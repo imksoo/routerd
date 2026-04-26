@@ -22,6 +22,7 @@ STATEDIR ?= /var/lib/routerd
 endif
 
 ROUTERD_BIN := bin/routerd
+ROUTERCTL_BIN := bin/routerctl
 
 .PHONY: test build generate-schema check-schema check-build-deps check-remote-deps install install-systemd dist remote-install remote-install-config validate-example dry-run-example plan-config clean
 
@@ -30,14 +31,21 @@ test:
 
 build:
 	go build -o $(ROUTERD_BIN) ./cmd/routerd
+	go build -o $(ROUTERCTL_BIN) ./cmd/routerctl
 
 generate-schema:
 	install -d schemas
 	go run ./cmd/routerd-schema > schemas/routerd-config-v1alpha1.schema.json
+	go run ./cmd/routerd-schema --schema control > schemas/routerd-control-v1alpha1.schema.json
+	go run ./cmd/routerd-schema --schema control-openapi > schemas/routerd-control-openapi-v1alpha1.json
 
 check-schema:
 	go run ./cmd/routerd-schema > /tmp/routerd-config-v1alpha1.schema.json
 	diff -u schemas/routerd-config-v1alpha1.schema.json /tmp/routerd-config-v1alpha1.schema.json
+	go run ./cmd/routerd-schema --schema control > /tmp/routerd-control-v1alpha1.schema.json
+	diff -u schemas/routerd-control-v1alpha1.schema.json /tmp/routerd-control-v1alpha1.schema.json
+	go run ./cmd/routerd-schema --schema control-openapi > /tmp/routerd-control-openapi-v1alpha1.json
+	diff -u schemas/routerd-control-openapi-v1alpha1.json /tmp/routerd-control-openapi-v1alpha1.json
 
 check-build-deps:
 	@missing=0; \
@@ -53,6 +61,7 @@ check-remote-deps:
 install: check-build-deps build
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 $(ROUTERD_BIN) $(DESTDIR)$(BINDIR)/routerd
+	install -m 0755 $(ROUTERCTL_BIN) $(DESTDIR)$(BINDIR)/routerctl
 	install -d $(DESTDIR)$(SYSCONFDIR)
 	install -m 0644 examples/basic-static.yaml $(DESTDIR)$(SYSCONFDIR)/router.yaml.example
 	install -d $(DESTDIR)$(SYSCONFDIR)/examples

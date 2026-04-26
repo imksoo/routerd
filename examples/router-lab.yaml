@@ -7,6 +7,17 @@ metadata:
 spec:
   resources:
     - apiVersion: system.routerd.net/v1alpha1
+      kind: LogSink
+      metadata:
+        name: local-syslog
+      spec:
+        type: syslog
+        minLevel: info
+        syslog:
+          facility: local6
+          tag: routerd
+
+    - apiVersion: system.routerd.net/v1alpha1
       kind: Sysctl
       metadata:
         name: ipv4-forwarding
@@ -224,6 +235,24 @@ spec:
         leaseTime: 12h
         defaultRoute: true
         dnsSource: self
+        selfAddressPolicy: lan-ipv6-self
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: SelfAddressPolicy
+      metadata:
+        name: lan-ipv6-self
+      spec:
+        addressFamily: ipv6
+        candidates:
+          - source: delegatedAddress
+            delegatedAddress: lan-ipv6-pd-address
+            addressSuffix: "::3"
+          - source: interfaceAddress
+            interface: lan
+            matchSuffix: "::3"
+          - source: interfaceAddress
+            interface: lan
+            ordinal: 1
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4DHCPServer

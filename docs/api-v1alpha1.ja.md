@@ -32,8 +32,10 @@ routerd の config は Kubernetes 風のリソース形状を使います。
 - `IPv6DelegatedAddress`
 - `IPv6DHCPServer`
 - `IPv6DHCPScope`
+- `SelfAddressPolicy`
 - `DNSConditionalForwarder`
 - `DSLiteTunnel`
+- `LogSink`
 - `Hostname`
 - `Sysctl`
 
@@ -43,6 +45,42 @@ routerd の config は Kubernetes 風のリソース形状を使います。
 
 - `managed: false`: observe と alias 解決だけを行い、link/address state は変更しません。
 - `managed: true`: routerd がそのinterfaceを管理できます。ただし cloud-init や netplan の既存所有が見える場合は、いきなり奪わず `RequiresAdoption` として計画に出します。
+
+## LogSink
+
+`system.routerd.net/v1alpha1` の `LogSink` は、routerd の内部イベントをどこへ出すかを宣言します。
+
+ローカルの journald/syslog に出す場合:
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: LogSink
+metadata:
+  name: local-syslog
+spec:
+  type: syslog
+  minLevel: info
+  syslog:
+    facility: local6
+    tag: routerd
+```
+
+信頼済みローカル log plugin に出す場合:
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: LogSink
+metadata:
+  name: external-log
+spec:
+  type: plugin
+  minLevel: warning
+  plugin:
+    path: /usr/local/libexec/routerd/log-sinks/example
+    timeout: 5s
+```
+
+`enabled` は省略時 `true`、`minLevel` は省略時 `info` です。`syslog.facility` は省略時 `local6`、`syslog.tag` は省略時 `routerd` です。
 
 ## Sysctl
 
@@ -61,6 +99,39 @@ spec:
 ```
 
 現在 `runtime: true` は実行中kernel値へ反映します。`persistent: true` は sysctl.d や rc.conf への永続化用として予約されています。
+
+## SelfAddressPolicy
+
+`SelfAddressPolicy` は `dnsSource: self` がどのlocal addressを選ぶかを定義します。LAN用 delegated address と DS-Lite source address のように、同じinterfaceに複数のIPv6 addressがある場合の選択を明示できます。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: SelfAddressPolicy
+metadata:
+  name: lan-ipv6-self
+spec:
+  addressFamily: ipv6
+  candidates:
+    - source: delegatedAddress
+      delegatedAddress: lan-ipv6-pd-address
+      addressSuffix: "::3"
+    - source: interfaceAddress
+      interface: lan
+      matchSuffix: "::3"
+    - source: interfaceAddress
+      interface: lan
+      ordinal: 1
+```
+
+`IPv6DHCPScope` から参照します。
+
+```yaml
+spec:
+  dnsSource: self
+  selfAddressPolicy: lan-ipv6-self
+```
+
+candidate は上から順番に評価され、最初に解決できたaddressを使います。省略時は、IPv6 DHCP scope の `IPv6DelegatedAddress.addressSuffix` を使った delegated address、suffix一致の観測済みaddress、観測済みglobal addressの先頭、という順番になります。
 
 ## IPv6 Prefix Delegation
 

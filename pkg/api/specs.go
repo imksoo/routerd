@@ -2,6 +2,26 @@ package api
 
 import "fmt"
 
+type LogSinkSpec struct {
+	Type     string            `yaml:"type" json:"type" jsonschema:"enum=syslog,enum=plugin"`
+	Enabled  *bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	MinLevel string            `yaml:"minLevel,omitempty" json:"minLevel,omitempty" jsonschema:"enum=debug,enum=info,enum=warning,enum=error"`
+	Syslog   LogSinkSyslogSpec `yaml:"syslog,omitempty" json:"syslog,omitempty"`
+	Plugin   LogSinkPluginSpec `yaml:"plugin,omitempty" json:"plugin,omitempty"`
+}
+
+type LogSinkSyslogSpec struct {
+	Network  string `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=,enum=unix,enum=unixgram,enum=tcp,enum=udp"`
+	Address  string `yaml:"address,omitempty" json:"address,omitempty"`
+	Facility string `yaml:"facility,omitempty" json:"facility,omitempty" jsonschema:"enum=kern,enum=user,enum=mail,enum=daemon,enum=auth,enum=syslog,enum=lpr,enum=news,enum=uucp,enum=cron,enum=authpriv,enum=ftp,enum=local0,enum=local1,enum=local2,enum=local3,enum=local4,enum=local5,enum=local6,enum=local7"`
+	Tag      string `yaml:"tag,omitempty" json:"tag,omitempty"`
+}
+
+type LogSinkPluginSpec struct {
+	Path    string `yaml:"path,omitempty" json:"path,omitempty"`
+	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+}
+
 type SysctlSpec struct {
 	Key        string `yaml:"key" json:"key" jsonschema:"title=Key"`
 	Value      string `yaml:"value" json:"value" jsonschema:"title=Value"`
@@ -87,13 +107,29 @@ type IPv6DHCPServerSpec struct {
 }
 
 type IPv6DHCPScopeSpec struct {
-	Server           string   `yaml:"server" json:"server"`
-	DelegatedAddress string   `yaml:"delegatedAddress" json:"delegatedAddress"`
-	Mode             string   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=ra-only"`
-	LeaseTime        string   `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
-	DefaultRoute     bool     `yaml:"defaultRoute,omitempty" json:"defaultRoute,omitempty"`
-	DNSSource        string   `yaml:"dnsSource,omitempty" json:"dnsSource,omitempty" jsonschema:"enum=self,enum=static,enum=none"`
-	DNSServers       []string `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
+	Server            string   `yaml:"server" json:"server"`
+	DelegatedAddress  string   `yaml:"delegatedAddress" json:"delegatedAddress"`
+	Mode              string   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=ra-only"`
+	LeaseTime         string   `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
+	DefaultRoute      bool     `yaml:"defaultRoute,omitempty" json:"defaultRoute,omitempty"`
+	DNSSource         string   `yaml:"dnsSource,omitempty" json:"dnsSource,omitempty" jsonschema:"enum=self,enum=static,enum=none"`
+	SelfAddressPolicy string   `yaml:"selfAddressPolicy,omitempty" json:"selfAddressPolicy,omitempty"`
+	DNSServers        []string `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
+}
+
+type SelfAddressPolicySpec struct {
+	AddressFamily string                       `yaml:"addressFamily" json:"addressFamily" jsonschema:"enum=ipv4,enum=ipv6"`
+	Candidates    []SelfAddressPolicyCandidate `yaml:"candidates" json:"candidates"`
+}
+
+type SelfAddressPolicyCandidate struct {
+	Source           string `yaml:"source" json:"source" jsonschema:"enum=delegatedAddress,enum=interfaceAddress,enum=static"`
+	Interface        string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	DelegatedAddress string `yaml:"delegatedAddress,omitempty" json:"delegatedAddress,omitempty"`
+	Address          string `yaml:"address,omitempty" json:"address,omitempty"`
+	AddressSuffix    string `yaml:"addressSuffix,omitempty" json:"addressSuffix,omitempty"`
+	MatchSuffix      string `yaml:"matchSuffix,omitempty" json:"matchSuffix,omitempty"`
+	Ordinal          int    `yaml:"ordinal,omitempty" json:"ordinal,omitempty" jsonschema:"minimum=1"`
 }
 
 type DNSConditionalForwarderSpec struct {
@@ -230,6 +266,10 @@ func (r Resource) IPv6DHCPScopeSpec() (IPv6DHCPScopeSpec, error) {
 	return specAs[IPv6DHCPScopeSpec](r)
 }
 
+func (r Resource) SelfAddressPolicySpec() (SelfAddressPolicySpec, error) {
+	return specAs[SelfAddressPolicySpec](r)
+}
+
 func (r Resource) DNSConditionalForwarderSpec() (DNSConditionalForwarderSpec, error) {
 	return specAs[DNSConditionalForwarderSpec](r)
 }
@@ -256,6 +296,10 @@ func (r Resource) IPv4PolicyRouteSetSpec() (IPv4PolicyRouteSetSpec, error) {
 
 func (r Resource) IPv4ReversePathFilterSpec() (IPv4ReversePathFilterSpec, error) {
 	return specAs[IPv4ReversePathFilterSpec](r)
+}
+
+func (r Resource) LogSinkSpec() (LogSinkSpec, error) {
+	return specAs[LogSinkSpec](r)
 }
 
 func (r Resource) HostnameSpec() (HostnameSpec, error) {

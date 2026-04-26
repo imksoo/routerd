@@ -18,7 +18,7 @@ type DnsmasqRuntime struct {
 }
 
 func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
-	aliases, staticIPv4, delegatedIPv6, err := dnsmasqInputs(router)
+	aliases, staticIPv4, delegatedIPv6, selfPolicies, err := dnsmasqInputs(router)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		if !spec.DefaultRoute {
 			buf.WriteString(fmt.Sprintf("ra-param=%s,0,0\n", delegated.IfName))
 		}
-		dnsServers, err := dnsmasqIPv6DNSServers(spec, delegated, runtime)
+		dnsServers, err := dnsmasqIPv6DNSServers(spec, delegated, selfPolicies[spec.SelfAddressPolicy], aliases, delegatedIPv6, runtime)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", res.ID(), err)
 		}
@@ -349,16 +349,17 @@ type delegatedIPv6Address struct {
 	AddressSuffix string
 }
 
-func dnsmasqInputs(router *api.Router) (map[string]string, map[string]netip.Prefix, map[string]delegatedIPv6Address, error) {
+func dnsmasqInputs(router *api.Router) (map[string]string, map[string]netip.Prefix, map[string]delegatedIPv6Address, map[string]api.SelfAddressPolicySpec, error) {
 	aliases := map[string]string{}
 	staticIPv4 := map[string]netip.Prefix{}
 	delegatedIPv6 := map[string]delegatedIPv6Address{}
+	selfPolicies := map[string]api.SelfAddressPolicySpec{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "Interface":
 			spec, err := res.InterfaceSpec()
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
 		}
@@ -368,22 +369,28 @@ func dnsmasqInputs(router *api.Router) (map[string]string, map[string]netip.Pref
 		case "IPv4StaticAddress":
 			spec, err := res.IPv4StaticAddressSpec()
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			prefix, err := netip.ParsePrefix(spec.Address)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			staticIPv4[spec.Interface] = prefix
 		case "IPv6DelegatedAddress":
 			spec, err := res.IPv6DelegatedAddressSpec()
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			delegatedIPv6[res.Metadata.Name] = delegatedIPv6Address{Interface: spec.Interface, IfName: aliases[spec.Interface], AddressSuffix: spec.AddressSuffix}
+		case "SelfAddressPolicy":
+			spec, err := res.SelfAddressPolicySpec()
+			if err != nil {
+				return nil, nil, nil, nil, err
+			}
+			selfPolicies[res.Metadata.Name] = spec
 		}
 	}
-	return aliases, staticIPv4, delegatedIPv6, nil
+	return aliases, staticIPv4, delegatedIPv6, selfPolicies, nil
 }
 
 func dnsmasqDNSServers(spec api.IPv4DHCPScopeSpec, aliases map[string]string, staticIPv4 map[string]netip.Prefix, runtime DnsmasqRuntime) ([]string, error) {
@@ -410,18 +417,10 @@ func dnsmasqDNSServers(spec api.IPv4DHCPScopeSpec, aliases map[string]string, st
 	}
 }
 
-func dnsmasqIPv6DNSServers(spec api.IPv6DHCPScopeSpec, delegated delegatedIPv6Address, runtime DnsmasqRuntime) ([]string, error) {
+func dnsmasqIPv6DNSServers(spec api.IPv6DHCPScopeSpec, delegated delegatedIPv6Address, policy api.SelfAddressPolicySpec, aliases map[string]string, delegatedAddresses map[string]delegatedIPv6Address, runtime DnsmasqRuntime) ([]string, error) {
 	switch defaultString(spec.DNSSource, "self") {
 	case "self":
-		servers := filterGlobalIPv6Strings(runtime.IPv6AddressesByInterface[delegated.IfName])
-		if len(servers) == 0 {
-			derived, err := deriveIPv6Address(runtime.IPv6PrefixesByInterface[delegated.IfName], delegated.AddressSuffix)
-			if err != nil {
-				return nil, fmt.Errorf("no delegated IPv6 DNS address observed on %s: %w", delegated.IfName, err)
-			}
-			return []string{derived}, nil
-		}
-		return []string{servers[0]}, nil
+		return selectIPv6SelfAddress(defaultIPv6SelfAddressPolicy(spec, delegated, policy), delegatedAddresses, aliases, runtime)
 	case "static":
 		return spec.DNSServers, nil
 	case "none":
@@ -429,6 +428,90 @@ func dnsmasqIPv6DNSServers(spec api.IPv6DHCPScopeSpec, delegated delegatedIPv6Ad
 	default:
 		return nil, fmt.Errorf("unsupported dnsSource %q", spec.DNSSource)
 	}
+}
+
+func defaultIPv6SelfAddressPolicy(spec api.IPv6DHCPScopeSpec, delegated delegatedIPv6Address, policy api.SelfAddressPolicySpec) api.SelfAddressPolicySpec {
+	if spec.SelfAddressPolicy != "" {
+		return policy
+	}
+	return api.SelfAddressPolicySpec{
+		AddressFamily: "ipv6",
+		Candidates: []api.SelfAddressPolicyCandidate{
+			{Source: "delegatedAddress", DelegatedAddress: spec.DelegatedAddress, AddressSuffix: delegated.AddressSuffix},
+			{Source: "interfaceAddress", Interface: delegated.Interface, MatchSuffix: delegated.AddressSuffix},
+			{Source: "interfaceAddress", Interface: delegated.Interface, Ordinal: 1},
+		},
+	}
+}
+
+func selectIPv6SelfAddress(policy api.SelfAddressPolicySpec, delegatedAddresses map[string]delegatedIPv6Address, aliases map[string]string, runtime DnsmasqRuntime) ([]string, error) {
+	var errs []string
+	for _, candidate := range policy.Candidates {
+		address, err := selectIPv6SelfAddressCandidate(candidate, delegatedAddresses, aliases, runtime)
+		if err == nil {
+			return []string{address}, nil
+		}
+		errs = append(errs, err.Error())
+	}
+	return nil, fmt.Errorf("no IPv6 self address selected: %s", strings.Join(errs, "; "))
+}
+
+func selectIPv6SelfAddressCandidate(candidate api.SelfAddressPolicyCandidate, delegatedAddresses map[string]delegatedIPv6Address, aliases map[string]string, runtime DnsmasqRuntime) (string, error) {
+	switch candidate.Source {
+	case "delegatedAddress":
+		delegated := delegatedAddresses[candidate.DelegatedAddress]
+		if delegated.IfName == "" {
+			return "", fmt.Errorf("delegated address %q is not available", candidate.DelegatedAddress)
+		}
+		suffix := defaultString(candidate.AddressSuffix, delegated.AddressSuffix)
+		address, err := deriveIPv6Address(runtime.IPv6PrefixesByInterface[delegated.IfName], suffix)
+		if err != nil {
+			return "", fmt.Errorf("derive %s%s: %w", candidate.DelegatedAddress, suffix, err)
+		}
+		return address, nil
+	case "interfaceAddress":
+		ifname := aliases[candidate.Interface]
+		if ifname == "" {
+			return "", fmt.Errorf("interface %q is not available", candidate.Interface)
+		}
+		servers := filterGlobalIPv6Strings(runtime.IPv6AddressesByInterface[ifname])
+		if candidate.MatchSuffix != "" {
+			for _, server := range servers {
+				if ipv6AddressMatchesSuffix(server, candidate.MatchSuffix) {
+					return server, nil
+				}
+			}
+			return "", fmt.Errorf("no IPv6 address on %s matches suffix %s", ifname, candidate.MatchSuffix)
+		}
+		ordinal := candidate.Ordinal
+		if ordinal == 0 {
+			ordinal = 1
+		}
+		if ordinal < 1 || ordinal > len(servers) {
+			return "", fmt.Errorf("IPv6 address ordinal %d is outside available address count %d on %s", ordinal, len(servers), ifname)
+		}
+		return servers[ordinal-1], nil
+	case "static":
+		return candidate.Address, nil
+	default:
+		return "", fmt.Errorf("unsupported self address source %q", candidate.Source)
+	}
+}
+
+func ipv6AddressMatchesSuffix(address, suffix string) bool {
+	addr, addrErr := netip.ParseAddr(address)
+	suffixAddr, suffixErr := netip.ParseAddr(suffix)
+	if addrErr != nil || suffixErr != nil || !addr.Is6() || !suffixAddr.Is6() {
+		return false
+	}
+	addrBytes := addr.As16()
+	suffixBytes := suffixAddr.As16()
+	for i := range suffixBytes {
+		if suffixBytes[i] != 0 && addrBytes[i] != suffixBytes[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func ipv4Netmask(bits int) (string, error) {

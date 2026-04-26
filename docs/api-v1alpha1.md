@@ -28,7 +28,15 @@ routerd uses Kubernetes-like API shapes:
 - `IPv4ReversePathFilter`
 - `IPv4SourceNAT`
 - `IPv6DHCPAddress`
+- `IPv6PrefixDelegation`
+- `IPv6DelegatedAddress`
+- `IPv6DHCPServer`
+- `IPv6DHCPScope`
+- `SelfAddressPolicy`
+- `DNSConditionalForwarder`
+- `DSLiteTunnel`
 - `Hostname`
+- `LogSink`
 - `Sysctl`
 
 The schema is intentionally small and will be implemented incrementally.
@@ -41,6 +49,42 @@ The schema is intentionally small and will be implemented incrementally.
 - `managed: true` means routerd may manage the interface after existing OS networking ownership has been reviewed.
 
 When cloud-init or netplan is detected, routerd planning reports `RequiresAdoption` instead of taking over automatically.
+
+## LogSink
+
+`system.routerd.net/v1alpha1` `LogSink` declares where routerd sends internal operational events.
+
+Local journald/syslog output:
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: LogSink
+metadata:
+  name: local-syslog
+spec:
+  type: syslog
+  minLevel: info
+  syslog:
+    facility: local6
+    tag: routerd
+```
+
+Trusted local log plugin output:
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: LogSink
+metadata:
+  name: external-log
+spec:
+  type: plugin
+  minLevel: warning
+  plugin:
+    path: /usr/local/libexec/routerd/log-sinks/example
+    timeout: 5s
+```
+
+`enabled` defaults to `true`. `minLevel` defaults to `info`. `syslog.facility` defaults to `local6`, and `syslog.tag` defaults to `routerd`.
 
 ## IPv4 Overlap Safety
 
@@ -73,6 +117,44 @@ spec:
 ```
 
 `runtime: true` means routerd should manage the running kernel value. `persistent: true` is reserved for OS-specific rendering such as sysctl.d or rc.conf and is not applied yet.
+
+## SelfAddressPolicy
+
+`SelfAddressPolicy` defines how `dnsSource: self` selects a local address. This
+keeps address selection explicit when an interface has multiple addresses, such
+as a delegated LAN address and extra DS-Lite source addresses.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: SelfAddressPolicy
+metadata:
+  name: lan-ipv6-self
+spec:
+  addressFamily: ipv6
+  candidates:
+    - source: delegatedAddress
+      delegatedAddress: lan-ipv6-pd-address
+      addressSuffix: "::3"
+    - source: interfaceAddress
+      interface: lan
+      matchSuffix: "::3"
+    - source: interfaceAddress
+      interface: lan
+      ordinal: 1
+```
+
+`IPv6DHCPScope` can reference it:
+
+```yaml
+spec:
+  dnsSource: self
+  selfAddressPolicy: lan-ipv6-self
+```
+
+Candidate order is significant. The first candidate that can be resolved wins.
+When omitted, IPv6 DHCP scopes use a default policy equivalent to delegated
+address plus the `IPv6DelegatedAddress.addressSuffix`, then an observed address
+matching that suffix, then the first observed global address.
 
 ## IPv4DefaultRoute
 

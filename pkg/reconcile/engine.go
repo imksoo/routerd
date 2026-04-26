@@ -62,6 +62,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		}
 
 		switch res.Kind {
+		case "LogSink":
+			e.observeLogSink(res, includePlan, &rr)
 		case "Sysctl":
 			e.observeSysctl(res, includePlan, &rr)
 		case "Interface":
@@ -84,6 +86,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv6DHCPServer(res, includePlan, &rr)
 		case "IPv6DHCPScope":
 			e.observeIPv6DHCPScope(res, includePlan, &rr)
+		case "SelfAddressPolicy":
+			e.observeSelfAddressPolicy(res, includePlan, &rr)
 		case "DNSConditionalForwarder":
 			e.observeDNSConditionalForwarder(res, aliases, includePlan, &rr)
 		case "DSLiteTunnel":
@@ -109,6 +113,47 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 	}
 
 	return result, nil
+}
+
+func (e *Engine) observeLogSink(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.LogSinkSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	enabled := api.BoolDefault(spec.Enabled, true)
+	minLevel := defaultString(spec.MinLevel, "info")
+	rr.Observed["type"] = spec.Type
+	rr.Observed["enabled"] = fmt.Sprintf("%t", enabled)
+	rr.Observed["minLevel"] = minLevel
+	switch spec.Type {
+	case "syslog":
+		rr.Observed["facility"] = defaultString(spec.Syslog.Facility, "local6")
+		rr.Observed["tag"] = defaultString(spec.Syslog.Tag, "routerd")
+		if spec.Syslog.Network != "" {
+			rr.Observed["network"] = spec.Syslog.Network
+		}
+		if spec.Syslog.Address != "" {
+			rr.Observed["address"] = spec.Syslog.Address
+		}
+	case "plugin":
+		rr.Observed["pluginPath"] = spec.Plugin.Path
+		rr.Observed["timeout"] = defaultString(spec.Plugin.Timeout, "5s")
+	}
+	if !includePlan {
+		return
+	}
+	if !enabled {
+		rr.Plan = append(rr.Plan, "log sink is disabled")
+		return
+	}
+	switch spec.Type {
+	case "syslog":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("send routerd events to syslog facility %s", defaultString(spec.Syslog.Facility, "local6")))
+	case "plugin":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("send routerd events to local log plugin %s", spec.Plugin.Path))
+	}
 }
 
 func (e *Engine) observeIPv6PrefixDelegation(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
@@ -215,6 +260,9 @@ func (e *Engine) observeIPv6DHCPScope(res api.Resource, includePlan bool, rr *Re
 	rr.Observed["mode"] = mode
 	rr.Observed["defaultRoute"] = fmt.Sprintf("%t", spec.DefaultRoute)
 	rr.Observed["dnsSource"] = dnsSource
+	if spec.SelfAddressPolicy != "" {
+		rr.Observed["selfAddressPolicy"] = spec.SelfAddressPolicy
+	}
 	if spec.LeaseTime != "" {
 		rr.Observed["leaseTime"] = spec.LeaseTime
 	}
@@ -236,6 +284,21 @@ func (e *Engine) observeIPv6DHCPScope(res api.Resource, includePlan bool, rr *Re
 	case "none":
 		rr.Plan = append(rr.Plan, "do not advertise IPv6 DNS servers")
 	}
+}
+
+func (e *Engine) observeSelfAddressPolicy(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.SelfAddressPolicySpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["addressFamily"] = spec.AddressFamily
+	rr.Observed["candidates"] = fmt.Sprintf("%d", len(spec.Candidates))
+	if !includePlan {
+		return
+	}
+	rr.Plan = append(rr.Plan, fmt.Sprintf("select %s self address from %d ordered candidates", spec.AddressFamily, len(spec.Candidates)))
 }
 
 func (e *Engine) observeDNSConditionalForwarder(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {

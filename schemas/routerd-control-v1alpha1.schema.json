@@ -1,0 +1,332 @@
+{
+  "$id": "https://routerd.net/schemas/routerd-control-v1alpha1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "status": {
+          "additionalProperties": false,
+          "properties": {
+            "generation": {
+              "type": "integer"
+            },
+            "lastReconcileTime": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "phase": {
+              "type": "string"
+            },
+            "resourceCount": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "phase"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "status"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "byMark": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "assured": {
+                "type": "boolean"
+              },
+              "family": {
+                "type": "string"
+              },
+              "mark": {
+                "type": "string"
+              },
+              "original": {
+                "additionalProperties": false,
+                "properties": {
+                  "destination": {
+                    "type": "string"
+                  },
+                  "destinationPort": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "sourcePort": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "protocol": {
+                "type": "string"
+              },
+              "rawAttributes": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "reply": {
+                "additionalProperties": false,
+                "properties": {
+                  "destination": {
+                    "type": "string"
+                  },
+                  "destinationPort": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "sourcePort": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "state": {
+                "type": "string"
+              },
+              "timeout": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "family",
+              "protocol",
+              "original",
+              "reply"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "max": {
+          "type": "integer"
+        },
+        "stats": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "cpu": {
+                "type": "string"
+              },
+              "fields": {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "cpu",
+              "fields"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "count"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "dryRun": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "result": {
+          "additionalProperties": false,
+          "properties": {
+            "generation": {
+              "type": "integer"
+            },
+            "phase": {
+              "type": "string"
+            },
+            "resources": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "conditions": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "observed": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "phase": {
+                    "type": "string"
+                  },
+                  "plan": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "warnings": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "id",
+                  "phase"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "timestamp": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "warnings": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "generation",
+            "timestamp",
+            "phase",
+            "resources"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "result"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "error": {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "error"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "routerd control API v1alpha1"
+}

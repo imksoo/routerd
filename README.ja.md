@@ -13,9 +13,12 @@
 - systemd-networkd drop-in による IPv6 Prefix Delegation
 - dnsmasq による DHCPv4、DHCPv6/RA、DNS forward/cache
 - runtime sysctl 管理
+- syslog/journald または trusted local log plugin への内部イベント出力
 - nftables による IPv4 Source NAT
 - nftables mark + `ip rule` による IPv4 policy routing
 - DS-Lite ipip6 tunnel、複数 tunnel のhash分散
+- Unix domain socket 上の HTTP+JSON daemon control API
+- client CLI `routerctl`
 - status JSON
 - dry-run / plan
 - ローカル trusted plugin の土台
@@ -25,7 +28,6 @@
 - firewall policy
 - remote plugin install
 - full rollback
-- 常駐 daemon loop
 
 ## 必要なもの
 
@@ -55,6 +57,7 @@ make build
 生成物は `bin/routerd` です。
 
 schema を Go の型から再生成する場合:
+control API の JSON Schema と OpenAPI 定義も同時に生成します。
 
 ```sh
 make generate-schema
@@ -93,6 +96,10 @@ make remote-install-config REMOTE_HOST=user@router.example CONFIG=path/to/router
 routerd validate --config examples/router-lab.yaml
 routerd plan --config examples/router-lab.yaml
 routerd reconcile --config examples/router-lab.yaml --once --dry-run
+routerd serve --config examples/router-lab.yaml --socket /run/routerd/routerd.sock
+routerctl status
+routerctl show napt --limit 20
+routerctl plan
 ```
 
 実反映:
@@ -108,12 +115,14 @@ remote router で実行する前に、`plan` と `dry-run` を確認してくだ
 - Config: `/usr/local/etc/routerd/router.yaml`
 - Plugin dir: `/usr/local/libexec/routerd/plugins`
 - Binary: `/usr/local/sbin/routerd`
+- Client binary: `/usr/local/sbin/routerctl`
 
 Linux:
 
 - Runtime dir: `/run/routerd`
 - State dir: `/var/lib/routerd`
 - Status file: `/run/routerd/status.json`
+- Control socket: `/run/routerd/routerd.sock`
 - Lock file: `/run/routerd/routerd.lock`
 
 FreeBSD:
@@ -121,11 +130,14 @@ FreeBSD:
 - Runtime dir: `/var/run/routerd`
 - State dir: `/var/db/routerd`
 - Status file: `/var/run/routerd/status.json`
+- Control socket: `/var/run/routerd/routerd.sock`
 - Lock file: `/var/run/routerd/routerd.lock`
 
 ## ドキュメント
 
 - [API v1alpha1](docs/api-v1alpha1.md)
+- [Control API v1alpha1](docs/control-api-v1alpha1.md)
 - [Plugin protocol](docs/plugin-protocol.md)
 - [API v1alpha1 日本語](docs/api-v1alpha1.ja.md)
+- [Control API v1alpha1 日本語](docs/control-api-v1alpha1.ja.md)
 - [Plugin protocol 日本語](docs/plugin-protocol.ja.md)

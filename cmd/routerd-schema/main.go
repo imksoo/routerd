@@ -2,15 +2,40 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 
 	"github.com/invopop/jsonschema"
 
 	"routerd/pkg/api"
+	"routerd/pkg/controlapi"
 )
 
 func main() {
+	schemaName := flag.String("schema", "config", "schema to generate: config, control, or control-openapi")
+	flag.Parse()
+	var schema map[string]any
+	switch *schemaName {
+	case "config":
+		schema = configSchema()
+	case "control":
+		schema = controlSchema()
+	case "control-openapi":
+		schema = controlOpenAPISchema()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown schema %q\n", *schemaName)
+		os.Exit(2)
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(schema); err != nil {
+		fmt.Fprintf(os.Stderr, "encode schema: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func configSchema() map[string]any {
 	schema := map[string]any{
 		"$schema": "https://json-schema.org/draft/2020-12/schema",
 		"$id":     "https://routerd.net/schemas/routerd-config-v1alpha1.schema.json",
@@ -40,18 +65,112 @@ func main() {
 			},
 		},
 	}
+	return schema
+}
 
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(schema); err != nil {
-		fmt.Fprintf(os.Stderr, "encode schema: %v\n", err)
-		os.Exit(1)
+func controlSchema() map[string]any {
+	return map[string]any{
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"$id":     "https://routerd.net/schemas/routerd-control-v1alpha1.schema.json",
+		"title":   "routerd control API v1alpha1",
+		"oneOf": []any{
+			reflectedSchema(controlapi.Status{}),
+			reflectedSchema(controlapi.NAPTTable{}),
+			reflectedSchema(controlapi.ReconcileRequest{}),
+			reflectedSchema(controlapi.ReconcileResult{}),
+			reflectedSchema(controlapi.Error{}),
+		},
 	}
+}
+
+func controlOpenAPISchema() map[string]any {
+	return map[string]any{
+		"openapi": "3.1.0",
+		"info": map[string]any{
+			"title":   "routerd control API",
+			"version": "v1alpha1",
+		},
+		"paths": map[string]any{
+			controlapi.Prefix + "/status": map[string]any{
+				"get": map[string]any{
+					"operationId": "getStatus",
+					"responses": map[string]any{
+						"200":     responseRef("Status"),
+						"default": responseRef("Error"),
+					},
+				},
+			},
+			controlapi.Prefix + "/reconcile": map[string]any{
+				"post": map[string]any{
+					"operationId": "reconcile",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": schemaRef("ReconcileRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200":     responseRef("ReconcileResult"),
+						"default": responseRef("Error"),
+					},
+				},
+			},
+			controlapi.Prefix + "/napt": map[string]any{
+				"get": map[string]any{
+					"operationId": "getNAPTTable",
+					"parameters": []any{
+						map[string]any{
+							"name":        "limit",
+							"in":          "query",
+							"required":    false,
+							"description": "Maximum number of entries to return. 0 returns only summary.",
+							"schema": map[string]any{
+								"type":    "integer",
+								"minimum": 0,
+								"default": 100,
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200":     responseRef("NAPTTable"),
+						"default": responseRef("Error"),
+					},
+				},
+			},
+		},
+		"components": map[string]any{
+			"schemas": map[string]any{
+				"Status":           reflectedSchema(controlapi.Status{}),
+				"NAPTTable":        reflectedSchema(controlapi.NAPTTable{}),
+				"ReconcileRequest": reflectedSchema(controlapi.ReconcileRequest{}),
+				"ReconcileResult":  reflectedSchema(controlapi.ReconcileResult{}),
+				"Error":            reflectedSchema(controlapi.Error{}),
+			},
+		},
+	}
+}
+
+func responseRef(name string) map[string]any {
+	return map[string]any{
+		"description": name,
+		"content": map[string]any{
+			"application/json": map[string]any{
+				"schema": schemaRef(name),
+			},
+		},
+	}
+}
+
+func schemaRef(name string) map[string]any {
+	return map[string]any{"$ref": "#/components/schemas/" + name}
 }
 
 func resourceUnionSchema() map[string]any {
 	return map[string]any{
 		"oneOf": []any{
+			resourceSchema(api.SystemAPIVersion, "LogSink", api.LogSinkSpec{}),
 			resourceSchema(api.SystemAPIVersion, "Sysctl", api.SysctlSpec{}),
 			resourceSchema(api.NetAPIVersion, "Interface", api.InterfaceSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4StaticAddress", api.IPv4StaticAddressSpec{}),
@@ -63,6 +182,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "IPv6DelegatedAddress", api.IPv6DelegatedAddressSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv6DHCPServer", api.IPv6DHCPServerSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv6DHCPScope", api.IPv6DHCPScopeSpec{}),
+			resourceSchema(api.NetAPIVersion, "SelfAddressPolicy", api.SelfAddressPolicySpec{}),
 			resourceSchema(api.NetAPIVersion, "DNSConditionalForwarder", api.DNSConditionalForwarderSpec{}),
 			resourceSchema(api.NetAPIVersion, "DSLiteTunnel", api.DSLiteTunnelSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4DefaultRoute", api.IPv4DefaultRouteSpec{}),

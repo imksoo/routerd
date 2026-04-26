@@ -59,6 +59,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 	r.Status = raw.Status
 
 	switch raw.Kind {
+	case "LogSink":
+		var spec LogSinkSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "Sysctl":
 		var spec SysctlSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -121,6 +127,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		r.Spec = spec
 	case "IPv6DHCPScope":
 		var spec IPv6DHCPScopeSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "SelfAddressPolicy":
+		var spec SelfAddressPolicySpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}

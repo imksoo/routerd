@@ -9,16 +9,21 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"os/exec"
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/config"
+	"routerd/pkg/controlapi"
+	"routerd/pkg/eventlog"
+	"routerd/pkg/observe"
 	"routerd/pkg/reconcile"
 	"routerd/pkg/render"
 	statuswriter "routerd/pkg/status"
@@ -56,6 +61,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return configCommand(args[1:], stdout, "plan")
 	case "reconcile":
 		return reconcileCommand(args[1:], stdout)
+	case "serve":
+		return serveCommand(args[1:], stdout)
 	case "run":
 		return configCommand(args[1:], stdout, "run")
 	case "status":
@@ -93,7 +100,7 @@ func validateCommand(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func configCommand(args []string, stdout io.Writer, name string) error {
+func configCommand(args []string, stdout io.Writer, name string) (err error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", defaultConfigPath, "config path")
@@ -105,6 +112,12 @@ func configCommand(args []string, stdout io.Writer, name string) error {
 	if err != nil {
 		return err
 	}
+	logger, err := eventlog.New(router)
+	if err != nil {
+		return err
+	}
+	defer closeLogger(logger, name, &err)
+	logger.Emit(eventlog.LevelInfo, name, "routerd command started", map[string]string{"config": *configPath})
 	engine := reconcile.New()
 	switch name {
 	case "observe":
@@ -126,7 +139,7 @@ func configCommand(args []string, stdout io.Writer, name string) error {
 	}
 }
 
-func reconcileCommand(args []string, stdout io.Writer) error {
+func reconcileCommand(args []string, stdout io.Writer) (err error) {
 	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", defaultConfigPath, "config path")
@@ -147,19 +160,54 @@ func reconcileCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	engine := reconcile.New()
-	result, err := engine.Plan(router)
+	logger, err := eventlog.New(router)
 	if err != nil {
 		return err
 	}
-	if !*dryRun {
+	defer closeLogger(logger, "reconcile", &err)
+	logger.Emit(eventlog.LevelInfo, "reconcile", "routerd command started", map[string]string{
+		"config": *configPath,
+		"dryRun": fmt.Sprintf("%t", *dryRun),
+	})
+	opts := reconcileApplyOptions{
+		ConfigPath:          *configPath,
+		StatusFile:          *statusFile,
+		NetplanPath:         *netplanPath,
+		DnsmasqConfigPath:   *dnsmasqConfigPath,
+		DnsmasqServicePath:  *dnsmasqServicePath,
+		NftablesPath:        *nftablesPath,
+		DryRun:              *dryRun,
+		AnnounceDryRunToCLI: true,
+	}
+	_, err = runReconcileOnce(router, opts, stdout, logger)
+	return err
+}
+
+type reconcileApplyOptions struct {
+	ConfigPath          string
+	StatusFile          string
+	NetplanPath         string
+	DnsmasqConfigPath   string
+	DnsmasqServicePath  string
+	NftablesPath        string
+	DryRun              bool
+	AnnounceDryRunToCLI bool
+}
+
+func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.Writer, logger *eventlog.Logger) (*reconcile.Result, error) {
+	engine := reconcile.New()
+	result, err := engine.Plan(router)
+	if err != nil {
+		return nil, err
+	}
+	if !opts.DryRun {
 		netplanData, err := render.Netplan(router)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		networkdFiles, err := render.NetworkdDropins(router)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		dnsmasqConfig, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
 			DHCPv4DNSServersByInterface: observedDNSServersByInterface(router),
@@ -168,39 +216,43 @@ func reconcileCommand(args []string, stdout io.Writer) error {
 			IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(router),
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		nftablesConfig, err := render.NftablesIPv4SourceNAT(router)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		networkChangedFiles, err := applyNetworkConfig(*netplanPath, netplanData, networkdFiles)
+		logger.Emit(eventlog.LevelInfo, "reconcile", "routerd plan completed", map[string]string{
+			"phase":     result.Phase,
+			"resources": fmt.Sprintf("%d", len(result.Resources)),
+		})
+		networkChangedFiles, err := applyNetworkConfig(opts.NetplanPath, netplanData, networkdFiles)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		dnsmasqChangedFiles, err := applyDnsmasqConfig(*dnsmasqConfigPath, *dnsmasqServicePath, dnsmasqConfig)
+		dnsmasqChangedFiles, err := applyDnsmasqConfig(opts.DnsmasqConfigPath, opts.DnsmasqServicePath, dnsmasqConfig)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		nftablesChangedFiles, err := applyNftablesConfig(*nftablesPath, nftablesConfig)
+		nftablesChangedFiles, err := applyNftablesConfig(opts.NftablesPath, nftablesConfig)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		appliedTunnels, err := applyDSLiteTunnels(router)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		appliedRuntime, err := applyRuntimeSysctls(router)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		appliedReversePathFilters, err := applyIPv4ReversePathFilters(router)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		appliedPolicyRoutes, err := applyIPv4PolicyRoutes(router)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		changedFiles := append(networkChangedFiles, dnsmasqChangedFiles...)
 		changedFiles = append(changedFiles, nftablesChangedFiles...)
@@ -234,10 +286,193 @@ func reconcileCommand(args []string, stdout io.Writer) error {
 		for _, route := range appliedPolicyRoutes {
 			fmt.Fprintf(stdout, "applied IPv4 policy route %s\n", route)
 		}
-		return writeResult(stdout, *statusFile, result)
+		logger.Emit(eventlog.LevelInfo, "reconcile", "routerd changes applied", map[string]string{
+			"changedFiles":        fmt.Sprintf("%d", len(changedFiles)),
+			"runtimeSysctls":      fmt.Sprintf("%d", len(appliedRuntime)),
+			"reversePathFilters":  fmt.Sprintf("%d", len(appliedReversePathFilters)),
+			"dsliteTunnels":       fmt.Sprintf("%d", len(appliedTunnels)),
+			"ipv4PolicyRouteSets": fmt.Sprintf("%d", len(appliedPolicyRoutes)),
+		})
+		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+			return nil, err
+		}
+		return result, nil
 	}
-	fmt.Fprintf(stdout, "dry-run reconcile plan for %s\n", *configPath)
-	return writeResult(stdout, *statusFile, result)
+	if opts.AnnounceDryRunToCLI {
+		fmt.Fprintf(stdout, "dry-run reconcile plan for %s\n", opts.ConfigPath)
+	}
+	logger.Emit(eventlog.LevelInfo, "reconcile", "routerd dry-run completed", map[string]string{
+		"phase":     result.Phase,
+		"resources": fmt.Sprintf("%d", len(result.Resources)),
+	})
+	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func serveCommand(args []string, stdout io.Writer) (err error) {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", defaultConfigPath, "config path")
+	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
+	socketPath := fs.String("socket", defaultSocketPath(), "Unix domain socket path")
+	observeInterval := fs.Duration("observe-interval", 30*time.Second, "periodic observe interval; 0 disables scheduled observe")
+	reconcileInterval := fs.Duration("reconcile-interval", 0, "periodic reconcile interval; 0 disables scheduled reconcile")
+	netplanPath := fs.String("netplan-file", defaultNetplanPath, "routerd-managed netplan file")
+	dnsmasqConfigPath := fs.String("dnsmasq-file", defaultDnsmasqConfigPath, "routerd-managed dnsmasq config file")
+	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
+	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	logger, err := eventlog.New(router)
+	if err != nil {
+		return err
+	}
+	defer closeLogger(logger, "serve", &err)
+	logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon starting", map[string]string{
+		"config":            *configPath,
+		"socket":            *socketPath,
+		"observeInterval":   observeInterval.String(),
+		"reconcileInterval": reconcileInterval.String(),
+	})
+
+	cache := &resultCache{}
+	engine := reconcile.New()
+	if result, observeErr := engine.Observe(router); observeErr == nil {
+		cache.Store(result)
+		_ = statuswriter.Write(*statusFile, result)
+	} else {
+		logger.Emit(eventlog.LevelWarning, "serve", "initial observe failed", map[string]string{"error": observeErr.Error()})
+	}
+
+	stop := make(chan struct{})
+	defer close(stop)
+	if *observeInterval > 0 {
+		go runObserveSchedule(stop, *observeInterval, router, cache, *statusFile, logger)
+	}
+	reconcileOpts := reconcileApplyOptions{
+		ConfigPath:         *configPath,
+		StatusFile:         *statusFile,
+		NetplanPath:        *netplanPath,
+		DnsmasqConfigPath:  *dnsmasqConfigPath,
+		DnsmasqServicePath: *dnsmasqServicePath,
+		NftablesPath:       *nftablesPath,
+	}
+	applyMu := &sync.Mutex{}
+	if *reconcileInterval > 0 {
+		go runReconcileSchedule(stop, *reconcileInterval, router, reconcileOpts, cache, logger, applyMu)
+	}
+
+	if err := os.MkdirAll(filepathDir(*socketPath), 0755); err != nil {
+		return err
+	}
+	_ = os.Remove(*socketPath)
+	listener, err := net.Listen("unix", *socketPath)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	if err := os.Chmod(*socketPath, 0660); err != nil {
+		return err
+	}
+
+	handler := controlapi.Handler{
+		Status: func(r *http.Request) (*controlapi.Status, error) {
+			status := controlapi.NewStatus(cache.Load())
+			return &status, nil
+		},
+		NAPT: func(r *http.Request, req controlapi.NAPTRequest) (*controlapi.NAPTTable, error) {
+			table, err := observe.NAPT(req.Limit)
+			if err != nil {
+				return nil, err
+			}
+			apiTable := controlapi.NewNAPTTable(table)
+			return &apiTable, nil
+		},
+		Reconcile: func(r *http.Request, req controlapi.ReconcileRequest) (*controlapi.ReconcileResult, error) {
+			opts := reconcileOpts
+			opts.DryRun = req.DryRun
+			applyMu.Lock()
+			defer applyMu.Unlock()
+			result, err := runReconcileOnce(router, opts, io.Discard, logger)
+			if err != nil {
+				return nil, err
+			}
+			cache.Store(result)
+			apiResult := controlapi.NewReconcileResult(result)
+			return &apiResult, nil
+		},
+	}
+	server := &http.Server{Handler: handler}
+	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
+	return server.Serve(listener)
+}
+
+type resultCache struct {
+	mu     sync.RWMutex
+	result *reconcile.Result
+}
+
+func (c *resultCache) Store(result *reconcile.Result) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.result = result
+}
+
+func (c *resultCache) Load() *reconcile.Result {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.result
+}
+
+func runObserveSchedule(stop <-chan struct{}, interval time.Duration, router *api.Router, cache *resultCache, statusFile string, logger *eventlog.Logger) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			engine := reconcile.New()
+			result, err := engine.Observe(router)
+			if err != nil {
+				logger.Emit(eventlog.LevelWarning, "serve", "scheduled observe failed", map[string]string{"error": err.Error()})
+				continue
+			}
+			cache.Store(result)
+			if err := statuswriter.Write(statusFile, result); err != nil {
+				logger.Emit(eventlog.LevelWarning, "serve", "scheduled status write failed", map[string]string{"error": err.Error()})
+				continue
+			}
+			logger.Emit(eventlog.LevelDebug, "serve", "scheduled observe completed", map[string]string{"phase": result.Phase})
+		}
+	}
+}
+
+func runReconcileSchedule(stop <-chan struct{}, interval time.Duration, router *api.Router, opts reconcileApplyOptions, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			applyMu.Lock()
+			result, err := runReconcileOnce(router, opts, io.Discard, logger)
+			applyMu.Unlock()
+			if err != nil {
+				logger.Emit(eventlog.LevelError, "serve", "scheduled reconcile failed", map[string]string{"error": err.Error()})
+				continue
+			}
+			cache.Store(result)
+		}
+	}
 }
 
 func observedIPv6PrefixesByInterface(router *api.Router) map[string][]string {
@@ -973,6 +1208,20 @@ func runLogged(name string, args ...string) error {
 	return nil
 }
 
+func closeLogger(logger *eventlog.Logger, command string, errp *error) {
+	if logger == nil {
+		return
+	}
+	if *errp != nil {
+		logger.Emit(eventlog.LevelError, command, "routerd command failed", map[string]string{"error": (*errp).Error()})
+	} else {
+		logger.Emit(eventlog.LevelInfo, command, "routerd command completed", nil)
+	}
+	if err := logger.Close(); err != nil && *errp == nil {
+		*errp = err
+	}
+}
+
 func statusCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -1045,6 +1294,10 @@ func defaultStatusFile() string {
 	return defaultRuntimeDir() + "/status.json"
 }
 
+func defaultSocketPath() string {
+	return defaultRuntimeDir() + "/routerd.sock"
+}
+
 func writeResult(stdout io.Writer, statusFile string, result *reconcile.Result) error {
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -1068,6 +1321,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  observe --config <path>")
 	fmt.Fprintln(w, "  plan --config <path>")
 	fmt.Fprintln(w, "  reconcile --config <path> --once [--dry-run]")
+	fmt.Fprintln(w, "  serve --config <path> [--socket <path>]")
 	fmt.Fprintln(w, "  run --config <path>")
 	fmt.Fprintln(w, "  status [--status-file <path>]")
 	fmt.Fprintln(w, "  plugin list --plugin-dir <path>")

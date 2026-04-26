@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"time"
 
 	"routerd/pkg/api"
 )
@@ -25,6 +26,7 @@ func Validate(router *api.Router) error {
 	dhcp6Servers := map[string]bool{}
 	prefixDelegations := map[string]bool{}
 	delegatedAddresses := map[string]bool{}
+	selfAddressPolicies := map[string]bool{}
 	dsliteTunnels := map[string]bool{}
 	staticByInterfaceAddress := map[string]string{}
 	for _, res := range router.Spec.Resources {
@@ -49,6 +51,9 @@ func Validate(router *api.Router) error {
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6DelegatedAddress" {
 			delegatedAddresses[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "SelfAddressPolicy" {
+			selfAddressPolicies[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DSLiteTunnel" {
 			dsliteTunnels[res.Metadata.Name] = true
@@ -154,6 +159,23 @@ func Validate(router *api.Router) error {
 			if !delegatedAddresses[spec.DelegatedAddress] {
 				return fmt.Errorf("%s references missing IPv6DelegatedAddress %q", res.ID(), spec.DelegatedAddress)
 			}
+			if spec.SelfAddressPolicy != "" && !selfAddressPolicies[spec.SelfAddressPolicy] {
+				return fmt.Errorf("%s references missing SelfAddressPolicy %q", res.ID(), spec.SelfAddressPolicy)
+			}
+		}
+		if res.Kind == "SelfAddressPolicy" {
+			spec, err := res.SelfAddressPolicySpec()
+			if err != nil {
+				return err
+			}
+			for i, candidate := range spec.Candidates {
+				if candidate.Interface != "" && !interfaces[candidate.Interface] {
+					return fmt.Errorf("%s spec.candidates[%d] references missing Interface %q", res.ID(), i, candidate.Interface)
+				}
+				if candidate.DelegatedAddress != "" && !delegatedAddresses[candidate.DelegatedAddress] {
+					return fmt.Errorf("%s spec.candidates[%d] references missing IPv6DelegatedAddress %q", res.ID(), i, candidate.DelegatedAddress)
+				}
+			}
 		}
 		if res.Kind == "DNSConditionalForwarder" {
 			spec, err := res.DNSConditionalForwarderSpec()
@@ -189,6 +211,43 @@ func validateResource(res api.Resource) error {
 	}
 
 	switch res.Kind {
+	case "LogSink":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.LogSinkSpec()
+		if err != nil {
+			return err
+		}
+		switch spec.Type {
+		case "syslog":
+			switch spec.Syslog.Network {
+			case "", "unix", "unixgram", "tcp", "udp":
+			default:
+				return fmt.Errorf("%s spec.syslog.network must be unix, unixgram, tcp, or udp", res.ID())
+			}
+			switch defaultString(spec.Syslog.Facility, "local6") {
+			case "kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news", "uucp", "cron", "authpriv", "ftp", "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7":
+			default:
+				return fmt.Errorf("%s spec.syslog.facility is invalid", res.ID())
+			}
+		case "plugin":
+			if spec.Plugin.Path == "" {
+				return fmt.Errorf("%s spec.plugin.path is required when type is plugin", res.ID())
+			}
+			if spec.Plugin.Timeout != "" {
+				if _, err := time.ParseDuration(spec.Plugin.Timeout); err != nil {
+					return fmt.Errorf("%s spec.plugin.timeout is invalid: %w", res.ID(), err)
+				}
+			}
+		default:
+			return fmt.Errorf("%s spec.type must be syslog or plugin", res.ID())
+		}
+		switch defaultString(spec.MinLevel, "info") {
+		case "debug", "info", "warning", "error":
+		default:
+			return fmt.Errorf("%s spec.minLevel must be debug, info, warning, or error", res.ID())
+		}
 	case "Sysctl":
 		if res.APIVersion != api.SystemAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
@@ -427,6 +486,65 @@ func validateResource(res api.Resource) error {
 			addr, err := netip.ParseAddr(dns)
 			if err != nil || !addr.Is6() {
 				return fmt.Errorf("%s spec.dnsServers entries must be IPv6 addresses", res.ID())
+			}
+		}
+	case "SelfAddressPolicy":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.SelfAddressPolicySpec()
+		if err != nil {
+			return err
+		}
+		switch spec.AddressFamily {
+		case "ipv4", "ipv6":
+		default:
+			return fmt.Errorf("%s spec.addressFamily must be ipv4 or ipv6", res.ID())
+		}
+		if len(spec.Candidates) == 0 {
+			return fmt.Errorf("%s spec.candidates is required", res.ID())
+		}
+		for i, candidate := range spec.Candidates {
+			switch candidate.Source {
+			case "delegatedAddress":
+				if spec.AddressFamily != "ipv6" {
+					return fmt.Errorf("%s spec.candidates[%d].source delegatedAddress is only valid for ipv6", res.ID(), i)
+				}
+				if candidate.DelegatedAddress == "" {
+					return fmt.Errorf("%s spec.candidates[%d].delegatedAddress is required", res.ID(), i)
+				}
+				if candidate.Address != "" || candidate.Interface != "" {
+					return fmt.Errorf("%s spec.candidates[%d] delegatedAddress candidate cannot set address or interface", res.ID(), i)
+				}
+				if candidate.AddressSuffix != "" {
+					addr, err := netip.ParseAddr(candidate.AddressSuffix)
+					if err != nil || !addr.Is6() {
+						return fmt.Errorf("%s spec.candidates[%d].addressSuffix must be an IPv6 suffix", res.ID(), i)
+					}
+				}
+			case "interfaceAddress":
+				if candidate.Interface == "" {
+					return fmt.Errorf("%s spec.candidates[%d].interface is required", res.ID(), i)
+				}
+				if candidate.MatchSuffix != "" {
+					addr, err := netip.ParseAddr(candidate.MatchSuffix)
+					if err != nil || !addr.Is6() {
+						return fmt.Errorf("%s spec.candidates[%d].matchSuffix must be an IPv6 suffix", res.ID(), i)
+					}
+				}
+			case "static":
+				if candidate.Address == "" {
+					return fmt.Errorf("%s spec.candidates[%d].address is required", res.ID(), i)
+				}
+				addr, err := netip.ParseAddr(candidate.Address)
+				if err != nil || (spec.AddressFamily == "ipv4" && !addr.Is4()) || (spec.AddressFamily == "ipv6" && !addr.Is6()) {
+					return fmt.Errorf("%s spec.candidates[%d].address must match addressFamily", res.ID(), i)
+				}
+			default:
+				return fmt.Errorf("%s spec.candidates[%d].source must be delegatedAddress, interfaceAddress, or static", res.ID(), i)
+			}
+			if candidate.Ordinal < 0 {
+				return fmt.Errorf("%s spec.candidates[%d].ordinal must be greater than 0", res.ID(), i)
 			}
 		}
 	case "DNSConditionalForwarder":

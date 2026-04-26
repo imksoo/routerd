@@ -12,15 +12,18 @@ layout friendly to source installs and future packaging:
 - DHCPv4, DHCPv6, RA, and DNS forwarding through managed dnsmasq
 - IPv6 prefix delegation through systemd-networkd drop-ins
 - runtime sysctl management
+- internal event logging to syslog/journald or trusted local log plugins
 - nftables-based IPv4 source NAT and policy routing
 - DS-Lite ipip6 tunnel setup, including multiple tunnel policy routing
 - local trusted resource plugins
+- local HTTP+JSON daemon control API over a Unix domain socket
+- `routerctl` client CLI
 - dry-run reconcile
 - machine-readable status JSON
 
-Firewall policy, remote plugin installation, full rollback, and a long-running
-daemon loop are still intentionally limited. The same reconcile logic is used
-for one-shot CLI execution and future daemon mode.
+Firewall policy, remote plugin installation, and full rollback are still
+intentionally limited. The same reconcile logic is used for one-shot CLI
+execution and daemon-triggered reconcile.
 
 The MVP scope is a working boundary, not a permanent constraint. When a small design improvement reduces future migration cost or improves router safety, the project should update the MVP direction deliberately instead of preserving a weak early assumption.
 
@@ -56,9 +59,10 @@ or:
 
 ```sh
 go build ./cmd/routerd
+go build ./cmd/routerctl
 ```
 
-The build artifact is written to `bin/routerd`.
+Build artifacts are written to `bin/routerd` and `bin/routerctl`.
 
 Check local build dependencies:
 
@@ -67,6 +71,7 @@ make check-build-deps
 ```
 
 Regenerate the YAML authoring schema from Go API structs:
+This also generates control API JSON Schema and OpenAPI definitions.
 
 ```sh
 make generate-schema
@@ -144,6 +149,10 @@ Useful direct commands:
 routerd validate --config examples/router-lab.yaml
 routerd plan --config examples/router-lab.yaml
 routerd reconcile --config examples/router-lab.yaml --once --dry-run
+routerd serve --config examples/router-lab.yaml --socket /run/routerd/routerd.sock
+routerctl status
+routerctl show napt --limit 20
+routerctl plan
 ```
 
 `reconcile --once` can apply managed netplan, networkd drop-ins, dnsmasq,
@@ -154,8 +163,10 @@ cloud-init or existing netplan configuration owns the management interface.
 ## Documentation
 
 - [API v1alpha1](docs/api-v1alpha1.md)
+- [Control API v1alpha1](docs/control-api-v1alpha1.md)
 - [Plugin protocol](docs/plugin-protocol.md)
 - [API v1alpha1 Japanese](docs/api-v1alpha1.ja.md)
+- [Control API v1alpha1 Japanese](docs/control-api-v1alpha1.ja.md)
 - [Plugin protocol Japanese](docs/plugin-protocol.ja.md)
 
 ## Default Paths
@@ -163,12 +174,14 @@ cloud-init or existing netplan configuration owns the management interface.
 - Config: `/usr/local/etc/routerd/router.yaml`
 - Plugin dir: `/usr/local/libexec/routerd/plugins`
 - Binary: `/usr/local/sbin/routerd`
+- Client binary: `/usr/local/sbin/routerctl`
 
 Linux runtime defaults:
 
 - Runtime dir: `/run/routerd`
 - State dir: `/var/lib/routerd`
 - Status file: `/run/routerd/status.json`
+- Control socket: `/run/routerd/routerd.sock`
 - Lock file: `/run/routerd/routerd.lock`
 
 FreeBSD runtime defaults:
@@ -176,4 +189,5 @@ FreeBSD runtime defaults:
 - Runtime dir: `/var/run/routerd`
 - State dir: `/var/db/routerd`
 - Status file: `/var/run/routerd/status.json`
+- Control socket: `/var/run/routerd/routerd.sock`
 - Lock file: `/var/run/routerd/routerd.lock`

@@ -34,6 +34,46 @@ func TestValidateSysctl(t *testing.T) {
 	}
 }
 
+func TestValidateLogSinkSyslog(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogSink"},
+				Metadata: api.ObjectMeta{Name: "local-syslog"},
+				Spec: api.LogSinkSpec{
+					Type:     "syslog",
+					MinLevel: "info",
+					Syslog:   api.LogSinkSyslogSpec{Facility: "local6", Tag: "routerd"},
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate log sink: %v", err)
+	}
+}
+
+func TestValidateLogSinkPluginRequiresPath(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogSink"},
+				Metadata: api.ObjectMeta{Name: "remote-log"},
+				Spec:     api.LogSinkSpec{Type: "plugin"},
+			},
+		}},
+	}
+
+	if err := Validate(router); err == nil {
+		t.Fatal("expected plugin log sink without path to be rejected")
+	}
+}
+
 func TestValidateIPv4DefaultRouteStaticRequiresGateway(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -87,6 +127,49 @@ func TestValidateIPv4DHCPScopeRange(t *testing.T) {
 
 	if err := Validate(router); err == nil {
 		t.Fatal("expected reversed DHCP range to be rejected")
+	}
+}
+
+func TestValidateSelfAddressPolicy(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				Metadata: api.ObjectMeta{Name: "wan-pd"},
+				Spec:     api.IPv6PrefixDelegationSpec{Interface: "lan"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-ipv6"},
+				Spec: api.IPv6DelegatedAddressSpec{
+					PrefixDelegation: "wan-pd",
+					Interface:        "lan",
+					AddressSuffix:    "::3",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "SelfAddressPolicy"},
+				Metadata: api.ObjectMeta{Name: "lan-self"},
+				Spec: api.SelfAddressPolicySpec{
+					AddressFamily: "ipv6",
+					Candidates: []api.SelfAddressPolicyCandidate{
+						{Source: "delegatedAddress", DelegatedAddress: "lan-ipv6", AddressSuffix: "::3"},
+						{Source: "interfaceAddress", Interface: "lan", MatchSuffix: "::3"},
+					},
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate self address policy: %v", err)
 	}
 }
 

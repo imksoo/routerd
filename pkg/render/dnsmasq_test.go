@@ -175,7 +175,10 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 
 	data, err := DnsmasqConfig(router, DnsmasqRuntime{
 		IPv6AddressesByInterface: map[string][]string{
-			"ens19": {"2409:10:3d60:1220::3", "fe80::1"},
+			"ens19": {"2409:10:3d60:1220::100", "2409:10:3d60:1220::3", "fe80::1"},
+		},
+		IPv6PrefixesByInterface: map[string][]string{
+			"ens19": {"2409:10:3d60:1220::/64"},
 		},
 	})
 	if err != nil {
@@ -195,11 +198,13 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 }
 
 func TestDnsmasqConfigDerivesIPv6SelfDNSFromRoutePrefix(t *testing.T) {
-	spec := api.IPv6DHCPScopeSpec{DNSSource: "self"}
-	got, err := dnsmasqIPv6DNSServers(spec, delegatedIPv6Address{
+	spec := api.IPv6DHCPScopeSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6"}
+	delegated := delegatedIPv6Address{
+		Interface:     "lan",
 		IfName:        "ens19",
 		AddressSuffix: "::3",
-	}, DnsmasqRuntime{
+	}
+	got, err := dnsmasqIPv6DNSServers(spec, delegated, api.SelfAddressPolicySpec{}, map[string]string{"lan": "ens19"}, map[string]delegatedIPv6Address{"lan-ipv6": delegated}, DnsmasqRuntime{
 		IPv6PrefixesByInterface: map[string][]string{"ens19": {"2409:10:3d60:1220::/64"}},
 	})
 	if err != nil {
@@ -207,6 +212,48 @@ func TestDnsmasqConfigDerivesIPv6SelfDNSFromRoutePrefix(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != "2409:10:3d60:1220::3" {
 		t.Fatalf("dns servers = %v, want delegated ::3", got)
+	}
+}
+
+func TestDnsmasqConfigPrefersObservedIPv6SelfDNSMatchingSuffix(t *testing.T) {
+	spec := api.IPv6DHCPScopeSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6"}
+	delegated := delegatedIPv6Address{
+		Interface:     "lan",
+		IfName:        "ens19",
+		AddressSuffix: "::3",
+	}
+	got, err := dnsmasqIPv6DNSServers(spec, delegated, api.SelfAddressPolicySpec{}, map[string]string{"lan": "ens19"}, map[string]delegatedIPv6Address{"lan-ipv6": delegated}, DnsmasqRuntime{
+		IPv6AddressesByInterface: map[string][]string{"ens19": {
+			"2409:10:3d60:1220::100",
+			"2409:10:3d60:1220::3",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("select dns server: %v", err)
+	}
+	if len(got) != 1 || got[0] != "2409:10:3d60:1220::3" {
+		t.Fatalf("dns servers = %v, want delegated ::3", got)
+	}
+}
+
+func TestDnsmasqConfigUsesSelfAddressPolicyOrder(t *testing.T) {
+	spec := api.IPv6DHCPScopeSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6", SelfAddressPolicy: "lan-dns-self"}
+	delegated := delegatedIPv6Address{Interface: "lan", IfName: "ens19", AddressSuffix: "::3"}
+	policy := api.SelfAddressPolicySpec{
+		AddressFamily: "ipv6",
+		Candidates: []api.SelfAddressPolicyCandidate{
+			{Source: "static", Address: "2001:db8::53"},
+			{Source: "delegatedAddress", DelegatedAddress: "lan-ipv6"},
+		},
+	}
+	got, err := dnsmasqIPv6DNSServers(spec, delegated, policy, map[string]string{"lan": "ens19"}, map[string]delegatedIPv6Address{"lan-ipv6": delegated}, DnsmasqRuntime{
+		IPv6PrefixesByInterface: map[string][]string{"ens19": {"2409:10:3d60:1220::/64"}},
+	})
+	if err != nil {
+		t.Fatalf("select dns server: %v", err)
+	}
+	if len(got) != 1 || got[0] != "2001:db8::53" {
+		t.Fatalf("dns servers = %v, want static policy candidate", got)
 	}
 }
 
