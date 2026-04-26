@@ -3,6 +3,7 @@ BINDIR ?= $(PREFIX)/sbin
 SYSCONFDIR ?= $(PREFIX)/etc/routerd
 PLUGINDIR ?= $(PREFIX)/libexec/routerd/plugins
 SYSTEMDUNITDIR ?= $(PREFIX)/lib/systemd/system
+RCDDIR ?= $(PREFIX)/etc/rc.d
 DESTDIR ?=
 DISTDIR ?= dist
 DISTROOT ?= $(DISTDIR)/root
@@ -14,17 +15,23 @@ REMOTE_CONFIG ?= $(SYSCONFDIR)/router.yaml
 UNAME_S := $(shell uname -s)
 
 ifeq ($(UNAME_S),FreeBSD)
+ROUTERD_OS ?= freebsd
 RUNDIR ?= /var/run/routerd
 STATEDIR ?= /var/db/routerd
+INSTALL_SERVICE_TARGET ?= install-rc-freebsd
+SERVICE_DEPS := pf dnsmasq
 else
+ROUTERD_OS ?= linux
 RUNDIR ?= /run/routerd
 STATEDIR ?= /var/lib/routerd
+INSTALL_SERVICE_TARGET ?= install-systemd
+SERVICE_DEPS := systemctl resolvectl dnsmasq nft conntrack
 endif
 
 ROUTERD_BIN := bin/routerd
 ROUTERCTL_BIN := bin/routerctl
 
-.PHONY: test build generate-schema check-schema website-build check-build-deps check-remote-deps install install-systemd dist remote-install remote-install-config validate-example dry-run-example plan-config clean
+.PHONY: test build generate-schema check-schema website-build check-build-deps check-remote-deps install install-service install-systemd install-rc-freebsd dist remote-install remote-install-config validate-example dry-run-example plan-config clean
 
 test:
 	go test ./...
@@ -59,7 +66,18 @@ check-build-deps:
 
 check-remote-deps:
 	@test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make check-remote-deps REMOTE_HOST=user@router.example" >&2; exit 2)
-	@ssh $(REMOTE_HOST) 'missing=0; for cmd in sudo tar install ip sysctl systemctl resolvectl dnsmasq nft conntrack; do if ! command -v $$cmd >/dev/null 2>&1; then echo "missing remote dependency: $$cmd" >&2; missing=1; fi; done; if ! command -v pppd >/dev/null 2>&1 && ! test -x /usr/sbin/pppd; then echo "missing remote dependency: ppp package / pppd command" >&2; missing=1; fi; exit $$missing'
+	@ssh $(REMOTE_HOST) 'missing=0; \
+		remote_os=$$(uname -s); \
+		if [ "$$remote_os" = FreeBSD ]; then \
+			required="sudo tar install ifconfig sysctl service pfctl dnsmasq"; \
+		else \
+			required="sudo tar install ip sysctl systemctl resolvectl dnsmasq nft conntrack"; \
+		fi; \
+		for cmd in $$required; do \
+			if ! command -v $$cmd >/dev/null 2>&1; then echo "missing remote dependency: $$cmd" >&2; missing=1; fi; \
+		done; \
+		if ! command -v pppd >/dev/null 2>&1 && ! test -x /usr/sbin/pppd; then echo "missing remote dependency: ppp package / pppd command" >&2; missing=1; fi; \
+		exit $$missing'
 
 install: check-build-deps build
 	install -d $(DESTDIR)$(BINDIR)
@@ -77,9 +95,15 @@ install: check-build-deps build
 	install -d $(DESTDIR)$(RUNDIR)
 	install -d $(DESTDIR)$(STATEDIR)
 
+install-service: $(INSTALL_SERVICE_TARGET)
+
 install-systemd:
 	install -d $(DESTDIR)$(SYSTEMDUNITDIR)
 	install -m 0644 contrib/systemd/routerd.service $(DESTDIR)$(SYSTEMDUNITDIR)/routerd.service
+
+install-rc-freebsd:
+	install -d $(DESTDIR)$(RCDDIR)
+	install -m 0555 contrib/freebsd/routerd $(DESTDIR)$(RCDDIR)/routerd
 
 dist:
 	rm -rf $(DISTROOT) $(DISTTAR)

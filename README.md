@@ -11,8 +11,12 @@ reviewable in Git instead of a pile of one-off shell commands.
 
 The current implementation targets Ubuntu Server first and installs under
 `/usr/local`, with a layout that stays friendly to source installs and future
-packaging. routerd is still pre-release: read the plan and dry-run output
-before applying it to a remote router.
+packaging. NixOS and FreeBSD are second-tier targets: the build, install
+layout, and service-manager integration scaffolds are in place, but several
+host-integration renderers (pf for FreeBSD, NixOS-native interface
+configuration) are still being ported. See [docs/platforms.md](docs/platforms.md)
+for the current matrix. routerd is still pre-release: read the plan and
+dry-run output before applying it to a remote router.
 
 ## What routerd makes the router do
 
@@ -141,11 +145,22 @@ Install only the config file to a remote test host:
 make remote-install-config REMOTE_HOST=user@router.example CONFIG=path/to/router.yaml
 ```
 
-Install the systemd unit explicitly on Linux systems that use systemd:
+Install the appropriate service-manager integration. The Makefile picks
+`install-systemd` on Linux and `install-rc-freebsd` on FreeBSD automatically:
 
 ```sh
-sudo make install-systemd
+sudo make install-service
 ```
+
+The OS-specific targets are also available directly:
+
+```sh
+sudo make install-systemd      # Linux (Ubuntu, NixOS, ...)
+sudo make install-rc-freebsd   # FreeBSD rc.d
+```
+
+For NixOS, prefer the flake and module under `contrib/nix/` instead of
+`make install`. See [contrib/nix/README.md](contrib/nix/README.md).
 
 ## Test
 
@@ -198,6 +213,7 @@ changing host state.
 - [Resource ownership and reconcile model](docs/resource-ownership.md)
 - [Control API v1alpha1](docs/control-api-v1alpha1.md)
 - [Plugin protocol](docs/plugin-protocol.md)
+- [Supported platforms](docs/platforms.md)
 - [Getting started](docs/tutorials/getting-started.md)
 - [Changelog](docs/releases/changelog.md)
 - [API v1alpha1 — Japanese](docs/api-v1alpha1.ja.md)
@@ -225,3 +241,9 @@ Linux runtime defaults:
 - Status file: /run/routerd/status.json
 - Control socket: /run/routerd/routerd.sock
 - Lock file: /run/routerd/routerd.lock
+
+FreeBSD runtime defaults:
+
+- Runtime dir: /var/run/routerd
+- State dir: /var/db/routerd
+- rc.d script: /usr/local/etc/rc.d/routerd

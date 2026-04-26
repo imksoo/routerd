@@ -1,0 +1,64 @@
+#!/bin/sh
+#
+# routerd rc.d script for FreeBSD.
+#
+# FreeBSD support is in-progress. This script installs the daemon under
+# the standard rc.d framework so packaging and operators can stage
+# routerd on FreeBSD hosts. Some resource kinds (netplan, systemd-
+# networkd, nftables) are Linux-only and will be skipped or refused on
+# FreeBSD until the corresponding pf/rc.conf renderers land. See
+# docs/platforms.md for the current matrix.
+#
+# PROVIDE: routerd
+# REQUIRE: NETWORKING SERVERS
+# BEFORE:  LOGIN
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf to enable routerd:
+#
+# routerd_enable="YES"
+# routerd_config="/usr/local/etc/routerd/router.yaml"   # optional
+# routerd_socket="/var/run/routerd/routerd.sock"        # optional
+# routerd_flags=""                                       # extra flags
+#
+
+. /etc/rc.subr
+
+name="routerd"
+rcvar="routerd_enable"
+desc="declarative router resource reconciler"
+
+load_rc_config "$name"
+
+: ${routerd_enable:="NO"}
+: ${routerd_config:="/usr/local/etc/routerd/router.yaml"}
+: ${routerd_socket:="/var/run/routerd/routerd.sock"}
+: ${routerd_reconcile_interval:="60s"}
+: ${routerd_user:="root"}
+
+pidfile="/var/run/routerd/routerd.pid"
+command="/usr/sbin/daemon"
+procname="/usr/local/sbin/routerd"
+command_args="-P ${pidfile} -r -t ${name} -- ${procname} serve \
+    --config ${routerd_config} \
+    --socket ${routerd_socket} \
+    --reconcile-interval ${routerd_reconcile_interval} \
+    ${routerd_flags}"
+
+start_precmd="routerd_prestart"
+
+routerd_prestart()
+{
+    install -d -m 0755 /var/run/routerd
+    install -d -m 0755 /var/db/routerd
+    if [ ! -x "${procname}" ]; then
+        warn "routerd binary ${procname} is missing or not executable"
+        return 1
+    fi
+    if [ ! -f "${routerd_config}" ]; then
+        warn "routerd config ${routerd_config} is missing"
+        return 1
+    fi
+}
+
+run_rc_command "$1"
