@@ -118,7 +118,7 @@ func TestPlanKeepsExternalWANObserveOnly(t *testing.T) {
 	}
 }
 
-func TestPlanUsesExternalDHCPv4DefaultRoute(t *testing.T) {
+func TestPlanIPv4DefaultRoutePolicy(t *testing.T) {
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -142,7 +142,7 @@ func TestPlanUsesExternalDHCPv4DefaultRoute(t *testing.T) {
 		t.Fatalf("plan: %v", err)
 	}
 
-	route := findResult(result, "net.routerd.net/v1alpha1/IPv4DefaultRoute/default-v4")
+	route := findResult(result, "net.routerd.net/v1alpha1/IPv4DefaultRoutePolicy/default-v4")
 	if route == nil {
 		t.Fatal("missing default route result")
 	}
@@ -152,8 +152,8 @@ func TestPlanUsesExternalDHCPv4DefaultRoute(t *testing.T) {
 	if route.Observed["currentIfname"] != "ens18" {
 		t.Fatalf("currentIfname = %q, want ens18", route.Observed["currentIfname"])
 	}
-	if got := strings.Join(route.Plan, "\n"); !strings.Contains(got, "DHCPv4 default route") {
-		t.Fatalf("route plan = %q, want DHCPv4 default route", got)
+	if got := strings.Join(route.Plan, "\n"); !strings.Contains(got, "first healthy IPv4 default route candidate") {
+		t.Fatalf("route plan = %q, want policy selection", got)
 	}
 }
 
@@ -198,7 +198,7 @@ func TestPlanIPv4SourceNAT(t *testing.T) {
 	}
 }
 
-func TestPlanStaticDefaultRouteDrift(t *testing.T) {
+func TestPlanStaticDefaultRoutePolicy(t *testing.T) {
 	router := staticDefaultRouteRouter()
 	engine := &Engine{
 		Command: fakeCommand(map[string]string{
@@ -213,15 +213,12 @@ func TestPlanStaticDefaultRouteDrift(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	route := findResult(result, "net.routerd.net/v1alpha1/IPv4DefaultRoute/default-v4")
+	route := findResult(result, "net.routerd.net/v1alpha1/IPv4DefaultRoutePolicy/default-v4")
 	if route == nil {
 		t.Fatal("missing default route result")
 	}
-	if route.Phase != "Drifted" {
-		t.Fatalf("route phase = %s, want Drifted", route.Phase)
-	}
-	if got := strings.Join(route.Plan, "\n"); !strings.Contains(got, "via 192.168.1.254 dev ens18") {
-		t.Fatalf("route plan = %q, want static gateway ensure", got)
+	if got := strings.Join(route.Plan, "\n"); !strings.Contains(got, "gatewaySource=static") {
+		t.Fatalf("route plan = %q, want static candidate", got)
 	}
 }
 
@@ -339,9 +336,13 @@ func staticDefaultRouteRouter() *api.Router {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true, Owner: "routerd"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoute"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
 				Metadata: api.ObjectMeta{Name: "default-v4"},
-				Spec:     api.IPv4DefaultRouteSpec{Interface: "wan", GatewaySource: "static", Gateway: "192.168.1.254"},
+				Spec: api.IPv4DefaultRoutePolicySpec{
+					Candidates: []api.IPv4DefaultRoutePolicyCandidate{
+						{Interface: "wan", GatewaySource: "static", Gateway: "192.168.1.254", Priority: 10, Table: 100, Mark: 256},
+					},
+				},
 			},
 		}},
 	}

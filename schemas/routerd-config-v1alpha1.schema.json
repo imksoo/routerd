@@ -286,6 +286,113 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "PPPoEInterface",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "acName": {
+                        "type": "string"
+                      },
+                      "defaultRoute": {
+                        "type": "boolean"
+                      },
+                      "ifname": {
+                        "type": "string"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "ipv6": {
+                        "type": "boolean"
+                      },
+                      "lcpFailure": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "lcpInterval": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "managed": {
+                        "type": "boolean"
+                      },
+                      "mru": {
+                        "maximum": 1500,
+                        "minimum": 576,
+                        "type": "integer"
+                      },
+                      "mtu": {
+                        "maximum": 1500,
+                        "minimum": 576,
+                        "type": "integer"
+                      },
+                      "password": {
+                        "type": "string"
+                      },
+                      "passwordFile": {
+                        "type": "string"
+                      },
+                      "persist": {
+                        "type": "boolean"
+                      },
+                      "secretEncoding": {
+                        "enum": [
+                          "plain"
+                        ],
+                        "type": "string"
+                      },
+                      "serviceName": {
+                        "type": "string"
+                      },
+                      "usePeerDNS": {
+                        "type": "boolean"
+                      },
+                      "username": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "interface",
+                      "username"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "IPv4StaticAddress",
                     "type": "string"
                   },
@@ -1174,7 +1281,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "IPv4DefaultRoute",
+                    "const": "HealthCheck",
                     "type": "string"
                   },
                   "metadata": {
@@ -1193,26 +1300,165 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
-                      "gateway": {
-                        "type": "string"
-                      },
-                      "gatewaySource": {
+                      "addressFamily": {
                         "enum": [
-                          "dhcp4",
-                          "static"
+                          "ipv4",
+                          "ipv6"
                         ],
                         "type": "string"
+                      },
+                      "healthyThreshold": {
+                        "minimum": 1,
+                        "type": "integer"
                       },
                       "interface": {
                         "type": "string"
                       },
-                      "required": {
-                        "type": "boolean"
+                      "interval": {
+                        "type": "string"
+                      },
+                      "target": {
+                        "type": "string"
+                      },
+                      "targetSource": {
+                        "enum": [
+                          "auto",
+                          "static",
+                          "defaultGateway",
+                          "dsliteRemote"
+                        ],
+                        "type": "string"
+                      },
+                      "timeout": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "enum": [
+                          "ping"
+                        ],
+                        "type": "string"
+                      },
+                      "unhealthyThreshold": {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv4DefaultRoutePolicy",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
                       }
                     },
                     "required": [
-                      "interface",
-                      "gatewaySource"
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "candidates": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "gateway": {
+                              "type": "string"
+                            },
+                            "gatewaySource": {
+                              "enum": [
+                                "none",
+                                "dhcp4",
+                                "static"
+                              ],
+                              "type": "string"
+                            },
+                            "healthCheck": {
+                              "type": "string"
+                            },
+                            "interface": {
+                              "type": "string"
+                            },
+                            "mark": {
+                              "maximum": 4294967295,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "priority": {
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "routeMetric": {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "routeSet": {
+                              "type": "string"
+                            },
+                            "table": {
+                              "maximum": 4294967295,
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "priority"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "destinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "mode": {
+                        "enum": [
+                          "priority"
+                        ],
+                        "type": "string"
+                      },
+                      "sourceCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "candidates"
                     ],
                     "type": "object"
                   },

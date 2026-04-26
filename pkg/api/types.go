@@ -77,6 +77,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "PPPoEInterface":
+		var spec PPPoEInterfaceSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv4StaticAddress":
 		var spec IPv4StaticAddressSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -149,8 +155,14 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "IPv4DefaultRoute":
-		var spec IPv4DefaultRouteSpec
+	case "HealthCheck":
+		var spec HealthCheckSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv4DefaultRoutePolicy":
+		var spec IPv4DefaultRoutePolicySpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}

@@ -74,7 +74,65 @@ func TestValidateLogSinkPluginRequiresPath(t *testing.T) {
 	}
 }
 
-func TestValidateIPv4DefaultRouteStaticRequiresGateway(t *testing.T) {
+func TestValidatePPPoEInterface(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan-ether"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				Metadata: api.ObjectMeta{Name: "wan-ppp"},
+				Spec: api.PPPoEInterfaceSpec{
+					Interface: "wan-ether",
+					IfName:    "ppp0",
+					Username:  "user@example.jp",
+					Password:  "secret",
+					Managed:   true,
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate PPPoE interface: %v", err)
+	}
+}
+
+func TestValidatePPPoEInterfaceRequiresOnePasswordSource(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan-ether"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				Metadata: api.ObjectMeta{Name: "wan-ppp"},
+				Spec: api.PPPoEInterfaceSpec{
+					Interface:    "wan-ether",
+					IfName:       "ppp0",
+					Username:     "user@example.jp",
+					Password:     "secret",
+					PasswordFile: "/usr/local/etc/routerd/pppoe.pass",
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err == nil {
+		t.Fatal("expected PPPoE interface with password and passwordFile to be rejected")
+	}
+}
+
+func TestValidateIPv4DefaultRoutePolicyStaticRequiresGateway(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -85,15 +143,95 @@ func TestValidateIPv4DefaultRouteStaticRequiresGateway(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoute"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
 				Metadata: api.ObjectMeta{Name: "default-v4"},
-				Spec:     api.IPv4DefaultRouteSpec{Interface: "wan", GatewaySource: "static"},
+				Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
+					{Interface: "wan", GatewaySource: "static", Priority: 10, Table: 100, Mark: 256},
+				}},
 			},
 		}},
 	}
 
 	if err := Validate(router); err == nil {
 		t.Fatal("expected static default route without gateway to be rejected")
+	}
+}
+
+func TestValidateIPv4DefaultRoutePolicyRouteSetCandidate(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"},
+				Metadata: api.ObjectMeta{Name: "wan-balance"},
+				Spec: api.IPv4PolicyRouteSetSpec{
+					Mode:             "hash",
+					HashFields:       []string{"sourceAddress", "destinationAddress"},
+					SourceCIDRs:      []string{"192.168.160.0/24"},
+					DestinationCIDRs: []string{"0.0.0.0/0"},
+					Targets: []api.IPv4PolicyRouteTarget{
+						{OutboundInterface: "wan", Table: 100, Priority: 10000, Mark: 256},
+						{OutboundInterface: "wan", Table: 101, Priority: 10001, Mark: 257},
+					},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
+				Metadata: api.ObjectMeta{Name: "default-v4"},
+				Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
+					{Name: "balanced", RouteSet: "wan-balance", Priority: 10},
+				}},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("routeSet default route candidate should be valid: %v", err)
+	}
+}
+
+func TestValidateIPv4DefaultRoutePolicyRouteSetCandidateRejectsDirectFields(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"},
+				Metadata: api.ObjectMeta{Name: "wan-balance"},
+				Spec: api.IPv4PolicyRouteSetSpec{
+					Mode:             "hash",
+					HashFields:       []string{"sourceAddress", "destinationAddress"},
+					SourceCIDRs:      []string{"192.168.160.0/24"},
+					DestinationCIDRs: []string{"0.0.0.0/0"},
+					Targets: []api.IPv4PolicyRouteTarget{
+						{OutboundInterface: "wan", Table: 100, Priority: 10000, Mark: 256},
+						{OutboundInterface: "wan", Table: 101, Priority: 10001, Mark: 257},
+					},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
+				Metadata: api.ObjectMeta{Name: "default-v4"},
+				Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
+					{Name: "balanced", RouteSet: "wan-balance", Priority: 10, Mark: 256},
+				}},
+			},
+		}},
+	}
+
+	if err := Validate(router); err == nil {
+		t.Fatal("expected routeSet candidate with direct route mark to be rejected")
 	}
 }
 

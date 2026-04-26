@@ -36,6 +36,26 @@ type InterfaceSpec struct {
 	Owner   string `yaml:"owner,omitempty" json:"owner,omitempty" jsonschema:"enum=routerd,enum=external"`
 }
 
+type PPPoEInterfaceSpec struct {
+	Interface      string `yaml:"interface" json:"interface"`
+	IfName         string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	Username       string `yaml:"username" json:"username"`
+	Password       string `yaml:"password,omitempty" json:"password,omitempty"`
+	PasswordFile   string `yaml:"passwordFile,omitempty" json:"passwordFile,omitempty"`
+	ServiceName    string `yaml:"serviceName,omitempty" json:"serviceName,omitempty"`
+	ACName         string `yaml:"acName,omitempty" json:"acName,omitempty"`
+	DefaultRoute   bool   `yaml:"defaultRoute,omitempty" json:"defaultRoute,omitempty"`
+	UsePeerDNS     bool   `yaml:"usePeerDNS,omitempty" json:"usePeerDNS,omitempty"`
+	Persist        *bool  `yaml:"persist,omitempty" json:"persist,omitempty"`
+	MTU            int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=1500"`
+	MRU            int    `yaml:"mru,omitempty" json:"mru,omitempty" jsonschema:"minimum=576,maximum=1500"`
+	LCPInterval    int    `yaml:"lcpInterval,omitempty" json:"lcpInterval,omitempty" jsonschema:"minimum=0"`
+	LCPFailure     int    `yaml:"lcpFailure,omitempty" json:"lcpFailure,omitempty" jsonschema:"minimum=0"`
+	IPv6           bool   `yaml:"ipv6,omitempty" json:"ipv6,omitempty"`
+	Managed        bool   `yaml:"managed,omitempty" json:"managed,omitempty"`
+	SecretEncoding string `yaml:"secretEncoding,omitempty" json:"secretEncoding,omitempty" jsonschema:"enum=plain"`
+}
+
 type IPv4StaticAddressSpec struct {
 	Interface          string `yaml:"interface" json:"interface"`
 	Address            string `yaml:"address" json:"address"`
@@ -157,11 +177,36 @@ type DSLiteTunnelSpec struct {
 	EncapsulationLimit    string   `yaml:"encapsulationLimit,omitempty" json:"encapsulationLimit,omitempty"`
 }
 
-type IPv4DefaultRouteSpec struct {
-	Interface     string `yaml:"interface" json:"interface"`
-	GatewaySource string `yaml:"gatewaySource" json:"gatewaySource" jsonschema:"enum=dhcp4,enum=static"`
+type HealthCheckSpec struct {
+	Type               string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=ping"`
+	AddressFamily      string `yaml:"addressFamily,omitempty" json:"addressFamily,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
+	Target             string `yaml:"target,omitempty" json:"target,omitempty"`
+	TargetSource       string `yaml:"targetSource,omitempty" json:"targetSource,omitempty" jsonschema:"enum=auto,enum=static,enum=defaultGateway,enum=dsliteRemote"`
+	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Interval           string `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Timeout            string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	HealthyThreshold   int    `yaml:"healthyThreshold,omitempty" json:"healthyThreshold,omitempty" jsonschema:"minimum=1"`
+	UnhealthyThreshold int    `yaml:"unhealthyThreshold,omitempty" json:"unhealthyThreshold,omitempty" jsonschema:"minimum=1"`
+}
+
+type IPv4DefaultRoutePolicySpec struct {
+	Mode             string                            `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=priority"`
+	SourceCIDRs      []string                          `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	DestinationCIDRs []string                          `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	Candidates       []IPv4DefaultRoutePolicyCandidate `yaml:"candidates" json:"candidates"`
+}
+
+type IPv4DefaultRoutePolicyCandidate struct {
+	Name          string `yaml:"name,omitempty" json:"name,omitempty"`
+	Interface     string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	RouteSet      string `yaml:"routeSet,omitempty" json:"routeSet,omitempty"`
+	GatewaySource string `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=none,enum=dhcp4,enum=static"`
 	Gateway       string `yaml:"gateway,omitempty" json:"gateway,omitempty"`
-	Required      bool   `yaml:"required,omitempty" json:"required,omitempty"`
+	Priority      int    `yaml:"priority" json:"priority" jsonschema:"minimum=1"`
+	Table         int    `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=1,maximum=4294967295"`
+	Mark          int    `yaml:"mark,omitempty" json:"mark,omitempty" jsonschema:"minimum=1,maximum=4294967295"`
+	RouteMetric   int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	HealthCheck   string `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
 }
 
 type IPv4SourceNATSpec struct {
@@ -230,6 +275,10 @@ func (r Resource) InterfaceSpec() (InterfaceSpec, error) {
 	return specAs[InterfaceSpec](r)
 }
 
+func (r Resource) PPPoEInterfaceSpec() (PPPoEInterfaceSpec, error) {
+	return specAs[PPPoEInterfaceSpec](r)
+}
+
 func (r Resource) IPv4StaticAddressSpec() (IPv4StaticAddressSpec, error) {
 	return specAs[IPv4StaticAddressSpec](r)
 }
@@ -278,8 +327,12 @@ func (r Resource) DSLiteTunnelSpec() (DSLiteTunnelSpec, error) {
 	return specAs[DSLiteTunnelSpec](r)
 }
 
-func (r Resource) IPv4DefaultRouteSpec() (IPv4DefaultRouteSpec, error) {
-	return specAs[IPv4DefaultRouteSpec](r)
+func (r Resource) HealthCheckSpec() (HealthCheckSpec, error) {
+	return specAs[HealthCheckSpec](r)
+}
+
+func (r Resource) IPv4DefaultRoutePolicySpec() (IPv4DefaultRoutePolicySpec, error) {
+	return specAs[IPv4DefaultRoutePolicySpec](r)
 }
 
 func (r Resource) IPv4SourceNATSpec() (IPv4SourceNATSpec, error) {

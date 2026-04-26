@@ -21,6 +21,7 @@ func Validate(router *api.Router) error {
 	}
 
 	seen := map[string]bool{}
+	baseInterfaces := map[string]bool{}
 	interfaces := map[string]bool{}
 	dhcp4Servers := map[string]bool{}
 	dhcp6Servers := map[string]bool{}
@@ -28,6 +29,8 @@ func Validate(router *api.Router) error {
 	delegatedAddresses := map[string]bool{}
 	selfAddressPolicies := map[string]bool{}
 	dsliteTunnels := map[string]bool{}
+	routeSets := map[string]bool{}
+	healthChecks := map[string]bool{}
 	staticByInterfaceAddress := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if err := validateResource(res); err != nil {
@@ -38,6 +41,10 @@ func Validate(router *api.Router) error {
 		}
 		seen[res.ID()] = true
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "Interface" {
+			baseInterfaces[res.Metadata.Name] = true
+			interfaces[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "PPPoEInterface" {
 			interfaces[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv4DHCPServer" {
@@ -58,6 +65,12 @@ func Validate(router *api.Router) error {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DSLiteTunnel" {
 			dsliteTunnels[res.Metadata.Name] = true
 		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv4PolicyRouteSet" {
+			routeSets[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "HealthCheck" {
+			healthChecks[res.Metadata.Name] = true
+		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv4StaticAddress" {
 			spec, err := res.IPv4StaticAddressSpec()
 			if err != nil {
@@ -77,7 +90,7 @@ func Validate(router *api.Router) error {
 
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4DHCPScope", "IPv6DHCPAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "IPv4DefaultRoute", "DSLiteTunnel":
+		case "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4DHCPScope", "IPv6DHCPAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface":
 			name, err := interfaceRef(res)
 			if err != nil {
 				return err
@@ -87,6 +100,9 @@ func Validate(router *api.Router) error {
 			}
 			if !interfaces[name] {
 				return fmt.Errorf("%s references missing Interface %q", res.ID(), name)
+			}
+			if res.Kind == "PPPoEInterface" && !baseInterfaces[name] {
+				return fmt.Errorf("%s spec.interface must reference a base Interface %q", res.ID(), name)
 			}
 		}
 		if res.Kind == "IPv4DHCPScope" {
@@ -107,7 +123,7 @@ func Validate(router *api.Router) error {
 				return err
 			}
 			if !interfaces[spec.OutboundInterface] && !dsliteTunnels[spec.OutboundInterface] {
-				return fmt.Errorf("%s references missing outbound Interface or DSLiteTunnel %q", res.ID(), spec.OutboundInterface)
+				return fmt.Errorf("%s references missing outbound Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.OutboundInterface)
 			}
 		}
 		if res.Kind == "IPv4PolicyRoute" {
@@ -116,7 +132,7 @@ func Validate(router *api.Router) error {
 				return err
 			}
 			if !interfaces[spec.OutboundInterface] && !dsliteTunnels[spec.OutboundInterface] {
-				return fmt.Errorf("%s references missing outbound Interface or DSLiteTunnel %q", res.ID(), spec.OutboundInterface)
+				return fmt.Errorf("%s references missing outbound Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.OutboundInterface)
 			}
 		}
 		if res.Kind == "IPv4PolicyRouteSet" {
@@ -126,7 +142,7 @@ func Validate(router *api.Router) error {
 			}
 			for _, target := range spec.Targets {
 				if !interfaces[target.OutboundInterface] && !dsliteTunnels[target.OutboundInterface] {
-					return fmt.Errorf("%s target %q references missing outbound Interface or DSLiteTunnel %q", res.ID(), target.Name, target.OutboundInterface)
+					return fmt.Errorf("%s target %q references missing outbound Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), target.Name, target.OutboundInterface)
 				}
 			}
 		}
@@ -136,7 +152,7 @@ func Validate(router *api.Router) error {
 				return err
 			}
 			if spec.Target == "interface" && !interfaces[spec.Interface] && !dsliteTunnels[spec.Interface] {
-				return fmt.Errorf("%s references missing Interface or DSLiteTunnel %q", res.ID(), spec.Interface)
+				return fmt.Errorf("%s references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.Interface)
 			}
 		}
 		if res.Kind == "IPv6DelegatedAddress" {
@@ -193,6 +209,32 @@ func Validate(router *api.Router) error {
 			}
 			if spec.LocalDelegatedAddress != "" && !delegatedAddresses[spec.LocalDelegatedAddress] {
 				return fmt.Errorf("%s references missing local IPv6DelegatedAddress %q", res.ID(), spec.LocalDelegatedAddress)
+			}
+		}
+		if res.Kind == "HealthCheck" {
+			spec, err := res.HealthCheckSpec()
+			if err != nil {
+				return err
+			}
+			if spec.Interface != "" && !interfaces[spec.Interface] && !dsliteTunnels[spec.Interface] {
+				return fmt.Errorf("%s references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.Interface)
+			}
+		}
+		if res.Kind == "IPv4DefaultRoutePolicy" {
+			spec, err := res.IPv4DefaultRoutePolicySpec()
+			if err != nil {
+				return err
+			}
+			for i, candidate := range spec.Candidates {
+				if candidate.Interface != "" && !interfaces[candidate.Interface] && !dsliteTunnels[candidate.Interface] {
+					return fmt.Errorf("%s spec.candidates[%d] references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), i, candidate.Interface)
+				}
+				if candidate.RouteSet != "" && !routeSets[candidate.RouteSet] {
+					return fmt.Errorf("%s spec.candidates[%d] references missing IPv4PolicyRouteSet %q", res.ID(), i, candidate.RouteSet)
+				}
+				if candidate.HealthCheck != "" && !healthChecks[candidate.HealthCheck] {
+					return fmt.Errorf("%s spec.candidates[%d] references missing HealthCheck %q", res.ID(), i, candidate.HealthCheck)
+				}
 			}
 		}
 	}
@@ -276,6 +318,55 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.IfName == "" {
 			return fmt.Errorf("%s spec.ifname is required", res.ID())
+		}
+	case "PPPoEInterface":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.PPPoEInterfaceSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Interface == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		if spec.Username == "" {
+			return fmt.Errorf("%s spec.username is required", res.ID())
+		}
+		if spec.Password == "" && spec.PasswordFile == "" {
+			return fmt.Errorf("%s spec.password or spec.passwordFile is required", res.ID())
+		}
+		if spec.Password != "" && spec.PasswordFile != "" {
+			return fmt.Errorf("%s spec.password and spec.passwordFile are mutually exclusive", res.ID())
+		}
+		if spec.IfName != "" && strings.ContainsAny(spec.IfName, " \t\n/") {
+			return fmt.Errorf("%s spec.ifname contains invalid whitespace or slash", res.ID())
+		}
+		if spec.IfName != "" && len(spec.IfName) > 15 {
+			return fmt.Errorf("%s spec.ifname must be 15 characters or fewer", res.ID())
+		}
+		if spec.IfName == "" && len("ppp-"+res.Metadata.Name) > 15 {
+			return fmt.Errorf("%s spec.ifname is required when default PPP interface name exceeds 15 characters", res.ID())
+		}
+		if spec.ServiceName != "" && strings.ContainsAny(spec.ServiceName, "\n\r") {
+			return fmt.Errorf("%s spec.serviceName contains invalid newline", res.ID())
+		}
+		if spec.ACName != "" && strings.ContainsAny(spec.ACName, "\n\r") {
+			return fmt.Errorf("%s spec.acName contains invalid newline", res.ID())
+		}
+		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 1500) {
+			return fmt.Errorf("%s spec.mtu must be within 576-1500", res.ID())
+		}
+		if spec.MRU != 0 && (spec.MRU < 576 || spec.MRU > 1500) {
+			return fmt.Errorf("%s spec.mru must be within 576-1500", res.ID())
+		}
+		if spec.LCPInterval < 0 || spec.LCPFailure < 0 {
+			return fmt.Errorf("%s spec.lcpInterval and spec.lcpFailure must be non-negative", res.ID())
+		}
+		switch spec.SecretEncoding {
+		case "", "plain":
+		default:
+			return fmt.Errorf("%s spec.secretEncoding must be plain", res.ID())
 		}
 	case "IPv4StaticAddress":
 		if res.APIVersion != api.NetAPIVersion {
@@ -646,31 +737,140 @@ func validateResource(res api.Resource) error {
 		if spec.MTU != 0 && (spec.MTU < 1280 || spec.MTU > 65535) {
 			return fmt.Errorf("%s spec.mtu must be within 1280-65535", res.ID())
 		}
-	case "IPv4DefaultRoute":
+	case "HealthCheck":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
 		}
-		spec, err := res.IPv4DefaultRouteSpec()
+		spec, err := res.HealthCheckSpec()
 		if err != nil {
 			return err
 		}
-		source := spec.GatewaySource
-		if source == "" {
-			return fmt.Errorf("%s spec.gatewaySource is required", res.ID())
-		}
-		switch source {
-		case "dhcp4":
-		case "static":
-			gateway := spec.Gateway
-			if gateway == "" {
-				return fmt.Errorf("%s spec.gateway is required when gatewaySource is static", res.ID())
-			}
-			addr, err := netip.ParseAddr(gateway)
-			if err != nil || !addr.Is4() {
-				return fmt.Errorf("%s spec.gateway must be an IPv4 address", res.ID())
-			}
+		switch defaultString(spec.Type, "ping") {
+		case "ping":
 		default:
-			return fmt.Errorf("%s spec.gatewaySource must be dhcp4 or static", res.ID())
+			return fmt.Errorf("%s spec.type must be ping", res.ID())
+		}
+		addressFamily := defaultString(spec.AddressFamily, "ipv4")
+		switch addressFamily {
+		case "ipv4", "ipv6":
+		default:
+			return fmt.Errorf("%s spec.addressFamily must be ipv4 or ipv6", res.ID())
+		}
+		switch defaultString(spec.TargetSource, "auto") {
+		case "auto", "static", "defaultGateway", "dsliteRemote":
+		default:
+			return fmt.Errorf("%s spec.targetSource must be auto, static, defaultGateway, or dsliteRemote", res.ID())
+		}
+		if spec.Target != "" {
+			addr, err := netip.ParseAddr(spec.Target)
+			if err != nil {
+				return fmt.Errorf("%s spec.target must be an IP address", res.ID())
+			}
+			if addressFamily == "ipv4" && !addr.Is4() {
+				return fmt.Errorf("%s spec.target must be an IPv4 address", res.ID())
+			}
+			if addressFamily == "ipv6" && !addr.Is6() {
+				return fmt.Errorf("%s spec.target must be an IPv6 address", res.ID())
+			}
+		}
+		if defaultString(spec.TargetSource, "auto") == "static" && spec.Target == "" {
+			return fmt.Errorf("%s spec.target is required when targetSource is static", res.ID())
+		}
+		interval := defaultString(spec.Interval, "60s")
+		if d, err := time.ParseDuration(interval); err != nil || d <= 0 {
+			return fmt.Errorf("%s spec.interval must be a positive duration", res.ID())
+		}
+		timeout := defaultString(spec.Timeout, "3s")
+		if d, err := time.ParseDuration(timeout); err != nil || d <= 0 {
+			return fmt.Errorf("%s spec.timeout must be a positive duration", res.ID())
+		}
+		if spec.HealthyThreshold < 0 || spec.UnhealthyThreshold < 0 {
+			return fmt.Errorf("%s spec.healthyThreshold and spec.unhealthyThreshold must be non-negative", res.ID())
+		}
+	case "IPv4DefaultRoutePolicy":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.IPv4DefaultRoutePolicySpec()
+		if err != nil {
+			return err
+		}
+		switch defaultString(spec.Mode, "priority") {
+		case "priority":
+		default:
+			return fmt.Errorf("%s spec.mode must be priority", res.ID())
+		}
+		if len(spec.Candidates) == 0 {
+			return fmt.Errorf("%s spec.candidates is required", res.ID())
+		}
+		for _, cidr := range spec.SourceCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return fmt.Errorf("%s spec.sourceCIDRs entries must be IPv4 prefixes", res.ID())
+			}
+		}
+		for _, cidr := range spec.DestinationCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv4 prefixes", res.ID())
+			}
+		}
+		seenPriorities := map[int]bool{}
+		seenMarks := map[int]bool{}
+		seenTables := map[int]bool{}
+		for i, candidate := range spec.Candidates {
+			if (candidate.Interface == "") == (candidate.RouteSet == "") {
+				return fmt.Errorf("%s spec.candidates[%d] must set exactly one of interface or routeSet", res.ID(), i)
+			}
+			isRouteSet := candidate.RouteSet != ""
+			source := defaultString(candidate.GatewaySource, "none")
+			if isRouteSet {
+				if candidate.GatewaySource != "" || candidate.Gateway != "" || candidate.Table != 0 || candidate.Mark != 0 || candidate.RouteMetric != 0 {
+					return fmt.Errorf("%s spec.candidates[%d] routeSet candidates cannot set gatewaySource, gateway, table, mark, or routeMetric", res.ID(), i)
+				}
+			} else {
+				switch source {
+				case "none":
+					if candidate.Gateway != "" {
+						return fmt.Errorf("%s spec.candidates[%d].gateway is only valid when gatewaySource is static", res.ID(), i)
+					}
+				case "dhcp4":
+				case "static":
+					gateway := candidate.Gateway
+					if gateway == "" {
+						return fmt.Errorf("%s spec.candidates[%d].gateway is required when gatewaySource is static", res.ID(), i)
+					}
+					addr, err := netip.ParseAddr(gateway)
+					if err != nil || !addr.Is4() {
+						return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv4 address", res.ID(), i)
+					}
+				default:
+					return fmt.Errorf("%s spec.candidates[%d].gatewaySource must be none, dhcp4, or static", res.ID(), i)
+				}
+			}
+			if candidate.Priority < 1 {
+				return fmt.Errorf("%s spec.candidates[%d].priority must be greater than 0", res.ID(), i)
+			}
+			if seenPriorities[candidate.Priority] {
+				return fmt.Errorf("%s spec.candidates[%d].priority duplicates another candidate", res.ID(), i)
+			}
+			seenPriorities[candidate.Priority] = true
+			if !isRouteSet {
+				if candidate.Table < 1 {
+					return fmt.Errorf("%s spec.candidates[%d].table must be greater than 0", res.ID(), i)
+				}
+				if candidate.Mark < 1 {
+					return fmt.Errorf("%s spec.candidates[%d].mark must be greater than 0", res.ID(), i)
+				}
+				if seenMarks[candidate.Mark] {
+					return fmt.Errorf("%s spec.candidates[%d].mark duplicates another candidate", res.ID(), i)
+				}
+				if seenTables[candidate.Table] {
+					return fmt.Errorf("%s spec.candidates[%d].table duplicates another candidate", res.ID(), i)
+				}
+				seenMarks[candidate.Mark] = true
+				seenTables[candidate.Table] = true
+			}
 		}
 	case "IPv4SourceNAT":
 		if res.APIVersion != api.NetAPIVersion {
@@ -902,8 +1102,8 @@ func interfaceRef(res api.Resource) (string, error) {
 	case "DSLiteTunnel":
 		spec, err := res.DSLiteTunnelSpec()
 		return spec.Interface, err
-	case "IPv4DefaultRoute":
-		spec, err := res.IPv4DefaultRouteSpec()
+	case "PPPoEInterface":
+		spec, err := res.PPPoEInterfaceSpec()
 		return spec.Interface, err
 	default:
 		return "", fmt.Errorf("%s has no interface reference", res.ID())

@@ -18,11 +18,13 @@ routerd の config は Kubernetes 風のリソース形状を使います。
 ## 主なリソース
 
 - `Interface`
+- `PPPoEInterface`
 - `IPv4StaticAddress`
 - `IPv4DHCPAddress`
 - `IPv4DHCPServer`
 - `IPv4DHCPScope`
-- `IPv4DefaultRoute`
+- `HealthCheck`
+- `IPv4DefaultRoutePolicy`
 - `IPv4SourceNAT`
 - `IPv4PolicyRoute`
 - `IPv4PolicyRouteSet`
@@ -45,6 +47,32 @@ routerd の config は Kubernetes 風のリソース形状を使います。
 
 - `managed: false`: observe と alias 解決だけを行い、link/address state は変更しません。
 - `managed: true`: routerd がそのinterfaceを管理できます。ただし cloud-init や netplan の既存所有が見える場合は、いきなり奪わず `RequiresAdoption` として計画に出します。
+
+## PPPoEInterface
+
+`PPPoEInterface` は、別の `Interface` の上に PPPoE interface を作るリソースです。Linux では pppd/rp-pppoe の peer 設定、CHAP/PAP secrets、任意の systemd unit を生成します。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: PPPoEInterface
+metadata:
+  name: wan-ppp
+spec:
+  interface: wan-ether
+  ifname: ppp0
+  username: user@example.jp
+  passwordFile: /usr/local/etc/routerd/pppoe-password
+  defaultRoute: true
+  usePeerDNS: true
+  managed: true
+  mtu: 1492
+  mru: 1492
+```
+
+`interface` は下位の Ethernet `Interface` を参照します。`ifname` は省略すると `ppp-<metadata.name>` ですが、Linux の interface name 制限に合わせて15文字以内である必要があります。
+`password` と `passwordFile` はどちらか一方だけを指定します。認証情報を main YAML に置かないため、通常は `passwordFile` を推奨します。
+
+`managed: true` の場合、routerd は `routerd-pppoe-<name>.service` を enable/start します。`managed: false` の場合は設定ファイルだけを生成し、unit は起動しません。
 
 ## LogSink
 
@@ -208,6 +236,61 @@ spec:
 
 `IPv6DHCPServer` と `IPv6DHCPScope` は dnsmasq による DHCPv6/RA を扱います。`dnsSource: self` は delegated LAN IPv6 address、たとえば `pd-prefix::3` をDNS serverとして広告します。
 
+## HealthCheck と IPv4DefaultRoutePolicy
+
+`HealthCheck` は疎通確認を宣言します。`interval` を省略した場合のデフォルトは `60s` です。経路切替が鋭敏になりすぎないよう、短い間隔は明示した場合だけ使います。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: HealthCheck
+metadata:
+  name: dslite-v4
+spec:
+  type: ping
+  targetSource: dsliteRemote
+  interface: transix-a
+```
+
+`IPv4DefaultRoutePolicy` は、healthy な候補のうち `priority` が最小のものを active にします。候補は直接interfaceを指すか、`IPv4PolicyRouteSet` を `routeSet` で参照します。直接候補は専用のrouting tableとfirewall markを持ちます。新規flowはactiveな直接候補へmarkされ、既存flowはその候補がhealthyな間はconntrack markで同じ経路を維持します。旧候補がunhealthyになった場合は、該当flowも現在のactive候補へmarkし直します。
+
+active候補が `routeSet` を参照する場合、routerd は新規flowをmarkせず、参照先の `IPv4PolicyRouteSet` がhashでtargetを選べるようにします。healthyなroute set targetのconntrack markは維持します。失敗した候補の古いmarkはclearし、route setに再選出させます。
+
+`target` を省略すると `targetSource: auto` として近傍の確認先を選びます。DS-Lite は AFTR の IPv6 アドレス、通常interface/PPPoE はそのinterfaceの IPv4 default gateway を確認します。これは next-hop や tunnel endpoint の生存確認です。IPv4 Internet 全体の到達性を見たい場合は、明示的なstatic IPv4 targetを持つ別の `HealthCheck` を設定します。候補に `healthCheck` を指定しない場合、その候補は常に up として扱います。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4DefaultRoutePolicy
+metadata:
+  name: default-v4
+spec:
+  mode: priority
+  sourceCIDRs:
+    - 192.168.160.0/24
+  destinationCIDRs:
+    - 0.0.0.0/0
+  candidates:
+    - name: dslite
+      routeSet: lan-dslite-balance
+      priority: 10
+      healthCheck: dslite-v4
+    - name: pppoe
+      interface: wan-pppoe
+      gatewaySource: none
+      priority: 20
+      table: 111
+      mark: 273
+      routeMetric: 60
+      healthCheck: pppoe-v4
+    - name: dhcp4
+      interface: wan
+      gatewaySource: dhcp4
+      priority: 30
+      table: 112
+      mark: 274
+      routeMetric: 100
+      healthCheck: wan-dhcp4-v4
+```
+
 ## IPv4 Source NAT
 
 `IPv4SourceNAT` は outbound NAT を宣言します。Linux では nftables にrenderされます。
@@ -230,7 +313,7 @@ spec:
       end: 65535
 ```
 
-`outboundInterface` は `Interface` または `DSLiteTunnel` を参照できます。
+`outboundInterface` は `Interface`、`PPPoEInterface`、または `DSLiteTunnel` を参照できます。
 
 ## IPv4PolicyRouteSet
 

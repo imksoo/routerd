@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ func (e *Engine) Plan(router *api.Router) (*Result, error) {
 
 func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error) {
 	aliases := interfaceAliases(router)
+	kinds := resourceKinds(router)
 	osNet := e.detectOSNetworking()
 	policies := interfacePolicies(router, osNet)
 	observedV4 := e.observedIPv4Prefixes(policies)
@@ -68,6 +70,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeSysctl(res, includePlan, &rr)
 		case "Interface":
 			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], includePlan, &rr)
+		case "PPPoEInterface":
+			e.observePPPoEInterface(res, aliases, includePlan, &rr)
 		case "IPv4StaticAddress":
 			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
 		case "IPv4DHCPAddress":
@@ -92,8 +96,10 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeDNSConditionalForwarder(res, aliases, includePlan, &rr)
 		case "DSLiteTunnel":
 			e.observeDSLiteTunnel(res, aliases, includePlan, &rr)
-		case "IPv4DefaultRoute":
-			e.observeIPv4DefaultRoute(res, aliases, policies, includePlan, &rr)
+		case "HealthCheck":
+			e.observeHealthCheck(res, aliases, kinds, includePlan, &rr)
+		case "IPv4DefaultRoutePolicy":
+			e.observeIPv4DefaultRoutePolicy(res, aliases, includePlan, &rr)
 		case "IPv4SourceNAT":
 			e.observeIPv4SourceNAT(res, aliases, policies, includePlan, &rr)
 		case "IPv4PolicyRoute":
@@ -368,6 +374,42 @@ func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string
 		}
 		if spec.DefaultRoute {
 			rr.Plan = append(rr.Plan, "route IPv4 default traffic through DS-Lite tunnel")
+		}
+	}
+}
+
+func (e *Engine) observePPPoEInterface(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.PPPoEInterfaceSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
+	lowerIfName := aliases[spec.Interface]
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["lowerIfname"] = lowerIfName
+	rr.Observed["ifname"] = ifname
+	rr.Observed["username"] = spec.Username
+	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
+	rr.Observed["defaultRoute"] = fmt.Sprintf("%t", spec.DefaultRoute)
+	rr.Observed["usePeerDNS"] = fmt.Sprintf("%t", spec.UsePeerDNS)
+	if spec.ServiceName != "" {
+		rr.Observed["serviceName"] = spec.ServiceName
+	}
+	if spec.ACName != "" {
+		rr.Observed["acName"] = spec.ACName
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure PPPoE interface %s over %s", ifname, lowerIfName))
+		if spec.DefaultRoute {
+			rr.Plan = append(rr.Plan, "install IPv4 default route from PPPoE peer")
+		}
+		if spec.UsePeerDNS {
+			rr.Plan = append(rr.Plan, "accept DNS servers from PPPoE peer")
+		}
+		if spec.Managed {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("manage systemd unit routerd-pppoe-%s.service", res.Metadata.Name))
 		}
 	}
 }
@@ -656,20 +698,56 @@ func (e *Engine) observeIPv4DHCPScope(res api.Resource, aliases map[string]strin
 	}
 }
 
-func (e *Engine) observeIPv4DefaultRoute(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
-	iface := stringSpec(res, "interface")
-	ifname := aliases[iface]
-	policy := policies[iface]
-	source := stringSpec(res, "gatewaySource")
-	gateway := stringSpec(res, "gateway")
-
-	rr.Observed["interface"] = iface
-	rr.Observed["ifname"] = ifname
-	rr.Observed["gatewaySource"] = source
-	if gateway != "" {
-		rr.Observed["desiredGateway"] = gateway
+func (e *Engine) observeHealthCheck(res api.Resource, aliases map[string]string, kinds map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.HealthCheckSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
 	}
+	checkType := defaultString(spec.Type, "ping")
+	targetSource := defaultString(spec.TargetSource, "auto")
+	addressFamily := spec.AddressFamily
+	if addressFamily == "" {
+		if targetSource == "dsliteRemote" || (targetSource == "auto" && kinds[spec.Interface] == "DSLiteTunnel") {
+			addressFamily = "ipv6"
+		} else {
+			addressFamily = "ipv4"
+		}
+	}
+	interval := defaultString(spec.Interval, "60s")
+	timeout := defaultString(spec.Timeout, "3s")
+	rr.Observed["type"] = checkType
+	rr.Observed["addressFamily"] = addressFamily
+	rr.Observed["targetSource"] = targetSource
+	if spec.Target != "" {
+		rr.Observed["target"] = spec.Target
+	}
+	rr.Observed["interval"] = interval
+	rr.Observed["timeout"] = timeout
+	if spec.Interface != "" {
+		rr.Observed["interface"] = spec.Interface
+		rr.Observed["ifname"] = aliases[spec.Interface]
+	}
+	if includePlan {
+		target := spec.Target
+		if target == "" {
+			target = targetSource
+		}
+		rr.Plan = append(rr.Plan, fmt.Sprintf("check %s reachability to %s every %s", addressFamily, target, interval))
+	}
+}
 
+func (e *Engine) observeIPv4DefaultRoutePolicy(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv4DefaultRoutePolicySpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	mode := defaultString(spec.Mode, "priority")
+	rr.Observed["mode"] = mode
+	rr.Observed["candidates"] = fmt.Sprintf("%d", len(spec.Candidates))
 	currentGateway, currentDev, currentProto := e.defaultIPv4Route()
 	if currentGateway != "" {
 		rr.Observed["currentGateway"] = currentGateway
@@ -680,35 +758,34 @@ func (e *Engine) observeIPv4DefaultRoute(res api.Resource, aliases map[string]st
 	if currentProto != "" {
 		rr.Observed["currentProto"] = currentProto
 	}
-
-	if source == "static" && (currentGateway != gateway || currentDev != ifname) {
-		rr.Phase = "Drifted"
+	var candidates []string
+	for _, candidate := range sortedDefaultRouteCandidates(spec.Candidates) {
+		name := defaultString(candidate.Name, defaultString(candidate.RouteSet, candidate.Interface))
+		if candidate.RouteSet != "" {
+			candidates = append(candidates, fmt.Sprintf("%s:routeSet=%s:priority=%d", name, candidate.RouteSet, candidate.Priority))
+			continue
+		}
+		ifname := aliases[candidate.Interface]
+		candidates = append(candidates, fmt.Sprintf("%s:%s:priority=%d", name, ifname, candidate.Priority))
 	}
-	if source == "dhcp4" && currentDev != "" && currentDev != ifname {
-		rr.Phase = "Drifted"
-	}
-
+	rr.Observed["candidateOrder"] = strings.Join(candidates, ",")
 	if !includePlan {
 		return
 	}
-	if !policy.Managed || policy.Owner == "external" {
-		if source == "dhcp4" {
-			rr.Plan = append(rr.Plan, "use externally managed DHCPv4 default route on referenced interface")
-		} else {
-			rr.Plan = append(rr.Plan, "observe only; referenced interface is externally managed")
+	rr.Plan = append(rr.Plan, "select the first healthy IPv4 default route candidate by priority")
+	for _, candidate := range sortedDefaultRouteCandidates(spec.Candidates) {
+		health := "no health check"
+		if candidate.HealthCheck != "" {
+			health = "healthCheck=" + candidate.HealthCheck
 		}
-		return
-	}
-	if policy.RequiresAdoption {
-		rr.Phase = "RequiresAdoption"
-		rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd manages default route")
-		return
-	}
-	switch source {
-	case "dhcp4":
-		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 default route is accepted from DHCPv4 on %s", ifname))
-	case "static":
-		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 default route via %s dev %s", gateway, ifname))
+		name := defaultString(candidate.Name, defaultString(candidate.RouteSet, candidate.Interface))
+		if candidate.RouteSet != "" {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("candidate %s priority %d via routeSet=%s %s", name, candidate.Priority, candidate.RouteSet, health))
+			continue
+		}
+		ifname := aliases[candidate.Interface]
+		source := defaultString(candidate.GatewaySource, "none")
+		rr.Plan = append(rr.Plan, fmt.Sprintf("candidate %s priority %d via %s gatewaySource=%s %s", name, candidate.Priority, ifname, source, health))
 	}
 }
 
@@ -1011,11 +1088,21 @@ func interfaceAliases(router *api.Router) map[string]string {
 		switch res.Kind {
 		case "Interface":
 			aliases[res.Metadata.Name] = stringSpec(res, "ifname")
+		case "PPPoEInterface":
+			aliases[res.Metadata.Name] = defaultString(stringSpec(res, "ifname"), "ppp-"+res.Metadata.Name)
 		case "DSLiteTunnel":
 			aliases[res.Metadata.Name] = defaultString(stringSpec(res, "tunnelName"), res.Metadata.Name)
 		}
 	}
 	return aliases
+}
+
+func resourceKinds(router *api.Router) map[string]string {
+	kinds := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		kinds[res.Metadata.Name] = res.Kind
+	}
+	return kinds
 }
 
 type ipv4Assignment struct {
@@ -1168,6 +1255,14 @@ func ownerFromManaged(managed bool) string {
 	return "external"
 }
 
+func sortedDefaultRouteCandidates(candidates []api.IPv4DefaultRoutePolicyCandidate) []api.IPv4DefaultRoutePolicyCandidate {
+	result := append([]api.IPv4DefaultRoutePolicyCandidate{}, candidates...)
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Priority < result[j].Priority
+	})
+	return result
+}
+
 func stringSpec(res api.Resource, key string) string {
 	switch spec := res.Spec.(type) {
 	case api.SysctlSpec:
@@ -1183,6 +1278,13 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.IfName
 		case "owner":
 			return spec.Owner
+		}
+	case api.PPPoEInterfaceSpec:
+		switch key {
+		case "ifname":
+			return spec.IfName
+		case "interface":
+			return spec.Interface
 		}
 	case api.IPv4StaticAddressSpec:
 		switch key {
@@ -1226,15 +1328,6 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.Interface
 		case "client":
 			return spec.Client
-		}
-	case api.IPv4DefaultRouteSpec:
-		switch key {
-		case "interface":
-			return spec.Interface
-		case "gatewaySource":
-			return spec.GatewaySource
-		case "gateway":
-			return spec.Gateway
 		}
 	case api.DSLiteTunnelSpec:
 		switch key {
@@ -1287,10 +1380,6 @@ func boolSpec(res api.Resource, key string) bool {
 			return spec.Required
 		}
 	case api.IPv6DHCPAddressSpec:
-		if key == "required" {
-			return spec.Required
-		}
-	case api.IPv4DefaultRouteSpec:
 		if key == "required" {
 			return spec.Required
 		}

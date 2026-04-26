@@ -36,7 +36,10 @@ const (
 	defaultDnsmasqConfigPath  = "/usr/local/etc/routerd/dnsmasq.conf"
 	defaultDnsmasqServicePath = "/etc/systemd/system/routerd-dnsmasq.service"
 	defaultNftablesPath       = "/usr/local/etc/routerd/nftables.nft"
+	defaultRouteNftablesPath  = "/usr/local/etc/routerd/default-route.nft"
 	routerdDnsmasqService     = "routerd-dnsmasq.service"
+	pppoeCHAPSecretsPath      = "/etc/ppp/chap-secrets"
+	pppoePAPSecretsPath       = "/etc/ppp/pap-secrets"
 )
 
 func main() {
@@ -238,7 +241,19 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if err != nil {
 			return nil, err
 		}
+		pppoeChangedFiles, err := applyPPPoEConfig(router)
+		if err != nil {
+			return nil, err
+		}
 		appliedTunnels, err := applyDSLiteTunnels(router)
+		if err != nil {
+			return nil, err
+		}
+		appliedPolicyRoutes, err := applyIPv4PolicyRoutes(router)
+		if err != nil {
+			return nil, err
+		}
+		appliedDefaultRoutes, err := applyIPv4DefaultRoutePolicies(router)
 		if err != nil {
 			return nil, err
 		}
@@ -250,12 +265,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if err != nil {
 			return nil, err
 		}
-		appliedPolicyRoutes, err := applyIPv4PolicyRoutes(router)
-		if err != nil {
-			return nil, err
-		}
 		changedFiles := append(networkChangedFiles, dnsmasqChangedFiles...)
 		changedFiles = append(changedFiles, nftablesChangedFiles...)
+		changedFiles = append(changedFiles, pppoeChangedFiles...)
 		if len(changedFiles) == 0 {
 			if len(appliedRuntime) == 0 {
 				fmt.Fprintln(stdout, "network configuration already up to date")
@@ -273,6 +285,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			if len(nftablesChangedFiles) > 0 {
 				fmt.Fprintln(stdout, "applied nftables")
 			}
+			if len(pppoeChangedFiles) > 0 {
+				fmt.Fprintln(stdout, "applied PPPoE")
+			}
 		}
 		for _, key := range appliedRuntime {
 			fmt.Fprintf(stdout, "applied sysctl %s\n", key)
@@ -283,6 +298,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		for _, tunnel := range appliedTunnels {
 			fmt.Fprintf(stdout, "applied DS-Lite tunnel %s\n", tunnel)
 		}
+		for _, route := range appliedDefaultRoutes {
+			fmt.Fprintf(stdout, "applied IPv4 default route %s\n", route)
+		}
 		for _, route := range appliedPolicyRoutes {
 			fmt.Fprintf(stdout, "applied IPv4 policy route %s\n", route)
 		}
@@ -290,7 +308,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			"changedFiles":        fmt.Sprintf("%d", len(changedFiles)),
 			"runtimeSysctls":      fmt.Sprintf("%d", len(appliedRuntime)),
 			"reversePathFilters":  fmt.Sprintf("%d", len(appliedReversePathFilters)),
+			"pppoeFiles":          fmt.Sprintf("%d", len(pppoeChangedFiles)),
 			"dsliteTunnels":       fmt.Sprintf("%d", len(appliedTunnels)),
+			"ipv4DefaultRoutes":   fmt.Sprintf("%d", len(appliedDefaultRoutes)),
 			"ipv4PolicyRouteSets": fmt.Sprintf("%d", len(appliedPolicyRoutes)),
 		})
 		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
@@ -605,6 +625,12 @@ func applyIPv4ReversePathFilters(router *api.Router) ([]string, error) {
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
+		case "PPPoEInterface":
+			spec, err := res.PPPoEInterfaceSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
 		case "DSLiteTunnel":
 			spec, err := res.DSLiteTunnelSpec()
 			if err != nil {
@@ -733,6 +759,12 @@ func applyIPv4PolicyRoutes(router *api.Router) ([]string, error) {
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
+		case "PPPoEInterface":
+			spec, err := res.PPPoEInterfaceSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
 		case "DSLiteTunnel":
 			spec, err := res.DSLiteTunnelSpec()
 			if err != nil {
@@ -782,6 +814,443 @@ func applyIPv4PolicyRoutes(router *api.Router) ([]string, error) {
 		}
 	}
 	return applied, nil
+}
+
+func applyIPv4DefaultRoutePolicies(router *api.Router) ([]string, error) {
+	aliases, err := outboundAliases(router)
+	if err != nil {
+		return nil, err
+	}
+	routeSets, err := ipv4PolicyRouteSets(router)
+	if err != nil {
+		return nil, err
+	}
+	healthChecks, err := evaluateHealthChecks(router, aliases)
+	if err != nil {
+		return nil, err
+	}
+	var applied []string
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv4DefaultRoutePolicy" {
+			continue
+		}
+		spec, err := res.IPv4DefaultRoutePolicySpec()
+		if err != nil {
+			return nil, err
+		}
+		candidate, ok := selectIPv4DefaultRouteCandidate(spec.Candidates, healthChecks)
+		if !ok {
+			return nil, fmt.Errorf("%s has no healthy IPv4 default route candidate", res.ID())
+		}
+		var healthy []api.IPv4DefaultRoutePolicyCandidate
+		for _, target := range spec.Candidates {
+			if target.HealthCheck != "" && !healthChecks[target.HealthCheck] {
+				continue
+			}
+			healthy = append(healthy, target)
+			if target.RouteSet != "" {
+				continue
+			}
+			label, err := applyIPv4DefaultRouteCandidate(res.ID(), aliases, target)
+			if err != nil {
+				return nil, err
+			}
+			applied = append(applied, label)
+		}
+		if err := applyIPv4DefaultRoutePolicyMarks(res.ID(), spec, candidate, healthy, routeSets); err != nil {
+			return nil, err
+		}
+		applied = append(applied, "active="+defaultRouteCandidateLabel(candidate))
+	}
+	return applied, nil
+}
+
+func ipv4PolicyRouteSets(router *api.Router) (map[string]api.IPv4PolicyRouteSetSpec, error) {
+	routeSets := map[string]api.IPv4PolicyRouteSetSpec{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv4PolicyRouteSet" {
+			continue
+		}
+		spec, err := res.IPv4PolicyRouteSetSpec()
+		if err != nil {
+			return nil, err
+		}
+		routeSets[res.Metadata.Name] = spec
+	}
+	return routeSets, nil
+}
+
+func defaultRouteCandidateLabel(candidate api.IPv4DefaultRoutePolicyCandidate) string {
+	if candidate.Name != "" {
+		return candidate.Name
+	}
+	if candidate.RouteSet != "" {
+		return candidate.RouteSet
+	}
+	return candidate.Interface
+}
+
+func outboundAliases(router *api.Router) (map[string]string, error) {
+	aliases := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "Interface":
+			spec, err := res.InterfaceSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = spec.IfName
+		case "PPPoEInterface":
+			spec, err := res.PPPoEInterfaceSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
+		case "DSLiteTunnel":
+			spec, err := res.DSLiteTunnelSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.TunnelName, res.Metadata.Name)
+		}
+	}
+	return aliases, nil
+}
+
+func evaluateHealthChecks(router *api.Router, aliases map[string]string) (map[string]bool, error) {
+	result := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "HealthCheck" {
+			continue
+		}
+		spec, err := res.HealthCheckSpec()
+		if err != nil {
+			return nil, err
+		}
+		healthy, err := runHealthCheck(router, spec, aliases)
+		if err != nil {
+			return nil, fmt.Errorf("%s health check: %w", res.ID(), err)
+		}
+		result[res.Metadata.Name] = healthy
+	}
+	return result, nil
+}
+
+func runHealthCheck(router *api.Router, spec api.HealthCheckSpec, aliases map[string]string) (bool, error) {
+	if defaultString(spec.Type, "ping") != "ping" {
+		return false, fmt.Errorf("unsupported health check type %q", spec.Type)
+	}
+	target, family, err := resolveHealthCheckTarget(router, spec, aliases)
+	if err != nil {
+		return false, nil
+	}
+	timeout := defaultString(spec.Timeout, "3s")
+	duration, err := time.ParseDuration(timeout)
+	if err != nil {
+		return false, err
+	}
+	if duration < time.Second {
+		duration = time.Second
+	}
+	cmdName := "ping"
+	args := []string{"-c", "1", "-W", fmt.Sprintf("%d", int(duration.Seconds()))}
+	if family == "ipv6" {
+		cmdName = "ping"
+		args = append([]string{"-6"}, args...)
+	} else {
+		args = append([]string{"-4"}, args...)
+	}
+	if spec.Interface != "" {
+		ifname := healthCheckPingInterface(router, spec, aliases)
+		if ifname == "" {
+			return false, fmt.Errorf("missing ifname for %s", spec.Interface)
+		}
+		args = append(args, "-I", ifname)
+	}
+	args = append(args, target)
+	ctx, cancel := context.WithTimeout(context.Background(), duration+time.Second)
+	defer cancel()
+	err = exec.CommandContext(ctx, cmdName, args...).Run()
+	return err == nil, nil
+}
+
+func healthCheckPingInterface(router *api.Router, spec api.HealthCheckSpec, aliases map[string]string) string {
+	if defaultString(spec.TargetSource, "auto") == "dsliteRemote" || (spec.TargetSource == "" && healthInterfaceKind(router, spec.Interface) == "DSLiteTunnel") {
+		for _, res := range router.Spec.Resources {
+			if res.Kind != "DSLiteTunnel" || res.Metadata.Name != spec.Interface {
+				continue
+			}
+			tunnel, err := res.DSLiteTunnelSpec()
+			if err != nil {
+				return ""
+			}
+			return aliases[tunnel.Interface]
+		}
+	}
+	return aliases[spec.Interface]
+}
+
+func resolveHealthCheckTarget(router *api.Router, spec api.HealthCheckSpec, aliases map[string]string) (string, string, error) {
+	if spec.Target != "" {
+		family := spec.AddressFamily
+		if family == "" {
+			addr, err := netip.ParseAddr(spec.Target)
+			if err != nil {
+				return "", "", err
+			}
+			if addr.Is6() {
+				family = "ipv6"
+			} else {
+				family = "ipv4"
+			}
+		}
+		return spec.Target, family, nil
+	}
+	source := defaultString(spec.TargetSource, "auto")
+	if source == "auto" {
+		if healthInterfaceKind(router, spec.Interface) == "DSLiteTunnel" {
+			source = "dsliteRemote"
+		} else {
+			source = "defaultGateway"
+		}
+	}
+	switch source {
+	case "defaultGateway":
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			return "", "", fmt.Errorf("missing ifname for %s", spec.Interface)
+		}
+		target, err := currentIPv4HealthTargetForInterface(ifname)
+		if err != nil {
+			return "", "", err
+		}
+		return target, "ipv4", nil
+	case "dsliteRemote":
+		target, err := dsliteRemoteAddress(router, spec.Interface)
+		if err != nil {
+			return "", "", err
+		}
+		return target, "ipv6", nil
+	case "static":
+		return "", "", fmt.Errorf("target is required when targetSource is static")
+	default:
+		return "", "", fmt.Errorf("unsupported targetSource %q", source)
+	}
+}
+
+func healthInterfaceKind(router *api.Router, name string) string {
+	for _, res := range router.Spec.Resources {
+		if res.Metadata.Name == name {
+			return res.Kind
+		}
+	}
+	return ""
+}
+
+func dsliteRemoteAddress(router *api.Router, name string) (string, error) {
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "DSLiteTunnel" || res.Metadata.Name != name {
+			continue
+		}
+		spec, err := res.DSLiteTunnelSpec()
+		if err != nil {
+			return "", err
+		}
+		if spec.RemoteAddress != "" {
+			return spec.RemoteAddress, nil
+		}
+		if spec.AFTRFQDN == "" {
+			return "", fmt.Errorf("%s has no remoteAddress or aftrFQDN", res.ID())
+		}
+		return resolveAAAAWithServers(spec.AFTRFQDN, spec.AFTRDNSServers, spec.AFTRAddressOrdinal, spec.AFTRAddressSelection)
+	}
+	return "", fmt.Errorf("missing DSLiteTunnel %q", name)
+}
+
+func selectIPv4DefaultRouteCandidate(candidates []api.IPv4DefaultRoutePolicyCandidate, health map[string]bool) (api.IPv4DefaultRoutePolicyCandidate, bool) {
+	ordered := append([]api.IPv4DefaultRoutePolicyCandidate{}, candidates...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return ordered[i].Priority < ordered[j].Priority
+	})
+	for _, candidate := range ordered {
+		if candidate.HealthCheck != "" && !health[candidate.HealthCheck] {
+			continue
+		}
+		return candidate, true
+	}
+	return api.IPv4DefaultRoutePolicyCandidate{}, false
+}
+
+func applyIPv4DefaultRouteCandidate(resourceID string, aliases map[string]string, candidate api.IPv4DefaultRoutePolicyCandidate) (string, error) {
+	ifname := aliases[candidate.Interface]
+	if ifname == "" {
+		return "", fmt.Errorf("%s references default route interface with empty ifname", resourceID)
+	}
+	metric := candidate.RouteMetric
+	if metric == 0 {
+		metric = 50
+	}
+	source := defaultString(candidate.GatewaySource, "none")
+	args := []string{"-4", "route", "replace", "default"}
+	switch source {
+	case "none":
+		args = append(args, "dev", ifname)
+	case "static":
+		args = append(args, "via", candidate.Gateway, "dev", ifname)
+	case "dhcp4":
+		gateway, err := currentIPv4DefaultGatewayForInterface(ifname)
+		if err != nil {
+			return "", fmt.Errorf("%s DHCPv4 gateway on %s: %w", resourceID, ifname, err)
+		}
+		args = append(args, "via", gateway, "dev", ifname)
+	default:
+		return "", fmt.Errorf("unsupported gatewaySource %q", source)
+	}
+	args = append(args, "table", fmt.Sprintf("%d", candidate.Table), "metric", fmt.Sprintf("%d", metric))
+	if err := runLogged("ip", args...); err != nil {
+		return "", err
+	}
+	if err := ensureIPv4FwmarkRule(candidate.Priority, candidate.Mark, candidate.Table); err != nil {
+		return "", err
+	}
+	name := defaultString(candidate.Name, candidate.Interface)
+	return fmt.Sprintf("%s(%s,table=%d,mark=0x%x,metric=%d)", name, ifname, candidate.Table, candidate.Mark, metric), nil
+}
+
+func applyIPv4DefaultRoutePolicyMarks(resourceID string, spec api.IPv4DefaultRoutePolicySpec, active api.IPv4DefaultRoutePolicyCandidate, healthy []api.IPv4DefaultRoutePolicyCandidate, routeSets map[string]api.IPv4PolicyRouteSetSpec) error {
+	if _, err := exec.LookPath("nft"); err != nil {
+		return fmt.Errorf("nft is required for IPv4 default route policy: %w", err)
+	}
+	data, err := renderIPv4DefaultRoutePolicyMarks(resourceID, spec, active, healthy, routeSets)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepathDir(defaultRouteNftablesPath), 0755); err != nil {
+		return err
+	}
+	if _, err := writeFileIfChanged(defaultRouteNftablesPath, data, 0644); err != nil {
+		return err
+	}
+	_ = exec.Command("nft", "delete", "table", "ip", "routerd_default_route").Run()
+	return runLogged("nft", "-f", defaultRouteNftablesPath)
+}
+
+func renderIPv4DefaultRoutePolicyMarks(resourceID string, spec api.IPv4DefaultRoutePolicySpec, active api.IPv4DefaultRoutePolicyCandidate, healthy []api.IPv4DefaultRoutePolicyCandidate, routeSets map[string]api.IPv4PolicyRouteSetSpec) ([]byte, error) {
+	matches, err := ipv4PolicyMatches(resourceID, spec.SourceCIDRs, spec.DestinationCIDRs)
+	if err != nil {
+		return nil, err
+	}
+	healthyMarks := make([]string, 0, len(healthy))
+	for _, candidate := range healthy {
+		if candidate.RouteSet != "" {
+			routeSet, ok := routeSets[candidate.RouteSet]
+			if !ok {
+				return nil, fmt.Errorf("%s references missing IPv4PolicyRouteSet %q", resourceID, candidate.RouteSet)
+			}
+			for _, target := range routeSet.Targets {
+				healthyMarks = append(healthyMarks, fmt.Sprintf("0x%x", target.Mark))
+			}
+			continue
+		}
+		healthyMarks = append(healthyMarks, fmt.Sprintf("0x%x", candidate.Mark))
+	}
+	sort.Strings(healthyMarks)
+	var buf bytes.Buffer
+	buf.WriteString("# Generated by routerd. Do not edit by hand.\n")
+	buf.WriteString("table ip routerd_default_route {\n")
+	buf.WriteString("  chain prerouting {\n")
+	buf.WriteString("    type filter hook prerouting priority -151; policy accept;\n")
+	activeRouteSet := active.RouteSet != ""
+	activeMark := fmt.Sprintf("0x%x", active.Mark)
+	for _, match := range matches {
+		prefix := strings.TrimSpace(match)
+		if prefix != "" {
+			prefix += " "
+		}
+		if len(healthyMarks) > 0 {
+			set := "{ " + strings.Join(healthyMarks, ", ") + " }"
+			buf.WriteString("    " + prefix + "ct mark " + set + " meta mark set ct mark\n")
+			if activeRouteSet {
+				buf.WriteString("    " + prefix + "ct mark != 0x0 ct mark != " + set + " meta mark set 0x0 ct mark set meta mark\n")
+			} else {
+				buf.WriteString("    " + prefix + "ct mark != 0x0 ct mark != " + set + " meta mark set " + activeMark + " ct mark set meta mark\n")
+			}
+		}
+		if !activeRouteSet {
+			buf.WriteString("    " + prefix + "ct mark 0x0 meta mark set " + activeMark + " ct mark set meta mark\n")
+		}
+	}
+	buf.WriteString("  }\n")
+	buf.WriteString("}\n")
+	return buf.Bytes(), nil
+}
+
+func ipv4PolicyMatches(resourceID string, sourceCIDRs, destinationCIDRs []string) ([]string, error) {
+	var sources []string
+	if len(sourceCIDRs) == 0 {
+		sources = []string{""}
+	} else {
+		for _, cidr := range sourceCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return nil, fmt.Errorf("%s has invalid IPv4 source CIDR %q", resourceID, cidr)
+			}
+			sources = append(sources, "ip saddr "+prefix.Masked().String())
+		}
+	}
+	var destinations []string
+	if len(destinationCIDRs) == 0 {
+		destinations = []string{""}
+	} else {
+		for _, cidr := range destinationCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return nil, fmt.Errorf("%s has invalid IPv4 destination CIDR %q", resourceID, cidr)
+			}
+			destinations = append(destinations, "ip daddr "+prefix.Masked().String())
+		}
+	}
+	var matches []string
+	for _, source := range sources {
+		for _, destination := range destinations {
+			matches = append(matches, strings.TrimSpace(strings.Join([]string{source, destination}, " ")))
+		}
+	}
+	return matches, nil
+}
+
+func currentIPv4DefaultGatewayForInterface(ifname string) (string, error) {
+	out, err := exec.Command("ip", "-4", "route", "show", "default", "dev", ifname).CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(string(out))
+	for i, field := range fields {
+		if field == "via" && i+1 < len(fields) {
+			return fields[i+1], nil
+		}
+	}
+	return "", fmt.Errorf("no gateway found")
+}
+
+func currentIPv4HealthTargetForInterface(ifname string) (string, error) {
+	if gateway, err := currentIPv4DefaultGatewayForInterface(ifname); err == nil {
+		return gateway, nil
+	}
+	out, err := exec.Command("ip", "-4", "addr", "show", "dev", ifname).CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(string(out))
+	for i, field := range fields {
+		if field == "peer" && i+1 < len(fields) {
+			addr := strings.SplitN(fields[i+1], "/", 2)[0]
+			if parsed, err := netip.ParseAddr(addr); err == nil && parsed.Is4() {
+				return parsed.String(), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no IPv4 default gateway or peer found")
 }
 
 func applyIPv4PolicyRouteTarget(resourceID string, aliases map[string]string, target api.IPv4PolicyRouteTarget) (string, error) {
@@ -1113,6 +1582,144 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 		}
 	}
 	return nil, nil
+}
+
+func applyPPPoEConfig(router *api.Router) ([]string, error) {
+	config, err := render.PPPoE(router, pppoePassword)
+	if err != nil {
+		return nil, err
+	}
+	if len(config.Files) == 0 && len(config.Secrets) == 0 {
+		return nil, nil
+	}
+	if !pppdAvailable() {
+		return nil, errors.New("pppd is required for managed PPPoE interfaces")
+	}
+
+	var changedFiles []string
+	for _, file := range config.Files {
+		if err := os.MkdirAll(filepathDir(file.Path), 0755); err != nil {
+			return nil, fmt.Errorf("create directory for %s: %w", file.Path, err)
+		}
+		changed, err := writeFileIfChanged(file.Path, file.Data, file.Perm)
+		if err != nil {
+			return nil, fmt.Errorf("write PPPoE file %s: %w", file.Path, err)
+		}
+		if changed {
+			changedFiles = append(changedFiles, file.Path)
+		}
+	}
+	if len(config.Secrets) > 0 {
+		for _, path := range []string{pppoeCHAPSecretsPath, pppoePAPSecretsPath} {
+			changed, err := updatePPPoESecrets(path, config.Secrets)
+			if err != nil {
+				return nil, err
+			}
+			if changed {
+				changedFiles = append(changedFiles, path)
+			}
+		}
+	}
+
+	if containsSystemdUnit(changedFiles) {
+		if err := runLogged("systemctl", "daemon-reload"); err != nil {
+			return nil, err
+		}
+	}
+	for _, unit := range config.Units {
+		if len(changedFiles) > 0 {
+			if err := runLogged("systemctl", "enable", unit); err != nil {
+				return nil, err
+			}
+			if err := runLogged("systemctl", "restart", unit); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if err := runLogged("systemctl", "is-active", "--quiet", unit); err != nil {
+			if err := runLogged("systemctl", "enable", "--now", unit); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return changedFiles, nil
+}
+
+func pppdAvailable() bool {
+	if _, err := exec.LookPath("pppd"); err == nil {
+		return true
+	}
+	if st, err := os.Stat("/usr/sbin/pppd"); err == nil && !st.IsDir() && st.Mode()&0111 != 0 {
+		return true
+	}
+	return false
+}
+
+func pppoePassword(res api.Resource, spec api.PPPoEInterfaceSpec) (string, error) {
+	if spec.Password != "" {
+		return spec.Password, nil
+	}
+	data, err := os.ReadFile(spec.PasswordFile)
+	if err != nil {
+		return "", fmt.Errorf("%s read passwordFile %s: %w", res.ID(), spec.PasswordFile, err)
+	}
+	password := strings.TrimRight(string(data), "\r\n")
+	if password == "" {
+		return "", fmt.Errorf("%s passwordFile %s is empty", res.ID(), spec.PasswordFile)
+	}
+	return password, nil
+}
+
+func updatePPPoESecrets(path string, entries []render.PPPoESecretEntry) (bool, error) {
+	if err := os.MkdirAll(filepathDir(path), 0755); err != nil {
+		return false, fmt.Errorf("create directory for %s: %w", path, err)
+	}
+	current, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("read PPP secrets %s: %w", path, err)
+	}
+	desired := replaceManagedPPPoEBlocks(string(current), entries)
+	return writeFileIfChanged(path, []byte(desired), 0600)
+}
+
+func replaceManagedPPPoEBlocks(current string, entries []render.PPPoESecretEntry) string {
+	lines := strings.Split(current, "\n")
+	var kept []string
+	skip := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "# BEGIN routerd pppoe ") {
+			skip = true
+			continue
+		}
+		if strings.HasPrefix(line, "# END routerd pppoe ") {
+			skip = false
+			continue
+		}
+		if !skip {
+			kept = append(kept, line)
+		}
+	}
+	text := strings.TrimRight(strings.Join(kept, "\n"), "\n")
+	var buf bytes.Buffer
+	if text != "" {
+		buf.WriteString(text)
+		buf.WriteString("\n")
+	}
+	for _, entry := range entries {
+		buf.WriteString("# BEGIN routerd pppoe " + entry.Name + "\n")
+		buf.WriteString(render.PPPoESecretLine(entry))
+		buf.WriteString("# END routerd pppoe " + entry.Name + "\n")
+	}
+	return buf.String()
+}
+
+func containsSystemdUnit(paths []string) bool {
+	for _, path := range paths {
+		if strings.HasPrefix(path, "/etc/systemd/system/") && strings.HasSuffix(path, ".service") {
+			return true
+		}
+	}
+	return false
 }
 
 func applyFiles(files []render.File) ([]string, error) {

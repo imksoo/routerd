@@ -11,6 +11,7 @@
 - インターフェース alias 解決
 - IPv4/IPv6 アドレス計画
 - systemd-networkd drop-in による IPv6 Prefix Delegation
+- pppd/rp-pppoe による PPPoE interface setup
 - dnsmasq による DHCPv4、DHCPv6/RA、DNS forward/cache
 - runtime sysctl 管理
 - syslog/journald または trusted local log plugin への内部イベント出力
@@ -38,15 +39,17 @@
 - `dnsmasq`
 - `nftables`
 - `conntrack`
+- PPPoE を使う場合は `pppd`
 
 Ubuntu 例:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack
+sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp
 ```
 
 `conntrack` は、複数 DS-Lite tunnel の policy routing や flow mark の診断にも使います。
+PPPoE リソースは、ディストリビューションの PPP パッケージに含まれる pppd と rp-pppoe plugin を使います。
 
 ## ビルド
 

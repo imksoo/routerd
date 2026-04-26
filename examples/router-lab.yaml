@@ -99,13 +99,33 @@ spec:
         required: true
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DefaultRoute
+      kind: HealthCheck
+      metadata:
+        name: wan-dhcp4-v4
+      spec:
+        type: ping
+        targetSource: defaultGateway
+        interface: wan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4DefaultRoutePolicy
       metadata:
         name: default-v4
       spec:
-        interface: wan
-        gatewaySource: dhcp4
-        required: true
+        mode: priority
+        sourceCIDRs:
+          - 192.168.160.0/24
+        destinationCIDRs:
+          - 0.0.0.0/0
+        candidates:
+          - name: wan-dhcp4
+            interface: wan
+            gatewaySource: dhcp4
+            priority: 10
+            table: 100
+            mark: 256
+            routeMetric: 50
+            healthCheck: wan-dhcp4-v4
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4SourceNAT

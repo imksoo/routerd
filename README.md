@@ -11,6 +11,7 @@ layout friendly to source installs and future packaging:
 - IPv4/IPv6 address planning
 - DHCPv4, DHCPv6, RA, and DNS forwarding through managed dnsmasq
 - IPv6 prefix delegation through systemd-networkd drop-ins
+- PPPoE interface setup through pppd/rp-pppoe
 - runtime sysctl management
 - internal event logging to syslog/journald or trusted local log plugins
 - nftables-based IPv4 source NAT and policy routing
@@ -38,16 +39,19 @@ Japanese documentation is available in [README.ja.md](README.ja.md).
 - `dnsmasq`
 - `nftables`
 - `conntrack`
+- `pppd` when using PPPoE
 
 On Ubuntu:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack
+sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp
 ```
 
 `conntrack` is used for diagnostics and policy-routing verification around
 multi-tunnel DS-Lite.
+PPPoE resources require pppd and the rp-pppoe plugin provided by the distro's
+PPP packages.
 
 ## Build
 

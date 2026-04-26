@@ -63,6 +63,12 @@ func nftOutboundAliases(router *api.Router) (map[string]string, error) {
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
+		case "PPPoEInterface":
+			spec, err := res.PPPoEInterfaceSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
 		case "DSLiteTunnel":
 			spec, err := res.DSLiteTunnelSpec()
 			if err != nil {

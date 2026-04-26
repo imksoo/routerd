@@ -5,7 +5,7 @@ Wants=network-pre.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/sbin/routerd serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock
+ExecStart=/usr/local/sbin/routerd serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock --reconcile-interval 60s
 Restart=always
 RestartSec=2s
 RuntimeDirectory=routerd

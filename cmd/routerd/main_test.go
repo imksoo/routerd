@@ -3,8 +3,10 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"routerd/pkg/api"
 	"routerd/pkg/render"
 )
 
@@ -64,6 +66,133 @@ func TestWriteFileIfChanged(t *testing.T) {
 	}
 	if !changed {
 		t.Fatal("different write changed = false, want true")
+	}
+}
+
+func TestReplaceManagedPPPoEBlocks(t *testing.T) {
+	current := "# existing\nold * value *\n# BEGIN routerd pppoe old\n\"u\" * \"old\" *\n# END routerd pppoe old\n"
+	got := replaceManagedPPPoEBlocks(current, []render.PPPoESecretEntry{
+		{Name: "wan", Username: "user@example.jp", Password: "secret"},
+	})
+	for _, want := range []string{
+		"# existing\nold * value *\n",
+		"# BEGIN routerd pppoe wan\n",
+		"\"user@example.jp\" * \"secret\" *\n",
+		"# END routerd pppoe wan\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("managed secrets missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "\"u\" * \"old\"") {
+		t.Fatalf("old managed block was not removed:\n%s", got)
+	}
+}
+
+func TestRenderIPv4DefaultRoutePolicyMarks(t *testing.T) {
+	data, err := renderIPv4DefaultRoutePolicyMarks(
+		"test/default",
+		api.IPv4DefaultRoutePolicySpec{
+			SourceCIDRs:      []string{"192.168.160.0/24"},
+			DestinationCIDRs: []string{"0.0.0.0/0"},
+		},
+		api.IPv4DefaultRoutePolicyCandidate{Name: "pppoe", Mark: 273},
+		[]api.IPv4DefaultRoutePolicyCandidate{
+			{Name: "dslite", Mark: 272},
+			{Name: "pppoe", Mark: 273},
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("render default route policy marks: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"table ip routerd_default_route",
+		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 ct mark { 0x110, 0x111 } meta mark set ct mark",
+		"ct mark != 0x0 ct mark != { 0x110, 0x111 } meta mark set 0x111 ct mark set meta mark",
+		"ct mark 0x0 meta mark set 0x111 ct mark set meta mark",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderIPv4DefaultRoutePolicyMarksRouteSetActive(t *testing.T) {
+	data, err := renderIPv4DefaultRoutePolicyMarks(
+		"test/default",
+		api.IPv4DefaultRoutePolicySpec{
+			SourceCIDRs:      []string{"192.168.160.0/24"},
+			DestinationCIDRs: []string{"0.0.0.0/0"},
+		},
+		api.IPv4DefaultRoutePolicyCandidate{Name: "dslite", RouteSet: "lan-dslite-balance"},
+		[]api.IPv4DefaultRoutePolicyCandidate{
+			{Name: "dslite", RouteSet: "lan-dslite-balance"},
+		},
+		map[string]api.IPv4PolicyRouteSetSpec{
+			"lan-dslite-balance": {
+				Targets: []api.IPv4PolicyRouteTarget{
+					{Name: "transix-a", Mark: 256},
+					{Name: "transix-b", Mark: 257},
+					{Name: "transix-c", Mark: 258},
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("render default route policy marks: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 ct mark { 0x100, 0x101, 0x102 } meta mark set ct mark",
+		"ct mark != 0x0 ct mark != { 0x100, 0x101, 0x102 } meta mark set 0x0 ct mark set meta mark",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "ct mark 0x0 meta mark set 0x") {
+		t.Fatalf("routeSet active candidate should leave new flows unmarked for IPv4PolicyRouteSet hashing:\n%s", got)
+	}
+}
+
+func TestSelectIPv4DefaultRouteCandidateTreatsMissingHealthCheckAsUp(t *testing.T) {
+	candidate, ok := selectIPv4DefaultRouteCandidate([]api.IPv4DefaultRoutePolicyCandidate{
+		{Name: "preferred", Priority: 10, HealthCheck: "preferred-check"},
+		{Name: "fallback", Priority: 20},
+	}, map[string]bool{"preferred-check": false})
+	if !ok {
+		t.Fatal("candidate not selected")
+	}
+	if candidate.Name != "fallback" {
+		t.Fatalf("candidate = %s, want fallback", candidate.Name)
+	}
+}
+
+func TestResolveHealthCheckTargetDSLiteRemoteAddress(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+				Metadata: api.ObjectMeta{Name: "transix"},
+				Spec: api.DSLiteTunnelSpec{
+					Interface:     "wan",
+					TunnelName:    "ds-transix",
+					RemoteAddress: "2404:8e00::feed:100",
+				},
+			},
+		}},
+	}
+	target, family, err := resolveHealthCheckTarget(router, api.HealthCheckSpec{
+		Interface:    "transix",
+		TargetSource: "dsliteRemote",
+	}, map[string]string{"transix": "ds-transix"})
+	if err != nil {
+		t.Fatalf("resolve target: %v", err)
+	}
+	if target != "2404:8e00::feed:100" || family != "ipv6" {
+		t.Fatalf("target/family = %s/%s, want 2404:8e00::feed:100/ipv6", target, family)
 	}
 }
 

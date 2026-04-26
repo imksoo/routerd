@@ -18,11 +18,13 @@ routerd uses Kubernetes-like API shapes:
 ## MVP Resources
 
 - `Interface`
+- `PPPoEInterface`
 - `IPv4StaticAddress`
 - `IPv4DHCPAddress`
 - `IPv4DHCPServer`
 - `IPv4DHCPScope`
-- `IPv4DefaultRoute`
+- `HealthCheck`
+- `IPv4DefaultRoutePolicy`
 - `IPv4PolicyRoute`
 - `IPv4PolicyRouteSet`
 - `IPv4ReversePathFilter`
@@ -49,6 +51,38 @@ The schema is intentionally small and will be implemented incrementally.
 - `managed: true` means routerd may manage the interface after existing OS networking ownership has been reviewed.
 
 When cloud-init or netplan is detected, routerd planning reports `RequiresAdoption` instead of taking over automatically.
+
+## PPPoEInterface
+
+`PPPoEInterface` declares a PPPoE interface built on top of another `Interface`.
+On Linux routerd renders pppd/rp-pppoe peer configuration, CHAP/PAP secrets,
+and an optional systemd unit.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: PPPoEInterface
+metadata:
+  name: wan-ppp
+spec:
+  interface: wan-ether
+  ifname: ppp0
+  username: user@example.jp
+  passwordFile: /usr/local/etc/routerd/pppoe-password
+  defaultRoute: true
+  usePeerDNS: true
+  managed: true
+  mtu: 1492
+  mru: 1492
+```
+
+`interface` references the lower Ethernet `Interface`. `ifname` defaults to
+`ppp-<metadata.name>` and must fit the Linux 15-character interface name limit.
+Exactly one of `password` or `passwordFile` is required. `passwordFile` is
+preferred so credentials do not have to live in the main YAML file.
+
+When `managed: true`, routerd enables and starts `routerd-pppoe-<name>.service`.
+When `managed: false`, routerd still renders the local config files but does not
+start the systemd unit.
 
 ## LogSink
 
@@ -156,39 +190,76 @@ When omitted, IPv6 DHCP scopes use a default policy equivalent to delegated
 address plus the `IPv6DelegatedAddress.addressSuffix`, then an observed address
 matching that suffix, then the first observed global address.
 
-## IPv4DefaultRoute
+## HealthCheck And IPv4DefaultRoutePolicy
 
-`IPv4DefaultRoute` declares how the IPv4 default gateway is selected.
-
-Use a DHCPv4-provided default route from the referenced interface:
+`HealthCheck` declares a small reachability check. The default interval is `60s`;
+shorter intervals are intentionally opt-in because route failover should not be
+overly sensitive by default.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: IPv4DefaultRoute
+kind: HealthCheck
 metadata:
-  name: default-v4
+  name: dslite-v4
 spec:
-  interface: wan
-  gatewaySource: dhcp4
-  required: true
+  type: ping
+  targetSource: dsliteRemote
+  interface: transix-a
 ```
 
-`spec.interface` is the source selector for `gatewaySource: dhcp4`. This keeps the route unambiguous when more than one WAN-like interface exists.
+`IPv4DefaultRoutePolicy` selects the healthy candidate with the lowest
+`priority`. A candidate may be a direct interface route, or it may reference an
+`IPv4PolicyRouteSet`. Direct candidates use dedicated routing tables and
+firewall marks. New flows are marked for the active direct candidate. Existing
+flows keep their conntrack mark while that candidate remains healthy; if the old
+candidate becomes unhealthy, routerd's nftables policy rewrites that flow to the
+currently active candidate.
 
-Future multi-WAN support will likely add route metric, routing table, and policy routing fields. The MVP intentionally handles only one declared IPv4 default route.
+When the active candidate references `routeSet`, routerd leaves new flows
+unmarked so the referenced `IPv4PolicyRouteSet` can hash them across its
+targets. Existing conntrack marks for healthy route-set targets are preserved.
+If a stale mark belongs to a failed candidate, routerd clears it and lets the
+route set select a target again.
 
-Use a static gateway:
+When `target` is omitted, `targetSource: auto` chooses a nearby check target:
+DS-Lite checks the AFTR IPv6 address, and ordinary/PPPoE interfaces check the
+IPv4 default gateway for that interface. This verifies local next-hop or tunnel
+endpoint liveness. If you need end-to-end IPv4 Internet reachability, configure
+an explicit static IPv4 target as a separate health check. A route candidate
+with no `healthCheck` is always treated as up.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: IPv4DefaultRoute
+kind: IPv4DefaultRoutePolicy
 metadata:
   name: default-v4
 spec:
-  interface: wan
-  gatewaySource: static
-  gateway: 192.0.2.1
-  required: true
+  mode: priority
+  sourceCIDRs:
+    - 192.168.160.0/24
+  destinationCIDRs:
+    - 0.0.0.0/0
+  candidates:
+    - name: dslite
+      routeSet: lan-dslite-balance
+      priority: 10
+      healthCheck: dslite-v4
+    - name: pppoe
+      interface: wan-pppoe
+      gatewaySource: none
+      priority: 20
+      table: 111
+      mark: 273
+      routeMetric: 60
+      healthCheck: pppoe-v4
+    - name: dhcp4
+      interface: wan
+      gatewaySource: dhcp4
+      priority: 30
+      table: 112
+      mark: 274
+      routeMetric: 100
+      healthCheck: wan-dhcp4-v4
 ```
 
 IPv6 default gateway behavior is intentionally left for a later design pass.
@@ -313,7 +384,7 @@ spec:
 
 ## IPv4SourceNAT
 
-`IPv4SourceNAT` declares outbound source NAT without using Linux-specific API names. On Linux this may render to masquerade when `translation.type` is `interfaceAddress`. `outboundInterface` may reference either an `Interface` resource or a `DSLiteTunnel` resource.
+`IPv4SourceNAT` declares outbound source NAT without using Linux-specific API names. On Linux this may render to masquerade when `translation.type` is `interfaceAddress`. `outboundInterface` may reference an `Interface`, `PPPoEInterface`, or `DSLiteTunnel` resource.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -356,7 +427,7 @@ translation:
 
 ## IPv4PolicyRoute
 
-`IPv4PolicyRoute` marks forwarded IPv4 packets that match source and/or destination CIDRs, installs an `ip rule` for that mark, and installs a default route in a dedicated routing table. `outboundInterface` may reference either an `Interface` resource or a `DSLiteTunnel` resource.
+`IPv4PolicyRoute` marks forwarded IPv4 packets that match source and/or destination CIDRs, installs an `ip rule` for that mark, and installs a default route in a dedicated routing table. `outboundInterface` may reference an `Interface`, `PPPoEInterface`, or `DSLiteTunnel` resource.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -427,7 +498,7 @@ spec:
   mode: disabled
 ```
 
-`target` may be `all`, `default`, or `interface`. When `target: interface`, `interface` may reference either an `Interface` resource or a `DSLiteTunnel` resource. `mode` may be `disabled`, `strict`, or `loose`, corresponding to Linux values `0`, `1`, and `2`.
+`target` may be `all`, `default`, or `interface`. When `target: interface`, `interface` may reference an `Interface`, `PPPoEInterface`, or `DSLiteTunnel` resource. `mode` may be `disabled`, `strict`, or `loose`, corresponding to Linux values `0`, `1`, and `2`.
 
 ## DNSConditionalForwarder
 
