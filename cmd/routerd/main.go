@@ -742,11 +742,35 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 }
 
 func applyNftablesConfig(path string, data []byte) ([]string, error) {
-	if len(data) == 0 {
-		return nil, nil
-	}
 	if _, err := exec.LookPath("nft"); err != nil {
 		return nil, fmt.Errorf("nft is required for managed nftables resources: %w", err)
+	}
+	managedTables := []struct {
+		family string
+		name   string
+		header string
+	}{
+		{family: "inet", name: "routerd_filter", header: "table inet routerd_filter"},
+		{family: "ip", name: "routerd_dnat", header: "table ip routerd_dnat"},
+		{family: "ip", name: "routerd_nat", header: "table ip routerd_nat"},
+		{family: "ip", name: "routerd_policy", header: "table ip routerd_policy"},
+	}
+	existingManaged := false
+	existingTables := map[string]bool{}
+	for _, table := range managedTables {
+		if exec.Command("nft", "list", "table", table.family, table.name).Run() == nil {
+			existingManaged = true
+			existingTables[table.name] = true
+		}
+	}
+	if len(data) == 0 {
+		if !existingManaged {
+			return nil, nil
+		}
+		for _, table := range managedTables {
+			_ = exec.Command("nft", "delete", "table", table.family, table.name).Run()
+		}
+		return []string{"nftables:routerd"}, nil
 	}
 	if err := os.MkdirAll(filepathDir(path), 0755); err != nil {
 		return nil, fmt.Errorf("create directory for %s: %w", path, err)
@@ -759,13 +783,19 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 	policyMissing := bytes.Contains(data, []byte("table ip routerd_policy")) && exec.Command("nft", "list", "table", "ip", "routerd_policy").Run() != nil
 	filterMissing := bytes.Contains(data, []byte("table inet routerd_filter")) && exec.Command("nft", "list", "table", "inet", "routerd_filter").Run() != nil
 	dnatMissing := bytes.Contains(data, []byte("table ip routerd_dnat")) && exec.Command("nft", "list", "table", "ip", "routerd_dnat").Run() != nil
-	if !changed && !natMissing && !policyMissing && !filterMissing && !dnatMissing {
+	staleManaged := false
+	for _, table := range managedTables {
+		if existingTables[table.name] && !bytes.Contains(data, []byte(table.header)) {
+			staleManaged = true
+			break
+		}
+	}
+	if !changed && !natMissing && !policyMissing && !filterMissing && !dnatMissing && !staleManaged {
 		return nil, nil
 	}
-	_ = exec.Command("nft", "delete", "table", "inet", "routerd_filter").Run()
-	_ = exec.Command("nft", "delete", "table", "ip", "routerd_dnat").Run()
-	_ = exec.Command("nft", "delete", "table", "ip", "routerd_nat").Run()
-	_ = exec.Command("nft", "delete", "table", "ip", "routerd_policy").Run()
+	for _, table := range managedTables {
+		_ = exec.Command("nft", "delete", "table", table.family, table.name).Run()
+	}
 	if err := runLogged("nft", "-f", path); err != nil {
 		return nil, err
 	}

@@ -205,7 +205,11 @@ func writeRouterServiceRule(buf *bytes.Buffer, zoneIfnames map[string][]string, 
 		buf.WriteString("    " + nftIfnameMatch("iifname", ifnames) + " " + expr + " accept\n")
 	}
 	if service.WAN.Enabled {
-		buf.WriteString("    " + expr + " accept\n")
+		ifnames := zoneIfnames["wan"]
+		if len(ifnames) == 0 {
+			return fmt.Errorf("wan.enabled requires a wan zone")
+		}
+		buf.WriteString("    " + nftIfnameMatch("iifname", ifnames) + " " + expr + " accept\n")
 	}
 	return nil
 }
