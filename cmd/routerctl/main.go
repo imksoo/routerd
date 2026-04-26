@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 	"time"
 
 	"routerd/pkg/controlapi"
+	"routerd/pkg/platform"
 )
+
+var platformDefaults, _ = platform.Current()
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -117,14 +119,11 @@ func writeJSON(stdout io.Writer, value any) error {
 }
 
 func defaultRuntimeDir() string {
-	if runtime.GOOS == "freebsd" {
-		return "/var/run/routerd"
-	}
-	return "/run/routerd"
+	return platformDefaults.RuntimeDir
 }
 
 func defaultSocketPath() string {
-	return defaultRuntimeDir() + "/routerd.sock"
+	return platformDefaults.SocketFile()
 }
 
 func usage(w io.Writer) {

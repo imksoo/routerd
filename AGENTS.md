@@ -107,8 +107,19 @@ Default source-install paths:
 
 Linux runtime defaults are `/run/routerd` and `/var/lib/routerd`.
 
-Future portability is welcome, but do not imply FreeBSD support is complete in
-user-facing README text until it exists.
+OS-specific defaults (paths, feature flags) live in `pkg/platform`. New
+OS-specific behavior should consult `platform.Current()` rather than reading
+`runtime.GOOS` directly, and renderers that depend on Linux-only host
+integrations (netplan, systemd-networkd, nftables) should branch on the
+matching `platform.Features` flag or a build tag rather than failing at
+runtime on FreeBSD/NixOS.
+
+NixOS and FreeBSD are second-tier targets. The build, install layout, and
+service-manager integration scaffolds (`contrib/nix/` flake + module,
+`contrib/freebsd/routerd` rc.d script) are in place, but pf and NixOS-native
+interface renderers are still pending. Do not imply parity in user-facing
+text — keep the language scoped to "groundwork" until the matching renderer
+exists. The full matrix lives in `docs/platforms.md`.
 
 ## Coding Rules
 

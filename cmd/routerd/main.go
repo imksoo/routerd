@@ -13,7 +13,6 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"routerd/pkg/controlapi"
 	"routerd/pkg/eventlog"
 	"routerd/pkg/observe"
+	"routerd/pkg/platform"
 	"routerd/pkg/reconcile"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
@@ -32,18 +32,23 @@ import (
 )
 
 const (
-	defaultConfigPath         = "/usr/local/etc/routerd/router.yaml"
-	defaultPluginDir          = "/usr/local/libexec/routerd/plugins"
-	defaultNetplanPath        = "/etc/netplan/90-routerd.yaml"
-	defaultDnsmasqConfigPath  = "/usr/local/etc/routerd/dnsmasq.conf"
-	defaultDnsmasqServicePath = "/etc/systemd/system/routerd-dnsmasq.service"
-	defaultNftablesPath       = "/usr/local/etc/routerd/nftables.nft"
-	defaultRouteNftablesPath  = "/usr/local/etc/routerd/default-route.nft"
-	defaultTimesyncdPath      = "/etc/systemd/timesyncd.conf.d/routerd.conf"
-	defaultLedgerPath         = "/var/lib/routerd/artifacts.json"
-	routerdDnsmasqService     = "routerd-dnsmasq.service"
-	pppoeCHAPSecretsPath      = "/etc/ppp/chap-secrets"
-	pppoePAPSecretsPath       = "/etc/ppp/pap-secrets"
+	routerdDnsmasqService = "routerd-dnsmasq.service"
+)
+
+var (
+	platformDefaults, platformFeatures = platform.Current()
+
+	defaultConfigPath         = platformDefaults.ConfigFile()
+	defaultPluginDir          = platformDefaults.PluginDir
+	defaultNetplanPath        = platformDefaults.NetplanFile
+	defaultDnsmasqConfigPath  = platformDefaults.DnsmasqConfigFile
+	defaultDnsmasqServicePath = platformDefaults.DnsmasqServiceFile
+	defaultNftablesPath       = platformDefaults.NftablesFile
+	defaultRouteNftablesPath  = platformDefaults.DefaultRouteNftablesFile
+	defaultTimesyncdPath      = platformDefaults.TimesyncdDropinFile
+	defaultLedgerPath         = platformDefaults.LedgerFile()
+	pppoeCHAPSecretsPath      = platformDefaults.PPPoEChapSecretsFile
+	pppoePAPSecretsPath       = platformDefaults.PPPoEPapSecretsFile
 )
 
 func main() {
@@ -2556,25 +2561,19 @@ func requireExistingFile(path string) error {
 }
 
 func defaultRuntimeDir() string {
-	if runtime.GOOS == "freebsd" {
-		return "/var/run/routerd"
-	}
-	return "/run/routerd"
+	return platformDefaults.RuntimeDir
 }
 
 func defaultStateDir() string {
-	if runtime.GOOS == "freebsd" {
-		return "/var/db/routerd"
-	}
-	return "/var/lib/routerd"
+	return platformDefaults.StateDir
 }
 
 func defaultStatusFile() string {
-	return defaultRuntimeDir() + "/status.json"
+	return platformDefaults.StatusFile()
 }
 
 func defaultSocketPath() string {
-	return defaultRuntimeDir() + "/routerd.sock"
+	return platformDefaults.SocketFile()
 }
 
 func writeResult(stdout io.Writer, statusFile string, result *reconcile.Result) error {

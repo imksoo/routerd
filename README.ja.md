@@ -4,7 +4,7 @@
 
 routerd は、ルータの設定を YAML で宣言しておくと、その通りに振る舞う Linux ルータを動かしてくれる小さなソフトウェアルータです。手元の YAML を書き換えて反映するだけで、インターフェースの上げ下げ、IPv4/IPv6 アドレス、DHCP、DNS、PPPoE、DS-Lite、NAT、ポリシールーティング、ファイアウォール、経路ヘルスチェックまでが連動して切り替わります。場当たり的なシェルコマンドの代わりに、Git で履歴を追えるルータ設定として運用することを目指しています。
 
-主な対象は Ubuntu Server で、インストール先は /usr/local 配下を基本にしています。将来のパッケージ化や FreeBSD などの他 OS 対応も想定したレイアウトです。プレリリースのため、リモートのルータへ反映する前には必ず計画表示と予行実行で挙動を確認してください。
+主な対象は Ubuntu Server で、インストール先は /usr/local 配下を基本にしています。NixOS と FreeBSD は二次サポート対象として、ビルド、インストール配置、サービスマネージャ連携の下地まで整えています。pf レンダラ（FreeBSD）や NixOS ネイティブのインターフェース設定など、ホスト連携の一部は移植中です。最新の対応状況は [docs/platforms.ja.md](docs/platforms.ja.md) を参照してください。プレリリースのため、リモートのルータへ反映する前には必ず計画表示と予行実行で挙動を確認してください。
 
 ## ルータとして何ができるか
 
@@ -112,11 +112,20 @@ make check-remote-deps REMOTE_HOST=user@router.example
 make remote-install-config REMOTE_HOST=user@router.example CONFIG=path/to/router.yaml
 ```
 
-systemd を使う Linux で、デーモンとして常駐させるためのユニットを入れる場合:
+サービスマネージャ連携を入れる場合、Linux なら systemd ユニット、FreeBSD なら rc.d スクリプトを `make install-service` が自動選択します:
 
 ```sh
-sudo make install-systemd
+sudo make install-service
 ```
+
+OS ごとに直接指定することもできます:
+
+```sh
+sudo make install-systemd      # Linux (Ubuntu, NixOS, ...)
+sudo make install-rc-freebsd   # FreeBSD rc.d
+```
+
+NixOS では `make install` ではなく `contrib/nix/` 配下の flake と NixOS モジュールを使うことを推奨します。詳細は [contrib/nix/README.md](contrib/nix/README.md) を参照してください。
 
 ## テスト
 
@@ -167,6 +176,7 @@ sudo routerd reconcile --config /usr/local/etc/routerd/router.yaml --once
 - [リソース所有と反映モデル](docs/resource-ownership.ja.md)
 - [制御 API v1alpha1](docs/control-api-v1alpha1.ja.md)
 - [プラグインプロトコル](docs/plugin-protocol.ja.md)
+- [対応プラットフォーム](docs/platforms.ja.md)
 - [はじめに（英語）](docs/tutorials/getting-started.md)
 - [更新履歴（英語）](docs/releases/changelog.md)
 - [英語 README](README.md)
@@ -187,3 +197,9 @@ Linux での実行時パス:
 - 状態ファイル: /run/routerd/status.json
 - 制御ソケット: /run/routerd/routerd.sock
 - ロックファイル: /run/routerd/routerd.lock
+
+FreeBSD での実行時パス:
+
+- 実行時ディレクトリ: /var/run/routerd
+- 状態保存ディレクトリ: /var/db/routerd
+- rc.d スクリプト: /usr/local/etc/rc.d/routerd
