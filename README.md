@@ -2,31 +2,49 @@
 
 `routerd` is a declarative router resource reconciler written in Go.
 
-The first MVP targets Ubuntu Server and focuses on the smallest reliable core:
+The current implementation targets Ubuntu Server first and keeps the install
+layout friendly to source installs and future packaging:
+
 - YAML router config
 - Kubernetes-like resource shapes
 - interface alias resolution
+- IPv4/IPv6 address planning
+- DHCPv4, DHCPv6, RA, and DNS forwarding through managed dnsmasq
+- IPv6 prefix delegation through systemd-networkd drop-ins
+- runtime sysctl management
+- nftables-based IPv4 source NAT and policy routing
+- DS-Lite ipip6 tunnel setup, including multiple tunnel policy routing
 - local trusted resource plugins
 - dry-run reconcile
 - machine-readable status JSON
 
-The MVP does not implement firewall, NAT, DS-Lite, IPv6 PD, policy routing, remote plugin installation, or full rollback.
+Firewall policy, remote plugin installation, full rollback, and a long-running
+daemon loop are still intentionally limited. The same reconcile logic is used
+for one-shot CLI execution and future daemon mode.
 
 The MVP scope is a working boundary, not a permanent constraint. When a small design improvement reduces future migration cost or improves router safety, the project should update the MVP direction deliberately instead of preserving a weak early assumption.
 
+Japanese documentation is available in [README.ja.md](README.ja.md).
+
 ## Requirements
 
-- Go 1.22 or newer
+- Go 1.24 or newer
 - `make`
 - `iproute2`
 - `jq`
+- `dnsmasq`
+- `nftables`
+- `conntrack`
 
 On Ubuntu:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y golang-go make iproute2 jq
+sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack
 ```
+
+`conntrack` is used for diagnostics and policy-routing verification around
+multi-tunnel DS-Lite.
 
 ## Build
 
@@ -120,7 +138,25 @@ make validate-example
 make dry-run-example
 ```
 
-The current CLI is an initial scaffold. Resource loading, plugin execution, and reconcile behavior will be implemented incrementally.
+Useful direct commands:
+
+```sh
+routerd validate --config examples/router-lab.yaml
+routerd plan --config examples/router-lab.yaml
+routerd reconcile --config examples/router-lab.yaml --once --dry-run
+```
+
+`reconcile --once` can apply managed netplan, networkd drop-ins, dnsmasq,
+nftables, sysctls, DS-Lite tunnels, and policy routing. Avoid using it on a
+remote router until the adoption plan is understood, especially where
+cloud-init or existing netplan configuration owns the management interface.
+
+## Documentation
+
+- [API v1alpha1](docs/api-v1alpha1.md)
+- [Plugin protocol](docs/plugin-protocol.md)
+- [API v1alpha1 Japanese](docs/api-v1alpha1.ja.md)
+- [Plugin protocol Japanese](docs/plugin-protocol.ja.md)
 
 ## Default Paths
 
