@@ -37,9 +37,10 @@ func (r Resource) ID() string {
 }
 
 const (
-	RouterAPIVersion = "routerd.net/v1alpha1"
-	NetAPIVersion    = "net.routerd.net/v1alpha1"
-	SystemAPIVersion = "system.routerd.net/v1alpha1"
+	RouterAPIVersion   = "routerd.net/v1alpha1"
+	NetAPIVersion      = "net.routerd.net/v1alpha1"
+	SystemAPIVersion   = "system.routerd.net/v1alpha1"
+	FirewallAPIVersion = "firewall.routerd.net/v1alpha1"
 )
 
 func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
@@ -193,6 +194,24 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		r.Spec = spec
 	case "IPv4ReversePathFilter":
 		var spec IPv4ReversePathFilterSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "Zone":
+		var spec ZoneSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "FirewallPolicy":
+		var spec FirewallPolicySpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "ExposeService":
+		var spec ExposeServiceSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}

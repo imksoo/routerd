@@ -110,6 +110,12 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv4PolicyRouteSet(res, aliases, policies, includePlan, &rr)
 		case "IPv4ReversePathFilter":
 			e.observeIPv4ReversePathFilter(res, aliases, includePlan, &rr)
+		case "Zone":
+			e.observeZone(res, aliases, includePlan, &rr)
+		case "FirewallPolicy":
+			e.observeFirewallPolicy(res, includePlan, &rr)
+		case "ExposeService":
+			e.observeExposeService(res, aliases, includePlan, &rr)
 		case "Hostname":
 			e.observeHostname(res, osNet, includePlan, &rr)
 		}
@@ -613,6 +619,76 @@ func (e *Engine) observeIPv4ReversePathFilter(res api.Resource, aliases map[stri
 	}
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 reverse path filtering is %s for %s", spec.Mode, targetName))
+	}
+}
+
+func (e *Engine) observeZone(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.ZoneSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	var ifnames []string
+	for _, name := range spec.Interfaces {
+		ifnames = append(ifnames, aliases[name])
+	}
+	rr.Observed["interfaces"] = strings.Join(spec.Interfaces, ",")
+	rr.Observed["ifnames"] = strings.Join(ifnames, ",")
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("define firewall zone %s for %s", res.Metadata.Name, strings.Join(ifnames, ",")))
+	}
+}
+
+func (e *Engine) observeFirewallPolicy(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.FirewallPolicySpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	preset := defaultString(spec.Preset, "home-router")
+	inputDefault := defaultString(spec.Input.Default, "drop")
+	forwardDefault := defaultString(spec.Forward.Default, "drop")
+	rr.Observed["preset"] = preset
+	rr.Observed["inputDefault"] = inputDefault
+	rr.Observed["forwardDefault"] = forwardDefault
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure firewall preset %s with input=%s forward=%s", preset, inputDefault, forwardDefault))
+		rr.Plan = append(rr.Plan, "allow established/related traffic and drop invalid packets")
+		rr.Plan = append(rr.Plan, "allow LAN to WAN forwarding for home-router preset")
+		rr.Plan = append(rr.Plan, "allow router SSH, DNS, and DHCP only from configured routerAccess zones")
+	}
+}
+
+func (e *Engine) observeExposeService(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.ExposeServiceSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	family := defaultString(spec.Family, "ipv4")
+	rr.Observed["family"] = family
+	rr.Observed["fromZone"] = spec.FromZone
+	if spec.ViaInterface != "" {
+		rr.Observed["viaInterface"] = spec.ViaInterface
+		rr.Observed["viaIfname"] = aliases[spec.ViaInterface]
+	}
+	rr.Observed["protocol"] = spec.Protocol
+	rr.Observed["externalPort"] = fmt.Sprintf("%d", spec.ExternalPort)
+	rr.Observed["internalAddress"] = spec.InternalAddress
+	rr.Observed["internalPort"] = fmt.Sprintf("%d", spec.InternalPort)
+	if len(spec.Sources) > 0 {
+		rr.Observed["sources"] = strings.Join(spec.Sources, ",")
+	}
+	rr.Observed["hairpin"] = fmt.Sprintf("%t", spec.Hairpin)
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("DNAT %s/%d from zone %s to %s:%d", spec.Protocol, spec.ExternalPort, spec.FromZone, spec.InternalAddress, spec.InternalPort))
+		rr.Plan = append(rr.Plan, "allow forwarded traffic to the exposed internal service")
+		if spec.Hairpin {
+			rr.Plan = append(rr.Plan, "note: hairpin is declared; current renderer requires an ingress match and does not synthesize external-address hairpin rules")
+		}
 	}
 }
 

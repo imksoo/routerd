@@ -273,6 +273,48 @@ type IPv4NATPortMappingSpec struct {
 	End   int    `yaml:"end,omitempty" json:"end,omitempty" jsonschema:"minimum=1,maximum=65535"`
 }
 
+type ZoneSpec struct {
+	Interfaces []string `yaml:"interfaces" json:"interfaces"`
+}
+
+type FirewallPolicySpec struct {
+	Preset       string                  `yaml:"preset,omitempty" json:"preset,omitempty" jsonschema:"enum=home-router"`
+	Input        FirewallChainPolicySpec `yaml:"input,omitempty" json:"input,omitempty"`
+	Forward      FirewallChainPolicySpec `yaml:"forward,omitempty" json:"forward,omitempty"`
+	RouterAccess RouterAccessSpec        `yaml:"routerAccess,omitempty" json:"routerAccess,omitempty"`
+}
+
+type FirewallChainPolicySpec struct {
+	Default string `yaml:"default,omitempty" json:"default,omitempty" jsonschema:"enum=accept,enum=drop"`
+}
+
+type RouterAccessSpec struct {
+	SSH  FirewallRouterServiceSpec `yaml:"ssh,omitempty" json:"ssh,omitempty"`
+	DNS  FirewallRouterServiceSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
+	DHCP FirewallRouterServiceSpec `yaml:"dhcp,omitempty" json:"dhcp,omitempty"`
+}
+
+type FirewallRouterServiceSpec struct {
+	FromZones []string                    `yaml:"fromZones,omitempty" json:"fromZones,omitempty"`
+	WAN       FirewallRouterWANAccessSpec `yaml:"wan,omitempty" json:"wan,omitempty"`
+}
+
+type FirewallRouterWANAccessSpec struct {
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+type ExposeServiceSpec struct {
+	Family          string   `yaml:"family,omitempty" json:"family,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
+	FromZone        string   `yaml:"fromZone" json:"fromZone"`
+	ViaInterface    string   `yaml:"viaInterface,omitempty" json:"viaInterface,omitempty"`
+	Protocol        string   `yaml:"protocol" json:"protocol" jsonschema:"enum=tcp,enum=udp"`
+	ExternalPort    int      `yaml:"externalPort" json:"externalPort" jsonschema:"minimum=1,maximum=65535"`
+	InternalAddress string   `yaml:"internalAddress" json:"internalAddress"`
+	InternalPort    int      `yaml:"internalPort" json:"internalPort" jsonschema:"minimum=1,maximum=65535"`
+	Sources         []string `yaml:"sources,omitempty" json:"sources,omitempty"`
+	Hairpin         bool     `yaml:"hairpin,omitempty" json:"hairpin,omitempty"`
+}
+
 type HostnameSpec struct {
 	Hostname string `yaml:"hostname" json:"hostname"`
 	Managed  bool   `yaml:"managed,omitempty" json:"managed,omitempty"`
@@ -364,6 +406,18 @@ func (r Resource) IPv4PolicyRouteSetSpec() (IPv4PolicyRouteSetSpec, error) {
 
 func (r Resource) IPv4ReversePathFilterSpec() (IPv4ReversePathFilterSpec, error) {
 	return specAs[IPv4ReversePathFilterSpec](r)
+}
+
+func (r Resource) ZoneSpec() (ZoneSpec, error) {
+	return specAs[ZoneSpec](r)
+}
+
+func (r Resource) FirewallPolicySpec() (FirewallPolicySpec, error) {
+	return specAs[FirewallPolicySpec](r)
+}
+
+func (r Resource) ExposeServiceSpec() (ExposeServiceSpec, error) {
+	return specAs[ExposeServiceSpec](r)
 }
 
 func (r Resource) LogSinkSpec() (LogSinkSpec, error) {

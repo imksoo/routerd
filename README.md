@@ -14,7 +14,7 @@ layout friendly to source installs and future packaging:
 - PPPoE interface setup through pppd/rp-pppoe
 - runtime sysctl management
 - internal event logging to syslog/journald or trusted local log plugins
-- nftables-based IPv4 source NAT and policy routing
+- nftables-based minimal firewall policy, IPv4 source NAT, and policy routing
 - DS-Lite ipip6 tunnel setup, including multiple tunnel policy routing
 - local trusted resource plugins
 - local HTTP+JSON daemon control API over a Unix domain socket
@@ -22,8 +22,9 @@ layout friendly to source installs and future packaging:
 - dry-run reconcile
 - machine-readable status JSON
 
-Firewall policy, remote plugin installation, and full rollback are still
-intentionally limited. The same reconcile logic is used for one-shot CLI
+Remote plugin installation and full rollback are still intentionally limited.
+Firewall policy starts with a small default-deny home-router model rather than a
+general rule language. The same reconcile logic is used for one-shot CLI
 execution and daemon-triggered reconcile.
 
 The MVP scope is a working boundary, not a permanent constraint. When a small design improvement reduces future migration cost or improves router safety, the project should update the MVP direction deliberately instead of preserving a weak early assumption.

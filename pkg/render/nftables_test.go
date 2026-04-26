@@ -190,3 +190,82 @@ func TestNftablesIPv4PolicyRouteSet(t *testing.T) {
 		}
 	}
 }
+
+func TestNftablesFirewallHomeRouter(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				Metadata: api.ObjectMeta{Name: "wan-pppoe"},
+				Spec: api.PPPoEInterfaceSpec{
+					Interface: "wan-ether",
+					IfName:    "ppp0",
+					Username:  "user@example.jp",
+					Password:  "secret",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "Zone"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.ZoneSpec{Interfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "Zone"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.ZoneSpec{Interfaces: []string{"wan-pppoe"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
+				Metadata: api.ObjectMeta{Name: "default-home"},
+				Spec: api.FirewallPolicySpec{
+					Preset:  "home-router",
+					Input:   api.FirewallChainPolicySpec{Default: "drop"},
+					Forward: api.FirewallChainPolicySpec{Default: "drop"},
+					RouterAccess: api.RouterAccessSpec{
+						SSH: api.FirewallRouterServiceSpec{FromZones: []string{"lan"}},
+					},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ExposeService"},
+				Metadata: api.ObjectMeta{Name: "nas-https"},
+				Spec: api.ExposeServiceSpec{
+					Family:          "ipv4",
+					FromZone:        "wan",
+					ViaInterface:    "wan-pppoe",
+					Protocol:        "tcp",
+					ExternalPort:    443,
+					InternalAddress: "192.168.160.20",
+					InternalPort:    443,
+					Sources:         []string{"203.0.113.0/24"},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"table inet routerd_filter",
+		"type filter hook input priority filter; policy drop;",
+		"ct state invalid drop",
+		"ct state { established, related } accept",
+		`iifname "ens19" tcp dport 22 accept`,
+		`iifname "ens19" oifname "ppp0" accept`,
+		`iifname "ppp0" ip saddr 203.0.113.0/24 ip daddr 192.168.160.20 tcp dport 443 accept`,
+		"table ip routerd_dnat",
+		`iifname "ppp0" ip saddr 203.0.113.0/24 tcp dport 443 dnat to 192.168.160.20:443`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}

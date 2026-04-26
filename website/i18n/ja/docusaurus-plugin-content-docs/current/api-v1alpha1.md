@@ -17,6 +17,7 @@ routerd の設定は Kubernetes 風のリソース形状を使います。
 
 - `routerd.net/v1alpha1`: 最上位の `Router`
 - `net.routerd.net/v1alpha1`: ネットワークリソース
+- `firewall.routerd.net/v1alpha1`: ファイアウォールリソース
 - `system.routerd.net/v1alpha1`: ローカルシステムリソース
 - `plugin.routerd.net/v1alpha1`: プラグインマニフェスト
 
@@ -34,6 +35,9 @@ routerd の設定は Kubernetes 風のリソース形状を使います。
 - `IPv4PolicyRoute`
 - `IPv4PolicyRouteSet`
 - `IPv4ReversePathFilter`
+- `Zone`
+- `FirewallPolicy`
+- `ExposeService`
 - `IPv6DHCPAddress`
 - `IPv6PrefixDelegation`
 - `IPv6DelegatedAddress`
@@ -408,6 +412,61 @@ spec:
 ```
 
 `target` は `all`、`default`、`interface`。`mode` は `disabled`、`strict`、`loose` です。
+
+## 最小ファイアウォール
+
+ファイアウォールリソースは `firewall.routerd.net/v1alpha1` を使います。最初の API は汎用ルール言語にせず、家庭用ルーターとしての安全な標準動作とサービス公開に絞ります。
+
+- `Zone`: `lan` や `wan` のように、ルーターのインターフェース集合へ名前を付けます。
+- `FirewallPolicy`: `home-router` プリセットと input/forward の標準動作を宣言します。
+- `ExposeService`: 内部 IPv4 サービスを DNAT と forward 許可ルールで公開します。
+
+`home-router` プリセットは、input/forward の標準 drop、invalid drop、established/related accept、loopback input accept、`lan`/`wan` zone がある場合の LAN から WAN への forward 許可、設定された `routerAccess` zone からの SSH/DNS/DHCP のみ許可、を出力します。
+
+```yaml
+apiVersion: firewall.routerd.net/v1alpha1
+kind: FirewallPolicy
+metadata:
+  name: default-home
+spec:
+  preset: home-router
+  input:
+    default: drop
+  forward:
+    default: drop
+  routerAccess:
+    ssh:
+      fromZones:
+        - lan
+      wan:
+        enabled: false
+    dns:
+      fromZones:
+        - lan
+    dhcp:
+      fromZones:
+        - lan
+```
+
+`ExposeService` は IPv4 port publish の最初の構成要素です。`sources` を指定すると、その送信元 IPv4 prefix だけを許可します。`hairpin` はリソース形状として受け付けますが、外側アドレスの選出モデルがまだ無いため、最初の renderer は external-address hairpin ルールを合成しません。
+
+```yaml
+apiVersion: firewall.routerd.net/v1alpha1
+kind: ExposeService
+metadata:
+  name: nas-https
+spec:
+  family: ipv4
+  fromZone: wan
+  viaInterface: wan-pppoe
+  protocol: tcp
+  externalPort: 443
+  internalAddress: 192.168.160.20
+  internalPort: 443
+  sources:
+    - 203.0.113.0/24
+  hairpin: true
+```
 
 ## DNSConditionalForwarder
 

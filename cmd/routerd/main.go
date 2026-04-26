@@ -746,7 +746,7 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 		return nil, nil
 	}
 	if _, err := exec.LookPath("nft"); err != nil {
-		return nil, fmt.Errorf("nft is required for managed IPv4 source NAT: %w", err)
+		return nil, fmt.Errorf("nft is required for managed nftables resources: %w", err)
 	}
 	if err := os.MkdirAll(filepathDir(path), 0755); err != nil {
 		return nil, fmt.Errorf("create directory for %s: %w", path, err)
@@ -755,11 +755,15 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("write nftables config %s: %w", path, err)
 	}
-	natMissing := exec.Command("nft", "list", "table", "ip", "routerd_nat").Run() != nil
+	natMissing := bytes.Contains(data, []byte("table ip routerd_nat")) && exec.Command("nft", "list", "table", "ip", "routerd_nat").Run() != nil
 	policyMissing := bytes.Contains(data, []byte("table ip routerd_policy")) && exec.Command("nft", "list", "table", "ip", "routerd_policy").Run() != nil
-	if !changed && !natMissing && !policyMissing {
+	filterMissing := bytes.Contains(data, []byte("table inet routerd_filter")) && exec.Command("nft", "list", "table", "inet", "routerd_filter").Run() != nil
+	dnatMissing := bytes.Contains(data, []byte("table ip routerd_dnat")) && exec.Command("nft", "list", "table", "ip", "routerd_dnat").Run() != nil
+	if !changed && !natMissing && !policyMissing && !filterMissing && !dnatMissing {
 		return nil, nil
 	}
+	_ = exec.Command("nft", "delete", "table", "inet", "routerd_filter").Run()
+	_ = exec.Command("nft", "delete", "table", "ip", "routerd_dnat").Run()
 	_ = exec.Command("nft", "delete", "table", "ip", "routerd_nat").Run()
 	_ = exec.Command("nft", "delete", "table", "ip", "routerd_policy").Run()
 	if err := runLogged("nft", "-f", path); err != nil {

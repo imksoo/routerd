@@ -15,7 +15,7 @@
 - dnsmasq による DHCPv4、DHCPv6/RA、DNS forward/cache
 - runtime sysctl 管理
 - syslog/journald または trusted local log plugin への内部イベント出力
-- nftables による IPv4 Source NAT
+- nftables による最小 firewall policy と IPv4 Source NAT
 - nftables mark + `ip rule` による IPv4 policy routing
 - DS-Lite ipip6 tunnel、複数 tunnel のhash分散
 - Unix domain socket 上の HTTP+JSON daemon control API
@@ -26,7 +26,6 @@
 
 まだ限定的なもの:
 
-- firewall policy
 - remote plugin install
 - full rollback
 

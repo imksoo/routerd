@@ -8,6 +8,7 @@ routerd は現在プレリリースのソフトウェアです。この変更履
 
 ## 未リリース
 
+- `firewall.routerd.net/v1alpha1` に最小ファイアウォールリソースとして `Zone`、`FirewallPolicy`、`ExposeService` を追加。
 - `HealthCheck.spec.role` を追加し、リンク、次ホップ、インターネット、サービス、ポリシーのヘルスチェックの意味を区別できるように変更。
 - `routerd.net` 用の Docusaurus ドキュメントサイトを追加。
 - `routerd.net` 向け Cloudflare Pages 前提の Docusaurus website を追加。

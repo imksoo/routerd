@@ -17,6 +17,7 @@ routerd uses Kubernetes-like API shapes:
 
 - `routerd.net/v1alpha1` for the top-level `Router` config
 - `net.routerd.net/v1alpha1` for network resources
+- `firewall.routerd.net/v1alpha1` for firewall resources
 - `system.routerd.net/v1alpha1` for local system resources
 - `plugin.routerd.net/v1alpha1` for plugin manifests
 
@@ -33,6 +34,9 @@ routerd uses Kubernetes-like API shapes:
 - `IPv4PolicyRoute`
 - `IPv4PolicyRouteSet`
 - `IPv4ReversePathFilter`
+- `Zone`
+- `FirewallPolicy`
+- `ExposeService`
 - `IPv4SourceNAT`
 - `IPv6DHCPAddress`
 - `IPv6PrefixDelegation`
@@ -562,6 +566,88 @@ spec:
 ```
 
 `target` may be `all`, `default`, or `interface`. When `target: interface`, `interface` may reference an `Interface`, `PPPoEInterface`, or `DSLiteTunnel` resource. `mode` may be `disabled`, `strict`, or `loose`, corresponding to Linux values `0`, `1`, and `2`.
+
+## Minimal Firewall
+
+Firewall resources use `firewall.routerd.net/v1alpha1`. The first firewall API is
+intentionally smaller than a general rule language. It models home-router safety
+defaults and service exposure:
+
+- `Zone`: names a set of router interfaces, such as `lan` or `wan`.
+- `FirewallPolicy`: applies the `home-router` preset with explicit input and
+  forward defaults.
+- `ExposeService`: publishes one internal IPv4 service with DNAT plus a matching
+  forward allow rule.
+
+The `home-router` preset renders input default drop, forward default drop,
+invalid drop, established/related accept, loopback input accept, LAN-to-WAN
+forward allow when `lan` and `wan` zones exist, and router SSH/DNS/DHCP access
+only from configured `routerAccess` zones.
+
+```yaml
+apiVersion: firewall.routerd.net/v1alpha1
+kind: Zone
+metadata:
+  name: lan
+spec:
+  interfaces:
+    - lan
+---
+apiVersion: firewall.routerd.net/v1alpha1
+kind: Zone
+metadata:
+  name: wan
+spec:
+  interfaces:
+    - wan-pppoe
+---
+apiVersion: firewall.routerd.net/v1alpha1
+kind: FirewallPolicy
+metadata:
+  name: default-home
+spec:
+  preset: home-router
+  input:
+    default: drop
+  forward:
+    default: drop
+  routerAccess:
+    ssh:
+      fromZones:
+        - lan
+      wan:
+        enabled: false
+    dns:
+      fromZones:
+        - lan
+    dhcp:
+      fromZones:
+        - lan
+```
+
+`ExposeService` is the first building block for IPv4 port publishing. `sources`
+is optional; when present, only those IPv4 source prefixes are accepted. `hairpin`
+is accepted in the resource shape, but the first renderer does not synthesize
+external-address hairpin rules yet because the external address selection model
+is not defined.
+
+```yaml
+apiVersion: firewall.routerd.net/v1alpha1
+kind: ExposeService
+metadata:
+  name: nas-https
+spec:
+  family: ipv4
+  fromZone: wan
+  viaInterface: wan-pppoe
+  protocol: tcp
+  externalPort: 443
+  internalAddress: 192.168.160.20
+  internalPort: 443
+  sources:
+    - 203.0.113.0/24
+  hairpin: true
+```
 
 ## DNSConditionalForwarder
 
