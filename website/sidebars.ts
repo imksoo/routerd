@@ -15,6 +15,7 @@ const sidebars: SidebarsConfig = {
       label: 'Reference',
       items: [
         'api-v1alpha1',
+        'resource-ownership',
         'control-api-v1alpha1',
         'plugin-protocol',
       ],

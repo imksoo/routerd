@@ -132,6 +132,8 @@ Keep these documents updated:
 - `README.ja.md`
 - `docs/api-v1alpha1.md`
 - `docs/api-v1alpha1.ja.md`
+- `docs/resource-ownership.md`
+- `docs/resource-ownership.ja.md`
 - `docs/plugin-protocol.md`
 - `docs/plugin-protocol.ja.md`
 - `docs/control-api-v1alpha1.md`
@@ -148,6 +150,8 @@ make check-schema
 ```
 
 When control API types change, update control API docs and generated schemas.
+When a resource kind starts managing a new host artifact, update resource
+ownership docs and keep artifact intent tests covering the resource.
 
 ## Current Non-goals
 

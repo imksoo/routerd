@@ -9,6 +9,12 @@ changes as the resource model takes shape.
 
 ## Unreleased
 
+- Added the resource ownership and adoption foundation: artifact intents for
+  every current resource kind, a local ownership ledger, read-only adoption
+  candidate reporting, and orphan reporting for managed routing/nftables
+  artifacts.
+- Added `routerd adopt --apply` and ledger updates after successful non-dry-run
+  reconcile.
 - Added `PathMTUPolicy` for IPv6 RA MTU advertisement and nftables TCP MSS
   clamping.
 - Added minimal firewall resources: `Zone`, `FirewallPolicy`, and

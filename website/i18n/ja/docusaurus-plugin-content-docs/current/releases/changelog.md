@@ -8,6 +8,10 @@ routerd は現在プレリリースのソフトウェアです。この変更履
 
 ## 未リリース
 
+- リソース所有と既存設定取り込みの基礎を追加。現在あるすべてのリソース種別が
+  artifact intent を出し、ローカル台帳、読み取り専用の取り込み候補表示、
+  管理対象の routing/nftables artifact の orphan 表示を持つように変更。
+- `routerd adopt --apply` と、dry-run ではない reconcile 成功後の台帳更新を追加。
 - IPv6 RA MTU 広告と nftables TCP MSS clamp のために `PathMTUPolicy` を追加。
 - `firewall.routerd.net/v1alpha1` に最小ファイアウォールリソースとして `Zone`、`FirewallPolicy`、`ExposeService` を追加。
 - `HealthCheck.spec.role` を追加し、リンク、次ホップ、インターネット、サービス、ポリシーのヘルスチェックの意味を区別できるように変更。

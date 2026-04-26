@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"routerd/pkg/observe"
 	"routerd/pkg/reconcile"
 	"routerd/pkg/render"
+	"routerd/pkg/resource"
 	statuswriter "routerd/pkg/status"
 )
 
@@ -38,6 +40,7 @@ const (
 	defaultNftablesPath       = "/usr/local/etc/routerd/nftables.nft"
 	defaultRouteNftablesPath  = "/usr/local/etc/routerd/default-route.nft"
 	defaultTimesyncdPath      = "/etc/systemd/timesyncd.conf.d/routerd.conf"
+	defaultLedgerPath         = "/var/lib/routerd/artifacts.json"
 	routerdDnsmasqService     = "routerd-dnsmasq.service"
 	pppoeCHAPSecretsPath      = "/etc/ppp/chap-secrets"
 	pppoePAPSecretsPath       = "/etc/ppp/pap-secrets"
@@ -63,6 +66,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return configCommand(args[1:], stdout, "observe")
 	case "plan":
 		return configCommand(args[1:], stdout, "plan")
+	case "adopt":
+		return adoptCommand(args[1:], stdout)
 	case "reconcile":
 		return reconcileCommand(args[1:], stdout)
 	case "serve":
@@ -143,6 +148,94 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 	}
 }
 
+func adoptCommand(args []string, stdout io.Writer) (err error) {
+	fs := flag.NewFlagSet("adopt", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", defaultConfigPath, "config path")
+	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
+	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
+	candidatesOnly := fs.Bool("candidates", false, "list adoption candidates without changing host state or the ownership ledger")
+	apply := fs.Bool("apply", false, "record adoption candidates in the ownership ledger without changing host state")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *candidatesOnly == *apply {
+		return errors.New("adopt requires exactly one of --candidates or --apply")
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	logger, err := eventlog.New(router)
+	if err != nil {
+		return err
+	}
+	defer closeLogger(logger, "adopt", &err)
+	logger.Emit(eventlog.LevelInfo, "adopt", "routerd command started", map[string]string{"config": *configPath})
+	ledger, err := resource.LoadLedger(*ledgerPath)
+	if err != nil {
+		return err
+	}
+	engine := reconcile.New()
+	candidates, artifacts, err := engine.AdoptionCandidateArtifacts(router, ledger)
+	if err != nil {
+		return err
+	}
+	result := &reconcile.Result{
+		Generation:         time.Now().Unix(),
+		Timestamp:          time.Now().UTC(),
+		Phase:              "Healthy",
+		AdoptionCandidates: candidates,
+	}
+	if *apply {
+		if drifted := driftedAdoptionCandidates(candidates); len(drifted) > 0 {
+			result.Phase = "Blocked"
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%d adoption candidates have observed attributes that differ from desired state; reconcile or update config before adopting", len(drifted)))
+			if err := writeResult(stdout, *statusFile, result); err != nil {
+				return err
+			}
+			return errors.New("adoption blocked by drifted candidates")
+		}
+		ledger.Remember(artifacts)
+		if err := ledger.Save(*ledgerPath); err != nil {
+			return err
+		}
+		result.AdoptedArtifacts = adoptedArtifactsForResult(artifacts)
+		result.AdoptionCandidates = nil
+	}
+	return writeResult(stdout, *statusFile, result)
+}
+
+func driftedAdoptionCandidates(candidates []reconcile.AdoptionCandidate) []reconcile.AdoptionCandidate {
+	var drifted []reconcile.AdoptionCandidate
+	for _, candidate := range candidates {
+		for key, desiredValue := range candidate.Desired {
+			if candidate.Observed[key] != desiredValue {
+				drifted = append(drifted, candidate)
+				break
+			}
+		}
+	}
+	return drifted
+}
+
+func adoptedArtifactsForResult(artifacts []resource.Artifact) []reconcile.AdoptedArtifact {
+	out := make([]reconcile.AdoptedArtifact, 0, len(artifacts))
+	seen := map[string]bool{}
+	for _, artifact := range artifacts {
+		if seen[artifact.Identity()] {
+			continue
+		}
+		seen[artifact.Identity()] = true
+		out = append(out, reconcile.AdoptedArtifact{
+			Kind:  artifact.Kind,
+			Name:  artifact.Name,
+			Owner: artifact.Owner,
+		})
+	}
+	return out
+}
+
 func reconcileCommand(args []string, stdout io.Writer) (err error) {
 	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -152,6 +245,7 @@ func reconcileCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqConfigPath := fs.String("dnsmasq-file", defaultDnsmasqConfigPath, "routerd-managed dnsmasq config file")
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
+	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
 	once := fs.Bool("once", false, "run one reconcile loop")
 	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
 	if err := fs.Parse(args); err != nil {
@@ -180,6 +274,7 @@ func reconcileCommand(args []string, stdout io.Writer) (err error) {
 		DnsmasqConfigPath:   *dnsmasqConfigPath,
 		DnsmasqServicePath:  *dnsmasqServicePath,
 		NftablesPath:        *nftablesPath,
+		LedgerPath:          *ledgerPath,
 		DryRun:              *dryRun,
 		AnnounceDryRunToCLI: true,
 	}
@@ -194,6 +289,7 @@ type reconcileApplyOptions struct {
 	DnsmasqConfigPath   string
 	DnsmasqServicePath  string
 	NftablesPath        string
+	LedgerPath          string
 	DryRun              bool
 	AnnounceDryRunToCLI bool
 }
@@ -270,11 +366,23 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if err != nil {
 			return nil, err
 		}
+		cleanedPolicyRules, err := cleanupIPv4ManagedFwmarkRules(router)
+		if err != nil {
+			return nil, err
+		}
 		appliedRuntime, err := applyRuntimeSysctls(router)
 		if err != nil {
 			return nil, err
 		}
 		appliedReversePathFilters, err := applyIPv4ReversePathFilters(router)
+		if err != nil {
+			return nil, err
+		}
+		appliedHostnames, err := applyHostnames(router)
+		if err != nil {
+			return nil, err
+		}
+		rememberedArtifacts, err := rememberReconciledArtifacts(router, opts.LedgerPath)
 		if err != nil {
 			return nil, err
 		}
@@ -312,6 +420,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		for _, key := range appliedReversePathFilters {
 			fmt.Fprintf(stdout, "applied IPv4 reverse path filter %s\n", key)
 		}
+		for _, hostname := range appliedHostnames {
+			fmt.Fprintf(stdout, "applied hostname %s\n", hostname)
+		}
 		for _, address := range appliedIPv6DelegatedAddresses {
 			fmt.Fprintf(stdout, "applied IPv6 delegated address %s\n", address)
 		}
@@ -324,16 +435,25 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		for _, route := range appliedPolicyRoutes {
 			fmt.Fprintf(stdout, "applied IPv4 policy route %s\n", route)
 		}
+		for _, rule := range cleanedPolicyRules {
+			fmt.Fprintf(stdout, "removed stale IPv4 policy rule %s\n", rule)
+		}
+		if rememberedArtifacts > 0 {
+			fmt.Fprintf(stdout, "remembered %d owned artifacts\n", rememberedArtifacts)
+		}
 		logger.Emit(eventlog.LevelInfo, "reconcile", "routerd changes applied", map[string]string{
 			"changedFiles":        fmt.Sprintf("%d", len(changedFiles)),
 			"runtimeSysctls":      fmt.Sprintf("%d", len(appliedRuntime)),
 			"reversePathFilters":  fmt.Sprintf("%d", len(appliedReversePathFilters)),
+			"hostnames":           fmt.Sprintf("%d", len(appliedHostnames)),
 			"ipv6DelegatedAddrs":  fmt.Sprintf("%d", len(appliedIPv6DelegatedAddresses)),
 			"pppoeFiles":          fmt.Sprintf("%d", len(pppoeChangedFiles)),
 			"ntpFiles":            fmt.Sprintf("%d", len(timesyncdChangedFiles)),
 			"dsliteTunnels":       fmt.Sprintf("%d", len(appliedTunnels)),
 			"ipv4DefaultRoutes":   fmt.Sprintf("%d", len(appliedDefaultRoutes)),
 			"ipv4PolicyRouteSets": fmt.Sprintf("%d", len(appliedPolicyRoutes)),
+			"ipv4PolicyRulesGone": fmt.Sprintf("%d", len(cleanedPolicyRules)),
+			"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 		})
 		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 			return nil, err
@@ -353,6 +473,26 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 	return result, nil
 }
 
+func rememberReconciledArtifacts(router *api.Router, ledgerPath string) (int, error) {
+	if ledgerPath == "" {
+		return 0, nil
+	}
+	engine := reconcile.New()
+	artifacts, err := engine.DesiredOwnedArtifacts(router)
+	if err != nil {
+		return 0, err
+	}
+	ledger, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		return 0, err
+	}
+	ledger.Remember(artifacts)
+	if err := ledger.Save(ledgerPath); err != nil {
+		return 0, err
+	}
+	return len(adoptedArtifactsForResult(artifacts)), nil
+}
+
 func serveCommand(args []string, stdout io.Writer) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -365,6 +505,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqConfigPath := fs.String("dnsmasq-file", defaultDnsmasqConfigPath, "routerd-managed dnsmasq config file")
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
+	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -405,6 +546,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		DnsmasqConfigPath:  *dnsmasqConfigPath,
 		DnsmasqServicePath: *dnsmasqServicePath,
 		NftablesPath:       *nftablesPath,
+		LedgerPath:         *ledgerPath,
 	}
 	applyMu := &sync.Mutex{}
 	if *reconcileInterval > 0 {
@@ -692,6 +834,46 @@ func applyIPv4ReversePathFilters(router *api.Router) ([]string, error) {
 		applied = append(applied, key)
 	}
 	return applied, nil
+}
+
+func applyHostnames(router *api.Router) ([]string, error) {
+	desired, err := managedHostnames(router)
+	if err != nil {
+		return nil, err
+	}
+	if len(desired) == 0 {
+		return nil, nil
+	}
+	if len(desired) > 1 {
+		return nil, fmt.Errorf("multiple managed Hostname resources are not supported: %s", strings.Join(desired, ","))
+	}
+	hostname := desired[0]
+	currentOut, err := exec.Command("hostname").CombinedOutput()
+	if err == nil && strings.TrimSpace(string(currentOut)) == hostname {
+		return nil, nil
+	}
+	if err := runLogged("hostnamectl", "set-hostname", hostname); err != nil {
+		return nil, err
+	}
+	return []string{hostname}, nil
+}
+
+func managedHostnames(router *api.Router) ([]string, error) {
+	var hostnames []string
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Hostname" {
+			continue
+		}
+		spec, err := res.HostnameSpec()
+		if err != nil {
+			return nil, err
+		}
+		if !spec.Managed {
+			continue
+		}
+		hostnames = append(hostnames, spec.Hostname)
+	}
+	return hostnames, nil
 }
 
 func ipv4ReversePathFilterValue(mode string) (string, error) {
@@ -1215,6 +1397,233 @@ func applyIPv4DefaultRouteCandidate(resourceID string, aliases map[string]string
 	return fmt.Sprintf("%s(%s,table=%d,mark=0x%x,metric=%d)", name, ifname, candidate.Table, candidate.Mark, metric), nil
 }
 
+type ipv4FwmarkRule struct {
+	Priority int
+	Mark     int
+	Table    int
+}
+
+func cleanupIPv4ManagedFwmarkRules(router *api.Router) ([]string, error) {
+	desired, err := desiredIPv4FwmarkArtifacts(router)
+	if err != nil {
+		return nil, err
+	}
+	desiredTables := map[int]bool{}
+	for _, artifact := range desired {
+		rule, ok := ipv4FwmarkRuleFromArtifact(artifact)
+		if ok {
+			desiredTables[rule.Table] = true
+		}
+	}
+	current, err := currentIPv4FwmarkArtifacts()
+	if err != nil {
+		return nil, err
+	}
+	var removed []string
+	for _, artifact := range resource.Orphans(desired, current, managedIPv4FwmarkArtifact) {
+		rule, ok := ipv4FwmarkRuleFromArtifact(artifact)
+		if !ok {
+			continue
+		}
+		if err := deleteIPv4FwmarkRule(rule); err != nil {
+			return nil, err
+		}
+		label := fmt.Sprintf("priority=%d mark=0x%x table=%d", rule.Priority, rule.Mark, rule.Table)
+		if !desiredTables[rule.Table] {
+			if err := flushIPv4RouteTable(rule.Table); err != nil {
+				return nil, err
+			}
+			label += " table=flushed"
+		}
+		removed = append(removed, label)
+	}
+	return removed, nil
+}
+
+func staleIPv4ManagedFwmarkRules(desired map[ipv4FwmarkRule]bool, current []ipv4FwmarkRule) []ipv4FwmarkRule {
+	var desiredArtifacts []resource.Artifact
+	for rule := range desired {
+		desiredArtifacts = append(desiredArtifacts, ipv4FwmarkRuleArtifact("", rule))
+	}
+	var currentArtifacts []resource.Artifact
+	for _, rule := range current {
+		currentArtifacts = append(currentArtifacts, ipv4FwmarkRuleArtifact("", rule))
+	}
+	orphanArtifacts := resource.Orphans(desiredArtifacts, currentArtifacts, managedIPv4FwmarkArtifact)
+	stale := make([]ipv4FwmarkRule, 0, len(orphanArtifacts))
+	for _, artifact := range orphanArtifacts {
+		if rule, ok := ipv4FwmarkRuleFromArtifact(artifact); ok {
+			stale = append(stale, rule)
+		}
+	}
+	return stale
+}
+
+func desiredIPv4FwmarkArtifacts(router *api.Router) ([]resource.Artifact, error) {
+	var desired []resource.Artifact
+	add := func(priority, mark, table int) {
+		if priority == 0 || mark == 0 || table == 0 {
+			return
+		}
+		desired = append(desired, ipv4FwmarkRuleArtifact("", ipv4FwmarkRule{Priority: priority, Mark: mark, Table: table}))
+	}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "IPv4PolicyRoute":
+			spec, err := res.IPv4PolicyRouteSpec()
+			if err != nil {
+				return nil, err
+			}
+			add(spec.Priority, spec.Mark, spec.Table)
+		case "IPv4PolicyRouteSet":
+			spec, err := res.IPv4PolicyRouteSetSpec()
+			if err != nil {
+				return nil, err
+			}
+			for _, target := range spec.Targets {
+				add(target.Priority, target.Mark, target.Table)
+			}
+		case "IPv4DefaultRoutePolicy":
+			spec, err := res.IPv4DefaultRoutePolicySpec()
+			if err != nil {
+				return nil, err
+			}
+			for _, candidate := range spec.Candidates {
+				if candidate.RouteSet != "" {
+					continue
+				}
+				add(candidate.Priority, candidate.Mark, candidate.Table)
+			}
+		}
+	}
+	return desired, nil
+}
+
+func desiredIPv4FwmarkRules(router *api.Router) (map[ipv4FwmarkRule]bool, error) {
+	artifacts, err := desiredIPv4FwmarkArtifacts(router)
+	if err != nil {
+		return nil, err
+	}
+	desired := map[ipv4FwmarkRule]bool{}
+	for _, artifact := range artifacts {
+		if rule, ok := ipv4FwmarkRuleFromArtifact(artifact); ok {
+			desired[rule] = true
+		}
+	}
+	return desired, nil
+}
+
+func currentIPv4FwmarkArtifacts() ([]resource.Artifact, error) {
+	out, err := exec.Command("ip", "-4", "rule", "show").CombinedOutput()
+	if err != nil {
+		return nil, err
+	}
+	var rules []resource.Artifact
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		rule := ipv4FwmarkRule{}
+		priority, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
+		if err != nil {
+			continue
+		}
+		rule.Priority = priority
+		for i, field := range fields {
+			switch field {
+			case "fwmark":
+				if i+1 >= len(fields) {
+					continue
+				}
+				mark, err := strconv.ParseInt(strings.SplitN(fields[i+1], "/", 2)[0], 0, 64)
+				if err != nil {
+					continue
+				}
+				rule.Mark = int(mark)
+			case "lookup":
+				if i+1 >= len(fields) {
+					continue
+				}
+				table, err := strconv.Atoi(fields[i+1])
+				if err != nil {
+					continue
+				}
+				rule.Table = table
+			}
+		}
+		if rule.Mark != 0 && rule.Table != 0 {
+			rules = append(rules, ipv4FwmarkRuleArtifact("", rule))
+		}
+	}
+	return rules, nil
+}
+
+func currentIPv4FwmarkRules() ([]ipv4FwmarkRule, error) {
+	artifacts, err := currentIPv4FwmarkArtifacts()
+	if err != nil {
+		return nil, err
+	}
+	rules := make([]ipv4FwmarkRule, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if rule, ok := ipv4FwmarkRuleFromArtifact(artifact); ok {
+			rules = append(rules, rule)
+		}
+	}
+	return rules, nil
+}
+
+func ipv4FwmarkRuleArtifact(owner string, rule ipv4FwmarkRule) resource.Artifact {
+	return resource.Artifact{
+		Kind:  "linux.ipv4.fwmarkRule",
+		Name:  fmt.Sprintf("priority=%d,mark=0x%x,table=%d", rule.Priority, rule.Mark, rule.Table),
+		Owner: owner,
+		Attributes: map[string]string{
+			"priority": fmt.Sprintf("%d", rule.Priority),
+			"mark":     fmt.Sprintf("0x%x", rule.Mark),
+			"table":    fmt.Sprintf("%d", rule.Table),
+		},
+	}
+}
+
+func ipv4FwmarkRuleFromArtifact(artifact resource.Artifact) (ipv4FwmarkRule, bool) {
+	priority, err := strconv.Atoi(artifact.Attributes["priority"])
+	if err != nil {
+		return ipv4FwmarkRule{}, false
+	}
+	mark, err := strconv.ParseInt(artifact.Attributes["mark"], 0, 64)
+	if err != nil {
+		return ipv4FwmarkRule{}, false
+	}
+	table, err := strconv.Atoi(artifact.Attributes["table"])
+	if err != nil {
+		return ipv4FwmarkRule{}, false
+	}
+	return ipv4FwmarkRule{Priority: priority, Mark: int(mark), Table: table}, true
+}
+
+func managedIPv4FwmarkArtifact(artifact resource.Artifact) bool {
+	rule, ok := ipv4FwmarkRuleFromArtifact(artifact)
+	return ok && routerdManagedMark(rule.Mark)
+}
+
+func routerdManagedMark(mark int) bool {
+	return mark >= 0x100 && mark <= 0x1ff
+}
+
+func deleteIPv4FwmarkRule(rule ipv4FwmarkRule) error {
+	return runLogged(
+		"ip", "-4", "rule", "del",
+		"priority", fmt.Sprintf("%d", rule.Priority),
+		"fwmark", fmt.Sprintf("0x%x", rule.Mark),
+		"table", fmt.Sprintf("%d", rule.Table),
+	)
+}
+
+func flushIPv4RouteTable(table int) error {
+	return runLogged("ip", "-4", "route", "flush", "table", fmt.Sprintf("%d", table))
+}
+
 func applyIPv4DefaultRoutePolicyMarks(resourceID string, spec api.IPv4DefaultRoutePolicySpec, active api.IPv4DefaultRoutePolicyCandidate, healthy []api.IPv4DefaultRoutePolicyCandidate, routeSets map[string]api.IPv4PolicyRouteSetSpec) error {
 	if _, err := exec.LookPath("nft"); err != nil {
 		return fmt.Errorf("nft is required for IPv4 default route policy: %w", err)
@@ -1384,7 +1793,15 @@ func ensureIPv4FwmarkRule(priority, mark, table int) error {
 			return nil
 		}
 	}
-	_ = exec.Command("ip", "-4", "rule", "del", "priority", priorityText).Run()
+	for {
+		out, err := exec.Command("ip", "-4", "rule", "show", "priority", priorityText).CombinedOutput()
+		if err != nil || strings.TrimSpace(string(out)) == "" {
+			break
+		}
+		if err := exec.Command("ip", "-4", "rule", "del", "priority", priorityText).Run(); err != nil {
+			break
+		}
+	}
 	return runLogged("ip", "-4", "rule", "add", "priority", priorityText, "fwmark", markText, "table", tableText)
 }
 
@@ -2044,7 +2461,6 @@ func writeResult(stdout io.Writer, statusFile string, result *reconcile.Result) 
 		if err := statuswriter.Write(statusFile, result); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "wrote status %s\n", statusFile)
 	}
 	return nil
 }
@@ -2056,6 +2472,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  validate --config <path>")
 	fmt.Fprintln(w, "  observe --config <path>")
 	fmt.Fprintln(w, "  plan --config <path>")
+	fmt.Fprintln(w, "  adopt --config <path> --candidates")
+	fmt.Fprintln(w, "  adopt --config <path> --apply")
 	fmt.Fprintln(w, "  reconcile --config <path> --once [--dry-run]")
 	fmt.Fprintln(w, "  serve --config <path> [--socket <path>]")
 	fmt.Fprintln(w, "  run --config <path>")

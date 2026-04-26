@@ -159,6 +159,7 @@ make website-build
 ```sh
 routerd validate --config examples/router-lab.yaml
 routerd plan --config examples/router-lab.yaml
+routerd adopt --config examples/router-lab.yaml --candidates
 routerd reconcile --config examples/router-lab.yaml --once --dry-run
 routerd serve --config examples/router-lab.yaml --socket /run/routerd/routerd.sock
 routerctl status
@@ -173,17 +174,19 @@ sudo routerd reconcile --config /usr/local/etc/routerd/router.yaml --once
 ```
 
 `reconcile --once` は、routerd が管理する netplan、networkd 追加設定、dnsmasq、nftables、sysctl、DS-Lite トンネル、ポリシールーティングを反映できます。リモートルーターで実行する前に、`plan` と `dry-run` を確認してください。cloud-init や既存 netplan が管理しているインターフェースを不用意に奪わないよう、routerd は引き継ぎが必要な状態を検出して計画に出します。
+既に実機上にある設定を routerd の管理下へ入れる場合は、`routerd adopt --candidates`
+で候補を確認し、問題がなければ `routerd adopt --apply` で実機状態を変えずに
+ローカル台帳へ記録します。
 
 ## ドキュメント
 
-- [API v1alpha1](docs/api-v1alpha1.md)
-- [Control API v1alpha1](docs/control-api-v1alpha1.md)
-- [Plugin protocol](docs/plugin-protocol.md)
+- [API v1alpha1 日本語](docs/api-v1alpha1.ja.md)
+- [リソース所有](docs/resource-ownership.ja.md)
+- [操作 API v1alpha1 日本語](docs/control-api-v1alpha1.ja.md)
+- [プラグインプロトコル 日本語](docs/plugin-protocol.ja.md)
 - [はじめに](docs/tutorials/getting-started.md)
 - [更新履歴](docs/releases/changelog.md)
-- [API v1alpha1 日本語](docs/api-v1alpha1.ja.md)
-- [Control API v1alpha1 日本語](docs/control-api-v1alpha1.ja.md)
-- [Plugin protocol 日本語](docs/plugin-protocol.ja.md)
+- [英語 README](README.md)
 
 公開サイトは `website/` 配下にあり、Docusaurus でビルドします。英語版と日本語版を Cloudflare Pages に公開する構成です。Cloudflare Pages ではルートディレクトリを `website`、ビルドコマンドを `npm ci && npm run build`、出力ディレクトリを `build` にします。`routerd.net` は Cloudflare Pages の独自ドメインとして追加します。
 

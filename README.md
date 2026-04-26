@@ -165,6 +165,7 @@ Useful direct commands:
 ```sh
 routerd validate --config examples/router-lab.yaml
 routerd plan --config examples/router-lab.yaml
+routerd adopt --config examples/router-lab.yaml --candidates
 routerd reconcile --config examples/router-lab.yaml --once --dry-run
 routerd serve --config examples/router-lab.yaml --socket /run/routerd/routerd.sock
 routerctl status
@@ -176,15 +177,20 @@ routerctl plan
 nftables, sysctls, DS-Lite tunnels, and policy routing. Avoid using it on a
 remote router until the adoption plan is understood, especially where
 cloud-init or existing netplan configuration owns the management interface.
+Use `routerd adopt --candidates` to inspect existing matching host artifacts,
+then `routerd adopt --apply` to record matching artifacts in the local ownership
+ledger without changing host state.
 
 ## Documentation
 
 - [API v1alpha1](docs/api-v1alpha1.md)
+- [Resource ownership](docs/resource-ownership.md)
 - [Control API v1alpha1](docs/control-api-v1alpha1.md)
 - [Plugin protocol](docs/plugin-protocol.md)
 - [Getting started](docs/tutorials/getting-started.md)
 - [Changelog](docs/releases/changelog.md)
 - [API v1alpha1 Japanese](docs/api-v1alpha1.ja.md)
+- [Resource ownership Japanese](docs/resource-ownership.ja.md)
 - [Control API v1alpha1 Japanese](docs/control-api-v1alpha1.ja.md)
 - [Plugin protocol Japanese](docs/plugin-protocol.ja.md)
 

@@ -61,6 +61,11 @@ The schema is intentionally small and will be implemented incrementally.
 - `managed: false` means routerd observes the interface and resolves aliases, but does not change link or address state.
 - `managed: true` means routerd may manage the interface after existing OS networking ownership has been reviewed.
 
+Host-level ownership is tracked as artifact intents and, for adopted resources,
+the local ledger at `/var/lib/routerd/artifacts.json`. See
+[Resource Ownership](resource-ownership.md) for the common reconcile and orphan
+cleanup model used across resource kinds.
+
 When cloud-init or netplan is detected, routerd planning reports `RequiresAdoption` instead of taking over automatically.
 
 ## PPPoEInterface

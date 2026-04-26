@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"routerd/pkg/api"
+	"routerd/pkg/reconcile"
 	"routerd/pkg/render"
+	"routerd/pkg/resource"
 )
 
 func TestApplyNetworkConfigSkipsUnchangedFiles(t *testing.T) {
@@ -170,6 +172,35 @@ func TestSelectIPv4DefaultRouteCandidateTreatsMissingHealthCheckAsUp(t *testing.
 	}
 }
 
+func TestStaleIPv4ManagedFwmarkRules(t *testing.T) {
+	desired := map[ipv4FwmarkRule]bool{
+		{Priority: 10, Mark: 0x111, Table: 111}: true,
+		{Priority: 20, Mark: 0x112, Table: 112}: true,
+	}
+	current := []ipv4FwmarkRule{
+		{Priority: 10, Mark: 0x111, Table: 111},
+		{Priority: 20, Mark: 0x112, Table: 112},
+		{Priority: 30, Mark: 0x112, Table: 112},
+		{Priority: 10000, Mark: 0x100, Table: 100},
+		{Priority: 10001, Mark: 0x101, Table: 101},
+		{Priority: 500, Mark: 0x900, Table: 900},
+	}
+	got := staleIPv4ManagedFwmarkRules(desired, current)
+	want := []ipv4FwmarkRule{
+		{Priority: 30, Mark: 0x112, Table: 112},
+		{Priority: 10000, Mark: 0x100, Table: 100},
+		{Priority: 10001, Mark: 0x101, Table: 101},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("stale rules = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("stale rules = %+v, want %+v", got, want)
+		}
+	}
+}
+
 func TestResolveHealthCheckTargetDSLiteRemoteAddress(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
@@ -210,6 +241,63 @@ func TestChangedNetworkdInterfaces(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("interfaces = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestManagedHostnames(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"},
+				Metadata: api.ObjectMeta{Name: "system-hostname"},
+				Spec:     api.HostnameSpec{Hostname: "router03.lain.local", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"},
+				Metadata: api.ObjectMeta{Name: "observed-hostname"},
+				Spec:     api.HostnameSpec{Hostname: "ignored.example", Managed: false},
+			},
+		}},
+	}
+	got, err := managedHostnames(router)
+	if err != nil {
+		t.Fatalf("managed hostnames: %v", err)
+	}
+	if len(got) != 1 || got[0] != "router03.lain.local" {
+		t.Fatalf("managed hostnames = %v, want router03.lain.local", got)
+	}
+}
+
+func TestDriftedAdoptionCandidates(t *testing.T) {
+	candidates := []reconcile.AdoptionCandidate{
+		{
+			Kind:     "linux.hostname",
+			Name:     "system",
+			Desired:  map[string]string{"hostname": "router03.lain.local"},
+			Observed: map[string]string{"hostname": "router03"},
+		},
+		{
+			Kind:     "linux.ipv4.routeTable",
+			Name:     "table=111",
+			Desired:  map[string]string{"table": "111", "ifname": "ppp0"},
+			Observed: map[string]string{"table": "111", "ifname": "ppp0"},
+		},
+	}
+	got := driftedAdoptionCandidates(candidates)
+	if len(got) != 1 || got[0].Kind != "linux.hostname" {
+		t.Fatalf("drifted candidates = %+v, want hostname only", got)
+	}
+}
+
+func TestAdoptedArtifactsForResultDeduplicates(t *testing.T) {
+	artifacts := []resource.Artifact{
+		{Kind: "nft.table", Name: "routerd_nat", Owner: "one"},
+		{Kind: "nft.table", Name: "routerd_nat", Owner: "one"},
+		{Kind: "linux.hostname", Name: "system", Owner: "host"},
+	}
+	got := adoptedArtifactsForResult(artifacts)
+	if len(got) != 2 {
+		t.Fatalf("adopted artifacts = %+v, want two", got)
 	}
 }
 

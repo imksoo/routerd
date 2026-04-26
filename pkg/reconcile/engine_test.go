@@ -7,6 +7,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/config"
+	"routerd/pkg/resource"
 )
 
 func TestPlanUsesNetplanForManagedInterfaceWhenAvailable(t *testing.T) {
@@ -375,6 +376,93 @@ func TestPlanAllowsDocumentedOverlapWithWarning(t *testing.T) {
 	}
 	if len(static.Warnings) == 0 {
 		t.Fatal("expected overlap warning")
+	}
+}
+
+func TestAdoptionCandidates(t *testing.T) {
+	router := staticDefaultRouteRouter()
+	engine := &Engine{
+		Command: fakeCommand(map[string]string{
+			"ip -4 rule show":                  "0:\tfrom all lookup local\n10:\tfrom all fwmark 0x100 lookup 100\n32766:\tfrom all lookup main\n",
+			"ip -4 route show table all":       "default via 192.168.1.254 dev ens18 table 100 metric 50\n",
+			"nft list tables":                  "table ip routerd_default_route\n",
+			"ip -4 route show default":         "default via 192.168.1.254 dev ens18 proto static metric 100\n",
+			"ip -brief link show dev ens18":    "ens18 UP 52:54:00:00:00:18 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
+			"ip -brief -4 addr show dev ens18": "192.168.1.10/24\n",
+		}),
+		OSNetworking: &osNetworking{},
+	}
+	candidates, err := engine.AdoptionCandidates(router, nil)
+	if err != nil {
+		t.Fatalf("adoption candidates: %v", err)
+	}
+	if len(candidates) == 0 {
+		t.Fatal("expected adoption candidates")
+	}
+	var foundRule bool
+	for _, candidate := range candidates {
+		if candidate.Kind == "linux.ipv4.fwmarkRule" && candidate.Name == "priority=10,mark=0x100,table=100" {
+			foundRule = true
+		}
+	}
+	if !foundRule {
+		t.Fatalf("missing fwmark adoption candidate: %+v", candidates)
+	}
+	ledger := &resource.Ledger{Version: 1}
+	ledger.Remember([]resource.Artifact{
+		{
+			Kind:  "linux.ipv4.fwmarkRule",
+			Name:  "priority=10,mark=0x100,table=100",
+			Owner: "net.routerd.net/v1alpha1/IPv4DefaultRoutePolicy/default-v4",
+			Attributes: map[string]string{
+				"priority": "10",
+				"mark":     "0x100",
+				"table":    "100",
+			},
+		},
+	})
+	candidates, err = engine.AdoptionCandidates(router, ledger)
+	if err != nil {
+		t.Fatalf("adoption candidates with ledger: %v", err)
+	}
+	for _, candidate := range candidates {
+		if candidate.Kind == "linux.ipv4.fwmarkRule" && candidate.Name == "priority=10,mark=0x100,table=100" {
+			t.Fatalf("ledger-owned rule still returned as adoption candidate: %+v", candidates)
+		}
+	}
+}
+
+func TestAdoptionCandidatesReportAttributeDrift(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"},
+				Metadata: api.ObjectMeta{Name: "system-hostname"},
+				Spec:     api.HostnameSpec{Hostname: "router03.lain.local", Managed: true},
+			},
+		}},
+	}
+	engine := &Engine{
+		Command: fakeCommand(map[string]string{
+			"hostname": "router03\n",
+		}),
+		OSNetworking: &osNetworking{},
+	}
+	candidates, err := engine.AdoptionCandidates(router, nil)
+	if err != nil {
+		t.Fatalf("adoption candidates: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %+v, want one", candidates)
+	}
+	got := candidates[0]
+	if got.Desired["hostname"] != "router03.lain.local" || got.Observed["hostname"] != "router03" {
+		t.Fatalf("candidate attributes = %+v", got)
+	}
+	if !strings.Contains(got.Reason, "observed attributes differ") {
+		t.Fatalf("reason = %q", got.Reason)
 	}
 }
 

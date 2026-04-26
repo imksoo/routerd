@@ -54,6 +54,11 @@ routerd の config は Kubernetes 風のリソース形状を使います。
 - `managed: false`: observe と alias 解決だけを行い、link/address state は変更しません。
 - `managed: true`: routerd がそのinterfaceを管理できます。ただし cloud-init や netplan の既存所有が見える場合は、いきなり奪わず `RequiresAdoption` として計画に出します。
 
+実機上の所有関係は artifact intent と、取り込み済みリソースについては
+`/var/lib/routerd/artifacts.json` のローカル台帳で扱います。各リソース共通の
+reconcile と orphan cleanup の考え方は [リソース所有](resource-ownership.ja.md)
+を参照してください。
+
 ## PPPoEInterface
 
 `PPPoEInterface` は、別の `Interface` の上に PPPoE interface を作るリソースです。Linux では pppd/rp-pppoe の peer 設定、CHAP/PAP secrets、任意の systemd unit を生成します。

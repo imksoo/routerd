@@ -121,11 +121,23 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		case "Hostname":
 			e.observeHostname(res, osNet, includePlan, &rr)
 		}
+		if includePlan {
+			rr.Artifacts = artifactIntentsForResult(resourceArtifactIntents(res, aliases))
+		}
 
 		if rr.Phase == "RequiresAdoption" || rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
 		}
 		result.Resources = append(result.Resources, rr)
+	}
+	if includePlan {
+		result.Orphans = append(result.Orphans, e.observeManagedOrphans(router, aliases)...)
+		if len(result.Orphans) > 0 {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%d orphaned managed artifacts found", len(result.Orphans)))
+			if result.Phase == "Healthy" {
+				result.Phase = "Drifted"
+			}
+		}
 	}
 
 	return result, nil
