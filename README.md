@@ -38,6 +38,48 @@ or:
 go build ./cmd/routerd
 ```
 
+The build artifact is written to `bin/routerd`.
+
+## Install
+
+For local source installs:
+
+```sh
+sudo make install
+```
+
+The install target is intentionally simple so packaging can later wrap the same layout from ports, dpkg, or another package system. Override paths with `PREFIX`, `DESTDIR`, `SYSCONFDIR`, `PLUGINDIR`, `RUNDIR`, `STATEDIR`, or `SYSTEMDUNITDIR` as needed.
+
+Example staged install:
+
+```sh
+make install DESTDIR=/tmp/routerd-root
+```
+
+Build a tarball containing the install tree:
+
+```sh
+make dist
+```
+
+Install to a remote test host without requiring Go or make on that host:
+
+```sh
+make remote-install REMOTE_HOST=user@router.example
+```
+
+Install a config file to a remote test host:
+
+```sh
+make remote-install-config REMOTE_HOST=user@router.example CONFIG=path/to/router.yaml
+```
+
+Install the systemd unit explicitly on Linux systems that use systemd:
+
+```sh
+sudo make install-systemd
+```
+
 ## Test
 
 ```sh
@@ -61,9 +103,20 @@ The current CLI is an initial scaffold. Resource loading, plugin execution, and 
 
 ## Default Paths
 
-- Config: `/etc/routerd/router.yaml`
-- Plugin dir: `/usr/lib/routerd/plugins`
+- Config: `/usr/local/etc/routerd/router.yaml`
+- Plugin dir: `/usr/local/libexec/routerd/plugins`
+- Binary: `/usr/local/sbin/routerd`
+
+Linux runtime defaults:
+
 - Runtime dir: `/run/routerd`
 - State dir: `/var/lib/routerd`
 - Status file: `/run/routerd/status.json`
 - Lock file: `/run/routerd/routerd.lock`
+
+FreeBSD runtime defaults:
+
+- Runtime dir: `/var/run/routerd`
+- State dir: `/var/db/routerd`
+- Status file: `/var/run/routerd/status.json`
+- Lock file: `/var/run/routerd/routerd.lock`

@@ -1,17 +1,22 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"runtime"
+
+	"routerd/pkg/config"
+	"routerd/pkg/reconcile"
+	statuswriter "routerd/pkg/status"
 )
 
 const (
-	defaultConfigPath = "/etc/routerd/router.yaml"
-	defaultPluginDir  = "/usr/lib/routerd/plugins"
-	defaultStatusFile = "/run/routerd/status.json"
+	defaultConfigPath = "/usr/local/etc/routerd/router.yaml"
+	defaultPluginDir  = "/usr/local/libexec/routerd/plugins"
 )
 
 func main() {
@@ -61,7 +66,15 @@ func validateCommand(args []string, stdout io.Writer) error {
 	if err := requireExistingFile(*configPath); err != nil {
 		return err
 	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	if err := config.Validate(router); err != nil {
+		return err
+	}
 	fmt.Fprintf(stdout, "config %s exists\n", *configPath)
+	fmt.Fprintln(stdout, "config is valid")
 	return nil
 }
 
@@ -69,36 +82,68 @@ func configCommand(args []string, stdout io.Writer, name string) error {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", defaultConfigPath, "config path")
+	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if err := requireExistingFile(*configPath); err != nil {
+	router, err := config.Load(*configPath)
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "%s is not implemented yet for %s\n", name, *configPath)
-	return nil
+	engine := reconcile.New()
+	switch name {
+	case "observe":
+		result, err := engine.Observe(router)
+		if err != nil {
+			return err
+		}
+		return writeResult(stdout, *statusFile, result)
+	case "plan":
+		result, err := engine.Plan(router)
+		if err != nil {
+			return err
+		}
+		return writeResult(stdout, *statusFile, result)
+	case "run":
+		return errors.New("run is not implemented yet")
+	default:
+		return fmt.Errorf("unknown config command %s", name)
+	}
 }
 
 func reconcileCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", defaultConfigPath, "config path")
+	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
 	once := fs.Bool("once", false, "run one reconcile loop")
 	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if err := requireExistingFile(*configPath); err != nil {
+	if !*once {
+		return errors.New("reconcile currently requires --once")
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "reconcile is not implemented yet for %s once=%t dryRun=%t\n", *configPath, *once, *dryRun)
-	return nil
+	engine := reconcile.New()
+	result, err := engine.Plan(router)
+	if err != nil {
+		return err
+	}
+	if !*dryRun {
+		return errors.New("non-dry-run reconcile is not implemented yet")
+	}
+	fmt.Fprintf(stdout, "dry-run reconcile plan for %s\n", *configPath)
+	return writeResult(stdout, *statusFile, result)
 }
 
 func statusCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	statusFile := fs.String("status-file", defaultStatusFile, "status file")
+	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -145,6 +190,39 @@ func requireExistingFile(path string) error {
 	}
 	if info.IsDir() {
 		return fmt.Errorf("%s is a directory", path)
+	}
+	return nil
+}
+
+func defaultRuntimeDir() string {
+	if runtime.GOOS == "freebsd" {
+		return "/var/run/routerd"
+	}
+	return "/run/routerd"
+}
+
+func defaultStateDir() string {
+	if runtime.GOOS == "freebsd" {
+		return "/var/db/routerd"
+	}
+	return "/var/lib/routerd"
+}
+
+func defaultStatusFile() string {
+	return defaultRuntimeDir() + "/status.json"
+}
+
+func writeResult(stdout io.Writer, statusFile string, result *reconcile.Result) error {
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, string(data))
+	if statusFile != "" {
+		if err := statuswriter.Write(statusFile, result); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "wrote status %s\n", statusFile)
 	}
 	return nil
 }

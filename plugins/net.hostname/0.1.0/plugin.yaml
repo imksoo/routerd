@@ -1,12 +1,12 @@
 apiVersion: plugin.routerd.net/v1alpha1
 kind: Plugin
 metadata:
-  name: net.ipv4.dhcp
+  name: net.hostname
   version: 0.1.0
 spec:
   resource:
     apiVersion: net.routerd.net/v1alpha1
-    kind: IPv4DHCPAddress
+    kind: Hostname
   runtime:
     executable: plugin.sh
   actions:
@@ -14,8 +14,9 @@ spec:
     observe: true
     plan: true
     ensure: true
-    delete: true
+    delete: false
   requirements:
     commands:
-      - dhcpcd
+      - hostname
+      - hostnamectl
       - jq

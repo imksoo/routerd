@@ -6,6 +6,7 @@ This repository implements `routerd`, a declarative router resource reconciler.
 
 Initial target:
 - Ubuntu Server
+- install layout under `/usr/local`
 - Go
 - YAML config
 - external trusted local plugins
@@ -50,6 +51,15 @@ go build ./cmd/routerd
 routerd validate --config examples/basic-static.yaml
 routerd reconcile --config examples/basic-static.yaml --once --dry-run
 ```
+
+Default install paths should stay friendly to both Linux source installs and future FreeBSD ports:
+
+- Config: `/usr/local/etc/routerd/router.yaml`
+- Plugin dir: `/usr/local/libexec/routerd/plugins`
+- Binary: `/usr/local/sbin/routerd`
+
+Linux runtime defaults are `/run/routerd` and `/var/lib/routerd`.
+FreeBSD runtime defaults are `/var/run/routerd` and `/var/db/routerd`.
 
 If a Makefile exists, prefer:
 

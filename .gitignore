@@ -1,3 +1,6 @@
 /routerd
+/bin/
+/LOCAL.md
+/local/
 *.test
 coverage.out

@@ -5,7 +5,7 @@ Wants=network-pre.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/sbin/routerd run --config /etc/routerd/router.yaml
+ExecStart=/usr/local/sbin/routerd run --config /usr/local/etc/routerd/router.yaml
 Restart=always
 RestartSec=2s
 RuntimeDirectory=routerd
