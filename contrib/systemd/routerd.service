@@ -1,0 +1,15 @@
+[Unit]
+Description=routerd declarative router controller
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/routerd run --config /etc/routerd/router.yaml
+Restart=always
+RestartSec=2s
+RuntimeDirectory=routerd
+StateDirectory=routerd
+
+[Install]
+WantedBy=multi-user.target

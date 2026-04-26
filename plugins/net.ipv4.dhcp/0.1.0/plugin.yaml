@@ -1,0 +1,20 @@
+apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  name: net.ipv4.dhcp
+  version: 0.1.0
+spec:
+  resource:
+    apiVersion: net.routerd.net/v1alpha1
+    kind: IPv4DHCPAddress
+  runtime:
+    executable: plugin.sh
+  actions:
+    validate: true
+    observe: true
+    plan: true
+    ensure: true
+    delete: true
+  requirements:
+    commands:
+      - jq

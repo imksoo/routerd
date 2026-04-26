@@ -1,0 +1,24 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: lab-router
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: dummy0
+        adminUp: true
+        managed: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-ipv4
+      spec:
+        interface: lan
+        address: 192.168.100.1/24
+        exclusive: false

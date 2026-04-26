@@ -1,0 +1,17 @@
+apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  name: fake.ipv4.static
+  version: 0.1.0
+spec:
+  resource:
+    apiVersion: net.routerd.net/v1alpha1
+    kind: IPv4StaticAddress
+  runtime:
+    executable: plugin.sh
+  actions:
+    validate: true
+    observe: true
+    plan: true
+    ensure: true
+    delete: true
