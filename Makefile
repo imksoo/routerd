@@ -48,7 +48,7 @@ check-build-deps:
 
 check-remote-deps:
 	@test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make check-remote-deps REMOTE_HOST=user@router.example" >&2; exit 2)
-	@ssh $(REMOTE_HOST) 'missing=0; for cmd in sudo tar install ip sysctl; do if ! command -v $$cmd >/dev/null 2>&1; then echo "missing remote dependency: $$cmd" >&2; missing=1; fi; done; exit $$missing'
+	@ssh $(REMOTE_HOST) 'missing=0; for cmd in sudo tar install ip sysctl systemctl resolvectl dnsmasq nft conntrack; do if ! command -v $$cmd >/dev/null 2>&1; then echo "missing remote dependency: $$cmd" >&2; missing=1; fi; done; exit $$missing'
 
 install: check-build-deps build
 	install -d $(DESTDIR)$(BINDIR)

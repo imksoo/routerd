@@ -16,6 +16,50 @@ spec:
         runtime: true
         persistent: false
 
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv6-forwarding
+      spec:
+        key: net.ipv6.conf.all.forwarding
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4ReversePathFilter
+      metadata:
+        name: rp-filter-all
+      spec:
+        target: all
+        mode: disabled
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4ReversePathFilter
+      metadata:
+        name: rp-filter-default
+      spec:
+        target: default
+        mode: disabled
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4ReversePathFilter
+      metadata:
+        name: rp-filter-lan
+      spec:
+        target: interface
+        interface: lan
+        mode: disabled
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4ReversePathFilter
+      metadata:
+        name: rp-filter-transix
+      spec:
+        target: interface
+        interface: transix
+        mode: disabled
+
     - apiVersion: net.routerd.net/v1alpha1
       kind: Hostname
       metadata:
@@ -57,7 +101,7 @@ spec:
       metadata:
         name: lan-to-wan
       spec:
-        outboundInterface: wan
+        outboundInterface: transix
         sourceCIDRs:
           - 192.168.160.0/24
         translation:
@@ -68,12 +112,66 @@ spec:
             end: 65535
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4PolicyRoute
+      metadata:
+        name: lan-via-transix
+      spec:
+        outboundInterface: transix
+        table: 100
+        priority: 10000
+        mark: 256
+        sourceCIDRs:
+          - 192.168.160.0/24
+        routeMetric: 50
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSConditionalForwarder
+      metadata:
+        name: transix-aftr
+      spec:
+        domain: gw.transix.jp
+        upstreamSource: static
+        upstreamServers:
+          - 2404:1a8:7f01:a::3
+          - 2404:1a8:7f01:b::3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: transix
+      spec:
+        interface: wan
+        tunnelName: ds-transix
+        aftrFQDN: gw.transix.jp
+        aftrDNSServers:
+          - 2404:1a8:7f01:a::3
+          - 2404:1a8:7f01:b::3
+        aftrAddressOrdinal: 1
+        aftrAddressSelection: ordinalModulo
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: lan-ipv6-pd-address
+        localAddressSuffix: "::100"
+        defaultRoute: true
+        routeMetric: 50
+        mtu: 1460
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DHCPAddress
       metadata:
         name: wan-dhcp6
       spec:
         interface: wan
-        client: dhcpcd
+        client: networkd
+        required: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6PrefixDelegation
+      metadata:
+        name: wan-pd
+      spec:
+        interface: wan
+        client: networkd
+        profile: ntt-hgw-lan-pd
         required: false
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -96,12 +194,49 @@ spec:
         exclusive: false
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: lan-ipv6-pd-address
+      spec:
+        prefixDelegation: wan-pd
+        interface: lan
+        subnetID: "0"
+        addressSuffix: "::3"
+        sendRA: false
+        announce: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DHCPServer
+      metadata:
+        name: dhcp6
+      spec:
+        server: dnsmasq
+        managed: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DHCPScope
+      metadata:
+        name: lan-dhcp6
+      spec:
+        server: dhcp6
+        delegatedAddress: lan-ipv6-pd-address
+        mode: stateless
+        leaseTime: 12h
+        defaultRoute: true
+        dnsSource: self
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4DHCPServer
       metadata:
         name: dhcp4
       spec:
         server: dnsmasq
         managed: true
+        dns:
+          enabled: true
+          upstreamSource: dhcp4
+          upstreamInterface: wan
+          cacheSize: 1000
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4DHCPScope
@@ -114,6 +249,5 @@ spec:
         rangeEnd: 192.168.160.199
         leaseTime: 12h
         routerSource: interfaceAddress
-        dnsSource: dhcp4
-        dnsInterface: wan
+        dnsSource: self
         authoritative: true

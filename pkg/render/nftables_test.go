@@ -1,0 +1,192 @@
+package render
+
+import (
+	"strings"
+	"testing"
+
+	"routerd/pkg/api"
+)
+
+func TestNftablesIPv4SourceNAT(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
+				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
+				Spec: api.IPv4SourceNATSpec{
+					OutboundInterface: "wan",
+					SourceCIDRs:       []string{"192.168.160.0/24"},
+					Translation: api.IPv4NATTranslationSpec{
+						Type: "interfaceAddress",
+						PortMapping: api.IPv4NATPortMappingSpec{
+							Type:  "range",
+							Start: 1024,
+							End:   65535,
+						},
+					},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"table ip routerd_nat",
+		"type nat hook postrouting priority srcnat; policy accept;",
+		`oifname "ens18" ip saddr 192.168.160.0/24 meta l4proto { tcp, udp } masquerade to :1024-65535`,
+		`oifname "ens18" ip saddr 192.168.160.0/24 masquerade`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesIPv4SourceNATCanUseDSLiteTunnel(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+				Metadata: api.ObjectMeta{Name: "transix"},
+				Spec: api.DSLiteTunnelSpec{
+					Interface:  "wan",
+					TunnelName: "ds-transix",
+					AFTRFQDN:   "gw.transix.jp",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
+				Metadata: api.ObjectMeta{Name: "lan-to-transix"},
+				Spec: api.IPv4SourceNATSpec{
+					OutboundInterface: "transix",
+					SourceCIDRs:       []string{"192.168.160.0/24"},
+					Translation:       api.IPv4NATTranslationSpec{Type: "interfaceAddress"},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	if !strings.Contains(string(data), `oifname "ds-transix" ip saddr 192.168.160.0/24 masquerade`) {
+		t.Fatalf("nftables output missing DS-Lite tunnel oif:\n%s", string(data))
+	}
+}
+
+func TestNftablesIPv4SourceNATAddressPortRange(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ds0", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
+				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
+				Spec: api.IPv4SourceNATSpec{
+					OutboundInterface: "wan",
+					SourceCIDRs:       []string{"192.168.160.0/24"},
+					Translation: api.IPv4NATTranslationSpec{
+						Type:    "address",
+						Address: "192.0.0.2",
+						PortMapping: api.IPv4NATPortMappingSpec{
+							Type:  "range",
+							Start: 1024,
+							End:   65535,
+						},
+					},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	if !strings.Contains(string(data), `snat to 192.0.0.2:1024-65535`) {
+		t.Fatalf("nftables output missing address SNAT port range:\n%s", string(data))
+	}
+}
+
+func TestNftablesIPv4PolicyRoute(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRoute"},
+				Metadata: api.ObjectMeta{Name: "lan-via-transix"},
+				Spec: api.IPv4PolicyRouteSpec{
+					OutboundInterface: "transix",
+					Table:             100,
+					Priority:          10000,
+					Mark:              256,
+					SourceCIDRs:       []string{"192.168.160.0/24"},
+					DestinationCIDRs:  []string{"0.0.0.0/0"},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"table ip routerd_policy",
+		"type filter hook prerouting priority mangle; policy accept;",
+		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 meta mark set 0x100",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesIPv4PolicyRouteSet(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"},
+				Metadata: api.ObjectMeta{Name: "lan-balance"},
+				Spec: api.IPv4PolicyRouteSetSpec{
+					Mode:             "hash",
+					HashFields:       []string{"sourceAddress", "destinationAddress"},
+					SourceCIDRs:      []string{"192.168.160.0/24"},
+					DestinationCIDRs: []string{"0.0.0.0/0"},
+					Targets: []api.IPv4PolicyRouteTarget{
+						{OutboundInterface: "transix-a", Table: 100, Priority: 10000, Mark: 256},
+						{OutboundInterface: "transix-b", Table: 101, Priority: 10001, Mark: 257},
+					},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 ct mark != 0x0 meta mark set ct mark",
+		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 meta mark set jhash ip saddr . ip daddr mod 2 map { 0 : 0x100, 1 : 0x101 }",
+		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 ct mark set meta mark",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}

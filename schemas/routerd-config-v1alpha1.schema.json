@@ -298,6 +298,37 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "dns": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "cacheSize": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "upstreamInterface": {
+                            "type": "string"
+                          },
+                          "upstreamServers": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "upstreamSource": {
+                            "enum": [
+                              "dhcp4",
+                              "static",
+                              "system",
+                              "none"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "managed": {
                         "type": "boolean"
                       },
@@ -484,6 +515,445 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "IPv6PrefixDelegation",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "client": {
+                        "type": "string"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "prefixLength": {
+                        "maximum": 128,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "profile": {
+                        "enum": [
+                          "default",
+                          "ntt-ngn-direct-hikari-denwa",
+                          "ntt-hgw-lan-pd"
+                        ],
+                        "type": "string"
+                      },
+                      "required": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "interface"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv6DelegatedAddress",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "addressSuffix": {
+                        "type": "string"
+                      },
+                      "announce": {
+                        "type": "boolean"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "prefixDelegation": {
+                        "type": "string"
+                      },
+                      "sendRA": {
+                        "type": "boolean"
+                      },
+                      "subnetID": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "prefixDelegation",
+                      "interface",
+                      "addressSuffix"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv6DHCPServer",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "managed": {
+                        "type": "boolean"
+                      },
+                      "server": {
+                        "enum": [
+                          "dnsmasq"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv6DHCPScope",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "defaultRoute": {
+                        "type": "boolean"
+                      },
+                      "delegatedAddress": {
+                        "type": "string"
+                      },
+                      "dnsServers": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "dnsSource": {
+                        "enum": [
+                          "self",
+                          "static",
+                          "none"
+                        ],
+                        "type": "string"
+                      },
+                      "leaseTime": {
+                        "type": "string"
+                      },
+                      "mode": {
+                        "enum": [
+                          "stateless",
+                          "ra-only"
+                        ],
+                        "type": "string"
+                      },
+                      "server": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "server",
+                      "delegatedAddress"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DNSConditionalForwarder",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "domain": {
+                        "type": "string"
+                      },
+                      "upstreamInterface": {
+                        "type": "string"
+                      },
+                      "upstreamServers": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "upstreamSource": {
+                        "enum": [
+                          "static",
+                          "dhcp4",
+                          "dhcp6"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "domain"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DSLiteTunnel",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "aftrAddressOrdinal": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "aftrAddressSelection": {
+                        "enum": [
+                          "ordinal",
+                          "ordinalModulo"
+                        ],
+                        "type": "string"
+                      },
+                      "aftrDNSServers": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "aftrFQDN": {
+                        "type": "string"
+                      },
+                      "defaultRoute": {
+                        "type": "boolean"
+                      },
+                      "encapsulationLimit": {
+                        "type": "string"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "localAddress": {
+                        "type": "string"
+                      },
+                      "localAddressSource": {
+                        "enum": [
+                          "interface",
+                          "static",
+                          "delegatedAddress"
+                        ],
+                        "type": "string"
+                      },
+                      "localAddressSuffix": {
+                        "type": "string"
+                      },
+                      "localDelegatedAddress": {
+                        "type": "string"
+                      },
+                      "mtu": {
+                        "maximum": 65535,
+                        "minimum": 1280,
+                        "type": "integer"
+                      },
+                      "remoteAddress": {
+                        "type": "string"
+                      },
+                      "routeMetric": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "tunnelName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "interface"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "IPv4DefaultRoute",
                     "type": "string"
                   },
@@ -630,6 +1100,268 @@
                       "outboundInterface",
                       "sourceCIDRs",
                       "translation"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv4PolicyRoute",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "allowLocalSourceNAT": {
+                        "type": "boolean"
+                      },
+                      "destinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "mark": {
+                        "maximum": 4294967295,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "outboundInterface": {
+                        "type": "string"
+                      },
+                      "priority": {
+                        "maximum": 32765,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "routeMetric": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "sourceCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "table": {
+                        "maximum": 4294967295,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "outboundInterface",
+                      "table",
+                      "priority",
+                      "mark"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv4PolicyRouteSet",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "destinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "hashFields": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "mode": {
+                        "enum": [
+                          "hash"
+                        ],
+                        "type": "string"
+                      },
+                      "sourceCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "targets": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mark": {
+                              "maximum": 4294967295,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "outboundInterface": {
+                              "type": "string"
+                            },
+                            "priority": {
+                              "maximum": 32765,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "routeMetric": {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "table": {
+                              "maximum": 4294967295,
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "outboundInterface",
+                            "table",
+                            "priority",
+                            "mark"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "targets"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv4ReversePathFilter",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "interface": {
+                        "type": "string"
+                      },
+                      "mode": {
+                        "enum": [
+                          "disabled",
+                          "strict",
+                          "loose"
+                        ],
+                        "type": "string"
+                      },
+                      "target": {
+                        "enum": [
+                          "all",
+                          "default",
+                          "interface"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "target",
+                      "mode"
                     ],
                     "type": "object"
                   },

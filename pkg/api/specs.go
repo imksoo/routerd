@@ -31,8 +31,17 @@ type IPv4DHCPAddressSpec struct {
 }
 
 type IPv4DHCPServerSpec struct {
-	Server  string `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
-	Managed bool   `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Server  string                `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
+	Managed bool                  `yaml:"managed,omitempty" json:"managed,omitempty"`
+	DNS     IPv4DHCPServerDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
+}
+
+type IPv4DHCPServerDNSSpec struct {
+	Enabled           bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	UpstreamSource    string   `yaml:"upstreamSource,omitempty" json:"upstreamSource,omitempty" jsonschema:"enum=dhcp4,enum=static,enum=system,enum=none"`
+	UpstreamInterface string   `yaml:"upstreamInterface,omitempty" json:"upstreamInterface,omitempty"`
+	UpstreamServers   []string `yaml:"upstreamServers,omitempty" json:"upstreamServers,omitempty"`
+	CacheSize         int      `yaml:"cacheSize,omitempty" json:"cacheSize,omitempty" jsonschema:"minimum=0"`
 }
 
 type IPv4DHCPScopeSpec struct {
@@ -55,6 +64,63 @@ type IPv6DHCPAddressSpec struct {
 	Required  bool   `yaml:"required,omitempty" json:"required,omitempty"`
 }
 
+type IPv6PrefixDelegationSpec struct {
+	Interface    string `yaml:"interface" json:"interface"`
+	Client       string `yaml:"client,omitempty" json:"client,omitempty"`
+	Profile      string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
+	PrefixLength int    `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
+	Required     bool   `yaml:"required,omitempty" json:"required,omitempty"`
+}
+
+type IPv6DelegatedAddressSpec struct {
+	PrefixDelegation string `yaml:"prefixDelegation" json:"prefixDelegation"`
+	Interface        string `yaml:"interface" json:"interface"`
+	SubnetID         string `yaml:"subnetID,omitempty" json:"subnetID,omitempty"`
+	AddressSuffix    string `yaml:"addressSuffix" json:"addressSuffix"`
+	SendRA           bool   `yaml:"sendRA,omitempty" json:"sendRA,omitempty"`
+	Announce         bool   `yaml:"announce,omitempty" json:"announce,omitempty"`
+}
+
+type IPv6DHCPServerSpec struct {
+	Server  string `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq"`
+	Managed bool   `yaml:"managed,omitempty" json:"managed,omitempty"`
+}
+
+type IPv6DHCPScopeSpec struct {
+	Server           string   `yaml:"server" json:"server"`
+	DelegatedAddress string   `yaml:"delegatedAddress" json:"delegatedAddress"`
+	Mode             string   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=ra-only"`
+	LeaseTime        string   `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
+	DefaultRoute     bool     `yaml:"defaultRoute,omitempty" json:"defaultRoute,omitempty"`
+	DNSSource        string   `yaml:"dnsSource,omitempty" json:"dnsSource,omitempty" jsonschema:"enum=self,enum=static,enum=none"`
+	DNSServers       []string `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
+}
+
+type DNSConditionalForwarderSpec struct {
+	Domain            string   `yaml:"domain" json:"domain"`
+	UpstreamSource    string   `yaml:"upstreamSource,omitempty" json:"upstreamSource,omitempty" jsonschema:"enum=static,enum=dhcp4,enum=dhcp6"`
+	UpstreamInterface string   `yaml:"upstreamInterface,omitempty" json:"upstreamInterface,omitempty"`
+	UpstreamServers   []string `yaml:"upstreamServers,omitempty" json:"upstreamServers,omitempty"`
+}
+
+type DSLiteTunnelSpec struct {
+	Interface             string   `yaml:"interface" json:"interface"`
+	TunnelName            string   `yaml:"tunnelName,omitempty" json:"tunnelName,omitempty"`
+	AFTRFQDN              string   `yaml:"aftrFQDN,omitempty" json:"aftrFQDN,omitempty"`
+	AFTRDNSServers        []string `yaml:"aftrDNSServers,omitempty" json:"aftrDNSServers,omitempty"`
+	AFTRAddressOrdinal    int      `yaml:"aftrAddressOrdinal,omitempty" json:"aftrAddressOrdinal,omitempty" jsonschema:"minimum=1"`
+	AFTRAddressSelection  string   `yaml:"aftrAddressSelection,omitempty" json:"aftrAddressSelection,omitempty" jsonschema:"enum=ordinal,enum=ordinalModulo"`
+	RemoteAddress         string   `yaml:"remoteAddress,omitempty" json:"remoteAddress,omitempty"`
+	LocalAddress          string   `yaml:"localAddress,omitempty" json:"localAddress,omitempty"`
+	LocalAddressSource    string   `yaml:"localAddressSource,omitempty" json:"localAddressSource,omitempty" jsonschema:"enum=interface,enum=static,enum=delegatedAddress"`
+	LocalDelegatedAddress string   `yaml:"localDelegatedAddress,omitempty" json:"localDelegatedAddress,omitempty"`
+	LocalAddressSuffix    string   `yaml:"localAddressSuffix,omitempty" json:"localAddressSuffix,omitempty"`
+	DefaultRoute          bool     `yaml:"defaultRoute,omitempty" json:"defaultRoute,omitempty"`
+	RouteMetric           int      `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	MTU                   int      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=1280,maximum=65535"`
+	EncapsulationLimit    string   `yaml:"encapsulationLimit,omitempty" json:"encapsulationLimit,omitempty"`
+}
+
 type IPv4DefaultRouteSpec struct {
 	Interface     string `yaml:"interface" json:"interface"`
 	GatewaySource string `yaml:"gatewaySource" json:"gatewaySource" jsonschema:"enum=dhcp4,enum=static"`
@@ -66,6 +132,40 @@ type IPv4SourceNATSpec struct {
 	OutboundInterface string                 `yaml:"outboundInterface" json:"outboundInterface"`
 	SourceCIDRs       []string               `yaml:"sourceCIDRs" json:"sourceCIDRs"`
 	Translation       IPv4NATTranslationSpec `yaml:"translation" json:"translation"`
+}
+
+type IPv4PolicyRouteSpec struct {
+	OutboundInterface   string   `yaml:"outboundInterface" json:"outboundInterface"`
+	Table               int      `yaml:"table" json:"table" jsonschema:"minimum=1,maximum=4294967295"`
+	Priority            int      `yaml:"priority" json:"priority" jsonschema:"minimum=1,maximum=32765"`
+	Mark                int      `yaml:"mark" json:"mark" jsonschema:"minimum=1,maximum=4294967295"`
+	SourceCIDRs         []string `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	DestinationCIDRs    []string `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	RouteMetric         int      `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	AllowLocalSourceNAT bool     `yaml:"allowLocalSourceNAT,omitempty" json:"allowLocalSourceNAT,omitempty"`
+}
+
+type IPv4PolicyRouteSetSpec struct {
+	Mode             string                  `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=hash"`
+	HashFields       []string                `yaml:"hashFields,omitempty" json:"hashFields,omitempty"`
+	SourceCIDRs      []string                `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	DestinationCIDRs []string                `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	Targets          []IPv4PolicyRouteTarget `yaml:"targets" json:"targets"`
+}
+
+type IPv4PolicyRouteTarget struct {
+	Name              string `yaml:"name,omitempty" json:"name,omitempty"`
+	OutboundInterface string `yaml:"outboundInterface" json:"outboundInterface"`
+	Table             int    `yaml:"table" json:"table" jsonschema:"minimum=1,maximum=4294967295"`
+	Priority          int    `yaml:"priority" json:"priority" jsonschema:"minimum=1,maximum=32765"`
+	Mark              int    `yaml:"mark" json:"mark" jsonschema:"minimum=1,maximum=4294967295"`
+	RouteMetric       int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+}
+
+type IPv4ReversePathFilterSpec struct {
+	Target    string `yaml:"target" json:"target" jsonschema:"enum=all,enum=default,enum=interface"`
+	Interface string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Mode      string `yaml:"mode" json:"mode" jsonschema:"enum=disabled,enum=strict,enum=loose"`
 }
 
 type IPv4NATTranslationSpec struct {
@@ -114,12 +214,48 @@ func (r Resource) IPv6DHCPAddressSpec() (IPv6DHCPAddressSpec, error) {
 	return specAs[IPv6DHCPAddressSpec](r)
 }
 
+func (r Resource) IPv6PrefixDelegationSpec() (IPv6PrefixDelegationSpec, error) {
+	return specAs[IPv6PrefixDelegationSpec](r)
+}
+
+func (r Resource) IPv6DelegatedAddressSpec() (IPv6DelegatedAddressSpec, error) {
+	return specAs[IPv6DelegatedAddressSpec](r)
+}
+
+func (r Resource) IPv6DHCPServerSpec() (IPv6DHCPServerSpec, error) {
+	return specAs[IPv6DHCPServerSpec](r)
+}
+
+func (r Resource) IPv6DHCPScopeSpec() (IPv6DHCPScopeSpec, error) {
+	return specAs[IPv6DHCPScopeSpec](r)
+}
+
+func (r Resource) DNSConditionalForwarderSpec() (DNSConditionalForwarderSpec, error) {
+	return specAs[DNSConditionalForwarderSpec](r)
+}
+
+func (r Resource) DSLiteTunnelSpec() (DSLiteTunnelSpec, error) {
+	return specAs[DSLiteTunnelSpec](r)
+}
+
 func (r Resource) IPv4DefaultRouteSpec() (IPv4DefaultRouteSpec, error) {
 	return specAs[IPv4DefaultRouteSpec](r)
 }
 
 func (r Resource) IPv4SourceNATSpec() (IPv4SourceNATSpec, error) {
 	return specAs[IPv4SourceNATSpec](r)
+}
+
+func (r Resource) IPv4PolicyRouteSpec() (IPv4PolicyRouteSpec, error) {
+	return specAs[IPv4PolicyRouteSpec](r)
+}
+
+func (r Resource) IPv4PolicyRouteSetSpec() (IPv4PolicyRouteSetSpec, error) {
+	return specAs[IPv4PolicyRouteSetSpec](r)
+}
+
+func (r Resource) IPv4ReversePathFilterSpec() (IPv4ReversePathFilterSpec, error) {
+	return specAs[IPv4ReversePathFilterSpec](r)
 }
 
 func (r Resource) HostnameSpec() (HostnameSpec, error) {

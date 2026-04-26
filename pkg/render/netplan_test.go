@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"routerd/pkg/api"
+	"routerd/pkg/config"
 )
 
 func TestNetplanRendersOnlyRouterdManagedInterfaces(t *testing.T) {
@@ -55,5 +56,20 @@ func TestNetplanRendersOnlyRouterdManagedInterfaces(t *testing.T) {
 	}
 	if strings.Contains(got, "ens18") {
 		t.Fatalf("netplan output includes external interface:\n%s", got)
+	}
+}
+
+func TestNetplanEnablesIPv6LinkLocalForDelegatedAddress(t *testing.T) {
+	router, err := config.Load("../../examples/router-lab.yaml")
+	if err != nil {
+		t.Fatalf("load example: %v", err)
+	}
+	data, err := Netplan(router)
+	if err != nil {
+		t.Fatalf("render netplan: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "link-local:\n        - ipv6") {
+		t.Fatalf("netplan output does not enable IPv6 link-local:\n%s", got)
 	}
 }

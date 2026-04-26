@@ -30,12 +30,13 @@ type netplanEthernet struct {
 }
 
 type netplanInterface struct {
-	Name      string
-	IfName    string
-	AdminUp   bool
-	Addresses []string
-	DHCP4     bool
-	DHCP6     bool
+	Name          string
+	IfName        string
+	AdminUp       bool
+	Addresses     []string
+	DHCP4         bool
+	DHCP6         bool
+	IPv6LinkLocal bool
 }
 
 func Netplan(router *api.Router) ([]byte, error) {
@@ -90,6 +91,15 @@ func Netplan(router *api.Router) ([]byte, error) {
 			}
 			if iface := interfaces[spec.Interface]; iface != nil {
 				iface.DHCP6 = true
+				iface.IPv6LinkLocal = true
+			}
+		case "IPv6DelegatedAddress":
+			spec, err := res.IPv6DelegatedAddressSpec()
+			if err != nil {
+				return nil, err
+			}
+			if iface := interfaces[spec.Interface]; iface != nil {
+				iface.IPv6LinkLocal = true
 			}
 		}
 	}
@@ -101,12 +111,16 @@ func Netplan(router *api.Router) ([]byte, error) {
 		if iface.IfName == "" {
 			return nil, fmt.Errorf("Interface %q has empty ifname", name)
 		}
+		linkLocal := []string{}
+		if iface.IPv6LinkLocal {
+			linkLocal = []string{"ipv6"}
+		}
 		ethernets[iface.IfName] = netplanEthernet{
 			Optional:  true,
 			DHCP4:     iface.DHCP4,
 			DHCP6:     iface.DHCP6,
 			AcceptRA:  iface.DHCP6,
-			LinkLocal: []string{},
+			LinkLocal: linkLocal,
 			Addresses: iface.Addresses,
 		}
 	}

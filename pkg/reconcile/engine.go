@@ -76,10 +76,28 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv4DHCPScope(res, aliases, policies, includePlan, &rr)
 		case "IPv6DHCPAddress":
 			e.observeDHCP(res, aliases, policies, "ipv6", includePlan, &rr)
+		case "IPv6PrefixDelegation":
+			e.observeIPv6PrefixDelegation(res, aliases, includePlan, &rr)
+		case "IPv6DelegatedAddress":
+			e.observeIPv6DelegatedAddress(res, aliases, includePlan, &rr)
+		case "IPv6DHCPServer":
+			e.observeIPv6DHCPServer(res, includePlan, &rr)
+		case "IPv6DHCPScope":
+			e.observeIPv6DHCPScope(res, includePlan, &rr)
+		case "DNSConditionalForwarder":
+			e.observeDNSConditionalForwarder(res, aliases, includePlan, &rr)
+		case "DSLiteTunnel":
+			e.observeDSLiteTunnel(res, aliases, includePlan, &rr)
 		case "IPv4DefaultRoute":
 			e.observeIPv4DefaultRoute(res, aliases, policies, includePlan, &rr)
 		case "IPv4SourceNAT":
 			e.observeIPv4SourceNAT(res, aliases, policies, includePlan, &rr)
+		case "IPv4PolicyRoute":
+			e.observeIPv4PolicyRoute(res, aliases, policies, includePlan, &rr)
+		case "IPv4PolicyRouteSet":
+			e.observeIPv4PolicyRouteSet(res, aliases, policies, includePlan, &rr)
+		case "IPv4ReversePathFilter":
+			e.observeIPv4ReversePathFilter(res, aliases, includePlan, &rr)
 		case "Hostname":
 			e.observeHostname(res, osNet, includePlan, &rr)
 		}
@@ -91,6 +109,204 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 	}
 
 	return result, nil
+}
+
+func (e *Engine) observeIPv6PrefixDelegation(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv6PrefixDelegationSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := aliases[spec.Interface]
+	client := defaultString(spec.Client, "networkd")
+	profile := defaultString(spec.Profile, "default")
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["ifname"] = ifname
+	rr.Observed["client"] = client
+	rr.Observed["profile"] = profile
+	prefixLength := effectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
+	if prefixLength != 0 {
+		rr.Observed["prefixLength"] = fmt.Sprintf("%d", prefixLength)
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("request DHCPv6 prefix delegation on %s with %s", ifname, client))
+		switch profile {
+		case "ntt-ngn-direct-hikari-denwa":
+			rr.Plan = append(rr.Plan, "use NTT NGN direct Hikari Denwa DHCPv6-PD profile quirks")
+		case "ntt-hgw-lan-pd":
+			rr.Plan = append(rr.Plan, "use NTT HGW LAN-side DHCPv6-PD profile quirks")
+		}
+	}
+}
+
+func (e *Engine) observeIPv6DelegatedAddress(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv6DelegatedAddressSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := aliases[spec.Interface]
+	subnetID := defaultString(spec.SubnetID, "0")
+	rr.Observed["prefixDelegation"] = spec.PrefixDelegation
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["ifname"] = ifname
+	rr.Observed["subnetID"] = subnetID
+	rr.Observed["addressSuffix"] = spec.AddressSuffix
+	rr.Observed["sendRA"] = fmt.Sprintf("%t", spec.SendRA)
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("derive IPv6 address %s from delegated prefix subnet %s on %s", spec.AddressSuffix, subnetID, ifname))
+		if spec.SendRA {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("send IPv6 router advertisements for delegated prefix on %s", ifname))
+		}
+	}
+}
+
+func effectiveIPv6PDPrefixLength(profile string, configured int) int {
+	if configured != 0 {
+		return configured
+	}
+	if profile == "ntt-ngn-direct-hikari-denwa" || profile == "ntt-hgw-lan-pd" {
+		return 60
+	}
+	return 0
+}
+
+func (e *Engine) observeIPv6DHCPServer(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv6DHCPServerSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	server := defaultString(spec.Server, "dnsmasq")
+	rr.Observed["server"] = server
+	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
+	if _, err := exec.LookPath(server); err == nil {
+		rr.Observed["serverAvailable"] = "true"
+	} else {
+		rr.Observed["serverAvailable"] = "false"
+		if includePlan {
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s is required to ensure DHCPv6 server on this host", server))
+		}
+	}
+	if !includePlan {
+		return
+	}
+	if !spec.Managed {
+		rr.Plan = append(rr.Plan, "observe only; DHCPv6 server instance is not managed")
+		return
+	}
+	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv6 DHCP server instance %s is available", server))
+}
+
+func (e *Engine) observeIPv6DHCPScope(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv6DHCPScopeSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	mode := defaultString(spec.Mode, "stateless")
+	dnsSource := defaultString(spec.DNSSource, "self")
+	rr.Observed["server"] = spec.Server
+	rr.Observed["delegatedAddress"] = spec.DelegatedAddress
+	rr.Observed["mode"] = mode
+	rr.Observed["defaultRoute"] = fmt.Sprintf("%t", spec.DefaultRoute)
+	rr.Observed["dnsSource"] = dnsSource
+	if spec.LeaseTime != "" {
+		rr.Observed["leaseTime"] = spec.LeaseTime
+	}
+	if len(spec.DNSServers) > 0 {
+		rr.Observed["dnsServers"] = strings.Join(spec.DNSServers, ",")
+	}
+	if !includePlan {
+		return
+	}
+	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv6 DHCP scope %s uses delegated address %s", spec.Server, spec.DelegatedAddress))
+	if spec.DefaultRoute {
+		rr.Plan = append(rr.Plan, "advertise IPv6 default route by router advertisement")
+	}
+	switch dnsSource {
+	case "self":
+		rr.Plan = append(rr.Plan, "advertise this router's delegated IPv6 address as DNS server")
+	case "static":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise IPv6 DNS servers %s", strings.Join(spec.DNSServers, ",")))
+	case "none":
+		rr.Plan = append(rr.Plan, "do not advertise IPv6 DNS servers")
+	}
+}
+
+func (e *Engine) observeDNSConditionalForwarder(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DNSConditionalForwarderSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	source := defaultString(spec.UpstreamSource, "static")
+	rr.Observed["domain"] = spec.Domain
+	rr.Observed["upstreamSource"] = source
+	if spec.UpstreamInterface != "" {
+		rr.Observed["upstreamInterface"] = spec.UpstreamInterface
+		rr.Observed["upstreamIfname"] = aliases[spec.UpstreamInterface]
+	}
+	if len(spec.UpstreamServers) > 0 {
+		rr.Observed["upstreamServers"] = strings.Join(spec.UpstreamServers, ",")
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("forward DNS queries for %s using %s upstreams", spec.Domain, source))
+	}
+}
+
+func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DSLiteTunnelSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	tunnelName := defaultString(spec.TunnelName, res.Metadata.Name)
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["ifname"] = aliases[spec.Interface]
+	rr.Observed["tunnelName"] = tunnelName
+	if spec.AFTRFQDN != "" {
+		rr.Observed["aftrFQDN"] = spec.AFTRFQDN
+	}
+	if spec.RemoteAddress != "" {
+		rr.Observed["remoteAddress"] = spec.RemoteAddress
+	}
+	if spec.AFTRAddressOrdinal != 0 {
+		rr.Observed["aftrAddressOrdinal"] = fmt.Sprintf("%d", spec.AFTRAddressOrdinal)
+	}
+	localSource := defaultString(spec.LocalAddressSource, "interface")
+	rr.Observed["localAddressSource"] = localSource
+	if spec.LocalAddress != "" {
+		rr.Observed["localAddress"] = spec.LocalAddress
+	}
+	if spec.LocalDelegatedAddress != "" {
+		rr.Observed["localDelegatedAddress"] = spec.LocalDelegatedAddress
+	}
+	if spec.LocalAddressSuffix != "" {
+		rr.Observed["localAddressSuffix"] = spec.LocalAddressSuffix
+	}
+	if len(spec.AFTRDNSServers) > 0 {
+		rr.Observed["aftrDNSServers"] = strings.Join(spec.AFTRDNSServers, ",")
+	}
+	rr.Observed["defaultRoute"] = fmt.Sprintf("%t", spec.DefaultRoute)
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure DS-Lite ipip6 tunnel %s on %s", tunnelName, aliases[spec.Interface]))
+		if spec.AFTRFQDN != "" && spec.AFTRAddressOrdinal != 0 {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("select sorted AFTR AAAA record #%d", spec.AFTRAddressOrdinal))
+		}
+		if localSource == "delegatedAddress" {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("use delegated LAN IPv6 address %s%s as tunnel source", spec.LocalDelegatedAddress, spec.LocalAddressSuffix))
+		}
+		if spec.DefaultRoute {
+			rr.Plan = append(rr.Plan, "route IPv4 default traffic through DS-Lite tunnel")
+		}
+	}
 }
 
 func (e *Engine) observeIPv4SourceNAT(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
@@ -147,6 +363,114 @@ func (e *Engine) observeIPv4SourceNAT(res api.Resource, aliases map[string]strin
 	}
 }
 
+func (e *Engine) observeIPv4PolicyRoute(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv4PolicyRouteSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	outIfName := aliases[spec.OutboundInterface]
+	policy := policies[spec.OutboundInterface]
+
+	rr.Observed["outboundInterface"] = spec.OutboundInterface
+	rr.Observed["outboundIfname"] = outIfName
+	rr.Observed["table"] = fmt.Sprintf("%d", spec.Table)
+	rr.Observed["priority"] = fmt.Sprintf("%d", spec.Priority)
+	rr.Observed["mark"] = fmt.Sprintf("0x%x", spec.Mark)
+	if len(spec.SourceCIDRs) > 0 {
+		rr.Observed["sourceCIDRs"] = strings.Join(spec.SourceCIDRs, ",")
+	}
+	if len(spec.DestinationCIDRs) > 0 {
+		rr.Observed["destinationCIDRs"] = strings.Join(spec.DestinationCIDRs, ",")
+	}
+	if spec.RouteMetric != 0 {
+		rr.Observed["routeMetric"] = fmt.Sprintf("%d", spec.RouteMetric)
+	}
+
+	if !includePlan {
+		return
+	}
+	if !policy.Managed || policy.Owner == "external" || policy.Owner == "" {
+		rr.Plan = append(rr.Plan, "plan policy route for externally managed outbound interface")
+	} else if policy.RequiresAdoption {
+		rr.Phase = "RequiresAdoption"
+		rr.Plan = append(rr.Plan, "blocked: outbound interface requires adoption before routerd manages policy routing")
+		return
+	}
+	rr.Plan = append(rr.Plan, fmt.Sprintf("mark matching IPv4 packets with 0x%x", spec.Mark))
+	rr.Plan = append(rr.Plan, fmt.Sprintf("route fwmark 0x%x via table %d default dev %s", spec.Mark, spec.Table, outIfName))
+}
+
+func (e *Engine) observeIPv4PolicyRouteSet(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv4PolicyRouteSetSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	mode := defaultString(spec.Mode, "hash")
+	rr.Observed["mode"] = mode
+	rr.Observed["hashFields"] = strings.Join(spec.HashFields, ",")
+	if len(spec.SourceCIDRs) > 0 {
+		rr.Observed["sourceCIDRs"] = strings.Join(spec.SourceCIDRs, ",")
+	}
+	if len(spec.DestinationCIDRs) > 0 {
+		rr.Observed["destinationCIDRs"] = strings.Join(spec.DestinationCIDRs, ",")
+	}
+	var targets []string
+	for _, target := range spec.Targets {
+		outIfName := aliases[target.OutboundInterface]
+		targetName := target.Name
+		if targetName == "" {
+			targetName = target.OutboundInterface
+		}
+		targets = append(targets, fmt.Sprintf("%s:%s:table=%d:mark=0x%x", targetName, outIfName, target.Table, target.Mark))
+		if includePlan {
+			policy := policies[target.OutboundInterface]
+			if policy.RequiresAdoption {
+				rr.Phase = "RequiresAdoption"
+				rr.Plan = append(rr.Plan, fmt.Sprintf("blocked: outbound interface %s requires adoption before routerd manages policy routing", target.OutboundInterface))
+				return
+			}
+		}
+	}
+	rr.Observed["targets"] = strings.Join(targets, ",")
+	if !includePlan {
+		return
+	}
+	rr.Plan = append(rr.Plan, fmt.Sprintf("hash IPv4 packets by %s and select one of %d policy route targets", strings.Join(spec.HashFields, ","), len(spec.Targets)))
+	rr.Plan = append(rr.Plan, "store selected mark in conntrack mark so each flow keeps the same route")
+}
+
+func (e *Engine) observeIPv4ReversePathFilter(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv4ReversePathFilterSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	target := spec.Target
+	targetName := target
+	if target == "interface" {
+		targetName = aliases[spec.Interface]
+	}
+	key := "net.ipv4.conf." + targetName + ".rp_filter"
+	rr.Observed["target"] = target
+	if spec.Interface != "" {
+		rr.Observed["interface"] = spec.Interface
+		rr.Observed["ifname"] = targetName
+	}
+	rr.Observed["mode"] = spec.Mode
+	rr.Observed["key"] = key
+	if current, err := e.Command("sysctl", "-n", key); err == nil {
+		rr.Observed["current"] = strings.TrimSpace(string(current))
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 reverse path filtering is %s for %s", spec.Mode, targetName))
+	}
+}
+
 func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *ResourceResult) {
 	spec, err := res.IPv4DHCPServerSpec()
 	if err != nil {
@@ -161,6 +485,16 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 
 	rr.Observed["server"] = server
 	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
+	rr.Observed["dnsEnabled"] = fmt.Sprintf("%t", spec.DNS.Enabled)
+	if spec.DNS.UpstreamSource != "" {
+		rr.Observed["dnsUpstreamSource"] = spec.DNS.UpstreamSource
+	}
+	if spec.DNS.UpstreamInterface != "" {
+		rr.Observed["dnsUpstreamInterface"] = spec.DNS.UpstreamInterface
+	}
+	if len(spec.DNS.UpstreamServers) > 0 {
+		rr.Observed["dnsUpstreamServers"] = strings.Join(spec.DNS.UpstreamServers, ",")
+	}
 
 	if _, err := exec.LookPath(server); err == nil {
 		rr.Observed["serverAvailable"] = "true"
@@ -179,6 +513,19 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 		return
 	}
 	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 DHCP server instance %s is available", server))
+	if spec.DNS.Enabled {
+		upstreamSource := defaultString(spec.DNS.UpstreamSource, "system")
+		switch upstreamSource {
+		case "dhcp4":
+			rr.Plan = append(rr.Plan, fmt.Sprintf("run dnsmasq DNS forwarder/cache using DHCPv4 DNS from %s", spec.DNS.UpstreamInterface))
+		case "static":
+			rr.Plan = append(rr.Plan, fmt.Sprintf("run dnsmasq DNS forwarder/cache using static upstreams %s", strings.Join(spec.DNS.UpstreamServers, ",")))
+		case "system":
+			rr.Plan = append(rr.Plan, "run dnsmasq DNS forwarder/cache using system resolver configuration")
+		case "none":
+			rr.Plan = append(rr.Plan, "run dnsmasq DNS service without upstream forwarders")
+		}
+	}
 }
 
 func (e *Engine) observeIPv4DHCPScope(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
@@ -453,7 +800,7 @@ func (e *Engine) observeDHCP(res api.Resource, aliases map[string]string, polici
 	rr.Observed["family"] = family
 	rr.Observed["client"] = client
 
-	if _, err := exec.LookPath(client); err == nil {
+	if dhcpClientAvailable(client) {
 		rr.Observed["clientAvailable"] = "true"
 	} else {
 		rr.Observed["clientAvailable"] = "false"
@@ -473,6 +820,15 @@ func (e *Engine) observeDHCP(res api.Resource, aliases map[string]string, polici
 		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s DHCP client %s is running for %s", family, client, ifname))
 	}
+}
+
+func dhcpClientAvailable(client string) bool {
+	if client == "networkd" {
+		_, err := exec.LookPath("networkctl")
+		return err == nil
+	}
+	_, err := exec.LookPath(client)
+	return err == nil
 }
 
 func (e *Engine) observeHostname(res api.Resource, osNet osNetworking, includePlan bool, rr *ResourceResult) {
@@ -589,8 +945,11 @@ func (e *Engine) observedIPv4Prefixes(policies map[string]interfacePolicy) []ipv
 func interfaceAliases(router *api.Router) map[string]string {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
-		if res.Kind == "Interface" {
+		switch res.Kind {
+		case "Interface":
 			aliases[res.Metadata.Name] = stringSpec(res, "ifname")
+		case "DSLiteTunnel":
+			aliases[res.Metadata.Name] = defaultString(stringSpec(res, "tunnelName"), res.Metadata.Name)
 		}
 	}
 	return aliases
@@ -813,6 +1172,13 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.GatewaySource
 		case "gateway":
 			return spec.Gateway
+		}
+	case api.DSLiteTunnelSpec:
+		switch key {
+		case "interface":
+			return spec.Interface
+		case "tunnelName":
+			return spec.TunnelName
 		}
 	case api.HostnameSpec:
 		switch key {
