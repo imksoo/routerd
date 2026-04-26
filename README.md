@@ -1,9 +1,19 @@
 # routerd
 
-`routerd` is a declarative router resource reconciler written in Go.
+[Project site and documentation: routerd.net](https://routerd.net/)
+
+`routerd` turns a small YAML file into the local operating-system settings
+needed to run a Linux machine as a router. It is meant for people who want a
+reviewable router configuration in Git instead of a pile of one-off shell
+commands.
+
+It can configure interfaces, DHCP, DNS forwarding, IPv6 prefix delegation,
+PPPoE, DS-Lite, NAT, policy routing, a small default-deny firewall, router
+health checks, and local status inspection. The project is still pre-release:
+read the plan and dry-run output before applying it to a remote router.
 
 The current implementation targets Ubuntu Server first and keeps the install
-layout friendly to source installs and future packaging:
+layout friendly to source installs and packaging:
 
 - YAML router config
 - Kubernetes-like resource shapes
@@ -198,11 +208,3 @@ Linux runtime defaults:
 - Status file: `/run/routerd/status.json`
 - Control socket: `/run/routerd/routerd.sock`
 - Lock file: `/run/routerd/routerd.lock`
-
-FreeBSD runtime defaults:
-
-- Runtime dir: `/var/run/routerd`
-- State dir: `/var/db/routerd`
-- Status file: `/var/run/routerd/status.json`
-- Control socket: `/var/run/routerd/routerd.sock`
-- Lock file: `/var/run/routerd/routerd.lock`

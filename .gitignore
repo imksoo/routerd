@@ -1,5 +1,6 @@
 /routerd
 /bin/
+/dist/
 /LOCAL.md
 /local/
 *.test
