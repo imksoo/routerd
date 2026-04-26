@@ -179,8 +179,105 @@
           "result": {
             "additionalProperties": false,
             "properties": {
+              "adoptedArtifacts": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "owner": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "owner"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "adoptionCandidates": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "desired": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "observed": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    "owner": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "owner",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
               "generation": {
                 "type": "integer"
+              },
+              "orphans": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "observed": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    "owner": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "remediation": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
               },
               "phase": {
                 "type": "string"
@@ -189,6 +286,32 @@
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "artifacts": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "action": {
+                            "type": "string"
+                          },
+                          "applyWith": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "name",
+                          "action"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "conditions": {
                       "items": {
                         "additionalProperties": false,
