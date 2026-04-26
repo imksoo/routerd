@@ -300,6 +300,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 	if err != nil {
 		return nil, err
 	}
+	if err := appendLedgerOwnedOrphans(result, router, opts.LedgerPath); err != nil {
+		return nil, err
+	}
 	if !opts.DryRun {
 		netplanData, err := render.Netplan(router)
 		if err != nil {
@@ -382,6 +385,10 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if err != nil {
 			return nil, err
 		}
+		cleanedLedgerOrphans, err := cleanupLedgerOwnedOrphans(router, opts.LedgerPath)
+		if err != nil {
+			return nil, err
+		}
 		rememberedArtifacts, err := rememberReconciledArtifacts(router, opts.LedgerPath)
 		if err != nil {
 			return nil, err
@@ -438,6 +445,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		for _, rule := range cleanedPolicyRules {
 			fmt.Fprintf(stdout, "removed stale IPv4 policy rule %s\n", rule)
 		}
+		for _, artifact := range cleanedLedgerOrphans {
+			fmt.Fprintf(stdout, "removed orphaned owned artifact %s\n", artifact)
+		}
 		if rememberedArtifacts > 0 {
 			fmt.Fprintf(stdout, "remembered %d owned artifacts\n", rememberedArtifacts)
 		}
@@ -453,6 +463,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			"ipv4DefaultRoutes":   fmt.Sprintf("%d", len(appliedDefaultRoutes)),
 			"ipv4PolicyRouteSets": fmt.Sprintf("%d", len(appliedPolicyRoutes)),
 			"ipv4PolicyRulesGone": fmt.Sprintf("%d", len(cleanedPolicyRules)),
+			"ownedOrphansGone":    fmt.Sprintf("%d", len(cleanedLedgerOrphans)),
 			"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 		})
 		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
@@ -471,6 +482,121 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		return nil, err
 	}
 	return result, nil
+}
+
+func appendLedgerOwnedOrphans(result *reconcile.Result, router *api.Router, ledgerPath string) error {
+	if ledgerPath == "" {
+		return nil
+	}
+	ledger, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		return err
+	}
+	engine := reconcile.New()
+	orphans, _, err := engine.LedgerOwnedOrphans(router, ledger)
+	if err != nil {
+		return err
+	}
+	if len(orphans) == 0 {
+		return nil
+	}
+	result.Orphans = appendUniqueOrphans(result.Orphans, orphans)
+	result.Warnings = append(result.Warnings, fmt.Sprintf("%d ledger-owned orphaned artifacts found", len(orphans)))
+	if result.Phase == "Healthy" {
+		result.Phase = "Drifted"
+	}
+	return nil
+}
+
+func appendUniqueOrphans(existing, additions []reconcile.OrphanedArtifact) []reconcile.OrphanedArtifact {
+	seen := map[string]int{}
+	for i, orphan := range existing {
+		seen[orphan.Name+"/"+orphan.Remediation] = i
+	}
+	for _, orphan := range additions {
+		id := orphan.Name + "/" + orphan.Remediation
+		if index, ok := seen[id]; ok {
+			if existing[index].Owner == "" && orphan.Owner != "" {
+				existing[index] = orphan
+			}
+			continue
+		}
+		seen[id] = len(existing)
+		existing = append(existing, orphan)
+	}
+	return existing
+}
+
+func cleanupLedgerOwnedOrphans(router *api.Router, ledgerPath string) ([]string, error) {
+	if ledgerPath == "" {
+		return nil, nil
+	}
+	ledger, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		return nil, err
+	}
+	engine := reconcile.New()
+	_, artifacts, err := engine.LedgerOwnedOrphans(router, ledger)
+	if err != nil {
+		return nil, err
+	}
+	var removed []string
+	var removedArtifacts []resource.Artifact
+	for _, artifact := range artifacts {
+		label, err := cleanupLedgerOwnedArtifact(artifact)
+		if err != nil {
+			return removed, err
+		}
+		if label == "" {
+			continue
+		}
+		removed = append(removed, label)
+		removedArtifacts = append(removedArtifacts, artifact)
+	}
+	if len(removedArtifacts) > 0 {
+		ledger.Forget(removedArtifacts)
+		if err := ledger.Save(ledgerPath); err != nil {
+			return removed, err
+		}
+	}
+	return removed, nil
+}
+
+func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
+	switch artifact.Kind {
+	case "linux.ipip6.tunnel":
+		if err := runLogged("ip", "-6", "tunnel", "del", artifact.Name); err != nil {
+			return "", err
+		}
+		return artifact.Kind + "/" + artifact.Name, nil
+	case "nft.table":
+		family := artifact.Attributes["family"]
+		name := artifact.Attributes["name"]
+		if !strings.HasPrefix(name, "routerd_") {
+			return "", nil
+		}
+		if err := runLogged("nft", "delete", "table", family, name); err != nil {
+			return "", err
+		}
+		return artifact.Kind + "/" + name, nil
+	case "systemd.service":
+		if !strings.HasPrefix(artifact.Name, "routerd-") || !strings.HasSuffix(artifact.Name, ".service") {
+			return "", nil
+		}
+		if err := runLogged("systemctl", "disable", "--now", artifact.Name); err != nil {
+			return "", err
+		}
+		unitPath := "/etc/systemd/system/" + artifact.Name
+		if err := os.Remove(unitPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if err := runLogged("systemctl", "daemon-reload"); err != nil {
+			return "", err
+		}
+		return artifact.Kind + "/" + artifact.Name, nil
+	default:
+		return "", nil
+	}
 }
 
 func rememberReconciledArtifacts(router *api.Router, ledgerPath string) (int, error) {

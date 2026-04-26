@@ -33,6 +33,7 @@ type Condition struct {
 type OrphanedArtifact struct {
 	Kind        string            `json:"kind"`
 	Name        string            `json:"name"`
+	Owner       string            `json:"owner,omitempty"`
 	Reason      string            `json:"reason"`
 	Remediation string            `json:"remediation,omitempty"`
 	Observed    map[string]string `json:"observed,omitempty"`

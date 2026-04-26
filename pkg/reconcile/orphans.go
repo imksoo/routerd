@@ -80,6 +80,76 @@ func (e *Engine) DesiredOwnedArtifacts(router *api.Router) ([]resource.Artifact,
 	return DesiredOwnedArtifacts(router, interfaceAliases(router)), nil
 }
 
+func (e *Engine) LedgerOwnedOrphans(router *api.Router, ledger *resource.Ledger) ([]OrphanedArtifact, []resource.Artifact, error) {
+	if err := e.Validate(router); err != nil {
+		return nil, nil, err
+	}
+	if ledger == nil {
+		return nil, nil, nil
+	}
+	aliases := interfaceAliases(router)
+	desired := DesiredOwnedArtifacts(router, aliases)
+	desiredIDs := map[string]bool{}
+	for _, artifact := range desired {
+		desiredIDs[artifact.Identity()] = true
+	}
+	actualByID := map[string]resource.Artifact{}
+	for _, artifact := range e.actualInventoryBackedArtifacts() {
+		actualByID[artifact.Identity()] = artifact
+	}
+	var result []OrphanedArtifact
+	var artifacts []resource.Artifact
+	seen := map[string]bool{}
+	for _, owned := range ledger.Artifacts {
+		id := owned.Identity()
+		if seen[id] || desiredIDs[id] {
+			continue
+		}
+		seen[id] = true
+		actual, ok := actualByID[id]
+		if !ok {
+			continue
+		}
+		artifact := mergeArtifactAttributes(owned, actual)
+		if !cleanupEligibleLedgerOrphan(artifact) {
+			continue
+		}
+		result = append(result, orphanedArtifactFromLedger(artifact))
+		artifacts = append(artifacts, artifact)
+	}
+	return result, artifacts, nil
+}
+
+func cleanupEligibleLedgerOrphan(artifact resource.Artifact) bool {
+	switch artifact.Kind {
+	case "linux.ipip6.tunnel", "systemd.service":
+		return true
+	case "nft.table":
+		return strings.HasPrefix(artifact.Attributes["name"], "routerd_")
+	default:
+		return false
+	}
+}
+
+func orphanedArtifactFromLedger(artifact resource.Artifact) OrphanedArtifact {
+	orphan := OrphanedArtifact{
+		Kind:     artifact.Kind,
+		Name:     artifact.Name,
+		Owner:    artifact.Owner,
+		Reason:   "local ownership ledger records this artifact but no current resource owns it",
+		Observed: artifact.Attributes,
+	}
+	switch artifact.Kind {
+	case "linux.ipip6.tunnel":
+		orphan.Remediation = "delete ipip6 tunnel " + artifact.Name
+	case "nft.table":
+		orphan.Remediation = "delete nft table " + artifact.Attributes["family"] + " " + artifact.Attributes["name"]
+	case "systemd.service":
+		orphan.Remediation = "disable and stop systemd service " + artifact.Name
+	}
+	return orphan
+}
+
 func desiredAttributesDrift(desired, actual map[string]string) bool {
 	for key, desiredValue := range desired {
 		if actual[key] != desiredValue {

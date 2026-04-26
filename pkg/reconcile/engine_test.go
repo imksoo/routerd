@@ -466,6 +466,67 @@ func TestAdoptionCandidatesReportAttributeDrift(t *testing.T) {
 	}
 }
 
+func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+	}
+	ledger := &resource.Ledger{Version: 1}
+	ledger.Remember([]resource.Artifact{
+		{Kind: "linux.ipip6.tunnel", Name: "ds-old", Owner: "net.routerd.net/v1alpha1/DSLiteTunnel/old"},
+		{Kind: "nft.table", Name: "routerd_old", Owner: "net.routerd.net/v1alpha1/IPv4SourceNAT/old", Attributes: map[string]string{"family": "ip", "name": "routerd_old"}},
+		{Kind: "systemd.service", Name: "routerd-old.service", Owner: "net.routerd.net/v1alpha1/PPPoEInterface/old"},
+		{Kind: "linux.link", Name: "ens19", Owner: "net.routerd.net/v1alpha1/Interface/lan"},
+		{Kind: "file", Name: "/etc/ppp/chap-secrets", Owner: "net.routerd.net/v1alpha1/PPPoEInterface/old"},
+	})
+	engine := &Engine{
+		Command: fakeCommand(map[string]string{
+			"ip -4 rule show":            "",
+			"ip -4 route show table all": "",
+			"nft list tables":            "table ip routerd_old\n",
+			"systemctl list-unit-files routerd-*.service --no-legend --no-pager": "routerd-old.service enabled enabled\n",
+			"systemctl cat routerd-dnsmasq.service":                              "",
+			"systemctl cat routerd-old.service":                                  "[Unit]\n",
+			"test -f /etc/ppp/chap-secrets":                                      "",
+			"test -f /etc/ppp/pap-secrets":                                       "",
+			"test -f /usr/local/etc/routerd/dnsmasq.conf":                        "",
+			"test -f /usr/local/etc/routerd/nftables.nft":                        "",
+			"test -f /usr/local/etc/routerd/default-route.nft":                   "",
+			"hostname":                                  "router\n",
+			"ip -brief link show":                       "ens19 UP aa:bb <BROADCAST>\n",
+			"ip -brief -4 addr show":                    "",
+			"ip -brief -6 addr show":                    "",
+			"ip -d link show type ip6tnl":               "8: ds-old@NONE: <POINTOPOINT,NOARP,UP> mtu 1454\n",
+			"sysctl -n net.ipv4.ip_forward":             "1\n",
+			"sysctl -n net.ipv6.conf.all.forwarding":    "1\n",
+			"sysctl -n net.ipv4.conf.all.rp_filter":     "0\n",
+			"sysctl -n net.ipv4.conf.default.rp_filter": "0\n",
+			"ls /proc/sys/net/ipv4/conf":                "",
+		}),
+		OSNetworking: &osNetworking{},
+	}
+	orphans, artifacts, err := engine.LedgerOwnedOrphans(router, ledger)
+	if err != nil {
+		t.Fatalf("ledger owned orphans: %v", err)
+	}
+	if len(orphans) != 3 || len(artifacts) != 3 {
+		t.Fatalf("orphans = %+v artifacts = %+v, want three cleanup eligible", orphans, artifacts)
+	}
+	kinds := map[string]bool{}
+	for _, orphan := range orphans {
+		kinds[orphan.Kind+"/"+orphan.Name] = true
+	}
+	for _, want := range []string{
+		"linux.ipip6.tunnel/ds-old",
+		"nft.table/routerd_old",
+		"systemd.service/routerd-old.service",
+	} {
+		if !kinds[want] {
+			t.Fatalf("missing ledger orphan %s in %+v", want, orphans)
+		}
+	}
+}
+
 func fakeCommand(outputs map[string]string) func(string, ...string) ([]byte, error) {
 	return func(name string, args ...string) ([]byte, error) {
 		key := strings.Join(append([]string{name}, args...), " ")

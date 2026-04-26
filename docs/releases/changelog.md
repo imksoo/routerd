@@ -15,6 +15,8 @@ changes as the resource model takes shape.
   artifacts.
 - Added `routerd adopt --apply` and ledger updates after successful non-dry-run
   reconcile.
+- Added ledger-owned orphan cleanup for DS-Lite tunnels, routerd nftables
+  tables, and routerd systemd services.
 - Added `PathMTUPolicy` for IPv6 RA MTU advertisement and nftables TCP MSS
   clamping.
 - Added minimal firewall resources: `Zone`, `FirewallPolicy`, and
