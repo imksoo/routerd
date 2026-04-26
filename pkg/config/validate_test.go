@@ -38,6 +38,35 @@ func TestValidateSysctl(t *testing.T) {
 	}
 }
 
+func TestValidateIPv4DefaultRouteStaticRequiresGateway(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec: map[string]any{
+					"ifname":  "ens18",
+					"managed": true,
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoute"},
+				Metadata: api.ObjectMeta{Name: "default-v4"},
+				Spec: map[string]any{
+					"interface":     "wan",
+					"gatewaySource": "static",
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err == nil {
+		t.Fatal("expected static default route without gateway to be rejected")
+	}
+}
+
 func TestValidateRejectsMissingInterfaceReference(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

@@ -43,6 +43,15 @@ spec:
         required: true
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4DefaultRoute
+      metadata:
+        name: default-v4
+      spec:
+        interface: wan
+        gatewaySource: dhcp4
+        required: true
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DHCPAddress
       metadata:
         name: wan-dhcp6

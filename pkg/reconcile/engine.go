@@ -72,6 +72,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeDHCP(res, aliases, policies, "ipv4", includePlan, &rr)
 		case "IPv6DHCPAddress":
 			e.observeDHCP(res, aliases, policies, "ipv6", includePlan, &rr)
+		case "IPv4DefaultRoute":
+			e.observeIPv4DefaultRoute(res, aliases, policies, includePlan, &rr)
 		case "Hostname":
 			e.observeHostname(res, osNet, includePlan, &rr)
 		}
@@ -83,6 +85,62 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 	}
 
 	return result, nil
+}
+
+func (e *Engine) observeIPv4DefaultRoute(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+	iface := stringSpec(res, "interface")
+	ifname := aliases[iface]
+	policy := policies[iface]
+	source := stringSpec(res, "gatewaySource")
+	gateway := stringSpec(res, "gateway")
+
+	rr.Observed["interface"] = iface
+	rr.Observed["ifname"] = ifname
+	rr.Observed["gatewaySource"] = source
+	if gateway != "" {
+		rr.Observed["desiredGateway"] = gateway
+	}
+
+	currentGateway, currentDev, currentProto := e.defaultIPv4Route()
+	if currentGateway != "" {
+		rr.Observed["currentGateway"] = currentGateway
+	}
+	if currentDev != "" {
+		rr.Observed["currentIfname"] = currentDev
+	}
+	if currentProto != "" {
+		rr.Observed["currentProto"] = currentProto
+	}
+
+	if source == "static" && (currentGateway != gateway || currentDev != ifname) {
+		rr.Phase = "Drifted"
+	}
+	if source == "dhcp4" && currentDev != "" && currentDev != ifname {
+		rr.Phase = "Drifted"
+	}
+
+	if !includePlan {
+		return
+	}
+	if !policy.Managed || policy.Owner == "external" {
+		if source == "dhcp4" {
+			rr.Plan = append(rr.Plan, "use externally managed DHCPv4 default route on referenced interface")
+		} else {
+			rr.Plan = append(rr.Plan, "observe only; referenced interface is externally managed")
+		}
+		return
+	}
+	if policy.RequiresAdoption {
+		rr.Phase = "RequiresAdoption"
+		rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd manages default route")
+		return
+	}
+	switch source {
+	case "dhcp4":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 default route is accepted from DHCPv4 on %s", ifname))
+	case "static":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 default route via %s dev %s", gateway, ifname))
+	}
 }
 
 func (e *Engine) observeSysctl(res api.Resource, includePlan bool, rr *ResourceResult) {
@@ -322,6 +380,31 @@ func (e *Engine) hasAddress(ifname, address, family string) bool {
 		return false
 	}
 	return strings.Contains(string(out), address)
+}
+
+func (e *Engine) defaultIPv4Route() (gateway, dev, proto string) {
+	out, err := e.Command("ip", "-4", "route", "show", "default")
+	if err != nil {
+		return "", "", ""
+	}
+	fields := strings.Fields(string(out))
+	for i := 0; i < len(fields); i++ {
+		switch fields[i] {
+		case "via":
+			if i+1 < len(fields) {
+				gateway = fields[i+1]
+			}
+		case "dev":
+			if i+1 < len(fields) {
+				dev = fields[i+1]
+			}
+		case "proto":
+			if i+1 < len(fields) {
+				proto = fields[i+1]
+			}
+		}
+	}
+	return gateway, dev, proto
 }
 
 func (e *Engine) observedIPv4Prefixes(policies map[string]interfacePolicy) []ipv4Assignment {

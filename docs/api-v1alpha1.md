@@ -20,6 +20,7 @@ routerd uses Kubernetes-like API shapes:
 - `Interface`
 - `IPv4StaticAddress`
 - `IPv4DHCPAddress`
+- `IPv4DefaultRoute`
 - `IPv6DHCPAddress`
 - `Hostname`
 - `Sysctl`
@@ -66,3 +67,40 @@ spec:
 ```
 
 `runtime: true` means routerd should manage the running kernel value. `persistent: true` is reserved for OS-specific rendering such as sysctl.d or rc.conf and is not applied yet.
+
+## IPv4DefaultRoute
+
+`IPv4DefaultRoute` declares how the IPv4 default gateway is selected.
+
+Use a DHCPv4-provided default route from the referenced interface:
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4DefaultRoute
+metadata:
+  name: default-v4
+spec:
+  interface: wan
+  gatewaySource: dhcp4
+  required: true
+```
+
+`spec.interface` is the source selector for `gatewaySource: dhcp4`. This keeps the route unambiguous when more than one WAN-like interface exists.
+
+Future multi-WAN support will likely add route metric, routing table, and policy routing fields. The MVP intentionally handles only one declared IPv4 default route.
+
+Use a static gateway:
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4DefaultRoute
+metadata:
+  name: default-v4
+spec:
+  interface: wan
+  gatewaySource: static
+  gateway: 192.0.2.1
+  required: true
+```
+
+IPv6 default gateway behavior is intentionally left for a later design pass.

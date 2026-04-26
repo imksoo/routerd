@@ -48,7 +48,7 @@ func Validate(router *api.Router) error {
 
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4StaticAddress", "IPv4DHCPAddress", "IPv6DHCPAddress":
+		case "IPv4StaticAddress", "IPv4DHCPAddress", "IPv6DHCPAddress", "IPv4DefaultRoute":
 			name := stringSpec(res, "interface")
 			if name == "" {
 				return fmt.Errorf("%s spec.interface is required", res.ID())
@@ -111,6 +111,28 @@ func validateResource(res api.Resource) error {
 	case "IPv4DHCPAddress", "IPv6DHCPAddress":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+	case "IPv4DefaultRoute":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		source := stringSpec(res, "gatewaySource")
+		if source == "" {
+			return fmt.Errorf("%s spec.gatewaySource is required", res.ID())
+		}
+		switch source {
+		case "dhcp4":
+		case "static":
+			gateway := stringSpec(res, "gateway")
+			if gateway == "" {
+				return fmt.Errorf("%s spec.gateway is required when gatewaySource is static", res.ID())
+			}
+			addr, err := netip.ParseAddr(gateway)
+			if err != nil || !addr.Is4() {
+				return fmt.Errorf("%s spec.gateway must be an IPv4 address", res.ID())
+			}
+		default:
+			return fmt.Errorf("%s spec.gatewaySource must be dhcp4 or static", res.ID())
 		}
 	case "Hostname":
 		if res.APIVersion != api.NetAPIVersion {
