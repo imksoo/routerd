@@ -145,6 +145,7 @@ go test ./...
 ```sh
 make validate-example
 make dry-run-example
+make website-build
 ```
 
 Useful direct commands:
@@ -169,9 +170,17 @@ cloud-init or existing netplan configuration owns the management interface.
 - [API v1alpha1](docs/api-v1alpha1.md)
 - [Control API v1alpha1](docs/control-api-v1alpha1.md)
 - [Plugin protocol](docs/plugin-protocol.md)
+- [Getting started](docs/tutorials/getting-started.md)
+- [Changelog](docs/releases/changelog.md)
 - [API v1alpha1 Japanese](docs/api-v1alpha1.ja.md)
 - [Control API v1alpha1 Japanese](docs/control-api-v1alpha1.ja.md)
 - [Plugin protocol Japanese](docs/plugin-protocol.ja.md)
+
+The public website lives in `website/` and is built with Docusaurus. It
+publishes English and Japanese docs to Cloudflare Pages. Use `website` as the
+Pages root directory, `npm ci && npm run build` as the build command, and
+`build` as the output directory. Add `routerd.net` as a Cloudflare Pages custom
+domain.
 
 ## Default Paths
 

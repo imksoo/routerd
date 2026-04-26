@@ -24,7 +24,7 @@ endif
 ROUTERD_BIN := bin/routerd
 ROUTERCTL_BIN := bin/routerctl
 
-.PHONY: test build generate-schema check-schema check-build-deps check-remote-deps install install-systemd dist remote-install remote-install-config validate-example dry-run-example plan-config clean
+.PHONY: test build generate-schema check-schema website-build check-build-deps check-remote-deps install install-systemd dist remote-install remote-install-config validate-example dry-run-example plan-config clean
 
 test:
 	go test ./...
@@ -46,6 +46,9 @@ check-schema:
 	diff -u schemas/routerd-control-v1alpha1.schema.json /tmp/routerd-control-v1alpha1.schema.json
 	go run ./cmd/routerd-schema --schema control-openapi > /tmp/routerd-control-openapi-v1alpha1.json
 	diff -u schemas/routerd-control-openapi-v1alpha1.json /tmp/routerd-control-openapi-v1alpha1.json
+
+website-build:
+	cd website && npm ci && npm run build
 
 check-build-deps:
 	@missing=0; \

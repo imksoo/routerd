@@ -1,3 +1,8 @@
+---
+title: Resource API v1alpha1
+slug: /reference/api-v1alpha1
+---
+
 # API v1alpha1
 
 routerd uses Kubernetes-like API shapes:

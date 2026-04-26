@@ -5,14 +5,14 @@ slug: /reference/plugin-protocol
 
 # Plugin Protocol
 
-routerd plugins are trusted local executables.
+routerd の plugin は、信頼済みのローカル実行ファイルです。
 
-routerd invokes a plugin with:
+routerd は plugin を次の形式で呼び出します。
 
-- JSON input on stdin
-- JSON output on stdout
-- human-readable logs on stderr
-- action metadata in environment variables
+- stdin: JSON input
+- stdout: JSON output
+- stderr: 人間向け log
+- environment variables: action と resource metadata
 
 ## Actions
 
@@ -33,16 +33,15 @@ routerd invokes a plugin with:
 - `ROUTERD_STATE_DIR`
 - `ROUTERD_DRY_RUN`
 
-The full protocol will be implemented and documented as the plugin runner is added.
+plugin runner の実装が進むにつれて、入出力 JSON の詳細をこの文書へ追加します。
 
 ## Log Sink Plugins
 
-`LogSink` resources with `spec.type: plugin` are one-way event sinks. routerd
-executes the configured trusted local executable once per event.
+`spec.type: plugin` の `LogSink` は一方向のイベント出力先です。routerd はイベントごとに、設定された信頼済みローカル実行ファイルを1回起動します。
 
-- stdin: one JSON event object followed by a newline
-- stdout: ignored
-- stderr: human-readable diagnostics
+- stdin: 1つの JSON event object と末尾改行
+- stdout: 無視
+- stderr: 人間向け診断
 - environment variables:
   - `ROUTERD_LOG_LEVEL`
   - `ROUTERD_LOG_ROUTER`

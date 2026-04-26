@@ -1,0 +1,8 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="routerd">
+  <rect width="64" height="64" rx="12" fill="#111827"/>
+  <path d="M14 36h36v12H14z" fill="#f8fafc"/>
+  <path d="M18 18h28l8 10-8 10H18L10 28z" fill="#38bdf8"/>
+  <circle cx="24" cy="42" r="2" fill="#111827"/>
+  <circle cx="32" cy="42" r="2" fill="#111827"/>
+  <circle cx="40" cy="42" r="2" fill="#111827"/>
+</svg>

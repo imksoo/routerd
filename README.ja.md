@@ -96,6 +96,7 @@ make remote-install-config REMOTE_HOST=user@router.example CONFIG=path/to/router
 ## よく使うコマンド
 
 ```sh
+make website-build
 routerd validate --config examples/router-lab.yaml
 routerd plan --config examples/router-lab.yaml
 routerd reconcile --config examples/router-lab.yaml --once --dry-run
@@ -141,6 +142,10 @@ FreeBSD:
 - [API v1alpha1](docs/api-v1alpha1.md)
 - [Control API v1alpha1](docs/control-api-v1alpha1.md)
 - [Plugin protocol](docs/plugin-protocol.md)
+- [はじめに](docs/tutorials/getting-started.md)
+- [更新履歴](docs/releases/changelog.md)
 - [API v1alpha1 日本語](docs/api-v1alpha1.ja.md)
 - [Control API v1alpha1 日本語](docs/control-api-v1alpha1.ja.md)
 - [Plugin protocol 日本語](docs/plugin-protocol.ja.md)
+
+公開 website は `website/` 配下にあり、Docusaurus で build します。英語版と日本語版を Cloudflare Pages に公開する構成です。Cloudflare Pages では root directory を `website`、build command を `npm ci && npm run build`、output directory を `build` にします。`routerd.net` は Cloudflare Pages の custom domain として追加します。
