@@ -22,6 +22,10 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	raMTUByScope, err := pathMTURAByScope(router)
+	if err != nil {
+		return nil, err
+	}
 
 	var v4Scopes []api.Resource
 	var v6Scopes []api.Resource
@@ -211,7 +215,14 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		}
 		buf.WriteString("\n")
 		buf.WriteString(fmt.Sprintf("dhcp-range=set:%s,::,constructor:%s,%s,64,%s\n", tag, delegated.IfName, raMode, leaseTime))
-		if !spec.DefaultRoute {
+		raMTU := raMTUByScope[res.Metadata.Name]
+		switch {
+		case raMTU != 0 && !spec.DefaultRoute:
+			buf.WriteString(fmt.Sprintf("ra-param=%s,%d\n", delegated.IfName, raMTU))
+			buf.WriteString(fmt.Sprintf("ra-param=%s,0,0\n", delegated.IfName))
+		case raMTU != 0:
+			buf.WriteString(fmt.Sprintf("ra-param=%s,%d\n", delegated.IfName, raMTU))
+		case !spec.DefaultRoute:
 			buf.WriteString(fmt.Sprintf("ra-param=%s,0,0\n", delegated.IfName))
 		}
 		dnsServers, err := dnsmasqIPv6DNSServers(spec, delegated, selfPolicies[spec.SelfAddressPolicy], aliases, delegatedIPv6, runtime)

@@ -8,6 +8,7 @@ routerd は現在プレリリースのソフトウェアです。この変更履
 
 ## 未リリース
 
+- IPv6 RA MTU 広告と nftables TCP MSS clamp のために `PathMTUPolicy` を追加。
 - `firewall.routerd.net/v1alpha1` に最小ファイアウォールリソースとして `Zone`、`FirewallPolicy`、`ExposeService` を追加。
 - `HealthCheck.spec.role` を追加し、リンク、次ホップ、インターネット、サービス、ポリシーのヘルスチェックの意味を区別できるように変更。
 - `routerd.net` 用の Docusaurus ドキュメントサイトを追加。

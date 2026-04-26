@@ -34,6 +34,7 @@ routerd uses Kubernetes-like API shapes:
 - `IPv4PolicyRoute`
 - `IPv4PolicyRouteSet`
 - `IPv4ReversePathFilter`
+- `PathMTUPolicy`
 - `Zone`
 - `FirewallPolicy`
 - `ExposeService`
@@ -567,6 +568,47 @@ spec:
 
 `target` may be `all`, `default`, or `interface`. When `target: interface`, `interface` may reference an `Interface`, `PPPoEInterface`, or `DSLiteTunnel` resource. `mode` may be `disabled`, `strict`, or `loose`, corresponding to Linux values `0`, `1`, and `2`.
 
+## PathMTUPolicy
+
+`PathMTUPolicy` derives an effective path MTU for traffic leaving one interface
+toward one or more upstream interfaces. It can advertise that MTU to IPv6 LAN
+clients through RA and clamp forwarded TCP MSS for IPv4 and IPv6.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: PathMTUPolicy
+metadata:
+  name: lan-wan-mtu
+spec:
+  fromInterface: lan
+  toInterfaces:
+    - wan
+    - transix
+  mtu:
+    source: minInterface
+  ipv6RA:
+    enabled: true
+    scope: lan-dhcp6
+  tcpMSSClamp:
+    enabled: true
+    families:
+      - ipv4
+      - ipv6
+```
+
+`mtu.source: minInterface` uses the minimum configured MTU among
+`toInterfaces`. Plain `Interface` resources currently default to `1500`,
+`PPPoEInterface` defaults to `1492`, and `DSLiteTunnel` defaults to `1454`
+unless their resource sets `mtu`. `mtu.source: static` uses `mtu.value`.
+
+When `ipv6RA.enabled` is true, `ipv6RA.scope` references an `IPv6DHCPScope`.
+dnsmasq then renders an RA MTU option such as `ra-param=ens19,1454`.
+
+When `tcpMSSClamp.enabled` is true, routerd renders nftables forward-chain MSS
+rules. The fixed MSS is derived from the effective MTU: IPv4 subtracts 40 bytes
+and IPv6 subtracts 60 bytes. If `families` is omitted, both `ipv4` and `ipv6`
+are enabled.
+
 ## Minimal Firewall
 
 Firewall resources use `firewall.routerd.net/v1alpha1`. The first firewall API is
@@ -697,7 +739,7 @@ spec:
   localAddressSuffix: "::100"
   defaultRoute: true
   routeMetric: 50
-  mtu: 1460
+  mtu: 1454
 ```
 
 If `remoteAddress` is omitted, routerd resolves `aftrFQDN` as AAAA. `aftrDNSServers` may be used when the provider only returns the AFTR address from specific DNS servers. AAAA answers are sorted alphabetically; `aftrAddressOrdinal` selects the 1-based record to use. If omitted, routerd uses the first sorted address.

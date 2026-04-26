@@ -751,6 +751,7 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 		header string
 	}{
 		{family: "inet", name: "routerd_filter", header: "table inet routerd_filter"},
+		{family: "inet", name: "routerd_mss", header: "table inet routerd_mss"},
 		{family: "ip", name: "routerd_dnat", header: "table ip routerd_dnat"},
 		{family: "ip", name: "routerd_nat", header: "table ip routerd_nat"},
 		{family: "ip", name: "routerd_policy", header: "table ip routerd_policy"},
@@ -782,6 +783,7 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 	natMissing := bytes.Contains(data, []byte("table ip routerd_nat")) && exec.Command("nft", "list", "table", "ip", "routerd_nat").Run() != nil
 	policyMissing := bytes.Contains(data, []byte("table ip routerd_policy")) && exec.Command("nft", "list", "table", "ip", "routerd_policy").Run() != nil
 	filterMissing := bytes.Contains(data, []byte("table inet routerd_filter")) && exec.Command("nft", "list", "table", "inet", "routerd_filter").Run() != nil
+	mssMissing := bytes.Contains(data, []byte("table inet routerd_mss")) && exec.Command("nft", "list", "table", "inet", "routerd_mss").Run() != nil
 	dnatMissing := bytes.Contains(data, []byte("table ip routerd_dnat")) && exec.Command("nft", "list", "table", "ip", "routerd_dnat").Run() != nil
 	staleManaged := false
 	for _, table := range managedTables {
@@ -790,7 +792,7 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 			break
 		}
 	}
-	if !changed && !natMissing && !policyMissing && !filterMissing && !dnatMissing && !staleManaged {
+	if !changed && !natMissing && !policyMissing && !filterMissing && !mssMissing && !dnatMissing && !staleManaged {
 		return nil, nil
 	}
 	for _, table := range managedTables {

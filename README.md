@@ -15,6 +15,7 @@ layout friendly to source installs and future packaging:
 - runtime sysctl management
 - internal event logging to syslog/journald or trusted local log plugins
 - nftables-based minimal firewall policy, IPv4 source NAT, and policy routing
+- path MTU propagation through IPv6 RA and TCP MSS clamping
 - DS-Lite ipip6 tunnel setup, including multiple tunnel policy routing
 - local trusted resource plugins
 - local HTTP+JSON daemon control API over a Unix domain socket

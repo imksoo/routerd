@@ -193,6 +193,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "IPv4PolicyRoute", api.IPv4PolicyRouteSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4PolicyRouteSet", api.IPv4PolicyRouteSetSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4ReversePathFilter", api.IPv4ReversePathFilterSpec{}),
+			resourceSchema(api.NetAPIVersion, "PathMTUPolicy", api.PathMTUPolicySpec{}),
 			resourceSchema(api.FirewallAPIVersion, "Zone", api.ZoneSpec{}),
 			resourceSchema(api.FirewallAPIVersion, "FirewallPolicy", api.FirewallPolicySpec{}),
 			resourceSchema(api.FirewallAPIVersion, "ExposeService", api.ExposeServiceSpec{}),

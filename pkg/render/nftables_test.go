@@ -191,6 +191,63 @@ func TestNftablesIPv4PolicyRouteSet(t *testing.T) {
 	}
 }
 
+func TestNftablesTCPMSSClamp(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				Metadata: api.ObjectMeta{Name: "wan-pppoe"},
+				Spec: api.PPPoEInterfaceSpec{
+					Interface: "wan",
+					IfName:    "ppp0",
+					Username:  "user@example.jp",
+					Password:  "secret",
+					MTU:       1492,
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+				Metadata: api.ObjectMeta{Name: "ds-lite-a"},
+				Spec:     api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-lite-a", RemoteAddress: "2001:db8::1"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"},
+				Metadata: api.ObjectMeta{Name: "lan-wan-mtu"},
+				Spec: api.PathMTUPolicySpec{
+					FromInterface: "lan",
+					ToInterfaces:  []string{"wan-pppoe", "ds-lite-a"},
+					MTU:           api.PathMTUPolicyMTUSpec{Source: "minInterface"},
+					TCPMSSClamp: api.PathMTUPolicyTCPMSSSpec{
+						Enabled:  true,
+						Families: []string{"ipv4", "ipv6"},
+					},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"table inet routerd_mss",
+		"type filter hook forward priority mangle; policy accept;",
+		`iifname "ens19" oifname { "ds-lite-a", "ppp0" } ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size set 1414`,
+		`iifname "ens19" oifname { "ds-lite-a", "ppp0" } meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size set 1394`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNftablesFirewallHomeRouter(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

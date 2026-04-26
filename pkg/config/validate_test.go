@@ -486,6 +486,60 @@ func TestValidateFirewallPolicyAndExposeService(t *testing.T) {
 	}
 }
 
+func TestValidatePathMTUPolicy(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+				Metadata: api.ObjectMeta{Name: "transix"},
+				Spec:     api.DSLiteTunnelSpec{Interface: "lan", TunnelName: "ds-transix", RemoteAddress: "2001:db8::1", MTU: 1460},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPServer"},
+				Metadata: api.ObjectMeta{Name: "dhcp6"},
+				Spec:     api.IPv6DHCPServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-ipv6"},
+				Spec:     api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				Metadata: api.ObjectMeta{Name: "wan-pd"},
+				Spec:     api.IPv6PrefixDelegationSpec{Interface: "lan"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPScope"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcp6"},
+				Spec:     api.IPv6DHCPScopeSpec{Server: "dhcp6", DelegatedAddress: "lan-ipv6"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"},
+				Metadata: api.ObjectMeta{Name: "lan-wan-mtu"},
+				Spec: api.PathMTUPolicySpec{
+					FromInterface: "lan",
+					ToInterfaces:  []string{"transix"},
+					MTU:           api.PathMTUPolicyMTUSpec{Source: "minInterface"},
+					IPv6RA:        api.PathMTUPolicyIPv6RASpec{Enabled: true, Scope: "lan-dhcp6"},
+					TCPMSSClamp:   api.PathMTUPolicyTCPMSSSpec{Enabled: true, Families: []string{"ipv4", "ipv6"}},
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate path MTU policy: %v", err)
+	}
+}
+
 func TestValidateRejectsMissingInterfaceReference(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

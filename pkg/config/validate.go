@@ -27,6 +27,7 @@ func Validate(router *api.Router) error {
 	dhcp4ServerSpecs := map[string]api.IPv4DHCPServerSpec{}
 	dhcp6Servers := map[string]bool{}
 	dhcp6ServerSpecs := map[string]api.IPv6DHCPServerSpec{}
+	dhcp6Scopes := map[string]bool{}
 	prefixDelegations := map[string]bool{}
 	delegatedAddresses := map[string]bool{}
 	delegatedAddressInterfaces := map[string]string{}
@@ -66,6 +67,9 @@ func Validate(router *api.Router) error {
 				return err
 			}
 			dhcp6ServerSpecs[res.Metadata.Name] = spec
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6DHCPScope" {
+			dhcp6Scopes[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6PrefixDelegation" {
 			prefixDelegations[res.Metadata.Name] = true
@@ -209,6 +213,23 @@ func Validate(router *api.Router) error {
 			}
 			if spec.Target == "interface" && !interfaces[spec.Interface] && !dsliteTunnels[spec.Interface] {
 				return fmt.Errorf("%s references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.Interface)
+			}
+		}
+		if res.Kind == "PathMTUPolicy" {
+			spec, err := res.PathMTUPolicySpec()
+			if err != nil {
+				return err
+			}
+			if !interfaces[spec.FromInterface] && !dsliteTunnels[spec.FromInterface] {
+				return fmt.Errorf("%s spec.fromInterface references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.FromInterface)
+			}
+			for i, name := range spec.ToInterfaces {
+				if !interfaces[name] && !dsliteTunnels[name] {
+					return fmt.Errorf("%s spec.toInterfaces[%d] references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), i, name)
+				}
+			}
+			if spec.IPv6RA.Enabled && !dhcp6Scopes[spec.IPv6RA.Scope] {
+				return fmt.Errorf("%s spec.ipv6RA.scope references missing IPv6DHCPScope %q", res.ID(), spec.IPv6RA.Scope)
 			}
 		}
 		if res.Kind == "IPv6DelegatedAddress" {
@@ -1201,6 +1222,54 @@ func validateResource(res api.Resource) error {
 		case "disabled", "strict", "loose":
 		default:
 			return fmt.Errorf("%s spec.mode must be disabled, strict, or loose", res.ID())
+		}
+	case "PathMTUPolicy":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.PathMTUPolicySpec()
+		if err != nil {
+			return err
+		}
+		if spec.FromInterface == "" {
+			return fmt.Errorf("%s spec.fromInterface is required", res.ID())
+		}
+		if len(spec.ToInterfaces) == 0 {
+			return fmt.Errorf("%s spec.toInterfaces is required", res.ID())
+		}
+		for i, name := range spec.ToInterfaces {
+			if name == "" {
+				return fmt.Errorf("%s spec.toInterfaces[%d] must not be empty", res.ID(), i)
+			}
+		}
+		switch defaultString(spec.MTU.Source, "minInterface") {
+		case "minInterface":
+			if spec.MTU.Value != 0 {
+				return fmt.Errorf("%s spec.mtu.value is only valid when mtu.source is static", res.ID())
+			}
+		case "static":
+			if spec.MTU.Value < 1280 || spec.MTU.Value > 65535 {
+				return fmt.Errorf("%s spec.mtu.value must be within 1280-65535", res.ID())
+			}
+		default:
+			return fmt.Errorf("%s spec.mtu.source must be minInterface or static", res.ID())
+		}
+		if spec.IPv6RA.Enabled && spec.IPv6RA.Scope == "" {
+			return fmt.Errorf("%s spec.ipv6RA.scope is required when ipv6RA.enabled is true", res.ID())
+		}
+		if spec.TCPMSSClamp.Enabled {
+			seenFamilies := map[string]bool{}
+			for i, family := range spec.TCPMSSClamp.Families {
+				switch family {
+				case "ipv4", "ipv6":
+				default:
+					return fmt.Errorf("%s spec.tcpMSSClamp.families[%d] must be ipv4 or ipv6", res.ID(), i)
+				}
+				if seenFamilies[family] {
+					return fmt.Errorf("%s spec.tcpMSSClamp.families[%d] duplicates another family", res.ID(), i)
+				}
+				seenFamilies[family] = true
+			}
 		}
 	case "Zone":
 		if res.APIVersion != api.FirewallAPIVersion {

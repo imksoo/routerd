@@ -1937,6 +1937,111 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "PathMTUPolicy",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "fromInterface": {
+                        "type": "string"
+                      },
+                      "ipv6RA": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "scope": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "mtu": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "source": {
+                            "enum": [
+                              "minInterface",
+                              "static"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "maximum": 65535,
+                            "minimum": 1280,
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "tcpMSSClamp": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "families": {
+                            "items": {
+                              "enum": [
+                                "ipv4",
+                                "ipv6"
+                              ],
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "toInterfaces": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "fromInterface",
+                      "toInterfaces"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "firewall.routerd.net/v1alpha1",
                     "type": "string"
                   },

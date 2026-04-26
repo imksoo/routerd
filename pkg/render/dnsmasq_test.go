@@ -177,6 +177,21 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 					DNSSource:        "self",
 				},
 			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+				Metadata: api.ObjectMeta{Name: "ds-lite-a"},
+				Spec:     api.DSLiteTunnelSpec{Interface: "wan", RemoteAddress: "2001:db8::1"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"},
+				Metadata: api.ObjectMeta{Name: "lan-wan-mtu"},
+				Spec: api.PathMTUPolicySpec{
+					FromInterface: "lan",
+					ToInterfaces:  []string{"ds-lite-a"},
+					MTU:           api.PathMTUPolicyMTUSpec{Source: "minInterface"},
+					IPv6RA:        api.PathMTUPolicyIPv6RASpec{Enabled: true, Scope: "lan-dhcp6"},
+				},
+			},
 		}},
 	}
 
@@ -196,6 +211,7 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 		"enable-ra",
 		"listen-address=127.0.0.1,2409:10:3d60:1220::3,::1",
 		"dhcp-range=set:lan-dhcp6,::,constructor:ens19,ra-stateless,64,12h",
+		"ra-param=ens19,1454",
 		"dhcp-option=tag:lan-dhcp6,option6:dns-server,[2409:10:3d60:1220::3]",
 	} {
 		if !strings.Contains(got, want) {

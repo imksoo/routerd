@@ -17,6 +17,7 @@
 - syslog/journald または trusted local log plugin への内部イベント出力
 - nftables による最小 firewall policy と IPv4 Source NAT
 - nftables mark + `ip rule` による IPv4 policy routing
+- IPv6 RA による Path MTU 広告と TCP MSS clamp
 - DS-Lite ipip6 tunnel、複数 tunnel のhash分散
 - Unix domain socket 上の HTTP+JSON daemon control API
 - client CLI `routerctl`

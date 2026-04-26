@@ -197,7 +197,27 @@ spec:
         localAddressSuffix: "::100"
         defaultRoute: true
         routeMetric: 50
-        mtu: 1460
+        mtu: 1454
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: PathMTUPolicy
+      metadata:
+        name: lan-wan-mtu
+      spec:
+        fromInterface: lan
+        toInterfaces:
+          - wan
+          - transix
+        mtu:
+          source: minInterface
+        ipv6RA:
+          enabled: true
+          scope: lan-dhcp6
+        tcpMSSClamp:
+          enabled: true
+          families:
+            - ipv4
+            - ipv6
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DHCPAddress

@@ -9,6 +9,8 @@ changes as the resource model takes shape.
 
 ## Unreleased
 
+- Added `PathMTUPolicy` for IPv6 RA MTU advertisement and nftables TCP MSS
+  clamping.
 - Added minimal firewall resources: `Zone`, `FirewallPolicy`, and
   `ExposeService` under `firewall.routerd.net/v1alpha1`.
 - Added `HealthCheck.spec.role` to distinguish link, next-hop, internet,

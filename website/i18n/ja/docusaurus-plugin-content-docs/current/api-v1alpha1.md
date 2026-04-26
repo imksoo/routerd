@@ -35,6 +35,7 @@ routerd の設定は Kubernetes 風のリソース形状を使います。
 - `IPv4PolicyRoute`
 - `IPv4PolicyRouteSet`
 - `IPv4ReversePathFilter`
+- `PathMTUPolicy`
 - `Zone`
 - `FirewallPolicy`
 - `ExposeService`
@@ -413,6 +414,38 @@ spec:
 
 `target` は `all`、`default`、`interface`。`mode` は `disabled`、`strict`、`loose` です。
 
+## PathMTUPolicy
+
+`PathMTUPolicy` は、あるインターフェースから複数の上流インターフェースへ出ていく通信の実効 MTU を決めます。その MTU を IPv6 RA で LAN クライアントへ広告し、IPv4/IPv6 の forward 通信に TCP MSS clamp を入れられます。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: PathMTUPolicy
+metadata:
+  name: lan-wan-mtu
+spec:
+  fromInterface: lan
+  toInterfaces:
+    - wan
+    - transix
+  mtu:
+    source: minInterface
+  ipv6RA:
+    enabled: true
+    scope: lan-dhcp6
+  tcpMSSClamp:
+    enabled: true
+    families:
+      - ipv4
+      - ipv6
+```
+
+`mtu.source: minInterface` は `toInterfaces` の MTU の最小値を使います。通常の `Interface` は現時点では `1500`、`PPPoEInterface` は `1492`、`DSLiteTunnel` は `1454` を既定値として扱います。各リソースで `mtu` を指定している場合はそれを使います。`mtu.source: static` の場合は `mtu.value` を使います。
+
+`ipv6RA.enabled` が true の場合、`ipv6RA.scope` は `IPv6DHCPScope` を参照します。dnsmasq には `ra-param=ens19,1454` のような RA MTU option を出力します。
+
+`tcpMSSClamp.enabled` が true の場合、routerd は nftables の forward chain に MSS clamp rule を出力します。MSS は実効 MTU から固定で計算します。IPv4 は 40 bytes、IPv6 は 60 bytes を引きます。`families` を省略した場合は `ipv4` と `ipv6` の両方を有効にします。
+
 ## 最小ファイアウォール
 
 ファイアウォールリソースは `firewall.routerd.net/v1alpha1` を使います。最初の API は汎用ルール言語にせず、家庭用ルーターとしての安全な標準動作とサービス公開に絞ります。
@@ -506,7 +539,7 @@ spec:
   localAddressSource: delegatedAddress
   localDelegatedAddress: lan-ipv6-pd-address
   localAddressSuffix: "::100"
-  mtu: 1460
+  mtu: 1454
 ```
 
 `remoteAddress` を省略すると、`aftrFQDN` のAAAAを引きます。AAAAは文字列昇順にsortされ、`aftrAddressOrdinal` で1始まりの番号を選びます。
