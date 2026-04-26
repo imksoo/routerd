@@ -26,13 +26,6 @@ const sidebars: SidebarsConfig = {
         'releases/changelog',
       ],
     },
-    {
-      type: 'category',
-      label: 'Deployment',
-      items: [
-        'deployment/cloudflare-pages',
-      ],
-    },
   ],
 };
 

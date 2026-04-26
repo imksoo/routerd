@@ -1,38 +1,38 @@
 ---
-title: Router Lab
+title: ルーターラボ
 ---
 
-# Router Lab
+# ルーターラボ
 
-このチュートリアルでは `examples/router-lab.yaml` の構成を説明します。routerd が育てている resource model を一通り見るための compact な router config です。
+このチュートリアルでは `examples/router-lab.yaml` の構成を説明します。routerd が育てているリソースモデルを一通り見るための、小さなルーター設定です。
 
-この example は production host にそのまま貼り付けるものではありません。interface name、prefix、credential、upstream の挙動は環境ごとに異なります。
+この例は本番ホストにそのまま貼り付けるものではありません。インターフェース名、プレフィックス、認証情報、上流ネットワークの挙動は環境ごとに異なります。
 
-## Topology
+## トポロジー
 
-lab model は次の構成を想定します。
+ラボモデルは次の構成を想定します。
 
-- `wan`: upstream Ethernet interface
-- `lan`: downstream Ethernet interface
+- `wan`: 上流側の Ethernet インターフェース
+- `lan`: 下流側の Ethernet インターフェース
 - WAN 側 DHCPv4
 - WAN 側 DHCPv6-PD
-- LAN 側 static IPv4
+- LAN 側 静的 IPv4
 - LAN 側 dnsmasq DHCP/DNS/RA
-- DS-Lite tunnel resource
-- health check 付き default route policy
+- DS-Lite トンネルリソース
+- ヘルスチェック付き標準経路ポリシー
 
-## Validate と Plan
+## 検証と計画確認
 
 ```bash
 routerd validate --config examples/router-lab.yaml
 routerd plan --config examples/router-lab.yaml
 ```
 
-plan では DNS/DHCP service が明示された LAN interface だけで提供されることを確認します。server は `listenInterfaces` で提供 interface を列挙し、scope が許可されていない interface に bind しようとすると reject されます。
+計画では DNS/DHCP サービスが明示された LAN インターフェースだけで提供されることを確認します。サーバーは `listenInterfaces` で提供インターフェースを列挙し、スコープが許可されていないインターフェースへ結び付こうとすると拒否されます。
 
 ## DHCP と DNS
 
-lab config では次のように書きます。
+ラボ設定では次のように書きます。
 
 ```yaml
 kind: IPv4DHCPServer
@@ -43,11 +43,11 @@ spec:
     - lan
 ```
 
-IPv6 では `dnsSource: self` が `pd-prefix::3` のような delegated LAN address を選びます。dnsmasq はこの DNS server を DHCPv6 と RA RDNSS の両方で広告するため、Android client でも自然に使えます。
+IPv6 では `dnsSource: self` が `pd-prefix::3` のような委譲された LAN アドレスを選びます。dnsmasq はこの DNS サーバーを DHCPv6 と RA RDNSS の両方で広告するため、Android クライアントでも自然に使えます。
 
 ## NTP と Syslog
 
-local system resource の例です。
+ローカルシステムリソースの例です。
 
 ```yaml
 kind: NTPClient
@@ -60,11 +60,11 @@ spec:
     - pool.ntp.org
 ```
 
-`interface` を指定すると、routerd はその systemd-networkd link に NTP server を render します。`LogSink` は routerd の内部 event を local syslog または remote syslog endpoint へ送れます。
+`interface` を指定すると、routerd はその systemd-networkd リンクに NTP サーバーを出力します。`LogSink` は routerd の内部イベントをローカル syslog またはリモート syslog 送信先へ送れます。
 
 ## 慎重に適用する
 
-実ホストではまず dry-run します。
+実ホストではまず予行実行します。
 
 ```bash
 sudo /usr/local/sbin/routerd reconcile \
@@ -73,4 +73,4 @@ sudo /usr/local/sbin/routerd reconcile \
   --dry-run
 ```
 
-cloud-init や別の network manager が所有している interface を routerd が奪わないことを確認してから `--dry-run` を外します。
+cloud-init や別のネットワーク管理ツールが所有しているインターフェースを routerd が奪わないことを確認してから `--dry-run` を外します。

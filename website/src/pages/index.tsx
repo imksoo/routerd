@@ -34,27 +34,27 @@ const copy = {
   },
   ja: {
     title: '宣言的ルーター制御',
-    description: 'routerd は Linux ホスト向けの宣言的ルーターリソース reconciler です',
+    description: 'routerd は Linux ホスト向けの宣言的ルーターリソース収束ツールです',
     eyebrow: 'オープンなルーター制御プレーン',
     subtitle:
-      '小規模ネットワークを明示的な設定、再現可能なインストール、実用的な観測性で運用するための宣言的ルーターリソース reconciler です。',
+      '小規模ネットワークを、明示的な設定、再現しやすいインストール、実用的な観測性で運用するための宣言的ルーターリソース収束ツールです。',
     tutorial: 'チュートリアルを始める',
     resources: 'リソースを見る',
     quickstartTitle: 'YAML からルーター状態へ',
     quickstartBody:
-      'daemon を有効にする前に、config を validate し、plan を確認し、one-shot mode で reconcile します。',
+      'デーモンを有効にする前に設定を検証し、計画を確認して、一度だけ望ましい状態へ収束させます。',
     features: [
       {
         title: '宣言的なルーターリソース',
-        body: 'interface、DHCP、DNS、NAT、DS-Lite、route policy、sysctl、local system の振る舞いを型付き YAML resource として記述します。',
+        body: 'インターフェース、DHCP、DNS、NAT、DS-Lite、経路ポリシー、sysctl、ローカルシステムの振る舞いを型付き YAML リソースとして記述します。',
       },
       {
         title: '実ホスト向け',
-        body: 'routerd は systemd-networkd、dnsmasq、nftables、pppd、systemd service など Linux networking component を reconcile します。',
+        body: 'routerd は systemd-networkd、dnsmasq、nftables、pppd、systemd サービスなどの Linux ネットワーク部品を望ましい状態へ収束させます。',
       },
       {
         title: '小さく読める制御プレーン',
-        body: 'Go daemon、one-shot CLI、JSON status、HTTP+JSON v1alpha1 control API で運用時の見通しを保ちます。',
+        body: 'Go 製デーモン、一度だけ実行できる CLI、JSON 状態出力、HTTP+JSON v1alpha1 制御 API で運用時の見通しを保ちます。',
       },
     ],
   },

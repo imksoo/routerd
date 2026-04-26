@@ -10,7 +10,7 @@ changes as the resource model takes shape.
 ## Unreleased
 
 - Added a Docusaurus documentation site scaffold for `routerd.net`.
-- Added Cloudflare Pages deployment documentation for `routerd.net`.
+- Added a Docusaurus website configured for Cloudflare Pages at `routerd.net`.
 - Added `NTPClient` for static `systemd-timesyncd` configuration.
 - Added explicit dnsmasq `listenInterfaces` allow-listing.
 - Scoped dnsmasq DNS bind addresses to router self addresses.

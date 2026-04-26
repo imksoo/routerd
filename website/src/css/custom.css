@@ -73,6 +73,18 @@
   color: #0f172a;
 }
 
+.heroActions .button.button--outline.button--secondary {
+  border-color: #e0f2fe;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+.heroActions .button.button--outline.button--secondary:hover {
+  border-color: #67e8f9;
+  color: #082f49;
+  background: #cffafe;
+}
+
 .section {
   padding: 4rem 0;
 }

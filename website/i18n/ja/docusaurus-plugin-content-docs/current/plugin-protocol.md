@@ -1,20 +1,20 @@
 ---
-title: Plugin Protocol
+title: プラグインプロトコル
 slug: /reference/plugin-protocol
 ---
 
-# Plugin Protocol
+# プラグインプロトコル
 
-routerd の plugin は、信頼済みのローカル実行ファイルです。
+routerd のプラグインは、信頼済みのローカル実行ファイルです。
 
-routerd は plugin を次の形式で呼び出します。
+routerd はプラグインを次の形式で呼び出します。
 
-- stdin: JSON input
-- stdout: JSON output
-- stderr: 人間向け log
-- environment variables: action と resource metadata
+- 標準入力: JSON 入力
+- 標準出力: JSON 出力
+- 標準エラー: 人間向けログ
+- 環境変数: 操作とリソースメタデータ
 
-## Actions
+## 操作
 
 - `validate`
 - `observe`
@@ -22,7 +22,7 @@ routerd は plugin を次の形式で呼び出します。
 - `ensure`
 - `delete`
 
-## Environment Variables
+## 環境変数
 
 - `ROUTERD_ACTION`
 - `ROUTERD_RESOURCE_API_VERSION`
@@ -33,21 +33,21 @@ routerd は plugin を次の形式で呼び出します。
 - `ROUTERD_STATE_DIR`
 - `ROUTERD_DRY_RUN`
 
-plugin runner の実装が進むにつれて、入出力 JSON の詳細をこの文書へ追加します。
+プラグイン実行処理の実装が進むにつれて、入出力 JSON の詳細をこの文書へ追加します。
 
-## Log Sink Plugins
+## ログ出力先プラグイン
 
 `spec.type: plugin` の `LogSink` は一方向のイベント出力先です。routerd はイベントごとに、設定された信頼済みローカル実行ファイルを1回起動します。
 
-- stdin: 1つの JSON event object と末尾改行
-- stdout: 無視
-- stderr: 人間向け診断
-- environment variables:
+- 標準入力: 1つの JSON イベントオブジェクトと末尾改行
+- 標準出力: 無視
+- 標準エラー: 人間向け診断
+- 環境変数:
   - `ROUTERD_LOG_LEVEL`
   - `ROUTERD_LOG_ROUTER`
   - `ROUTERD_LOG_COMMAND`
 
-Event JSON:
+イベント JSON:
 
 ```json
 {
