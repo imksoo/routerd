@@ -8,6 +8,7 @@ routerd は現在プレリリースのソフトウェアです。この変更履
 
 ## 未リリース
 
+- `HealthCheck.spec.role` を追加し、リンク、次ホップ、インターネット、サービス、ポリシーのヘルスチェックの意味を区別できるように変更。
 - `routerd.net` 用の Docusaurus ドキュメントサイトを追加。
 - `routerd.net` 向け Cloudflare Pages 前提の Docusaurus website を追加。
 - 日本語ドキュメントを追加。

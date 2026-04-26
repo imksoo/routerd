@@ -189,6 +189,7 @@ type DSLiteTunnelSpec struct {
 
 type HealthCheckSpec struct {
 	Type               string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=ping"`
+	Role               string `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=link,enum=next-hop,enum=internet,enum=service,enum=policy"`
 	AddressFamily      string `yaml:"addressFamily,omitempty" json:"addressFamily,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
 	Target             string `yaml:"target,omitempty" json:"target,omitempty"`
 	TargetSource       string `yaml:"targetSource,omitempty" json:"targetSource,omitempty" jsonschema:"enum=auto,enum=static,enum=defaultGateway,enum=dsliteRemote"`

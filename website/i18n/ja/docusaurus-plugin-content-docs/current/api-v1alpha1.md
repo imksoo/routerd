@@ -280,15 +280,26 @@ metadata:
   name: dslite-v4
 spec:
   type: ping
+  role: next-hop
   targetSource: dsliteRemote
   interface: transix-a
 ```
+
+`role` は、その確認が運用上何を意味するかを表します。これ自体は送出するパケットを変えませんが、経路ポリシーや状態出力を読みやすくします。
+
+- `link`: インターフェースの存在、キャリア、管理状態。
+- `next-hop`: ゲートウェイ、AFTR、トンネル終端など近傍の転送依存先。
+- `internet`: 公開先への ping や TCP 接続など、インターネット全体の到達性。
+- `service`: DNS 解決、DHCP、AFTR FQDN 解決、PPPoE セッションなどサービス固有の依存先。
+- `policy`: 経路候補を選んでよいかを示す集約結果。
+
+省略時の `role` は `next-hop` です。これは現在の `targetSource: auto` の動きと一致します。
 
 `IPv4DefaultRoutePolicy` は、正常な候補のうち `priority` が最小のものを有効にします。候補は直接インターフェースを指すか、`IPv4PolicyRouteSet` を `routeSet` で参照します。直接候補は専用のルーティングテーブルとファイアウォールマークを持ちます。新しい通信フローは有効な直接候補へマークされ、既存フローはその候補が正常な間は conntrack マークで同じ経路を維持します。旧候補が異常になった場合は、該当フローも現在の有効候補へマークし直します。
 
 有効候補が `routeSet` を参照する場合、routerd は新規フローをマークせず、参照先の `IPv4PolicyRouteSet` がハッシュで対象を選べるようにします。正常な経路セット対象の conntrack マークは維持します。失敗した候補の古いマークは消去し、経路セットに再選出させます。
 
-`target` を省略すると `targetSource: auto` として近傍の確認先を選びます。DS-Lite は AFTR の IPv6 アドレス、通常のインターフェースや PPPoE はそのインターフェースの IPv4 標準ゲートウェイを確認します。これは次ホップやトンネル終端の生存確認です。IPv4 インターネット全体の到達性を見たい場合は、明示的な静的 IPv4 確認先を持つ別の `HealthCheck` を設定します。候補に `healthCheck` を指定しない場合、その候補は常に有効として扱います。
+`target` を省略すると `targetSource: auto` として近傍の確認先を選びます。DS-Lite は AFTR の IPv6 アドレス、通常のインターフェースや PPPoE はそのインターフェースの IPv4 標準ゲートウェイを確認します。これは標準では `next-hop` 確認です。IPv4 インターネット全体の到達性を見たい場合は、明示的な静的 IPv4 確認先を持つ `role: internet` の別 `HealthCheck` を設定します。将来的には `role: policy` の集約確認で、複数の下位確認をまとめて経路候補の選択可否にできます。候補に `healthCheck` を指定しない場合、その候補は常に有効として扱います。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1

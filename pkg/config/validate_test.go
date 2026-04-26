@@ -74,6 +74,62 @@ func TestValidateLogSinkPluginRequiresPath(t *testing.T) {
 	}
 }
 
+func TestValidateHealthCheckRole(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+				Metadata: api.ObjectMeta{Name: "wan-next-hop"},
+				Spec: api.HealthCheckSpec{
+					Type:         "ping",
+					Role:         "next-hop",
+					TargetSource: "defaultGateway",
+					Interface:    "wan",
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate health check role: %v", err)
+	}
+}
+
+func TestValidateHealthCheckRejectsUnknownRole(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+				Metadata: api.ObjectMeta{Name: "wan-unknown"},
+				Spec: api.HealthCheckSpec{
+					Type:         "ping",
+					Role:         "mystery",
+					TargetSource: "defaultGateway",
+					Interface:    "wan",
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err == nil {
+		t.Fatal("expected unknown health check role to be rejected")
+	}
+}
+
 func TestValidatePPPoEInterface(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

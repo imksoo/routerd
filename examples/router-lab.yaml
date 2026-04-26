@@ -116,6 +116,7 @@ spec:
         name: wan-dhcp4-v4
       spec:
         type: ping
+        role: next-hop
         targetSource: defaultGateway
         interface: wan
 

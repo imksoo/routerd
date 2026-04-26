@@ -750,6 +750,7 @@ func (e *Engine) observeHealthCheck(res api.Resource, aliases map[string]string,
 		return
 	}
 	checkType := defaultString(spec.Type, "ping")
+	role := defaultString(spec.Role, "next-hop")
 	targetSource := defaultString(spec.TargetSource, "auto")
 	addressFamily := spec.AddressFamily
 	if addressFamily == "" {
@@ -762,6 +763,7 @@ func (e *Engine) observeHealthCheck(res api.Resource, aliases map[string]string,
 	interval := defaultString(spec.Interval, "60s")
 	timeout := defaultString(spec.Timeout, "3s")
 	rr.Observed["type"] = checkType
+	rr.Observed["role"] = role
 	rr.Observed["addressFamily"] = addressFamily
 	rr.Observed["targetSource"] = targetSource
 	if spec.Target != "" {
@@ -778,7 +780,7 @@ func (e *Engine) observeHealthCheck(res api.Resource, aliases map[string]string,
 		if target == "" {
 			target = targetSource
 		}
-		rr.Plan = append(rr.Plan, fmt.Sprintf("check %s reachability to %s every %s", addressFamily, target, interval))
+		rr.Plan = append(rr.Plan, fmt.Sprintf("check %s %s reachability to %s every %s", role, addressFamily, target, interval))
 	}
 }
 

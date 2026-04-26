@@ -9,6 +9,8 @@ changes as the resource model takes shape.
 
 ## Unreleased
 
+- Added `HealthCheck.spec.role` to distinguish link, next-hop, internet,
+  service, and policy health semantics.
 - Added a Docusaurus documentation site scaffold for `routerd.net`.
 - Added a Docusaurus website configured for Cloudflare Pages at `routerd.net`.
 - Added `NTPClient` for static `systemd-timesyncd` configuration.

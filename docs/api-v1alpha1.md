@@ -234,9 +234,26 @@ metadata:
   name: dslite-v4
 spec:
   type: ping
+  role: next-hop
   targetSource: dsliteRemote
   interface: transix-a
 ```
+
+`role` describes what the check means operationally. It does not change the
+wire operation by itself; it makes route policy and status output easier to
+read. Supported roles are:
+
+- `link`: interface existence, carrier, or administrative link state.
+- `next-hop`: nearby forwarding dependency such as a gateway, AFTR, or tunnel
+  endpoint.
+- `internet`: end-to-end public reachability, such as ping or TCP connect to a
+  public target.
+- `service`: service-specific dependency such as DNS resolution, DHCP, AFTR
+  FQDN resolution, or a PPPoE session.
+- `policy`: an aggregate answer to whether a route candidate may be selected.
+
+The default role is `next-hop`, matching the current `targetSource: auto`
+behavior.
 
 `IPv4DefaultRoutePolicy` selects the healthy candidate with the lowest
 `priority`. A candidate may be a direct interface route, or it may reference an
@@ -254,10 +271,12 @@ route set select a target again.
 
 When `target` is omitted, `targetSource: auto` chooses a nearby check target:
 DS-Lite checks the AFTR IPv6 address, and ordinary/PPPoE interfaces check the
-IPv4 default gateway for that interface. This verifies local next-hop or tunnel
-endpoint liveness. If you need end-to-end IPv4 Internet reachability, configure
-an explicit static IPv4 target as a separate health check. A route candidate
-with no `healthCheck` is always treated as up.
+IPv4 default gateway for that interface. This is a `next-hop` check by default.
+If you need end-to-end IPv4 Internet reachability, configure an explicit static
+IPv4 target as a separate `role: internet` health check. A future aggregate
+`role: policy` check can combine several lower-level checks into one answer for
+route candidate selection. A route candidate with no `healthCheck` is always
+treated as up.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1

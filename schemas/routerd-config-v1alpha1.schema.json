@@ -1396,6 +1396,16 @@
                       "interval": {
                         "type": "string"
                       },
+                      "role": {
+                        "enum": [
+                          "link",
+                          "next-hop",
+                          "internet",
+                          "service",
+                          "policy"
+                        ],
+                        "type": "string"
+                      },
                       "target": {
                         "type": "string"
                       },

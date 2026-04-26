@@ -844,6 +844,11 @@ func validateResource(res api.Resource) error {
 		default:
 			return fmt.Errorf("%s spec.type must be ping", res.ID())
 		}
+		switch defaultString(spec.Role, "next-hop") {
+		case "link", "next-hop", "internet", "service", "policy":
+		default:
+			return fmt.Errorf("%s spec.role must be link, next-hop, internet, service, or policy", res.ID())
+		}
 		addressFamily := defaultString(spec.AddressFamily, "ipv4")
 		switch addressFamily {
 		case "ipv4", "ipv6":
