@@ -9,7 +9,7 @@ import (
 	"routerd/pkg/config"
 )
 
-func TestPlanBlocksManagedInterfaceWhenOSNetworkingExists(t *testing.T) {
+func TestPlanUsesNetplanForManagedInterfaceWhenAvailable(t *testing.T) {
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -31,27 +31,58 @@ func TestPlanBlocksManagedInterfaceWhenOSNetworkingExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if result.Phase != "Blocked" {
-		t.Fatalf("phase = %s, want Blocked", result.Phase)
+	if result.Phase != "Healthy" {
+		t.Fatalf("phase = %s, want Healthy", result.Phase)
 	}
 
 	lan := findResult(result, "net.routerd.net/v1alpha1/Interface/lan")
 	if lan == nil {
 		t.Fatal("missing lan result")
 	}
-	if lan.Phase != "RequiresAdoption" {
-		t.Fatalf("lan phase = %s, want RequiresAdoption", lan.Phase)
+	if lan.Phase != "Healthy" {
+		t.Fatalf("lan phase = %s, want Healthy", lan.Phase)
 	}
 
 	static := findResult(result, "net.routerd.net/v1alpha1/IPv4StaticAddress/lan-ipv4")
 	if static == nil {
 		t.Fatal("missing lan static result")
 	}
-	if static.Phase != "RequiresAdoption" {
-		t.Fatalf("static phase = %s, want RequiresAdoption", static.Phase)
+	if static.Phase != "Drifted" {
+		t.Fatalf("static phase = %s, want Drifted", static.Phase)
 	}
-	if got := strings.Join(static.Plan, "\n"); !strings.Contains(got, "requires adoption") {
-		t.Fatalf("static plan = %q, want adoption block", got)
+	if got := strings.Join(static.Plan, "\n"); !strings.Contains(got, "ensure IPv4 address") {
+		t.Fatalf("static plan = %q, want address ensure", got)
+	}
+}
+
+func TestPlanBlocksManagedInterfaceWhenCloudInitOwnsNetworking(t *testing.T) {
+	router, err := config.Load("../../examples/router-lab.yaml")
+	if err != nil {
+		t.Fatalf("load example: %v", err)
+	}
+
+	engine := &Engine{
+		Command: fakeCommand(map[string]string{
+			"hostname":                         "old-router\n",
+			"sysctl -n net.ipv4.ip_forward":    "0\n",
+			"ip -4 route show default":         "default via 192.168.1.1 dev ens18 proto dhcp src 192.168.1.10 metric 100\n",
+			"ip -brief link show dev ens18":    "ens18 UP 52:54:00:00:00:18 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
+			"ip -brief link show dev ens19":    "ens19 DOWN 52:54:00:00:00:19 <BROADCAST,MULTICAST>\n",
+			"ip -brief -4 addr show dev ens19": "",
+		}),
+		OSNetworking: &osNetworking{CloudInit: true, Netplan: false, Networkd: true},
+	}
+
+	result, err := engine.Plan(router)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	lan := findResult(result, "net.routerd.net/v1alpha1/Interface/lan")
+	if lan == nil {
+		t.Fatal("missing lan result")
+	}
+	if lan.Phase != "RequiresAdoption" {
+		t.Fatalf("lan phase = %s, want RequiresAdoption", lan.Phase)
 	}
 }
 
@@ -194,7 +225,7 @@ func TestPlanStaticDefaultRouteDrift(t *testing.T) {
 	}
 }
 
-func TestPlanBlocksDHCPServerWhenInterfaceRequiresAdoption(t *testing.T) {
+func TestPlanAllowsDHCPScopeWhenNetplanCanManageInterface(t *testing.T) {
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -221,11 +252,11 @@ func TestPlanBlocksDHCPServerWhenInterfaceRequiresAdoption(t *testing.T) {
 	if scope == nil {
 		t.Fatal("missing DHCP scope result")
 	}
-	if scope.Phase != "RequiresAdoption" {
-		t.Fatalf("DHCP scope phase = %s, want RequiresAdoption", scope.Phase)
+	if scope.Phase != "Healthy" {
+		t.Fatalf("DHCP scope phase = %s, want Healthy", scope.Phase)
 	}
-	if got := strings.Join(scope.Plan, "\n"); !strings.Contains(got, "requires adoption") {
-		t.Fatalf("DHCP scope plan = %q, want adoption block", got)
+	if got := strings.Join(scope.Plan, "\n"); !strings.Contains(got, "ensure IPv4 DHCP scope") {
+		t.Fatalf("DHCP scope plan = %q, want scope ensure", got)
 	}
 }
 

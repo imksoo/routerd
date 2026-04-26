@@ -7,16 +7,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"runtime"
 
 	"routerd/pkg/config"
 	"routerd/pkg/reconcile"
+	"routerd/pkg/render"
 	statuswriter "routerd/pkg/status"
 )
 
 const (
-	defaultConfigPath = "/usr/local/etc/routerd/router.yaml"
-	defaultPluginDir  = "/usr/local/libexec/routerd/plugins"
+	defaultConfigPath  = "/usr/local/etc/routerd/router.yaml"
+	defaultPluginDir   = "/usr/local/libexec/routerd/plugins"
+	defaultNetplanPath = "/etc/netplan/90-routerd.yaml"
 )
 
 func main() {
@@ -116,6 +119,7 @@ func reconcileCommand(args []string, stdout io.Writer) error {
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", defaultConfigPath, "config path")
 	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
+	netplanPath := fs.String("netplan-file", defaultNetplanPath, "routerd-managed netplan file")
 	once := fs.Bool("once", false, "run one reconcile loop")
 	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
 	if err := fs.Parse(args); err != nil {
@@ -134,10 +138,41 @@ func reconcileCommand(args []string, stdout io.Writer) error {
 		return err
 	}
 	if !*dryRun {
-		return errors.New("non-dry-run reconcile is not implemented yet")
+		netplanData, err := render.Netplan(router)
+		if err != nil {
+			return err
+		}
+		if err := applyNetplan(*netplanPath, netplanData); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "wrote netplan %s\n", *netplanPath)
+		fmt.Fprintln(stdout, "applied netplan")
+		return writeResult(stdout, *statusFile, result)
 	}
 	fmt.Fprintf(stdout, "dry-run reconcile plan for %s\n", *configPath)
 	return writeResult(stdout, *statusFile, result)
+}
+
+func applyNetplan(path string, data []byte) error {
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("write netplan %s: %w", path, err)
+	}
+	if err := runLogged("netplan", "generate"); err != nil {
+		return err
+	}
+	if err := runLogged("netplan", "apply"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runLogged(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %v: %w: %s", name, args, err, string(out))
+	}
+	return nil
 }
 
 func statusCommand(args []string, stdout io.Writer) error {

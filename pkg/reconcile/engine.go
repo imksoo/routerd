@@ -718,7 +718,7 @@ func interfacePolicies(router *api.Router, osNet osNetworking) map[string]interf
 			IfName:           stringSpec(res, "ifname"),
 			Managed:          managed,
 			Owner:            owner,
-			RequiresAdoption: managed && owner != "external" && (osNet.CloudInit || osNet.Netplan),
+			RequiresAdoption: managed && owner != "external" && osNet.CloudInit && !osNet.Netplan,
 			OS:               osNet,
 		}
 	}
