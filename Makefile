@@ -23,13 +23,21 @@ endif
 
 ROUTERD_BIN := bin/routerd
 
-.PHONY: test build check-build-deps check-remote-deps install install-systemd dist remote-install remote-install-config validate-example dry-run-example plan-config clean
+.PHONY: test build generate-schema check-schema check-build-deps check-remote-deps install install-systemd dist remote-install remote-install-config validate-example dry-run-example plan-config clean
 
 test:
 	go test ./...
 
 build:
 	go build -o $(ROUTERD_BIN) ./cmd/routerd
+
+generate-schema:
+	install -d schemas
+	go run ./cmd/routerd-schema > schemas/routerd-config-v1alpha1.schema.json
+
+check-schema:
+	go run ./cmd/routerd-schema > /tmp/routerd-config-v1alpha1.schema.json
+	diff -u schemas/routerd-config-v1alpha1.schema.json /tmp/routerd-config-v1alpha1.schema.json
 
 check-build-deps:
 	@missing=0; \

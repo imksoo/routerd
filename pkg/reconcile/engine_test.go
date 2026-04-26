@@ -126,6 +126,47 @@ func TestPlanUsesExternalDHCPv4DefaultRoute(t *testing.T) {
 	}
 }
 
+func TestPlanIPv4SourceNAT(t *testing.T) {
+	router, err := config.Load("../../examples/router-lab.yaml")
+	if err != nil {
+		t.Fatalf("load example: %v", err)
+	}
+
+	engine := &Engine{
+		Command: fakeCommand(map[string]string{
+			"hostname":                         "router.example\n",
+			"sysctl -n net.ipv4.ip_forward":    "1\n",
+			"ip -4 route show default":         "default via 192.168.1.1 dev ens18 proto dhcp src 192.168.1.10 metric 100\n",
+			"ip -brief link show dev ens18":    "ens18 UP 52:54:00:00:00:18 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
+			"ip -brief link show dev ens19":    "ens19 DOWN 52:54:00:00:00:19 <BROADCAST,MULTICAST>\n",
+			"ip -brief -4 addr show dev ens18": "192.168.1.10/24\n",
+			"ip -brief -4 addr show dev ens19": "",
+		}),
+		OSNetworking: &osNetworking{CloudInit: true, Netplan: true, Networkd: true},
+	}
+
+	result, err := engine.Plan(router)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	nat := findResult(result, "net.routerd.net/v1alpha1/IPv4SourceNAT/lan-to-wan")
+	if nat == nil {
+		t.Fatal("missing source NAT result")
+	}
+	if nat.Observed["translationType"] != "interfaceAddress" {
+		t.Fatalf("translationType = %q, want interfaceAddress", nat.Observed["translationType"])
+	}
+	if got := strings.Join(nat.Plan, "\n"); !strings.Contains(got, "source NAT") {
+		t.Fatalf("NAT plan = %q, want source NAT", got)
+	}
+	if nat.Observed["portMapping"] != "range" {
+		t.Fatalf("portMapping = %q, want range", nat.Observed["portMapping"])
+	}
+	if nat.Observed["portRange"] != "1024-65535" {
+		t.Fatalf("portRange = %q, want 1024-65535", nat.Observed["portRange"])
+	}
+}
+
 func TestPlanStaticDefaultRouteDrift(t *testing.T) {
 	router := staticDefaultRouteRouter()
 	engine := &Engine{
@@ -150,6 +191,41 @@ func TestPlanStaticDefaultRouteDrift(t *testing.T) {
 	}
 	if got := strings.Join(route.Plan, "\n"); !strings.Contains(got, "via 192.168.1.254 dev ens18") {
 		t.Fatalf("route plan = %q, want static gateway ensure", got)
+	}
+}
+
+func TestPlanBlocksDHCPServerWhenInterfaceRequiresAdoption(t *testing.T) {
+	router, err := config.Load("../../examples/router-lab.yaml")
+	if err != nil {
+		t.Fatalf("load example: %v", err)
+	}
+
+	engine := &Engine{
+		Command: fakeCommand(map[string]string{
+			"hostname":                         "router.example\n",
+			"sysctl -n net.ipv4.ip_forward":    "1\n",
+			"ip -4 route show default":         "default via 192.168.1.1 dev ens18 proto dhcp src 192.168.1.10 metric 100\n",
+			"ip -brief link show dev ens18":    "ens18 UP 52:54:00:00:00:18 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
+			"ip -brief link show dev ens19":    "ens19 DOWN 52:54:00:00:00:19 <BROADCAST,MULTICAST>\n",
+			"ip -brief -4 addr show dev ens18": "192.168.1.10/24\n",
+			"ip -brief -4 addr show dev ens19": "",
+		}),
+		OSNetworking: &osNetworking{CloudInit: true, Netplan: true, Networkd: true},
+	}
+
+	result, err := engine.Plan(router)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	scope := findResult(result, "net.routerd.net/v1alpha1/IPv4DHCPScope/lan-dhcp4")
+	if scope == nil {
+		t.Fatal("missing DHCP scope result")
+	}
+	if scope.Phase != "RequiresAdoption" {
+		t.Fatalf("DHCP scope phase = %s, want RequiresAdoption", scope.Phase)
+	}
+	if got := strings.Join(scope.Plan, "\n"); !strings.Contains(got, "requires adoption") {
+		t.Fatalf("DHCP scope plan = %q, want adoption block", got)
 	}
 }
 
@@ -229,20 +305,12 @@ func staticDefaultRouteRouter() *api.Router {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec: map[string]any{
-					"ifname":  "ens18",
-					"managed": true,
-					"owner":   "routerd",
-				},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true, Owner: "routerd"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoute"},
 				Metadata: api.ObjectMeta{Name: "default-v4"},
-				Spec: map[string]any{
-					"interface":     "wan",
-					"gatewaySource": "static",
-					"gateway":       "192.168.1.254",
-				},
+				Spec:     api.IPv4DefaultRouteSpec{Interface: "wan", GatewaySource: "static", Gateway: "192.168.1.254"},
 			},
 		}},
 	}
@@ -301,13 +369,10 @@ func findResult(result *Result, id string) *ResourceResult {
 }
 
 func overlapRouter(allowOverlap bool) *api.Router {
-	staticSpec := map[string]any{
-		"interface": "lan",
-		"address":   "192.168.160.3/24",
-	}
+	staticSpec := api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.3/24"}
 	if allowOverlap {
-		staticSpec["allowOverlap"] = true
-		staticSpec["allowOverlapReason"] = "overlapping customer network for NAT lab"
+		staticSpec.AllowOverlap = true
+		staticSpec.AllowOverlapReason = "overlapping customer network for NAT lab"
 	}
 	return &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -316,20 +381,12 @@ func overlapRouter(allowOverlap bool) *api.Router {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec: map[string]any{
-					"ifname":  "ens18",
-					"managed": false,
-					"owner":   "external",
-				},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec: map[string]any{
-					"ifname":  "ens19",
-					"managed": true,
-					"owner":   "routerd",
-				},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},

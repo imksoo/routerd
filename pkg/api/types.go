@@ -1,5 +1,11 @@
 package api
 
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
+
 type TypeMeta struct {
 	APIVersion string `yaml:"apiVersion" json:"apiVersion"`
 	Kind       string `yaml:"kind" json:"kind"`
@@ -22,7 +28,7 @@ type RouterSpec struct {
 type Resource struct {
 	TypeMeta `yaml:",inline" json:",inline"`
 	Metadata ObjectMeta     `yaml:"metadata" json:"metadata"`
-	Spec     map[string]any `yaml:"spec" json:"spec"`
+	Spec     any            `yaml:"spec" json:"spec"`
 	Status   map[string]any `yaml:"status,omitempty" json:"status,omitempty"`
 }
 
@@ -35,3 +41,90 @@ const (
 	NetAPIVersion    = "net.routerd.net/v1alpha1"
 	SystemAPIVersion = "system.routerd.net/v1alpha1"
 )
+
+func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
+	type rawResource struct {
+		TypeMeta `yaml:",inline"`
+		Metadata ObjectMeta     `yaml:"metadata"`
+		Spec     yaml.Node      `yaml:"spec"`
+		Status   map[string]any `yaml:"status,omitempty"`
+	}
+
+	var raw rawResource
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	r.TypeMeta = raw.TypeMeta
+	r.Metadata = raw.Metadata
+	r.Status = raw.Status
+
+	switch raw.Kind {
+	case "Sysctl":
+		var spec SysctlSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "Interface":
+		var spec InterfaceSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv4StaticAddress":
+		var spec IPv4StaticAddressSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv4DHCPAddress":
+		var spec IPv4DHCPAddressSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv4DHCPServer":
+		var spec IPv4DHCPServerSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv4DHCPScope":
+		var spec IPv4DHCPScopeSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv6DHCPAddress":
+		var spec IPv6DHCPAddressSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv4DefaultRoute":
+		var spec IPv4DefaultRouteSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv4SourceNAT":
+		var spec IPv4SourceNATSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "Hostname":
+		var spec HostnameSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	default:
+		var spec map[string]any
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	}
+	return nil
+}

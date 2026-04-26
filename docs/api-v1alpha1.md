@@ -20,7 +20,10 @@ routerd uses Kubernetes-like API shapes:
 - `Interface`
 - `IPv4StaticAddress`
 - `IPv4DHCPAddress`
+- `IPv4DHCPServer`
+- `IPv4DHCPScope`
 - `IPv4DefaultRoute`
+- `IPv4SourceNAT`
 - `IPv6DHCPAddress`
 - `Hostname`
 - `Sysctl`
@@ -104,3 +107,81 @@ spec:
 ```
 
 IPv6 default gateway behavior is intentionally left for a later design pass.
+
+## IPv4DHCPServer And IPv4DHCPScope
+
+`IPv4DHCPServer` declares a DHCPv4 server instance. `IPv4DHCPScope` binds that server to an interface and declares one address pool plus DHCP options. This split keeps multi-scope DHCP readable.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4DHCPServer
+metadata:
+  name: dhcp4
+spec:
+  server: dnsmasq
+  managed: true
+```
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4DHCPScope
+metadata:
+  name: lan-dhcp4
+spec:
+  server: dhcp4
+  interface: lan
+  rangeStart: 192.168.160.100
+  rangeEnd: 192.168.160.199
+  leaseTime: 12h
+  routerSource: interfaceAddress
+  dnsSource: dhcp4
+  dnsInterface: wan
+  authoritative: true
+```
+
+`routerSource` may be `interfaceAddress`, `static`, or `none`. `dnsSource` may be `dhcp4`, `static`, `self`, or `none`.
+
+`spec.interface` must refer to an `Interface`. If that interface still requires adoption because cloud-init or netplan is present, planning blocks DHCP scope management as well.
+
+## IPv4SourceNAT
+
+`IPv4SourceNAT` declares outbound source NAT without using Linux-specific API names. On Linux this may render to masquerade when `translation.type` is `interfaceAddress`.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4SourceNAT
+metadata:
+  name: lan-to-wan
+spec:
+  outboundInterface: wan
+  sourceCIDRs:
+    - 192.168.160.0/24
+  translation:
+    type: interfaceAddress
+    portMapping:
+      type: range
+      start: 1024
+      end: 65535
+```
+
+Other translation forms are reserved for static SNAT and pools:
+
+```yaml
+translation:
+  type: address
+  address: 203.0.113.10
+```
+
+```yaml
+translation:
+  type: pool
+  addresses:
+    - 203.0.113.10
+    - 203.0.113.11
+```
+
+`translation.portMapping` controls source port handling:
+
+- `auto`: let the platform choose source ports.
+- `preserve`: preserve source ports when the platform can.
+- `range`: map source ports into `start` through `end`.

@@ -70,10 +70,16 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
 		case "IPv4DHCPAddress":
 			e.observeDHCP(res, aliases, policies, "ipv4", includePlan, &rr)
+		case "IPv4DHCPServer":
+			e.observeIPv4DHCPServer(res, includePlan, &rr)
+		case "IPv4DHCPScope":
+			e.observeIPv4DHCPScope(res, aliases, policies, includePlan, &rr)
 		case "IPv6DHCPAddress":
 			e.observeDHCP(res, aliases, policies, "ipv6", includePlan, &rr)
 		case "IPv4DefaultRoute":
 			e.observeIPv4DefaultRoute(res, aliases, policies, includePlan, &rr)
+		case "IPv4SourceNAT":
+			e.observeIPv4SourceNAT(res, aliases, policies, includePlan, &rr)
 		case "Hostname":
 			e.observeHostname(res, osNet, includePlan, &rr)
 		}
@@ -85,6 +91,159 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 	}
 
 	return result, nil
+}
+
+func (e *Engine) observeIPv4SourceNAT(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv4SourceNATSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	outIfName := aliases[spec.OutboundInterface]
+	policy := policies[spec.OutboundInterface]
+
+	rr.Observed["outboundInterface"] = spec.OutboundInterface
+	rr.Observed["outboundIfname"] = outIfName
+	rr.Observed["sourceCIDRs"] = strings.Join(spec.SourceCIDRs, ",")
+	rr.Observed["translationType"] = spec.Translation.Type
+	if spec.Translation.Address != "" {
+		rr.Observed["translationAddress"] = spec.Translation.Address
+	}
+	if len(spec.Translation.Addresses) > 0 {
+		rr.Observed["translationAddresses"] = strings.Join(spec.Translation.Addresses, ",")
+	}
+	portMapping := defaultString(spec.Translation.PortMapping.Type, "auto")
+	rr.Observed["portMapping"] = portMapping
+	if portMapping == "range" {
+		rr.Observed["portRange"] = fmt.Sprintf("%d-%d", spec.Translation.PortMapping.Start, spec.Translation.PortMapping.End)
+	}
+
+	if !includePlan {
+		return
+	}
+	if !policy.Managed || policy.Owner == "external" {
+		rr.Plan = append(rr.Plan, "plan NAT rule for externally managed outbound interface")
+	} else if policy.RequiresAdoption {
+		rr.Phase = "RequiresAdoption"
+		rr.Plan = append(rr.Plan, "blocked: outbound interface requires adoption before routerd manages NAT")
+		return
+	}
+	switch spec.Translation.Type {
+	case "interfaceAddress":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 source NAT for %s via interface address on %s", strings.Join(spec.SourceCIDRs, ","), outIfName))
+	case "address":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 source NAT for %s to %s via %s", strings.Join(spec.SourceCIDRs, ","), spec.Translation.Address, outIfName))
+	case "pool":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 source NAT for %s to pool %s via %s", strings.Join(spec.SourceCIDRs, ","), strings.Join(spec.Translation.Addresses, ","), outIfName))
+	}
+	switch portMapping {
+	case "auto":
+		rr.Plan = append(rr.Plan, "use automatic source port mapping")
+	case "preserve":
+		rr.Plan = append(rr.Plan, "preserve source ports when supported")
+	case "range":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("map source ports to %d-%d", spec.Translation.PortMapping.Start, spec.Translation.PortMapping.End))
+	}
+}
+
+func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv4DHCPServerSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	server := spec.Server
+	if server == "" {
+		server = "dnsmasq"
+	}
+
+	rr.Observed["server"] = server
+	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
+
+	if _, err := exec.LookPath(server); err == nil {
+		rr.Observed["serverAvailable"] = "true"
+	} else {
+		rr.Observed["serverAvailable"] = "false"
+		if includePlan {
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s is required to ensure DHCP server on this host", server))
+		}
+	}
+
+	if !includePlan {
+		return
+	}
+	if !spec.Managed {
+		rr.Plan = append(rr.Plan, "observe only; DHCP server instance is not managed")
+		return
+	}
+	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 DHCP server instance %s is available", server))
+}
+
+func (e *Engine) observeIPv4DHCPScope(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv4DHCPScopeSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := aliases[spec.Interface]
+	policy := policies[spec.Interface]
+	routerSource := defaultString(spec.RouterSource, "interfaceAddress")
+	dnsSource := defaultString(spec.DNSSource, "self")
+
+	rr.Observed["server"] = spec.Server
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["ifname"] = ifname
+	rr.Observed["rangeStart"] = spec.RangeStart
+	rr.Observed["rangeEnd"] = spec.RangeEnd
+	rr.Observed["routerSource"] = routerSource
+	rr.Observed["dnsSource"] = dnsSource
+	if spec.LeaseTime != "" {
+		rr.Observed["leaseTime"] = spec.LeaseTime
+	}
+	if spec.Router != "" {
+		rr.Observed["router"] = spec.Router
+	}
+	if spec.DNSInterface != "" {
+		rr.Observed["dnsInterface"] = spec.DNSInterface
+	}
+	if len(spec.DNSServers) > 0 {
+		rr.Observed["dnsServers"] = strings.Join(spec.DNSServers, ",")
+	}
+
+	if !includePlan {
+		return
+	}
+	if !policy.Managed || policy.Owner == "external" {
+		rr.Plan = append(rr.Plan, "observe only; referenced interface is externally managed")
+		return
+	}
+	if policy.RequiresAdoption {
+		rr.Phase = "RequiresAdoption"
+		rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd manages DHCP scope")
+		return
+	}
+	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 DHCP scope %s serves %s-%s on %s", spec.Server, spec.RangeStart, spec.RangeEnd, ifname))
+	switch routerSource {
+	case "interfaceAddress":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise router option from IPv4 address on %s", ifname))
+	case "static":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise router option %s", spec.Router))
+	case "none":
+		rr.Plan = append(rr.Plan, "do not advertise router option")
+	}
+	switch dnsSource {
+	case "dhcp4":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise DNS servers learned from DHCPv4 on %s", aliases[spec.DNSInterface]))
+	case "static":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise DNS servers %s", strings.Join(spec.DNSServers, ",")))
+	case "self":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise this router as DNS server on %s", ifname))
+	case "none":
+		rr.Plan = append(rr.Plan, "do not advertise DNS servers")
+	}
 }
 
 func (e *Engine) observeIPv4DefaultRoute(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
@@ -588,15 +747,80 @@ func ownerFromManaged(managed bool) string {
 }
 
 func stringSpec(res api.Resource, key string) string {
-	value, ok := res.Spec[key]
-	if !ok {
-		return ""
+	switch spec := res.Spec.(type) {
+	case api.SysctlSpec:
+		switch key {
+		case "key":
+			return spec.Key
+		case "value":
+			return spec.Value
+		}
+	case api.InterfaceSpec:
+		switch key {
+		case "ifname":
+			return spec.IfName
+		case "owner":
+			return spec.Owner
+		}
+	case api.IPv4StaticAddressSpec:
+		switch key {
+		case "interface":
+			return spec.Interface
+		case "address":
+			return spec.Address
+		case "allowOverlapReason":
+			return spec.AllowOverlapReason
+		}
+	case api.IPv4DHCPAddressSpec:
+		switch key {
+		case "interface":
+			return spec.Interface
+		case "client":
+			return spec.Client
+		}
+	case api.IPv4DHCPServerSpec:
+		switch key {
+		case "server":
+			return spec.Server
+		}
+	case api.IPv4DHCPScopeSpec:
+		switch key {
+		case "interface":
+			return spec.Interface
+		case "server":
+			return spec.Server
+		case "rangeStart":
+			return spec.RangeStart
+		case "rangeEnd":
+			return spec.RangeEnd
+		case "leaseTime":
+			return spec.LeaseTime
+		case "router":
+			return spec.Router
+		}
+	case api.IPv6DHCPAddressSpec:
+		switch key {
+		case "interface":
+			return spec.Interface
+		case "client":
+			return spec.Client
+		}
+	case api.IPv4DefaultRouteSpec:
+		switch key {
+		case "interface":
+			return spec.Interface
+		case "gatewaySource":
+			return spec.GatewaySource
+		case "gateway":
+			return spec.Gateway
+		}
+	case api.HostnameSpec:
+		switch key {
+		case "hostname":
+			return spec.Hostname
+		}
 	}
-	s, ok := value.(string)
-	if !ok {
-		return ""
-	}
-	return s
+	return ""
 }
 
 func stringSpecDefault(res api.Resource, key, fallback string) string {
@@ -607,22 +831,58 @@ func stringSpecDefault(res api.Resource, key, fallback string) string {
 }
 
 func boolSpec(res api.Resource, key string) bool {
-	value, ok := res.Spec[key]
-	if !ok {
-		return false
+	switch spec := res.Spec.(type) {
+	case api.SysctlSpec:
+		switch key {
+		case "runtime":
+			return api.BoolDefault(spec.Runtime, false)
+		case "persistent":
+			return spec.Persistent
+		}
+	case api.InterfaceSpec:
+		switch key {
+		case "adminUp":
+			return spec.AdminUp
+		case "managed":
+			return spec.Managed
+		}
+	case api.IPv4StaticAddressSpec:
+		switch key {
+		case "exclusive":
+			return spec.Exclusive
+		case "allowOverlap":
+			return spec.AllowOverlap
+		}
+	case api.IPv4DHCPAddressSpec:
+		if key == "required" {
+			return spec.Required
+		}
+	case api.IPv6DHCPAddressSpec:
+		if key == "required" {
+			return spec.Required
+		}
+	case api.IPv4DefaultRouteSpec:
+		if key == "required" {
+			return spec.Required
+		}
+	case api.HostnameSpec:
+		if key == "managed" {
+			return spec.Managed
+		}
 	}
-	b, ok := value.(bool)
-	return ok && b
+	return false
 }
 
 func boolSpecDefault(res api.Resource, key string, fallback bool) bool {
-	value, ok := res.Spec[key]
-	if !ok {
+	if spec, ok := res.Spec.(api.SysctlSpec); ok && key == "runtime" {
+		return api.BoolDefault(spec.Runtime, fallback)
+	}
+	return boolSpec(res, key)
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
 		return fallback
 	}
-	b, ok := value.(bool)
-	if !ok {
-		return fallback
-	}
-	return b
+	return value
 }

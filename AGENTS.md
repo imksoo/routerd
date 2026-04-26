@@ -12,7 +12,9 @@ Initial target:
 - external trusted local plugins
 - systemd service
 
-MVP scope is intentionally small:
+MVP scope is intentionally small, but it is not frozen. If a small design change prevents obvious future migration cost or improves safety, propose it clearly and implement it after the tradeoff is understood.
+
+MVP scope currently includes:
 - Interface alias resources
 - IPv4 static address resource
 - IPv4 DHCP resource stub or minimal implementation
@@ -73,6 +75,8 @@ make dry-run-example
 ## Coding Rules
 
 - Keep the first implementation small.
+- Treat MVP boundaries as guidance, not as an excuse to bake in avoidable technical debt.
+- Prefer early typed API shapes and generated machine-readable schema when resource fields are introduced.
 - Do not implement firewall or NAT until the core resource/plugin loop works.
 - Prefer explicit code over clever abstractions.
 - Keep plugin protocol documented.

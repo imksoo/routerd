@@ -12,6 +12,8 @@ The first MVP targets Ubuntu Server and focuses on the smallest reliable core:
 
 The MVP does not implement firewall, NAT, DS-Lite, IPv6 PD, policy routing, remote plugin installation, or full rollback.
 
+The MVP scope is a working boundary, not a permanent constraint. When a small design improvement reduces future migration cost or improves router safety, the project should update the MVP direction deliberately instead of preserving a weak early assumption.
+
 ## Requirements
 
 - Go 1.22 or newer
@@ -44,6 +46,13 @@ Check local build dependencies:
 
 ```sh
 make check-build-deps
+```
+
+Regenerate the YAML authoring schema from Go API structs:
+
+```sh
+make generate-schema
+make check-schema
 ```
 
 ## Install

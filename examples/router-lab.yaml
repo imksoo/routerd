@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
@@ -52,6 +53,21 @@ spec:
         required: true
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4SourceNAT
+      metadata:
+        name: lan-to-wan
+      spec:
+        outboundInterface: wan
+        sourceCIDRs:
+          - 192.168.160.0/24
+        translation:
+          type: interfaceAddress
+          portMapping:
+            type: range
+            start: 1024
+            end: 65535
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DHCPAddress
       metadata:
         name: wan-dhcp6
@@ -78,3 +94,26 @@ spec:
         interface: lan
         address: 192.168.160.3/24
         exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4DHCPServer
+      metadata:
+        name: dhcp4
+      spec:
+        server: dnsmasq
+        managed: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4DHCPScope
+      metadata:
+        name: lan-dhcp4
+      spec:
+        server: dhcp4
+        interface: lan
+        rangeStart: 192.168.160.100
+        rangeEnd: 192.168.160.199
+        leaseTime: 12h
+        routerSource: interfaceAddress
+        dnsSource: dhcp4
+        dnsInterface: wan
+        authoritative: true

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
