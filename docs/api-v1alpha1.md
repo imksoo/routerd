@@ -39,6 +39,7 @@ routerd uses Kubernetes-like API shapes:
 - `DSLiteTunnel`
 - `Hostname`
 - `LogSink`
+- `NTPClient`
 - `Sysctl`
 
 The schema is intentionally small and will be implemented incrementally.
@@ -119,6 +120,31 @@ spec:
 ```
 
 `enabled` defaults to `true`. `minLevel` defaults to `info`. `syslog.facility` defaults to `local6`, and `syslog.tag` defaults to `routerd`.
+For remote syslog, set `syslog.network` and `syslog.address`, for example
+`network: udp` and `address: syslog.example.net:514`.
+
+## NTPClient
+
+`system.routerd.net/v1alpha1` `NTPClient` declares the local NTP client. The
+initial implementation manages `systemd-timesyncd` with static servers.
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: NTPClient
+metadata:
+  name: system-time
+spec:
+  provider: systemd-timesyncd
+  managed: true
+  source: static
+  interface: wan
+  servers:
+    - pool.ntp.org
+```
+
+When `interface` is set, routerd renders per-link `NTP=` through
+systemd-networkd for that interface. When omitted, routerd writes global
+`systemd-timesyncd` servers.
 
 ## IPv4 Overlap Safety
 
@@ -316,6 +342,8 @@ metadata:
 spec:
   server: dnsmasq
   managed: true
+  listenInterfaces:
+    - lan
   dns:
     enabled: true
     upstreamSource: dhcp4
@@ -364,6 +392,8 @@ metadata:
 spec:
   server: dnsmasq
   managed: true
+  listenInterfaces:
+    - lan
 ```
 
 ```yaml
@@ -381,6 +411,15 @@ spec:
 ```
 
 `mode: stateless` means clients use SLAAC for addresses and DHCPv6 for options such as DNS. `mode: ra-only` sends RA without DHCPv6 address assignment. IPv6 default routes are advertised by RA; DHCPv6 itself has no default gateway option. With `dnsSource: self`, routerd advertises the delegated LAN IPv6 address, for example `pd-prefix::3`, as the DNS server. Static IPv6 DNS servers can be advertised with `dnsSource: static` and `dnsServers`.
+
+When dnsmasq RA is enabled, routerd uses the same IPv6 DNS server list for
+DHCPv6 DNS and RA RDNSS. This matters for Android clients, which should be
+treated as SLAAC/RDNSS clients rather than DHCPv6 clients.
+
+For dnsmasq-backed DHCP and DNS, `listenInterfaces` is the allow-list of
+interfaces where dnsmasq may serve. Scopes must bind to an interface listed by
+their server. Interfaces not listed are rendered as `except-interface`, so a WAN
+is not served unless it is explicitly configured.
 
 ## IPv4SourceNAT
 

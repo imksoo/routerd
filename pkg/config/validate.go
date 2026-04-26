@@ -24,9 +24,12 @@ func Validate(router *api.Router) error {
 	baseInterfaces := map[string]bool{}
 	interfaces := map[string]bool{}
 	dhcp4Servers := map[string]bool{}
+	dhcp4ServerSpecs := map[string]api.IPv4DHCPServerSpec{}
 	dhcp6Servers := map[string]bool{}
+	dhcp6ServerSpecs := map[string]api.IPv6DHCPServerSpec{}
 	prefixDelegations := map[string]bool{}
 	delegatedAddresses := map[string]bool{}
+	delegatedAddressInterfaces := map[string]string{}
 	selfAddressPolicies := map[string]bool{}
 	dsliteTunnels := map[string]bool{}
 	routeSets := map[string]bool{}
@@ -49,15 +52,30 @@ func Validate(router *api.Router) error {
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv4DHCPServer" {
 			dhcp4Servers[res.Metadata.Name] = true
+			spec, err := res.IPv4DHCPServerSpec()
+			if err != nil {
+				return err
+			}
+			dhcp4ServerSpecs[res.Metadata.Name] = spec
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6DHCPServer" {
 			dhcp6Servers[res.Metadata.Name] = true
+			spec, err := res.IPv6DHCPServerSpec()
+			if err != nil {
+				return err
+			}
+			dhcp6ServerSpecs[res.Metadata.Name] = spec
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6PrefixDelegation" {
 			prefixDelegations[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6DelegatedAddress" {
 			delegatedAddresses[res.Metadata.Name] = true
+			spec, err := res.IPv6DelegatedAddressSpec()
+			if err != nil {
+				return err
+			}
+			delegatedAddressInterfaces[res.Metadata.Name] = spec.Interface
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "SelfAddressPolicy" {
 			selfAddressPolicies[res.Metadata.Name] = true
@@ -113,8 +131,42 @@ func Validate(router *api.Router) error {
 			if !dhcp4Servers[spec.Server] {
 				return fmt.Errorf("%s references missing IPv4DHCPServer %q", res.ID(), spec.Server)
 			}
+			if !stringInSlice(spec.Interface, dhcp4ServerSpecs[spec.Server].ListenInterfaces) {
+				return fmt.Errorf("%s spec.interface %q must be listed in IPv4DHCPServer %q spec.listenInterfaces", res.ID(), spec.Interface, spec.Server)
+			}
 			if spec.DNSInterface != "" && !interfaces[spec.DNSInterface] {
 				return fmt.Errorf("%s references missing DNS Interface %q", res.ID(), spec.DNSInterface)
+			}
+		}
+		if res.Kind == "NTPClient" {
+			spec, err := res.NTPClientSpec()
+			if err != nil {
+				return err
+			}
+			if spec.Interface != "" && !interfaces[spec.Interface] {
+				return fmt.Errorf("%s references missing Interface %q", res.ID(), spec.Interface)
+			}
+		}
+		if res.Kind == "IPv4DHCPServer" {
+			spec, err := res.IPv4DHCPServerSpec()
+			if err != nil {
+				return err
+			}
+			for i, name := range spec.ListenInterfaces {
+				if !interfaces[name] {
+					return fmt.Errorf("%s spec.listenInterfaces[%d] references missing Interface %q", res.ID(), i, name)
+				}
+			}
+		}
+		if res.Kind == "IPv6DHCPServer" {
+			spec, err := res.IPv6DHCPServerSpec()
+			if err != nil {
+				return err
+			}
+			for i, name := range spec.ListenInterfaces {
+				if !interfaces[name] {
+					return fmt.Errorf("%s spec.listenInterfaces[%d] references missing Interface %q", res.ID(), i, name)
+				}
 			}
 		}
 		if res.Kind == "IPv4SourceNAT" {
@@ -174,6 +226,9 @@ func Validate(router *api.Router) error {
 			}
 			if !delegatedAddresses[spec.DelegatedAddress] {
 				return fmt.Errorf("%s references missing IPv6DelegatedAddress %q", res.ID(), spec.DelegatedAddress)
+			}
+			if !stringInSlice(delegatedAddressInterfaces[spec.DelegatedAddress], dhcp6ServerSpecs[spec.Server].ListenInterfaces) {
+				return fmt.Errorf("%s delegatedAddress interface %q must be listed in IPv6DHCPServer %q spec.listenInterfaces", res.ID(), delegatedAddressInterfaces[spec.DelegatedAddress], spec.Server)
 			}
 			if spec.SelfAddressPolicy != "" && !selfAddressPolicies[spec.SelfAddressPolicy] {
 				return fmt.Errorf("%s references missing SelfAddressPolicy %q", res.ID(), spec.SelfAddressPolicy)
@@ -307,6 +362,35 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.Value == "" {
 			return fmt.Errorf("%s spec.value is required", res.ID())
+		}
+	case "NTPClient":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.NTPClientSpec()
+		if err != nil {
+			return err
+		}
+		switch defaultString(spec.Provider, "systemd-timesyncd") {
+		case "systemd-timesyncd":
+		default:
+			return fmt.Errorf("%s spec.provider must be systemd-timesyncd", res.ID())
+		}
+		switch defaultString(spec.Source, "static") {
+		case "static":
+		default:
+			return fmt.Errorf("%s spec.source must be static", res.ID())
+		}
+		if spec.Managed && len(spec.Servers) == 0 {
+			return fmt.Errorf("%s spec.servers is required when managed is true", res.ID())
+		}
+		for i, server := range spec.Servers {
+			if strings.TrimSpace(server) == "" {
+				return fmt.Errorf("%s spec.servers[%d] must not be empty", res.ID(), i)
+			}
+			if strings.ContainsAny(server, " \t\n\r") {
+				return fmt.Errorf("%s spec.servers[%d] must be a single hostname or IP address", res.ID(), i)
+			}
 		}
 	case "Interface":
 		if res.APIVersion != api.NetAPIVersion {
@@ -468,6 +552,11 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.dns.upstreamServers contains invalid address %q", res.ID(), dns)
 			}
 		}
+		for i, name := range spec.ListenInterfaces {
+			if name == "" {
+				return fmt.Errorf("%s spec.listenInterfaces[%d] must not be empty", res.ID(), i)
+			}
+		}
 	case "IPv4DHCPScope":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -544,6 +633,11 @@ func validateResource(res api.Resource) error {
 		case "", "dnsmasq":
 		default:
 			return fmt.Errorf("%s spec.server must be dnsmasq", res.ID())
+		}
+		for i, name := range spec.ListenInterfaces {
+			if name == "" {
+				return fmt.Errorf("%s spec.listenInterfaces[%d] must not be empty", res.ID(), i)
+			}
 		}
 	case "IPv6DHCPScope":
 		if res.APIVersion != api.NetAPIVersion {
@@ -1115,4 +1209,13 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func stringInSlice(value string, values []string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }

@@ -29,6 +29,14 @@ type SysctlSpec struct {
 	Persistent bool   `yaml:"persistent,omitempty" json:"persistent,omitempty"`
 }
 
+type NTPClientSpec struct {
+	Provider  string   `yaml:"provider,omitempty" json:"provider,omitempty" jsonschema:"enum=systemd-timesyncd"`
+	Managed   bool     `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Source    string   `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"enum=static"`
+	Interface string   `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Servers   []string `yaml:"servers,omitempty" json:"servers,omitempty"`
+}
+
 type InterfaceSpec struct {
 	IfName  string `yaml:"ifname" json:"ifname"`
 	AdminUp bool   `yaml:"adminUp,omitempty" json:"adminUp,omitempty"`
@@ -71,9 +79,10 @@ type IPv4DHCPAddressSpec struct {
 }
 
 type IPv4DHCPServerSpec struct {
-	Server  string                `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
-	Managed bool                  `yaml:"managed,omitempty" json:"managed,omitempty"`
-	DNS     IPv4DHCPServerDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
+	Server           string                `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
+	Managed          bool                  `yaml:"managed,omitempty" json:"managed,omitempty"`
+	ListenInterfaces []string              `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
+	DNS              IPv4DHCPServerDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
 }
 
 type IPv4DHCPServerDNSSpec struct {
@@ -122,8 +131,9 @@ type IPv6DelegatedAddressSpec struct {
 }
 
 type IPv6DHCPServerSpec struct {
-	Server  string `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq"`
-	Managed bool   `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Server           string   `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq"`
+	Managed          bool     `yaml:"managed,omitempty" json:"managed,omitempty"`
+	ListenInterfaces []string `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
 }
 
 type IPv6DHCPScopeSpec struct {
@@ -269,6 +279,10 @@ type HostnameSpec struct {
 
 func (r Resource) SysctlSpec() (SysctlSpec, error) {
 	return specAs[SysctlSpec](r)
+}
+
+func (r Resource) NTPClientSpec() (NTPClientSpec, error) {
+	return specAs[NTPClientSpec](r)
 }
 
 func (r Resource) InterfaceSpec() (InterfaceSpec, error) {

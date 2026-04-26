@@ -100,6 +100,39 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 			Data: buf.Bytes(),
 		})
 	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "NTPClient" {
+			continue
+		}
+		spec, err := res.NTPClientSpec()
+		if err != nil {
+			return nil, err
+		}
+		if !spec.Managed || spec.Interface == "" {
+			continue
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			return nil, fmt.Errorf("%s references interface with empty ifname", res.ID())
+		}
+		var servers []string
+		for _, server := range spec.Servers {
+			server = strings.TrimSpace(server)
+			if server != "" {
+				servers = append(servers, server)
+			}
+		}
+		if len(servers) == 0 {
+			return nil, fmt.Errorf("%s spec.servers is required", res.ID())
+		}
+		var buf bytes.Buffer
+		buf.WriteString("[Network]\n")
+		buf.WriteString("NTP=" + strings.Join(servers, " ") + "\n")
+		files = append(files, File{
+			Path: filepath.Join(networkdDropinDir(ifname), "91-routerd-ntp.conf"),
+			Data: buf.Bytes(),
+		})
+	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, nil
 }

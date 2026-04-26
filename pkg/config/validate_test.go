@@ -248,7 +248,7 @@ func TestValidateIPv4DHCPScopeRange(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
 				Metadata: api.ObjectMeta{Name: "dhcp4"},
-				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Managed: true},
+				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPScope"},

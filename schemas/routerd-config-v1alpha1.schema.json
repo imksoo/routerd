@@ -219,6 +219,73 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "system.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "NTPClient",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "interface": {
+                        "type": "string"
+                      },
+                      "managed": {
+                        "type": "boolean"
+                      },
+                      "provider": {
+                        "enum": [
+                          "systemd-timesyncd"
+                        ],
+                        "type": "string"
+                      },
+                      "servers": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "source": {
+                        "enum": [
+                          "static"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "net.routerd.net/v1alpha1",
                     "type": "string"
                   },
@@ -560,6 +627,12 @@
                         },
                         "type": "object"
                       },
+                      "listenInterfaces": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "managed": {
                         "type": "boolean"
                       },
@@ -899,6 +972,12 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "listenInterfaces": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "managed": {
                         "type": "boolean"
                       },

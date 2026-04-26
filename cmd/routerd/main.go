@@ -37,6 +37,7 @@ const (
 	defaultDnsmasqServicePath = "/etc/systemd/system/routerd-dnsmasq.service"
 	defaultNftablesPath       = "/usr/local/etc/routerd/nftables.nft"
 	defaultRouteNftablesPath  = "/usr/local/etc/routerd/default-route.nft"
+	defaultTimesyncdPath      = "/etc/systemd/timesyncd.conf.d/routerd.conf"
 	routerdDnsmasqService     = "routerd-dnsmasq.service"
 	pppoeCHAPSecretsPath      = "/etc/ppp/chap-secrets"
 	pppoePAPSecretsPath       = "/etc/ppp/pap-secrets"
@@ -225,11 +226,19 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if err != nil {
 			return nil, err
 		}
+		timesyncdConfig, err := render.TimesyncdConfig(router)
+		if err != nil {
+			return nil, err
+		}
 		logger.Emit(eventlog.LevelInfo, "reconcile", "routerd plan completed", map[string]string{
 			"phase":     result.Phase,
 			"resources": fmt.Sprintf("%d", len(result.Resources)),
 		})
 		networkChangedFiles, err := applyNetworkConfig(opts.NetplanPath, netplanData, networkdFiles)
+		if err != nil {
+			return nil, err
+		}
+		appliedIPv6DelegatedAddresses, err := applyIPv6DelegatedAddresses(router)
 		if err != nil {
 			return nil, err
 		}
@@ -242,6 +251,10 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			return nil, err
 		}
 		pppoeChangedFiles, err := applyPPPoEConfig(router)
+		if err != nil {
+			return nil, err
+		}
+		timesyncdChangedFiles, err := applyTimesyncdConfig(defaultTimesyncdPath, timesyncdConfig)
 		if err != nil {
 			return nil, err
 		}
@@ -268,6 +281,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		changedFiles := append(networkChangedFiles, dnsmasqChangedFiles...)
 		changedFiles = append(changedFiles, nftablesChangedFiles...)
 		changedFiles = append(changedFiles, pppoeChangedFiles...)
+		changedFiles = append(changedFiles, timesyncdChangedFiles...)
 		if len(changedFiles) == 0 {
 			if len(appliedRuntime) == 0 {
 				fmt.Fprintln(stdout, "network configuration already up to date")
@@ -288,12 +302,18 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			if len(pppoeChangedFiles) > 0 {
 				fmt.Fprintln(stdout, "applied PPPoE")
 			}
+			if len(timesyncdChangedFiles) > 0 {
+				fmt.Fprintln(stdout, "applied NTP client")
+			}
 		}
 		for _, key := range appliedRuntime {
 			fmt.Fprintf(stdout, "applied sysctl %s\n", key)
 		}
 		for _, key := range appliedReversePathFilters {
 			fmt.Fprintf(stdout, "applied IPv4 reverse path filter %s\n", key)
+		}
+		for _, address := range appliedIPv6DelegatedAddresses {
+			fmt.Fprintf(stdout, "applied IPv6 delegated address %s\n", address)
 		}
 		for _, tunnel := range appliedTunnels {
 			fmt.Fprintf(stdout, "applied DS-Lite tunnel %s\n", tunnel)
@@ -308,7 +328,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			"changedFiles":        fmt.Sprintf("%d", len(changedFiles)),
 			"runtimeSysctls":      fmt.Sprintf("%d", len(appliedRuntime)),
 			"reversePathFilters":  fmt.Sprintf("%d", len(appliedReversePathFilters)),
+			"ipv6DelegatedAddrs":  fmt.Sprintf("%d", len(appliedIPv6DelegatedAddresses)),
 			"pppoeFiles":          fmt.Sprintf("%d", len(pppoeChangedFiles)),
+			"ntpFiles":            fmt.Sprintf("%d", len(timesyncdChangedFiles)),
 			"dsliteTunnels":       fmt.Sprintf("%d", len(appliedTunnels)),
 			"ipv4DefaultRoutes":   fmt.Sprintf("%d", len(appliedDefaultRoutes)),
 			"ipv4PolicyRouteSets": fmt.Sprintf("%d", len(appliedPolicyRoutes)),
@@ -747,6 +769,46 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 		return []string{path}, nil
 	}
 	return []string{"nftables:routerd"}, nil
+}
+
+func applyIPv6DelegatedAddresses(router *api.Router) ([]string, error) {
+	aliases := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			return nil, err
+		}
+		aliases[res.Metadata.Name] = spec.IfName
+	}
+	var applied []string
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6DelegatedAddress" {
+			continue
+		}
+		spec, err := res.IPv6DelegatedAddressSpec()
+		if err != nil {
+			return nil, err
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			return nil, fmt.Errorf("%s references interface with empty ifname", res.ID())
+		}
+		address, err := deriveIPv6AddressFromInterface(ifname, spec.AddressSuffix)
+		if err != nil {
+			return nil, fmt.Errorf("%s derive delegated address: %w", res.ID(), err)
+		}
+		ensured, err := ensureIPv6LocalAddress(ifname, address)
+		if err != nil {
+			return nil, fmt.Errorf("%s ensure delegated address: %w", res.ID(), err)
+		}
+		if ensured {
+			applied = append(applied, ifname+":"+address)
+		}
+	}
+	return applied, nil
 }
 
 func applyIPv4PolicyRoutes(router *api.Router) ([]string, error) {
@@ -1578,6 +1640,37 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	}
 	if err := runLogged("systemctl", "is-active", "--quiet", routerdDnsmasqService); err != nil {
 		if err := runLogged("systemctl", "enable", "--now", routerdDnsmasqService); err != nil {
+			return nil, err
+		}
+	}
+	return nil, nil
+}
+
+func applyTimesyncdConfig(path string, configData []byte) ([]string, error) {
+	if len(configData) == 0 {
+		return nil, nil
+	}
+	if _, err := exec.LookPath("timedatectl"); err != nil {
+		return nil, fmt.Errorf("systemd-timesyncd support requires timedatectl: %w", err)
+	}
+	if err := os.MkdirAll(filepathDir(path), 0755); err != nil {
+		return nil, err
+	}
+	changed, err := writeFileIfChanged(path, configData, 0644)
+	if err != nil {
+		return nil, err
+	}
+	if err := runLogged("timedatectl", "set-ntp", "true"); err != nil {
+		return nil, err
+	}
+	if changed {
+		if err := runLogged("systemctl", "restart", "systemd-timesyncd.service"); err != nil {
+			return nil, err
+		}
+		return []string{path}, nil
+	}
+	if err := runLogged("systemctl", "is-active", "--quiet", "systemd-timesyncd.service"); err != nil {
+		if err := runLogged("systemctl", "enable", "--now", "systemd-timesyncd.service"); err != nil {
 			return nil, err
 		}
 	}

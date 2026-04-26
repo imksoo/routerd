@@ -17,14 +17,17 @@ func TestNetworkdDropinsRenderDHCPv6PD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render networkd dropins: %v", err)
 	}
-	if len(files) != 2 {
-		t.Fatalf("len(files) = %d, want 2", len(files))
+	if len(files) != 3 {
+		t.Fatalf("len(files) = %d, want 3", len(files))
 	}
 
-	wan := string(files[0].Data)
-	lan := string(files[1].Data)
-	if !strings.Contains(files[0].Path, "10-netplan-ens18.network.d") {
-		t.Fatalf("wan path = %s", files[0].Path)
+	wanFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/90-routerd-dhcp6-pd.conf")
+	lanFile := findNetworkdTestFile(files, "10-netplan-ens19.network.d/90-routerd-dhcp6-pd.conf")
+	ntpFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/91-routerd-ntp.conf")
+	wan := string(wanFile.Data)
+	lan := string(lanFile.Data)
+	if wanFile.Path == "" {
+		t.Fatal("missing WAN DHCPv6-PD drop-in")
 	}
 	if !strings.Contains(wan, "DHCP=yes") {
 		t.Fatalf("wan drop-in missing DHCP=yes:\n%s", wan)
@@ -35,8 +38,8 @@ func TestNetworkdDropinsRenderDHCPv6PD(t *testing.T) {
 	if !strings.Contains(wan, "PrefixDelegationHint=::/60") {
 		t.Fatalf("wan drop-in missing PrefixDelegationHint:\n%s", wan)
 	}
-	if !strings.Contains(files[1].Path, "10-netplan-ens19.network.d") {
-		t.Fatalf("lan path = %s", files[1].Path)
+	if lanFile.Path == "" {
+		t.Fatal("missing LAN delegated address drop-in")
 	}
 	for _, want := range []string{
 		"DHCPPrefixDelegation=yes",
@@ -52,6 +55,22 @@ func TestNetworkdDropinsRenderDHCPv6PD(t *testing.T) {
 	if strings.Contains(lan, "IPv6SendRA=yes") {
 		t.Fatalf("lan drop-in should leave RA to dnsmasq:\n%s", lan)
 	}
+	ntp := string(ntpFile.Data)
+	if ntpFile.Path == "" {
+		t.Fatal("missing NTP drop-in")
+	}
+	if !strings.Contains(ntp, "NTP=pool.ntp.org") {
+		t.Fatalf("ntp drop-in missing NTP server:\n%s", ntp)
+	}
+}
+
+func findNetworkdTestFile(files []File, suffix string) File {
+	for _, file := range files {
+		if strings.Contains(file.Path, suffix) {
+			return file
+		}
+	}
+	return File{}
 }
 
 func TestNetworkdDropinsRenderNTTFletsProfile(t *testing.T) {

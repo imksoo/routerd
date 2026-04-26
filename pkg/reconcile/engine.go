@@ -68,6 +68,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeLogSink(res, includePlan, &rr)
 		case "Sysctl":
 			e.observeSysctl(res, includePlan, &rr)
+		case "NTPClient":
+			e.observeNTPClient(res, aliases, includePlan, &rr)
 		case "Interface":
 			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], includePlan, &rr)
 		case "PPPoEInterface":
@@ -119,6 +121,40 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 	}
 
 	return result, nil
+}
+
+func (e *Engine) observeNTPClient(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.NTPClientSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	provider := defaultString(spec.Provider, "systemd-timesyncd")
+	source := defaultString(spec.Source, "static")
+	rr.Observed["provider"] = provider
+	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
+	rr.Observed["source"] = source
+	rr.Observed["servers"] = strings.Join(spec.Servers, ",")
+	if spec.Interface != "" {
+		rr.Observed["interface"] = spec.Interface
+		rr.Observed["ifname"] = aliases[spec.Interface]
+	}
+	if out, err := e.Command("timedatectl", "show", "-p", "NTPSynchronized", "--value"); err == nil {
+		rr.Observed["synchronized"] = strings.TrimSpace(string(out))
+	}
+	if !includePlan {
+		return
+	}
+	if !spec.Managed {
+		rr.Plan = append(rr.Plan, "observe only; NTP client is not managed")
+		return
+	}
+	if spec.Interface != "" {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s uses static NTP servers on %s", provider, aliases[spec.Interface]))
+	} else {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s uses static global NTP servers", provider))
+	}
 }
 
 func (e *Engine) observeLogSink(res api.Resource, includePlan bool, rr *ResourceResult) {
@@ -234,6 +270,7 @@ func (e *Engine) observeIPv6DHCPServer(res api.Resource, includePlan bool, rr *R
 	server := defaultString(spec.Server, "dnsmasq")
 	rr.Observed["server"] = server
 	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
+	rr.Observed["listenInterfaces"] = strings.Join(spec.ListenInterfaces, ",")
 	if _, err := exec.LookPath(server); err == nil {
 		rr.Observed["serverAvailable"] = "true"
 	} else {
@@ -250,6 +287,9 @@ func (e *Engine) observeIPv6DHCPServer(res api.Resource, includePlan bool, rr *R
 		return
 	}
 	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv6 DHCP server instance %s is available", server))
+	if len(spec.ListenInterfaces) > 0 {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("serve dnsmasq RA/DHCPv6 only on %s", strings.Join(spec.ListenInterfaces, ",")))
+	}
 }
 
 func (e *Engine) observeIPv6DHCPScope(res api.Resource, includePlan bool, rr *ResourceResult) {
@@ -590,6 +630,7 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 
 	rr.Observed["server"] = server
 	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
+	rr.Observed["listenInterfaces"] = strings.Join(spec.ListenInterfaces, ",")
 	rr.Observed["dnsEnabled"] = fmt.Sprintf("%t", spec.DNS.Enabled)
 	if spec.DNS.UpstreamSource != "" {
 		rr.Observed["dnsUpstreamSource"] = spec.DNS.UpstreamSource
@@ -618,6 +659,9 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 		return
 	}
 	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 DHCP server instance %s is available", server))
+	if len(spec.ListenInterfaces) > 0 {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("serve dnsmasq only on %s", strings.Join(spec.ListenInterfaces, ",")))
+	}
 	if spec.DNS.Enabled {
 		upstreamSource := defaultString(spec.DNS.UpstreamSource, "system")
 		switch upstreamSource {

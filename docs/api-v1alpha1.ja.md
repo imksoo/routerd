@@ -38,6 +38,7 @@ routerd の config は Kubernetes 風のリソース形状を使います。
 - `DNSConditionalForwarder`
 - `DSLiteTunnel`
 - `LogSink`
+- `NTPClient`
 - `Hostname`
 - `Sysctl`
 
@@ -109,6 +110,27 @@ spec:
 ```
 
 `enabled` は省略時 `true`、`minLevel` は省略時 `info` です。`syslog.facility` は省略時 `local6`、`syslog.tag` は省略時 `routerd` です。
+remote syslog へ送る場合は `syslog.network` と `syslog.address` を指定します。例: `network: udp`、`address: syslog.example.net:514`。
+
+## NTPClient
+
+`system.routerd.net/v1alpha1` の `NTPClient` はlocal NTP clientを宣言します。初期実装では `systemd-timesyncd` とstatic server指定を管理します。
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: NTPClient
+metadata:
+  name: system-time
+spec:
+  provider: systemd-timesyncd
+  managed: true
+  source: static
+  interface: wan
+  servers:
+    - pool.ntp.org
+```
+
+`interface` を指定した場合、routerd は systemd-networkd のlink別 `NTP=` としてそのinterfaceにNTP serverを設定します。省略時は `systemd-timesyncd` のglobal serverとして設定します。
 
 ## Sysctl
 
@@ -211,6 +233,8 @@ metadata:
 spec:
   server: dnsmasq
   managed: true
+  listenInterfaces:
+    - lan
   dns:
     enabled: true
     upstreamSource: dhcp4
@@ -235,6 +259,10 @@ spec:
 ```
 
 `IPv6DHCPServer` と `IPv6DHCPScope` は dnsmasq による DHCPv6/RA を扱います。`dnsSource: self` は delegated LAN IPv6 address、たとえば `pd-prefix::3` をDNS serverとして広告します。
+
+dnsmasq の RA が有効な場合、routerd は同じ IPv6 DNS server list を DHCPv6 DNS と RA RDNSS の両方に使います。Android は DHCPv6 client として期待せず、SLAAC/RDNSS client として扱う方が自然です。
+
+dnsmasq backendでは `listenInterfaces` がサービス提供interfaceのallow-listです。scopeはserver側の `listenInterfaces` に含まれるinterfaceにだけbindできます。指定されていないinterfaceは `except-interface` としてrenderされるため、WANであってもLANであっても明示しない限りサービスしません。
 
 ## HealthCheck と IPv4DefaultRoutePolicy
 

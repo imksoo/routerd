@@ -86,13 +86,15 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		buf.WriteString("port=0\n")
 		buf.WriteString("no-resolv\n")
 	}
-	buf.WriteString("bind-dynamic\n")
-
 	var renderedScopes []string
 	for _, res := range v4Scopes {
 		spec, err := res.IPv4DHCPScopeSpec()
 		if err != nil {
 			return nil, err
+		}
+		server := v4Servers[spec.Server]
+		if !serverListensOn(server.ListenInterfaces, spec.Interface) {
+			return nil, fmt.Errorf("%s interface %q is not listed in IPv4DHCPServer %q listenInterfaces", res.ID(), spec.Interface, spec.Server)
 		}
 		ifname := aliases[spec.Interface]
 		if ifname == "" {
@@ -106,15 +108,40 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 			return nil, err
 		}
 		delegated := delegatedIPv6[spec.DelegatedAddress]
+		server := v6Servers[spec.Server]
+		if !serverListensOn(server.ListenInterfaces, delegated.Interface) {
+			return nil, fmt.Errorf("%s delegatedAddress interface %q is not listed in IPv6DHCPServer %q listenInterfaces", res.ID(), delegated.Interface, spec.Server)
+		}
 		if delegated.IfName == "" {
 			return nil, fmt.Errorf("%s references delegated address with empty ifname", res.ID())
 		}
 		renderedScopes = append(renderedScopes, delegated.IfName)
 	}
-	for _, ifname := range uniqueStrings(renderedScopes) {
-		buf.WriteString("interface=" + ifname + "\n")
+	var listenAddresses []string
+	if dnsEnabled {
+		var err error
+		listenAddresses, err = dnsmasqListenAddresses(v4Scopes, v6Scopes, aliases, staticIPv4, delegatedIPv6, selfPolicies, runtime)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(listenAddresses) > 0 {
+		buf.WriteString("bind-interfaces\n")
+	} else {
+		buf.WriteString("bind-dynamic\n")
+	}
+	if len(listenAddresses) == 0 {
+		for _, ifname := range uniqueStrings(renderedScopes) {
+			buf.WriteString("interface=" + ifname + "\n")
+		}
+	}
+	for _, ifname := range dnsmasqExcludedInterfaces(aliases, renderedScopes) {
+		buf.WriteString("except-interface=" + ifname + "\n")
 	}
 	if dnsEnabled {
+		if len(listenAddresses) > 0 {
+			buf.WriteString("listen-address=" + strings.Join(listenAddresses, ",") + "\n")
+		}
 		if err := writeDnsmasqDNSUpstreams(&buf, v4Scopes, v4Servers, aliases, runtime); err != nil {
 			return nil, err
 		}
@@ -391,6 +418,72 @@ func dnsmasqInputs(router *api.Router) (map[string]string, map[string]netip.Pref
 		}
 	}
 	return aliases, staticIPv4, delegatedIPv6, selfPolicies, nil
+}
+
+func dnsmasqExcludedInterfaces(aliases map[string]string, renderedScopes []string) []string {
+	served := map[string]bool{}
+	for _, ifname := range renderedScopes {
+		if ifname != "" {
+			served[ifname] = true
+		}
+	}
+	var excluded []string
+	for _, ifname := range aliases {
+		if ifname != "" && !served[ifname] {
+			excluded = append(excluded, ifname)
+		}
+	}
+	return uniqueStrings(excluded)
+}
+
+func serverListensOn(listenInterfaces []string, iface string) bool {
+	for _, candidate := range listenInterfaces {
+		if candidate == iface {
+			return true
+		}
+	}
+	return false
+}
+
+func dnsmasqListenAddresses(v4Scopes, v6Scopes []api.Resource, aliases map[string]string, staticIPv4 map[string]netip.Prefix, delegatedIPv6 map[string]delegatedIPv6Address, selfPolicies map[string]api.SelfAddressPolicySpec, runtime DnsmasqRuntime) ([]string, error) {
+	var addresses []string
+	addresses = append(addresses, "127.0.0.1", "::1")
+	for _, res := range v4Scopes {
+		spec, err := res.IPv4DHCPScopeSpec()
+		if err != nil {
+			return nil, err
+		}
+		if defaultString(spec.DNSSource, "self") != "self" {
+			continue
+		}
+		for _, server := range dnsmasqSelfIPv4ListenAddresses(spec, staticIPv4) {
+			addresses = append(addresses, server)
+		}
+	}
+	for _, res := range v6Scopes {
+		spec, err := res.IPv6DHCPScopeSpec()
+		if err != nil {
+			return nil, err
+		}
+		if defaultString(spec.DNSSource, "self") != "self" {
+			continue
+		}
+		delegated := delegatedIPv6[spec.DelegatedAddress]
+		servers, err := dnsmasqIPv6DNSServers(spec, delegated, selfPolicies[spec.SelfAddressPolicy], aliases, delegatedIPv6, runtime)
+		if err != nil {
+			return nil, err
+		}
+		addresses = append(addresses, servers...)
+	}
+	return uniqueStrings(addresses), nil
+}
+
+func dnsmasqSelfIPv4ListenAddresses(spec api.IPv4DHCPScopeSpec, staticIPv4 map[string]netip.Prefix) []string {
+	addrPrefix := staticIPv4[spec.Interface]
+	if !addrPrefix.IsValid() {
+		return nil
+	}
+	return []string{addrPrefix.Addr().String()}
 }
 
 func dnsmasqDNSServers(spec api.IPv4DHCPScopeSpec, aliases map[string]string, staticIPv4 map[string]netip.Prefix, runtime DnsmasqRuntime) ([]string, error) {

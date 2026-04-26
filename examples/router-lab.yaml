@@ -18,6 +18,18 @@ spec:
           tag: routerd
 
     - apiVersion: system.routerd.net/v1alpha1
+      kind: NTPClient
+      metadata:
+        name: system-time
+      spec:
+        provider: systemd-timesyncd
+        managed: true
+        source: static
+        interface: wan
+        servers:
+          - pool.ntp.org
+
+    - apiVersion: system.routerd.net/v1alpha1
       kind: Sysctl
       metadata:
         name: ipv4-forwarding
@@ -243,6 +255,8 @@ spec:
       spec:
         server: dnsmasq
         managed: true
+        listenInterfaces:
+          - lan
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DHCPScope
@@ -281,6 +295,8 @@ spec:
       spec:
         server: dnsmasq
         managed: true
+        listenInterfaces:
+          - lan
         dns:
           enabled: true
           upstreamSource: dhcp4

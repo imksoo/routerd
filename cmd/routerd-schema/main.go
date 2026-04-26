@@ -172,6 +172,7 @@ func resourceUnionSchema() map[string]any {
 		"oneOf": []any{
 			resourceSchema(api.SystemAPIVersion, "LogSink", api.LogSinkSpec{}),
 			resourceSchema(api.SystemAPIVersion, "Sysctl", api.SysctlSpec{}),
+			resourceSchema(api.SystemAPIVersion, "NTPClient", api.NTPClientSpec{}),
 			resourceSchema(api.NetAPIVersion, "Interface", api.InterfaceSpec{}),
 			resourceSchema(api.NetAPIVersion, "PPPoEInterface", api.PPPoEInterfaceSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4StaticAddress", api.IPv4StaticAddressSpec{}),
