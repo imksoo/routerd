@@ -23,7 +23,7 @@ endif
 
 ROUTERD_BIN := bin/routerd
 
-.PHONY: test build install install-systemd dist remote-install remote-install-config validate-example dry-run-example plan-config clean
+.PHONY: test build check-build-deps check-remote-deps install install-systemd dist remote-install remote-install-config validate-example dry-run-example plan-config clean
 
 test:
 	go test ./...
@@ -31,7 +31,18 @@ test:
 build:
 	go build -o $(ROUTERD_BIN) ./cmd/routerd
 
-install: build
+check-build-deps:
+	@missing=0; \
+	for cmd in go install tar find cp; do \
+		if ! command -v $$cmd >/dev/null 2>&1; then echo "missing build dependency: $$cmd" >&2; missing=1; fi; \
+	done; \
+	exit $$missing
+
+check-remote-deps:
+	@test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make check-remote-deps REMOTE_HOST=user@router.example" >&2; exit 2)
+	@ssh $(REMOTE_HOST) 'missing=0; for cmd in sudo tar install ip sysctl; do if ! command -v $$cmd >/dev/null 2>&1; then echo "missing remote dependency: $$cmd" >&2; missing=1; fi; done; exit $$missing'
+
+install: check-build-deps build
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 $(ROUTERD_BIN) $(DESTDIR)$(BINDIR)/routerd
 	install -d $(DESTDIR)$(SYSCONFDIR)
@@ -56,7 +67,7 @@ dist:
 	install -d $(DISTDIR)
 	tar -C $(DISTROOT) -cf $(DISTTAR) .
 
-remote-install: dist
+remote-install: check-build-deps check-remote-deps dist
 	test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make remote-install REMOTE_HOST=user@router.example" >&2; exit 2)
 	scp $(DISTTAR) $(REMOTE_HOST):$(REMOTE_TAR)
 	ssh $(REMOTE_HOST) 'sudo tar --no-same-owner -C / -xf $(REMOTE_TAR) && rm -f $(REMOTE_TAR)'

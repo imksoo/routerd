@@ -18,6 +18,7 @@ func TestPlanBlocksManagedInterfaceWhenOSNetworkingExists(t *testing.T) {
 	engine := &Engine{
 		Command: fakeCommand(map[string]string{
 			"hostname":                         "old-router\n",
+			"sysctl -n net.ipv4.ip_forward":    "0\n",
 			"ip -brief link show dev ens18":    "ens18 UP 52:54:00:00:00:18 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
 			"ip -brief link show dev ens19":    "ens19 DOWN 52:54:00:00:00:19 <BROADCAST,MULTICAST>\n",
 			"ip -brief -4 addr show dev ens19": "",
@@ -62,6 +63,7 @@ func TestPlanKeepsExternalWANObserveOnly(t *testing.T) {
 	engine := &Engine{
 		Command: fakeCommand(map[string]string{
 			"hostname":                         "router.example\n",
+			"sysctl -n net.ipv4.ip_forward":    "1\n",
 			"ip -brief link show dev ens18":    "ens18 UP 52:54:00:00:00:18 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
 			"ip -brief link show dev ens19":    "ens19 DOWN 52:54:00:00:00:19 <BROADCAST,MULTICAST>\n",
 			"ip -brief -4 addr show dev ens19": "",
@@ -80,6 +82,40 @@ func TestPlanKeepsExternalWANObserveOnly(t *testing.T) {
 	}
 	if got := strings.Join(wanDHCP.Plan, "\n"); !strings.Contains(got, "observe only") {
 		t.Fatalf("wan dhcp plan = %q, want observe only", got)
+	}
+}
+
+func TestPlanSysctlDrift(t *testing.T) {
+	router, err := config.Load("../../examples/router-lab.yaml")
+	if err != nil {
+		t.Fatalf("load example: %v", err)
+	}
+
+	engine := &Engine{
+		Command: fakeCommand(map[string]string{
+			"hostname":                         "router.example\n",
+			"sysctl -n net.ipv4.ip_forward":    "0\n",
+			"ip -brief link show dev ens18":    "ens18 UP 52:54:00:00:00:18 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
+			"ip -brief link show dev ens19":    "ens19 DOWN 52:54:00:00:00:19 <BROADCAST,MULTICAST>\n",
+			"ip -brief -4 addr show dev ens18": "192.168.1.2/24\n",
+			"ip -brief -4 addr show dev ens19": "",
+		}),
+		OSNetworking: &osNetworking{},
+	}
+
+	result, err := engine.Plan(router)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	sysctl := findResult(result, "system.routerd.net/v1alpha1/Sysctl/ipv4-forwarding")
+	if sysctl == nil {
+		t.Fatal("missing sysctl result")
+	}
+	if sysctl.Phase != "Drifted" {
+		t.Fatalf("sysctl phase = %s, want Drifted", sysctl.Phase)
+	}
+	if got := strings.Join(sysctl.Plan, "\n"); !strings.Contains(got, "net.ipv4.ip_forward=1") {
+		t.Fatalf("sysctl plan = %q, want forwarding ensure", got)
 	}
 }
 

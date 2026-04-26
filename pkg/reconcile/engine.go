@@ -62,6 +62,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		}
 
 		switch res.Kind {
+		case "Sysctl":
+			e.observeSysctl(res, includePlan, &rr)
 		case "Interface":
 			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], includePlan, &rr)
 		case "IPv4StaticAddress":
@@ -81,6 +83,40 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 	}
 
 	return result, nil
+}
+
+func (e *Engine) observeSysctl(res api.Resource, includePlan bool, rr *ResourceResult) {
+	key := stringSpec(res, "key")
+	desired := stringSpec(res, "value")
+	runtime := boolSpecDefault(res, "runtime", true)
+	persistent := boolSpec(res, "persistent")
+
+	rr.Observed["key"] = key
+	rr.Observed["desired"] = desired
+	rr.Observed["runtime"] = fmt.Sprintf("%t", runtime)
+	rr.Observed["persistent"] = fmt.Sprintf("%t", persistent)
+
+	if out, err := e.Command("sysctl", "-n", key); err == nil {
+		current := strings.TrimSpace(string(out))
+		rr.Observed["current"] = current
+		if current != desired {
+			rr.Phase = "Drifted"
+		}
+	} else {
+		rr.Phase = "Drifted"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("could not observe sysctl %s: %v", key, err))
+	}
+
+	if !includePlan {
+		return
+	}
+	if runtime {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure runtime sysctl %s=%s", key, desired))
+	}
+	if persistent {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("persistent sysctl %s=%s is not implemented yet", key, desired))
+		rr.Warnings = append(rr.Warnings, "persistent sysctl rendering is pending OS-specific implementation")
+	}
 }
 
 func (e *Engine) observeInterface(res api.Resource, policy interfacePolicy, observedV4 []ipv4Assignment, includePlan bool, rr *ResourceResult) {
@@ -494,4 +530,16 @@ func boolSpec(res api.Resource, key string) bool {
 	}
 	b, ok := value.(bool)
 	return ok && b
+}
+
+func boolSpecDefault(res api.Resource, key string, fallback bool) bool {
+	value, ok := res.Spec[key]
+	if !ok {
+		return fallback
+	}
+	b, ok := value.(bool)
+	if !ok {
+		return fallback
+	}
+	return b
 }

@@ -5,6 +5,16 @@ metadata:
 
 spec:
   resources:
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv4-forwarding
+      spec:
+        key: net.ipv4.ip_forward
+        value: "1"
+        runtime: true
+        persistent: false
+
     - apiVersion: net.routerd.net/v1alpha1
       kind: Hostname
       metadata:

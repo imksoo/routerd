@@ -73,6 +73,20 @@ func validateResource(res api.Resource) error {
 	}
 
 	switch res.Kind {
+	case "Sysctl":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		key := stringSpec(res, "key")
+		if key == "" {
+			return fmt.Errorf("%s spec.key is required", res.ID())
+		}
+		if strings.ContainsAny(key, " \t\n/") {
+			return fmt.Errorf("%s spec.key contains invalid whitespace or slash", res.ID())
+		}
+		if stringSpec(res, "value") == "" {
+			return fmt.Errorf("%s spec.value is required", res.ID())
+		}
 	case "Interface":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

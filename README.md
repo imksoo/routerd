@@ -40,6 +40,12 @@ go build ./cmd/routerd
 
 The build artifact is written to `bin/routerd`.
 
+Check local build dependencies:
+
+```sh
+make check-build-deps
+```
+
 ## Install
 
 For local source installs:
@@ -66,6 +72,12 @@ Install to a remote test host without requiring Go or make on that host:
 
 ```sh
 make remote-install REMOTE_HOST=user@router.example
+```
+
+Check minimum remote host dependencies:
+
+```sh
+make check-remote-deps REMOTE_HOST=user@router.example
 ```
 
 Install a config file to a remote test host:

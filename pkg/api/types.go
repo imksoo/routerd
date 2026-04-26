@@ -33,4 +33,5 @@ func (r Resource) ID() string {
 const (
 	RouterAPIVersion = "routerd.net/v1alpha1"
 	NetAPIVersion    = "net.routerd.net/v1alpha1"
+	SystemAPIVersion = "system.routerd.net/v1alpha1"
 )

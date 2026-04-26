@@ -16,6 +16,28 @@ func TestValidateRouterLabExample(t *testing.T) {
 	}
 }
 
+func TestValidateSysctl(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"},
+				Metadata: api.ObjectMeta{Name: "ipv4-forwarding"},
+				Spec: map[string]any{
+					"key":     "net.ipv4.ip_forward",
+					"value":   "1",
+					"runtime": true,
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate sysctl: %v", err)
+	}
+}
+
 func TestValidateRejectsMissingInterfaceReference(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

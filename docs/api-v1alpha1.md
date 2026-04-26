@@ -12,6 +12,7 @@ routerd uses Kubernetes-like API shapes:
 
 - `routerd.net/v1alpha1` for the top-level `Router` config
 - `net.routerd.net/v1alpha1` for network resources
+- `system.routerd.net/v1alpha1` for local system resources
 - `plugin.routerd.net/v1alpha1` for plugin manifests
 
 ## MVP Resources
@@ -21,6 +22,7 @@ routerd uses Kubernetes-like API shapes:
 - `IPv4DHCPAddress`
 - `IPv6DHCPAddress`
 - `Hostname`
+- `Sysctl`
 
 The schema is intentionally small and will be implemented incrementally.
 
@@ -46,3 +48,21 @@ spec:
   allowOverlap: true
   allowOverlapReason: overlapping customer network for NAT lab
 ```
+
+## Sysctl
+
+`system.routerd.net/v1alpha1` `Sysctl` declares a kernel parameter.
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: Sysctl
+metadata:
+  name: ipv4-forwarding
+spec:
+  key: net.ipv4.ip_forward
+  value: "1"
+  runtime: true
+  persistent: false
+```
+
+`runtime: true` means routerd should manage the running kernel value. `persistent: true` is reserved for OS-specific rendering such as sysctl.d or rc.conf and is not applied yet.
