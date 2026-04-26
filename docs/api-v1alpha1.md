@@ -3,9 +3,15 @@ title: Resource API v1alpha1
 slug: /reference/api-v1alpha1
 ---
 
-# API v1alpha1
+# Resource API v1alpha1
 
-routerd uses Kubernetes-like API shapes:
+A routerd config is a list of declarative resources. Each resource describes a
+single behavior the router should exhibit — an interface that should come up,
+an address pool that should be served, a tunnel that should reach an AFTR, a
+default route that should follow a healthy uplink. Reconcile compares those
+intents against the host and brings the host into shape.
+
+The resource shape is intentionally Kubernetes-like:
 
 - `apiVersion`
 - `kind`
@@ -13,66 +19,77 @@ routerd uses Kubernetes-like API shapes:
 - `spec`
 - `status` where applicable
 
-## API Groups
+This page describes what each resource makes the router do, the spec fields
+that change that behavior, and the host artifacts that come out of it.
 
-- `routerd.net/v1alpha1` for the top-level `Router` config
-- `net.routerd.net/v1alpha1` for network resources
-- `firewall.routerd.net/v1alpha1` for firewall resources
-- `system.routerd.net/v1alpha1` for local system resources
-- `plugin.routerd.net/v1alpha1` for plugin manifests
+## API groups
 
-## MVP Resources
+- `routerd.net/v1alpha1` for the top-level `Router`.
+- `net.routerd.net/v1alpha1` for interfaces, addressing, DNS, route policy,
+  and tunnels.
+- `firewall.routerd.net/v1alpha1` for firewall zones and policy.
+- `system.routerd.net/v1alpha1` for hostname, sysctl, NTP client, and the
+  routerd event sink.
+- `plugin.routerd.net/v1alpha1` for plugin manifests.
 
-- `Interface`
-- `PPPoEInterface`
-- `IPv4StaticAddress`
-- `IPv4DHCPAddress`
-- `IPv4DHCPServer`
-- `IPv4DHCPScope`
-- `HealthCheck`
-- `IPv4DefaultRoutePolicy`
-- `IPv4PolicyRoute`
-- `IPv4PolicyRouteSet`
-- `IPv4ReversePathFilter`
-- `PathMTUPolicy`
-- `Zone`
-- `FirewallPolicy`
-- `ExposeService`
-- `IPv4SourceNAT`
-- `IPv6DHCPAddress`
-- `IPv6PrefixDelegation`
-- `IPv6DelegatedAddress`
-- `IPv6DHCPServer`
-- `IPv6DHCPScope`
-- `SelfAddressPolicy`
-- `DNSConditionalForwarder`
-- `DSLiteTunnel`
-- `Hostname`
-- `LogSink`
-- `NTPClient`
-- `Sysctl`
+## Available resource kinds
 
-The schema is intentionally small and will be implemented incrementally.
+Networking:
+`Interface`, `PPPoEInterface`, `IPv4StaticAddress`, `IPv4DHCPAddress`,
+`IPv4DHCPServer`, `IPv4DHCPScope`, `IPv6DHCPAddress`, `IPv6PrefixDelegation`,
+`IPv6DelegatedAddress`, `IPv6DHCPServer`, `IPv6DHCPScope`,
+`SelfAddressPolicy`, `DNSConditionalForwarder`, `DSLiteTunnel`,
+`HealthCheck`, `IPv4DefaultRoutePolicy`, `IPv4SourceNAT`, `IPv4PolicyRoute`,
+`IPv4PolicyRouteSet`, `IPv4ReversePathFilter`, `PathMTUPolicy`.
 
-## Interface Ownership
+Firewall:
+`Zone`, `FirewallPolicy`, `ExposeService`.
 
-`Interface` resources support `spec.managed`.
+System:
+`Hostname`, `Sysctl`, `NTPClient`, `LogSink`.
 
-- `managed: false` means routerd observes the interface and resolves aliases, but does not change link or address state.
-- `managed: true` means routerd may manage the interface after existing OS networking ownership has been reviewed.
+The set is small on purpose. New kinds are added when the router gains a new
+behavior, not as a generic platform.
 
-Host-level ownership is tracked as artifact intents and, for adopted resources,
-the local ledger at `/var/lib/routerd/artifacts.json`. See
-[Resource Ownership](resource-ownership.md) for the common reconcile and orphan
-cleanup model used across resource kinds.
+## Interfaces
 
-When cloud-init or netplan is detected, routerd planning reports `RequiresAdoption` instead of taking over automatically.
+### Interface
 
-## PPPoEInterface
+`Interface` declares one networking interface that routerd should know about
+and, optionally, manage.
 
-`PPPoEInterface` declares a PPPoE interface built on top of another `Interface`.
-On Linux routerd renders pppd/rp-pppoe peer configuration, CHAP/PAP secrets,
-and an optional systemd unit.
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: Interface
+metadata:
+  name: lan
+spec:
+  ifname: ens19
+  adminUp: true
+  managed: true
+```
+
+How routerd behaves:
+
+- `spec.ifname` resolves the alias `lan` to a real link on the host. Other
+  resources reference `lan`, never the kernel name.
+- `spec.adminUp: true` keeps the link administratively up.
+- `spec.managed: true` means routerd may change link and address state. If
+  cloud-init or netplan already owns the interface, planning reports it as
+  requiring adoption instead of taking it over.
+- `spec.managed: false` keeps routerd in observe-only mode for that
+  interface: alias resolution still works, but link and address state are
+  left alone.
+
+Host ownership decisions, including the local ledger at
+`/var/lib/routerd/artifacts.json`, are described in
+[Resource Ownership](resource-ownership.md).
+
+### PPPoEInterface
+
+`PPPoEInterface` brings up a PPPoE session on top of an existing
+`Interface`. routerd renders pppd / rp-pppoe peer configuration, the CHAP/PAP
+secret, and a managed systemd unit.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -91,113 +108,279 @@ spec:
   mru: 1492
 ```
 
-`interface` references the lower Ethernet `Interface`. `ifname` defaults to
-`ppp-<metadata.name>` and must fit the Linux 15-character interface name limit.
-Exactly one of `password` or `passwordFile` is required. `passwordFile` is
-preferred so credentials do not have to live in the main YAML file.
+How routerd behaves:
 
-When `managed: true`, routerd enables and starts `routerd-pppoe-<name>.service`.
-When `managed: false`, routerd still renders the local config files but does not
-start the systemd unit.
+- `spec.interface` references the underlying Ethernet `Interface`.
+- `spec.ifname` defaults to `ppp-<metadata.name>` and must fit Linux's
+  15-character interface name limit.
+- Exactly one of `spec.password` and `spec.passwordFile` must be set; using
+  `passwordFile` keeps credentials out of the main YAML.
+- `spec.managed: true` enables and starts `routerd-pppoe-<name>.service`.
+  `spec.managed: false` renders the config files but leaves the unit alone.
+- `spec.defaultRoute: true` lets pppd install a default route through the
+  PPP link; combine with `IPv4DefaultRoutePolicy` if multiple uplinks need
+  to coexist.
+- `spec.usePeerDNS: true` accepts DNS servers the PPP peer advertises.
+- `spec.mtu` and `spec.mru` are useful when the upstream session uses a
+  smaller MTU than 1500 (PPPoE typically caps at 1492).
 
-## LogSink
+## IPv4 addressing
 
-`system.routerd.net/v1alpha1` `LogSink` declares where routerd sends internal operational events.
+### IPv4StaticAddress
 
-Local journald/syslog output:
+`IPv4StaticAddress` makes a fixed IPv4 prefix appear on an interface.
 
 ```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: LogSink
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4StaticAddress
 metadata:
-  name: local-syslog
-spec:
-  type: syslog
-  minLevel: info
-  syslog:
-    facility: local6
-    tag: routerd
-```
-
-Trusted local log plugin output:
-
-```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: LogSink
-metadata:
-  name: external-log
-spec:
-  type: plugin
-  minLevel: warning
-  plugin:
-    path: /usr/local/libexec/routerd/log-sinks/example
-    timeout: 5s
-```
-
-`enabled` defaults to `true`. `minLevel` defaults to `info`. `syslog.facility` defaults to `local6`, and `syslog.tag` defaults to `routerd`.
-For remote syslog, set `syslog.network` and `syslog.address`, for example
-`network: udp` and `address: syslog.example.net:514`.
-
-## NTPClient
-
-`system.routerd.net/v1alpha1` `NTPClient` declares the local NTP client. The
-initial implementation manages `systemd-timesyncd` with static servers.
-
-```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: NTPClient
-metadata:
-  name: system-time
-spec:
-  provider: systemd-timesyncd
-  managed: true
-  source: static
-  interface: wan
-  servers:
-    - pool.ntp.org
-```
-
-When `interface` is set, routerd renders per-link `NTP=` through
-systemd-networkd for that interface. When omitted, routerd writes global
-`systemd-timesyncd` servers.
-
-## IPv4 Overlap Safety
-
-`IPv4StaticAddress` resources are checked against desired static addresses and observed IPv4 prefixes on other interfaces during planning.
-
-Overlapping prefixes on different interfaces are blocked by default. Intentional overlap for NAT, HA, or lab cases must be explicit:
-
-```yaml
+  name: lan-ipv4
 spec:
   interface: lan
   address: 192.168.160.3/24
-  allowOverlap: true
-  allowOverlapReason: overlapping customer network for NAT lab
+  exclusive: true
 ```
 
-## Sysctl
+How routerd behaves:
 
-`system.routerd.net/v1alpha1` `Sysctl` declares a kernel parameter.
+- routerd assigns `192.168.160.3/24` to the LAN interface and treats it as
+  the router's own address.
+- `spec.exclusive: true` makes routerd remove other static IPv4 addresses on
+  that interface during reconcile, so the LAN side does not end up with two
+  conflicting prefixes after a renumber.
+- During planning, routerd checks the desired static addresses and observed
+  IPv4 prefixes on other interfaces. Overlapping prefixes on different
+  interfaces are blocked unless explicitly allowed:
+
+  ```yaml
+  spec:
+    interface: lan
+    address: 192.168.160.3/24
+    allowOverlap: true
+    allowOverlapReason: overlapping customer network for NAT lab
+  ```
+
+### IPv4DHCPAddress
+
+`IPv4DHCPAddress` asks routerd to obtain an IPv4 address from upstream DHCP.
 
 ```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: Sysctl
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4DHCPAddress
 metadata:
-  name: ipv4-forwarding
+  name: wan-dhcp4
 spec:
-  key: net.ipv4.ip_forward
-  value: "1"
-  runtime: true
-  persistent: false
+  interface: wan
+  client: dhclient
+  required: true
 ```
 
-`runtime: true` means routerd should manage the running kernel value. `persistent: true` is reserved for OS-specific rendering such as sysctl.d or rc.conf and is not applied yet.
+How routerd behaves:
 
-## SelfAddressPolicy
+- routerd manages a DHCPv4 client binding on `interface`. `spec.client`
+  picks the client implementation (currently `dhclient`).
+- `spec.required: true` means reconcile fails if no lease is acquired —
+  useful when the rest of the config depends on a working WAN address.
 
-`SelfAddressPolicy` defines how `dnsSource: self` selects a local address. This
-keeps address selection explicit when an interface has multiple addresses, such
-as a delegated LAN address and extra DS-Lite source addresses.
+## IPv4 DHCP and DNS service
+
+### IPv4DHCPServer and IPv4DHCPScope
+
+The DHCPv4 service is split into a server resource and one or more scope
+resources. The server represents a single dnsmasq instance; each scope binds
+that server to one downstream interface.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4DHCPServer
+metadata:
+  name: dhcp4
+spec:
+  server: dnsmasq
+  managed: true
+  listenInterfaces:
+    - lan
+  dns:
+    enabled: true
+    upstreamSource: dhcp4
+    upstreamInterface: wan
+    cacheSize: 1000
+```
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4DHCPScope
+metadata:
+  name: lan-dhcp4
+spec:
+  server: dhcp4
+  interface: lan
+  rangeStart: 192.168.160.100
+  rangeEnd: 192.168.160.199
+  leaseTime: 12h
+  routerSource: interfaceAddress
+  dnsSource: self
+  authoritative: true
+```
+
+How routerd behaves:
+
+- `spec.listenInterfaces` is the allow-list for dnsmasq. Scopes may only
+  bind to interfaces listed by their server. Anything not listed is
+  rendered as `except-interface`, so a WAN never serves DHCP/DNS unless it
+  is explicitly named.
+- `IPv4DHCPScope.routerSource` controls the gateway option:
+  `interfaceAddress` advertises the router's LAN address, `static` uses
+  `spec.router`, `none` omits the option.
+- `IPv4DHCPScope.dnsSource` controls the DNS server option:
+  - `dhcp4` and `static` write the DNS servers directly into the DHCPv4
+    option; dnsmasq does not need to listen on port 53 for that scope.
+  - `self` advertises the router's own LAN IPv4 address and runs dnsmasq as
+    a DNS forwarder/cache. The forwarder behavior is then controlled by
+    `IPv4DHCPServer.spec.dns`:
+    - `upstreamSource: dhcp4` forwards to the DNS servers learned through
+      DHCPv4 on `upstreamInterface`.
+    - `upstreamSource: static` uses `upstreamServers`.
+    - `upstreamSource: system` follows the host resolver configuration.
+    - `upstreamSource: none` runs without upstream forwarders.
+  - `none` omits the DNS option entirely.
+- If `spec.interface` still requires adoption — for example because
+  cloud-init owns it — planning blocks the DHCP scope as well, since
+  serving DHCP without owning the interface would race with another
+  manager.
+
+## IPv6 addressing and prefix delegation
+
+### IPv6PrefixDelegation
+
+`IPv6PrefixDelegation` requests a delegated prefix on an uplink interface.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6PrefixDelegation
+metadata:
+  name: wan-pd
+spec:
+  interface: wan
+  client: networkd
+  profile: ntt-hgw-lan-pd
+  prefixLength: 60
+```
+
+How routerd behaves:
+
+- routerd renders systemd-networkd drop-ins under
+  `/etc/systemd/network/10-netplan-<ifname>.network.d/` to ask DHCPv6 for a
+  prefix delegation on the WAN side.
+- `spec.profile` selects a known upstream environment:
+  - `default` is generic DHCPv6-PD.
+  - `ntt-ngn-direct-hikari-denwa` is for a router connected directly to
+    NTT NGN/ONU on a Hikari Denwa contract.
+  - `ntt-hgw-lan-pd` is for a router behind an NTT home gateway that
+    delegates `/60` prefixes to the LAN side.
+  Both NTT profiles request IA_PD only, disable rapid commit, use a
+  link-layer DUID, force DHCPv6 Solicit when needed, and default the prefix
+  hint to `/60` unless `prefixLength` is set explicitly.
+
+Some NTT home-gateway environments only advertise IPv6 by RA/SLAAC and never
+answer DHCPv6-PD. Those should not be modeled as `IPv6PrefixDelegation`;
+that mode needs a separate RA/SLAAC resource design.
+
+### IPv6DelegatedAddress
+
+`IPv6DelegatedAddress` carves a downstream subnet out of a delegated prefix
+and gives the router a stable address inside it.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6DelegatedAddress
+metadata:
+  name: lan-ipv6-pd-address
+spec:
+  prefixDelegation: wan-pd
+  interface: lan
+  subnetID: "0"
+  addressSuffix: "::3"
+  sendRA: true
+  announce: true
+```
+
+How routerd behaves:
+
+- routerd combines one delegated subnet with the static suffix to assign
+  the LAN-side address. With systemd-networkd, the suffix is rendered as
+  `Token=`, so `::3` means the LAN interface receives the delegated prefix
+  with host identifier `::3`.
+- `spec.sendRA: true` lets dnsmasq advertise the prefix through RA.
+- `spec.announce: true` exposes this address as a candidate for
+  `dnsSource: self` and for DS-Lite local-address selection.
+
+### IPv6DHCPAddress
+
+`IPv6DHCPAddress` runs a DHCPv6 client on an uplink interface to obtain an
+IA_NA address. It is independent from prefix delegation, which is requested
+by `IPv6PrefixDelegation`.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6DHCPAddress
+metadata:
+  name: wan-dhcp6
+spec:
+  interface: wan
+  client: networkd
+  required: true
+```
+
+### IPv6DHCPServer and IPv6DHCPScope
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6DHCPServer
+metadata:
+  name: dhcp6
+spec:
+  server: dnsmasq
+  managed: true
+  listenInterfaces:
+    - lan
+```
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6DHCPScope
+metadata:
+  name: lan-dhcp6
+spec:
+  server: dhcp6
+  delegatedAddress: lan-ipv6-pd-address
+  mode: stateless
+  leaseTime: 12h
+  defaultRoute: true
+  dnsSource: self
+```
+
+How routerd behaves:
+
+- The scope binds to `IPv6DelegatedAddress`, so the LAN prefix automatically
+  follows whatever WAN-side DHCPv6-PD hands out.
+- `spec.mode: stateless` lets clients pick their own address through SLAAC
+  while still receiving DHCPv6 options such as DNS.
+- `spec.mode: ra-only` sends RA without DHCPv6 address assignment.
+- IPv6 default routes are advertised by RA; DHCPv6 itself has no default
+  gateway option.
+- `spec.dnsSource: self` advertises the router's delegated LAN IPv6 address
+  (for example `pd-prefix::3`) as the DNS server. `dnsSource: static` plus
+  `dnsServers` advertises a fixed list instead.
+- When dnsmasq RA is enabled, routerd uses the same IPv6 DNS server list
+  for DHCPv6 DNS and RA RDNSS. This matters for Android clients, which
+  should be treated as SLAAC/RDNSS clients rather than DHCPv6 clients.
+
+### SelfAddressPolicy
+
+`SelfAddressPolicy` defines how `dnsSource: self` selects a local address
+when an interface has more than one — for example a delegated LAN address
+plus extra DS-Lite source addresses.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -218,24 +401,104 @@ spec:
       ordinal: 1
 ```
 
-`IPv6DHCPScope` can reference it:
+`IPv6DHCPScope` references it through `spec.selfAddressPolicy`. Candidates
+are evaluated in order; the first one routerd can resolve wins. When no
+policy is referenced, IPv6 DHCP scopes fall back to a default that prefers
+the delegated address with `IPv6DelegatedAddress.addressSuffix`, then a
+matching observed address, then the first observed global address.
+
+### DNSConditionalForwarder
+
+`DNSConditionalForwarder` forwards a single domain to specific upstream
+servers. With dnsmasq this becomes `server=/domain/upstream`.
 
 ```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: DNSConditionalForwarder
+metadata:
+  name: transix-aftr
 spec:
-  dnsSource: self
-  selfAddressPolicy: lan-ipv6-self
+  domain: gw.transix.jp
+  upstreamSource: static
+  upstreamServers:
+    - 2404:1a8:7f01:a::3
+    - 2404:1a8:7f01:b::3
 ```
 
-Candidate order is significant. The first candidate that can be resolved wins.
-When omitted, IPv6 DHCP scopes use a default policy equivalent to delegated
-address plus the `IPv6DelegatedAddress.addressSuffix`, then an observed address
-matching that suffix, then the first observed global address.
+`upstreamSource` controls where the forwarders come from:
 
-## HealthCheck And IPv4DefaultRoutePolicy
+- `static`: use `upstreamServers`.
+- `dhcp4`: use DNS servers learned by DHCPv4 on `upstreamInterface`.
+- `dhcp6`: use DNS servers learned by DHCPv6 on `upstreamInterface`.
 
-`HealthCheck` declares a small reachability check. The default interval is `60s`;
-shorter intervals are intentionally opt-in because route failover should not be
-overly sensitive by default.
+This makes it possible to run a global ad-blocking resolver as the default,
+while keeping provider-specific names (such as DS-Lite AFTR FQDNs) on
+provider DNS so they resolve to the correct AAAA records.
+
+## DS-Lite
+
+### DSLiteTunnel
+
+`DSLiteTunnel` brings up a DS-Lite B4 tunnel toward an AFTR.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: DSLiteTunnel
+metadata:
+  name: transix
+spec:
+  interface: wan
+  tunnelName: ds-transix
+  aftrFQDN: gw.transix.jp
+  aftrDNSServers:
+    - 2404:1a8:7f01:a::3
+    - 2404:1a8:7f01:b::3
+  aftrAddressOrdinal: 1
+  aftrAddressSelection: ordinalModulo
+  localAddressSource: delegatedAddress
+  localDelegatedAddress: lan-ipv6-pd-address
+  localAddressSuffix: "::100"
+  defaultRoute: true
+  routeMetric: 50
+  mtu: 1454
+```
+
+How routerd behaves:
+
+- routerd creates an `ipip6` tunnel with the IPv6 underlay reaching the
+  AFTR through `spec.interface`.
+- If `spec.remoteAddress` is omitted, routerd resolves `aftrFQDN` as AAAA.
+  `aftrDNSServers` is consulted when only specific DNS servers return the
+  AFTR record. AAAA answers are sorted alphabetically;
+  `aftrAddressOrdinal` selects the 1-based record.
+- `aftrAddressSelection` controls what happens when the ordinal is outside
+  the current AAAA record count:
+  - `ordinal`: reconcile fails for this tunnel.
+  - `ordinalModulo`: the ordinal wraps around the current count.
+- `localAddressSource` chooses the tunnel's local IPv6 source address:
+  - `interface`: use the first global IPv6 address on `spec.interface`.
+  - `static`: use `localAddress`.
+  - `delegatedAddress`: derive an address from the
+    `IPv6DelegatedAddress` named in `localDelegatedAddress`;
+    `localAddressSuffix` overrides the suffix for this tunnel.
+
+  With `delegatedAddress`, routerd also adds the derived local address as
+  `/128` on the delegated address interface when missing. This keeps the
+  DS-Lite underlay on WAN while letting multiple tunnels use distinct
+  LAN-PD-derived source addresses.
+- `defaultRoute: true` adds an IPv4 default route through the tunnel, with
+  `routeMetric` controlling the priority among multiple uplinks.
+
+For multiple DS-Lite tunnels with `ordinalModulo`, keep `localAddressSuffix`
+distinct per tunnel so two tunnels remain unique even if the AFTR set
+shrinks. Health-based failover still requires an active `HealthCheck`
+resource.
+
+## IPv4 routing
+
+### HealthCheck
+
+`HealthCheck` declares one reachability check.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -249,44 +512,34 @@ spec:
   interface: transix-a
 ```
 
-`role` describes what the check means operationally. It does not change the
-wire operation by itself; it makes route policy and status output easier to
-read. Supported roles are:
+How routerd behaves:
 
-- `link`: interface existence, carrier, or administrative link state.
-- `next-hop`: nearby forwarding dependency such as a gateway, AFTR, or tunnel
-  endpoint.
-- `internet`: end-to-end public reachability, such as ping or TCP connect to a
-  public target.
-- `service`: service-specific dependency such as DNS resolution, DHCP, AFTR
-  FQDN resolution, or a PPPoE session.
-- `policy`: an aggregate answer to whether a route candidate may be selected.
+- `spec.interval` defaults to 60 seconds. Shorter intervals are opt-in
+  because route failover should not be overly sensitive by default.
+- `spec.target` may be an explicit address; if omitted, `targetSource: auto`
+  picks a nearby check target. DS-Lite tunnels check the AFTR IPv6
+  address; ordinary or PPPoE interfaces check the IPv4 default gateway.
+- `spec.role` describes what the check means operationally. It does not
+  change the wire operation by itself, but it makes route policy and
+  status output easier to read:
+  - `link`: interface presence, carrier, or administrative state.
+  - `next-hop`: nearby forwarding dependency such as a gateway, AFTR, or
+    tunnel endpoint. This is the default.
+  - `internet`: end-to-end public reachability — for example a ping or TCP
+    connect to a public address.
+  - `service`: a service-specific dependency such as DNS resolution, DHCP,
+    AFTR FQDN resolution, or a PPPoE session.
+  - `policy`: an aggregate answer to whether a route candidate may be
+    selected. Reserved for future use.
 
-The default role is `next-hop`, matching the current `targetSource: auto`
-behavior.
+If you need end-to-end IPv4 Internet reachability, configure an explicit
+static IPv4 target as a separate `role: internet` health check rather than
+overloading the next-hop check.
 
-`IPv4DefaultRoutePolicy` selects the healthy candidate with the lowest
-`priority`. A candidate may be a direct interface route, or it may reference an
-`IPv4PolicyRouteSet`. Direct candidates use dedicated routing tables and
-firewall marks. New flows are marked for the active direct candidate. Existing
-flows keep their conntrack mark while that candidate remains healthy; if the old
-candidate becomes unhealthy, routerd's nftables policy rewrites that flow to the
-currently active candidate.
+### IPv4DefaultRoutePolicy
 
-When the active candidate references `routeSet`, routerd leaves new flows
-unmarked so the referenced `IPv4PolicyRouteSet` can hash them across its
-targets. Existing conntrack marks for healthy route-set targets are preserved.
-If a stale mark belongs to a failed candidate, routerd clears it and lets the
-route set select a target again.
-
-When `target` is omitted, `targetSource: auto` chooses a nearby check target:
-DS-Lite checks the AFTR IPv6 address, and ordinary/PPPoE interfaces check the
-IPv4 default gateway for that interface. This is a `next-hop` check by default.
-If you need end-to-end IPv4 Internet reachability, configure an explicit static
-IPv4 target as a separate `role: internet` health check. A future aggregate
-`role: policy` check can combine several lower-level checks into one answer for
-route candidate selection. A route candidate with no `healthCheck` is always
-treated as up.
+`IPv4DefaultRoutePolicy` selects which uplink the IPv4 default route
+follows. The healthy candidate with the lowest `priority` becomes active.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -322,142 +575,28 @@ spec:
       healthCheck: wan-dhcp4-v4
 ```
 
+How routerd behaves:
+
+- A candidate may point directly at an interface or reference an
+  `IPv4PolicyRouteSet` through `routeSet`.
+- For direct candidates, routerd installs a dedicated routing table and a
+  firewall mark per candidate. New flows are marked for the active
+  candidate. Established flows keep their conntrack mark while that
+  candidate stays healthy; if the old candidate becomes unhealthy, routerd
+  rewrites that flow to the currently active candidate.
+- For route-set candidates, routerd leaves new flows unmarked so the
+  referenced `IPv4PolicyRouteSet` can hash them across its targets.
+  Existing conntrack marks for healthy route-set targets are preserved;
+  marks belonging to a failed target are cleared so the route set picks
+  again.
+- A candidate without `healthCheck` is always treated as up.
+
 IPv6 default gateway behavior is intentionally left for a later design pass.
 
-## IPv6 Prefix Delegation
+### IPv4SourceNAT
 
-`IPv6PrefixDelegation` requests a delegated prefix on an uplink interface. `IPv6DelegatedAddress` assigns an address on a downstream interface by combining one delegated subnet with a static interface identifier.
-
-```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: IPv6PrefixDelegation
-metadata:
-  name: wan-pd
-spec:
-  interface: wan
-  client: networkd
-  profile: ntt-hgw-lan-pd
-```
-
-```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: IPv6DelegatedAddress
-metadata:
-  name: lan-ipv6-pd-address
-spec:
-  prefixDelegation: wan-pd
-  interface: lan
-  subnetID: "0"
-  addressSuffix: "::3"
-  sendRA: true
-  announce: true
-```
-
-On Linux with systemd-networkd, routerd renders drop-ins under `/etc/systemd/network/10-netplan-<ifname>.network.d/`. The downstream `addressSuffix` maps to networkd `Token=`, so `::3` means the LAN interface receives the delegated prefix with host identifier `::3`.
-
-`profile` tunes DHCPv6-PD behavior for known upstream environments:
-
-- `ntt-ngn-direct-hikari-denwa`: the router is connected directly to the NTT NGN/ONU side on a Hikari Denwa contract.
-- `ntt-hgw-lan-pd`: the router is connected to the LAN side of an NTT home gateway that delegates `/60` prefixes to downstream routers.
-
-Both NTT PD profiles currently request IA_PD only, disable rapid commit, use a link-layer DUID, force DHCPv6 Solicit when necessary, and default the prefix delegation hint to `/60` unless `prefixLength` is set explicitly.
-
-Some NTT home gateway LAN-side environments only advertise IPv6 by RA/SLAAC and do not answer DHCPv6-PD. That mode should not be modeled as `IPv6PrefixDelegation`; it needs a separate RA/SLAAC resource design.
-
-## IPv4DHCPServer And IPv4DHCPScope
-
-`IPv4DHCPServer` declares a DHCPv4 server instance. `IPv4DHCPScope` binds that server to an interface and declares one address pool plus DHCP options. This split keeps multi-scope DHCP readable.
-
-```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: IPv4DHCPServer
-metadata:
-  name: dhcp4
-spec:
-  server: dnsmasq
-  managed: true
-  listenInterfaces:
-    - lan
-  dns:
-    enabled: true
-    upstreamSource: dhcp4
-    upstreamInterface: wan
-    cacheSize: 1000
-```
-
-```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: IPv4DHCPScope
-metadata:
-  name: lan-dhcp4
-spec:
-  server: dhcp4
-  interface: lan
-  rangeStart: 192.168.160.100
-  rangeEnd: 192.168.160.199
-  leaseTime: 12h
-  routerSource: interfaceAddress
-  dnsSource: self
-  authoritative: true
-```
-
-`routerSource` may be `interfaceAddress`, `static`, or `none`. `dnsSource` may be `dhcp4`, `static`, `self`, or `none`.
-
-For `server: dnsmasq`, `dnsSource: self` advertises the router's LAN IPv4 address as the DNS server and runs dnsmasq as a DNS forwarder/cache. `spec.dns.upstreamSource` on `IPv4DHCPServer` controls where dnsmasq forwards queries:
-
-- `dhcp4`: use DNS servers observed from DHCPv4 on `upstreamInterface`.
-- `static`: use `upstreamServers`.
-- `system`: use the host resolver configuration.
-- `none`: run without upstream forwarders.
-
-If `dnsSource` is `dhcp4` or `static` on the scope, routerd writes those DNS server addresses directly into the DHCPv4 option and dnsmasq does not need to listen on DNS port 53 for that scope.
-
-`spec.interface` must refer to an `Interface`. If that interface still requires adoption because cloud-init or netplan is present, planning blocks DHCP scope management as well.
-
-## IPv6DHCPServer And IPv6DHCPScope
-
-`IPv6DHCPServer` declares a DHCPv6/RA server instance. `IPv6DHCPScope` binds it to an `IPv6DelegatedAddress`, so the LAN prefix follows the WAN DHCPv6-PD lease.
-
-```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: IPv6DHCPServer
-metadata:
-  name: dhcp6
-spec:
-  server: dnsmasq
-  managed: true
-  listenInterfaces:
-    - lan
-```
-
-```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: IPv6DHCPScope
-metadata:
-  name: lan-dhcp6
-spec:
-  server: dhcp6
-  delegatedAddress: lan-ipv6-pd-address
-  mode: stateless
-  leaseTime: 12h
-  defaultRoute: true
-  dnsSource: self
-```
-
-`mode: stateless` means clients use SLAAC for addresses and DHCPv6 for options such as DNS. `mode: ra-only` sends RA without DHCPv6 address assignment. IPv6 default routes are advertised by RA; DHCPv6 itself has no default gateway option. With `dnsSource: self`, routerd advertises the delegated LAN IPv6 address, for example `pd-prefix::3`, as the DNS server. Static IPv6 DNS servers can be advertised with `dnsSource: static` and `dnsServers`.
-
-When dnsmasq RA is enabled, routerd uses the same IPv6 DNS server list for
-DHCPv6 DNS and RA RDNSS. This matters for Android clients, which should be
-treated as SLAAC/RDNSS clients rather than DHCPv6 clients.
-
-For dnsmasq-backed DHCP and DNS, `listenInterfaces` is the allow-list of
-interfaces where dnsmasq may serve. Scopes must bind to an interface listed by
-their server. Interfaces not listed are rendered as `except-interface`, so a WAN
-is not served unless it is explicitly configured.
-
-## IPv4SourceNAT
-
-`IPv4SourceNAT` declares outbound source NAT without using Linux-specific API names. On Linux this may render to masquerade when `translation.type` is `interfaceAddress`. `outboundInterface` may reference an `Interface`, `PPPoEInterface`, or `DSLiteTunnel` resource.
+`IPv4SourceNAT` declares outbound source NAT in terms of source ranges and
+the desired translation.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -476,31 +615,36 @@ spec:
       end: 65535
 ```
 
-Other translation forms are reserved for static SNAT and pools:
+How routerd behaves:
 
-```yaml
-translation:
-  type: address
-  address: 203.0.113.10
-```
+- `outboundInterface` may be an `Interface`, `PPPoEInterface`, or
+  `DSLiteTunnel`.
+- `translation.type: interfaceAddress` translates to whatever IPv4 address
+  is currently on the egress interface. Linux renders this as masquerade.
+- `translation.type: address` pins translation to a single address:
 
-```yaml
-translation:
-  type: pool
-  addresses:
-    - 203.0.113.10
-    - 203.0.113.11
-```
+  ```yaml
+  translation:
+    type: address
+    address: 203.0.113.10
+  ```
+- `translation.type: pool` distributes across a pool:
 
-`translation.portMapping` controls source port handling:
+  ```yaml
+  translation:
+    type: pool
+    addresses:
+      - 203.0.113.10
+      - 203.0.113.11
+  ```
+- `translation.portMapping`:
+  - `auto`: let the platform pick source ports.
+  - `preserve`: preserve original source ports when possible.
+  - `range`: limit translated source ports to `[start, end]`.
 
-- `auto`: let the platform choose source ports.
-- `preserve`: preserve source ports when the platform can.
-- `range`: map source ports into `start` through `end`.
+### IPv4PolicyRoute
 
-## IPv4PolicyRoute
-
-`IPv4PolicyRoute` marks forwarded IPv4 packets that match source and/or destination CIDRs, installs an `ip rule` for that mark, and installs a default route in a dedicated routing table. `outboundInterface` may reference an `Interface`, `PPPoEInterface`, or `DSLiteTunnel` resource.
+`IPv4PolicyRoute` sends matching forwarded traffic out a specific egress.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -519,11 +663,16 @@ spec:
   routeMetric: 50
 ```
 
-This is the first building block for multiple DS-Lite tunnels. Several policies can route different client or destination prefixes through different tunnel resources. Automatic load balancing and conntrack-aware tunnel selection are intentionally separate future resources.
+How routerd behaves: routerd marks IPv4 packets matching the source and
+destination CIDRs, installs an `ip rule` for that mark, and installs a
+default route in the dedicated routing table. This is the building block
+for routing different LAN prefixes through different uplinks. Hash-based
+load balancing is a separate resource (`IPv4PolicyRouteSet`).
 
-## IPv4PolicyRouteSet
+### IPv4PolicyRouteSet
 
-`IPv4PolicyRouteSet` selects one of multiple policy-route targets by hashing packet fields. On Linux, routerd renders nftables rules that restore an existing conntrack mark, choose a mark with `jhash` for new flows, save the selected mark back to conntrack, and install one `ip rule` plus routing table per target.
+`IPv4PolicyRouteSet` selects between multiple egress targets by hashing the
+flow.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -554,11 +703,22 @@ spec:
       routeMetric: 50
 ```
 
-`hashFields` currently supports `sourceAddress` and `destinationAddress`. This is meant for multiple DS-Lite tunnels with different local IPv6 source addresses; each target usually points at a different `DSLiteTunnel`.
+How routerd behaves:
 
-## IPv4ReversePathFilter
+- routerd renders nftables rules that restore an existing conntrack mark,
+  pick a mark with `jhash` for new flows, save the chosen mark back into
+  conntrack, and install one `ip rule` plus one routing table per target.
+- Established flows stay on the same target through their conntrack mark.
+- `hashFields` currently supports `sourceAddress` and `destinationAddress`.
+- This is the recommended way to load balance multiple DS-Lite tunnels
+  with different local IPv6 source addresses; each target usually points
+  at a different `DSLiteTunnel`.
 
-`IPv4ReversePathFilter` controls Linux `rp_filter` for policy-routing cases where reverse path checks can drop valid asymmetric traffic.
+### IPv4ReversePathFilter
+
+`IPv4ReversePathFilter` controls Linux `rp_filter` for cases where reverse
+path checks would drop legitimate asymmetric traffic — common with policy
+routing and multiple DS-Lite tunnels.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -571,13 +731,16 @@ spec:
   mode: disabled
 ```
 
-`target` may be `all`, `default`, or `interface`. When `target: interface`, `interface` may reference an `Interface`, `PPPoEInterface`, or `DSLiteTunnel` resource. `mode` may be `disabled`, `strict`, or `loose`, corresponding to Linux values `0`, `1`, and `2`.
+`spec.target` may be `all`, `default`, or `interface`. With
+`target: interface`, `spec.interface` may reference an `Interface`,
+`PPPoEInterface`, or `DSLiteTunnel`. `spec.mode` is `disabled`, `strict`,
+or `loose`, mapping to Linux values 0, 1, and 2.
 
 ## PathMTUPolicy
 
-`PathMTUPolicy` derives an effective path MTU for traffic leaving one interface
-toward one or more upstream interfaces. It can advertise that MTU to IPv6 LAN
-clients through RA and clamp forwarded TCP MSS for IPv4 and IPv6.
+`PathMTUPolicy` works out the effective path MTU between one downstream
+interface and one or more upstream interfaces, then advertises that MTU and
+clamps forwarded TCP MSS so end hosts converge on it.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -601,35 +764,30 @@ spec:
       - ipv6
 ```
 
-`mtu.source: minInterface` uses the minimum configured MTU among
-`toInterfaces`. Plain `Interface` resources currently default to `1500`,
-`PPPoEInterface` defaults to `1492`, and `DSLiteTunnel` defaults to `1454`
-unless their resource sets `mtu`. `mtu.source: static` uses `mtu.value`.
+How routerd behaves:
 
-When `ipv6RA.enabled` is true, `ipv6RA.scope` references an `IPv6DHCPScope`.
-dnsmasq then renders an RA MTU option such as `ra-param=ens19,1454`.
+- `mtu.source: minInterface` takes the smallest configured MTU among
+  `toInterfaces`. Plain `Interface` defaults to 1500, `PPPoEInterface`
+  defaults to 1492, and `DSLiteTunnel` defaults to 1454. Any explicit
+  `spec.mtu` on those resources wins.
+- `mtu.source: static` uses `mtu.value` directly.
+- `ipv6RA.enabled: true` advertises the resulting MTU through the
+  referenced `IPv6DHCPScope` — for example, dnsmasq emits
+  `ra-param=ens19,1454`.
+- `tcpMSSClamp.enabled: true` installs nftables forward-chain MSS rules.
+  The clamped MSS is derived from the effective MTU: IPv4 subtracts 40
+  bytes and IPv6 subtracts 60 bytes. Omitting `families` enables both
+  `ipv4` and `ipv6`.
 
-When `tcpMSSClamp.enabled` is true, routerd renders nftables forward-chain MSS
-rules. The fixed MSS is derived from the effective MTU: IPv4 subtracts 40 bytes
-and IPv6 subtracts 60 bytes. If `families` is omitted, both `ipv4` and `ipv6`
-are enabled.
+## Firewall
 
-## Minimal Firewall
+The first firewall API is intentionally smaller than a general rule
+language. It models home-router safety defaults and explicit service
+exposure.
 
-Firewall resources use `firewall.routerd.net/v1alpha1`. The first firewall API is
-intentionally smaller than a general rule language. It models home-router safety
-defaults and service exposure:
+### Zone
 
-- `Zone`: names a set of router interfaces, such as `lan` or `wan`.
-- `FirewallPolicy`: applies the `home-router` preset with explicit input and
-  forward defaults.
-- `ExposeService`: publishes one internal IPv4 service with DNAT plus a matching
-  forward allow rule.
-
-The `home-router` preset renders input default drop, forward default drop,
-invalid drop, established/related accept, loopback input accept, LAN-to-WAN
-forward allow when `lan` and `wan` zones exist, and router SSH/DNS/DHCP access
-only from configured `routerAccess` zones.
+A `Zone` names a group of router interfaces.
 
 ```yaml
 apiVersion: firewall.routerd.net/v1alpha1
@@ -647,7 +805,13 @@ metadata:
 spec:
   interfaces:
     - wan-pppoe
----
+```
+
+### FirewallPolicy
+
+`FirewallPolicy` applies a preset and explicit chain defaults.
+
+```yaml
 apiVersion: firewall.routerd.net/v1alpha1
 kind: FirewallPolicy
 metadata:
@@ -672,11 +836,17 @@ spec:
         - lan
 ```
 
-`ExposeService` is the first building block for IPv4 port publishing. `sources`
-is optional; when present, only those IPv4 source prefixes are accepted. `hairpin`
-is accepted in the resource shape, but the first renderer does not synthesize
-external-address hairpin rules yet because the external address selection model
-is not defined.
+The `home-router` preset installs:
+
+- input default drop and forward default drop.
+- invalid drop, established/related accept, loopback input accept.
+- LAN-to-WAN forward allow when both `lan` and `wan` zones are defined.
+- SSH, DNS, and DHCP access to the router only from the configured
+  `routerAccess` zones; SSH from WAN is gated by `routerAccess.ssh.wan`.
+
+### ExposeService
+
+`ExposeService` publishes one internal IPv4 service to the outside.
 
 ```yaml
 apiVersion: firewall.routerd.net/v1alpha1
@@ -696,70 +866,111 @@ spec:
   hairpin: true
 ```
 
-## DNSConditionalForwarder
+How routerd behaves: routerd renders a DNAT rule plus a matching
+forward-chain accept. `spec.sources`, when present, restricts the source
+prefixes that may reach the published port. `spec.hairpin` is accepted in
+the resource shape, but the first renderer does not yet synthesize
+external-address hairpin rules — the external-address selection model is
+still being designed.
 
-`DNSConditionalForwarder` declares domain-specific DNS forwarding. With dnsmasq this renders to `server=/domain/upstream`.
+## System resources
+
+### Hostname
+
+`Hostname` declares the system hostname.
 
 ```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: DNSConditionalForwarder
+apiVersion: system.routerd.net/v1alpha1
+kind: Hostname
 metadata:
-  name: transix-aftr
+  name: system
 spec:
-  domain: gw.transix.jp
-  upstreamSource: static
-  upstreamServers:
-    - 2404:1a8:7f01:a::3
-    - 2404:1a8:7f01:b::3
+  hostname: router03.example.net
+  managed: true
 ```
 
-`upstreamSource` may be:
+`managed: false` keeps the resource as observation only and does not change
+host state.
 
-- `static`: use `upstreamServers`.
-- `dhcp4`: use DNS servers learned on `upstreamInterface` by DHCPv4.
-- `dhcp6`: use DNS servers learned on `upstreamInterface` by DHCPv6.
+### Sysctl
 
-This allows a default DNS policy such as an ad-blocking resolver while keeping provider-specific names, such as DS-Lite AFTR names, on provider DNS.
-
-## DSLiteTunnel
-
-`DSLiteTunnel` declares a DS-Lite B4 tunnel. On Linux routerd creates an `ipip6` tunnel and can install an IPv4 default route through it.
+`Sysctl` declares one kernel parameter.
 
 ```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: DSLiteTunnel
+apiVersion: system.routerd.net/v1alpha1
+kind: Sysctl
 metadata:
-  name: transix
+  name: ipv4-forwarding
 spec:
+  key: net.ipv4.ip_forward
+  value: "1"
+  runtime: true
+  persistent: false
+```
+
+`runtime: true` reflects the value into the running kernel during
+reconcile. `persistent: true` is reserved for OS-specific rendering such as
+sysctl.d or rc.conf and is not applied yet.
+
+### NTPClient
+
+`NTPClient` declares the local NTP client. The first implementation manages
+`systemd-timesyncd` with a static server list.
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: NTPClient
+metadata:
+  name: system-time
+spec:
+  provider: systemd-timesyncd
+  managed: true
+  source: static
   interface: wan
-  tunnelName: ds-transix
-  aftrFQDN: gw.transix.jp
-  aftrDNSServers:
-    - 2404:1a8:7f01:a::3
-    - 2404:1a8:7f01:b::3
-  aftrAddressOrdinal: 1
-  aftrAddressSelection: ordinalModulo
-  localAddressSource: delegatedAddress
-  localDelegatedAddress: lan-ipv6-pd-address
-  localAddressSuffix: "::100"
-  defaultRoute: true
-  routeMetric: 50
-  mtu: 1454
+  servers:
+    - pool.ntp.org
 ```
 
-If `remoteAddress` is omitted, routerd resolves `aftrFQDN` as AAAA. `aftrDNSServers` may be used when the provider only returns the AFTR address from specific DNS servers. AAAA answers are sorted alphabetically; `aftrAddressOrdinal` selects the 1-based record to use. If omitted, routerd uses the first sorted address.
+How routerd behaves: when `interface` is set, routerd writes a per-link
+`NTP=` drop-in through systemd-networkd for that interface. When omitted,
+routerd writes the global `systemd-timesyncd` server list.
 
-`aftrAddressSelection` controls what happens when `aftrAddressOrdinal` is outside the current AAAA record count:
+### LogSink
 
-- `ordinal`: fail reconcile for this tunnel.
-- `ordinalModulo`: wrap around the current record count.
+`LogSink` declares where routerd sends its own internal events — config
+load, plan output, reconcile result, plugin errors, and so on.
 
-For multiple DS-Lite tunnels, configure different `aftrAddressOrdinal` values and run reconcile periodically. If the provider changes the AAAA set, each reconcile observes the new sorted set and recreates tunnels whose selected AFTR changed. When using `ordinalModulo`, keep `localAddressSuffix` distinct per tunnel so two tunnels can still coexist if the AFTR set shrinks. Health-based failover still needs an active health check resource.
+Local journald or syslog:
 
-`interface` is the underlay interface used to reach the AFTR. `localAddressSource` controls the tunnel's local IPv6 source address:
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: LogSink
+metadata:
+  name: local-syslog
+spec:
+  type: syslog
+  minLevel: info
+  syslog:
+    facility: local6
+    tag: routerd
+```
 
-- `interface`: use the first global IPv6 address on `interface`.
-- `static`: use `localAddress`.
-- `delegatedAddress`: derive an address from an `IPv6DelegatedAddress` resource referenced by `localDelegatedAddress`; `localAddressSuffix` overrides that delegated address suffix for this tunnel.
+Trusted local plugin:
 
-With `delegatedAddress`, routerd adds the derived local address as `/128` on the delegated address interface when it is missing. This keeps the DS-Lite underlay on WAN while allowing multiple tunnels to use distinct LAN-PD-derived source addresses.
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: LogSink
+metadata:
+  name: external-log
+spec:
+  type: plugin
+  minLevel: warning
+  plugin:
+    path: /usr/local/libexec/routerd/log-sinks/example
+    timeout: 5s
+```
+
+Defaults: `enabled: true`, `minLevel: info`, `syslog.facility: local6`,
+`syslog.tag: routerd`. For remote syslog, set `syslog.network` (`udp`,
+`tcp`, `unix`, or `unixgram`) and `syslog.address` (for example
+`syslog.example.net:514`).

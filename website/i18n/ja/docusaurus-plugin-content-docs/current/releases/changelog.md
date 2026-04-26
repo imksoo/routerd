@@ -4,29 +4,23 @@ title: 更新履歴
 
 # 更新履歴
 
-routerd は現在プレリリースのソフトウェアです。この変更履歴では、リソースモデルが形になっていく過程の意味のある変更を記録します。
+routerd は現在プレリリースのソフトウェアです。リソースモデルが形になっていく過程で、振る舞いとして意味のある変更を記録していきます。
 
 ## 未リリース
 
-- リソース所有と既存設定取り込みの基礎を追加。現在あるすべてのリソース種別が
-  artifact intent を出し、ローカル台帳、読み取り専用の取り込み候補表示、
-  管理対象の routing/nftables artifact の orphan 表示を持つように変更。
-- `routerd adopt --apply` と、dry-run ではない reconcile 成功後の台帳更新を追加。
-- 台帳で所有が分かる DS-Lite tunnel、routerd nftables table、routerd systemd
-  service の orphan cleanup を追加。
-- IPv6 RA MTU 広告と nftables TCP MSS clamp のために `PathMTUPolicy` を追加。
-- `firewall.routerd.net/v1alpha1` に最小ファイアウォールリソースとして `Zone`、`FirewallPolicy`、`ExposeService` を追加。
-- `HealthCheck.spec.role` を追加し、リンク、次ホップ、インターネット、サービス、ポリシーのヘルスチェックの意味を区別できるように変更。
-- `routerd.net` 用の Docusaurus ドキュメントサイトを追加。
-- `routerd.net` 向け Cloudflare Pages 前提の Docusaurus website を追加。
-- 日本語ドキュメントを追加。
-- 静的な `systemd-timesyncd` 設定用の `NTPClient` を追加。
-- dnsmasq の `listenInterfaces` 許可リストを追加。
-- dnsmasq の DNS 待ち受けアドレスをルーター自身のアドレスに絞るように変更。
-- `LogSink` によるリモート syslog 設定を追加。
-- `IPv4DefaultRoutePolicy` が有効候補として `IPv4PolicyRouteSet` を参照できるように変更。
-- PPPoE インターフェース出力と systemd ユニット管理を追加。
+- リソース所有と取り込みの基礎を導入。すべてのリソース種別が管理意図を出すようになり、ローカル所有台帳がホスト側の構成物を記録、`routerd adopt --candidates` が読み取り専用で取り込み候補を表示、反映時には経路と nftables 関連の管理対象構成物の残置候補を報告するようになりました。
+- `routerd adopt --apply` を追加。ホストの状態を変更せず、一致した取り込み候補を台帳に記録します。dry-run でない反映が成功した場合も、台帳が自動で更新されます。
+- 台帳で所有が確認できる DS-Lite トンネル、routerd の nftables テーブル、routerd の systemd サービスについて、残置物のクリーンアップを追加。
+- `PathMTUPolicy` を追加。実効 MTU を IPv6 RA で広告し、転送 TCP の MSS を nftables でクランプします。
+- `firewall.routerd.net/v1alpha1` に最小ファイアウォール用の `Zone`、`FirewallPolicy`、`ExposeService` を追加。
+- `HealthCheck.spec.role` を追加。リンク、次ホップ、インターネット、サービス、ポリシー集約のいずれを見ているチェックなのかを区別できるようになりました。
+- routerd.net 用の Docusaurus サイトの土台を追加。Cloudflare Pages の英日構成を前提にしています。
+- `NTPClient` を追加。固定サーバを使う `systemd-timesyncd` 構成を管理します。
+- dnsmasq の DHCP / DNS について、`listenInterfaces` の許可リストを必須化し、DNS の待ち受けアドレスをルータ自身のアドレスに絞るよう変更。
+- `LogSink` でリモート syslog 送出に対応。
+- `IPv4DefaultRoutePolicy` の候補が `IPv4PolicyRouteSet` を参照できるようになり、健全な宛先のコネクション追跡マークを保ったまま動かせるようになりました。
+- PPPoE インターフェースの構成出力と、routerd 管理の systemd ユニットを追加。
 
 ## 0.1.0 計画時点の基準
 
-- インターフェース、静的 IPv4、DHCP の下書き実装、プラグイン、予行実行、JSON 状態出力、systemd サービス配置の初期リソースモデル。
+- インターフェース、IPv4 静的アドレス、DHCP の最小実装、プラグイン、予行実行、JSON 状態出力、systemd サービスの配置を含む初期リソースモデル。

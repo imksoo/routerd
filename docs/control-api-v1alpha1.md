@@ -5,40 +5,41 @@ slug: /reference/control-api-v1alpha1
 
 # Control API v1alpha1
 
-routerd exposes a local daemon control API over HTTP+JSON. The default transport
-is a Unix domain socket:
+`routerd serve` exposes a small local control API. Operators and tooling
+use it to ask the router about its current state and to drive specific
+actions without restarting the daemon. The API is meant to feel familiar
+to anyone who has used a Kubernetes-style status / action shape.
+
+The default transport is a Unix domain socket:
 
 ```text
 /run/routerd/routerd.sock
 ```
 
-The API version is:
+API version:
 
 ```text
 control.routerd.net/v1alpha1
 ```
 
-The schema is generated from Go types:
+The schemas come from the same Go types the daemon uses, so the wire shape
+matches the implementation:
 
-```text
-schemas/routerd-control-v1alpha1.schema.json
-```
-
-An OpenAPI 3.1 document is also generated:
-
-```text
-schemas/routerd-control-openapi-v1alpha1.json
-```
+- JSON Schema: `schemas/routerd-control-v1alpha1.schema.json`
+- OpenAPI 3.1: `schemas/routerd-control-openapi-v1alpha1.json`
 
 ## Endpoints
 
-### GET Status
+### Status
 
 ```text
 GET /api/control.routerd.net/v1alpha1/status
 ```
 
-Response:
+Returns the latest reconcile result the daemon is sitting on: phase,
+generation, the time of the last reconcile, and how many resources were
+loaded. This is the cheapest way to ask "is the router doing OK right
+now?".
 
 ```json
 {
@@ -56,16 +57,16 @@ Response:
 }
 ```
 
-### GET NAPT Table
+### NAPT table
 
 ```text
 GET /api/control.routerd.net/v1alpha1/napt?limit=100
 ```
 
-This reads Linux conntrack state and returns NAT/NAPT-like translations. Use
-`limit=0` for summary only.
-
-Response:
+Reads Linux conntrack and returns NAT/NAPT-style translations. This is the
+quickest way to confirm that NAT is happening and that flows are pinned to
+the expected egress through their conntrack mark. `limit=0` returns the
+summary section only.
 
 ```json
 {
@@ -105,13 +106,17 @@ Response:
 }
 ```
 
-### POST Reconcile
+### Reconcile
 
 ```text
 POST /api/control.routerd.net/v1alpha1/reconcile
 ```
 
-Dry-run request:
+Asks the running daemon to perform an extra reconcile pass. Useful right
+after a YAML change, when you do not want to wait for the periodic
+schedule.
+
+Dry-run request body:
 
 ```json
 {
@@ -134,7 +139,12 @@ Response:
 }
 ```
 
-## curl
+`dryRun: true` runs the same plan as a regular reconcile but does not
+change host state. `dryRun: false` (or omitted) applies the result.
+
+## Talking to it directly
+
+`routerctl` wraps these endpoints, but `curl` works too:
 
 ```sh
 curl --unix-socket /run/routerd/routerd.sock \
@@ -153,12 +163,17 @@ curl --unix-socket /run/routerd/routerd.sock \
   http://routerd/api/control.routerd.net/v1alpha1/reconcile
 ```
 
-## Scheduler
+## Daemon scheduler
 
-`routerd serve` owns a small scheduler:
+`routerd serve` carries a small scheduler that drives periodic work on top
+of the control API:
 
-- `--observe-interval`: periodic read-only observe/status refresh; defaults to `30s`
-- `--reconcile-interval`: periodic reconcile; defaults to `0`, disabled
+- `--observe-interval`: how often the daemon refreshes its read-only
+  observation of host state. Defaults to 30 seconds.
+- `--reconcile-interval`: how often the daemon performs a full reconcile.
+  Defaults to 0, which disables scheduled reconciles — the daemon then
+  only reconciles in response to control API calls.
 
-Health checks should be added as scheduler jobs rather than mixed into one-shot
-CLI commands.
+Health checks are owned by the scheduler rather than mixed into one-shot
+CLI commands. This keeps the same reconcile path in use for daemon mode
+and one-shot mode.

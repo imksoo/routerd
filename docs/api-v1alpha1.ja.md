@@ -1,6 +1,13 @@
-# API v1alpha1
+---
+title: リソース API v1alpha1
+slug: /reference/api-v1alpha1
+---
 
-routerd の config は Kubernetes 風のリソース形状を使います。
+# リソース API v1alpha1
+
+routerd の設定は宣言的なリソースの集まりです。ひとつひとつのリソースは「ルータがこう振る舞ってほしい」という意図を表します。インターフェースを上げる、アドレスプールを配る、AFTR へトンネルを張る、健全な上流にデフォルト経路を載せる、といった粒度です。`reconcile` は、その意図とホストの現状を比べて差分を縮める作業を行います。
+
+リソースの形は Kubernetes 風で揃えています。
 
 - `apiVersion`
 - `kind`
@@ -8,60 +15,58 @@ routerd の config は Kubernetes 風のリソース形状を使います。
 - `spec`
 - 必要に応じて `status`
 
-## API Groups
+このページでは、各リソースを書くとルータがどう振る舞うか、設定値を変えると何が変わるか、ホスト側にどんな構成物が現れるかを順に説明します。
 
-- `routerd.net/v1alpha1`: top-level `Router`
-- `net.routerd.net/v1alpha1`: network resources
-- `firewall.routerd.net/v1alpha1`: firewall resources
-- `system.routerd.net/v1alpha1`: local system resources
-- `plugin.routerd.net/v1alpha1`: plugin manifests
+## API グループ
 
-## 主なリソース
+- `routerd.net/v1alpha1`: トップレベルの `Router`
+- `net.routerd.net/v1alpha1`: インターフェース、アドレッシング、DNS、経路ポリシー、トンネル
+- `firewall.routerd.net/v1alpha1`: ファイアウォールゾーンとポリシー
+- `system.routerd.net/v1alpha1`: ホスト名、sysctl、NTP クライアント、routerd の内部イベント送出先
+- `plugin.routerd.net/v1alpha1`: プラグインマニフェスト
 
-- `Interface`
-- `PPPoEInterface`
-- `IPv4StaticAddress`
-- `IPv4DHCPAddress`
-- `IPv4DHCPServer`
-- `IPv4DHCPScope`
-- `HealthCheck`
-- `IPv4DefaultRoutePolicy`
-- `IPv4SourceNAT`
-- `IPv4PolicyRoute`
-- `IPv4PolicyRouteSet`
-- `IPv4ReversePathFilter`
-- `PathMTUPolicy`
-- `Zone`
-- `FirewallPolicy`
-- `ExposeService`
-- `IPv6DHCPAddress`
-- `IPv6PrefixDelegation`
-- `IPv6DelegatedAddress`
-- `IPv6DHCPServer`
-- `IPv6DHCPScope`
-- `SelfAddressPolicy`
-- `DNSConditionalForwarder`
-- `DSLiteTunnel`
-- `LogSink`
-- `NTPClient`
-- `Hostname`
-- `Sysctl`
+## 用意されているリソース
 
-## Interface Ownership
+ネットワーク関連:
+`Interface`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4DHCPServer`、`IPv4DHCPScope`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
 
-`Interface.spec.managed` は、routerd がそのinterfaceを変更してよいかを示します。
+ファイアウォール:
+`Zone`、`FirewallPolicy`、`ExposeService`。
 
-- `managed: false`: observe と alias 解決だけを行い、link/address state は変更しません。
-- `managed: true`: routerd がそのinterfaceを管理できます。ただし cloud-init や netplan の既存所有が見える場合は、いきなり奪わず `RequiresAdoption` として計画に出します。
+システム:
+`Hostname`、`Sysctl`、`NTPClient`、`LogSink`。
 
-実機上の所有関係は artifact intent と、取り込み済みリソースについては
-`/var/lib/routerd/artifacts.json` のローカル台帳で扱います。各リソース共通の
-reconcile と orphan cleanup の考え方は [リソース所有](resource-ownership.ja.md)
-を参照してください。
+種類は意識的に絞っています。汎用プラットフォームではなく、ルータとして新しい振る舞いが必要になったときだけ種類を増やします。
 
-## PPPoEInterface
+## インターフェース
 
-`PPPoEInterface` は、別の `Interface` の上に PPPoE interface を作るリソースです。Linux では pppd/rp-pppoe の peer 設定、CHAP/PAP secrets、任意の systemd unit を生成します。
+### Interface
+
+`Interface` は routerd が知っておく（必要に応じて管理する）ネットワークインターフェースを宣言します。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: Interface
+metadata:
+  name: lan
+spec:
+  ifname: ens19
+  adminUp: true
+  managed: true
+```
+
+ルータの振る舞い:
+
+- `spec.ifname` は、別名 `lan` をホスト上の実際のリンクに結び付けます。他のリソースは常に `lan` を参照し、カーネル側の名前を直接書きません。
+- `spec.adminUp: true` で管理状態を up に保ちます。
+- `spec.managed: true` のとき、routerd はリンクとアドレスの状態を変更できます。ただし cloud-init や netplan が既に握っている場合は奪わず、計画上で「取り込み待ち」として表示します。
+- `spec.managed: false` の場合は観測専用です。別名解決はしますが、リンクとアドレスは触りません。
+
+ホスト側の所有関係や、`/var/lib/routerd/artifacts.json` のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership.ja.md) を参照してください。
+
+### PPPoEInterface
+
+`PPPoEInterface` は、別の `Interface` の上に PPPoE セッションを張ります。pppd / rp-pppoe の peer 設定、CHAP/PAP secret、systemd ユニットを routerd が管理します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -80,160 +85,72 @@ spec:
   mru: 1492
 ```
 
-`interface` は下位の Ethernet `Interface` を参照します。`ifname` は省略すると `ppp-<metadata.name>` ですが、Linux の interface name 制限に合わせて15文字以内である必要があります。
-`password` と `passwordFile` はどちらか一方だけを指定します。認証情報を main YAML に置かないため、通常は `passwordFile` を推奨します。
+ルータの振る舞い:
 
-`managed: true` の場合、routerd は `routerd-pppoe-<name>.service` を enable/start します。`managed: false` の場合は設定ファイルだけを生成し、unit は起動しません。
+- `spec.interface` は土台になる Ethernet の `Interface` を参照します。
+- `spec.ifname` を省略すると `ppp-<metadata.name>` になります。Linux の制限により 15 文字以内である必要があります。
+- 認証情報は `spec.password` か `spec.passwordFile` のどちらか一方を指定します。本体 YAML に秘密情報を残さないよう、通常は `passwordFile` を推奨します。
+- `spec.managed: true` のとき、routerd は `routerd-pppoe-<name>.service` を有効化して起動します。`managed: false` のときは設定ファイルだけ生成し、ユニットには触りません。
+- `spec.defaultRoute: true` で pppd が PPP リンク経由のデフォルト経路を入れます。複数の上流を併用する場合は `IPv4DefaultRoutePolicy` と組み合わせます。
+- `spec.usePeerDNS: true` で、PPP 対向が広告した DNS サーバを受け入れます。
+- `spec.mtu` と `spec.mru` は、上流が 1500 より小さい MTU を要求するときに指定します。PPPoE では通常 1492 になります。
 
-## LogSink
+## IPv4 アドレッシング
 
-`system.routerd.net/v1alpha1` の `LogSink` は、routerd の内部イベントをどこへ出すかを宣言します。
+### IPv4StaticAddress
 
-ローカルの journald/syslog に出す場合:
-
-```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: LogSink
-metadata:
-  name: local-syslog
-spec:
-  type: syslog
-  minLevel: info
-  syslog:
-    facility: local6
-    tag: routerd
-```
-
-信頼済みローカル log plugin に出す場合:
-
-```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: LogSink
-metadata:
-  name: external-log
-spec:
-  type: plugin
-  minLevel: warning
-  plugin:
-    path: /usr/local/libexec/routerd/log-sinks/example
-    timeout: 5s
-```
-
-`enabled` は省略時 `true`、`minLevel` は省略時 `info` です。`syslog.facility` は省略時 `local6`、`syslog.tag` は省略時 `routerd` です。
-remote syslog へ送る場合は `syslog.network` と `syslog.address` を指定します。例: `network: udp`、`address: syslog.example.net:514`。
-
-## NTPClient
-
-`system.routerd.net/v1alpha1` の `NTPClient` はlocal NTP clientを宣言します。初期実装では `systemd-timesyncd` とstatic server指定を管理します。
-
-```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: NTPClient
-metadata:
-  name: system-time
-spec:
-  provider: systemd-timesyncd
-  managed: true
-  source: static
-  interface: wan
-  servers:
-    - pool.ntp.org
-```
-
-`interface` を指定した場合、routerd は systemd-networkd のlink別 `NTP=` としてそのinterfaceにNTP serverを設定します。省略時は `systemd-timesyncd` のglobal serverとして設定します。
-
-## Sysctl
-
-`system.routerd.net/v1alpha1` の `Sysctl` は kernel parameter を宣言します。
-
-```yaml
-apiVersion: system.routerd.net/v1alpha1
-kind: Sysctl
-metadata:
-  name: ipv4-forwarding
-spec:
-  key: net.ipv4.ip_forward
-  value: "1"
-  runtime: true
-  persistent: false
-```
-
-現在 `runtime: true` は実行中kernel値へ反映します。`persistent: true` は sysctl.d や rc.conf への永続化用として予約されています。
-
-## SelfAddressPolicy
-
-`SelfAddressPolicy` は `dnsSource: self` がどのlocal addressを選ぶかを定義します。LAN用 delegated address と DS-Lite source address のように、同じinterfaceに複数のIPv6 addressがある場合の選択を明示できます。
+`IPv4StaticAddress` は固定の IPv4 プレフィックスをインターフェースに載せます。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: SelfAddressPolicy
+kind: IPv4StaticAddress
 metadata:
-  name: lan-ipv6-self
+  name: lan-ipv4
 spec:
-  addressFamily: ipv6
-  candidates:
-    - source: delegatedAddress
-      delegatedAddress: lan-ipv6-pd-address
-      addressSuffix: "::3"
-    - source: interfaceAddress
-      interface: lan
-      matchSuffix: "::3"
-    - source: interfaceAddress
-      interface: lan
-      ordinal: 1
-```
-
-`IPv6DHCPScope` から参照します。
-
-```yaml
-spec:
-  dnsSource: self
-  selfAddressPolicy: lan-ipv6-self
-```
-
-candidate は上から順番に評価され、最初に解決できたaddressを使います。省略時は、IPv6 DHCP scope の `IPv6DelegatedAddress.addressSuffix` を使った delegated address、suffix一致の観測済みaddress、観測済みglobal addressの先頭、という順番になります。
-
-## IPv6 Prefix Delegation
-
-`IPv6PrefixDelegation` は uplink interface で DHCPv6-PD を要求します。`IPv6DelegatedAddress` は delegated prefix と固定suffixを組み合わせて downstream interface のIPv6 addressを作ります。
-
-```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: IPv6PrefixDelegation
-metadata:
-  name: wan-pd
-spec:
-  interface: wan
-  client: networkd
-  profile: ntt-hgw-lan-pd
-  prefixLength: 60
-```
-
-```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: IPv6DelegatedAddress
-metadata:
-  name: lan-ipv6-pd-address
-spec:
-  prefixDelegation: wan-pd
   interface: lan
-  subnetID: "0"
-  addressSuffix: "::3"
-  announce: true
+  address: 192.168.160.3/24
+  exclusive: true
 ```
 
-Linux では systemd-networkd drop-in を `/etc/systemd/network/10-netplan-<ifname>.network.d/` にrenderします。
+ルータの振る舞い:
 
-NTT向けprofile:
+- routerd は `192.168.160.3/24` を LAN インターフェースに割り当て、ルータ自身のアドレスとして扱います。
+- `spec.exclusive: true` のとき、反映時にそのインターフェース上の他の静的 IPv4 アドレスを取り除きます。番号付け替え後に古い設定が残ったまま重複するのを防ぐためです。
+- 計画段階で、宣言した静的アドレスと他のインターフェースで観測しているプレフィックスが照合されます。別インターフェースに重複するプレフィックスがあると既定では拒否されます。NAT 検証や HA、ラボ用途で意図的な重複を許可する場合は明示します。
 
-- `ntt-ngn-direct-hikari-denwa`
-- `ntt-hgw-lan-pd`
+  ```yaml
+  spec:
+    interface: lan
+    address: 192.168.160.3/24
+    allowOverlap: true
+    allowOverlapReason: overlapping customer network for NAT lab
+  ```
 
-どちらも現時点では IA_PD のみを前提にし、prefix hint は明示がなければ `/60` を使います。
+### IPv4DHCPAddress
 
-## DHCP と DNS
+`IPv4DHCPAddress` は、上流の DHCPv4 から IPv4 アドレスを取得します。
 
-`IPv4DHCPServer` は DHCPv4 server instance、`IPv4DHCPScope` は interface と address pool / options を定義します。
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4DHCPAddress
+metadata:
+  name: wan-dhcp4
+spec:
+  interface: wan
+  client: dhclient
+  required: true
+```
+
+ルータの振る舞い:
+
+- `interface` 上の DHCPv4 クライアントを routerd が管理します。`spec.client` でクライアント実装を選びます（現状は `dhclient`）。
+- `spec.required: true` のとき、リースが取れない場合は反映が失敗します。WAN アドレスの取得を前提に他の設定が成り立つ場合に有効です。
+
+## IPv4 DHCP と DNS の提供
+
+### IPv4DHCPServer と IPv4DHCPScope
+
+DHCPv4 サービスは、サーバを表すリソースと、そのサーバを 1 本のインターフェースに紐付けるスコープに分かれています。サーバはひとつの dnsmasq インスタンスに対応します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -268,15 +185,226 @@ spec:
   authoritative: true
 ```
 
-`IPv6DHCPServer` と `IPv6DHCPScope` は dnsmasq による DHCPv6/RA を扱います。`dnsSource: self` は delegated LAN IPv6 address、たとえば `pd-prefix::3` をDNS serverとして広告します。
+ルータの振る舞い:
 
-dnsmasq の RA が有効な場合、routerd は同じ IPv6 DNS server list を DHCPv6 DNS と RA RDNSS の両方に使います。Android は DHCPv6 client として期待せず、SLAAC/RDNSS client として扱う方が自然です。
+- `spec.listenInterfaces` は dnsmasq に対する許可リストです。スコープは、対応するサーバの `listenInterfaces` に含まれるインターフェースにしか紐付けられません。リストに無いインターフェースは `except-interface` として書き出すため、明示しない限り WAN にサービスを出してしまうことはありません。
+- `IPv4DHCPScope.routerSource` はゲートウェイオプションの出し方を決めます。`interfaceAddress` ならルータの LAN アドレス、`static` なら `spec.router` の値、`none` ならオプション自体を出しません。
+- `IPv4DHCPScope.dnsSource` は DNS サーバオプションの出し方を決めます。
+  - `dhcp4` と `static` は、DHCPv4 オプションに DNS サーバを直接書き込みます。このスコープでは dnsmasq が 53 番ポートを開く必要はありません。
+  - `self` のとき、ルータ自身の LAN IPv4 アドレスを DNS サーバとして広告し、dnsmasq を DNS フォワーダ兼キャッシュとして動かします。フォワード先は `IPv4DHCPServer.spec.dns` で決まります。
+    - `upstreamSource: dhcp4` は、`upstreamInterface` で DHCPv4 から学習した DNS サーバへ転送します。
+    - `upstreamSource: static` は `upstreamServers` を使います。
+    - `upstreamSource: system` はホストのリゾルバ設定に従います。
+    - `upstreamSource: none` は上流フォワーダを持たずに動かします。
+  - `none` は DNS オプションそのものを出しません。
+- `spec.interface` がまだ取り込み待ちの状態（cloud-init などが握っている）にある場合、その上で DHCP を提供すると競合するため、計画段階で DHCP スコープも止めます。
 
-dnsmasq backendでは `listenInterfaces` がサービス提供interfaceのallow-listです。scopeはserver側の `listenInterfaces` に含まれるinterfaceにだけbindできます。指定されていないinterfaceは `except-interface` としてrenderされるため、WANであってもLANであっても明示しない限りサービスしません。
+## IPv6 アドレッシングとプレフィックス委譲
 
-## HealthCheck と IPv4DefaultRoutePolicy
+### IPv6PrefixDelegation
 
-`HealthCheck` は疎通確認を宣言します。`interval` を省略した場合のデフォルトは `60s` です。経路切替が鋭敏になりすぎないよう、短い間隔は明示した場合だけ使います。
+`IPv6PrefixDelegation` は、上流側のインターフェースで IPv6 プレフィックスの委譲を要求します。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6PrefixDelegation
+metadata:
+  name: wan-pd
+spec:
+  interface: wan
+  client: networkd
+  profile: ntt-hgw-lan-pd
+  prefixLength: 60
+```
+
+ルータの振る舞い:
+
+- routerd は systemd-networkd の追加設定を `/etc/systemd/network/10-netplan-<ifname>.network.d/` 配下に書き出し、WAN 側で DHCPv6-PD を要求します。
+- `spec.profile` は既知の上流環境向けにパラメータを切り替えます。
+  - `default`: 一般的な DHCPv6-PD。
+  - `ntt-ngn-direct-hikari-denwa`: NTT NGN/ONU に直結し、ひかり電話契約を使う構成。
+  - `ntt-hgw-lan-pd`: NTT のホームゲートウェイの LAN 側につなぎ、`/60` 単位で再委譲を受ける構成。
+
+  どちらの NTT 系プロファイルも IA_PD のみを要求し、rapid commit を無効化、リンクレイヤ DUID を使用、必要に応じて DHCPv6 Solicit を強制し、`prefixLength` を明示しなければ `/60` をヒントにします。
+
+NTT のホームゲートウェイには、IPv6 を RA/SLAAC のみで配布し DHCPv6-PD に応答しないモードもあります。これは `IPv6PrefixDelegation` ではモデル化できないため、別途 RA/SLAAC のリソース設計を行う必要があります。
+
+### IPv6DelegatedAddress
+
+`IPv6DelegatedAddress` は、委譲されたプレフィックスから下流のサブネットを切り出し、その中にルータの安定したアドレスを置きます。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6DelegatedAddress
+metadata:
+  name: lan-ipv6-pd-address
+spec:
+  prefixDelegation: wan-pd
+  interface: lan
+  subnetID: "0"
+  addressSuffix: "::3"
+  sendRA: true
+  announce: true
+```
+
+ルータの振る舞い:
+
+- 委譲されたサブネットと固定サフィックスを組み合わせて LAN 側のアドレスを決めます。systemd-networkd ではサフィックスが `Token=` として書き出されるため、`::3` は委譲プレフィックス内のホスト識別子 `::3` を持つアドレスになります。
+- `spec.sendRA: true` のとき、dnsmasq から RA としてプレフィックスを広告します。
+- `spec.announce: true` のとき、`dnsSource: self` や DS-Lite の local アドレス選定でこのアドレスを候補として扱います。
+
+### IPv6DHCPAddress
+
+`IPv6DHCPAddress` は上流側のインターフェースで DHCPv6 クライアントを動かし、IA_NA アドレスを取得します。プレフィックス委譲は `IPv6PrefixDelegation` 側の責務で、こちらとは独立しています。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6DHCPAddress
+metadata:
+  name: wan-dhcp6
+spec:
+  interface: wan
+  client: networkd
+  required: true
+```
+
+### IPv6DHCPServer と IPv6DHCPScope
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6DHCPServer
+metadata:
+  name: dhcp6
+spec:
+  server: dnsmasq
+  managed: true
+  listenInterfaces:
+    - lan
+```
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6DHCPScope
+metadata:
+  name: lan-dhcp6
+spec:
+  server: dhcp6
+  delegatedAddress: lan-ipv6-pd-address
+  mode: stateless
+  leaseTime: 12h
+  defaultRoute: true
+  dnsSource: self
+```
+
+ルータの振る舞い:
+
+- スコープは `IPv6DelegatedAddress` に紐付くので、WAN 側で受けた DHCPv6-PD の結果に LAN 側のプレフィックスが自動で追従します。
+- `spec.mode: stateless` のとき、クライアントは SLAAC でアドレスを決め、DHCPv6 からは DNS などのオプションだけを受け取ります。
+- `spec.mode: ra-only` は、DHCPv6 のアドレス払い出しを行わず RA だけを送ります。
+- IPv6 のデフォルト経路は RA で広告します。DHCPv6 自体にデフォルトゲートウェイのオプションはありません。
+- `spec.dnsSource: self` のとき、ルータの LAN 側 IPv6 アドレス（例: `pd-prefix::3`）を DNS サーバとして広告します。`dnsSource: static` と `dnsServers` の組み合わせでは、固定の DNS サーバ一覧を広告します。
+- dnsmasq の RA が有効な場合、routerd は DHCPv6 と RA RDNSS の両方に同じ IPv6 DNS サーバ一覧を流します。Android のように DHCPv6 を使わず SLAAC/RDNSS で動くクライアントを想定するため重要です。
+
+### SelfAddressPolicy
+
+`SelfAddressPolicy` は、`dnsSource: self` がローカルアドレスを選ぶときの優先順位を決めます。同じインターフェースに、委譲由来の LAN アドレスと DS-Lite 用の補助アドレスのように複数の IPv6 アドレスがある場合に使います。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: SelfAddressPolicy
+metadata:
+  name: lan-ipv6-self
+spec:
+  addressFamily: ipv6
+  candidates:
+    - source: delegatedAddress
+      delegatedAddress: lan-ipv6-pd-address
+      addressSuffix: "::3"
+    - source: interfaceAddress
+      interface: lan
+      matchSuffix: "::3"
+    - source: interfaceAddress
+      interface: lan
+      ordinal: 1
+```
+
+`IPv6DHCPScope` の `spec.selfAddressPolicy` から参照します。候補は上から順に評価され、最初に解決できたものが採用されます。ポリシーを参照しない場合は、委譲アドレスと `IPv6DelegatedAddress.addressSuffix` の組、サフィックス一致の観測アドレス、観測されたグローバルアドレスの先頭、の順で代替する標準動作になります。
+
+### DNSConditionalForwarder
+
+`DNSConditionalForwarder` は、特定のドメインだけ別の DNS サーバへ転送します。dnsmasq では `server=/domain/upstream` として書き出されます。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: DNSConditionalForwarder
+metadata:
+  name: transix-aftr
+spec:
+  domain: gw.transix.jp
+  upstreamSource: static
+  upstreamServers:
+    - 2404:1a8:7f01:a::3
+    - 2404:1a8:7f01:b::3
+```
+
+`upstreamSource` で転送先の決め方を選びます。
+
+- `static`: `upstreamServers` を使います。
+- `dhcp4`: `upstreamInterface` で DHCPv4 から学習した DNS サーバを使います。
+- `dhcp6`: `upstreamInterface` で DHCPv6 から学習した DNS サーバを使います。
+
+これにより、全体の DNS は広告ブロック用の上流に向けつつ、DS-Lite の AFTR FQDN のように事業者の DNS でしか正しい AAAA が返らない名前だけを事業者 DNS に流す、といった構成が書けます。
+
+## DS-Lite
+
+### DSLiteTunnel
+
+`DSLiteTunnel` は AFTR に向けた DS-Lite B4 トンネルを宣言します。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: DSLiteTunnel
+metadata:
+  name: transix
+spec:
+  interface: wan
+  tunnelName: ds-transix
+  aftrFQDN: gw.transix.jp
+  aftrDNSServers:
+    - 2404:1a8:7f01:a::3
+    - 2404:1a8:7f01:b::3
+  aftrAddressOrdinal: 1
+  aftrAddressSelection: ordinalModulo
+  localAddressSource: delegatedAddress
+  localDelegatedAddress: lan-ipv6-pd-address
+  localAddressSuffix: "::100"
+  defaultRoute: true
+  routeMetric: 50
+  mtu: 1454
+```
+
+ルータの振る舞い:
+
+- routerd は `ipip6` トンネルを作り、IPv6 の下層は `spec.interface` を経由して AFTR に到達させます。
+- `spec.remoteAddress` を省略すると `aftrFQDN` の AAAA を引きます。`aftrDNSServers` は、特定の DNS でしか AFTR の AAAA が返らない事業者向けに使います。AAAA の応答は文字列として昇順に並べ替え、`aftrAddressOrdinal` の番号（1 始まり）で1つ選びます。
+- `aftrAddressSelection` は、現在の AAAA 件数より大きい番号を指定したときの挙動を決めます。
+  - `ordinal`: そのトンネルの反映を失敗させます。
+  - `ordinalModulo`: 件数で折り返して選びます。
+- `localAddressSource` はトンネルの IPv6 ローカルアドレスの決め方です。
+  - `interface`: `spec.interface` の最初のグローバル IPv6 アドレスを使います。
+  - `static`: `localAddress` を使います。
+  - `delegatedAddress`: `localDelegatedAddress` で参照する `IPv6DelegatedAddress` から導出します。`localAddressSuffix` を指定するとそのサフィックスで上書きします。
+
+  `delegatedAddress` を選んだ場合、導出したローカルアドレスが該当インターフェースに無ければ `/128` で追加します。これにより、DS-Lite の下層は WAN を使いつつ、複数のトンネルがそれぞれ違う LAN 委譲由来のソースアドレスを使えます。
+- `defaultRoute: true` でトンネル経由の IPv4 デフォルト経路を入れ、`routeMetric` で複数上流間の優先度を決めます。
+
+`ordinalModulo` で複数のトンネルを並べる場合は、トンネルごとに `localAddressSuffix` を変えてください。AFTR の数が減ってもトンネルが重複せず維持できます。健全性に応じた切替には別途 `HealthCheck` が必要です。
+
+## IPv4 経路
+
+### HealthCheck
+
+`HealthCheck` は1件の到達性チェックを宣言します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -290,21 +418,22 @@ spec:
   interface: transix-a
 ```
 
-`role` は、その確認が運用上何を意味するかを表します。これ自体は送出するパケットを変えませんが、経路ポリシーや状態出力を読みやすくします。
+ルータの振る舞い:
 
-- `link`: インターフェースの存在、キャリア、管理状態。
-- `next-hop`: ゲートウェイ、AFTR、トンネル終端など近傍の転送依存先。
-- `internet`: 公開先への ping や TCP 接続など、インターネット全体の到達性。
-- `service`: DNS 解決、DHCP、AFTR FQDN 解決、PPPoE セッションなどサービス固有の依存先。
-- `policy`: 経路候補を選んでよいかを示す集約結果。
+- `spec.interval` を省略した場合は 60 秒です。経路切替が過度に敏感にならないよう、短い間隔は明示したときだけ使う前提です。
+- `spec.target` を明示しないときは `targetSource: auto` で近傍の確認先を自動で選びます。DS-Lite トンネルは AFTR の IPv6 アドレスを、通常のインターフェースや PPPoE はそのインターフェースの IPv4 デフォルトゲートウェイを確認します。
+- `spec.role` は、その確認が運用上どの種類の依存性を見ているかを示します。これ自体は送出するパケットを変えませんが、経路ポリシーや状態出力を読みやすくします。
+  - `link`: インターフェースの存在、キャリア、管理状態。
+  - `next-hop`: ゲートウェイ、AFTR、トンネル端点など近傍の転送依存。省略時の既定値です。
+  - `internet`: 公開先までの到達性。たとえば公開アドレスへの ping や TCP 接続。
+  - `service`: DNS 解決、DHCP、AFTR FQDN の解決、PPPoE セッションなど、サービス固有の依存。
+  - `policy`: 経路候補を選んでよいかの集約結果。将来用。
 
-省略時の `role` は `next-hop` です。これは現在の `targetSource: auto` の動きと一致します。
+IPv4 のインターネット全体の到達性を確認したい場合は、`role: next-hop` の確認に詰め込まず、明示的な静的 IPv4 ターゲットで `role: internet` を別に立てるのが安全です。
 
-`IPv4DefaultRoutePolicy` は、healthy な候補のうち `priority` が最小のものを active にします。候補は直接interfaceを指すか、`IPv4PolicyRouteSet` を `routeSet` で参照します。直接候補は専用のrouting tableとfirewall markを持ちます。新規flowはactiveな直接候補へmarkされ、既存flowはその候補がhealthyな間はconntrack markで同じ経路を維持します。旧候補がunhealthyになった場合は、該当flowも現在のactive候補へmarkし直します。
+### IPv4DefaultRoutePolicy
 
-active候補が `routeSet` を参照する場合、routerd は新規flowをmarkせず、参照先の `IPv4PolicyRouteSet` がhashでtargetを選べるようにします。healthyなroute set targetのconntrack markは維持します。失敗した候補の古いmarkはclearし、route setに再選出させます。
-
-`target` を省略すると `targetSource: auto` として近傍の確認先を選びます。DS-Lite は AFTR の IPv6 アドレス、通常interface/PPPoE はそのinterfaceの IPv4 default gateway を確認します。これは標準では `next-hop` 確認です。IPv4 Internet 全体の到達性を見たい場合は、明示的なstatic IPv4 targetを持つ `role: internet` の別 `HealthCheck` を設定します。将来的には `role: policy` の集約確認で、複数の下位確認をまとめて経路候補の選択可否にできます。候補に `healthCheck` を指定しない場合、その候補は常に up として扱います。
+`IPv4DefaultRoutePolicy` は、IPv4 のデフォルト経路をどの上流に載せるかを決めます。健全な候補のうち `priority` が最小のものが現役になります。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -340,33 +469,87 @@ spec:
       healthCheck: wan-dhcp4-v4
 ```
 
-## IPv4 Source NAT
+ルータの振る舞い:
 
-`IPv4SourceNAT` は outbound NAT を宣言します。Linux では nftables にrenderされます。
+- 候補はインターフェースを直接指すか、`routeSet` で `IPv4PolicyRouteSet` を参照します。
+- 直接型の候補には専用のルーティングテーブルとファイアウォールマークが割り当てられます。新規フローには現役候補のマークを付けます。既存フローはコネクション追跡のマークで同じ候補を維持し、現役候補が不健全になったら、そのフローのマークを現在の現役候補へ付け替えます。
+- ルートセット型の候補が現役のときは、新規フローにマークを付けず、参照先の `IPv4PolicyRouteSet` がハッシュで宛先を選べるようにします。健全な宛先のコネクション追跡マークはそのまま維持します。失敗した候補に紐付くマークは消し、ルートセットに再選択させます。
+- 候補に `healthCheck` を指定しないときは常に up 扱いです。
+
+IPv6 のデフォルト経路はあとで設計するため、現状はこのリソースの対象外です。
+
+### IPv4SourceNAT
+
+`IPv4SourceNAT` は、送信元レンジと変換方法を指定して下りの IPv4 を NAT します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
 kind: IPv4SourceNAT
 metadata:
-  name: lan-to-transix-a
+  name: lan-to-wan
 spec:
-  outboundInterface: transix-a
+  outboundInterface: transix
   sourceCIDRs:
     - 192.168.160.0/24
   translation:
-    type: address
-    address: 192.0.0.2
+    type: interfaceAddress
     portMapping:
       type: range
       start: 1024
       end: 65535
 ```
 
-`outboundInterface` は `Interface`、`PPPoEInterface`、または `DSLiteTunnel` を参照できます。
+ルータの振る舞い:
 
-## IPv4PolicyRouteSet
+- `outboundInterface` は `Interface`、`PPPoEInterface`、`DSLiteTunnel` を参照できます。
+- `translation.type: interfaceAddress` は、送出インターフェースに現在乗っている IPv4 アドレスへ変換します。Linux では masquerade として書き出されます。
+- `translation.type: address` は、固定の 1 アドレスへ変換します。
 
-`IPv4PolicyRouteSet` は、source/destination address をhashして複数のpolicy route targetへ分散します。Linux では nftables mark、conntrack mark、`ip rule`、専用routing tableを使います。
+  ```yaml
+  translation:
+    type: address
+    address: 203.0.113.10
+  ```
+- `translation.type: pool` は、複数のアドレスに分散します。
+
+  ```yaml
+  translation:
+    type: pool
+    addresses:
+      - 203.0.113.10
+      - 203.0.113.11
+  ```
+- `translation.portMapping`:
+  - `auto`: 送信元ポートはプラットフォームに任せます。
+  - `preserve`: 可能な限り元のポート番号を維持します。
+  - `range`: `start` から `end` の範囲に収めます。
+
+### IPv4PolicyRoute
+
+`IPv4PolicyRoute` は、条件に合う転送トラフィックを特定の出口に流します。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4PolicyRoute
+metadata:
+  name: lan-via-transix
+spec:
+  outboundInterface: transix
+  table: 100
+  priority: 10000
+  mark: 256
+  sourceCIDRs:
+    - 192.168.160.0/24
+  destinationCIDRs:
+    - 0.0.0.0/0
+  routeMetric: 50
+```
+
+ルータの振る舞い: routerd は条件に合う IPv4 パケットにマークを付け、そのマーク用の `ip rule` と専用ルーティングテーブルを作って、そこにデフォルト経路を入れます。LAN の異なるプレフィックスを別々の上流に流すときの基本部品です。ハッシュ分散は別リソース `IPv4PolicyRouteSet` の役割です。
+
+### IPv4PolicyRouteSet
+
+`IPv4PolicyRouteSet` は、ハッシュで複数の出口候補のいずれかを選びます。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -388,18 +571,25 @@ spec:
       table: 100
       priority: 10000
       mark: 256
+      routeMetric: 50
     - name: transix-b
       outboundInterface: transix-b
       table: 101
       priority: 10001
       mark: 257
+      routeMetric: 50
 ```
 
-同じflowは conntrack mark によって同じtargetへ固定されます。
+ルータの振る舞い:
 
-## IPv4ReversePathFilter
+- routerd は nftables のルールとして、既存のコネクション追跡マークを復元し、新規フローには `jhash` でマークを選び、選んだマークをコネクション追跡側に保存し、各候補ごとに `ip rule` とルーティングテーブルを 1 組ずつ用意します。
+- 確立済みのフローは、そのコネクション追跡マークによって同じ候補に固定されます。
+- `hashFields` は現状 `sourceAddress` と `destinationAddress` に対応します。
+- ローカル IPv6 アドレスを使い分けた複数の DS-Lite トンネルに分散する用途を主に想定しています。各候補は通常、別々の `DSLiteTunnel` を指します。
 
-policy routing や複数DS-Lite tunnelでは、Linux `rp_filter` が正当な戻り通信を落とす場合があります。`IPv4ReversePathFilter` はそれをconfigで制御します。
+### IPv4ReversePathFilter
+
+`IPv4ReversePathFilter` は Linux の `rp_filter` を制御します。ポリシールーティングや複数 DS-Lite トンネルでは、戻り通信の経路チェックに引っかかって正規のトラフィックが落ちることがあるためです。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -412,11 +602,11 @@ spec:
   mode: disabled
 ```
 
-`target` は `all`、`default`、`interface`。`mode` は `disabled`、`strict`、`loose` です。
+`spec.target` は `all`、`default`、`interface` のいずれかです。`target: interface` の場合、`spec.interface` は `Interface`、`PPPoEInterface`、`DSLiteTunnel` を参照できます。`spec.mode` は `disabled`、`strict`、`loose` で、Linux の値 0、1、2 に対応します。
 
 ## PathMTUPolicy
 
-`PathMTUPolicy` は、あるインターフェースから複数の上流インターフェースへ出ていく通信の実効 MTU を決めます。その MTU を IPv6 RA で LAN クライアントへ広告し、IPv4/IPv6 の forward 通信に TCP MSS clamp を入れられます。
+`PathMTUPolicy` は、ある下流インターフェースから複数の上流インターフェースへ抜ける通信の実効 MTU を計算し、その値を IPv6 RA で広告したり、転送 TCP の MSS をクランプして端末同士の MSS を揃えます。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -440,21 +630,42 @@ spec:
       - ipv6
 ```
 
-`mtu.source: minInterface` は `toInterfaces` の MTU の最小値を使います。通常の `Interface` は現時点では `1500`、`PPPoEInterface` は `1492`、`DSLiteTunnel` は `1454` を既定値として扱います。各リソースで `mtu` を指定している場合はそれを使います。`mtu.source: static` の場合は `mtu.value` を使います。
+ルータの振る舞い:
 
-`ipv6RA.enabled` が true の場合、`ipv6RA.scope` は `IPv6DHCPScope` を参照します。dnsmasq には `ra-param=ens19,1454` のような RA MTU option を出力します。
+- `mtu.source: minInterface` は `toInterfaces` に並べたインターフェースの設定 MTU の最小値を採用します。`Interface` の標準は 1500、`PPPoEInterface` の標準は 1492、`DSLiteTunnel` の標準は 1454 です。各リソースで `spec.mtu` が指定されていればそちらを優先します。
+- `mtu.source: static` は `mtu.value` をそのまま使います。
+- `ipv6RA.enabled: true` のとき、参照した `IPv6DHCPScope` を経由して RA で MTU を広告します。dnsmasq では `ra-param=ens19,1454` のように書き出されます。
+- `tcpMSSClamp.enabled: true` のとき、nftables の forward チェインに MSS クランプのルールを入れます。MSS は実効 MTU から計算し、IPv4 で 40 バイト、IPv6 で 60 バイトを引きます。`families` を省略すると IPv4 / IPv6 の両方を有効にします。
 
-`tcpMSSClamp.enabled` が true の場合、routerd は nftables の forward chain に MSS clamp rule を出力します。MSS は実効 MTU から固定で計算します。IPv4 は 40 bytes、IPv6 は 60 bytes を引きます。`families` を省略した場合は `ipv4` と `ipv6` の両方を有効にします。
+## ファイアウォール
 
-## 最小 Firewall
+最初のファイアウォール API は汎用ルール言語ではなく、家庭用ルータの安全な既定動作と、必要なサービス公開だけに絞っています。
 
-Firewall リソースは `firewall.routerd.net/v1alpha1` を使います。最初の firewall API は汎用ルール言語にせず、家庭用ルーターとしての安全な標準動作とサービス公開に絞ります。
+### Zone
 
-- `Zone`: `lan` や `wan` のように、ルーターのインターフェース集合へ名前を付けます。
-- `FirewallPolicy`: `home-router` プリセットと input/forward の標準動作を宣言します。
-- `ExposeService`: 内部 IPv4 サービスを DNAT と forward 許可ルールで公開します。
+`Zone` はルータのインターフェースの集合に名前を付けます。
 
-`home-router` プリセットは、input/forward の標準 drop、invalid drop、established/related accept、loopback input accept、`lan`/`wan` zone がある場合の LAN から WAN への forward 許可、設定された `routerAccess` zone からの SSH/DNS/DHCP のみ許可、を出力します。
+```yaml
+apiVersion: firewall.routerd.net/v1alpha1
+kind: Zone
+metadata:
+  name: lan
+spec:
+  interfaces:
+    - lan
+---
+apiVersion: firewall.routerd.net/v1alpha1
+kind: Zone
+metadata:
+  name: wan
+spec:
+  interfaces:
+    - wan-pppoe
+```
+
+### FirewallPolicy
+
+`FirewallPolicy` はプリセットとチェインの既定値を宣言します。
 
 ```yaml
 apiVersion: firewall.routerd.net/v1alpha1
@@ -481,7 +692,16 @@ spec:
         - lan
 ```
 
-`ExposeService` は IPv4 port publish の最初の構成要素です。`sources` を指定すると、その送信元 IPv4 prefix だけを許可します。`hairpin` はリソース形状として受け付けますが、外側アドレスの選出モデルがまだ無いため、最初の renderer は external-address hairpin ルールを合成しません。
+`home-router` プリセットを選ぶと次の規則が入ります。
+
+- input と forward の既定をいずれも drop にする。
+- invalid を drop、established/related を accept、loopback への input を accept する。
+- `lan` と `wan` の両ゾーンが存在する場合、LAN から WAN への forward を許可する。
+- ルータ自身への SSH / DNS / DHCP は、`routerAccess` で指定したゾーンからのみ許可する。WAN からの SSH は `routerAccess.ssh.wan` で別管理にする。
+
+### ExposeService
+
+`ExposeService` は内部の IPv4 サービスを 1 件公開します。
 
 ```yaml
 apiVersion: firewall.routerd.net/v1alpha1
@@ -501,52 +721,96 @@ spec:
   hairpin: true
 ```
 
-## DNSConditionalForwarder
+ルータの振る舞い: routerd は DNAT のルールと、対応する forward 許可を入れます。`spec.sources` を指定すると、そのプレフィックスからの接続だけを許可します。`spec.hairpin` はリソース形状としては受け付けますが、外側アドレスの選定モデルがまだ整っていないため、現状の出力にはヘアピン用ルールは含まれません。
 
-特定domainだけ別DNSへforwardします。DS-Lite AFTR名のようにprovider DNSでしか正しいAAAAが返らない名前に使います。
+## システムリソース
+
+### Hostname
+
+`Hostname` はホスト名を宣言します。
 
 ```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: DNSConditionalForwarder
+apiVersion: system.routerd.net/v1alpha1
+kind: Hostname
 metadata:
-  name: transix-aftr
+  name: system
 spec:
-  domain: gw.transix.jp
-  upstreamSource: static
-  upstreamServers:
-    - 2404:1a8:7f01:a::3
-    - 2404:1a8:7f01:b::3
+  hostname: router03.example.net
+  managed: true
 ```
 
-## DSLiteTunnel
+`managed: false` のときは観測のみ、`managed: true` のときに実機のホスト名を反映します。
 
-`DSLiteTunnel` は DS-Lite B4 tunnel を宣言します。Linux では `ip -6 tunnel` の `ipip6` tunnel を作ります。
+### Sysctl
+
+`Sysctl` はカーネルパラメータを 1 件宣言します。
 
 ```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: DSLiteTunnel
+apiVersion: system.routerd.net/v1alpha1
+kind: Sysctl
 metadata:
-  name: transix-a
+  name: ipv4-forwarding
 spec:
+  key: net.ipv4.ip_forward
+  value: "1"
+  runtime: true
+  persistent: false
+```
+
+`runtime: true` で、反映時に実行中のカーネルへ値を書き込みます。`persistent: true` は sysctl.d や rc.conf 相当の永続化用に予約済みで、現状は反映しません。
+
+### NTPClient
+
+`NTPClient` はローカルの NTP クライアントを宣言します。最初の実装は `systemd-timesyncd` と固定サーバ一覧の管理に対応します。
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: NTPClient
+metadata:
+  name: system-time
+spec:
+  provider: systemd-timesyncd
+  managed: true
+  source: static
   interface: wan
-  tunnelName: ds-transix-a
-  aftrFQDN: gw.transix.jp
-  aftrDNSServers:
-    - 2404:1a8:7f01:a::3
-    - 2404:1a8:7f01:b::3
-  aftrAddressOrdinal: 1
-  aftrAddressSelection: ordinalModulo
-  localAddressSource: delegatedAddress
-  localDelegatedAddress: lan-ipv6-pd-address
-  localAddressSuffix: "::100"
-  mtu: 1454
+  servers:
+    - pool.ntp.org
 ```
 
-`remoteAddress` を省略すると、`aftrFQDN` のAAAAを引きます。AAAAは文字列昇順にsortされ、`aftrAddressOrdinal` で1始まりの番号を選びます。
+ルータの振る舞い: `interface` を指定すると、そのリンクに対する `NTP=` の追加設定を systemd-networkd 経由で書き出します。省略時は `systemd-timesyncd` のグローバルなサーバ一覧として書き出します。
 
-`aftrAddressSelection`:
+### LogSink
 
-- `ordinal`: 指定番号が存在しなければ失敗します。
-- `ordinalModulo`: record数で折り返します。
+`LogSink` は routerd の内部イベント（設定ロード、計画出力、反映結果、プラグインのエラーなど）の送出先を宣言します。
 
-AFTR record数が減っても複数tunnelを維持したい場合、`localAddressSuffix` はtunnelごとに分けてください。そうしないと同じ `(local, remote)` の tunnel が重複する可能性があります。
+ローカルの journald / syslog に出す場合:
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: LogSink
+metadata:
+  name: local-syslog
+spec:
+  type: syslog
+  minLevel: info
+  syslog:
+    facility: local6
+    tag: routerd
+```
+
+信頼済みのローカルプラグインに渡す場合:
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: LogSink
+metadata:
+  name: external-log
+spec:
+  type: plugin
+  minLevel: warning
+  plugin:
+    path: /usr/local/libexec/routerd/log-sinks/example
+    timeout: 5s
+```
+
+省略時の既定値は `enabled: true`、`minLevel: info`、`syslog.facility: local6`、`syslog.tag: routerd` です。リモート syslog に送る場合は `syslog.network`（`udp` / `tcp` / `unix` / `unixgram`）と `syslog.address`（例: `syslog.example.net:514`）を指定します。

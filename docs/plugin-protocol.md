@@ -5,24 +5,78 @@ slug: /reference/plugin-protocol
 
 # Plugin Protocol
 
-routerd plugins are trusted local executables.
+routerd plugins are trusted local executables. They extend
+resource-specific behavior — observing, planning, applying, and removing —
+without baking that logic into the core. There is no remote plugin
+registry and no remote plugin install: every plugin is a file on the
+router's own filesystem, vetted before install.
 
-routerd invokes a plugin with:
+A plugin is laid out as a small directory containing a manifest and one
+executable:
 
-- JSON input on stdin
-- JSON output on stdout
-- human-readable logs on stderr
-- action metadata in environment variables
+```text
+/usr/local/libexec/routerd/plugins/net.interface/0.1.0/
+├── plugin.yaml
+└── plugin.sh
+```
+
+The manifest declares which routerd resource the plugin serves and which
+actions it implements:
+
+```yaml
+apiVersion: plugin.routerd.net/v1alpha1
+kind: Plugin
+metadata:
+  name: net.interface
+  version: 0.1.0
+spec:
+  resource:
+    apiVersion: net.routerd.net/v1alpha1
+    kind: Interface
+  runtime:
+    executable: plugin.sh
+  actions:
+    validate: true
+    observe: true
+    plan: true
+    ensure: true
+    delete: true
+  requirements:
+    commands:
+      - ip
+      - jq
+```
+
+## How routerd invokes a plugin
+
+When routerd needs the plugin to act on a resource, it runs the executable
+with:
+
+- a JSON document on stdin describing the resource and context,
+- a JSON document expected on stdout,
+- human-readable diagnostics on stderr,
+- action and resource metadata on environment variables.
+
+The plugin is responsible for a single resource at a time. routerd picks
+the right plugin by matching `spec.resource` in the manifest against the
+resource being processed.
 
 ## Actions
 
-- `validate`
-- `observe`
-- `plan`
-- `ensure`
-- `delete`
+Each action maps to a phase of the reconcile pipeline:
 
-## Environment Variables
+- `validate`: structural and semantic validation of the resource.
+- `observe`: read host state related to the resource.
+- `plan`: compute the difference between desired and observed state.
+- `ensure`: bring the host to desired state.
+- `delete`: remove host state owned by the resource.
+
+A plugin manifest only needs to opt into the actions it implements.
+
+## Environment variables
+
+Action and resource metadata are passed as environment variables so the
+plugin script does not need to parse them out of stdin:
 
 - `ROUTERD_ACTION`
 - `ROUTERD_RESOURCE_API_VERSION`
@@ -33,22 +87,25 @@ routerd invokes a plugin with:
 - `ROUTERD_STATE_DIR`
 - `ROUTERD_DRY_RUN`
 
-The full protocol will be implemented and documented as the plugin runner is added.
+The detailed shape of the stdin / stdout JSON documents is being filled in
+as the plugin runner solidifies, and will be added to this document along
+with each new action that lands in core.
 
-## Log Sink Plugins
+## Log sink plugins
 
-`LogSink` resources with `spec.type: plugin` are one-way event sinks. routerd
-executes the configured trusted local executable once per event.
+`LogSink` resources with `spec.type: plugin` are a separate, simpler form
+of plugin. They are one-way event sinks: routerd executes the configured
+trusted local executable once per event.
 
-- stdin: one JSON event object followed by a newline
-- stdout: ignored
-- stderr: human-readable diagnostics
-- environment variables:
+- stdin: one JSON event object followed by a newline.
+- stdout: ignored.
+- stderr: human-readable diagnostics.
+- Environment variables:
   - `ROUTERD_LOG_LEVEL`
   - `ROUTERD_LOG_ROUTER`
   - `ROUTERD_LOG_COMMAND`
 
-Event JSON:
+The event payload looks like this:
 
 ```json
 {
@@ -62,3 +119,7 @@ Event JSON:
   }
 }
 ```
+
+routerd waits for the executable to exit before considering the event
+delivered. The configured `spec.plugin.timeout` bounds that wait, so a
+slow or stuck sink cannot hold up reconcile.

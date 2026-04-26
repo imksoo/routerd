@@ -2,56 +2,61 @@
 
 [Project site and documentation: routerd.net](https://routerd.net/)
 
-`routerd` turns a small YAML file into the local operating-system settings
-needed to run a Linux machine as a router. It is meant for people who want a
-reviewable router configuration in Git instead of a pile of one-off shell
-commands.
+routerd is a small software router for Linux. You describe how the router
+should behave in a YAML file, and routerd brings up the matching interfaces,
+addresses, DHCP and DNS service, NAT, policy routing, firewall, and route
+health checks. Editing the YAML and running one reconcile is enough to change
+all of those at once. The goal is to keep router configuration as something
+reviewable in Git instead of a pile of one-off shell commands.
 
-It can configure interfaces, DHCP, DNS forwarding, IPv6 prefix delegation,
-PPPoE, DS-Lite, NAT, policy routing, a small default-deny firewall, router
-health checks, and local status inspection. The project is still pre-release:
-read the plan and dry-run output before applying it to a remote router.
+The current implementation targets Ubuntu Server first and installs under
+`/usr/local`, with a layout that stays friendly to source installs and future
+packaging. routerd is still pre-release: read the plan and dry-run output
+before applying it to a remote router.
 
-The current implementation targets Ubuntu Server first and keeps the install
-layout friendly to source installs and packaging:
+## What routerd makes the router do
 
-- YAML router config
-- Kubernetes-like resource shapes
-- interface alias resolution
-- IPv4/IPv6 address planning
-- DHCPv4, DHCPv6, RA, and DNS forwarding through managed dnsmasq
-- IPv6 prefix delegation through systemd-networkd drop-ins
-- PPPoE interface setup through pppd/rp-pppoe
-- runtime sysctl management
-- internal event logging to syslog/journald or trusted local log plugins
-- nftables-based minimal firewall policy, IPv4 source NAT, and policy routing
-- path MTU propagation through IPv6 RA and TCP MSS clamping
-- DS-Lite ipip6 tunnel setup, including multiple tunnel policy routing
-- local trusted resource plugins
-- local HTTP+JSON daemon control API over a Unix domain socket
-- `routerctl` client CLI
-- dry-run reconcile
-- machine-readable status JSON
+- Declare interfaces and ownership scope so routerd does not fight with
+  cloud-init or netplan over the management link.
+- Acquire WAN-side addressing and routing through DHCPv4, DHCPv6, IPv6 prefix
+  delegation, PPPoE, or DS-Lite.
+- Hand out LAN-side IPv4 and IPv6 addresses, including addresses derived from
+  a delegated IPv6 prefix.
+- Serve LAN clients through a managed dnsmasq: DHCPv4, DHCPv6, RA, DNS cache,
+  and conditional forwarding.
+- Source-NAT IPv4 traffic, hash-balance flows across multiple egress paths, and
+  pin established flows to the same path through conntrack marks.
+- Run health checks against multiple uplinks and switch the IPv4 default route
+  to the healthy candidate with the lowest priority.
+- Compute the effective path MTU toward each upstream, advertise it over IPv6
+  RA, and clamp forwarded TCP MSS for IPv4 and IPv6.
+- Apply a small default-deny home-router firewall preset and publish only the
+  services declared in the config.
+- Manage sysctl values, hostname, systemd-timesyncd, and the routerd event
+  sink from the same YAML.
+- Plan and dry-run reconciles, expose status as JSON, and accept control
+  requests over a Unix domain socket.
+- Extend resource-specific behavior through trusted local plugins.
 
-Remote plugin installation and full rollback are still intentionally limited.
-Firewall policy starts with a small default-deny home-router model rather than a
-general rule language. The same reconcile logic is used for one-shot CLI
-execution and daemon-triggered reconcile.
-
-The MVP scope is a working boundary, not a permanent constraint. When a small design improvement reduces future migration cost or improves router safety, the project should update the MVP direction deliberately instead of preserving a weak early assumption.
+Remote plugin installation and full rollback of OS-level changes are
+intentionally out of scope for now. The firewall is a focused home-router
+preset rather than a general rule language. These boundaries are working
+defaults, not permanent constraints — when a small design change reduces
+future migration cost or makes the router safer, the project updates the
+direction deliberately.
 
 Japanese documentation is available in [README.ja.md](README.ja.md).
 
 ## Requirements
 
 - Go 1.24 or newer
-- `make`
-- `iproute2`
-- `jq`
-- `dnsmasq`
-- `nftables`
-- `conntrack`
-- `pppd` when using PPPoE
+- make
+- iproute2
+- jq
+- dnsmasq
+- nftables
+- conntrack
+- pppd when using PPPoE
 
 On Ubuntu:
 
@@ -60,10 +65,9 @@ sudo apt-get update
 sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp
 ```
 
-`conntrack` is used for diagnostics and policy-routing verification around
-multi-tunnel DS-Lite.
-PPPoE resources require pppd and the rp-pppoe plugin provided by the distro's
-PPP packages.
+conntrack is also used for diagnostics around multi-tunnel DS-Lite policy
+routing. PPPoE resources rely on pppd and the rp-pppoe plugin shipped by the
+distribution's PPP packages.
 
 ## Build
 
@@ -86,8 +90,8 @@ Check local build dependencies:
 make check-build-deps
 ```
 
-Regenerate the YAML authoring schema from Go API structs:
-This also generates control API JSON Schema and OpenAPI definitions.
+Regenerate the YAML authoring schema from Go API structs. The same target also
+generates control API JSON Schema and OpenAPI definitions:
 
 ```sh
 make generate-schema
@@ -102,7 +106,10 @@ For local source installs:
 sudo make install
 ```
 
-The install target is intentionally simple so packaging can later wrap the same layout from ports, dpkg, or another package system. Override paths with `PREFIX`, `DESTDIR`, `SYSCONFDIR`, `PLUGINDIR`, `RUNDIR`, `STATEDIR`, or `SYSTEMDUNITDIR` as needed.
+The install target stays intentionally simple so packaging can later wrap the
+same layout from ports, dpkg, or another package system. Override paths with
+`PREFIX`, `DESTDIR`, `SYSCONFDIR`, `PLUGINDIR`, `RUNDIR`, `STATEDIR`, or
+`SYSTEMDUNITDIR` as needed.
 
 Example staged install:
 
@@ -128,7 +135,7 @@ Check minimum remote host dependencies:
 make check-remote-deps REMOTE_HOST=user@router.example
 ```
 
-Install a config file to a remote test host:
+Install only the config file to a remote test host:
 
 ```sh
 make remote-install-config REMOTE_HOST=user@router.example CONFIG=path/to/router.yaml
@@ -152,7 +159,7 @@ or:
 go test ./...
 ```
 
-## Example Commands
+## Example commands
 
 ```sh
 make validate-example
@@ -173,44 +180,48 @@ routerctl show napt --limit 20
 routerctl plan
 ```
 
-`reconcile --once` can apply managed netplan, networkd drop-ins, dnsmasq,
-nftables, sysctls, DS-Lite tunnels, and policy routing. Avoid using it on a
-remote router until the adoption plan is understood, especially where
-cloud-init or existing netplan configuration owns the management interface.
-Use `routerd adopt --candidates` to inspect existing matching host artifacts,
-then `routerd adopt --apply` to record matching artifacts in the local ownership
-ledger without changing host state.
+`routerd reconcile --once` applies managed netplan, systemd-networkd drop-ins,
+dnsmasq, nftables, sysctl values, DS-Lite tunnels, and policy routing. Avoid
+running it against a remote router until the adoption plan is understood,
+especially where cloud-init or existing netplan owns the management
+interface. routerd reports such cases as adoption candidates rather than
+silently taking them over.
+
+When a host already carries matching configuration, run
+`routerd adopt --candidates` to inspect the existing artifacts, then
+`routerd adopt --apply` to record them in the local ownership ledger without
+changing host state.
 
 ## Documentation
 
-- [API v1alpha1](docs/api-v1alpha1.md)
-- [Resource ownership](docs/resource-ownership.md)
+- [Resource API v1alpha1](docs/api-v1alpha1.md)
+- [Resource ownership and reconcile model](docs/resource-ownership.md)
 - [Control API v1alpha1](docs/control-api-v1alpha1.md)
 - [Plugin protocol](docs/plugin-protocol.md)
 - [Getting started](docs/tutorials/getting-started.md)
 - [Changelog](docs/releases/changelog.md)
-- [API v1alpha1 Japanese](docs/api-v1alpha1.ja.md)
-- [Resource ownership Japanese](docs/resource-ownership.ja.md)
-- [Control API v1alpha1 Japanese](docs/control-api-v1alpha1.ja.md)
-- [Plugin protocol Japanese](docs/plugin-protocol.ja.md)
+- [API v1alpha1 — Japanese](docs/api-v1alpha1.ja.md)
+- [Resource ownership — Japanese](docs/resource-ownership.ja.md)
+- [Control API v1alpha1 — Japanese](docs/control-api-v1alpha1.ja.md)
+- [Plugin protocol — Japanese](docs/plugin-protocol.ja.md)
 
 The public website lives in `website/` and is built with Docusaurus. It
 publishes English and Japanese docs to Cloudflare Pages. Use `website` as the
 Pages root directory, `npm ci && npm run build` as the build command, and
-`build` as the output directory. Add `routerd.net` as a Cloudflare Pages custom
-domain.
+`build` as the output directory. Add `routerd.net` as the Cloudflare Pages
+custom domain.
 
-## Default Paths
+## Default paths
 
-- Config: `/usr/local/etc/routerd/router.yaml`
-- Plugin dir: `/usr/local/libexec/routerd/plugins`
-- Binary: `/usr/local/sbin/routerd`
-- Client binary: `/usr/local/sbin/routerctl`
+- Config: /usr/local/etc/routerd/router.yaml
+- Plugin dir: /usr/local/libexec/routerd/plugins
+- Binary: /usr/local/sbin/routerd
+- Client binary: /usr/local/sbin/routerctl
 
 Linux runtime defaults:
 
-- Runtime dir: `/run/routerd`
-- State dir: `/var/lib/routerd`
-- Status file: `/run/routerd/status.json`
-- Control socket: `/run/routerd/routerd.sock`
-- Lock file: `/run/routerd/routerd.lock`
+- Runtime dir: /run/routerd
+- State dir: /var/lib/routerd
+- Status file: /run/routerd/status.json
+- Control socket: /run/routerd/routerd.sock
+- Lock file: /run/routerd/routerd.lock

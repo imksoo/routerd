@@ -4,39 +4,43 @@ title: Router Lab
 
 # Router Lab
 
-This tutorial explains the shape of `examples/router-lab.yaml`. It is a compact
-router configuration that demonstrates the resources routerd is growing around.
+This tutorial walks through `examples/router-lab.yaml`, a compact
+configuration that exercises the resources routerd is growing around. It
+is meant for a lab VM with two interfaces, not for direct application to a
+production router — interface names, prefixes, credentials, and upstream
+behavior are environment-specific.
 
-The example is not meant to be pasted blindly onto a production host. Interface
-names, prefixes, credentials, and upstream behavior are environment-specific.
+## What the lab declares
 
-## Topology
+The lab config combines:
 
-The lab model uses:
+- a WAN Ethernet interface with DHCPv4 and DHCPv6 prefix delegation,
+- a LAN Ethernet interface with a static IPv4 address and a delegated
+  IPv6 address,
+- dnsmasq serving DHCP, DNS, and RA on the LAN,
+- DS-Lite tunnel resources reaching an AFTR over the WAN,
+- a default IPv4 route policy with health checks across multiple
+  uplinks.
 
-- `wan`: upstream Ethernet interface
-- `lan`: downstream Ethernet interface
-- DHCPv4 on WAN
-- DHCPv6-PD on WAN
-- static IPv4 on LAN
-- dnsmasq for LAN DHCP/DNS/RA
-- DS-Lite tunnel resources
-- default route policy with health checks
+You can read the YAML alongside the [resource API
+reference](/docs/reference/api-v1alpha1) to see how each resource maps
+back to a single behavior.
 
-## Validate And Inspect
+## Validate and inspect first
 
 ```bash
 routerd validate --config examples/router-lab.yaml
 routerd plan --config examples/router-lab.yaml
 ```
 
-The plan should show DNS/DHCP service only on the configured LAN interface. A
-server must list the interfaces it serves through `listenInterfaces`; scopes are
-rejected if they bind to an interface the server did not explicitly allow.
+The plan should show DNS and DHCP service only on the configured LAN
+interface. Each DHCP server resource lists the interfaces it is allowed
+to serve through `listenInterfaces`; scopes that try to bind to an
+interface the server does not list are rejected during planning.
 
-## DHCP And DNS
+## DHCP and DNS shape
 
-The lab config uses:
+The lab runs a single dnsmasq instance and binds it to LAN:
 
 ```yaml
 kind: IPv4DHCPServer
@@ -47,13 +51,14 @@ spec:
     - lan
 ```
 
-For IPv6, `dnsSource: self` selects the delegated LAN address such as
-`pd-prefix::3`. dnsmasq advertises that DNS server through DHCPv6 and RA RDNSS,
-which is important for Android clients.
+For IPv6, `dnsSource: self` makes dnsmasq advertise the delegated LAN
+address (for example `pd-prefix::3`) as the DNS server. Because dnsmasq
+puts that address into both DHCPv6 DNS and RA RDNSS, Android clients —
+which only consume RA RDNSS — pick it up the same way as DHCPv6 clients.
 
-## NTP And Syslog
+## NTP and event sink
 
-The lab also demonstrates local system resources:
+The lab also demonstrates the system-side resources:
 
 ```yaml
 kind: NTPClient
@@ -66,13 +71,14 @@ spec:
     - pool.ntp.org
 ```
 
-When `interface` is set, routerd renders the NTP server onto that systemd
-networkd link. `LogSink` can send local routerd events to syslog locally or to a
-remote syslog endpoint.
+When `interface` is set, routerd writes a per-link `NTP=` drop-in through
+systemd-networkd for that interface. `LogSink` resources route routerd's
+own internal events to local journald or syslog, or to a remote syslog
+endpoint, without interfering with the rest of the configuration.
 
-## Apply Carefully
+## Apply carefully
 
-On a real host:
+On a real host, always run a dry-run first:
 
 ```bash
 sudo /usr/local/sbin/routerd reconcile \
@@ -81,5 +87,8 @@ sudo /usr/local/sbin/routerd reconcile \
   --dry-run
 ```
 
-Only remove `--dry-run` after you have verified that routerd will not take over
-interfaces still owned by cloud-init or another network manager.
+Drop `--dry-run` only after confirming that routerd is not about to take
+over interfaces still owned by cloud-init or another network manager.
+When in doubt, run `routerd adopt --candidates` first and follow the
+[resource ownership workflow](/docs/reference/resource-ownership) to
+record existing artifacts in the local ledger before applying.

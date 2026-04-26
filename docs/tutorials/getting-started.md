@@ -4,13 +4,15 @@ title: Getting Started
 
 # Getting Started
 
-This tutorial walks through the smallest useful routerd workflow on a host with
-one WAN interface and one LAN interface. It starts by receiving a DHCPv4 address
-on the WAN side, then adds a static LAN address, and only then moves toward
-installing and running routerd.
+This tutorial walks through the smallest useful routerd workflow on a host
+that has one WAN interface and one LAN interface. The flow is the same one
+you would follow on a real router: confirm the physical layout, get the
+WAN side talking to the upstream, give the LAN side an address, then
+install routerd and let the daemon take over.
 
-routerd is still v1alpha1 software. Start in a lab VM or a host with console
-access before applying it to a remote router.
+routerd is still v1alpha1 software. Run through this in a lab VM or on a
+host you can reach through a console before pointing it at a remote
+router.
 
 ## 1. Build routerd
 
@@ -18,16 +20,16 @@ access before applying it to a remote router.
 make build
 ```
 
-The build creates:
+This produces:
 
 - `bin/routerd`
 - `bin/routerctl`
 
-## 2. Identify WAN And LAN Interfaces
+## 2. Identify the WAN and LAN interfaces
 
 Start with the physical shape of the machine. In the examples below, `wan`
-points at an upstream network and `lan` points at the downstream client network.
-Replace the interface names with the names from your host:
+points at the upstream network and `lan` points at the downstream client
+network. Replace the kernel names with whatever your host actually uses:
 
 ```bash
 ip link
@@ -38,14 +40,15 @@ For example, a small router VM might use:
 - WAN: `ens18`
 - LAN: `ens19`
 
-routerd configs use stable resource names such as `wan` and `lan`, while
-`spec.ifname` maps those names to real operating system interfaces.
+Inside the routerd config you stay on stable resource names like `wan` and
+`lan`. The `spec.ifname` field is what binds those names to real OS
+interfaces, so you can swap hardware without rewriting every reference.
 
-## 3. First Building Block: WAN DHCPv4
+## 3. First building block: WAN DHCPv4
 
-The first useful resource pair is an `Interface` plus an `IPv4DHCPAddress`.
-This asks routerd to bring the WAN interface up and receive an IPv4 address from
-the upstream network:
+The first useful pair of resources is an `Interface` plus an
+`IPv4DHCPAddress`. Together they tell routerd to bring the WAN interface
+up and ask the upstream network for an IPv4 address:
 
 ```yaml
 apiVersion: routerd.net/v1alpha1
@@ -74,18 +77,19 @@ spec:
         required: true
 ```
 
-The repository includes the same shape in `examples/basic-dhcp.yaml`. Validate
-and inspect it before changing any network state:
+The repository ships `examples/basic-dhcp.yaml` with the same shape.
+Validate it and look at the dry-run output before changing any network
+state:
 
 ```bash
 routerd validate --config examples/basic-dhcp.yaml
 routerd reconcile --config examples/basic-dhcp.yaml --once --dry-run
 ```
 
-The dry-run output is JSON status. It tells you which resources are healthy,
-which are drifted, and what routerd would do.
+The dry-run output is JSON status: which resources are healthy, which
+have drifted from the host, and what routerd would do.
 
-## 4. Add The LAN Address
+## 4. Add the LAN address
 
 Once the WAN side is understandable, add the LAN interface as a separate
 building block. A minimal LAN side only needs an `Interface` and an
@@ -111,11 +115,12 @@ building block. A minimal LAN side only needs an `Interface` and an
         exclusive: true
 ```
 
-At this stage the host is not yet a full router for clients. DHCP service, DNS,
-NAT, IPv6 PD, DS-Lite, PPPoE, and route policy are later resources. Keeping each
-piece separate makes the plan easier to review.
+At this stage the host is not yet a full router for clients. DHCP service,
+DNS, NAT, IPv6 prefix delegation, DS-Lite, PPPoE, and route policy are
+later resources. Adding them one at a time keeps the plan output easy to
+read.
 
-## 5. Install The Source Layout
+## 5. Install the source layout
 
 routerd defaults to a `/usr/local` layout:
 
@@ -126,13 +131,13 @@ sudo install -m 0644 examples/basic-dhcp.yaml /usr/local/etc/routerd/router.yaml
 
 Important default paths:
 
-- Config: `/usr/local/etc/routerd/router.yaml`
-- Binary: `/usr/local/sbin/routerd`
-- Plugins: `/usr/local/libexec/routerd/plugins`
-- Runtime: `/run/routerd`
-- State: `/var/lib/routerd`
+- Config: /usr/local/etc/routerd/router.yaml
+- Binary: /usr/local/sbin/routerd
+- Plugins: /usr/local/libexec/routerd/plugins
+- Runtime dir: /run/routerd
+- State dir: /var/lib/routerd
 
-## 6. Reconcile Once
+## 6. Reconcile once
 
 Always run one-shot mode before enabling the daemon:
 
@@ -143,9 +148,9 @@ sudo /usr/local/sbin/routerd reconcile \
   --dry-run
 ```
 
-Remove `--dry-run` only after the plan is expected.
+Drop `--dry-run` only after the plan looks the way you expect.
 
-## 7. Enable The Daemon
+## 7. Enable the daemon
 
 Install the systemd unit after the one-shot run looks correct:
 
@@ -155,12 +160,16 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now routerd.service
 ```
 
-`routerd serve` keeps a local control API socket under `/run/routerd/` and runs
-scheduled reconciliation.
+`routerd serve` keeps a control API socket under /run/routerd/ and runs
+scheduled reconciles. From there you can use `routerctl status` and the
+[control API](/docs/reference/control-api-v1alpha1) to ask the daemon
+about what it sees.
 
-## Next Steps
+## Next steps
 
-- Read the [resource API reference](/docs/reference/api-v1alpha1).
-- Try the [router lab tutorial](/docs/tutorials/router-lab).
-- Review the [control API](/docs/reference/control-api-v1alpha1) for status and
-  operational tooling.
+- Read the [resource API reference](/docs/reference/api-v1alpha1) for the
+  full list of behaviors you can declare.
+- Try the [router lab tutorial](/docs/tutorials/router-lab) for a more
+  realistic configuration.
+- Browse the [resource ownership model](/docs/reference/resource-ownership)
+  before letting routerd take over an existing router.
