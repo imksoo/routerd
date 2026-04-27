@@ -47,6 +47,9 @@ behavior changes and new resource shapes as the model takes shape.
 - The home-router firewall preset now permits WAN-side DHCPv6 client
   replies to UDP destination port 546 without constraining the server
   source port, and permits ICMPv6 control-plane traffic.
+- dnsmasq rendering now suppresses IPv6 DHCP/RA scopes until a delegated
+  LAN prefix is observable, allowing IPv4 DHCP and DNS to keep running
+  while DHCPv6-PD is still unavailable.
 - IPv4 default route selection now ignores route-set candidates whose
   target interfaces do not exist, so DS-Lite fallback can use DHCPv4
   while prefix delegation is still unavailable.

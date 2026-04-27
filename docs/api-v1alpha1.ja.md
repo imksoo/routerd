@@ -433,6 +433,9 @@ spec:
 - `spec.mode: stateless` のとき、クライアントは SLAAC でアドレスを決め、DHCPv6 からは DNS などのオプションだけを受け取ります。
 - `spec.mode: ra-only` は、DHCPv6 のアドレス払い出しを行わず RA だけを送ります。
 - IPv6 のデフォルト経路は RA で広告します。DHCPv6 自体にデフォルトゲートウェイのオプションはありません。
+- 委譲された LAN 側プレフィックスをまだ観測できない場合、routerd は
+  dnsmasq の IPv6 スコープを一時的に出力しません。DHCPv6-PD の収束を
+  待っている間も、IPv4 DHCP と DNS は動かし続けられます。
 - `spec.dnsSource: self` のとき、ルータの LAN 側 IPv6 アドレス（例: `pd-prefix::3`）を DNS サーバとして広告します。`dnsSource: static` と `dnsServers` の組み合わせでは、固定の DNS サーバ一覧を広告します。
 - dnsmasq の RA が有効な場合、routerd は DHCPv6 と RA RDNSS の両方に同じ IPv6 DNS サーバ一覧を流します。Android のように DHCPv6 を使わず SLAAC/RDNSS で動くクライアントを想定するため重要です。
 

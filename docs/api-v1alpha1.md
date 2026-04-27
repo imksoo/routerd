@@ -529,6 +529,9 @@ How routerd behaves:
 - `spec.mode: ra-only` sends RA without DHCPv6 address assignment.
 - IPv6 default routes are advertised by RA; DHCPv6 itself has no default
   gateway option.
+- If the delegated LAN prefix is not observable yet, routerd omits the
+  dnsmasq IPv6 scope temporarily. IPv4 DHCP and DNS scopes can continue
+  running while DHCPv6-PD is still converging.
 - `spec.dnsSource: self` advertises the router's delegated LAN IPv6 address
   (for example `pd-prefix::3`) as the DNS server. `dnsSource: static` plus
   `dnsServers` advertises a fixed list instead.

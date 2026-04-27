@@ -74,6 +74,10 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 	}
 	sort.Slice(v4Scopes, func(i, j int) bool { return v4Scopes[i].Metadata.Name < v4Scopes[j].Metadata.Name })
 	sort.Slice(v6Scopes, func(i, j int) bool { return v6Scopes[i].Metadata.Name < v6Scopes[j].Metadata.Name })
+	v6Scopes, err = activeDnsmasqIPv6Scopes(v6Scopes, delegatedIPv6, runtime)
+	if err != nil {
+		return nil, err
+	}
 
 	dnsEnabled, err := dnsmasqDNSEnabled(v4Scopes, v4Servers, v6Scopes)
 	if err != nil {
@@ -316,6 +320,21 @@ RuntimeDirectory=routerd
 [Install]
 WantedBy=multi-user.target
 `)
+}
+
+func activeDnsmasqIPv6Scopes(scopes []api.Resource, delegatedIPv6 map[string]delegatedIPv6Address, runtime DnsmasqRuntime) ([]api.Resource, error) {
+	var active []api.Resource
+	for _, res := range scopes {
+		spec, err := res.IPv6DHCPScopeSpec()
+		if err != nil {
+			return nil, err
+		}
+		delegated := delegatedIPv6[spec.DelegatedAddress]
+		if delegated.IfName == "" || hasUsableIPv6Prefix(runtime.IPv6PrefixesByInterface[delegated.IfName]) {
+			active = append(active, res)
+		}
+	}
+	return active, nil
 }
 
 func dnsmasqDNSEnabled(v4Scopes []api.Resource, servers map[string]api.IPv4DHCPServerSpec, v6Scopes []api.Resource) (bool, error) {
@@ -649,7 +668,7 @@ func deriveIPv6Address(prefixes []string, suffix string) (string, error) {
 	suffixBytes := suffixAddr.As16()
 	for _, value := range prefixes {
 		prefix, err := netip.ParsePrefix(value)
-		if err != nil || !prefix.Addr().Is6() {
+		if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() {
 			continue
 		}
 		addrBytes := prefix.Masked().Addr().As16()
@@ -659,6 +678,16 @@ func deriveIPv6Address(prefixes []string, suffix string) (string, error) {
 		return netip.AddrFrom16(addrBytes).String(), nil
 	}
 	return "", fmt.Errorf("no IPv6 prefix available")
+}
+
+func hasUsableIPv6Prefix(prefixes []string) bool {
+	for _, value := range prefixes {
+		prefix, err := netip.ParsePrefix(value)
+		if err == nil && prefix.Addr().Is6() && !prefix.Addr().IsLinkLocalUnicast() {
+			return true
+		}
+	}
+	return false
 }
 
 func filterIPv4Strings(values []string) []string {

@@ -220,6 +220,85 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.2/24"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
+				Metadata: api.ObjectMeta{Name: "dhcp4"},
+				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPScope"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcp4"},
+				Spec: api.IPv4DHCPScopeSpec{
+					Server:       "dhcp4",
+					Interface:    "lan",
+					RangeStart:   "192.168.160.120",
+					RangeEnd:     "192.168.160.129",
+					RouterSource: "interfaceAddress",
+					DNSSource:    "self",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-ipv6"},
+				Spec: api.IPv6DelegatedAddressSpec{
+					PrefixDelegation: "wan-pd",
+					Interface:        "lan",
+					AddressSuffix:    "::2",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPServer"},
+				Metadata: api.ObjectMeta{Name: "dhcp6"},
+				Spec:     api.IPv6DHCPServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPScope"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcp6"},
+				Spec: api.IPv6DHCPScopeSpec{
+					Server:           "dhcp6",
+					DelegatedAddress: "lan-ipv6",
+					Mode:             "stateless",
+					DNSSource:        "self",
+				},
+			},
+		}},
+	}
+
+	data, err := DnsmasqConfig(router, DnsmasqRuntime{
+		IPv6PrefixesByInterface: map[string][]string{"ens19": {"fe80::/64"}},
+	})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	got := string(data)
+	for _, unwanted := range []string{
+		"enable-ra",
+		"constructor:ens19",
+		"option6:dns-server",
+		"fe80::2",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("dnsmasq output contains %q before PD exists:\n%s", unwanted, got)
+		}
+	}
+	if !strings.Contains(got, "dhcp-range=set:lan-dhcp4,192.168.160.120,192.168.160.129,255.255.255.0") {
+		t.Fatalf("dnsmasq output should keep IPv4 DHCP active:\n%s", got)
+	}
+}
+
 func TestDnsmasqConfigDerivesIPv6SelfDNSFromRoutePrefix(t *testing.T) {
 	spec := api.IPv6DHCPScopeSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6"}
 	delegated := delegatedIPv6Address{
