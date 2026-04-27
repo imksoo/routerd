@@ -16,12 +16,16 @@ UNAME_S := $(shell uname -s)
 
 ifeq ($(UNAME_S),FreeBSD)
 ROUTERD_OS ?= freebsd
+else
+ROUTERD_OS ?= linux
+endif
+
+ifeq ($(ROUTERD_OS),freebsd)
 RUNDIR ?= /var/run/routerd
 STATEDIR ?= /var/db/routerd
 INSTALL_SERVICE_TARGET ?= install-rc-freebsd
 SERVICE_DEPS := pf dnsmasq
 else
-ROUTERD_OS ?= linux
 RUNDIR ?= /run/routerd
 STATEDIR ?= /var/lib/routerd
 INSTALL_SERVICE_TARGET ?= install-systemd
@@ -30,6 +34,10 @@ endif
 
 ROUTERD_BIN := bin/routerd
 ROUTERCTL_BIN := bin/routerctl
+GO_BUILD_ENV := GOOS=$(ROUTERD_OS)
+ifneq ($(GOARCH),)
+GO_BUILD_ENV += GOARCH=$(GOARCH)
+endif
 
 .PHONY: test build generate-schema check-schema website-build check-build-deps check-remote-deps install install-service install-systemd install-rc-freebsd dist remote-install remote-install-config validate-example dry-run-example plan-config clean
 
@@ -37,8 +45,8 @@ test:
 	go test ./...
 
 build:
-	go build -o $(ROUTERD_BIN) ./cmd/routerd
-	go build -o $(ROUTERCTL_BIN) ./cmd/routerctl
+	$(GO_BUILD_ENV) go build -o $(ROUTERD_BIN) ./cmd/routerd
+	$(GO_BUILD_ENV) go build -o $(ROUTERCTL_BIN) ./cmd/routerctl
 
 generate-schema:
 	install -d schemas
@@ -69,14 +77,16 @@ check-remote-deps:
 	@ssh $(REMOTE_HOST) 'missing=0; \
 		remote_os=$$(uname -s); \
 		if [ "$$remote_os" = FreeBSD ]; then \
-			required="sudo tar install ifconfig sysctl service pfctl dnsmasq"; \
+			required="sudo tar install ifconfig sysctl sysrc service pfctl dnsmasq dhcp6c jq"; \
+			optional_ppp=""; \
 		else \
-			required="sudo tar install ip sysctl systemctl resolvectl dnsmasq nft conntrack"; \
+			required="sudo tar install ip sysctl systemctl resolvectl dnsmasq nft conntrack jq"; \
+			optional_ppp="pppd"; \
 		fi; \
 		for cmd in $$required; do \
 			if ! command -v $$cmd >/dev/null 2>&1; then echo "missing remote dependency: $$cmd" >&2; missing=1; fi; \
 		done; \
-		if ! command -v pppd >/dev/null 2>&1 && ! test -x /usr/sbin/pppd; then echo "missing remote dependency: ppp package / pppd command" >&2; missing=1; fi; \
+		if [ "$$optional_ppp" = pppd ] && ! command -v pppd >/dev/null 2>&1 && ! test -x /usr/sbin/pppd; then echo "missing remote dependency: ppp package / pppd command" >&2; missing=1; fi; \
 		exit $$missing'
 
 install: check-build-deps build

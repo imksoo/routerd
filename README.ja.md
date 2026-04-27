@@ -100,11 +100,24 @@ Go や make がないリモートのテストホストへ入れる場合:
 make remote-install REMOTE_HOST=user@router.example
 ```
 
+Linux の開発機から FreeBSD のテストホストへ入れる場合は、FreeBSD 向け
+バイナリを明示して作ります:
+
+```sh
+make remote-install ROUTERD_OS=freebsd REMOTE_HOST=user@router.example
+```
+
 リモート側の必須コマンドが揃っているかを確認するには:
 
 ```sh
 make check-remote-deps REMOTE_HOST=user@router.example
 ```
+
+Ubuntu では、現在のソースインストールは `systemd`、`iproute2`、
+`dnsmasq`、`nftables`、`conntrack`、`jq`、`pppd` などのホスト側コマンドを
+前提にします。FreeBSD ではまだ下地段階ですが、基本のネットワーク
+コマンドに加えて、`dnsmasq` と `dhcp6` パッケージに含まれる
+`dnsmasq`、`dhcp6c`、状態確認で使う `jq` が必要です。
 
 設定ファイルだけをリモートホストに置きたい場合:
 

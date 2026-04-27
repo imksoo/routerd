@@ -46,9 +46,19 @@ parity that the code does not yet provide.
 - An rc.d script at `contrib/freebsd/routerd` is installed via
   `make install-rc-freebsd` (selected automatically by `make
   install-service` when `uname -s` is `FreeBSD`).
+- When building from Linux for a FreeBSD test host, pass
+  `ROUTERD_OS=freebsd` to `make build`, `make dist`, or
+  `make remote-install` so the installed binaries target FreeBSD.
 - `routerd render freebsd` emits rc.conf values, dhclient.conf, and
   dhcp6c.conf. Runtime reconcile can apply this limited set with `sysrc`,
   `service netif`, and `service dhcp6c`.
+- FreeBSD hosts need the base networking tools plus `jq`, `dnsmasq`, and `dhcp6`
+  packages for the current groundwork. The `dhcp6` package provides the
+  `dhcp6c` command and rc.d service used for DHCPv6-PD experiments.
+- The FreeBSD DHCPv6-PD renderer configures delegated prefixes through
+  `dhcp6c`. It does not yet honor `IPv6DelegatedAddress.spec.addressSuffix`
+  because the packaged KAME `dhcp6c` configuration accepts `sla-id` and
+  `sla-len` here but not the Linux-style interface identifier statement.
 - Not yet implemented for FreeBSD:
   - pf renderer to replace nftables for source NAT and firewall.
   - mpd5 or native FreeBSD PPPoE wiring (Linux uses pppd / rp-pppoe).

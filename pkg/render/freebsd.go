@@ -135,16 +135,11 @@ func freeBSDDHCP6C(router *api.Router, aliases map[string]string, pds []freeBSDP
 			if ifname == "" {
 				return nil, fmt.Errorf("%s references interface with empty ifname", res.ID())
 			}
-			ifid, err := freeBSDIPv6IfID(spec.AddressSuffix)
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", res.ID(), err)
-			}
 			buf.WriteString(fmt.Sprintf("  prefix-interface %s {\n", ifname))
 			buf.WriteString(fmt.Sprintf("    sla-id %s;\n", defaultString(spec.SubnetID, "0")))
 			if pd.PrefixLength > 0 && pd.PrefixLength <= 64 {
 				buf.WriteString(fmt.Sprintf("    sla-len %d;\n", 64-pd.PrefixLength))
 			}
-			buf.WriteString(fmt.Sprintf("    ifid %s;\n", ifid))
 			buf.WriteString("  };\n")
 		}
 		buf.WriteString("};\n\n")
@@ -182,19 +177,6 @@ func freeBSDIPv4CIDR(value string) (string, error) {
 		return "", err
 	}
 	return prefix.Addr().String() + "/" + fmt.Sprintf("%d", prefix.Bits()), nil
-}
-
-func freeBSDIPv6IfID(value string) (string, error) {
-	addr, err := netip.ParseAddr(value)
-	if err != nil || !addr.Is6() {
-		return "", fmt.Errorf("invalid IPv6 interface identifier %q", value)
-	}
-	segments := strings.Split(addr.String(), ":")
-	last := segments[len(segments)-1]
-	if last == "" {
-		return "0", nil
-	}
-	return "0x" + last, nil
 }
 
 func sortedFreeBSDMapKeys(values map[string]bool) []string {

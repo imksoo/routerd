@@ -9,6 +9,12 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- FreeBSD remote install hardening: `ROUTERD_OS=freebsd` now builds
+  FreeBSD binaries and uses FreeBSD runtime directories even when invoked
+  from a Linux workstation.
+- Remote dependency checks now cover `jq`, FreeBSD `dhcp6c`, and `sysrc`.
+- FreeBSD DHCPv6-PD rendering now emits KAME `dhcp6c` syntax accepted by
+  the packaged client.
 - Resource ownership and adoption foundation: every resource kind now
   emits artifact intents, the local ownership ledger records routerd-owned
   host artifacts, `routerd adopt --candidates` reports adoption candidates

@@ -133,11 +133,24 @@ Install to a remote test host without requiring Go or make on that host:
 make remote-install REMOTE_HOST=user@router.example
 ```
 
+When installing to a FreeBSD test host from a Linux workstation, build the
+FreeBSD binaries explicitly:
+
+```sh
+make remote-install ROUTERD_OS=freebsd REMOTE_HOST=user@router.example
+```
+
 Check minimum remote host dependencies:
 
 ```sh
 make check-remote-deps REMOTE_HOST=user@router.example
 ```
+
+On Ubuntu, the current source install expects host tools such as `systemd`,
+`iproute2`, `dnsmasq`, `nftables`, `conntrack`, `jq`, and `pppd`. On FreeBSD, the
+limited groundwork expects base networking tools plus the `dnsmasq` and
+`dhcp6` packages so `dnsmasq` and `dhcp6c` are available, plus `jq` for local
+status inspection scripts.
 
 Install only the config file to a remote test host:
 
