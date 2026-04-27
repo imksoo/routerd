@@ -56,6 +56,8 @@ var (
 	pppoePAPSecretsPath        = platformDefaults.PPPoEPapSecretsFile
 )
 
+var errNoIPv6PrefixAvailable = errors.New("no IPv6 prefix available")
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -2227,6 +2229,10 @@ func applyIPv6DelegatedAddresses(router *api.Router) ([]string, error) {
 		}
 		address, err := deriveIPv6AddressFromInterface(ifname, spec.AddressSuffix)
 		if err != nil {
+			if errors.Is(err, errNoIPv6PrefixAvailable) {
+				applied = append(applied, "skipped-unavailable:"+ifname)
+				continue
+			}
 			return nil, fmt.Errorf("%s derive delegated address: %w", res.ID(), err)
 		}
 		ensured, err := ensureIPv6LocalAddress(ifname, address)
@@ -3152,6 +3158,9 @@ func applyDSLiteTunnels(router *api.Router) ([]string, error) {
 		}
 		local, localIfName, err := dsliteLocalAddress(spec, ifname, aliases, delegated)
 		if err != nil {
+			if !errors.Is(err, errNoIPv6PrefixAvailable) {
+				return nil, fmt.Errorf("%s local address: %w", res.ID(), err)
+			}
 			_ = deleteDSLiteTunnel(tunnelName)
 			applied = append(applied, "removed-unusable:"+tunnelName)
 			continue
@@ -3246,7 +3255,7 @@ func deriveIPv6Address(prefixes []string, suffix string) (string, error) {
 		}
 		return netip.AddrFrom16(addrBytes).String(), nil
 	}
-	return "", fmt.Errorf("no IPv6 prefix available")
+	return "", errNoIPv6PrefixAvailable
 }
 
 func deriveIPv6AddressFromGlobalAddress(addresses []string, suffix string) (string, error) {
@@ -3269,7 +3278,7 @@ func deriveIPv6AddressFromGlobalAddress(addresses []string, suffix string) (stri
 		}
 		return netip.AddrFrom16(addrBytes).String(), nil
 	}
-	return "", fmt.Errorf("no IPv6 prefix available")
+	return "", errNoIPv6PrefixAvailable
 }
 
 func ensureIPv6LocalAddress(ifname, address string) (bool, error) {
