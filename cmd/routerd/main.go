@@ -3099,6 +3099,7 @@ func applyDSLiteTunnels(router *api.Router) ([]string, error) {
 		}
 		local, localIfName, err := dsliteLocalAddress(spec, ifname, aliases, delegated)
 		if err != nil {
+			_ = deleteDSLiteTunnel(tunnelName)
 			return nil, fmt.Errorf("%s local address: %w", res.ID(), err)
 		}
 		if localIfName != "" {
@@ -3119,6 +3120,13 @@ func applyDSLiteTunnels(router *api.Router) ([]string, error) {
 		}
 	}
 	return applied, nil
+}
+
+func deleteDSLiteTunnel(name string) error {
+	if name == "" {
+		return nil
+	}
+	return exec.Command("ip", "-6", "tunnel", "del", name).Run()
 }
 
 func dsliteLocalAddress(spec api.DSLiteTunnelSpec, ifname string, aliases map[string]string, delegated map[string]api.IPv6DelegatedAddressSpec) (string, string, error) {
