@@ -161,6 +161,10 @@ reconcile を続けています。一方で、永続的な NixOS 設定（ホス
 - 永続状態の反映には `nixos-rebuild switch` を使い、ヘルスチェックや
   経路選択、AFTR 解決、ステータス報告、conntrack 観測などの非永続な
   実行時判断は `routerd serve` が引き続き担当します。
+  まだ flake の NixOS モジュールを取り込まない場合は、
+  `NixOSHost.spec.routerdService.enabled: true` を設定すると、
+  `/usr/local/sbin/routerd serve` を起動するローカルの
+  `routerd.service` も生成できます。
 
 動くラボ例は次の 2 ファイルです。
 
@@ -197,6 +201,12 @@ sudo nixos-rebuild switch
 | `extraFlags` | `routerd serve` に追加で渡すコマンドラインフラグ。 |
 
 完全な一覧は `contrib/nix/module.nix` にあります。
+
+`routerd render nixos` だけを使い、flake モジュールをまだ使わない場合は、
+同等の設定を `NixOSHost.spec.routerdService` に書きます。この方法は
+ラボ環境や `/usr/local/sbin/routerd` に置いたバイナリでの動作確認向け
+です。NixOS として長く運用するなら、最終的には flake モジュールに寄せる
+方が自然です。
 
 ## つまずきやすいところ
 

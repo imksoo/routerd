@@ -40,7 +40,7 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	packages, _, err := nixOSPackages(router, host)
+	packages, servicePackages, err := nixOSPackages(router, host)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +108,9 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 			buf.WriteString("    " + pkg + "\n")
 		}
 		buf.WriteString("  ];\n")
+	}
+	if api.BoolDefault(host.RouterdService.Enabled, false) {
+		writeNixOSRouterdService(&buf, host.RouterdService, servicePackages)
 	}
 	if host.StateVersion != "" {
 		buf.WriteString("  system.stateVersion = " + nixString(host.StateVersion) + ";\n")
@@ -338,10 +341,53 @@ func writeNixOSUser(buf *bytes.Buffer, user api.NixOSUserSpec) {
 	buf.WriteString("  };\n")
 }
 
+func writeNixOSRouterdService(buf *bytes.Buffer, spec api.NixOSRouterdServiceSpec, servicePackages []string) {
+	binaryPath := defaultString(spec.BinaryPath, "/usr/local/sbin/routerd")
+	configFile := defaultString(spec.ConfigFile, "/usr/local/etc/routerd/router.yaml")
+	socket := defaultString(spec.Socket, "/run/routerd/routerd.sock")
+	reconcileInterval := defaultString(spec.ReconcileInterval, "60s")
+	args := []string{
+		binaryPath,
+		"serve",
+		"--config", configFile,
+		"--socket", socket,
+		"--reconcile-interval", reconcileInterval,
+	}
+	args = append(args, spec.ExtraFlags...)
+
+	buf.WriteString("  systemd.services.routerd = {\n")
+	buf.WriteString("    description = \"routerd declarative router controller\";\n")
+	buf.WriteString("    wantedBy = [ \"multi-user.target\" ];\n")
+	buf.WriteString("    after = [ \"network-pre.target\" ];\n")
+	buf.WriteString("    wants = [ \"network-pre.target\" ];\n")
+	if len(servicePackages) > 0 {
+		buf.WriteString("    path = with pkgs; [\n")
+		for _, pkg := range servicePackages {
+			buf.WriteString("      " + pkg + "\n")
+		}
+		buf.WriteString("    ];\n")
+	}
+	buf.WriteString("    serviceConfig = {\n")
+	buf.WriteString("      Type = \"simple\";\n")
+	buf.WriteString("      ExecStart = lib.concatStringsSep \" \" [\n")
+	for _, arg := range args {
+		buf.WriteString("        " + nixString(arg) + "\n")
+	}
+	buf.WriteString("      ];\n")
+	buf.WriteString("      Restart = \"always\";\n")
+	buf.WriteString("      RestartSec = \"2s\";\n")
+	buf.WriteString("      RuntimeDirectory = \"routerd\";\n")
+	buf.WriteString("      StateDirectory = \"routerd\";\n")
+	buf.WriteString("    };\n")
+	buf.WriteString("  };\n")
+}
+
 func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []string, error) {
 	service := map[string]bool{
-		"iproute2": true,
-		"systemd":  true,
+		"conntrack-tools": true,
+		"iproute2":        true,
+		"procps":          true,
+		"systemd":         true,
 	}
 	debug := map[string]bool{
 		"jq": true,

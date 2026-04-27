@@ -134,7 +134,76 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 	if strings.Contains(got, "pkgs.netplan") || strings.Contains(got, "\n    netplan\n") {
 		t.Fatalf("NixOS module should not depend on netplan:\n%s", got)
 	}
-	if strings.Contains(got, "systemd.services.routerd.path") {
-		t.Fatalf("NixOS module must not emit an incomplete routerd service:\n%s", got)
+	if strings.Contains(got, "systemd.services.routerd") {
+		t.Fatalf("NixOS module must not emit routerd service unless requested:\n%s", got)
+	}
+}
+
+func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
+	enabled := true
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NixOSHost"},
+				Metadata: api.ObjectMeta{Name: "router02"},
+				Spec: api.NixOSHostSpec{
+					RouterdService: api.NixOSRouterdServiceSpec{
+						Enabled:           &enabled,
+						BinaryPath:        "/usr/local/sbin/routerd",
+						ConfigFile:        "/usr/local/etc/routerd/router.yaml",
+						Socket:            "/run/routerd/routerd.sock",
+						ReconcileInterval: "60s",
+						ExtraFlags:        []string{"--status-file", "/run/routerd/status.json"},
+					},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
+				Metadata: api.ObjectMeta{Name: "dhcp4"},
+				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
+				Metadata: api.ObjectMeta{Name: "default-home"},
+				Spec:     api.FirewallPolicySpec{Preset: "home-router"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				Metadata: api.ObjectMeta{Name: "pppoe"},
+				Spec: api.PPPoEInterfaceSpec{
+					Interface: "wan",
+					Username:  "open@open.ad.jp",
+					Password:  "open",
+				},
+			},
+		}},
+	}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatalf("render NixOS module: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`systemd.services.routerd = {`,
+		`description = "routerd declarative router controller";`,
+		`wantedBy = [ "multi-user.target" ];`,
+		`dnsmasq`,
+		`nftables`,
+		`ppp`,
+		`"/usr/local/sbin/routerd"`,
+		`"serve"`,
+		`"--config"`,
+		`"/usr/local/etc/routerd/router.yaml"`,
+		`"--reconcile-interval"`,
+		`"60s"`,
+		`"--status-file"`,
+		`"/run/routerd/status.json"`,
+		`RuntimeDirectory = "routerd";`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("NixOS routerd service missing %q:\n%s", want, got)
+		}
 	}
 }

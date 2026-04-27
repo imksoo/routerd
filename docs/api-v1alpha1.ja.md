@@ -883,6 +883,11 @@ spec:
   boot:
     loader: grub
     grubDevice: /dev/sda
+  routerdService:
+    enabled: true
+    binaryPath: /usr/local/sbin/routerd
+    configFile: /usr/local/etc/routerd/router.yaml
+    reconcileInterval: 60s
   debugSystemPackages: true
   ssh:
     enabled: true
@@ -908,6 +913,12 @@ spec:
 - `spec.users` から `users.users.<name>` を生成し、併せて SSH 公開鍵も
   配置します。
 - `spec.ssh` と `spec.sudo` から OpenSSH と sudo の設定を生成します。
+- `spec.routerdService.enabled: true` のときは、`routerd serve` を
+  起動するローカルの systemd ユニットを生成します。flake の NixOS
+  モジュールを取り込まず、`/usr/local/sbin/routerd` に置いた
+  バイナリでまず動かすような単純なホスト向けです。既定では
+  `/usr/local/sbin/routerd`、`/usr/local/etc/routerd/router.yaml`、
+  `/run/routerd/routerd.sock`、反映周期 `60s` を使います。
 - `spec.debugSystemPackages` を有効にすると、運用時の動作確認に使う
   ツール一式を `environment.systemPackages` に追加します。追加する
   パッケージはリソースから導き、`dnsmasq`、`nftables`、`ppp`、

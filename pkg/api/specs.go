@@ -44,16 +44,17 @@ type NTPClientSpec struct {
 }
 
 type NixOSHostSpec struct {
-	Hostname              string          `yaml:"hostname,omitempty" json:"hostname,omitempty"`
-	Domain                string          `yaml:"domain,omitempty" json:"domain,omitempty"`
-	StateVersion          string          `yaml:"stateVersion,omitempty" json:"stateVersion,omitempty"`
-	Boot                  NixOSBootSpec   `yaml:"boot,omitempty" json:"boot,omitempty"`
-	Users                 []NixOSUserSpec `yaml:"users,omitempty" json:"users,omitempty"`
-	SSH                   NixOSSSHSpec    `yaml:"ssh,omitempty" json:"ssh,omitempty"`
-	Sudo                  NixOSSudoSpec   `yaml:"sudo,omitempty" json:"sudo,omitempty"`
-	DebugSystemPackages   bool            `yaml:"debugSystemPackages,omitempty" json:"debugSystemPackages,omitempty"`
-	AdditionalPackages    []string        `yaml:"additionalPackages,omitempty" json:"additionalPackages,omitempty"`
-	AdditionalServicePath []string        `yaml:"additionalServicePath,omitempty" json:"additionalServicePath,omitempty"`
+	Hostname              string                  `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	Domain                string                  `yaml:"domain,omitempty" json:"domain,omitempty"`
+	StateVersion          string                  `yaml:"stateVersion,omitempty" json:"stateVersion,omitempty"`
+	Boot                  NixOSBootSpec           `yaml:"boot,omitempty" json:"boot,omitempty"`
+	Users                 []NixOSUserSpec         `yaml:"users,omitempty" json:"users,omitempty"`
+	SSH                   NixOSSSHSpec            `yaml:"ssh,omitempty" json:"ssh,omitempty"`
+	Sudo                  NixOSSudoSpec           `yaml:"sudo,omitempty" json:"sudo,omitempty"`
+	RouterdService        NixOSRouterdServiceSpec `yaml:"routerdService,omitempty" json:"routerdService,omitempty"`
+	DebugSystemPackages   bool                    `yaml:"debugSystemPackages,omitempty" json:"debugSystemPackages,omitempty"`
+	AdditionalPackages    []string                `yaml:"additionalPackages,omitempty" json:"additionalPackages,omitempty"`
+	AdditionalServicePath []string                `yaml:"additionalServicePath,omitempty" json:"additionalServicePath,omitempty"`
 }
 
 type NixOSBootSpec struct {
@@ -77,6 +78,15 @@ type NixOSSSHSpec struct {
 
 type NixOSSudoSpec struct {
 	WheelNeedsPassword *bool `yaml:"wheelNeedsPassword,omitempty" json:"wheelNeedsPassword,omitempty"`
+}
+
+type NixOSRouterdServiceSpec struct {
+	Enabled           *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	BinaryPath        string   `yaml:"binaryPath,omitempty" json:"binaryPath,omitempty"`
+	ConfigFile        string   `yaml:"configFile,omitempty" json:"configFile,omitempty"`
+	Socket            string   `yaml:"socket,omitempty" json:"socket,omitempty"`
+	ReconcileInterval string   `yaml:"reconcileInterval,omitempty" json:"reconcileInterval,omitempty"`
+	ExtraFlags        []string `yaml:"extraFlags,omitempty" json:"extraFlags,omitempty"`
 }
 
 type InterfaceSpec struct {

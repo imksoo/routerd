@@ -1061,6 +1061,11 @@ spec:
   boot:
     loader: grub
     grubDevice: /dev/sda
+  routerdService:
+    enabled: true
+    binaryPath: /usr/local/sbin/routerd
+    configFile: /usr/local/etc/routerd/router.yaml
+    reconcileInterval: 60s
   debugSystemPackages: true
   ssh:
     enabled: true
@@ -1086,6 +1091,12 @@ How routerd behaves:
 - `spec.users` renders `users.users.<name>` entries, including SSH
   authorized keys.
 - `spec.ssh` and `spec.sudo` render OpenSSH and sudo policy.
+- `spec.routerdService.enabled: true` renders a local systemd unit for
+  `routerd serve`. This is useful for simple NixOS hosts that use a
+  source-installed `/usr/local/sbin/routerd` binary instead of importing
+  the flake module. The service defaults are:
+  `/usr/local/sbin/routerd`, `/usr/local/etc/routerd/router.yaml`,
+  `/run/routerd/routerd.sock`, and a `60s` reconcile interval.
 - `spec.debugSystemPackages` adds operational tools to
   `environment.systemPackages`. The package set is derived from resources,
   for example `dnsmasq`, `nftables`, `ppp`, and `iproute2`.

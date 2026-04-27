@@ -523,6 +523,23 @@ func validateResource(res api.Resource) error {
 		default:
 			return fmt.Errorf("%s spec.ssh.permitRootLogin is invalid", res.ID())
 		}
+		if spec.RouterdService.BinaryPath != "" && strings.ContainsAny(spec.RouterdService.BinaryPath, " \t\n\r") {
+			return fmt.Errorf("%s spec.routerdService.binaryPath must be a single path", res.ID())
+		}
+		if spec.RouterdService.ConfigFile != "" && strings.ContainsAny(spec.RouterdService.ConfigFile, " \t\n\r") {
+			return fmt.Errorf("%s spec.routerdService.configFile must be a single path", res.ID())
+		}
+		if spec.RouterdService.Socket != "" && strings.ContainsAny(spec.RouterdService.Socket, " \t\n\r") {
+			return fmt.Errorf("%s spec.routerdService.socket must be a single path", res.ID())
+		}
+		if spec.RouterdService.ReconcileInterval != "" && strings.ContainsAny(spec.RouterdService.ReconcileInterval, " \t\n\r") {
+			return fmt.Errorf("%s spec.routerdService.reconcileInterval must be a single duration", res.ID())
+		}
+		for i, flag := range spec.RouterdService.ExtraFlags {
+			if strings.TrimSpace(flag) == "" || strings.ContainsAny(flag, "\n\r") {
+				return fmt.Errorf("%s spec.routerdService.extraFlags[%d] is invalid", res.ID(), i)
+			}
+		}
 		for i, user := range spec.Users {
 			if user.Name == "" {
 				return fmt.Errorf("%s spec.users[%d].name is required", res.ID(), i)

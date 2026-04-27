@@ -299,6 +299,16 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 	}
 }
 
+func TestDnsmasqServiceUnitDoesNotOwnRouterdRuntimeDirectory(t *testing.T) {
+	unit := string(DnsmasqServiceUnit("/run/routerd/routerd-dnsmasq.conf", "/run/current-system/sw/bin/dnsmasq"))
+	if strings.Contains(unit, "RuntimeDirectory=routerd") {
+		t.Fatalf("dnsmasq unit must not own /run/routerd because it can remove the routerd control socket:\n%s", unit)
+	}
+	if !strings.Contains(unit, "--pid-file=/run/routerd/dnsmasq.pid") {
+		t.Fatalf("dnsmasq unit should keep the managed pid path:\n%s", unit)
+	}
+}
+
 func TestDnsmasqConfigDerivesIPv6SelfDNSFromRoutePrefix(t *testing.T) {
 	spec := api.IPv6DHCPScopeSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6"}
 	delegated := delegatedIPv6Address{

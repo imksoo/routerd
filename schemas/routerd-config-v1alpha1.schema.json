@@ -372,6 +372,33 @@
                       "hostname": {
                         "type": "string"
                       },
+                      "routerdService": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "binaryPath": {
+                            "type": "string"
+                          },
+                          "configFile": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "extraFlags": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "reconcileInterval": {
+                            "type": "string"
+                          },
+                          "socket": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "ssh": {
                         "additionalProperties": false,
                         "properties": {

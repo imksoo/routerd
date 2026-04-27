@@ -24,6 +24,15 @@ spec:
         boot:
           loader: grub
           grubDevice: /dev/sda
+        routerdService:
+          enabled: true
+          binaryPath: /usr/local/sbin/routerd
+          configFile: /usr/local/etc/routerd/router.yaml
+          socket: /run/routerd/routerd.sock
+          reconcileInterval: 60s
+          extraFlags:
+            - --status-file
+            - /run/routerd/status.json
         debugSystemPackages: true
         ssh:
           enabled: true

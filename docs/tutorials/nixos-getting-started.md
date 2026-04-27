@@ -161,6 +161,9 @@ a NixOS module. The split looks like this:
 - `nixos-rebuild switch` applies persistent state. `routerd serve`
   handles non-persistent runtime decisions (health checks, route
   selection, AFTR resolution, status reporting, conntrack inspection).
+  If you are not importing the flake module yet, set
+  `NixOSHost.spec.routerdService.enabled: true` to render a local
+  `routerd.service` that runs `/usr/local/sbin/routerd serve`.
 
 A working lab example lives at:
 
@@ -197,6 +200,11 @@ The most relevant `services.routerd` options:
 | `extraFlags` | Extra command-line flags appended to `routerd serve`. |
 
 The full set is in `contrib/nix/module.nix`.
+
+When you use `routerd render nixos` without the flake module, the matching
+settings live under `NixOSHost.spec.routerdService` instead. That path is
+intended for lab hosts and source-installed binaries; the flake module is
+still the cleaner long-term NixOS integration.
 
 ## Common pitfalls
 

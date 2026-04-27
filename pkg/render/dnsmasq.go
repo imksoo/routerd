@@ -315,7 +315,6 @@ Type=simple
 ExecStart=` + dnsmasqPath + ` --keep-in-foreground --conf-file=` + configPath + ` --pid-file=/run/routerd/dnsmasq.pid
 Restart=on-failure
 RestartSec=2s
-RuntimeDirectory=routerd
 
 [Install]
 WantedBy=multi-user.target

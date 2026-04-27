@@ -50,6 +50,12 @@ behavior changes and new resource shapes as the model takes shape.
 - dnsmasq rendering now suppresses IPv6 DHCP/RA scopes until a delegated
   LAN prefix is observable, allowing IPv4 DHCP and DNS to keep running
   while DHCPv6-PD is still unavailable.
+- NixOSHost can now render an optional local `routerd.service` for
+  source-installed lab hosts, so `routerd serve` can resume reconcile
+  automatically after reboot without importing the flake module.
+- The managed dnsmasq systemd unit no longer owns `/run/routerd`, avoiding
+  accidental removal of the routerd control socket when dnsmasq is
+  restarted.
 - IPv4 default route selection now ignores route-set candidates whose
   target interfaces do not exist, so DS-Lite fallback can use DHCPv4
   while prefix delegation is still unavailable.
