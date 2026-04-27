@@ -188,6 +188,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "SelfAddressPolicy", api.SelfAddressPolicySpec{}),
 			resourceSchema(api.NetAPIVersion, "DNSConditionalForwarder", api.DNSConditionalForwarderSpec{}),
 			resourceSchema(api.NetAPIVersion, "DSLiteTunnel", api.DSLiteTunnelSpec{}),
+			resourceSchema(api.NetAPIVersion, "StatePolicy", api.StatePolicySpec{}),
 			resourceSchema(api.NetAPIVersion, "HealthCheck", api.HealthCheckSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4DefaultRoutePolicy", api.IPv4DefaultRoutePolicySpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4SourceNAT", api.IPv4SourceNATSpec{}),

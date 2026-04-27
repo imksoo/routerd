@@ -948,6 +948,54 @@ func validateResource(res api.Resource) error {
 		if spec.MTU != 0 && (spec.MTU < 1280 || spec.MTU > 65535) {
 			return fmt.Errorf("%s spec.mtu must be within 1280-65535", res.ID())
 		}
+	case "StatePolicy":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.StatePolicySpec()
+		if err != nil {
+			return err
+		}
+		if spec.Variable == "" {
+			return fmt.Errorf("%s spec.variable is required", res.ID())
+		}
+		if len(spec.Values) == 0 {
+			return fmt.Errorf("%s spec.values is required", res.ID())
+		}
+		values := map[string]bool{}
+		for i, value := range spec.Values {
+			if value.Value == "" {
+				return fmt.Errorf("%s spec.values[%d].value is required", res.ID(), i)
+			}
+			if values[value.Value] {
+				return fmt.Errorf("%s duplicates value %q", res.ID(), value.Value)
+			}
+			values[value.Value] = true
+			if value.When.DNSResolve.Name != "" {
+				if strings.ContainsAny(value.When.DNSResolve.Name, " \t\n/") {
+					return fmt.Errorf("%s spec.values[%d].when.dnsResolve.name contains invalid whitespace or slash", res.ID(), i)
+				}
+				if defaultString(value.When.DNSResolve.Type, "AAAA") != "AAAA" {
+					return fmt.Errorf("%s spec.values[%d].when.dnsResolve.type must be AAAA", res.ID(), i)
+				}
+				switch defaultString(value.When.DNSResolve.UpstreamSource, "system") {
+				case "system", "static", "dhcp4", "dhcp6":
+				default:
+					return fmt.Errorf("%s spec.values[%d].when.dnsResolve.upstreamSource must be system, static, dhcp4, or dhcp6", res.ID(), i)
+				}
+				for _, server := range value.When.DNSResolve.UpstreamServers {
+					addr, err := netip.ParseAddr(server)
+					if err != nil || (!addr.Is4() && !addr.Is6()) {
+						return fmt.Errorf("%s spec.values[%d].when.dnsResolve.upstreamServers contains invalid address %q", res.ID(), i, server)
+					}
+				}
+			}
+			if value.When.IPv6PrefixDelegation.UnavailableFor != "" {
+				if _, err := time.ParseDuration(value.When.IPv6PrefixDelegation.UnavailableFor); err != nil {
+					return fmt.Errorf("%s spec.values[%d].when.ipv6PrefixDelegation.unavailableFor is invalid: %w", res.ID(), i, err)
+				}
+			}
+		}
 	case "HealthCheck":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

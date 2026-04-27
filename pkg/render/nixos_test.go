@@ -68,6 +68,16 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 					Translation:       api.IPv4NATTranslationSpec{Type: "interfaceAddress"},
 				},
 			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"},
+				Metadata: api.ObjectMeta{Name: "time"},
+				Spec: api.NTPClientSpec{
+					Provider: "systemd-timesyncd",
+					Managed:  true,
+					Source:   "static",
+					Servers:  []string{"pool.ntp.org"},
+				},
+			},
 		}},
 	}
 	data, err := NixOSModule(router)
@@ -79,14 +89,15 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`networking.hostName = "router02";`,
 		`networking.domain = "lain.local";`,
 		`boot.loader.grub.device = "/dev/sda";`,
-		`systemd.network.networks."10-routerd-ens18"`,
+		`systemd.network.networks."10-netplan-ens18"`,
 		`DHCP = "yes";`,
 		`IPv6AcceptRA = true;`,
-		`systemd.network.networks."10-routerd-ens19"`,
+		`systemd.network.networks."10-netplan-ens19"`,
 		`LinkLocalAddressing = "no";`,
 		`users.users.nwadmin`,
 		`initialPassword = "nwadmin";`,
 		`security.sudo.wheelNeedsPassword = false;`,
+		`services.timesyncd.servers = [ "pool.ntp.org" ];`,
 		`nftables`,
 		`systemd.services.routerd.path`,
 		`system.stateVersion = "25.11";`,
@@ -95,7 +106,7 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 			t.Fatalf("NixOS module missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "netplan") {
-		t.Fatalf("NixOS module should not reference netplan:\n%s", got)
+	if strings.Contains(got, "pkgs.netplan") || strings.Contains(got, "\n    netplan\n") {
+		t.Fatalf("NixOS module should not depend on netplan:\n%s", got)
 	}
 }

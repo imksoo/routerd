@@ -29,6 +29,10 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	ntpServers, err := nixOSNTPServers(router)
+	if err != nil {
+		return nil, err
+	}
 	packages, servicePath, err := nixOSPackages(router, host)
 	if err != nil {
 		return nil, err
@@ -79,6 +83,10 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	if host.Sudo.WheelNeedsPassword != nil {
 		buf.WriteString("  security.sudo.wheelNeedsPassword = " + nixBool(*host.Sudo.WheelNeedsPassword) + ";\n")
 	}
+	if len(ntpServers) > 0 {
+		buf.WriteString("  services.timesyncd.enable = true;\n")
+		buf.WriteString("  services.timesyncd.servers = " + nixStringList(ntpServers) + ";\n")
+	}
 	if len(packages) > 0 {
 		buf.WriteString("  environment.systemPackages = with pkgs; [\n")
 		for _, pkg := range packages {
@@ -128,6 +136,36 @@ func nixOSHost(router *api.Router) (api.NixOSHostSpec, error) {
 		}
 	}
 	return out, nil
+}
+
+func nixOSNTPServers(router *api.Router) ([]string, error) {
+	var servers []string
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "NTPClient" {
+			continue
+		}
+		spec, err := res.NTPClientSpec()
+		if err != nil {
+			return nil, err
+		}
+		if !spec.Managed {
+			continue
+		}
+		if provider := defaultString(spec.Provider, "systemd-timesyncd"); provider != "systemd-timesyncd" {
+			return nil, fmt.Errorf("%s has unsupported provider %q", res.ID(), provider)
+		}
+		if source := defaultString(spec.Source, "static"); source != "static" {
+			return nil, fmt.Errorf("%s has unsupported source %q", res.ID(), source)
+		}
+		for _, server := range spec.Servers {
+			server = strings.TrimSpace(server)
+			if server != "" {
+				servers = append(servers, server)
+			}
+		}
+	}
+	sort.Strings(servers)
+	return servers, nil
 }
 
 func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
@@ -204,7 +242,7 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 }
 
 func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
-	buf.WriteString("  systemd.network.networks." + nixString("10-routerd-"+iface.IfName) + " = {\n")
+	buf.WriteString("  systemd.network.networks." + nixString("10-netplan-"+iface.IfName) + " = {\n")
 	buf.WriteString("    matchConfig.Name = " + nixString(iface.IfName) + ";\n")
 	if iface.DHCP4 || iface.DHCP6 || iface.AcceptRA || len(iface.Addresses) == 0 {
 		buf.WriteString("    networkConfig = {\n")

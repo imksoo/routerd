@@ -28,7 +28,7 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 ## 用意されているリソース
 
 ネットワーク関連:
-`Interface`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4DHCPServer`、`IPv4DHCPScope`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
+`Interface`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4DHCPServer`、`IPv4DHCPScope`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
 
 ファイアウォール:
 `Zone`、`FirewallPolicy`、`ExposeService`。
@@ -37,6 +37,72 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 `Hostname`、`Sysctl`、`NTPClient`、`NixOSHost`、`LogSink`。
 
 種類は意識的に絞っています。汎用プラットフォームではなく、ルータとして新しい振る舞いが必要になったときだけ種類を増やします。
+
+## 状態と条件
+
+### StatePolicy
+
+`StatePolicy` は、ホストの観測結果から名前付きの状態変数を作ります。状態変数には3つの相があります。
+
+- `unknown`: まだ評価していない、または観測に失敗した。
+- `unset`: 評価した結果、値がないことが分かった。
+- `set`: 評価した結果、具体的な値がある。
+
+`Set(name, "")` は `unset` として扱います。履歴を捨てて `unknown` に戻す操作は、値なしを意味する `Unset()` とは別に扱います。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: StatePolicy
+metadata:
+  name: wan-ipv6-mode
+spec:
+  variable: wan.ipv6.mode
+  values:
+    - value: pd-ready
+      when:
+        ipv6PrefixDelegation:
+          resource: wan-pd
+          available: true
+    - value: address-only
+      when:
+        ipv6PrefixDelegation:
+          resource: wan-pd
+          available: false
+          unavailableFor: 180s
+        ipv6Address:
+          interface: wan
+          global: true
+        dnsResolve:
+          name: gw.transix.jp
+          type: AAAA
+          upstreamSource: static
+          upstreamServers:
+            - 2404:1a8:7f01:a::3
+            - 2404:1a8:7f01:b::3
+```
+
+`spec.when` を持つリソースは、条件が真のときだけ反映対象になります。通常の比較では `unknown` と `unset` は偽です。`unset` や `unknown` を条件にしたい場合だけ、`status` や `exists: false` で明示します。
+
+```yaml
+when:
+  state:
+    wan.ipv6.mode:
+      in:
+        - pd-ready
+        - address-only
+```
+
+状態条件で使える演算子:
+
+- `exists: true`: 状態が `set` のとき真。
+- `exists: false`: 状態が `unset` のとき真。`unknown` は真にしません。
+- `equals`: 状態が `set` で、値が一致するとき真。
+- `in`: 状態が `set` で、値が候補のいずれかと一致するとき真。
+- `contains`: 状態が `set` で、値が指定文字列を含むとき真。
+- `status`: `set`、`unset`、`unknown` を明示的に見る。
+- `for`: その状態または値が指定時間以上続いたとき真。
+
+現在 `spec.when` を使えるのは、DHCP スコープ、IPv6 委譲アドレス、DS-Lite トンネル、ヘルスチェック、IPv4 NAT、IPv4 ポリシー経路セット、IPv4 デフォルト経路候補です。
 
 ## インターフェース
 

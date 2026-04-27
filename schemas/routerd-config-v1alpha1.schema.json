@@ -880,6 +880,47 @@
                       },
                       "server": {
                         "type": "string"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
                       }
                     },
                     "required": [
@@ -1070,6 +1111,47 @@
                       },
                       "subnetID": {
                         "type": "string"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
                       }
                     },
                     "required": [
@@ -1212,6 +1294,47 @@
                       },
                       "server": {
                         "type": "string"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
                       }
                     },
                     "required": [
@@ -1479,10 +1602,186 @@
                       },
                       "tunnelName": {
                         "type": "string"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
                       }
                     },
                     "required": [
                       "interface"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "StatePolicy",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "interface": {
+                        "type": "string"
+                      },
+                      "values": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "value": {
+                              "type": "string"
+                            },
+                            "when": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "dnsResolve": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "type": {
+                                      "enum": [
+                                        "AAAA"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "upstreamInterface": {
+                                      "type": "string"
+                                    },
+                                    "upstreamServers": {
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "upstreamSource": {
+                                      "enum": [
+                                        "static",
+                                        "dhcp4",
+                                        "dhcp6",
+                                        "system"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "ipv6Address": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "global": {
+                                      "type": "boolean"
+                                    },
+                                    "interface": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "ipv6PrefixDelegation": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "available": {
+                                      "type": "boolean"
+                                    },
+                                    "resource": {
+                                      "type": "string"
+                                    },
+                                    "unavailableFor": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "when"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "variable": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "variable",
+                      "values"
                     ],
                     "type": "object"
                   },
@@ -1577,6 +1876,47 @@
                       "unhealthyThreshold": {
                         "minimum": 1,
                         "type": "integer"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
                       }
                     },
                     "type": "object"
@@ -1665,6 +2005,47 @@
                               "maximum": 4294967295,
                               "minimum": 1,
                               "type": "integer"
+                            },
+                            "when": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "state": {
+                                  "additionalProperties": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "contains": {
+                                        "type": "string"
+                                      },
+                                      "equals": {
+                                        "type": "string"
+                                      },
+                                      "exists": {
+                                        "type": "boolean"
+                                      },
+                                      "for": {
+                                        "type": "string"
+                                      },
+                                      "in": {
+                                        "items": {
+                                          "type": "string"
+                                        },
+                                        "type": "array"
+                                      },
+                                      "status": {
+                                        "enum": [
+                                          "set",
+                                          "unset",
+                                          "unknown"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "type": "object"
                             }
                           },
                           "required": [
@@ -1795,6 +2176,47 @@
                         "required": [
                           "type"
                         ],
+                        "type": "object"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
                         "type": "object"
                       }
                     },
@@ -1994,6 +2416,47 @@
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
                       }
                     },
                     "required": [

@@ -28,6 +28,7 @@ import (
 	"routerd/pkg/reconcile"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
+	routerstate "routerd/pkg/state"
 	statuswriter "routerd/pkg/status"
 )
 
@@ -47,6 +48,7 @@ var (
 	defaultRouteNftablesPath  = platformDefaults.DefaultRouteNftablesFile
 	defaultTimesyncdPath      = platformDefaults.TimesyncdDropinFile
 	defaultLedgerPath         = platformDefaults.LedgerFile()
+	defaultStatePath          = platformDefaults.StateDir + "/state.json"
 	pppoeCHAPSecretsPath      = platformDefaults.PPPoEChapSecretsFile
 	pppoePAPSecretsPath       = platformDefaults.PPPoEPapSecretsFile
 )
@@ -180,18 +182,29 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 	defer closeLogger(logger, name, &err)
 	logger.Emit(eventlog.LevelInfo, name, "routerd command started", map[string]string{"config": *configPath})
 	engine := reconcile.New()
+	stateStore, err := routerstate.Load(defaultStatePath)
+	if err != nil {
+		return err
+	}
+	stateChanges, err := evaluateStatePolicies(router, stateStore)
+	if err != nil {
+		return err
+	}
+	effectiveRouter := filterRouterByWhen(router, stateStore)
 	switch name {
 	case "observe":
-		result, err := engine.Observe(router)
+		result, err := engine.Observe(effectiveRouter)
 		if err != nil {
 			return err
 		}
+		appendStatePolicyResults(result, router, stateStore, stateChanges)
 		return writeResult(stdout, *statusFile, result)
 	case "plan":
-		result, err := engine.Plan(router)
+		result, err := engine.Plan(effectiveRouter)
 		if err != nil {
 			return err
 		}
+		appendStatePolicyResults(result, router, stateStore, stateChanges)
 		return writeResult(stdout, *statusFile, result)
 	case "run":
 		return errors.New("run is not implemented yet")
@@ -324,9 +337,10 @@ func reconcileCommand(args []string, stdout io.Writer) (err error) {
 		StatusFile:          *statusFile,
 		NetplanPath:         *netplanPath,
 		DnsmasqConfigPath:   *dnsmasqConfigPath,
-		DnsmasqServicePath:  *dnsmasqServicePath,
+		DnsmasqServicePath:  runtimeDnsmasqServicePath(*dnsmasqServicePath),
 		NftablesPath:        *nftablesPath,
 		LedgerPath:          *ledgerPath,
+		StatePath:           defaultStatePath,
 		DryRun:              *dryRun,
 		AnnounceDryRunToCLI: true,
 	}
@@ -342,44 +356,67 @@ type reconcileApplyOptions struct {
 	DnsmasqServicePath  string
 	NftablesPath        string
 	LedgerPath          string
+	StatePath           string
 	DryRun              bool
 	AnnounceDryRunToCLI bool
 }
 
 func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.Writer, logger *eventlog.Logger) (*reconcile.Result, error) {
-	engine := reconcile.New()
-	result, err := engine.Plan(router)
+	stateStore, err := routerstate.Load(defaultString(opts.StatePath, defaultStatePath))
 	if err != nil {
 		return nil, err
 	}
-	if err := appendLedgerOwnedOrphans(result, router, opts.LedgerPath); err != nil {
+	stateChanges, err := evaluateStatePolicies(router, stateStore)
+	if err != nil {
+		return nil, err
+	}
+	effectiveRouter := filterRouterByWhen(router, stateStore)
+	engine := reconcile.New()
+	result, err := engine.Plan(effectiveRouter)
+	if err != nil {
+		return nil, err
+	}
+	appendStatePolicyResults(result, router, stateStore, stateChanges)
+	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath); err != nil {
 		return nil, err
 	}
 	if !opts.DryRun {
-		netplanData, err := render.Netplan(router)
+		if err := os.MkdirAll(filepathDir(defaultString(opts.StatePath, defaultStatePath)), 0755); err != nil {
+			return nil, err
+		}
+		if err := stateStore.Save(defaultString(opts.StatePath, defaultStatePath)); err != nil {
+			return nil, err
+		}
+		netplanData, err := render.Netplan(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
-		networkdFiles, err := render.NetworkdDropins(router)
+		if isNixOSHost() {
+			netplanData = nil
+		}
+		networkdFiles, err := render.NetworkdDropins(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
-		dnsmasqConfig, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
-			DHCPv4DNSServersByInterface: observedDNSServersByInterface(router),
-			DHCPv6DNSServersByInterface: observedDNSServersByInterface(router),
-			IPv6AddressesByInterface:    observedIPv6AddressesByInterface(router),
-			IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(router),
+		dnsmasqConfig, err := render.DnsmasqConfig(effectiveRouter, render.DnsmasqRuntime{
+			DHCPv4DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
+			DHCPv6DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
+			IPv6AddressesByInterface:    observedIPv6AddressesByInterface(effectiveRouter),
+			IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(effectiveRouter),
 		})
 		if err != nil {
 			return nil, err
 		}
-		nftablesConfig, err := render.NftablesIPv4SourceNAT(router)
+		nftablesConfig, err := render.NftablesIPv4SourceNAT(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
-		timesyncdConfig, err := render.TimesyncdConfig(router)
+		timesyncdConfig, err := render.TimesyncdConfig(effectiveRouter)
 		if err != nil {
 			return nil, err
+		}
+		if isNixOSHost() {
+			timesyncdConfig = nil
 		}
 		logger.Emit(eventlog.LevelInfo, "reconcile", "routerd plan completed", map[string]string{
 			"phase":     result.Phase,
@@ -389,7 +426,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if err != nil {
 			return nil, err
 		}
-		appliedIPv6DelegatedAddresses, err := applyIPv6DelegatedAddresses(router)
+		appliedIPv6DelegatedAddresses, err := applyIPv6DelegatedAddresses(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
@@ -401,7 +438,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if err != nil {
 			return nil, err
 		}
-		pppoeChangedFiles, err := applyPPPoEConfig(router)
+		pppoeChangedFiles, err := applyPPPoEConfig(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
@@ -409,39 +446,39 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if err != nil {
 			return nil, err
 		}
-		appliedTunnels, err := applyDSLiteTunnels(router)
+		appliedTunnels, err := applyDSLiteTunnels(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
-		appliedPolicyRoutes, err := applyIPv4PolicyRoutes(router)
+		appliedPolicyRoutes, err := applyIPv4PolicyRoutes(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
-		appliedDefaultRoutes, err := applyIPv4DefaultRoutePolicies(router)
+		appliedDefaultRoutes, err := applyIPv4DefaultRoutePolicies(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
-		cleanedPolicyRules, err := cleanupIPv4ManagedFwmarkRules(router)
+		cleanedPolicyRules, err := cleanupIPv4ManagedFwmarkRules(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
-		appliedRuntime, err := applyRuntimeSysctls(router)
+		appliedRuntime, err := applyRuntimeSysctls(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
-		appliedReversePathFilters, err := applyIPv4ReversePathFilters(router)
+		appliedReversePathFilters, err := applyIPv4ReversePathFilters(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
-		appliedHostnames, err := applyHostnames(router)
+		appliedHostnames, err := applyHostnames(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
-		cleanedLedgerOrphans, err := cleanupLedgerOwnedOrphans(router, opts.LedgerPath)
+		cleanedLedgerOrphans, err := cleanupLedgerOwnedOrphans(effectiveRouter, opts.LedgerPath)
 		if err != nil {
 			return nil, err
 		}
-		rememberedArtifacts, err := rememberReconciledArtifacts(router, opts.LedgerPath)
+		rememberedArtifacts, err := rememberReconciledArtifacts(effectiveRouter, opts.LedgerPath)
 		if err != nil {
 			return nil, err
 		}
@@ -541,6 +578,282 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		return nil, err
 	}
 	return result, nil
+}
+
+type stateChange struct {
+	Name  string
+	Value routerstate.Value
+}
+
+func evaluateStatePolicies(router *api.Router, store *routerstate.Store) ([]stateChange, error) {
+	aliases := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			return nil, err
+		}
+		aliases[res.Metadata.Name] = spec.IfName
+	}
+	var changes []stateChange
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "StatePolicy" {
+			continue
+		}
+		spec, err := res.StatePolicySpec()
+		if err != nil {
+			return nil, err
+		}
+		applied := false
+		for _, value := range spec.Values {
+			ok, err := evaluateStateConditions(router, aliases, store, spec, value)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", res.ID(), err)
+			}
+			if ok {
+				changes = append(changes, stateChange{Name: spec.Variable, Value: store.Set(spec.Variable, value.Value, res.ID())})
+				applied = true
+				break
+			}
+		}
+		if !applied {
+			changes = append(changes, stateChange{Name: spec.Variable, Value: store.Unset(spec.Variable, res.ID()+": no value matched")})
+		}
+	}
+	return changes, nil
+}
+
+func evaluateStateConditions(router *api.Router, aliases map[string]string, store *routerstate.Store, policy api.StatePolicySpec, value api.StateValueSpec) (bool, error) {
+	if value.When.IPv6PrefixDelegation.Resource != "" || value.When.IPv6PrefixDelegation.Available != nil {
+		ok, known, err := stateIPv6PrefixDelegationAvailable(router, aliases, value.When.IPv6PrefixDelegation)
+		predicateName := policy.Variable + "." + value.Value + ".ipv6PrefixDelegation"
+		if err != nil || !known {
+			store.Forget(predicateName, "ipv6 prefix delegation unknown")
+			return false, err
+		}
+		if ok {
+			store.Set(predicateName, "available", "ipv6 prefix delegation available")
+		} else {
+			store.Unset(predicateName, "ipv6 prefix delegation unavailable")
+		}
+		if value.When.IPv6PrefixDelegation.Available != nil && ok != *value.When.IPv6PrefixDelegation.Available {
+			return false, nil
+		}
+		if value.When.IPv6PrefixDelegation.UnavailableFor != "" {
+			duration, err := time.ParseDuration(value.When.IPv6PrefixDelegation.UnavailableFor)
+			if err != nil {
+				return false, err
+			}
+			if store.Get(predicateName).Status != routerstate.StatusUnset || store.Age(predicateName) < duration {
+				return false, nil
+			}
+		}
+	}
+	if value.When.IPv6Address.Global != nil || value.When.IPv6Address.Interface != "" {
+		ifname := aliases[defaultString(value.When.IPv6Address.Interface, policy.Interface)]
+		hasGlobal := firstGlobalIPv6(ipv6Addresses(ifname)) != ""
+		if value.When.IPv6Address.Global != nil && hasGlobal != *value.When.IPv6Address.Global {
+			return false, nil
+		}
+	}
+	if value.When.DNSResolve.Name != "" {
+		addrs, err := resolveStateDNS(value.When.DNSResolve, aliases)
+		if err != nil || len(addrs) == 0 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func stateIPv6PrefixDelegationAvailable(router *api.Router, aliases map[string]string, cond api.StateIPv6PrefixDelegationCondition) (bool, bool, error) {
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6DelegatedAddress" {
+			continue
+		}
+		spec, err := res.IPv6DelegatedAddressSpec()
+		if err != nil {
+			return false, false, err
+		}
+		if cond.Resource != "" && spec.PrefixDelegation != cond.Resource {
+			continue
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			continue
+		}
+		if _, err := deriveIPv6AddressFromInterface(ifname, spec.AddressSuffix); err == nil {
+			return true, true, nil
+		}
+	}
+	return false, true, nil
+}
+
+func resolveStateDNS(spec api.StateDNSResolveCondition, aliases map[string]string) ([]string, error) {
+	if defaultString(spec.Type, "AAAA") != "AAAA" {
+		return nil, fmt.Errorf("unsupported DNS resolve type %q", spec.Type)
+	}
+	servers := spec.UpstreamServers
+	if len(servers) == 0 || defaultString(spec.UpstreamSource, "system") == "system" {
+		return net.LookupHost(spec.Name)
+	}
+	var out []string
+	for _, server := range servers {
+		addrs, err := resolveAAAAWithServers(spec.Name, []string{server}, 0, "")
+		if err == nil && addrs != "" {
+			out = append(out, addrs)
+		}
+	}
+	return out, nil
+}
+
+func filterRouterByWhen(router *api.Router, store *routerstate.Store) *api.Router {
+	filtered := *router
+	filtered.Spec.Resources = nil
+	for _, res := range router.Spec.Resources {
+		if res.Kind == "StatePolicy" {
+			continue
+		}
+		when := resourceWhen(res)
+		if resourceWhenMatches(when, store) {
+			if res.Kind == "IPv4DefaultRoutePolicy" {
+				res = filterDefaultRoutePolicyCandidatesByWhen(res, store)
+			}
+			filtered.Spec.Resources = append(filtered.Spec.Resources, res)
+		}
+	}
+	return &filtered
+}
+
+func filterDefaultRoutePolicyCandidatesByWhen(res api.Resource, store *routerstate.Store) api.Resource {
+	spec, err := res.IPv4DefaultRoutePolicySpec()
+	if err != nil {
+		return res
+	}
+	var candidates []api.IPv4DefaultRoutePolicyCandidate
+	for _, candidate := range spec.Candidates {
+		if resourceWhenMatches(candidate.When, store) {
+			candidates = append(candidates, candidate)
+		}
+	}
+	spec.Candidates = candidates
+	res.Spec = spec
+	return res
+}
+
+func resourceWhen(res api.Resource) api.ResourceWhenSpec {
+	switch res.Kind {
+	case "IPv4DHCPScope":
+		spec, _ := res.IPv4DHCPScopeSpec()
+		return spec.When
+	case "IPv6DelegatedAddress":
+		spec, _ := res.IPv6DelegatedAddressSpec()
+		return spec.When
+	case "IPv6DHCPScope":
+		spec, _ := res.IPv6DHCPScopeSpec()
+		return spec.When
+	case "DSLiteTunnel":
+		spec, _ := res.DSLiteTunnelSpec()
+		return spec.When
+	case "HealthCheck":
+		spec, _ := res.HealthCheckSpec()
+		return spec.When
+	case "IPv4SourceNAT":
+		spec, _ := res.IPv4SourceNATSpec()
+		return spec.When
+	case "IPv4PolicyRouteSet":
+		spec, _ := res.IPv4PolicyRouteSetSpec()
+		return spec.When
+	default:
+		return api.ResourceWhenSpec{}
+	}
+}
+
+func resourceWhenMatches(when api.ResourceWhenSpec, store *routerstate.Store) bool {
+	if len(when.State) == 0 {
+		return true
+	}
+	for name, match := range when.State {
+		if !stateMatch(store, name, match) {
+			return false
+		}
+	}
+	return true
+}
+
+func stateMatch(store *routerstate.Store, name string, match api.StateMatchSpec) bool {
+	value := store.Get(name)
+	ok := true
+	if match.Status != "" {
+		ok = ok && value.Status == match.Status
+	}
+	if match.Exists != nil {
+		if *match.Exists {
+			ok = ok && value.Status == routerstate.StatusSet
+		} else {
+			ok = ok && value.Status == routerstate.StatusUnset
+		}
+	}
+	if match.Equals != "" {
+		ok = ok && value.Status == routerstate.StatusSet && value.Value == match.Equals
+	}
+	if len(match.In) > 0 {
+		ok = ok && value.Status == routerstate.StatusSet && stringIn(value.Value, match.In)
+	}
+	if match.Contains != "" {
+		ok = ok && value.Status == routerstate.StatusSet && strings.Contains(value.Value, match.Contains)
+	}
+	if !ok {
+		return false
+	}
+	if match.For != "" {
+		duration, err := time.ParseDuration(match.For)
+		if err != nil || store.Age(name) < duration {
+			return false
+		}
+	}
+	return true
+}
+
+func appendStatePolicyResults(result *reconcile.Result, router *api.Router, store *routerstate.Store, changes []stateChange) {
+	changed := map[string]routerstate.Value{}
+	for _, change := range changes {
+		changed[change.Name] = change.Value
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "StatePolicy" {
+			continue
+		}
+		spec, err := res.StatePolicySpec()
+		if err != nil {
+			continue
+		}
+		value := store.Get(spec.Variable)
+		if changedValue, ok := changed[spec.Variable]; ok {
+			value = changedValue
+		}
+		result.Resources = append(result.Resources, reconcile.ResourceResult{
+			ID:    res.ID(),
+			Phase: "Healthy",
+			Observed: map[string]string{
+				"variable": spec.Variable,
+				"status":   value.Status,
+				"value":    value.Value,
+				"since":    value.Since.Format(time.RFC3339),
+			},
+			Plan: []string{"evaluate state variable " + spec.Variable},
+		})
+	}
+}
+
+func stringIn(value string, values []string) bool {
+	for _, candidate := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func appendLedgerOwnedOrphans(result *reconcile.Result, router *api.Router, ledgerPath string) error {
@@ -729,9 +1042,10 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		StatusFile:         *statusFile,
 		NetplanPath:        *netplanPath,
 		DnsmasqConfigPath:  *dnsmasqConfigPath,
-		DnsmasqServicePath: *dnsmasqServicePath,
+		DnsmasqServicePath: runtimeDnsmasqServicePath(*dnsmasqServicePath),
 		NftablesPath:       *nftablesPath,
 		LedgerPath:         *ledgerPath,
+		StatePath:          defaultStatePath,
 	}
 	applyMu := &sync.Mutex{}
 	if *reconcileInterval > 0 {
@@ -1059,6 +1373,13 @@ func isNixOSHost() bool {
 		}
 	}
 	return false
+}
+
+func runtimeDnsmasqServicePath(path string) string {
+	if isNixOSHost() && path == defaultDnsmasqServicePath {
+		return "/run/systemd/system/" + routerdDnsmasqService
+	}
+	return path
 }
 
 func managedHostnames(router *api.Router) ([]string, error) {
@@ -2117,7 +2438,10 @@ func dsliteLocalAddress(spec api.DSLiteTunnelSpec, ifname string, aliases map[st
 }
 
 func deriveIPv6AddressFromInterface(ifname, suffix string) (string, error) {
-	return deriveIPv6Address(ipv6Prefixes(ifname), suffix)
+	if address, err := deriveIPv6Address(ipv6Prefixes(ifname), suffix); err == nil {
+		return address, nil
+	}
+	return deriveIPv6AddressFromGlobalAddress(ipv6Addresses(ifname), suffix)
 }
 
 func deriveIPv6Address(prefixes []string, suffix string) (string, error) {
@@ -2131,7 +2455,33 @@ func deriveIPv6Address(prefixes []string, suffix string) (string, error) {
 		if err != nil || !prefix.Addr().Is6() {
 			continue
 		}
+		if prefix.Addr().IsLinkLocalUnicast() {
+			continue
+		}
 		addrBytes := prefix.Masked().Addr().As16()
+		for i := range addrBytes {
+			addrBytes[i] |= suffixBytes[i]
+		}
+		return netip.AddrFrom16(addrBytes).String(), nil
+	}
+	return "", fmt.Errorf("no IPv6 prefix available")
+}
+
+func deriveIPv6AddressFromGlobalAddress(addresses []string, suffix string) (string, error) {
+	suffixAddr, err := netip.ParseAddr(suffix)
+	if err != nil || !suffixAddr.Is6() {
+		return "", fmt.Errorf("invalid IPv6 suffix %q", suffix)
+	}
+	suffixBytes := suffixAddr.As16()
+	for _, value := range addresses {
+		addr, err := netip.ParseAddr(value)
+		if err != nil || !addr.Is6() || addr.IsLinkLocalUnicast() {
+			continue
+		}
+		addrBytes := addr.As16()
+		for i := 8; i < len(addrBytes); i++ {
+			addrBytes[i] = 0
+		}
 		for i := range addrBytes {
 			addrBytes[i] |= suffixBytes[i]
 		}
@@ -2266,7 +2616,8 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	if len(configData) == 0 {
 		return nil, nil
 	}
-	if _, err := exec.LookPath("dnsmasq"); err != nil {
+	dnsmasqPath, err := exec.LookPath("dnsmasq")
+	if err != nil {
 		return nil, fmt.Errorf("dnsmasq is required for managed IPv4 DHCP service: %w", err)
 	}
 
@@ -2285,7 +2636,7 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	if err := os.MkdirAll(filepathDir(servicePath), 0755); err != nil {
 		return nil, fmt.Errorf("create directory for %s: %w", servicePath, err)
 	}
-	serviceChanged, err := writeFileIfChanged(servicePath, render.DnsmasqServiceUnit(configPath), 0644)
+	serviceChanged, err := writeFileIfChanged(servicePath, render.DnsmasqServiceUnit(configPath, dnsmasqPath), 0644)
 	if err != nil {
 		return nil, fmt.Errorf("write dnsmasq service %s: %w", servicePath, err)
 	}
@@ -2297,8 +2648,10 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	}
 
 	if len(changedFiles) > 0 {
-		if err := runLogged("systemctl", "enable", routerdDnsmasqService); err != nil {
-			return nil, err
+		if !strings.HasPrefix(servicePath, "/run/systemd/system/") {
+			if err := runLogged("systemctl", "enable", routerdDnsmasqService); err != nil {
+				return nil, err
+			}
 		}
 		if err := runLogged("systemctl", "restart", routerdDnsmasqService); err != nil {
 			return nil, err
@@ -2306,8 +2659,14 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 		return changedFiles, nil
 	}
 	if err := runLogged("systemctl", "is-active", "--quiet", routerdDnsmasqService); err != nil {
-		if err := runLogged("systemctl", "enable", "--now", routerdDnsmasqService); err != nil {
-			return nil, err
+		if strings.HasPrefix(servicePath, "/run/systemd/system/") {
+			if err := runLogged("systemctl", "restart", routerdDnsmasqService); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := runLogged("systemctl", "enable", "--now", routerdDnsmasqService); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return nil, nil

@@ -10,6 +10,7 @@ import (
 	"routerd/pkg/reconcile"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
+	routerstate "routerd/pkg/state"
 )
 
 func TestApplyNetworkConfigSkipsUnchangedFiles(t *testing.T) {
@@ -308,6 +309,60 @@ func TestDeriveIPv6Address(t *testing.T) {
 	}
 	if got != "2409:10:3d60:1220::100" {
 		t.Fatalf("address = %s, want 2409:10:3d60:1220::100", got)
+	}
+}
+
+func TestDeriveIPv6AddressFromGlobalAddress(t *testing.T) {
+	got, err := deriveIPv6AddressFromGlobalAddress([]string{
+		"fe80::3",
+		"2409:10:3d60:1220::3",
+	}, "::100")
+	if err != nil {
+		t.Fatalf("derive IPv6 address from global address: %v", err)
+	}
+	if got != "2409:10:3d60:1220::100" {
+		t.Fatalf("address = %s, want 2409:10:3d60:1220::100", got)
+	}
+}
+
+func TestStateWhenRequiresSetAndEqual(t *testing.T) {
+	store := routerstate.New()
+	when := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+		"wan.ipv6.mode": {Equals: "pd-ready"},
+	}}
+	if resourceWhenMatches(when, store) {
+		t.Fatal("unknown state matched equals")
+	}
+	store.Unset("wan.ipv6.mode", "observed absent")
+	if resourceWhenMatches(when, store) {
+		t.Fatal("unset state matched equals")
+	}
+	store.Set("wan.ipv6.mode", "address-only", "observed fallback")
+	if resourceWhenMatches(when, store) {
+		t.Fatal("different set value matched equals")
+	}
+	store.Set("wan.ipv6.mode", "pd-ready", "observed pd")
+	if !resourceWhenMatches(when, store) {
+		t.Fatal("matching set value did not match equals")
+	}
+}
+
+func TestFilterDefaultRouteCandidatesByWhen(t *testing.T) {
+	store := routerstate.New()
+	store.Set("wan.ipv6.mode", "address-only", "test")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{Kind: "IPv4DefaultRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default-v4"}, Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
+			{Name: "dslite", RouteSet: "dslite", Priority: 10, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {In: []string{"pd-ready", "address-only"}}}}},
+			{Name: "pppoe", Interface: "wan-pppoe", Priority: 20, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {Equals: "ipv4-only"}}}},
+		}}},
+	}}}
+	filtered := filterRouterByWhen(router, store)
+	spec, err := filtered.Spec.Resources[0].IPv4DefaultRoutePolicySpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Candidates) != 1 || spec.Candidates[0].Name != "dslite" {
+		t.Fatalf("candidates = %+v, want only dslite", spec.Candidates)
 	}
 }
 

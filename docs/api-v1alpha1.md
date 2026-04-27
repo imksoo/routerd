@@ -39,8 +39,9 @@ Networking:
 `IPv4DHCPServer`, `IPv4DHCPScope`, `IPv6DHCPAddress`, `IPv6PrefixDelegation`,
 `IPv6DelegatedAddress`, `IPv6DHCPServer`, `IPv6DHCPScope`,
 `SelfAddressPolicy`, `DNSConditionalForwarder`, `DSLiteTunnel`,
-`HealthCheck`, `IPv4DefaultRoutePolicy`, `IPv4SourceNAT`, `IPv4PolicyRoute`,
-`IPv4PolicyRouteSet`, `IPv4ReversePathFilter`, `PathMTUPolicy`.
+`StatePolicy`, `HealthCheck`, `IPv4DefaultRoutePolicy`, `IPv4SourceNAT`,
+`IPv4PolicyRoute`, `IPv4PolicyRouteSet`, `IPv4ReversePathFilter`,
+`PathMTUPolicy`.
 
 Firewall:
 `Zone`, `FirewallPolicy`, `ExposeService`.
@@ -50,6 +51,78 @@ System:
 
 The set is small on purpose. New kinds are added when the router gains a new
 behavior, not as a generic platform.
+
+## State And Conditions
+
+### StatePolicy
+
+`StatePolicy` evaluates host observations into a named state variable. State
+variables have three statuses:
+
+- `unknown`: routerd has not evaluated the value, or observation failed.
+- `unset`: routerd evaluated the source and found no value.
+- `set`: routerd evaluated the source and recorded a concrete value.
+
+`Set(name, "")` is normalized to `unset`. Only an explicit reset/forget
+operation returns a value to `unknown`.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: StatePolicy
+metadata:
+  name: wan-ipv6-mode
+spec:
+  variable: wan.ipv6.mode
+  values:
+    - value: pd-ready
+      when:
+        ipv6PrefixDelegation:
+          resource: wan-pd
+          available: true
+    - value: address-only
+      when:
+        ipv6PrefixDelegation:
+          resource: wan-pd
+          available: false
+          unavailableFor: 180s
+        ipv6Address:
+          interface: wan
+          global: true
+        dnsResolve:
+          name: gw.transix.jp
+          type: AAAA
+          upstreamSource: static
+          upstreamServers:
+            - 2404:1a8:7f01:a::3
+            - 2404:1a8:7f01:b::3
+```
+
+Resources that support `spec.when` are applied only when the expression is
+true. `unknown` and `unset` are false for ordinary comparisons; they only match
+when explicitly requested by `status` or `exists: false`.
+
+```yaml
+when:
+  state:
+    wan.ipv6.mode:
+      in:
+        - pd-ready
+        - address-only
+```
+
+Supported state match operators:
+
+- `exists: true`: true when the variable is `set`.
+- `exists: false`: true when the variable is `unset`; `unknown` remains false.
+- `equals`: true when the variable is `set` and equal to the value.
+- `in`: true when the variable is `set` and equal to one listed value.
+- `contains`: true when the variable is `set` and contains the string.
+- `status`: explicitly match `set`, `unset`, or `unknown`.
+- `for`: require the matched status/value to have held for the duration.
+
+`spec.when` is currently available on DHCP scopes, IPv6 delegated addresses,
+DS-Lite tunnels, health checks, IPv4 NAT, IPv4 policy route sets, and
+IPv4 default route candidates.
 
 ## Interfaces
 
