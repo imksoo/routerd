@@ -441,6 +441,17 @@ How routerd behaves:
   Both NTT profiles request IA_PD only, disable rapid commit, use a
   link-layer DUID, force DHCPv6 Solicit when needed, and default the prefix
   hint to `/60` unless `prefixLength` is set explicitly.
+- During reconcile, routerd records observed prefix-delegation state in the
+  local state store. The keys are
+  `ipv6PrefixDelegation.<name>.currentPrefix`,
+  `ipv6PrefixDelegation.<name>.lastPrefix`,
+  `ipv6PrefixDelegation.<name>.uplinkIfname`,
+  `ipv6PrefixDelegation.<name>.downstreamIfname`, and
+  `ipv6PrefixDelegation.<name>.prefixLength`.
+  `currentPrefix` is cleared when no downstream delegated prefix is visible,
+  but `lastPrefix` is kept. This preserves enough local memory to support
+  upstreams that treat a known client as an existing DHCPv6-PD lease rather
+  than a fresh client.
 
 Some NTT home-gateway environments only advertise IPv6 by RA/SLAAC and never
 answer DHCPv6-PD. Those should not be modeled as `IPv6PrefixDelegation`;

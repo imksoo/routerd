@@ -404,6 +404,32 @@ func TestDeriveIPv6AddressFromGlobalAddress(t *testing.T) {
 	}
 }
 
+func TestDelegatedPrefixFromObservedUsesKernelPrefix(t *testing.T) {
+	got, ok := delegatedPrefixFromObserved([]string{
+		"fe80::/64",
+		"2409:10:3d60:1240::/64",
+	}, nil, 60)
+	if !ok {
+		t.Fatal("delegated prefix not found")
+	}
+	if got != "2409:10:3d60:1240::/60" {
+		t.Fatalf("prefix = %s, want 2409:10:3d60:1240::/60", got)
+	}
+}
+
+func TestDelegatedPrefixFromObservedFallsBackToAddress(t *testing.T) {
+	got, ok := delegatedPrefixFromObserved(nil, []string{
+		"fe80::3",
+		"2409:10:3d60:1240::2",
+	}, 60)
+	if !ok {
+		t.Fatal("delegated prefix not found")
+	}
+	if got != "2409:10:3d60:1240::/60" {
+		t.Fatalf("prefix = %s, want 2409:10:3d60:1240::/60", got)
+	}
+}
+
 func TestStateWhenRequiresSetAndEqual(t *testing.T) {
 	store := routerstate.New()
 	when := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{

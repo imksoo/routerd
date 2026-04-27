@@ -439,10 +439,15 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 	if err != nil {
 		return nil, err
 	}
-	stateChanges, err := evaluateStatePolicies(router, stateStore)
+	stateChanges, err := recordObservedPrefixDelegationState(router, stateStore)
 	if err != nil {
 		return nil, err
 	}
+	policyChanges, err := evaluateStatePolicies(router, stateStore)
+	if err != nil {
+		return nil, err
+	}
+	stateChanges = append(stateChanges, policyChanges...)
 	effectiveRouter := filterRouterByWhen(router, stateStore)
 	engine := reconcile.New()
 	result, err := engine.Plan(effectiveRouter)
@@ -900,6 +905,117 @@ func evaluateStatePolicies(router *api.Router, store *routerstate.Store) ([]stat
 		}
 	}
 	return changes, nil
+}
+
+func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.Store) ([]stateChange, error) {
+	aliases := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			return nil, err
+		}
+		aliases[res.Metadata.Name] = spec.IfName
+	}
+	delegatedByPD := map[string][]api.Resource{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6DelegatedAddress" {
+			continue
+		}
+		spec, err := res.IPv6DelegatedAddressSpec()
+		if err != nil {
+			return nil, err
+		}
+		delegatedByPD[spec.PrefixDelegation] = append(delegatedByPD[spec.PrefixDelegation], res)
+	}
+
+	var changes []stateChange
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6PrefixDelegation" {
+			continue
+		}
+		spec, err := res.IPv6PrefixDelegationSpec()
+		if err != nil {
+			return nil, err
+		}
+		prefixLength := stateEffectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength)
+		base := "ipv6PrefixDelegation." + res.Metadata.Name
+		if ifname := aliases[spec.Interface]; ifname != "" {
+			changes = append(changes, stateChange{Name: base + ".uplinkIfname", Value: store.Set(base+".uplinkIfname", ifname, res.ID()+": observed uplink interface")})
+		}
+		if prefixLength > 0 {
+			changes = append(changes, stateChange{Name: base + ".prefixLength", Value: store.Set(base+".prefixLength", strconv.Itoa(prefixLength), res.ID()+": configured prefix length")})
+		}
+
+		var observedPrefix, observedIfname string
+		for _, delegated := range delegatedByPD[res.Metadata.Name] {
+			delegatedSpec, err := delegated.IPv6DelegatedAddressSpec()
+			if err != nil {
+				return nil, err
+			}
+			ifname := aliases[delegatedSpec.Interface]
+			if ifname == "" {
+				continue
+			}
+			prefix, ok := delegatedPrefixFromObservedInterface(ifname, prefixLength)
+			if ok {
+				observedPrefix = prefix
+				observedIfname = ifname
+				break
+			}
+		}
+		if observedPrefix == "" {
+			changes = append(changes, stateChange{Name: base + ".currentPrefix", Value: store.Unset(base+".currentPrefix", res.ID()+": no delegated prefix observable")})
+			continue
+		}
+		changes = append(changes,
+			stateChange{Name: base + ".currentPrefix", Value: store.Set(base+".currentPrefix", observedPrefix, res.ID()+": observed delegated prefix")},
+			stateChange{Name: base + ".lastPrefix", Value: store.Set(base+".lastPrefix", observedPrefix, res.ID()+": observed delegated prefix")},
+			stateChange{Name: base + ".downstreamIfname", Value: store.Set(base+".downstreamIfname", observedIfname, res.ID()+": observed delegated prefix")},
+		)
+	}
+	return changes, nil
+}
+
+func delegatedPrefixFromObservedInterface(ifname string, prefixLength int) (string, bool) {
+	return delegatedPrefixFromObserved(ipv6Prefixes(ifname), ipv6Addresses(ifname), prefixLength)
+}
+
+func delegatedPrefixFromObserved(prefixes, addresses []string, prefixLength int) (string, bool) {
+	for _, value := range prefixes {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() {
+			continue
+		}
+		if prefixLength > 0 && prefixLength <= prefix.Bits() {
+			prefix = netip.PrefixFrom(prefix.Addr(), prefixLength)
+		}
+		return prefix.Masked().String(), true
+	}
+	for _, value := range addresses {
+		addr, err := netip.ParseAddr(value)
+		if err != nil || !addr.Is6() || addr.IsLinkLocalUnicast() {
+			continue
+		}
+		bits := prefixLength
+		if bits <= 0 || bits > 128 {
+			bits = 64
+		}
+		return netip.PrefixFrom(addr, bits).Masked().String(), true
+	}
+	return "", false
+}
+
+func stateEffectiveIPv6PDPrefixLength(profile string, configured int) int {
+	if configured != 0 {
+		return configured
+	}
+	if profile == "ntt-ngn-direct-hikari-denwa" || profile == "ntt-hgw-lan-pd" {
+		return 60
+	}
+	return 0
 }
 
 func evaluateStateConditions(router *api.Router, aliases map[string]string, store *routerstate.Store, policy api.StatePolicySpec, value api.StateValueSpec) (bool, error) {

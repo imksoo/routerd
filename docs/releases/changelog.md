@@ -65,6 +65,12 @@ behavior changes and new resource shapes as the model takes shape.
 - IPv4 default route selection now ignores route-set candidates whose
   target interfaces do not exist, so DS-Lite fallback can use DHCPv4
   while prefix delegation is still unavailable.
+- Reconcile now records observed IPv6 prefix-delegation state per
+  `IPv6PrefixDelegation` resource, including the current prefix, last known
+  prefix, uplink/downstream interface names, and prefix length. The last
+  known prefix is retained when the current prefix disappears, which is
+  groundwork for DHCPv6-PD renewal behavior with home gateways that remember
+  prior leases.
 
 ## 0.1.0 planning baseline
 

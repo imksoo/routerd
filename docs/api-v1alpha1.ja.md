@@ -357,6 +357,7 @@ spec:
   - `ntt-hgw-lan-pd`: NTT のホームゲートウェイの LAN 側につなぎ、`/60` 単位で再委譲を受ける構成。
 
   どちらの NTT 系プロファイルも IA_PD のみを要求し、rapid commit を無効化、リンクレイヤ DUID を使用、必要に応じて DHCPv6 Solicit を強制し、`prefixLength` を明示しなければ `/60` をヒントにします。
+- routerd は反映のたびに、観測できたプレフィックス委譲の状態をローカルの状態保存領域に記録します。キーは `ipv6PrefixDelegation.<name>.currentPrefix`、`ipv6PrefixDelegation.<name>.lastPrefix`、`ipv6PrefixDelegation.<name>.uplinkIfname`、`ipv6PrefixDelegation.<name>.downstreamIfname`、`ipv6PrefixDelegation.<name>.prefixLength` です。下流側の委譲プレフィックスが見えなくなった場合、`currentPrefix` は消しますが、`lastPrefix` は残します。これにより、既知の機器を新規クライアントではなく既存リースの更新相手として扱う上流機器に対応するための足場を残せます。
 
 NTT のホームゲートウェイには、IPv6 を RA/SLAAC のみで配布し DHCPv6-PD に応答しないモードもあります。これは `IPv6PrefixDelegation` ではモデル化できないため、別途 RA/SLAAC のリソース設計を行う必要があります。
 
