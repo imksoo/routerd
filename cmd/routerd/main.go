@@ -1529,12 +1529,14 @@ func appendPrefixDelegationStateWarnings(result *reconcile.Result, router *api.R
 			continue
 		}
 		last := store.Get(base + ".lastPrefix")
-		if last.Status != routerstate.StatusSet || last.Value == "" {
-			continue
-		}
 		observedAt := store.Get(base + ".lastObservedAt").Value
 		missingAt := store.Get(base + ".lastMissingAt").Value
-		msg := fmt.Sprintf("%s is not currently observable; last delegated prefix was %s", res.ID(), last.Value)
+		msg := fmt.Sprintf("%s is not currently observable", res.ID())
+		if last.Status == routerstate.StatusSet && last.Value != "" {
+			msg += "; last delegated prefix was " + last.Value
+		} else {
+			msg += "; no delegated prefix has been recorded locally yet"
+		}
 		if observedAt != "" {
 			msg += " observed at " + observedAt
 		}
