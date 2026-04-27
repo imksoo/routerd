@@ -59,6 +59,32 @@ func TestNetplanRendersOnlyRouterdManagedInterfaces(t *testing.T) {
 	}
 }
 
+func TestNetplanReturnsNilWhenNoInterfacesAreManaged(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			},
+		}},
+	}
+	data, err := Netplan(router)
+	if err != nil {
+		t.Fatalf("render netplan: %v", err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("netplan output = %q, want empty", string(data))
+	}
+}
+
 func TestNetplanEnablesIPv6LinkLocalForDelegatedAddress(t *testing.T) {
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {

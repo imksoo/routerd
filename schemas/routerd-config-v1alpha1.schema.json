@@ -286,6 +286,153 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "system.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "NixOSHost",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "additionalPackages": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "additionalServicePath": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "boot": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "grubDevice": {
+                            "type": "string"
+                          },
+                          "loader": {
+                            "enum": [
+                              "",
+                              "grub"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "debugSystemPackages": {
+                        "type": "boolean"
+                      },
+                      "domain": {
+                        "type": "string"
+                      },
+                      "hostname": {
+                        "type": "string"
+                      },
+                      "ssh": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "passwordAuthentication": {
+                            "type": "boolean"
+                          },
+                          "permitRootLogin": {
+                            "enum": [
+                              "",
+                              "no",
+                              "yes",
+                              "prohibit-password",
+                              "forced-commands-only"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "stateVersion": {
+                        "type": "string"
+                      },
+                      "sudo": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "wheelNeedsPassword": {
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "users": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "description": {
+                              "type": "string"
+                            },
+                            "groups": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "initialPassword": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "sshAuthorizedKeys": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "net.routerd.net/v1alpha1",
                     "type": "string"
                   },

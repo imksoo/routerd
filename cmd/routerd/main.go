@@ -73,6 +73,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return configCommand(args[1:], stdout, "plan")
 	case "adopt":
 		return adoptCommand(args[1:], stdout)
+	case "render":
+		return renderCommand(args[1:], stdout)
 	case "reconcile":
 		return reconcileCommand(args[1:], stdout)
 	case "serve":
@@ -90,6 +92,51 @@ func run(args []string, stdout, stderr io.Writer) error {
 		usage(stderr)
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func renderCommand(args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("render requires a target: nixos")
+	}
+	switch args[0] {
+	case "nixos":
+		return renderNixOSCommand(args[1:], stdout)
+	default:
+		return fmt.Errorf("unknown render target %q", args[0])
+	}
+}
+
+func renderNixOSCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("render nixos", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", defaultConfigPath, "config path")
+	outPath := fs.String("out", "", "output path for routerd-generated.nix; writes to stdout when empty")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	if err := config.Validate(router); err != nil {
+		return err
+	}
+	data, err := render.NixOSModule(router)
+	if err != nil {
+		return err
+	}
+	if *outPath == "" {
+		_, err := stdout.Write(data)
+		return err
+	}
+	if err := os.MkdirAll(filepathDir(*outPath), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(*outPath, data, 0644); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "wrote %s\n", *outPath)
+	return nil
 }
 
 func validateCommand(args []string, stdout io.Writer) error {
@@ -471,6 +518,13 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			"ownedOrphansGone":    fmt.Sprintf("%d", len(cleanedLedgerOrphans)),
 			"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 		})
+		result, err = engine.Plan(router)
+		if err != nil {
+			return nil, err
+		}
+		if err := appendLedgerOwnedOrphans(result, router, opts.LedgerPath); err != nil {
+			return nil, err
+		}
 		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 			return nil, err
 		}
@@ -984,9 +1038,27 @@ func applyHostnames(router *api.Router) ([]string, error) {
 		return nil, nil
 	}
 	if err := runLogged("hostnamectl", "set-hostname", hostname); err != nil {
-		return nil, err
+		if !isNixOSHost() {
+			return nil, err
+		}
+		if fallbackErr := runLogged("hostname", hostname); fallbackErr != nil {
+			return nil, fmt.Errorf("%w; fallback hostname failed: %v", err, fallbackErr)
+		}
 	}
 	return []string{hostname}, nil
+}
+
+func isNixOSHost() bool {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "ID=nixos" || line == `ID="nixos"` {
+			return true
+		}
+	}
+	return false
 }
 
 func managedHostnames(router *api.Router) ([]string, error) {
@@ -1025,6 +1097,9 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 	if err != nil {
 		return nil, err
 	}
+	if len(netplanData) == 0 {
+		return changedNetworkdFiles, nil
+	}
 	netplanChanged, err := writeFileIfChanged(netplanPath, netplanData, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("write netplan %s: %w", netplanPath, err)
@@ -1055,9 +1130,6 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 }
 
 func applyNftablesConfig(path string, data []byte) ([]string, error) {
-	if _, err := exec.LookPath("nft"); err != nil {
-		return nil, fmt.Errorf("nft is required for managed nftables resources: %w", err)
-	}
 	managedTables := []struct {
 		family string
 		name   string
@@ -1069,15 +1141,17 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 		{family: "ip", name: "routerd_nat", header: "table ip routerd_nat"},
 		{family: "ip", name: "routerd_policy", header: "table ip routerd_policy"},
 	}
-	existingManaged := false
-	existingTables := map[string]bool{}
-	for _, table := range managedTables {
-		if exec.Command("nft", "list", "table", table.family, table.name).Run() == nil {
-			existingManaged = true
-			existingTables[table.name] = true
-		}
-	}
 	if len(data) == 0 {
+		if _, err := exec.LookPath("nft"); err != nil {
+			return nil, nil
+		}
+		existingManaged := false
+		for _, table := range managedTables {
+			if exec.Command("nft", "list", "table", table.family, table.name).Run() == nil {
+				existingManaged = true
+				break
+			}
+		}
 		if !existingManaged {
 			return nil, nil
 		}
@@ -1085,6 +1159,15 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 			_ = exec.Command("nft", "delete", "table", table.family, table.name).Run()
 		}
 		return []string{"nftables:routerd"}, nil
+	}
+	if _, err := exec.LookPath("nft"); err != nil {
+		return nil, fmt.Errorf("nft is required for managed nftables resources: %w", err)
+	}
+	existingTables := map[string]bool{}
+	for _, table := range managedTables {
+		if exec.Command("nft", "list", "table", table.family, table.name).Run() == nil {
+			existingTables[table.name] = true
+		}
 	}
 	if err := os.MkdirAll(filepathDir(path), 0755); err != nil {
 		return nil, fmt.Errorf("create directory for %s: %w", path, err)
@@ -2599,6 +2682,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  plan --config <path>")
 	fmt.Fprintln(w, "  adopt --config <path> --candidates")
 	fmt.Fprintln(w, "  adopt --config <path> --apply")
+	fmt.Fprintln(w, "  render nixos --config <path> [--out <path>]")
 	fmt.Fprintln(w, "  reconcile --config <path> --once [--dry-run]")
 	fmt.Fprintln(w, "  serve --config <path> [--socket <path>]")
 	fmt.Fprintln(w, "  run --config <path>")

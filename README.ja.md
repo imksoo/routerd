@@ -125,7 +125,7 @@ sudo make install-systemd      # Linux (Ubuntu, NixOS, ...)
 sudo make install-rc-freebsd   # FreeBSD rc.d
 ```
 
-NixOS では `make install` ではなく `contrib/nix/` 配下の flake と NixOS モジュールを使うことを推奨します。詳細は [contrib/nix/README.md](contrib/nix/README.md) を参照してください。
+NixOS では `make install` ではなく、リポジトリ直下の flake と `contrib/nix/` 配下の NixOS モジュールを使うことを推奨します。詳細は [contrib/nix/README.md](contrib/nix/README.md) を参照してください。
 
 ## テスト
 

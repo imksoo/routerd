@@ -46,7 +46,7 @@ Firewall:
 `Zone`, `FirewallPolicy`, `ExposeService`.
 
 System:
-`Hostname`, `Sysctl`, `NTPClient`, `LogSink`.
+`Hostname`, `Sysctl`, `NTPClient`, `NixOSHost`, `LogSink`.
 
 The set is small on purpose. New kinds are added when the router gains a new
 behavior, not as a generic platform.
@@ -874,6 +874,57 @@ external-address hairpin rules — the external-address selection model is
 still being designed.
 
 ## System resources
+
+### NixOSHost
+
+`NixOSHost` declares NixOS host-level settings for `routerd render nixos`.
+It is not applied by runtime reconcile. The generated
+`routerd-generated.nix` is meant to be imported from a small
+`configuration.nix` and applied with `nixos-rebuild switch`.
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: NixOSHost
+metadata:
+  name: router02
+spec:
+  hostname: router02
+  domain: example.net
+  stateVersion: "25.11"
+  boot:
+    loader: grub
+    grubDevice: /dev/sda
+  debugSystemPackages: true
+  ssh:
+    enabled: true
+    passwordAuthentication: true
+    permitRootLogin: "no"
+  sudo:
+    wheelNeedsPassword: false
+  users:
+    - name: nwadmin
+      groups:
+        - wheel
+      initialPassword: nwadmin
+      sshAuthorizedKeys:
+        - ssh-ed25519 AAAA...
+```
+
+How routerd behaves:
+
+- `spec.hostname` and `spec.domain` render `networking.hostName` and
+  `networking.domain`.
+- `spec.boot.loader: grub` and `spec.boot.grubDevice` render the minimal
+  GRUB boot loader settings needed by a generated NixOS host module.
+- `spec.users` renders `users.users.<name>` entries, including SSH
+  authorized keys.
+- `spec.ssh` and `spec.sudo` render OpenSSH and sudo policy.
+- `spec.debugSystemPackages` adds operational tools to
+  `environment.systemPackages`. routerd also derives the daemon service
+  path from resources, for example `dnsmasq`, `nftables`, `ppp`, and
+  `iproute2`.
+- `spec.additionalPackages` and `spec.additionalServicePath` allow
+  explicit package additions.
 
 ### Hostname
 

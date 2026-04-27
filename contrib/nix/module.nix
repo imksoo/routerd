@@ -74,6 +74,7 @@ in {
         nftables
         dnsmasq
         conntrack-tools
+        ppp
         systemd
       ];
 

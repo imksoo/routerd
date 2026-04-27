@@ -18,16 +18,24 @@ parity that the code does not yet provide.
 
 ## Tier 2 — NixOS (groundwork)
 
-- A flake under `contrib/nix/` builds the same Go binaries via
-  `buildGoModule`, ships a NixOS module that wires routerd into the
-  systemd unit graph, and exposes a development shell.
-- Reuses Linux renderers: netplan and systemd-networkd drop-ins are
-  generated as on Ubuntu. On a NixOS host without netplan, point
-  `--netplan-file` at a path inside `/etc/systemd/network/` (or set the
-  flag to a discardable location until a NixOS-native renderer lands).
-- A NixOS-native interface renderer that emits to `networking.*`
-  options or to systemd-networkd `.network` files is not implemented
-  yet.
+- The repository-root flake builds the same Go binaries via
+  `buildGoModule`, ships a NixOS module from `contrib/nix/` that wires
+  routerd into the systemd unit graph, and exposes a development shell.
+- The NixOS module does not depend on netplan. Today, NixOS
+  configurations should either observe externally managed interfaces or
+  use Linux primitives that are already available on the host. Ubuntu's
+  netplan renderer remains available for Ubuntu, but it is not a NixOS
+  runtime dependency.
+- Persistent NixOS settings are produced as Nix and applied with
+  `nixos-rebuild switch`, not by having the daemon rewrite `/etc`
+  configuration files. The flow is `routerd render nixos` producing
+  `routerd-generated.nix`, a small `configuration.nix` importing it,
+  then `routerd serve` handling non-persistent runtime decisions. The
+  lab sample `examples/nixos-router02-configuration.nix` shows the
+  hand-written side of this split.
+- The first NixOS renderer emits host settings, dependency packages,
+  and basic systemd-networkd `.network` declarations. More resource
+  kinds still need Nix-native persistent rendering.
 
 ## Tier 2 — FreeBSD (groundwork)
 

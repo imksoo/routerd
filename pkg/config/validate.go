@@ -464,6 +464,51 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.servers[%d] must be a single hostname or IP address", res.ID(), i)
 			}
 		}
+	case "NixOSHost":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.NixOSHostSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Hostname != "" && strings.ContainsAny(spec.Hostname, " \t\n/") {
+			return fmt.Errorf("%s spec.hostname contains invalid whitespace or slash", res.ID())
+		}
+		if spec.Domain != "" && strings.ContainsAny(spec.Domain, " \t\n/") {
+			return fmt.Errorf("%s spec.domain contains invalid whitespace or slash", res.ID())
+		}
+		switch spec.Boot.Loader {
+		case "", "grub":
+		default:
+			return fmt.Errorf("%s spec.boot.loader is invalid", res.ID())
+		}
+		if spec.Boot.GrubDevice != "" && strings.ContainsAny(spec.Boot.GrubDevice, " \t\n\r") {
+			return fmt.Errorf("%s spec.boot.grubDevice must be a single device path", res.ID())
+		}
+		switch spec.SSH.PermitRootLogin {
+		case "", "no", "yes", "prohibit-password", "forced-commands-only":
+		default:
+			return fmt.Errorf("%s spec.ssh.permitRootLogin is invalid", res.ID())
+		}
+		for i, user := range spec.Users {
+			if user.Name == "" {
+				return fmt.Errorf("%s spec.users[%d].name is required", res.ID(), i)
+			}
+			if strings.ContainsAny(user.Name, " \t\n/:") {
+				return fmt.Errorf("%s spec.users[%d].name contains invalid whitespace, slash, or colon", res.ID(), i)
+			}
+			for j, group := range user.Groups {
+				if group == "" || strings.ContainsAny(group, " \t\n/:") {
+					return fmt.Errorf("%s spec.users[%d].groups[%d] is invalid", res.ID(), i, j)
+				}
+			}
+			for j, key := range user.SSHAuthorizedKeys {
+				if strings.TrimSpace(key) == "" || strings.ContainsAny(key, "\n\r") {
+					return fmt.Errorf("%s spec.users[%d].sshAuthorizedKeys[%d] is invalid", res.ID(), i, j)
+				}
+			}
+		}
 	case "Interface":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

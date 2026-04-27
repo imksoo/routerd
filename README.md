@@ -159,8 +159,9 @@ sudo make install-systemd      # Linux (Ubuntu, NixOS, ...)
 sudo make install-rc-freebsd   # FreeBSD rc.d
 ```
 
-For NixOS, prefer the flake and module under `contrib/nix/` instead of
-`make install`. See [contrib/nix/README.md](contrib/nix/README.md).
+For NixOS, prefer the repository-root flake and the module under
+`contrib/nix/` instead of `make install`. See
+[contrib/nix/README.md](contrib/nix/README.md).
 
 ## Test
 

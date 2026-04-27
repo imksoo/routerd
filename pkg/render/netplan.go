@@ -105,6 +105,9 @@ func Netplan(router *api.Router) ([]byte, error) {
 	}
 
 	sort.Strings(names)
+	if len(names) == 0 {
+		return nil, nil
+	}
 	ethernets := map[string]netplanEthernet{}
 	for _, name := range names {
 		iface := interfaces[name]

@@ -78,6 +78,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "NixOSHost":
+		var spec NixOSHostSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "Interface":
 		var spec InterfaceSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

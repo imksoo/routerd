@@ -34,7 +34,7 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 `Zone`、`FirewallPolicy`、`ExposeService`。
 
 システム:
-`Hostname`、`Sysctl`、`NTPClient`、`LogSink`。
+`Hostname`、`Sysctl`、`NTPClient`、`NixOSHost`、`LogSink`。
 
 種類は意識的に絞っています。汎用プラットフォームではなく、ルータとして新しい振る舞いが必要になったときだけ種類を増やします。
 
@@ -62,7 +62,7 @@ spec:
 - `spec.managed: true` のとき、routerd はリンクとアドレスの状態を変更できます。ただし cloud-init や netplan が既に握っている場合は奪わず、計画上で「取り込み待ち」として表示します。
 - `spec.managed: false` の場合は観測専用です。別名解決はしますが、リンクとアドレスは触りません。
 
-ホスト側の所有関係や、`/var/lib/routerd/artifacts.json` のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership.ja.md) を参照してください。
+ホスト側の所有関係や、`/var/lib/routerd/artifacts.json` のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership.md) を参照してください。
 
 ### PPPoEInterface
 
@@ -724,6 +724,58 @@ spec:
 ルータの振る舞い: routerd は DNAT のルールと、対応する forward 許可を入れます。`spec.sources` を指定すると、そのプレフィックスからの接続だけを許可します。`spec.hairpin` はリソース形状としては受け付けますが、外側アドレスの選定モデルがまだ整っていないため、現状の出力にはヘアピン用ルールは含まれません。
 
 ## システムリソース
+
+### NixOSHost
+
+`NixOSHost` は `routerd render nixos` 用の NixOS ホスト設定を宣言します。
+実行時の reconcile では反映しません。生成される `routerd-generated.nix`
+は薄い `configuration.nix` から import し、`nixos-rebuild switch` で
+反映します。
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: NixOSHost
+metadata:
+  name: router02
+spec:
+  hostname: router02
+  domain: example.net
+  stateVersion: "25.11"
+  boot:
+    loader: grub
+    grubDevice: /dev/sda
+  debugSystemPackages: true
+  ssh:
+    enabled: true
+    passwordAuthentication: true
+    permitRootLogin: "no"
+  sudo:
+    wheelNeedsPassword: false
+  users:
+    - name: nwadmin
+      groups:
+        - wheel
+      initialPassword: nwadmin
+      sshAuthorizedKeys:
+        - ssh-ed25519 AAAA...
+```
+
+ルータの振る舞い:
+
+- `spec.hostname` と `spec.domain` から `networking.hostName` と
+  `networking.domain` を生成します。
+- `spec.boot.loader: grub` と `spec.boot.grubDevice` から、生成された
+  NixOS ホスト設定で必要になる最小限の GRUB ブートローダー設定を
+  生成します。
+- `spec.users` から `users.users.<name>` を生成し、SSH 公開鍵も設定
+  します。
+- `spec.ssh` と `spec.sudo` から OpenSSH と sudo の設定を生成します。
+- `spec.debugSystemPackages` を有効にすると運用確認用のツールを
+  `environment.systemPackages` に入れます。routerd デーモンの
+  service path はリソースから導出し、`dnsmasq`、`nftables`、`ppp`、
+  `iproute2` など必要なものを入れます。
+- `spec.additionalPackages` と `spec.additionalServicePath` で明示的な
+  パッケージ追加もできます。
 
 ### Hostname
 

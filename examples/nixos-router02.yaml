@@ -1,0 +1,72 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: router02
+
+spec:
+  resources:
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: NixOSHost
+      metadata:
+        name: host
+      spec:
+        hostname: router02
+        domain: lain.local
+        stateVersion: "25.11"
+        boot:
+          loader: grub
+          grubDevice: /dev/sda
+        debugSystemPackages: true
+        ssh:
+          enabled: true
+          passwordAuthentication: true
+          permitRootLogin: "no"
+        sudo:
+          wheelNeedsPassword: false
+        users:
+          - name: nwadmin
+            description: Network administrator
+            groups:
+              - wheel
+            initialPassword: nwadmin
+            sshAuthorizedKeys:
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIVN47JvcsD+o8a07RLfICFbhj2NKsjGKu1AEcUzOR8E imksoo@nwadmin03
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4DHCPAddress
+      metadata:
+        name: wan-dhcp4
+      spec:
+        interface: wan
+        client: networkd
+        required: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DHCPAddress
+      metadata:
+        name: wan-dhcp6
+      spec:
+        interface: wan
+        client: networkd
+        required: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        adminUp: true
+        managed: false
+        owner: external

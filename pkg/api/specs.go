@@ -37,6 +37,42 @@ type NTPClientSpec struct {
 	Servers   []string `yaml:"servers,omitempty" json:"servers,omitempty"`
 }
 
+type NixOSHostSpec struct {
+	Hostname              string          `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	Domain                string          `yaml:"domain,omitempty" json:"domain,omitempty"`
+	StateVersion          string          `yaml:"stateVersion,omitempty" json:"stateVersion,omitempty"`
+	Boot                  NixOSBootSpec   `yaml:"boot,omitempty" json:"boot,omitempty"`
+	Users                 []NixOSUserSpec `yaml:"users,omitempty" json:"users,omitempty"`
+	SSH                   NixOSSSHSpec    `yaml:"ssh,omitempty" json:"ssh,omitempty"`
+	Sudo                  NixOSSudoSpec   `yaml:"sudo,omitempty" json:"sudo,omitempty"`
+	DebugSystemPackages   bool            `yaml:"debugSystemPackages,omitempty" json:"debugSystemPackages,omitempty"`
+	AdditionalPackages    []string        `yaml:"additionalPackages,omitempty" json:"additionalPackages,omitempty"`
+	AdditionalServicePath []string        `yaml:"additionalServicePath,omitempty" json:"additionalServicePath,omitempty"`
+}
+
+type NixOSBootSpec struct {
+	Loader     string `yaml:"loader,omitempty" json:"loader,omitempty" jsonschema:"enum=,enum=grub"`
+	GrubDevice string `yaml:"grubDevice,omitempty" json:"grubDevice,omitempty"`
+}
+
+type NixOSUserSpec struct {
+	Name              string   `yaml:"name" json:"name"`
+	Description       string   `yaml:"description,omitempty" json:"description,omitempty"`
+	Groups            []string `yaml:"groups,omitempty" json:"groups,omitempty"`
+	InitialPassword   string   `yaml:"initialPassword,omitempty" json:"initialPassword,omitempty"`
+	SSHAuthorizedKeys []string `yaml:"sshAuthorizedKeys,omitempty" json:"sshAuthorizedKeys,omitempty"`
+}
+
+type NixOSSSHSpec struct {
+	Enabled                *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	PasswordAuthentication *bool  `yaml:"passwordAuthentication,omitempty" json:"passwordAuthentication,omitempty"`
+	PermitRootLogin        string `yaml:"permitRootLogin,omitempty" json:"permitRootLogin,omitempty" jsonschema:"enum=,enum=no,enum=yes,enum=prohibit-password,enum=forced-commands-only"`
+}
+
+type NixOSSudoSpec struct {
+	WheelNeedsPassword *bool `yaml:"wheelNeedsPassword,omitempty" json:"wheelNeedsPassword,omitempty"`
+}
+
 type InterfaceSpec struct {
 	IfName  string `yaml:"ifname" json:"ifname"`
 	AdminUp bool   `yaml:"adminUp,omitempty" json:"adminUp,omitempty"`
@@ -349,6 +385,10 @@ func (r Resource) SysctlSpec() (SysctlSpec, error) {
 
 func (r Resource) NTPClientSpec() (NTPClientSpec, error) {
 	return specAs[NTPClientSpec](r)
+}
+
+func (r Resource) NixOSHostSpec() (NixOSHostSpec, error) {
+	return specAs[NixOSHostSpec](r)
 }
 
 func (r Resource) InterfaceSpec() (InterfaceSpec, error) {
