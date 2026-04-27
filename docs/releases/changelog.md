@@ -79,6 +79,10 @@ behavior changes and new resource shapes as the model takes shape.
   `spec.duidType`, and `spec.duidRawData`. systemd-networkd renders all
   three; FreeBSD `dhcp6c` uses `iaid` for the `ia-pd` / `id-assoc pd`
   identifier.
+- DS-Lite health checks now ping the AFTR from the tunnel's configured local
+  IPv6 source address, and IPv4 default-route route-set candidates skip
+  DS-Lite targets whose local source address cannot be resolved. This avoids
+  selecting stale DS-Lite tunnels after prefix delegation disappears.
 
 ## 0.1.0 planning baseline
 

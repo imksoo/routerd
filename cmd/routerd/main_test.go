@@ -218,9 +218,13 @@ func TestAvailableIPv4DefaultRouteCandidatesSkipsMissingRouteSetDevices(t *testi
 		"ds-lite-a": "ds-lite-a",
 		"ds-lite-b": "ds-lite-b",
 	}
-	available := availableIPv4DefaultRouteCandidates(candidates, aliases, routeSets, map[string]bool{"wan-check": true}, func(ifname string) bool {
-		return ifname == "ens18"
-	})
+	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
+		Router:     &api.Router{},
+		Aliases:    aliases,
+		RouteSets:  routeSets,
+		Health:     map[string]bool{"wan-check": true},
+		LinkExists: func(ifname string) bool { return ifname == "ens18" },
+	}, candidates)
 	if len(available) != 1 || available[0].Name != "wan" {
 		t.Fatalf("available candidates = %+v, want wan only", available)
 	}
@@ -244,11 +248,61 @@ func TestAvailableIPv4DefaultRouteCandidatesKeepsRouteSetWithAnyDevice(t *testin
 		"ds-lite-a": "ds-lite-a",
 		"ds-lite-b": "ds-lite-b",
 	}
-	available := availableIPv4DefaultRouteCandidates(candidates, aliases, routeSets, nil, func(ifname string) bool {
-		return ifname == "ens18" || ifname == "ds-lite-b"
-	})
+	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
+		Router:     &api.Router{},
+		Aliases:    aliases,
+		RouteSets:  routeSets,
+		LinkExists: func(ifname string) bool { return ifname == "ens18" || ifname == "ds-lite-b" },
+	}, candidates)
 	if len(available) != 2 || available[0].Name != "dslite" {
 		t.Fatalf("available candidates = %+v, want dslite first", available)
+	}
+}
+
+func TestAvailableIPv4DefaultRouteCandidatesSkipsDSLiteWithoutLocalAddress(t *testing.T) {
+	candidates := []api.IPv4DefaultRoutePolicyCandidate{
+		{Name: "dslite", Priority: 10, RouteSet: "dslite-set"},
+		{Name: "wan", Priority: 20, Interface: "wan"},
+	}
+	routeSets := map[string]api.IPv4PolicyRouteSetSpec{
+		"dslite-set": {
+			Targets: []api.IPv4PolicyRouteTarget{{OutboundInterface: "ds-lite-a"}},
+		},
+	}
+	aliases := map[string]string{
+		"wan":       "ens18",
+		"lan":       "ens19",
+		"ds-lite-a": "ds-lite-a",
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+			Metadata: api.ObjectMeta{Name: "ds-lite-a"},
+			Spec: api.DSLiteTunnelSpec{
+				Interface:             "wan",
+				LocalAddressSource:    "delegatedAddress",
+				LocalDelegatedAddress: "lan-ipv6",
+				LocalAddressSuffix:    "::3",
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
+			Metadata: api.ObjectMeta{Name: "lan-ipv6"},
+			Spec: api.IPv6DelegatedAddressSpec{
+				PrefixDelegation: "wan-pd",
+				Interface:        "lan",
+				AddressSuffix:    "::3",
+			},
+		},
+	}}}
+	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
+		Router:     router,
+		Aliases:    aliases,
+		RouteSets:  routeSets,
+		LinkExists: func(ifname string) bool { return ifname == "ens18" || ifname == "ds-lite-a" },
+	}, candidates)
+	if len(available) != 1 || available[0].Name != "wan" {
+		t.Fatalf("available candidates = %+v, want wan only", available)
 	}
 }
 
@@ -304,6 +358,31 @@ func TestResolveHealthCheckTargetDSLiteRemoteAddress(t *testing.T) {
 	}
 	if target != "2404:8e00::feed:100" || family != "ipv6" {
 		t.Fatalf("target/family = %s/%s, want 2404:8e00::feed:100/ipv6", target, family)
+	}
+}
+
+func TestHealthCheckPingSourceUsesDSLiteLocalAddress(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+				Metadata: api.ObjectMeta{Name: "transix"},
+				Spec: api.DSLiteTunnelSpec{
+					Interface:          "wan",
+					TunnelName:         "ds-transix",
+					LocalAddressSource: "static",
+					LocalAddress:       "2001:db8::3",
+					RemoteAddress:      "2001:db8::100",
+				},
+			},
+		}},
+	}
+	source := healthCheckPingSource(router, api.HealthCheckSpec{
+		Interface:    "transix",
+		TargetSource: "dsliteRemote",
+	}, map[string]string{"wan": "ens18", "transix": "ds-transix"})
+	if source != "2001:db8::3" {
+		t.Fatalf("ping source = %q, want 2001:db8::3", source)
 	}
 }
 

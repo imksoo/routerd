@@ -2332,7 +2332,7 @@ func applyIPv4DefaultRoutePolicies(router *api.Router) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		available := availableIPv4DefaultRouteCandidates(spec.Candidates, aliases, routeSets, healthChecks, linkExists)
+		available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{Router: router, Aliases: aliases, RouteSets: routeSets, Health: healthChecks, LinkExists: linkExists}, spec.Candidates)
 		candidate, ok := selectIPv4DefaultRouteCandidate(available, healthChecks)
 		if !ok {
 			return nil, fmt.Errorf("%s has no healthy IPv4 default route candidate", res.ID())
@@ -2372,22 +2372,30 @@ func ipv4PolicyRouteSets(router *api.Router) (map[string]api.IPv4PolicyRouteSetS
 	return routeSets, nil
 }
 
-func availableIPv4DefaultRouteCandidates(candidates []api.IPv4DefaultRoutePolicyCandidate, aliases map[string]string, routeSets map[string]api.IPv4PolicyRouteSetSpec, health map[string]bool, exists func(string) bool) []api.IPv4DefaultRoutePolicyCandidate {
+type effectiveRouterAvailability struct {
+	Router     *api.Router
+	Aliases    map[string]string
+	RouteSets  map[string]api.IPv4PolicyRouteSetSpec
+	Health     map[string]bool
+	LinkExists func(string) bool
+}
+
+func availableIPv4DefaultRouteCandidates(ctx effectiveRouterAvailability, candidates []api.IPv4DefaultRoutePolicyCandidate) []api.IPv4DefaultRoutePolicyCandidate {
 	var available []api.IPv4DefaultRoutePolicyCandidate
 	for _, candidate := range candidates {
-		if candidate.HealthCheck != "" && !health[candidate.HealthCheck] {
+		if candidate.HealthCheck != "" && !ctx.Health[candidate.HealthCheck] {
 			continue
 		}
 		if candidate.RouteSet != "" {
-			routeSet, ok := routeSets[candidate.RouteSet]
-			if !ok || !ipv4RouteSetHasAvailableTarget(routeSet, aliases, exists) {
+			routeSet, ok := ctx.RouteSets[candidate.RouteSet]
+			if !ok || !ipv4RouteSetHasAvailableTarget(ctx, routeSet) {
 				continue
 			}
 			available = append(available, candidate)
 			continue
 		}
-		ifname := aliases[candidate.Interface]
-		if ifname == "" || !exists(ifname) {
+		ifname := ctx.Aliases[candidate.Interface]
+		if ifname == "" || !ctx.LinkExists(ifname) {
 			continue
 		}
 		available = append(available, candidate)
@@ -2395,14 +2403,52 @@ func availableIPv4DefaultRouteCandidates(candidates []api.IPv4DefaultRoutePolicy
 	return available
 }
 
-func ipv4RouteSetHasAvailableTarget(routeSet api.IPv4PolicyRouteSetSpec, aliases map[string]string, exists func(string) bool) bool {
+func ipv4RouteSetHasAvailableTarget(ctx effectiveRouterAvailability, routeSet api.IPv4PolicyRouteSetSpec) bool {
 	for _, target := range routeSet.Targets {
-		ifname := aliases[target.OutboundInterface]
-		if ifname != "" && exists(ifname) {
+		ifname := ctx.Aliases[target.OutboundInterface]
+		if ifname != "" && ctx.LinkExists(ifname) && routeSetTargetUsable(ctx, target.OutboundInterface) {
 			return true
 		}
 	}
 	return false
+}
+
+func routeSetTargetUsable(ctx effectiveRouterAvailability, name string) bool {
+	for _, res := range ctx.Router.Spec.Resources {
+		if res.Metadata.Name != name {
+			continue
+		}
+		if res.Kind != "DSLiteTunnel" {
+			return true
+		}
+		spec, err := res.DSLiteTunnelSpec()
+		if err != nil {
+			return false
+		}
+		ifname := ctx.Aliases[spec.Interface]
+		delegated, err := ipv6DelegatedAddressSpecs(ctx.Router)
+		if err != nil {
+			return false
+		}
+		_, _, err = dsliteLocalAddress(spec, ifname, ctx.Aliases, delegated)
+		return err == nil
+	}
+	return true
+}
+
+func ipv6DelegatedAddressSpecs(router *api.Router) (map[string]api.IPv6DelegatedAddressSpec, error) {
+	delegated := map[string]api.IPv6DelegatedAddressSpec{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6DelegatedAddress" {
+			continue
+		}
+		spec, err := res.IPv6DelegatedAddressSpec()
+		if err != nil {
+			return nil, err
+		}
+		delegated[res.Metadata.Name] = spec
+	}
+	return delegated, nil
 }
 
 func defaultRouteCandidateLabel(candidate api.IPv4DefaultRoutePolicyCandidate) string {
@@ -2486,11 +2532,11 @@ func runHealthCheck(router *api.Router, spec api.HealthCheckSpec, aliases map[st
 		args = append([]string{"-4"}, args...)
 	}
 	if spec.Interface != "" {
-		ifname := healthCheckPingInterface(router, spec, aliases)
-		if ifname == "" {
-			return false, fmt.Errorf("missing ifname for %s", spec.Interface)
+		source := healthCheckPingSource(router, spec, aliases)
+		if source == "" {
+			return false, fmt.Errorf("missing ping source for %s", spec.Interface)
 		}
-		args = append(args, "-I", ifname)
+		args = append(args, "-I", source)
 	}
 	args = append(args, target)
 	ctx, cancel := context.WithTimeout(context.Background(), duration+time.Second)
@@ -2499,7 +2545,7 @@ func runHealthCheck(router *api.Router, spec api.HealthCheckSpec, aliases map[st
 	return err == nil, nil
 }
 
-func healthCheckPingInterface(router *api.Router, spec api.HealthCheckSpec, aliases map[string]string) string {
+func healthCheckPingSource(router *api.Router, spec api.HealthCheckSpec, aliases map[string]string) string {
 	if defaultString(spec.TargetSource, "auto") == "dsliteRemote" || (spec.TargetSource == "" && healthInterfaceKind(router, spec.Interface) == "DSLiteTunnel") {
 		for _, res := range router.Spec.Resources {
 			if res.Kind != "DSLiteTunnel" || res.Metadata.Name != spec.Interface {
@@ -2509,7 +2555,15 @@ func healthCheckPingInterface(router *api.Router, spec api.HealthCheckSpec, alia
 			if err != nil {
 				return ""
 			}
-			return aliases[tunnel.Interface]
+			delegated, err := ipv6DelegatedAddressSpecs(router)
+			if err != nil {
+				return ""
+			}
+			local, _, err := dsliteLocalAddress(tunnel, aliases[tunnel.Interface], aliases, delegated)
+			if err != nil {
+				return ""
+			}
+			return local
 		}
 	}
 	return aliases[spec.Interface]
@@ -3062,22 +3116,18 @@ func ensureIPv4FwmarkRule(priority, mark, table int) error {
 
 func applyDSLiteTunnels(router *api.Router) ([]string, error) {
 	aliases := map[string]string{}
-	delegated := map[string]api.IPv6DelegatedAddressSpec{}
 	for _, res := range router.Spec.Resources {
-		switch res.Kind {
-		case "Interface":
+		if res.Kind == "Interface" {
 			spec, err := res.InterfaceSpec()
 			if err != nil {
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
-		case "IPv6DelegatedAddress":
-			spec, err := res.IPv6DelegatedAddressSpec()
-			if err != nil {
-				return nil, err
-			}
-			delegated[res.Metadata.Name] = spec
 		}
+	}
+	delegated, err := ipv6DelegatedAddressSpecs(router)
+	if err != nil {
+		return nil, err
 	}
 	var applied []string
 	for _, res := range router.Spec.Resources {
