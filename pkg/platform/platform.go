@@ -69,6 +69,9 @@ type Defaults struct {
 	PPPoEChapSecretsFile string
 	// PPPoEPapSecretsFile is the system-wide PPP PAP secrets file.
 	PPPoEPapSecretsFile string
+	// FreeBSDMPD5ConfigFile is the mpd5 configuration file used for
+	// FreeBSD PPPoE sessions.
+	FreeBSDMPD5ConfigFile string
 }
 
 // Features describes which host integrations the current platform

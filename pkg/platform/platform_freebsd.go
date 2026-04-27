@@ -22,6 +22,7 @@ func currentDefaults() Defaults {
 		FreeBSDDHCP6CConfigFile:   "/usr/local/etc/dhcp6c.conf",
 		PPPoEChapSecretsFile:      "/etc/ppp/chap-secrets",
 		PPPoEPapSecretsFile:       "/etc/ppp/pap-secrets",
+		FreeBSDMPD5ConfigFile:     "/usr/local/etc/mpd5/mpd.conf",
 	}
 }
 

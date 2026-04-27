@@ -17,6 +17,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPAddress"}, Metadata: api.ObjectMeta{Name: "mgmt-dhcp4"}, Spec: api.IPv4DHCPAddressSpec{Interface: "mgmt", Client: "dhclient", UseRoutes: &disabled, UseDNS: &disabled}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPAddress"}, Metadata: api.ObjectMeta{Name: "wan-dhcp6"}, Spec: api.IPv6DHCPAddressSpec{Interface: "wan", Client: "dhcp6c"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcp6c", Profile: "ntt-hgw-lan-pd", PrefixLength: 60, IAID: "ca53095a"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "wan-pppoe"}, Spec: api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp0", Username: "user@example.jp", Password: "secret", Managed: true, DefaultRoute: true}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", SubnetID: "0", AddressSuffix: "::1", Announce: true}},
 	}}}
@@ -33,6 +34,8 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		`ifconfig_vtnet1="inet 192.168.10.1/24"`,
 		`dhcp6c_enable="YES"`,
 		`dhcp6c_interfaces="vtnet0"`,
+		`mpd_enable="YES"`,
+		`mpd_flags="-b"`,
 	} {
 		if !strings.Contains(rc, want) {
 			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
@@ -62,5 +65,23 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	}
 	if strings.Contains(dhcp6c, "ifid") {
 		t.Fatalf("dhcp6c output must not include unsupported ifid statement:\n%s", dhcp6c)
+	}
+	mpd5 := string(got.MPD5)
+	for _, want := range []string{
+		"default:",
+		"load routerd_wan_pppoe",
+		"routerd_wan_pppoe:",
+		"create bundle static Bwan_pppoe",
+		"set iface name ppp0",
+		"set iface route default",
+		"create link static Lwan_pppoe pppoe",
+		`set auth authname "user@example.jp"`,
+		`set auth password "secret"`,
+		"set pppoe iface vtnet0",
+		"open",
+	} {
+		if !strings.Contains(mpd5, want) {
+			t.Fatalf("mpd5 output missing %q:\n%s", want, mpd5)
+		}
 	}
 }

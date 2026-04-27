@@ -180,7 +180,7 @@ spec:
 
 ### PPPoEInterface
 
-`PPPoEInterface` は、別の `Interface` の上に PPPoE セッションを張ります。pppd / rp-pppoe の peer 設定、CHAP/PAP secret、systemd ユニットを routerd が管理します。
+`PPPoEInterface` は、別の `Interface` の上に PPPoE セッションを張ります。Linux では pppd / rp-pppoe の peer 設定、CHAP/PAP secret、systemd ユニットを routerd が管理します。FreeBSD では `mpd5` の設定を出力し、管理対象のセッションがある場合は `mpd` の rc.d サービスを有効にします。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -204,7 +204,7 @@ spec:
 - `spec.interface` は土台になる Ethernet の `Interface` を参照します。
 - `spec.ifname` を省略すると `ppp-<metadata.name>` になります。Linux の制限により 15 文字以内である必要があります。
 - 認証情報は `spec.password` か `spec.passwordFile` のどちらか一方を指定します。本体 YAML に秘密情報を残さないよう、通常は `passwordFile` を推奨します。
-- `spec.managed: true` のとき、routerd は `routerd-pppoe-<name>.service` を有効化して起動します。`managed: false` のときは設定ファイルだけ生成し、ユニットには触りません。
+- `spec.managed: true` のとき、Linux では `routerd-pppoe-<name>.service` を有効化して起動します。FreeBSD では、生成した `mpd5` の既定ラベルからそのセッションを読み込みます。`managed: false` のときは設定だけを残し、自動接続しません。
 - `spec.defaultRoute: true` で pppd が PPP リンク経由のデフォルト経路を入れます。複数の上流を併用する場合は `IPv4DefaultRoutePolicy` と組み合わせます。
 - `spec.usePeerDNS: true` で、PPP 対向が広告した DNS サーバを受け入れます。
 - `spec.mtu` と `spec.mru` は、上流が 1500 より小さい MTU を要求するときに指定します。PPPoE では通常 1492 になります。

@@ -77,7 +77,7 @@ check-remote-deps:
 	@ssh $(REMOTE_HOST) 'missing=0; \
 		remote_os=$$(uname -s); \
 		if [ "$$remote_os" = FreeBSD ]; then \
-			required="sudo tar install ifconfig sysctl sysrc service pfctl dnsmasq dhcp6c jq"; \
+			required="sudo tar install ifconfig sysctl sysrc service pfctl dnsmasq dhcp6c mpd5 jq"; \
 			optional_ppp=""; \
 		else \
 			required="sudo tar install ip sysctl systemctl resolvectl dnsmasq nft conntrack jq"; \

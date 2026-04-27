@@ -52,6 +52,8 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			artifact("systemd.service", "routerd-pppoe-"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", nil),
 			artifact("file", "/etc/ppp/chap-secrets", resource.ActionEnsure, "file", nil),
 			artifact("file", "/etc/ppp/pap-secrets", resource.ActionEnsure, "file", nil),
+			artifact("file", "/usr/local/etc/mpd5/mpd.conf", resource.ActionEnsure, "mpd5", nil),
+			artifact("rc.d.service", "mpd", resource.ActionEnsure, "service", nil),
 		}
 	case "IPv4StaticAddress":
 		spec, err := res.IPv4StaticAddressSpec()

@@ -227,8 +227,10 @@ Host ownership decisions, including the local ledger at
 ### PPPoEInterface
 
 `PPPoEInterface` brings up a PPPoE session on top of an existing
-`Interface`. routerd renders pppd / rp-pppoe peer configuration, the CHAP/PAP
-secret, and a managed systemd unit.
+`Interface`. On Linux, routerd renders pppd / rp-pppoe peer configuration,
+the CHAP/PAP secret, and a managed systemd unit. On FreeBSD, routerd renders
+an `mpd5` configuration and enables the `mpd` rc.d service for managed
+sessions.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -256,6 +258,8 @@ How routerd behaves:
   `passwordFile` keeps credentials out of the main YAML.
 - `spec.managed: true` enables and starts `routerd-pppoe-<name>.service`.
   `spec.managed: false` renders the config files but leaves the unit alone.
+  On FreeBSD, the same flag controls whether the session is loaded by the
+  generated `mpd5` default label.
 - `spec.defaultRoute: true` lets pppd install a default route through the
   PPP link; combine with `IPv4DefaultRoutePolicy` if multiple uplinks need
   to coexist.

@@ -47,6 +47,7 @@ var (
 	defaultDnsmasqServicePath  = platformDefaults.DnsmasqServiceFile
 	defaultFreeBSDDHClientPath = platformDefaults.FreeBSDDHClientConfigFile
 	defaultFreeBSDDHCP6CPath   = platformDefaults.FreeBSDDHCP6CConfigFile
+	defaultFreeBSDMPD5Path     = platformDefaults.FreeBSDMPD5ConfigFile
 	defaultNftablesPath        = platformDefaults.NftablesFile
 	defaultRouteNftablesPath   = platformDefaults.DefaultRouteNftablesFile
 	defaultTimesyncdPath       = platformDefaults.TimesyncdDropinFile
@@ -130,7 +131,7 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	if err := config.Validate(router); err != nil {
 		return err
 	}
-	data, err := render.FreeBSD(router)
+	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
 		return err
 	}
@@ -150,9 +151,16 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	if len(data.DHCPClient) > 0 {
 		files["dhclient.conf"] = data.DHCPClient
 	}
+	if len(data.MPD5) > 0 {
+		files["mpd5.conf"] = data.MPD5
+	}
 	for name, content := range files {
 		path := strings.TrimRight(*outDir, "/") + "/" + name
-		if err := os.WriteFile(path, content, 0644); err != nil {
+		perm := os.FileMode(0644)
+		if name == "mpd5.conf" {
+			perm = 0600
+		}
+		if err := os.WriteFile(path, content, perm); err != nil {
 			return err
 		}
 		fmt.Fprintf(stdout, "wrote %s\n", path)
@@ -792,7 +800,7 @@ func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, std
 	var changedFreeBSD []string
 	if err := recordStageError("freebsd-network", func() error {
 		var err error
-		changedFreeBSD, err = applyFreeBSDConfig(router, defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath)
+		changedFreeBSD, err = applyFreeBSDConfig(router, defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath, defaultFreeBSDMPD5Path)
 		return err
 	}()); err != nil {
 		return nil, err
@@ -2000,8 +2008,8 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 	return changedFiles, nil
 }
 
-func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath string) ([]string, error) {
-	data, err := render.FreeBSD(router)
+func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, mpd5Path string) ([]string, error) {
+	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
 		return nil, err
 	}
@@ -2048,6 +2056,24 @@ func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath string) ([]
 				return changed, err
 			}
 			changed = append(changed, "service:dhcp6c")
+		}
+	}
+	if len(data.MPD5) > 0 && mpd5Path != "" {
+		if err := os.MkdirAll(filepathDir(mpd5Path), 0755); err != nil {
+			return changed, err
+		}
+		fileChanged, err := writeFileIfChanged(mpd5Path, data.MPD5, 0600)
+		if err != nil {
+			return changed, err
+		}
+		if fileChanged {
+			changed = append(changed, mpd5Path)
+		}
+		if (fileChanged || rcValues["mpd_enable"] == "YES") && freeBSDServiceExists("mpd") {
+			if err := runLogged("service", "mpd", "restart"); err != nil {
+				return changed, err
+			}
+			changed = append(changed, "service:mpd")
 		}
 	}
 	for _, ifname := range compactStringList(restartIfnames) {
