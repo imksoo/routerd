@@ -64,6 +64,7 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	if len(interfaces) > 0 {
 		buf.WriteString("  networking.useDHCP = false;\n")
 		buf.WriteString("  networking.useNetworkd = true;\n")
+		buf.WriteString("  networking.firewall.checkReversePath = false;\n")
 		buf.WriteString("  systemd.network.enable = true;\n")
 		for _, iface := range interfaces {
 			writeNixOSNetwork(&buf, iface)

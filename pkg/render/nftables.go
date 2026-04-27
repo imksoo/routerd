@@ -136,6 +136,10 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	buf.WriteString("    ct state invalid drop\n")
 	buf.WriteString("    ct state { established, related } accept\n")
 	buf.WriteString("    iifname \"lo\" accept\n")
+	buf.WriteString("    meta l4proto ipv6-icmp accept\n")
+	if wan := zoneIfnames["wan"]; len(wan) > 0 {
+		buf.WriteString("    " + nftIfnameMatch("iifname", wan) + " udp dport 546 accept\n")
+	}
 	for _, zone := range protectedZones {
 		ifnames := zoneIfnames[zone]
 		if len(ifnames) == 0 {

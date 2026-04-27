@@ -1000,6 +1000,10 @@ The `home-router` preset installs:
 
 - input default drop and forward default drop.
 - invalid drop, established/related accept, loopback input accept.
+- IPv6 control-plane input needed by the router itself: ICMPv6 and
+  DHCPv6 client replies to UDP destination port 546 on WAN interfaces.
+  The DHCPv6 rule intentionally does not constrain the server source
+  port, because some home gateways reply from an ephemeral UDP port.
 - LAN-to-WAN forward allow when both `lan` and `wan` zones are defined.
 - SSH, DNS, and DHCP access to the router only from the configured
   `routerAccess` zones; SSH from WAN is gated by `routerAccess.ssh.wan`.

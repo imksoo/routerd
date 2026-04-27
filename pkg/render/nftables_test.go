@@ -315,6 +315,8 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 		"type filter hook input priority filter; policy drop;",
 		"ct state invalid drop",
 		"ct state { established, related } accept",
+		"meta l4proto ipv6-icmp accept",
+		`iifname "ppp0" udp dport 546 accept`,
 		`iifname "ens19" tcp dport 22 accept`,
 		`iifname "ens19" oifname "ppp0" accept`,
 		`iifname "ppp0" ip saddr 203.0.113.0/24 ip daddr 192.168.160.20 tcp dport 443 accept`,
@@ -361,5 +363,49 @@ func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 	got := string(data)
 	if !strings.Contains(got, `iifname "ens20" tcp dport 22 accept`) {
 		t.Fatalf("nftables output does not keep protected mgmt SSH open:\n%s", got)
+	}
+}
+
+func TestNftablesAllowsWANIPv6ClientControlPlane(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{
+			Resources: []api.Resource{
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+					Metadata: api.ObjectMeta{Name: "wan"},
+					Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+				},
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "Zone"},
+					Metadata: api.ObjectMeta{Name: "wan"},
+					Spec:     api.ZoneSpec{Interfaces: []string{"wan"}},
+				},
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
+					Metadata: api.ObjectMeta{Name: "default-home"},
+					Spec: api.FirewallPolicySpec{
+						Input:   api.FirewallChainPolicySpec{Default: "drop"},
+						Forward: api.FirewallChainPolicySpec{Default: "drop"},
+					},
+				},
+			},
+		},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"meta l4proto ipv6-icmp accept",
+		`iifname "ens18" udp dport 546 accept`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "udp sport 547") {
+		t.Fatalf("DHCPv6 client rule must not constrain server source port:\n%s", got)
 	}
 }

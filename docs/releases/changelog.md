@@ -42,6 +42,11 @@ behavior changes and new resource shapes as the model takes shape.
 - PPPoE interface rendering and routerd-managed systemd unit.
 - NixOS renderer groundwork for host settings, systemd-networkd links,
   dependency packages, and persistent sysctl values.
+- NixOS rendering now disables reverse-path firewall checks for router
+  hosts, avoiding pre-input drops for routed and DHCPv6-PD traffic.
+- The home-router firewall preset now permits WAN-side DHCPv6 client
+  replies to UDP destination port 546 without constraining the server
+  source port, and permits ICMPv6 control-plane traffic.
 - IPv4 default route selection now ignores route-set candidates whose
   target interfaces do not exist, so DS-Lite fallback can use DHCPv4
   while prefix delegation is still unavailable.

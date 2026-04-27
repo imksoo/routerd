@@ -108,6 +108,7 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`networking.hostName = "router02";`,
 		`networking.domain = "lain.local";`,
 		`boot.loader.grub.device = "/dev/sda";`,
+		`networking.firewall.checkReversePath = false;`,
 		`systemd.network.networks."10-netplan-ens18"`,
 		`DHCP = "yes";`,
 		`IPv6AcceptRA = true;`,

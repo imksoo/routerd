@@ -827,6 +827,10 @@ spec:
 
 - input と forward の既定をいずれも drop にする。
 - invalid を drop、established/related を accept、loopback への input を accept する。
+- ルータ自身の IPv6 制御通信として、ICMPv6 と、WAN 側で受ける DHCPv6
+  クライアント応答を許可する。DHCPv6 は UDP 宛先ポート 546 だけを見て、
+  送信元ポートは縛らない。一部のホームゲートウェイがエフェメラルポート
+  から応答するため。
 - `lan` と `wan` の両ゾーンが存在する場合、LAN から WAN への forward を許可する。
 - ルータ自身への SSH / DNS / DHCP は、`routerAccess` で指定したゾーンからのみ許可する。WAN からの SSH は `routerAccess.ssh.wan` で別管理にする。
 

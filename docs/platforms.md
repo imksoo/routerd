@@ -8,6 +8,9 @@ parity that the code does not yet provide.
 
 - Full source-install layout under `/usr/local`.
 - systemd unit at `contrib/systemd/routerd.service`.
+- Firewall rendering permits WAN-side DHCPv6 client replies by UDP
+  destination port 546 only. It must not require a server source port of
+  547, because some home gateways reply from ephemeral UDP ports.
 - Installed and tested in CI. All currently implemented resource kinds
   (interface aliases, IPv4 static/DHCP, dnsmasq DHCP/DHCPv6/RA, IPv6 PD
   through systemd-networkd drop-ins, conditional DNS forwarding, PPPoE,
@@ -37,6 +40,10 @@ parity that the code does not yet provide.
   persistent sysctl values, and basic systemd-networkd `.network`
   declarations. More resource kinds still need Nix-native persistent
   rendering.
+- For router hosts, the generated NixOS module disables the built-in
+  reverse-path firewall check. routerd's own firewall rules then apply
+  the same DHCPv6 client rule as other Linux targets: accept UDP
+  destination port 546 without constraining the server source port.
 
 ## Tier 2 — FreeBSD (groundwork)
 
@@ -64,6 +71,10 @@ parity that the code does not yet provide.
   - mpd5 or native FreeBSD PPPoE wiring (Linux uses pppd / rp-pppoe).
   - dnsmasq orchestration via `service` instead of `systemctl`.
   - router advertisement service orchestration with `rtadvd`.
+
+When the FreeBSD pf renderer is added, it must follow the same DHCPv6
+client rule: accept WAN-side UDP destination port 546 without requiring
+the server source port to be 547.
 
 Until those land, `routerd reconcile` on FreeBSD only applies the supported
 host pieces above plus runtime sysctl and hostname. Resource kinds that
