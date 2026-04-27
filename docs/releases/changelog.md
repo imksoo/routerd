@@ -56,6 +56,9 @@ behavior changes and new resource shapes as the model takes shape.
 - The managed dnsmasq systemd unit no longer owns `/run/routerd`, avoiding
   accidental removal of the routerd control socket when dnsmasq is
   restarted.
+- Reconcile now removes ledger-owned orphaned DS-Lite ipip6 tunnels before
+  creating desired DS-Lite tunnels, so renaming a tunnel does not fail when
+  the old tunnel still owns the same local and remote endpoints.
 - IPv4 default route selection now ignores route-set candidates whose
   target interfaces do not exist, so DS-Lite fallback can use DHCPv4
   while prefix delegation is still unavailable.

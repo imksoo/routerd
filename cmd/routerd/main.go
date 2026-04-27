@@ -565,6 +565,17 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			return nil, err
 		}
 
+		var cleanedPreDSLiteOrphans []string
+		if len(applyErrors) == 0 {
+			var err error
+			cleanedPreDSLiteOrphans, err = cleanupLedgerOwnedOrphansMatching(effectiveRouter, opts.LedgerPath, func(artifact resource.Artifact) bool {
+				return artifact.Kind == "linux.ipip6.tunnel"
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		var appliedTunnels []string
 		if err := recordStageError("ds-lite", func() error {
 			var err error
@@ -699,6 +710,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		for _, rule := range cleanedPolicyRules {
 			fmt.Fprintf(stdout, "removed stale IPv4 policy rule %s\n", rule)
 		}
+		for _, artifact := range cleanedPreDSLiteOrphans {
+			fmt.Fprintf(stdout, "removed orphaned owned artifact %s\n", artifact)
+		}
 		for _, artifact := range cleanedLedgerOrphans {
 			fmt.Fprintf(stdout, "removed orphaned owned artifact %s\n", artifact)
 		}
@@ -717,7 +731,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			"ipv4DefaultRoutes":   fmt.Sprintf("%d", len(appliedDefaultRoutes)),
 			"ipv4PolicyRouteSets": fmt.Sprintf("%d", len(appliedPolicyRoutes)),
 			"ipv4PolicyRulesGone": fmt.Sprintf("%d", len(cleanedPolicyRules)),
-			"ownedOrphansGone":    fmt.Sprintf("%d", len(cleanedLedgerOrphans)),
+			"ownedOrphansGone":    fmt.Sprintf("%d", len(cleanedPreDSLiteOrphans)+len(cleanedLedgerOrphans)),
 			"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 		})
 		applyWarnings := append([]string{}, result.Warnings...)
@@ -1163,6 +1177,10 @@ func appendUniqueOrphans(existing, additions []reconcile.OrphanedArtifact) []rec
 }
 
 func cleanupLedgerOwnedOrphans(router *api.Router, ledgerPath string) ([]string, error) {
+	return cleanupLedgerOwnedOrphansMatching(router, ledgerPath, func(resource.Artifact) bool { return true })
+}
+
+func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, match func(resource.Artifact) bool) ([]string, error) {
 	if ledgerPath == "" {
 		return nil, nil
 	}
@@ -1178,6 +1196,9 @@ func cleanupLedgerOwnedOrphans(router *api.Router, ledgerPath string) ([]string,
 	var removed []string
 	var removedArtifacts []resource.Artifact
 	for _, artifact := range artifacts {
+		if match != nil && !match(artifact) {
+			continue
+		}
 		label, err := cleanupLedgerOwnedArtifact(artifact)
 		if err != nil {
 			return removed, err
