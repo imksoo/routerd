@@ -52,6 +52,41 @@ System:
 The set is small on purpose. New kinds are added when the router gains a new
 behavior, not as a generic platform.
 
+## Top-Level Reconcile Policy
+
+The top-level `spec.reconcile` block controls how routerd behaves when one
+part of an apply fails.
+
+```yaml
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: lab-router
+spec:
+  reconcile:
+    mode: progressive
+    protectedInterfaces:
+      - mgmt
+    protectedZones:
+      - mgmt
+```
+
+- `mode: strict` is the default. routerd stops at the first apply error and
+  returns that error.
+- `mode: progressive` applies independent stages where it can, records stage
+  errors as warnings, and reports the result as `Degraded`. Destructive
+  orphan cleanup and ownership recording are skipped when a stage fails.
+- `protectedInterfaces` names interfaces that carry the management path.
+  routerd treats them as safety anchors when deciding whether to continue
+  after an error.
+- `protectedZones` names firewall zones that must keep router access open.
+  nftables rendering automatically keeps SSH open from these zones even if a
+  firewall policy forgets to list them explicitly.
+
+This does not make every host operation transactional. It gives routerd a
+clear rule: keep the management path, apply what can be applied safely, and
+leave failed data-plane work visible for the next reconcile pass.
+
 ## State And Conditions
 
 ### StatePolicy
@@ -285,6 +320,27 @@ How routerd behaves:
   picks the client implementation (currently `dhclient`).
 - `spec.required: true` means reconcile fails if no lease is acquired —
   useful when the rest of the config depends on a working WAN address.
+- `spec.useRoutes: false` tells supported renderers to ignore DHCP-provided
+  routes. `spec.useDNS: false` ignores DHCP-provided DNS servers. This is
+  useful for management interfaces that should receive an address from IPAM
+  without changing the router's default route or resolver.
+- `spec.routeMetric` sets the metric for DHCP-provided IPv4 routes when routes
+  are accepted.
+
+Management-interface example:
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4DHCPAddress
+metadata:
+  name: mgmt-dhcp4
+spec:
+  interface: mgmt
+  client: networkd
+  required: false
+  useRoutes: false
+  useDNS: false
+```
 
 ## IPv4 DHCP and DNS service
 

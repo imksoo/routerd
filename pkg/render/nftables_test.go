@@ -326,3 +326,40 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 		}
 	}
 }
+
+func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{
+			Reconcile: api.ReconcilePolicySpec{ProtectedZones: []string{"mgmt"}},
+			Resources: []api.Resource{
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+					Metadata: api.ObjectMeta{Name: "mgmt"},
+					Spec:     api.InterfaceSpec{IfName: "ens20", Managed: true, Owner: "routerd"},
+				},
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "Zone"},
+					Metadata: api.ObjectMeta{Name: "mgmt"},
+					Spec:     api.ZoneSpec{Interfaces: []string{"mgmt"}},
+				},
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
+					Metadata: api.ObjectMeta{Name: "default-home"},
+					Spec: api.FirewallPolicySpec{
+						Input:   api.FirewallChainPolicySpec{Default: "drop"},
+						Forward: api.FirewallChainPolicySpec{Default: "drop"},
+					},
+				},
+			},
+		},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, `iifname "ens20" tcp dport 22 accept`) {
+		t.Fatalf("nftables output does not keep protected mgmt SSH open:\n%s", got)
+	}
+}

@@ -54,6 +54,10 @@ type Defaults struct {
 	// DnsmasqServiceFile is the routerd-managed dnsmasq service unit
 	// (systemd) or rc.d script (FreeBSD).
 	DnsmasqServiceFile string
+	// FreeBSDDHClientConfigFile is the dhclient.conf path on FreeBSD.
+	FreeBSDDHClientConfigFile string
+	// FreeBSDDHCP6CConfigFile is the dhcp6c.conf path on FreeBSD.
+	FreeBSDDHCP6CConfigFile string
 	// NftablesFile is the routerd-managed nftables ruleset path.
 	// Empty on platforms without nftables.
 	NftablesFile string

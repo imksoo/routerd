@@ -5,6 +5,13 @@ metadata:
   name: lab-router
 
 spec:
+  reconcile:
+    mode: progressive
+    protectedInterfaces:
+      - mgmt
+    protectedZones:
+      - mgmt
+
   resources:
     - apiVersion: system.routerd.net/v1alpha1
       kind: LogSink
@@ -109,6 +116,27 @@ spec:
         interface: wan
         client: dhcpcd
         required: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: mgmt
+      spec:
+        ifname: ens20
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4DHCPAddress
+      metadata:
+        name: mgmt-dhcp4
+      spec:
+        interface: mgmt
+        client: networkd
+        required: false
+        useRoutes: false
+        useDNS: false
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: HealthCheck
@@ -273,6 +301,14 @@ spec:
         interfaces:
           - wan
           - transix
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: Zone
+      metadata:
+        name: mgmt
+      spec:
+        interfaces:
+          - mgmt
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallPolicy

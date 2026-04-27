@@ -72,6 +72,33 @@ func TestWriteFileIfChanged(t *testing.T) {
 	}
 }
 
+func TestParseFreeBSDRCConf(t *testing.T) {
+	got, err := parseFreeBSDRCConf([]byte(`# Generated
+gateway_enable="YES"
+ifconfig_vtnet2="DHCP"
+ifconfig_vtnet0_ipv6="inet6 accept_rtadv"
+`))
+	if err != nil {
+		t.Fatalf("parse rc.conf: %v", err)
+	}
+	for key, want := range map[string]string{
+		"gateway_enable":       "YES",
+		"ifconfig_vtnet2":      "DHCP",
+		"ifconfig_vtnet0_ipv6": "inet6 accept_rtadv",
+	} {
+		if got[key] != want {
+			t.Fatalf("%s = %q, want %q", key, got[key], want)
+		}
+	}
+	if ifname := freeBSDIfconfigKeyInterface("ifconfig_vtnet0_ipv6"); ifname != "vtnet0" {
+		t.Fatalf("ifconfig key interface = %q, want vtnet0", ifname)
+	}
+	ifnames := freeBSDDHCPClientIfnames([]byte("interface \"vtnet2\" {\n  ignore routers;\n};\n"))
+	if len(ifnames) != 1 || ifnames[0] != "vtnet2" {
+		t.Fatalf("dhclient ifnames = %v, want [vtnet2]", ifnames)
+	}
+}
+
 func TestReplaceManagedPPPoEBlocks(t *testing.T) {
 	current := "# existing\nold * value *\n# BEGIN routerd pppoe old\n\"u\" * \"old\" *\n# END routerd pppoe old\n"
 	got := replaceManagedPPPoEBlocks(current, []render.PPPoESecretEntry{

@@ -57,6 +57,7 @@ func configSchema() map[string]any {
 				"required":             []string{"resources"},
 				"additionalProperties": false,
 				"properties": map[string]any{
+					"reconcile": reflectedSchema(api.ReconcilePolicySpec{}),
 					"resources": map[string]any{
 						"type":  "array",
 						"items": resourceUnionSchema(),

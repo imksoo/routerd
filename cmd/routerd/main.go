@@ -39,18 +39,20 @@ const (
 var (
 	platformDefaults, platformFeatures = platform.Current()
 
-	defaultConfigPath         = platformDefaults.ConfigFile()
-	defaultPluginDir          = platformDefaults.PluginDir
-	defaultNetplanPath        = platformDefaults.NetplanFile
-	defaultDnsmasqConfigPath  = platformDefaults.DnsmasqConfigFile
-	defaultDnsmasqServicePath = platformDefaults.DnsmasqServiceFile
-	defaultNftablesPath       = platformDefaults.NftablesFile
-	defaultRouteNftablesPath  = platformDefaults.DefaultRouteNftablesFile
-	defaultTimesyncdPath      = platformDefaults.TimesyncdDropinFile
-	defaultLedgerPath         = platformDefaults.LedgerFile()
-	defaultStatePath          = platformDefaults.StateDir + "/state.json"
-	pppoeCHAPSecretsPath      = platformDefaults.PPPoEChapSecretsFile
-	pppoePAPSecretsPath       = platformDefaults.PPPoEPapSecretsFile
+	defaultConfigPath          = platformDefaults.ConfigFile()
+	defaultPluginDir           = platformDefaults.PluginDir
+	defaultNetplanPath         = platformDefaults.NetplanFile
+	defaultDnsmasqConfigPath   = platformDefaults.DnsmasqConfigFile
+	defaultDnsmasqServicePath  = platformDefaults.DnsmasqServiceFile
+	defaultFreeBSDDHClientPath = platformDefaults.FreeBSDDHClientConfigFile
+	defaultFreeBSDDHCP6CPath   = platformDefaults.FreeBSDDHCP6CConfigFile
+	defaultNftablesPath        = platformDefaults.NftablesFile
+	defaultRouteNftablesPath   = platformDefaults.DefaultRouteNftablesFile
+	defaultTimesyncdPath       = platformDefaults.TimesyncdDropinFile
+	defaultLedgerPath          = platformDefaults.LedgerFile()
+	defaultStatePath           = platformDefaults.StateDir + "/state.json"
+	pppoeCHAPSecretsPath       = platformDefaults.PPPoEChapSecretsFile
+	pppoePAPSecretsPath        = platformDefaults.PPPoEPapSecretsFile
 )
 
 func main() {
@@ -98,14 +100,61 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 func renderCommand(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("render requires a target: nixos")
+		return errors.New("render requires a target: nixos or freebsd")
 	}
 	switch args[0] {
 	case "nixos":
 		return renderNixOSCommand(args[1:], stdout)
+	case "freebsd":
+		return renderFreeBSDCommand(args[1:], stdout)
 	default:
 		return fmt.Errorf("unknown render target %q", args[0])
 	}
+}
+
+func renderFreeBSDCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("render freebsd", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", defaultConfigPath, "config path")
+	outDir := fs.String("out-dir", "", "output directory for FreeBSD generated files; writes rc.conf fragment to stdout when empty")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	if err := config.Validate(router); err != nil {
+		return err
+	}
+	data, err := render.FreeBSD(router)
+	if err != nil {
+		return err
+	}
+	if *outDir == "" {
+		_, err := stdout.Write(data.RCConf)
+		return err
+	}
+	if err := os.MkdirAll(*outDir, 0755); err != nil {
+		return err
+	}
+	files := map[string][]byte{
+		"rc.conf.d-routerd": data.RCConf,
+	}
+	if len(data.DHCP6C) > 0 {
+		files["dhcp6c.conf"] = data.DHCP6C
+	}
+	if len(data.DHCPClient) > 0 {
+		files["dhclient.conf"] = data.DHCPClient
+	}
+	for name, content := range files {
+		path := strings.TrimRight(*outDir, "/") + "/" + name
+		if err := os.WriteFile(path, content, 0644); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "wrote %s\n", path)
+	}
+	return nil
 }
 
 func renderNixOSCommand(args []string, stdout io.Writer) error {
@@ -361,6 +410,30 @@ type reconcileApplyOptions struct {
 	AnnounceDryRunToCLI bool
 }
 
+func effectiveReconcilePolicy(router *api.Router) api.ReconcilePolicySpec {
+	policy := router.Spec.Reconcile
+	if policy.Mode == "" {
+		policy.Mode = "strict"
+	}
+	policy.ProtectedInterfaces = compactStringList(policy.ProtectedInterfaces)
+	policy.ProtectedZones = compactStringList(policy.ProtectedZones)
+	return policy
+}
+
+func compactStringList(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.Writer, logger *eventlog.Logger) (*reconcile.Result, error) {
 	stateStore, err := routerstate.Load(defaultString(opts.StatePath, defaultStatePath))
 	if err != nil {
@@ -387,100 +460,192 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if err := stateStore.Save(defaultString(opts.StatePath, defaultStatePath)); err != nil {
 			return nil, err
 		}
-		netplanData, err := render.Netplan(effectiveRouter)
-		if err != nil {
-			return nil, err
-		}
-		if isNixOSHost() {
-			netplanData = nil
-		}
-		networkdFiles, err := render.NetworkdDropins(effectiveRouter)
-		if err != nil {
-			return nil, err
-		}
-		dnsmasqConfig, err := render.DnsmasqConfig(effectiveRouter, render.DnsmasqRuntime{
-			DHCPv4DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
-			DHCPv6DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
-			IPv6AddressesByInterface:    observedIPv6AddressesByInterface(effectiveRouter),
-			IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(effectiveRouter),
-		})
-		if err != nil {
-			return nil, err
-		}
-		nftablesConfig, err := render.NftablesIPv4SourceNAT(effectiveRouter)
-		if err != nil {
-			return nil, err
-		}
-		timesyncdConfig, err := render.TimesyncdConfig(effectiveRouter)
-		if err != nil {
-			return nil, err
-		}
-		if isNixOSHost() {
-			timesyncdConfig = nil
-		}
 		logger.Emit(eventlog.LevelInfo, "reconcile", "routerd plan completed", map[string]string{
 			"phase":     result.Phase,
 			"resources": fmt.Sprintf("%d", len(result.Resources)),
 		})
-		networkChangedFiles, err := applyNetworkConfig(opts.NetplanPath, netplanData, networkdFiles)
-		if err != nil {
+		if platformDefaults.OS == platform.OSFreeBSD {
+			return runFreeBSDReconcileOnce(effectiveRouter, opts, stdout, logger, engine, result)
+		}
+		policy := effectiveReconcilePolicy(effectiveRouter)
+		protectedCritical := len(policy.ProtectedInterfaces) > 0 || len(policy.ProtectedZones) > 0
+		var applyErrors []string
+		recordStageError := func(stage string, err error) error {
+			if err == nil {
+				return nil
+			}
+			msg := fmt.Sprintf("%s: %v", stage, err)
+			result.Warnings = append(result.Warnings, msg)
+			applyErrors = append(applyErrors, msg)
+			logger.Emit(eventlog.LevelError, "reconcile", "routerd apply stage failed", map[string]string{"stage": stage, "error": err.Error()})
+			if policy.Mode != "progressive" {
+				return fmt.Errorf("%s: %w", stage, err)
+			}
+			return nil
+		}
+
+		var networkChangedFiles []string
+		if err := recordStageError("network", func() error {
+			netplanData, err := render.Netplan(effectiveRouter)
+			if err != nil {
+				return err
+			}
+			if isNixOSHost() {
+				netplanData = nil
+			}
+			networkdFiles, err := render.NetworkdDropins(effectiveRouter)
+			if err != nil {
+				return err
+			}
+			networkChangedFiles, err = applyNetworkConfig(opts.NetplanPath, netplanData, networkdFiles)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		appliedIPv6DelegatedAddresses, err := applyIPv6DelegatedAddresses(effectiveRouter)
-		if err != nil {
+
+		var nftablesChangedFiles []string
+		if err := recordStageError("nftables", func() error {
+			nftablesConfig, err := render.NftablesIPv4SourceNAT(effectiveRouter)
+			if err != nil {
+				return err
+			}
+			nftablesChangedFiles, err = applyNftablesConfig(opts.NftablesPath, nftablesConfig)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		dnsmasqChangedFiles, err := applyDnsmasqConfig(opts.DnsmasqConfigPath, opts.DnsmasqServicePath, dnsmasqConfig)
-		if err != nil {
+
+		var appliedIPv6DelegatedAddresses []string
+		if err := recordStageError("ipv6-delegated-address", func() error {
+			var err error
+			appliedIPv6DelegatedAddresses, err = applyIPv6DelegatedAddresses(effectiveRouter)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		nftablesChangedFiles, err := applyNftablesConfig(opts.NftablesPath, nftablesConfig)
-		if err != nil {
+
+		var dnsmasqChangedFiles []string
+		if err := recordStageError("dnsmasq", func() error {
+			dnsmasqConfig, err := render.DnsmasqConfig(effectiveRouter, render.DnsmasqRuntime{
+				DHCPv4DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
+				DHCPv6DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
+				IPv6AddressesByInterface:    observedIPv6AddressesByInterface(effectiveRouter),
+				IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(effectiveRouter),
+			})
+			if err != nil {
+				return err
+			}
+			dnsmasqChangedFiles, err = applyDnsmasqConfig(opts.DnsmasqConfigPath, opts.DnsmasqServicePath, dnsmasqConfig)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		pppoeChangedFiles, err := applyPPPoEConfig(effectiveRouter)
-		if err != nil {
+
+		var pppoeChangedFiles []string
+		if err := recordStageError("pppoe", func() error {
+			var err error
+			pppoeChangedFiles, err = applyPPPoEConfig(effectiveRouter)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		timesyncdChangedFiles, err := applyTimesyncdConfig(defaultTimesyncdPath, timesyncdConfig)
-		if err != nil {
+
+		var timesyncdChangedFiles []string
+		if err := recordStageError("timesyncd", func() error {
+			timesyncdConfig, err := render.TimesyncdConfig(effectiveRouter)
+			if err != nil {
+				return err
+			}
+			if isNixOSHost() {
+				timesyncdConfig = nil
+			}
+			timesyncdChangedFiles, err = applyTimesyncdConfig(defaultTimesyncdPath, timesyncdConfig)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		appliedTunnels, err := applyDSLiteTunnels(effectiveRouter)
-		if err != nil {
+
+		var appliedTunnels []string
+		if err := recordStageError("ds-lite", func() error {
+			var err error
+			appliedTunnels, err = applyDSLiteTunnels(effectiveRouter)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		appliedPolicyRoutes, err := applyIPv4PolicyRoutes(effectiveRouter)
-		if err != nil {
+
+		var appliedPolicyRoutes []string
+		if err := recordStageError("ipv4-policy-routes", func() error {
+			var err error
+			appliedPolicyRoutes, err = applyIPv4PolicyRoutes(effectiveRouter)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		appliedDefaultRoutes, err := applyIPv4DefaultRoutePolicies(effectiveRouter)
-		if err != nil {
+
+		var appliedDefaultRoutes []string
+		if err := recordStageError("ipv4-default-route-policy", func() error {
+			var err error
+			appliedDefaultRoutes, err = applyIPv4DefaultRoutePolicies(effectiveRouter)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		cleanedPolicyRules, err := cleanupIPv4ManagedFwmarkRules(effectiveRouter)
-		if err != nil {
+
+		var cleanedPolicyRules []string
+		if len(applyErrors) == 0 || !protectedCritical {
+			if err := recordStageError("ipv4-policy-rule-cleanup", func() error {
+				var err error
+				cleanedPolicyRules, err = cleanupIPv4ManagedFwmarkRules(effectiveRouter)
+				return err
+			}()); err != nil {
+				return nil, err
+			}
+		} else {
+			result.Warnings = append(result.Warnings, "skipped policy-rule cleanup because an earlier progressive apply stage failed")
+		}
+
+		var appliedRuntime []string
+		if err := recordStageError("sysctl", func() error {
+			var err error
+			appliedRuntime, err = applyRuntimeSysctls(effectiveRouter)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		appliedRuntime, err := applyRuntimeSysctls(effectiveRouter)
-		if err != nil {
+
+		var appliedReversePathFilters []string
+		if err := recordStageError("rp-filter", func() error {
+			var err error
+			appliedReversePathFilters, err = applyIPv4ReversePathFilters(effectiveRouter)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		appliedReversePathFilters, err := applyIPv4ReversePathFilters(effectiveRouter)
-		if err != nil {
+
+		var appliedHostnames []string
+		if err := recordStageError("hostname", func() error {
+			var err error
+			appliedHostnames, err = applyHostnames(effectiveRouter)
+			return err
+		}()); err != nil {
 			return nil, err
 		}
-		appliedHostnames, err := applyHostnames(effectiveRouter)
-		if err != nil {
-			return nil, err
-		}
-		cleanedLedgerOrphans, err := cleanupLedgerOwnedOrphans(effectiveRouter, opts.LedgerPath)
-		if err != nil {
-			return nil, err
-		}
-		rememberedArtifacts, err := rememberReconciledArtifacts(effectiveRouter, opts.LedgerPath)
-		if err != nil {
-			return nil, err
+
+		var cleanedLedgerOrphans []string
+		var rememberedArtifacts int
+		if len(applyErrors) == 0 {
+			var err error
+			cleanedLedgerOrphans, err = cleanupLedgerOwnedOrphans(effectiveRouter, opts.LedgerPath)
+			if err != nil {
+				return nil, err
+			}
+			rememberedArtifacts, err = rememberReconciledArtifacts(effectiveRouter, opts.LedgerPath)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			result.Warnings = append(result.Warnings, "skipped ledger orphan cleanup and ownership recording because reconcile completed with stage errors")
 		}
 		changedFiles := append(networkChangedFiles, dnsmasqChangedFiles...)
 		changedFiles = append(changedFiles, nftablesChangedFiles...)
@@ -555,11 +720,16 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			"ownedOrphansGone":    fmt.Sprintf("%d", len(cleanedLedgerOrphans)),
 			"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 		})
-		result, err = engine.Plan(router)
+		applyWarnings := append([]string{}, result.Warnings...)
+		result, err = engine.Plan(effectiveRouter)
 		if err != nil {
 			return nil, err
 		}
-		if err := appendLedgerOwnedOrphans(result, router, opts.LedgerPath); err != nil {
+		result.Warnings = append(result.Warnings, applyWarnings...)
+		if len(applyErrors) > 0 {
+			result.Phase = "Degraded"
+		}
+		if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath); err != nil {
 			return nil, err
 		}
 		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
@@ -578,6 +748,99 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		return nil, err
 	}
 	return result, nil
+}
+
+func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.Writer, logger *eventlog.Logger, engine *reconcile.Engine, result *reconcile.Result) (*reconcile.Result, error) {
+	policy := effectiveReconcilePolicy(router)
+	var applyErrors []string
+	recordStageError := func(stage string, err error) error {
+		if err == nil {
+			return nil
+		}
+		msg := fmt.Sprintf("%s: %v", stage, err)
+		result.Warnings = append(result.Warnings, msg)
+		applyErrors = append(applyErrors, msg)
+		logger.Emit(eventlog.LevelError, "reconcile", "routerd FreeBSD apply stage failed", map[string]string{"stage": stage, "error": err.Error()})
+		if policy.Mode != "progressive" {
+			return fmt.Errorf("%s: %w", stage, err)
+		}
+		return nil
+	}
+
+	var changedFreeBSD []string
+	if err := recordStageError("freebsd-network", func() error {
+		var err error
+		changedFreeBSD, err = applyFreeBSDConfig(router, defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath)
+		return err
+	}()); err != nil {
+		return nil, err
+	}
+	var appliedRuntime []string
+	if err := recordStageError("sysctl", func() error {
+		var err error
+		appliedRuntime, err = applyRuntimeSysctls(router)
+		return err
+	}()); err != nil {
+		return nil, err
+	}
+	var appliedHostnames []string
+	if err := recordStageError("hostname", func() error {
+		var err error
+		appliedHostnames, err = applyHostnames(router)
+		return err
+	}()); err != nil {
+		return nil, err
+	}
+
+	for _, item := range changedFreeBSD {
+		fmt.Fprintf(stdout, "applied FreeBSD network configuration %s\n", item)
+	}
+	for _, key := range appliedRuntime {
+		fmt.Fprintf(stdout, "applied sysctl %s\n", key)
+	}
+	for _, hostname := range appliedHostnames {
+		fmt.Fprintf(stdout, "applied hostname %s\n", hostname)
+	}
+	if len(changedFreeBSD) == 0 && len(appliedRuntime) == 0 && len(appliedHostnames) == 0 {
+		fmt.Fprintln(stdout, "FreeBSD configuration already up to date")
+	}
+
+	var rememberedArtifacts int
+	if len(applyErrors) == 0 {
+		var err error
+		rememberedArtifacts, err = rememberReconciledArtifacts(router, opts.LedgerPath)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		result.Warnings = append(result.Warnings, "skipped ownership recording because FreeBSD reconcile completed with stage errors")
+	}
+	if rememberedArtifacts > 0 {
+		fmt.Fprintf(stdout, "remembered %d owned artifacts\n", rememberedArtifacts)
+	}
+
+	applyWarnings := append([]string{}, result.Warnings...)
+	next, err := engine.Plan(router)
+	if err != nil {
+		return nil, err
+	}
+	next.Warnings = append(next.Warnings, applyWarnings...)
+	if len(applyErrors) > 0 {
+		next.Phase = "Degraded"
+	}
+	if err := appendLedgerOwnedOrphans(next, router, opts.LedgerPath); err != nil {
+		return nil, err
+	}
+	if err := writeResult(stdout, opts.StatusFile, next); err != nil {
+		return nil, err
+	}
+	logger.Emit(eventlog.LevelInfo, "reconcile", "routerd FreeBSD changes applied", map[string]string{
+		"freebsdChanges":      fmt.Sprintf("%d", len(changedFreeBSD)),
+		"runtimeSysctls":      fmt.Sprintf("%d", len(appliedRuntime)),
+		"hostnames":           fmt.Sprintf("%d", len(appliedHostnames)),
+		"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
+	})
+	return next, nil
 }
 
 type stateChange struct {
@@ -1352,6 +1615,15 @@ func applyHostnames(router *api.Router) ([]string, error) {
 		return nil, nil
 	}
 	if err := runLogged("hostnamectl", "set-hostname", hostname); err != nil {
+		if platformDefaults.OS == platform.OSFreeBSD {
+			if err := runLogged("sysrc", "hostname="+hostname); err != nil {
+				return nil, err
+			}
+			if fallbackErr := runLogged("hostname", hostname); fallbackErr != nil {
+				return nil, fallbackErr
+			}
+			return []string{hostname}, nil
+		}
 		if !isNixOSHost() {
 			return nil, err
 		}
@@ -1450,6 +1722,131 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 	return changedFiles, nil
 }
 
+func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath string) ([]string, error) {
+	data, err := render.FreeBSD(router)
+	if err != nil {
+		return nil, err
+	}
+	rcValues, err := parseFreeBSDRCConf(data.RCConf)
+	if err != nil {
+		return nil, err
+	}
+	var changed []string
+	var restartIfnames []string
+	for _, key := range sortedStringMapKeys(rcValues) {
+		value := rcValues[key]
+		currentOut, err := exec.Command("sysrc", "-n", key).CombinedOutput()
+		if err == nil && strings.TrimSpace(string(currentOut)) == value {
+			continue
+		}
+		if err := runLogged("sysrc", key+"="+value); err != nil {
+			return changed, err
+		}
+		changed = append(changed, "sysrc:"+key)
+		if ifname := freeBSDIfconfigKeyInterface(key); ifname != "" {
+			restartIfnames = append(restartIfnames, ifname)
+		}
+	}
+	if len(data.DHCPClient) > 0 && dhclientPath != "" {
+		fileChanged, err := writeFileIfChanged(dhclientPath, data.DHCPClient, 0644)
+		if err != nil {
+			return changed, err
+		}
+		if fileChanged {
+			changed = append(changed, dhclientPath)
+			restartIfnames = append(restartIfnames, freeBSDDHCPClientIfnames(data.DHCPClient)...)
+		}
+	}
+	if len(data.DHCP6C) > 0 && dhcp6cPath != "" {
+		fileChanged, err := writeFileIfChanged(dhcp6cPath, data.DHCP6C, 0644)
+		if err != nil {
+			return changed, err
+		}
+		if fileChanged {
+			changed = append(changed, dhcp6cPath)
+		}
+		if (fileChanged || rcValues["dhcp6c_enable"] == "YES") && freeBSDServiceExists("dhcp6c") {
+			if err := runLogged("service", "dhcp6c", "restart"); err != nil {
+				return changed, err
+			}
+			changed = append(changed, "service:dhcp6c")
+		}
+	}
+	for _, ifname := range compactStringList(restartIfnames) {
+		if err := runLogged("service", "netif", "restart", ifname); err != nil {
+			return changed, err
+		}
+		changed = append(changed, "netif:"+ifname)
+	}
+	return changed, nil
+}
+
+func freeBSDServiceExists(name string) bool {
+	out, err := exec.Command("service", "-l").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == name {
+			return true
+		}
+	}
+	return false
+}
+
+func parseFreeBSDRCConf(data []byte) (map[string]string, error) {
+	values := map[string]string{}
+	for lineNo, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid rc.conf line %d: %q", lineNo+1, raw)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"`)
+		if key == "" {
+			return nil, fmt.Errorf("invalid rc.conf line %d: empty key", lineNo+1)
+		}
+		values[key] = value
+	}
+	return values, nil
+}
+
+func freeBSDIfconfigKeyInterface(key string) string {
+	if !strings.HasPrefix(key, "ifconfig_") {
+		return ""
+	}
+	name := strings.TrimPrefix(key, "ifconfig_")
+	return strings.TrimSuffix(name, "_ipv6")
+}
+
+func freeBSDDHCPClientIfnames(data []byte) []string {
+	var ifnames []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "interface ") {
+			continue
+		}
+		name := strings.TrimSpace(strings.TrimPrefix(line, "interface "))
+		name = strings.TrimSuffix(name, "{")
+		name = strings.Trim(strings.TrimSpace(name), `"`)
+		ifnames = append(ifnames, name)
+	}
+	return ifnames
+}
+
+func sortedStringMapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func applyNftablesConfig(path string, data []byte) ([]string, error) {
 	managedTables := []struct {
 		family string
@@ -1496,6 +1893,9 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 	changed, err := writeFileIfChanged(path, data, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("write nftables config %s: %w", path, err)
+	}
+	if err := runLogged("nft", "-c", "-f", path); err != nil {
+		return nil, fmt.Errorf("validate nftables config %s: %w", path, err)
 	}
 	natMissing := bytes.Contains(data, []byte("table ip routerd_nat")) && exec.Command("nft", "list", "table", "ip", "routerd_nat").Run() != nil
 	policyMissing := bytes.Contains(data, []byte("table ip routerd_policy")) && exec.Command("nft", "list", "table", "ip", "routerd_policy").Run() != nil

@@ -45,19 +45,19 @@ parity that the code does not yet provide.
 - An rc.d script at `contrib/freebsd/routerd` is installed via
   `make install-rc-freebsd` (selected automatically by `make
   install-service` when `uname -s` is `FreeBSD`).
+- `routerd render freebsd` emits rc.conf values, dhclient.conf, and
+  dhcp6c.conf. Runtime reconcile can apply this limited set with `sysrc`,
+  `service netif`, and `service dhcp6c`.
 - Not yet implemented for FreeBSD:
   - pf renderer to replace nftables for source NAT and firewall.
-  - rc.conf / `ifconfig`-based interface renderer to replace netplan
-    and systemd-networkd.
   - mpd5 or native FreeBSD PPPoE wiring (Linux uses pppd / rp-pppoe).
   - dnsmasq orchestration via `service` instead of `systemctl`.
-  - IPv6 prefix delegation via `rtsold` / `rtadvd` instead of
-    systemd-networkd.
+  - router advertisement service orchestration with `rtadvd`.
 
-Until those land, `routerd reconcile` on FreeBSD will validate, plan,
-and dry-run, but will refuse or no-op for resource kinds that depend on
-Linux-only host integrations. Use `routerd validate` and `routerd plan
---dry-run` to test configurations on FreeBSD today.
+Until those land, `routerd reconcile` on FreeBSD only applies the supported
+host pieces above plus runtime sysctl and hostname. Resource kinds that
+depend on Linux-only host integrations are left for later platform-specific
+renderers.
 
 ## How the platform is selected
 

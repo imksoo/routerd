@@ -37,6 +37,50 @@ objects carry an owner reference, finalizers handle pre-deletion cleanup,
 and field ownership records who manages a field. routerd has no API server,
 so the ownership model lives in the reconciler and in a JSON file on disk.
 
+## Apply Failure Model
+
+routerd deliberately avoids promising a single all-or-nothing transaction for
+every host operation. Linux routing tables, DHCP leases, nftables state,
+systemd units, and FreeBSD rc.conf files do not share one common transaction
+manager. Pretending otherwise would make failure handling harder to reason
+about.
+
+Instead, routerd uses three plain concepts:
+
+- **Current apply**: the work attempted by one reconcile pass.
+- **Ownership ledger**: the local record of artifacts routerd has created or
+  adopted.
+- **Protected management path**: interfaces or firewall zones that must remain
+  usable for SSH or the local control API.
+
+The top-level `spec.reconcile` policy chooses how strict an apply should be:
+
+```yaml
+spec:
+  reconcile:
+    mode: progressive
+    protectedInterfaces:
+      - mgmt
+    protectedZones:
+      - mgmt
+```
+
+`mode: strict` stops on the first apply error. `mode: progressive` keeps
+independent stages moving when it can, records failed stages as warnings, and
+marks the result as `Degraded`. If any stage fails, routerd skips destructive
+orphan cleanup and skips recording new ownership in the ledger. This prevents
+a partial apply from being mistaken for a clean committed generation.
+
+Protected interfaces and zones are safety anchors. They do not mean "never
+touch this interface". They mean routerd must not casually remove or block
+the path the operator uses to repair the router. Firewall rendering always
+keeps SSH open from protected zones. Future cleanup and rollback code must
+treat protected artifacts as preserve-first.
+
+For operators, the rule is simple: keep management access, apply safe
+independent changes, and leave failed data-plane work visible for the next
+plan or reconcile.
+
 ## Artifact intents
 
 An intent is the bridge between a YAML resource and the host:
@@ -153,7 +197,7 @@ intent.
 | `Interface` | Linux link |
 | `PPPoEInterface` | PPP interface, routerd PPPoE systemd unit, PPP secret files |
 | `IPv4StaticAddress` | Linux IPv4 address |
-| `IPv4DHCPAddress` | DHCPv4 client binding |
+| `IPv4DHCPAddress` | DHCPv4 client binding and renderer-specific route/DNS adoption settings |
 | `IPv4DHCPServer` | dnsmasq config and service |
 | `IPv4DHCPScope` | dnsmasq DHCPv4 scope |
 | `IPv6DHCPAddress` | DHCPv6 client binding |

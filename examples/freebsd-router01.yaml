@@ -1,0 +1,131 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: router01
+
+spec:
+  reconcile:
+    mode: progressive
+    protectedInterfaces:
+      - mgmt
+
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Hostname
+      metadata:
+        name: system-hostname
+      spec:
+        hostname: router01.lain.local
+        managed: true
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv4-forwarding
+      spec:
+        key: net.inet.ip.forwarding
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv6-forwarding
+      spec:
+        key: net.inet6.ip6.forwarding
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: vtnet0
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4DHCPAddress
+      metadata:
+        name: wan-dhcp4
+      spec:
+        interface: wan
+        client: dhclient
+        required: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: mgmt
+      spec:
+        ifname: vtnet2
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4DHCPAddress
+      metadata:
+        name: mgmt-dhcp4
+      spec:
+        interface: mgmt
+        client: dhclient
+        required: false
+        useRoutes: false
+        useDNS: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DHCPAddress
+      metadata:
+        name: wan-dhcp6
+      spec:
+        interface: wan
+        client: dhcp6c
+        required: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6PrefixDelegation
+      metadata:
+        name: wan-pd
+      spec:
+        interface: wan
+        client: dhcp6c
+        profile: ntt-hgw-lan-pd
+        prefixLength: 60
+        required: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: vtnet1
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-ipv4
+      spec:
+        interface: lan
+        address: 192.168.160.1/24
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: lan-ipv6-pd-address
+      spec:
+        prefixDelegation: wan-pd
+        interface: lan
+        subnetID: "0"
+        addressSuffix: "::1"
+        sendRA: false
+        announce: true

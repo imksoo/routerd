@@ -10,6 +10,12 @@ type LogSinkSpec struct {
 	Plugin   LogSinkPluginSpec `yaml:"plugin,omitempty" json:"plugin,omitempty"`
 }
 
+type ReconcilePolicySpec struct {
+	Mode                string   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=strict,enum=progressive"`
+	ProtectedInterfaces []string `yaml:"protectedInterfaces,omitempty" json:"protectedInterfaces,omitempty"`
+	ProtectedZones      []string `yaml:"protectedZones,omitempty" json:"protectedZones,omitempty"`
+}
+
 type LogSinkSyslogSpec struct {
 	Network  string `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=,enum=unix,enum=unixgram,enum=tcp,enum=udp"`
 	Address  string `yaml:"address,omitempty" json:"address,omitempty"`
@@ -109,9 +115,12 @@ type IPv4StaticAddressSpec struct {
 }
 
 type IPv4DHCPAddressSpec struct {
-	Interface string `yaml:"interface" json:"interface"`
-	Client    string `yaml:"client,omitempty" json:"client,omitempty"`
-	Required  bool   `yaml:"required,omitempty" json:"required,omitempty"`
+	Interface   string `yaml:"interface" json:"interface"`
+	Client      string `yaml:"client,omitempty" json:"client,omitempty"`
+	Required    bool   `yaml:"required,omitempty" json:"required,omitempty"`
+	UseRoutes   *bool  `yaml:"useRoutes,omitempty" json:"useRoutes,omitempty"`
+	UseDNS      *bool  `yaml:"useDNS,omitempty" json:"useDNS,omitempty"`
+	RouteMetric int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
 }
 
 type IPv4DHCPServerSpec struct {

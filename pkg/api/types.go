@@ -22,7 +22,8 @@ type Router struct {
 }
 
 type RouterSpec struct {
-	Resources []Resource `yaml:"resources" json:"resources"`
+	Reconcile ReconcilePolicySpec `yaml:"reconcile,omitempty" json:"reconcile,omitempty"`
+	Resources []Resource          `yaml:"resources" json:"resources"`
 }
 
 type Resource struct {

@@ -27,6 +27,32 @@
     "spec": {
       "additionalProperties": false,
       "properties": {
+        "reconcile": {
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": [
+                "",
+                "strict",
+                "progressive"
+              ],
+              "type": "string"
+            },
+            "protectedInterfaces": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "protectedZones": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "resources": {
           "items": {
             "oneOf": [
@@ -695,6 +721,16 @@
                         "type": "string"
                       },
                       "required": {
+                        "type": "boolean"
+                      },
+                      "routeMetric": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "useDNS": {
+                        "type": "boolean"
+                      },
+                      "useRoutes": {
                         "type": "boolean"
                       }
                     },

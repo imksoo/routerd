@@ -11,13 +11,16 @@ import (
 )
 
 type nixOSInterface struct {
-	Name      string
-	IfName    string
-	AdminUp   bool
-	DHCP4     bool
-	DHCP6     bool
-	AcceptRA  bool
-	Addresses []string
+	Name             string
+	IfName           string
+	AdminUp          bool
+	DHCP4            bool
+	DHCP4UseRoutes   *bool
+	DHCP4UseDNS      *bool
+	DHCP4RouteMetric int
+	DHCP6            bool
+	AcceptRA         bool
+	Addresses        []string
 }
 
 func NixOSModule(router *api.Router) ([]byte, error) {
@@ -206,6 +209,9 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 			}
 			if iface := interfaces[spec.Interface]; iface != nil {
 				iface.DHCP4 = true
+				iface.DHCP4UseRoutes = spec.UseRoutes
+				iface.DHCP4UseDNS = spec.UseDNS
+				iface.DHCP4RouteMetric = spec.RouteMetric
 			}
 		case "IPv6DHCPAddress":
 			spec, err := res.IPv6DHCPAddressSpec()
@@ -267,6 +273,19 @@ func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 			buf.WriteString("      " + nixString(address) + "\n")
 		}
 		buf.WriteString("    ];\n")
+	}
+	if iface.DHCP4UseRoutes != nil || iface.DHCP4UseDNS != nil || iface.DHCP4RouteMetric != 0 {
+		buf.WriteString("    dhcpV4Config = {\n")
+		if iface.DHCP4UseRoutes != nil {
+			buf.WriteString("      UseRoutes = " + nixBool(*iface.DHCP4UseRoutes) + ";\n")
+		}
+		if iface.DHCP4UseDNS != nil {
+			buf.WriteString("      UseDNS = " + nixBool(*iface.DHCP4UseDNS) + ";\n")
+		}
+		if iface.DHCP4RouteMetric != 0 {
+			buf.WriteString("      RouteMetric = " + strconv.Itoa(iface.DHCP4RouteMetric) + ";\n")
+		}
+		buf.WriteString("    };\n")
 	}
 	if iface.AdminUp || len(iface.Addresses) == 0 {
 		required := "no"

@@ -38,6 +38,31 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 
 種類は意識的に絞っています。汎用プラットフォームではなく、ルータとして新しい振る舞いが必要になったときだけ種類を増やします。
 
+## 反映方針
+
+トップレベルの `spec.reconcile` は、反映中に一部が失敗したときの動きを決めます。
+
+```yaml
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: lab-router
+spec:
+  reconcile:
+    mode: progressive
+    protectedInterfaces:
+      - mgmt
+    protectedZones:
+      - mgmt
+```
+
+- `mode: strict` が既定値です。どこかで反映に失敗したら、そこで止まってエラーを返します。
+- `mode: progressive` は、独立して進められる反映段階をできるだけ続けます。失敗した段階は警告として残し、全体の結果は `Degraded` になります。途中で失敗した場合、残置物の削除と所有台帳への記録は行いません。
+- `protectedInterfaces` は、管理経路を運ぶインターフェースを指定します。routerd は、失敗後に処理を続けてよいか判断するとき、このインターフェースを安全上の支点として扱います。
+- `protectedZones` は、ルータ自身へのアクセスを残すべきファイアウォールゾーンを指定します。nftables の出力では、ファイアウォールポリシーに明示し忘れても、このゾーンからの SSH を開けます。
+
+これは、ホスト上のすべての操作を完全な一括取引にする仕組みではありません。routerd に「管理経路は残す」「安全に進められるものは進める」「失敗したデータ転送側の作業は次回の反映で見える状態に残す」という明確な規則を与えるためのものです。
+
 ## 状態と条件
 
 ### StatePolicy
@@ -234,6 +259,23 @@ spec:
 
 - `interface` 上の DHCPv4 クライアントを routerd が管理します。`spec.client` でクライアント実装を選びます（現状は `dhclient`）。
 - `spec.required: true` のとき、リースが取れない場合は反映が失敗します。WAN アドレスの取得を前提に他の設定が成り立つ場合に有効です。
+- `spec.useRoutes: false` を指定すると、対応している出力先では DHCP で配られた経路を使いません。`spec.useDNS: false` は DHCP で配られた DNS サーバーを使いません。管理用インターフェースで、IPAM からアドレスだけを受け取り、デフォルト経路やリゾルバーを変えたくない場合に使います。
+- `spec.routeMetric` は、DHCP で配られた IPv4 経路を使う場合のメトリックを指定します。
+
+管理用インターフェースの例:
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4DHCPAddress
+metadata:
+  name: mgmt-dhcp4
+spec:
+  interface: mgmt
+  client: networkd
+  required: false
+  useRoutes: false
+  useDNS: false
+```
 
 ## IPv4 DHCP と DNS の提供
 

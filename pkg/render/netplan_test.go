@@ -99,3 +99,40 @@ func TestNetplanEnablesIPv6LinkLocalForDelegatedAddress(t *testing.T) {
 		t.Fatalf("netplan output does not enable IPv6 link-local:\n%s", got)
 	}
 }
+
+func TestNetplanRendersDHCPv4Overrides(t *testing.T) {
+	disabled := false
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "mgmt"},
+				Spec:     api.InterfaceSpec{IfName: "ens20", Managed: true, Owner: "routerd", AdminUp: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPAddress"},
+				Metadata: api.ObjectMeta{Name: "mgmt-dhcp4"},
+				Spec:     api.IPv4DHCPAddressSpec{Interface: "mgmt", Client: "networkd", UseRoutes: &disabled, UseDNS: &disabled, RouteMetric: 900},
+			},
+		}},
+	}
+	data, err := Netplan(router)
+	if err != nil {
+		t.Fatalf("render netplan: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"ens20:",
+		"dhcp4: true",
+		"dhcp4-overrides:",
+		"use-routes: false",
+		"use-dns: false",
+		"route-metric: 900",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("netplan output missing %q:\n%s", want, got)
+		}
+	}
+}

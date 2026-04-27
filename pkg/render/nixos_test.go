@@ -60,6 +60,16 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
 			},
 			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "mgmt"},
+				Spec:     api.InterfaceSpec{IfName: "ens20", Managed: true, Owner: "routerd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPAddress"},
+				Metadata: api.ObjectMeta{Name: "mgmt-dhcp4"},
+				Spec:     api.IPv4DHCPAddressSpec{Interface: "mgmt", UseRoutes: &disabled, UseDNS: &disabled, RouteMetric: 900},
+			},
+			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
 				Metadata: api.ObjectMeta{Name: "lan-nat"},
 				Spec: api.IPv4SourceNATSpec{
@@ -94,6 +104,11 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`IPv6AcceptRA = true;`,
 		`systemd.network.networks."10-netplan-ens19"`,
 		`LinkLocalAddressing = "no";`,
+		`systemd.network.networks."10-netplan-ens20"`,
+		`DHCP = "ipv4";`,
+		`UseRoutes = false;`,
+		`UseDNS = false;`,
+		`RouteMetric = 900;`,
 		`users.users.nwadmin`,
 		`initialPassword = "nwadmin";`,
 		`security.sudo.wheelNeedsPassword = false;`,

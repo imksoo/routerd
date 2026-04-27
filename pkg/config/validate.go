@@ -19,6 +19,9 @@ func Validate(router *api.Router) error {
 	if router.Metadata.Name == "" {
 		return fmt.Errorf("router metadata.name is required")
 	}
+	if err := validateReconcilePolicy(router.Spec.Reconcile); err != nil {
+		return err
+	}
 
 	seen := map[string]bool{}
 	baseInterfaces := map[string]bool{}
@@ -111,6 +114,16 @@ func Validate(router *api.Router) error {
 		}
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "Zone" {
 			zones[res.Metadata.Name] = true
+		}
+	}
+	for i, name := range router.Spec.Reconcile.ProtectedInterfaces {
+		if !interfaces[name] {
+			return fmt.Errorf("spec.reconcile.protectedInterfaces[%d] references missing Interface %q", i, name)
+		}
+	}
+	for i, name := range router.Spec.Reconcile.ProtectedZones {
+		if !zones[name] {
+			return fmt.Errorf("spec.reconcile.protectedZones[%d] references missing Zone %q", i, name)
 		}
 	}
 
@@ -354,6 +367,25 @@ func Validate(router *api.Router) error {
 			if spec.ViaInterface != "" && !interfaces[spec.ViaInterface] && !dsliteTunnels[spec.ViaInterface] {
 				return fmt.Errorf("%s spec.viaInterface references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.ViaInterface)
 			}
+		}
+	}
+	return nil
+}
+
+func validateReconcilePolicy(spec api.ReconcilePolicySpec) error {
+	switch spec.Mode {
+	case "", "strict", "progressive":
+	default:
+		return fmt.Errorf("spec.reconcile.mode must be strict or progressive")
+	}
+	for _, name := range spec.ProtectedInterfaces {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("spec.reconcile.protectedInterfaces must not contain empty names")
+		}
+	}
+	for _, name := range spec.ProtectedZones {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("spec.reconcile.protectedZones must not contain empty names")
 		}
 	}
 	return nil
