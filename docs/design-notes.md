@@ -54,6 +54,10 @@ Current groundwork:
 - For systemd-networkd, routerd records IAID/DUID material when it can be
   observed from networkd runtime files. For NTT profiles it also records the
   expected link-layer DUID derived from the uplink MAC address.
+- For FreeBSD `dhcp6c`, routerd records IAID from configuration and DUID from
+  `/var/db/dhcp6c_duid`. This matters because a home gateway may treat a
+  remembered DUID/IAID pair as an existing lease that should be renewed rather
+  than a new client that should receive a fresh lease.
 - For FreeBSD, routerd observes the delegated prefix from addresses that KAME
   `dhcp6c` has already placed on the downstream interface, then adds the
   configured stable suffix address as a secondary address.

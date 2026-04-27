@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -967,7 +969,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		if ifname := aliases[spec.Interface]; ifname != "" {
 			changes = append(changes, stateChange{Name: base + ".uplinkIfname", Value: store.Set(base+".uplinkIfname", ifname, res.ID()+": observed uplink interface")})
-			for _, change := range observedPrefixDelegationIdentityState(base, ifname, defaultString(spec.Client, "networkd"), defaultString(spec.Profile, "default"), store, res.ID()) {
+			for _, change := range observedPrefixDelegationIdentityState(base, ifname, defaultString(spec.Client, "networkd"), defaultString(spec.Profile, "default"), spec.IAID, store, res.ID()) {
 				changes = append(changes, change)
 			}
 		}
@@ -1039,12 +1041,17 @@ func retainCurrentPrefixDuringConvergence(current routerstate.Value, timeout tim
 	return current.Value, true
 }
 
-func observedPrefixDelegationIdentityState(base, ifname, client, profile string, store *routerstate.Store, owner string) []stateChange {
+func observedPrefixDelegationIdentityState(base, ifname, client, profile, configuredIAID string, store *routerstate.Store, owner string) []stateChange {
 	var changes []stateChange
-	if client != "networkd" {
+	var identity dhcpIdentity
+	switch client {
+	case "networkd":
+		identity = observeNetworkdDHCPIdentity(ifname)
+	case "dhcp6c":
+		identity = observeFreeBSDDHCP6CIdentity(configuredIAID)
+	default:
 		return changes
 	}
-	identity := observeNetworkdDHCPIdentity(ifname)
 	if identity.IAID != "" {
 		changes = append(changes, stateChange{Name: base + ".iaid", Value: store.Set(base+".iaid", identity.IAID, owner+": observed DHCP IAID")})
 	}
@@ -1088,6 +1095,83 @@ func observeNetworkdDHCPIdentity(ifname string) dhcpIdentity {
 		}
 	}
 	return identity
+}
+
+func observeFreeBSDDHCP6CIdentity(configuredIAID string) dhcpIdentity {
+	identity := dhcpIdentity{IAID: configuredOrDefaultDHCP6CIAID(configuredIAID)}
+	data, err := os.ReadFile("/var/db/dhcp6c_duid")
+	if err != nil || len(data) == 0 {
+		if identity.IAID != "" {
+			identity.Source = "configured-iaid"
+		}
+		return identity
+	}
+	duid := freeBSDDHCP6CDUIDPayload(data)
+	if len(duid) == 0 {
+		return identity
+	}
+	identity.DUID = hex.EncodeToString(duid)
+	identity.DUIDText = colonHex(duid)
+	identity.Source = "dhcp6c-duid-file"
+	return identity
+}
+
+func configuredOrDefaultDHCP6CIAID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "0"
+	}
+	parsed, ok := parseUint32Flexible(value)
+	if !ok {
+		return value
+	}
+	return strconv.FormatUint(uint64(parsed), 10)
+}
+
+func parseUint32Flexible(value string) (uint32, bool) {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return 0, false
+	}
+	base := 10
+	if strings.HasPrefix(value, "0x") {
+		base = 16
+		value = strings.TrimPrefix(value, "0x")
+	} else if len(value) == 8 && isLowerHex(value) {
+		base = 16
+	}
+	parsed, err := strconv.ParseUint(value, base, 32)
+	if err != nil {
+		return 0, false
+	}
+	return uint32(parsed), true
+}
+
+func freeBSDDHCP6CDUIDPayload(data []byte) []byte {
+	if len(data) < 3 {
+		return data
+	}
+	lengthLE := int(binary.LittleEndian.Uint16(data[:2]))
+	lengthBE := int(binary.BigEndian.Uint16(data[:2]))
+	switch {
+	case lengthLE == len(data)-2:
+		return data[2:]
+	case lengthBE == len(data)-2:
+		return data[2:]
+	default:
+		return data
+	}
+}
+
+func colonHex(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(data))
+	for _, b := range data {
+		parts = append(parts, fmt.Sprintf("%02x", b))
+	}
+	return strings.Join(parts, ":")
 }
 
 func parseRFC4361ClientID(value string) dhcpIdentity {

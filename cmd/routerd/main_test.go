@@ -543,6 +543,19 @@ func TestRetainCurrentPrefixDuringConvergence(t *testing.T) {
 	}
 }
 
+func TestObserveFreeBSDDHCP6CIdentityPayload(t *testing.T) {
+	payload := freeBSDDHCP6CDUIDPayload([]byte{
+		0x0e, 0x00,
+		0x00, 0x01, 0x00, 0x01, 0x31, 0x82, 0x0f, 0x6f, 0xbc, 0x24, 0x11, 0xe3, 0xc2, 0x38,
+	})
+	if got := colonHex(payload); got != "00:01:00:01:31:82:0f:6f:bc:24:11:e3:c2:38" {
+		t.Fatalf("DUID payload = %s", got)
+	}
+	if got := configuredOrDefaultDHCP6CIAID("ca53095a"); got != "3394439514" {
+		t.Fatalf("IAID = %s, want decimal conversion", got)
+	}
+}
+
 func TestParseRFC4361ClientID(t *testing.T) {
 	identity := parseRFC4361ClientID("ffca53095a0003000102005e102030")
 	if identity.IAID != "ca53095a" {

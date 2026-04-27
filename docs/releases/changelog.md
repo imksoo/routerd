@@ -26,6 +26,8 @@ behavior changes and new resource shapes as the model takes shape.
 - FreeBSD `dhcp6c` is now started with `-n`, and required restarts use SIGUSR1
   before starting the service again to avoid unnecessary DHCPv6 Release
   traffic.
+- FreeBSD DHCPv6-PD identity observation now records the configured IAID and
+  the `dhcp6c` DUID file in routerd state.
 - Resource ownership and adoption foundation: every resource kind now
   emits artifact intents, the local ownership ledger records routerd-owned
   host artifacts, `routerd adopt --candidates` reports adoption candidates

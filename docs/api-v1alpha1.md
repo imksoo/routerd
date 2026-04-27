@@ -468,15 +468,20 @@ How routerd behaves:
   This preserves enough local memory to support
   upstreams that treat a known client as an existing DHCPv6-PD lease rather
   than a fresh client.
-- For systemd-networkd clients, routerd also records the observed DHCP
+- For systemd-networkd and FreeBSD `dhcp6c` clients, routerd also records the observed DHCP
   identity when available: `ipv6PrefixDelegation.<name>.iaid`,
   `ipv6PrefixDelegation.<name>.duid`,
   `ipv6PrefixDelegation.<name>.duidText`, and
-  `ipv6PrefixDelegation.<name>.identitySource`. For NTT profiles it records
+  `ipv6PrefixDelegation.<name>.identitySource`. With `dhcp6c`, the DUID is
+  read from `/var/db/dhcp6c_duid` and the IAID is derived from the configured
+  `iaid` or the `dhcp6c` default of `0`. For NTT profiles it records
   `ipv6PrefixDelegation.<name>.expectedDUID`, derived from the uplink MAC as
   a DHCPv6 link-layer DUID. These values are state memory, not desired
   configuration; future retry logic can use them to prefer renewal-like
   behavior when a home gateway still remembers a prior lease.
+- The OS DHCPv6 client remains responsible for Renew/Rebind before the lease
+  expires. routerd should not normally restart that client during reconcile,
+  because a restart can turn a renewal path into a fresh Solicit or Release.
 - `spec.iaid` pins the DHCPv6 IAID. It may be written as decimal, `0x`
   prefixed hex, or 8 hex digits. systemd-networkd renders it as a decimal
   `IAID=` value; FreeBSD `dhcp6c` uses it as the `ia-pd` / `id-assoc pd`

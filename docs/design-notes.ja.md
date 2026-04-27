@@ -57,6 +57,10 @@ IA_PD の DHCPv6 Solicit を送り続けても Advertise / Reply を受け取れ
 - systemd-networkd では、実行時ファイルから読み取れる範囲で IAID/DUID
   の材料を記録する。NTT 系プロファイルでは、上流インターフェースの
   MAC アドレスから期待されるリンクレイヤ DUID も記録する。
+- FreeBSD の `dhcp6c` では、IAID を設定値から、DUID を
+  `/var/db/dhcp6c_duid` から記録する。ホームゲートウェイが DUID/IAID の
+  組を覚えている場合、新規クライアントではなく既存リースの更新として
+  扱わせるために重要になる。
 - FreeBSD では、KAME `dhcp6c` が下流インターフェースに設定したアドレス
   から委譲プレフィックスを観測し、その後で設定された安定サフィックスの
   アドレスを二つ目のアドレスとして追加する。
