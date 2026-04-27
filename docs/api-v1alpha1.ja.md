@@ -42,13 +42,13 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 
 ### StatePolicy
 
-`StatePolicy` は、ホストの観測結果から名前付きの状態変数を作ります。状態変数には3つの相があります。
+`StatePolicy` は、ホストの観測結果を名前付きの状態変数として記録します。各状態変数には次の 3 つのステータスがあります。
 
-- `unknown`: まだ評価していない、または観測に失敗した。
-- `unset`: 評価した結果、値がないことが分かった。
-- `set`: 評価した結果、具体的な値がある。
+- `unknown`: routerd がまだ評価していない、または観測自体に失敗している状態。
+- `unset`: 評価した結果、値が無いことが確定している状態。
+- `set`: 評価した結果、具体的な値が記録されている状態。
 
-`Set(name, "")` は `unset` として扱います。履歴を捨てて `unknown` に戻す操作は、値なしを意味する `Unset()` とは別に扱います。
+空文字を値とした `Set` 呼び出しは `unset` に正規化します。`unset`（値が無いことが確定）と `unknown`（未評価）は意味が異なるため、一度 `set` か `unset` になった変数を `unknown` に戻すには、明示的な reset / forget 操作が必要です。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -81,7 +81,7 @@ spec:
             - 2404:1a8:7f01:b::3
 ```
 
-`spec.when` を持つリソースは、条件が真のときだけ反映対象になります。通常の比較では `unknown` と `unset` は偽です。`unset` や `unknown` を条件にしたい場合だけ、`status` や `exists: false` で明示します。
+`spec.when` を指定したリソースは、その条件が真と評価されたときだけ反映対象になります。通常の比較では `unknown` と `unset` はどちらも偽として扱います。`unset` 自体を条件にしたい場合は `exists: false` を、`unknown` も含めてステータスを直接条件にしたい場合は `status` を使い、明示的に指定してください。
 
 ```yaml
 when:
@@ -92,17 +92,40 @@ when:
         - address-only
 ```
 
-状態条件で使える演算子:
+状態条件で使えるマッチ演算子:
 
-- `exists: true`: 状態が `set` のとき真。
-- `exists: false`: 状態が `unset` のとき真。`unknown` は真にしません。
-- `equals`: 状態が `set` で、値が一致するとき真。
-- `in`: 状態が `set` で、値が候補のいずれかと一致するとき真。
-- `contains`: 状態が `set` で、値が指定文字列を含むとき真。
-- `status`: `set`、`unset`、`unknown` を明示的に見る。
-- `for`: その状態または値が指定時間以上続いたとき真。
+- `exists: true`: 変数が `set` のとき真。
+- `exists: false`: 変数が `unset` のとき真。`unknown` は真になりません。
+- `equals`: 変数が `set` で、値が指定値と一致するとき真。
+- `in`: 変数が `set` で、値が候補のいずれかに一致するとき真。
+- `contains`: 変数が `set` で、値が指定した文字列を含むとき真。
+- `status`: ステータスそのもの（`set` / `unset` / `unknown`）を直接指定してマッチさせる。
+- `for`: 上記でマッチした状態または値が、指定した時間以上継続しているときに限り真。
 
-現在 `spec.when` を使えるのは、DHCP スコープ、IPv6 委譲アドレス、DS-Lite トンネル、ヘルスチェック、IPv4 NAT、IPv4 ポリシー経路セット、IPv4 デフォルト経路候補です。
+同一マッチ内で指定した複数のフィールド（`equals`、`for` など）は AND で結合し、`spec.when.state` に複数の変数を並べた場合も、すべての変数のマッチを AND で評価します。`spec.when` には OR 演算子はありません。同じ変数の値に対する OR は `in: [a, b, c]` で表現できますが、それを超える OR が必要な場合は、`StatePolicy` で合成した状態変数を経由して表現します。
+
+`StatePolicy.values` は上から順に評価され、最初にマッチしたエントリの値で `Set` されます（どれもマッチしないときは `unset`）。同じ値を記録するエントリを複数並べると、それぞれの `when` 条件の OR と等価になります。
+
+```yaml
+kind: StatePolicy
+spec:
+  variable: wan.ready
+  values:
+    - value: ready
+      when:
+        ipv6PrefixDelegation:
+          resource: wan-pd
+          available: true
+    - value: ready
+      when:
+        ipv6Address:
+          interface: wan
+          global: true
+```
+
+参照側は `when: { state: { wan.ready: { equals: ready } } }` と書けば、上のいずれかの条件が成立したときにマッチします。
+
+現時点で `spec.when` を指定できるリソースは、DHCP スコープ、IPv6 委譲アドレス、DS-Lite トンネル、ヘルスチェック、IPv4 NAT、IPv4 ポリシー経路セット、IPv4 デフォルト経路候補です。
 
 ## インターフェース
 

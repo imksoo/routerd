@@ -120,6 +120,37 @@ Supported state match operators:
 - `status`: explicitly match `set`, `unset`, or `unknown`.
 - `for`: require the matched status/value to have held for the duration.
 
+Fields within a single match (`equals`, `for`, etc.) combine with AND, and
+multiple `spec.when.state` entries also combine with AND. There is no OR
+operator in `spec.when`: `in: [a, b, c]` covers OR across the values of a
+single variable, and broader OR is expressed by deriving a synthetic state
+variable through a `StatePolicy`.
+
+`StatePolicy.values` is evaluated top to bottom, and the first matching entry
+wins; if nothing matches, the variable becomes `unset`. Two entries that
+record the same value therefore behave as OR over their `when` conditions:
+
+```yaml
+kind: StatePolicy
+spec:
+  variable: wan.ready
+  values:
+    - value: ready
+      when:
+        ipv6PrefixDelegation:
+          resource: wan-pd
+          available: true
+    - value: ready
+      when:
+        ipv6Address:
+          interface: wan
+          global: true
+```
+
+Resources can then guard themselves with
+`when: { state: { wan.ready: { equals: ready } } }`, which matches whenever
+either source condition holds.
+
 `spec.when` is currently available on DHCP scopes, IPv6 delegated addresses,
 DS-Lite tunnels, health checks, IPv4 NAT, IPv4 policy route sets, and
 IPv4 default route candidates.
