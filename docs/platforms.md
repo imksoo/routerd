@@ -67,9 +67,16 @@ parity that the code does not yet provide.
   provides the `dhcp6c` command and rc.d service used for DHCPv6-PD
   experiments.
 - The FreeBSD DHCPv6-PD renderer configures delegated prefixes through
-  `dhcp6c`. It does not yet honor `IPv6DelegatedAddress.spec.addressSuffix`
-  because the packaged KAME `dhcp6c` configuration accepts `sla-id` and
-  `sla-len` here but not the Linux-style interface identifier statement.
+  `dhcp6c`. The packaged KAME `dhcp6c` assigns the downstream interface
+  identifier itself; routerd observes that address, derives the delegated
+  prefix from it, and then adds the stable `IPv6DelegatedAddress` suffix as a
+  secondary address when the prefix is visible.
+- FreeBSD reconcile restarts `dhcp6c` only when the rendered configuration or
+  matching rc.conf values changed, or when the service is not running. This
+  avoids sending unnecessary DHCPv6 Release messages during routine
+  reconciliation. The renderer also starts `dhcp6c` with `-n`, and the
+  reconciler uses SIGUSR1 before starting it again, so required restarts avoid
+  releasing the delegated prefix when possible.
 - The FreeBSD PPPoE renderer uses `mpd5`. `PPPoEInterface` resources are
   rendered into `/usr/local/etc/mpd5/mpd.conf`, and managed sessions enable
   the `mpd5` rc.d service. Only mark the router that should actively hold a

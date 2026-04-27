@@ -34,6 +34,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		`ifconfig_vtnet1="inet 192.168.10.1/24"`,
 		`dhcp6c_enable="YES"`,
 		`dhcp6c_interfaces="vtnet0"`,
+		`dhcp6c_flags="-n"`,
 		`mpd_enable="YES"`,
 		`mpd_flags="-b"`,
 	} {

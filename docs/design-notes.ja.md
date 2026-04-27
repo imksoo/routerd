@@ -7,8 +7,7 @@
 
 参考資料:
 
-- 佐藤広生氏 FreeBSD Workshop 2017 資料:
-  <https://people.allbsd.org/~hrs/sato-FBSDW20170825.pdf>
+- [佐藤広生氏 FreeBSD Workshop 2017 資料](https://people.allbsd.org/~hrs/sato-FBSDW20170825.pdf)
 
 PR-400NE / NTT フレッツ環境の検証では、ホームゲートウェイ再起動直後に
 DHCPv6 プレフィックス委譲を受けられるホストがある一方で、別のホストは
@@ -49,9 +48,31 @@ IA_PD の DHCPv6 Solicit を送り続けても Advertise / Reply を受け取れ
   状態保存領域に `ipv6PrefixDelegation.<name>.*` として記録する。
 - 現在の下流プレフィックスが見えなくなっても、最後に見えた
   プレフィックスは残す。
+- `IPv6PrefixDelegation.spec.convergenceTimeout` は、直前まで見えていた
+  現在のプレフィックスを短時間だけ維持するための待ち時間です。OS 側の
+  DHCPv6 クライアントがプレフィックス委譲を取り直している間に、すぐ
+  「消えた」と判断しないために使います。この値は systemd-networkd や
+  KAME `dhcp6c` のパケット再送間隔とは別物です。現時点の routerd は、
+  それらのクライアント固有の再送間隔を調整しません。
 - systemd-networkd では、実行時ファイルから読み取れる範囲で IAID/DUID
   の材料を記録する。NTT 系プロファイルでは、上流インターフェースの
   MAC アドレスから期待されるリンクレイヤ DUID も記録する。
+- FreeBSD では、KAME `dhcp6c` が下流インターフェースに設定したアドレス
+  から委譲プレフィックスを観測し、その後で設定された安定サフィックスの
+  アドレスを二つ目のアドレスとして追加する。
+- FreeBSD の `dhcp6c` は `-n` 付きで起動し、必要な再起動では SIGUSR1 で
+  止めてから起動し直す。通常の停止では DHCPv6 Release を送るため、
+  ホームゲートウェイ側に古いリースが残り、クライアント側は新規 Solicit
+  に戻ってしまう状態を避けるためです。
+- PR-400NE の検証では、DHCPv6 の Advertise / Reply が UDP 宛先ポート
+  546、かつ送信元ポート 547 以外で返ることを確認した。ファイアウォール
+  方針では宛先ポート 546 を見ればよく、送信元ポート 547 を必須条件に
+  してはいけない。
+- PR-400NE の検証では、ホームゲートウェイ再起動後に複数の `/60`
+  プレフィックス委譲が同時に見える一方で、再起動前の新規 Solicit は
+  無応答に見えることがあった。当面は DUID/IAID と最後に見えた
+  プレフィックスを記録し、不要な Release を避ける。更新に近い再試行は
+  今後の別作業として扱う。
 
 この段階では、routerd が DHCPv6 Renew/Rebind パケットを自前で生成する
 わけではありません。その実装は、管理経路を落とさず、OS 側の DHCPv6

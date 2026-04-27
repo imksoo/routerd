@@ -264,6 +264,7 @@ spec:
         interface: wan
         client: networkd
         profile: ntt-hgw-lan-pd
+        convergenceTimeout: 5m
         required: false
 
     - apiVersion: net.routerd.net/v1alpha1

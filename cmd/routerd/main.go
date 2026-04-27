@@ -821,6 +821,14 @@ func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, std
 	}()); err != nil {
 		return nil, err
 	}
+	var appliedIPv6DelegatedAddresses []string
+	if err := recordStageError("ipv6-delegated-address", func() error {
+		var err error
+		appliedIPv6DelegatedAddresses, err = applyIPv6DelegatedAddresses(router)
+		return err
+	}()); err != nil {
+		return nil, err
+	}
 
 	for _, item := range changedFreeBSD {
 		fmt.Fprintf(stdout, "applied FreeBSD network configuration %s\n", item)
@@ -831,7 +839,10 @@ func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, std
 	for _, hostname := range appliedHostnames {
 		fmt.Fprintf(stdout, "applied hostname %s\n", hostname)
 	}
-	if len(changedFreeBSD) == 0 && len(appliedRuntime) == 0 && len(appliedHostnames) == 0 {
+	for _, address := range appliedIPv6DelegatedAddresses {
+		fmt.Fprintf(stdout, "applied IPv6 delegated address %s\n", address)
+	}
+	if len(changedFreeBSD) == 0 && len(appliedRuntime) == 0 && len(appliedHostnames) == 0 && len(appliedIPv6DelegatedAddresses) == 0 {
 		fmt.Fprintln(stdout, "FreeBSD configuration already up to date")
 	}
 
@@ -868,6 +879,7 @@ func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, std
 		"freebsdChanges":      fmt.Sprintf("%d", len(changedFreeBSD)),
 		"runtimeSysctls":      fmt.Sprintf("%d", len(appliedRuntime)),
 		"hostnames":           fmt.Sprintf("%d", len(appliedHostnames)),
+		"delegatedAddresses":  fmt.Sprintf("%d", len(appliedIPv6DelegatedAddresses)),
 		"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 	})
 	return next, nil
@@ -964,6 +976,10 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 		if prefixLength > 0 {
 			changes = append(changes, stateChange{Name: base + ".prefixLength", Value: store.Set(base+".prefixLength", strconv.Itoa(prefixLength), res.ID()+": configured prefix length")})
 		}
+		convergenceTimeout := effectiveIPv6PDConvergenceTimeout(defaultString(spec.Profile, "default"), spec.ConvergenceTimeout)
+		if convergenceTimeout > 0 {
+			changes = append(changes, stateChange{Name: base + ".convergenceTimeout", Value: store.Set(base+".convergenceTimeout", convergenceTimeout.String(), res.ID()+": configured convergence timeout")})
+		}
 
 		var observedPrefix, observedIfname string
 		for _, delegated := range delegatedByPD[res.Metadata.Name] {
@@ -983,6 +999,10 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 			}
 		}
 		if observedPrefix == "" {
+			if retained, ok := retainCurrentPrefixDuringConvergence(store.Get(base+".currentPrefix"), convergenceTimeout, store); ok {
+				changes = append(changes, stateChange{Name: base + ".currentPrefix", Value: store.Set(base+".currentPrefix", retained, res.ID()+": waiting for DHCPv6-PD convergence")})
+				continue
+			}
 			changes = append(changes, stateChange{Name: base + ".currentPrefix", Value: store.Unset(base+".currentPrefix", res.ID()+": no delegated prefix observable")})
 			continue
 		}
@@ -993,6 +1013,30 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 		)
 	}
 	return changes, nil
+}
+
+func effectiveIPv6PDConvergenceTimeout(profile, configured string) time.Duration {
+	if configured != "" {
+		if d, err := time.ParseDuration(configured); err == nil && d > 0 {
+			return d
+		}
+	}
+	switch profile {
+	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
+		return 5 * time.Minute
+	default:
+		return 2 * time.Minute
+	}
+}
+
+func retainCurrentPrefixDuringConvergence(current routerstate.Value, timeout time.Duration, store *routerstate.Store) (string, bool) {
+	if timeout <= 0 || current.Status != routerstate.StatusSet || current.Value == "" || current.UpdatedAt.IsZero() {
+		return "", false
+	}
+	if store.Now().Sub(current.UpdatedAt) > timeout {
+		return "", false
+	}
+	return current.Value, true
 }
 
 func observedPrefixDelegationIdentityState(base, ifname, client, profile string, store *routerstate.Store, owner string) []stateChange {
@@ -1720,6 +1764,9 @@ func observedIPv6PrefixesByInterface(router *api.Router) map[string][]string {
 }
 
 func ipv6Prefixes(ifname string) []string {
+	if platformDefaults.OS == platform.OSFreeBSD {
+		return freeBSDIPv6Prefixes(ifname)
+	}
 	out, err := exec.Command("ip", "-6", "route", "show", "dev", ifname, "proto", "kernel").CombinedOutput()
 	if err != nil {
 		return nil
@@ -1750,6 +1797,9 @@ func observedIPv6AddressesByInterface(router *api.Router) map[string][]string {
 }
 
 func ipv6Addresses(ifname string) []string {
+	if platformDefaults.OS == platform.OSFreeBSD {
+		return freeBSDIPv6Addresses(ifname)
+	}
 	out, err := exec.Command("ip", "-brief", "-6", "addr", "show", "dev", ifname).CombinedOutput()
 	if err != nil {
 		return nil
@@ -1766,6 +1816,59 @@ func ipv6Addresses(ifname string) []string {
 		}
 	}
 	return addrs
+}
+
+func freeBSDIPv6Prefixes(ifname string) []string {
+	out, err := exec.Command("ifconfig", ifname).CombinedOutput()
+	if err != nil {
+		return nil
+	}
+	prefixes, _ := parseFreeBSDIfconfigIPv6(string(out))
+	return prefixes
+}
+
+func freeBSDIPv6Addresses(ifname string) []string {
+	out, err := exec.Command("ifconfig", ifname).CombinedOutput()
+	if err != nil {
+		return nil
+	}
+	_, addrs := parseFreeBSDIfconfigIPv6(string(out))
+	return addrs
+}
+
+func parseFreeBSDIfconfigIPv6(out string) ([]string, []string) {
+	var prefixes []string
+	var addrs []string
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "inet6" {
+			continue
+		}
+		addrText := fields[1]
+		if base, _, ok := strings.Cut(addrText, "%"); ok {
+			addrText = base
+		}
+		addr, err := netip.ParseAddr(addrText)
+		if err != nil || !addr.Is6() {
+			continue
+		}
+		addrs = append(addrs, addr.String())
+		bits := 64
+		for i := 2; i+1 < len(fields); i++ {
+			if fields[i] != "prefixlen" {
+				continue
+			}
+			parsed, err := strconv.Atoi(fields[i+1])
+			if err == nil && parsed >= 0 && parsed <= 128 {
+				bits = parsed
+			}
+			break
+		}
+		if !addr.IsLinkLocalUnicast() {
+			prefixes = append(prefixes, netip.PrefixFrom(addr, bits).Masked().String())
+		}
+	}
+	return prefixes, addrs
 }
 
 func observedDNSServersByInterface(router *api.Router) map[string][]string {
@@ -2051,8 +2154,8 @@ func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, mpd5Path s
 		if fileChanged {
 			changed = append(changed, dhcp6cPath)
 		}
-		if (fileChanged || rcValues["dhcp6c_enable"] == "YES") && freeBSDServiceExists("dhcp6c") {
-			if err := runLogged("service", "dhcp6c", "restart"); err != nil {
+		if (fileChanged || freeBSDRCValuesChanged(changed, "dhcp6c_") || !freeBSDServiceRunning("dhcp6c")) && freeBSDServiceExists("dhcp6c") {
+			if err := restartFreeBSDDHCP6CNoRelease(); err != nil {
 				return changed, err
 			}
 			changed = append(changed, "service:dhcp6c")
@@ -2069,7 +2172,7 @@ func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, mpd5Path s
 		if fileChanged {
 			changed = append(changed, mpd5Path)
 		}
-		if (fileChanged || rcValues["mpd_enable"] == "YES") && freeBSDServiceExists("mpd5") {
+		if (fileChanged || freeBSDRCValuesChanged(changed, "mpd_") || !freeBSDServiceRunning("mpd5")) && rcValues["mpd_enable"] == "YES" && freeBSDServiceExists("mpd5") {
 			if err := runLogged("service", "mpd5", "restart"); err != nil {
 				return changed, err
 			}
@@ -2085,6 +2188,16 @@ func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, mpd5Path s
 	return changed, nil
 }
 
+func freeBSDRCValuesChanged(changed []string, prefix string) bool {
+	for _, item := range changed {
+		key, ok := strings.CutPrefix(item, "sysrc:")
+		if ok && strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func freeBSDServiceExists(name string) bool {
 	out, err := exec.Command("service", "-l").CombinedOutput()
 	if err != nil {
@@ -2096,6 +2209,30 @@ func freeBSDServiceExists(name string) bool {
 		}
 	}
 	return false
+}
+
+func freeBSDServiceRunning(name string) bool {
+	return exec.Command("service", name, "status").Run() == nil
+}
+
+func restartFreeBSDDHCP6CNoRelease() error {
+	pid := strings.TrimSpace(readFirstString("/var/run/dhcp6c.pid"))
+	if pid != "" && freeBSDServiceRunning("dhcp6c") {
+		if err := runLogged("kill", "-USR1", pid); err != nil {
+			return err
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if !freeBSDServiceRunning("dhcp6c") {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if err := runLogged("service", "dhcp6c", "start"); err != nil {
+		return err
+	}
+	return nil
 }
 
 func parseFreeBSDRCConf(data []byte) (map[string]string, error) {
@@ -3312,6 +3449,12 @@ func ensureIPv6LocalAddress(ifname, address string) (bool, error) {
 		if value == address {
 			return false, nil
 		}
+	}
+	if platformDefaults.OS == platform.OSFreeBSD {
+		if err := runLogged("ifconfig", ifname, "inet6", address, "prefixlen", "128", "alias"); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	if err := runLogged("ip", "-6", "addr", "add", address+"/128", "dev", ifname); err != nil {
 		return false, err

@@ -1092,6 +1092,9 @@
                       "client": {
                         "type": "string"
                       },
+                      "convergenceTimeout": {
+                        "type": "string"
+                      },
                       "duidRawData": {
                         "type": "string"
                       },

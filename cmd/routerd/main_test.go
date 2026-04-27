@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/reconcile"
@@ -506,6 +508,38 @@ func TestDelegatedPrefixFromObservedFallsBackToAddress(t *testing.T) {
 	}
 	if got != "2001:db8:3d60:1240::/60" {
 		t.Fatalf("prefix = %s, want 2001:db8:3d60:1240::/60", got)
+	}
+}
+
+func TestParseFreeBSDIfconfigIPv6(t *testing.T) {
+	prefixes, addrs := parseFreeBSDIfconfigIPv6(`vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	inet 192.168.160.1 netmask 0xffffff00 broadcast 192.168.160.255
+	inet6 fe80::be24:11ff:fea3:c1f4%vtnet1 prefixlen 64 scopeid 0x2
+	inet6 2001:db8:3d60:1240:be24:11ff:fea3:c1f4 prefixlen 64
+`)
+	if len(prefixes) != 1 || prefixes[0] != "2001:db8:3d60:1240::/64" {
+		t.Fatalf("prefixes = %v, want delegated /64", prefixes)
+	}
+	wantAddrs := []string{"fe80::be24:11ff:fea3:c1f4", "2001:db8:3d60:1240:be24:11ff:fea3:c1f4"}
+	if fmt.Sprint(addrs) != fmt.Sprint(wantAddrs) {
+		t.Fatalf("addrs = %v, want %v", addrs, wantAddrs)
+	}
+}
+
+func TestRetainCurrentPrefixDuringConvergence(t *testing.T) {
+	store := routerstate.New()
+	current := routerstate.Value{
+		Status:    routerstate.StatusSet,
+		Value:     "2001:db8:3d60:1240::/60",
+		UpdatedAt: time.Now().UTC().Add(-30 * time.Second),
+	}
+	got, ok := retainCurrentPrefixDuringConvergence(current, 5*time.Minute, store)
+	if !ok || got != current.Value {
+		t.Fatalf("retained prefix = %q %v, want current prefix", got, ok)
+	}
+	current.UpdatedAt = time.Now().UTC().Add(-10 * time.Minute)
+	if got, ok := retainCurrentPrefixDuringConvergence(current, 5*time.Minute, store); ok {
+		t.Fatalf("retained expired prefix = %q", got)
 	}
 }
 

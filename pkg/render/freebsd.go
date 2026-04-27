@@ -117,6 +117,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	if len(dhcp6cIfaces) > 0 {
 		rc.WriteString("dhcp6c_enable=\"YES\"\n")
 		rc.WriteString("dhcp6c_interfaces=\"" + strings.Join(sortedFreeBSDMapKeys(dhcp6cIfaces), " ") + "\"\n")
+		rc.WriteString("dhcp6c_flags=\"-n\"\n")
 	}
 	if hasManagedFreeBSDPPPoE(pppoes) {
 		rc.WriteString("mpd_enable=\"YES\"\n")

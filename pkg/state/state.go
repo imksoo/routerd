@@ -95,3 +95,7 @@ func (s *Store) set(name, status, value, reason string) Value {
 func (s *Store) Age(name string) time.Duration {
 	return s.now().UTC().Sub(s.Get(name).Since)
 }
+
+func (s *Store) Now() time.Time {
+	return s.now().UTC()
+}

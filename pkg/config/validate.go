@@ -660,6 +660,11 @@ func validateResource(res api.Resource) error {
 		if spec.PrefixLength != 0 && (spec.PrefixLength < 1 || spec.PrefixLength > 128) {
 			return fmt.Errorf("%s spec.prefixLength must be within 1-128", res.ID())
 		}
+		if spec.ConvergenceTimeout != "" {
+			if d, err := time.ParseDuration(spec.ConvergenceTimeout); err != nil || d <= 0 {
+				return fmt.Errorf("%s spec.convergenceTimeout must be a positive duration", res.ID())
+			}
+		}
 		if spec.IAID != "" && !validIAID(spec.IAID) {
 			return fmt.Errorf("%s spec.iaid must be a uint32 decimal value, 0x-prefixed hex value, or 8 hex digits", res.ID())
 		}

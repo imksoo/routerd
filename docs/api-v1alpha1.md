@@ -429,6 +429,7 @@ spec:
   client: networkd
   profile: ntt-hgw-lan-pd
   prefixLength: 60
+  convergenceTimeout: 5m
   iaid: ca53095a
   duidType: link-layer
   duidRawData: 00:01:02:00:5e:10:20:30
@@ -448,15 +449,23 @@ How routerd behaves:
   Both NTT profiles request IA_PD only, disable rapid commit, use a
   link-layer DUID, force DHCPv6 Solicit when needed, and default the prefix
   hint to `/60` unless `prefixLength` is set explicitly.
+- `spec.convergenceTimeout` is routerd's grace period before it marks a
+  previously observed delegated prefix absent. It does not change the DHCPv6
+  client's packet retry timers. The generic default is `2m`; NTT profiles
+  default to `5m` because some home gateways converge slowly after restart or
+  while old leases are being remembered.
 - During reconcile, routerd records observed prefix-delegation state in the
   local state store. The keys are
   `ipv6PrefixDelegation.<name>.currentPrefix`,
   `ipv6PrefixDelegation.<name>.lastPrefix`,
   `ipv6PrefixDelegation.<name>.uplinkIfname`,
   `ipv6PrefixDelegation.<name>.downstreamIfname`, and
-  `ipv6PrefixDelegation.<name>.prefixLength`.
+  `ipv6PrefixDelegation.<name>.prefixLength`. The effective convergence
+  timeout is recorded as
+  `ipv6PrefixDelegation.<name>.convergenceTimeout`.
   `currentPrefix` is cleared when no downstream delegated prefix is visible,
-  but `lastPrefix` is kept. This preserves enough local memory to support
+  but only after the convergence timeout has elapsed. `lastPrefix` is kept.
+  This preserves enough local memory to support
   upstreams that treat a known client as an existing DHCPv6-PD lease rather
   than a fresh client.
 - For systemd-networkd clients, routerd also records the observed DHCP
