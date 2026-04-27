@@ -39,15 +39,19 @@ load_rc_config "$name"
 : ${routerd_user:="root"}
 
 pidfile="/var/run/routerd/routerd.pid"
+supervisor_pidfile="/var/run/routerd/routerd.daemon.pid"
 command="/usr/sbin/daemon"
 procname="/usr/local/sbin/routerd"
-command_args="-p ${pidfile} -r -t ${name} -o ${routerd_log} -- ${procname} serve \
+command_args="-P ${supervisor_pidfile} -p ${pidfile} -r -t ${name} -o ${routerd_log} -- ${procname} serve \
     --config ${routerd_config} \
     --socket ${routerd_socket} \
     --reconcile-interval ${routerd_reconcile_interval} \
     ${routerd_flags} >/dev/null 2>&1"
 
 start_precmd="routerd_prestart"
+start_cmd="routerd_start"
+stop_cmd="routerd_stop"
+status_cmd="routerd_status"
 
 routerd_prestart()
 {
@@ -62,6 +66,71 @@ routerd_prestart()
         warn "routerd config ${routerd_config} is missing"
         return 1
     fi
+}
+
+routerd_pid()
+{
+    pgrep -f "^${procname} serve --config ${routerd_config} --socket ${routerd_socket}"
+}
+
+routerd_supervisor_pid()
+{
+    pgrep -f "^daemon: ${name}"
+}
+
+routerd_start()
+{
+    routerd_prestart || return 1
+    if routerd_pid >/dev/null 2>&1; then
+        echo "${name} is already running."
+        return 0
+    fi
+    echo "Starting ${name}."
+    eval "${command} ${command_args}"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if routerd_pid >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    warn "failed to start ${name}"
+    return 1
+}
+
+routerd_stop()
+{
+    supervisor_pid="$(routerd_supervisor_pid)"
+    child_pid="$(routerd_pid)"
+    if [ -z "${supervisor_pid}" ] && [ -z "${child_pid}" ]; then
+        echo "${name} is not running."
+        return 0
+    fi
+    echo "Stopping ${name}."
+    if [ -n "${supervisor_pid}" ]; then
+        kill ${supervisor_pid}
+    fi
+    if [ -n "${child_pid}" ]; then
+        kill ${child_pid}
+    fi
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if ! routerd_pid >/dev/null 2>&1 && ! routerd_supervisor_pid >/dev/null 2>&1; then
+            rm -f "${pidfile}" "${supervisor_pidfile}"
+            return 0
+        fi
+        sleep 1
+    done
+    warn "failed to stop ${name}"
+    return 1
+}
+
+routerd_status()
+{
+    pid="$(routerd_pid)"
+    if [ -z "${pid}" ]; then
+        echo "${name} is not running."
+        return 1
+    fi
+    echo "${name} is running as pid ${pid}."
 }
 
 run_rc_command "$1"
