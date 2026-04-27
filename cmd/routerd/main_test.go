@@ -430,6 +430,23 @@ func TestDelegatedPrefixFromObservedFallsBackToAddress(t *testing.T) {
 	}
 }
 
+func TestParseRFC4361ClientID(t *testing.T) {
+	identity := parseRFC4361ClientID("ffca53095a0003000102005e102030")
+	if identity.IAID != "ca53095a" {
+		t.Fatalf("IAID = %q, want ca53095a", identity.IAID)
+	}
+	if identity.DUID != "0003000102005e102030" {
+		t.Fatalf("DUID = %q, want link-layer DUID", identity.DUID)
+	}
+}
+
+func TestLinkLayerDUIDFromMAC(t *testing.T) {
+	got := linkLayerDUIDFromMAC("02:00:5e:10:20:30")
+	if got != "0003000102005e102030" {
+		t.Fatalf("DUID = %q, want 0003000102005e102030", got)
+	}
+}
+
 func TestStateWhenRequiresSetAndEqual(t *testing.T) {
 	store := routerstate.New()
 	when := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{

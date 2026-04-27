@@ -452,6 +452,15 @@ How routerd behaves:
   but `lastPrefix` is kept. This preserves enough local memory to support
   upstreams that treat a known client as an existing DHCPv6-PD lease rather
   than a fresh client.
+- For systemd-networkd clients, routerd also records the observed DHCP
+  identity when available: `ipv6PrefixDelegation.<name>.iaid`,
+  `ipv6PrefixDelegation.<name>.duid`,
+  `ipv6PrefixDelegation.<name>.duidText`, and
+  `ipv6PrefixDelegation.<name>.identitySource`. For NTT profiles it records
+  `ipv6PrefixDelegation.<name>.expectedDUID`, derived from the uplink MAC as
+  a DHCPv6 link-layer DUID. These values are state memory, not desired
+  configuration; future retry logic can use them to prefer renewal-like
+  behavior when a home gateway still remembers a prior lease.
 
 Some NTT home-gateway environments only advertise IPv6 by RA/SLAAC and never
 answer DHCPv6-PD. Those should not be modeled as `IPv6PrefixDelegation`;

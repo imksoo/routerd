@@ -40,3 +40,17 @@ Potential future resource shape:
 - a retry policy that records previously delegated prefixes, DUID, IAID, and
   lease metadata to prefer renewal-like behavior when a home gateway is
   sensitive to fresh DHCPv6-PD requests.
+
+Current groundwork:
+
+- `IPv6PrefixDelegation` records observed prefix state under
+  `ipv6PrefixDelegation.<name>.*` in the routerd state store.
+- The last known prefix is retained when no current downstream prefix is
+  visible.
+- For systemd-networkd, routerd records IAID/DUID material when it can be
+  observed from networkd runtime files. For NTT profiles it also records the
+  expected link-layer DUID derived from the uplink MAC address.
+
+This still does not synthesize DHCPv6 Renew/Rebind packets. That should remain
+a separate implementation step because it must preserve management
+connectivity and must not fight the OS DHCPv6 client.

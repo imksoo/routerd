@@ -71,6 +71,10 @@ behavior changes and new resource shapes as the model takes shape.
   known prefix is retained when the current prefix disappears, which is
   groundwork for DHCPv6-PD renewal behavior with home gateways that remember
   prior leases.
+- IPv6 prefix-delegation state now also records DHCP identity material for
+  systemd-networkd clients when observable, including IAID, DUID, textual
+  networkd DUID, identity source, and the expected link-layer DUID for NTT
+  profiles.
 
 ## 0.1.0 planning baseline
 

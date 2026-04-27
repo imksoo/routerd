@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -944,7 +945,12 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		if ifname := aliases[spec.Interface]; ifname != "" {
 			changes = append(changes, stateChange{Name: base + ".uplinkIfname", Value: store.Set(base+".uplinkIfname", ifname, res.ID()+": observed uplink interface")})
+			for _, change := range observedPrefixDelegationIdentityState(base, ifname, defaultString(spec.Client, "networkd"), defaultString(spec.Profile, "default"), store, res.ID()) {
+				changes = append(changes, change)
+			}
 		}
+		changes = append(changes, stateChange{Name: base + ".client", Value: store.Set(base+".client", defaultString(spec.Client, "networkd"), res.ID()+": configured DHCPv6-PD client")})
+		changes = append(changes, stateChange{Name: base + ".profile", Value: store.Set(base+".profile", defaultString(spec.Profile, "default"), res.ID()+": configured DHCPv6-PD profile")})
 		if prefixLength > 0 {
 			changes = append(changes, stateChange{Name: base + ".prefixLength", Value: store.Set(base+".prefixLength", strconv.Itoa(prefixLength), res.ID()+": configured prefix length")})
 		}
@@ -977,6 +983,136 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 		)
 	}
 	return changes, nil
+}
+
+func observedPrefixDelegationIdentityState(base, ifname, client, profile string, store *routerstate.Store, owner string) []stateChange {
+	var changes []stateChange
+	if client != "networkd" {
+		return changes
+	}
+	identity := observeNetworkdDHCPIdentity(ifname)
+	if identity.IAID != "" {
+		changes = append(changes, stateChange{Name: base + ".iaid", Value: store.Set(base+".iaid", identity.IAID, owner+": observed DHCP IAID")})
+	}
+	if identity.DUID != "" {
+		changes = append(changes, stateChange{Name: base + ".duid", Value: store.Set(base+".duid", identity.DUID, owner+": observed DHCP DUID")})
+	}
+	if identity.DUIDText != "" {
+		changes = append(changes, stateChange{Name: base + ".duidText", Value: store.Set(base+".duidText", identity.DUIDText, owner+": observed DHCPv6 DUID")})
+	}
+	if identity.Source != "" {
+		changes = append(changes, stateChange{Name: base + ".identitySource", Value: store.Set(base+".identitySource", identity.Source, owner+": observed DHCP identity source")})
+	}
+	if expected := expectedPrefixDelegationDUID(ifname, profile); expected != "" {
+		changes = append(changes, stateChange{Name: base + ".expectedDUID", Value: store.Set(base+".expectedDUID", expected, owner+": expected DHCPv6 DUID for profile")})
+	}
+	return changes
+}
+
+type dhcpIdentity struct {
+	IAID     string
+	DUID     string
+	DUIDText string
+	Source   string
+}
+
+func observeNetworkdDHCPIdentity(ifname string) dhcpIdentity {
+	ifindex := strings.TrimSpace(readFirstString(filepath.Join("/sys/class/net", ifname, "ifindex")))
+	if ifindex == "" {
+		return dhcpIdentity{}
+	}
+	leaseValues := parseKeyValueFile(filepath.Join("/run/systemd/netif/leases", ifindex))
+	identity := parseRFC4361ClientID(leaseValues["CLIENTID"])
+	if identity.Source != "" {
+		identity.Source = "systemd-networkd-lease"
+	}
+	linkValues := parseKeyValueFile(filepath.Join("/run/systemd/netif/links", ifindex))
+	if value := strings.Trim(linkValues["DHCP6_CLIENT_DUID"], `"`); value != "" {
+		identity.DUIDText = value
+		if identity.Source == "" {
+			identity.Source = "systemd-networkd-link"
+		}
+	}
+	return identity
+}
+
+func parseRFC4361ClientID(value string) dhcpIdentity {
+	value = strings.ToLower(strings.TrimSpace(strings.Trim(value, `"`)))
+	if len(value) < 12 || !strings.HasPrefix(value, "ff") {
+		return dhcpIdentity{}
+	}
+	iaid := value[2:10]
+	duid := value[10:]
+	if !isLowerHex(iaid) || !isLowerHex(duid) {
+		return dhcpIdentity{}
+	}
+	return dhcpIdentity{IAID: iaid, DUID: duid, Source: "rfc4361-clientid"}
+}
+
+func expectedPrefixDelegationDUID(ifname, profile string) string {
+	switch profile {
+	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
+	default:
+		return ""
+	}
+	mac := strings.TrimSpace(readFirstString(filepath.Join("/sys/class/net", ifname, "address")))
+	return linkLayerDUIDFromMAC(mac)
+}
+
+func linkLayerDUIDFromMAC(mac string) string {
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(mac)), ":")
+	if len(parts) != 6 {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString("00030001")
+	for _, part := range parts {
+		if len(part) != 2 || !isLowerHex(part) {
+			return ""
+		}
+		builder.WriteString(part)
+	}
+	return builder.String()
+}
+
+func isLowerHex(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func readFirstString(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func parseKeyValueFile(path string) map[string]string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]string{}
+	}
+	values := map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	return values
 }
 
 func delegatedPrefixFromObservedInterface(ifname string, prefixLength int) (string, bool) {
