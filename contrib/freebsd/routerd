@@ -19,6 +19,7 @@
 # routerd_enable="YES"
 # routerd_config="/usr/local/etc/routerd/router.yaml"   # optional
 # routerd_socket="/var/run/routerd/routerd.sock"        # optional
+# routerd_log="/var/log/routerd.log"                    # optional
 # routerd_flags=""                                       # extra flags
 #
 
@@ -34,16 +35,17 @@ load_rc_config "$name"
 : ${routerd_config:="/usr/local/etc/routerd/router.yaml"}
 : ${routerd_socket:="/var/run/routerd/routerd.sock"}
 : ${routerd_reconcile_interval:="60s"}
+: ${routerd_log:="/var/log/routerd.log"}
 : ${routerd_user:="root"}
 
 pidfile="/var/run/routerd/routerd.pid"
 command="/usr/sbin/daemon"
 procname="/usr/local/sbin/routerd"
-command_args="-P ${pidfile} -r -t ${name} -- ${procname} serve \
+command_args="-p ${pidfile} -r -t ${name} -o ${routerd_log} -- ${procname} serve \
     --config ${routerd_config} \
     --socket ${routerd_socket} \
     --reconcile-interval ${routerd_reconcile_interval} \
-    ${routerd_flags}"
+    ${routerd_flags} >/dev/null 2>&1"
 
 start_precmd="routerd_prestart"
 
@@ -51,6 +53,7 @@ routerd_prestart()
 {
     install -d -m 0755 /var/run/routerd
     install -d -m 0755 /var/db/routerd
+    install -m 0644 /dev/null "${routerd_log}"
     if [ ! -x "${procname}" ]; then
         warn "routerd binary ${procname} is missing or not executable"
         return 1
