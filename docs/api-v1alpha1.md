@@ -425,6 +425,9 @@ spec:
   client: networkd
   profile: ntt-hgw-lan-pd
   prefixLength: 60
+  iaid: ca53095a
+  duidType: link-layer
+  duidRawData: 00:01:02:00:5e:10:20:30
 ```
 
 How routerd behaves:
@@ -461,6 +464,14 @@ How routerd behaves:
   a DHCPv6 link-layer DUID. These values are state memory, not desired
   configuration; future retry logic can use them to prefer renewal-like
   behavior when a home gateway still remembers a prior lease.
+- `spec.iaid` pins the DHCPv6 IAID. It may be written as decimal, `0x`
+  prefixed hex, or 8 hex digits. systemd-networkd renders it as a decimal
+  `IAID=` value; FreeBSD `dhcp6c` uses it as the `ia-pd` / `id-assoc pd`
+  identifier.
+- `spec.duidType` and `spec.duidRawData` pin the systemd-networkd DUID
+  settings. `duidRawData` accepts either `00:01:...` byte notation or compact
+  hex. These fields are intentionally renderer-specific for now; FreeBSD
+  `dhcp6c` DUID file management is not modeled yet.
 
 Some NTT home-gateway environments only advertise IPv6 by RA/SLAAC and never
 answer DHCPv6-PD. Those should not be modeled as `IPv6PrefixDelegation`;

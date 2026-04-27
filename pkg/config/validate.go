@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -658,6 +659,17 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.PrefixLength != 0 && (spec.PrefixLength < 1 || spec.PrefixLength > 128) {
 			return fmt.Errorf("%s spec.prefixLength must be within 1-128", res.ID())
+		}
+		if spec.IAID != "" && !validIAID(spec.IAID) {
+			return fmt.Errorf("%s spec.iaid must be a uint32 decimal value, 0x-prefixed hex value, or 8 hex digits", res.ID())
+		}
+		switch spec.DUIDType {
+		case "", "vendor", "uuid", "link-layer-time", "link-layer":
+		default:
+			return fmt.Errorf("%s spec.duidType must be vendor, uuid, link-layer-time, or link-layer", res.ID())
+		}
+		if spec.DUIDRawData != "" && !validDUIDRawData(spec.DUIDRawData) {
+			return fmt.Errorf("%s spec.duidRawData must be hex bytes, with or without colon separators", res.ID())
 		}
 	case "IPv6DelegatedAddress":
 		if res.APIVersion != api.NetAPIVersion {
@@ -1515,6 +1527,52 @@ func validateResource(res api.Resource) error {
 		return fmt.Errorf("unsupported resource kind %s in %s", res.Kind, res.ID())
 	}
 	return nil
+}
+
+func validIAID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
+		_, err := strconv.ParseUint(value[2:], 16, 32)
+		return err == nil
+	}
+	if len(value) == 8 && validHex(value) {
+		_, err := strconv.ParseUint(value, 16, 32)
+		return err == nil
+	}
+	_, err := strconv.ParseUint(value, 10, 32)
+	return err == nil
+}
+
+func validDUIDRawData(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if strings.Contains(value, ":") {
+		parts := strings.Split(value, ":")
+		for _, part := range parts {
+			if len(part) != 2 || !validHex(part) {
+				return false
+			}
+		}
+		return true
+	}
+	return len(value)%2 == 0 && validHex(value)
+}
+
+func validHex(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range strings.ToLower(value) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func interfaceRef(res api.Resource) (string, error) {

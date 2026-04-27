@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"routerd/pkg/api"
@@ -20,6 +21,9 @@ type pdSource struct {
 	IfName       string
 	Profile      string
 	PrefixLength int
+	IAID         string
+	DUIDType     string
+	DUIDRawData  string
 }
 
 func NetworkdDropins(router *api.Router) ([]File, error) {
@@ -49,6 +53,9 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 			IfName:       aliases[spec.Interface],
 			Profile:      defaultString(spec.Profile, "default"),
 			PrefixLength: effectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength),
+			IAID:         spec.IAID,
+			DUIDType:     spec.DUIDType,
+			DUIDRawData:  spec.DUIDRawData,
 		}
 	}
 
@@ -139,9 +146,19 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 
 func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 	buf.WriteString("[Network]\nDHCP=yes\nIPv6AcceptRA=yes\n\n[DHCPv6]\n")
+	if source.IAID != "" {
+		buf.WriteString("IAID=" + normalizeIAIDForRender(source.IAID) + "\n")
+	}
+	if source.DUIDType != "" {
+		buf.WriteString("DUIDType=" + source.DUIDType + "\n")
+	} else if source.Profile == "ntt-ngn-direct-hikari-denwa" || source.Profile == "ntt-hgw-lan-pd" {
+		buf.WriteString("DUIDType=link-layer\n")
+	}
+	if source.DUIDRawData != "" {
+		buf.WriteString("DUIDRawData=" + formatColonHex(source.DUIDRawData) + "\n")
+	}
 	switch source.Profile {
 	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
-		buf.WriteString("DUIDType=link-layer\n")
 		buf.WriteString("UseAddress=no\n")
 		buf.WriteString("UseDelegatedPrefix=yes\n")
 		buf.WriteString("WithoutRA=solicit\n")
@@ -153,6 +170,56 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 	if source.PrefixLength != 0 {
 		buf.WriteString(fmt.Sprintf("PrefixDelegationHint=::/%d\n", source.PrefixLength))
 	}
+}
+
+func normalizeIAIDForRender(value string) string {
+	parsed, ok := parseIAID(value)
+	if !ok {
+		return value
+	}
+	return fmt.Sprintf("%d", parsed)
+}
+
+func parseIAID(value string) (uint32, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
+		parsed, err := strconv.ParseUint(value[2:], 16, 32)
+		return uint32(parsed), err == nil
+	}
+	if len(value) == 8 && isHexString(value) {
+		parsed, err := strconv.ParseUint(value, 16, 32)
+		return uint32(parsed), err == nil
+	}
+	parsed, err := strconv.ParseUint(value, 10, 32)
+	return uint32(parsed), err == nil
+}
+
+func formatColonHex(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, ":", "")
+	if len(value)%2 != 0 || !isHexString(value) {
+		return strings.TrimSpace(value)
+	}
+	var parts []string
+	for i := 0; i < len(value); i += 2 {
+		parts = append(parts, value[i:i+2])
+	}
+	return strings.Join(parts, ":")
+}
+
+func isHexString(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range strings.ToLower(value) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func effectiveIPv6PDPrefixLength(profile string, configured int) int {

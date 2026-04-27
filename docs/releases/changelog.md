@@ -75,6 +75,10 @@ behavior changes and new resource shapes as the model takes shape.
   systemd-networkd clients when observable, including IAID, DUID, textual
   networkd DUID, identity source, and the expected link-layer DUID for NTT
   profiles.
+- `IPv6PrefixDelegation` can now pin DHCP identity fields with `spec.iaid`,
+  `spec.duidType`, and `spec.duidRawData`. systemd-networkd renders all
+  three; FreeBSD `dhcp6c` uses `iaid` for the `ia-pd` / `id-assoc pd`
+  identifier.
 
 ## 0.1.0 planning baseline
 

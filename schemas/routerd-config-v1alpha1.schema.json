@@ -1092,6 +1092,22 @@
                       "client": {
                         "type": "string"
                       },
+                      "duidRawData": {
+                        "type": "string"
+                      },
+                      "duidType": {
+                        "enum": [
+                          "",
+                          "vendor",
+                          "uuid",
+                          "link-layer-time",
+                          "link-layer"
+                        ],
+                        "type": "string"
+                      },
+                      "iaid": {
+                        "type": "string"
+                      },
                       "interface": {
                         "type": "string"
                       },

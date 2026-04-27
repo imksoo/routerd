@@ -346,6 +346,9 @@ spec:
   client: networkd
   profile: ntt-hgw-lan-pd
   prefixLength: 60
+  iaid: ca53095a
+  duidType: link-layer
+  duidRawData: 00:01:02:00:5e:10:20:30
 ```
 
 ルータの振る舞い:
@@ -359,6 +362,8 @@ spec:
   どちらの NTT 系プロファイルも IA_PD のみを要求し、rapid commit を無効化、リンクレイヤ DUID を使用、必要に応じて DHCPv6 Solicit を強制し、`prefixLength` を明示しなければ `/60` をヒントにします。
 - routerd は反映のたびに、観測できたプレフィックス委譲の状態をローカルの状態保存領域に記録します。キーは `ipv6PrefixDelegation.<name>.currentPrefix`、`ipv6PrefixDelegation.<name>.lastPrefix`、`ipv6PrefixDelegation.<name>.uplinkIfname`、`ipv6PrefixDelegation.<name>.downstreamIfname`、`ipv6PrefixDelegation.<name>.prefixLength` です。下流側の委譲プレフィックスが見えなくなった場合、`currentPrefix` は消しますが、`lastPrefix` は残します。これにより、既知の機器を新規クライアントではなく既存リースの更新相手として扱う上流機器に対応するための足場を残せます。
 - systemd-networkd を使う場合、取得できる範囲で DHCP の識別情報も記録します。キーは `ipv6PrefixDelegation.<name>.iaid`、`ipv6PrefixDelegation.<name>.duid`、`ipv6PrefixDelegation.<name>.duidText`、`ipv6PrefixDelegation.<name>.identitySource` です。NTT 系プロファイルでは、上流インターフェースの MAC アドレスから DHCPv6 のリンクレイヤ DUID を計算し、`ipv6PrefixDelegation.<name>.expectedDUID` に残します。これらは望ましい設定ではなく、観測した状態の記憶です。将来の再試行処理では、この情報を使って、ホームゲートウェイが以前のリースを覚えている場合に更新に近い動きを優先できます。
+- `spec.iaid` は DHCPv6 の IAID を固定します。10 進数、`0x` 付きの 16 進数、または 8 桁の 16 進数で書けます。systemd-networkd では 10 進数の `IAID=` として出力し、FreeBSD の `dhcp6c` では `ia-pd` / `id-assoc pd` の識別子として使います。
+- `spec.duidType` と `spec.duidRawData` は systemd-networkd の DUID 設定を固定します。`duidRawData` は `00:01:...` のようなバイト列表記でも、区切りなしの 16 進数でも書けます。現時点ではこの2つは systemd-networkd 向けです。FreeBSD の `dhcp6c` が持つ DUID ファイルの管理は、まだリソースとして扱っていません。
 
 NTT のホームゲートウェイには、IPv6 を RA/SLAAC のみで配布し DHCPv6-PD に応答しないモードもあります。これは `IPv6PrefixDelegation` ではモデル化できないため、別途 RA/SLAAC のリソース設計を行う必要があります。
 

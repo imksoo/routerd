@@ -367,6 +367,38 @@ func TestValidateSelfAddressPolicy(t *testing.T) {
 	}
 }
 
+func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				Metadata: api.ObjectMeta{Name: "wan-pd"},
+				Spec: api.IPv6PrefixDelegationSpec{
+					Interface:   "wan",
+					IAID:        "ca53095a",
+					DUIDType:    "link-layer",
+					DUIDRawData: "000102005e102030",
+				},
+			},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate prefix delegation identity: %v", err)
+	}
+
+	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", IAID: "not-an-iaid"}
+	if err := Validate(router); err == nil {
+		t.Fatal("expected invalid IAID to be rejected")
+	}
+}
+
 func TestValidateIPv4SourceNATRequiresValidCIDR(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
