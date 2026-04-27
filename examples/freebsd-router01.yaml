@@ -16,7 +16,7 @@ spec:
       metadata:
         name: system-hostname
       spec:
-        hostname: router01.lain.local
+        hostname: router01.example.internal
         managed: true
 
     - apiVersion: system.routerd.net/v1alpha1
@@ -115,7 +115,7 @@ spec:
         name: lan-ipv4
       spec:
         interface: lan
-        address: 192.168.160.1/24
+        address: 192.168.10.1/24
         exclusive: false
 
     - apiVersion: net.routerd.net/v1alpha1

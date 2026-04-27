@@ -155,7 +155,7 @@ spec:
       spec:
         mode: priority
         sourceCIDRs:
-          - 192.168.160.0/24
+          - 192.168.10.0/24
         destinationCIDRs:
           - 0.0.0.0/0
         candidates:
@@ -175,7 +175,7 @@ spec:
       spec:
         outboundInterface: transix
         sourceCIDRs:
-          - 192.168.160.0/24
+          - 192.168.10.0/24
         translation:
           type: interfaceAddress
           portMapping:
@@ -193,7 +193,7 @@ spec:
         priority: 10000
         mark: 256
         sourceCIDRs:
-          - 192.168.160.0/24
+          - 192.168.10.0/24
         routeMetric: 50
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -282,7 +282,7 @@ spec:
         name: lan-ipv4
       spec:
         interface: lan
-        address: 192.168.160.3/24
+        address: 192.168.10.3/24
         exclusive: false
 
     - apiVersion: firewall.routerd.net/v1alpha1
@@ -407,8 +407,8 @@ spec:
       spec:
         server: dhcp4
         interface: lan
-        rangeStart: 192.168.160.100
-        rangeEnd: 192.168.160.199
+        rangeStart: 192.168.10.100
+        rangeEnd: 192.168.10.199
         leaseTime: 12h
         routerSource: interfaceAddress
         dnsSource: self

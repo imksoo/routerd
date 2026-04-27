@@ -88,7 +88,7 @@ summary section only.
         "protocol": "tcp",
         "state": "ESTABLISHED",
         "original": {
-          "source": "192.168.160.132",
+          "source": "192.168.10.132",
           "destination": "93.184.216.34",
           "sourcePort": "34567",
           "destinationPort": "443"

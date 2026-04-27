@@ -111,7 +111,7 @@ building block. A minimal LAN side only needs an `Interface` and an
         name: lan-ipv4
       spec:
         interface: lan
-        address: 192.168.160.3/24
+        address: 192.168.10.3/24
         exclusive: true
 ```
 

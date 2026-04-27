@@ -26,7 +26,7 @@ func TestNetplanRendersOnlyRouterdManagedInterfaces(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
 				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.3/24"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPAddress"},
@@ -48,7 +48,7 @@ func TestNetplanRendersOnlyRouterdManagedInterfaces(t *testing.T) {
 		"dhcp6: false",
 		"accept-ra: false",
 		"link-local: []",
-		"- 192.168.160.3/24",
+		"- 192.168.10.3/24",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("netplan output missing %q:\n%s", want, got)

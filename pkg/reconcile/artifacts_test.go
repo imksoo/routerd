@@ -19,7 +19,7 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"}, Metadata: api.ObjectMeta{Name: "time"}, Spec: api.NTPClientSpec{Provider: "systemd-timesyncd"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "wan-pppoe"}, Spec: api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp0"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.3/24"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPAddress"}, Metadata: api.ObjectMeta{Name: "wan-v4"}, Spec: api.IPv4DHCPAddressSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"}, Metadata: api.ObjectMeta{Name: "dhcp4"}, Spec: api.IPv4DHCPServerSpec{Server: "dnsmasq"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPScope"}, Metadata: api.ObjectMeta{Name: "lan-scope"}, Spec: api.IPv4DHCPScopeSpec{Server: "dhcp4", Interface: "lan"}},
@@ -79,13 +79,13 @@ default via 192.168.1.1 dev ens18 table 112 metric 600
 
 func TestParseIfconfigAddressArtifacts(t *testing.T) {
 	got := parseIfconfigAddressArtifacts(`vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
-	inet 192.168.160.1 netmask 0xffffff00 broadcast 192.168.160.255
+	inet 192.168.10.1 netmask 0xffffff00 broadcast 192.168.10.255
 	inet6 fe80::be24:11ff:fe5d:e063%vtnet1 prefixlen 64 scopeid 0x2
 `)
 	if len(got) != 2 {
 		t.Fatalf("ifconfig artifacts = %+v, want two", got)
 	}
-	if got[0].Kind != "net.ipv4.address" || got[0].Name != "vtnet1:192.168.160.1/24" {
+	if got[0].Kind != "net.ipv4.address" || got[0].Name != "vtnet1:192.168.10.1/24" {
 		t.Fatalf("first artifact = %+v", got[0])
 	}
 	if got[1].Kind != "net.ipv6.address" || got[1].Name != "vtnet1:fe80::be24:11ff:fe5d:e063/64" {

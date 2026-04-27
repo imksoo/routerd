@@ -19,7 +19,7 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "router02"},
 				Spec: api.NixOSHostSpec{
 					Hostname:            "router02",
-					Domain:              "lain.local",
+					Domain:              "example.internal",
 					StateVersion:        "25.11",
 					Boot:                api.NixOSBootSpec{Loader: "grub", GrubDevice: "/dev/sda"},
 					DebugSystemPackages: true,
@@ -31,9 +31,9 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 					Sudo: api.NixOSSudoSpec{WheelNeedsPassword: &disabled},
 					Users: []api.NixOSUserSpec{
 						{
-							Name:              "nwadmin",
+							Name:              "admin",
 							Groups:            []string{"wheel"},
-							InitialPassword:   "nwadmin",
+							InitialPassword:   "change-me",
 							SSHAuthorizedKeys: []string{"ssh-ed25519 AAAA test"},
 						},
 					},
@@ -74,7 +74,7 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "lan-nat"},
 				Spec: api.IPv4SourceNATSpec{
 					OutboundInterface: "wan",
-					SourceCIDRs:       []string{"192.168.160.0/24"},
+					SourceCIDRs:       []string{"192.168.10.0/24"},
 					Translation:       api.IPv4NATTranslationSpec{Type: "interfaceAddress"},
 				},
 			},
@@ -106,7 +106,7 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		`networking.hostName = "router02";`,
-		`networking.domain = "lain.local";`,
+		`networking.domain = "example.internal";`,
 		`boot.loader.grub.device = "/dev/sda";`,
 		`networking.firewall.checkReversePath = false;`,
 		`systemd.network.networks."10-netplan-ens18"`,
@@ -119,8 +119,8 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`UseRoutes = false;`,
 		`UseDNS = false;`,
 		`RouteMetric = 900;`,
-		`users.users.nwadmin`,
-		`initialPassword = "nwadmin";`,
+		`users.users.admin`,
+		`initialPassword = "change-me";`,
 		`security.sudo.wheelNeedsPassword = false;`,
 		`services.timesyncd.servers = [ "pool.ntp.org" ];`,
 		`"net.ipv4.ip_forward" = 1;`,

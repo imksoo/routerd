@@ -229,7 +229,7 @@ func TestValidateIPv4DefaultRoutePolicyRouteSetCandidate(t *testing.T) {
 				Spec: api.IPv4PolicyRouteSetSpec{
 					Mode:             "hash",
 					HashFields:       []string{"sourceAddress", "destinationAddress"},
-					SourceCIDRs:      []string{"192.168.160.0/24"},
+					SourceCIDRs:      []string{"192.168.10.0/24"},
 					DestinationCIDRs: []string{"0.0.0.0/0"},
 					Targets: []api.IPv4PolicyRouteTarget{
 						{OutboundInterface: "wan", Table: 100, Priority: 10000, Mark: 256},
@@ -268,7 +268,7 @@ func TestValidateIPv4DefaultRoutePolicyRouteSetCandidateRejectsDirectFields(t *t
 				Spec: api.IPv4PolicyRouteSetSpec{
 					Mode:             "hash",
 					HashFields:       []string{"sourceAddress", "destinationAddress"},
-					SourceCIDRs:      []string{"192.168.160.0/24"},
+					SourceCIDRs:      []string{"192.168.10.0/24"},
 					DestinationCIDRs: []string{"0.0.0.0/0"},
 					Targets: []api.IPv4PolicyRouteTarget{
 						{OutboundInterface: "wan", Table: 100, Priority: 10000, Mark: 256},
@@ -312,8 +312,8 @@ func TestValidateIPv4DHCPScopeRange(t *testing.T) {
 				Spec: api.IPv4DHCPScopeSpec{
 					Server:     "dhcp4",
 					Interface:  "lan",
-					RangeStart: "192.168.160.199",
-					RangeEnd:   "192.168.160.100",
+					RangeStart: "192.168.10.199",
+					RangeEnd:   "192.168.10.100",
 				},
 			},
 		}},
@@ -409,7 +409,7 @@ func TestValidateIPv4SourceNATRejectsInvalidPortRange(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
 				Spec: api.IPv4SourceNATSpec{
 					OutboundInterface: "wan",
-					SourceCIDRs:       []string{"192.168.160.0/24"},
+					SourceCIDRs:       []string{"192.168.10.0/24"},
 					Translation: api.IPv4NATTranslationSpec{
 						Type: "interfaceAddress",
 						PortMapping: api.IPv4NATPortMappingSpec{
@@ -472,7 +472,7 @@ func TestValidateFirewallPolicyAndExposeService(t *testing.T) {
 					ViaInterface:    "wan",
 					Protocol:        "tcp",
 					ExternalPort:    443,
-					InternalAddress: "192.168.160.20",
+					InternalAddress: "192.168.10.20",
 					InternalPort:    443,
 					Sources:         []string{"203.0.113.0/24"},
 					Hairpin:         true,
@@ -594,7 +594,7 @@ func TestValidateRequiresOverlapReason(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
 				Metadata: api.ObjectMeta{Name: "addr"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.3/24", AllowOverlap: true},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24", AllowOverlap: true},
 			},
 		}},
 	}
@@ -617,12 +617,12 @@ func TestValidateRejectsDuplicateStaticOnSameInterface(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
 				Metadata: api.ObjectMeta{Name: "addr-a"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.3/24"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
 				Metadata: api.ObjectMeta{Name: "addr-b"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.3/24"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
 			},
 		}},
 	}

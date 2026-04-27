@@ -123,7 +123,7 @@ func TestRenderIPv4DefaultRoutePolicyMarks(t *testing.T) {
 	data, err := renderIPv4DefaultRoutePolicyMarks(
 		"test/default",
 		api.IPv4DefaultRoutePolicySpec{
-			SourceCIDRs:      []string{"192.168.160.0/24"},
+			SourceCIDRs:      []string{"192.168.10.0/24"},
 			DestinationCIDRs: []string{"0.0.0.0/0"},
 		},
 		api.IPv4DefaultRoutePolicyCandidate{Name: "pppoe", Mark: 273},
@@ -139,7 +139,7 @@ func TestRenderIPv4DefaultRoutePolicyMarks(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"table ip routerd_default_route",
-		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 ct mark { 0x110, 0x111 } meta mark set ct mark",
+		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark { 0x110, 0x111 } meta mark set ct mark",
 		"ct mark != 0x0 ct mark != { 0x110, 0x111 } meta mark set 0x111 ct mark set meta mark",
 		"ct mark 0x0 meta mark set 0x111 ct mark set meta mark",
 	} {
@@ -153,7 +153,7 @@ func TestRenderIPv4DefaultRoutePolicyMarksRouteSetActive(t *testing.T) {
 	data, err := renderIPv4DefaultRoutePolicyMarks(
 		"test/default",
 		api.IPv4DefaultRoutePolicySpec{
-			SourceCIDRs:      []string{"192.168.160.0/24"},
+			SourceCIDRs:      []string{"192.168.10.0/24"},
 			DestinationCIDRs: []string{"0.0.0.0/0"},
 		},
 		api.IPv4DefaultRoutePolicyCandidate{Name: "dslite", RouteSet: "lan-dslite-balance"},
@@ -175,7 +175,7 @@ func TestRenderIPv4DefaultRoutePolicyMarksRouteSetActive(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 ct mark { 0x100, 0x101, 0x102 } meta mark set ct mark",
+		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark { 0x100, 0x101, 0x102 } meta mark set ct mark",
 		"ct mark != 0x0 ct mark != { 0x100, 0x101, 0x102 } meta mark set 0x0 ct mark set meta mark",
 	} {
 		if !strings.Contains(got, want) {
@@ -330,7 +330,7 @@ func TestManagedHostnames(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"},
 				Metadata: api.ObjectMeta{Name: "system-hostname"},
-				Spec:     api.HostnameSpec{Hostname: "router03.lain.local", Managed: true},
+				Spec:     api.HostnameSpec{Hostname: "router03.example.internal", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"},
@@ -343,8 +343,8 @@ func TestManagedHostnames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("managed hostnames: %v", err)
 	}
-	if len(got) != 1 || got[0] != "router03.lain.local" {
-		t.Fatalf("managed hostnames = %v, want router03.lain.local", got)
+	if len(got) != 1 || got[0] != "router03.example.internal" {
+		t.Fatalf("managed hostnames = %v, want router03.example.internal", got)
 	}
 }
 
@@ -353,7 +353,7 @@ func TestDriftedAdoptionCandidates(t *testing.T) {
 		{
 			Kind:     "host.hostname",
 			Name:     "system",
-			Desired:  map[string]string{"hostname": "router03.lain.local"},
+			Desired:  map[string]string{"hostname": "router03.example.internal"},
 			Observed: map[string]string{"hostname": "router03"},
 		},
 		{
@@ -382,51 +382,51 @@ func TestAdoptedArtifactsForResultDeduplicates(t *testing.T) {
 }
 
 func TestDeriveIPv6Address(t *testing.T) {
-	got, err := deriveIPv6Address([]string{"2409:10:3d60:1220::/64"}, "::100")
+	got, err := deriveIPv6Address([]string{"2001:db8:3d60:1220::/64"}, "::100")
 	if err != nil {
 		t.Fatalf("derive IPv6 address: %v", err)
 	}
-	if got != "2409:10:3d60:1220::100" {
-		t.Fatalf("address = %s, want 2409:10:3d60:1220::100", got)
+	if got != "2001:db8:3d60:1220::100" {
+		t.Fatalf("address = %s, want 2001:db8:3d60:1220::100", got)
 	}
 }
 
 func TestDeriveIPv6AddressFromGlobalAddress(t *testing.T) {
 	got, err := deriveIPv6AddressFromGlobalAddress([]string{
 		"fe80::3",
-		"2409:10:3d60:1220::3",
+		"2001:db8:3d60:1220::3",
 	}, "::100")
 	if err != nil {
 		t.Fatalf("derive IPv6 address from global address: %v", err)
 	}
-	if got != "2409:10:3d60:1220::100" {
-		t.Fatalf("address = %s, want 2409:10:3d60:1220::100", got)
+	if got != "2001:db8:3d60:1220::100" {
+		t.Fatalf("address = %s, want 2001:db8:3d60:1220::100", got)
 	}
 }
 
 func TestDelegatedPrefixFromObservedUsesKernelPrefix(t *testing.T) {
 	got, ok := delegatedPrefixFromObserved([]string{
 		"fe80::/64",
-		"2409:10:3d60:1240::/64",
+		"2001:db8:3d60:1240::/64",
 	}, nil, 60)
 	if !ok {
 		t.Fatal("delegated prefix not found")
 	}
-	if got != "2409:10:3d60:1240::/60" {
-		t.Fatalf("prefix = %s, want 2409:10:3d60:1240::/60", got)
+	if got != "2001:db8:3d60:1240::/60" {
+		t.Fatalf("prefix = %s, want 2001:db8:3d60:1240::/60", got)
 	}
 }
 
 func TestDelegatedPrefixFromObservedFallsBackToAddress(t *testing.T) {
 	got, ok := delegatedPrefixFromObserved(nil, []string{
 		"fe80::3",
-		"2409:10:3d60:1240::2",
+		"2001:db8:3d60:1240::2",
 	}, 60)
 	if !ok {
 		t.Fatal("delegated prefix not found")
 	}
-	if got != "2409:10:3d60:1240::/60" {
-		t.Fatalf("prefix = %s, want 2409:10:3d60:1240::/60", got)
+	if got != "2001:db8:3d60:1240::/60" {
+		t.Fatalf("prefix = %s, want 2001:db8:3d60:1240::/60", got)
 	}
 }
 

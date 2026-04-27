@@ -23,7 +23,7 @@ func TestDnsmasqConfigUsesSelfDNSWithDHCPv4Upstream(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
 				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.3/24"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
@@ -48,8 +48,8 @@ func TestDnsmasqConfigUsesSelfDNSWithDHCPv4Upstream(t *testing.T) {
 				Spec: api.IPv4DHCPScopeSpec{
 					Server:        "dhcp4",
 					Interface:     "lan",
-					RangeStart:    "192.168.160.130",
-					RangeEnd:      "192.168.160.139",
+					RangeStart:    "192.168.10.130",
+					RangeEnd:      "192.168.10.139",
 					LeaseTime:     "12h",
 					RouterSource:  "interfaceAddress",
 					DNSSource:     "self",
@@ -61,7 +61,7 @@ func TestDnsmasqConfigUsesSelfDNSWithDHCPv4Upstream(t *testing.T) {
 
 	data, err := DnsmasqConfig(router, DnsmasqRuntime{
 		DHCPv4DNSServersByInterface: map[string][]string{
-			"ens18": {"192.168.1.66", "192.168.1.67", "2409:10:3d60:1200::1"},
+			"ens18": {"192.168.1.66", "192.168.1.67", "2001:db8:3d60:1200::1"},
 		},
 	})
 	if err != nil {
@@ -72,13 +72,13 @@ func TestDnsmasqConfigUsesSelfDNSWithDHCPv4Upstream(t *testing.T) {
 		"port=53",
 		"bind-interfaces",
 		"except-interface=ens18",
-		"listen-address=127.0.0.1,192.168.160.3,::1",
+		"listen-address=127.0.0.1,192.168.10.3,::1",
 		"cache-size=1000",
 		"server=192.168.1.66",
 		"server=192.168.1.67",
-		"dhcp-range=set:lan-dhcp4,192.168.160.130,192.168.160.139,255.255.255.0,12h",
-		"dhcp-option=tag:lan-dhcp4,option:router,192.168.160.3",
-		"dhcp-option=tag:lan-dhcp4,option:dns-server,192.168.160.3",
+		"dhcp-range=set:lan-dhcp4,192.168.10.130,192.168.10.139,255.255.255.0,12h",
+		"dhcp-option=tag:lan-dhcp4,option:router,192.168.10.3",
+		"dhcp-option=tag:lan-dhcp4,option:dns-server,192.168.10.3",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
@@ -105,7 +105,7 @@ func TestDnsmasqConfigCanPassThroughDHCPv4DNS(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
 				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.3/24"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
@@ -118,8 +118,8 @@ func TestDnsmasqConfigCanPassThroughDHCPv4DNS(t *testing.T) {
 				Spec: api.IPv4DHCPScopeSpec{
 					Server:       "dhcp4",
 					Interface:    "lan",
-					RangeStart:   "192.168.160.130",
-					RangeEnd:     "192.168.160.139",
+					RangeStart:   "192.168.10.130",
+					RangeEnd:     "192.168.10.139",
 					RouterSource: "interfaceAddress",
 					DNSSource:    "dhcp4",
 					DNSInterface: "wan",
@@ -197,10 +197,10 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 
 	data, err := DnsmasqConfig(router, DnsmasqRuntime{
 		IPv6AddressesByInterface: map[string][]string{
-			"ens19": {"2409:10:3d60:1220::100", "2409:10:3d60:1220::3", "fe80::1"},
+			"ens19": {"2001:db8:3d60:1220::100", "2001:db8:3d60:1220::3", "fe80::1"},
 		},
 		IPv6PrefixesByInterface: map[string][]string{
-			"ens19": {"2409:10:3d60:1220::/64"},
+			"ens19": {"2001:db8:3d60:1220::/64"},
 		},
 	})
 	if err != nil {
@@ -209,10 +209,10 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"enable-ra",
-		"listen-address=127.0.0.1,2409:10:3d60:1220::3,::1",
+		"listen-address=127.0.0.1,2001:db8:3d60:1220::3,::1",
 		"dhcp-range=set:lan-dhcp6,::,constructor:ens19,ra-stateless,64,12h",
 		"ra-param=ens19,1454",
-		"dhcp-option=tag:lan-dhcp6,option6:dns-server,[2409:10:3d60:1220::3]",
+		"dhcp-option=tag:lan-dhcp6,option6:dns-server,[2001:db8:3d60:1220::3]",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
@@ -231,7 +231,7 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
 				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.2/24"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.2/24"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
@@ -244,8 +244,8 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 				Spec: api.IPv4DHCPScopeSpec{
 					Server:       "dhcp4",
 					Interface:    "lan",
-					RangeStart:   "192.168.160.120",
-					RangeEnd:     "192.168.160.129",
+					RangeStart:   "192.168.10.120",
+					RangeEnd:     "192.168.10.129",
 					RouterSource: "interfaceAddress",
 					DNSSource:    "self",
 				},
@@ -294,7 +294,7 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 			t.Fatalf("dnsmasq output contains %q before PD exists:\n%s", unwanted, got)
 		}
 	}
-	if !strings.Contains(got, "dhcp-range=set:lan-dhcp4,192.168.160.120,192.168.160.129,255.255.255.0") {
+	if !strings.Contains(got, "dhcp-range=set:lan-dhcp4,192.168.10.120,192.168.10.129,255.255.255.0") {
 		t.Fatalf("dnsmasq output should keep IPv4 DHCP active:\n%s", got)
 	}
 }
@@ -317,12 +317,12 @@ func TestDnsmasqConfigDerivesIPv6SelfDNSFromRoutePrefix(t *testing.T) {
 		AddressSuffix: "::3",
 	}
 	got, err := dnsmasqIPv6DNSServers(spec, delegated, api.SelfAddressPolicySpec{}, map[string]string{"lan": "ens19"}, map[string]delegatedIPv6Address{"lan-ipv6": delegated}, DnsmasqRuntime{
-		IPv6PrefixesByInterface: map[string][]string{"ens19": {"2409:10:3d60:1220::/64"}},
+		IPv6PrefixesByInterface: map[string][]string{"ens19": {"2001:db8:3d60:1220::/64"}},
 	})
 	if err != nil {
 		t.Fatalf("derive dns server: %v", err)
 	}
-	if len(got) != 1 || got[0] != "2409:10:3d60:1220::3" {
+	if len(got) != 1 || got[0] != "2001:db8:3d60:1220::3" {
 		t.Fatalf("dns servers = %v, want delegated ::3", got)
 	}
 }
@@ -336,14 +336,14 @@ func TestDnsmasqConfigPrefersObservedIPv6SelfDNSMatchingSuffix(t *testing.T) {
 	}
 	got, err := dnsmasqIPv6DNSServers(spec, delegated, api.SelfAddressPolicySpec{}, map[string]string{"lan": "ens19"}, map[string]delegatedIPv6Address{"lan-ipv6": delegated}, DnsmasqRuntime{
 		IPv6AddressesByInterface: map[string][]string{"ens19": {
-			"2409:10:3d60:1220::100",
-			"2409:10:3d60:1220::3",
+			"2001:db8:3d60:1220::100",
+			"2001:db8:3d60:1220::3",
 		}},
 	})
 	if err != nil {
 		t.Fatalf("select dns server: %v", err)
 	}
-	if len(got) != 1 || got[0] != "2409:10:3d60:1220::3" {
+	if len(got) != 1 || got[0] != "2001:db8:3d60:1220::3" {
 		t.Fatalf("dns servers = %v, want delegated ::3", got)
 	}
 }
@@ -359,7 +359,7 @@ func TestDnsmasqConfigUsesSelfAddressPolicyOrder(t *testing.T) {
 		},
 	}
 	got, err := dnsmasqIPv6DNSServers(spec, delegated, policy, map[string]string{"lan": "ens19"}, map[string]delegatedIPv6Address{"lan-ipv6": delegated}, DnsmasqRuntime{
-		IPv6PrefixesByInterface: map[string][]string{"ens19": {"2409:10:3d60:1220::/64"}},
+		IPv6PrefixesByInterface: map[string][]string{"ens19": {"2001:db8:3d60:1220::/64"}},
 	})
 	if err != nil {
 		t.Fatalf("select dns server: %v", err)
@@ -380,7 +380,7 @@ func TestDnsmasqConfigRendersConditionalForwarder(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
 				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.3/24"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
@@ -393,8 +393,8 @@ func TestDnsmasqConfigRendersConditionalForwarder(t *testing.T) {
 				Spec: api.IPv4DHCPScopeSpec{
 					Server:       "dhcp4",
 					Interface:    "lan",
-					RangeStart:   "192.168.160.130",
-					RangeEnd:     "192.168.160.139",
+					RangeStart:   "192.168.10.130",
+					RangeEnd:     "192.168.10.139",
 					RouterSource: "interfaceAddress",
 					DNSSource:    "self",
 				},
@@ -428,12 +428,12 @@ func TestDnsmasqConfigRendersDHCPv6ConditionalForwarder(t *testing.T) {
 		UpstreamInterface: "wan",
 	}
 	servers, err := conditionalForwarderServers(spec, map[string]string{"wan": "ens18"}, DnsmasqRuntime{
-		DHCPv6DNSServersByInterface: map[string][]string{"ens18": {"2409:10:3d60:1200:1eb1:7fff:fe73:76d8", "192.0.2.53"}},
+		DHCPv6DNSServersByInterface: map[string][]string{"ens18": {"2001:db8:3d60:1200:1eb1:7fff:fe73:76d8", "192.0.2.53"}},
 	})
 	if err != nil {
 		t.Fatalf("conditional forwarder servers: %v", err)
 	}
-	if len(servers) != 1 || servers[0] != "2409:10:3d60:1200:1eb1:7fff:fe73:76d8" {
+	if len(servers) != 1 || servers[0] != "2001:db8:3d60:1200:1eb1:7fff:fe73:76d8" {
 		t.Fatalf("servers = %v, want DHCPv6 DNS only", servers)
 	}
 }

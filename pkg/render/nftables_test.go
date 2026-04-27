@@ -20,7 +20,7 @@ func TestNftablesIPv4SourceNAT(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
 				Spec: api.IPv4SourceNATSpec{
 					OutboundInterface: "wan",
-					SourceCIDRs:       []string{"192.168.160.0/24"},
+					SourceCIDRs:       []string{"192.168.10.0/24"},
 					Translation: api.IPv4NATTranslationSpec{
 						Type: "interfaceAddress",
 						PortMapping: api.IPv4NATPortMappingSpec{
@@ -42,8 +42,8 @@ func TestNftablesIPv4SourceNAT(t *testing.T) {
 	for _, want := range []string{
 		"table ip routerd_nat",
 		"type nat hook postrouting priority srcnat; policy accept;",
-		`oifname "ens18" ip saddr 192.168.160.0/24 meta l4proto { tcp, udp } masquerade to :1024-65535`,
-		`oifname "ens18" ip saddr 192.168.160.0/24 masquerade`,
+		`oifname "ens18" ip saddr 192.168.10.0/24 meta l4proto { tcp, udp } masquerade to :1024-65535`,
+		`oifname "ens18" ip saddr 192.168.10.0/24 masquerade`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
@@ -68,7 +68,7 @@ func TestNftablesIPv4SourceNATCanUseDSLiteTunnel(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "lan-to-transix"},
 				Spec: api.IPv4SourceNATSpec{
 					OutboundInterface: "transix",
-					SourceCIDRs:       []string{"192.168.160.0/24"},
+					SourceCIDRs:       []string{"192.168.10.0/24"},
 					Translation:       api.IPv4NATTranslationSpec{Type: "interfaceAddress"},
 				},
 			},
@@ -79,7 +79,7 @@ func TestNftablesIPv4SourceNATCanUseDSLiteTunnel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
-	if !strings.Contains(string(data), `oifname "ds-transix" ip saddr 192.168.160.0/24 masquerade`) {
+	if !strings.Contains(string(data), `oifname "ds-transix" ip saddr 192.168.10.0/24 masquerade`) {
 		t.Fatalf("nftables output missing DS-Lite tunnel oif:\n%s", string(data))
 	}
 }
@@ -97,7 +97,7 @@ func TestNftablesIPv4SourceNATAddressPortRange(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
 				Spec: api.IPv4SourceNATSpec{
 					OutboundInterface: "wan",
-					SourceCIDRs:       []string{"192.168.160.0/24"},
+					SourceCIDRs:       []string{"192.168.10.0/24"},
 					Translation: api.IPv4NATTranslationSpec{
 						Type:    "address",
 						Address: "192.0.0.2",
@@ -132,7 +132,7 @@ func TestNftablesIPv4PolicyRoute(t *testing.T) {
 					Table:             100,
 					Priority:          10000,
 					Mark:              256,
-					SourceCIDRs:       []string{"192.168.160.0/24"},
+					SourceCIDRs:       []string{"192.168.10.0/24"},
 					DestinationCIDRs:  []string{"0.0.0.0/0"},
 				},
 			},
@@ -147,7 +147,7 @@ func TestNftablesIPv4PolicyRoute(t *testing.T) {
 	for _, want := range []string{
 		"table ip routerd_policy",
 		"type filter hook prerouting priority mangle; policy accept;",
-		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 meta mark set 0x100",
+		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 meta mark set 0x100",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
@@ -164,7 +164,7 @@ func TestNftablesIPv4PolicyRouteSet(t *testing.T) {
 				Spec: api.IPv4PolicyRouteSetSpec{
 					Mode:             "hash",
 					HashFields:       []string{"sourceAddress", "destinationAddress"},
-					SourceCIDRs:      []string{"192.168.160.0/24"},
+					SourceCIDRs:      []string{"192.168.10.0/24"},
 					DestinationCIDRs: []string{"0.0.0.0/0"},
 					Targets: []api.IPv4PolicyRouteTarget{
 						{OutboundInterface: "transix-a", Table: 100, Priority: 10000, Mark: 256},
@@ -181,9 +181,9 @@ func TestNftablesIPv4PolicyRouteSet(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 ct mark != 0x0 meta mark set ct mark",
-		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 meta mark set jhash ip saddr . ip daddr mod 2 map { 0 : 0x100, 1 : 0x101 }",
-		"ip saddr 192.168.160.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 ct mark set meta mark",
+		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark != 0x0 meta mark set ct mark",
+		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 meta mark set jhash ip saddr . ip daddr mod 2 map { 0 : 0x100, 1 : 0x101 }",
+		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 ct mark set meta mark",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
@@ -297,7 +297,7 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 					ViaInterface:    "wan-pppoe",
 					Protocol:        "tcp",
 					ExternalPort:    443,
-					InternalAddress: "192.168.160.20",
+					InternalAddress: "192.168.10.20",
 					InternalPort:    443,
 					Sources:         []string{"203.0.113.0/24"},
 				},
@@ -319,9 +319,9 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 		`iifname "ppp0" udp dport 546 accept`,
 		`iifname "ens19" tcp dport 22 accept`,
 		`iifname "ens19" oifname "ppp0" accept`,
-		`iifname "ppp0" ip saddr 203.0.113.0/24 ip daddr 192.168.160.20 tcp dport 443 accept`,
+		`iifname "ppp0" ip saddr 203.0.113.0/24 ip daddr 192.168.10.20 tcp dport 443 accept`,
 		"table ip routerd_dnat",
-		`iifname "ppp0" ip saddr 203.0.113.0/24 tcp dport 443 dnat to 192.168.160.20:443`,
+		`iifname "ppp0" ip saddr 203.0.113.0/24 tcp dport 443 dnat to 192.168.10.20:443`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)

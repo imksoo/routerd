@@ -19,7 +19,7 @@ spec:
         name: host
       spec:
         hostname: router02
-        domain: lain.local
+        domain: example.internal
         stateVersion: "25.11"
         boot:
           loader: grub
@@ -43,13 +43,13 @@ spec:
         sudo:
           wheelNeedsPassword: false
         users:
-          - name: nwadmin
+          - name: admin
             description: Network administrator
             groups:
               - wheel
-            initialPassword: nwadmin
+            initialPassword: change-me
             sshAuthorizedKeys:
-              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIVN47JvcsD+o8a07RLfICFbhj2NKsjGKu1AEcUzOR8E imksoo@nwadmin03
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexampleexampleexampleexampleexampleexample lab-admin@example
 
     - apiVersion: system.routerd.net/v1alpha1
       kind: LogSink
@@ -217,7 +217,7 @@ spec:
         name: lan-ipv4
       spec:
         interface: lan
-        address: 192.168.160.2/24
+        address: 192.168.10.2/24
         exclusive: false
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -322,7 +322,7 @@ spec:
           - sourceAddress
           - destinationAddress
         sourceCIDRs:
-          - 192.168.160.0/24
+          - 192.168.10.0/24
         destinationCIDRs:
           - 0.0.0.0/0
         targets:
@@ -352,7 +352,7 @@ spec:
       spec:
         mode: priority
         sourceCIDRs:
-          - 192.168.160.0/24
+          - 192.168.10.0/24
         destinationCIDRs:
           - 0.0.0.0/0
         candidates:
@@ -375,7 +375,7 @@ spec:
       spec:
         outboundInterface: ds-lite-a
         sourceCIDRs:
-          - 192.168.160.0/24
+          - 192.168.10.0/24
         translation:
           type: interfaceAddress
           portMapping:
@@ -390,7 +390,7 @@ spec:
       spec:
         outboundInterface: ds-lite-b
         sourceCIDRs:
-          - 192.168.160.0/24
+          - 192.168.10.0/24
         translation:
           type: interfaceAddress
           portMapping:
@@ -405,7 +405,7 @@ spec:
       spec:
         outboundInterface: ds-lite-c
         sourceCIDRs:
-          - 192.168.160.0/24
+          - 192.168.10.0/24
         translation:
           type: interfaceAddress
           portMapping:
@@ -543,8 +543,8 @@ spec:
       spec:
         server: dhcp4
         interface: lan
-        rangeStart: 192.168.160.120
-        rangeEnd: 192.168.160.129
+        rangeStart: 192.168.10.120
+        rangeEnd: 192.168.10.129
         leaseTime: 12h
         routerSource: interfaceAddress
         dnsSource: self

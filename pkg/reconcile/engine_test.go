@@ -300,7 +300,7 @@ func TestPlanBlocksOverlappingObservedWANAndLANStatic(t *testing.T) {
 			"hostname":                         "router.example\n",
 			"ip -brief link show dev ens18":    "ens18 UP 52:54:00:00:00:18 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
 			"ip -brief link show dev ens19":    "ens19 UP 52:54:00:00:00:19 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
-			"ip -brief -4 addr show dev ens18": "ens18 UP 192.168.160.20/24\n",
+			"ip -brief -4 addr show dev ens18": "ens18 UP 192.168.10.20/24\n",
 			"ip -brief -4 addr show dev ens19": "",
 		}),
 		OSNetworking: &osNetworking{},
@@ -356,7 +356,7 @@ func TestPlanAllowsDocumentedOverlapWithWarning(t *testing.T) {
 			"hostname":                         "router.example\n",
 			"ip -brief link show dev ens18":    "ens18 UP 52:54:00:00:00:18 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
 			"ip -brief link show dev ens19":    "ens19 UP 52:54:00:00:00:19 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
-			"ip -brief -4 addr show dev ens18": "ens18 UP 192.168.160.20/24\n",
+			"ip -brief -4 addr show dev ens18": "ens18 UP 192.168.10.20/24\n",
 			"ip -brief -4 addr show dev ens19": "",
 		}),
 		OSNetworking: &osNetworking{},
@@ -440,7 +440,7 @@ func TestAdoptionCandidatesReportAttributeDrift(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"},
 				Metadata: api.ObjectMeta{Name: "system-hostname"},
-				Spec:     api.HostnameSpec{Hostname: "router03.lain.local", Managed: true},
+				Spec:     api.HostnameSpec{Hostname: "router03.example.internal", Managed: true},
 			},
 		}},
 	}
@@ -458,7 +458,7 @@ func TestAdoptionCandidatesReportAttributeDrift(t *testing.T) {
 		t.Fatalf("candidates = %+v, want one", candidates)
 	}
 	got := candidates[0]
-	if got.Desired["hostname"] != "router03.lain.local" || got.Observed["hostname"] != "router03" {
+	if got.Desired["hostname"] != "router03.example.internal" || got.Observed["hostname"] != "router03" {
 		t.Fatalf("candidate attributes = %+v", got)
 	}
 	if !strings.Contains(got.Reason, "observed attributes differ") {
@@ -539,17 +539,17 @@ func TestInterfaceStateFallsBackToIfconfig(t *testing.T) {
 
 func TestHasAddressFallsBackToIfconfigAddressWithoutPrefix(t *testing.T) {
 	engine := &Engine{Command: fakeCommand(map[string]string{
-		"ifconfig vtnet1": "vtnet1: flags=...\n\tinet 192.168.160.1 netmask 0xffffff00 broadcast 192.168.160.255\n",
+		"ifconfig vtnet1": "vtnet1: flags=...\n\tinet 192.168.10.1 netmask 0xffffff00 broadcast 192.168.10.255\n",
 	})}
-	if !engine.hasAddress("vtnet1", "192.168.160.1/24", "-4") {
+	if !engine.hasAddress("vtnet1", "192.168.10.1/24", "-4") {
 		t.Fatal("hasAddress = false, want true")
 	}
 }
 
 func TestParseIPv4PrefixesFromIfconfig(t *testing.T) {
-	got := parseIPv4Prefixes("vtnet1: flags=...\n\tinet 192.168.160.1 netmask 0xffffff00 broadcast 192.168.160.255\n")
-	if len(got) != 1 || got[0].String() != "192.168.160.0/24" {
-		t.Fatalf("prefixes = %v, want 192.168.160.0/24", got)
+	got := parseIPv4Prefixes("vtnet1: flags=...\n\tinet 192.168.10.1 netmask 0xffffff00 broadcast 192.168.10.255\n")
+	if len(got) != 1 || got[0].String() != "192.168.10.0/24" {
+		t.Fatalf("prefixes = %v, want 192.168.10.0/24", got)
 	}
 }
 
@@ -576,7 +576,7 @@ func findResult(result *Result, id string) *ResourceResult {
 }
 
 func overlapRouter(allowOverlap bool) *api.Router {
-	staticSpec := api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.160.3/24"}
+	staticSpec := api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"}
 	if allowOverlap {
 		staticSpec.AllowOverlap = true
 		staticSpec.AllowOverlapReason = "overlapping customer network for NAT lab"

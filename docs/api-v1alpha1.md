@@ -276,13 +276,13 @@ metadata:
   name: lan-ipv4
 spec:
   interface: lan
-  address: 192.168.160.3/24
+  address: 192.168.10.3/24
   exclusive: true
 ```
 
 How routerd behaves:
 
-- routerd assigns `192.168.160.3/24` to the LAN interface and treats it as
+- routerd assigns `192.168.10.3/24` to the LAN interface and treats it as
   the router's own address.
 - `spec.exclusive: true` makes routerd remove other static IPv4 addresses on
   that interface during reconcile, so the LAN side does not end up with two
@@ -294,7 +294,7 @@ How routerd behaves:
   ```yaml
   spec:
     interface: lan
-    address: 192.168.160.3/24
+    address: 192.168.10.3/24
     allowOverlap: true
     allowOverlapReason: overlapping customer network for NAT lab
   ```
@@ -375,8 +375,8 @@ metadata:
 spec:
   server: dhcp4
   interface: lan
-  rangeStart: 192.168.160.100
-  rangeEnd: 192.168.160.199
+  rangeStart: 192.168.10.100
+  rangeEnd: 192.168.10.199
   leaseTime: 12h
   routerSource: interfaceAddress
   dnsSource: self
@@ -723,7 +723,7 @@ metadata:
 spec:
   mode: priority
   sourceCIDRs:
-    - 192.168.160.0/24
+    - 192.168.10.0/24
   destinationCIDRs:
     - 0.0.0.0/0
   candidates:
@@ -780,7 +780,7 @@ metadata:
 spec:
   outboundInterface: transix
   sourceCIDRs:
-    - 192.168.160.0/24
+    - 192.168.10.0/24
   translation:
     type: interfaceAddress
     portMapping:
@@ -831,7 +831,7 @@ spec:
   priority: 10000
   mark: 256
   sourceCIDRs:
-    - 192.168.160.0/24
+    - 192.168.10.0/24
   destinationCIDRs:
     - 0.0.0.0/0
   routeMetric: 50
@@ -859,7 +859,7 @@ spec:
     - sourceAddress
     - destinationAddress
   sourceCIDRs:
-    - 192.168.160.0/24
+    - 192.168.10.0/24
   destinationCIDRs:
     - 0.0.0.0/0
   targets:
@@ -1037,7 +1037,7 @@ spec:
   viaInterface: wan-pppoe
   protocol: tcp
   externalPort: 443
-  internalAddress: 192.168.160.20
+  internalAddress: 192.168.10.20
   internalPort: 443
   sources:
     - 203.0.113.0/24
@@ -1085,10 +1085,10 @@ spec:
   sudo:
     wheelNeedsPassword: false
   users:
-    - name: nwadmin
+    - name: admin
       groups:
         - wheel
-      initialPassword: nwadmin
+      initialPassword: change-me
       sshAuthorizedKeys:
         - ssh-ed25519 AAAA...
 ```
