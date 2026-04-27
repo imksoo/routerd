@@ -33,6 +33,8 @@ spec:
           extraFlags:
             - --status-file
             - /run/routerd/status.json
+        additionalPackages:
+          - tcpdump
         debugSystemPackages: true
         ssh:
           enabled: true
