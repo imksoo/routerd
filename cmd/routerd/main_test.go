@@ -556,6 +556,22 @@ func TestObserveFreeBSDDHCP6CIdentityPayload(t *testing.T) {
 	}
 }
 
+func TestAppendPrefixDelegationStateWarnings(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+		Metadata: api.ObjectMeta{Name: "wan-pd"},
+		Spec:     api.IPv6PrefixDelegationSpec{Interface: "wan"},
+	}}}}
+	store := routerstate.New()
+	store.Set("ipv6PrefixDelegation.wan-pd.lastPrefix", "2001:db8:3d60:1240::/60", "test")
+	store.Unset("ipv6PrefixDelegation.wan-pd.currentPrefix", "test")
+	result := &reconcile.Result{}
+	appendPrefixDelegationStateWarnings(result, router, store)
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "2001:db8:3d60:1240::/60") {
+		t.Fatalf("warnings = %#v", result.Warnings)
+	}
+}
+
 func TestParseRFC4361ClientID(t *testing.T) {
 	identity := parseRFC4361ClientID("ffca53095a0003000102005e102030")
 	if identity.IAID != "ca53095a" {

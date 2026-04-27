@@ -485,6 +485,9 @@ How routerd behaves:
 - The OS DHCPv6 client remains responsible for Renew/Rebind before the lease
   expires. routerd should not normally restart that client during reconcile,
   because a restart can turn a renewal path into a fresh Solicit or Release.
+  If routerd has a `lastPrefix` but no current observable prefix, `plan`,
+  `reconcile`, and daemon status include a warning so the operator can fix
+  the DHCPv6 client before the upstream lease expires.
 - `spec.iaid` pins the DHCPv6 IAID. It may be written as decimal, `0x`
   prefixed hex, or 8 hex digits. systemd-networkd renders it as a decimal
   `IAID=` value; FreeBSD `dhcp6c` uses it as the `ia-pd` / `id-assoc pd`

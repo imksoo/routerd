@@ -468,6 +468,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		return nil, err
 	}
 	appendStatePolicyResults(result, router, stateStore, stateChanges)
+	appendPrefixDelegationStateWarnings(result, router, stateStore)
 	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath); err != nil {
 		return nil, err
 	}
@@ -1514,6 +1515,34 @@ func appendStatePolicyResults(result *reconcile.Result, router *api.Router, stor
 			},
 			Plan: []string{"evaluate state variable " + spec.Variable},
 		})
+	}
+}
+
+func appendPrefixDelegationStateWarnings(result *reconcile.Result, router *api.Router, store *routerstate.Store) {
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6PrefixDelegation" {
+			continue
+		}
+		base := "ipv6PrefixDelegation." + res.Metadata.Name
+		current := store.Get(base + ".currentPrefix")
+		if current.Status == routerstate.StatusSet {
+			continue
+		}
+		last := store.Get(base + ".lastPrefix")
+		if last.Status != routerstate.StatusSet || last.Value == "" {
+			continue
+		}
+		observedAt := store.Get(base + ".lastObservedAt").Value
+		missingAt := store.Get(base + ".lastMissingAt").Value
+		msg := fmt.Sprintf("%s is not currently observable; last delegated prefix was %s", res.ID(), last.Value)
+		if observedAt != "" {
+			msg += " observed at " + observedAt
+		}
+		if missingAt != "" {
+			msg += ", missing since " + missingAt
+		}
+		msg += ". The OS DHCPv6 client must renew or reacquire PD before the upstream lease expires."
+		result.Warnings = append(result.Warnings, msg)
 	}
 }
 
