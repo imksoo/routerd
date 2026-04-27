@@ -727,10 +727,11 @@ spec:
 
 ### NixOSHost
 
-`NixOSHost` は `routerd render nixos` 用の NixOS ホスト設定を宣言します。
-実行時の reconcile では反映しません。生成される `routerd-generated.nix`
-は薄い `configuration.nix` から import し、`nixos-rebuild switch` で
-反映します。
+`NixOSHost` は `routerd render nixos` 向けに NixOS のホスト設定を宣言
+するリソースです。`routerd serve` の実行時調整（reconcile）の対象には
+含めず、ホストへの反映は Nix 経由で行います。具体的には、生成された
+`routerd-generated.nix` を最小限の手書き `configuration.nix` から
+import し、`nixos-rebuild switch` で適用します。
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -762,20 +763,21 @@ spec:
 
 ルータの振る舞い:
 
-- `spec.hostname` と `spec.domain` から `networking.hostName` と
+- `spec.hostname` と `spec.domain` から `networking.hostName` および
   `networking.domain` を生成します。
-- `spec.boot.loader: grub` と `spec.boot.grubDevice` から、生成された
-  NixOS ホスト設定で必要になる最小限の GRUB ブートローダー設定を
-  生成します。
-- `spec.users` から `users.users.<name>` を生成し、SSH 公開鍵も設定
-  します。
+- `spec.boot.loader: grub` と `spec.boot.grubDevice` から、最小限の
+  GRUB ブートローダー設定を生成します。
+- `spec.users` から `users.users.<name>` を生成し、併せて SSH 公開鍵も
+  配置します。
 - `spec.ssh` と `spec.sudo` から OpenSSH と sudo の設定を生成します。
-- `spec.debugSystemPackages` を有効にすると運用確認用のツールを
-  `environment.systemPackages` に入れます。routerd デーモンの
-  service path はリソースから導出し、`dnsmasq`、`nftables`、`ppp`、
-  `iproute2` など必要なものを入れます。
-- `spec.additionalPackages` と `spec.additionalServicePath` で明示的な
-  パッケージ追加もできます。
+- `spec.debugSystemPackages` を有効にすると、運用時の動作確認に使う
+  ツール一式を `environment.systemPackages` に追加します。あわせて、
+  routerd デーモン本体の systemd ユニットの `PATH` を他のリソースから
+  導出し、`dnsmasq`、`nftables`、`ppp`、`iproute2` など必要なものを
+  含めます。
+- 上記で足りない場合は、`spec.additionalPackages` で
+  `environment.systemPackages` に、`spec.additionalServicePath` で
+  routerd ユニットの `PATH` に、それぞれ追加のパッケージを足せます。
 
 ### Hostname
 

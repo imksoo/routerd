@@ -216,6 +216,7 @@ changing host state.
 - [Plugin protocol](docs/plugin-protocol.md)
 - [Supported platforms](docs/platforms.md)
 - [Getting started](docs/tutorials/getting-started.md)
+- [Getting started on Nix and NixOS](docs/tutorials/nixos-getting-started.md)
 - [Changelog](docs/releases/changelog.md)
 - [API v1alpha1 — Japanese](docs/api-v1alpha1.ja.md)
 - [Resource ownership — Japanese](docs/resource-ownership.ja.md)

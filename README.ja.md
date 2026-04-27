@@ -178,6 +178,7 @@ sudo routerd reconcile --config /usr/local/etc/routerd/router.yaml --once
 - [プラグインプロトコル](docs/plugin-protocol.ja.md)
 - [対応プラットフォーム](docs/platforms.ja.md)
 - [はじめに（英語）](docs/tutorials/getting-started.md)
+- [Nix / NixOS から始める（英語）](docs/tutorials/nixos-getting-started.md)
 - [更新履歴（英語）](docs/releases/changelog.md)
 - [英語 README](README.md)
 

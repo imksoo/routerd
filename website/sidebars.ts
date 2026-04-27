@@ -8,6 +8,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'tutorials/getting-started',
         'tutorials/router-lab',
+        'tutorials/nixos-getting-started',
       ],
     },
     {
