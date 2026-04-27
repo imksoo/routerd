@@ -124,7 +124,6 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`services.timesyncd.servers = [ "pool.ntp.org" ];`,
 		`"net.ipv4.ip_forward" = 1;`,
 		`nftables`,
-		`systemd.services.routerd.path`,
 		`system.stateVersion = "25.11";`,
 	} {
 		if !strings.Contains(got, want) {
@@ -133,5 +132,8 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 	}
 	if strings.Contains(got, "pkgs.netplan") || strings.Contains(got, "\n    netplan\n") {
 		t.Fatalf("NixOS module should not depend on netplan:\n%s", got)
+	}
+	if strings.Contains(got, "systemd.services.routerd.path") {
+		t.Fatalf("NixOS module must not emit an incomplete routerd service:\n%s", got)
 	}
 }

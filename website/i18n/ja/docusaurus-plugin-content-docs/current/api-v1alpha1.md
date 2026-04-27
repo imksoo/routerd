@@ -902,10 +902,9 @@ spec:
   配置します。
 - `spec.ssh` と `spec.sudo` から OpenSSH と sudo の設定を生成します。
 - `spec.debugSystemPackages` を有効にすると、運用時の動作確認に使う
-  ツール一式を `environment.systemPackages` に追加します。あわせて、
-  routerd デーモン本体の systemd ユニットの `PATH` を他のリソースから
-  導出し、`dnsmasq`、`nftables`、`ppp`、`iproute2` など必要なものを
-  含めます。
+  ツール一式を `environment.systemPackages` に追加します。追加する
+  パッケージはリソースから導き、`dnsmasq`、`nftables`、`ppp`、
+  `iproute2` など必要なものを含めます。
 - `persistent: true` の `Sysctl` リソースは `boot.kernel.sysctl` として
   生成します。実行中のカーネルだけに反映する sysctl は、引き続き
   デーモン側の担当です。

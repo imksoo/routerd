@@ -1080,9 +1080,8 @@ How routerd behaves:
   authorized keys.
 - `spec.ssh` and `spec.sudo` render OpenSSH and sudo policy.
 - `spec.debugSystemPackages` adds operational tools to
-  `environment.systemPackages`. routerd also derives the daemon service
-  path from resources, for example `dnsmasq`, `nftables`, `ppp`, and
-  `iproute2`.
+  `environment.systemPackages`. The package set is derived from resources,
+  for example `dnsmasq`, `nftables`, `ppp`, and `iproute2`.
 - `Sysctl` resources with `persistent: true` render into
   `boot.kernel.sysctl`. Runtime-only sysctl resources remain the daemon's
   responsibility.

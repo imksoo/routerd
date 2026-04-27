@@ -1581,6 +1581,9 @@ func applyIPv4ReversePathFilters(router *api.Router) ([]string, error) {
 		if target == "" {
 			return nil, fmt.Errorf("%s references target with empty interface name", res.ID())
 		}
+		if target != "all" && target != "default" && !linkExists(target) {
+			continue
+		}
 		key := "net.ipv4.conf." + target + ".rp_filter"
 		value, err := ipv4ReversePathFilterValue(spec.Mode)
 		if err != nil {
@@ -2004,7 +2007,7 @@ func applyIPv4PolicyRoutes(router *api.Router) ([]string, error) {
 				Mark:              spec.Mark,
 				RouteMetric:       spec.RouteMetric,
 			}
-			label, err := applyIPv4PolicyRouteTarget(res.ID(), aliases, target)
+			label, err := applyIPv4PolicyRouteTarget(res.ID(), aliases, target, false)
 			if err != nil {
 				return nil, err
 			}
@@ -2020,9 +2023,12 @@ func applyIPv4PolicyRoutes(router *api.Router) ([]string, error) {
 					targetName = fmt.Sprintf("%s-%d", res.Metadata.Name, i)
 				}
 				target.Name = targetName
-				label, err := applyIPv4PolicyRouteTarget(res.ID(), aliases, target)
+				label, err := applyIPv4PolicyRouteTarget(res.ID(), aliases, target, true)
 				if err != nil {
 					return nil, err
+				}
+				if label == "" {
+					continue
 				}
 				applied = append(applied, label)
 			}
@@ -2053,15 +2059,13 @@ func applyIPv4DefaultRoutePolicies(router *api.Router) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		candidate, ok := selectIPv4DefaultRouteCandidate(spec.Candidates, healthChecks)
+		available := availableIPv4DefaultRouteCandidates(spec.Candidates, aliases, routeSets, healthChecks, linkExists)
+		candidate, ok := selectIPv4DefaultRouteCandidate(available, healthChecks)
 		if !ok {
 			return nil, fmt.Errorf("%s has no healthy IPv4 default route candidate", res.ID())
 		}
 		var healthy []api.IPv4DefaultRoutePolicyCandidate
-		for _, target := range spec.Candidates {
-			if target.HealthCheck != "" && !healthChecks[target.HealthCheck] {
-				continue
-			}
+		for _, target := range available {
 			healthy = append(healthy, target)
 			if target.RouteSet != "" {
 				continue
@@ -2093,6 +2097,39 @@ func ipv4PolicyRouteSets(router *api.Router) (map[string]api.IPv4PolicyRouteSetS
 		routeSets[res.Metadata.Name] = spec
 	}
 	return routeSets, nil
+}
+
+func availableIPv4DefaultRouteCandidates(candidates []api.IPv4DefaultRoutePolicyCandidate, aliases map[string]string, routeSets map[string]api.IPv4PolicyRouteSetSpec, health map[string]bool, exists func(string) bool) []api.IPv4DefaultRoutePolicyCandidate {
+	var available []api.IPv4DefaultRoutePolicyCandidate
+	for _, candidate := range candidates {
+		if candidate.HealthCheck != "" && !health[candidate.HealthCheck] {
+			continue
+		}
+		if candidate.RouteSet != "" {
+			routeSet, ok := routeSets[candidate.RouteSet]
+			if !ok || !ipv4RouteSetHasAvailableTarget(routeSet, aliases, exists) {
+				continue
+			}
+			available = append(available, candidate)
+			continue
+		}
+		ifname := aliases[candidate.Interface]
+		if ifname == "" || !exists(ifname) {
+			continue
+		}
+		available = append(available, candidate)
+	}
+	return available
+}
+
+func ipv4RouteSetHasAvailableTarget(routeSet api.IPv4PolicyRouteSetSpec, aliases map[string]string, exists func(string) bool) bool {
+	for _, target := range routeSet.Targets {
+		ifname := aliases[target.OutboundInterface]
+		if ifname != "" && exists(ifname) {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultRouteCandidateLabel(candidate api.IPv4DefaultRoutePolicyCandidate) string {
@@ -2695,10 +2732,16 @@ func currentIPv4HealthTargetForInterface(ifname string) (string, error) {
 	return "", fmt.Errorf("no IPv4 default gateway or peer found")
 }
 
-func applyIPv4PolicyRouteTarget(resourceID string, aliases map[string]string, target api.IPv4PolicyRouteTarget) (string, error) {
+func applyIPv4PolicyRouteTarget(resourceID string, aliases map[string]string, target api.IPv4PolicyRouteTarget, skipMissingLink bool) (string, error) {
 	ifname := aliases[target.OutboundInterface]
 	if ifname == "" {
 		return "", fmt.Errorf("%s references outbound interface with empty ifname", resourceID)
+	}
+	if !linkExists(ifname) {
+		if skipMissingLink {
+			return "", nil
+		}
+		return "", fmt.Errorf("%s outbound interface %s does not exist", resourceID, ifname)
 	}
 	metric := target.RouteMetric
 	if metric == 0 {
@@ -2715,6 +2758,10 @@ func applyIPv4PolicyRouteTarget(resourceID string, aliases map[string]string, ta
 		name = target.OutboundInterface
 	}
 	return fmt.Sprintf("%s(table=%d,mark=0x%x)", name, target.Table, target.Mark), nil
+}
+
+func linkExists(ifname string) bool {
+	return exec.Command("ip", "link", "show", "dev", ifname).Run() == nil
 }
 
 func ensureIPv4FwmarkRule(priority, mark, table int) error {

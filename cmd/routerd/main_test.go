@@ -200,6 +200,58 @@ func TestSelectIPv4DefaultRouteCandidateTreatsMissingHealthCheckAsUp(t *testing.
 	}
 }
 
+func TestAvailableIPv4DefaultRouteCandidatesSkipsMissingRouteSetDevices(t *testing.T) {
+	candidates := []api.IPv4DefaultRoutePolicyCandidate{
+		{Name: "dslite", Priority: 10, RouteSet: "dslite-set"},
+		{Name: "wan", Priority: 20, Interface: "wan", HealthCheck: "wan-check"},
+	}
+	routeSets := map[string]api.IPv4PolicyRouteSetSpec{
+		"dslite-set": {
+			Targets: []api.IPv4PolicyRouteTarget{
+				{OutboundInterface: "ds-lite-a"},
+				{OutboundInterface: "ds-lite-b"},
+			},
+		},
+	}
+	aliases := map[string]string{
+		"wan":       "ens18",
+		"ds-lite-a": "ds-lite-a",
+		"ds-lite-b": "ds-lite-b",
+	}
+	available := availableIPv4DefaultRouteCandidates(candidates, aliases, routeSets, map[string]bool{"wan-check": true}, func(ifname string) bool {
+		return ifname == "ens18"
+	})
+	if len(available) != 1 || available[0].Name != "wan" {
+		t.Fatalf("available candidates = %+v, want wan only", available)
+	}
+}
+
+func TestAvailableIPv4DefaultRouteCandidatesKeepsRouteSetWithAnyDevice(t *testing.T) {
+	candidates := []api.IPv4DefaultRoutePolicyCandidate{
+		{Name: "dslite", Priority: 10, RouteSet: "dslite-set"},
+		{Name: "wan", Priority: 20, Interface: "wan"},
+	}
+	routeSets := map[string]api.IPv4PolicyRouteSetSpec{
+		"dslite-set": {
+			Targets: []api.IPv4PolicyRouteTarget{
+				{OutboundInterface: "ds-lite-a"},
+				{OutboundInterface: "ds-lite-b"},
+			},
+		},
+	}
+	aliases := map[string]string{
+		"wan":       "ens18",
+		"ds-lite-a": "ds-lite-a",
+		"ds-lite-b": "ds-lite-b",
+	}
+	available := availableIPv4DefaultRouteCandidates(candidates, aliases, routeSets, nil, func(ifname string) bool {
+		return ifname == "ens18" || ifname == "ds-lite-b"
+	})
+	if len(available) != 2 || available[0].Name != "dslite" {
+		t.Fatalf("available candidates = %+v, want dslite first", available)
+	}
+}
+
 func TestStaleIPv4ManagedFwmarkRules(t *testing.T) {
 	desired := map[ipv4FwmarkRule]bool{
 		{Priority: 10, Mark: 0x111, Table: 111}: true,

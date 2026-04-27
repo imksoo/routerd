@@ -40,7 +40,7 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	packages, servicePath, err := nixOSPackages(router, host)
+	packages, _, err := nixOSPackages(router, host)
 	if err != nil {
 		return nil, err
 	}
@@ -104,13 +104,6 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	if len(packages) > 0 {
 		buf.WriteString("  environment.systemPackages = with pkgs; [\n")
 		for _, pkg := range packages {
-			buf.WriteString("    " + pkg + "\n")
-		}
-		buf.WriteString("  ];\n")
-	}
-	if len(servicePath) > 0 {
-		buf.WriteString("  systemd.services.routerd.path = with pkgs; [\n")
-		for _, pkg := range servicePath {
 			buf.WriteString("    " + pkg + "\n")
 		}
 		buf.WriteString("  ];\n")

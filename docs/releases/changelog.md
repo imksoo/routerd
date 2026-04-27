@@ -34,6 +34,11 @@ behavior changes and new resource shapes as the model takes shape.
 - `IPv4DefaultRoutePolicy` candidates that reference `IPv4PolicyRouteSet`,
   preserving conntrack marks for healthy targets.
 - PPPoE interface rendering and routerd-managed systemd unit.
+- NixOS renderer groundwork for host settings, systemd-networkd links,
+  dependency packages, and persistent sysctl values.
+- IPv4 default route selection now ignores route-set candidates whose
+  target interfaces do not exist, so DS-Lite fallback can use DHCPv4
+  while prefix delegation is still unavailable.
 
 ## 0.1.0 planning baseline
 
