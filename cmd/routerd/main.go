@@ -248,10 +248,15 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 	if err != nil {
 		return err
 	}
-	stateChanges, err := evaluateStatePolicies(router, stateStore)
+	stateChanges, err := recordObservedPrefixDelegationState(router, stateStore)
 	if err != nil {
 		return err
 	}
+	policyChanges, err := evaluateStatePolicies(router, stateStore)
+	if err != nil {
+		return err
+	}
+	stateChanges = append(stateChanges, policyChanges...)
 	effectiveRouter := filterRouterByWhen(router, stateStore)
 	switch name {
 	case "observe":
@@ -260,6 +265,7 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 			return err
 		}
 		appendStatePolicyResults(result, router, stateStore, stateChanges)
+		appendPrefixDelegationStateWarnings(result, router, stateStore)
 		return writeResult(stdout, *statusFile, result)
 	case "plan":
 		result, err := engine.Plan(effectiveRouter)
@@ -267,6 +273,7 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 			return err
 		}
 		appendStatePolicyResults(result, router, stateStore, stateChanges)
+		appendPrefixDelegationStateWarnings(result, router, stateStore)
 		return writeResult(stdout, *statusFile, result)
 	case "run":
 		return errors.New("run is not implemented yet")
