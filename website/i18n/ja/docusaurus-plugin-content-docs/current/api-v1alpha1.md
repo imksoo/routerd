@@ -180,7 +180,7 @@ spec:
 
 ### PPPoEInterface
 
-`PPPoEInterface` は、別の `Interface` の上に PPPoE セッションを張ります。Linux では pppd / rp-pppoe の peer 設定、CHAP/PAP secret、systemd ユニットを routerd が管理します。FreeBSD では `mpd5` の設定を出力し、管理対象のセッションがある場合は `mpd` の rc.d サービスを有効にします。
+`PPPoEInterface` は、別の `Interface` の上に PPPoE セッションを張ります。Linux では pppd / rp-pppoe の peer 設定、CHAP/PAP secret、systemd ユニットを routerd が管理します。FreeBSD では `mpd5` の設定を出力し、管理対象のセッションがある場合は `mpd5` の rc.d サービスを起動します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1

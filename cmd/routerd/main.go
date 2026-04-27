@@ -2069,11 +2069,11 @@ func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, mpd5Path s
 		if fileChanged {
 			changed = append(changed, mpd5Path)
 		}
-		if (fileChanged || rcValues["mpd_enable"] == "YES") && freeBSDServiceExists("mpd") {
-			if err := runLogged("service", "mpd", "restart"); err != nil {
+		if (fileChanged || rcValues["mpd_enable"] == "YES") && freeBSDServiceExists("mpd5") {
+			if err := runLogged("service", "mpd5", "restart"); err != nil {
 				return changed, err
 			}
-			changed = append(changed, "service:mpd")
+			changed = append(changed, "service:mpd5")
 		}
 	}
 	for _, ifname := range compactStringList(restartIfnames) {
@@ -3532,8 +3532,20 @@ func applyPPPoEConfig(router *api.Router) ([]string, error) {
 		return nil, errors.New("pppd is required for managed PPPoE interfaces")
 	}
 
+	nixOS := isNixOSHost()
+	managedUnits := map[string]bool{}
+	for _, unit := range config.Units {
+		managedUnits[unit] = true
+	}
 	var changedFiles []string
 	for _, file := range config.Files {
+		if strings.HasPrefix(file.Path, "/etc/systemd/system/") && strings.HasSuffix(file.Path, ".service") && nixOS {
+			unit := filepath.Base(file.Path)
+			if !managedUnits[unit] {
+				continue
+			}
+			file.Path = filepath.Join("/run/systemd/system", unit)
+		}
 		if err := os.MkdirAll(filepathDir(file.Path), 0755); err != nil {
 			return nil, fmt.Errorf("create directory for %s: %w", file.Path, err)
 		}
@@ -3563,6 +3575,20 @@ func applyPPPoEConfig(router *api.Router) ([]string, error) {
 		}
 	}
 	for _, unit := range config.Units {
+		if nixOS {
+			if len(changedFiles) > 0 {
+				if err := runLogged("systemctl", "restart", unit); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if err := runLogged("systemctl", "is-active", "--quiet", unit); err != nil {
+				if err := runLogged("systemctl", "start", unit); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
 		if len(changedFiles) > 0 {
 			if err := runLogged("systemctl", "enable", unit); err != nil {
 				return nil, err
@@ -3651,7 +3677,7 @@ func replaceManagedPPPoEBlocks(current string, entries []render.PPPoESecretEntry
 
 func containsSystemdUnit(paths []string) bool {
 	for _, path := range paths {
-		if strings.HasPrefix(path, "/etc/systemd/system/") && strings.HasSuffix(path, ".service") {
+		if (strings.HasPrefix(path, "/etc/systemd/system/") || strings.HasPrefix(path, "/run/systemd/system/")) && strings.HasSuffix(path, ".service") {
 			return true
 		}
 	}
@@ -3686,12 +3712,25 @@ func filepathDir(path string) string {
 func writeFileIfChanged(path string, data []byte, perm os.FileMode) (bool, error) {
 	current, err := os.ReadFile(path)
 	if err == nil && bytes.Equal(current, data) {
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			return false, statErr
+		}
+		if info.Mode().Perm() != perm {
+			if err := os.Chmod(path, perm); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
 		return false, nil
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
 	if err := os.WriteFile(path, data, perm); err != nil {
+		return false, err
+	}
+	if err := os.Chmod(path, perm); err != nil {
 		return false, err
 	}
 	return true, nil

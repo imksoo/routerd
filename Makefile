@@ -5,7 +5,8 @@ PLUGINDIR ?= $(PREFIX)/libexec/routerd/plugins
 SYSTEMDUNITDIR ?= $(PREFIX)/lib/systemd/system
 RCDDIR ?= $(PREFIX)/etc/rc.d
 DESTDIR ?=
-DISTDIR ?= dist
+DISTBASE ?= dist
+DISTDIR ?= $(DISTBASE)/$(ROUTERD_OS)$(if $(GOARCH),-$(GOARCH))
 DISTROOT ?= $(DISTDIR)/root
 DISTTAR ?= $(DISTDIR)/routerd-install.tar
 REMOTE_HOST ?=
@@ -32,8 +33,9 @@ INSTALL_SERVICE_TARGET ?= install-systemd
 SERVICE_DEPS := systemctl resolvectl dnsmasq nft conntrack
 endif
 
-ROUTERD_BIN := bin/routerd
-ROUTERCTL_BIN := bin/routerctl
+BUILDDIR ?= bin/$(ROUTERD_OS)$(if $(GOARCH),-$(GOARCH))
+ROUTERD_BIN := $(BUILDDIR)/routerd
+ROUTERCTL_BIN := $(BUILDDIR)/routerctl
 GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
@@ -45,6 +47,7 @@ test:
 	go test ./...
 
 build:
+	install -d $(BUILDDIR)
 	$(GO_BUILD_ENV) go build -o $(ROUTERD_BIN) ./cmd/routerd
 	$(GO_BUILD_ENV) go build -o $(ROUTERCTL_BIN) ./cmd/routerctl
 

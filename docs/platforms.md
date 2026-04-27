@@ -72,7 +72,7 @@ parity that the code does not yet provide.
   `sla-len` here but not the Linux-style interface identifier statement.
 - The FreeBSD PPPoE renderer uses `mpd5`. `PPPoEInterface` resources are
   rendered into `/usr/local/etc/mpd5/mpd.conf`, and managed sessions enable
-  the `mpd` rc.d service. Only mark the router that should actively hold a
+  the `mpd5` rc.d service. Only mark the router that should actively hold a
   PPPoE session as `managed: true` when the access line has a session limit.
 - Not yet implemented for FreeBSD:
   - pf renderer to replace nftables for source NAT and firewall.

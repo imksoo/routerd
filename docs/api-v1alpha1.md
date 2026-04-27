@@ -229,7 +229,7 @@ Host ownership decisions, including the local ledger at
 `PPPoEInterface` brings up a PPPoE session on top of an existing
 `Interface`. On Linux, routerd renders pppd / rp-pppoe peer configuration,
 the CHAP/PAP secret, and a managed systemd unit. On FreeBSD, routerd renders
-an `mpd5` configuration and enables the `mpd` rc.d service for managed
+an `mpd5` configuration and starts the `mpd5` rc.d service for managed
 sessions.
 
 ```yaml
