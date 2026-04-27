@@ -1198,7 +1198,11 @@ func (e *Engine) detectOSNetworking() osNetworking {
 func (e *Engine) interfaceState(ifname string) (bool, bool) {
 	out, err := e.Command("ip", "-brief", "link", "show", "dev", ifname)
 	if err != nil {
-		return false, false
+		out, err = e.Command("ifconfig", ifname)
+		if err != nil {
+			return false, false
+		}
+		return true, ifconfigStatusActive(string(out))
 	}
 	fields := strings.Fields(string(out))
 	if len(fields) < 2 {
@@ -1210,9 +1214,18 @@ func (e *Engine) interfaceState(ifname string) (bool, bool) {
 func (e *Engine) hasAddress(ifname, address, family string) bool {
 	out, err := e.Command("ip", "-brief", family, "addr", "show", "dev", ifname)
 	if err != nil {
-		return false
+		out, err = e.Command("ifconfig", ifname)
+		if err != nil {
+			return false
+		}
 	}
-	return strings.Contains(string(out), address)
+	if strings.Contains(string(out), address) {
+		return true
+	}
+	if addr, _, ok := strings.Cut(address, "/"); ok {
+		return strings.Contains(string(out), addr)
+	}
+	return false
 }
 
 func (e *Engine) defaultIPv4Route() (gateway, dev, proto string) {
@@ -1245,7 +1258,10 @@ func (e *Engine) observedIPv4Prefixes(policies map[string]interfacePolicy) []ipv
 	for name, policy := range policies {
 		out, err := e.Command("ip", "-brief", "-4", "addr", "show", "dev", policy.IfName)
 		if err != nil {
-			continue
+			out, err = e.Command("ifconfig", policy.IfName)
+			if err != nil {
+				continue
+			}
 		}
 		for _, prefix := range parseIPv4Prefixes(string(out)) {
 			assignments = append(assignments, ipv4Assignment{
@@ -1258,6 +1274,17 @@ func (e *Engine) observedIPv4Prefixes(policies map[string]interfacePolicy) []ipv
 		}
 	}
 	return assignments
+}
+
+func ifconfigStatusActive(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "status:" {
+			return fields[1] == "active"
+		}
+	}
+	firstLine, _, _ := strings.Cut(output, "\n")
+	return strings.Contains(firstLine, "<") && strings.Contains(firstLine, "UP")
 }
 
 func interfaceAliases(router *api.Router) map[string]string {
@@ -1370,6 +1397,28 @@ func prefixesOverlap(a, b netip.Prefix) bool {
 
 func parseIPv4Prefixes(output string) []netip.Prefix {
 	var prefixes []netip.Prefix
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "inet" {
+			continue
+		}
+		prefixLen := ""
+		for i, field := range fields {
+			switch {
+			case field == "netmask" && i+1 < len(fields):
+				prefixLen = freeBSDIPv4MaskPrefix(fields[i+1])
+			case strings.HasPrefix(field, "netmask ") && len(field) > len("netmask "):
+				prefixLen = freeBSDIPv4MaskPrefix(strings.TrimPrefix(field, "netmask "))
+			}
+		}
+		if prefixLen == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(fields[1] + "/" + prefixLen)
+		if err == nil && prefix.Addr().Is4() {
+			prefixes = append(prefixes, prefix.Masked())
+		}
+	}
 	for _, field := range strings.Fields(output) {
 		if !strings.Contains(field, "/") {
 			continue

@@ -476,7 +476,7 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 		{Kind: "linux.ipip6.tunnel", Name: "ds-old", Owner: "net.routerd.net/v1alpha1/DSLiteTunnel/old"},
 		{Kind: "nft.table", Name: "routerd_old", Owner: "net.routerd.net/v1alpha1/IPv4SourceNAT/old", Attributes: map[string]string{"family": "ip", "name": "routerd_old"}},
 		{Kind: "systemd.service", Name: "routerd-old.service", Owner: "net.routerd.net/v1alpha1/PPPoEInterface/old"},
-		{Kind: "linux.link", Name: "ens19", Owner: "net.routerd.net/v1alpha1/Interface/lan"},
+		{Kind: "net.link", Name: "ens19", Owner: "net.routerd.net/v1alpha1/Interface/lan"},
 		{Kind: "file", Name: "/etc/ppp/chap-secrets", Owner: "net.routerd.net/v1alpha1/PPPoEInterface/old"},
 	})
 	engine := &Engine{
@@ -524,6 +524,32 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 		if !kinds[want] {
 			t.Fatalf("missing ledger orphan %s in %+v", want, orphans)
 		}
+	}
+}
+
+func TestInterfaceStateFallsBackToIfconfig(t *testing.T) {
+	engine := &Engine{Command: fakeCommand(map[string]string{
+		"ifconfig vtnet1": "vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500\n\tstatus: active\n",
+	})}
+	exists, up := engine.interfaceState("vtnet1")
+	if !exists || !up {
+		t.Fatalf("interface state exists=%t up=%t, want true true", exists, up)
+	}
+}
+
+func TestHasAddressFallsBackToIfconfigAddressWithoutPrefix(t *testing.T) {
+	engine := &Engine{Command: fakeCommand(map[string]string{
+		"ifconfig vtnet1": "vtnet1: flags=...\n\tinet 192.168.160.1 netmask 0xffffff00 broadcast 192.168.160.255\n",
+	})}
+	if !engine.hasAddress("vtnet1", "192.168.160.1/24", "-4") {
+		t.Fatal("hasAddress = false, want true")
+	}
+}
+
+func TestParseIPv4PrefixesFromIfconfig(t *testing.T) {
+	got := parseIPv4Prefixes("vtnet1: flags=...\n\tinet 192.168.160.1 netmask 0xffffff00 broadcast 192.168.160.255\n")
+	if len(got) != 1 || got[0].String() != "192.168.160.0/24" {
+		t.Fatalf("prefixes = %v, want 192.168.160.0/24", got)
 	}
 }
 

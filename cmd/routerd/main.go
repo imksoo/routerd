@@ -1239,7 +1239,7 @@ func rememberReconciledArtifacts(router *api.Router, ledgerPath string) (int, er
 		return 0, nil
 	}
 	engine := reconcile.New()
-	artifacts, err := engine.DesiredOwnedArtifacts(router)
+	artifacts, err := engine.ReconciledOwnedArtifacts(router)
 	if err != nil {
 		return 0, err
 	}

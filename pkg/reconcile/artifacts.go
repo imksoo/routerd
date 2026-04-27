@@ -28,7 +28,7 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("linux.sysctl", spec.Key, resource.ActionEnsure, "sysctl", map[string]string{"value": spec.Value})}
+		return []resource.Intent{artifact("host.sysctl", spec.Key, resource.ActionEnsure, "sysctl", map[string]string{"value": spec.Value})}
 	case "NTPClient":
 		return []resource.Intent{artifact("systemd.timesyncd.config", "routerd.conf", resource.ActionEnsure, "timesyncd", nil)}
 	case "Interface":
@@ -40,7 +40,7 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if spec.Managed {
 			action = resource.ActionEnsure
 		}
-		return []resource.Intent{artifact("linux.link", spec.IfName, action, "netplan/networkd/ip-link", nil)}
+		return []resource.Intent{artifact("net.link", spec.IfName, action, "platform-network", nil)}
 	case "PPPoEInterface":
 		spec, err := res.PPPoEInterfaceSpec()
 		if err != nil {
@@ -58,7 +58,7 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("linux.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "netplan/ip-addr", nil)}
+		return []resource.Intent{artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "platform-network", nil)}
 	case "IPv4DHCPAddress":
 		spec, err := res.IPv4DHCPAddressSpec()
 		if err != nil {
@@ -93,7 +93,7 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("linux.ipv6.address", aliases[spec.Interface]+":"+spec.AddressSuffix, resource.ActionEnsure, "networkd/ip-addr", nil)}
+		return []resource.Intent{artifact("net.ipv6.address", aliases[spec.Interface]+":"+spec.AddressSuffix, resource.ActionEnsure, "platform-network", nil)}
 	case "IPv6DHCPScope":
 		spec, err := res.IPv6DHCPScopeSpec()
 		if err != nil {
@@ -129,7 +129,7 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if target == "interface" {
 			target = aliases[spec.Interface]
 		}
-		return []resource.Intent{artifact("linux.sysctl", "net.ipv4.conf."+target+".rp_filter", resource.ActionEnsure, "sysctl", nil)}
+		return []resource.Intent{artifact("host.sysctl", "net.ipv4.conf."+target+".rp_filter", resource.ActionEnsure, "sysctl", nil)}
 	case "PathMTUPolicy":
 		return []resource.Intent{
 			artifact("nft.table", "routerd_mss", resource.ActionEnsure, "nft", nil),
@@ -146,7 +146,7 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("linux.hostname", "system", resource.ActionEnsure, "hostnamectl", map[string]string{"hostname": spec.Hostname})}
+		return []resource.Intent{artifact("host.hostname", "system", resource.ActionEnsure, "platform-hostname", map[string]string{"hostname": spec.Hostname})}
 	default:
 		return nil
 	}

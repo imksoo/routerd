@@ -299,7 +299,7 @@ func TestManagedHostnames(t *testing.T) {
 func TestDriftedAdoptionCandidates(t *testing.T) {
 	candidates := []reconcile.AdoptionCandidate{
 		{
-			Kind:     "linux.hostname",
+			Kind:     "host.hostname",
 			Name:     "system",
 			Desired:  map[string]string{"hostname": "router03.lain.local"},
 			Observed: map[string]string{"hostname": "router03"},
@@ -312,7 +312,7 @@ func TestDriftedAdoptionCandidates(t *testing.T) {
 		},
 	}
 	got := driftedAdoptionCandidates(candidates)
-	if len(got) != 1 || got[0].Kind != "linux.hostname" {
+	if len(got) != 1 || got[0].Kind != "host.hostname" {
 		t.Fatalf("drifted candidates = %+v, want hostname only", got)
 	}
 }
@@ -321,7 +321,7 @@ func TestAdoptedArtifactsForResultDeduplicates(t *testing.T) {
 	artifacts := []resource.Artifact{
 		{Kind: "nft.table", Name: "routerd_nat", Owner: "one"},
 		{Kind: "nft.table", Name: "routerd_nat", Owner: "one"},
-		{Kind: "linux.hostname", Name: "system", Owner: "host"},
+		{Kind: "host.hostname", Name: "system", Owner: "host"},
 	}
 	got := adoptedArtifactsForResult(artifacts)
 	if len(got) != 2 {

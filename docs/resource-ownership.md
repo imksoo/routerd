@@ -173,7 +173,7 @@ Example of a drifted candidate:
 
 ```json
 {
-  "kind": "linux.hostname",
+  "kind": "host.hostname",
   "name": "system",
   "desired": {"hostname": "router03.example.net"},
   "observed": {"hostname": "router03"}
@@ -192,17 +192,17 @@ intent.
 | Resource | Host artifacts |
 | --- | --- |
 | `LogSink` | routerd log sink |
-| `Sysctl` | Linux sysctl key |
+| `Sysctl` | host sysctl key |
 | `NTPClient` | systemd-timesyncd config |
-| `Interface` | Linux link |
+| `Interface` | network link |
 | `PPPoEInterface` | PPP interface, routerd PPPoE systemd unit, PPP secret files |
-| `IPv4StaticAddress` | Linux IPv4 address |
+| `IPv4StaticAddress` | IPv4 address |
 | `IPv4DHCPAddress` | DHCPv4 client binding and renderer-specific route/DNS adoption settings |
 | `IPv4DHCPServer` | dnsmasq config and service |
 | `IPv4DHCPScope` | dnsmasq DHCPv4 scope |
 | `IPv6DHCPAddress` | DHCPv6 client binding |
 | `IPv6PrefixDelegation` | DHCPv6 prefix delegation binding |
-| `IPv6DelegatedAddress` | Linux IPv6 address |
+| `IPv6DelegatedAddress` | IPv6 address |
 | `IPv6DHCPServer` | dnsmasq config and service |
 | `IPv6DHCPScope` | dnsmasq DHCPv6 scope |
 | `SelfAddressPolicy` | routerd address-selection policy |
@@ -290,15 +290,15 @@ Cleanup details:
 
 Explicitly *not* cleaned up as orphans:
 
-- `linux.link`: physical NICs, hypervisor NICs, VLANs, bridges, and other
+- `net.link`: physical NICs, hypervisor NICs, VLANs, bridges, and other
   software links may have ownership outside routerd. Routerd does not
   delete links.
 - `file`: routerd does not delete whole managed files as orphan cleanup.
   Only routerd-owned blocks inside a file may be safe to touch.
-- `linux.ipv4.address` / `linux.ipv6.address`: address cleanup is left
+- `net.ipv4.address` / `net.ipv6.address`: address cleanup is left
   separate. Stale addresses can block moving an address to another
   interface, but deleting the wrong one breaks management connectivity.
-- `linux.sysctl` and `linux.hostname`: these are global host state, not
+- `host.sysctl` and `host.hostname`: these are global host state, not
   standalone objects that can be safely removed. Reconcile can drive them
   to a desired value, but orphan cleanup will not delete them.
 

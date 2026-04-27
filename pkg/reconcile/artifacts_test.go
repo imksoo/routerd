@@ -76,3 +76,42 @@ default via 192.168.1.1 dev ens18 table 112 metric 600
 		t.Fatalf("second artifact = %+v, want table=112 ifname=ens18", got[1])
 	}
 }
+
+func TestParseIfconfigAddressArtifacts(t *testing.T) {
+	got := parseIfconfigAddressArtifacts(`vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	inet 192.168.160.1 netmask 0xffffff00 broadcast 192.168.160.255
+	inet6 fe80::be24:11ff:fe5d:e063%vtnet1 prefixlen 64 scopeid 0x2
+`)
+	if len(got) != 2 {
+		t.Fatalf("ifconfig artifacts = %+v, want two", got)
+	}
+	if got[0].Kind != "net.ipv4.address" || got[0].Name != "vtnet1:192.168.160.1/24" {
+		t.Fatalf("first artifact = %+v", got[0])
+	}
+	if got[1].Kind != "net.ipv6.address" || got[1].Name != "vtnet1:fe80::be24:11ff:fe5d:e063/64" {
+		t.Fatalf("second artifact = %+v", got[1])
+	}
+}
+
+func TestReconciledOwnedArtifactsRequireObservedInventory(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"}, Metadata: api.ObjectMeta{Name: "host"}, Spec: api.HostnameSpec{Hostname: "router.example", Managed: true}},
+		}},
+	}
+	engine := &Engine{
+		Command: fakeCommand(map[string]string{
+			"hostname": "router.example\n",
+		}),
+	}
+	got, err := engine.ReconciledOwnedArtifacts(router)
+	if err != nil {
+		t.Fatalf("reconciled artifacts: %v", err)
+	}
+	if len(got) != 1 || got[0].Kind != "host.hostname" {
+		t.Fatalf("reconciled artifacts = %+v, want only observed hostname", got)
+	}
+}

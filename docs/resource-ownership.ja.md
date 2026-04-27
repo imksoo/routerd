@@ -121,7 +121,7 @@ routerd 管理範囲外の構成物は、台帳で routerd の所有が確認で
 
 ```json
 {
-  "kind": "linux.hostname",
+  "kind": "host.hostname",
   "name": "system",
   "desired": {"hostname": "router03.example.net"},
   "observed": {"hostname": "router03"}
@@ -137,17 +137,17 @@ routerd 管理範囲外の構成物は、台帳で routerd の所有が確認で
 | リソース | ホスト上の構成物 |
 | --- | --- |
 | `LogSink` | routerd のログ出力先 |
-| `Sysctl` | Linux の sysctl キー |
+| `Sysctl` | ホストの sysctl キー |
 | `NTPClient` | systemd-timesyncd の設定 |
-| `Interface` | Linux のリンク |
+| `Interface` | ネットワークリンク |
 | `PPPoEInterface` | PPP インターフェース、routerd の PPPoE systemd ユニット、PPP secret ファイル |
-| `IPv4StaticAddress` | Linux の IPv4 アドレス |
+| `IPv4StaticAddress` | IPv4 アドレス |
 | `IPv4DHCPAddress` | DHCPv4 クライアントのバインディングと、出力先ごとの経路/DNS 採用設定 |
 | `IPv4DHCPServer` | dnsmasq の設定とサービス |
 | `IPv4DHCPScope` | dnsmasq の DHCPv4 スコープ |
 | `IPv6DHCPAddress` | DHCPv6 クライアントのバインディング |
 | `IPv6PrefixDelegation` | DHCPv6 プレフィックス委譲のバインディング |
-| `IPv6DelegatedAddress` | Linux の IPv6 アドレス |
+| `IPv6DelegatedAddress` | IPv6 アドレス |
 | `IPv6DHCPServer` | dnsmasq の設定とサービス |
 | `IPv6DHCPScope` | dnsmasq の DHCPv6 スコープ |
 | `SelfAddressPolicy` | routerd の自分自身のアドレス選定方針 |
@@ -217,10 +217,10 @@ routerd は、削除操作の範囲が狭く、所有を確認できる構成物
 
 意図的に残置物クリーンアップしないもの:
 
-- `linux.link`: 物理 NIC、ハイパーバイザの NIC、VLAN、ブリッジ、その他のソフトウェアリンクは routerd 外の所有者を持ちうるため、削除しません。
+- `net.link`: 物理 NIC、ハイパーバイザの NIC、VLAN、ブリッジ、その他のソフトウェアリンクは routerd 外の所有者を持ちうるため、削除しません。
 - `file`: 管理対象ファイルを丸ごと削除はしません。安全に触れる可能性があるのは、ファイル内の routerd 所有ブロックだけです。
-- `linux.ipv4.address` / `linux.ipv6.address`: アドレスのクリーンアップは別建てにしています。古いアドレスは別インターフェースへ移すときに邪魔になりますが、誤って消すと管理経路を落とすためです。
-- `linux.sysctl` と `linux.hostname`: ホストのグローバルな状態であり、単独で削除できる構成物ではありません。望む値への反映はできますが、残置物として削除はしません。
+- `net.ipv4.address` / `net.ipv6.address`: アドレスのクリーンアップは別建てにしています。古いアドレスは別インターフェースへ移すときに邪魔になりますが、誤って消すと管理経路を落とすためです。
+- `host.sysctl` と `host.hostname`: ホストのグローバルな状態であり、単独で削除できる構成物ではありません。望む値への反映はできますが、残置物として削除はしません。
 
 長期方針は保守的に取ります。ファイル、サービス、nftables テーブル、汎用ルーティングテーブルなど広い種別では、台帳で所有が証明できる場合だけ削除します。名前や番号の範囲は補助的な安全柵として使い、それだけで長期の所有判定にはしません。
 
