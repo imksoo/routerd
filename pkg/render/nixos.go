@@ -36,6 +36,10 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	sysctls, err := nixOSSysctls(router)
+	if err != nil {
+		return nil, err
+	}
 	packages, servicePath, err := nixOSPackages(router, host)
 	if err != nil {
 		return nil, err
@@ -89,6 +93,13 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	if len(ntpServers) > 0 {
 		buf.WriteString("  services.timesyncd.enable = true;\n")
 		buf.WriteString("  services.timesyncd.servers = " + nixStringList(ntpServers) + ";\n")
+	}
+	if len(sysctls) > 0 {
+		buf.WriteString("  boot.kernel.sysctl = {\n")
+		for _, key := range sortedMapKeysString(sysctls) {
+			buf.WriteString("    " + nixString(key) + " = " + nixSysctlValue(sysctls[key]) + ";\n")
+		}
+		buf.WriteString("  };\n")
 	}
 	if len(packages) > 0 {
 		buf.WriteString("  environment.systemPackages = with pkgs; [\n")
@@ -169,6 +180,24 @@ func nixOSNTPServers(router *api.Router) ([]string, error) {
 	}
 	sort.Strings(servers)
 	return servers, nil
+}
+
+func nixOSSysctls(router *api.Router) (map[string]string, error) {
+	values := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Sysctl" {
+			continue
+		}
+		spec, err := res.SysctlSpec()
+		if err != nil {
+			return nil, err
+		}
+		if !spec.Persistent {
+			continue
+		}
+		values[spec.Key] = spec.Value
+	}
+	return values, nil
 }
 
 func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
@@ -381,6 +410,15 @@ func sortedMapKeys(values map[string]bool) []string {
 	return out
 }
 
+func sortedMapKeysString(values map[string]string) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func nixBool(value bool) string {
 	if value {
 		return "true"
@@ -390,6 +428,18 @@ func nixBool(value bool) string {
 
 func nixString(value string) string {
 	return strconv.Quote(value)
+}
+
+func nixSysctlValue(value string) string {
+	if _, err := strconv.Atoi(value); err == nil {
+		return value
+	}
+	switch value {
+	case "true", "false":
+		return value
+	default:
+		return nixString(value)
+	}
 }
 
 func nixStringList(values []string) string {

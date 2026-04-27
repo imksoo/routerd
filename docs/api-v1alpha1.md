@@ -1083,6 +1083,9 @@ How routerd behaves:
   `environment.systemPackages`. routerd also derives the daemon service
   path from resources, for example `dnsmasq`, `nftables`, `ppp`, and
   `iproute2`.
+- `Sysctl` resources with `persistent: true` render into
+  `boot.kernel.sysctl`. Runtime-only sysctl resources remain the daemon's
+  responsibility.
 - `spec.additionalPackages` and `spec.additionalServicePath` allow
   explicit package additions.
 

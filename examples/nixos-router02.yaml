@@ -71,7 +71,7 @@ spec:
         key: net.ipv4.ip_forward
         value: "1"
         runtime: true
-        persistent: false
+        persistent: true
 
     - apiVersion: system.routerd.net/v1alpha1
       kind: Sysctl
@@ -81,7 +81,7 @@ spec:
         key: net.ipv6.conf.all.forwarding
         value: "1"
         runtime: true
-        persistent: false
+        persistent: true
 
     - apiVersion: system.routerd.net/v1alpha1
       kind: Sysctl
@@ -91,7 +91,7 @@ spec:
         key: net.ipv6.conf.ens18.accept_ra
         value: "2"
         runtime: true
-        persistent: false
+        persistent: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4ReversePathFilter

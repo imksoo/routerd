@@ -906,6 +906,9 @@ spec:
   routerd デーモン本体の systemd ユニットの `PATH` を他のリソースから
   導出し、`dnsmasq`、`nftables`、`ppp`、`iproute2` など必要なものを
   含めます。
+- `persistent: true` の `Sysctl` リソースは `boot.kernel.sysctl` として
+  生成します。実行中のカーネルだけに反映する sysctl は、引き続き
+  デーモン側の担当です。
 - 上記で足りない場合は、`spec.additionalPackages` で
   `environment.systemPackages` に、`spec.additionalServicePath` で
   routerd ユニットの `PATH` に、それぞれ追加のパッケージを足せます。

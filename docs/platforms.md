@@ -33,9 +33,10 @@ parity that the code does not yet provide.
   then `routerd serve` handling non-persistent runtime decisions. The
   lab sample `examples/nixos-router02-configuration.nix` shows the
   hand-written side of this split.
-- The first NixOS renderer emits host settings, dependency packages,
-  and basic systemd-networkd `.network` declarations. More resource
-  kinds still need Nix-native persistent rendering.
+- The current NixOS renderer emits host settings, dependency packages,
+  persistent sysctl values, and basic systemd-networkd `.network`
+  declarations. More resource kinds still need Nix-native persistent
+  rendering.
 
 ## Tier 2 — FreeBSD (groundwork)
 

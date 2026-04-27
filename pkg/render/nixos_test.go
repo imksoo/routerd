@@ -88,6 +88,15 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 					Servers:  []string{"pool.ntp.org"},
 				},
 			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"},
+				Metadata: api.ObjectMeta{Name: "forwarding"},
+				Spec: api.SysctlSpec{
+					Key:        "net.ipv4.ip_forward",
+					Value:      "1",
+					Persistent: true,
+				},
+			},
 		}},
 	}
 	data, err := NixOSModule(router)
@@ -113,6 +122,7 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`initialPassword = "nwadmin";`,
 		`security.sudo.wheelNeedsPassword = false;`,
 		`services.timesyncd.servers = [ "pool.ntp.org" ];`,
+		`"net.ipv4.ip_forward" = 1;`,
 		`nftables`,
 		`systemd.services.routerd.path`,
 		`system.stateVersion = "25.11";`,
