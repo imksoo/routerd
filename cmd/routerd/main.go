@@ -1001,6 +1001,8 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 			}
 		}
 		if observedPrefix == "" {
+			nowText := store.Now().Format(time.RFC3339)
+			changes = append(changes, stateChange{Name: base + ".lastMissingAt", Value: store.Set(base+".lastMissingAt", nowText, res.ID()+": delegated prefix not observable")})
 			if retained, ok := retainCurrentPrefixDuringConvergence(store.Get(base+".currentPrefix"), convergenceTimeout, store); ok {
 				changes = append(changes, stateChange{Name: base + ".currentPrefix", Value: store.Set(base+".currentPrefix", retained, res.ID()+": waiting for DHCPv6-PD convergence")})
 				continue
@@ -1011,6 +1013,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 		changes = append(changes,
 			stateChange{Name: base + ".currentPrefix", Value: store.Set(base+".currentPrefix", observedPrefix, res.ID()+": observed delegated prefix")},
 			stateChange{Name: base + ".lastPrefix", Value: store.Set(base+".lastPrefix", observedPrefix, res.ID()+": observed delegated prefix")},
+			stateChange{Name: base + ".lastObservedAt", Value: store.Set(base+".lastObservedAt", store.Now().Format(time.RFC3339), res.ID()+": observed delegated prefix")},
 			stateChange{Name: base + ".downstreamIfname", Value: store.Set(base+".downstreamIfname", observedIfname, res.ID()+": observed delegated prefix")},
 		)
 	}

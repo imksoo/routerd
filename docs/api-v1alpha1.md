@@ -462,7 +462,10 @@ How routerd behaves:
   `ipv6PrefixDelegation.<name>.downstreamIfname`, and
   `ipv6PrefixDelegation.<name>.prefixLength`. The effective convergence
   timeout is recorded as
-  `ipv6PrefixDelegation.<name>.convergenceTimeout`.
+  `ipv6PrefixDelegation.<name>.convergenceTimeout`. The last successful
+  observation time is recorded as
+  `ipv6PrefixDelegation.<name>.lastObservedAt`; failed observations update
+  `ipv6PrefixDelegation.<name>.lastMissingAt`.
   `currentPrefix` is cleared when no downstream delegated prefix is visible,
   but only after the convergence timeout has elapsed. `lastPrefix` is kept.
   This preserves enough local memory to support
