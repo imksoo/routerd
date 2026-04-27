@@ -7,6 +7,9 @@ parity that the code does not yet provide.
 ## Tier 1 — Ubuntu (and other Debian-family Linux)
 
 - Full source-install layout under `/usr/local`.
+- Makefile builds use `CGO_ENABLED=0` by default, so source installs and
+  remote-install tarballs contain static Go binaries. This avoids dynamic
+  loader surprises on minimal router hosts and NixOS systems.
 - systemd unit at `contrib/systemd/routerd.service`.
 - Firewall rendering permits WAN-side DHCPv6 client replies by UDP
   destination port 546 only. It must not require a server source port of

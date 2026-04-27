@@ -34,7 +34,7 @@ endif
 
 ROUTERD_BIN := bin/routerd
 ROUTERCTL_BIN := bin/routerctl
-GO_BUILD_ENV := GOOS=$(ROUTERD_OS)
+GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
 endif
