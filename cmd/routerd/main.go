@@ -2534,6 +2534,9 @@ func runHealthCheck(router *api.Router, spec api.HealthCheckSpec, aliases map[st
 	if spec.Interface != "" {
 		source := healthCheckPingSource(router, spec, aliases)
 		if source == "" {
+			if defaultString(spec.TargetSource, "auto") == "dsliteRemote" || (spec.TargetSource == "" && healthInterfaceKind(router, spec.Interface) == "DSLiteTunnel") {
+				return false, nil
+			}
 			return false, fmt.Errorf("missing ping source for %s", spec.Interface)
 		}
 		args = append(args, "-I", source)
@@ -3150,7 +3153,8 @@ func applyDSLiteTunnels(router *api.Router) ([]string, error) {
 		local, localIfName, err := dsliteLocalAddress(spec, ifname, aliases, delegated)
 		if err != nil {
 			_ = deleteDSLiteTunnel(tunnelName)
-			return nil, fmt.Errorf("%s local address: %w", res.ID(), err)
+			applied = append(applied, "removed-unusable:"+tunnelName)
+			continue
 		}
 		if localIfName != "" {
 			ensured, err := ensureIPv6LocalAddress(localIfName, local)
