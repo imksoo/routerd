@@ -726,6 +726,84 @@ Staged migration plan:
 5. Only after those captures, decide whether the NTT profile should default to
    dhcpcd, odhcp6c, or an explicitly patched WIDE/KAME path.
 
+### 2026-04-29 KAME Natural Renew Test
+
+router01 was cleaned up to remove the earlier HUP test effect:
+
+- stopped `routerd`
+- killed `dhcp6c`
+- removed `/var/run/dhcp6c.pid`
+- started packet capture on `vtnet0`
+- restarted `routerd`
+
+The first routerd-managed start created a new `dhcp6c` process, but there was
+no DHCPv6 packet in the new capture until `dhcp6c` was run in the foreground for
+20 seconds with debug output. The foreground command used the same generated
+configuration:
+
+```text
+interface vtnet0 {
+  send ia-pd 0;
+  request domain-name-servers;
+};
+
+id-assoc pd 0 {
+  prefix 2409:10:3d60:1220::/60 infinity;
+  prefix-interface vtnet1 {
+    sla-id 0;
+    sla-len 4;
+  };
+};
+```
+
+Extracted result from the debug run and matching pcap:
+
+| Question | Observation |
+| --- | --- |
+| Sent message type | `dhcp6c -D -f` sent Solicit, not Renew. The debug log repeatedly printed `Sending Solicit` and `send solicit to ff02::1:2%vtnet0`. |
+| IA_PD prefix lifetime fields | The Solicit carried `IA_PD IAID:0 T1:0 T2:0` and an IA_PD prefix hint `2409:10:3d60:1220::/60` with `pltime:4294967295` and `vltime:4294967295`, i.e. infinity. This confirms KAME's hint Solicit path sends non-zero lifetime fields. |
+| HGW Advertise/Reply | No Advertise or Reply was captured during the 20-second debug run. The pcap contains only outbound Solicit packets. |
+| Reply IA_PD prefix and lifetime | No Reply was received, so there is no new delegated prefix or new lifetime value to extract. |
+
+The decisive natural Renew test did not start yet because the prerequisite
+failed: after a clean restart, KAME did not reacquire PD from PR-400NE. It fell
+back to repeated exact-hint Solicit with infinite IA Prefix lifetimes. This is
+still useful because it proves one packet-level difference from systemd-networkd
+and odhcp6c: KAME's hint Solicit path sends non-zero IA Prefix lifetimes. It
+does not prove KAME's real T1 Renew behavior, and it does not prove whether
+PR-400NE will reply to a non-zero-lifetime Renew.
+
+For the next attempt, router01 needs to enter a true bound state from a fresh
+Advertise/Request/Reply exchange, then be left untouched until T1. Starting
+`dhcp6c` with `-D -f` is useful for packet validation, but it should not be used
+for the final two-hour natural Renew window because the foreground timeout
+itself terminates the client before T1.
+
+Follow-up implementation changed the FreeBSD KAME `dhcp6c` renderer so NTT
+profiles render finite prefix-hint lifetimes by default:
+
+```text
+prefix 2409:10:3d60:1220::/60 14400 14400;
+```
+
+`IPv6PrefixDelegation.spec.preferredLifetime` and `spec.validLifetime` can
+override those values for experiments. The router01 test confirmed that the
+rendered values are visible on the wire:
+
+| Hint lifetime | On-wire result | HGW response |
+| --- | --- | --- |
+| `14400 14400` | Solicit carried `pltime:14400 vltime:14400` for `2409:10:3d60:1220::/60`. | No Advertise or Reply in the capture. |
+| `7200 7200` | Solicit carried `pltime:7200 vltime:7200`. | No Advertise or Reply in the capture. |
+| `86400 86400` | Solicit carried `pltime:86400 vltime:86400`. | No Advertise or Reply in the capture. |
+
+This rules out the simple hypothesis that PR-400NE was ignoring only KAME's
+`infinity` prefix-hint lifetime. Finite lifetime hints are correctly rendered
+and transmitted, but the gateway still does not answer fresh Solicit in the
+current lease-table state. The remaining distinction to test is still true
+Renew from a bound client, not Solicit with different hint lifetime values.
+After the temporary 7200 and 86400 tests, router01's router.yaml was restored;
+with the new default renderer it now produces `14400 14400` for the NTT profile.
+
 ### PR-400NE Behavior Hypotheses
 
 These are working hypotheses for the lab profile

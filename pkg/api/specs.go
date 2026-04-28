@@ -176,6 +176,8 @@ type IPv6PrefixDelegationSpec struct {
 	PrefixLength       int    `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
 	ConvergenceTimeout string `yaml:"convergenceTimeout,omitempty" json:"convergenceTimeout,omitempty"`
 	HintFromState      *bool  `yaml:"hintFromState,omitempty" json:"hintFromState,omitempty"`
+	PreferredLifetime  string `yaml:"preferredLifetime,omitempty" json:"preferredLifetime,omitempty"`
+	ValidLifetime      string `yaml:"validLifetime,omitempty" json:"validLifetime,omitempty"`
 	IAID               string `yaml:"iaid,omitempty" json:"iaid,omitempty"`
 	DUIDType           string `yaml:"duidType,omitempty" json:"duidType,omitempty" jsonschema:"enum=,enum=vendor,enum=uuid,enum=link-layer-time,enum=link-layer"`
 	DUIDRawData        string `yaml:"duidRawData,omitempty" json:"duidRawData,omitempty"`

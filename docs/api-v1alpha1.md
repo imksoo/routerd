@@ -431,6 +431,8 @@ spec:
   prefixLength: 60
   convergenceTimeout: 5m
   hintFromState: true
+  preferredLifetime: "14400"
+  validLifetime: "14400"
   iaid: ca53095a
   duidType: link-layer
   duidRawData: 00:01:02:00:5e:10:20:30
@@ -461,6 +463,10 @@ How routerd behaves:
   too old, missing, or disabled, routerd falls back to a prefix-length hint
   such as `::/60`. This is only a hint: an upstream may return the same prefix,
   a different prefix, or no prefix.
+- `spec.preferredLifetime` and `spec.validLifetime` tune the lifetime values
+  rendered into FreeBSD KAME `dhcp6c` prefix hints. They are positive second
+  values. If omitted, NTT profiles render `14400 14400`, matching the observed
+  PR-400NE lease lifetime; other profiles keep the older `infinity` hint.
 - During apply, routerd records observed prefix-delegation state in
   `ipv6PrefixDelegation.<name>.lease` in the local state store. The lease JSON
   holds the current prefix, last known prefix, observed DUID, IAID, expected

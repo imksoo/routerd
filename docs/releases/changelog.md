@@ -9,6 +9,10 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- `IPv6PrefixDelegation.spec.preferredLifetime` and `spec.validLifetime` can
+  now tune FreeBSD KAME `dhcp6c` prefix-hint lifetimes. NTT profiles default
+  those hint lifetimes to `14400 14400` instead of `infinity` to match the
+  observed PR-400NE DHCPv6-PD lease lifetime.
 - CLI and control verbs now use `apply`: `routerd reconcile`,
   `routerctl reconcile`, and the control API apply action were renamed to
   `routerd apply`, `routerctl apply`, and `/apply`. The YAML

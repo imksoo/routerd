@@ -1117,6 +1117,9 @@
                       "interface": {
                         "type": "string"
                       },
+                      "preferredLifetime": {
+                        "type": "string"
+                      },
                       "prefixLength": {
                         "maximum": 128,
                         "minimum": 1,
@@ -1132,6 +1135,9 @@
                       },
                       "required": {
                         "type": "boolean"
+                      },
+                      "validLifetime": {
+                        "type": "string"
                       }
                     },
                     "required": [
