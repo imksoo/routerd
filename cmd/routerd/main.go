@@ -1013,9 +1013,12 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 			}
 		}
 		if observedPrefix == "" {
-			nowText := store.Now().Format(time.RFC3339)
-			changes = append(changes, stateChange{Name: base + ".lastMissingAt", Value: store.Set(base+".lastMissingAt", nowText, res.ID()+": delegated prefix not observable")})
-			if retained, ok := retainCurrentPrefixDuringConvergence(store.Get(base+".currentPrefix"), convergenceTimeout, store); ok {
+			missing := store.Get(base + ".lastMissingAt")
+			if missing.Status != routerstate.StatusSet || missing.Value == "" {
+				missing = store.Set(base+".lastMissingAt", store.Now().Format(time.RFC3339), res.ID()+": delegated prefix not observable")
+				changes = append(changes, stateChange{Name: base + ".lastMissingAt", Value: missing})
+			}
+			if retained, ok := retainCurrentPrefixDuringConvergence(store.Get(base+".currentPrefix"), missing, convergenceTimeout, store); ok {
 				changes = append(changes, stateChange{Name: base + ".currentPrefix", Value: store.Set(base+".currentPrefix", retained, res.ID()+": waiting for DHCPv6-PD convergence")})
 				continue
 			}
@@ -1026,6 +1029,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 			stateChange{Name: base + ".currentPrefix", Value: store.Set(base+".currentPrefix", observedPrefix, res.ID()+": observed delegated prefix")},
 			stateChange{Name: base + ".lastPrefix", Value: store.Set(base+".lastPrefix", observedPrefix, res.ID()+": observed delegated prefix")},
 			stateChange{Name: base + ".lastObservedAt", Value: store.Set(base+".lastObservedAt", store.Now().Format(time.RFC3339), res.ID()+": observed delegated prefix")},
+			stateChange{Name: base + ".lastMissingAt", Value: store.Unset(base+".lastMissingAt", res.ID()+": delegated prefix observable")},
 			stateChange{Name: base + ".downstreamIfname", Value: store.Set(base+".downstreamIfname", observedIfname, res.ID()+": observed delegated prefix")},
 		)
 		lease, _ := routerstate.DecodePDLease(store.Get(base + ".lease").Value)
@@ -1050,11 +1054,17 @@ func effectiveIPv6PDConvergenceTimeout(profile, configured string) time.Duration
 	}
 }
 
-func retainCurrentPrefixDuringConvergence(current routerstate.Value, timeout time.Duration, store *routerstate.Store) (string, bool) {
+func retainCurrentPrefixDuringConvergence(current, missing routerstate.Value, timeout time.Duration, store *routerstate.Store) (string, bool) {
 	if timeout <= 0 || current.Status != routerstate.StatusSet || current.Value == "" || current.UpdatedAt.IsZero() {
 		return "", false
 	}
-	if store.Now().Sub(current.UpdatedAt) > timeout {
+	missingAt := current.UpdatedAt
+	if missing.Status == routerstate.StatusSet && missing.Value != "" {
+		if parsed, err := time.Parse(time.RFC3339, missing.Value); err == nil {
+			missingAt = parsed
+		}
+	}
+	if store.Now().Sub(missingAt) > timeout {
 		return "", false
 	}
 	return current.Value, true

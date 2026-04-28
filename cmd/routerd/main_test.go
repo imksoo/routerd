@@ -537,12 +537,16 @@ func TestRetainCurrentPrefixDuringConvergence(t *testing.T) {
 		Value:     "2001:db8:3d60:1240::/60",
 		UpdatedAt: time.Now().UTC().Add(-30 * time.Second),
 	}
-	got, ok := retainCurrentPrefixDuringConvergence(current, 5*time.Minute, store)
+	missing := routerstate.Value{
+		Status: routerstate.StatusSet,
+		Value:  time.Now().UTC().Add(-30 * time.Second).Format(time.RFC3339),
+	}
+	got, ok := retainCurrentPrefixDuringConvergence(current, missing, 5*time.Minute, store)
 	if !ok || got != current.Value {
 		t.Fatalf("retained prefix = %q %v, want current prefix", got, ok)
 	}
-	current.UpdatedAt = time.Now().UTC().Add(-10 * time.Minute)
-	if got, ok := retainCurrentPrefixDuringConvergence(current, 5*time.Minute, store); ok {
+	missing.Value = time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
+	if got, ok := retainCurrentPrefixDuringConvergence(current, missing, 5*time.Minute, store); ok {
 		t.Fatalf("retained expired prefix = %q", got)
 	}
 }
