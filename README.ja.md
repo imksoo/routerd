@@ -170,6 +170,7 @@ routerd reconcile --config examples/router-lab.yaml --once --dry-run
 routerd serve --config examples/router-lab.yaml --socket /run/routerd/routerd.sock
 routerctl status
 routerctl show napt --limit 20
+routerctl show pd
 routerctl plan
 ```
 

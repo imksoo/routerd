@@ -8,10 +8,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
+	"text/tabwriter"
 	"time"
 
 	"routerd/pkg/controlapi"
 	"routerd/pkg/platform"
+	routerstate "routerd/pkg/state"
 )
 
 var platformDefaults, _ = platform.Current()
@@ -54,6 +58,8 @@ func showCommand(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "napt", "conntrack":
 		return showNAPTCommand(args[1:], stdout)
+	case "pd":
+		return showPDCommand(args[1:], stdout)
 	default:
 		return fmt.Errorf("unknown show subcommand %q", args[0])
 	}
@@ -112,6 +118,101 @@ func showNAPTCommand(args []string, stdout io.Writer) error {
 	return writeJSON(stdout, table)
 }
 
+type pdRow struct {
+	Name           string
+	DUID           string
+	IAID           string
+	CurrentPrefix  string
+	LastPrefix     string
+	LastObservedAt string
+	LastMissingAt  string
+	ExpectedDUID   string
+	IdentitySource string
+}
+
+func showPDCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("show pd", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	statePath := fs.String("state-file", defaultStatePath(), "routerd state file path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	store, err := routerstate.Load(*statePath)
+	if err != nil {
+		return err
+	}
+	rows := pdRowsFromState(store)
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tDUID\tIAID\tCURRENT PREFIX\tLAST PREFIX\tLAST OBSERVED\tLAST MISSING\tEXPECTED DUID\tIDENTITY SOURCE")
+	for _, row := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.Name,
+			displayCell(row.DUID),
+			displayCell(row.IAID),
+			displayCell(row.CurrentPrefix),
+			displayCell(row.LastPrefix),
+			displayCell(row.LastObservedAt),
+			displayCell(row.LastMissingAt),
+			displayCell(row.ExpectedDUID),
+			displayCell(row.IdentitySource),
+		)
+	}
+	return w.Flush()
+}
+
+func pdRowsFromState(store *routerstate.Store) []pdRow {
+	names := map[string]bool{}
+	for name := range store.Variables {
+		rest, ok := strings.CutPrefix(name, "ipv6PrefixDelegation.")
+		if !ok {
+			continue
+		}
+		pdName, _, ok := strings.Cut(rest, ".")
+		if ok && pdName != "" {
+			names[pdName] = true
+		}
+	}
+	var sorted []string
+	for name := range names {
+		sorted = append(sorted, name)
+	}
+	sort.Strings(sorted)
+	rows := make([]pdRow, 0, len(sorted))
+	for _, name := range sorted {
+		base := "ipv6PrefixDelegation." + name
+		lease, _ := routerstate.PDLeaseFromStore(store, base)
+		row := pdRow{
+			Name:           name,
+			DUID:           firstNonEmpty(lease.DUIDText, lease.DUID),
+			IAID:           lease.IAID,
+			CurrentPrefix:  lease.CurrentPrefix,
+			LastPrefix:     lease.LastPrefix,
+			LastObservedAt: lease.LastObservedAt,
+			LastMissingAt:  lease.LastMissingAt,
+			ExpectedDUID:   lease.ExpectedDUID,
+			IdentitySource: lease.IdentitySource,
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func displayCell(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
+}
+
 func writeJSON(stdout io.Writer, value any) error {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
@@ -120,6 +221,10 @@ func writeJSON(stdout io.Writer, value any) error {
 
 func defaultRuntimeDir() string {
 	return platformDefaults.RuntimeDir
+}
+
+func defaultStatePath() string {
+	return platformDefaults.StateDir + "/state.json"
 }
 
 func defaultSocketPath() string {
@@ -132,6 +237,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  status [--socket <path>]")
 	fmt.Fprintln(w, "  show napt [--socket <path>] [--limit <n>]")
+	fmt.Fprintln(w, "  show pd [--state-file <path>]")
 	fmt.Fprintln(w, "  plan [--socket <path>]")
 	fmt.Fprintln(w, "  reconcile [--socket <path>] [--dry-run]")
 }

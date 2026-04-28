@@ -9,6 +9,8 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- `routerctl show pd` now prints remembered DHCPv6-PD identity and prefix
+  state from the local state database.
 - FreeBSD remote install hardening: `ROUTERD_OS=freebsd` now builds
   FreeBSD binaries and uses FreeBSD runtime directories even when invoked
   from a Linux workstation.

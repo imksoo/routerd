@@ -9,11 +9,18 @@ import (
 )
 
 type PDLease struct {
+	CurrentPrefix      string `json:"currentPrefix,omitempty"`
 	LastPrefix         string `json:"lastPrefix,omitempty"`
 	LastObservedServer string `json:"lastObservedServer,omitempty"`
 	PreferredLifetime  string `json:"preferredLifetime,omitempty"`
 	ValidLifetime      string `json:"validLifetime,omitempty"`
 	LastObservedAt     string `json:"lastObservedAt,omitempty"`
+	LastMissingAt      string `json:"lastMissingAt,omitempty"`
+	DUID               string `json:"duid,omitempty"`
+	DUIDText           string `json:"duidText,omitempty"`
+	IAID               string `json:"iaid,omitempty"`
+	ExpectedDUID       string `json:"expectedDUID,omitempty"`
+	IdentitySource     string `json:"identitySource,omitempty"`
 }
 
 func EncodePDLease(lease PDLease) string {
@@ -33,6 +40,34 @@ func DecodePDLease(value string) (PDLease, bool) {
 		return lease, false
 	}
 	return lease, true
+}
+
+func PDLeaseFromStore(store *Store, base string) (PDLease, bool) {
+	lease, ok := DecodePDLease(store.Get(base + ".lease").Value)
+	merged := ok
+	mergeString := func(field *string, key string) {
+		if *field != "" {
+			return
+		}
+		value := store.Get(base + "." + key)
+		if value.Status == StatusSet && value.Value != "" {
+			*field = value.Value
+			merged = true
+		}
+	}
+	mergeString(&lease.CurrentPrefix, "currentPrefix")
+	mergeString(&lease.LastPrefix, "lastPrefix")
+	mergeString(&lease.LastObservedServer, "lastObservedServer")
+	mergeString(&lease.PreferredLifetime, "preferredLifetime")
+	mergeString(&lease.ValidLifetime, "validLifetime")
+	mergeString(&lease.LastObservedAt, "lastObservedAt")
+	mergeString(&lease.LastMissingAt, "lastMissingAt")
+	mergeString(&lease.DUID, "duid")
+	mergeString(&lease.DUIDText, "duidText")
+	mergeString(&lease.IAID, "iaid")
+	mergeString(&lease.ExpectedDUID, "expectedDUID")
+	mergeString(&lease.IdentitySource, "identitySource")
+	return lease, merged
 }
 
 func PDLeaseHintPrefix(lease PDLease, now time.Time) (string, bool) {
