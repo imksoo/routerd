@@ -103,6 +103,7 @@ type showOptions struct {
 	Diff       bool
 	LedgerOnly bool
 	AdoptOnly  bool
+	Events     bool
 	NAPTLimit  int
 }
 
@@ -116,6 +117,7 @@ type showResource struct {
 	State      map[string]any      `json:"state,omitempty" yaml:"state,omitempty"`
 	Diff       []showDiff          `json:"diff,omitempty" yaml:"diff,omitempty"`
 	Adopt      []any               `json:"adopt,omitempty" yaml:"adopt,omitempty"`
+	Events     []routerstate.Event `json:"events,omitempty" yaml:"events,omitempty"`
 }
 
 type showDiff struct {
@@ -227,6 +229,8 @@ func parseShowOptions(args []string) (showOptions, error) {
 			opts.LedgerOnly = true
 		case "--adopt":
 			opts.AdoptOnly = true
+		case "--events":
+			opts.Events = true
 		default:
 			if strings.HasPrefix(arg, "-o=") {
 				opts.Output = strings.TrimPrefix(arg, "-o=")
@@ -365,11 +369,15 @@ func buildShowResources(router *api.Router, resources []api.Resource, store rout
 			}
 		}
 		item.Ledger = ledgerArtifactsForOwner(ledger, res.ID())
+		if opts.Events {
+			item.Events = eventsForResource(store, res)
+		}
 		if opts.LedgerOnly {
 			item.Spec = nil
 			item.Observed = nil
 			item.State = nil
 			item.Diff = nil
+			item.Events = nil
 		}
 		rows = append(rows, item)
 	}
@@ -424,6 +432,14 @@ func ledgerArtifactsForOwner(ledger resource.Ledger, owner string) []resource.Ar
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Identity() < out[j].Identity() })
 	return out
+}
+
+func eventsForResource(store routerstate.Store, res api.Resource) []routerstate.Event {
+	recorder, ok := store.(routerstate.EventRecorder)
+	if !ok {
+		return nil
+	}
+	return recorder.Events(res.APIVersion, res.Kind, res.Metadata.Name, 20)
 }
 
 func observeResource(res api.Resource, aliases map[string]string, opts showOptions) map[string]any {
@@ -645,9 +661,13 @@ func writeShowTable(stdout io.Writer, rows []showResource, opts showOptions) err
 			fmt.Fprintf(w, "%s\t%s\t%d artifacts\n", row.Kind, row.Name, len(row.Ledger))
 		}
 	default:
-		fmt.Fprintln(w, "KIND\tNAME\tSPEC\tOBSERVED\tLEDGER\tSTATE")
+		header := "KIND\tNAME\tSPEC\tOBSERVED\tLEDGER\tSTATE"
+		if opts.Events {
+			header += "\tEVENTS"
+		}
+		fmt.Fprintln(w, header)
 		for _, row := range rows {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d artifacts\t%s\n",
+			line := fmt.Sprintf("%s\t%s\t%s\t%s\t%d artifacts\t%s",
 				row.Kind,
 				row.Name,
 				specSummary(row.Spec),
@@ -655,6 +675,10 @@ func writeShowTable(stdout io.Writer, rows []showResource, opts showOptions) err
 				len(row.Ledger),
 				stateSummary(row.State),
 			)
+			if opts.Events {
+				line += fmt.Sprintf("\t%d events", len(row.Events))
+			}
+			fmt.Fprintln(w, line)
 		}
 	}
 	return w.Flush()
@@ -773,7 +797,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  status [--socket <path>]")
 	fmt.Fprintln(w, "  show <kind> [--config <path>] [--state-file <path>] [--ledger-file <path>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plan [--socket <path>]")
 	fmt.Fprintln(w, "  reconcile [--socket <path>] [--dry-run]")
 }

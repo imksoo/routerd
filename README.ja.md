@@ -176,7 +176,7 @@ routerctl show ipv4sourcenat/lan-to-wan --diff
 routerctl plan
 ```
 
-`routerctl show <種別>` は、設定済みリソースを一覧します。`router.yaml` に書かれた定義、実機から観測した状態、ローカルの所有台帳、routerd の状態履歴をまとめて表示します。単体を見る場合は `routerctl show <種別>/<名前>` を使います。`-o json` と `-o yaml` で構造化出力、`--diff` で定義と実機状態の差分、`--ledger` で所有台帳だけ、`--adopt` で取り込み候補だけを表示できます。よく使う略称は `if`、`ipv6pd`、`nat`、`dslite`、`pppoe`、`fw`、`zone`、`hostname`、`route` です。NAPT やコネクション追跡の情報は `IPv4SourceNAT` の観測状態として表示するため、独立した `show napt` コマンドはありません。
+`routerctl show <種別>` は、設定済みリソースを一覧します。`router.yaml` に書かれた定義、実機から観測した状態、ローカルの所有台帳、routerd の状態履歴をまとめて表示します。単体を見る場合は `routerctl show <種別>/<名前>` を使います。`-o json` と `-o yaml` で構造化出力、`--diff` で定義と実機状態の差分、`--ledger` で所有台帳だけ、`--adopt` で取り込み候補だけ、`--events` で最近のイベントを表示できます。よく使う略称は `if`、`ipv6pd`、`nat`、`dslite`、`pppoe`、`fw`、`zone`、`hostname`、`route` です。NAPT やコネクション追跡の情報は `IPv4SourceNAT` の観測状態として表示するため、独立した `show napt` コマンドはありません。
 
 実機への反映:
 

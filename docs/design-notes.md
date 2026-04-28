@@ -87,25 +87,37 @@ connectivity and must not fight the OS DHCPv6 client.
 
 routerd stores local state and ownership information in SQLite at
 `/var/lib/routerd/routerd.db` on Linux and `/var/db/routerd/routerd.db` on
-FreeBSD. The database uses two small tables:
+FreeBSD. The schema now follows the same broad storage idea as Kubernetes:
+reconcile attempts create generations, resource-like records live as objects,
+and events record notable changes. The goal is to make "what did routerd want,
+what did it observe, and when did that happen" queryable without inventing a
+new side channel for every resource type.
 
-- `state` keeps state variables such as DHCPv6-PD leases and timestamps.
-- `artifacts` keeps the local ownership ledger for host objects managed by
-  routerd.
+- `generations` records each reconcile attempt, its phase, warnings, and a hash
+  of the config used for that attempt.
+- `objects` stores resource-scoped status JSON. For example,
+  `IPv6PrefixDelegation/wan-pd` keeps its lease, DUID, IAID, and timestamps
+  under one object row instead of scattered state keys.
+- `artifacts` stores the local ownership ledger for host objects managed by
+  routerd, split into owner API version, kind, and name.
+- `events` records reconcile warnings and PD observations. Higher-level
+  describe commands can use this later.
+- `access_logs` is present for the future local HTTP API audit trail. It is
+  created now but not populated yet.
 
-The `value` and `attributes` columns contain JSON text. SQLite JSON1 can inspect
-them directly, for example:
+JSON columns are stored as text and can be inspected through SQLite JSON1:
 
 ```sh
 sqlite3 /var/lib/routerd/routerd.db \
-  "select json_extract(value, '$.lastPrefix') from state where key = 'ipv6PrefixDelegation.wan-pd.lease';"
+  "select json_extract(status, '$.lastPrefix') from objects where kind = 'IPv6PrefixDelegation' and name = 'wan-pd';"
 ```
 
-`state.json` and `artifacts.json` are import-only legacy files. On first open,
-routerd imports them into SQLite and renames them to `state.json.migrated` and
-`artifacts.json.migrated`. Rolling back to an older binary is therefore a file
-operation: stop routerd, move the `.migrated` file back to its original name,
-and use the older binary or explicit JSON paths.
+`state.json` and `artifacts.json` are import-only legacy files. The earlier
+two-table SQLite schema is also treated as an input format: routerd copies
+`state` rows into `objects`, copies the old `artifacts` table into the new owner
+columns, and drops the old tables. JSON files are still renamed to
+`.migrated`. This keeps first startup automatic while allowing the storage model
+to move forward during the pre-release period.
 
 The runtime does not require the `sqlite3` command-line tool. It is useful for
 human debugging, especially when looking at JSON fields through `json_extract`.

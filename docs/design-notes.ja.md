@@ -92,25 +92,36 @@ IA_PD の DHCPv6 Solicit を送り続けても Advertise / Reply を受け取れ
 
 routerd は、ローカル状態と所有台帳を SQLite に保存します。既定の場所は
 Linux では `/var/lib/routerd/routerd.db`、FreeBSD では
-`/var/db/routerd/routerd.db` です。データベースには小さな表を二つ置きます。
+`/var/db/routerd/routerd.db` です。現在のスキーマは Kubernetes の保存方式を
+参考にし、反映処理の世代、リソース単位の状態、イベントを分けて記録します。
+「routerd が何を望み、何を観測し、それがいつ起きたのか」を、リソースごとに
+追えるようにするためです。
 
-- `state` は、DHCPv6 プレフィックス委譲のリースや時刻などの状態変数を
-  保存します。
-- `artifacts` は、routerd が管理しているホスト側構成物の所有台帳です。
+- `generations` は、反映を試みた単位ごとに、結果、警告、使った設定のハッシュを
+  記録します。
+- `objects` は、リソース単位の状態 JSON を保存します。たとえば
+  `IPv6PrefixDelegation/wan-pd` は、リース、DUID、IAID、時刻を一つの行に
+  まとめて持ちます。
+- `artifacts` は、routerd が管理しているホスト側構成物の所有台帳です。所有者は
+  API バージョン、種類、名前に分けて保存します。
+- `events` は、反映時の警告やプレフィックス委譲の観測を記録します。あとで
+  詳細表示コマンドから使えるようにするための土台です。
+- `access_logs` は、将来のローカル HTTP API 監査用です。今回は表だけを作り、
+  まだ書き込みません。
 
-`value` と `attributes` の列には JSON 文字列を入れます。SQLite の JSON1
-機能を使うと、次のように中身を直接確認できます。
+JSON は文字列として保存し、SQLite の JSON1 機能で確認できます。
 
 ```sh
 sqlite3 /var/lib/routerd/routerd.db \
-  "select json_extract(value, '$.lastPrefix') from state where key = 'ipv6PrefixDelegation.wan-pd.lease';"
+  "select json_extract(status, '$.lastPrefix') from objects where kind = 'IPv6PrefixDelegation' and name = 'wan-pd';"
 ```
 
 古い `state.json` と `artifacts.json` は、移行用の入力としてだけ扱います。
-初回起動時に SQLite へ取り込み、取り込み後は `state.json.migrated` と
-`artifacts.json.migrated` に名前を変えます。古いバイナリへ戻す場合は、
-routerd を止めてから `.migrated` ファイルを元の名前へ戻し、古いバイナリ
-または明示的な JSON パスで起動します。
+直前の二表だけの SQLite スキーマも移行元として扱います。routerd は `state`
+の行を `objects` へ、古い `artifacts` 表を新しい所有者列へコピーし、移行後に
+古い表を削除します。JSON ファイルは引き続き `.migrated` 付きの名前へ変えます。
+プレリリース期間中は互換性よりも保存構造の整理を優先しつつ、初回起動の移行は
+自動で行います。
 
 routerd の実行に `sqlite3` コマンドは不要です。ただし、人が状態を調べる
 ときには便利です。特に `json_extract` で JSON の一部だけを見る用途に向いて

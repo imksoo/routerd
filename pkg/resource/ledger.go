@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -119,8 +120,9 @@ func (l *JSONLedger) All() []Artifact {
 }
 
 type SQLiteLedger struct {
-	path string
-	db   *sql.DB
+	path       string
+	db         *sql.DB
+	generation int64
 }
 
 func OpenSQLiteLedger(path string) (*SQLiteLedger, error) {
@@ -129,6 +131,10 @@ func OpenSQLiteLedger(path string) (*SQLiteLedger, error) {
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	ledger := &SQLiteLedger{path: path, db: db}
@@ -145,26 +151,158 @@ func OpenSQLiteLedger(path string) (*SQLiteLedger, error) {
 
 func (l *SQLiteLedger) init() error {
 	_, err := l.db.Exec(`
-CREATE TABLE IF NOT EXISTS state (
-  key TEXT PRIMARY KEY,
-  value TEXT,
-  status TEXT NOT NULL,
-  reason TEXT,
-  since TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS generations (
+  generation INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  phase TEXT,
+  warnings TEXT,
+  config_hash TEXT
 );
 CREATE TABLE IF NOT EXISTS artifacts (
-  id TEXT PRIMARY KEY,
+  artifact_id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
   name TEXT NOT NULL,
-  owner TEXT,
+  owner_api_version TEXT,
+  owner_kind TEXT,
+  owner_name TEXT,
   attributes TEXT,
   source TEXT,
   generation INTEGER,
   observed_at TEXT
 );
+CREATE TABLE IF NOT EXISTS objects (
+  api_version TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  uid TEXT,
+  resource_version INTEGER NOT NULL DEFAULT 1,
+  observed_generation INTEGER,
+  status TEXT,
+  created_at TEXT NOT NULL,
+  modified_at TEXT NOT NULL,
+  PRIMARY KEY(api_version, kind, name)
+);
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  api_version TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  message TEXT NOT NULL,
+  generation INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS access_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT,
+  user TEXT,
+  method TEXT,
+  path TEXT,
+  status_code INTEGER,
+  duration_ms INTEGER,
+  generation INTEGER
+);
 `)
+	if err != nil {
+		return err
+	}
+	return l.migrateLegacyArtifactsTable()
+}
+
+func (l *SQLiteLedger) migrateLegacyArtifactsTable() error {
+	hasNew, err := l.tableHasColumn("artifacts", "artifact_id")
+	if err != nil || hasNew {
+		return err
+	}
+	hasOld, err := l.tableHasColumn("artifacts", "id")
+	if err != nil || !hasOld {
+		return err
+	}
+	if _, err := l.db.Exec(`ALTER TABLE artifacts RENAME TO artifacts_legacy`); err != nil {
+		return err
+	}
+	if _, err := l.db.Exec(`CREATE TABLE artifacts (
+  artifact_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  owner_api_version TEXT,
+  owner_kind TEXT,
+  owner_name TEXT,
+  attributes TEXT,
+  source TEXT,
+  generation INTEGER,
+  observed_at TEXT
+)`); err != nil {
+		return err
+	}
+	rows, err := l.db.Query(`SELECT id,kind,name,coalesce(owner,''),coalesce(attributes,'{}'),coalesce(source,''),generation,coalesce(observed_at,'') FROM artifacts_legacy`)
+	if err != nil {
+		return err
+	}
+	type legacyArtifact struct {
+		id, kind, name, owner, attrs, source, observed string
+		generation                                     sql.NullInt64
+	}
+	var legacyArtifacts []legacyArtifact
+	for rows.Next() {
+		var item legacyArtifact
+		if err := rows.Scan(&item.id, &item.kind, &item.name, &item.owner, &item.attrs, &item.source, &item.generation, &item.observed); err != nil {
+			return err
+		}
+		legacyArtifacts = append(legacyArtifacts, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range legacyArtifacts {
+		ownerAPI, ownerKind, ownerName := splitOwner(item.owner)
+		if _, err := l.db.Exec(`INSERT INTO artifacts(artifact_id,kind,name,owner_api_version,owner_kind,owner_name,attributes,source,generation,observed_at)
+VALUES(?,?,?,?,?,?,?,?,?,?)`, item.id, item.kind, item.name, ownerAPI, ownerKind, ownerName, item.attrs, item.source, item.generation, item.observed); err != nil {
+			return err
+		}
+	}
+	_, err = l.db.Exec(`DROP TABLE artifacts_legacy`)
 	return err
+}
+
+func (l *SQLiteLedger) tableExists(name string) (bool, error) {
+	var found string
+	err := l.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (l *SQLiteLedger) tableHasColumn(table, column string) (bool, error) {
+	exists, err := l.tableExists(table)
+	if err != nil || !exists {
+		return false, err
+	}
+	rows, err := l.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func (l *SQLiteLedger) migrateLegacyJSON() error {
@@ -209,29 +347,30 @@ func (l *SQLiteLedger) Remember(artifacts []Artifact) {
 			continue
 		}
 		attrs, _ := json.Marshal(artifact.Attributes)
-		_, _ = l.db.Exec(`INSERT INTO artifacts(id,kind,name,owner,attributes,source,generation,observed_at)
-VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,name=excluded.name,owner=excluded.owner,attributes=excluded.attributes,source=excluded.source,generation=excluded.generation,observed_at=excluded.observed_at`,
-			artifact.Identity(), artifact.Kind, artifact.Name, artifact.Owner, string(attrs), "routerd", 1, now)
+		ownerAPI, ownerKind, ownerName := splitOwner(artifact.Owner)
+		_, _ = l.db.Exec(`INSERT INTO artifacts(artifact_id,kind,name,owner_api_version,owner_kind,owner_name,attributes,source,generation,observed_at)
+VALUES(?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(artifact_id) DO UPDATE SET kind=excluded.kind,name=excluded.name,owner_api_version=excluded.owner_api_version,owner_kind=excluded.owner_kind,owner_name=excluded.owner_name,attributes=excluded.attributes,source=excluded.source,generation=excluded.generation,observed_at=excluded.observed_at`,
+			artifact.Identity(), artifact.Kind, artifact.Name, ownerAPI, ownerKind, ownerName, string(attrs), "routerd", effectiveGeneration(l.generation), now)
 	}
 }
 
 func (l *SQLiteLedger) Forget(artifacts []Artifact) {
 	for _, artifact := range artifacts {
-		_, _ = l.db.Exec(`DELETE FROM artifacts WHERE id = ?`, artifact.Identity())
+		_, _ = l.db.Exec(`DELETE FROM artifacts WHERE artifact_id = ?`, artifact.Identity())
 	}
 }
 
 func (l *SQLiteLedger) Owns(artifact Artifact) bool {
 	var id string
-	err := l.db.QueryRow(`SELECT id FROM artifacts WHERE id = ?`, artifact.Identity()).Scan(&id)
+	err := l.db.QueryRow(`SELECT artifact_id FROM artifacts WHERE artifact_id = ?`, artifact.Identity()).Scan(&id)
 	return err == nil
 }
 
 func (l *SQLiteLedger) Save(path string) error { return nil }
 
 func (l *SQLiteLedger) All() []Artifact {
-	rows, err := l.db.Query(`SELECT kind,name,coalesce(owner,''),coalesce(attributes,'{}') FROM artifacts ORDER BY id`)
+	rows, err := l.db.Query(`SELECT kind,name,coalesce(owner_api_version,''),coalesce(owner_kind,''),coalesce(owner_name,''),coalesce(attributes,'{}') FROM artifacts ORDER BY artifact_id`)
 	if err != nil {
 		return nil
 	}
@@ -239,10 +378,11 @@ func (l *SQLiteLedger) All() []Artifact {
 	var out []Artifact
 	for rows.Next() {
 		var artifact Artifact
-		var attrs string
-		if err := rows.Scan(&artifact.Kind, &artifact.Name, &artifact.Owner, &attrs); err != nil {
+		var attrs, ownerAPI, ownerKind, ownerName string
+		if err := rows.Scan(&artifact.Kind, &artifact.Name, &ownerAPI, &ownerKind, &ownerName, &attrs); err != nil {
 			continue
 		}
+		artifact.Owner = joinOwner(ownerAPI, ownerKind, ownerName)
 		_ = json.Unmarshal([]byte(attrs), &artifact.Attributes)
 		if artifact.Attributes == nil {
 			artifact.Attributes = map[string]string{}
@@ -250,4 +390,30 @@ func (l *SQLiteLedger) All() []Artifact {
 		out = append(out, artifact)
 	}
 	return out
+}
+
+func (l *SQLiteLedger) SetGeneration(generation int64) {
+	l.generation = generation
+}
+
+func effectiveGeneration(generation int64) any {
+	if generation == 0 {
+		return nil
+	}
+	return generation
+}
+
+func splitOwner(owner string) (string, string, string) {
+	parts := strings.Split(owner, "/")
+	if len(parts) < 3 {
+		return "", "", ""
+	}
+	return strings.Join(parts[:len(parts)-2], "/"), parts[len(parts)-2], parts[len(parts)-1]
+}
+
+func joinOwner(apiVersion, kind, name string) string {
+	if apiVersion == "" || kind == "" || name == "" {
+		return ""
+	}
+	return apiVersion + "/" + kind + "/" + name
 }

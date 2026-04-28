@@ -34,6 +34,29 @@ type Store interface {
 	Variables() map[string]Value
 }
 
+type GenerationStore interface {
+	BeginGeneration(configHash string) (int64, error)
+	FinishGeneration(generation int64, phase string, warnings []string) error
+	CurrentGeneration() int64
+}
+
+type EventRecorder interface {
+	RecordEvent(apiVersion, kind, name, eventType, reason, message string) error
+	Events(apiVersion, kind, name string, limit int) []Event
+}
+
+type Event struct {
+	ID         int64     `json:"id" yaml:"id"`
+	APIVersion string    `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string    `json:"kind" yaml:"kind"`
+	Name       string    `json:"name" yaml:"name"`
+	Type       string    `json:"type" yaml:"type"`
+	Reason     string    `json:"reason" yaml:"reason"`
+	Message    string    `json:"message" yaml:"message"`
+	Generation int64     `json:"generation" yaml:"generation"`
+	CreatedAt  time.Time `json:"createdAt" yaml:"createdAt"`
+}
+
 type JSONStore struct {
 	Values map[string]Value `json:"variables"`
 	now    func() time.Time

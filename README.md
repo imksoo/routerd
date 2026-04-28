@@ -220,7 +220,8 @@ It combines the resource definition from `router.yaml`, observed host state,
 the local ownership ledger, and routerd's state history. Use
 `routerctl show <kind>/<name>` for one resource, `-o json` or `-o yaml` for
 structured output, `--diff` for desired-vs-observed differences, `--ledger` for
-ledger entries only, and `--adopt` for adoption candidates. Common aliases
+ledger entries only, `--adopt` for adoption candidates, and `--events` for
+recent resource events. Common aliases
 include `if`, `ipv6pd`, `nat`, `dslite`, `pppoe`, `fw`, `zone`, `hostname`, and
 `route`. NAPT/conntrack details are shown under `IPv4SourceNAT` observed state,
 so there is no separate `show napt` command.

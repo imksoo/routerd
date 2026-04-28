@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -444,6 +445,27 @@ func effectiveReconcilePolicy(router *api.Router) api.ReconcilePolicySpec {
 	return policy
 }
 
+func routerConfigHash(router *api.Router) string {
+	data, _ := json.Marshal(router)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func recordWarningEvents(router *api.Router, store routerstate.Store, warnings []string) {
+	recorder, ok := store.(routerstate.EventRecorder)
+	if !ok {
+		return
+	}
+	for _, warning := range warnings {
+		_ = recorder.RecordEvent(router.APIVersion, router.Kind, router.Metadata.Name, "Warning", "ReconcileWarning", warning)
+		for _, res := range router.Spec.Resources {
+			if strings.Contains(warning, res.ID()) {
+				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "ReconcileWarning", warning)
+			}
+		}
+	}
+}
+
 func compactStringList(values []string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -463,6 +485,19 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 	if err != nil {
 		return nil, err
 	}
+	var generation int64
+	generationFinished := false
+	if store, ok := stateStore.(routerstate.GenerationStore); ok {
+		generation, err = store.BeginGeneration(routerConfigHash(router))
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if !generationFinished {
+				_ = store.FinishGeneration(generation, "Errored", nil)
+			}
+		}()
+	}
 	stateChanges, err := recordObservedPrefixDelegationState(router, stateStore)
 	if err != nil {
 		return nil, err
@@ -478,6 +513,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 	if err != nil {
 		return nil, err
 	}
+	if generation != 0 {
+		result.Generation = generation
+	}
 	appendStatePolicyResults(result, router, stateStore, stateChanges)
 	appendPrefixDelegationStateWarnings(result, router, stateStore)
 	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath); err != nil {
@@ -487,6 +525,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		renewChanges, renewWarnings := renewMissingPrefixDelegations(router, stateStore)
 		stateChanges = append(stateChanges, renewChanges...)
 		result.Warnings = append(result.Warnings, renewWarnings...)
+		recordWarningEvents(router, stateStore, result.Warnings)
 		if err := os.MkdirAll(filepathDir(defaultString(opts.StatePath, defaultStatePath)), 0755); err != nil {
 			return nil, err
 		}
@@ -498,7 +537,12 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			"resources": fmt.Sprintf("%d", len(result.Resources)),
 		})
 		if platformDefaults.OS == platform.OSFreeBSD {
-			return runFreeBSDReconcileOnce(effectiveRouter, opts, stdout, logger, engine, result)
+			next, err := runFreeBSDReconcileOnce(effectiveRouter, opts, stdout, logger, engine, result, generation)
+			if store, ok := stateStore.(routerstate.GenerationStore); ok && next != nil {
+				_ = store.FinishGeneration(generation, next.Phase, next.Warnings)
+				generationFinished = true
+			}
+			return next, err
 		}
 		policy := effectiveReconcilePolicy(effectiveRouter)
 		protectedCritical := len(policy.ProtectedInterfaces) > 0 || len(policy.ProtectedZones) > 0
@@ -684,7 +728,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			if err != nil {
 				return nil, err
 			}
-			rememberedArtifacts, err = rememberReconciledArtifacts(effectiveRouter, opts.LedgerPath)
+			rememberedArtifacts, err = rememberReconciledArtifacts(effectiveRouter, opts.LedgerPath, generation)
 			if err != nil {
 				return nil, err
 			}
@@ -772,6 +816,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if err != nil {
 			return nil, err
 		}
+		if generation != 0 {
+			result.Generation = generation
+		}
 		result.Warnings = append(result.Warnings, applyWarnings...)
 		if len(applyErrors) > 0 {
 			result.Phase = "Degraded"
@@ -781,6 +828,10 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		}
 		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 			return nil, err
+		}
+		if store, ok := stateStore.(routerstate.GenerationStore); ok {
+			_ = store.FinishGeneration(generation, result.Phase, result.Warnings)
+			generationFinished = true
 		}
 		return result, nil
 	}
@@ -794,10 +845,14 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 		return nil, err
 	}
+	if store, ok := stateStore.(routerstate.GenerationStore); ok {
+		_ = store.FinishGeneration(generation, result.Phase, result.Warnings)
+		generationFinished = true
+	}
 	return result, nil
 }
 
-func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.Writer, logger *eventlog.Logger, engine *reconcile.Engine, result *reconcile.Result) (*reconcile.Result, error) {
+func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.Writer, logger *eventlog.Logger, engine *reconcile.Engine, result *reconcile.Result, generation int64) (*reconcile.Result, error) {
 	policy := effectiveReconcilePolicy(router)
 	var applyErrors []string
 	recordStageError := func(stage string, err error) error {
@@ -866,7 +921,7 @@ func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, std
 	var rememberedArtifacts int
 	if len(applyErrors) == 0 {
 		var err error
-		rememberedArtifacts, err = rememberReconciledArtifacts(router, opts.LedgerPath)
+		rememberedArtifacts, err = rememberReconciledArtifacts(router, opts.LedgerPath, generation)
 		if err != nil {
 			return nil, err
 		}
@@ -881,6 +936,9 @@ func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, std
 	next, err := engine.Plan(router)
 	if err != nil {
 		return nil, err
+	}
+	if generation != 0 {
+		next.Generation = generation
 	}
 	next.Warnings = append(next.Warnings, applyWarnings...)
 	if len(applyErrors) > 0 {
@@ -1032,6 +1090,9 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		if observedPrefix == "" {
 			if lease.LastMissingAt == "" {
 				lease.LastMissingAt = store.Now().Format(time.RFC3339)
+				if recorder, ok := store.(routerstate.EventRecorder); ok {
+					_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixMissing", "delegated IPv6 prefix is not observable")
+				}
 			}
 			if retained, ok := retainCurrentPrefixDuringConvergence(pdLeaseCurrentValue(lease), pdLeaseMissingValue(lease), convergenceTimeout, store); ok {
 				lease.CurrentPrefix = retained
@@ -1044,9 +1105,13 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		}
 		observedAt := store.Now().Format(time.RFC3339)
 		lease.CurrentPrefix = observedPrefix
+		previousPrefix := lease.LastPrefix
 		lease.LastPrefix = observedPrefix
 		lease.LastObservedAt = observedAt
 		lease.LastMissingAt = ""
+		if recorder, ok := store.(routerstate.EventRecorder); ok && previousPrefix != observedPrefix {
+			_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Normal", "PrefixObserved", "observed delegated IPv6 prefix "+observedPrefix)
+		}
 		changes = append(changes,
 			stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": observed delegated prefix lease")},
 			stateChange{Name: base + ".downstreamIfname", Value: store.Set(base+".downstreamIfname", observedIfname, res.ID()+": observed delegated prefix")},
@@ -1805,7 +1870,7 @@ func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
 	}
 }
 
-func rememberReconciledArtifacts(router *api.Router, ledgerPath string) (int, error) {
+func rememberReconciledArtifacts(router *api.Router, ledgerPath string, generation int64) (int, error) {
 	if ledgerPath == "" {
 		return 0, nil
 	}
@@ -1817,6 +1882,9 @@ func rememberReconciledArtifacts(router *api.Router, ledgerPath string) (int, er
 	ledger, err := resource.LoadLedger(ledgerPath)
 	if err != nil {
 		return 0, err
+	}
+	if sqliteLedger, ok := ledger.(interface{ SetGeneration(int64) }); ok {
+		sqliteLedger.SetGeneration(generation)
 	}
 	ledger.Remember(artifacts)
 	if err := ledger.Save(ledgerPath); err != nil {
