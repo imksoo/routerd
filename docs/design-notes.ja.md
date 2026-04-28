@@ -506,9 +506,10 @@ IX2215 や Aterm と思われる別 DUID の Solicit は入りませんでした
 - 見るべき点は、OS 側クライアントが覚えているサーバーへ Renew を出すか、
   T2 後に Rebind へ進むか、routerd の `lastObservedAt` が新規 Solicit なしに
   更新されるか、HGW が同じ `/60` を維持するかです。
-- FreeBSD は優先度の高い残件です。PD 自体は受け取れるようになりましたが、
-  復帰したプレフィックスを LAN 側アドレス、dnsmasq、既定 IPv6 経路へ伝搬
-  できていません。
+- FreeBSD の LAN 側への伝搬は、この観測の後で修正しました。router01 は
+  保存済みのプレフィックス委譲状態から LAN 側アドレスを導出し、管理対象の
+  dnsmasq rc.d サービスを動かし、IPv6 既定経路を得て、IPv6 通信できる
+  状態になっています。
 
 ### 2026-04-28 の実機 DUID 確認
 
@@ -546,6 +547,40 @@ DUID 管理のコードを変える前に、検証機で実際の設定とパケ
   パケット上でも DUID-LL になりました。その 60 秒の取得では
   Advertise / Reply は見えなかったため、ホームゲートウェイのリース状態や
   Solicit と Renew の違いは、FreeBSD の DUID 修正後も残る仮説です。
+
+### 2026-04-29 手動 Renew 実機テスト
+
+3 台の検証ルーターで、WAN 側インターフェースを 60 秒 tcpdump しながら、
+OS の DHCPv6 クライアントに手動更新を促しました。
+
+| ホスト | クライアントと操作 | パケット観測 | テスト後の状態 | 解釈 |
+| --- | --- | --- | --- | --- |
+| router01 / FreeBSD | KAME `dhcp6c`; `kill -HUP $(cat /var/run/dhcp6c.pid)` | `dhcp6c` は Renew を送りませんでした。UDP 送信元 546、DUID-LL `bc:24:11:e3:c2:38`、IA_PD IAID 0、`2409:10:3d60:1220::/60` の正確なヒントを持つ Solicit を `ff02::1:2` へ送り直しました。60 秒以内に Advertise / Reply は見えませんでした。 | routerd は current / last prefix ともに `2409:10:3d60:1220::/60` を観測し続けました。`lastObservedAt` は、ホスト上に残っているプレフィックスを見て更新されました。 | この構成での HUP は本当の Renew ではありません。プレフィックスヒント付き Solicit へ戻る、制御された再取得です。 |
+| router02 / NixOS | systemd-networkd; `networkctl renew ens18` | `ens18` では DHCPv6 パケットが 1 つも見えませんでした。コマンドは成功終了し、systemd-networkd のログにも新しい行は出ませんでした。 | routerd は current / last prefix ともに `2409:10:3d60:1230::/60` を観測し続けました。`lastObservedAt` は、Reply 受信ではなくホスト状態の観測で更新されました。 | この systemd-networkd の版と設定では、`networkctl renew` は DHCPv6-PD の手動更新として働いていません。 |
+| router03 / Ubuntu | systemd-networkd; `networkctl renew ens18` | `ens18` では DHCPv6 パケットが 1 つも見えませんでした。コマンドは成功終了し、systemd-networkd のログにも新しい行は出ませんでした。 | routerd は current / last prefix ともに `2409:10:3d60:1240::/60` を観測し続けました。`lastObservedAt` は、Reply 受信ではなくホスト状態の観測で更新されました。 | router02 と同じく、networkd 配下の routerd で信頼できる手動更新手段にはなっていません。 |
+
+このテストでは、通常の T1/T2 による更新経路は確認できませんでした。一方で、
+OS 任せの手動更新フックが弱いことは分かりました。
+
+- FreeBSD `dhcp6c` は刺激できますが、その動きは Renew ではなく、
+  プレフィックスヒント付き Solicit です。
+- systemd-networkd は `networkctl renew` を成功扱いにしますが、観測窓の中で
+  DHCPv6-PD パケットを出しませんでした。
+- routerd の状態は、ホスト上に残っている委譲プレフィックスを観測することで
+  新しく見えます。これはローカル状態としては有用ですが、上流リースが
+  更新された証拠とは区別しなければなりません。
+
+設計上の扱い:
+
+- OS 側クライアントへの手動刺激は、あくまで復旧を促す補助として扱います。
+- 可能な場合は、T1、T2、優先寿命、有効寿命、サーバー識別子、最後の
+  DHCPv6 メッセージ遷移を保存します。これらがないと、上流リースの更新と
+  ホスト上の残存プレフィックス観測を区別できません。
+- 将来の routerd 内蔵 DHCPv6 クライアントでは、Renew と Rebind を自前で
+  実装し、パケット単位でログに残すべきです。PR-400NE/HGW の調査には、
+  これが一番見通しのよい経路です。
+- `networkctl renew` に頼らず、T1 の時刻をまたいで tcpdump を取り続ける
+  受動観測を残件に追加します。
 
 ### PR-400NE の挙動に関する仮説
 

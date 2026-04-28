@@ -501,9 +501,9 @@ Follow-up for renewal observation:
   to the remembered server, whether Rebind appears after T2, whether routerd
   state updates `lastObservedAt` without a new Solicit, and whether the HGW
   keeps the same `/60`.
-- FreeBSD remains the highest-priority follow-up because it now receives PD
-  but does not yet propagate the recovered prefix to LAN addressing, dnsmasq,
-  or a default IPv6 route.
+- FreeBSD LAN propagation was fixed after this observation: router01 can now
+  derive the LAN address from stored PD state, run the managed dnsmasq rc.d
+  service, learn an IPv6 default route, and pass IPv6 traffic.
 
 ### Lab DUID Validation on 2026-04-28
 
@@ -541,6 +541,40 @@ Follow-up after implementation:
   which is DUID-LL on the wire. No Advertise or Reply was seen in that 60
   second capture, so HGW lease state and Solicit-vs-Renew behavior remain
   open hypotheses after the FreeBSD DUID fix.
+
+### Manual Renew Lab Test on 2026-04-29
+
+The three lab routers were tested with a 60 second tcpdump on the WAN-side
+interface while manually asking the OS DHCPv6 client to refresh its lease.
+
+| Host | Client and command | Packet observation | State after the test | Interpretation |
+| --- | --- | --- | --- | --- |
+| router01 / FreeBSD | KAME `dhcp6c`; `kill -HUP $(cat /var/run/dhcp6c.pid)` | `dhcp6c` did not send Renew. It restarted acquisition with Solicit to `ff02::1:2`, UDP source port 546, DUID-LL `bc:24:11:e3:c2:38`, IA_PD IAID 0, and an exact hint for `2409:10:3d60:1220::/60`. No Advertise or Reply was seen within 60 seconds. | routerd still observed current and last prefix `2409:10:3d60:1220::/60`; `lastObservedAt` advanced because the prefix remained present on the host. | HUP is not a true renew path for KAME `dhcp6c` in this setup. It is a controlled restart that falls back to hint-bearing Solicit. |
+| router02 / NixOS | systemd-networkd; `networkctl renew ens18` | No DHCPv6 packets were captured on `ens18`. The command returned success and wrote no new systemd-networkd journal entries. | routerd still observed current and last prefix `2409:10:3d60:1230::/60`; `lastObservedAt` advanced from host observation, not from a visible Reply. | `networkctl renew` did not trigger an on-wire DHCPv6-PD renewal in this systemd-networkd version/configuration. |
+| router03 / Ubuntu | systemd-networkd; `networkctl renew ens18` | No DHCPv6 packets were captured on `ens18`. The command returned success and wrote no new systemd-networkd journal entries. | routerd still observed current and last prefix `2409:10:3d60:1240::/60`; `lastObservedAt` advanced from host observation, not from a visible Reply. | Same as router02: this is not a reliable manual PD renew mechanism for networkd-backed routerd. |
+
+This test did not prove the normal T1/T2 renewal path. It did show that the
+current OS-backed manual hooks are weak:
+
+- FreeBSD `dhcp6c` can be nudged, but the nudge behaves as Solicit with a
+  prefix hint, not Renew.
+- systemd-networkd accepted `networkctl renew` but did not put a DHCPv6-PD
+  packet on the wire during the capture window.
+- routerd's state can still look fresh because apply observes the delegated
+  prefix already installed on the host. That is useful for local state, but it
+  must not be confused with proof that the upstream lease was renewed.
+
+Design consequences:
+
+- Keep using OS-backed hooks only as best-effort recovery nudges.
+- Store T1, T2, preferred lifetime, valid lifetime, server identifier, and the
+  last DHCPv6 transition when available. Without those fields, routerd cannot
+  distinguish a real upstream renewal from a local host observation.
+- The future in-process DHCPv6 client should implement and log real Renew and
+  Rebind exchanges itself. That remains the clean path for PR-400NE/HGW
+  debugging.
+- Add a backlog item to test passive T1/T2 renewal by leaving tcpdump running
+  across the expected T1 window instead of relying on `networkctl renew`.
 
 ### PR-400NE Behavior Hypotheses
 
