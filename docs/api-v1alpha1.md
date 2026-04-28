@@ -461,39 +461,30 @@ How routerd behaves:
   too old, missing, or disabled, routerd falls back to a prefix-length hint
   such as `::/60`. This is only a hint: an upstream may return the same prefix,
   a different prefix, or no prefix.
-- During reconcile, routerd records observed prefix-delegation state in the
-  local state store. The keys are
-  `ipv6PrefixDelegation.<name>.currentPrefix`,
-  `ipv6PrefixDelegation.<name>.lastPrefix`,
-  `ipv6PrefixDelegation.<name>.lease`,
-  `ipv6PrefixDelegation.<name>.uplinkIfname`,
-  `ipv6PrefixDelegation.<name>.downstreamIfname`, and
-  `ipv6PrefixDelegation.<name>.prefixLength`. The effective convergence
-  timeout is recorded as
-  `ipv6PrefixDelegation.<name>.convergenceTimeout`. The last successful
-  observation time is recorded as
-  `ipv6PrefixDelegation.<name>.lastObservedAt`; failed observations update
-  `ipv6PrefixDelegation.<name>.lastMissingAt`.
-  `currentPrefix` is cleared when no downstream delegated prefix is visible,
-  but only after the convergence timeout has elapsed. `lastPrefix` is kept.
+- During reconcile, routerd records observed prefix-delegation state in
+  `ipv6PrefixDelegation.<name>.lease` in the local state store. The lease JSON
+  holds the current prefix, last known prefix, observed DUID, IAID, expected
+  DUID, identity source, last observed time, last missing time, and lease
+  lifetime fields when they are known. Older state files that used separate
+  keys such as `ipv6PrefixDelegation.<name>.lastPrefix` are migrated into this
+  lease value when read. Interface names, configured prefix length, client
+  type, profile, and convergence timeout remain separate state entries because
+  they describe routerd configuration rather than the DHCPv6 lease itself.
+  `currentPrefix` inside the lease is cleared when no downstream delegated
+  prefix is visible, but only after the convergence timeout has elapsed.
+  `lastPrefix` is kept.
   This preserves enough local memory to support
   upstreams that treat a known client as an existing DHCPv6-PD lease rather
   than a fresh client.
-  `ipv6PrefixDelegation.<name>.lease` is a structured copy of the same lease
-  memory. It currently stores `lastPrefix`, `lastObservedServer` when
-  available, `preferredLifetime`, `validLifetime`, and `lastObservedAt`.
-  Renderers use this record for prefix hints.
-- For systemd-networkd and FreeBSD `dhcp6c` clients, routerd also records the observed DHCP
-  identity when available: `ipv6PrefixDelegation.<name>.iaid`,
-  `ipv6PrefixDelegation.<name>.duid`,
-  `ipv6PrefixDelegation.<name>.duidText`, and
-  `ipv6PrefixDelegation.<name>.identitySource`. With `dhcp6c`, the DUID is
-  read from `/var/db/dhcp6c_duid` and the IAID is derived from the configured
-  `iaid` or the `dhcp6c` default of `0`. For NTT profiles it records
-  `ipv6PrefixDelegation.<name>.expectedDUID`, derived from the uplink MAC as
-  a DHCPv6 link-layer DUID. These values are state memory, not desired
-  configuration; future retry logic can use them to prefer renewal-like
-  behavior when a home gateway still remembers a prior lease.
+  Renderers use this lease record for prefix hints. `routerctl show pd` prints
+  the same lease information in a table for field debugging.
+- For systemd-networkd and FreeBSD `dhcp6c` clients, routerd records observed
+  DHCP identity into the lease when available. With `dhcp6c`, the DUID is read
+  from `/var/db/dhcp6c_duid` and the IAID is derived from the configured `iaid`
+  or the `dhcp6c` default of `0`. For NTT profiles it records an expected DUID,
+  derived from the uplink MAC as a DHCPv6 link-layer DUID. These values are
+  state memory, not desired configuration; retry logic can use them to prefer
+  renewal-like behavior when a home gateway still remembers a prior lease.
 - The OS DHCPv6 client remains responsible for Renew/Rebind before the lease
   expires. routerd should not normally restart that client during reconcile,
   because a restart can turn a renewal path into a fresh Solicit or Release.

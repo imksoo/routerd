@@ -45,6 +45,7 @@ func Load(path string) (*Store, error) {
 	if store.Variables == nil {
 		store.Variables = map[string]Value{}
 	}
+	MigratePDLeases(store)
 	return store, nil
 }
 
@@ -78,6 +79,10 @@ func (s *Store) Unset(name, reason string) Value {
 
 func (s *Store) Forget(name, reason string) Value {
 	return s.set(name, StatusUnknown, "", reason)
+}
+
+func (s *Store) Delete(name string) {
+	delete(s.Variables, name)
 }
 
 func (s *Store) set(name, status, value, reason string) Value {

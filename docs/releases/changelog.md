@@ -11,6 +11,8 @@ behavior changes and new resource shapes as the model takes shape.
 
 - `routerctl show pd` now prints remembered DHCPv6-PD identity and prefix
   state from the local state database.
+- DHCPv6-PD state now migrates scattered prefix and identity keys into the
+  structured `ipv6PrefixDelegation.<name>.lease` value.
 - FreeBSD remote install hardening: `ROUTERD_OS=freebsd` now builds
   FreeBSD binaries and uses FreeBSD runtime directories even when invoked
   from a Linux workstation.

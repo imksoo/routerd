@@ -979,10 +979,24 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 		}
 		prefixLength := stateEffectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength)
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
+		lease, _ := routerstate.PDLeaseFromStore(store, base)
 		if ifname := aliases[spec.Interface]; ifname != "" {
 			changes = append(changes, stateChange{Name: base + ".uplinkIfname", Value: store.Set(base+".uplinkIfname", ifname, res.ID()+": observed uplink interface")})
-			for _, change := range observedPrefixDelegationIdentityState(base, ifname, defaultString(spec.Client, "networkd"), defaultString(spec.Profile, "default"), spec.IAID, store, res.ID()) {
-				changes = append(changes, change)
+			identity := observedPrefixDelegationIdentity(ifname, defaultString(spec.Client, "networkd"), spec.IAID)
+			if identity.IAID != "" {
+				lease.IAID = identity.IAID
+			}
+			if identity.DUID != "" {
+				lease.DUID = identity.DUID
+			}
+			if identity.DUIDText != "" {
+				lease.DUIDText = identity.DUIDText
+			}
+			if identity.Source != "" {
+				lease.IdentitySource = identity.Source
+			}
+			if expected := expectedPrefixDelegationDUID(ifname, defaultString(spec.Profile, "default")); expected != "" {
+				lease.ExpectedDUID = expected
 			}
 		}
 		changes = append(changes, stateChange{Name: base + ".client", Value: store.Set(base+".client", defaultString(spec.Client, "networkd"), res.ID()+": configured DHCPv6-PD client")})
@@ -1013,31 +1027,49 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 			}
 		}
 		if observedPrefix == "" {
-			missing := store.Get(base + ".lastMissingAt")
-			if missing.Status != routerstate.StatusSet || missing.Value == "" {
-				missing = store.Set(base+".lastMissingAt", store.Now().Format(time.RFC3339), res.ID()+": delegated prefix not observable")
-				changes = append(changes, stateChange{Name: base + ".lastMissingAt", Value: missing})
+			if lease.LastMissingAt == "" {
+				lease.LastMissingAt = store.Now().Format(time.RFC3339)
 			}
-			if retained, ok := retainCurrentPrefixDuringConvergence(store.Get(base+".currentPrefix"), missing, convergenceTimeout, store); ok {
-				changes = append(changes, stateChange{Name: base + ".currentPrefix", Value: store.Set(base+".currentPrefix", retained, res.ID()+": waiting for DHCPv6-PD convergence")})
+			if retained, ok := retainCurrentPrefixDuringConvergence(pdLeaseCurrentValue(lease), pdLeaseMissingValue(lease), convergenceTimeout, store); ok {
+				lease.CurrentPrefix = retained
+				changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": waiting for DHCPv6-PD convergence")})
 				continue
 			}
-			changes = append(changes, stateChange{Name: base + ".currentPrefix", Value: store.Unset(base+".currentPrefix", res.ID()+": no delegated prefix observable")})
+			lease.CurrentPrefix = ""
+			changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": no delegated prefix observable")})
 			continue
 		}
+		observedAt := store.Now().Format(time.RFC3339)
+		lease.CurrentPrefix = observedPrefix
+		lease.LastPrefix = observedPrefix
+		lease.LastObservedAt = observedAt
+		lease.LastMissingAt = ""
 		changes = append(changes,
-			stateChange{Name: base + ".currentPrefix", Value: store.Set(base+".currentPrefix", observedPrefix, res.ID()+": observed delegated prefix")},
-			stateChange{Name: base + ".lastPrefix", Value: store.Set(base+".lastPrefix", observedPrefix, res.ID()+": observed delegated prefix")},
-			stateChange{Name: base + ".lastObservedAt", Value: store.Set(base+".lastObservedAt", store.Now().Format(time.RFC3339), res.ID()+": observed delegated prefix")},
-			stateChange{Name: base + ".lastMissingAt", Value: store.Unset(base+".lastMissingAt", res.ID()+": delegated prefix observable")},
+			stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": observed delegated prefix lease")},
 			stateChange{Name: base + ".downstreamIfname", Value: store.Set(base+".downstreamIfname", observedIfname, res.ID()+": observed delegated prefix")},
 		)
-		lease, _ := routerstate.DecodePDLease(store.Get(base + ".lease").Value)
-		lease.LastPrefix = observedPrefix
-		lease.LastObservedAt = store.Now().Format(time.RFC3339)
-		changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": observed delegated prefix lease")})
 	}
 	return changes, nil
+}
+
+func pdLeaseCurrentValue(lease routerstate.PDLease) routerstate.Value {
+	updatedAt := time.Time{}
+	if lease.LastObservedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, lease.LastObservedAt); err == nil {
+			updatedAt = parsed
+		}
+	}
+	if lease.CurrentPrefix == "" {
+		return routerstate.Value{Status: routerstate.StatusUnset, UpdatedAt: updatedAt}
+	}
+	return routerstate.Value{Status: routerstate.StatusSet, Value: lease.CurrentPrefix, UpdatedAt: updatedAt}
+}
+
+func pdLeaseMissingValue(lease routerstate.PDLease) routerstate.Value {
+	if lease.LastMissingAt == "" {
+		return routerstate.Value{Status: routerstate.StatusUnset}
+	}
+	return routerstate.Value{Status: routerstate.StatusSet, Value: lease.LastMissingAt}
 }
 
 func effectiveIPv6PDConvergenceTimeout(profile, configured string) time.Duration {
@@ -1070,33 +1102,15 @@ func retainCurrentPrefixDuringConvergence(current, missing routerstate.Value, ti
 	return current.Value, true
 }
 
-func observedPrefixDelegationIdentityState(base, ifname, client, profile, configuredIAID string, store *routerstate.Store, owner string) []stateChange {
-	var changes []stateChange
-	var identity dhcpIdentity
+func observedPrefixDelegationIdentity(ifname, client, configuredIAID string) dhcpIdentity {
 	switch client {
 	case "networkd":
-		identity = observeNetworkdDHCPIdentity(ifname)
+		return observeNetworkdDHCPIdentity(ifname)
 	case "dhcp6c":
-		identity = observeFreeBSDDHCP6CIdentity(configuredIAID)
+		return observeFreeBSDDHCP6CIdentity(configuredIAID)
 	default:
-		return changes
+		return dhcpIdentity{}
 	}
-	if identity.IAID != "" {
-		changes = append(changes, stateChange{Name: base + ".iaid", Value: store.Set(base+".iaid", identity.IAID, owner+": observed DHCP IAID")})
-	}
-	if identity.DUID != "" {
-		changes = append(changes, stateChange{Name: base + ".duid", Value: store.Set(base+".duid", identity.DUID, owner+": observed DHCP DUID")})
-	}
-	if identity.DUIDText != "" {
-		changes = append(changes, stateChange{Name: base + ".duidText", Value: store.Set(base+".duidText", identity.DUIDText, owner+": observed DHCPv6 DUID")})
-	}
-	if identity.Source != "" {
-		changes = append(changes, stateChange{Name: base + ".identitySource", Value: store.Set(base+".identitySource", identity.Source, owner+": observed DHCP identity source")})
-	}
-	if expected := expectedPrefixDelegationDUID(ifname, profile); expected != "" {
-		changes = append(changes, stateChange{Name: base + ".expectedDUID", Value: store.Set(base+".expectedDUID", expected, owner+": expected DHCPv6 DUID for profile")})
-	}
-	return changes
 }
 
 type dhcpIdentity struct {
@@ -1538,24 +1552,21 @@ func appendPrefixDelegationStateWarnings(result *reconcile.Result, router *api.R
 			continue
 		}
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
-		current := store.Get(base + ".currentPrefix")
-		if current.Status == routerstate.StatusSet {
+		lease, _ := routerstate.PDLeaseFromStore(store, base)
+		if lease.CurrentPrefix != "" {
 			continue
 		}
-		last := store.Get(base + ".lastPrefix")
-		observedAt := store.Get(base + ".lastObservedAt").Value
-		missingAt := store.Get(base + ".lastMissingAt").Value
 		msg := fmt.Sprintf("%s is not currently observable", res.ID())
-		if last.Status == routerstate.StatusSet && last.Value != "" {
-			msg += "; last delegated prefix was " + last.Value
+		if lease.LastPrefix != "" {
+			msg += "; last delegated prefix was " + lease.LastPrefix
 		} else {
 			msg += "; no delegated prefix has been recorded locally yet"
 		}
-		if observedAt != "" {
-			msg += " observed at " + observedAt
+		if lease.LastObservedAt != "" {
+			msg += " observed at " + lease.LastObservedAt
 		}
-		if missingAt != "" {
-			msg += ", missing since " + missingAt
+		if lease.LastMissingAt != "" {
+			msg += ", missing since " + lease.LastMissingAt
 		}
 		msg += ". The OS DHCPv6 client must renew or reacquire PD before the upstream lease expires."
 		result.Warnings = append(result.Warnings, msg)

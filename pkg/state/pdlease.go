@@ -70,6 +70,61 @@ func PDLeaseFromStore(store *Store, base string) (PDLease, bool) {
 	return lease, merged
 }
 
+var legacyPDLeaseFields = []string{
+	"currentPrefix",
+	"lastPrefix",
+	"lastObservedServer",
+	"preferredLifetime",
+	"validLifetime",
+	"lastObservedAt",
+	"lastMissingAt",
+	"duid",
+	"duidText",
+	"iaid",
+	"expectedDUID",
+	"identitySource",
+}
+
+func MigratePDLeases(store *Store) bool {
+	names := map[string]bool{}
+	for name := range store.Variables {
+		rest, ok := strings.CutPrefix(name, "ipv6PrefixDelegation.")
+		if !ok {
+			continue
+		}
+		pdName, field, ok := strings.Cut(rest, ".")
+		if ok && pdName != "" && isLegacyPDLeaseField(field) {
+			names[pdName] = true
+		}
+	}
+	changed := false
+	for name := range names {
+		base := "ipv6PrefixDelegation." + name
+		lease, ok := PDLeaseFromStore(store, base)
+		if ok {
+			store.Set(base+".lease", EncodePDLease(lease), "migrated DHCPv6-PD lease state")
+			changed = true
+		}
+		for _, field := range legacyPDLeaseFields {
+			key := base + "." + field
+			if _, exists := store.Variables[key]; exists {
+				store.Delete(key)
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func isLegacyPDLeaseField(field string) bool {
+	for _, candidate := range legacyPDLeaseFields {
+		if field == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 func PDLeaseHintPrefix(lease PDLease, now time.Time) (string, bool) {
 	prefix := strings.TrimSpace(lease.LastPrefix)
 	if prefix == "" {

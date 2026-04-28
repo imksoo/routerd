@@ -189,18 +189,7 @@ func prefixHintFromState(name string, spec api.IPv6PrefixDelegationSpec, store *
 		return ""
 	}
 	base := "ipv6PrefixDelegation." + name
-	if lease, ok := routerstate.DecodePDLease(store.Get(base + ".lease").Value); ok {
-		if prefix, ok := routerstate.PDLeaseHintPrefix(lease, time.Now().UTC()); ok {
-			return prefix
-		}
-	}
-	lease := routerstate.PDLease{
-		LastPrefix:         store.Get(base + ".lastPrefix").Value,
-		LastObservedServer: store.Get(base + ".lastObservedServer").Value,
-		PreferredLifetime:  store.Get(base + ".preferredLifetime").Value,
-		ValidLifetime:      store.Get(base + ".validLifetime").Value,
-		LastObservedAt:     store.Get(base + ".lastObservedAt").Value,
-	}
+	lease, _ := routerstate.PDLeaseFromStore(store, base)
 	prefix, ok := routerstate.PDLeaseHintPrefix(lease, time.Now().UTC())
 	if !ok {
 		return ""
