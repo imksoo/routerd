@@ -576,6 +576,42 @@ Design consequences:
 - Add a backlog item to test passive T1/T2 renewal by leaving tcpdump running
   across the expected T1 window instead of relying on `networkctl renew`.
 
+### Passive T1/T2 Renewal Window Capture on 2026-04-29
+
+The lab routers started a four-hour passive DHCPv6 capture on the WAN-side
+interface at about `2026-04-28T15:50Z`:
+
+| Host | WAN interface | Prefix at start | Capture files |
+| --- | --- | --- | --- |
+| router01 / FreeBSD | `vtnet0` | `2409:10:3d60:1220::/60` | `/tmp/pd-renew-window.pcap`, `/tmp/pd-renew-window-routerctl.log` |
+| router02 / NixOS | `ens18` | `2409:10:3d60:1230::/60` | `/tmp/pd-renew-window.pcap`, `/tmp/pd-renew-window-routerctl.log` |
+| router03 / Ubuntu | `ens18` | `2409:10:3d60:1240::/60` | `/tmp/pd-renew-window.pcap`, `/tmp/pd-renew-window-routerctl.log` |
+
+The current routerd state does not yet store explicit T1, T2, preferred
+lifetime, or valid lifetime values. For this capture window, the estimate uses
+the observed PR-400NE/IX2215 values from the lab: preferred lifetime 14400
+seconds, valid lifetime 14400 seconds, T1 7200 seconds, and T2 12600 seconds.
+The prefixes were reacquired shortly after the HGW restart, around
+`2026-04-28T15:02Z` to `15:07Z`, so the expected windows are:
+
+| Event | Estimated UTC window | Notes |
+| --- | --- | --- |
+| T1 | `2026-04-28T17:02Z` to `17:07Z` | A normal client should send Renew to the remembered server. |
+| T2 | `2026-04-28T18:32Z` to `18:37Z` | If Renew failed, a normal client should send Rebind. |
+| Valid lifetime expiry | `2026-04-28T19:02Z` to `19:07Z` | If neither renewal path succeeds, the prefix should become invalid. |
+
+Initial capture check:
+
+| Host | Initial DHCPv6 message counts | Immediate note |
+| --- | --- | --- |
+| router01 | Solicit 8, Request 0, Renew 0, Rebind 0, Reply 0 | KAME `dhcp6c` was still sending exact-hint Solicit after the earlier HUP test. This must be treated separately from a clean T1 Renew. |
+| router02 | Solicit 0, Request 0, Renew 0, Rebind 0, Reply 0 | No DHCPv6 traffic yet. |
+| router03 | Solicit 0, Request 0, Renew 0, Rebind 0, Reply 0 | No DHCPv6 traffic yet. |
+
+The capture uses packet-immediate pcap writing so intermediate counts can be
+read while tcpdump is still running. The routerd state monitor logs a
+`routerctl describe ipv6pd/wan-pd` snapshot every ten minutes.
+
 ### PR-400NE Behavior Hypotheses
 
 These are working hypotheses for the lab profile

@@ -582,6 +582,42 @@ OS 任せの手動更新フックが弱いことは分かりました。
 - `networkctl renew` に頼らず、T1 の時刻をまたいで tcpdump を取り続ける
   受動観測を残件に追加します。
 
+### 2026-04-29 T1/T2 自然更新窓の受動観測
+
+3 台の検証ルーターで、WAN 側インターフェースの DHCPv6 を 4 時間取得する
+受動観測を `2026-04-28T15:50Z` ごろに開始しました。
+
+| ホスト | WAN 側インターフェース | 開始時のプレフィックス | 取得ファイル |
+| --- | --- | --- | --- |
+| router01 / FreeBSD | `vtnet0` | `2409:10:3d60:1220::/60` | `/tmp/pd-renew-window.pcap`, `/tmp/pd-renew-window-routerctl.log` |
+| router02 / NixOS | `ens18` | `2409:10:3d60:1230::/60` | `/tmp/pd-renew-window.pcap`, `/tmp/pd-renew-window-routerctl.log` |
+| router03 / Ubuntu | `ens18` | `2409:10:3d60:1240::/60` | `/tmp/pd-renew-window.pcap`, `/tmp/pd-renew-window-routerctl.log` |
+
+現在の routerd 状態には、T1、T2、優先寿命、有効寿命がまだ明示的には
+保存されていません。そのため、この観測では検証環境で見えている
+PR-400NE/IX2215 の値を使って、優先寿命 14400 秒、有効寿命 14400 秒、
+T1 7200 秒、T2 12600 秒と仮定します。各プレフィックスは HGW 再起動後の
+`2026-04-28T15:02Z` から `15:07Z` ごろに再取得されたため、想定時刻は
+次の通りです。
+
+| 事象 | 推定 UTC 時刻 | 見たいこと |
+| --- | --- | --- |
+| T1 | `2026-04-28T17:02Z` から `17:07Z` | 通常のクライアントなら、覚えているサーバーへ Renew を送るはずです。 |
+| T2 | `2026-04-28T18:32Z` から `18:37Z` | Renew が成功していなければ、Rebind へ進むはずです。 |
+| 有効寿命切れ | `2026-04-28T19:02Z` から `19:07Z` | 更新できなければ、プレフィックスは無効になるはずです。 |
+
+開始直後の確認:
+
+| ホスト | DHCPv6 メッセージ数 | 直後のメモ |
+| --- | --- | --- |
+| router01 | Solicit 8, Request 0, Renew 0, Rebind 0, Reply 0 | 先ほどの HUP テスト後、KAME `dhcp6c` が正確なヒント付き Solicit を送り続けていました。これはきれいな T1 Renew とは分けて扱います。 |
+| router02 | Solicit 0, Request 0, Renew 0, Rebind 0, Reply 0 | まだ DHCPv6 パケットはありません。 |
+| router03 | Solicit 0, Request 0, Renew 0, Rebind 0, Reply 0 | まだ DHCPv6 パケットはありません。 |
+
+pcap は tcpdump 実行中でも途中集計できるよう、パケットごとに書き出す形で
+取得しています。routerd の状態は 10 分ごとに
+`routerctl describe ipv6pd/wan-pd` の先頭部分を記録します。
+
 ### PR-400NE の挙動に関する仮説
 
 以下は検証環境向けプロファイル `ntt-flets-with-hikari-denwa` の作業仮説です。
