@@ -318,3 +318,136 @@ Defer:
   matching.
 - Add downstream deprecation behavior for removed PD prefixes before removing
   addresses and RA/DHCPv6 service data.
+
+## NTT FLET'S DHCPv6-PD Notes for PR-400NE
+
+This note records what public specifications and router configuration examples
+say about NTT FLET'S-style DHCPv6 Prefix Delegation, and separates those facts
+from hypotheses about the PR-400NE home gateway used in the lab.
+
+References:
+
+- [RFC 8415: Dynamic Host Configuration Protocol for IPv6](https://www.rfc-editor.org/rfc/rfc8415.html)
+- [NTT East technical references](https://www.ntt-east.co.jp/gisanshi/)
+- [NTT West technical reference: IP communication network service interface](https://www.ntt-west.co.jp/info/katsuyo/pdf/23/tenpu16-1.pdf)
+- [NTT West: NGN IPv6 ISP tunnel interface](https://www.ntt-west.co.jp/open/ngn/pdf/ipv6_tunnel_uni.pdf)
+- [Yamaha RT Series DHCPv6 features](https://www.rtpro.yamaha.co.jp/RT/docs/dhcpv6/index.html)
+- [Yamaha IPv6 IPoE features](https://www.rtpro.yamaha.co.jp/RT/docs/ipoe/index.html)
+- [NEC UNIVERGE IX FLET'S Hikari Next IPv6 IPoE configuration guide](https://jpn.nec.com/univerge/ix/Support/ipv6/native/ipv6-internet_dh.html)
+- [NEC IX-R/IX-V DHCPv6 feature description](https://support.necplatforms.co.jp/ix-nrv/manual/fd/02_router/14-1_dhcpv6.html)
+- [Internet Multifeed transix DS-Lite service](https://www.mfeed.ad.jp/transix/dslite/)
+- [Internet Multifeed transix DS-Lite device list](https://www.mfeed.ad.jp/transix/dslite-models/)
+- [Internet Multifeed transix glossary](https://www.mfeed.ad.jp/transix/faq/glossary/)
+- [rixwwd: PR-400NE / Dream Router DHCPv6 packet observation](https://rixwwd.hatenablog.jp/entry/2023/04/09/211529)
+- [SEIL: NGN IPv6 native IPoE example](https://www.seil.jp/blog/10.html)
+
+### What the Public Documents Establish
+
+- RFC 8415 defines the normal four-message exchange as
+  Solicit, Advertise, Request, and Reply. Rapid Commit can shorten this to
+  Solicit and Reply, but a client must not depend on Rapid Commit being used.
+- RFC 8415 defines UDP port 546 as the client listening port and UDP port 547
+  as the server and relay listening port. A firewall rule that accepts only
+  packets with source port 547 is therefore an implementation shortcut, not a
+  safe interpretation of the client receive path.
+- RFC 8415 allows an IA_PD option to contain IA Prefix values as a prefix or
+  prefix-length hint. It also allows a length-only hint by using prefix
+  `::/length`.
+- RFC 8415 says Renew extends leases with the original server, Rebind asks any
+  available server after Renew fails, and Solicit is used again after all valid
+  lifetimes have expired.
+- Confirm is address-oriented. It can validate assigned addresses for a link,
+  but it is not the recovery mechanism routerd should depend on for delegated
+  prefixes.
+- The NTT East and NTT West public interface documents describe the FLET'S
+  network side and reference DHCPv6 and DHCPv6-PD RFCs for IPv6 ISP
+  connectivity. They do not specify every LAN-side quirk of a PR-400NE home
+  gateway.
+- NEC's official IX guide states that FLET'S Hikari Next changes behavior based
+  on the Hikari Denwa contract: without Hikari Denwa the router uses RA, and
+  with Hikari Denwa it uses DHCPv6-PD. The same guide obtains DNS through the
+  DHCPv6 client, advertises the delegated prefix downstream with RA, and sets
+  the RA other-config flag for DHCPv6 DNS delivery.
+- NEC's guide filters DHCPv6 with source 547 to destination 546 and source 546
+  to destination 547. That is a reasonable vendor example, but it conflicts
+  with PR-400NE packet observations where Advertise may be sent from an
+  ephemeral source port. routerd should therefore accept UDP destination 546
+  regardless of the source port in the NTT home-gateway profile.
+- Yamaha's DHCPv6 documentation confirms that RT-series routers support
+  DHCPv6-PD, downstream use of a DHCPv6-PD-acquired prefix, and NGN-specific
+  configuration through `ngn type` when using FLET'S Hikari Next or FLET'S
+  Hikari Cross.
+- transix / Internet Multifeed documentation establishes the DS-Lite service
+  model and supported devices. It does not define the PR-400NE downstream
+  DHCPv6-PD exchange. For routerd, transix DNS and AFTR handling should remain
+  separate from PD acquisition.
+
+### PR-400NE Behavior Hypotheses
+
+These are working hypotheses for the lab profile
+`ntt-flets-with-hikari-denwa`. They must stay configurable because they are
+derived from public examples plus observed PR-400NE behavior, not from an
+explicit PR-400NE LAN-side protocol specification.
+
+| Scenario | Expected client sequence | Why this is plausible | routerd reproduction requirement |
+| --- | --- | --- | --- |
+| Fresh acquisition after HGW restart | Solicit with IA_PD for /60, optional prefix hint, then Advertise, Request, Reply. | RFC 8415 four-message exchange is the baseline. The lab HGW allocates /60 prefixes to downstream routers after restart. NEC and SEIL examples use DHCPv6-PD for Hikari Denwa environments. | Send standards-compliant Solicit, accept Advertise/Reply to UDP destination 546 from any source port, and keep acquisition timeouts long enough for a slow HGW restart window. |
+| Known lease recovery | If DUID, IAID, and `lastPrefix` are still valid, send IA_PD with the last prefix as a hint. If the OS client still has server state, prefer Renew before falling back to Solicit. | RFC 8415 explicitly permits prefix hints. PR-400NE appears to remember DUID/IAID/prefix bindings across short restarts. | Persist `PDLease`, render the hint while valid lifetime remains, and expose whether recovery used Renew, Rebind, or Solicit. |
+| Normal renewal | At T1, Renew to the server that issued the lease. If no Reply is received by T2, Rebind to any server. | RFC 8415 defines T1/T2-driven Renew/Rebind for IA_PD. The HGW lease table shows finite lifetimes, so losing renewal would eventually remove PD. | Store T1/T2 and lifetimes. Schedule renew attempts before expiry instead of waiting for the prefix to disappear. |
+| Expired or forgotten lease | After valid lifetime expiry, use Solicit again. Include a length-only `::/60` hint or the previous prefix only if the profile allows stale hints. | RFC 8415 terminates the exchange when all valid lifetimes expire. A stale exact hint may be harmless, but it should be a profile choice. | Default to no exact hint after valid lifetime expiry; retain a length-only /60 request for the NTT profile. |
+| Release avoidance | Do not send Release on daemon restart or controlled shutdown unless explicitly requested. | Some home gateways behave better when existing bindings age out or renew than when clients repeatedly release and create new bindings. pfSense and KAME `dhcp6c` expose no-release behavior for similar operational reasons. | Provide `sendRelease: false` or equivalent in the profile and make OS-specific renderers honor it. |
+| IA_NA plus IA_PD | Start with IA_PD-only. Make combined IA_NA+IA_PD a profile option. | Some commercial subscriber examples request both, but the lab only needs delegated prefixes and the HGW may be sensitive to small client differences. | `routerd_dhcp6c_client` must support both modes, with IA_PD-only as the NTT home-gateway default until tests prove otherwise. |
+| Rapid Commit | Support it if the server offers it, but do not request or require it by default. | RFC 8415 allows Rapid Commit, but NTT and router vendor examples do not require it for the observed use case. | Leave Rapid Commit off by default for `ntt-flets-with-hikari-denwa`; record if a server sends it. |
+| UDP receive filtering | Accept DHCPv6 replies with destination UDP port 546 from any source port. | RFC 8415 fixes listener ports, while PR-400NE community packet captures report Advertise from source port 49153. | Firewall and packet parser must not require source port 547 on inbound DHCPv6 client replies. |
+
+### Requirements for `routerd_dhcp6c_client`
+
+The future in-process client based on `insomniacslk/dhcp` should reproduce
+the useful parts of OS clients while making NTT profile behavior observable and
+testable:
+
+- Keep DUID and IAID stable. For the NTT home-gateway profile, DUID-LL is the
+  safest default because NEC and the lab HGW identify clients by link-layer
+  style bindings.
+- Persist `PDLease` with DUID, IAID, server identifier, server link-local
+  address when known, current prefix, last prefix, preferred lifetime, valid
+  lifetime, T1, T2, last observed time, last missing time, and the last DHCPv6
+  message transition.
+- Build Solicit with Client Identifier, Elapsed Time, Option Request Option for
+  DNS/SNTP as configured, and IA_PD. When state is valid, include the exact
+  previous prefix hint; otherwise include a length-only `::/60` hint for the
+  NTT profile.
+- Do not include IA_NA by default in the NTT profile. Add a profile switch for
+  IA_NA+IA_PD so it can be tested without changing code.
+- After Advertise, send Request to the selected server with the same Client
+  Identifier and IA_PD. Preserve Server Identifier for later Renew.
+- At T1, send Renew with Server Identifier and IA_PD containing the current
+  delegated prefix. At T2, send Rebind to the DHCPv6 multicast address if Renew
+  did not complete.
+- Do not fake Renew if routerd lacks a valid Server Identifier. In that case,
+  fall back to Solicit with a prefix hint and log that the exchange is a new
+  acquisition attempt.
+- Treat Release as an explicit administrative action, not as the default
+  shutdown behavior.
+- Follow RFC retransmission rules, but allow the NTT profile to use a longer
+  acquisition window because the PR-400NE may respond only during or shortly
+  after a home-gateway restart in the observed lab condition.
+- Log every packet-level transition with message type, transaction ID, DUID,
+  IAID, requested hint, delegated prefix, T1/T2, lifetimes, and whether the
+  reply source port was non-547.
+- Emit events when a prefix is acquired, renewed, rebound, lost, or when the
+  server ignores the requested hint and delegates a different /60.
+
+### Backlog Items from This Review
+
+- Add an explicit `ntt-flets-with-hikari-denwa` DHCPv6 client profile that
+  defaults to `/60`, stable DUID-LL, stable IAID, `hintFromState: true`,
+  `sendRelease: false`, IA_PD-only, Rapid Commit disabled, long initial
+  acquisition timeout, and inbound UDP destination 546 matching without source
+  port restriction.
+- Add packet-capture based integration tests for Solicit with exact prefix
+  hint, Solicit with length-only hint, Renew with current IA_PD, Rebind after
+  T2, and Advertise from a non-547 source port.
+- Keep transix AFTR DNS resolution independent from PD state, but allow a
+  route policy to depend on the state variable that says usable IPv6 upstream
+  connectivity exists.
