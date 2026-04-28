@@ -43,7 +43,7 @@ func DecodePDLease(value string) (PDLease, bool) {
 	return lease, true
 }
 
-func PDLeaseFromStore(store *Store, base string) (PDLease, bool) {
+func PDLeaseFromStore(store Store, base string) (PDLease, bool) {
 	lease, ok := DecodePDLease(store.Get(base + ".lease").Value)
 	merged := ok
 	mergeString := func(field *string, key string) {
@@ -88,9 +88,9 @@ var legacyPDLeaseFields = []string{
 	"identitySource",
 }
 
-func MigratePDLeases(store *Store) bool {
+func MigratePDLeases(store Store) bool {
 	names := map[string]bool{}
-	for name := range store.Variables {
+	for name := range store.Variables() {
 		rest, ok := strings.CutPrefix(name, "ipv6PrefixDelegation.")
 		if !ok {
 			continue
@@ -110,7 +110,7 @@ func MigratePDLeases(store *Store) bool {
 		}
 		for _, field := range legacyPDLeaseFields {
 			key := base + "." + field
-			if _, exists := store.Variables[key]; exists {
+			if _, exists := store.Variables()[key]; exists {
 				store.Delete(key)
 				changed = true
 			}

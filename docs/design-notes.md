@@ -83,6 +83,36 @@ This still does not synthesize DHCPv6 Renew/Rebind packets. That should remain
 a separate implementation step because it must preserve management
 connectivity and must not fight the OS DHCPv6 client.
 
+## State and Ownership Storage
+
+routerd stores local state and ownership information in SQLite at
+`/var/lib/routerd/routerd.db` on Linux and `/var/db/routerd/routerd.db` on
+FreeBSD. The database uses two small tables:
+
+- `state` keeps state variables such as DHCPv6-PD leases and timestamps.
+- `artifacts` keeps the local ownership ledger for host objects managed by
+  routerd.
+
+The `value` and `attributes` columns contain JSON text. SQLite JSON1 can inspect
+them directly, for example:
+
+```sh
+sqlite3 /var/lib/routerd/routerd.db \
+  "select json_extract(value, '$.lastPrefix') from state where key = 'ipv6PrefixDelegation.wan-pd.lease';"
+```
+
+`state.json` and `artifacts.json` are import-only legacy files. On first open,
+routerd imports them into SQLite and renames them to `state.json.migrated` and
+`artifacts.json.migrated`. Rolling back to an older binary is therefore a file
+operation: stop routerd, move the `.migrated` file back to its original name,
+and use the older binary or explicit JSON paths.
+
+The runtime does not require the `sqlite3` command-line tool. It is useful for
+human debugging, especially when looking at JSON fields through `json_extract`.
+`jq` remains a dependency because trusted local plugins use JSON on standard
+input and output, and shell-based plugins commonly need it to construct their
+responses.
+
 ### PR-400NE Lab Observation: Prefix Hints
 
 Router01, a FreeBSD host using KAME `dhcp6c`, was tested behind a PR-400NE on

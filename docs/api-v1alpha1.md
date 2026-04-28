@@ -221,7 +221,7 @@ How routerd behaves:
   left alone.
 
 Host ownership decisions, including the local ledger at
-`/var/lib/routerd/artifacts.json`, are described in
+the `artifacts` table in `/var/lib/routerd/routerd.db`, are described in
 [Resource Ownership](resource-ownership.md).
 
 ### PPPoEInterface

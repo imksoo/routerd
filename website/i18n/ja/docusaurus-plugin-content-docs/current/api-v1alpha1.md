@@ -176,7 +176,7 @@ spec:
 - `spec.managed: true` のとき、routerd はリンクとアドレスの状態を変更できます。ただし cloud-init や netplan が既に握っている場合は奪わず、計画上で「取り込み待ち」として表示します。
 - `spec.managed: false` の場合は観測専用です。別名解決はしますが、リンクとアドレスは触りません。
 
-ホスト側の所有関係や、`/var/lib/routerd/artifacts.json` のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership.md) を参照してください。
+ホスト側の所有関係や、`/var/lib/routerd/routerd.db` の `artifacts` テーブル のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership.md) を参照してください。
 
 ### PPPoEInterface
 

@@ -58,6 +58,9 @@ func TestDerivedPaths(t *testing.T) {
 	if got, want := defaults.LedgerFile(), defaults.StateDir+"/artifacts.json"; got != want {
 		t.Errorf("LedgerFile = %q, want %q", got, want)
 	}
+	if got, want := defaults.DBFile(), defaults.StateDir+"/routerd.db"; got != want {
+		t.Errorf("DBFile = %q, want %q", got, want)
+	}
 	if got, want := defaults.ConfigFile(), defaults.SysconfDir+"/router.yaml"; got != want {
 		t.Errorf("ConfigFile = %q, want %q", got, want)
 	}

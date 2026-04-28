@@ -34,6 +34,7 @@ routerd は、ルータの設定を YAML で宣言しておくと、その通り
 - nftables
 - conntrack
 - PPPoE を使う場合は pppd
+- sqlite3 は状態データベースを人が調べる場合だけ任意で使う
 
 Ubuntu の例:
 
@@ -42,7 +43,7 @@ sudo apt-get update
 sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp
 ```
 
-conntrack は、複数 DS-Lite トンネルでのポリシールーティングや、フローごとのマーク状態を診断する用途でも使います。PPPoE のリソースは、ディストリビューションに含まれる pppd と rp-pppoe プラグインから動かします。
+conntrack は、複数 DS-Lite トンネルでのポリシールーティングや、フローごとのマーク状態を診断する用途でも使います。PPPoE のリソースは、ディストリビューションに含まれる pppd と rp-pppoe プラグインから動かします。SQLite は静的バイナリに組み込まれるため、実行時に `sqlite3` コマンドは不要です。`/var/lib/routerd/routerd.db` を手作業で確認したい場合だけ入れてください。
 
 ## ビルド
 
@@ -115,7 +116,7 @@ make check-remote-deps REMOTE_HOST=user@router.example
 
 Ubuntu では、現在のソースインストールは `systemd`、`iproute2`、
 `dnsmasq`、`nftables`、`conntrack`、`jq`、`pppd` などのホスト側コマンドを
-前提にします。FreeBSD ではまだ下地段階ですが、基本のネットワーク
+前提にします。`sqlite3` は状態確認用の任意コマンドです。FreeBSD ではまだ下地段階ですが、基本のネットワーク
 コマンドに加えて、`dnsmasq` と `dhcp6` パッケージに含まれる
 `dnsmasq`、`dhcp6c`、状態確認で使う `jq` が必要です。
 

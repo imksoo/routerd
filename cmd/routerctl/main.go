@@ -344,7 +344,7 @@ func resourceKindExists(resources []api.Resource, kind string) bool {
 	return false
 }
 
-func buildShowResources(router *api.Router, resources []api.Resource, store *routerstate.Store, ledger *resource.Ledger, opts showOptions) ([]showResource, error) {
+func buildShowResources(router *api.Router, resources []api.Resource, store routerstate.Store, ledger resource.Ledger, opts showOptions) ([]showResource, error) {
 	aliases := interfaceAliases(router.Spec.Resources)
 	var rows []showResource
 	for _, res := range resources {
@@ -376,7 +376,7 @@ func buildShowResources(router *api.Router, resources []api.Resource, store *rou
 	return rows, nil
 }
 
-func adoptOnlyShowResources(router *api.Router, rows []showResource, ledger *resource.Ledger) ([]showResource, error) {
+func adoptOnlyShowResources(router *api.Router, rows []showResource, ledger resource.Ledger) ([]showResource, error) {
 	candidates, _, err := reconcile.New().AdoptionCandidateArtifacts(router, ledger)
 	if err != nil {
 		return nil, err
@@ -415,9 +415,9 @@ func interfaceAliases(resources []api.Resource) map[string]string {
 	return aliases
 }
 
-func ledgerArtifactsForOwner(ledger *resource.Ledger, owner string) []resource.Artifact {
+func ledgerArtifactsForOwner(ledger resource.Ledger, owner string) []resource.Artifact {
 	var out []resource.Artifact
-	for _, artifact := range ledger.Artifacts {
+	for _, artifact := range ledger.All() {
 		if artifact.Owner == owner {
 			out = append(out, artifact)
 		}
@@ -508,7 +508,7 @@ func interfaceIPv4Addresses(ifname string) []string {
 	return out
 }
 
-func stateForResource(res api.Resource, store *routerstate.Store) map[string]any {
+func stateForResource(res api.Resource, store routerstate.Store) map[string]any {
 	switch res.Kind {
 	case "IPv6PrefixDelegation":
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
@@ -546,9 +546,9 @@ func statePrefixForKind(kind, name string) string {
 	return strings.ToLower(kind[:1]) + kind[1:] + "." + name + "."
 }
 
-func prefixedState(store *routerstate.Store, prefix string) map[string]any {
+func prefixedState(store routerstate.Store, prefix string) map[string]any {
 	out := map[string]any{}
-	for key, value := range store.Variables {
+	for key, value := range store.Variables() {
 		if strings.HasPrefix(key, prefix) {
 			out[strings.TrimPrefix(key, prefix)] = value
 		}
@@ -559,7 +559,7 @@ func prefixedState(store *routerstate.Store, prefix string) map[string]any {
 	return out
 }
 
-func stateString(store *routerstate.Store, key string) string {
+func stateString(store routerstate.Store, key string) string {
 	value := store.Get(key)
 	if value.Status != routerstate.StatusSet {
 		return ""
@@ -756,11 +756,11 @@ func defaultConfigPath() string {
 }
 
 func defaultLedgerPath() string {
-	return platformDefaults.LedgerFile()
+	return platformDefaults.DBFile()
 }
 
 func defaultStatePath() string {
-	return platformDefaults.StateDir + "/state.json"
+	return platformDefaults.DBFile()
 }
 
 func defaultSocketPath() string {

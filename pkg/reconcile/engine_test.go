@@ -408,7 +408,7 @@ func TestAdoptionCandidates(t *testing.T) {
 	if !foundRule {
 		t.Fatalf("missing fwmark adoption candidate: %+v", candidates)
 	}
-	ledger := &resource.Ledger{Version: 1}
+	ledger := resource.NewLedger()
 	ledger.Remember([]resource.Artifact{
 		{
 			Kind:  "linux.ipv4.fwmarkRule",
@@ -471,7 +471,7 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 	}
-	ledger := &resource.Ledger{Version: 1}
+	ledger := resource.NewLedger()
 	ledger.Remember([]resource.Artifact{
 		{Kind: "linux.ipip6.tunnel", Name: "ds-old", Owner: "net.routerd.net/v1alpha1/DSLiteTunnel/old"},
 		{Kind: "nft.table", Name: "routerd_old", Owner: "net.routerd.net/v1alpha1/IPv4SourceNAT/old", Attributes: map[string]string{"family": "ip", "name": "routerd_old"}},

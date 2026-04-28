@@ -9,6 +9,11 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- State history and the ownership ledger now use
+  `/var/lib/routerd/routerd.db` (or `/var/db/routerd/routerd.db` on FreeBSD)
+  backed by SQLite + JSON1. On first startup, legacy `state.json` and
+  `artifacts.json` files are imported and renamed to `.migrated`; rollback to
+  an older binary is done by restoring those files.
 - `routerctl show` now uses `routerctl show <kind>` and
   `routerctl show <kind>/<name>`, combining resource spec, observed host state,
   ownership ledger entries, and routerd state history. It supports table, JSON,

@@ -61,6 +61,7 @@ Japanese documentation is available in [README.ja.md](README.ja.md).
 - nftables
 - conntrack
 - pppd when using PPPoE
+- sqlite3 is optional for human inspection of the local state database
 
 On Ubuntu:
 
@@ -71,7 +72,9 @@ sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack pp
 
 conntrack is also used for diagnostics around multi-tunnel DS-Lite policy
 routing. PPPoE resources rely on pppd and the rp-pppoe plugin shipped by the
-distribution's PPP packages.
+distribution's PPP packages. routerd embeds SQLite support in the static
+binary, so the `sqlite3` command is not required at runtime; install it only
+when you want to inspect `/var/lib/routerd/routerd.db` by hand.
 
 ## Build
 
@@ -147,10 +150,11 @@ make check-remote-deps REMOTE_HOST=user@router.example
 ```
 
 On Ubuntu, the current source install expects host tools such as `systemd`,
-`iproute2`, `dnsmasq`, `nftables`, `conntrack`, `jq`, and `pppd`. On FreeBSD, the
-limited groundwork expects base networking tools plus the `dnsmasq` and
-`dhcp6` packages so `dnsmasq` and `dhcp6c` are available, plus `jq` for local
-status inspection scripts.
+`iproute2`, `dnsmasq`, `nftables`, `conntrack`, `jq`, and `pppd`. `sqlite3` is
+optional for manual state inspection. On FreeBSD, the limited groundwork
+expects base networking tools plus the `dnsmasq` and `dhcp6` packages so
+`dnsmasq` and `dhcp6c` are available, plus `jq` for local status inspection
+scripts.
 
 Install only the config file to a remote test host:
 

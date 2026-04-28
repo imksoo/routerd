@@ -53,8 +53,8 @@ var (
 	defaultNftablesPath        = platformDefaults.NftablesFile
 	defaultRouteNftablesPath   = platformDefaults.DefaultRouteNftablesFile
 	defaultTimesyncdPath       = platformDefaults.TimesyncdDropinFile
-	defaultLedgerPath          = platformDefaults.LedgerFile()
-	defaultStatePath           = platformDefaults.StateDir + "/state.json"
+	defaultLedgerPath          = platformDefaults.DBFile()
+	defaultStatePath           = platformDefaults.DBFile()
 	pppoeCHAPSecretsPath       = platformDefaults.PPPoEChapSecretsFile
 	pppoePAPSecretsPath        = platformDefaults.PPPoEPapSecretsFile
 )
@@ -907,7 +907,7 @@ type stateChange struct {
 	Value routerstate.Value
 }
 
-func evaluateStatePolicies(router *api.Router, store *routerstate.Store) ([]stateChange, error) {
+func evaluateStatePolicies(router *api.Router, store routerstate.Store) ([]stateChange, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Interface" {
@@ -947,7 +947,7 @@ func evaluateStatePolicies(router *api.Router, store *routerstate.Store) ([]stat
 	return changes, nil
 }
 
-func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.Store) ([]stateChange, error) {
+func recordObservedPrefixDelegationState(router *api.Router, store routerstate.Store) ([]stateChange, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Interface" {
@@ -1075,7 +1075,7 @@ func pdLeaseMissingValue(lease routerstate.PDLease) routerstate.Value {
 	return routerstate.Value{Status: routerstate.StatusSet, Value: lease.LastMissingAt}
 }
 
-func renewMissingPrefixDelegations(router *api.Router, store *routerstate.Store) ([]stateChange, []string) {
+func renewMissingPrefixDelegations(router *api.Router, store routerstate.Store) ([]stateChange, []string) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Interface" {
@@ -1187,7 +1187,7 @@ func effectiveIPv6PDConvergenceTimeout(profile, configured string) time.Duration
 	}
 }
 
-func retainCurrentPrefixDuringConvergence(current, missing routerstate.Value, timeout time.Duration, store *routerstate.Store) (string, bool) {
+func retainCurrentPrefixDuringConvergence(current, missing routerstate.Value, timeout time.Duration, store routerstate.Store) (string, bool) {
 	if timeout <= 0 || current.Status != routerstate.StatusSet || current.Value == "" || current.UpdatedAt.IsZero() {
 		return "", false
 	}
@@ -1425,7 +1425,7 @@ func stateEffectiveIPv6PDPrefixLength(profile string, configured int) int {
 	return 0
 }
 
-func evaluateStateConditions(router *api.Router, aliases map[string]string, store *routerstate.Store, policy api.StatePolicySpec, value api.StateValueSpec) (bool, error) {
+func evaluateStateConditions(router *api.Router, aliases map[string]string, store routerstate.Store, policy api.StatePolicySpec, value api.StateValueSpec) (bool, error) {
 	if value.When.IPv6PrefixDelegation.Resource != "" || value.When.IPv6PrefixDelegation.Available != nil {
 		ok, known, err := stateIPv6PrefixDelegationAvailable(router, aliases, value.When.IPv6PrefixDelegation)
 		predicateName := policy.Variable + "." + value.Value + ".ipv6PrefixDelegation"
@@ -1508,7 +1508,7 @@ func resolveStateDNS(spec api.StateDNSResolveCondition, aliases map[string]strin
 	return out, nil
 }
 
-func filterRouterByWhen(router *api.Router, store *routerstate.Store) *api.Router {
+func filterRouterByWhen(router *api.Router, store routerstate.Store) *api.Router {
 	filtered := *router
 	filtered.Spec.Resources = nil
 	for _, res := range router.Spec.Resources {
@@ -1526,7 +1526,7 @@ func filterRouterByWhen(router *api.Router, store *routerstate.Store) *api.Route
 	return &filtered
 }
 
-func filterDefaultRoutePolicyCandidatesByWhen(res api.Resource, store *routerstate.Store) api.Resource {
+func filterDefaultRoutePolicyCandidatesByWhen(res api.Resource, store routerstate.Store) api.Resource {
 	spec, err := res.IPv4DefaultRoutePolicySpec()
 	if err != nil {
 		return res
@@ -1570,7 +1570,7 @@ func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 	}
 }
 
-func resourceWhenMatches(when api.ResourceWhenSpec, store *routerstate.Store) bool {
+func resourceWhenMatches(when api.ResourceWhenSpec, store routerstate.Store) bool {
 	if len(when.State) == 0 {
 		return true
 	}
@@ -1582,7 +1582,7 @@ func resourceWhenMatches(when api.ResourceWhenSpec, store *routerstate.Store) bo
 	return true
 }
 
-func stateMatch(store *routerstate.Store, name string, match api.StateMatchSpec) bool {
+func stateMatch(store routerstate.Store, name string, match api.StateMatchSpec) bool {
 	value := store.Get(name)
 	ok := true
 	if match.Status != "" {
@@ -1616,7 +1616,7 @@ func stateMatch(store *routerstate.Store, name string, match api.StateMatchSpec)
 	return true
 }
 
-func appendStatePolicyResults(result *reconcile.Result, router *api.Router, store *routerstate.Store, changes []stateChange) {
+func appendStatePolicyResults(result *reconcile.Result, router *api.Router, store routerstate.Store, changes []stateChange) {
 	changed := map[string]routerstate.Value{}
 	for _, change := range changes {
 		changed[change.Name] = change.Value
@@ -1647,7 +1647,7 @@ func appendStatePolicyResults(result *reconcile.Result, router *api.Router, stor
 	}
 }
 
-func appendPrefixDelegationStateWarnings(result *reconcile.Result, router *api.Router, store *routerstate.Store) {
+func appendPrefixDelegationStateWarnings(result *reconcile.Result, router *api.Router, store routerstate.Store) {
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "IPv6PrefixDelegation" {
 			continue

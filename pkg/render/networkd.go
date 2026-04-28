@@ -33,7 +33,7 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 	return NetworkdDropinsWithState(router, nil)
 }
 
-func NetworkdDropinsWithState(router *api.Router, store *routerstate.Store) ([]File, error) {
+func NetworkdDropinsWithState(router *api.Router, store routerstate.Store) ([]File, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Interface" {
@@ -184,7 +184,7 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 	}
 }
 
-func prefixHintFromState(name string, spec api.IPv6PrefixDelegationSpec, store *routerstate.Store) string {
+func prefixHintFromState(name string, spec api.IPv6PrefixDelegationSpec, store routerstate.Store) string {
 	if store == nil || (spec.HintFromState != nil && !*spec.HintFromState) {
 		return ""
 	}

@@ -130,6 +130,11 @@ func (d Defaults) LedgerFile() string {
 	return d.StateDir + "/artifacts.json"
 }
 
+// DBFile returns the default structured state and ownership database path.
+func (d Defaults) DBFile() string {
+	return d.StateDir + "/routerd.db"
+}
+
 // ConfigFile returns the default router.yaml path.
 func (d Defaults) ConfigFile() string {
 	return d.SysconfDir + "/router.yaml"

@@ -88,6 +88,35 @@ IA_PD の DHCPv6 Solicit を送り続けても Advertise / Reply を受け取れ
 わけではありません。その実装は、管理経路を落とさず、OS 側の DHCPv6
 クライアントと競合しないよう、別の段階で慎重に進めます。
 
+## 状態と所有台帳の保存
+
+routerd は、ローカル状態と所有台帳を SQLite に保存します。既定の場所は
+Linux では `/var/lib/routerd/routerd.db`、FreeBSD では
+`/var/db/routerd/routerd.db` です。データベースには小さな表を二つ置きます。
+
+- `state` は、DHCPv6 プレフィックス委譲のリースや時刻などの状態変数を
+  保存します。
+- `artifacts` は、routerd が管理しているホスト側構成物の所有台帳です。
+
+`value` と `attributes` の列には JSON 文字列を入れます。SQLite の JSON1
+機能を使うと、次のように中身を直接確認できます。
+
+```sh
+sqlite3 /var/lib/routerd/routerd.db \
+  "select json_extract(value, '$.lastPrefix') from state where key = 'ipv6PrefixDelegation.wan-pd.lease';"
+```
+
+古い `state.json` と `artifacts.json` は、移行用の入力としてだけ扱います。
+初回起動時に SQLite へ取り込み、取り込み後は `state.json.migrated` と
+`artifacts.json.migrated` に名前を変えます。古いバイナリへ戻す場合は、
+routerd を止めてから `.migrated` ファイルを元の名前へ戻し、古いバイナリ
+または明示的な JSON パスで起動します。
+
+routerd の実行に `sqlite3` コマンドは不要です。ただし、人が状態を調べる
+ときには便利です。特に `json_extract` で JSON の一部だけを見る用途に向いて
+います。`jq` は、信頼済みローカルプラグインが標準入出力で JSON を扱い、
+シェル製プラグインが応答を組み立てる場面で必要になるため、引き続き残します。
+
 ### PR-400NE 実機観測: プレフィックスヒント
 
 2026-04-28 に、FreeBSD と KAME `dhcp6c` を使う router01 を PR-400NE 配下で

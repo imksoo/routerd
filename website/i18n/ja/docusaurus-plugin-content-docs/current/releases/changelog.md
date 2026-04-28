@@ -8,6 +8,11 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
 
 ## 未リリース
 
+- 状態履歴と所有台帳の保存先を、SQLite + JSON1 を使う
+  `/var/lib/routerd/routerd.db` に移しました。FreeBSD では
+  `/var/db/routerd/routerd.db` を使います。初回起動時に古い `state.json` と
+  `artifacts.json` を取り込み、取り込み後は `.migrated` 付きの名前へ変えます。
+  古いバイナリへ戻す場合は、そのファイル名を元に戻します。
 - `routerctl show` を整理。`routerctl show <種別>` と `routerctl show <種別>/<名前>` で、リソース定義、実機状態、所有台帳、routerd の状態履歴をまとめて見られるようになりました。表、JSON、YAML、差分、台帳のみ、取り込み候補のみの表示に対応しています。NAPT やコネクション追跡の情報は `IPv4SourceNAT` の観測状態に移しました。
 - DHCPv6-PD の状態記録を整理。プレフィックスや識別子の個別キーを、構造化された `ipv6PrefixDelegation.<name>.lease` に移すようになりました。
 - 記録上まだ有効な DHCPv6-PD リースがローカルで見えなくなった場合、反映時に OS 側クライアントへ一度だけ更新を促すようになりました。

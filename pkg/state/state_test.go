@@ -47,7 +47,7 @@ func TestMigratePDLeasesMovesLegacyFieldsIntoLease(t *testing.T) {
 	if lease.CurrentPrefix != "2001:db8:1200:1220::/60" || lease.LastPrefix != "2001:db8:1200:1210::/60" || lease.IAID != "0" {
 		t.Fatalf("lease = %+v", lease)
 	}
-	if _, exists := store.Variables["ipv6PrefixDelegation.wan-pd.lastPrefix"]; exists {
+	if _, exists := store.Variables()["ipv6PrefixDelegation.wan-pd.lastPrefix"]; exists {
 		t.Fatal("legacy lastPrefix key still exists")
 	}
 	if got := store.Get("ipv6PrefixDelegation.wan-pd.uplinkIfname").Value; got != "ens18" {
@@ -79,7 +79,7 @@ func TestLoadMigratesPDLeases(t *testing.T) {
 	if !ok || lease.LastPrefix != "2001:db8:1200:1210::/60" {
 		t.Fatalf("lease = %+v ok=%v", lease, ok)
 	}
-	if _, exists := store.Variables["ipv6PrefixDelegation.wan-pd.lastPrefix"]; exists {
+	if _, exists := store.Variables()["ipv6PrefixDelegation.wan-pd.lastPrefix"]; exists {
 		t.Fatal("legacy lastPrefix key still exists after Load")
 	}
 }

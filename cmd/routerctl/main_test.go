@@ -27,7 +27,7 @@ func TestShowIPv6PDTableIncludesSpecStateLedger(t *testing.T) {
 	if err := store.Save(statePath); err != nil {
 		t.Fatalf("save state: %v", err)
 	}
-	ledger := &resource.Ledger{Version: 1}
+	ledger := resource.NewLedger()
 	ledger.Remember([]resource.Artifact{{
 		Kind:  "dhcp.ipv6.prefixDelegation",
 		Name:  "ens18",
@@ -58,7 +58,7 @@ func TestShowKindNameYAML(t *testing.T) {
 	if err := routerstate.New().Save(statePath); err != nil {
 		t.Fatalf("save state: %v", err)
 	}
-	if err := (&resource.Ledger{Version: 1}).Save(ledgerPath); err != nil {
+	if err := (resource.NewLedger()).Save(ledgerPath); err != nil {
 		t.Fatalf("save ledger: %v", err)
 	}
 
@@ -83,7 +83,7 @@ func TestShowDiffAndLedgerModes(t *testing.T) {
 	if err := routerstate.New().Save(statePath); err != nil {
 		t.Fatalf("save state: %v", err)
 	}
-	ledger := &resource.Ledger{Version: 1}
+	ledger := resource.NewLedger()
 	ledger.Remember([]resource.Artifact{{
 		Kind:  "net.link",
 		Name:  "ens18",
@@ -112,15 +112,16 @@ func TestShowDiffAndLedgerModes(t *testing.T) {
 
 func TestShowPDLegacySubcommandRemoved(t *testing.T) {
 	configPath := writeShowConfig(t, t.TempDir())
+	dir := t.TempDir()
 	var out bytes.Buffer
-	err := run([]string{"show", "pd", "--config", configPath, "--state-file", filepath.Join(t.TempDir(), "state.json")}, &out, &bytes.Buffer{})
+	err := run([]string{"show", "pd", "--config", configPath, "--state-file", filepath.Join(dir, "state.json"), "--ledger-file", filepath.Join(dir, "artifacts.json")}, &out, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "unknown resource kind") {
 		t.Fatalf("show pd err = %v, want unknown kind", err)
 	}
 }
 
 func TestDefaultStatePathUsesPlatformStateDir(t *testing.T) {
-	if got := defaultStatePath(); got == "" || filepath.Base(got) != "state.json" {
+	if got := defaultStatePath(); got == "" || filepath.Base(got) != "routerd.db" {
 		t.Fatalf("default state path = %q", got)
 	}
 }

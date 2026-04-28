@@ -134,7 +134,7 @@ There are two orphan signals:
   namespace, such as fwmark `0x100-0x1ff` or an nftables table named
   `routerd_*`.
 - **Ledger signal**: the artifact was previously recorded in
-  `/var/lib/routerd/artifacts.json` as owned by a routerd resource.
+  the `artifacts` table in `/var/lib/routerd/routerd.db` as owned by a routerd resource.
 
 The ledger signal is the stronger one. A namespace or numeric range is a
 useful guardrail, but on its own it is not enough for broad destructive
@@ -235,7 +235,7 @@ sudo routerd adopt \
 
 The candidate command is read-only. It reports desired artifacts that
 already exist on the host but are not yet recorded in
-`/var/lib/routerd/artifacts.json`.
+the `artifacts` table in `/var/lib/routerd/routerd.db`.
 
 If the candidates look correct and none reports differing observed
 attributes, record them in the ledger:

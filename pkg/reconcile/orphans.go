@@ -24,17 +24,17 @@ func (e *Engine) observeManagedOrphans(router *api.Router, aliases map[string]st
 	return orphans
 }
 
-func (e *Engine) AdoptionCandidates(router *api.Router, ledger *resource.Ledger) ([]AdoptionCandidate, error) {
+func (e *Engine) AdoptionCandidates(router *api.Router, ledger resource.Ledger) ([]AdoptionCandidate, error) {
 	candidates, _, err := e.AdoptionCandidateArtifacts(router, ledger)
 	return candidates, err
 }
 
-func (e *Engine) AdoptionCandidateArtifacts(router *api.Router, ledger *resource.Ledger) ([]AdoptionCandidate, []resource.Artifact, error) {
+func (e *Engine) AdoptionCandidateArtifacts(router *api.Router, ledger resource.Ledger) ([]AdoptionCandidate, []resource.Artifact, error) {
 	if err := e.Validate(router); err != nil {
 		return nil, nil, err
 	}
 	if ledger == nil {
-		ledger = &resource.Ledger{Version: 1}
+		ledger = resource.NewLedger()
 	}
 	aliases := interfaceAliases(router)
 	desired := DesiredOwnedArtifacts(router, aliases)
@@ -107,7 +107,7 @@ func (e *Engine) ReconciledOwnedArtifacts(router *api.Router) ([]resource.Artifa
 	return artifacts, nil
 }
 
-func (e *Engine) LedgerOwnedOrphans(router *api.Router, ledger *resource.Ledger) ([]OrphanedArtifact, []resource.Artifact, error) {
+func (e *Engine) LedgerOwnedOrphans(router *api.Router, ledger resource.Ledger) ([]OrphanedArtifact, []resource.Artifact, error) {
 	if err := e.Validate(router); err != nil {
 		return nil, nil, err
 	}
@@ -127,7 +127,7 @@ func (e *Engine) LedgerOwnedOrphans(router *api.Router, ledger *resource.Ledger)
 	var result []OrphanedArtifact
 	var artifacts []resource.Artifact
 	seen := map[string]bool{}
-	for _, owned := range ledger.Artifacts {
+	for _, owned := range ledger.All() {
 		id := owned.Identity()
 		if seen[id] || desiredIDs[id] {
 			continue

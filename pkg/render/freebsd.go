@@ -32,7 +32,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	return FreeBSDWithStateAndPPPoEPasswords(router, nil, passwordFor)
 }
 
-func FreeBSDWithStateAndPPPoEPasswords(router *api.Router, store *routerstate.Store, passwordFor func(api.Resource, api.PPPoEInterfaceSpec) (string, error)) (FreeBSDConfig, error) {
+func FreeBSDWithStateAndPPPoEPasswords(router *api.Router, store routerstate.Store, passwordFor func(api.Resource, api.PPPoEInterfaceSpec) (string, error)) (FreeBSDConfig, error) {
 	aliases := map[string]string{}
 	managed := map[string]bool{}
 	for _, res := range router.Spec.Resources {
