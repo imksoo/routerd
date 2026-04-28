@@ -9,6 +9,9 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- `routerctl get` and `routerctl describe` were added, splitting the CLI into
+  kubectl-style verbs: `get` for desired config, `describe` for human-readable
+  status/events/ledger details, and `show` for the existing combined view.
 - SQLite storage was redesigned around Kubernetes-style generations, objects,
   artifacts, and events. Reconcile generations and events are now first-class
   records, and the previous two-table SQLite schema is migrated automatically

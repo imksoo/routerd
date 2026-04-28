@@ -44,6 +44,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "status":
 		return statusCommand(args[1:], stdout)
+	case "get":
+		return getCommand(args[1:], stdout, stderr)
+	case "describe":
+		return describeCommand(args[1:], stdout, stderr)
 	case "show":
 		return showCommand(args[1:], stdout, stderr)
 	case "reconcile":
@@ -104,6 +108,8 @@ type showOptions struct {
 	LedgerOnly bool
 	AdoptOnly  bool
 	Events     bool
+	SpecOnly   bool
+	StatusOnly bool
 	NAPTLimit  int
 }
 
@@ -124,6 +130,211 @@ type showDiff struct {
 	Field    string `json:"field" yaml:"field"`
 	Spec     any    `json:"spec,omitempty" yaml:"spec,omitempty"`
 	Observed any    `json:"observed,omitempty" yaml:"observed,omitempty"`
+}
+
+type getOptions struct {
+	Target     string
+	Output     string
+	ConfigPath string
+	ListKinds  bool
+}
+
+func getCommand(args []string, stdout, stderr io.Writer) error {
+	opts, err := parseGetOptions(args)
+	if err != nil {
+		usage(stderr)
+		return err
+	}
+	router, err := config.Load(opts.ConfigPath)
+	if err != nil {
+		return err
+	}
+	if opts.ListKinds {
+		return writeGetKinds(stdout, router.Spec.Resources, opts.Output)
+	}
+	kind, name, err := parseResourceTarget("get", opts.Target)
+	if err != nil {
+		return err
+	}
+	resources := selectResources(router.Spec.Resources, kind, name)
+	if len(resources) == 0 {
+		return resourceSelectionError(router.Spec.Resources, kind, name)
+	}
+	switch opts.Output {
+	case "", "table":
+		return writeGetTable(stdout, resources)
+	case "json":
+		return writeJSON(stdout, resources)
+	case "yaml":
+		return writeYAML(stdout, resources)
+	default:
+		return fmt.Errorf("unsupported output %q", opts.Output)
+	}
+}
+
+func parseGetOptions(args []string) (getOptions, error) {
+	opts := getOptions{ConfigPath: defaultConfigPath()}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "-o", "--output":
+			i++
+			if i >= len(args) {
+				return opts, errors.New("-o requires a value")
+			}
+			opts.Output = args[i]
+		case "--config":
+			i++
+			if i >= len(args) {
+				return opts, errors.New("--config requires a value")
+			}
+			opts.ConfigPath = args[i]
+		case "--list-kinds":
+			opts.ListKinds = true
+		default:
+			if strings.HasPrefix(arg, "-o=") {
+				opts.Output = strings.TrimPrefix(arg, "-o=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--output=") {
+				opts.Output = strings.TrimPrefix(arg, "--output=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--config=") {
+				opts.ConfigPath = strings.TrimPrefix(arg, "--config=")
+				continue
+			}
+			if strings.HasPrefix(arg, "-") {
+				return opts, fmt.Errorf("unknown get option %q", arg)
+			}
+			if opts.Target != "" {
+				return opts, fmt.Errorf("unexpected get argument %q", arg)
+			}
+			opts.Target = arg
+		}
+	}
+	if !opts.ListKinds && opts.Target == "" {
+		return opts, errors.New("get requires <kind>, <kind>/<name>, or --list-kinds")
+	}
+	return opts, nil
+}
+
+type describeOptions struct {
+	Target      string
+	ConfigPath  string
+	StatePath   string
+	LedgerPath  string
+	EventsLimit int
+}
+
+func describeCommand(args []string, stdout, stderr io.Writer) error {
+	opts, err := parseDescribeOptions(args)
+	if err != nil {
+		usage(stderr)
+		return err
+	}
+	router, err := config.Load(opts.ConfigPath)
+	if err != nil {
+		return err
+	}
+	store, err := routerstate.Load(opts.StatePath)
+	if err != nil {
+		return err
+	}
+	ledger, err := resource.LoadLedger(opts.LedgerPath)
+	if err != nil {
+		return err
+	}
+	kind, name, err := parseResourceTarget("describe", opts.Target)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return errors.New("describe requires <kind>/<name>")
+	}
+	resources := selectResources(router.Spec.Resources, kind, name)
+	if len(resources) == 0 {
+		return resourceSelectionError(router.Spec.Resources, kind, name)
+	}
+	rows, err := buildShowResources(router, resources, store, ledger, showOptions{Events: true, NAPTLimit: 20})
+	if err != nil {
+		return err
+	}
+	if len(rows) != 1 {
+		return fmt.Errorf("describe expected one resource, got %d", len(rows))
+	}
+	rows[0].Events = eventsForResourceLimit(store, resources[0], opts.EventsLimit)
+	return writeDescribe(stdout, rows[0], store)
+}
+
+func parseDescribeOptions(args []string) (describeOptions, error) {
+	opts := describeOptions{
+		ConfigPath:  defaultConfigPath(),
+		StatePath:   defaultStatePath(),
+		LedgerPath:  defaultLedgerPath(),
+		EventsLimit: 10,
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--config":
+			i++
+			if i >= len(args) {
+				return opts, errors.New("--config requires a value")
+			}
+			opts.ConfigPath = args[i]
+		case "--state-file":
+			i++
+			if i >= len(args) {
+				return opts, errors.New("--state-file requires a value")
+			}
+			opts.StatePath = args[i]
+		case "--ledger-file":
+			i++
+			if i >= len(args) {
+				return opts, errors.New("--ledger-file requires a value")
+			}
+			opts.LedgerPath = args[i]
+		case "--events-limit":
+			i++
+			if i >= len(args) {
+				return opts, errors.New("--events-limit requires a value")
+			}
+			if _, err := fmt.Sscanf(args[i], "%d", &opts.EventsLimit); err != nil || opts.EventsLimit < 0 {
+				return opts, errors.New("--events-limit must be a non-negative integer")
+			}
+		default:
+			if strings.HasPrefix(arg, "--config=") {
+				opts.ConfigPath = strings.TrimPrefix(arg, "--config=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--state-file=") {
+				opts.StatePath = strings.TrimPrefix(arg, "--state-file=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--ledger-file=") {
+				opts.LedgerPath = strings.TrimPrefix(arg, "--ledger-file=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--events-limit=") {
+				if _, err := fmt.Sscanf(strings.TrimPrefix(arg, "--events-limit="), "%d", &opts.EventsLimit); err != nil || opts.EventsLimit < 0 {
+					return opts, errors.New("--events-limit must be a non-negative integer")
+				}
+				continue
+			}
+			if strings.HasPrefix(arg, "-") {
+				return opts, fmt.Errorf("unknown describe option %q", arg)
+			}
+			if opts.Target != "" {
+				return opts, fmt.Errorf("unexpected describe argument %q", arg)
+			}
+			opts.Target = arg
+		}
+	}
+	if opts.Target == "" {
+		return opts, errors.New("describe requires <kind>/<name>")
+	}
+	return opts, nil
 }
 
 func showCommand(args []string, stdout, stderr io.Writer) error {
@@ -150,12 +361,7 @@ func showCommand(args []string, stdout, stderr io.Writer) error {
 	}
 	resources := selectResources(router.Spec.Resources, kind, name)
 	if len(resources) == 0 {
-		if !resourceKindExists(router.Spec.Resources, kind) {
-			return fmt.Errorf("unknown resource kind %q", kind)
-		}
-		if name != "" {
-			return fmt.Errorf("%s/%s not found", kind, name)
-		}
+		return resourceSelectionError(router.Spec.Resources, kind, name)
 	}
 	rows, err := buildShowResources(router, resources, store, ledger, opts)
 	if err != nil {
@@ -231,6 +437,10 @@ func parseShowOptions(args []string) (showOptions, error) {
 			opts.AdoptOnly = true
 		case "--events":
 			opts.Events = true
+		case "--spec":
+			opts.SpecOnly = true
+		case "--status":
+			opts.StatusOnly = true
 		default:
 			if strings.HasPrefix(arg, "-o=") {
 				opts.Output = strings.TrimPrefix(arg, "-o=")
@@ -268,13 +478,17 @@ func parseShowOptions(args []string) (showOptions, error) {
 }
 
 func parseShowTarget(target string) (string, string, error) {
+	return parseResourceTarget("show", target)
+}
+
+func parseResourceTarget(verb, target string) (string, string, error) {
 	kind, name, hasName := strings.Cut(target, "/")
 	kind = canonicalShowKind(kind)
 	if kind == "" {
 		return "", "", fmt.Errorf("unknown resource kind %q", target)
 	}
 	if hasName && strings.TrimSpace(name) == "" {
-		return "", "", fmt.Errorf("show target %q has empty name", target)
+		return "", "", fmt.Errorf("%s target %q has empty name", verb, target)
 	}
 	return kind, name, nil
 }
@@ -286,6 +500,7 @@ func canonicalShowKind(kind string) string {
 		"iface":                "Interface",
 		"interface":            "Interface",
 		"interfaces":           "Interface",
+		"pd":                   "IPv6PrefixDelegation",
 		"ipv6pd":               "IPv6PrefixDelegation",
 		"prefixdelegation":     "IPv6PrefixDelegation",
 		"ipv6prefixdelegation": "IPv6PrefixDelegation",
@@ -320,6 +535,16 @@ func canonicalShowKind(kind string) string {
 		return ""
 	}
 	return kind
+}
+
+func resourceSelectionError(resources []api.Resource, kind, name string) error {
+	if !resourceKindExists(resources, kind) {
+		return fmt.Errorf("unknown resource kind %q", kind)
+	}
+	if name != "" {
+		return fmt.Errorf("%s/%s not found", kind, name)
+	}
+	return fmt.Errorf("no %s resources found", kind)
 }
 
 func selectResources(resources []api.Resource, kind, name string) []api.Resource {
@@ -379,6 +604,20 @@ func buildShowResources(router *api.Router, resources []api.Resource, store rout
 			item.Diff = nil
 			item.Events = nil
 		}
+		if opts.SpecOnly {
+			item.Observed = nil
+			item.Ledger = nil
+			item.State = nil
+			item.Diff = nil
+			item.Adopt = nil
+			item.Events = nil
+		}
+		if opts.StatusOnly {
+			item.Spec = nil
+			item.Ledger = nil
+			item.Diff = nil
+			item.Adopt = nil
+		}
 		rows = append(rows, item)
 	}
 	return rows, nil
@@ -435,11 +674,15 @@ func ledgerArtifactsForOwner(ledger resource.Ledger, owner string) []resource.Ar
 }
 
 func eventsForResource(store routerstate.Store, res api.Resource) []routerstate.Event {
+	return eventsForResourceLimit(store, res, 20)
+}
+
+func eventsForResourceLimit(store routerstate.Store, res api.Resource, limit int) []routerstate.Event {
 	recorder, ok := store.(routerstate.EventRecorder)
 	if !ok {
 		return nil
 	}
-	return recorder.Events(res.APIVersion, res.Kind, res.Metadata.Name, 20)
+	return recorder.Events(res.APIVersion, res.Kind, res.Metadata.Name, limit)
 }
 
 func observeResource(res api.Resource, aliases map[string]string, opts showOptions) map[string]any {
@@ -684,6 +927,137 @@ func writeShowTable(stdout io.Writer, rows []showResource, opts showOptions) err
 	return w.Flush()
 }
 
+func writeGetTable(stdout io.Writer, resources []api.Resource) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "KIND\tNAME\tSPEC")
+	for _, res := range resources {
+		fmt.Fprintf(w, "%s\t%s\t%s\n", res.Kind, res.Metadata.Name, specSummary(res.Spec))
+	}
+	return w.Flush()
+}
+
+func writeGetKinds(stdout io.Writer, resources []api.Resource, output string) error {
+	counts := map[string]int{}
+	for _, res := range resources {
+		counts[res.Kind]++
+	}
+	var kinds []string
+	for kind := range counts {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	type kindRow struct {
+		Kind  string `json:"kind" yaml:"kind"`
+		Count int    `json:"count" yaml:"count"`
+	}
+	var rows []kindRow
+	for _, kind := range kinds {
+		rows = append(rows, kindRow{Kind: kind, Count: counts[kind]})
+	}
+	switch output {
+	case "", "table":
+		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "KIND\tCOUNT")
+		for _, row := range rows {
+			fmt.Fprintf(w, "%s\t%d\n", row.Kind, row.Count)
+		}
+		return w.Flush()
+	case "json":
+		return writeJSON(stdout, rows)
+	case "yaml":
+		return writeYAML(stdout, rows)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeDescribe(stdout io.Writer, row showResource, store routerstate.Store) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "Name:\t%s\n", row.Name)
+	fmt.Fprintf(w, "Kind:\t%s\n", row.Kind)
+	fmt.Fprintf(w, "API Version:\t%s\n", row.APIVersion)
+	if generationReader, ok := store.(routerstate.ObjectGenerationReader); ok {
+		if generation := generationReader.ObjectGeneration(row.APIVersion, row.Kind, row.Name); generation != 0 {
+			fmt.Fprintf(w, "Last Reconcile Generation:\t%d\n", generation)
+		}
+	}
+	writeDescribeStatus(w, row)
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Spec:")
+	writeDescribeMap(w, row.Spec, "  ")
+	fmt.Fprintln(w, "Observed:")
+	writeDescribeMap(w, row.Observed, "  ")
+	fmt.Fprintln(w, "Ledger:")
+	if len(row.Ledger) == 0 {
+		fmt.Fprintln(w, "  <none>")
+	} else {
+		for _, artifact := range row.Ledger {
+			fmt.Fprintf(w, "  %s/%s\n", artifact.Kind, artifact.Name)
+		}
+	}
+	fmt.Fprintln(w, "Events:")
+	if len(row.Events) == 0 {
+		fmt.Fprintln(w, "  <none>")
+	} else {
+		for _, event := range row.Events {
+			fmt.Fprintf(w, "  %s\t%s\t%s\tgeneration=%d\t%s\n", event.CreatedAt.Format(time.RFC3339), event.Type, event.Reason, event.Generation, event.Message)
+		}
+	}
+	return w.Flush()
+}
+
+func writeDescribeStatus(w io.Writer, row showResource) {
+	lease, ok := describePDLease(row.State)
+	if ok {
+		fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(lease.CurrentPrefix != ""))
+		fmt.Fprintf(w, "Current delegated prefix:\t%s\n", displayCell(lease.CurrentPrefix))
+		fmt.Fprintf(w, "Last delegated prefix:\t%s\n", displayCell(lease.LastPrefix))
+		fmt.Fprintf(w, "Last observed at:\t%s\n", displayCell(lease.LastObservedAt))
+		fmt.Fprintf(w, "Last missing at:\t%s\n", displayCell(lease.LastMissingAt))
+		return
+	}
+	observable := false
+	if exists, ok := row.Observed["exists"].(bool); ok {
+		observable = exists
+	} else if len(row.Observed) > 0 {
+		observable = true
+	}
+	fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(observable))
+	fmt.Fprintf(w, "Last observed at:\t-\n")
+	fmt.Fprintf(w, "Last missing at:\t-\n")
+}
+
+func describePDLease(state map[string]any) (routerstate.PDLease, bool) {
+	if state == nil {
+		return routerstate.PDLease{}, false
+	}
+	lease, ok := state["lease"].(routerstate.PDLease)
+	return lease, ok
+}
+
+func yesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
+}
+
+func writeDescribeMap(w io.Writer, value any, indent string) {
+	values := flattenAny(value)
+	if len(values) == 0 {
+		fmt.Fprintln(w, indent+"<none>")
+		return
+	}
+	var keys []string
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fmt.Fprintf(w, "%s%s:\t%v\n", indent, key, values[key])
+	}
+}
+
 func specSummary(spec any) string {
 	values := flattenAny(spec)
 	if len(values) == 0 {
@@ -796,8 +1170,10 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  status [--socket <path>]")
+	fmt.Fprintln(w, "  get <kind>[/<name>] [--list-kinds] [--config <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  describe <kind>/<name> [--config <path>] [--state-file <path>] [--ledger-file <path>] [--events-limit <n>]")
 	fmt.Fprintln(w, "  show <kind> [--config <path>] [--state-file <path>] [--ledger-file <path>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events|--spec|--status] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plan [--socket <path>]")
 	fmt.Fprintln(w, "  reconcile [--socket <path>] [--dry-run]")
 }

@@ -115,8 +115,72 @@ func TestShowPDLegacySubcommandRemoved(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
 	err := run([]string{"show", "pd", "--config", configPath, "--state-file", filepath.Join(dir, "state.json"), "--ledger-file", filepath.Join(dir, "artifacts.json")}, &out, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "unknown resource kind") {
-		t.Fatalf("show pd err = %v, want unknown kind", err)
+	if err != nil {
+		t.Fatalf("show pd alias: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "IPv6PrefixDelegation") {
+		t.Fatalf("show pd output = %s", got)
+	}
+}
+
+func TestGetKindAndListKinds(t *testing.T) {
+	configPath := writeShowConfig(t, t.TempDir())
+	var out bytes.Buffer
+	if err := run([]string{"get", "pd", "--config", configPath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("get pd: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "IPv6PrefixDelegation") || !strings.Contains(got, "wan-pd") || strings.Contains(got, "STATE") {
+		t.Fatalf("get output = %s", got)
+	}
+
+	out.Reset()
+	if err := run([]string{"get", "--list-kinds", "--config", configPath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("get --list-kinds: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "Interface") || !strings.Contains(got, "IPv4SourceNAT") {
+		t.Fatalf("list kinds output = %s", got)
+	}
+}
+
+func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeShowConfig(t, dir)
+	dbPath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	generation, err := store.BeginGeneration("test")
+	if err != nil {
+		t.Fatalf("begin generation: %v", err)
+	}
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
+		CurrentPrefix:  "2001:db8:1200:1220::/60",
+		LastPrefix:     "2001:db8:1200:1220::/60",
+		LastObservedAt: "2026-04-28T01:02:03Z",
+	}), "test")
+	if err := store.RecordEvent("net.routerd.net/v1alpha1", "IPv6PrefixDelegation", "wan-pd", "Normal", "PrefixObserved", "observed delegated prefix"); err != nil {
+		t.Fatalf("record event: %v", err)
+	}
+	if err := store.FinishGeneration(generation, "Healthy", nil); err != nil {
+		t.Fatalf("finish generation: %v", err)
+	}
+	ledger, err := resource.OpenSQLiteLedger(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite ledger: %v", err)
+	}
+	ledger.Remember([]resource.Artifact{{Kind: "dhcp.ipv6.prefixDelegation", Name: "ens18", Owner: "net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd"}})
+
+	var out bytes.Buffer
+	err = run([]string{"describe", "pd/wan-pd", "--config", configPath, "--state-file", dbPath, "--ledger-file", dbPath}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("describe pd: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"Currently observable:", "Current delegated prefix:", "Last delegated prefix:", "Last Reconcile Generation:", "PrefixObserved", "dhcp.ipv6.prefixDelegation/ens18"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("describe output missing %q:\n%s", want, got)
+		}
 	}
 }
 

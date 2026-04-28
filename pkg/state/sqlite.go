@@ -433,6 +433,15 @@ func (s *SQLiteStore) FinishGeneration(generation int64, phase string, warnings 
 
 func (s *SQLiteStore) CurrentGeneration() int64 { return s.generation }
 
+func (s *SQLiteStore) ObjectGeneration(apiVersion, kind, name string) int64 {
+	var generation sql.NullInt64
+	err := s.db.QueryRow(`SELECT observed_generation FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&generation)
+	if err != nil || !generation.Valid {
+		return 0
+	}
+	return generation.Int64
+}
+
 func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, message string) error {
 	_, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, eventType, reason, message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano))

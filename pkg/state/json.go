@@ -45,6 +45,10 @@ type EventRecorder interface {
 	Events(apiVersion, kind, name string, limit int) []Event
 }
 
+type ObjectGenerationReader interface {
+	ObjectGeneration(apiVersion, kind, name string) int64
+}
+
 type Event struct {
 	ID         int64     `json:"id" yaml:"id"`
 	APIVersion string    `json:"apiVersion" yaml:"apiVersion"`
