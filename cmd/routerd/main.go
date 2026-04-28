@@ -1279,24 +1279,13 @@ func delegatedPrefixFromObservedInterface(ifname string, prefixLength int) (stri
 func delegatedPrefixFromObserved(prefixes, addresses []string, prefixLength int) (string, bool) {
 	for _, value := range prefixes {
 		prefix, err := netip.ParsePrefix(value)
-		if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() {
+		if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() || prefix.Bits() >= 128 {
 			continue
 		}
 		if prefixLength > 0 && prefixLength <= prefix.Bits() {
 			prefix = netip.PrefixFrom(prefix.Addr(), prefixLength)
 		}
 		return prefix.Masked().String(), true
-	}
-	for _, value := range addresses {
-		addr, err := netip.ParseAddr(value)
-		if err != nil || !addr.Is6() || addr.IsLinkLocalUnicast() {
-			continue
-		}
-		bits := prefixLength
-		if bits <= 0 || bits > 128 {
-			bits = 64
-		}
-		return netip.PrefixFrom(addr, bits).Masked().String(), true
 	}
 	return "", false
 }

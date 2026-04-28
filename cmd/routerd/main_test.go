@@ -498,16 +498,20 @@ func TestDelegatedPrefixFromObservedUsesKernelPrefix(t *testing.T) {
 	}
 }
 
-func TestDelegatedPrefixFromObservedFallsBackToAddress(t *testing.T) {
-	got, ok := delegatedPrefixFromObserved(nil, []string{
+func TestDelegatedPrefixFromObservedIgnoresStandaloneAddress(t *testing.T) {
+	if got, ok := delegatedPrefixFromObserved(nil, []string{
 		"fe80::3",
 		"2001:db8:3d60:1240::2",
-	}, 60)
-	if !ok {
-		t.Fatal("delegated prefix not found")
+	}, 60); ok {
+		t.Fatalf("prefix = %s, want no prefix from standalone address", got)
 	}
-	if got != "2001:db8:3d60:1240::/60" {
-		t.Fatalf("prefix = %s, want 2001:db8:3d60:1240::/60", got)
+}
+
+func TestDelegatedPrefixFromObservedIgnoresHostRoute(t *testing.T) {
+	if got, ok := delegatedPrefixFromObserved([]string{
+		"2001:db8:3d60:1240::2/128",
+	}, nil, 60); ok {
+		t.Fatalf("prefix = %s, want no prefix from host route", got)
 	}
 }
 
