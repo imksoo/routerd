@@ -9,8 +9,11 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
-- `routerctl show pd` now prints remembered DHCPv6-PD identity and prefix
-  state from the local state database.
+- `routerctl show` now uses `routerctl show <kind>` and
+  `routerctl show <kind>/<name>`, combining resource spec, observed host state,
+  ownership ledger entries, and routerd state history. It supports table, JSON,
+  YAML, diff, ledger-only, and adoption-candidate views. NAPT/conntrack
+  inspection moved under `IPv4SourceNAT` observed state.
 - DHCPv6-PD state now migrates scattered prefix and identity keys into the
   structured `ipv6PrefixDelegation.<name>.lease` value.
 - Reconcile now asks the OS DHCPv6-PD client to renew once when a remembered

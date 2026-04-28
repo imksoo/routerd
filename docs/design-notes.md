@@ -210,7 +210,7 @@ Defer:
 
 ### Backlog Items
 
-- Extend `routerctl show pd` with lifetimes, T1/T2, client status, and
+- Extend `routerctl show ipv6pd` with lifetimes, T1/T2, client status, and
   warnings. It already reports the core DUID, IAID, current prefix, last
   prefix, and observation timestamps from the local lease record.
 - Extend the internal `PDLease` state model with server DUID, preferred

@@ -205,10 +205,21 @@ routerd adopt --config examples/router-lab.yaml --candidates
 routerd reconcile --config examples/router-lab.yaml --once --dry-run
 routerd serve --config examples/router-lab.yaml --socket /run/routerd/routerd.sock
 routerctl status
-routerctl show napt --limit 20
-routerctl show pd
+routerctl show ipv6pd
+routerctl show interface/wan -o yaml
+routerctl show ipv4sourcenat/lan-to-wan --diff
 routerctl plan
 ```
+
+`routerctl show <kind>` inspects configured resources in a kubectl-like shape.
+It combines the resource definition from `router.yaml`, observed host state,
+the local ownership ledger, and routerd's state history. Use
+`routerctl show <kind>/<name>` for one resource, `-o json` or `-o yaml` for
+structured output, `--diff` for desired-vs-observed differences, `--ledger` for
+ledger entries only, and `--adopt` for adoption candidates. Common aliases
+include `if`, `ipv6pd`, `nat`, `dslite`, `pppoe`, `fw`, `zone`, `hostname`, and
+`route`. NAPT/conntrack details are shown under `IPv4SourceNAT` observed state,
+so there is no separate `show napt` command.
 
 `routerd reconcile --once` applies managed netplan, systemd-networkd drop-ins,
 dnsmasq, nftables, sysctl values, DS-Lite tunnels, and policy routing. Avoid

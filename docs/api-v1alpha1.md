@@ -476,7 +476,7 @@ How routerd behaves:
   This preserves enough local memory to support
   upstreams that treat a known client as an existing DHCPv6-PD lease rather
   than a fresh client.
-  Renderers use this lease record for prefix hints. `routerctl show pd` prints
+  Renderers use this lease record for prefix hints. `routerctl show ipv6pd` prints
   the same lease information in a table for field debugging.
 - For systemd-networkd and FreeBSD `dhcp6c` clients, routerd records observed
   DHCP identity into the lease when available. With `dhcp6c`, the DUID is read

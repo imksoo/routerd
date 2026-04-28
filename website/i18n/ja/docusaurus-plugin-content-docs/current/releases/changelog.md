@@ -8,7 +8,7 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
 
 ## 未リリース
 
-- `routerctl show pd` を追加。ローカルの状態保存ファイルから、DHCPv6-PD の識別子とプレフィックスの記録を一覧表示できるようになりました。
+- `routerctl show` を整理。`routerctl show <種別>` と `routerctl show <種別>/<名前>` で、リソース定義、実機状態、所有台帳、routerd の状態履歴をまとめて見られるようになりました。表、JSON、YAML、差分、台帳のみ、取り込み候補のみの表示に対応しています。NAPT やコネクション追跡の情報は `IPv4SourceNAT` の観測状態に移しました。
 - DHCPv6-PD の状態記録を整理。プレフィックスや識別子の個別キーを、構造化された `ipv6PrefixDelegation.<name>.lease` に移すようになりました。
 - 記録上まだ有効な DHCPv6-PD リースがローカルで見えなくなった場合、反映時に OS 側クライアントへ一度だけ更新を促すようになりました。
 - FreeBSD へのリモート導入を改善。Linux 作業端末から実行しても、`ROUTERD_OS=freebsd` で FreeBSD 向けバイナリをビルドし、FreeBSD の実行時ディレクトリを使うようになりました。
