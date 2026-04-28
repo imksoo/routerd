@@ -640,6 +640,92 @@ Two details stand out for follow-up:
   the actual T1/T2 learned by each OS client, because the rough global estimate
   is not precise enough for debugging.
 
+### DHCPv6 Client Renew Packet Comparison
+
+The lab failure is not explained by a single statement such as "Linux DHCPv6
+clients cannot renew NTT PD". The important difference is how each client
+constructs the IA_PD option in Renew/Rebind, how much lease state it exposes to
+routerd, and whether the same client can run on both Linux and FreeBSD.
+
+References checked:
+
+- [RFC 8415](https://www.rfc-editor.org/rfc/rfc8415.html), especially
+  Sections 18.2.4 and 21.22.
+- [systemd `sd-dhcp6-client.c`](https://github.com/systemd/systemd/blob/main/src/libsystemd-network/sd-dhcp6-client.c)
+  and [`dhcp6-option.c`](https://github.com/systemd/systemd/blob/main/src/libsystemd-network/dhcp6-option.c).
+- [OpenWrt `odhcp6c` `dhcpv6.c`](https://github.com/openwrt/odhcp6c/blob/master/src/dhcpv6.c)
+  and the OpenWrt issue
+  [#13454](https://github.com/openwrt/openwrt/issues/13454) about NTT 10G
+  DHCPv6-PD renewal.
+- [dhcpcd `dhcp6.c`](https://github.com/NetworkConfiguration/dhcpcd/blob/master/src/dhcp6.c)
+  and the [`dhcpcd.conf(5)` manual](https://man.archlinux.org/man/dhcpcd.conf.5.en).
+- [OPNsense/WIDE `dhcp6c`](https://github.com/opnsense/dhcp6c), especially
+  `dhcp6c.c`, `dhcp6c_ia.c`, `prefixconf.c`, and `common.c`.
+- [systemd `systemd.network` documentation source](https://github.com/systemd/systemd/blob/main/man/systemd.network.xml).
+
+RFC 8415 is clear on the lifetime question. Renew messages include IA_PD and IA
+Prefix options for the delegated prefixes being extended. Section 21.22 says
+that, in messages from a client to a server, IA Prefix preferred and valid
+lifetimes should be set to 0, and the server must ignore any values it receives
+there. The same explanatory note says older lifetime hints caused operational
+problems because servers sometimes misunderstood decreasing values. Therefore,
+the zero lifetimes seen in router02/router03 Renew/Rebind packets are not an RFC
+violation.
+
+| Client | Renew/Rebind IA Prefix lifetime fields | Other relevant behavior | routerd implication |
+| --- | --- | --- | --- |
+| systemd-networkd | Sends 0. `dhcp6_option_append_ia()` deliberately creates IA_NA/IA_PD headers with T1/T2 unset and `option_append_pd_prefix()` copies only prefix length and address. | `UseDelegatedPrefix`, `UseAddress`, `PrefixDelegationHint`, `IAID`, `DUIDType`, `DUIDRawData`, and `WithoutRA` control whether PD is requested, identity, hinting, and RA-gated startup. They do not change IA Prefix lifetime serialization. | There is no small `.network` switch that makes systemd-networkd send non-zero IA Prefix lifetimes in Renew. It remains useful for simple Linux PD, but it gives routerd limited hooks and weak packet-level observability. |
+| OpenWrt odhcp6c | Sends 0 for Renew/Rebind. It copies lifetimes only when constructing Request from an Advertise/Reply candidate; Renew/Rebind uses the current PD entries but leaves the IA Prefix lifetime fields at their zero-initialized value. | It is built for router use and calls a state script when DHCPv6 state changes. OpenWrt issue #13454 reports NTT 10G Hikari PD renewal loss with odhcp6c, and compares odhcp6c's zero lifetime Renew with an ISP router that sends non-zero lifetimes. | odhcp6c is a strong Linux router client, but it is not proof that zero-lifetime Renew always works with NTT. It is also OpenWrt-centered and has no normal FreeBSD port path. |
+| dhcpcd | Sends 0 for Renew/Rebind. In `dhcp6.c`, the IA Prefix buffer is zeroed, then only prefix length and prefix address are copied into the outgoing option. | It has `ia_pd`, `iaid`, `duid`, `script`, and hook support, and it is packaged for Linux and FreeBSD. The manual explicitly documents prefix delegation and hook execution. | dhcpcd is the best candidate for cross-platform reuse because it can replace both systemd-networkd DHCPv6 and KAME `dhcp6c` with one supervised client. However, it does not avoid zero-lifetime Renew, so it must be tested against PR-400NE before we treat it as a fix. |
+| WIDE/KAME dhcp6c | Appears to send non-zero lifetimes on the normal Renew/Rebind path. `prefixconf.c` builds Renew/Rebind data from the stored site prefix, and `common.c` serializes `pltime` and `vltime` into IA Prefix. | FreeBSD currently uses this family. In our manual HUP test, it did not exercise a true Renew; it restarted into Solicit, so this source-level behavior has not been confirmed on the wire in the lab. | This is the only client in this comparison that may match the "ISP router sends non-zero lifetime" pattern. If PR-400NE depends on that behavior despite RFC 8415, WIDE/KAME or a patched derivative is a useful reference. |
+
+The OpenWrt NTT 10G report is important because it weakens the simple
+"OpenWrt works, so odhcp6c must be safe" assumption. It describes a failure
+after PD valid lifetime expiration and notes that the Renew packet differs from
+the ISP router. The packet detail in that issue is consistent with the source:
+odhcp6c sends 0 in IA Prefix lifetime fields during Renew. This is valid per
+RFC 8415, but a fragile ISP or home-gateway implementation may still behave
+better with the older non-zero lifetime style.
+
+The current practical comparison is:
+
+- odhcp6c has the best OpenWrt router integration model, but it is Linux-only
+  for our purposes and has a public NTT renewal failure report.
+- dhcpcd has the best chance of becoming a single Linux/FreeBSD managed client.
+  It supports stable DUID/IAID, prefix delegation hints, and hook scripts that
+  routerd can consume. Its Renew lifetime behavior is still the RFC 8415
+  zero-lifetime style, so it must be verified on PR-400NE before migration.
+- WIDE/KAME has weaker cross-platform appeal, but its normal Renew packet may
+  be closer to the working commercial-router pattern. A FreeBSD-only WIDE
+  compatibility patch remains a reasonable fallback if dhcpcd does not renew
+  reliably on the lab HGW.
+
+Recommendation for now: do not jump directly to odhcp6c. Prototype `dhcpcd`
+first as a routerd-managed DHCPv6 client on router02 or router03, because that
+tests the cross-platform path without committing to a Linux-only client. The
+prototype should disable systemd-networkd DHCPv6 on the WAN, run dhcpcd with an
+explicit DUID-LL, stable IAID, `ia_pd` /60 hint, no automatic LAN address
+assignment unless routerd asks for it, and a dedicated hook script that writes
+the delegated prefix, server identifier, T1/T2, preferred lifetime, valid
+lifetime, and event reason into routerd state. In parallel, keep a WIDE/KAME
+packet capture target for FreeBSD so we can confirm whether its true Renew path
+really sends non-zero lifetimes and whether PR-400NE replies.
+
+Staged migration plan:
+
+1. Add a `dhcpv6Client.backend` design field with values `systemd-networkd`,
+   `odhcp6c`, `dhcpcd`, and `kame-dhcp6c`; keep the current backends unchanged.
+2. Implement only rendering and supervision for `dhcpcd` in a lab branch:
+   managed config, managed systemd unit, managed FreeBSD rc.d service, and a
+   routerd-owned hook script.
+3. Test `dhcpcd` on router02 first. Compare Solicit, Request, Renew, Rebind,
+   Reply, DUID, IAID, prefix hint, and lifetimes with the existing
+   systemd-networkd capture.
+4. If PR-400NE ignores dhcpcd Renew in the same way, test WIDE/KAME natural
+   Renew on router01 before implementing an in-process client or WIDE patch.
+5. Only after those captures, decide whether the NTT profile should default to
+   dhcpcd, odhcp6c, or an explicitly patched WIDE/KAME path.
+
 ### PR-400NE Behavior Hypotheses
 
 These are working hypotheses for the lab profile
