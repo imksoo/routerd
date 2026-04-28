@@ -83,6 +83,46 @@ This still does not synthesize DHCPv6 Renew/Rebind packets. That should remain
 a separate implementation step because it must preserve management
 connectivity and must not fight the OS DHCPv6 client.
 
+### PR-400NE Lab Observation: Prefix Hints
+
+Router01, a FreeBSD host using KAME `dhcp6c`, was tested behind a PR-400NE on
+2026-04-28. The management interface was kept on a separate network and the
+test changed only the WAN-side DHCPv6-PD client configuration. Before the test,
+router01 had no locally recorded `lastPrefix`; its state store only retained
+the stable DUID and IAID `0`.
+
+Observed behavior:
+
+- With no state-derived prefix hint, router01 sent DHCPv6 Solicit from UDP
+  port 546 to `ff02::1:2` port 547. The IA_PD option used IAID `0` and a
+  length-only prefix hint `::/60`. The PR-400NE did not send Advertise or Reply
+  during the 40 second capture.
+- After seeding routerd's state store with the previously seen
+  `2409:10:3d60:1240::/60`, routerd rendered `prefix
+  2409:10:3d60:1240::/60 infinity;` in `dhcp6c.conf`. tcpdump confirmed that
+  Solicit carried IA_PD IAID `0` and the specific prefix hint
+  `2409:10:3d60:1240::/60`. The PR-400NE still did not send Advertise or Reply
+  during the 40 second capture.
+- With the same seeded prefix but a temporary IAID `1`, tcpdump confirmed
+  Solicit with IA_PD IAID `1` and the same specific prefix hint. The PR-400NE
+  again did not send Advertise or Reply during the capture. The configuration
+  was restored to IAID `0` after the test.
+- No DHCPv6 Release packets were observed in these captures. The client was
+  restarted using no-release behavior.
+
+Interpretation:
+
+- KAME `dhcp6c` does put the rendered `prefix ... infinity;` value into the
+  IA_PD prefix hint. This validates routerd's FreeBSD renderer behavior.
+- In this PR-400NE state, a prefix hint alone did not revive an unobservable
+  delegated prefix. The likely behavior is that the home gateway either had no
+  active binding for this client at that moment or was not responding to fresh
+  Solicit, even when the Solicit included the remembered prefix.
+- The next useful test is a real Renew/Rebind path while a lease is still
+  active, not another fresh Solicit. routerd should therefore keep the prefix
+  hint mechanism, but still needs an OS-client-safe renewal operation or an
+  observation point that captures Renew/Rebind before the lease expires.
+
 ## DHCPv6 Prefix Delegation Behavior in Other Routers
 
 This note compares open-source and commercial DHCPv6 Prefix Delegation
