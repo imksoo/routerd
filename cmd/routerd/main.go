@@ -484,6 +484,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		return nil, err
 	}
 	if !opts.DryRun {
+		renewChanges, renewWarnings := renewMissingPrefixDelegations(router, stateStore)
+		stateChanges = append(stateChanges, renewChanges...)
+		result.Warnings = append(result.Warnings, renewWarnings...)
 		if err := os.MkdirAll(filepathDir(defaultString(opts.StatePath, defaultStatePath)), 0755); err != nil {
 			return nil, err
 		}
@@ -1070,6 +1073,104 @@ func pdLeaseMissingValue(lease routerstate.PDLease) routerstate.Value {
 		return routerstate.Value{Status: routerstate.StatusUnset}
 	}
 	return routerstate.Value{Status: routerstate.StatusSet, Value: lease.LastMissingAt}
+}
+
+func renewMissingPrefixDelegations(router *api.Router, store *routerstate.Store) ([]stateChange, []string) {
+	aliases := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err == nil {
+			aliases[res.Metadata.Name] = spec.IfName
+		}
+	}
+	var changes []stateChange
+	var warnings []string
+	now := store.Now()
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6PrefixDelegation" {
+			continue
+		}
+		spec, err := res.IPv6PrefixDelegationSpec()
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: cannot inspect DHCPv6-PD renew hook: %v", res.ID(), err))
+			continue
+		}
+		base := "ipv6PrefixDelegation." + res.Metadata.Name
+		lease, _ := routerstate.PDLeaseFromStore(store, base)
+		if !shouldAttemptPDLeaseRenew(lease, now) {
+			continue
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			warnings = append(warnings, fmt.Sprintf("%s: cannot renew DHCPv6-PD because interface %q has no ifname", res.ID(), spec.Interface))
+			continue
+		}
+		client := defaultString(spec.Client, "networkd")
+		if err := runPDLeaseRenewHook(client, ifname); err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: DHCPv6-PD renew hook failed: %v", res.ID(), err))
+			continue
+		}
+		lease.LastRenewAttemptAt = now.Format(time.RFC3339)
+		changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": requested DHCPv6-PD renew")})
+	}
+	return changes, warnings
+}
+
+func shouldAttemptPDLeaseRenew(lease routerstate.PDLease, now time.Time) bool {
+	if lease.CurrentPrefix != "" || lease.LastPrefix == "" || lease.LastMissingAt == "" || lease.LastObservedAt == "" {
+		return false
+	}
+	observedAt, err := time.Parse(time.RFC3339, lease.LastObservedAt)
+	if err != nil {
+		return false
+	}
+	lifetime, ok := routerstate.ParseLeaseLifetime(lease.ValidLifetime)
+	if !ok {
+		return false
+	}
+	if lifetime >= 0 && !now.UTC().Before(observedAt.UTC().Add(lifetime)) {
+		return false
+	}
+	if lease.LastRenewAttemptAt == "" {
+		return true
+	}
+	attemptedAt, err := time.Parse(time.RFC3339, lease.LastRenewAttemptAt)
+	if err != nil {
+		return true
+	}
+	missingAt, err := time.Parse(time.RFC3339, lease.LastMissingAt)
+	if err != nil {
+		return false
+	}
+	return attemptedAt.Before(missingAt)
+}
+
+var runPDLeaseRenewHook = func(client, ifname string) error {
+	switch client {
+	case "networkd":
+		if ifname == "" {
+			return errors.New("empty interface name")
+		}
+		return runLogged("networkctl", "renew", ifname)
+	case "dhcp6c":
+		return signalFreeBSDDHCP6CRenew()
+	default:
+		return fmt.Errorf("unsupported DHCPv6-PD client %q", client)
+	}
+}
+
+func signalFreeBSDDHCP6CRenew() error {
+	pid := strings.TrimSpace(readFirstString("/var/run/dhcp6c.pid"))
+	if pid == "" {
+		if freeBSDServiceExists("dhcp6c") {
+			return runLogged("service", "dhcp6c", "start")
+		}
+		return errors.New("dhcp6c pid file is empty")
+	}
+	return runLogged("kill", "-HUP", pid)
 }
 
 func effectiveIPv6PDConvergenceTimeout(profile, configured string) time.Duration {

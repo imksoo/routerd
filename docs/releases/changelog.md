@@ -13,6 +13,8 @@ behavior changes and new resource shapes as the model takes shape.
   state from the local state database.
 - DHCPv6-PD state now migrates scattered prefix and identity keys into the
   structured `ipv6PrefixDelegation.<name>.lease` value.
+- Reconcile now asks the OS DHCPv6-PD client to renew once when a remembered
+  lease is missing locally but still within its recorded valid lifetime.
 - FreeBSD remote install hardening: `ROUTERD_OS=freebsd` now builds
   FreeBSD binaries and uses FreeBSD runtime directories even when invoked
   from a Linux workstation.

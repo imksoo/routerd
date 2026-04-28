@@ -218,15 +218,16 @@ IAID `0` だけが状態保存領域に残っていました。
 
 ### バックログ
 
-- `routerctl show pd` を追加し、DUID、IAID、プレフィックス、寿命、T1/T2、
-  最後に見えた時刻、最後に消えた時刻、クライアント状態、警告を表示する。
+- `routerctl show pd` を拡張し、寿命、T1/T2、クライアント状態、警告も
+  表示する。DUID、IAID、現在のプレフィックス、最後に見えた
+  プレフィックス、観測時刻の表示はすでに入っている。
 - 内部の `PDLease` 状態モデルを拡張し、OS 側クライアントから取得できる
   場合は、サーバー DUID、優先寿命、有効寿命、T1、T2、取得状態も保存する。
-- OS ごとの安全な更新フックを調査する。
-  - systemd-networkd: DBus、`networkctl`、サービス再読み込みのどれで
-    Release なしの更新を促せるか確認する。
-  - FreeBSD/KAME `dhcp6c`: 制御ソケットの有無と、SIGUSR1 以外に安全な
-    更新手段があるか確認する。
+- OS ごとの安全な更新フックをさらに固める。
+  - systemd-networkd: routerd は現在、ローカルのリース記録から前回リースが
+    まだ有効と判断できる場合に `networkctl renew <link>` を使う。
+  - FreeBSD/KAME `dhcp6c`: routerd は現在、同じ条件で実行中のクライアントへ
+    SIGHUP を送る。より強い方針を入れる前に、制御ソケットの有無を調べる。
 - `releasePolicy` または `sendRelease` 設定を追加し、NTT 系ホーム
   ゲートウェイ向けプロファイルでは保守的な既定値にする。
 - プロファイルに、プレフィックスヒント、IA_NA と IA_PD を同じ要求に

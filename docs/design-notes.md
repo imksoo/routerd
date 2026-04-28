@@ -210,16 +210,18 @@ Defer:
 
 ### Backlog Items
 
-- Add `routerctl show pd` with DUID, IAID, prefix, lifetimes, T1/T2, last
-  observed time, last missing time, client status, and warnings.
+- Extend `routerctl show pd` with lifetimes, T1/T2, client status, and
+  warnings. It already reports the core DUID, IAID, current prefix, last
+  prefix, and observation timestamps from the local lease record.
 - Extend the internal `PDLease` state model with server DUID, preferred
   lifetime, valid lifetime, T1, T2, and acquisition state when each OS client
   exposes them.
-- Add OS-specific renew hooks:
-  - systemd-networkd: investigate whether DBus, `networkctl`, or service reload
-    can request renewal without releasing state.
-  - FreeBSD/KAME `dhcp6c`: investigate control socket support and safe signal
-    behavior beyond SIGUSR1/no-release restart.
+- Continue hardening OS-specific renew hooks:
+  - systemd-networkd: routerd currently uses `networkctl renew <link>` when the
+    local lease memory says the prior lease should still be valid.
+  - FreeBSD/KAME `dhcp6c`: routerd currently sends SIGHUP to the running client
+    under the same condition. Investigate control socket support before adding
+    stronger policy.
 - Add explicit `releasePolicy` or `sendRelease` configuration with conservative
   defaults for NTT/home-gateway profiles.
 - Add profile fields for prefix hint, IA_NA/IA_PD combined request preference,

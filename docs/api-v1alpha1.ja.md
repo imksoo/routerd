@@ -368,6 +368,7 @@ spec:
 - systemd-networkd と FreeBSD の `dhcp6c` では、取得できる範囲で DHCP の識別情報もリース記録に残します。`dhcp6c` では `/var/db/dhcp6c_duid` から DUID を読み取り、IAID は設定された `iaid`、または `dhcp6c` の既定値である `0` から決めます。NTT 系プロファイルでは、上流インターフェースの MAC アドレスから DHCPv6 のリンクレイヤ DUID を計算し、期待される DUID として残します。これらは望ましい設定ではなく、観測した状態の記憶です。再試行処理では、この情報を使って、ホームゲートウェイが以前のリースを覚えている場合に更新に近い動きを優先できます。
 - リース期限が切れる前の Renew/Rebind は、OS 側の DHCPv6 クライアントの責務です。routerd は通常の反映でこのクライアントを再起動しないようにします。再起動すると、更新として続けられたはずの処理が新規 Solicit や Release に変わることがあるためです。
   現在のプレフィックスが観測できない場合、`plan`、`reconcile`、デーモン状態には警告を出します。上流リースが切れる前に DHCPv6 クライアントを直すためです。
+  実際に反映する場合、現在のプレフィックスが見えず、構造化されたリース記録に最後のプレフィックス、最後に見えた時刻、期限内の有効寿命が残っていれば、routerd はその見失い状態につき一度だけ OS 側クライアントへ更新を促します。systemd-networkd では `networkctl renew <link>` を呼びます。FreeBSD の KAME `dhcp6c` では、実行中の `dhcp6c` に SIGHUP を送ります。試行時刻はリース内の `lastRenewAttemptAt` に残すため、反映のたびに短い間隔で何度も刺激することはありません。
 - `spec.iaid` は DHCPv6 の IAID を固定します。10 進数、`0x` 付きの 16 進数、または 8 桁の 16 進数で書けます。systemd-networkd では 10 進数の `IAID=` として出力し、FreeBSD の `dhcp6c` では `ia-pd` / `id-assoc pd` の識別子として使います。
 - `spec.duidType` と `spec.duidRawData` は systemd-networkd の DUID 設定を固定します。`duidRawData` は `00:01:...` のようなバイト列表記でも、区切りなしの 16 進数でも書けます。現時点ではこの2つは systemd-networkd 向けです。FreeBSD の `dhcp6c` が持つ DUID ファイルの管理は、まだリソースとして扱っていません。
 

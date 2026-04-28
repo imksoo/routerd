@@ -491,6 +491,13 @@ How routerd behaves:
   If there is no current observable prefix, `plan`, `reconcile`, and daemon
   status include a warning so the operator can fix the DHCPv6 client before
   the upstream lease expires.
+  During a real reconcile, if the current prefix is missing but the structured
+  lease still has a last prefix, a last observed time, and an unexpired valid
+  lifetime, routerd asks the OS client to renew once for that missing episode.
+  On systemd-networkd hosts this calls `networkctl renew <link>`. On FreeBSD
+  KAME `dhcp6c` hosts this sends SIGHUP to the running `dhcp6c` process. The
+  attempt time is recorded as `lastRenewAttemptAt` in the lease so reconcile
+  does not keep poking the client in a tight loop.
 - `spec.iaid` pins the DHCPv6 IAID. It may be written as decimal, `0x`
   prefixed hex, or 8 hex digits. systemd-networkd renders it as a decimal
   `IAID=` value; FreeBSD `dhcp6c` uses it as the `ia-pd` / `id-assoc pd`

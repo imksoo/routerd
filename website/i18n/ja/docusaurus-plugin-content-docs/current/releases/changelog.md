@@ -10,6 +10,7 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
 
 - `routerctl show pd` を追加。ローカルの状態保存ファイルから、DHCPv6-PD の識別子とプレフィックスの記録を一覧表示できるようになりました。
 - DHCPv6-PD の状態記録を整理。プレフィックスや識別子の個別キーを、構造化された `ipv6PrefixDelegation.<name>.lease` に移すようになりました。
+- 記録上まだ有効な DHCPv6-PD リースがローカルで見えなくなった場合、反映時に OS 側クライアントへ一度だけ更新を促すようになりました。
 - FreeBSD へのリモート導入を改善。Linux 作業端末から実行しても、`ROUTERD_OS=freebsd` で FreeBSD 向けバイナリをビルドし、FreeBSD の実行時ディレクトリを使うようになりました。
 - リモート依存確認で `jq`、FreeBSD の `dhcp6c`、`mpd5`、`sysrc` を確認するようになりました。
 - FreeBSD の DHCPv6-PD 出力を、パッケージ版の KAME `dhcp6c` が受け付ける構文に変更。

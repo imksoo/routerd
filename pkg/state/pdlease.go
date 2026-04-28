@@ -16,6 +16,7 @@ type PDLease struct {
 	ValidLifetime      string `json:"validLifetime,omitempty"`
 	LastObservedAt     string `json:"lastObservedAt,omitempty"`
 	LastMissingAt      string `json:"lastMissingAt,omitempty"`
+	LastRenewAttemptAt string `json:"lastRenewAttemptAt,omitempty"`
 	DUID               string `json:"duid,omitempty"`
 	DUIDText           string `json:"duidText,omitempty"`
 	IAID               string `json:"iaid,omitempty"`
@@ -62,6 +63,7 @@ func PDLeaseFromStore(store *Store, base string) (PDLease, bool) {
 	mergeString(&lease.ValidLifetime, "validLifetime")
 	mergeString(&lease.LastObservedAt, "lastObservedAt")
 	mergeString(&lease.LastMissingAt, "lastMissingAt")
+	mergeString(&lease.LastRenewAttemptAt, "lastRenewAttemptAt")
 	mergeString(&lease.DUID, "duid")
 	mergeString(&lease.DUIDText, "duidText")
 	mergeString(&lease.IAID, "iaid")
@@ -78,6 +80,7 @@ var legacyPDLeaseFields = []string{
 	"validLifetime",
 	"lastObservedAt",
 	"lastMissingAt",
+	"lastRenewAttemptAt",
 	"duid",
 	"duidText",
 	"iaid",
