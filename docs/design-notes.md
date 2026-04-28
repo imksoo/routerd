@@ -397,6 +397,39 @@ References:
   DHCPv6-PD exchange. For routerd, transix DNS and AFTR handling should remain
   separate from PD acquisition.
 
+### Close Reading of NTT Official Specifications
+
+This pass reread the locally fetched NTT East `ip-int-3.pdf` and NTT West
+`tenpu16-1.pdf` text with the client-side DHCPv6-PD questions in mind. Page
+numbers below are the printed page numbers in the PDF text, not viewer page
+indexes.
+
+| Question | Relevant sections | Reading for routerd |
+| --- | --- | --- |
+| IA_NA and IA_PD in the same request | NTT East, FLET'S Hikari 25G, `2.4.1.1.2` on pp. 5-6 says the endpoint receives a prefix with DHCPv6-PD and cannot obtain a 128-bit address through DHCPv6. The DHCPv6 option table in `2.4.1.1.5` on pp. 7-8 lists IA_NA, IA_TA, IA Address, and Rapid Commit with note 2, whose footnote says they are not used by this interface specification. NTT West, FLET'S Hikari Cross, `2.4.2.1.2` on pp. 21-22 has the same "prefix only, no 128-bit DHCPv6 address" shape. | The official text does not give a reason to request IA_NA together with IA_PD for the NTT profile. It points the other way: PD is the useful request, and IA_NA is not part of the documented endpoint model for these sections. |
+| DHCPv6 retransmission timers | The searched NTT East and West PDFs contain no DHCPv6 constants such as SOL_TIMEOUT or REQ_TIMEOUT. The visible timer sections are for other protocols or service operations, not DHCPv6 client retransmission. | Use RFC DHCPv6 retransmission behavior in any in-process client. Keep routerd's profile-level acquisition window configurable because PR-400NE/HGW timing is an operational issue, but do not invent NTT-specific packet timers from these PDFs. |
+| UDP source port | The PDFs reference RFC3315/RFC3633 for DHCPv6 and DHCPv6-PD but do not add a client source-port rule. No text was found requiring client packets to originate only from UDP 546 beyond the normal DHCPv6 client/server port model. | routerd should still send from the DHCPv6 client port when it owns the socket, but firewall receive rules must not require reply source port 547. This remains based on RFC behavior and PR-400NE packet observations, not on a special NTT PDF rule. |
+| RA M/O flags and Solicit timing | NTT East, Hikari Cross `4.4.2.1.2` on p. 22 and NTT West, Hikari Cross `2.4.2.1.2` on pp. 21-22 say RA may have the O and M flags set, while Information-Request is not supported in those sections. NTT East and West, FLET'S Hikari Next `2.4.2.1.2` on pp. 60-61 and pp. 59-60 say O=1 recommends Information-Request and M=1 recommends DHCPv6-PD. They also say voice-service cases use DHCPv6-PD and receive a 48-bit or 56-bit prefix. | The M flag is a good standards-facing trigger for PD. The documents are not uniform about Information-Request across service families, so routerd should not make Information-Request mandatory for the NTT HGW profile. A future client should support both RA-gated start and forced Solicit, with forced Solicit remaining useful for HGW LAN-side testing. |
+| Rapid Commit | NTT East option tables such as `2.4.1.1.5` on pp. 7-8 list Rapid Commit but mark it with the same "not used" note as IA_NA. No section found says that the network will use or require two-message Rapid Commit acquisition. | Do not request or require Rapid Commit in `ntt-flets-with-hikari-denwa`. If a server sends Rapid Commit anyway, record it as an observed event. |
+| Server Identifier in Solicit | DUID sections such as NTT East `2.4.1.1.4` on p. 6 and NTT West `2.4.2.1.4` on p. 22 say the network DUID is stable and MAC based. The option table lists Server Identifier as the network DUID, but no text found requires an initial Solicit to include a Server Identifier. | Follow DHCPv6 semantics: include Client Identifier in Solicit, use Server Identifier after the server is known, and persist the server identifier for Renew. Do not fake a server identifier in a fresh Solicit. |
+| Confirm support | No Confirm message support was found in the searched NTT East or West PDF text. The explicit acquisition sequence diagrams show Solicit, Advertise, Request, and Reply for DHCPv6-PD. | Confirm is not part of the NTT PD recovery plan. Use Renew/Rebind while a lease is alive, and Solicit with prefix hints after that state is lost. |
+
+Implementation option for IA_NA+IA_PD:
+
+- Keep the NTT profile default as IA_PD-only. The official specifications
+  repeatedly say a 128-bit address cannot be obtained through DHCPv6, and the
+  option tables mark IA_NA as unused.
+- If testing later proves that a particular HGW or upstream path reacts better
+  to combined requests, add an explicit profile field such as
+  `requestNonTemporaryAddress: true`; do not infer it from the NTT profile.
+- For systemd-networkd, that mode would render DHCPv6 address use in addition
+  to prefix delegation, instead of the current PD-only shape.
+- For KAME `dhcp6c`, that mode would add `send ia-na <iaid>;` and an
+  `id-assoc na <iaid> { };` block next to the existing `send ia-pd` and
+  `id-assoc pd` block.
+- Renderer tests should assert both modes: NTT default renders only IA_PD,
+  while the explicit experiment switch renders IA_NA and IA_PD together.
+
 ### Lab DUID Validation on 2026-04-28
 
 The lab hosts were checked before changing DUID management code:
