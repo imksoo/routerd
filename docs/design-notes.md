@@ -329,6 +329,7 @@ References:
 
 - [RFC 8415: Dynamic Host Configuration Protocol for IPv6](https://www.rfc-editor.org/rfc/rfc8415.html)
 - [NTT East technical references](https://www.ntt-east.co.jp/gisanshi/)
+- [NTT East FLET'S series technical reference, volume 3](https://flets.com/pdf/ip-int-3.pdf)
 - [NTT West technical reference: IP communication network service interface](https://www.ntt-west.co.jp/info/katsuyo/pdf/23/tenpu16-1.pdf)
 - [NTT West: NGN IPv6 ISP tunnel interface](https://www.ntt-west.co.jp/open/ngn/pdf/ipv6_tunnel_uni.pdf)
 - [Yamaha RT Series DHCPv6 features](https://www.rtpro.yamaha.co.jp/RT/docs/dhcpv6/index.html)
@@ -338,6 +339,7 @@ References:
 - [Internet Multifeed transix DS-Lite service](https://www.mfeed.ad.jp/transix/dslite/)
 - [Internet Multifeed transix DS-Lite device list](https://www.mfeed.ad.jp/transix/dslite-models/)
 - [Internet Multifeed transix glossary](https://www.mfeed.ad.jp/transix/faq/glossary/)
+- [Sorah's Diary: FLET'S Hikari Next with Hikari Denwa DHCPv6-PD observation](https://diary.sorah.jp/2017/02/19/flets-ngn-hikaridenwa-kill-dhcpv6pd)
 - [rixwwd: PR-400NE / Dream Router DHCPv6 packet observation](https://rixwwd.hatenablog.jp/entry/2023/04/09/211529)
 - [SEIL: NGN IPv6 native IPoE example](https://www.seil.jp/blog/10.html)
 
@@ -363,6 +365,19 @@ References:
   network side and reference DHCPv6 and DHCPv6-PD RFCs for IPv6 ISP
   connectivity. They do not specify every LAN-side quirk of a PR-400NE home
   gateway.
+- The current NTT East and NTT West FLET'S series interface documents say that
+  terminal-side DUID generation must follow DUID-LL or DUID-LLT and must be
+  based on the MAC address. DUID-EN, UUID-derived DUIDs, and machine-id-derived
+  DUIDs are therefore outside the documented FLET'S endpoint model.
+- The same documents describe a network-side delegated prefix of 48 or 56 bits
+  for services that use DHCPv6-PD. The /60 prefixes observed behind PR-400NE
+  are best interpreted as home-gateway downstream subdivisions, not as the
+  raw NGN-facing prefix size.
+- Sorah's 2017 field report is stronger than the current public interface
+  text: it reports that NGN DHCPv6-PD silently ignores Solicit messages whose
+  client identifier is not DUID-LL, including DUID-LLT and DUID-EN. Because the
+  current official text permits DUID-LLT, routerd should treat "DUID-LL only"
+  as a strict NTT profile quirk rather than as the generic DHCPv6 rule.
 - NEC's official IX guide states that FLET'S Hikari Next changes behavior based
   on the Hikari Denwa contract: without Hikari Denwa the router uses RA, and
   with Hikari Denwa it uses DHCPv6-PD. The same guide obtains DNS through the
@@ -382,6 +397,30 @@ References:
   DHCPv6-PD exchange. For routerd, transix DNS and AFTR handling should remain
   separate from PD acquisition.
 
+### Lab DUID Validation on 2026-04-28
+
+The lab hosts were checked before changing DUID management code:
+
+| Host | Client | Rendered configuration | Observed DUID | Packet result |
+| --- | --- | --- | --- | --- |
+| router02 / NixOS | systemd-networkd | `/etc/systemd/network/10-netplan-ens18.network.d/90-routerd-dhcp6-pd.conf` contains `DUIDType=link-layer` and a prefix hint for `2409:10:3d60:1230::/60`. | `networkctl status ens18` reports `DUID-LL:0001bc2411305d76`. tcpdump shows `client-ID hwaddr type 1 bc2411305d76`. | routerd's networkd renderer is active and the on-wire DUID is DUID-LL. No Advertise or Reply was seen during the 60 second restart capture. |
+| router03 / Ubuntu | systemd-networkd | `/etc/systemd/network/10-netplan-ens18.network.d/90-routerd-dhcp6-pd.conf` contains `DUIDType=link-layer` and a prefix hint for `2409:10:3d60:1220::/60`. | `networkctl status ens18` reports `DUID-LL:0001bc24114032de`. tcpdump shows `client-ID hwaddr type 1 bc24114032de`. | routerd's networkd renderer is active and the on-wire DUID is DUID-LL. No Advertise or Reply was seen during the 60 second restart capture. |
+| router01 / FreeBSD | KAME `dhcp6c` | `/usr/local/etc/dhcp6c.conf` requests IA_PD with a `::/60` hint. | `/var/db/dhcp6c_duid` starts with length `0e 00` followed by DUID type `00 01`, so it is DUID-LLT. tcpdump shows `client-ID hwaddr/time type 1 time 830607215 bc2411e3c238`. | The FreeBSD path does not yet manage the DUID file. router01 is still sending DUID-LLT and may be filtered by stricter NTT/HGW behavior. |
+
+Conclusion:
+
+- The systemd-networkd code path is not the current DUID problem for router02
+  or router03. It already renders `DUIDType=link-layer`, networkd uses it, and
+  tcpdump confirms DUID-LL on the wire.
+- DUID alone does not explain the current no-reply captures for router02 and
+  router03. They had previously received PD with the same DUID-LL values, so
+  home-gateway lease state, timing after HGW restart, and Solicit-vs-Renew
+  behavior remain active hypotheses.
+- The FreeBSD/KAME path is a real gap. router01 still has a generated
+  DUID-LLT file and sends DUID-LLT in Solicit. The next implementation should
+  manage or adopt `/var/db/dhcp6c_duid` for NTT profiles before testing more
+  HGW behavior on FreeBSD.
+
 ### PR-400NE Behavior Hypotheses
 
 These are working hypotheses for the lab profile
@@ -396,6 +435,7 @@ explicit PR-400NE LAN-side protocol specification.
 | Normal renewal | At T1, Renew to the server that issued the lease. If no Reply is received by T2, Rebind to any server. | RFC 8415 defines T1/T2-driven Renew/Rebind for IA_PD. The HGW lease table shows finite lifetimes, so losing renewal would eventually remove PD. | Store T1/T2 and lifetimes. Schedule renew attempts before expiry instead of waiting for the prefix to disappear. |
 | Expired or forgotten lease | After valid lifetime expiry, use Solicit again. Include a length-only `::/60` hint or the previous prefix only if the profile allows stale hints. | RFC 8415 terminates the exchange when all valid lifetimes expire. A stale exact hint may be harmless, but it should be a profile choice. | Default to no exact hint after valid lifetime expiry; retain a length-only /60 request for the NTT profile. |
 | Release avoidance | Do not send Release on daemon restart or controlled shutdown unless explicitly requested. | Some home gateways behave better when existing bindings age out or renew than when clients repeatedly release and create new bindings. pfSense and KAME `dhcp6c` expose no-release behavior for similar operational reasons. | Provide `sendRelease: false` or equivalent in the profile and make OS-specific renderers honor it. |
+| Strict DUID selection | Use DUID-LL by default for NTT profiles. Treat DUID-EN and UUID-derived DUIDs as invalid for FLET'S-style PD. Allow DUID-LLT only when the profile explicitly relaxes the strict behavior. | Current NTT interface documents allow MAC-based DUID-LL or DUID-LLT, while Sorah's direct-NGN observation reports DUID-LL-only filtering. systemd-networkd's default DUID-EN is definitely outside the documented NTT model. | Default `spec.duidType` to `link-layer` for NTT profiles, render that choice explicitly, and report a warning when observed DUID does not start with DUID-LL type 3. |
 | IA_NA plus IA_PD | Start with IA_PD-only. Make combined IA_NA+IA_PD a profile option. | Some commercial subscriber examples request both, but the lab only needs delegated prefixes and the HGW may be sensitive to small client differences. | `routerd_dhcp6c_client` must support both modes, with IA_PD-only as the NTT home-gateway default until tests prove otherwise. |
 | Rapid Commit | Support it if the server offers it, but do not request or require it by default. | RFC 8415 allows Rapid Commit, but NTT and router vendor examples do not require it for the observed use case. | Leave Rapid Commit off by default for `ntt-flets-with-hikari-denwa`; record if a server sends it. |
 | UDP receive filtering | Accept DHCPv6 replies with destination UDP port 546 from any source port. | RFC 8415 fixes listener ports, while PR-400NE community packet captures report Advertise from source port 49153. | Firewall and packet parser must not require source port 547 on inbound DHCPv6 client replies. |
@@ -406,9 +446,10 @@ The future in-process client based on `insomniacslk/dhcp` should reproduce
 the useful parts of OS clients while making NTT profile behavior observable and
 testable:
 
-- Keep DUID and IAID stable. For the NTT home-gateway profile, DUID-LL is the
-  safest default because NEC and the lab HGW identify clients by link-layer
-  style bindings.
+- Keep DUID and IAID stable. For NTT profiles, DUID-LL should be the default
+  even though the current NTT interface documents also permit DUID-LLT. This
+  avoids systemd-networkd's default DUID-EN and matches stricter field reports
+  that say NGN silently drops non-DUID-LL clients.
 - Persist `PDLease` with DUID, IAID, server identifier, server link-local
   address when known, current prefix, last prefix, preferred lifetime, valid
   lifetime, T1, T2, last observed time, last missing time, and the last DHCPv6
@@ -445,6 +486,11 @@ testable:
   `sendRelease: false`, IA_PD-only, Rapid Commit disabled, long initial
   acquisition timeout, and inbound UDP destination 546 matching without source
   port restriction.
+- For OS-backed clients, make NTT DUID rendering an owned artifact:
+  systemd-networkd should render `DUIDType=link-layer` and, when pinning is
+  required, `DUIDRawData` containing hardware type plus MAC address. FreeBSD
+  KAME `dhcp6c` should have its `/var/db/dhcp6c_duid` managed or adopted so it
+  does not silently keep a DUID-LLT value from an earlier boot.
 - Add packet-capture based integration tests for Solicit with exact prefix
   hint, Solicit with length-only hint, Renew with current IA_PD, Rebind after
   T2, and Advertise from a non-547 source port.
