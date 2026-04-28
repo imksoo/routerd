@@ -397,6 +397,10 @@ spec:
 ルータの振る舞い:
 
 - 委譲されたサブネットと固定サフィックスを組み合わせて LAN 側のアドレスを決めます。systemd-networkd ではサフィックスが `Token=` として書き出されるため、`::3` は委譲プレフィックス内のホスト識別子 `::3` を持つアドレスになります。
+- FreeBSD では、KAME `dhcp6c` が下流インターフェースに利用できるアドレスを
+  残していない場合でも、routerd が保存している `IPv6PrefixDelegation` の
+  リース情報から LAN 側アドレスを導出できます。その場合は
+  `ifconfig <ifname> inet6 <address> prefixlen 64 alias` で反映します。
 - `spec.sendRA: true` のとき、dnsmasq から RA としてプレフィックスを広告します。
 - `spec.announce: true` のとき、`dnsSource: self` や DS-Lite の local アドレス選定でこのアドレスを候補として扱います。
 

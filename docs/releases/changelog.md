@@ -46,6 +46,10 @@ behavior changes and new resource shapes as the model takes shape.
 - FreeBSD apply now observes delegated prefixes from downstream
   `ifconfig` output, applies stable `IPv6DelegatedAddress` aliases, and avoids
   restarting `dhcp6c` unless its configuration changed or the service is down.
+- FreeBSD apply can now derive LAN-side `IPv6DelegatedAddress` aliases from
+  stored PD lease state, manages dnsmasq through a `routerd_dnsmasq` rc.d
+  service, and nudges RA default-route learning with `rtsol` when no IPv6
+  default route is present.
 - FreeBSD `dhcp6c` is now started with `-n`, and required restarts use SIGUSR1
   before starting the service again to avoid unnecessary DHCPv6 Release
   traffic.

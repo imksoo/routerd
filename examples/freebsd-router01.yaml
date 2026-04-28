@@ -117,8 +117,32 @@ spec:
         name: lan-ipv4
       spec:
         interface: lan
-        address: 192.168.10.1/24
+        address: 192.168.160.1/24
         exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4DHCPServer
+      metadata:
+        name: lan-dhcp4-server
+      spec:
+        server: dnsmasq
+        managed: true
+        listenInterfaces:
+          - lan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4DHCPScope
+      metadata:
+        name: lan-dhcp4
+      spec:
+        server: lan-dhcp4-server
+        interface: lan
+        rangeStart: 192.168.160.110
+        rangeEnd: 192.168.160.119
+        leaseTime: 12h
+        routerSource: interfaceAddress
+        dnsSource: self
+        authoritative: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
@@ -131,3 +155,25 @@ spec:
         addressSuffix: "::1"
         sendRA: false
         announce: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DHCPServer
+      metadata:
+        name: lan-dhcp6-server
+      spec:
+        server: dnsmasq
+        managed: true
+        listenInterfaces:
+          - lan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DHCPScope
+      metadata:
+        name: lan-dhcp6
+      spec:
+        server: lan-dhcp6-server
+        delegatedAddress: lan-ipv6-pd-address
+        mode: stateless
+        defaultRoute: true
+        dnsSource: self
+        leaseTime: 12h

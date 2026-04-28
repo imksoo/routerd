@@ -60,8 +60,9 @@ parity that the code does not yet provide.
   `ROUTERD_OS=freebsd` to `make build`, `make dist`, or
   `make remote-install` so the installed binaries target FreeBSD.
 - `routerd render freebsd` emits rc.conf values, dhclient.conf, and
-  dhcp6c.conf. Runtime apply can apply this limited set with `sysrc`,
-  `service netif`, and `service dhcp6c`.
+  dhcp6c.conf. Runtime apply can apply this set with `sysrc`,
+  `service netif`, `service dhcp6c`, and the routerd-managed dnsmasq rc.d
+  service.
 - FreeBSD hosts need the base networking tools plus `jq`, `dnsmasq`, `dhcp6`,
   and `mpd5` packages for the current groundwork. The `dhcp6` package
   provides the `dhcp6c` command and rc.d service used for DHCPv6-PD
@@ -70,7 +71,18 @@ parity that the code does not yet provide.
   `dhcp6c`. The packaged KAME `dhcp6c` assigns the downstream interface
   identifier itself; routerd observes that address, derives the delegated
   prefix from it, and then adds the stable `IPv6DelegatedAddress` suffix as a
-  secondary address when the prefix is visible.
+  secondary address when the prefix is visible. If `dhcp6c` no longer leaves
+  a downstream address behind but routerd still has a stored PD lease, apply
+  can derive the LAN address from that lease and install it with
+  `ifconfig ... prefixlen 64 alias`.
+- Managed dnsmasq resources are applied on FreeBSD through
+  `/usr/local/etc/rc.d/routerd_dnsmasq`. The generated config uses the
+  platform runtime directory under `/var/run/routerd` for leases and pid
+  files.
+- When IPv6 forwarding is enabled, FreeBSD apply enables
+  `net.inet6.ip6.rfc6204w3=1` for uplinks with `IPv6DHCPAddress` and runs
+  `rtsol` if no IPv6 default route is present, so a router can still learn
+  its upstream RA default route.
 - FreeBSD apply restarts `dhcp6c` only when the rendered configuration or
   matching rc.conf values changed, or when the service is not running. This
   avoids sending unnecessary DHCPv6 Release messages during routine
@@ -83,17 +95,16 @@ parity that the code does not yet provide.
   PPPoE session as `managed: true` when the access line has a session limit.
 - Not yet implemented for FreeBSD:
   - pf renderer to replace nftables for source NAT and firewall.
-  - dnsmasq orchestration via `service` instead of `systemctl`.
   - router advertisement service orchestration with `rtadvd`.
 
 When the FreeBSD pf renderer is added, it must follow the same DHCPv6
 client rule: accept WAN-side UDP destination port 546 without requiring
 the server source port to be 547.
 
-Until those land, `routerd apply` on FreeBSD only applies the supported
-host pieces above plus runtime sysctl and hostname. Resource kinds that
-depend on Linux-only host integrations are left for later platform-specific
-renderers.
+Until those land, `routerd apply` on FreeBSD applies the supported host pieces
+above plus runtime sysctl, hostname, delegated LAN IPv6 addresses, and managed
+dnsmasq. Resource kinds that depend on Linux-only host integrations are left
+for later platform-specific renderers.
 
 ## How the platform is selected
 

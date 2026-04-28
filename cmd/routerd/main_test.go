@@ -485,6 +485,49 @@ func TestDeriveIPv6AddressFromGlobalAddress(t *testing.T) {
 	}
 }
 
+func TestDeriveIPv6AddressFromDelegatedPrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		prefix   string
+		subnetID string
+		suffix   string
+		want     string
+	}{
+		{
+			name:     "ntt /60 first subnet",
+			prefix:   "2409:10:3d60:1220::/60",
+			subnetID: "0",
+			suffix:   "::1",
+			want:     "2409:10:3d60:1220::1",
+		},
+		{
+			name:     "ntt /60 hex subnet",
+			prefix:   "2409:10:3d60:1220::/60",
+			subnetID: "a",
+			suffix:   "::3",
+			want:     "2409:10:3d60:122a::3",
+		},
+		{
+			name:     "ntt /56 decimal subnet",
+			prefix:   "2409:10:3d60:1200::/56",
+			subnetID: "16",
+			suffix:   "::100",
+			want:     "2409:10:3d60:1210::100",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := deriveIPv6AddressFromDelegatedPrefix(tt.prefix, tt.subnetID, tt.suffix)
+			if err != nil {
+				t.Fatalf("derive IPv6 delegated address: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("address = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDelegatedPrefixFromObservedUsesKernelPrefix(t *testing.T) {
 	got, ok := delegatedPrefixFromObserved([]string{
 		"fe80::/64",

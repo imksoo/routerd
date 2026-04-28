@@ -545,6 +545,10 @@ How routerd behaves:
   the LAN-side address. With systemd-networkd, the suffix is rendered as
   `Token=`, so `::3` means the LAN interface receives the delegated prefix
   with host identifier `::3`.
+- On FreeBSD, apply can derive the LAN-side address from routerd's stored
+  `IPv6PrefixDelegation` lease when KAME `dhcp6c` has not left a usable
+  downstream address on the interface. routerd then applies the address with
+  `ifconfig <ifname> inet6 <address> prefixlen 64 alias`.
 - `spec.sendRA: true` lets dnsmasq advertise the prefix through RA.
 - `spec.announce: true` exposes this address as a candidate for
   `dnsSource: self` and for DS-Lite local-address selection.

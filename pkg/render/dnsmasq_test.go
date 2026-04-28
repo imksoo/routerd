@@ -309,6 +309,21 @@ func TestDnsmasqServiceUnitDoesNotOwnRouterdRuntimeDirectory(t *testing.T) {
 	}
 }
 
+func TestDnsmasqRCScriptUsesFreeBSDRuntimeDirectory(t *testing.T) {
+	script := string(DnsmasqRCScript("/usr/local/etc/routerd/dnsmasq.conf", "/var/run/routerd"))
+	for _, want := range []string{
+		`name="routerd_dnsmasq"`,
+		`rcvar="routerd_dnsmasq_enable"`,
+		`command="/usr/local/sbin/dnsmasq"`,
+		`pidfile="/var/run/routerd/dnsmasq.pid"`,
+		`--conf-file=/usr/local/etc/routerd/dnsmasq.conf`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("rc.d script missing %q:\n%s", want, script)
+		}
+	}
+}
+
 func TestDnsmasqConfigDerivesIPv6SelfDNSFromRoutePrefix(t *testing.T) {
 	spec := api.IPv6DHCPScopeSpec{DNSSource: "self", DelegatedAddress: "lan-ipv6"}
 	delegated := delegatedIPv6Address{

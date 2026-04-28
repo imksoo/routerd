@@ -198,12 +198,12 @@ intent.
 | `PPPoEInterface` | PPP interface, Linux PPPoE systemd unit and PPP secret files, or FreeBSD mpd5 config and `mpd5` service |
 | `IPv4StaticAddress` | IPv4 address |
 | `IPv4DHCPAddress` | DHCPv4 client binding and renderer-specific route/DNS adoption settings |
-| `IPv4DHCPServer` | dnsmasq config and service |
+| `IPv4DHCPServer` | dnsmasq config and service; Linux uses `routerd-dnsmasq.service`, FreeBSD uses `/usr/local/etc/rc.d/routerd_dnsmasq` |
 | `IPv4DHCPScope` | dnsmasq DHCPv4 scope |
 | `IPv6DHCPAddress` | DHCPv6 client binding |
 | `IPv6PrefixDelegation` | DHCPv6 prefix delegation binding; FreeBSD KAME `dhcp6c` DUID file for NTT link-layer DUID profiles |
-| `IPv6DelegatedAddress` | IPv6 address |
-| `IPv6DHCPServer` | dnsmasq config and service |
+| `IPv6DelegatedAddress` | IPv6 address, including FreeBSD LAN-side aliases derived from stored PD lease state when the downstream address is no longer visible |
+| `IPv6DHCPServer` | dnsmasq config and service; Linux uses `routerd-dnsmasq.service`, FreeBSD uses `/usr/local/etc/rc.d/routerd_dnsmasq` |
 | `IPv6DHCPScope` | dnsmasq DHCPv6 scope |
 | `SelfAddressPolicy` | routerd address-selection policy |
 | `DNSConditionalForwarder` | dnsmasq conditional forwarding config |

@@ -538,7 +538,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			"resources": fmt.Sprintf("%d", len(result.Resources)),
 		})
 		if platformDefaults.OS == platform.OSFreeBSD {
-			next, err := runFreeBSDApplyOnce(effectiveRouter, opts, stdout, logger, engine, result, generation)
+			next, err := runFreeBSDApplyOnce(effectiveRouter, opts, stdout, logger, engine, result, generation, stateStore)
 			if store, ok := stateStore.(routerstate.GenerationStore); ok && next != nil {
 				_ = store.FinishGeneration(generation, next.Phase, next.Warnings)
 				generationFinished = true
@@ -853,7 +853,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	return result, nil
 }
 
-func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger, engine *apply.Engine, result *apply.Result, generation int64) (*apply.Result, error) {
+func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger, engine *apply.Engine, result *apply.Result, generation int64, stateStore routerstate.Store) (*apply.Result, error) {
 	policy := effectiveApplyPolicy(router)
 	var applyErrors []string
 	recordStageError := func(stage string, err error) error {
@@ -897,7 +897,32 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	var appliedIPv6DelegatedAddresses []string
 	if err := recordStageError("ipv6-delegated-address", func() error {
 		var err error
-		appliedIPv6DelegatedAddresses, err = applyIPv6DelegatedAddresses(router)
+		appliedIPv6DelegatedAddresses, err = applyIPv6DelegatedAddressesWithState(router, stateStore)
+		return err
+	}()); err != nil {
+		return nil, err
+	}
+	var dnsmasqChangedFiles []string
+	if err := recordStageError("dnsmasq", func() error {
+		dnsmasqConfig, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
+			DHCPv4DNSServersByInterface: observedDNSServersByInterface(router),
+			DHCPv6DNSServersByInterface: observedDNSServersByInterface(router),
+			IPv6AddressesByInterface:    observedIPv6AddressesByInterface(router),
+			IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(router),
+			RuntimeDir:                  platformDefaults.RuntimeDir,
+		})
+		if err != nil {
+			return err
+		}
+		dnsmasqChangedFiles, err = applyDnsmasqConfig(opts.DnsmasqConfigPath, opts.DnsmasqServicePath, dnsmasqConfig)
+		return err
+	}()); err != nil {
+		return nil, err
+	}
+	var appliedIPv6DefaultRoutes []string
+	if err := recordStageError("ipv6-default-route", func() error {
+		var err error
+		appliedIPv6DefaultRoutes, err = applyFreeBSDIPv6DefaultRoutes(router)
 		return err
 	}()); err != nil {
 		return nil, err
@@ -915,7 +940,13 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	for _, address := range appliedIPv6DelegatedAddresses {
 		fmt.Fprintf(stdout, "applied IPv6 delegated address %s\n", address)
 	}
-	if len(changedFreeBSD) == 0 && len(appliedRuntime) == 0 && len(appliedHostnames) == 0 && len(appliedIPv6DelegatedAddresses) == 0 {
+	for _, path := range dnsmasqChangedFiles {
+		fmt.Fprintf(stdout, "applied dnsmasq %s\n", path)
+	}
+	for _, route := range appliedIPv6DefaultRoutes {
+		fmt.Fprintf(stdout, "applied IPv6 default route %s\n", route)
+	}
+	if len(changedFreeBSD) == 0 && len(appliedRuntime) == 0 && len(appliedHostnames) == 0 && len(appliedIPv6DelegatedAddresses) == 0 && len(dnsmasqChangedFiles) == 0 && len(appliedIPv6DefaultRoutes) == 0 {
 		fmt.Fprintln(stdout, "FreeBSD configuration already up to date")
 	}
 
@@ -956,6 +987,8 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 		"runtimeSysctls":      fmt.Sprintf("%d", len(appliedRuntime)),
 		"hostnames":           fmt.Sprintf("%d", len(appliedHostnames)),
 		"delegatedAddresses":  fmt.Sprintf("%d", len(appliedIPv6DelegatedAddresses)),
+		"dnsmasqFiles":        fmt.Sprintf("%d", len(dnsmasqChangedFiles)),
+		"ipv6DefaultRoutes":   fmt.Sprintf("%d", len(appliedIPv6DefaultRoutes)),
 		"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 	})
 	return next, nil
@@ -2752,16 +2785,30 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 }
 
 func applyIPv6DelegatedAddresses(router *api.Router) ([]string, error) {
+	return applyIPv6DelegatedAddressesWithState(router, nil)
+}
+
+func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.Store) ([]string, error) {
 	aliases := map[string]string{}
+	pdPrefixes := map[string]string{}
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
+		switch res.Kind {
+		case "Interface":
+			spec, err := res.InterfaceSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = spec.IfName
+		case "IPv6PrefixDelegation":
+			if store == nil {
+				continue
+			}
+			base := "ipv6PrefixDelegation." + res.Metadata.Name
+			lease, _ := routerstate.PDLeaseFromStore(store, base)
+			if prefix := usablePDLeasePrefix(lease); prefix != "" {
+				pdPrefixes[res.Metadata.Name] = prefix
+			}
 		}
-		spec, err := res.InterfaceSpec()
-		if err != nil {
-			return nil, err
-		}
-		aliases[res.Metadata.Name] = spec.IfName
 	}
 	var applied []string
 	for _, res := range router.Spec.Resources {
@@ -2779,10 +2826,16 @@ func applyIPv6DelegatedAddresses(router *api.Router) ([]string, error) {
 		address, err := deriveIPv6AddressFromInterface(ifname, spec.AddressSuffix)
 		if err != nil {
 			if errors.Is(err, errNoIPv6PrefixAvailable) {
-				applied = append(applied, "skipped-unavailable:"+ifname)
-				continue
+				if prefix := pdPrefixes[spec.PrefixDelegation]; prefix != "" {
+					address, err = deriveIPv6AddressFromDelegatedPrefix(prefix, spec.SubnetID, spec.AddressSuffix)
+				}
+				if err != nil {
+					applied = append(applied, "skipped-unavailable:"+ifname)
+					continue
+				}
+			} else {
+				return nil, fmt.Errorf("%s derive delegated address: %w", res.ID(), err)
 			}
-			return nil, fmt.Errorf("%s derive delegated address: %w", res.ID(), err)
 		}
 		ensured, err := ensureIPv6LocalAddress(ifname, address)
 		if err != nil {
@@ -2793,6 +2846,13 @@ func applyIPv6DelegatedAddresses(router *api.Router) ([]string, error) {
 		}
 	}
 	return applied, nil
+}
+
+func usablePDLeasePrefix(lease routerstate.PDLease) string {
+	if lease.CurrentPrefix != "" {
+		return lease.CurrentPrefix
+	}
+	return lease.LastPrefix
 }
 
 func applyIPv4PolicyRoutes(router *api.Router) ([]string, error) {
@@ -3784,6 +3844,51 @@ func deriveIPv6AddressFromInterface(ifname, suffix string) (string, error) {
 	return deriveIPv6AddressFromGlobalAddress(ipv6Addresses(ifname), suffix)
 }
 
+func deriveIPv6AddressFromDelegatedPrefix(value, subnetID, suffix string) (string, error) {
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil || !prefix.Addr().Is6() {
+		return "", fmt.Errorf("invalid delegated IPv6 prefix %q", value)
+	}
+	if prefix.Bits() > 64 {
+		return "", fmt.Errorf("delegated IPv6 prefix %q is longer than /64", value)
+	}
+	subnet, err := parseIPv6SubnetID(defaultString(subnetID, "0"))
+	if err != nil {
+		return "", err
+	}
+	subnetBits := 64 - prefix.Bits()
+	if subnetBits < 64 && subnet >= (uint64(1)<<subnetBits) {
+		return "", fmt.Errorf("subnetID %q does not fit in delegated prefix %s", subnetID, value)
+	}
+	suffixAddr, err := netip.ParseAddr(suffix)
+	if err != nil || !suffixAddr.Is6() {
+		return "", fmt.Errorf("invalid IPv6 suffix %q", suffix)
+	}
+	addrBytes := prefix.Masked().Addr().As16()
+	first64 := binary.BigEndian.Uint64(addrBytes[:8])
+	first64 |= subnet
+	binary.BigEndian.PutUint64(addrBytes[:8], first64)
+	suffixBytes := suffixAddr.As16()
+	for i := range addrBytes {
+		addrBytes[i] |= suffixBytes[i]
+	}
+	return netip.AddrFrom16(addrBytes).String(), nil
+}
+
+func parseIPv6SubnetID(value string) (uint64, error) {
+	if value == "" {
+		return 0, nil
+	}
+	if parsed, err := strconv.ParseUint(value, 0, 64); err == nil {
+		return parsed, nil
+	}
+	parsed, err := strconv.ParseUint(value, 16, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid IPv6 subnetID %q", value)
+	}
+	return parsed, nil
+}
+
 func deriveIPv6Address(prefixes []string, suffix string) (string, error) {
 	suffixAddr, err := netip.ParseAddr(suffix)
 	if err != nil || !suffixAddr.Is6() {
@@ -3837,7 +3942,7 @@ func ensureIPv6LocalAddress(ifname, address string) (bool, error) {
 		}
 	}
 	if platformDefaults.OS == platform.OSFreeBSD {
-		if err := runLogged("ifconfig", ifname, "inet6", address, "prefixlen", "128", "alias"); err != nil {
+		if err := runLogged("ifconfig", ifname, "inet6", address, "prefixlen", "64", "alias"); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -3966,6 +4071,9 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	if err != nil {
 		return nil, fmt.Errorf("dnsmasq is required for managed IPv4 DHCP service: %w", err)
 	}
+	if platformDefaults.OS == platform.OSFreeBSD {
+		return applyFreeBSDDnsmasqConfig(configPath, servicePath, configData)
+	}
 
 	var changedFiles []string
 	if err := os.MkdirAll(filepathDir(configPath), 0755); err != nil {
@@ -4016,6 +4124,111 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 		}
 	}
 	return nil, nil
+}
+
+func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte) ([]string, error) {
+	var changedFiles []string
+	if err := os.MkdirAll(filepathDir(configPath), 0755); err != nil {
+		return nil, fmt.Errorf("create directory for %s: %w", configPath, err)
+	}
+	changed, err := writeFileIfChanged(configPath, configData, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("write dnsmasq config %s: %w", configPath, err)
+	}
+	if changed {
+		changedFiles = append(changedFiles, configPath)
+	}
+	if err := os.MkdirAll(platformDefaults.RuntimeDir, 0755); err != nil {
+		return changedFiles, fmt.Errorf("create runtime directory %s: %w", platformDefaults.RuntimeDir, err)
+	}
+	if err := os.MkdirAll(filepathDir(servicePath), 0755); err != nil {
+		return changedFiles, fmt.Errorf("create directory for %s: %w", servicePath, err)
+	}
+	serviceChanged, err := writeFileIfChanged(servicePath, render.DnsmasqRCScript(configPath, platformDefaults.RuntimeDir), 0555)
+	if err != nil {
+		return changedFiles, fmt.Errorf("write dnsmasq rc.d script %s: %w", servicePath, err)
+	}
+	if serviceChanged {
+		changedFiles = append(changedFiles, servicePath)
+	}
+	if err := runLogged("sysrc", "routerd_dnsmasq_enable=YES"); err != nil {
+		return changedFiles, err
+	}
+	if len(changedFiles) > 0 || !freeBSDServiceRunning("routerd_dnsmasq") {
+		if freeBSDServiceRunning("routerd_dnsmasq") {
+			if err := runLogged("service", "routerd_dnsmasq", "restart"); err != nil {
+				return changedFiles, err
+			}
+		} else {
+			if err := runLogged("service", "routerd_dnsmasq", "start"); err != nil {
+				return changedFiles, err
+			}
+		}
+		changedFiles = append(changedFiles, "service:routerd_dnsmasq")
+	}
+	return changedFiles, nil
+}
+
+func applyFreeBSDIPv6DefaultRoutes(router *api.Router) ([]string, error) {
+	if platformDefaults.OS != platform.OSFreeBSD {
+		return nil, nil
+	}
+	aliases := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			return nil, err
+		}
+		aliases[res.Metadata.Name] = spec.IfName
+	}
+	var applied []string
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6DHCPAddress" {
+			continue
+		}
+		spec, err := res.IPv6DHCPAddressSpec()
+		if err != nil {
+			return nil, err
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			return nil, fmt.Errorf("%s references interface with empty ifname", res.ID())
+		}
+		currentOut, currentErr := exec.Command("sysctl", "-n", "net.inet6.ip6.rfc6204w3").CombinedOutput()
+		if currentErr != nil || strings.TrimSpace(string(currentOut)) != "1" {
+			if err := runLogged("sysctl", "-w", "net.inet6.ip6.rfc6204w3=1"); err != nil {
+				return applied, err
+			}
+			applied = append(applied, "sysctl:net.inet6.ip6.rfc6204w3")
+		}
+		if freeBSDHasIPv6DefaultRoute() {
+			continue
+		}
+		if _, err := exec.LookPath("rtsol"); err != nil {
+			continue
+		}
+		if err := runLogged("rtsol", ifname); err != nil {
+			return applied, err
+		}
+		applied = append(applied, "rtsol:"+ifname)
+	}
+	return applied, nil
+}
+
+func freeBSDHasIPv6DefaultRoute() bool {
+	out, err := exec.Command("netstat", "-rn", "-f", "inet6").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "default ") {
+			return true
+		}
+	}
+	return false
 }
 
 func applyTimesyncdConfig(path string, configData []byte) ([]string, error) {
