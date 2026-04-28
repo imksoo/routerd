@@ -123,6 +123,53 @@ Interpretation:
   hint mechanism, but still needs an OS-client-safe renewal operation or an
   observation point that captures Renew/Rebind before the lease expires.
 
+### PR-400NE Lab Observation: Renew Hooks
+
+On 2026-04-28, routerd's first OS-level renew hooks were tested on router01
+and router02 after installing the latest binaries on router01, router02, and
+router03 and restarting their routerd services. The test preserved the
+management paths and restored the state databases afterward.
+
+Router01, FreeBSD with KAME `dhcp6c`, was seeded with a structured lease for
+`2409:10:3d60:1230::/60`, `lastObservedAt` two hours in the past, and
+`validLifetime` 14400 seconds. Reconcile recorded `lastRenewAttemptAt`, so
+routerd did run the hook. tcpdump on `vtnet0` showed:
+
+- an initial set of Solicit packets with the length-only `::/60` hint, caused
+  by the first reconcile after the new binary changed the rendered `dhcp6c`
+  configuration;
+- a later set of Solicit packets with IA_PD IAID `0` and the seeded
+  `2409:10:3d60:1230::/60` prefix hint;
+- no Renew packet, no Rebind packet, and no Advertise or Reply from the
+  PR-400NE during the capture.
+
+This confirms that the hook and hint feed can push KAME `dhcp6c` into sending
+a hint-bearing Solicit, but it did not recover the PD lease in this PR-400NE
+state. The test was not a clean Renew path because the client had no visible
+active PD lease and the first reconcile also had to repair generated
+configuration.
+
+Router02, systemd-networkd, was seeded with the same style of lease memory.
+Reconcile recorded `lastRenewAttemptAt`, so routerd did call
+`networkctl renew ens18`. tcpdump on `ens18` captured no DHCPv6 packets during
+the test window. In this state, `networkctl renew` did not produce an
+observable DHCPv6-PD Renew/Rebind/Solicit packet.
+
+Design consequence:
+
+- Keep `lastRenewAttemptAt`; it is useful to prove that routerd tried exactly
+  once for a missing lease episode.
+- Treat the current renew hooks as best-effort nudges, not as a reliable PD
+  recovery mechanism.
+- For KAME `dhcp6c`, a no-release restart plus a prefix hint may be the
+  practical recovery action when no in-memory lease exists, but it is still a
+  fresh Solicit path and depends on the home gateway responding.
+- For systemd-networkd, routerd needs either a better control path or a
+  scheduled check before the lease expires while networkd still has live
+  DHCPv6 state.
+- Add explicit logging for renew hook invocation and result so future packet
+  captures can be correlated without relying only on state changes.
+
 ## DHCPv6 Prefix Delegation Behavior in Other Routers
 
 This note compares open-source and commercial DHCPv6 Prefix Delegation
