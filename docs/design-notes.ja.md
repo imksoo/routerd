@@ -436,6 +436,80 @@ IA_NA と IA_PD を同時に求める場合の実装案:
 - 出力テストでは、NTT 既定では IA_PD だけが出ること、明示的な実験スイッチを
   入れた時だけ IA_NA と IA_PD が同時に出ることを確認します。
 
+### 2026-04-29 HGW 再起動後のパケット比較
+
+PR-400NE を再起動した後、HGW 画面では 3 台すべてに `/60` が払い出されました。
+
+- router01: `2409:10:3d60:1220::/60`
+- router02: `2409:10:3d60:1230::/60`
+- router03: `2409:10:3d60:1240::/60`
+
+router03 の WAN 側で、再起動中の DHCPv6 パケットを取得しました。この取得には、
+IX2215 や Aterm と思われる別 DUID の Solicit は入りませんでした。そのため、
+商用ルーターとのバイト単位比較はまだ未完了です。一方で、router03 と PR-400NE
+の完全な取得手順は取れています。
+
+| 項目 | router02 の比較用 Solicit | router03 の成功した取得 |
+| --- | --- | --- |
+| クライアント DUID | DUID-LL、MAC `bc:24:11:30:5d:76` | DUID-LL、MAC `bc:24:11:40:32:de` |
+| UDP ポート | 送信元 546、宛先 547 | 送信元 546、宛先 547 |
+| 要求内容 | IA_PD のみ。IA_NA、Rapid Commit、Vendor Class、Reconfigure Accept はなし。 | Solicit では IA_PD のみ。IA_NA、Rapid Commit、Vendor Class、Reconfigure Accept はなし。 |
+| Solicit のオプション順 | IA_PD、Client FQDN、Option Request、Client Identifier、Elapsed Time | IA_PD、Client FQDN、Option Request、Client Identifier、Elapsed Time |
+| 要求オプション | SIP ドメイン、SIP アドレス、DNS、SNTP、NTP、option 82、option 103、option 144 | DNS、SNTP、NTP、option 82、option 103 |
+| プレフィックスヒント | `2409:10:3d60:1230::/60` | 最初は `2409:10:3d60:1220::/60`。HGW は `2409:10:3d60:1240::/60` を返した。 |
+| サーバー応答 | 比較用取得では応答なし | Advertise と Reply はリンクローカル `fe80::1eb1:7fff:fe73:76d8`、UDP 送信元 49153、宛先 546 から返った。 |
+| サーバー側オプション | 観測なし | Server Identifier は DUID-LL、MAC `1c:b1:7f:73:76:d8`。DNS、SNTP、IA_PD T1 7200、T2 12600、優先寿命 14400、有効寿命 14400。Reply には Reconfigure Accept も入っていた。 |
+
+重要な観測結果:
+
+- 成功した router03 の Solicit は、router02 の routerd 生成 networkd Solicit と
+  ほぼ同じ構造です。どちらも DUID-LL、IA_PD のみ、UDP 送信元 546、主要な
+  オプション順も同じです。
+- PR-400NE は今回も UDP 送信元 49153 から応答しました。したがって、
+  DHCPv6 クライアント向け受信は、送信元 547 ではなく宛先 546 で許可する
+  方針を維持します。
+- router03 の最初の Solicit は、状態から得た古い
+  `2409:10:3d60:1220::/60` をヒントにしていました。しかし HGW は
+  `2409:10:3d60:1240::/60` を委譲しました。正確なヒントはあくまで希望であり、
+  違う `/60` が返っても routerd はそれを受け入れ、すぐ状態を更新する必要が
+  あります。
+- router02 は復帰後も `2409:10:3d60:1230::/60` でした。これは前回の
+  `lastPrefix` と一致します。HGW が紐付けを覚えている、または同じ紐付けを
+  作り直せる場合に、`hintFromState` が同一プレフィックス復帰を助け得る
+  という裏付けになります。ただし、ヒントだけが原因だとまでは断定しません。
+- キャプチャには、router03 が Reply 後に Release を送り、その直後に再度
+  Solicit して成功する流れも入っていました。取得が成功している時でも、
+  制御されていないクライアント再起動は HGW 側の紐付けを揺らす可能性が
+  あります。systemd-networkd 経路では Release 抑止を引き続き重視します。
+
+### 2026-04-29 PD 復活後の状態検証
+
+同じ復旧タイミングで、routerd の状態と OS の状態を確認しました。
+
+| ホスト | routerd の PD 状態 | LAN 側 IPv6 | dnsmasq | DS-Lite | IPv6 外部疎通 |
+| --- | --- | --- | --- | --- | --- |
+| router01 / FreeBSD | `routerctl describe ipv6pd/wan-pd` では、現在値と最後に見えた値が `2409:10:3d60:1220::/60`。 | `vtnet1` はリンクローカルのみ。期待する `2409:10:3d60:1220::1/64` はまだ付いていない。 | `routerd_dnsmasq` は存在せず、`dnsmasq` も動いていない。 | DS-Lite トンネルは見えない。 | `ping6 ipv6.google.com` は経路なしで失敗。 |
+| router02 / NixOS | `routerctl describe ipv6pd/wan-pd` では、現在値と最後に見えた値が `2409:10:3d60:1230::/60`。 | `ens19` に `2409:10:3d60:1230::2/64` と、DS-Lite 送信元用の `::100`、`::101`、`::102` が付いている。 | 動作中。設定は `192.168.160.2` と `2409:10:3d60:1230::2` で待ち受け、`ens19` で RA を出し、DNS として `2409:10:3d60:1230::2` を配る。 | `ds-lite-a`、`ds-lite-b`、`ds-lite-c` が MTU 1454 で起動し、送信元は `::100`、`::101`、`::102`。 | `ping6 ipv6.google.com` は成功。 |
+| router03 / Ubuntu | `routerctl describe ipv6pd/wan-pd` では、現在値と最後に見えた値が `2409:10:3d60:1240::/60`。 | `ens19` に `2409:10:3d60:1240::3/128` が付いており、委譲 `/64` の経路もある。 | 動作中。設定は `192.168.160.3` と `2409:10:3d60:1240::3` で待ち受け、`ens19` で RA を出し、DNS として `2409:10:3d60:1240::3` を配る。 | `ds-lite-a`、`ds-lite-b`、`ds-lite-c` が MTU 1454 で起動し、送信元は `2409:10:3d60:1240::3`。 | `ping6 ipv6.google.com` は成功。 |
+
+今回の作業端末は、確認した LAN 側リンクでグローバル IPv6 アドレスと既定経路を
+持っていませんでした。そのため、下流クライアントが SLAAC で `/64` を取れて
+いるかの確認は、この作業端末からは完了できませんでした。
+
+今後の更新観測メモ:
+
+- HGW の応答では、T1 は 7200 秒、T2 は 12600 秒、優先寿命と有効寿命は
+  14400 秒でした。
+- 正常取得後、T1 の少し前から T2 を越えるまでパケットを取る観測枠を用意します。
+  運用者側の cron または systemd timer で tcpdump を起動し、
+  `/tmp/routerd-pd-renew-<host>-<timestamp>.pcap` のように保存すればよいです。
+- 見るべき点は、OS 側クライアントが覚えているサーバーへ Renew を出すか、
+  T2 後に Rebind へ進むか、routerd の `lastObservedAt` が新規 Solicit なしに
+  更新されるか、HGW が同じ `/60` を維持するかです。
+- FreeBSD は優先度の高い残件です。PD 自体は受け取れるようになりましたが、
+  復帰したプレフィックスを LAN 側アドレス、dnsmasq、既定 IPv6 経路へ伝搬
+  できていません。
+
 ### 2026-04-28 の実機 DUID 確認
 
 DUID 管理のコードを変える前に、検証機で実際の設定とパケットを確認しました。

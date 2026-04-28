@@ -430,6 +430,81 @@ Implementation option for IA_NA+IA_PD:
 - Renderer tests should assert both modes: NTT default renders only IA_PD,
   while the explicit experiment switch renders IA_NA and IA_PD together.
 
+### Packet Comparison After the 2026-04-29 HGW Restart
+
+After another PR-400NE restart, the HGW screen showed all three lab routers
+with delegated `/60` prefixes:
+
+- router01: `2409:10:3d60:1220::/60`
+- router02: `2409:10:3d60:1230::/60`
+- router03: `2409:10:3d60:1240::/60`
+
+router03 captured DHCPv6 traffic on its WAN interface during the restart
+window. The capture did not include a separate IX2215 or Aterm client DUID, so
+it is not yet a byte-for-byte comparison against a working commercial router.
+It did capture a complete router03 exchange with the PR-400NE:
+
+| Item | router02 local Solicit sample | router03 successful restart exchange |
+| --- | --- | --- |
+| Client DUID | DUID-LL, MAC `bc:24:11:30:5d:76` | DUID-LL, MAC `bc:24:11:40:32:de` |
+| UDP ports | source 546, destination 547 | source 546, destination 547 |
+| Request contents | IA_PD only. No IA_NA, no Rapid Commit, no Vendor Class, no Reconfigure Accept. | IA_PD only. No IA_NA, no Rapid Commit, no Vendor Class, no Reconfigure Accept in Solicit. |
+| Option order in Solicit | IA_PD, Client FQDN, Option Request, Client Identifier, Elapsed Time | IA_PD, Client FQDN, Option Request, Client Identifier, Elapsed Time |
+| Option Request | SIP domain, SIP address, DNS, SNTP, NTP, option 82, option 103, option 144 | DNS, SNTP, NTP, option 82, option 103 |
+| Prefix hint | `2409:10:3d60:1230::/60` | initially `2409:10:3d60:1220::/60`, then the HGW delegated `2409:10:3d60:1240::/60` |
+| Server response | no response in the comparison sample | Advertise and Reply came from link-local `fe80::1eb1:7fff:fe73:76d8`, UDP source port 49153, destination port 546 |
+| Server options | none observed | Server Identifier DUID-LL MAC `1c:b1:7f:73:76:d8`, DNS, SNTP, IA_PD T1 7200, T2 12600, preferred lifetime 14400, valid lifetime 14400. Reply also included Reconfigure Accept. |
+
+Important observations:
+
+- The successful router03 Solicit is structurally the same as router02's
+  routerd-rendered networkd Solicit. Both use DUID-LL, IA_PD only, UDP source
+  port 546, and the same main option order.
+- The PR-400NE again replied from UDP source port 49153, so the rule remains:
+  inbound DHCPv6 client traffic must match destination port 546, not source
+  port 547.
+- The first router03 Solicit carried the old state-derived prefix hint
+  `2409:10:3d60:1220::/60`, but the HGW delegated `2409:10:3d60:1240::/60`.
+  This confirms that an exact hint is advisory. routerd must accept a different
+  `/60`, update state immediately, and not treat the mismatch as an error.
+- router02's restored prefix stayed `2409:10:3d60:1230::/60`, matching its
+  previous `lastPrefix`. That is useful evidence that `hintFromState` can help
+  return to the same prefix when the HGW still has, or recreates, a matching
+  binding. It is not proof that the hint was the only cause.
+- The capture also showed a router03 Release shortly after a Reply, followed
+  by another Solicit and successful Request/Reply. That is a warning for the
+  systemd-networkd path: even when acquisition works, uncontrolled client
+  restarts can send Release and churn the HGW binding.
+
+### State Validation After PD Recovery
+
+The same recovery window was checked from routerd state and OS state.
+
+| Host | routerd PD state | LAN-side IPv6 | dnsmasq | DS-Lite | IPv6 reachability |
+| --- | --- | --- | --- | --- | --- |
+| router01 / FreeBSD | `routerctl describe ipv6pd/wan-pd` reported current and last prefix `2409:10:3d60:1220::/60`. | `vtnet1` still had only link-local IPv6; the expected `2409:10:3d60:1220::1/64` was missing. | `routerd_dnsmasq` was not present and `dnsmasq` was not running. | no DS-Lite tunnel observed. | `ping6 ipv6.google.com` failed with no route. |
+| router02 / NixOS | `routerctl describe ipv6pd/wan-pd` reported current and last prefix `2409:10:3d60:1230::/60`. | `ens19` had `2409:10:3d60:1230::2/64` plus DS-Lite source addresses `::100`, `::101`, and `::102`. | active; config listened on `192.168.160.2` and `2409:10:3d60:1230::2`, advertised RA on `ens19`, and handed out DNS `2409:10:3d60:1230::2`. | `ds-lite-a`, `ds-lite-b`, and `ds-lite-c` were up with MTU 1454 and sources `::100`, `::101`, `::102`. | `ping6 ipv6.google.com` succeeded. |
+| router03 / Ubuntu | `routerctl describe ipv6pd/wan-pd` reported current and last prefix `2409:10:3d60:1240::/60`. | `ens19` had `2409:10:3d60:1240::3/128`; the kernel also had the delegated `/64` route. | active; config listened on `192.168.160.3` and `2409:10:3d60:1240::3`, advertised RA on `ens19`, and handed out DNS `2409:10:3d60:1240::3`. | `ds-lite-a`, `ds-lite-b`, and `ds-lite-c` were up with MTU 1454 and source `2409:10:3d60:1240::3`. | `ping6 ipv6.google.com` succeeded. |
+
+The current development host did not have a global IPv6 address or default IPv6
+route on the tested LAN-facing links, so a downstream SLAAC client check could
+not be completed from that host in this pass.
+
+Follow-up for renewal observation:
+
+- HGW replies reported T1 7200 seconds and T2 12600 seconds, with 14400 second
+  preferred and valid lifetimes.
+- Schedule an observation window before T1 and through T2 after a successful
+  lease. A simple operator-side cron or systemd timer can run tcpdump around
+  T1/T2 and save `/tmp/routerd-pd-renew-<host>-<timestamp>.pcap`.
+- The important packet-level questions are whether the OS client sends Renew
+  to the remembered server, whether Rebind appears after T2, whether routerd
+  state updates `lastObservedAt` without a new Solicit, and whether the HGW
+  keeps the same `/60`.
+- FreeBSD remains the highest-priority follow-up because it now receives PD
+  but does not yet propagate the recovered prefix to LAN addressing, dnsmasq,
+  or a default IPv6 route.
+
 ### Lab DUID Validation on 2026-04-28
 
 The lab hosts were checked before changing DUID management code:
