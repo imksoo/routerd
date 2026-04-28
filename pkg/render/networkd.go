@@ -7,8 +7,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"routerd/pkg/api"
+	routerstate "routerd/pkg/state"
 )
 
 type File struct {
@@ -24,9 +26,14 @@ type pdSource struct {
 	IAID         string
 	DUIDType     string
 	DUIDRawData  string
+	PrefixHint   string
 }
 
 func NetworkdDropins(router *api.Router) ([]File, error) {
+	return NetworkdDropinsWithState(router, nil)
+}
+
+func NetworkdDropinsWithState(router *api.Router, store *routerstate.Store) ([]File, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Interface" {
@@ -56,6 +63,7 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 			IAID:         spec.IAID,
 			DUIDType:     spec.DUIDType,
 			DUIDRawData:  spec.DUIDRawData,
+			PrefixHint:   prefixHintFromState(res.Metadata.Name, spec, store),
 		}
 	}
 
@@ -168,8 +176,36 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 		buf.WriteString("WithoutRA=solicit\n")
 	}
 	if source.PrefixLength != 0 {
-		buf.WriteString(fmt.Sprintf("PrefixDelegationHint=::/%d\n", source.PrefixLength))
+		hint := source.PrefixHint
+		if hint == "" {
+			hint = fmt.Sprintf("::/%d", source.PrefixLength)
+		}
+		buf.WriteString("PrefixDelegationHint=" + hint + "\n")
 	}
+}
+
+func prefixHintFromState(name string, spec api.IPv6PrefixDelegationSpec, store *routerstate.Store) string {
+	if store == nil || (spec.HintFromState != nil && !*spec.HintFromState) {
+		return ""
+	}
+	base := "ipv6PrefixDelegation." + name
+	if lease, ok := routerstate.DecodePDLease(store.Get(base + ".lease").Value); ok {
+		if prefix, ok := routerstate.PDLeaseHintPrefix(lease, time.Now().UTC()); ok {
+			return prefix
+		}
+	}
+	lease := routerstate.PDLease{
+		LastPrefix:         store.Get(base + ".lastPrefix").Value,
+		LastObservedServer: store.Get(base + ".lastObservedServer").Value,
+		PreferredLifetime:  store.Get(base + ".preferredLifetime").Value,
+		ValidLifetime:      store.Get(base + ".validLifetime").Value,
+		LastObservedAt:     store.Get(base + ".lastObservedAt").Value,
+	}
+	prefix, ok := routerstate.PDLeaseHintPrefix(lease, time.Now().UTC())
+	if !ok {
+		return ""
+	}
+	return prefix
 }
 
 func normalizeIAIDForRender(value string) string {

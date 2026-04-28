@@ -3,8 +3,10 @@ package render
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"routerd/pkg/api"
+	routerstate "routerd/pkg/state"
 )
 
 func TestFreeBSDRendersRouter01Basics(t *testing.T) {
@@ -84,5 +86,32 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		if !strings.Contains(mpd5, want) {
 			t.Fatalf("mpd5 output missing %q:\n%s", want, mpd5)
 		}
+	}
+}
+
+func TestFreeBSDRendersPrefixHintFromState(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcp6c", Profile: "ntt-hgw-lan-pd", PrefixLength: 60, IAID: "ca53095a"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", SubnetID: "0", AddressSuffix: "::1", Announce: true}},
+	}}}
+	store := routerstate.New()
+	lease := routerstate.PDLease{
+		LastPrefix:     "2001:db8:1234:1240::/60",
+		ValidLifetime:  "14400",
+		LastObservedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(lease), "test")
+
+	got, err := FreeBSDWithStateAndPPPoEPasswords(router, store, func(_ api.Resource, spec api.PPPoEInterfaceSpec) (string, error) {
+		return spec.Password, nil
+	})
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	dhcp6c := string(got.DHCP6C)
+	if !strings.Contains(dhcp6c, "prefix 2001:db8:1234:1240::/60 infinity;") {
+		t.Fatalf("dhcp6c output missing prefix hint:\n%s", dhcp6c)
 	}
 }

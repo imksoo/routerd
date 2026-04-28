@@ -133,7 +133,11 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	if err := config.Validate(router); err != nil {
 		return err
 	}
-	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
+	stateStore, err := routerstate.Load(defaultStatePath)
+	if err != nil {
+		return err
+	}
+	data, err := render.FreeBSDWithStateAndPPPoEPasswords(router, stateStore, pppoePassword)
 	if err != nil {
 		return err
 	}
@@ -519,7 +523,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			if isNixOSHost() {
 				netplanData = nil
 			}
-			networkdFiles, err := render.NetworkdDropins(effectiveRouter)
+			networkdFiles, err := render.NetworkdDropinsWithState(effectiveRouter, stateStore)
 			if err != nil {
 				return err
 			}
@@ -810,7 +814,7 @@ func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, std
 	var changedFreeBSD []string
 	if err := recordStageError("freebsd-network", func() error {
 		var err error
-		changedFreeBSD, err = applyFreeBSDConfig(router, defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath, defaultFreeBSDMPD5Path)
+		changedFreeBSD, err = applyFreeBSDConfig(router, defaultString(opts.StatePath, defaultStatePath), defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath, defaultFreeBSDMPD5Path)
 		return err
 	}()); err != nil {
 		return nil, err
@@ -1024,6 +1028,10 @@ func recordObservedPrefixDelegationState(router *api.Router, store *routerstate.
 			stateChange{Name: base + ".lastObservedAt", Value: store.Set(base+".lastObservedAt", store.Now().Format(time.RFC3339), res.ID()+": observed delegated prefix")},
 			stateChange{Name: base + ".downstreamIfname", Value: store.Set(base+".downstreamIfname", observedIfname, res.ID()+": observed delegated prefix")},
 		)
+		lease, _ := routerstate.DecodePDLease(store.Get(base + ".lease").Value)
+		lease.LastPrefix = observedPrefix
+		lease.LastObservedAt = store.Now().Format(time.RFC3339)
+		changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": observed delegated prefix lease")})
 	}
 	return changes, nil
 }
@@ -2236,8 +2244,12 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 	return changedFiles, nil
 }
 
-func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, mpd5Path string) ([]string, error) {
-	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
+func applyFreeBSDConfig(router *api.Router, statePath, dhclientPath, dhcp6cPath, mpd5Path string) ([]string, error) {
+	stateStore, err := routerstate.Load(statePath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := render.FreeBSDWithStateAndPPPoEPasswords(router, stateStore, pppoePassword)
 	if err != nil {
 		return nil, err
 	}

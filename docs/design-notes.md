@@ -65,6 +65,11 @@ Current groundwork:
   required restarts, because normal stops send DHCPv6 Release and can make a
   home gateway keep a stale lease while the client falls back to fresh
   Solicit.
+- `IPv6PrefixDelegation.spec.hintFromState` defaults to `true`. When routerd
+  has a last observed prefix whose valid lifetime has not elapsed, it feeds
+  that prefix back to systemd-networkd or KAME `dhcp6c` as a prefix hint. If
+  the lease memory is missing or too old, routerd falls back to a prefix-length
+  hint. This keeps the request harmless when the upstream forgot the old lease.
 - PR-400NE testing showed DHCPv6 Advertise/Reply packets with UDP destination
   port 546 and a non-547 source port. Firewall policy must match the client
   destination port and must not require source port 547.
@@ -126,6 +131,9 @@ Adopt:
   interface, client implementation, DUID, IAID, server DUID when observable,
   current prefix, previous prefix, preferred lifetime, valid lifetime, T1, T2,
   last observed time, last missing time, and acquisition state.
+- Feed a valid previous prefix to the OS DHCPv6 client as a prefix hint. This
+  is useful for home gateways that remember a DUID/IAID/prefix tuple, and it
+  degrades to an ordinary Solicit when the upstream ignores the hint.
 - Treat DUID and IAID as first-class desired state. Render them explicitly for
   systemd-networkd and KAME `dhcp6c` where possible, and warn when observed
   identity differs from the profile expectation.
@@ -164,8 +172,9 @@ Defer:
 
 - Add `routerctl show pd` with DUID, IAID, prefix, lifetimes, T1/T2, last
   observed time, last missing time, client status, and warnings.
-- Add an internal `PDLease` state model and migrate the current
-  `ipv6PrefixDelegation.<name>.*` variables into that model.
+- Extend the internal `PDLease` state model with server DUID, preferred
+  lifetime, valid lifetime, T1, T2, and acquisition state when each OS client
+  exposes them.
 - Add OS-specific renew hooks:
   - systemd-networkd: investigate whether DBus, `networkctl`, or service reload
     can request renewal without releasing state.

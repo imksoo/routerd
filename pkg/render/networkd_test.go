@@ -3,9 +3,11 @@ package render
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/config"
+	routerstate "routerd/pkg/state"
 )
 
 func TestNetworkdDropinsRenderDHCPv6PD(t *testing.T) {
@@ -107,6 +109,73 @@ func TestNetworkdDropinsRenderNTTFletsProfile(t *testing.T) {
 		if !strings.Contains(wan, want) {
 			t.Fatalf("wan drop-in missing %q:\n%s", want, wan)
 		}
+	}
+}
+
+func TestNetworkdDropinsRenderPrefixHintFromState(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{
+			Resources: []api.Resource{
+				netResource("Interface", "wan", api.InterfaceSpec{IfName: "ens18", Managed: false}),
+				netResource("IPv6PrefixDelegation", "wan-pd", api.IPv6PrefixDelegationSpec{
+					Interface:    "wan",
+					Client:       "networkd",
+					Profile:      "ntt-hgw-lan-pd",
+					PrefixLength: 60,
+				}),
+			},
+		},
+	}
+	store := routerstate.New()
+	lease := routerstate.PDLease{
+		LastPrefix:     "2001:db8:1234:1220::/60",
+		ValidLifetime:  "4h",
+		LastObservedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(lease), "test")
+
+	files, err := NetworkdDropinsWithState(router, store)
+	if err != nil {
+		t.Fatalf("render networkd dropins: %v", err)
+	}
+	wan := string(files[0].Data)
+	if !strings.Contains(wan, "PrefixDelegationHint=2001:db8:1234:1220::/60") {
+		t.Fatalf("wan drop-in missing state prefix hint:\n%s", wan)
+	}
+}
+
+func TestNetworkdDropinsSkipExpiredPrefixHintFromState(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{
+			Resources: []api.Resource{
+				netResource("Interface", "wan", api.InterfaceSpec{IfName: "ens18", Managed: false}),
+				netResource("IPv6PrefixDelegation", "wan-pd", api.IPv6PrefixDelegationSpec{
+					Interface:    "wan",
+					Client:       "networkd",
+					Profile:      "ntt-hgw-lan-pd",
+					PrefixLength: 60,
+				}),
+			},
+		},
+	}
+	store := routerstate.New()
+	lease := routerstate.PDLease{
+		LastPrefix:     "2001:db8:1234:1220::/60",
+		ValidLifetime:  "1h",
+		LastObservedAt: time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339),
+	}
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(lease), "test")
+
+	files, err := NetworkdDropinsWithState(router, store)
+	if err != nil {
+		t.Fatalf("render networkd dropins: %v", err)
+	}
+	wan := string(files[0].Data)
+	if strings.Contains(wan, "2001:db8:1234:1220::/60") {
+		t.Fatalf("wan drop-in must not include expired state prefix hint:\n%s", wan)
+	}
+	if !strings.Contains(wan, "PrefixDelegationHint=::/60") {
+		t.Fatalf("wan drop-in should fall back to length hint:\n%s", wan)
 	}
 }
 

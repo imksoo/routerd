@@ -176,7 +176,7 @@ spec:
 - `spec.managed: true` のとき、routerd はリンクとアドレスの状態を変更できます。ただし cloud-init や netplan が既に握っている場合は奪わず、計画上で「取り込み待ち」として表示します。
 - `spec.managed: false` の場合は観測専用です。別名解決はしますが、リンクとアドレスは触りません。
 
-ホスト側の所有関係や、`/var/lib/routerd/artifacts.json` のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership) を参照してください。
+ホスト側の所有関係や、`/var/lib/routerd/artifacts.json` のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership.md) を参照してください。
 
 ### PPPoEInterface
 
@@ -347,6 +347,7 @@ spec:
   profile: ntt-hgw-lan-pd
   prefixLength: 60
   convergenceTimeout: 5m
+  hintFromState: true
   iaid: ca53095a
   duidType: link-layer
   duidRawData: 00:01:02:00:5e:10:20:30
@@ -362,7 +363,8 @@ spec:
 
   どちらの NTT 系プロファイルも IA_PD のみを要求し、rapid commit を無効化、リンクレイヤ DUID を使用、必要に応じて DHCPv6 Solicit を強制し、`prefixLength` を明示しなければ `/60` をヒントにします。
 - `spec.convergenceTimeout` は、過去に見えていた委譲プレフィックスを「なくなった」と判断するまで routerd が待つ時間です。DHCPv6 クライアント自身のパケット再送間隔を変えるものではありません。通常の既定値は `2m`、NTT 系プロファイルでは `5m` です。ホームゲートウェイの再起動直後や、古いリースを覚えている状態では収束に時間がかかることがあるためです。
-- routerd は反映のたびに、観測できたプレフィックス委譲の状態をローカルの状態保存領域に記録します。キーは `ipv6PrefixDelegation.<name>.currentPrefix`、`ipv6PrefixDelegation.<name>.lastPrefix`、`ipv6PrefixDelegation.<name>.uplinkIfname`、`ipv6PrefixDelegation.<name>.downstreamIfname`、`ipv6PrefixDelegation.<name>.prefixLength` です。有効な待ち時間は `ipv6PrefixDelegation.<name>.convergenceTimeout` にも記録します。最後に観測できた時刻は `ipv6PrefixDelegation.<name>.lastObservedAt`、見えなかった時刻は `ipv6PrefixDelegation.<name>.lastMissingAt` に残します。下流側の委譲プレフィックスが見えなくなった場合でも、待ち時間のあいだは `currentPrefix` を維持します。待ち時間を過ぎても見えない場合は `currentPrefix` を消しますが、`lastPrefix` は残します。これにより、既知の機器を新規クライアントではなく既存リースの更新相手として扱う上流機器に対応するための足場を残せます。
+- `spec.hintFromState` は既定で `true` です。有効な場合、routerd は最後に観測した委譲プレフィックスを OS 側の DHCPv6 クライアントへプレフィックスヒントとして渡します。ただし、記録された有効寿命を過ぎている場合は使いません。ヒントが古い、存在しない、または無効化されている場合は、`::/60` のようなプレフィックス長だけのヒントに戻します。これはあくまでヒントです。上流は同じプレフィックスを返すことも、別のプレフィックスを返すことも、返さないこともあります。
+- routerd は反映のたびに、観測できたプレフィックス委譲の状態をローカルの状態保存領域に記録します。キーは `ipv6PrefixDelegation.<name>.currentPrefix`、`ipv6PrefixDelegation.<name>.lastPrefix`、`ipv6PrefixDelegation.<name>.lease`、`ipv6PrefixDelegation.<name>.uplinkIfname`、`ipv6PrefixDelegation.<name>.downstreamIfname`、`ipv6PrefixDelegation.<name>.prefixLength` です。有効な待ち時間は `ipv6PrefixDelegation.<name>.convergenceTimeout` にも記録します。最後に観測できた時刻は `ipv6PrefixDelegation.<name>.lastObservedAt`、見えなかった時刻は `ipv6PrefixDelegation.<name>.lastMissingAt` に残します。下流側の委譲プレフィックスが見えなくなった場合でも、待ち時間のあいだは `currentPrefix` を維持します。待ち時間を過ぎても見えない場合は `currentPrefix` を消しますが、`lastPrefix` は残します。これにより、既知の機器を新規クライアントではなく既存リースの更新相手として扱う上流機器に対応するための足場を残せます。`ipv6PrefixDelegation.<name>.lease` は同じリース記憶を構造化して保存する値です。現時点では `lastPrefix`、取得できる場合の `lastObservedServer`、`preferredLifetime`、`validLifetime`、`lastObservedAt` を持ち、レンダラがプレフィックスヒントを作るために使います。
 - systemd-networkd と FreeBSD の `dhcp6c` では、取得できる範囲で DHCP の識別情報も記録します。キーは `ipv6PrefixDelegation.<name>.iaid`、`ipv6PrefixDelegation.<name>.duid`、`ipv6PrefixDelegation.<name>.duidText`、`ipv6PrefixDelegation.<name>.identitySource` です。`dhcp6c` では `/var/db/dhcp6c_duid` から DUID を読み取り、IAID は設定された `iaid`、または `dhcp6c` の既定値である `0` から決めます。NTT 系プロファイルでは、上流インターフェースの MAC アドレスから DHCPv6 のリンクレイヤ DUID を計算し、`ipv6PrefixDelegation.<name>.expectedDUID` に残します。これらは望ましい設定ではなく、観測した状態の記憶です。将来の再試行処理では、この情報を使って、ホームゲートウェイが以前のリースを覚えている場合に更新に近い動きを優先できます。
 - リース期限が切れる前の Renew/Rebind は、OS 側の DHCPv6 クライアントの責務です。routerd は通常の反映でこのクライアントを再起動しないようにします。再起動すると、更新として続けられたはずの処理が新規 Solicit や Release に変わることがあるためです。
   現在のプレフィックスが観測できない場合、`plan`、`reconcile`、デーモン状態には警告を出します。上流リースが切れる前に DHCPv6 クライアントを直すためです。

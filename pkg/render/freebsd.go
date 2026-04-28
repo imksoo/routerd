@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	routerstate "routerd/pkg/state"
 )
 
 type FreeBSDConfig struct {
@@ -28,6 +29,10 @@ func FreeBSD(router *api.Router) (FreeBSDConfig, error) {
 }
 
 func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource, api.PPPoEInterfaceSpec) (string, error)) (FreeBSDConfig, error) {
+	return FreeBSDWithStateAndPPPoEPasswords(router, nil, passwordFor)
+}
+
+func FreeBSDWithStateAndPPPoEPasswords(router *api.Router, store *routerstate.Store, passwordFor func(api.Resource, api.PPPoEInterfaceSpec) (string, error)) (FreeBSDConfig, error) {
 	aliases := map[string]string{}
 	managed := map[string]bool{}
 	for _, res := range router.Spec.Resources {
@@ -96,7 +101,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 				return FreeBSDConfig{}, fmt.Errorf("%s references interface with empty ifname", res.ID())
 			}
 			dhcp6cIfaces[ifname] = true
-			pds = append(pds, freeBSDPD{Name: res.Metadata.Name, IfName: ifname, PrefixLength: effectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength), IAID: spec.IAID})
+			pds = append(pds, freeBSDPD{Name: res.Metadata.Name, IfName: ifname, PrefixLength: effectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength), IAID: spec.IAID, PrefixHint: prefixHintFromState(res.Metadata.Name, spec, store)})
 		case "PPPoEInterface":
 			spec, err := res.PPPoEInterfaceSpec()
 			if err != nil {
@@ -141,6 +146,7 @@ type freeBSDPD struct {
 	IfName       string
 	PrefixLength int
 	IAID         string
+	PrefixHint   string
 }
 
 type freeBSDPPPoE struct {
@@ -250,6 +256,9 @@ func freeBSDDHCP6C(router *api.Router, aliases map[string]string, pds []freeBSDP
 		buf.WriteString("  request domain-name-servers;\n")
 		buf.WriteString("};\n\n")
 		buf.WriteString(fmt.Sprintf("id-assoc pd %d {\n", iaid))
+		if pd.PrefixHint != "" {
+			buf.WriteString("  prefix " + pd.PrefixHint + " infinity;\n")
+		}
 		for _, res := range router.Spec.Resources {
 			if res.Kind != "IPv6DelegatedAddress" {
 				continue

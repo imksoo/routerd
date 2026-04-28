@@ -430,6 +430,7 @@ spec:
   profile: ntt-hgw-lan-pd
   prefixLength: 60
   convergenceTimeout: 5m
+  hintFromState: true
   iaid: ca53095a
   duidType: link-layer
   duidRawData: 00:01:02:00:5e:10:20:30
@@ -454,10 +455,17 @@ How routerd behaves:
   client's packet retry timers. The generic default is `2m`; NTT profiles
   default to `5m` because some home gateways converge slowly after restart or
   while old leases are being remembered.
+- `spec.hintFromState` defaults to `true`. When enabled, routerd feeds the
+  last observed delegated prefix back to the OS DHCPv6 client as a prefix
+  hint, as long as the recorded valid lifetime has not elapsed. If the hint is
+  too old, missing, or disabled, routerd falls back to a prefix-length hint
+  such as `::/60`. This is only a hint: an upstream may return the same prefix,
+  a different prefix, or no prefix.
 - During reconcile, routerd records observed prefix-delegation state in the
   local state store. The keys are
   `ipv6PrefixDelegation.<name>.currentPrefix`,
   `ipv6PrefixDelegation.<name>.lastPrefix`,
+  `ipv6PrefixDelegation.<name>.lease`,
   `ipv6PrefixDelegation.<name>.uplinkIfname`,
   `ipv6PrefixDelegation.<name>.downstreamIfname`, and
   `ipv6PrefixDelegation.<name>.prefixLength`. The effective convergence
@@ -471,6 +479,10 @@ How routerd behaves:
   This preserves enough local memory to support
   upstreams that treat a known client as an existing DHCPv6-PD lease rather
   than a fresh client.
+  `ipv6PrefixDelegation.<name>.lease` is a structured copy of the same lease
+  memory. It currently stores `lastPrefix`, `lastObservedServer` when
+  available, `preferredLifetime`, `validLifetime`, and `lastObservedAt`.
+  Renderers use this record for prefix hints.
 - For systemd-networkd and FreeBSD `dhcp6c` clients, routerd also records the observed DHCP
   identity when available: `ipv6PrefixDelegation.<name>.iaid`,
   `ipv6PrefixDelegation.<name>.duid`,
