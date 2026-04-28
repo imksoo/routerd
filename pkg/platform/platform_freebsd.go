@@ -4,7 +4,7 @@ package platform
 
 // FreeBSD support is in-progress. These defaults describe the install
 // layout so packaging, rc.d scripts, renderers, and the limited FreeBSD
-// reconciler can target stable paths. See docs/platforms.md.
+// applier can target stable paths. See docs/platforms.md.
 
 func currentDefaults() Defaults {
 	return Defaults{

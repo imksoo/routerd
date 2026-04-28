@@ -3,8 +3,8 @@ package controlapi
 import (
 	"time"
 
+	"routerd/pkg/apply"
 	"routerd/pkg/observe"
-	"routerd/pkg/reconcile"
 )
 
 const APIVersion = "control.routerd.net/v1alpha1"
@@ -25,20 +25,20 @@ type Status struct {
 }
 
 type StatusStatus struct {
-	Phase             string    `json:"phase" yaml:"phase"`
-	Generation        int64     `json:"generation,omitempty" yaml:"generation,omitempty"`
-	LastReconcileTime time.Time `json:"lastReconcileTime,omitempty" yaml:"lastReconcileTime,omitempty"`
-	ResourceCount     int       `json:"resourceCount,omitempty" yaml:"resourceCount,omitempty"`
+	Phase         string    `json:"phase" yaml:"phase"`
+	Generation    int64     `json:"generation,omitempty" yaml:"generation,omitempty"`
+	LastApplyTime time.Time `json:"lastApplyTime,omitempty" yaml:"lastApplyTime,omitempty"`
+	ResourceCount int       `json:"resourceCount,omitempty" yaml:"resourceCount,omitempty"`
 }
 
-type ReconcileRequest struct {
+type ApplyRequest struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	DryRun   bool `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
 }
 
-type ReconcileResult struct {
+type ApplyResult struct {
 	TypeMeta `json:",inline" yaml:",inline"`
-	Result   reconcile.Result `json:"result" yaml:"result"`
+	Result   apply.Result `json:"result" yaml:"result"`
 }
 
 type NAPTTable struct {
@@ -67,7 +67,7 @@ func NewNAPTTable(table *observe.NAPTTable) NAPTTable {
 	}
 }
 
-func NewStatus(result *reconcile.Result) Status {
+func NewStatus(result *apply.Result) Status {
 	status := Status{
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "Status"},
 		Metadata: ObjectMeta{Name: "routerd"},
@@ -78,17 +78,17 @@ func NewStatus(result *reconcile.Result) Status {
 	}
 	status.Status.Phase = result.Phase
 	status.Status.Generation = result.Generation
-	status.Status.LastReconcileTime = result.Timestamp
+	status.Status.LastApplyTime = result.Timestamp
 	status.Status.ResourceCount = len(result.Resources)
 	return status
 }
 
-func NewReconcileResult(result *reconcile.Result) ReconcileResult {
+func NewApplyResult(result *apply.Result) ApplyResult {
 	if result == nil {
-		result = &reconcile.Result{}
+		result = &apply.Result{}
 	}
-	return ReconcileResult{
-		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "ReconcileResult"},
+	return ApplyResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "ApplyResult"},
 		Result:   *result,
 	}
 }

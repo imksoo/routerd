@@ -1,4 +1,4 @@
-package reconcile
+package apply
 
 import (
 	"testing"
@@ -93,7 +93,7 @@ func TestParseIfconfigAddressArtifacts(t *testing.T) {
 	}
 }
 
-func TestReconciledOwnedArtifactsRequireObservedInventory(t *testing.T) {
+func TestAppliedOwnedArtifactsRequireObservedInventory(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -107,11 +107,11 @@ func TestReconciledOwnedArtifactsRequireObservedInventory(t *testing.T) {
 			"hostname": "router.example\n",
 		}),
 	}
-	got, err := engine.ReconciledOwnedArtifacts(router)
+	got, err := engine.AppliedOwnedArtifacts(router)
 	if err != nil {
-		t.Fatalf("reconciled artifacts: %v", err)
+		t.Fatalf("applied artifacts: %v", err)
 	}
 	if len(got) != 1 || got[0].Kind != "host.hostname" {
-		t.Fatalf("reconciled artifacts = %+v, want only observed hostname", got)
+		t.Fatalf("applied artifacts = %+v, want only observed hostname", got)
 	}
 }

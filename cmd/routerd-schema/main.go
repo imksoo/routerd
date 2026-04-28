@@ -57,7 +57,7 @@ func configSchema() map[string]any {
 				"required":             []string{"resources"},
 				"additionalProperties": false,
 				"properties": map[string]any{
-					"reconcile": reflectedSchema(api.ReconcilePolicySpec{}),
+					"reconcile": reflectedSchema(api.ApplyPolicySpec{}),
 					"resources": map[string]any{
 						"type":  "array",
 						"items": resourceUnionSchema(),
@@ -77,8 +77,8 @@ func controlSchema() map[string]any {
 		"oneOf": []any{
 			reflectedSchema(controlapi.Status{}),
 			reflectedSchema(controlapi.NAPTTable{}),
-			reflectedSchema(controlapi.ReconcileRequest{}),
-			reflectedSchema(controlapi.ReconcileResult{}),
+			reflectedSchema(controlapi.ApplyRequest{}),
+			reflectedSchema(controlapi.ApplyResult{}),
 			reflectedSchema(controlapi.Error{}),
 		},
 	}
@@ -101,19 +101,19 @@ func controlOpenAPISchema() map[string]any {
 					},
 				},
 			},
-			controlapi.Prefix + "/reconcile": map[string]any{
+			controlapi.Prefix + "/apply": map[string]any{
 				"post": map[string]any{
-					"operationId": "reconcile",
+					"operationId": "apply",
 					"requestBody": map[string]any{
 						"required": true,
 						"content": map[string]any{
 							"application/json": map[string]any{
-								"schema": schemaRef("ReconcileRequest"),
+								"schema": schemaRef("ApplyRequest"),
 							},
 						},
 					},
 					"responses": map[string]any{
-						"200":     responseRef("ReconcileResult"),
+						"200":     responseRef("ApplyResult"),
 						"default": responseRef("Error"),
 					},
 				},
@@ -143,11 +143,11 @@ func controlOpenAPISchema() map[string]any {
 		},
 		"components": map[string]any{
 			"schemas": map[string]any{
-				"Status":           reflectedSchema(controlapi.Status{}),
-				"NAPTTable":        reflectedSchema(controlapi.NAPTTable{}),
-				"ReconcileRequest": reflectedSchema(controlapi.ReconcileRequest{}),
-				"ReconcileResult":  reflectedSchema(controlapi.ReconcileResult{}),
-				"Error":            reflectedSchema(controlapi.Error{}),
+				"Status":       reflectedSchema(controlapi.Status{}),
+				"NAPTTable":    reflectedSchema(controlapi.NAPTTable{}),
+				"ApplyRequest": reflectedSchema(controlapi.ApplyRequest{}),
+				"ApplyResult":  reflectedSchema(controlapi.ApplyResult{}),
+				"Error":        reflectedSchema(controlapi.Error{}),
 			},
 		},
 	}

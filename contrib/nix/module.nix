@@ -7,7 +7,7 @@ let
     else pkgs.writeText "router.yaml" cfg.configText;
 in {
   options.services.routerd = {
-    enable = lib.mkEnableOption "routerd declarative router reconciler";
+    enable = lib.mkEnableOption "routerd declarative router applier";
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -35,10 +35,10 @@ in {
       description = "Control API Unix socket path.";
     };
 
-    reconcileInterval = lib.mkOption {
+    applyInterval = lib.mkOption {
       type = lib.types.str;
       default = "60s";
-      description = "Periodic reconcile interval, as a Go duration.";
+      description = "Periodic apply interval, as a Go duration.";
     };
 
     extraFlags = lib.mkOption {
@@ -58,7 +58,7 @@ in {
 
     environment.systemPackages = [ cfg.package ];
 
-    # routerd is a privileged router controller. The reconciler currently
+    # routerd is a privileged router controller. The applier currently
     # expects to be able to call ip, sysctl, systemctl, dnsmasq, nft, and
     # related tools, so the unit runs as root for now. Hardening will
     # tighten the unit once each renderer reports its required
@@ -85,7 +85,7 @@ in {
           "serve"
           "--config" "${configFile}"
           "--socket" cfg.socket
-          "--reconcile-interval" cfg.reconcileInterval
+          "--apply-interval" cfg.applyInterval
         ] ++ cfg.extraFlags);
         Restart = "always";
         RestartSec = "2s";

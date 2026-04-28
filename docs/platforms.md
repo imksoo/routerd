@@ -60,7 +60,7 @@ parity that the code does not yet provide.
   `ROUTERD_OS=freebsd` to `make build`, `make dist`, or
   `make remote-install` so the installed binaries target FreeBSD.
 - `routerd render freebsd` emits rc.conf values, dhclient.conf, and
-  dhcp6c.conf. Runtime reconcile can apply this limited set with `sysrc`,
+  dhcp6c.conf. Runtime apply can apply this limited set with `sysrc`,
   `service netif`, and `service dhcp6c`.
 - FreeBSD hosts need the base networking tools plus `jq`, `dnsmasq`, `dhcp6`,
   and `mpd5` packages for the current groundwork. The `dhcp6` package
@@ -71,11 +71,11 @@ parity that the code does not yet provide.
   identifier itself; routerd observes that address, derives the delegated
   prefix from it, and then adds the stable `IPv6DelegatedAddress` suffix as a
   secondary address when the prefix is visible.
-- FreeBSD reconcile restarts `dhcp6c` only when the rendered configuration or
+- FreeBSD apply restarts `dhcp6c` only when the rendered configuration or
   matching rc.conf values changed, or when the service is not running. This
   avoids sending unnecessary DHCPv6 Release messages during routine
   reconciliation. The renderer also starts `dhcp6c` with `-n`, and the
-  reconciler uses SIGUSR1 before starting it again, so required restarts avoid
+  applier uses SIGUSR1 before starting it again, so required restarts avoid
   releasing the delegated prefix when possible.
 - The FreeBSD PPPoE renderer uses `mpd5`. `PPPoEInterface` resources are
   rendered into `/usr/local/etc/mpd5/mpd.conf`, and managed sessions enable
@@ -90,7 +90,7 @@ When the FreeBSD pf renderer is added, it must follow the same DHCPv6
 client rule: accept WAN-side UDP destination port 546 without requiring
 the server source port to be 547.
 
-Until those land, `routerd reconcile` on FreeBSD only applies the supported
+Until those land, `routerd apply` on FreeBSD only applies the supported
 host pieces above plus runtime sysctl and hostname. Resource kinds that
 depend on Linux-only host integrations are left for later platform-specific
 renderers.
@@ -98,7 +98,7 @@ renderers.
 ## How the platform is selected
 
 `pkg/platform` resolves OS-specific defaults at compile time using Go
-build tags. Renderers and the reconciler should consult
+build tags. Renderers and the applier should consult
 `platform.Current()` rather than `runtime.GOOS`. New OS-specific
 behavior should be added in three places:
 

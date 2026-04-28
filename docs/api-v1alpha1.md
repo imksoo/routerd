@@ -8,7 +8,7 @@ slug: /reference/api-v1alpha1
 A routerd config is a list of declarative resources. Each resource describes a
 single behavior the router should exhibit — an interface that should come up,
 an address pool that should be served, a tunnel that should reach an AFTR, a
-default route that should follow a healthy uplink. Reconcile compares those
+default route that should follow a healthy uplink. Apply compares those
 intents against the host and brings the host into shape.
 
 The resource shape is intentionally Kubernetes-like:
@@ -52,7 +52,7 @@ System:
 The set is small on purpose. New kinds are added when the router gains a new
 behavior, not as a generic platform.
 
-## Top-Level Reconcile Policy
+## Top-Level Apply Policy
 
 The top-level `spec.reconcile` block controls how routerd behaves when one
 part of an apply fails.
@@ -85,7 +85,7 @@ spec:
 
 This does not make every host operation transactional. It gives routerd a
 clear rule: keep the management path, apply what can be applied safely, and
-leave failed data-plane work visible for the next reconcile pass.
+leave failed data-plane work visible for the next apply pass.
 
 ## State And Conditions
 
@@ -289,7 +289,7 @@ How routerd behaves:
 - routerd assigns `192.168.10.3/24` to the LAN interface and treats it as
   the router's own address.
 - `spec.exclusive: true` makes routerd remove other static IPv4 addresses on
-  that interface during reconcile, so the LAN side does not end up with two
+  that interface during apply, so the LAN side does not end up with two
   conflicting prefixes after a renumber.
 - During planning, routerd checks the desired static addresses and observed
   IPv4 prefixes on other interfaces. Overlapping prefixes on different
@@ -322,7 +322,7 @@ How routerd behaves:
 
 - routerd manages a DHCPv4 client binding on `interface`. `spec.client`
   picks the client implementation (currently `dhclient`).
-- `spec.required: true` means reconcile fails if no lease is acquired —
+- `spec.required: true` means apply fails if no lease is acquired —
   useful when the rest of the config depends on a working WAN address.
 - `spec.useRoutes: false` tells supported renderers to ignore DHCP-provided
   routes. `spec.useDNS: false` ignores DHCP-provided DNS servers. This is
@@ -461,7 +461,7 @@ How routerd behaves:
   too old, missing, or disabled, routerd falls back to a prefix-length hint
   such as `::/60`. This is only a hint: an upstream may return the same prefix,
   a different prefix, or no prefix.
-- During reconcile, routerd records observed prefix-delegation state in
+- During apply, routerd records observed prefix-delegation state in
   `ipv6PrefixDelegation.<name>.lease` in the local state store. The lease JSON
   holds the current prefix, last known prefix, observed DUID, IAID, expected
   DUID, identity source, last observed time, last missing time, and lease
@@ -489,17 +489,17 @@ How routerd behaves:
   state memory, not desired configuration; retry logic can use them to prefer
   renewal-like behavior when a home gateway still remembers a prior lease.
 - The OS DHCPv6 client remains responsible for Renew/Rebind before the lease
-  expires. routerd should not normally restart that client during reconcile,
+  expires. routerd should not normally restart that client during apply,
   because a restart can turn a renewal path into a fresh Solicit or Release.
-  If there is no current observable prefix, `plan`, `reconcile`, and daemon
+  If there is no current observable prefix, `plan`, `apply`, and daemon
   status include a warning so the operator can fix the DHCPv6 client before
   the upstream lease expires.
-  During a real reconcile, if the current prefix is missing but the structured
+  During a real apply, if the current prefix is missing but the structured
   lease still has a last prefix, a last observed time, and an unexpired valid
   lifetime, routerd asks the OS client to renew once for that missing episode.
   On systemd-networkd hosts this calls `networkctl renew <link>`. On FreeBSD
   KAME `dhcp6c` hosts this sends SIGHUP to the running `dhcp6c` process. The
-  attempt time is recorded as `lastRenewAttemptAt` in the lease so reconcile
+  attempt time is recorded as `lastRenewAttemptAt` in the lease so apply
   does not keep poking the client in a tight loop.
 - `spec.iaid` pins the DHCPv6 IAID. It may be written as decimal, `0x`
   prefixed hex, or 8 hex digits. systemd-networkd renders it as a decimal
@@ -704,7 +704,7 @@ How routerd behaves:
   `aftrAddressOrdinal` selects the 1-based record.
 - `aftrAddressSelection` controls what happens when the ordinal is outside
   the current AAAA record count:
-  - `ordinal`: reconcile fails for this tunnel.
+  - `ordinal`: apply fails for this tunnel.
   - `ordinalModulo`: the ordinal wraps around the current count.
 - `localAddressSource` chooses the tunnel's local IPv6 source address:
   - `interface`: use the first global IPv6 address on `spec.interface`.
@@ -1113,7 +1113,7 @@ still being designed.
 ### NixOSHost
 
 `NixOSHost` declares NixOS host-level settings for `routerd render nixos`.
-It is not applied by runtime reconcile. The generated
+It is not applied by runtime apply. The generated
 `routerd-generated.nix` is meant to be imported from a small
 `configuration.nix` and applied with `nixos-rebuild switch`.
 
@@ -1133,7 +1133,7 @@ spec:
     enabled: true
     binaryPath: /usr/local/sbin/routerd
     configFile: /usr/local/etc/routerd/router.yaml
-    reconcileInterval: 60s
+    applyInterval: 60s
   debugSystemPackages: true
   ssh:
     enabled: true
@@ -1164,7 +1164,7 @@ How routerd behaves:
   source-installed `/usr/local/sbin/routerd` binary instead of importing
   the flake module. The service defaults are:
   `/usr/local/sbin/routerd`, `/usr/local/etc/routerd/router.yaml`,
-  `/run/routerd/routerd.sock`, and a `60s` reconcile interval.
+  `/run/routerd/routerd.sock`, and a `60s` apply interval.
 - `spec.debugSystemPackages` adds operational tools to
   `environment.systemPackages`. The package set is derived from resources,
   for example `dnsmasq`, `nftables`, `ppp`, and `iproute2`.
@@ -1208,7 +1208,7 @@ spec:
 ```
 
 `runtime: true` reflects the value into the running kernel during
-reconcile. `persistent: true` is reserved for OS-specific rendering such as
+apply. `persistent: true` is reserved for OS-specific rendering such as
 sysctl.d or rc.conf and is not applied yet.
 
 ### NTPClient
@@ -1237,7 +1237,7 @@ routerd writes the global `systemd-timesyncd` server list.
 ### LogSink
 
 `LogSink` declares where routerd sends its own internal events — config
-load, plan output, reconcile result, plugin errors, and so on.
+load, plan output, apply result, plugin errors, and so on.
 
 Local journald or syslog:
 

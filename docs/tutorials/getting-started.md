@@ -83,7 +83,7 @@ state:
 
 ```bash
 routerd validate --config examples/basic-dhcp.yaml
-routerd reconcile --config examples/basic-dhcp.yaml --once --dry-run
+routerd apply --config examples/basic-dhcp.yaml --once --dry-run
 ```
 
 The dry-run output is JSON status: which resources are healthy, which
@@ -137,12 +137,12 @@ Important default paths:
 - Runtime dir: /run/routerd
 - State dir: /var/lib/routerd
 
-## 6. Reconcile once
+## 6. Apply once
 
 Always run one-shot mode before enabling the daemon:
 
 ```bash
-sudo /usr/local/sbin/routerd reconcile \
+sudo /usr/local/sbin/routerd apply \
   --config /usr/local/etc/routerd/router.yaml \
   --once \
   --dry-run
@@ -161,7 +161,7 @@ sudo systemctl enable --now routerd.service
 ```
 
 `routerd serve` keeps a control API socket under /run/routerd/ and runs
-scheduled reconciles. From there you can use `routerctl status` and the
+scheduled applies. From there you can use `routerctl status` and the
 [control API](/docs/reference/control-api-v1alpha1) to ask the daemon
 about what it sees.
 

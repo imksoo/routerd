@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"routerd/pkg/api"
-	"routerd/pkg/reconcile"
+	"routerd/pkg/apply"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
@@ -430,7 +430,7 @@ func TestManagedHostnames(t *testing.T) {
 }
 
 func TestDriftedAdoptionCandidates(t *testing.T) {
-	candidates := []reconcile.AdoptionCandidate{
+	candidates := []apply.AdoptionCandidate{
 		{
 			Kind:     "host.hostname",
 			Name:     "system",
@@ -573,7 +573,7 @@ func TestAppendPrefixDelegationStateWarnings(t *testing.T) {
 	store := routerstate.New()
 	store.Set("ipv6PrefixDelegation.wan-pd.lastPrefix", "2001:db8:3d60:1240::/60", "test")
 	store.Unset("ipv6PrefixDelegation.wan-pd.currentPrefix", "test")
-	result := &reconcile.Result{}
+	result := &apply.Result{}
 	appendPrefixDelegationStateWarnings(result, router, store)
 	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "2001:db8:3d60:1240::/60") {
 		t.Fatalf("warnings = %#v", result.Warnings)
@@ -588,7 +588,7 @@ func TestAppendPrefixDelegationStateWarningsWithoutLastPrefix(t *testing.T) {
 	}}}}
 	store := routerstate.New()
 	store.Unset("ipv6PrefixDelegation.wan-pd.currentPrefix", "test")
-	result := &reconcile.Result{}
+	result := &apply.Result{}
 	appendPrefixDelegationStateWarnings(result, router, store)
 	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "no delegated prefix has been recorded") {
 		t.Fatalf("warnings = %#v", result.Warnings)

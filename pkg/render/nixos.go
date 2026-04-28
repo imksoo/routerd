@@ -345,13 +345,13 @@ func writeNixOSRouterdService(buf *bytes.Buffer, spec api.NixOSRouterdServiceSpe
 	binaryPath := defaultString(spec.BinaryPath, "/usr/local/sbin/routerd")
 	configFile := defaultString(spec.ConfigFile, "/usr/local/etc/routerd/router.yaml")
 	socket := defaultString(spec.Socket, "/run/routerd/routerd.sock")
-	reconcileInterval := defaultString(spec.ReconcileInterval, "60s")
+	applyInterval := defaultString(spec.ApplyInterval, "60s")
 	args := []string{
 		binaryPath,
 		"serve",
 		"--config", configFile,
 		"--socket", socket,
-		"--reconcile-interval", reconcileInterval,
+		"--apply-interval", applyInterval,
 	}
 	args = append(args, spec.ExtraFlags...)
 

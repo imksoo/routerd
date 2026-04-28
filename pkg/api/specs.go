@@ -10,7 +10,7 @@ type LogSinkSpec struct {
 	Plugin   LogSinkPluginSpec `yaml:"plugin,omitempty" json:"plugin,omitempty"`
 }
 
-type ReconcilePolicySpec struct {
+type ApplyPolicySpec struct {
 	Mode                string   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=strict,enum=progressive"`
 	ProtectedInterfaces []string `yaml:"protectedInterfaces,omitempty" json:"protectedInterfaces,omitempty"`
 	ProtectedZones      []string `yaml:"protectedZones,omitempty" json:"protectedZones,omitempty"`
@@ -81,12 +81,12 @@ type NixOSSudoSpec struct {
 }
 
 type NixOSRouterdServiceSpec struct {
-	Enabled           *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	BinaryPath        string   `yaml:"binaryPath,omitempty" json:"binaryPath,omitempty"`
-	ConfigFile        string   `yaml:"configFile,omitempty" json:"configFile,omitempty"`
-	Socket            string   `yaml:"socket,omitempty" json:"socket,omitempty"`
-	ReconcileInterval string   `yaml:"reconcileInterval,omitempty" json:"reconcileInterval,omitempty"`
-	ExtraFlags        []string `yaml:"extraFlags,omitempty" json:"extraFlags,omitempty"`
+	Enabled       *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	BinaryPath    string   `yaml:"binaryPath,omitempty" json:"binaryPath,omitempty"`
+	ConfigFile    string   `yaml:"configFile,omitempty" json:"configFile,omitempty"`
+	Socket        string   `yaml:"socket,omitempty" json:"socket,omitempty"`
+	ApplyInterval string   `yaml:"applyInterval,omitempty" json:"applyInterval,omitempty"`
+	ExtraFlags    []string `yaml:"extraFlags,omitempty" json:"extraFlags,omitempty"`
 }
 
 type InterfaceSpec struct {

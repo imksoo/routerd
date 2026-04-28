@@ -41,7 +41,7 @@ func TestPluginSinkWritesEventJSON(t *testing.T) {
 		Level:     LevelInfo,
 		Message:   "test event",
 		Router:    "test-router",
-		Command:   "reconcile",
+		Command:   "apply",
 		Fields:    map[string]string{"phase": "Healthy"},
 	})
 	if err != nil {
@@ -94,10 +94,10 @@ func TestFormatEvent(t *testing.T) {
 		Level:   LevelWarning,
 		Message: "changed",
 		Router:  "r1",
-		Command: "reconcile",
+		Command: "apply",
 		Fields:  map[string]string{"phase": "Drifted"},
 	})
-	for _, want := range []string{"warning", "changed", "router=r1", "command=reconcile", "phase=Drifted"} {
+	for _, want := range []string{"warning", "changed", "router=r1", "command=apply", "phase=Drifted"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("line %q does not contain %q", line, want)
 		}

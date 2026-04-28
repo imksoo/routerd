@@ -1,4 +1,4 @@
-package reconcile
+package apply
 
 import (
 	"fmt"
@@ -80,7 +80,7 @@ func (e *Engine) DesiredOwnedArtifacts(router *api.Router) ([]resource.Artifact,
 	return DesiredOwnedArtifacts(router, interfaceAliases(router)), nil
 }
 
-func (e *Engine) ReconciledOwnedArtifacts(router *api.Router) ([]resource.Artifact, error) {
+func (e *Engine) AppliedOwnedArtifacts(router *api.Router) ([]resource.Artifact, error) {
 	if err := e.Validate(router); err != nil {
 		return nil, err
 	}

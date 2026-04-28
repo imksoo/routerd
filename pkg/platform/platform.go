@@ -75,7 +75,7 @@ type Defaults struct {
 }
 
 // Features describes which host integrations the current platform
-// supports. Renderers and reconcilers consult these flags rather than
+// supports. Renderers and appliers consult these flags rather than
 // inspecting runtime.GOOS directly.
 type Features struct {
 	// HasSystemd indicates that systemctl is the service manager.
@@ -120,7 +120,7 @@ func (d Defaults) SocketFile() string {
 	return d.RuntimeDir + "/routerd.sock"
 }
 
-// LockFile returns the default reconcile lock file path.
+// LockFile returns the default apply lock file path.
 func (d Defaults) LockFile() string {
 	return d.RuntimeDir + "/routerd.lock"
 }

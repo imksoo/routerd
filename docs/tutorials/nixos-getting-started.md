@@ -138,7 +138,7 @@ runtime view:
 sudo routerctl status
 ```
 
-At this point, routerd is running as a systemd unit and reconciling
+At this point, routerd is running as a systemd unit and applying
 runtime decisions. Persistent NixOS settings (hostname, users, SSH,
 boot loader) are still your responsibility — they are part of your
 hand-written `configuration.nix`.
@@ -196,7 +196,7 @@ The most relevant `services.routerd` options:
 | `configFile` | Path to a `router.yaml` outside the Nix store. |
 | `configText` | Inline `router.yaml`, written into the Nix store. Use either this or `configFile`. |
 | `socket` | Control API Unix socket path. Default `/run/routerd/routerd.sock`. |
-| `reconcileInterval` | Periodic reconcile interval as a Go duration. Default `60s`. |
+| `applyInterval` | Periodic apply interval as a Go duration. Default `60s`. |
 | `extraFlags` | Extra command-line flags appended to `routerd serve`. |
 
 The full set is in `contrib/nix/module.nix`.
@@ -218,7 +218,7 @@ still the cleaner long-term NixOS integration.
 - **Expecting full Nix-native rendering for every resource.** The
   current renderer covers host settings, dependency packages, and basic
   systemd-networkd `.network` declarations. Other resource kinds run
-  through the runtime reconciler. The roadmap is in
+  through the runtime applier. The roadmap is in
   [Supported platforms](/docs/platforms).
 
 ## Next steps

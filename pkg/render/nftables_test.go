@@ -332,7 +332,7 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{
-			Reconcile: api.ReconcilePolicySpec{ProtectedZones: []string{"mgmt"}},
+			Apply: api.ApplyPolicySpec{ProtectedZones: []string{"mgmt"}},
 			Resources: []api.Resource{
 				{
 					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},

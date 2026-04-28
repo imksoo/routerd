@@ -8,6 +8,10 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
 
 ## 未リリース
 
+- CLI と制御 API の動詞を `apply` に揃えました。`routerd reconcile`、
+  `routerctl reconcile`、制御 API の反映操作は、それぞれ `routerd apply`、
+  `routerctl apply`、`/apply` に変わりました。YAML の `spec.reconcile`
+  という設定名はそのままです。
 - `routerctl get` と `routerctl describe` を追加し、`routerctl` を kubectl に近い動詞で分けました。`get` は望む設定、`describe` は人が読むための状態・イベント・所有台帳、`show` は従来通りの全部入り表示です。
 - SQLite の保存形式を、Kubernetes の考え方に近い世代、オブジェクト、所有台帳、
   イベントの形へ作り直しました。反映処理の世代とイベントを通常の記録として

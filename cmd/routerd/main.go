@@ -24,12 +24,12 @@ import (
 	"time"
 
 	"routerd/pkg/api"
+	"routerd/pkg/apply"
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
 	"routerd/pkg/eventlog"
 	"routerd/pkg/observe"
 	"routerd/pkg/platform"
-	"routerd/pkg/reconcile"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
@@ -86,8 +86,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return adoptCommand(args[1:], stdout)
 	case "render":
 		return renderCommand(args[1:], stdout)
-	case "reconcile":
-		return reconcileCommand(args[1:], stdout)
+	case "apply":
+		return applyCommand(args[1:], stdout)
 	case "serve":
 		return serveCommand(args[1:], stdout)
 	case "run":
@@ -248,7 +248,7 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 	}
 	defer closeLogger(logger, name, &err)
 	logger.Emit(eventlog.LevelInfo, name, "routerd command started", map[string]string{"config": *configPath})
-	engine := reconcile.New()
+	engine := apply.New()
 	stateStore, err := routerstate.Load(defaultStatePath)
 	if err != nil {
 		return err
@@ -294,11 +294,11 @@ func adoptCommand(args []string, stdout io.Writer) (err error) {
 	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
 	candidatesOnly := fs.Bool("candidates", false, "list adoption candidates without changing host state or the ownership ledger")
-	apply := fs.Bool("apply", false, "record adoption candidates in the ownership ledger without changing host state")
+	applyFlag := fs.Bool("apply", false, "record adoption candidates in the ownership ledger without changing host state")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *candidatesOnly == *apply {
+	if *candidatesOnly == *applyFlag {
 		return errors.New("adopt requires exactly one of --candidates or --apply")
 	}
 	router, err := config.Load(*configPath)
@@ -315,21 +315,21 @@ func adoptCommand(args []string, stdout io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	engine := reconcile.New()
+	engine := apply.New()
 	candidates, artifacts, err := engine.AdoptionCandidateArtifacts(router, ledger)
 	if err != nil {
 		return err
 	}
-	result := &reconcile.Result{
+	result := &apply.Result{
 		Generation:         time.Now().Unix(),
 		Timestamp:          time.Now().UTC(),
 		Phase:              "Healthy",
 		AdoptionCandidates: candidates,
 	}
-	if *apply {
+	if *applyFlag {
 		if drifted := driftedAdoptionCandidates(candidates); len(drifted) > 0 {
 			result.Phase = "Blocked"
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%d adoption candidates have observed attributes that differ from desired state; reconcile or update config before adopting", len(drifted)))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%d adoption candidates have observed attributes that differ from desired state; apply or update config before adopting", len(drifted)))
 			if err := writeResult(stdout, *statusFile, result); err != nil {
 				return err
 			}
@@ -345,8 +345,8 @@ func adoptCommand(args []string, stdout io.Writer) (err error) {
 	return writeResult(stdout, *statusFile, result)
 }
 
-func driftedAdoptionCandidates(candidates []reconcile.AdoptionCandidate) []reconcile.AdoptionCandidate {
-	var drifted []reconcile.AdoptionCandidate
+func driftedAdoptionCandidates(candidates []apply.AdoptionCandidate) []apply.AdoptionCandidate {
+	var drifted []apply.AdoptionCandidate
 	for _, candidate := range candidates {
 		for key, desiredValue := range candidate.Desired {
 			if candidate.Observed[key] != desiredValue {
@@ -358,15 +358,15 @@ func driftedAdoptionCandidates(candidates []reconcile.AdoptionCandidate) []recon
 	return drifted
 }
 
-func adoptedArtifactsForResult(artifacts []resource.Artifact) []reconcile.AdoptedArtifact {
-	out := make([]reconcile.AdoptedArtifact, 0, len(artifacts))
+func adoptedArtifactsForResult(artifacts []resource.Artifact) []apply.AdoptedArtifact {
+	out := make([]apply.AdoptedArtifact, 0, len(artifacts))
 	seen := map[string]bool{}
 	for _, artifact := range artifacts {
 		if seen[artifact.Identity()] {
 			continue
 		}
 		seen[artifact.Identity()] = true
-		out = append(out, reconcile.AdoptedArtifact{
+		out = append(out, apply.AdoptedArtifact{
 			Kind:  artifact.Kind,
 			Name:  artifact.Name,
 			Owner: artifact.Owner,
@@ -375,8 +375,8 @@ func adoptedArtifactsForResult(artifacts []resource.Artifact) []reconcile.Adopte
 	return out
 }
 
-func reconcileCommand(args []string, stdout io.Writer) (err error) {
-	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
+func applyCommand(args []string, stdout io.Writer) (err error) {
+	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", defaultConfigPath, "config path")
 	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
@@ -385,13 +385,13 @@ func reconcileCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
-	once := fs.Bool("once", false, "run one reconcile loop")
+	once := fs.Bool("once", false, "run one apply loop")
 	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if !*once {
-		return errors.New("reconcile currently requires --once")
+		return errors.New("apply currently requires --once")
 	}
 	router, err := config.Load(*configPath)
 	if err != nil {
@@ -401,12 +401,12 @@ func reconcileCommand(args []string, stdout io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	defer closeLogger(logger, "reconcile", &err)
-	logger.Emit(eventlog.LevelInfo, "reconcile", "routerd command started", map[string]string{
+	defer closeLogger(logger, "apply", &err)
+	logger.Emit(eventlog.LevelInfo, "apply", "routerd command started", map[string]string{
 		"config": *configPath,
 		"dryRun": fmt.Sprintf("%t", *dryRun),
 	})
-	opts := reconcileApplyOptions{
+	opts := applyOptions{
 		ConfigPath:          *configPath,
 		StatusFile:          *statusFile,
 		NetplanPath:         *netplanPath,
@@ -418,11 +418,11 @@ func reconcileCommand(args []string, stdout io.Writer) (err error) {
 		DryRun:              *dryRun,
 		AnnounceDryRunToCLI: true,
 	}
-	_, err = runReconcileOnce(router, opts, stdout, logger)
+	_, err = runApplyOnce(router, opts, stdout, logger)
 	return err
 }
 
-type reconcileApplyOptions struct {
+type applyOptions struct {
 	ConfigPath          string
 	StatusFile          string
 	NetplanPath         string
@@ -435,8 +435,8 @@ type reconcileApplyOptions struct {
 	AnnounceDryRunToCLI bool
 }
 
-func effectiveReconcilePolicy(router *api.Router) api.ReconcilePolicySpec {
-	policy := router.Spec.Reconcile
+func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
+	policy := router.Spec.Apply
 	if policy.Mode == "" {
 		policy.Mode = "strict"
 	}
@@ -457,10 +457,10 @@ func recordWarningEvents(router *api.Router, store routerstate.Store, warnings [
 		return
 	}
 	for _, warning := range warnings {
-		_ = recorder.RecordEvent(router.APIVersion, router.Kind, router.Metadata.Name, "Warning", "ReconcileWarning", warning)
+		_ = recorder.RecordEvent(router.APIVersion, router.Kind, router.Metadata.Name, "Warning", "ApplyWarning", warning)
 		for _, res := range router.Spec.Resources {
 			if strings.Contains(warning, res.ID()) {
-				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "ReconcileWarning", warning)
+				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "ApplyWarning", warning)
 			}
 		}
 	}
@@ -480,7 +480,7 @@ func compactStringList(values []string) []string {
 	return out
 }
 
-func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.Writer, logger *eventlog.Logger) (*reconcile.Result, error) {
+func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
 	stateStore, err := routerstate.Load(defaultString(opts.StatePath, defaultStatePath))
 	if err != nil {
 		return nil, err
@@ -508,7 +508,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 	}
 	stateChanges = append(stateChanges, policyChanges...)
 	effectiveRouter := filterRouterByWhen(router, stateStore)
-	engine := reconcile.New()
+	engine := apply.New()
 	result, err := engine.Plan(effectiveRouter)
 	if err != nil {
 		return nil, err
@@ -532,19 +532,19 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if err := stateStore.Save(defaultString(opts.StatePath, defaultStatePath)); err != nil {
 			return nil, err
 		}
-		logger.Emit(eventlog.LevelInfo, "reconcile", "routerd plan completed", map[string]string{
+		logger.Emit(eventlog.LevelInfo, "apply", "routerd plan completed", map[string]string{
 			"phase":     result.Phase,
 			"resources": fmt.Sprintf("%d", len(result.Resources)),
 		})
 		if platformDefaults.OS == platform.OSFreeBSD {
-			next, err := runFreeBSDReconcileOnce(effectiveRouter, opts, stdout, logger, engine, result, generation)
+			next, err := runFreeBSDApplyOnce(effectiveRouter, opts, stdout, logger, engine, result, generation)
 			if store, ok := stateStore.(routerstate.GenerationStore); ok && next != nil {
 				_ = store.FinishGeneration(generation, next.Phase, next.Warnings)
 				generationFinished = true
 			}
 			return next, err
 		}
-		policy := effectiveReconcilePolicy(effectiveRouter)
+		policy := effectiveApplyPolicy(effectiveRouter)
 		protectedCritical := len(policy.ProtectedInterfaces) > 0 || len(policy.ProtectedZones) > 0
 		var applyErrors []string
 		recordStageError := func(stage string, err error) error {
@@ -554,7 +554,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			msg := fmt.Sprintf("%s: %v", stage, err)
 			result.Warnings = append(result.Warnings, msg)
 			applyErrors = append(applyErrors, msg)
-			logger.Emit(eventlog.LevelError, "reconcile", "routerd apply stage failed", map[string]string{"stage": stage, "error": err.Error()})
+			logger.Emit(eventlog.LevelError, "apply", "routerd apply stage failed", map[string]string{"stage": stage, "error": err.Error()})
 			if policy.Mode != "progressive" {
 				return fmt.Errorf("%s: %w", stage, err)
 			}
@@ -728,12 +728,12 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 			if err != nil {
 				return nil, err
 			}
-			rememberedArtifacts, err = rememberReconciledArtifacts(effectiveRouter, opts.LedgerPath, generation)
+			rememberedArtifacts, err = rememberAppliedArtifacts(effectiveRouter, opts.LedgerPath, generation)
 			if err != nil {
 				return nil, err
 			}
 		} else {
-			result.Warnings = append(result.Warnings, "skipped ledger orphan cleanup and ownership recording because reconcile completed with stage errors")
+			result.Warnings = append(result.Warnings, "skipped ledger orphan cleanup and ownership recording because apply completed with stage errors")
 		}
 		changedFiles := append(networkChangedFiles, dnsmasqChangedFiles...)
 		changedFiles = append(changedFiles, nftablesChangedFiles...)
@@ -796,7 +796,7 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		if rememberedArtifacts > 0 {
 			fmt.Fprintf(stdout, "remembered %d owned artifacts\n", rememberedArtifacts)
 		}
-		logger.Emit(eventlog.LevelInfo, "reconcile", "routerd changes applied", map[string]string{
+		logger.Emit(eventlog.LevelInfo, "apply", "routerd changes applied", map[string]string{
 			"changedFiles":        fmt.Sprintf("%d", len(changedFiles)),
 			"runtimeSysctls":      fmt.Sprintf("%d", len(appliedRuntime)),
 			"reversePathFilters":  fmt.Sprintf("%d", len(appliedReversePathFilters)),
@@ -836,9 +836,9 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 		return result, nil
 	}
 	if opts.AnnounceDryRunToCLI {
-		fmt.Fprintf(stdout, "dry-run reconcile plan for %s\n", opts.ConfigPath)
+		fmt.Fprintf(stdout, "dry-run apply plan for %s\n", opts.ConfigPath)
 	}
-	logger.Emit(eventlog.LevelInfo, "reconcile", "routerd dry-run completed", map[string]string{
+	logger.Emit(eventlog.LevelInfo, "apply", "routerd dry-run completed", map[string]string{
 		"phase":     result.Phase,
 		"resources": fmt.Sprintf("%d", len(result.Resources)),
 	})
@@ -852,8 +852,8 @@ func runReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.
 	return result, nil
 }
 
-func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, stdout io.Writer, logger *eventlog.Logger, engine *reconcile.Engine, result *reconcile.Result, generation int64) (*reconcile.Result, error) {
-	policy := effectiveReconcilePolicy(router)
+func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger, engine *apply.Engine, result *apply.Result, generation int64) (*apply.Result, error) {
+	policy := effectiveApplyPolicy(router)
 	var applyErrors []string
 	recordStageError := func(stage string, err error) error {
 		if err == nil {
@@ -862,7 +862,7 @@ func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, std
 		msg := fmt.Sprintf("%s: %v", stage, err)
 		result.Warnings = append(result.Warnings, msg)
 		applyErrors = append(applyErrors, msg)
-		logger.Emit(eventlog.LevelError, "reconcile", "routerd FreeBSD apply stage failed", map[string]string{"stage": stage, "error": err.Error()})
+		logger.Emit(eventlog.LevelError, "apply", "routerd FreeBSD apply stage failed", map[string]string{"stage": stage, "error": err.Error()})
 		if policy.Mode != "progressive" {
 			return fmt.Errorf("%s: %w", stage, err)
 		}
@@ -921,12 +921,12 @@ func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, std
 	var rememberedArtifacts int
 	if len(applyErrors) == 0 {
 		var err error
-		rememberedArtifacts, err = rememberReconciledArtifacts(router, opts.LedgerPath, generation)
+		rememberedArtifacts, err = rememberAppliedArtifacts(router, opts.LedgerPath, generation)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		result.Warnings = append(result.Warnings, "skipped ownership recording because FreeBSD reconcile completed with stage errors")
+		result.Warnings = append(result.Warnings, "skipped ownership recording because FreeBSD apply completed with stage errors")
 	}
 	if rememberedArtifacts > 0 {
 		fmt.Fprintf(stdout, "remembered %d owned artifacts\n", rememberedArtifacts)
@@ -950,7 +950,7 @@ func runFreeBSDReconcileOnce(router *api.Router, opts reconcileApplyOptions, std
 	if err := writeResult(stdout, opts.StatusFile, next); err != nil {
 		return nil, err
 	}
-	logger.Emit(eventlog.LevelInfo, "reconcile", "routerd FreeBSD changes applied", map[string]string{
+	logger.Emit(eventlog.LevelInfo, "apply", "routerd FreeBSD changes applied", map[string]string{
 		"freebsdChanges":      fmt.Sprintf("%d", len(changedFreeBSD)),
 		"runtimeSysctls":      fmt.Sprintf("%d", len(appliedRuntime)),
 		"hostnames":           fmt.Sprintf("%d", len(appliedHostnames)),
@@ -1681,7 +1681,7 @@ func stateMatch(store routerstate.Store, name string, match api.StateMatchSpec) 
 	return true
 }
 
-func appendStatePolicyResults(result *reconcile.Result, router *api.Router, store routerstate.Store, changes []stateChange) {
+func appendStatePolicyResults(result *apply.Result, router *api.Router, store routerstate.Store, changes []stateChange) {
 	changed := map[string]routerstate.Value{}
 	for _, change := range changes {
 		changed[change.Name] = change.Value
@@ -1698,7 +1698,7 @@ func appendStatePolicyResults(result *reconcile.Result, router *api.Router, stor
 		if changedValue, ok := changed[spec.Variable]; ok {
 			value = changedValue
 		}
-		result.Resources = append(result.Resources, reconcile.ResourceResult{
+		result.Resources = append(result.Resources, apply.ResourceResult{
 			ID:    res.ID(),
 			Phase: "Healthy",
 			Observed: map[string]string{
@@ -1712,7 +1712,7 @@ func appendStatePolicyResults(result *reconcile.Result, router *api.Router, stor
 	}
 }
 
-func appendPrefixDelegationStateWarnings(result *reconcile.Result, router *api.Router, store routerstate.Store) {
+func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Router, store routerstate.Store) {
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "IPv6PrefixDelegation" {
 			continue
@@ -1748,7 +1748,7 @@ func stringIn(value string, values []string) bool {
 	return false
 }
 
-func appendLedgerOwnedOrphans(result *reconcile.Result, router *api.Router, ledgerPath string) error {
+func appendLedgerOwnedOrphans(result *apply.Result, router *api.Router, ledgerPath string) error {
 	if ledgerPath == "" {
 		return nil
 	}
@@ -1756,7 +1756,7 @@ func appendLedgerOwnedOrphans(result *reconcile.Result, router *api.Router, ledg
 	if err != nil {
 		return err
 	}
-	engine := reconcile.New()
+	engine := apply.New()
 	orphans, _, err := engine.LedgerOwnedOrphans(router, ledger)
 	if err != nil {
 		return err
@@ -1772,7 +1772,7 @@ func appendLedgerOwnedOrphans(result *reconcile.Result, router *api.Router, ledg
 	return nil
 }
 
-func appendUniqueOrphans(existing, additions []reconcile.OrphanedArtifact) []reconcile.OrphanedArtifact {
+func appendUniqueOrphans(existing, additions []apply.OrphanedArtifact) []apply.OrphanedArtifact {
 	seen := map[string]int{}
 	for i, orphan := range existing {
 		seen[orphan.Name+"/"+orphan.Remediation] = i
@@ -1803,7 +1803,7 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 	if err != nil {
 		return nil, err
 	}
-	engine := reconcile.New()
+	engine := apply.New()
 	_, artifacts, err := engine.LedgerOwnedOrphans(router, ledger)
 	if err != nil {
 		return nil, err
@@ -1870,12 +1870,12 @@ func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
 	}
 }
 
-func rememberReconciledArtifacts(router *api.Router, ledgerPath string, generation int64) (int, error) {
+func rememberAppliedArtifacts(router *api.Router, ledgerPath string, generation int64) (int, error) {
 	if ledgerPath == "" {
 		return 0, nil
 	}
-	engine := reconcile.New()
-	artifacts, err := engine.ReconciledOwnedArtifacts(router)
+	engine := apply.New()
+	artifacts, err := engine.AppliedOwnedArtifacts(router)
 	if err != nil {
 		return 0, err
 	}
@@ -1900,7 +1900,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
 	socketPath := fs.String("socket", defaultSocketPath(), "Unix domain socket path")
 	observeInterval := fs.Duration("observe-interval", 30*time.Second, "periodic observe interval; 0 disables scheduled observe")
-	reconcileInterval := fs.Duration("reconcile-interval", 0, "periodic reconcile interval; 0 disables scheduled reconcile")
+	applyInterval := fs.Duration("apply-interval", 0, "periodic apply interval; 0 disables scheduled apply")
 	netplanPath := fs.String("netplan-file", defaultNetplanPath, "routerd-managed netplan file")
 	dnsmasqConfigPath := fs.String("dnsmasq-file", defaultDnsmasqConfigPath, "routerd-managed dnsmasq config file")
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
@@ -1919,14 +1919,14 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	}
 	defer closeLogger(logger, "serve", &err)
 	logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon starting", map[string]string{
-		"config":            *configPath,
-		"socket":            *socketPath,
-		"observeInterval":   observeInterval.String(),
-		"reconcileInterval": reconcileInterval.String(),
+		"config":          *configPath,
+		"socket":          *socketPath,
+		"observeInterval": observeInterval.String(),
+		"applyInterval":   applyInterval.String(),
 	})
 
 	cache := &resultCache{}
-	engine := reconcile.New()
+	engine := apply.New()
 	if result, observeErr := engine.Observe(router); observeErr == nil {
 		cache.Store(result)
 		_ = statuswriter.Write(*statusFile, result)
@@ -1939,7 +1939,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	if *observeInterval > 0 {
 		go runObserveSchedule(stop, *observeInterval, router, cache, *statusFile, logger)
 	}
-	reconcileOpts := reconcileApplyOptions{
+	applyOpts := applyOptions{
 		ConfigPath:         *configPath,
 		StatusFile:         *statusFile,
 		NetplanPath:        *netplanPath,
@@ -1950,8 +1950,8 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		StatePath:          defaultStatePath,
 	}
 	applyMu := &sync.Mutex{}
-	if *reconcileInterval > 0 {
-		go runReconcileSchedule(stop, *reconcileInterval, router, reconcileOpts, cache, logger, applyMu)
+	if *applyInterval > 0 {
+		go runApplySchedule(stop, *applyInterval, router, applyOpts, cache, logger, applyMu)
 	}
 
 	if err := os.MkdirAll(filepathDir(*socketPath), 0755); err != nil {
@@ -1980,17 +1980,17 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			apiTable := controlapi.NewNAPTTable(table)
 			return &apiTable, nil
 		},
-		Reconcile: func(r *http.Request, req controlapi.ReconcileRequest) (*controlapi.ReconcileResult, error) {
-			opts := reconcileOpts
+		Apply: func(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
+			opts := applyOpts
 			opts.DryRun = req.DryRun
 			applyMu.Lock()
 			defer applyMu.Unlock()
-			result, err := runReconcileOnce(router, opts, io.Discard, logger)
+			result, err := runApplyOnce(router, opts, io.Discard, logger)
 			if err != nil {
 				return nil, err
 			}
 			cache.Store(result)
-			apiResult := controlapi.NewReconcileResult(result)
+			apiResult := controlapi.NewApplyResult(result)
 			return &apiResult, nil
 		},
 	}
@@ -2001,16 +2001,16 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 
 type resultCache struct {
 	mu     sync.RWMutex
-	result *reconcile.Result
+	result *apply.Result
 }
 
-func (c *resultCache) Store(result *reconcile.Result) {
+func (c *resultCache) Store(result *apply.Result) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.result = result
 }
 
-func (c *resultCache) Load() *reconcile.Result {
+func (c *resultCache) Load() *apply.Result {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.result
@@ -2024,7 +2024,7 @@ func runObserveSchedule(stop <-chan struct{}, interval time.Duration, router *ap
 		case <-stop:
 			return
 		case <-ticker.C:
-			engine := reconcile.New()
+			engine := apply.New()
 			result, err := engine.Observe(router)
 			if err != nil {
 				logger.Emit(eventlog.LevelWarning, "serve", "scheduled observe failed", map[string]string{"error": err.Error()})
@@ -2040,7 +2040,7 @@ func runObserveSchedule(stop <-chan struct{}, interval time.Duration, router *ap
 	}
 }
 
-func runReconcileSchedule(stop <-chan struct{}, interval time.Duration, router *api.Router, opts reconcileApplyOptions, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {
+func runApplySchedule(stop <-chan struct{}, interval time.Duration, router *api.Router, opts applyOptions, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2049,10 +2049,10 @@ func runReconcileSchedule(stop <-chan struct{}, interval time.Duration, router *
 			return
 		case <-ticker.C:
 			applyMu.Lock()
-			result, err := runReconcileOnce(router, opts, io.Discard, logger)
+			result, err := runApplyOnce(router, opts, io.Discard, logger)
 			applyMu.Unlock()
 			if err != nil {
-				logger.Emit(eventlog.LevelError, "serve", "scheduled reconcile failed", map[string]string{"error": err.Error()})
+				logger.Emit(eventlog.LevelError, "serve", "scheduled apply failed", map[string]string{"error": err.Error()})
 				continue
 			}
 			cache.Store(result)
@@ -4333,7 +4333,7 @@ func defaultSocketPath() string {
 	return platformDefaults.SocketFile()
 }
 
-func writeResult(stdout io.Writer, statusFile string, result *reconcile.Result) error {
+func writeResult(stdout io.Writer, statusFile string, result *apply.Result) error {
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return err
@@ -4357,7 +4357,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  adopt --config <path> --candidates")
 	fmt.Fprintln(w, "  adopt --config <path> --apply")
 	fmt.Fprintln(w, "  render nixos --config <path> [--out <path>]")
-	fmt.Fprintln(w, "  reconcile --config <path> --once [--dry-run]")
+	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run]")
 	fmt.Fprintln(w, "  serve --config <path> [--socket <path>]")
 	fmt.Fprintln(w, "  run --config <path>")
 	fmt.Fprintln(w, "  status [--status-file <path>]")

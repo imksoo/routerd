@@ -9,11 +9,15 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- CLI and control verbs now use `apply`: `routerd reconcile`,
+  `routerctl reconcile`, and the control API apply action were renamed to
+  `routerd apply`, `routerctl apply`, and `/apply`. The YAML
+  `spec.reconcile` policy name stays unchanged.
 - `routerctl get` and `routerctl describe` were added, splitting the CLI into
   kubectl-style verbs: `get` for desired config, `describe` for human-readable
   status/events/ledger details, and `show` for the existing combined view.
 - SQLite storage was redesigned around Kubernetes-style generations, objects,
-  artifacts, and events. Reconcile generations and events are now first-class
+  artifacts, and events. Apply generations and events are now first-class
   records, and the previous two-table SQLite schema is migrated automatically
   into the new shape.
 - `routerctl show` now uses `routerctl show <kind>` and
@@ -23,7 +27,7 @@ behavior changes and new resource shapes as the model takes shape.
   inspection moved under `IPv4SourceNAT` observed state.
 - DHCPv6-PD state now migrates scattered prefix and identity keys into the
   structured `ipv6PrefixDelegation.<name>.lease` value.
-- Reconcile now asks the OS DHCPv6-PD client to renew once when a remembered
+- Apply now asks the OS DHCPv6-PD client to renew once when a remembered
   lease is missing locally but still within its recorded valid lifetime.
 - FreeBSD remote install hardening: `ROUTERD_OS=freebsd` now builds
   FreeBSD binaries and uses FreeBSD runtime directories even when invoked
@@ -36,7 +40,7 @@ behavior changes and new resource shapes as the model takes shape.
 - `IPv6PrefixDelegation.spec.convergenceTimeout` keeps recently observed
   delegated prefixes stable while DHCPv6-PD is converging; NTT profiles
   default this grace period to five minutes.
-- FreeBSD reconcile now observes delegated prefixes from downstream
+- FreeBSD apply now observes delegated prefixes from downstream
   `ifconfig` output, applies stable `IPv6DelegatedAddress` aliases, and avoids
   restarting `dhcp6c` unless its configuration changed or the service is down.
 - FreeBSD `dhcp6c` is now started with `-n`, and required restarts use SIGUSR1
@@ -47,10 +51,10 @@ behavior changes and new resource shapes as the model takes shape.
 - Resource ownership and adoption foundation: every resource kind now
   emits artifact intents, the local ownership ledger records routerd-owned
   host artifacts, `routerd adopt --candidates` reports adoption candidates
-  read-only, and reconcile reports orphan candidates for managed routing
+  read-only, and apply reports orphan candidates for managed routing
   and nftables artifacts.
 - `routerd adopt --apply` records matching adoption candidates in the
-  ledger without changing host state. Successful non-dry-run reconcile
+  ledger without changing host state. Successful non-dry-run apply
   also updates the ledger automatically.
 - Ledger-backed orphan cleanup for DS-Lite tunnels, routerd nftables
   tables, and routerd systemd services.
@@ -80,12 +84,12 @@ behavior changes and new resource shapes as the model takes shape.
   LAN prefix is observable, allowing IPv4 DHCP and DNS to keep running
   while DHCPv6-PD is still unavailable.
 - NixOSHost can now render an optional local `routerd.service` for
-  source-installed lab hosts, so `routerd serve` can resume reconcile
+  source-installed lab hosts, so `routerd serve` can resume apply
   automatically after reboot without importing the flake module.
 - The managed dnsmasq systemd unit no longer owns `/run/routerd`, avoiding
   accidental removal of the routerd control socket when dnsmasq is
   restarted.
-- Reconcile now removes ledger-owned orphaned DS-Lite ipip6 tunnels before
+- Apply now removes ledger-owned orphaned DS-Lite ipip6 tunnels before
   creating desired DS-Lite tunnels, so renaming a tunnel does not fail when
   the old tunnel still owns the same local and remote endpoints.
 - The FreeBSD rc.d script now tracks the child routerd PID and redirects
@@ -94,7 +98,7 @@ behavior changes and new resource shapes as the model takes shape.
 - IPv4 default route selection now ignores route-set candidates whose
   target interfaces do not exist, so DS-Lite fallback can use DHCPv4
   while prefix delegation is still unavailable.
-- Reconcile now records observed IPv6 prefix-delegation state per
+- Apply now records observed IPv6 prefix-delegation state per
   `IPv6PrefixDelegation` resource, including the current prefix, last known
   prefix, uplink/downstream interface names, and prefix length. The last
   known prefix is retained when the current prefix disappears, which is

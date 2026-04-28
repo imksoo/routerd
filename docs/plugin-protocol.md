@@ -63,7 +63,7 @@ resource being processed.
 
 ## Actions
 
-Each action maps to a phase of the reconcile pipeline:
+Each action maps to a phase of the apply pipeline:
 
 - `validate`: structural and semantic validation of the resource.
 - `observe`: read host state related to the resource.
@@ -113,7 +113,7 @@ The event payload looks like this:
   "level": "info",
   "message": "routerd command completed",
   "router": "lab-router",
-  "command": "reconcile",
+  "command": "apply",
   "fields": {
     "phase": "Healthy"
   }
@@ -122,4 +122,4 @@ The event payload looks like this:
 
 routerd waits for the executable to exit before considering the event
 delivered. The configured `spec.plugin.timeout` bounds that wait, so a
-slow or stuck sink cannot hold up reconcile.
+slow or stuck sink cannot hold up apply.

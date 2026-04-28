@@ -99,7 +99,7 @@ routerd がプラグインに処理を依頼するときは、実行ファイル
   "level": "info",
   "message": "routerd command completed",
   "router": "lab-router",
-  "command": "reconcile",
+  "command": "apply",
   "fields": {
     "phase": "Healthy"
   }

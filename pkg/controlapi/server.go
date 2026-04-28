@@ -10,9 +10,9 @@ import (
 const Prefix = "/api/control.routerd.net/v1alpha1"
 
 type Handler struct {
-	Status    func(*http.Request) (*Status, error)
-	NAPT      func(*http.Request, NAPTRequest) (*NAPTTable, error)
-	Reconcile func(*http.Request, ReconcileRequest) (*ReconcileResult, error)
+	Status func(*http.Request) (*Status, error)
+	NAPT   func(*http.Request, NAPTRequest) (*NAPTTable, error)
+	Apply  func(*http.Request, ApplyRequest) (*ApplyResult, error)
 }
 
 type NAPTRequest struct {
@@ -25,8 +25,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleStatus(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/napt":
 		h.handleNAPT(w, r)
-	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/reconcile":
-		h.handleReconcile(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/apply":
+		h.handleApply(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
@@ -67,13 +67,13 @@ func (h Handler) handleNAPT(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, table)
 }
 
-func (h Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
-	if h.Reconcile == nil {
-		writeError(w, http.StatusNotImplemented, "reconcile handler is not configured")
+func (h Handler) handleApply(w http.ResponseWriter, r *http.Request) {
+	if h.Apply == nil {
+		writeError(w, http.StatusNotImplemented, "apply handler is not configured")
 		return
 	}
 	defer r.Body.Close()
-	var req ReconcileRequest
+	var req ApplyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -82,11 +82,11 @@ func (h Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unsupported apiVersion")
 		return
 	}
-	if req.Kind != "" && req.Kind != "ReconcileRequest" {
+	if req.Kind != "" && req.Kind != "ApplyRequest" {
 		writeError(w, http.StatusBadRequest, "unsupported kind")
 		return
 	}
-	result, err := h.Reconcile(r, req)
+	result, err := h.Apply(r, req)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, ErrBadRequest) {

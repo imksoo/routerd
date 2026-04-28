@@ -5,7 +5,7 @@
 routerd is a small software router for Linux. You describe how the router
 should behave in a YAML file, and routerd brings up the matching interfaces,
 addresses, DHCP and DNS service, NAT, policy routing, firewall, and route
-health checks. Editing the YAML and running one reconcile is enough to change
+health checks. Editing the YAML and running one apply is enough to change
 all of those at once. The goal is to keep router configuration as something
 reviewable in Git instead of a pile of one-off shell commands.
 
@@ -38,7 +38,7 @@ dry-run output before applying it to a remote router.
   services declared in the config.
 - Manage sysctl values, hostname, systemd-timesyncd, and the routerd event
   sink from the same YAML.
-- Plan and dry-run reconciles, expose status as JSON, and accept control
+- Plan and dry-run applies, expose status as JSON, and accept control
   requests over a Unix domain socket.
 - Extend resource-specific behavior through trusted local plugins.
 
@@ -206,7 +206,7 @@ Useful direct commands:
 routerd validate --config examples/router-lab.yaml
 routerd plan --config examples/router-lab.yaml
 routerd adopt --config examples/router-lab.yaml --candidates
-routerd reconcile --config examples/router-lab.yaml --once --dry-run
+routerd apply --config examples/router-lab.yaml --once --dry-run
 routerd serve --config examples/router-lab.yaml --socket /run/routerd/routerd.sock
 routerctl status
 routerctl get ipv6pd
@@ -221,14 +221,14 @@ routerctl plan
 Use `routerctl get --list-kinds` to list configured kinds, and `-o json` or
 `-o yaml` for structured output. `routerctl describe <kind>/<name>` is the
 human-readable investigation view: it combines observed status, recent events,
-owned host artifacts, and the last reconcile generation. `routerctl show`
+owned host artifacts, and the last apply generation. `routerctl show`
 remains the all-in-one view for scripts and debugging, with `--diff`,
 `--ledger`, `--adopt`, `--events`, `--spec`, and `--status`. Common aliases
 include `if`, `pd`, `ipv6pd`, `nat`, `dslite`, `pppoe`, `fw`, `zone`,
 `hostname`, and `route`. NAPT/conntrack details are shown under
 `IPv4SourceNAT` observed state, so there is no separate `show napt` command.
 
-`routerd reconcile --once` applies managed netplan, systemd-networkd drop-ins,
+`routerd apply --once` applies managed netplan, systemd-networkd drop-ins,
 dnsmasq, nftables, sysctl values, DS-Lite tunnels, and policy routing. Avoid
 running it against a remote router until the adoption plan is understood,
 especially where cloud-init or existing netplan owns the management
@@ -243,7 +243,7 @@ changing host state.
 ## Documentation
 
 - [Resource API v1alpha1](docs/api-v1alpha1.md)
-- [Resource ownership and reconcile model](docs/resource-ownership.md)
+- [Resource ownership and apply model](docs/resource-ownership.md)
 - [Control API v1alpha1](docs/control-api-v1alpha1.md)
 - [Plugin protocol](docs/plugin-protocol.md)
 - [Supported platforms](docs/platforms.md)

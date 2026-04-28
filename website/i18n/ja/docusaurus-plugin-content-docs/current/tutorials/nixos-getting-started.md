@@ -139,7 +139,7 @@ sudo routerctl status
 ```
 
 この段階で routerd は systemd ユニットとして常駐し、実行時判断の
-reconcile を続けています。一方で、永続的な NixOS 設定（ホスト名、
+反映を続けています。一方で、永続的な NixOS 設定（ホスト名、
 ユーザ、SSH、ブートローダーなど）はまだ手書きの `configuration.nix`
 側の責任です。
 
@@ -197,7 +197,7 @@ sudo nixos-rebuild switch
 | `configFile` | Nix ストア外の `router.yaml` のパス。 |
 | `configText` | インラインで書く `router.yaml`。Nix ストアに展開されます。`configFile` とは排他。 |
 | `socket` | 制御 API の Unix ソケットパス。既定 `/run/routerd/routerd.sock`。 |
-| `reconcileInterval` | 定期 reconcile の間隔（Go の duration 形式）。既定 `60s`。 |
+| `applyInterval` | 定期反映の間隔（Go の duration 形式）。既定 `60s`。 |
 | `extraFlags` | `routerd serve` に追加で渡すコマンドラインフラグ。 |
 
 完全な一覧は `contrib/nix/module.nix` にあります。
@@ -221,7 +221,7 @@ sudo nixos-rebuild switch
 - **すべてのリソースが Nix ネイティブで生成されると期待する。** 現状
   のレンダラはホスト設定、依存パッケージ、基本的な systemd-networkd
   の `.network` 宣言までです。それ以外のリソース種別は実行時の
-  reconcile を経由します。詳細は [対応プラットフォーム](/ja/docs/platforms)
+  反映処理を経由します。詳細は [対応プラットフォーム](/ja/docs/platforms)
   にあります。
 
 ## 次に読むもの

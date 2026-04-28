@@ -29,7 +29,7 @@ spec:
           binaryPath: /usr/local/sbin/routerd
           configFile: /usr/local/etc/routerd/router.yaml
           socket: /run/routerd/routerd.sock
-          reconcileInterval: 60s
+          applyInterval: 60s
           extraFlags:
             - --status-file
             - /run/routerd/status.json

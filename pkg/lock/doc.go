@@ -1,2 +1,2 @@
-// Package lock coordinates exclusive routerd reconcile runs.
+// Package lock coordinates exclusive routerd apply runs.
 package lock

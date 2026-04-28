@@ -177,7 +177,7 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 		t.Fatalf("describe pd: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"Currently observable:", "Current delegated prefix:", "Last delegated prefix:", "Last Reconcile Generation:", "PrefixObserved", "dhcp.ipv6.prefixDelegation/ens18"} {
+	for _, want := range []string{"Currently observable:", "Current delegated prefix:", "Last delegated prefix:", "Last Apply Generation:", "PrefixObserved", "dhcp.ipv6.prefixDelegation/ens18"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("describe output missing %q:\n%s", want, got)
 		}

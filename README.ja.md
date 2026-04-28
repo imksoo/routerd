@@ -167,7 +167,7 @@ make website-build
 routerd validate --config examples/router-lab.yaml
 routerd plan --config examples/router-lab.yaml
 routerd adopt --config examples/router-lab.yaml --candidates
-routerd reconcile --config examples/router-lab.yaml --once --dry-run
+routerd apply --config examples/router-lab.yaml --once --dry-run
 routerd serve --config examples/router-lab.yaml --socket /run/routerd/routerd.sock
 routerctl status
 routerctl get ipv6pd
@@ -183,10 +183,10 @@ routerctl plan
 実機への反映:
 
 ```sh
-sudo routerd reconcile --config /usr/local/etc/routerd/router.yaml --once
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
-`routerd reconcile --once` は、routerd が管理対象として認識した netplan、systemd-networkd の追加設定、dnsmasq、nftables、sysctl、DS-Lite トンネル、ポリシールーティングを実機へ反映します。リモートのルータで実行する前に、必ず `plan` と `--dry-run` で挙動を確認してください。cloud-init や既存の netplan が掴んでいるインターフェースを不用意に奪わないよう、引き継ぎが必要な状態は計画上で「取り込み待ち」として表示します。
+`routerd apply --once` は、routerd が管理対象として認識した netplan、systemd-networkd の追加設定、dnsmasq、nftables、sysctl、DS-Lite トンネル、ポリシールーティングを実機へ反映します。リモートのルータで実行する前に、必ず `plan` と `--dry-run` で挙動を確認してください。cloud-init や既存の netplan が掴んでいるインターフェースを不用意に奪わないよう、引き継ぎが必要な状態は計画上で「取り込み待ち」として表示します。
 
 すでに実機にある設定を routerd の管理下に取り込む場合は、まず `routerd adopt --candidates` で候補を確認し、内容に問題がなければ `routerd adopt --apply` で実機の状態を変更せずローカル台帳にだけ所有関係を記録します。
 

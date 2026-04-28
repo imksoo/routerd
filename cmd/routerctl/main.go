@@ -18,11 +18,11 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"routerd/pkg/api"
+	"routerd/pkg/apply"
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
 	"routerd/pkg/observe"
 	"routerd/pkg/platform"
-	"routerd/pkg/reconcile"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
 )
@@ -50,10 +50,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return describeCommand(args[1:], stdout, stderr)
 	case "show":
 		return showCommand(args[1:], stdout, stderr)
-	case "reconcile":
-		return reconcileCommand(args[1:], stdout)
+	case "apply":
+		return applyCommand(args[1:], stdout)
 	case "plan":
-		return reconcileCommand(append([]string{"--dry-run"}, args[1:]...), stdout)
+		return applyCommand(append([]string{"--dry-run"}, args[1:]...), stdout)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return nil
@@ -80,8 +80,8 @@ func statusCommand(args []string, stdout io.Writer) error {
 	return writeJSON(stdout, status)
 }
 
-func reconcileCommand(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
+func applyCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
@@ -91,7 +91,7 @@ func reconcileCommand(args []string, stdout io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	result, err := controlapi.NewUnixClient(*socketPath).Reconcile(ctx, controlapi.ReconcileRequest{DryRun: *dryRun})
+	result, err := controlapi.NewUnixClient(*socketPath).Apply(ctx, controlapi.ApplyRequest{DryRun: *dryRun})
 	if err != nil {
 		return err
 	}
@@ -624,7 +624,7 @@ func buildShowResources(router *api.Router, resources []api.Resource, store rout
 }
 
 func adoptOnlyShowResources(router *api.Router, rows []showResource, ledger resource.Ledger) ([]showResource, error) {
-	candidates, _, err := reconcile.New().AdoptionCandidateArtifacts(router, ledger)
+	candidates, _, err := apply.New().AdoptionCandidateArtifacts(router, ledger)
 	if err != nil {
 		return nil, err
 	}
@@ -978,7 +978,7 @@ func writeDescribe(stdout io.Writer, row showResource, store routerstate.Store) 
 	fmt.Fprintf(w, "API Version:\t%s\n", row.APIVersion)
 	if generationReader, ok := store.(routerstate.ObjectGenerationReader); ok {
 		if generation := generationReader.ObjectGeneration(row.APIVersion, row.Kind, row.Name); generation != 0 {
-			fmt.Fprintf(w, "Last Reconcile Generation:\t%d\n", generation)
+			fmt.Fprintf(w, "Last Apply Generation:\t%d\n", generation)
 		}
 	}
 	writeDescribeStatus(w, row)
@@ -1175,5 +1175,5 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  show <kind> [--config <path>] [--state-file <path>] [--ledger-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events|--spec|--status] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plan [--socket <path>]")
-	fmt.Fprintln(w, "  reconcile [--socket <path>] [--dry-run]")
+	fmt.Fprintln(w, "  apply [--socket <path>] [--dry-run]")
 }

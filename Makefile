@@ -121,6 +121,7 @@ install-rc-freebsd:
 dist:
 	rm -rf $(DISTROOT) $(DISTTAR)
 	$(MAKE) install DESTDIR=$(abspath $(DISTROOT))
+	$(MAKE) install-service DESTDIR=$(abspath $(DISTROOT))
 	install -d $(DISTDIR)
 	tar -C $(DISTROOT) -cf $(DISTTAR) .
 
@@ -139,7 +140,7 @@ validate-example:
 	go run ./cmd/routerd validate --config examples/basic-static.yaml
 
 dry-run-example:
-	go run ./cmd/routerd reconcile --config examples/basic-static.yaml --once --dry-run --status-file /tmp/routerd-status.json
+	go run ./cmd/routerd apply --config examples/basic-static.yaml --once --dry-run --status-file /tmp/routerd-status.json
 
 plan-config:
 	test -n "$(CONFIG)" || (echo "CONFIG is required, for example: make plan-config CONFIG=path/to/router.yaml" >&2; exit 2)

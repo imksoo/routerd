@@ -36,8 +36,8 @@ matches the implementation:
 GET /api/control.routerd.net/v1alpha1/status
 ```
 
-Returns the latest reconcile result the daemon is sitting on: phase,
-generation, the time of the last reconcile, and how many resources were
+Returns the latest apply result the daemon is sitting on: phase,
+generation, the time of the last apply, and how many resources were
 loaded. This is the cheapest way to ask "is the router doing OK right
 now?".
 
@@ -51,7 +51,7 @@ now?".
   "status": {
     "phase": "Healthy",
     "generation": 1777203750,
-    "lastReconcileTime": "2026-04-26T11:42:30Z",
+    "lastApplyTime": "2026-04-26T11:42:30Z",
     "resourceCount": 2
   }
 }
@@ -106,13 +106,13 @@ summary section only.
 }
 ```
 
-### Reconcile
+### Apply
 
 ```text
-POST /api/control.routerd.net/v1alpha1/reconcile
+POST /api/control.routerd.net/v1alpha1/apply
 ```
 
-Asks the running daemon to perform an extra reconcile pass. Useful right
+Asks the running daemon to perform an extra apply pass. Useful right
 after a YAML change, when you do not want to wait for the periodic
 schedule.
 
@@ -121,7 +121,7 @@ Dry-run request body:
 ```json
 {
   "apiVersion": "control.routerd.net/v1alpha1",
-  "kind": "ReconcileRequest",
+  "kind": "ApplyRequest",
   "dryRun": true
 }
 ```
@@ -131,7 +131,7 @@ Response:
 ```json
 {
   "apiVersion": "control.routerd.net/v1alpha1",
-  "kind": "ReconcileResult",
+  "kind": "ApplyResult",
   "result": {
     "phase": "Healthy",
     "resources": []
@@ -139,7 +139,7 @@ Response:
 }
 ```
 
-`dryRun: true` runs the same plan as a regular reconcile but does not
+`dryRun: true` runs the same plan as a regular apply but does not
 change host state. `dryRun: false` (or omitted) applies the result.
 
 ## Talking to it directly
@@ -159,8 +159,8 @@ curl --unix-socket /run/routerd/routerd.sock \
 ```sh
 curl --unix-socket /run/routerd/routerd.sock \
   -H 'Content-Type: application/json' \
-  -d '{"apiVersion":"control.routerd.net/v1alpha1","kind":"ReconcileRequest","dryRun":true}' \
-  http://routerd/api/control.routerd.net/v1alpha1/reconcile
+  -d '{"apiVersion":"control.routerd.net/v1alpha1","kind":"ApplyRequest","dryRun":true}' \
+  http://routerd/api/control.routerd.net/v1alpha1/apply
 ```
 
 ## Daemon scheduler
@@ -170,10 +170,10 @@ of the control API:
 
 - `--observe-interval`: how often the daemon refreshes its read-only
   observation of host state. Defaults to 30 seconds.
-- `--reconcile-interval`: how often the daemon performs a full reconcile.
-  Defaults to 0, which disables scheduled reconciles — the daemon then
-  only reconciles in response to control API calls.
+- `--apply-interval`: how often the daemon performs a full apply.
+  Defaults to 0, which disables scheduled applies — the daemon then
+  only applies in response to control API calls.
 
 Health checks are owned by the scheduler rather than mixed into one-shot
-CLI commands. This keeps the same reconcile path in use for daemon mode
+CLI commands. This keeps the same apply path in use for daemon mode
 and one-shot mode.

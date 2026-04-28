@@ -69,7 +69,7 @@ spec:
 
 ```bash
 routerd validate --config examples/basic-dhcp.yaml
-routerd reconcile --config examples/basic-dhcp.yaml --once --dry-run
+routerd apply --config examples/basic-dhcp.yaml --once --dry-run
 ```
 
 予行実行の結果は JSON で返ります。どのリソースが健全か、ホストとどのくらい乖離しているか、routerd が何をしようとしているかを確認できます。
@@ -122,7 +122,7 @@ sudo install -m 0644 examples/basic-dhcp.yaml /usr/local/etc/routerd/router.yaml
 デーモンを有効化する前に、必ず 1 回限りの反映で挙動を確認します。
 
 ```bash
-sudo /usr/local/sbin/routerd reconcile \
+sudo /usr/local/sbin/routerd apply \
   --config /usr/local/etc/routerd/router.yaml \
   --once \
   --dry-run

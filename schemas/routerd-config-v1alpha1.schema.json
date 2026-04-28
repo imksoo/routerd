@@ -375,6 +375,9 @@
                       "routerdService": {
                         "additionalProperties": false,
                         "properties": {
+                          "applyInterval": {
+                            "type": "string"
+                          },
                           "binaryPath": {
                             "type": "string"
                           },
@@ -389,9 +392,6 @@
                               "type": "string"
                             },
                             "type": "array"
-                          },
-                          "reconcileInterval": {
-                            "type": "string"
                           },
                           "socket": {
                             "type": "string"

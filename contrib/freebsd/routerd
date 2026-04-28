@@ -27,14 +27,14 @@
 
 name="routerd"
 rcvar="routerd_enable"
-desc="declarative router resource reconciler"
+desc="declarative router resource applier"
 
 load_rc_config "$name"
 
 : ${routerd_enable:="NO"}
 : ${routerd_config:="/usr/local/etc/routerd/router.yaml"}
 : ${routerd_socket:="/var/run/routerd/routerd.sock"}
-: ${routerd_reconcile_interval:="60s"}
+: ${routerd_apply_interval:="60s"}
 : ${routerd_log:="/var/log/routerd.log"}
 : ${routerd_user:="root"}
 
@@ -45,7 +45,7 @@ procname="/usr/local/sbin/routerd"
 command_args="-P ${supervisor_pidfile} -p ${pidfile} -r -t ${name} -o ${routerd_log} -- ${procname} serve \
     --config ${routerd_config} \
     --socket ${routerd_socket} \
-    --reconcile-interval ${routerd_reconcile_interval} \
+    --apply-interval ${routerd_apply_interval} \
     ${routerd_flags} >/dev/null 2>&1"
 
 start_precmd="routerd_prestart"

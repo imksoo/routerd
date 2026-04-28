@@ -64,7 +64,7 @@ spec:
 実機に向けるときは、必ず予行実行を先に通します。
 
 ```bash
-sudo /usr/local/sbin/routerd reconcile \
+sudo /usr/local/sbin/routerd apply \
   --config /usr/local/etc/routerd/router.yaml \
   --once \
   --dry-run

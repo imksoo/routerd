@@ -86,6 +86,6 @@ hand-written `configuration.nix`.
   `routerd-generated.nix` module for host settings, dependency
   packages, and basic systemd-networkd interface configuration. The
   module does not depend on netplan.
-- Runtime reconcile on NixOS should be limited to non-persistent
+- Runtime apply on NixOS should be limited to non-persistent
   decisions until each resource has a Nix-native persistent rendering
   story.

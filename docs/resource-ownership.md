@@ -3,7 +3,7 @@ title: Resource Ownership
 slug: /reference/resource-ownership
 ---
 
-# Resource Ownership and Reconcile Model
+# Resource Ownership and Apply Model
 
 routerd is allowed to change a router's kernel networking state, dnsmasq
 config, nftables tables, systemd units, and other host-side configuration.
@@ -19,9 +19,9 @@ This page describes how routerd answers those questions. The local ownership
 ledger is central to question 2, and is part of the safety model — it is
 not just a cache.
 
-## How reconcile works
+## How apply works
 
-Each reconcile pass:
+Each apply pass:
 
 1. Reads the current host inventory.
 2. Lets each routerd resource emit one or more *artifact intents* — short
@@ -35,7 +35,7 @@ Each reconcile pass:
 This mirrors the broad ownership idea Kubernetes controllers use: generated
 objects carry an owner reference, finalizers handle pre-deletion cleanup,
 and field ownership records who manages a field. routerd has no API server,
-so the ownership model lives in the reconciler and in a JSON file on disk.
+so the ownership model lives in the applier and in a JSON file on disk.
 
 ## Apply Failure Model
 
@@ -47,7 +47,7 @@ about.
 
 Instead, routerd uses three plain concepts:
 
-- **Current apply**: the work attempted by one reconcile pass.
+- **Current apply**: the work attempted by one apply pass.
 - **Ownership ledger**: the local record of artifacts routerd has created or
   adopted.
 - **Protected management path**: interfaces or firewall zones that must remain
@@ -79,7 +79,7 @@ treat protected artifacts as preserve-first.
 
 For operators, the rule is simple: keep management access, apply safe
 independent changes, and leave failed data-plane work visible for the next
-plan or reconcile.
+plan or apply.
 
 ## Artifact intents
 
@@ -144,7 +144,7 @@ artifact.
 
 For Linux policy routing, routerd currently treats fwmarks `0x100-0x1ff` as
 a managed range. A stale rule from a removed DS-Lite route set in that
-range is removed by reconcile; if the routing table it pointed at is no
+range is removed by apply; if the routing table it pointed at is no
 longer desired, that table is flushed too.
 
 Artifacts outside routerd-managed namespaces are treated as external until
@@ -162,7 +162,7 @@ If an artifact exists on the host but is not in the ledger,
 attributes differ, adoption is no longer a plain ownership transfer — the
 operator has to make a decision first:
 
-- run reconcile so the host matches the YAML,
+- run apply so the host matches the YAML,
 - change the YAML so desired matches the host, or
 - leave the artifact unmanaged.
 
@@ -248,9 +248,9 @@ sudo routerd adopt \
 
 `adopt --apply` does not change kernel, nftables, systemd, or file state.
 It only writes the ownership ledger. If a candidate differs from desired
-state, run reconcile or change the config first, then re-run adoption.
+state, run apply or change the config first, then re-run adoption.
 
-After a successful non-dry-run reconcile, routerd also remembers the owned
+After a successful non-dry-run apply, routerd also remembers the owned
 artifacts it can inventory. Derived artifacts that cannot yet be matched to
 a stable host identity are intentionally left out of the ledger.
 
@@ -258,14 +258,14 @@ A typical first-time workflow on an already configured router:
 
 1. Run `routerd plan` and inspect drift.
 2. Run `routerd adopt --candidates`.
-3. Resolve drift by reconciling or editing the YAML.
+3. Resolve drift by applying changes or editing the YAML.
 4. Run `routerd adopt --apply` to record matching artifacts.
-5. Run `routerd reconcile --once --dry-run` and confirm there are no
+5. Run `routerd apply --once --dry-run` and confirm there are no
    unexpected orphans.
-6. Run `routerd reconcile --once`.
+6. Run `routerd apply --once`.
 
 For a fresh router built only through routerd, step 4 is often
-unnecessary, because successful reconcile records owned artifacts
+unnecessary, because successful apply records owned artifacts
 automatically.
 
 ## Cleanup policy
@@ -299,7 +299,7 @@ Explicitly *not* cleaned up as orphans:
   separate. Stale addresses can block moving an address to another
   interface, but deleting the wrong one breaks management connectivity.
 - `host.sysctl` and `host.hostname`: these are global host state, not
-  standalone objects that can be safely removed. Reconcile can drive them
+  standalone objects that can be safely removed. Apply can drive them
   to a desired value, but orphan cleanup will not delete them.
 
 The long-term rule is conservative: routerd deletes broad artifact types
@@ -322,6 +322,6 @@ When adding or changing a resource kind:
    behavior.
 6. Add tests that fail if the resource kind emits no artifact intent.
 
-These rules keep reconcile from turning into unrelated one-off cleanup
+These rules keep apply from turning into unrelated one-off cleanup
 heuristics. The goal is that every host-side object has a declared owner,
 a known inventory method, and a deliberate cleanup policy.

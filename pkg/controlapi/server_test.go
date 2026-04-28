@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"routerd/pkg/reconcile"
+	"routerd/pkg/apply"
 )
 
 func TestStatusHandler(t *testing.T) {
 	handler := Handler{
 		Status: func(r *http.Request) (*Status, error) {
-			status := NewStatus(&reconcile.Result{Phase: "Healthy", Generation: 42})
+			status := NewStatus(&apply.Result{Phase: "Healthy", Generation: 42})
 			return &status, nil
 		},
 	}
@@ -32,17 +32,17 @@ func TestStatusHandler(t *testing.T) {
 	}
 }
 
-func TestReconcileHandler(t *testing.T) {
+func TestApplyHandler(t *testing.T) {
 	handler := Handler{
-		Reconcile: func(r *http.Request, req ReconcileRequest) (*ReconcileResult, error) {
+		Apply: func(r *http.Request, req ApplyRequest) (*ApplyResult, error) {
 			if !req.DryRun {
 				t.Fatal("DryRun = false, want true")
 			}
-			result := NewReconcileResult(&reconcile.Result{Phase: "Healthy", Generation: 7})
+			result := NewApplyResult(&apply.Result{Phase: "Healthy", Generation: 7})
 			return &result, nil
 		},
 	}
-	req := httptest.NewRequest(http.MethodPost, Prefix+"/reconcile", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"ReconcileRequest","dryRun":true}`))
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/apply", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"ApplyRequest","dryRun":true}`))
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -50,7 +50,7 @@ func TestReconcileHandler(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"kind": "ReconcileResult"`) {
+	if !strings.Contains(rec.Body.String(), `"kind": "ApplyResult"`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

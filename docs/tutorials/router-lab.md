@@ -81,7 +81,7 @@ endpoint, without interfering with the rest of the configuration.
 On a real host, always run a dry-run first:
 
 ```bash
-sudo /usr/local/sbin/routerd reconcile \
+sudo /usr/local/sbin/routerd apply \
   --config /usr/local/etc/routerd/router.yaml \
   --once \
   --dry-run

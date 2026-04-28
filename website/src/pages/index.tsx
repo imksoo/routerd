@@ -8,15 +8,15 @@ import styles from './index.module.css';
 const copy = {
   en: {
     title: 'Declarative router control',
-    description: 'routerd is a declarative router resource reconciler for Linux hosts',
+    description: 'routerd is a declarative router resource applier for Linux hosts',
     eyebrow: 'Open router control plane',
     subtitle:
-      'A declarative router resource reconciler for small networks that need explicit configuration, repeatable installs, and practical observability.',
+      'A declarative router resource applier for small networks that need explicit configuration, repeatable installs, and practical observability.',
     tutorial: 'Start the tutorial',
     resources: 'Browse resources',
     quickstartTitle: 'From YAML To Router State',
     quickstartBody:
-      'Validate a config, inspect the plan, and reconcile it in one-shot mode before enabling the daemon.',
+      'Validate a config, inspect the plan, and apply it in one-shot mode before enabling the daemon.',
     features: [
       {
         title: 'Declarative Router Resources',
@@ -24,7 +24,7 @@ const copy = {
       },
       {
         title: 'Built For Real Hosts',
-        body: 'routerd reconciles Linux networking components such as systemd-networkd, dnsmasq, nftables, pppd, and systemd services.',
+        body: 'routerd applies Linux networking components such as systemd-networkd, dnsmasq, nftables, pppd, and systemd services.',
       },
       {
         title: 'Small, Inspectable Control Plane',
@@ -112,7 +112,7 @@ export default function Home(): JSX.Element {
               {siteCopy.quickstartBody}
             </p>
             <pre className="terminal"><code>{`routerd validate --config /usr/local/etc/routerd/router.yaml
-routerd reconcile --config /usr/local/etc/routerd/router.yaml --once --dry-run
+routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
 routerd serve --config /usr/local/etc/routerd/router.yaml`}</code></pre>
           </div>
         </section>

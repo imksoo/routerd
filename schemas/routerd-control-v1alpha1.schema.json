@@ -29,7 +29,7 @@
             "generation": {
               "type": "integer"
             },
-            "lastReconcileTime": {
+            "lastApplyTime": {
               "format": "date-time",
               "type": "string"
             },

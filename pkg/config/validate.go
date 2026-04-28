@@ -20,7 +20,7 @@ func Validate(router *api.Router) error {
 	if router.Metadata.Name == "" {
 		return fmt.Errorf("router metadata.name is required")
 	}
-	if err := validateReconcilePolicy(router.Spec.Reconcile); err != nil {
+	if err := validateApplyPolicy(router.Spec.Apply); err != nil {
 		return err
 	}
 
@@ -117,14 +117,14 @@ func Validate(router *api.Router) error {
 			zones[res.Metadata.Name] = true
 		}
 	}
-	for i, name := range router.Spec.Reconcile.ProtectedInterfaces {
+	for i, name := range router.Spec.Apply.ProtectedInterfaces {
 		if !interfaces[name] {
-			return fmt.Errorf("spec.reconcile.protectedInterfaces[%d] references missing Interface %q", i, name)
+			return fmt.Errorf("spec.apply.protectedInterfaces[%d] references missing Interface %q", i, name)
 		}
 	}
-	for i, name := range router.Spec.Reconcile.ProtectedZones {
+	for i, name := range router.Spec.Apply.ProtectedZones {
 		if !zones[name] {
-			return fmt.Errorf("spec.reconcile.protectedZones[%d] references missing Zone %q", i, name)
+			return fmt.Errorf("spec.apply.protectedZones[%d] references missing Zone %q", i, name)
 		}
 	}
 
@@ -373,7 +373,7 @@ func Validate(router *api.Router) error {
 	return nil
 }
 
-func validateReconcilePolicy(spec api.ReconcilePolicySpec) error {
+func validateApplyPolicy(spec api.ApplyPolicySpec) error {
 	switch spec.Mode {
 	case "", "strict", "progressive":
 	default:
@@ -533,8 +533,8 @@ func validateResource(res api.Resource) error {
 		if spec.RouterdService.Socket != "" && strings.ContainsAny(spec.RouterdService.Socket, " \t\n\r") {
 			return fmt.Errorf("%s spec.routerdService.socket must be a single path", res.ID())
 		}
-		if spec.RouterdService.ReconcileInterval != "" && strings.ContainsAny(spec.RouterdService.ReconcileInterval, " \t\n\r") {
-			return fmt.Errorf("%s spec.routerdService.reconcileInterval must be a single duration", res.ID())
+		if spec.RouterdService.ApplyInterval != "" && strings.ContainsAny(spec.RouterdService.ApplyInterval, " \t\n\r") {
+			return fmt.Errorf("%s spec.routerdService.applyInterval must be a single duration", res.ID())
 		}
 		for i, flag := range spec.RouterdService.ExtraFlags {
 			if strings.TrimSpace(flag) == "" || strings.ContainsAny(flag, "\n\r") {

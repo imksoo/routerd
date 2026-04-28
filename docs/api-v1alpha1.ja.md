@@ -5,7 +5,7 @@ slug: /reference/api-v1alpha1
 
 # リソース API v1alpha1
 
-routerd の設定は宣言的なリソースの集まりです。ひとつひとつのリソースは「ルータがこう振る舞ってほしい」という意図を表します。インターフェースを上げる、アドレスプールを配る、AFTR へトンネルを張る、健全な上流にデフォルト経路を載せる、といった粒度です。`reconcile` は、その意図とホストの現状を比べて差分を縮める作業を行います。
+routerd の設定は宣言的なリソースの集まりです。ひとつひとつのリソースは「ルータがこう振る舞ってほしい」という意図を表します。インターフェースを上げる、アドレスプールを配る、AFTR へトンネルを張る、健全な上流にデフォルト経路を載せる、といった粒度です。反映処理は、その意図とホストの現状を比べて差分を縮めます。
 
 リソースの形は Kubernetes 風で揃えています。
 
@@ -367,7 +367,7 @@ spec:
 - routerd は反映のたびに、観測できたプレフィックス委譲の状態をローカルの状態保存領域にある `ipv6PrefixDelegation.<name>.lease` へ記録します。この JSON 値には、現在のプレフィックス、最後に見えたプレフィックス、観測した DUID、IAID、期待される DUID、識別情報の取得元、最後に見えた時刻、最後に見えなかった時刻、分かる場合のリース寿命を保存します。以前の状態ファイルで使っていた `ipv6PrefixDelegation.<name>.lastPrefix` などの個別キーは、読み込み時にこの値へ移します。インターフェース名、設定されたプレフィックス長、クライアント種別、プロファイル、待ち時間は、DHCPv6 リースそのものではなく routerd の設定を表すため、別の状態値として残します。下流側の委譲プレフィックスが見えなくなった場合でも、待ち時間のあいだは `lease` 内の `currentPrefix` を維持します。待ち時間を過ぎても見えない場合は `currentPrefix` を消しますが、`lastPrefix` は残します。これにより、既知の機器を新規クライアントではなく既存リースの更新相手として扱う上流機器に対応するための足場を残せます。レンダラはこのリース記録をプレフィックスヒントに使います。望む定義は `routerctl get ipv6pd` で確認し、現在の委譲プレフィックスと最後に見えた委譲プレフィックスを取り違えず調べるには `routerctl describe ipv6pd/<名前>` を使います。機械処理向けにまとめて見る場合は `routerctl show ipv6pd -o yaml --events` を使います。
 - systemd-networkd と FreeBSD の `dhcp6c` では、取得できる範囲で DHCP の識別情報もリース記録に残します。`dhcp6c` では `/var/db/dhcp6c_duid` から DUID を読み取り、IAID は設定された `iaid`、または `dhcp6c` の既定値である `0` から決めます。NTT 系プロファイルでは、上流インターフェースの MAC アドレスから DHCPv6 のリンクレイヤ DUID を計算し、期待される DUID として残します。これらは望ましい設定ではなく、観測した状態の記憶です。再試行処理では、この情報を使って、ホームゲートウェイが以前のリースを覚えている場合に更新に近い動きを優先できます。
 - リース期限が切れる前の Renew/Rebind は、OS 側の DHCPv6 クライアントの責務です。routerd は通常の反映でこのクライアントを再起動しないようにします。再起動すると、更新として続けられたはずの処理が新規 Solicit や Release に変わることがあるためです。
-  現在のプレフィックスが観測できない場合、`plan`、`reconcile`、デーモン状態には警告を出します。上流リースが切れる前に DHCPv6 クライアントを直すためです。
+  現在のプレフィックスが観測できない場合、`plan`、`routerd apply`、デーモン状態には警告を出します。上流リースが切れる前に DHCPv6 クライアントを直すためです。
   実際に反映する場合、現在のプレフィックスが見えず、構造化されたリース記録に最後のプレフィックス、最後に見えた時刻、期限内の有効寿命が残っていれば、routerd はその見失い状態につき一度だけ OS 側クライアントへ更新を促します。systemd-networkd では `networkctl renew <link>` を呼びます。FreeBSD の KAME `dhcp6c` では、実行中の `dhcp6c` に SIGHUP を送ります。試行時刻はリース内の `lastRenewAttemptAt` に残すため、反映のたびに短い間隔で何度も刺激することはありません。
 - `spec.iaid` は DHCPv6 の IAID を固定します。10 進数、`0x` 付きの 16 進数、または 8 桁の 16 進数で書けます。systemd-networkd では 10 進数の `IAID=` として出力し、FreeBSD の `dhcp6c` では `ia-pd` / `id-assoc pd` の識別子として使います。
 - `spec.duidType` と `spec.duidRawData` は systemd-networkd の DUID 設定を固定します。`duidRawData` は `00:01:...` のようなバイト列表記でも、区切りなしの 16 進数でも書けます。現時点ではこの2つは systemd-networkd 向けです。FreeBSD の `dhcp6c` が持つ DUID ファイルの管理は、まだリソースとして扱っていません。
@@ -880,7 +880,7 @@ spec:
 ### NixOSHost
 
 `NixOSHost` は `routerd render nixos` 向けに NixOS のホスト設定を宣言
-するリソースです。`routerd serve` の実行時調整（reconcile）の対象には
+するリソースです。`routerd serve` の実行時の反映の対象には
 含めず、ホストへの反映は Nix 経由で行います。具体的には、生成された
 `routerd-generated.nix` を最小限の手書き `configuration.nix` から
 import し、`nixos-rebuild switch` で適用します。
@@ -901,7 +901,7 @@ spec:
     enabled: true
     binaryPath: /usr/local/sbin/routerd
     configFile: /usr/local/etc/routerd/router.yaml
-    reconcileInterval: 60s
+    applyInterval: 60s
   debugSystemPackages: true
   ssh:
     enabled: true

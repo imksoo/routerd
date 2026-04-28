@@ -1,5 +1,5 @@
 {
-  description = "routerd: declarative router resource reconciler";
+  description = "routerd: declarative router resource applier";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -33,7 +33,7 @@
             subPackages = [ "cmd/routerd" "cmd/routerctl" ];
             doCheck = true;
             meta = with pkgs.lib; {
-              description = "Declarative router resource reconciler";
+              description = "Declarative router resource applier";
               license = licenses.asl20;
               mainProgram = "routerd";
               platforms = platforms.linux;

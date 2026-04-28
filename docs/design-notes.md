@@ -88,19 +88,19 @@ connectivity and must not fight the OS DHCPv6 client.
 routerd stores local state and ownership information in SQLite at
 `/var/lib/routerd/routerd.db` on Linux and `/var/db/routerd/routerd.db` on
 FreeBSD. The schema now follows the same broad storage idea as Kubernetes:
-reconcile attempts create generations, resource-like records live as objects,
+apply attempts create generations, resource-like records live as objects,
 and events record notable changes. The goal is to make "what did routerd want,
 what did it observe, and when did that happen" queryable without inventing a
 new side channel for every resource type.
 
-- `generations` records each reconcile attempt, its phase, warnings, and a hash
+- `generations` records each apply attempt, its phase, warnings, and a hash
   of the config used for that attempt.
 - `objects` stores resource-scoped status JSON. For example,
   `IPv6PrefixDelegation/wan-pd` keeps its lease, DUID, IAID, and timestamps
   under one object row instead of scattered state keys.
 - `artifacts` stores the local ownership ledger for host objects managed by
   routerd, split into owner API version, kind, and name.
-- `events` records reconcile warnings and PD observations. Higher-level
+- `events` records apply warnings and PD observations. Higher-level
   describe commands can use this later.
 - `access_logs` is present for the future local HTTP API audit trail. It is
   created now but not populated yet.
@@ -174,11 +174,11 @@ management paths and restored the state databases afterward.
 
 Router01, FreeBSD with KAME `dhcp6c`, was seeded with a structured lease for
 `2409:10:3d60:1230::/60`, `lastObservedAt` two hours in the past, and
-`validLifetime` 14400 seconds. Reconcile recorded `lastRenewAttemptAt`, so
+`validLifetime` 14400 seconds. Apply recorded `lastRenewAttemptAt`, so
 routerd did run the hook. tcpdump on `vtnet0` showed:
 
 - an initial set of Solicit packets with the length-only `::/60` hint, caused
-  by the first reconcile after the new binary changed the rendered `dhcp6c`
+  by the first apply after the new binary changed the rendered `dhcp6c`
   configuration;
 - a later set of Solicit packets with IA_PD IAID `0` and the seeded
   `2409:10:3d60:1230::/60` prefix hint;
@@ -188,11 +188,11 @@ routerd did run the hook. tcpdump on `vtnet0` showed:
 This confirms that the hook and hint feed can push KAME `dhcp6c` into sending
 a hint-bearing Solicit, but it did not recover the PD lease in this PR-400NE
 state. The test was not a clean Renew path because the client had no visible
-active PD lease and the first reconcile also had to repair generated
+active PD lease and the first apply also had to repair generated
 configuration.
 
 Router02, systemd-networkd, was seeded with the same style of lease memory.
-Reconcile recorded `lastRenewAttemptAt`, so routerd did call
+Apply recorded `lastRenewAttemptAt`, so routerd did call
 `networkctl renew ens18`. tcpdump on `ens18` captured no DHCPv6 packets during
 the test window. In this state, `networkctl renew` did not produce an
 observable DHCPv6-PD Renew/Rebind/Solicit packet.

@@ -41,19 +41,19 @@ func (c *Client) Status(ctx context.Context) (*Status, error) {
 	return &status, nil
 }
 
-func (c *Client) Reconcile(ctx context.Context, request ReconcileRequest) (*ReconcileResult, error) {
+func (c *Client) Apply(ctx context.Context, request ApplyRequest) (*ApplyResult, error) {
 	request.APIVersion = APIVersion
-	request.Kind = "ReconcileRequest"
+	request.Kind = "ApplyRequest"
 	data, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/reconcile", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/apply", bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	var result ReconcileResult
+	var result ApplyResult
 	if err := c.do(req, &result); err != nil {
 		return nil, err
 	}

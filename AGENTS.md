@@ -2,7 +2,7 @@
 
 ## Project
 
-This repository implements `routerd`, a declarative router resource reconciler.
+This repository implements `routerd`, a declarative router resource applier.
 
 Current primary target:
 - Ubuntu Server
@@ -39,7 +39,7 @@ Current implemented scope includes:
 - minimal default-deny home-router firewall resources
 - sysctl, hostname, NTP client, and log sink resources
 - plugin protocol
-- dry-run, plan, status JSON, and daemon reconcile
+- dry-run, plan, status JSON, and daemon apply
 - local NAPT/conntrack inspection through `routerctl`
 
 ## API Groups
@@ -65,7 +65,7 @@ Any test that changes network state must be isolated under:
 Be careful when applying config to a remote router. Prefer this sequence:
 - validate
 - plan
-- dry-run reconcile
+- dry-run apply
 - confirm the management path is not being removed
 - apply
 - verify service state and connectivity
@@ -93,7 +93,7 @@ go build ./cmd/routerd
 go build ./cmd/routerctl
 routerd validate --config examples/router-lab.yaml
 routerd plan --config examples/router-lab.yaml
-routerd reconcile --config examples/router-lab.yaml --once --dry-run --status-file /tmp/routerd-status.json
+routerd apply --config examples/router-lab.yaml --once --dry-run --status-file /tmp/routerd-status.json
 routerctl status
 routerctl show napt --limit 20
 ```
@@ -129,8 +129,8 @@ exists. The full matrix lives in `docs/platforms.md`.
 - Prefer explicit code over clever abstractions.
 - Keep plugin protocol documented.
 - Subprocess execution must be wrapped so it can be tested.
-- Config loading, validation, plugin discovery, dependency ordering, rendering, and reconcile behavior must have tests.
-- The same reconcile code must work in daemon mode and one-shot CLI mode.
+- Config loading, validation, plugin discovery, dependency ordering, rendering, and apply behavior must have tests.
+- The same apply code must work in daemon mode and one-shot CLI mode.
 - Do not hardcode shell snippets in the core for resource-specific operations.
 - Core orchestrates; renderers and resource-specific apply helpers perform concrete OS work.
 - For firewall/NAT/routing changes, keep the default behavior conservative and add focused renderer tests.

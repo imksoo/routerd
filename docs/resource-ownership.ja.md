@@ -187,7 +187,7 @@ sudo routerd adopt \
 
 `adopt --apply` はカーネル、nftables、systemd、ファイル状態を変更しません。所有関係の台帳だけを書き換えます。差分のある候補があれば、先に反映または設定の修正を行ってからもう一度実行します。
 
-試行実行ではない `reconcile` が成功した場合も、routerd は在庫照合できる所有済みの構成物を台帳に記録します。安定した識別子に紐付けられない派生構成物は、意図的に台帳の対象から外しています。
+試行実行ではない `routerd apply` が成功した場合も、routerd は在庫照合できる所有済みの構成物を台帳に記録します。安定した識別子に紐付けられない派生構成物は、意図的に台帳の対象から外しています。
 
 すでに設定済みのルータで初回導入するときの典型的な流れ:
 
@@ -195,8 +195,8 @@ sudo routerd adopt \
 2. `routerd adopt --candidates` で取り込み候補を見る。
 3. 反映するか YAML を直して差分を解消する。
 4. `routerd adopt --apply` で、一致している構成物を台帳に記録する。
-5. `routerd reconcile --once --dry-run` で想定外の残置物が無いことを確認する。
-6. `routerd reconcile --once` を実行する。
+5. `routerd apply --once --dry-run` で想定外の残置物が無いことを確認する。
+6. `routerd apply --once` を実行する。
 
 routerd だけで新規構築したルータでは、反映成功時に所有済みの構成物を自動で台帳に記録するため、ステップ 4 が不要になることが多いです。
 
