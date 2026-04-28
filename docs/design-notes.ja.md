@@ -618,6 +618,32 @@ pcap は tcpdump 実行中でも途中集計できるよう、パケットごと
 取得しています。routerd の状態は 10 分ごとに
 `routerctl describe ipv6pd/wan-pd` の先頭部分を記録します。
 
+T2 前の暫定結果です。`2026-04-28T17:27Z` ごろに緊急確認しました。
+
+| ホスト | ここまでの DHCPv6 数 | T1 窓のパケット詳細 | 現在のローカル状態 | 暫定判断 |
+| --- | --- | --- | --- | --- |
+| router01 | Solicit 582, Request 0, Renew 0, Rebind 0, Advertise 0, Reply 0 | `17:00Z` から `17:10Z` にかけて、KAME `dhcp6c` は DUID-LL `bc:24:11:e3:c2:38` と `2409:10:3d60:1220::/60` の正確なヒントを入れた Solicit を毎分送り続けました。 | プレフィックスはローカルではまだ観測でき、IPv6 既定経路もあります。 | router01 は通常の更新経路に乗っていません。ヒント付き Solicit を繰り返しており、応答は見えていません。 |
+| router02 | Solicit 0, Request 0, Renew 9, Rebind 0, Advertise 0, Reply 0 | systemd-networkd は `17:01:01`, `17:03:09`, `17:07:19`, `17:15:24`, `17:24:35` に Renew を送りました。server-ID は `1c:b1:7f:73:76:d8`、クライアント DUID-LL は `bc:24:11:30:5d:76`、IA_PD は `2409:10:3d60:1230::/60` で、Renew パケット内の寿命は 0 と表示されています。 | LAN 側の委譲経路は残っていますが、カーネル上の残り時間は約 5700 秒まで減っています。systemd-networkd のログには新しい行は出ていません。 | WAN 側では DHCPv6 Renew が実際に出ています。tcpdump の条件で見落としているわけではありません。HGW からの Reply は見えていません。 |
+| router03 | Solicit 0, Request 0, Renew 6, Rebind 9, Advertise 0, Reply 0 | `17:01:01` の時点で、systemd-networkd はすでに Rebind を送っていました。その後 `17:03:19`, `17:07:42`, `17:16:07`, `17:25:17` に `2409:10:3d60:1240::/60` で再送しています。 | LAN 側の委譲経路は残っていますが、カーネル上の残り時間は約 5800 秒まで減っています。systemd-networkd のログには新しい行は出ていません。 | router03 は粗い T1 推定時刻の時点で、すでに Renew を越えて Rebind に入っていたようです。それでも Reply は見えていません。 |
+
+`udp port 546 or udp port 547` という取得条件が原因で見落としている可能性は
+低いです。この条件で router02 と router03 の送信 Renew/Rebind は取れており、
+UDP 送信元または宛先が 546/547 の Reply も取れるはずです。T2 前の時点で
+見えている問題は、検証ルーターから Renew/Rebind が出ているにもかかわらず、
+WAN 側で Advertise / Reply が一切見えていないことです。HGW 画面で
+HGW/VoIP 側のリースは更新され、検証 3 台のリースは更新されていないという
+観測とも合います。
+
+追加で気になる点:
+
+- systemd-networkd の Renew/Rebind では、既存 IA_PD プレフィックスを入れつつ、
+  パケット上の優先寿命と有効寿命が 0 と表示されています。これは更新要求の
+  表現として正常かもしれませんが、動作中の商用ルーターのパケットと比較する
+  価値があります。
+- router03 は、PR-400NE/IX2215 の表から粗く推定した T2 よりかなり早く
+  Rebind に入っています。routerd は OS クライアントが実際に得た T1/T2 を
+  保存しないと、この種の調査で時刻を正確に扱えません。
+
 ### PR-400NE の挙動に関する仮説
 
 以下は検証環境向けプロファイル `ntt-flets-with-hikari-denwa` の作業仮説です。

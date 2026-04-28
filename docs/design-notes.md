@@ -612,6 +612,34 @@ The capture uses packet-immediate pcap writing so intermediate counts can be
 read while tcpdump is still running. The routerd state monitor logs a
 `routerctl describe ipv6pd/wan-pd` snapshot every ten minutes.
 
+Interim result before T2, after an urgent check at about
+`2026-04-28T17:27Z`:
+
+| Host | DHCPv6 count so far | T1-window packet detail | Current local state | Interim reading |
+| --- | --- | --- | --- | --- |
+| router01 | Solicit 582, Request 0, Renew 0, Rebind 0, Advertise 0, Reply 0 | From `17:00Z` through `17:10Z`, KAME `dhcp6c` kept sending Solicit once per minute with an exact `2409:10:3d60:1220::/60` hint and DUID-LL `bc:24:11:e3:c2:38`. | Prefix is still locally observable; IPv6 default route is present. | router01 is not on a normal renewal path. It is in repeated hint-bearing Solicit and is not receiving any response. |
+| router02 | Solicit 0, Request 0, Renew 9, Rebind 0, Advertise 0, Reply 0 | `systemd-networkd` sent Renew at `17:01:01`, `17:03:09`, `17:07:19`, `17:15:24`, and `17:24:35` using server-ID `1c:b1:7f:73:76:d8`, client DUID-LL `bc:24:11:30:5d:76`, and IA_PD for `2409:10:3d60:1230::/60` with lifetimes shown as zero in the Renew packet. | The delegated LAN route still exists but its kernel expiry had fallen to about 5700 seconds. No systemd-networkd journal lines were emitted. | The WAN interface is sending DHCPv6 Renew on the wire; the tcpdump filter is not missing it. The HGW did not send any visible Reply. |
+| router03 | Solicit 0, Request 0, Renew 6, Rebind 9, Advertise 0, Reply 0 | By `17:01:01`, `systemd-networkd` was already sending Rebind, then retried at `17:03:19`, `17:07:42`, `17:16:07`, and `17:25:17` for `2409:10:3d60:1240::/60`. | The delegated LAN route still exists but its kernel expiry had fallen to about 5800 seconds. No systemd-networkd journal lines were emitted. | router03 appears to have moved past Renew into Rebind before or at the observed T1 window, and still received no visible Reply. |
+
+The filter `udp port 546 or udp port 547` is not the current problem: it
+captured the outgoing Renew and Rebind packets from router02 and router03, and
+would also capture any Reply with UDP source or destination port 546/547. The
+problem observed before T2 is that no Advertise or Reply is visible on the WAN
+interfaces even though renew/rebind traffic is leaving the lab routers. This
+matches the HGW screen observation that the HGW/VoIP lease renewed while the
+three lab-router leases did not.
+
+Two details stand out for follow-up:
+
+- systemd-networkd's Renew/Rebind packets carry the existing IA_PD prefix with
+  preferred and valid lifetimes rendered as zero. That may be normal for a
+  client asking the server to refresh the lease, but it is worth comparing with
+  a working commercial router capture.
+- router03 has already reached Rebind much earlier than the rough T2 estimate
+  derived from the PR-400NE/IX2215 lifetime table. routerd needs to persist
+  the actual T1/T2 learned by each OS client, because the rough global estimate
+  is not precise enough for debugging.
+
 ### PR-400NE Behavior Hypotheses
 
 These are working hypotheses for the lab profile
