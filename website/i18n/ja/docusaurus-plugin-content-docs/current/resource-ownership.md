@@ -146,7 +146,7 @@ routerd 管理範囲外の構成物は、台帳で routerd の所有が確認で
 | `IPv4DHCPServer` | dnsmasq の設定とサービス |
 | `IPv4DHCPScope` | dnsmasq の DHCPv4 スコープ |
 | `IPv6DHCPAddress` | DHCPv6 クライアントのバインディング |
-| `IPv6PrefixDelegation` | DHCPv6 プレフィックス委譲のバインディング |
+| `IPv6PrefixDelegation` | DHCPv6 プレフィックス委譲のバインディング。FreeBSD KAME `dhcp6c` で NTT 系リンクレイヤ DUID を使う場合は DUID ファイル |
 | `IPv6DelegatedAddress` | IPv6 アドレス |
 | `IPv6DHCPServer` | dnsmasq の設定とサービス |
 | `IPv6DHCPScope` | dnsmasq の DHCPv6 スコープ |

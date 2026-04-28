@@ -27,6 +27,9 @@ behavior changes and new resource shapes as the model takes shape.
   inspection moved under `IPv4SourceNAT` observed state.
 - DHCPv6-PD state now migrates scattered prefix and identity keys into the
   structured `ipv6PrefixDelegation.<name>.lease` value.
+- FreeBSD/KAME `dhcp6c` DUID files are now managed for NTT profiles whose
+  effective DUID type is `link-layer`; non-DUID-LL files are backed up before
+  routerd writes a MAC-derived DUID-LL.
 - Apply now asks the OS DHCPv6-PD client to renew once when a remembered
   lease is missing locally but still within its recorded valid lifetime.
 - FreeBSD remote install hardening: `ROUTERD_OS=freebsd` now builds

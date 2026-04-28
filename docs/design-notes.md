@@ -421,6 +421,19 @@ Conclusion:
   manage or adopt `/var/db/dhcp6c_duid` for NTT profiles before testing more
   HGW behavior on FreeBSD.
 
+Follow-up after implementation:
+
+- routerd now backs up the FreeBSD KAME DUID file when it is not DUID-LL and
+  writes `0a 00 00 03 00 01 <uplink-mac>` before starting `dhcp6c` for NTT
+  link-layer DUID profiles.
+- On router01, `/var/db/dhcp6c_duid` changed from DUID-LLT to
+  `0a 00 00 03 00 01 bc 24 11 e3 c2 38`, and the previous file was preserved
+  as `/var/db/dhcp6c_duid.bak.20260428T094248Z`.
+- A post-change tcpdump confirmed `client-ID hwaddr type 1 bc2411e3c238`,
+  which is DUID-LL on the wire. No Advertise or Reply was seen in that 60
+  second capture, so HGW lease state and Solicit-vs-Renew behavior remain
+  open hypotheses after the FreeBSD DUID fix.
+
 ### PR-400NE Behavior Hypotheses
 
 These are working hypotheses for the lab profile
@@ -486,11 +499,11 @@ testable:
   `sendRelease: false`, IA_PD-only, Rapid Commit disabled, long initial
   acquisition timeout, and inbound UDP destination 546 matching without source
   port restriction.
-- For OS-backed clients, make NTT DUID rendering an owned artifact:
-  systemd-networkd should render `DUIDType=link-layer` and, when pinning is
-  required, `DUIDRawData` containing hardware type plus MAC address. FreeBSD
-  KAME `dhcp6c` should have its `/var/db/dhcp6c_duid` managed or adopted so it
-  does not silently keep a DUID-LLT value from an earlier boot.
+- For OS-backed clients, NTT DUID rendering is an owned artifact:
+  systemd-networkd renders `DUIDType=link-layer` by default for NTT profiles.
+  FreeBSD KAME `dhcp6c` manages `/var/db/dhcp6c_duid` for the same profiles;
+  when the file is not DUID-LL, routerd backs it up and writes a DUID-LL
+  derived from the uplink MAC before starting `dhcp6c`.
 - Add packet-capture based integration tests for Solicit with exact prefix
   hint, Solicit with length-only hint, Renew with current IA_PD, Rebind after
   T2, and Advertise from a non-547 source port.

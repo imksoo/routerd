@@ -18,6 +18,7 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
   扱い、直前の二表だけの SQLite スキーマからは自動で移行します。
 - `routerctl show` を整理。`routerctl show <種別>` と `routerctl show <種別>/<名前>` で、リソース定義、実機状態、所有台帳、routerd の状態履歴をまとめて見られるようになりました。表、JSON、YAML、差分、台帳のみ、取り込み候補のみの表示に対応しています。NAPT やコネクション追跡の情報は `IPv4SourceNAT` の観測状態に移しました。
 - DHCPv6-PD の状態記録を整理。プレフィックスや識別子の個別キーを、構造化された `ipv6PrefixDelegation.<name>.lease` に移すようになりました。
+- FreeBSD/KAME `dhcp6c` の DUID ファイルを NTT 系プロファイルで管理するようになりました。実効 DUID 型が `link-layer` の場合、DUID-LL 以外のファイルは退避し、MAC アドレスから作った DUID-LL を書き込みます。
 - 記録上まだ有効な DHCPv6-PD リースがローカルで見えなくなった場合、反映時に OS 側クライアントへ一度だけ更新を促すようになりました。
 - FreeBSD へのリモート導入を改善。Linux 作業端末から実行しても、`ROUTERD_OS=freebsd` で FreeBSD 向けバイナリをビルドし、FreeBSD の実行時ディレクトリを使うようになりました。
 - リモート依存確認で `jq`、FreeBSD の `dhcp6c`、`mpd5`、`sysrc` を確認するようになりました。

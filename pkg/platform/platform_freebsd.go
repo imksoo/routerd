@@ -20,6 +20,7 @@ func currentDefaults() Defaults {
 		DnsmasqServiceFile:        "/usr/local/etc/rc.d/routerd_dnsmasq",
 		FreeBSDDHClientConfigFile: "/etc/dhclient.conf",
 		FreeBSDDHCP6CConfigFile:   "/usr/local/etc/dhcp6c.conf",
+		FreeBSDDHCP6CDUIDFile:     "/var/db/dhcp6c_duid",
 		PPPoEChapSecretsFile:      "/etc/ppp/chap-secrets",
 		PPPoEPapSecretsFile:       "/etc/ppp/pap-secrets",
 		FreeBSDMPD5ConfigFile:     "/usr/local/etc/mpd5/mpd.conf",

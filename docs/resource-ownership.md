@@ -201,7 +201,7 @@ intent.
 | `IPv4DHCPServer` | dnsmasq config and service |
 | `IPv4DHCPScope` | dnsmasq DHCPv4 scope |
 | `IPv6DHCPAddress` | DHCPv6 client binding |
-| `IPv6PrefixDelegation` | DHCPv6 prefix delegation binding |
+| `IPv6PrefixDelegation` | DHCPv6 prefix delegation binding; FreeBSD KAME `dhcp6c` DUID file for NTT link-layer DUID profiles |
 | `IPv6DelegatedAddress` | IPv6 address |
 | `IPv6DHCPServer` | dnsmasq config and service |
 | `IPv6DHCPScope` | dnsmasq DHCPv6 scope |

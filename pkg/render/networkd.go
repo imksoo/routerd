@@ -61,7 +61,7 @@ func NetworkdDropinsWithState(router *api.Router, store routerstate.Store) ([]Fi
 			Profile:      defaultString(spec.Profile, "default"),
 			PrefixLength: effectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength),
 			IAID:         spec.IAID,
-			DUIDType:     spec.DUIDType,
+			DUIDType:     EffectiveIPv6PDDUIDType(defaultString(spec.Profile, "default"), spec.DUIDType),
 			DUIDRawData:  spec.DUIDRawData,
 			PrefixHint:   prefixHintFromState(res.Metadata.Name, spec, store),
 		}
@@ -159,8 +159,6 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 	}
 	if source.DUIDType != "" {
 		buf.WriteString("DUIDType=" + source.DUIDType + "\n")
-	} else if source.Profile == "ntt-ngn-direct-hikari-denwa" || source.Profile == "ntt-hgw-lan-pd" {
-		buf.WriteString("DUIDType=link-layer\n")
 	}
 	if source.DUIDRawData != "" {
 		buf.WriteString("DUIDRawData=" + formatColonHex(source.DUIDRawData) + "\n")
@@ -255,6 +253,16 @@ func effectiveIPv6PDPrefixLength(profile string, configured int) int {
 		return 60
 	}
 	return 0
+}
+
+func EffectiveIPv6PDDUIDType(profile, configured string) string {
+	if configured != "" {
+		return configured
+	}
+	if profile == "ntt-ngn-direct-hikari-denwa" || profile == "ntt-hgw-lan-pd" {
+		return "link-layer"
+	}
+	return ""
 }
 
 func networkdDropinDir(ifname string) string {

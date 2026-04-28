@@ -58,6 +58,8 @@ type Defaults struct {
 	FreeBSDDHClientConfigFile string
 	// FreeBSDDHCP6CConfigFile is the dhcp6c.conf path on FreeBSD.
 	FreeBSDDHCP6CConfigFile string
+	// FreeBSDDHCP6CDUIDFile is the KAME dhcp6c client DUID file on FreeBSD.
+	FreeBSDDHCP6CDUIDFile string
 	// NftablesFile is the routerd-managed nftables ruleset path.
 	// Empty on platforms without nftables.
 	NftablesFile string

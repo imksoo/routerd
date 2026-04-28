@@ -370,7 +370,9 @@ spec:
   現在のプレフィックスが観測できない場合、`plan`、`routerd apply`、デーモン状態には警告を出します。上流リースが切れる前に DHCPv6 クライアントを直すためです。
   実際に反映する場合、現在のプレフィックスが見えず、構造化されたリース記録に最後のプレフィックス、最後に見えた時刻、期限内の有効寿命が残っていれば、routerd はその見失い状態につき一度だけ OS 側クライアントへ更新を促します。systemd-networkd では `networkctl renew <link>` を呼びます。FreeBSD の KAME `dhcp6c` では、実行中の `dhcp6c` に SIGHUP を送ります。試行時刻はリース内の `lastRenewAttemptAt` に残すため、反映のたびに短い間隔で何度も刺激することはありません。
 - `spec.iaid` は DHCPv6 の IAID を固定します。10 進数、`0x` 付きの 16 進数、または 8 桁の 16 進数で書けます。systemd-networkd では 10 進数の `IAID=` として出力し、FreeBSD の `dhcp6c` では `ia-pd` / `id-assoc pd` の識別子として使います。
-- `spec.duidType` と `spec.duidRawData` は systemd-networkd の DUID 設定を固定します。`duidRawData` は `00:01:...` のようなバイト列表記でも、区切りなしの 16 進数でも書けます。現時点ではこの2つは systemd-networkd 向けです。FreeBSD の `dhcp6c` が持つ DUID ファイルの管理は、まだリソースとして扱っていません。
+- `spec.duidType` は、NTT 系プロファイルで省略すると `link-layer` として扱います。systemd-networkd が既定で使う machine-id 由来の DUID を避け、FreeBSD/KAME `dhcp6c` も NTT 系ホームゲートウェイで期待される識別子にそろえるためです。
+- `spec.duidType` と `spec.duidRawData` は systemd-networkd の DUID 設定を固定します。`duidRawData` は `00:01:...` のようなバイト列表記でも、区切りなしの 16 進数でも書けます。
+- FreeBSD の KAME `dhcp6c` では、NTT 系プロファイルかつ実効 DUID 型が `link-layer` の場合、routerd が `/var/db/dhcp6c_duid` を管理します。既存ファイルが DUID-LL でなければ `.bak.<時刻>` として退避し、上流インターフェースの MAC アドレスから作った DUID-LL を `dhcp6c` 起動前に書き込みます。
 
 NTT のホームゲートウェイには、IPv6 を RA/SLAAC のみで配布し DHCPv6-PD に応答しないモードもあります。これは `IPv6PrefixDelegation` ではモデル化できないため、別途 RA/SLAAC のリソース設計を行う必要があります。
 

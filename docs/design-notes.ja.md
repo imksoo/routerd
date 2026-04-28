@@ -427,6 +427,19 @@ DUID 管理のコードを変える前に、検証機で実際の設定とパケ
   次の実装では、NTT 向けプロファイルで `/var/db/dhcp6c_duid` を管理または
   取り込み対象にしてから、FreeBSD での HGW 挙動を再検証するべきです。
 
+実装後の追跡結果:
+
+- routerd は、FreeBSD KAME の DUID ファイルが DUID-LL でない場合に退避し、
+  NTT 系リンクレイヤ DUID プロファイルで `dhcp6c` を起動する前に
+  `0a 00 00 03 00 01 <上流MAC>` を書き込むようになりました。
+- router01 では、`/var/db/dhcp6c_duid` が DUID-LLT から
+  `0a 00 00 03 00 01 bc 24 11 e3 c2 38` に変わりました。以前のファイルは
+  `/var/db/dhcp6c_duid.bak.20260428T094248Z` として残っています。
+- 変更後の tcpdump では `client-ID hwaddr type 1 bc2411e3c238` を確認でき、
+  パケット上でも DUID-LL になりました。その 60 秒の取得では
+  Advertise / Reply は見えなかったため、ホームゲートウェイのリース状態や
+  Solicit と Renew の違いは、FreeBSD の DUID 修正後も残る仮説です。
+
 ### PR-400NE の挙動に関する仮説
 
 以下は検証環境向けプロファイル `ntt-flets-with-hikari-denwa` の作業仮説です。
@@ -491,10 +504,10 @@ DUID 管理のコードを変える前に、検証機で実際の設定とパケ
   Rapid Commit 無効、長めの初回取得待ち、受信 UDP 宛先 546 を
   送信元ポート制限なしで許可、とする。
 - OS 側クライアントの DUID も routerd の管理対象にする。systemd-networkd では
-  `DUIDType=link-layer` を出力し、必要なら hardware type と MAC アドレスを
-  含む `DUIDRawData` も出力する。FreeBSD の KAME `dhcp6c` では
-  `/var/db/dhcp6c_duid` を管理または取り込み対象にし、過去の起動で作られた
-  DUID-LLT が残り続けないようにする。
+  NTT 系プロファイルの既定として `DUIDType=link-layer` を出力する。
+  FreeBSD の KAME `dhcp6c` では同じプロファイルで `/var/db/dhcp6c_duid` を
+  管理し、DUID-LL 以外のファイルがあれば退避してから、上流インターフェースの
+  MAC アドレスから作った DUID-LL を `dhcp6c` 起動前に書き込む。
 - 正確なプレフィックスヒント付き Solicit、長さだけのヒント付き Solicit、
   現在の IA_PD を含む Renew、T2 後の Rebind、送信元ポート 547 以外からの
   Advertise を、パケット取得ベースの結合テストとして追加する。
