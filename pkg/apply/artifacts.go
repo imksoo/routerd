@@ -84,6 +84,12 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		return []resource.Intent{artifact("dhcp.ipv6.client", aliases[spec.Interface], resource.ActionEnsure, defaultString(spec.Client, "networkd"), nil)}
+	case "IPv6RAAddress":
+		spec, err := res.IPv6RAAddressSpec()
+		if err != nil {
+			return nil
+		}
+		return []resource.Intent{artifact("net.ipv6.ra.client", aliases[spec.Interface], resource.ActionEnsure, "platform-network", nil)}
 	case "IPv6PrefixDelegation":
 		spec, err := res.IPv6PrefixDelegationSpec()
 		if err != nil {

@@ -171,6 +171,12 @@ type IPv6DHCPAddressSpec struct {
 	Required  bool   `yaml:"required,omitempty" json:"required,omitempty"`
 }
 
+type IPv6RAAddressSpec struct {
+	Interface string `yaml:"interface" json:"interface"`
+	Managed   *bool  `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Required  bool   `yaml:"required,omitempty" json:"required,omitempty"`
+}
+
 type IPv6PrefixDelegationSpec struct {
 	Interface    string `yaml:"interface" json:"interface"`
 	Client       string `yaml:"client,omitempty" json:"client,omitempty"`
@@ -541,6 +547,10 @@ func (r Resource) IPv4DHCPScopeSpec() (IPv4DHCPScopeSpec, error) {
 
 func (r Resource) IPv6DHCPAddressSpec() (IPv6DHCPAddressSpec, error) {
 	return specAs[IPv6DHCPAddressSpec](r)
+}
+
+func (r Resource) IPv6RAAddressSpec() (IPv6RAAddressSpec, error) {
+	return specAs[IPv6RAAddressSpec](r)
 }
 
 func (r Resource) IPv6PrefixDelegationSpec() (IPv6PrefixDelegationSpec, error) {

@@ -46,6 +46,7 @@ type netplanInterface struct {
 	DHCP4UseDNS      *bool
 	DHCP4RouteMetric int
 	DHCP6            bool
+	AcceptRA         bool
 	IPv6LinkLocal    bool
 }
 
@@ -106,6 +107,15 @@ func Netplan(router *api.Router) ([]byte, error) {
 				iface.DHCP6 = true
 				iface.IPv6LinkLocal = true
 			}
+		case "IPv6RAAddress":
+			spec, err := res.IPv6RAAddressSpec()
+			if err != nil {
+				return nil, err
+			}
+			if iface := interfaces[spec.Interface]; iface != nil && api.BoolDefault(spec.Managed, true) {
+				iface.AcceptRA = true
+				iface.IPv6LinkLocal = true
+			}
 		case "IPv6DelegatedAddress":
 			spec, err := res.IPv6DelegatedAddressSpec()
 			if err != nil {
@@ -144,7 +154,7 @@ func Netplan(router *api.Router) ([]byte, error) {
 			DHCP4:          iface.DHCP4,
 			DHCP4Overrides: dhcp4Overrides,
 			DHCP6:          iface.DHCP6,
-			AcceptRA:       iface.DHCP6,
+			AcceptRA:       iface.DHCP6 || iface.AcceptRA,
 			LinkLocal:      linkLocal,
 			Addresses:      iface.Addresses,
 		}

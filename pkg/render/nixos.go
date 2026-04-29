@@ -248,6 +248,14 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 				iface.DHCP6 = true
 				iface.AcceptRA = true
 			}
+		case "IPv6RAAddress":
+			spec, err := res.IPv6RAAddressSpec()
+			if err != nil {
+				return nil, err
+			}
+			if iface := interfaces[spec.Interface]; iface != nil && api.BoolDefault(spec.Managed, true) {
+				iface.AcceptRA = true
+			}
 		case "IPv6PrefixDelegation":
 			spec, err := res.IPv6PrefixDelegationSpec()
 			if err != nil {

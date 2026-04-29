@@ -17,15 +17,23 @@ func TestNetworkdDropinsRenderDHCPv6PD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render networkd dropins: %v", err)
 	}
-	if len(files) != 3 {
-		t.Fatalf("len(files) = %d, want 3", len(files))
+	if len(files) != 4 {
+		t.Fatalf("len(files) = %d, want 4", len(files))
 	}
 
+	raFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/89-routerd-ipv6-ra.conf")
 	wanFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/90-routerd-dhcp6-pd.conf")
 	lanFile := findNetworkdTestFile(files, "10-netplan-ens19.network.d/90-routerd-dhcp6-pd.conf")
 	ntpFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/91-routerd-ntp.conf")
+	ra := string(raFile.Data)
 	wan := string(wanFile.Data)
 	lan := string(lanFile.Data)
+	if raFile.Path == "" {
+		t.Fatal("missing WAN IPv6 RA drop-in")
+	}
+	if !strings.Contains(ra, "IPv6AcceptRA=yes") {
+		t.Fatalf("ra drop-in missing IPv6AcceptRA=yes:\n%s", ra)
+	}
 	if wanFile.Path == "" {
 		t.Fatal("missing WAN DHCPv6-PD drop-in")
 	}

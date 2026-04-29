@@ -74,6 +74,16 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 				rc.WriteString(fmt.Sprintf("rtsold_flags=\"%s\"\n", aliases[spec.Interface]))
 				rc.WriteString("rtsold_enable=\"YES\"\n")
 			}
+		case "IPv6RAAddress":
+			spec, err := res.IPv6RAAddressSpec()
+			if err != nil {
+				return FreeBSDConfig{}, err
+			}
+			if api.BoolDefault(spec.Managed, true) {
+				rc.WriteString(fmt.Sprintf("ifconfig_%s_ipv6=\"inet6 accept_rtadv\"\n", aliases[spec.Interface]))
+				rc.WriteString(fmt.Sprintf("rtsold_flags=\"%s\"\n", aliases[spec.Interface]))
+				rc.WriteString("rtsold_enable=\"YES\"\n")
+			}
 		case "IPv4StaticAddress":
 			spec, err := res.IPv4StaticAddressSpec()
 			if err != nil {

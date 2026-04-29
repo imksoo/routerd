@@ -44,6 +44,7 @@ This is a long page. Jump to the kind you need:
 **IPv6 addressing and prefix delegation**
 - [IPv6PrefixDelegation](#ipv6prefixdelegation)
 - [IPv6DelegatedAddress](#ipv6delegatedaddress)
+- [IPv6RAAddress](#ipv6raaddress)
 - [IPv6DHCPAddress](#ipv6dhcpaddress)
 - [IPv6DHCPServer / IPv6DHCPScope](#ipv6dhcpserver-and-ipv6dhcpscope)
 - [SelfAddressPolicy](#selfaddresspolicy)
@@ -611,6 +612,27 @@ How routerd behaves:
 - `spec.sendRA: true` lets dnsmasq advertise the prefix through RA.
 - `spec.announce: true` exposes this address as a candidate for
   `dnsSource: self` and for DS-Lite local-address selection.
+
+### IPv6RAAddress
+
+`IPv6RAAddress` accepts IPv6 Router Advertisements on an uplink interface so
+the router itself receives an upstream SLAAC address and RA-provided default
+route. This is separate from DHCPv6-PD: DS-Lite AFTR DNS lookups and other
+WAN-side IPv6 control traffic need a usable WAN IPv6 address even before a
+delegated LAN prefix is applied.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6RAAddress
+metadata:
+  name: wan-ra
+spec:
+  interface: wan
+  required: true
+```
+
+On Linux renderers this enables `IPv6AcceptRA=yes`. On FreeBSD it enables
+`accept_rtadv` and `rtsold` for the interface.
 
 ### IPv6DHCPAddress
 

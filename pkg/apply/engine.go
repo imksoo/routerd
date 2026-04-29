@@ -84,6 +84,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv4DHCPScope(res, aliases, policies, includePlan, &rr)
 		case "IPv6DHCPAddress":
 			e.observeDHCP(res, aliases, policies, "ipv6", includePlan, &rr)
+		case "IPv6RAAddress":
+			e.observeIPv6RAAddress(res, aliases, policies, includePlan, &rr)
 		case "IPv6PrefixDelegation":
 			e.observeIPv6PrefixDelegation(res, aliases, includePlan, &rr)
 		case "IPv6DelegatedAddress":
@@ -1130,6 +1132,36 @@ func (e *Engine) observeDHCP(res api.Resource, aliases map[string]string, polici
 	}
 }
 
+func (e *Engine) observeIPv6RAAddress(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+	iface := stringSpec(res, "interface")
+	ifname := aliases[iface]
+	policy := policies[iface]
+	managed := boolSpecDefault(res, "managed", true)
+
+	rr.Observed["interface"] = iface
+	rr.Observed["ifname"] = ifname
+	rr.Observed["managed"] = fmt.Sprintf("%t", managed)
+	rr.Observed["family"] = "ipv6"
+	rr.Observed["source"] = "routerAdvertisement"
+
+	if includePlan {
+		if !managed {
+			rr.Plan = append(rr.Plan, "observe IPv6 RA/SLAAC address and default route")
+			return
+		}
+		if !policy.Managed || policy.Owner == "external" {
+			rr.Plan = append(rr.Plan, "configure IPv6 RA/SLAAC through host network renderer for externally managed interface")
+			return
+		}
+		if policy.RequiresAdoption {
+			rr.Phase = "RequiresAdoption"
+			rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd manages IPv6 RA/SLAAC")
+			return
+		}
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv6 RA/SLAAC is accepted on %s", ifname))
+	}
+}
+
 func dhcpClientAvailable(client string) bool {
 	if client == "networkd" {
 		_, err := exec.LookPath("networkctl")
@@ -1546,6 +1578,10 @@ func stringSpec(res api.Resource, key string) string {
 		case "client":
 			return spec.Client
 		}
+	case api.IPv6RAAddressSpec:
+		if key == "interface" {
+			return spec.Interface
+		}
 	case api.DSLiteTunnelSpec:
 		switch key {
 		case "interface":
@@ -1598,6 +1634,13 @@ func boolSpec(res api.Resource, key string) bool {
 		}
 	case api.IPv6DHCPAddressSpec:
 		if key == "required" {
+			return spec.Required
+		}
+	case api.IPv6RAAddressSpec:
+		switch key {
+		case "managed":
+			return api.BoolDefault(spec.Managed, true)
+		case "required":
 			return spec.Required
 		}
 	case api.HostnameSpec:

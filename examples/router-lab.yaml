@@ -257,6 +257,14 @@ spec:
         required: false
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6RAAddress
+      metadata:
+        name: wan-ra
+      spec:
+        interface: wan
+        required: true
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6PrefixDelegation
       metadata:
         name: wan-pd

@@ -39,6 +39,7 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 **IPv6 アドレッシングとプレフィックス委譲**
 - [IPv6PrefixDelegation](#ipv6prefixdelegation)
 - [IPv6DelegatedAddress](#ipv6delegatedaddress)
+- [IPv6RAAddress](#ipv6raaddress)
 - [IPv6DHCPAddress](#ipv6dhcpaddress)
 - [IPv6DHCPServer / IPv6DHCPScope](#ipv6dhcpserver-と-ipv6dhcpscope)
 - [SelfAddressPolicy](#selfaddresspolicy)
@@ -472,6 +473,27 @@ spec:
   追加できます。
 - `spec.sendRA: true` のとき、dnsmasq から RA としてプレフィックスを広告します。
 - `spec.announce: true` のとき、`dnsSource: self` や DS-Lite の local アドレス選定でこのアドレスを候補として扱います。
+
+### IPv6RAAddress
+
+`IPv6RAAddress` は、上流インターフェースで IPv6 ルーター広告を受け取り、
+ルーター自身に上流セグメントの SLAAC アドレスと RA 由来のデフォルト経路を
+持たせます。これは DHCPv6-PD とは別です。DS-Lite の AFTR を引く DNS 問い合わせや、
+WAN 側の IPv6 制御通信には、LAN へ委譲するプレフィックスとは別に WAN 自身の
+到達可能な IPv6 アドレスが必要です。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6RAAddress
+metadata:
+  name: wan-ra
+spec:
+  interface: wan
+  required: true
+```
+
+Linux 系レンダラでは `IPv6AcceptRA=yes` を有効にします。FreeBSD では対象
+インターフェースに `accept_rtadv` と `rtsold` を設定します。
 
 ### IPv6DHCPAddress
 

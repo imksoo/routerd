@@ -4257,14 +4257,28 @@ func applyFreeBSDIPv6DefaultRoutes(router *api.Router) ([]string, error) {
 	}
 	var applied []string
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6DHCPAddress" {
+		if res.Kind != "IPv6DHCPAddress" && res.Kind != "IPv6RAAddress" {
 			continue
 		}
-		spec, err := res.IPv6DHCPAddressSpec()
-		if err != nil {
-			return nil, err
+		var iface string
+		switch res.Kind {
+		case "IPv6DHCPAddress":
+			spec, err := res.IPv6DHCPAddressSpec()
+			if err != nil {
+				return nil, err
+			}
+			iface = spec.Interface
+		case "IPv6RAAddress":
+			spec, err := res.IPv6RAAddressSpec()
+			if err != nil {
+				return nil, err
+			}
+			if !api.BoolDefault(spec.Managed, true) {
+				continue
+			}
+			iface = spec.Interface
 		}
-		ifname := aliases[spec.Interface]
+		ifname := aliases[iface]
 		if ifname == "" {
 			return nil, fmt.Errorf("%s references interface with empty ifname", res.ID())
 		}

@@ -28,6 +28,9 @@ behavior changes and new resource shapes as the model takes shape.
   DUID-LL and a MAC-derived IAID by default, omit exact prefix hints, and keep
   `duidRawData` / `iaid` only as explicit operator overrides for migration or
   HA cases.
+- `IPv6RAAddress` now models WAN-side RA/SLAAC separately from DHCPv6-PD so
+  DS-Lite AFTR DNS lookups can rely on an upstream IPv6 address and RA default
+  route.
 - Apply now derives delegated LAN IPv6 addresses and DS-Lite tunnel source
   addresses from the current PD state object when available, and removes
   stale routerd-derived IPv6 addresses that share managed suffixes after a PD

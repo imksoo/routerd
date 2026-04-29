@@ -42,8 +42,20 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 	}
 
 	pds := map[string]pdSource{}
+	raIfaces := map[string]bool{}
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" {
+		switch res.Kind {
+		case "IPv6RAAddress":
+			spec, err := res.IPv6RAAddressSpec()
+			if err != nil {
+				return nil, err
+			}
+			if ifname := aliases[spec.Interface]; ifname != "" {
+				raIfaces[ifname] = api.BoolDefault(spec.Managed, true)
+			}
+			continue
+		case "IPv6PrefixDelegation":
+		default:
 			continue
 		}
 		spec, err := res.IPv6PrefixDelegationSpec()
@@ -63,6 +75,21 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 	}
 
 	var files []File
+	var raNames []string
+	for ifname, managed := range raIfaces {
+		if managed {
+			raNames = append(raNames, ifname)
+		}
+	}
+	sort.Strings(raNames)
+	for _, ifname := range raNames {
+		var buf bytes.Buffer
+		buf.WriteString("[Network]\nIPv6AcceptRA=yes\n")
+		files = append(files, File{
+			Path: filepath.Join(networkdDropinDir(ifname), "89-routerd-ipv6-ra.conf"),
+			Data: buf.Bytes(),
+		})
+	}
 	var names []string
 	for name := range pds {
 		names = append(names, name)

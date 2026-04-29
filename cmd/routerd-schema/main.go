@@ -182,6 +182,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "IPv4DHCPServer", api.IPv4DHCPServerSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4DHCPScope", api.IPv4DHCPScopeSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv6DHCPAddress", api.IPv6DHCPAddressSpec{}),
+			resourceSchema(api.NetAPIVersion, "IPv6RAAddress", api.IPv6RAAddressSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv6PrefixDelegation", api.IPv6PrefixDelegationSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv6DelegatedAddress", api.IPv6DelegatedAddressSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv6DHCPServer", api.IPv6DHCPServerSpec{}),
