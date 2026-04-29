@@ -151,7 +151,29 @@ assert: Rebuild steps:
 - If stale PR-400NE binding is suspected, wait for lease expiry or clear it
   administratively.
 
-### 2.3 Removed Old Observations
+### 2.3 L2 Switch Multicast Snooping
+
+observe: When L2 switches in the path had IGMP snooping enabled, parts of the
+IPv6 RA and DHCPv6 multicast exchange were not delivered. Many implementations
+tie IGMP snooping and MLD snooping together, so a setting that was meant to
+optimize IPv4 multicast can block IPv6 ND/DHCPv6 paths during validation.
+
+assert: For routerd lab validation, disable snooping so that multicast flows
+flat. If snooping must remain enabled in production, alternatives are:
+
+- Place an MLD Querier on the segment so that hosts emit Listener Reports and
+  the snooping tables stay populated.
+- Split the topology so that snooping is disabled only on the routerd-facing
+  VLAN, while other VLANs keep it.
+
+believe: At lab scale, disabled snooping is the practical choice. The added
+flooding is acceptable and root-cause separation is faster.
+
+observe: Concrete switch configuration depends on each vendor's UI/CLI. Switch
+model names and exact commands are intentionally not included in this
+document.
+
+### 2.4 Removed Old Observations
 
 The following old statements were removed because they were collected while the
 virtual multicast path was not trustworthy. They are not kept as PR-400NE or
