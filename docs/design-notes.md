@@ -823,6 +823,68 @@ explicit PR-400NE LAN-side protocol specification.
 | Rapid Commit | Support it if the server offers it, but do not request or require it by default. | RFC 8415 allows Rapid Commit, but NTT and router vendor examples do not require it for the observed use case. | Leave Rapid Commit off by default for `ntt-flets-with-hikari-denwa`; record if a server sends it. |
 | UDP receive filtering | Accept DHCPv6 replies with destination UDP port 546 from any source port. | RFC 8415 fixes listener ports, while PR-400NE community packet captures report Advertise from source port 49153. | Firewall and packet parser must not require source port 547 on inbound DHCPv6 client replies. |
 
+### 2026-04-29 PR-400NE Lab Packet Comparison
+
+After disabling multicast snooping on the Proxmox bridges and disabling
+snooping on the lab switch path, router01 and router03 reacquired delegated
+prefixes from the PR-400NE:
+
+| Router | Client | Result |
+| --- | --- | --- |
+| router01 / FreeBSD | KAME `dhcp6c` | Acquired `2409:10:3d60:1220::/60`; LAN `vtnet1` received `2409:10:3d60:1220::1/64`. |
+| router02 / NixOS | odhcp6c experiment, then systemd-networkd rollback | Still no current delegated prefix. The previous prefix remains `2409:10:3d60:1230::/60` in state only. |
+| router03 / Ubuntu | systemd-networkd | Acquired `2409:10:3d60:1240::/60`; LAN `ens19` received `2409:10:3d60:1240::3/64`. |
+
+The same capture also included the working NEC IX2215 exchange. `tcpdump`
+could decode enough DHCPv6 fields to compare the Solicit packets:
+
+| Field | IX2215 | router01 / KAME | router03 / networkd | router02 / odhcp6c experiment |
+| --- | --- | --- | --- | --- |
+| Source MAC | `00:60:b9:f9:73:cf` | `bc:24:11:e3:c2:38` | `bc:24:11:40:32:de` | `bc:24:11:30:5d:76` |
+| DUID type | DUID-LL, hardware type 1 | DUID-LL, hardware type 1 | DUID-LL, hardware type 1 | DUID-LL, hardware type 1 |
+| DUID value | `0060b9f973cf` | `bc2411e3c238` | `bc24114032de` | `bc2411305d76` |
+| IA_PD IAID | `1568088` | `0` | `3394439514` | `1` |
+| Prefix hint | none in Solicit | exact `/60` hint, `1220::/60` | exact `/60` hint, `1240::/60` | exact `/60` hint, `1230::/60` |
+| Prefix hint lifetimes | none in Solicit | `14400/14400` | `0/0` | `0/0` |
+| Option Request Option | none | DNS only | DNS, SNTP, NTP, option 82, option 103 | SIP domain, SIP address, DNS, DNS search, SNTP, NTP, option 67, option 82, option 103 |
+| Elapsed Time | present | present | present | present |
+| Reconfigure Accept | present | absent | absent | present |
+| Vendor Class | absent | absent | absent | absent |
+| Vendor-specific Information | absent | absent | absent | absent |
+| Client FQDN | absent | absent | present | absent |
+| Rapid Commit | absent | absent | absent | absent |
+| IPv6 hop limit | 64 | 1 | 1 | 1 |
+
+The strongest packet-level difference is not DUID. All clients now send DUID-LL.
+The IX2215 Solicit is smaller: no prefix hint, no ORO, no Client FQDN, and only
+IA_PD plus Reconfigure Accept. router01 still succeeds with an exact prefix
+hint and DNS-only ORO, so the PR-400NE is not rejecting every prefix hint.
+router03 succeeds with systemd-networkd even though it sends Client FQDN and a
+larger ORO, so those fields are not universally fatal either.
+
+router02 is the remaining outlier. During the odhcp6c experiment, the PR-400NE
+sent Advertise packets to router02 from UDP source port 49153 to destination
+port 546, including `2409:10:3d60:1230::/60`, T1 7200, T2 12600, and
+14400-second lifetimes. odhcp6c did not proceed to a successful Request/Reply
+exchange or install the prefix. After rolling router02 back to the main
+systemd-networkd render path and rebooting, networkd sent DUID-LL Solicit with
+`PrefixDelegationHint=2409:10:3d60:1230::/60`, but no Advertise/Reply was
+captured in a 70-second window. router02 therefore needs a separate cleanup
+pass, but odhcp6c should not be promoted from the experiment branch.
+
+Operational lessons from this capture:
+
+- DHCPv6 captures must use `udp port 546 or udp port 547`; `udp port 547` alone
+  misses PR-400NE Advertise/Reply packets sourced from UDP port 49153.
+- Virtual lab hosts need the Proxmox bridge and the intervening switch to pass
+  IPv6 multicast reliably before DHCPv6-PD behavior can be judged.
+- The odhcp6c experiment is not a candidate for mainline as observed here.
+  The main path should stay KAME `dhcp6c` on FreeBSD and systemd-networkd on
+  Linux until a clearer replacement proves itself.
+- Prefix hinting, DUID-LL defaults, SQLite state, `get`/`describe`/`show`, and
+  observed PD events remain useful. The more defensive HGW-state workarounds
+  should be reviewed after router02 is cleanly recovered.
+
 ### Requirements for `routerd_dhcp6c_client`
 
 The future in-process client based on `insomniacslk/dhcp` should reproduce
