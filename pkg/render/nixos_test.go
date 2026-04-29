@@ -16,9 +16,9 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NixOSHost"},
-				Metadata: api.ObjectMeta{Name: "router02"},
+				Metadata: api.ObjectMeta{Name: "nixos-edge"},
 				Spec: api.NixOSHostSpec{
-					Hostname:            "router02",
+					Hostname:            "nixos-edge",
 					Domain:              "example.internal",
 					StateVersion:        "25.11",
 					Boot:                api.NixOSBootSpec{Loader: "grub", GrubDevice: "/dev/sda"},
@@ -110,7 +110,7 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		`networking.hostName = "router02";`,
+		`networking.hostName = "nixos-edge";`,
 		`networking.domain = "example.internal";`,
 		`boot.loader.grub.device = "/dev/sda";`,
 		`networking.firewall.checkReversePath = false;`,
@@ -152,7 +152,7 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NixOSHost"},
-				Metadata: api.ObjectMeta{Name: "router02"},
+				Metadata: api.ObjectMeta{Name: "nixos-edge"},
 				Spec: api.NixOSHostSpec{
 					RouterdService: api.NixOSRouterdServiceSpec{
 						Enabled:       &enabled,

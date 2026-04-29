@@ -52,55 +52,27 @@ MAC アドレス、DUID、宅内アドレスは文書用の値に置き換えて
   委譲プレフィックス、下流広告を運用対象として扱います。routerd もこれらを
   状態として表示できる必要があります。
 
-### 1.2 PR-400NE 検証環境で測定したこと
+### 1.2 NTT ホームゲートウェイ向けプロファイルの形
 
-この節の値は文書用に置き換えています。
+measure: NTT ホームゲートウェイの LAN 側でプレフィックス委譲を受ける構成では、
+成功したクライアントは DUID-LL、IA_PD、Rapid Commit 無効、`/60` 委譲を使いました。
+DHCPv6 の Advertise/Reply は UDP 宛先 546 に届くため、送信元ポート 547 固定を
+前提にしてはいけません。
 
-| 項目 | 測定結果 |
-| --- | --- |
-| DHCPv6-PD サーバー機能 | measure: PR-400NE の LAN 側は下流ルーターへ DHCPv6-PD を配りました。動作中ルーターと routerd 検証機が同じリース表に出ました。 |
-| リース表 | observe: 画面上の払い出し上限は 15 件でした。 |
-| 応答ポート | measure: Advertise/Reply は宛先 UDP 546 へ届き、送信元は 547 ではない一時ポートでした。したがって取得確認の tcpdump は `udp port 546 or udp port 547` にします。 |
-| サーバー識別子 | measure: Server Identifier は DUID-LL でした。文書では `<HGW-DUID>` とします。 |
-| 寿命 | measure: Reply の T1 は 7200 秒、T2 は 12600 秒、優先寿命と有効寿命は 14400 秒でした。 |
-| 委譲長 | measure: 下流ルーターには `/60` が配られました。これは HGW が上流側で受けたより大きなプレフィックスを分割したものと考えます。 |
-| ヒント | measure: 正確なプレフィックスヒント付きの Solicit でも取得できました。したがって、PR-400NE がすべてのヒントを拒否しているわけではありません。ただし、動作中ルーターの初回 Solicit にはヒントが無かったため、NTT 系プロファイルでは既定でヒントを出しません。 |
+measure: 動作中ルーターの初回 Solicit にはプレフィックスヒントがありませんでした。
+そのため routerd は `ntt-ngn-direct-hikari-denwa` と `ntt-hgw-lan-pd` では、
+正確なヒントも長さだけのヒントも既定では送りません。正確なヒントが常に悪いとは
+扱いませんが、既定の形からは外します。
 
-検証で使った文書用の対応表:
-
-| 検証対象 | 文書用プレフィックス | 文書用 MAC | 文書用 DUID |
-| --- | --- | --- | --- |
-| FreeBSD/KAME 検証機 | `2001:db8:0:1220::/60` | `02:00:00:00:01:01` | `<DUID-LAB-FREEBSD>` |
-| NixOS 検証機 | `2001:db8:0:1230::/60` | `02:00:00:00:01:02` | `<DUID-LAB-NIXOS>` |
-| Ubuntu 検証機 | `2001:db8:0:1240::/60` | `02:00:00:00:01:03` | `<DUID-LAB-UBUNTU>` |
-| PR-400NE | - | `02:00:00:00:00:01` | `<HGW-DUID>` |
-| 動作中の商用ルーター | `2001:db8:0:1210::/60` | `00:00:5e:00:53:cf` | `<DUID-COMMERCIAL-ROUTER>` |
-
-### 1.3 Solicit パケット比較
-
-observe: PR-400NE が委譲している動作中ルーターと、routerd 検証機の Solicit を
-比較しました。値は文書用に置き換えています。
-
-| 項目 | 動作中ルーター | FreeBSD/KAME | Ubuntu/systemd-networkd |
-| --- | --- | --- | --- |
-| DUID 種別 | DUID-LL | DUID-LL | DUID-LL |
-| IA_PD IAID | `<COMMERCIAL-IAID>` | `0` | `<NETWORKD-IAID>` |
-| プレフィックスヒント | 無し | 整理後は無し | 整理後は無し |
-| ヒント寿命 | 無し | 整理後は無し | 整理後は無し |
-| 要求オプション | 無し | DNS のみ | DNS、SNTP、NTP など |
-| 再設定許可 | あり | 無し | 無し |
-| クライアント FQDN | 無し | 無し | あり |
-| Rapid Commit | 無し | 無し | 無し |
-
-assert: DUID-LL は必須に近い前提として扱います。一方で、ヒント、要求オプション、
-クライアント FQDN の有無は、単独では成功/失敗を説明しません。FreeBSD/KAME と
-Ubuntu/systemd-networkd は異なる Solicit でも取得できました。
+assert: DUID-LL は NTT 向けプロファイルの強い既定値です。要求オプション、
+再設定許可、クライアント FQDN は動くクライアント間でも差があるため、
+routerd では主要なプロファイル要素として扱いません。
 
 assert: `ntt-ngn-direct-hikari-denwa` と `ntt-hgw-lan-pd` では、正確なヒントも
 長さだけのヒントも既定では送りません。`prefixLength` は routerd が期待する形を
 表す値として残しますが、systemd-networkd へは `PrefixDelegationHint=` を出力しません。
 
-### 1.4 OS クライアント実装から分かること
+### 1.3 OS クライアント実装から分かること
 
 | クライアント | 測定または引用した挙動 | routerd での扱い |
 | --- | --- | --- |
@@ -169,7 +141,7 @@ observe: 物理 L2 スイッチの設定変更は機種ごとの管理画面・C
 - [NEC UNIVERGE IX フレッツ 光ネクスト IPv6 IPoE 設定例](https://jpn.nec.com/univerge/ix/Support/ipv6/native/ipv6-internet_dh.html)
 - [NEC IX-R/IX-V DHCPv6 機能説明](https://support.necplatforms.co.jp/ix-nrv/manual/fd/02_router/14-1_dhcpv6.html)
 - [Sorah's Diary: フレッツ光ネクスト ひかり電話あり環境の DHCPv6-PD 観測](https://diary.sorah.jp/2017/02/19/flets-ngn-hikaridenwa-kill-dhcpv6pd)
-- [rixwwd: PR-400NE / Dream Router の DHCPv6 パケット観測](https://rixwwd.hatenablog.jp/entry/2023/04/09/211529)
+- [rixwwd: NTT ホームゲートウェイ配下の DHCPv6 パケット観測](https://rixwwd.hatenablog.jp/entry/2023/04/09/211529)
 - [SEIL: NGN IPv6 ネイティブ IPoE 接続例](https://www.seil.jp/blog/10.html)
 - [systemd.network マニュアル](https://www.freedesktop.org/software/systemd/man/254/systemd.network.html)
 - [FreeBSD dhcp6c(8)](https://man.freebsd.org/cgi/man.cgi?manpath=freebsd-release-ports&query=dhcp6c&sektion=8)

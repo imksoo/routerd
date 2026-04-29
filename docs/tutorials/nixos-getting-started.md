@@ -167,9 +167,9 @@ a NixOS module. The split looks like this:
 
 A working lab example lives at:
 
-- `examples/nixos-router02.yaml` — `router.yaml` with `NixOSHost`,
+- `examples/nixos-edge.yaml` — `router.yaml` with `NixOSHost`,
   `Interface`, `IPv4DHCPAddress`, `IPv6DHCPAddress`.
-- `examples/nixos-router02-configuration.nix` — the matching minimal
+- `examples/nixos-edge-configuration.nix` — the matching minimal
   hand-written `configuration.nix`.
 
 The render command is:

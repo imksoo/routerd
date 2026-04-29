@@ -905,9 +905,9 @@ import し、`nixos-rebuild switch` で適用します。
 apiVersion: system.routerd.net/v1alpha1
 kind: NixOSHost
 metadata:
-  name: router02
+  name: nixos-edge
 spec:
-  hostname: router02
+  hostname: nixos-edge
   domain: example.net
   stateVersion: "25.11"
   boot:

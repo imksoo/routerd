@@ -9,11 +9,11 @@ import (
 )
 
 func TestKAMEDHCP6CDUIDLLFromMAC(t *testing.T) {
-	got, err := KAMEDHCP6CDUIDLLFromMAC("bc:24:11:e3:c2:38")
+	got, err := KAMEDHCP6CDUIDLLFromMAC("02:00:00:00:01:01")
 	if err != nil {
 		t.Fatalf("build DUID: %v", err)
 	}
-	want := "0a0000030001bc2411e3c238"
+	want := "0a0000030001020000000101"
 	if hex.EncodeToString(got) != want {
 		t.Fatalf("DUID = %s, want %s", hex.EncodeToString(got), want)
 	}
@@ -39,19 +39,19 @@ func TestParseKAMEDHCP6CDUID(t *testing.T) {
 	}{
 		{
 			name:             "duid-llt little endian length",
-			data:             []byte{0x0e, 0x00, 0x00, 0x01, 0x00, 0x01, 0x31, 0x82, 0x0f, 0x6f, 0xbc, 0x24, 0x11, 0xe3, 0xc2, 0x38},
+			data:             []byte{0x0e, 0x00, 0x00, 0x01, 0x00, 0x01, 0x31, 0x82, 0x0f, 0x6f, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01},
 			wantLengthPrefix: true,
 			wantType:         DUIDTypeLinkLayerTime,
 		},
 		{
 			name:             "duid-ll little endian length",
-			data:             []byte{0x0a, 0x00, 0x00, 0x03, 0x00, 0x01, 0xbc, 0x24, 0x11, 0xe3, 0xc2, 0x38},
+			data:             []byte{0x0a, 0x00, 0x00, 0x03, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01},
 			wantLengthPrefix: true,
 			wantType:         DUIDTypeLinkLayer,
 		},
 		{
 			name:             "duid payload without length",
-			data:             []byte{0x00, 0x03, 0x00, 0x01, 0xbc, 0x24, 0x11, 0xe3, 0xc2, 0x38},
+			data:             []byte{0x00, 0x03, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01},
 			wantLengthPrefix: false,
 			wantType:         DUIDTypeLinkLayer,
 		},
@@ -69,11 +69,11 @@ func TestParseKAMEDHCP6CDUID(t *testing.T) {
 func TestEnsureKAMEDHCP6CDUIDLLBacksUpNonLL(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dhcp6c_duid")
-	old := []byte{0x0e, 0x00, 0x00, 0x01, 0x00, 0x01, 0x31, 0x82, 0x0f, 0x6f, 0xbc, 0x24, 0x11, 0xe3, 0xc2, 0x38}
+	old := []byte{0x0e, 0x00, 0x00, 0x01, 0x00, 0x01, 0x31, 0x82, 0x0f, 0x6f, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01}
 	if err := os.WriteFile(path, old, 0600); err != nil {
 		t.Fatalf("write old DUID: %v", err)
 	}
-	changed, backup, err := EnsureKAMEDHCP6CDUIDLL(path, "bc:24:11:e3:c2:38", time.Date(2026, 4, 28, 9, 30, 0, 0, time.UTC))
+	changed, backup, err := EnsureKAMEDHCP6CDUIDLL(path, "02:00:00:00:01:01", time.Date(2026, 4, 28, 9, 30, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("ensure DUID: %v", err)
 	}
@@ -102,14 +102,14 @@ func TestEnsureKAMEDHCP6CDUIDLLBacksUpNonLL(t *testing.T) {
 func TestEnsureKAMEDHCP6CDUIDLLKeepsMatchingLL(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dhcp6c_duid")
-	current, err := KAMEDHCP6CDUIDLLFromMAC("bc:24:11:e3:c2:38")
+	current, err := KAMEDHCP6CDUIDLLFromMAC("02:00:00:00:01:01")
 	if err != nil {
 		t.Fatalf("build current DUID: %v", err)
 	}
 	if err := os.WriteFile(path, current, 0600); err != nil {
 		t.Fatalf("write current DUID: %v", err)
 	}
-	changed, backup, err := EnsureKAMEDHCP6CDUIDLL(path, "bc:24:11:e3:c2:38", time.Now())
+	changed, backup, err := EnsureKAMEDHCP6CDUIDLL(path, "02:00:00:00:01:01", time.Now())
 	if err != nil {
 		t.Fatalf("ensure DUID: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestEnsureKAMEDHCP6CDUIDLLReplacesDifferentLL(t *testing.T) {
 	if err := os.WriteFile(path, current, 0600); err != nil {
 		t.Fatalf("write current DUID: %v", err)
 	}
-	changed, backup, err := EnsureKAMEDHCP6CDUIDLL(path, "bc:24:11:e3:c2:38", time.Date(2026, 4, 29, 7, 30, 0, 0, time.UTC))
+	changed, backup, err := EnsureKAMEDHCP6CDUIDLL(path, "02:00:00:00:01:01", time.Date(2026, 4, 29, 7, 30, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("ensure DUID: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestEnsureKAMEDHCP6CDUIDLLReplacesDifferentLL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read DUID: %v", err)
 	}
-	want, err := KAMEDHCP6CDUIDLLFromMAC("bc:24:11:e3:c2:38")
+	want, err := KAMEDHCP6CDUIDLLFromMAC("02:00:00:00:01:01")
 	if err != nil {
 		t.Fatalf("build wanted DUID: %v", err)
 	}

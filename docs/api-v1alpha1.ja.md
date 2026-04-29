@@ -378,7 +378,7 @@ spec:
   - `ntt-ngn-direct-hikari-denwa`: NTT NGN/ONU に直結し、ひかり電話契約を使う構成。
   - `ntt-hgw-lan-pd`: NTT のホームゲートウェイの LAN 側につなぎ、`/60` 単位で再委譲を受ける構成。
 
-  どちらの NTT 系プロファイルも IA_PD のみを要求し、Rapid Commit を無効にし、リンクレイヤ DUID を使い、必要に応じて DHCPv6 Solicit を強制します。委譲される長さの既定は `/60` ですが、systemd-networkd では `PrefixDelegationHint=` をあえて出力しません。検証環境で観測した商用ルーターの初回 Solicit に近づけるためです。
+  どちらの NTT 系プロファイルも IA_PD のみを要求し、Rapid Commit を無効にし、リンクレイヤ DUID を使い、必要に応じて DHCPv6 Solicit を強制します。委譲される長さの既定は `/60` ですが、systemd-networkd では `PrefixDelegationHint=` をあえて出力しません。動作確認済みクライアントの初回 Solicit に近づけるためです。
 - routerd は反映のたびに、観測できたプレフィックス委譲の状態をローカルの状態保存領域にある `ipv6PrefixDelegation.<name>.lease` へ記録します。この JSON 値には、現在のプレフィックス、最後に見えたプレフィックス、観測した DUID、IAID、期待される DUID、最後に見えた時刻を保存します。以前の開発版で使っていた `ipv6PrefixDelegation.<name>.lastPrefix` などの個別キーは、現在は自動移行しません。インターフェース名、設定されたプレフィックス長、クライアント種別、プロファイルは、DHCPv6 リースそのものではなく routerd の設定を表すため、別の状態値として残します。下流側の委譲プレフィックスが見えなくなった場合は `currentPrefix` を消しますが、`lastPrefix` は運用者が確認できるように残します。レンダラはこの記録を正確なプレフィックスヒントとして再利用しません。望む定義は `routerctl get ipv6pd` で確認し、現在の委譲プレフィックスと最後に見えた委譲プレフィックスを取り違えず調べるには `routerctl describe ipv6pd/<名前>` を使います。機械処理向けにまとめて見る場合は `routerctl show ipv6pd -o yaml --events` を使います。
 - systemd-networkd と FreeBSD の `dhcp6c` では、取得できる範囲で DHCP の識別情報もリース記録に残します。`dhcp6c` では `/var/db/dhcp6c_duid` から DUID を読み取り、IAID は設定された `iaid`、または `dhcp6c` の既定値である `0` から決めます。NTT 系プロファイルでは、上流インターフェースの MAC アドレスから DHCPv6 のリンクレイヤ DUID を計算し、期待される DUID として残します。これらは表示と識別子の照合に使う観測値であり、望ましい設定そのものではありません。
 - リース期限が切れる前の Renew/Rebind は、OS 側の DHCPv6 クライアントの責務です。routerd は通常の反映でこのクライアントを再起動しないようにします。再起動すると、更新として続けられたはずの処理が新規 Solicit や Release に変わることがあるためです。
@@ -908,9 +908,9 @@ import し、`nixos-rebuild switch` で適用します。
 apiVersion: system.routerd.net/v1alpha1
 kind: NixOSHost
 metadata:
-  name: router02
+  name: nixos-edge
 spec:
-  hostname: router02
+  hostname: nixos-edge
   domain: example.net
   stateVersion: "25.11"
   boot:

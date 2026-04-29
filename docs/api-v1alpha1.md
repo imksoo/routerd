@@ -472,7 +472,7 @@ How routerd behaves:
   link-layer DUID, force DHCPv6 Solicit when needed, and default the expected
   delegated length to `/60`. For systemd-networkd, routerd deliberately omits
   `PrefixDelegationHint=` for these profiles so the first Solicit stays close
-  to commercial router behavior observed in the lab.
+  to known working client behavior.
 - During apply, routerd records observed prefix-delegation state in
   `ipv6PrefixDelegation.<name>.lease` in the local state store. The lease JSON
   holds the current prefix, last known prefix, observed DUID, IAID, expected
@@ -1131,9 +1131,9 @@ It is not applied by runtime apply. The generated
 apiVersion: system.routerd.net/v1alpha1
 kind: NixOSHost
 metadata:
-  name: router02
+  name: nixos-edge
 spec:
-  hostname: router02
+  hostname: nixos-edge
   domain: example.net
   stateVersion: "25.11"
   boot:

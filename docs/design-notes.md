@@ -53,57 +53,28 @@ section or remove it.
   delegated prefixes, and downstream advertisement as operational state.
   routerd should expose the same class of information.
 
-### 1.2 PR-400NE Lab Measurements
+### 1.2 NTT Home-Gateway Profile Shape
 
-All lab-specific values below are documentation replacements.
+measure: In a NTT home-gateway LAN-side delegation environment, successful
+clients used DUID-LL, IA_PD, Rapid Commit disabled, and `/60` delegated
+prefixes. DHCPv6 Advertise/Reply packets arrived at UDP destination 546, and
+captures must not assume source port 547.
 
-| Item | Measurement |
-| --- | --- |
-| DHCPv6-PD server | measure: The PR-400NE LAN side delegated prefixes to downstream routers. A working commercial router and routerd lab machines appeared in the same lease table. |
-| Lease table | observe: The UI showed a 15-entry delegation table. |
-| Reply port | measure: Advertise/Reply packets arrived at UDP destination 546 from a non-547 ephemeral source port. Captures must therefore use `udp port 546 or udp port 547`. |
-| Server identifier | measure: The Server Identifier was DUID-LL. This document calls it `<HGW-DUID>`. |
-| Lifetimes | measure: Reply contained T1 7200 seconds, T2 12600 seconds, and preferred/valid lifetimes of 14400 seconds. |
-| Delegated length | measure: Downstream routers received `/60` prefixes. Treat this as HGW subdivision of a larger upstream prefix. |
-| Prefix hints | measure: A client succeeded with an exact prefix hint, so PR-400NE does not reject every prefix hint. The NTT profile nevertheless omits prefix hints by default because the working commercial router's initial Solicit did not include one. |
+measure: A commercial router's initial Solicit did not include a prefix hint.
+routerd therefore omits exact and length-only prefix hints for
+`ntt-ngn-direct-hikari-denwa` and `ntt-hgw-lan-pd`. Exact hints are not modeled
+as generally harmful, but they are no longer the default shape.
 
-Documentation replacements used in examples:
-
-| Subject | Documentation prefix | Documentation MAC | Documentation DUID |
-| --- | --- | --- | --- |
-| FreeBSD/KAME lab router | `2001:db8:0:1220::/60` | `02:00:00:00:01:01` | `<DUID-LAB-FREEBSD>` |
-| NixOS lab router | `2001:db8:0:1230::/60` | `02:00:00:00:01:02` | `<DUID-LAB-NIXOS>` |
-| Ubuntu lab router | `2001:db8:0:1240::/60` | `02:00:00:00:01:03` | `<DUID-LAB-UBUNTU>` |
-| PR-400NE | - | `02:00:00:00:00:01` | `<HGW-DUID>` |
-| Working commercial router | `2001:db8:0:1210::/60` | `00:00:5e:00:53:cf` | `<DUID-COMMERCIAL-ROUTER>` |
-
-### 1.3 Solicit Packet Comparison
-
-observe: A capture included the working commercial router and routerd lab
-machines. Values are redacted or replaced.
-
-| Field | Working commercial router | FreeBSD/KAME | Ubuntu/systemd-networkd |
-| --- | --- | --- | --- |
-| DUID type | DUID-LL | DUID-LL | DUID-LL |
-| IA_PD IAID | `<COMMERCIAL-IAID>` | `0` | `<NETWORKD-IAID>` |
-| Prefix hint | none | none after cleanup | none after cleanup |
-| Hint lifetimes | none | none after cleanup | none after cleanup |
-| ORO | none | DNS only | DNS, SNTP, NTP, and related options |
-| Elapsed Time | present | present | present |
-| Reconfigure Accept | present | absent | absent |
-| Client FQDN | absent | absent | present |
-| Rapid Commit | absent | absent | absent |
-
-assert: DUID-LL is a strong default for NTT profiles. Prefix hints, ORO content,
-and Client FQDN do not by themselves explain success or failure: FreeBSD/KAME
-and Ubuntu/systemd-networkd succeeded with different packet shapes.
+assert: DUID-LL is a strong default for NTT profiles. Option-request contents,
+Reconfigure Accept, and Client FQDN can differ between working clients, so
+routerd does not treat those fields as the deciding profile knobs.
 
 assert: The `ntt-ngn-direct-hikari-denwa` and `ntt-hgw-lan-pd` profiles should
 not send exact or length-only prefix hints by default. `prefixLength` remains
 part of routerd's expected-shape model, but the systemd-networkd renderer omits
 `PrefixDelegationHint=` for these profiles.
 
-### 1.4 OS Client Behavior
+### 1.3 OS Client Behavior
 
 | Client | Cited or measured behavior | routerd treatment |
 | --- | --- | --- |
@@ -173,7 +144,7 @@ Primary references:
 - [NEC UNIVERGE IX FLET'S IPv6 IPoE example](https://jpn.nec.com/univerge/ix/Support/ipv6/native/ipv6-internet_dh.html)
 - [NEC IX-R/IX-V DHCPv6 documentation](https://support.necplatforms.co.jp/ix-nrv/manual/fd/02_router/14-1_dhcpv6.html)
 - [Sorah's Diary DHCPv6-PD observation](https://diary.sorah.jp/2017/02/19/flets-ngn-hikaridenwa-kill-dhcpv6pd)
-- [rixwwd PR-400NE / Dream Router packet observation](https://rixwwd.hatenablog.jp/entry/2023/04/09/211529)
+- [rixwwd DHCPv6 packet observation behind an NTT home gateway](https://rixwwd.hatenablog.jp/entry/2023/04/09/211529)
 - [SEIL NGN IPv6 native IPoE example](https://www.seil.jp/blog/10.html)
 - [systemd.network manual](https://www.freedesktop.org/software/systemd/man/254/systemd.network.html)
 - [FreeBSD dhcp6c(8)](https://man.freebsd.org/cgi/man.cgi?manpath=freebsd-release-ports&query=dhcp6c&sektion=8)

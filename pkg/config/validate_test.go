@@ -382,7 +382,7 @@ func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "wan-pd"},
 				Spec: api.IPv6PrefixDelegationSpec{
 					Interface:   "wan",
-					IAID:        "ca53095a",
+					IAID:        "00000001",
 					DUIDType:    "link-layer",
 					DUIDRawData: "000102005e102030",
 				},

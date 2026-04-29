@@ -57,7 +57,7 @@ routerd rewrites at runtime. The intended workflow is:
    reporting, and connection tracking observations.
 
 The hand-written `configuration.nix` can stay minimal. For a lab example,
-see `examples/nixos-router02-configuration.nix`:
+see `examples/nixos-edge-configuration.nix`:
 
 ```nix
 { config, pkgs, ... }:

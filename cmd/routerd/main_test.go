@@ -493,25 +493,25 @@ func TestDeriveIPv6AddressFromDelegatedPrefix(t *testing.T) {
 		want     string
 	}{
 		{
-			name:     "ntt /60 first subnet",
-			prefix:   "2409:10:3d60:1220::/60",
+			name:     "documentation /60 first subnet",
+			prefix:   "2001:db8:3d60:1220::/60",
 			subnetID: "0",
 			suffix:   "::1",
-			want:     "2409:10:3d60:1220::1",
+			want:     "2001:db8:3d60:1220::1",
 		},
 		{
-			name:     "ntt /60 hex subnet",
-			prefix:   "2409:10:3d60:1220::/60",
+			name:     "documentation /60 hex subnet",
+			prefix:   "2001:db8:3d60:1220::/60",
 			subnetID: "a",
 			suffix:   "::3",
-			want:     "2409:10:3d60:122a::3",
+			want:     "2001:db8:3d60:122a::3",
 		},
 		{
-			name:     "ntt /56 decimal subnet",
-			prefix:   "2409:10:3d60:1200::/56",
+			name:     "documentation /56 decimal subnet",
+			prefix:   "2001:db8:3d60:1200::/56",
 			subnetID: "16",
 			suffix:   "::100",
-			want:     "2409:10:3d60:1210::100",
+			want:     "2001:db8:3d60:1210::100",
 		},
 	}
 	for _, tt := range tests {
@@ -559,7 +559,7 @@ func TestDelegatedPrefixFromObservedIgnoresHostRoute(t *testing.T) {
 
 func TestParseFreeBSDIfconfigIPv6(t *testing.T) {
 	prefixes, addrs := parseFreeBSDIfconfigIPv6(`vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
-	inet 192.168.160.1 netmask 0xffffff00 broadcast 192.168.160.255
+	inet 192.0.2.1 netmask 0xffffff00 broadcast 192.0.2.255
 	inet6 fe80::be24:11ff:fea3:c1f4%vtnet1 prefixlen 64 scopeid 0x2
 	inet6 2001:db8:3d60:1240:be24:11ff:fea3:c1f4 prefixlen 64
 `)
@@ -575,12 +575,12 @@ func TestParseFreeBSDIfconfigIPv6(t *testing.T) {
 func TestObserveFreeBSDDHCP6CIdentityPayload(t *testing.T) {
 	payload := freeBSDDHCP6CDUIDPayload([]byte{
 		0x0e, 0x00,
-		0x00, 0x01, 0x00, 0x01, 0x31, 0x82, 0x0f, 0x6f, 0xbc, 0x24, 0x11, 0xe3, 0xc2, 0x38,
+		0x00, 0x01, 0x00, 0x01, 0x31, 0x82, 0x0f, 0x6f, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01,
 	})
-	if got := colonHex(payload); got != "00:01:00:01:31:82:0f:6f:bc:24:11:e3:c2:38" {
+	if got := colonHex(payload); got != "00:01:00:01:31:82:0f:6f:02:00:00:00:01:01" {
 		t.Fatalf("DUID payload = %s", got)
 	}
-	if got := configuredOrDefaultDHCP6CIAID("ca53095a"); got != "3394439514" {
+	if got := configuredOrDefaultDHCP6CIAID("00000001"); got != "1" {
 		t.Fatalf("IAID = %s, want decimal conversion", got)
 	}
 }
@@ -647,9 +647,9 @@ func TestRecordHostInventoryState(t *testing.T) {
 }
 
 func TestParseRFC4361ClientID(t *testing.T) {
-	identity := parseRFC4361ClientID("ffca53095a0003000102005e102030")
-	if identity.IAID != "ca53095a" {
-		t.Fatalf("IAID = %q, want ca53095a", identity.IAID)
+	identity := parseRFC4361ClientID("ff000000010003000102005e102030")
+	if identity.IAID != "00000001" {
+		t.Fatalf("IAID = %q, want 00000001", identity.IAID)
 	}
 	if identity.DUID != "0003000102005e102030" {
 		t.Fatalf("DUID = %q, want link-layer DUID", identity.DUID)

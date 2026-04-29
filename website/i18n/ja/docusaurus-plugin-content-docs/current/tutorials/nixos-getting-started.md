@@ -168,9 +168,9 @@ sudo routerctl status
 
 動くラボ例は次の 2 ファイルです。
 
-- `examples/nixos-router02.yaml` — `NixOSHost`、`Interface`、
+- `examples/nixos-edge.yaml` — `NixOSHost`、`Interface`、
   `IPv4DHCPAddress`、`IPv6DHCPAddress` を含む `router.yaml`。
-- `examples/nixos-router02-configuration.nix` — 上記に対応する手書きの
+- `examples/nixos-edge-configuration.nix` — 上記に対応する手書きの
   最小 `configuration.nix`。
 
 レンダリングコマンドは次のとおりです。

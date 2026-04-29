@@ -37,7 +37,7 @@ parity that the code does not yet provide.
   configuration files. The flow is `routerd render nixos` producing
   `routerd-generated.nix`, a small `configuration.nix` importing it,
   then `routerd serve` handling non-persistent runtime decisions. The
-  lab sample `examples/nixos-router02-configuration.nix` shows the
+  lab sample `examples/nixos-edge-configuration.nix` shows the
   hand-written side of this split.
 - The current NixOS renderer emits host settings, dependency packages,
   persistent sysctl values, and basic systemd-networkd `.network`

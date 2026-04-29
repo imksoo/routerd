@@ -2,7 +2,7 @@
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
-  name: router01
+  name: freebsd-edge
 
 spec:
   reconcile:
@@ -16,7 +16,7 @@ spec:
       metadata:
         name: system-hostname
       spec:
-        hostname: router01.example.internal
+        hostname: freebsd-edge.example.internal
         managed: true
 
     - apiVersion: system.routerd.net/v1alpha1
@@ -115,7 +115,7 @@ spec:
         name: lan-ipv4
       spec:
         interface: lan
-        address: 192.168.160.1/24
+        address: 192.0.2.1/24
         exclusive: false
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -135,8 +135,8 @@ spec:
       spec:
         server: lan-dhcp4-server
         interface: lan
-        rangeStart: 192.168.160.110
-        rangeEnd: 192.168.160.119
+        rangeStart: 192.0.2.110
+        rangeEnd: 192.0.2.119
         leaseTime: 12h
         routerSource: interfaceAddress
         dnsSource: self
