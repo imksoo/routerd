@@ -56,7 +56,6 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	MigratePDLeases(store)
 	return store, nil
 }
 

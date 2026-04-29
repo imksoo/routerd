@@ -98,7 +98,6 @@ func LoadJSON(path string) (*JSONStore, error) {
 	if store.Values == nil {
 		store.Values = map[string]Value{}
 	}
-	MigratePDLeases(store)
 	return store, nil
 }
 

@@ -84,17 +84,17 @@ Documentation replacements used in examples:
 observe: A capture included the working commercial router and routerd lab
 machines. Values are redacted or replaced.
 
-| Field | Working commercial router | FreeBSD/KAME | Ubuntu/systemd-networkd | NixOS/odhcp6c experiment |
-| --- | --- | --- | --- | --- |
-| DUID type | DUID-LL | DUID-LL | DUID-LL | DUID-LL |
-| IA_PD IAID | `<COMMERCIAL-IAID>` | `0` | `<NETWORKD-IAID>` | `1` |
-| Prefix hint | none | none after cleanup | none after cleanup | `2001:db8:0:1230::/60` during experiment |
-| Hint lifetimes | none | none after cleanup | none after cleanup | `0/0` during experiment |
-| ORO | none | DNS only | DNS, SNTP, NTP, and related options | SIP, DNS, SNTP, NTP, and related options |
-| Elapsed Time | present | present | present | present |
-| Reconfigure Accept | present | absent | absent | present |
-| Client FQDN | absent | absent | present | absent |
-| Rapid Commit | absent | absent | absent | absent |
+| Field | Working commercial router | FreeBSD/KAME | Ubuntu/systemd-networkd |
+| --- | --- | --- | --- |
+| DUID type | DUID-LL | DUID-LL | DUID-LL |
+| IA_PD IAID | `<COMMERCIAL-IAID>` | `0` | `<NETWORKD-IAID>` |
+| Prefix hint | none | none after cleanup | none after cleanup |
+| Hint lifetimes | none | none after cleanup | none after cleanup |
+| ORO | none | DNS only | DNS, SNTP, NTP, and related options |
+| Elapsed Time | present | present | present |
+| Reconfigure Accept | present | absent | absent |
+| Client FQDN | absent | absent | present |
+| Rapid Commit | absent | absent | absent |
 
 assert: DUID-LL is a strong default for NTT profiles. Prefix hints, ORO content,
 and Client FQDN do not by themselves explain success or failure: FreeBSD/KAME
@@ -105,10 +105,9 @@ not send exact or length-only prefix hints by default. `prefixLength` remains
 part of routerd's expected-shape model, but the systemd-networkd renderer omits
 `PrefixDelegationHint=` for these profiles.
 
-observe: In the NixOS/odhcp6c experiment, PR-400NE sent Advertise, but the
-client did not complete Request/Reply or install the prefix. The experiment
-also showed stale transaction IDs, changing IAID, and excessive ORO content.
-The odhcp6c experiment is not promoted to main.
+assert: The odhcp6c experiment is not promoted to main. Keep the production
+Linux path on systemd-networkd unless a new test branch proves a cleaner
+replacement.
 
 ### 1.4 OS Client Behavior
 
@@ -116,7 +115,6 @@ The odhcp6c experiment is not promoted to main.
 | --- | --- | --- |
 | systemd-networkd | cite/measure: Supports `DUIDType=link-layer`, `IAID`, `PrefixDelegationHint`, `WithoutRA`, and `SendRelease`. Renew/Rebind IA Prefix lifetimes are zero. | Keep as the default Linux path. routerd compensates for weak notification and state visibility with observation. |
 | KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. `-n` and SIGUSR1 avoid Release. Hint-bearing Solicit can carry IA Prefix lifetimes. | Keep as the FreeBSD path. routerd manages DUID-LL files and release policy for NTT profiles. |
-| odhcp6c | cite/observe: Integrates well with OpenWrt routers, but the NixOS experiment did not complete after Advertise. | Do not merge into main. Re-test only on a separate branch if needed. |
 | dhcpcd | cite: Available on Linux and FreeBSD, with DUID, IAID, hooks, and IA_PD support. Renew/Rebind IA Prefix lifetimes are zero. | Adopt for the FreeBSD path after a short lab migration. |
 | dnsmasq | cite/assert: Useful for LAN DNS, DHCPv4, DHCPv6, and RA. It is not the source of truth for WAN PD acquisition. | Keep it for LAN services only. |
 
@@ -143,24 +141,7 @@ assert: Before judging DHCPv6-PD behavior in routerd labs, verify:
 - A working router's Solicit/Request can be seen on the same segment before
   concluding that the HGW is not replying.
 
-### 2.2 NixOS Lab Router Rebuild
-
-observe: The NixOS lab router retained state from the odhcp6c experiment.
-Advertise was visible, but Request/Reply and OS prefix installation did not
-complete. Returning to systemd-networkd did not immediately reacquire PD.
-
-assert: Rebuild steps:
-
-- Remove odhcp6c services, configuration, hooks, and transient units.
-- Remove `/var/lib/systemd/network/` DHCPv6 lease state.
-- Use only systemd-networkd with DUID-LL and a stable IAID.
-- Use only systemd-networkd with DUID-LL and no prefix hint.
-- Keep IAID stable. Avoid carrying over odhcp6c transaction state or stale
-  networkd lease files from experiments.
-- If stale PR-400NE binding is suspected, wait for lease expiry or clear it
-  administratively.
-
-### 2.3 L2 Switch Multicast Snooping
+### 2.2 L2 Switch Multicast Snooping
 
 observe: When L2 switches in the path had IGMP snooping enabled, parts of the
 IPv6 RA and DHCPv6 multicast exchange were not delivered. Many implementations
@@ -181,20 +162,6 @@ flooding is acceptable and root-cause separation is faster.
 observe: Concrete switch configuration depends on each vendor's UI/CLI. Switch
 model names and exact commands are intentionally not included in this
 document.
-
-### 2.4 Removed Old Observations
-
-The following old statements were removed because they were collected while the
-virtual multicast path was not trustworthy. They are not kept as PR-400NE or
-NTT behavior:
-
-- "PR-400NE only replies just after reboot."
-- "PR-400NE does not reply to natural T1/T2 Renew."
-- "KAME `infinity` hint lifetime is rejected by PR-400NE."
-- "State-fed prefix hints cannot recover PD."
-- "Rapid Commit was the root cause."
-
-They were useful while debugging, but are now either unverified or contradicted.
 
 ## 3. Public References
 
@@ -235,8 +202,6 @@ Primary references:
   contract without versioned evidence.
 - believe: dhcpcd is a possible shared Linux/FreeBSD client. It needs short
   PR-400NE tests for Solicit, Request/Reply, and natural Renew before adoption.
-- assert: odhcp6c is not merged into main from the NixOS experiment. A future
-  test must control ORO, IAID, transaction IDs, and hooks on a separate branch.
 - assert: An in-process routerd DHCPv6 client remains a later option. First,
   stabilize DUID, IAID, lease storage, and events around OS clients.
 

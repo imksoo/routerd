@@ -45,9 +45,9 @@ func TestSQLiteStoreMigratesLegacyJSONAndRenames(t *testing.T) {
 	legacy := filepath.Join(dir, "state.json")
 	if err := os.WriteFile(legacy, []byte(`{
   "variables": {
-    "ipv6PrefixDelegation.wan-pd.lastPrefix": {
+    "ipv6PrefixDelegation.wan-pd.lease": {
       "status": "set",
-      "value": "2001:db8:1200:1210::/60",
+      "value": "{\"lastPrefix\":\"2001:db8:1200:1210::/60\"}",
       "since": "2026-04-28T00:00:00Z",
       "updatedAt": "2026-04-28T00:00:00Z"
     }

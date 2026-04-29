@@ -45,8 +45,9 @@ behavior changes and new resource shapes as the model takes shape.
   ownership ledger entries, and routerd state history. It supports table, JSON,
   YAML, diff, ledger-only, and adoption-candidate views. NAPT/conntrack
   inspection moved under `IPv4SourceNAT` observed state.
-- DHCPv6-PD state now migrates scattered prefix and identity keys into the
-  structured `ipv6PrefixDelegation.<name>.lease` value.
+- DHCPv6-PD state now uses only the structured
+  `ipv6PrefixDelegation.<name>.lease` value. Pre-release migration support for
+  older scattered prefix and identity keys was removed.
 - FreeBSD/KAME `dhcp6c` DUID files are now managed for NTT profiles whose
   effective DUID type is `link-layer`; non-DUID-LL files are backed up before
   routerd writes a MAC-derived DUID-LL.

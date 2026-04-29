@@ -592,8 +592,9 @@ func TestAppendPrefixDelegationStateWarnings(t *testing.T) {
 		Spec:     api.IPv6PrefixDelegationSpec{Interface: "wan"},
 	}}}}
 	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lastPrefix", "2001:db8:3d60:1240::/60", "test")
-	store.Unset("ipv6PrefixDelegation.wan-pd.currentPrefix", "test")
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
+		LastPrefix: "2001:db8:3d60:1240::/60",
+	}), "test")
 	result := &apply.Result{}
 	appendPrefixDelegationStateWarnings(result, router, store)
 	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "2001:db8:3d60:1240::/60") {

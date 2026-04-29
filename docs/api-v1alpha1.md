@@ -453,9 +453,6 @@ spec:
   profile: ntt-hgw-lan-pd
   prefixLength: 60
   releasePolicy: never
-  iaid: ca53095a
-  duidType: link-layer
-  duidRawData: 00:01:02:00:5e:10:20:30
 ```
 
 Breaking note: the HGW workaround fields `convergenceTimeout`,
@@ -487,9 +484,9 @@ How routerd behaves:
 - During apply, routerd records observed prefix-delegation state in
   `ipv6PrefixDelegation.<name>.lease` in the local state store. The lease JSON
   holds the current prefix, last known prefix, observed DUID, IAID, expected
-  DUID, and last observed time. Older state files that used separate
-  keys such as `ipv6PrefixDelegation.<name>.lastPrefix` are migrated into this
-  lease value when read. Interface names, configured prefix length, client
+  DUID, and last observed time. Older pre-release state files that used
+  separate keys such as `ipv6PrefixDelegation.<name>.lastPrefix` are no longer
+  migrated automatically. Interface names, configured prefix length, client
   type, and profile remain separate state entries because
   they describe routerd configuration rather than the DHCPv6 lease itself.
   `currentPrefix` inside the lease is cleared when no downstream delegated
