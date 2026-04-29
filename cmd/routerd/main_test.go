@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -582,6 +583,54 @@ func TestDelegatedPrefixFromObservedIgnoresHostRoute(t *testing.T) {
 	}
 }
 
+func TestManagedDelegatedIPv6TargetsIncludeDelegatedAddressAndDSLiteSources(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", SubnetID: "0", AddressSuffix: "::3"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "lan-ipv6", LocalAddressSuffix: "::100"}},
+	}}}
+	store := routerstate.New()
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{CurrentPrefix: "2001:db8:3d60:1220::/60"}), "test")
+
+	targets, err := managedDelegatedIPv6Targets(router, store)
+	if err != nil {
+		t.Fatalf("managed targets: %v", err)
+	}
+	for _, want := range []string{"2001:db8:3d60:1220::3", "2001:db8:3d60:1220::100"} {
+		if !targets.DesiredByInterface["ens19"][want] {
+			t.Fatalf("desired targets = %#v, missing %s", targets.DesiredByInterface, want)
+		}
+	}
+	for _, suffix := range []string{"::3", "::100"} {
+		addr := netip.MustParseAddr(suffix)
+		if !targets.SuffixesByInterface["ens19"][ipv6HostSuffix64(addr)] {
+			t.Fatalf("suffix targets = %#v, missing %s", targets.SuffixesByInterface, suffix)
+		}
+	}
+}
+
+func TestManagedDelegatedIPv6TargetsTrackSuffixWithoutCurrentPrefix(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"}},
+	}}}
+	store := routerstate.New()
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{LastPrefix: "2001:db8:3d60:1220::/60"}), "test")
+
+	targets, err := managedDelegatedIPv6Targets(router, store)
+	if err != nil {
+		t.Fatalf("managed targets: %v", err)
+	}
+	if len(targets.DesiredByInterface["ens19"]) != 0 {
+		t.Fatalf("desired targets = %#v, want none without current prefix", targets.DesiredByInterface)
+	}
+	if !targets.SuffixesByInterface["ens19"][ipv6HostSuffix64(netip.MustParseAddr("::3"))] {
+		t.Fatalf("suffix targets = %#v, want ::3 tracked for stale cleanup", targets.SuffixesByInterface)
+	}
+}
+
 func TestParseFreeBSDIfconfigIPv6(t *testing.T) {
 	prefixes, addrs := parseFreeBSDIfconfigIPv6(`vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
 	inet 192.0.2.1 netmask 0xffffff00 broadcast 192.0.2.255
@@ -594,6 +643,12 @@ func TestParseFreeBSDIfconfigIPv6(t *testing.T) {
 	wantAddrs := []string{"fe80::be24:11ff:fea3:c1f4", "2001:db8:3d60:1240:be24:11ff:fea3:c1f4"}
 	if fmt.Sprint(addrs) != fmt.Sprint(wantAddrs) {
 		t.Fatalf("addrs = %v, want %v", addrs, wantAddrs)
+	}
+	_, entries := parseFreeBSDIfconfigIPv6Entries(`vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	inet6 2001:db8:3d60:1240::1 prefixlen 64
+`)
+	if len(entries) != 1 || entries[0].Address != "2001:db8:3d60:1240::1" || entries[0].PrefixLen != 64 {
+		t.Fatalf("entries = %#v, want address with prefixlen 64", entries)
 	}
 }
 

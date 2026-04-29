@@ -27,6 +27,10 @@ behavior changes and new resource shapes as the model takes shape.
   `ipv6PrefixDelegation.<name>.lease` object. NTT profiles use MAC-derived
   DUID-LL by default, omit exact prefix hints, and keep `duidRawData` only as
   an explicit operator override for migration or HA cases.
+- Apply now derives delegated LAN IPv6 addresses and DS-Lite tunnel source
+  addresses from the current PD state object when available, and removes
+  stale routerd-derived IPv6 addresses that share managed suffixes after a PD
+  change.
 - FreeBSD groundwork now uses KAME `dhcp6c` for DHCPv6-PD, `dhclient` or the
   configured IPv4 DHCP client for IPv4, `mpd5` for PPPoE, and rc.d-managed
   dnsmasq for LAN services. FreeBSD remote install builds the proper target

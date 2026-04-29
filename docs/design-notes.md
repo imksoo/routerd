@@ -251,7 +251,10 @@ routerctl describe inventory/host
   `/usr/local/sbin` such as `dhcp6c` and `dnsmasq` can be available to rc.d but
   still appear missing if routerd checks with a narrow PATH. Inventory should
   use platform-aware lookup paths and show the resolved command path.
-- Design how LAN RA/DHCPv6 withdraws stale prefixes when PD disappears.
+- Complete stale delegated prefix withdrawal. Apply now removes routerd-derived
+  LAN addresses and DS-Lite source addresses that share managed suffixes after
+  a PD change. LAN RA/DHCPv6 withdrawal still needs explicit design so clients
+  stop using an old prefix quickly when PD disappears.
 - Use `Inventory/host` as an input to future platform advice or rendering for
   host prerequisites such as virtual bridge multicast behavior, RA acceptance,
   and service-manager differences.

@@ -619,7 +619,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		var appliedIPv6DelegatedAddresses []string
 		if err := recordStageError("ipv6-delegated-address", func() error {
 			var err error
-			appliedIPv6DelegatedAddresses, err = applyIPv6DelegatedAddresses(effectiveRouter)
+			appliedIPv6DelegatedAddresses, err = applyIPv6DelegatedAddressesWithState(effectiveRouter, stateStore)
 			return err
 		}()); err != nil {
 			return nil, err
@@ -680,7 +680,16 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		var appliedTunnels []string
 		if err := recordStageError("ds-lite", func() error {
 			var err error
-			appliedTunnels, err = applyDSLiteTunnels(effectiveRouter)
+			appliedTunnels, err = applyDSLiteTunnelsWithState(effectiveRouter, stateStore)
+			return err
+		}()); err != nil {
+			return nil, err
+		}
+
+		var cleanedDelegatedIPv6Addresses []string
+		if err := recordStageError("ipv6-delegated-address-cleanup", func() error {
+			var err error
+			cleanedDelegatedIPv6Addresses, err = cleanupStaleDelegatedIPv6Addresses(effectiveRouter, stateStore)
 			return err
 		}()); err != nil {
 			return nil, err
@@ -801,6 +810,9 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		}
 		for _, tunnel := range appliedTunnels {
 			fmt.Fprintf(stdout, "applied DS-Lite tunnel %s\n", tunnel)
+		}
+		for _, address := range cleanedDelegatedIPv6Addresses {
+			fmt.Fprintf(stdout, "removed stale delegated IPv6 address %s\n", address)
 		}
 		for _, route := range appliedDefaultRoutes {
 			fmt.Fprintf(stdout, "applied IPv4 default route %s\n", route)
@@ -2001,14 +2013,28 @@ func observedIPv6AddressesByInterface(router *api.Router) map[string][]string {
 }
 
 func ipv6Addresses(ifname string) []string {
+	entries := ipv6AddressEntries(ifname)
+	addrs := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		addrs = append(addrs, entry.Address)
+	}
+	return addrs
+}
+
+type ipv6AddressEntry struct {
+	Address   string
+	PrefixLen int
+}
+
+func ipv6AddressEntries(ifname string) []ipv6AddressEntry {
 	if platformDefaults.OS == platform.OSFreeBSD {
-		return freeBSDIPv6Addresses(ifname)
+		return freeBSDIPv6AddressEntries(ifname)
 	}
 	out, err := exec.Command("ip", "-brief", "-6", "addr", "show", "dev", ifname).CombinedOutput()
 	if err != nil {
 		return nil
 	}
-	var addrs []string
+	var entries []ipv6AddressEntry
 	for _, field := range strings.Fields(string(out)) {
 		addrPart, _, ok := strings.Cut(field, "/")
 		if !ok {
@@ -2016,10 +2042,14 @@ func ipv6Addresses(ifname string) []string {
 		}
 		addr, err := netip.ParseAddr(addrPart)
 		if err == nil && addr.Is6() {
-			addrs = append(addrs, addr.String())
+			bits := 128
+			if prefix, err := netip.ParsePrefix(field); err == nil {
+				bits = prefix.Bits()
+			}
+			entries = append(entries, ipv6AddressEntry{Address: addr.String(), PrefixLen: bits})
 		}
 	}
-	return addrs
+	return entries
 }
 
 func freeBSDIPv6Prefixes(ifname string) []string {
@@ -2032,17 +2062,35 @@ func freeBSDIPv6Prefixes(ifname string) []string {
 }
 
 func freeBSDIPv6Addresses(ifname string) []string {
+	entries := freeBSDIPv6AddressEntries(ifname)
+	addrs := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		addrs = append(addrs, entry.Address)
+	}
+	return addrs
+}
+
+func freeBSDIPv6AddressEntries(ifname string) []ipv6AddressEntry {
 	out, err := exec.Command("ifconfig", ifname).CombinedOutput()
 	if err != nil {
 		return nil
 	}
-	_, addrs := parseFreeBSDIfconfigIPv6(string(out))
-	return addrs
+	_, entries := parseFreeBSDIfconfigIPv6Entries(string(out))
+	return entries
 }
 
 func parseFreeBSDIfconfigIPv6(out string) ([]string, []string) {
+	prefixes, entries := parseFreeBSDIfconfigIPv6Entries(out)
+	addrs := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		addrs = append(addrs, entry.Address)
+	}
+	return prefixes, addrs
+}
+
+func parseFreeBSDIfconfigIPv6Entries(out string) ([]string, []ipv6AddressEntry) {
 	var prefixes []string
-	var addrs []string
+	var entries []ipv6AddressEntry
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 || fields[0] != "inet6" {
@@ -2056,7 +2104,6 @@ func parseFreeBSDIfconfigIPv6(out string) ([]string, []string) {
 		if err != nil || !addr.Is6() {
 			continue
 		}
-		addrs = append(addrs, addr.String())
 		bits := 64
 		for i := 2; i+1 < len(fields); i++ {
 			if fields[i] != "prefixlen" {
@@ -2068,11 +2115,12 @@ func parseFreeBSDIfconfigIPv6(out string) ([]string, []string) {
 			}
 			break
 		}
+		entries = append(entries, ipv6AddressEntry{Address: addr.String(), PrefixLen: bits})
 		if !addr.IsLinkLocalUnicast() {
 			prefixes = append(prefixes, netip.PrefixFrom(addr, bits).Masked().String())
 		}
 	}
-	return prefixes, addrs
+	return prefixes, entries
 }
 
 func observedDNSServersByInterface(router *api.Router) map[string][]string {
@@ -2651,6 +2699,7 @@ func applyIPv6DelegatedAddresses(router *api.Router) ([]string, error) {
 func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.Store) ([]string, error) {
 	aliases := map[string]string{}
 	pdPrefixes := map[string]string{}
+	pdResources := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "Interface":
@@ -2660,6 +2709,7 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 			}
 			aliases[res.Metadata.Name] = spec.IfName
 		case "IPv6PrefixDelegation":
+			pdResources[res.Metadata.Name] = true
 			if store == nil {
 				continue
 			}
@@ -2683,17 +2733,26 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 		if ifname == "" {
 			return nil, fmt.Errorf("%s references interface with empty ifname", res.ID())
 		}
-		address, err := deriveIPv6AddressFromInterface(ifname, spec.AddressSuffix)
-		if err != nil {
-			if errors.Is(err, errNoIPv6PrefixAvailable) {
-				if prefix := pdPrefixes[spec.PrefixDelegation]; prefix != "" {
-					address, err = deriveIPv6AddressFromDelegatedPrefix(prefix, spec.SubnetID, spec.AddressSuffix)
-				}
-				if err != nil {
+		var address string
+		if store != nil && pdResources[spec.PrefixDelegation] {
+			prefix := pdPrefixes[spec.PrefixDelegation]
+			if prefix == "" {
+				applied = append(applied, "skipped-unavailable:"+ifname)
+				continue
+			}
+			var err error
+			address, err = deriveIPv6AddressFromDelegatedPrefix(prefix, spec.SubnetID, spec.AddressSuffix)
+			if err != nil {
+				return nil, fmt.Errorf("%s derive delegated address from state: %w", res.ID(), err)
+			}
+		} else {
+			var err error
+			address, err = deriveIPv6AddressFromInterface(ifname, spec.AddressSuffix)
+			if err != nil {
+				if errors.Is(err, errNoIPv6PrefixAvailable) {
 					applied = append(applied, "skipped-unavailable:"+ifname)
 					continue
 				}
-			} else {
 				return nil, fmt.Errorf("%s derive delegated address: %w", res.ID(), err)
 			}
 		}
@@ -2706,6 +2765,124 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 		}
 	}
 	return applied, nil
+}
+
+type delegatedIPv6Targets struct {
+	DesiredByInterface  map[string]map[string]bool
+	SuffixesByInterface map[string]map[uint64]bool
+}
+
+func managedDelegatedIPv6Targets(router *api.Router, store routerstate.Store) (delegatedIPv6Targets, error) {
+	targets := delegatedIPv6Targets{
+		DesiredByInterface:  map[string]map[string]bool{},
+		SuffixesByInterface: map[string]map[uint64]bool{},
+	}
+	if store == nil {
+		return targets, nil
+	}
+	aliases := map[string]string{}
+	pdPrefixes := map[string]string{}
+	delegated := map[string]api.IPv6DelegatedAddressSpec{}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "Interface":
+			spec, err := res.InterfaceSpec()
+			if err != nil {
+				return targets, err
+			}
+			aliases[res.Metadata.Name] = spec.IfName
+		case "IPv6PrefixDelegation":
+			base := "ipv6PrefixDelegation." + res.Metadata.Name
+			lease, _ := routerstate.PDLeaseFromStore(store, base)
+			if lease.CurrentPrefix != "" {
+				pdPrefixes[res.Metadata.Name] = lease.CurrentPrefix
+			}
+		case "IPv6DelegatedAddress":
+			spec, err := res.IPv6DelegatedAddressSpec()
+			if err != nil {
+				return targets, err
+			}
+			delegated[res.Metadata.Name] = spec
+			if err := addManagedDelegatedIPv6Target(targets, aliases[spec.Interface], pdPrefixes[spec.PrefixDelegation], spec.SubnetID, spec.AddressSuffix); err != nil {
+				return targets, fmt.Errorf("%s target: %w", res.ID(), err)
+			}
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "DSLiteTunnel" {
+			continue
+		}
+		spec, err := res.DSLiteTunnelSpec()
+		if err != nil {
+			return targets, err
+		}
+		if defaultString(spec.LocalAddressSource, "interface") != "delegatedAddress" {
+			continue
+		}
+		delegatedSpec, ok := delegated[spec.LocalDelegatedAddress]
+		if !ok {
+			continue
+		}
+		suffix := defaultString(spec.LocalAddressSuffix, delegatedSpec.AddressSuffix)
+		if err := addManagedDelegatedIPv6Target(targets, aliases[delegatedSpec.Interface], pdPrefixes[delegatedSpec.PrefixDelegation], delegatedSpec.SubnetID, suffix); err != nil {
+			return targets, fmt.Errorf("%s target: %w", res.ID(), err)
+		}
+	}
+	return targets, nil
+}
+
+func addManagedDelegatedIPv6Target(targets delegatedIPv6Targets, ifname, prefix, subnetID, suffix string) error {
+	if ifname == "" {
+		return nil
+	}
+	suffixAddr, err := netip.ParseAddr(suffix)
+	if err != nil || !suffixAddr.Is6() {
+		return fmt.Errorf("invalid IPv6 suffix %q", suffix)
+	}
+	if targets.SuffixesByInterface[ifname] == nil {
+		targets.SuffixesByInterface[ifname] = map[uint64]bool{}
+	}
+	targets.SuffixesByInterface[ifname][ipv6HostSuffix64(suffixAddr)] = true
+	if prefix == "" {
+		return nil
+	}
+	address, err := deriveIPv6AddressFromDelegatedPrefix(prefix, subnetID, suffix)
+	if err != nil {
+		return err
+	}
+	if targets.DesiredByInterface[ifname] == nil {
+		targets.DesiredByInterface[ifname] = map[string]bool{}
+	}
+	targets.DesiredByInterface[ifname][address] = true
+	return nil
+}
+
+func cleanupStaleDelegatedIPv6Addresses(router *api.Router, store routerstate.Store) ([]string, error) {
+	targets, err := managedDelegatedIPv6Targets(router, store)
+	if err != nil {
+		return nil, err
+	}
+	var removed []string
+	for ifname, suffixes := range targets.SuffixesByInterface {
+		desired := targets.DesiredByInterface[ifname]
+		for _, entry := range ipv6AddressEntries(ifname) {
+			addr, err := netip.ParseAddr(entry.Address)
+			if err != nil || !addr.Is6() || addr.IsLinkLocalUnicast() {
+				continue
+			}
+			if desired[addr.String()] {
+				continue
+			}
+			if !suffixes[ipv6HostSuffix64(addr)] {
+				continue
+			}
+			if err := deleteIPv6LocalAddress(ifname, entry.Address, entry.PrefixLen); err != nil {
+				return removed, err
+			}
+			removed = append(removed, ifname+":"+entry.Address)
+		}
+	}
+	return removed, nil
 }
 
 func applyIPv4PolicyRoutes(router *api.Router) ([]string, error) {
@@ -3586,14 +3763,29 @@ func ensureIPv4FwmarkRule(priority, mark, table int) error {
 }
 
 func applyDSLiteTunnels(router *api.Router) ([]string, error) {
+	return applyDSLiteTunnelsWithState(router, nil)
+}
+
+func applyDSLiteTunnelsWithState(router *api.Router, store routerstate.Store) ([]string, error) {
 	aliases := map[string]string{}
+	pdPrefixes := map[string]string{}
 	for _, res := range router.Spec.Resources {
-		if res.Kind == "Interface" {
+		switch res.Kind {
+		case "Interface":
 			spec, err := res.InterfaceSpec()
 			if err != nil {
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
+		case "IPv6PrefixDelegation":
+			if store == nil {
+				continue
+			}
+			base := "ipv6PrefixDelegation." + res.Metadata.Name
+			lease, _ := routerstate.PDLeaseFromStore(store, base)
+			if lease.CurrentPrefix != "" {
+				pdPrefixes[res.Metadata.Name] = lease.CurrentPrefix
+			}
 		}
 	}
 	delegated, err := ipv6DelegatedAddressSpecs(router)
@@ -3618,7 +3810,7 @@ func applyDSLiteTunnels(router *api.Router) ([]string, error) {
 				return nil, fmt.Errorf("%s resolve AFTR: %w", res.ID(), err)
 			}
 		}
-		local, localIfName, err := dsliteLocalAddress(spec, ifname, aliases, delegated)
+		local, localIfName, err := dsliteLocalAddressWithPrefixes(spec, ifname, aliases, delegated, pdPrefixes)
 		if err != nil {
 			if !errors.Is(err, errNoIPv6PrefixAvailable) {
 				return nil, fmt.Errorf("%s local address: %w", res.ID(), err)
@@ -3655,6 +3847,10 @@ func deleteDSLiteTunnel(name string) error {
 }
 
 func dsliteLocalAddress(spec api.DSLiteTunnelSpec, ifname string, aliases map[string]string, delegated map[string]api.IPv6DelegatedAddressSpec) (string, string, error) {
+	return dsliteLocalAddressWithPrefixes(spec, ifname, aliases, delegated, nil)
+}
+
+func dsliteLocalAddressWithPrefixes(spec api.DSLiteTunnelSpec, ifname string, aliases map[string]string, delegated map[string]api.IPv6DelegatedAddressSpec, pdPrefixes map[string]string) (string, string, error) {
 	switch defaultString(spec.LocalAddressSource, "interface") {
 	case "interface":
 		if spec.LocalAddress != "" {
@@ -3680,6 +3876,13 @@ func dsliteLocalAddress(spec api.DSLiteTunnelSpec, ifname string, aliases map[st
 			return "", "", fmt.Errorf("missing Interface %q for delegated address %q", delegatedSpec.Interface, spec.LocalDelegatedAddress)
 		}
 		suffix := defaultString(spec.LocalAddressSuffix, delegatedSpec.AddressSuffix)
+		if prefix := pdPrefixes[delegatedSpec.PrefixDelegation]; prefix != "" {
+			local, err := deriveIPv6AddressFromDelegatedPrefix(prefix, delegatedSpec.SubnetID, suffix)
+			if err != nil {
+				return "", "", err
+			}
+			return local, localIfName, nil
+		}
 		local, err := deriveIPv6AddressFromInterface(localIfName, suffix)
 		if err != nil {
 			return "", "", err
@@ -3788,6 +3991,11 @@ func deriveIPv6AddressFromGlobalAddress(addresses []string, suffix string) (stri
 	return "", errNoIPv6PrefixAvailable
 }
 
+func ipv6HostSuffix64(addr netip.Addr) uint64 {
+	bytes := addr.As16()
+	return binary.BigEndian.Uint64(bytes[8:])
+}
+
 func ensureIPv6LocalAddress(ifname, address string) (bool, error) {
 	for _, value := range ipv6Addresses(ifname) {
 		if value == address {
@@ -3804,6 +4012,16 @@ func ensureIPv6LocalAddress(ifname, address string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func deleteIPv6LocalAddress(ifname, address string, prefixLen int) error {
+	if prefixLen <= 0 || prefixLen > 128 {
+		prefixLen = 128
+	}
+	if platformDefaults.OS == platform.OSFreeBSD {
+		return runLogged("ifconfig", ifname, "inet6", address, "-alias")
+	}
+	return runLogged("ip", "-6", "addr", "del", fmt.Sprintf("%s/%d", address, prefixLen), "dev", ifname)
 }
 
 func ensureDSLiteTunnel(name, ifname, local, remote string, spec api.DSLiteTunnelSpec) (bool, error) {
