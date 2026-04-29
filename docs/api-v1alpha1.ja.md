@@ -367,10 +367,8 @@ spec:
   prefixLength: 60
 ```
 
-破壊的変更: ホームゲートウェイ回避用だった `convergenceTimeout`、
-`hintFromState`、`preferredLifetime`、`validLifetime` と、Release 制御用の
-`releasePolicy` は削除しました。
-古い設定に残っている場合は、そのキーを消してください。
+破壊的変更: 開発中に追加した DHCPv6-PD 回避用の設定は削除しました。
+古い設定に残っている未知の DHCPv6-PD キーは消してください。
 
 ルータの振る舞い:
 

@@ -2640,8 +2640,8 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 			}
 			base := "ipv6PrefixDelegation." + res.Metadata.Name
 			lease, _ := routerstate.PDLeaseFromStore(store, base)
-			if prefix := usablePDLeasePrefix(lease); prefix != "" {
-				pdPrefixes[res.Metadata.Name] = prefix
+			if lease.CurrentPrefix != "" {
+				pdPrefixes[res.Metadata.Name] = lease.CurrentPrefix
 			}
 		}
 	}
@@ -2681,13 +2681,6 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 		}
 	}
 	return applied, nil
-}
-
-func usablePDLeasePrefix(lease routerstate.PDLease) string {
-	if lease.CurrentPrefix != "" {
-		return lease.CurrentPrefix
-	}
-	return lease.LastPrefix
 }
 
 func applyIPv4PolicyRoutes(router *api.Router) ([]string, error) {

@@ -13,10 +13,8 @@ behavior changes and new resource shapes as the model takes shape.
   `reconcile` CLI and control API actions were replaced by `routerd apply`,
   `routerctl apply`, and `/apply`; the YAML `spec.reconcile` policy name stays
   unchanged.
-- Breaking: removed pre-release DHCPv6-PD workaround fields:
-  `IPv6PrefixDelegation.spec.convergenceTimeout`, `spec.hintFromState`,
-  `spec.preferredLifetime`, `spec.validLifetime`, and `spec.releasePolicy`.
-  DHCPv6 Renew/Rebind and Release behavior is delegated to the OS client.
+- Breaking: removed obsolete pre-release DHCPv6-PD workaround fields. DHCPv6
+  Renew/Rebind and Release behavior is delegated to the OS client.
 - `routerctl` now has kubectl-style `get`, `describe`, and `show` verbs.
   `show` combines desired config, observed host state, ownership ledger data,
   state history, and events; NAPT/conntrack inspection is reported under

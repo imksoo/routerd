@@ -454,10 +454,8 @@ spec:
   prefixLength: 60
 ```
 
-Breaking note: the HGW workaround fields `convergenceTimeout`,
-`hintFromState`, `preferredLifetime`, `validLifetime`, and the Release-control
-field `releasePolicy` were removed. If an older config still contains them,
-delete those keys.
+Breaking note: obsolete pre-release DHCPv6-PD workaround fields were removed.
+If an older config still contains unknown DHCPv6-PD keys, delete those keys.
 
 How routerd behaves:
 

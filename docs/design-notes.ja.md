@@ -48,10 +48,9 @@ MAC アドレス、DUID、宅内アドレスは文書用の値に置き換えて
   DHCPv6 全般の規則にはしません。
 - cite: NEC IX の公開設定例では、ひかり電話ありの環境で DHCPv6-PD を使い、
   委譲されたプレフィックスを下流へ広告する構成が示されています。
-- cite: Yamaha RT シリーズ、Cisco IOS XE、Juniper Junos、MikroTik RouterOS、
-  pfSense、OPNsense、OpenWrt は、DUID、IAID、リース状態、委譲プレフィックス、
-  下流広告を運用対象として扱います。routerd もこれらを状態として表示できる
-  必要があります。
+- cite: 商用ルーターや公開されているルーター実装は、DUID、IAID、リース状態、
+  委譲プレフィックス、下流広告を運用対象として扱います。routerd もこれらを
+  状態として表示できる必要があります。
 
 ### 1.2 PR-400NE 検証環境で測定したこと
 
@@ -240,7 +239,7 @@ routerctl describe inventory/host
 ### 4.4 今後の設計作業
 
 - `IPv6PrefixDelegation` の状態表示を強化し、現在値、最後に見えた値、
-  DUID、IAID、T1/T2、寿命、最後の更新試行、警告を明確に出します。
+  DUID、IAID、T1/T2、寿命、最後に観測した時刻、警告を明確に出します。
 - DUID と IAID は期待値と観測値を分けて表示します。
 - NTT 向けプロファイルでは DUID-LL、IA_PD のみ、Rapid Commit 無効を既定にします。
 - DHCPv6 応答を受けるファイアウォールは、UDP 宛先 546 を送信元ポート制限なしで

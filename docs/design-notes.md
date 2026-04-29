@@ -49,10 +49,9 @@ section or remove it.
   profiles, not as a universal DHCPv6 rule.
 - cite: NEC IX public examples show DHCPv6-PD use in Hikari Denwa environments
   and downstream advertisement of delegated prefixes.
-- cite: Yamaha RT, Cisco IOS XE, Juniper Junos, MikroTik RouterOS, pfSense,
-  OPNsense, and OpenWrt all treat DUID, IAID, lease state, delegated prefixes,
-  and downstream advertisement as operational state. routerd should expose the
-  same class of information.
+- cite: Commercial and open router platforms treat DUID, IAID, lease state,
+  delegated prefixes, and downstream advertisement as operational state.
+  routerd should expose the same class of information.
 
 ### 1.2 PR-400NE Lab Measurements
 
@@ -245,7 +244,7 @@ routerctl describe inventory/host
 ### 4.4 Future Design Work
 
 - Improve `IPv6PrefixDelegation` status output for current prefix, last prefix,
-  DUID, IAID, T1/T2, lifetimes, last renewal attempt, and warnings.
+  DUID, IAID, T1/T2, lifetimes, last observed time, and warnings.
 - Display expected and observed DUID/IAID separately.
 - Keep NTT profile defaults conservative: DUID-LL, IA_PD only, and Rapid
   Commit disabled.

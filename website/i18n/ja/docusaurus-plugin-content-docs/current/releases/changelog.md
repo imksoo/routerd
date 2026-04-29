@@ -11,11 +11,8 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
 - 破壊的変更: 利用者向けの動詞を `apply` に揃えました。古い
   `reconcile` CLI と制御 API は `routerd apply`、`routerctl apply`、
   `/apply` に置き換わりました。YAML の `spec.reconcile` はそのままです。
-- 破壊的変更: 開発中に追加した DHCPv6-PD 回避用の設定
-  `IPv6PrefixDelegation.spec.convergenceTimeout`、`spec.hintFromState`、
-  `spec.preferredLifetime`、`spec.validLifetime`、`spec.releasePolicy` を
-  削除しました。DHCPv6 の Renew/Rebind と Release は OS 側クライアントに
-  任せます。
+- 破壊的変更: 開発中に追加した DHCPv6-PD 回避用の設定を削除しました。
+  DHCPv6 の Renew/Rebind と Release は OS 側クライアントに任せます。
 - `routerctl` に `get`、`describe`、`show` を整理しました。`show` は
   望む設定、実機状態、所有台帳、状態履歴、イベントをまとめて表示し、
   NAPT やコネクション追跡は `IPv4SourceNAT` の観測状態として扱います。

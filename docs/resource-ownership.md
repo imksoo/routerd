@@ -202,7 +202,7 @@ intent.
 | `IPv4DHCPScope` | dnsmasq DHCPv4 scope |
 | `IPv6DHCPAddress` | DHCPv6 client binding |
 | `IPv6PrefixDelegation` | DHCPv6 prefix delegation binding; FreeBSD KAME `dhcp6c` DUID file for NTT link-layer DUID profiles |
-| `IPv6DelegatedAddress` | IPv6 address, including FreeBSD LAN-side aliases derived from stored PD lease state when the downstream address is no longer visible |
+| `IPv6DelegatedAddress` | IPv6 address, including FreeBSD LAN-side aliases derived only from a currently observed delegated prefix |
 | `IPv6DHCPServer` | dnsmasq config and service; Linux uses `routerd-dnsmasq.service`, FreeBSD uses `/usr/local/etc/rc.d/routerd_dnsmasq` |
 | `IPv6DHCPScope` | dnsmasq DHCPv6 scope |
 | `SelfAddressPolicy` | routerd address-selection policy |

@@ -71,10 +71,8 @@ parity that the code does not yet provide.
   `dhcp6c`. The packaged KAME `dhcp6c` assigns the downstream interface
   identifier itself; routerd observes that address, derives the delegated
   prefix from it, and then adds the stable `IPv6DelegatedAddress` suffix as a
-  secondary address when the prefix is visible. If `dhcp6c` no longer leaves
-  a downstream address behind but routerd still has a stored PD lease, apply
-  can derive the LAN address from that lease and install it with
-  `ifconfig ... prefixlen 64 alias`.
+  secondary address while the prefix is currently visible. routerd does not
+  install a LAN address from a historical delegated prefix alone.
 - Managed dnsmasq resources are applied on FreeBSD through
   `/usr/local/etc/rc.d/routerd_dnsmasq`. The generated config uses the
   platform runtime directory under `/var/run/routerd` for leases and pid
