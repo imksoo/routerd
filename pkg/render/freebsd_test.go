@@ -57,7 +57,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		"interface vtnet0",
 		"send ia-pd 3394439514",
 		"id-assoc pd 3394439514",
-		"prefix ::/60 infinity;",
+		"prefix ::/60;",
 		"prefix-interface vtnet1",
 		"sla-len 4",
 	} {

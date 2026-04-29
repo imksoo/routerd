@@ -272,7 +272,7 @@ func freeBSDDHCP6C(router *api.Router, aliases map[string]string, pds []freeBSDP
 		buf.WriteString("};\n\n")
 		buf.WriteString(fmt.Sprintf("id-assoc pd %d {\n", iaid))
 		if pd.PrefixHint != "" {
-			buf.WriteString("  prefix " + pd.PrefixHint + " infinity;\n")
+			buf.WriteString("  prefix " + pd.PrefixHint + ";\n")
 		}
 		for _, res := range router.Spec.Resources {
 			if res.Kind != "IPv6DelegatedAddress" {
