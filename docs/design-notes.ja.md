@@ -101,17 +101,17 @@ assert: `ntt-ngn-direct-hikari-denwa` と `ntt-hgw-lan-pd` では、正確なヒ
 長さだけのヒントも既定では送りません。`prefixLength` は routerd が期待する形を
 表す値として残しますが、systemd-networkd へは `PrefixDelegationHint=` を出力しません。
 
-assert: odhcp6c 実験は main へ採用しません。新しい枝で明確に有利な結果が
-出るまでは、Linux の基本経路は systemd-networkd のままとします。
-
 ### 1.4 OS クライアント実装から分かること
 
 | クライアント | 測定または引用した挙動 | routerd での扱い |
 | --- | --- | --- |
 | systemd-networkd | cite/measure: `DUIDType=link-layer`、`IAID`、`PrefixDelegationHint`、`WithoutRA` を設定できます。Renew/Rebind の IA Prefix 寿命は 0 です。 | Linux の基本経路として残します。通知や詳細状態の見え方は弱いため、routerd 側で観測を補います。 |
 | KAME/WIDE `dhcp6c` | cite/measure: DUID はファイル、IAID と IA_PD は設定で扱います。ヒント付き Solicit では IA Prefix 寿命を出力できます。 | FreeBSD の DHCPv6-PD 経路として残します。NTT 向けでは DUID-LL ファイルを routerd 管理対象にします。 |
-| dhcpcd | cite: Linux と FreeBSD の両方で使え、DUID、IAID、フック、IA_PD を扱えます。 | FreeBSD の DHCPv6-PD には今は採用しません。IPv4 DHCP では、プラットフォームが選ぶ場合のクライアント候補として扱います。 |
 | dnsmasq | cite/assert: LAN 側の DNS、DHCPv4、DHCPv6、RA には有用です。WAN 側の PD クライアントの正にはしません。 | LAN サービスに限定して使います。 |
+
+assert: DHCPv6-PD の取得経路は意図的に絞ります。Linux は systemd-networkd、
+FreeBSD は KAME/WIDE `dhcp6c` を使います。`dhcpcd` は、プラットフォームが選ぶ場合の
+IPv4 DHCP クライアントとして使うことはありますが、FreeBSD の DHCPv6-PD 経路にはしません。
 
 assert: NTT 系プロファイルでは、実際の MAC アドレスから作った DUID-LL を既定にします。`duidRawData` は、高可用構成の切り替え、ルータ交換、移行のために明示的に使う上書き設定であり、通常の復旧経路では使いません。
 
@@ -173,8 +173,6 @@ observe: 物理 L2 スイッチの設定変更は機種ごとの管理画面・C
 - [Sorah's Diary: フレッツ光ネクスト ひかり電話あり環境の DHCPv6-PD 観測](https://diary.sorah.jp/2017/02/19/flets-ngn-hikaridenwa-kill-dhcpv6pd)
 - [rixwwd: PR-400NE / Dream Router の DHCPv6 パケット観測](https://rixwwd.hatenablog.jp/entry/2023/04/09/211529)
 - [SEIL: NGN IPv6 ネイティブ IPoE 接続例](https://www.seil.jp/blog/10.html)
-- [OpenWrt odhcp6c README](https://github.com/openwrt/odhcp6c)
-- [OpenWrt odhcpd README](https://github.com/openwrt/odhcpd)
 - [systemd.network マニュアル](https://www.freedesktop.org/software/systemd/man/254/systemd.network.html)
 - [FreeBSD dhcp6c(8)](https://man.freebsd.org/cgi/man.cgi?manpath=freebsd-release-ports&query=dhcp6c&sektion=8)
 - [FreeBSD dhcp6c.conf(5)](https://man.freebsd.org/cgi/man.cgi?query=dhcp6c.conf)
@@ -191,9 +189,6 @@ observe: 物理 L2 スイッチの設定変更は機種ごとの管理画面・C
 - believe: DUID-LLT が特定の NTT 経路で黙って無視される可能性はあります。
   ただし NTT 公式資料は DUID-LLT も許しているため、これは公式仕様ではなく
   実装差の可能性として扱います。
-- observe: systemd-networkd の `networkctl renew` は、今回使った版では
-  手動更新手段として十分に見えませんでした。版依存の可能性があるため、
-  routerd の恒久仕様にはしません。
 - assert: routerd 自前 DHCPv6 クライアントは、OS クライアントで得られる
   安定性と運用性を確認した後の選択肢です。先に DUID、IAID、リース、イベントの
   観測を固めます。

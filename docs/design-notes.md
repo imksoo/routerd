@@ -104,18 +104,18 @@ not send exact or length-only prefix hints by default. `prefixLength` remains
 part of routerd's expected-shape model, but the systemd-networkd renderer omits
 `PrefixDelegationHint=` for these profiles.
 
-assert: The odhcp6c experiment is not promoted to main. Keep the production
-Linux path on systemd-networkd unless a new test branch proves a cleaner
-replacement.
-
 ### 1.4 OS Client Behavior
 
 | Client | Cited or measured behavior | routerd treatment |
 | --- | --- | --- |
 | systemd-networkd | cite/measure: Supports `DUIDType=link-layer`, `IAID`, `PrefixDelegationHint`, and `WithoutRA`. Renew/Rebind IA Prefix lifetimes are zero. | Keep as the default Linux path. routerd compensates for weak notification and state visibility with observation. |
 | KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. Hint-bearing Solicit can carry IA Prefix lifetimes. | Keep as the FreeBSD DHCPv6-PD path. routerd manages DUID-LL files for NTT profiles. |
-| dhcpcd | cite: Available on Linux and FreeBSD, with DUID, IAID, hooks, and IA_PD support. | Do not adopt for FreeBSD DHCPv6-PD now. It can remain useful for IPv4 DHCP where a platform chooses it. |
 | dnsmasq | cite/assert: Useful for LAN DNS, DHCPv4, DHCPv6, and RA. It is not the source of truth for WAN PD acquisition. | Keep it for LAN services only. |
+
+assert: DHCPv6-PD acquisition is intentionally narrow: Linux uses
+systemd-networkd and FreeBSD uses KAME/WIDE `dhcp6c`. `dhcpcd` may still be
+used as an IPv4 DHCP client where a platform chooses it, but it is not the
+FreeBSD DHCPv6-PD path.
 
 assert: NTT profiles default to real MAC-derived DUID-LL. `duidRawData` is an
 explicit override for HA failover, router replacement, or migration. It is not
@@ -178,8 +178,6 @@ Primary references:
 - [Sorah's Diary DHCPv6-PD observation](https://diary.sorah.jp/2017/02/19/flets-ngn-hikaridenwa-kill-dhcpv6pd)
 - [rixwwd PR-400NE / Dream Router packet observation](https://rixwwd.hatenablog.jp/entry/2023/04/09/211529)
 - [SEIL NGN IPv6 native IPoE example](https://www.seil.jp/blog/10.html)
-- [OpenWrt odhcp6c README](https://github.com/openwrt/odhcp6c)
-- [OpenWrt odhcpd README](https://github.com/openwrt/odhcpd)
 - [systemd.network manual](https://www.freedesktop.org/software/systemd/man/254/systemd.network.html)
 - [FreeBSD dhcp6c(8)](https://man.freebsd.org/cgi/man.cgi?manpath=freebsd-release-ports&query=dhcp6c&sektion=8)
 - [FreeBSD dhcp6c.conf(5)](https://man.freebsd.org/cgi/man.cgi?query=dhcp6c.conf)
@@ -195,9 +193,6 @@ Primary references:
 
 - believe: Some NTT paths may silently ignore DUID-LLT. NTT public documents
   still allow DUID-LLT, so this remains implementation-specific, not official.
-- observe: `networkctl renew` was not a sufficient manual PD renewal tool in
-  the tested systemd-networkd version. Do not make it the permanent routerd
-  contract without versioned evidence.
 - assert: An in-process routerd DHCPv6 client remains a later option. First,
   stabilize DUID, IAID, lease storage, and events around OS clients.
 
