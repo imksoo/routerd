@@ -102,17 +102,12 @@ func FreeBSDWithStateAndPPPoEPasswords(router *api.Router, store routerstate.Sto
 			}
 			dhcp6cIfaces[ifname] = true
 			prefixLength := effectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength)
-			prefixHint := ""
-			if prefixLength > 0 {
-				prefixHint = fmt.Sprintf("::/%d", prefixLength)
-			}
 			pds = append(pds, freeBSDPD{
 				Name:          res.Metadata.Name,
 				IfName:        ifname,
 				PrefixLength:  prefixLength,
 				ReleasePolicy: EffectiveIPv6PDReleasePolicy(defaultString(spec.Profile, "default"), spec.ReleasePolicy),
 				IAID:          spec.IAID,
-				PrefixHint:    prefixHint,
 				Profile:       defaultString(spec.Profile, "default"),
 			})
 		case "PPPoEInterface":

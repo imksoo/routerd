@@ -57,7 +57,6 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		"interface vtnet0",
 		"send ia-pd 3394439514",
 		"id-assoc pd 3394439514",
-		"prefix ::/60;",
 		"prefix-interface vtnet1",
 		"sla-len 4",
 	} {
@@ -67,6 +66,9 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	}
 	if strings.Contains(dhcp6c, "ifid") {
 		t.Fatalf("dhcp6c output must not include unsupported ifid statement:\n%s", dhcp6c)
+	}
+	if strings.Contains(dhcp6c, "prefix ::/60;") {
+		t.Fatalf("dhcp6c output must not render unsupported length-only prefix hints:\n%s", dhcp6c)
 	}
 	mpd5 := string(got.MPD5)
 	for _, want := range []string{
