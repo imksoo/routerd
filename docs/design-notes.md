@@ -112,8 +112,12 @@ The odhcp6c experiment is not promoted to main.
 | systemd-networkd | cite/measure: Supports `DUIDType=link-layer`, `IAID`, `PrefixDelegationHint`, `WithoutRA`, and `SendRelease`. Renew/Rebind IA Prefix lifetimes are zero. | Keep as the default Linux path. routerd compensates for weak notification and state visibility with observation. |
 | KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. `-n` and SIGUSR1 avoid Release. Hint-bearing Solicit can carry IA Prefix lifetimes. | Keep as the FreeBSD path. routerd manages DUID-LL files and release policy for NTT profiles. |
 | odhcp6c | cite/observe: Integrates well with OpenWrt routers, but the NixOS experiment did not complete after Advertise. | Do not merge into main. Re-test only on a separate branch if needed. |
-| dhcpcd | cite: Available on Linux and FreeBSD, with DUID, IAID, hooks, and IA_PD support. Renew/Rebind IA Prefix lifetimes are zero. | Candidate for a future shared client, pending short lab tests. |
+| dhcpcd | cite: Available on Linux and FreeBSD, with DUID, IAID, hooks, and IA_PD support. Renew/Rebind IA Prefix lifetimes are zero. | Adopt for the FreeBSD path after a short lab migration. |
 | dnsmasq | cite/assert: Useful for LAN DNS, DHCPv4, DHCPv6, and RA. It is not the source of truth for WAN PD acquisition. | Keep it for LAN services only. |
+
+assert: NTT profiles default to real MAC-derived DUID-LL. `duidRawData` is an
+explicit override for HA failover, router replacement, or migration. It is not
+the default lab recovery path.
 
 ## 2. Lab-Specific Issues
 

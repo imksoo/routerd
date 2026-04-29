@@ -38,6 +38,9 @@ func TestNetworkdDropinsRenderDHCPv6PD(t *testing.T) {
 	if !strings.Contains(wan, "DUIDType=link-layer") {
 		t.Fatalf("wan drop-in missing NTT default DUIDType:\n%s", wan)
 	}
+	if strings.Contains(wan, "DUIDRawData=") {
+		t.Fatalf("wan drop-in should not render DUIDRawData when it is unspecified:\n%s", wan)
+	}
 	if !strings.Contains(wan, "PrefixDelegationHint=::/60") {
 		t.Fatalf("wan drop-in missing PrefixDelegationHint:\n%s", wan)
 	}

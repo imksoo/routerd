@@ -9,6 +9,10 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- DHCPv6 DUID handling now preserves explicit `duidRawData` overrides and
+  restores real MAC-derived DUID-LL when the override is removed. FreeBSD KAME
+  `dhcp6c` DUID files are backed up and rewritten when they differ from the
+  desired DUID.
 - Host OS inventory is now collected at apply time and stored as
   `routerd.net/v1alpha1/Inventory/host` in the SQLite objects table.
   `routerctl describe inventory/host` shows OS, kernel, virtualization,

@@ -2467,6 +2467,9 @@ func ensureFreeBSDDHCP6CDUID(router *api.Router, duidPath string) (bool, string,
 		if ifname == "" {
 			return false, "", fmt.Errorf("%s references interface with empty ifname", res.ID())
 		}
+		if spec.DUIDRawData != "" {
+			return routerstate.EnsureKAMEDHCP6CDUIDLLRaw(duidPath, spec.DUIDRawData, time.Now())
+		}
 		mac, err := freeBSDInterfaceMAC(ifname)
 		if err != nil {
 			return false, "", fmt.Errorf("%s read %s MAC: %w", res.ID(), ifname, err)

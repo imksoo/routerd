@@ -517,13 +517,15 @@ How routerd behaves:
 - `spec.duidType` defaults to `link-layer` for NTT profiles when omitted.
   This keeps systemd-networkd away from its default machine-id based DUID and
   keeps FreeBSD/KAME `dhcp6c` aligned with NTT home-gateway expectations.
-- `spec.duidType` and `spec.duidRawData` pin the systemd-networkd DUID
-  settings. `duidRawData` accepts either `00:01:...` byte notation or compact
-  hex.
+- `spec.duidType` and `spec.duidRawData` pin the DHCPv6 DUID when an operator
+  intentionally needs a stable identity that is not derived from the uplink
+  MAC, for example during HA failover, router replacement, or a staged
+  migration. `duidRawData` accepts either `00:01:...` byte notation or compact
+  hex. Leave it unset for the normal real MAC-derived DUID-LL behavior.
 - On FreeBSD with KAME `dhcp6c`, routerd manages `/var/db/dhcp6c_duid` for
   NTT profiles whose effective DUID type is `link-layer`. If the existing file
-  is not DUID-LL, routerd backs it up as `.bak.<timestamp>` and writes a
-  DUID-LL derived from the uplink MAC before starting `dhcp6c`.
+  differs from the desired DUID, routerd backs it up as `.bak.<timestamp>` and
+  writes the desired DUID before starting `dhcp6c`.
 
 Some NTT home-gateway environments only advertise IPv6 by RA/SLAAC and never
 answer DHCPv6-PD. Those should not be modeled as `IPv6PrefixDelegation`;

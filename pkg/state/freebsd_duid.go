@@ -43,6 +43,23 @@ func KAMEDHCP6CDUIDLLFromMAC(mac string) ([]byte, error) {
 	return data, nil
 }
 
+func KAMEDHCP6CDUIDLLFromRawData(raw string) ([]byte, error) {
+	cleaned := strings.ReplaceAll(strings.TrimSpace(raw), ":", "")
+	payload, err := hex.DecodeString(cleaned)
+	if err != nil {
+		return nil, fmt.Errorf("invalid DUID raw data %q", raw)
+	}
+	if len(payload) == 0 {
+		return nil, fmt.Errorf("invalid DUID raw data %q", raw)
+	}
+	duid := []byte{0x00, 0x03}
+	duid = append(duid, payload...)
+	data := make([]byte, 2, 2+len(duid))
+	binary.LittleEndian.PutUint16(data, uint16(len(duid)))
+	data = append(data, duid...)
+	return data, nil
+}
+
 func ParseKAMEDHCP6CDUID(data []byte) KAMEDUIDInfo {
 	payload := data
 	hasLength := false
@@ -70,10 +87,21 @@ func EnsureKAMEDHCP6CDUIDLL(path, mac string, now time.Time) (changed bool, back
 	if err != nil {
 		return false, "", err
 	}
+	return EnsureKAMEDHCP6CDUID(path, want, now)
+}
+
+func EnsureKAMEDHCP6CDUIDLLRaw(path, raw string, now time.Time) (changed bool, backupPath string, err error) {
+	want, err := KAMEDHCP6CDUIDLLFromRawData(raw)
+	if err != nil {
+		return false, "", err
+	}
+	return EnsureKAMEDHCP6CDUID(path, want, now)
+}
+
+func EnsureKAMEDHCP6CDUID(path string, want []byte, now time.Time) (changed bool, backupPath string, err error) {
 	current, readErr := os.ReadFile(path)
 	if readErr == nil {
-		info := ParseKAMEDHCP6CDUID(current)
-		if info.Type == DUIDTypeLinkLayer {
+		if string(current) == string(want) {
 			return false, "", nil
 		}
 		backupPath = path + ".bak." + now.UTC().Format("20060102T150405Z")
