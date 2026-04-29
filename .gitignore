@@ -8,3 +8,4 @@ coverage.out
 website/.docusaurus/
 website/build/
 website/node_modules/
+.claude/
