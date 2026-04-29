@@ -264,6 +264,7 @@ spec:
         interface: wan
         client: networkd
         profile: ntt-hgw-lan-pd
+        releasePolicy: never
         required: false
 
     - apiVersion: net.routerd.net/v1alpha1

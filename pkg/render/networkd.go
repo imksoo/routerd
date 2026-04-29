@@ -18,14 +18,15 @@ type File struct {
 }
 
 type pdSource struct {
-	Name         string
-	IfName       string
-	Profile      string
-	PrefixLength int
-	IAID         string
-	DUIDType     string
-	DUIDRawData  string
-	PrefixHint   string
+	Name          string
+	IfName        string
+	Profile       string
+	PrefixLength  int
+	ReleasePolicy string
+	IAID          string
+	DUIDType      string
+	DUIDRawData   string
+	PrefixHint    string
 }
 
 func NetworkdDropins(router *api.Router) ([]File, error) {
@@ -55,13 +56,14 @@ func NetworkdDropinsWithState(router *api.Router, store routerstate.Store) ([]Fi
 			return nil, err
 		}
 		pds[res.Metadata.Name] = pdSource{
-			Name:         res.Metadata.Name,
-			IfName:       aliases[spec.Interface],
-			Profile:      defaultString(spec.Profile, "default"),
-			PrefixLength: effectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength),
-			IAID:         spec.IAID,
-			DUIDType:     EffectiveIPv6PDDUIDType(defaultString(spec.Profile, "default"), spec.DUIDType),
-			DUIDRawData:  spec.DUIDRawData,
+			Name:          res.Metadata.Name,
+			IfName:        aliases[spec.Interface],
+			Profile:       defaultString(spec.Profile, "default"),
+			PrefixLength:  effectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength),
+			ReleasePolicy: EffectiveIPv6PDReleasePolicy(defaultString(spec.Profile, "default"), spec.ReleasePolicy),
+			IAID:          spec.IAID,
+			DUIDType:      EffectiveIPv6PDDUIDType(defaultString(spec.Profile, "default"), spec.DUIDType),
+			DUIDRawData:   spec.DUIDRawData,
 		}
 	}
 
@@ -161,6 +163,12 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 	if source.DUIDRawData != "" {
 		buf.WriteString("DUIDRawData=" + formatColonHex(source.DUIDRawData) + "\n")
 	}
+	switch source.ReleasePolicy {
+	case "never":
+		buf.WriteString("SendRelease=no\n")
+	case "always":
+		buf.WriteString("SendRelease=yes\n")
+	}
 	switch source.Profile {
 	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
 		buf.WriteString("UseAddress=no\n")
@@ -177,6 +185,19 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 			hint = fmt.Sprintf("::/%d", source.PrefixLength)
 		}
 		buf.WriteString("PrefixDelegationHint=" + hint + "\n")
+	}
+}
+
+func EffectiveIPv6PDReleasePolicy(profile, configured string) string {
+	switch configured {
+	case "never", "always":
+		return configured
+	}
+	switch profile {
+	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
+		return "never"
+	default:
+		return "always"
 	}
 }
 

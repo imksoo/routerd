@@ -107,12 +107,13 @@ func FreeBSDWithStateAndPPPoEPasswords(router *api.Router, store routerstate.Sto
 				prefixHint = fmt.Sprintf("::/%d", prefixLength)
 			}
 			pds = append(pds, freeBSDPD{
-				Name:         res.Metadata.Name,
-				IfName:       ifname,
-				PrefixLength: prefixLength,
-				IAID:         spec.IAID,
-				PrefixHint:   prefixHint,
-				Profile:      defaultString(spec.Profile, "default"),
+				Name:          res.Metadata.Name,
+				IfName:        ifname,
+				PrefixLength:  prefixLength,
+				ReleasePolicy: EffectiveIPv6PDReleasePolicy(defaultString(spec.Profile, "default"), spec.ReleasePolicy),
+				IAID:          spec.IAID,
+				PrefixHint:    prefixHint,
+				Profile:       defaultString(spec.Profile, "default"),
 			})
 		case "PPPoEInterface":
 			spec, err := res.PPPoEInterfaceSpec()
@@ -134,7 +135,7 @@ func FreeBSDWithStateAndPPPoEPasswords(router *api.Router, store routerstate.Sto
 	if len(dhcp6cIfaces) > 0 {
 		rc.WriteString("dhcp6c_enable=\"YES\"\n")
 		rc.WriteString("dhcp6c_interfaces=\"" + strings.Join(sortedFreeBSDMapKeys(dhcp6cIfaces), " ") + "\"\n")
-		rc.WriteString("dhcp6c_flags=\"-n\"\n")
+		rc.WriteString("dhcp6c_flags=\"" + freeBSDDHCP6CFlags(pds) + "\"\n")
 	}
 	if hasManagedFreeBSDPPPoE(pppoes) {
 		rc.WriteString("mpd_enable=\"YES\"\n")
@@ -154,12 +155,13 @@ func FreeBSDWithStateAndPPPoEPasswords(router *api.Router, store routerstate.Sto
 }
 
 type freeBSDPD struct {
-	Name         string
-	IfName       string
-	PrefixLength int
-	IAID         string
-	PrefixHint   string
-	Profile      string
+	Name          string
+	IfName        string
+	PrefixLength  int
+	ReleasePolicy string
+	IAID          string
+	PrefixHint    string
+	Profile       string
 }
 
 type freeBSDPPPoE struct {
@@ -297,6 +299,15 @@ func freeBSDDHCP6C(router *api.Router, aliases map[string]string, pds []freeBSDP
 		buf.WriteString("};\n\n")
 	}
 	return buf.Bytes(), nil
+}
+
+func freeBSDDHCP6CFlags(pds []freeBSDPD) string {
+	for _, pd := range pds {
+		if pd.ReleasePolicy == "never" {
+			return "-n"
+		}
+	}
+	return ""
 }
 
 func freeBSDDHClient(options map[string]api.IPv4DHCPAddressSpec) []byte {

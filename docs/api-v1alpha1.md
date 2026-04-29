@@ -429,6 +429,7 @@ spec:
   client: networkd
   profile: ntt-hgw-lan-pd
   prefixLength: 60
+  releasePolicy: never
   iaid: ca53095a
   duidType: link-layer
   duidRawData: 00:01:02:00:5e:10:20:30
@@ -452,6 +453,12 @@ How routerd behaves:
   Both NTT profiles request IA_PD only, disable rapid commit, use a
   link-layer DUID, force DHCPv6 Solicit when needed, and default the prefix
   hint to `/60` unless `prefixLength` is set explicitly.
+- `spec.releasePolicy` controls whether the OS DHCPv6 client sends Release
+  when it stops. Values are `default`, `never`, and `always`; an omitted value
+  is the same as `default`. The NTT profiles default to `never`, so
+  systemd-networkd renders `SendRelease=no` and FreeBSD `dhcp6c` starts with
+  `-n`. Other profiles default to `always`. Set `always` explicitly only when
+  the upstream server should clear the binding on client shutdown.
 - During apply, routerd records observed prefix-delegation state in
   `ipv6PrefixDelegation.<name>.lease` in the local state store. The lease JSON
   holds the current prefix, last known prefix, observed DUID, IAID, expected

@@ -67,7 +67,7 @@ All lab-specific values below are documentation replacements.
 | Lifetimes | measure: Reply contained T1 7200 seconds, T2 12600 seconds, and preferred/valid lifetimes of 14400 seconds. |
 | Delegated length | measure: Downstream routers received `/60` prefixes. Treat this as HGW subdivision of a larger upstream prefix. |
 | Prefix hints | measure: A client succeeded with an exact prefix hint, so PR-400NE does not reject every prefix hint. |
-| Release | observe: Unnecessary Release may disturb the lease table. NTT profiles keep no-release behavior. |
+| Release | observe/assert: Unnecessary Release may disturb the lease table. `IPv6PrefixDelegation.spec.releasePolicy` makes this explicit; NTT profiles default to no Release. |
 
 Documentation replacements used in examples:
 
@@ -109,8 +109,8 @@ The odhcp6c experiment is not promoted to main.
 
 | Client | Cited or measured behavior | routerd treatment |
 | --- | --- | --- |
-| systemd-networkd | cite/measure: Supports `DUIDType=link-layer`, `IAID`, `PrefixDelegationHint`, and `WithoutRA`. Renew/Rebind IA Prefix lifetimes are zero. | Keep as the default Linux path. routerd compensates for weak notification and state visibility with observation. |
-| KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. `-n` and SIGUSR1 avoid Release. Hint-bearing Solicit can carry IA Prefix lifetimes. | Keep as the FreeBSD path. routerd manages DUID-LL files for NTT profiles. |
+| systemd-networkd | cite/measure: Supports `DUIDType=link-layer`, `IAID`, `PrefixDelegationHint`, `WithoutRA`, and `SendRelease`. Renew/Rebind IA Prefix lifetimes are zero. | Keep as the default Linux path. routerd compensates for weak notification and state visibility with observation. |
+| KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. `-n` and SIGUSR1 avoid Release. Hint-bearing Solicit can carry IA Prefix lifetimes. | Keep as the FreeBSD path. routerd manages DUID-LL files and release policy for NTT profiles. |
 | odhcp6c | cite/observe: Integrates well with OpenWrt routers, but the NixOS experiment did not complete after Advertise. | Do not merge into main. Re-test only on a separate branch if needed. |
 | dhcpcd | cite: Available on Linux and FreeBSD, with DUID, IAID, hooks, and IA_PD support. Renew/Rebind IA Prefix lifetimes are zero. | Candidate for a future shared client, pending short lab tests. |
 | dnsmasq | cite/assert: Useful for LAN DNS, DHCPv4, DHCPv6, and RA. It is not the source of truth for WAN PD acquisition. | Keep it for LAN services only. |
@@ -262,7 +262,7 @@ standard input and output.
   DUID, IAID, T1/T2, lifetimes, last renewal attempt, and warnings.
 - Display expected and observed DUID/IAID separately.
 - Keep NTT profile defaults conservative: DUID-LL, IA_PD only, Rapid Commit
-  disabled, no Release on ordinary shutdown.
+  disabled, and `releasePolicy: never` on ordinary shutdown.
 - Permit inbound DHCPv6 replies to UDP destination 546 without source-port
   restriction.
 - Design how LAN RA/DHCPv6 withdraws stale prefixes when PD disappears.

@@ -55,6 +55,11 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Spec:     api.IPv6DHCPAddressSpec{Interface: "wan"},
 			},
 			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				Metadata: api.ObjectMeta{Name: "wan-pd"},
+				Spec:     api.IPv6PrefixDelegationSpec{Interface: "wan", Profile: "ntt-hgw-lan-pd"},
+			},
+			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "lan"},
 				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
@@ -112,6 +117,7 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`systemd.network.networks."10-netplan-ens18"`,
 		`DHCP = "yes";`,
 		`IPv6AcceptRA = true;`,
+		`SendRelease = false;`,
 		`systemd.network.networks."10-netplan-ens19"`,
 		`LinkLocalAddressing = "no";`,
 		`systemd.network.networks."10-netplan-ens20"`,

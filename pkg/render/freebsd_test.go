@@ -87,3 +87,38 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		}
 	}
 }
+
+func TestFreeBSDRendersReleasePolicyAlways(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan", Profile: "ntt-hgw-lan-pd", ReleasePolicy: "always"}},
+	}}}
+
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	rc := string(got.RCConf)
+	if !strings.Contains(rc, `dhcp6c_flags=""`) {
+		t.Fatalf("rc.conf output missing release-enabled dhcp6c flags:\n%s", rc)
+	}
+	if strings.Contains(rc, `dhcp6c_flags="-n"`) {
+		t.Fatalf("rc.conf output should not suppress Release when releasePolicy=always:\n%s", rc)
+	}
+}
+
+func TestFreeBSDRendersReleasePolicyNeverOverride(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan", Profile: "default", ReleasePolicy: "never"}},
+	}}}
+
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	rc := string(got.RCConf)
+	if !strings.Contains(rc, `dhcp6c_flags="-n"`) {
+		t.Fatalf("rc.conf output missing release-suppression dhcp6c flags:\n%s", rc)
+	}
+}

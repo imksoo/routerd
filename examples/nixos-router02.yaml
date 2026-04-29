@@ -188,6 +188,7 @@ spec:
         client: networkd
         profile: ntt-hgw-lan-pd
         prefixLength: 60
+        releasePolicy: never
         required: false
 
     - apiVersion: net.routerd.net/v1alpha1

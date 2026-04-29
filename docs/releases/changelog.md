@@ -9,6 +9,10 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- `IPv6PrefixDelegation.spec.releasePolicy` was added to control DHCPv6
+  Release behavior. NTT profiles default to `never`, rendering
+  systemd-networkd `SendRelease=no` and FreeBSD `dhcp6c -n`; other profiles
+  default to `always`.
 - Breaking: removed the HGW workaround fields
   `IPv6PrefixDelegation.spec.convergenceTimeout`, `spec.hintFromState`,
   `spec.preferredLifetime`, and `spec.validLifetime`. routerd now renders

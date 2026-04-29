@@ -8,6 +8,7 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
 
 ## 未リリース
 
+- `IPv6PrefixDelegation.spec.releasePolicy` を追加しました。DHCPv6 クライアントが停止時に Release を送るかどうかを設定できます。NTT 系プロファイルでは `never` が既定になり、systemd-networkd には `SendRelease=no`、FreeBSD の `dhcp6c` には `-n` を出力します。それ以外のプロファイルでは `always` が既定です。
 - 破壊的変更: ホームゲートウェイ回避用だった
   `IPv6PrefixDelegation.spec.convergenceTimeout`、`spec.hintFromState`、
   `spec.preferredLifetime`、`spec.validLifetime` を削除しました。routerd は

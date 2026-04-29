@@ -1124,6 +1124,15 @@
                         ],
                         "type": "string"
                       },
+                      "releasePolicy": {
+                        "enum": [
+                          "",
+                          "default",
+                          "never",
+                          "always"
+                        ],
+                        "type": "string"
+                      },
                       "required": {
                         "type": "boolean"
                       }
