@@ -227,22 +227,22 @@ func (e *Engine) observeIPv6PrefixDelegation(res api.Resource, aliases map[strin
 	}
 	ifname := aliases[spec.Interface]
 	client := defaultString(spec.Client, "networkd")
-	profile := defaultString(spec.Profile, "default")
+	profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 	rr.Observed["interface"] = spec.Interface
 	rr.Observed["ifname"] = ifname
 	rr.Observed["client"] = client
 	rr.Observed["profile"] = profile
-	prefixLength := effectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
+	prefixLength := api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
 	if prefixLength != 0 {
 		rr.Observed["prefixLength"] = fmt.Sprintf("%d", prefixLength)
 	}
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("request DHCPv6 prefix delegation on %s with %s", ifname, client))
 		switch profile {
-		case "ntt-ngn-direct-hikari-denwa":
-			rr.Plan = append(rr.Plan, "use NTT NGN direct Hikari Denwa DHCPv6-PD profile quirks")
-		case "ntt-hgw-lan-pd":
-			rr.Plan = append(rr.Plan, "use NTT HGW LAN-side DHCPv6-PD profile quirks")
+		case api.IPv6PDProfileNTTNGNDirectHikariDenwa:
+			rr.Plan = append(rr.Plan, "use NTT NGN direct Hikari Denwa DHCPv6-PD profile defaults")
+		case api.IPv6PDProfileNTTHGWLANPD:
+			rr.Plan = append(rr.Plan, "use NTT HGW LAN-side DHCPv6-PD profile defaults")
 		}
 	}
 }
@@ -268,16 +268,6 @@ func (e *Engine) observeIPv6DelegatedAddress(res api.Resource, aliases map[strin
 			rr.Plan = append(rr.Plan, fmt.Sprintf("send IPv6 router advertisements for delegated prefix on %s", ifname))
 		}
 	}
-}
-
-func effectiveIPv6PDPrefixLength(profile string, configured int) int {
-	if configured != 0 {
-		return configured
-	}
-	if profile == "ntt-ngn-direct-hikari-denwa" || profile == "ntt-hgw-lan-pd" {
-		return 60
-	}
-	return 0
 }
 
 func (e *Engine) observeIPv6DHCPServer(res api.Resource, includePlan bool, rr *ResourceResult) {

@@ -183,6 +183,56 @@ type IPv6PrefixDelegationSpec struct {
 	Required      bool   `yaml:"required,omitempty" json:"required,omitempty"`
 }
 
+const (
+	IPv6PDProfileDefault                 = "default"
+	IPv6PDProfileNTTNGNDirectHikariDenwa = "ntt-ngn-direct-hikari-denwa"
+	IPv6PDProfileNTTHGWLANPD             = "ntt-hgw-lan-pd"
+)
+
+func IsNTTIPv6PDProfile(profile string) bool {
+	switch profile {
+	case IPv6PDProfileNTTNGNDirectHikariDenwa, IPv6PDProfileNTTHGWLANPD:
+		return true
+	default:
+		return false
+	}
+}
+
+func EffectiveIPv6PDPrefixLength(profile string, configured int) int {
+	if configured != 0 {
+		return configured
+	}
+	if IsNTTIPv6PDProfile(profile) {
+		return 60
+	}
+	return 0
+}
+
+func EffectiveIPv6PDReleasePolicy(profile, configured string) string {
+	switch configured {
+	case "never", "always":
+		return configured
+	}
+	if IsNTTIPv6PDProfile(profile) {
+		return "never"
+	}
+	return "always"
+}
+
+func EffectiveIPv6PDDUIDType(profile, configured string) string {
+	if configured != "" {
+		return configured
+	}
+	if IsNTTIPv6PDProfile(profile) {
+		return "link-layer"
+	}
+	return ""
+}
+
+func ShouldRenderIPv6PDPrefixHint(profile string) bool {
+	return !IsNTTIPv6PDProfile(profile)
+}
+
 type IPv6DelegatedAddressSpec struct {
 	PrefixDelegation string           `yaml:"prefixDelegation" json:"prefixDelegation"`
 	Interface        string           `yaml:"interface" json:"interface"`

@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
-	routerstate "routerd/pkg/state"
 )
 
 type File struct {
@@ -26,14 +25,9 @@ type pdSource struct {
 	IAID          string
 	DUIDType      string
 	DUIDRawData   string
-	PrefixHint    string
 }
 
 func NetworkdDropins(router *api.Router) ([]File, error) {
-	return NetworkdDropinsWithState(router, nil)
-}
-
-func NetworkdDropinsWithState(router *api.Router, store routerstate.Store) ([]File, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Interface" {
@@ -55,14 +49,15 @@ func NetworkdDropinsWithState(router *api.Router, store routerstate.Store) ([]Fi
 		if err != nil {
 			return nil, err
 		}
+		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 		pds[res.Metadata.Name] = pdSource{
 			Name:          res.Metadata.Name,
 			IfName:        aliases[spec.Interface],
-			Profile:       defaultString(spec.Profile, "default"),
-			PrefixLength:  effectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength),
-			ReleasePolicy: EffectiveIPv6PDReleasePolicy(defaultString(spec.Profile, "default"), spec.ReleasePolicy),
+			Profile:       profile,
+			PrefixLength:  api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
+			ReleasePolicy: api.EffectiveIPv6PDReleasePolicy(profile, spec.ReleasePolicy),
 			IAID:          spec.IAID,
-			DUIDType:      EffectiveIPv6PDDUIDType(defaultString(spec.Profile, "default"), spec.DUIDType),
+			DUIDType:      api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType),
 			DUIDRawData:   spec.DUIDRawData,
 		}
 	}
@@ -170,7 +165,7 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 		buf.WriteString("SendRelease=yes\n")
 	}
 	switch source.Profile {
-	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
+	case api.IPv6PDProfileNTTNGNDirectHikariDenwa, api.IPv6PDProfileNTTHGWLANPD:
 		buf.WriteString("UseAddress=no\n")
 		buf.WriteString("UseDelegatedPrefix=yes\n")
 		buf.WriteString("WithoutRA=solicit\n")
@@ -179,34 +174,8 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 		buf.WriteString("UseDelegatedPrefix=yes\n")
 		buf.WriteString("WithoutRA=solicit\n")
 	}
-	if source.PrefixLength != 0 && !suppressIPv6PDPrefixHint(source.Profile) {
-		hint := source.PrefixHint
-		if hint == "" {
-			hint = fmt.Sprintf("::/%d", source.PrefixLength)
-		}
-		buf.WriteString("PrefixDelegationHint=" + hint + "\n")
-	}
-}
-
-func EffectiveIPv6PDReleasePolicy(profile, configured string) string {
-	switch configured {
-	case "never", "always":
-		return configured
-	}
-	switch profile {
-	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
-		return "never"
-	default:
-		return "always"
-	}
-}
-
-func suppressIPv6PDPrefixHint(profile string) bool {
-	switch profile {
-	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
-		return true
-	default:
-		return false
+	if source.PrefixLength != 0 && api.ShouldRenderIPv6PDPrefixHint(source.Profile) {
+		buf.WriteString(fmt.Sprintf("PrefixDelegationHint=::/%d\n", source.PrefixLength))
 	}
 }
 
@@ -258,26 +227,6 @@ func isHexString(value string) bool {
 		}
 	}
 	return true
-}
-
-func effectiveIPv6PDPrefixLength(profile string, configured int) int {
-	if configured != 0 {
-		return configured
-	}
-	if profile == "ntt-ngn-direct-hikari-denwa" || profile == "ntt-hgw-lan-pd" {
-		return 60
-	}
-	return 0
-}
-
-func EffectiveIPv6PDDUIDType(profile, configured string) string {
-	if configured != "" {
-		return configured
-	}
-	if profile == "ntt-ngn-direct-hikari-denwa" || profile == "ntt-hgw-lan-pd" {
-		return "link-layer"
-	}
-	return ""
 }
 
 func networkdDropinDir(ifname string) string {

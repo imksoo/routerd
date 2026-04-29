@@ -89,8 +89,10 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if err != nil {
 			return nil
 		}
-		intents := []resource.Intent{artifact("dhcp.ipv6.prefixDelegation", aliases[spec.Interface], resource.ActionEnsure, defaultString(spec.Client, "networkd"), nil)}
-		if defaultString(spec.Client, "networkd") == "dhcp6c" && effectiveIPv6PDDUIDTypeForArtifacts(defaultString(spec.Profile, "default"), spec.DUIDType) == "link-layer" {
+		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
+		client := defaultString(spec.Client, "networkd")
+		intents := []resource.Intent{artifact("dhcp.ipv6.prefixDelegation", aliases[spec.Interface], resource.ActionEnsure, client, nil)}
+		if client == "dhcp6c" && api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType) == "link-layer" {
 			intents = append(intents, artifact("file", "/var/db/dhcp6c_duid", resource.ActionEnsure, "dhcp6c", map[string]string{"purpose": "dhcpv6-client-duid"}))
 		}
 		return intents
@@ -156,16 +158,6 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 	default:
 		return nil
 	}
-}
-
-func effectiveIPv6PDDUIDTypeForArtifacts(profile, configured string) string {
-	if configured != "" {
-		return configured
-	}
-	if profile == "ntt-ngn-direct-hikari-denwa" || profile == "ntt-hgw-lan-pd" {
-		return "link-layer"
-	}
-	return ""
 }
 
 func ipv4PolicyRouteArtifacts(res api.Resource, aliases map[string]string) []resource.Intent {

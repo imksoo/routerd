@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
-	routerstate "routerd/pkg/state"
 )
 
 type FreeBSDConfig struct {
@@ -29,10 +28,6 @@ func FreeBSD(router *api.Router) (FreeBSDConfig, error) {
 }
 
 func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource, api.PPPoEInterfaceSpec) (string, error)) (FreeBSDConfig, error) {
-	return FreeBSDWithStateAndPPPoEPasswords(router, nil, passwordFor)
-}
-
-func FreeBSDWithStateAndPPPoEPasswords(router *api.Router, store routerstate.Store, passwordFor func(api.Resource, api.PPPoEInterfaceSpec) (string, error)) (FreeBSDConfig, error) {
 	aliases := map[string]string{}
 	managed := map[string]bool{}
 	for _, res := range router.Spec.Resources {
@@ -101,14 +96,13 @@ func FreeBSDWithStateAndPPPoEPasswords(router *api.Router, store routerstate.Sto
 				return FreeBSDConfig{}, fmt.Errorf("%s references interface with empty ifname", res.ID())
 			}
 			dhcp6cIfaces[ifname] = true
-			prefixLength := effectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength)
+			profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 			pds = append(pds, freeBSDPD{
 				Name:          res.Metadata.Name,
 				IfName:        ifname,
-				PrefixLength:  prefixLength,
-				ReleasePolicy: EffectiveIPv6PDReleasePolicy(defaultString(spec.Profile, "default"), spec.ReleasePolicy),
+				PrefixLength:  api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
+				ReleasePolicy: api.EffectiveIPv6PDReleasePolicy(profile, spec.ReleasePolicy),
 				IAID:          spec.IAID,
-				Profile:       defaultString(spec.Profile, "default"),
 			})
 		case "PPPoEInterface":
 			spec, err := res.PPPoEInterfaceSpec()
@@ -155,8 +149,6 @@ type freeBSDPD struct {
 	PrefixLength  int
 	ReleasePolicy string
 	IAID          string
-	PrefixHint    string
-	Profile       string
 }
 
 type freeBSDPPPoE struct {
@@ -266,9 +258,6 @@ func freeBSDDHCP6C(router *api.Router, aliases map[string]string, pds []freeBSDP
 		buf.WriteString("  request domain-name-servers;\n")
 		buf.WriteString("};\n\n")
 		buf.WriteString(fmt.Sprintf("id-assoc pd %d {\n", iaid))
-		if pd.PrefixHint != "" {
-			buf.WriteString("  prefix " + pd.PrefixHint + ";\n")
-		}
 		for _, res := range router.Spec.Resources {
 			if res.Kind != "IPv6DelegatedAddress" {
 				continue

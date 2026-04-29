@@ -660,7 +660,7 @@ func validateResource(res api.Resource) error {
 			return fmt.Errorf("%s spec.interface is required", res.ID())
 		}
 		switch spec.Profile {
-		case "", "default", "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
+		case "", api.IPv6PDProfileDefault, api.IPv6PDProfileNTTNGNDirectHikariDenwa, api.IPv6PDProfileNTTHGWLANPD:
 		default:
 			return fmt.Errorf("%s spec.profile must be default, ntt-ngn-direct-hikari-denwa, or ntt-hgw-lan-pd", res.ID())
 		}

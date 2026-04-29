@@ -137,11 +137,7 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	if err := config.Validate(router); err != nil {
 		return err
 	}
-	stateStore, err := routerstate.Load(defaultStatePath)
-	if err != nil {
-		return err
-	}
-	data, err := render.FreeBSDWithStateAndPPPoEPasswords(router, stateStore, pppoePassword)
+	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
 		return err
 	}
@@ -598,7 +594,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			if isNixOSHost() {
 				netplanData = nil
 			}
-			networkdFiles, err := render.NetworkdDropinsWithState(effectiveRouter, stateStore)
+			networkdFiles, err := render.NetworkdDropins(effectiveRouter)
 			if err != nil {
 				return err
 			}
@@ -900,7 +896,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	var changedFreeBSD []string
 	if err := recordStageError("freebsd-network", func() error {
 		var err error
-		changedFreeBSD, err = applyFreeBSDConfig(router, defaultString(opts.StatePath, defaultStatePath), defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath, defaultFreeBSDDHCP6CDUIDPath, defaultFreeBSDMPD5Path)
+		changedFreeBSD, err = applyFreeBSDConfig(router, defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath, defaultFreeBSDDHCP6CDUIDPath, defaultFreeBSDMPD5Path)
 		return err
 	}()); err != nil {
 		return nil, err
@@ -1099,7 +1095,8 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		if err != nil {
 			return nil, err
 		}
-		prefixLength := stateEffectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength)
+		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
+		prefixLength := api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		lease, _ := routerstate.PDLeaseFromStore(store, base)
 		if ifname := aliases[spec.Interface]; ifname != "" {
@@ -1114,12 +1111,12 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			if identity.DUIDText != "" {
 				lease.DUIDText = identity.DUIDText
 			}
-			if expected := expectedPrefixDelegationDUID(ifname, defaultString(spec.Profile, "default")); expected != "" {
+			if expected := expectedPrefixDelegationDUID(ifname, profile); expected != "" {
 				lease.ExpectedDUID = expected
 			}
 		}
 		changes = append(changes, stateChange{Name: base + ".client", Value: store.Set(base+".client", defaultString(spec.Client, "networkd"), res.ID()+": configured DHCPv6-PD client")})
-		changes = append(changes, stateChange{Name: base + ".profile", Value: store.Set(base+".profile", defaultString(spec.Profile, "default"), res.ID()+": configured DHCPv6-PD profile")})
+		changes = append(changes, stateChange{Name: base + ".profile", Value: store.Set(base+".profile", profile, res.ID()+": configured DHCPv6-PD profile")})
 		if prefixLength > 0 {
 			changes = append(changes, stateChange{Name: base + ".prefixLength", Value: store.Set(base+".prefixLength", strconv.Itoa(prefixLength), res.ID()+": configured prefix length")})
 		}
@@ -1307,9 +1304,7 @@ func parseRFC4361ClientID(value string) dhcpIdentity {
 }
 
 func expectedPrefixDelegationDUID(ifname, profile string) string {
-	switch profile {
-	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
-	default:
+	if !api.IsNTTIPv6PDProfile(profile) {
 		return ""
 	}
 	mac := strings.TrimSpace(readFirstString(filepath.Join("/sys/class/net", ifname, "address")))
@@ -1388,16 +1383,6 @@ func delegatedPrefixFromObserved(prefixes, addresses []string, prefixLength int)
 		return prefix.Masked().String(), true
 	}
 	return "", false
-}
-
-func stateEffectiveIPv6PDPrefixLength(profile string, configured int) int {
-	if configured != 0 {
-		return configured
-	}
-	if profile == "ntt-ngn-direct-hikari-denwa" || profile == "ntt-hgw-lan-pd" {
-		return 60
-	}
-	return 0
 }
 
 func evaluateStateConditions(router *api.Router, aliases map[string]string, store routerstate.Store, policy api.StatePolicySpec, value api.StateValueSpec) (bool, error) {
@@ -2330,12 +2315,8 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 	return changedFiles, nil
 }
 
-func applyFreeBSDConfig(router *api.Router, statePath, dhclientPath, dhcp6cPath, dhcp6cDUIDPath, mpd5Path string) ([]string, error) {
-	stateStore, err := routerstate.Load(statePath)
-	if err != nil {
-		return nil, err
-	}
-	data, err := render.FreeBSDWithStateAndPPPoEPasswords(router, stateStore, pppoePassword)
+func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, dhcp6cDUIDPath, mpd5Path string) ([]string, error) {
+	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
 		return nil, err
 	}
@@ -2454,13 +2435,11 @@ func ensureFreeBSDDHCP6CDUID(router *api.Router, duidPath string) (bool, string,
 		if err != nil {
 			return false, "", err
 		}
-		profile := defaultString(spec.Profile, "default")
-		if render.EffectiveIPv6PDDUIDType(profile, spec.DUIDType) != "link-layer" {
+		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
+		if api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType) != "link-layer" {
 			continue
 		}
-		switch profile {
-		case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
-		default:
+		if !api.IsNTTIPv6PDProfile(profile) {
 			continue
 		}
 		ifname := aliases[spec.Interface]
@@ -2542,8 +2521,8 @@ func freeBSDDHCP6CReleasePolicy(router *api.Router) string {
 		if err != nil {
 			continue
 		}
-		profile := defaultString(spec.Profile, "default")
-		if render.EffectiveIPv6PDReleasePolicy(profile, spec.ReleasePolicy) == "never" {
+		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
+		if api.EffectiveIPv6PDReleasePolicy(profile, spec.ReleasePolicy) == "never" {
 			return "never"
 		}
 	}

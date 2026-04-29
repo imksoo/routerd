@@ -257,7 +257,7 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 			if iface := interfaces[spec.Interface]; iface != nil {
 				iface.DHCP6 = true
 				iface.AcceptRA = true
-				iface.DHCP6SendRelease = EffectiveIPv6PDReleasePolicy(defaultString(spec.Profile, "default"), spec.ReleasePolicy)
+				iface.DHCP6SendRelease = api.EffectiveIPv6PDReleasePolicy(defaultString(spec.Profile, api.IPv6PDProfileDefault), spec.ReleasePolicy)
 			}
 		}
 	}
