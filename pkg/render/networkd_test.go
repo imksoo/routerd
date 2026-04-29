@@ -145,6 +145,30 @@ func TestNetworkdDropinsRenderGenericPrefixHint(t *testing.T) {
 	}
 }
 
+func TestIAIDFromMACUsesLastFourOctets(t *testing.T) {
+	got, ok := iaidFromMAC("02:00:00:12:34:56")
+	if !ok {
+		t.Fatal("iaidFromMAC returned !ok")
+	}
+	if got != 0x00123456 {
+		t.Fatalf("iaidFromMAC = %#x, want 0x00123456", got)
+	}
+}
+
+func TestEffectiveIPv6PDIAIDPrefersConfiguredValue(t *testing.T) {
+	got := effectiveIPv6PDIAID(api.IPv6PDProfileNTTHGWLANPD, "00000001", "no-such-interface")
+	if got != "00000001" {
+		t.Fatalf("effectiveIPv6PDIAID = %q, want configured value", got)
+	}
+}
+
+func TestEffectiveIPv6PDIAIDDoesNotDefaultForGenericProfile(t *testing.T) {
+	got := effectiveIPv6PDIAID(api.IPv6PDProfileDefault, "", "no-such-interface")
+	if got != "" {
+		t.Fatalf("effectiveIPv6PDIAID = %q, want empty for generic profile", got)
+	}
+}
+
 func netResource(kind, name string, spec any) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{

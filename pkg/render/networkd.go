@@ -2,7 +2,9 @@ package render
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"net"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -54,7 +56,7 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 			IfName:       aliases[spec.Interface],
 			Profile:      profile,
 			PrefixLength: api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
-			IAID:         spec.IAID,
+			IAID:         effectiveIPv6PDIAID(profile, spec.IAID, aliases[spec.Interface]),
 			DUIDType:     api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType),
 			DUIDRawData:  spec.DUIDRawData,
 		}
@@ -177,6 +179,39 @@ func normalizeIAIDForRender(value string) string {
 		return value
 	}
 	return fmt.Sprintf("%d", parsed)
+}
+
+func effectiveIPv6PDIAID(profile, configured, ifname string) string {
+	if strings.TrimSpace(configured) != "" {
+		return configured
+	}
+	if !api.IsNTTIPv6PDProfile(profile) {
+		return ""
+	}
+	iaid, ok := iaidFromInterfaceMAC(ifname)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%d", iaid)
+}
+
+func iaidFromInterfaceMAC(ifname string) (uint32, bool) {
+	if strings.TrimSpace(ifname) == "" {
+		return 0, false
+	}
+	iface, err := net.InterfaceByName(ifname)
+	if err != nil {
+		return 0, false
+	}
+	return iaidFromMAC(iface.HardwareAddr.String())
+}
+
+func iaidFromMAC(value string) (uint32, bool) {
+	hw, err := net.ParseMAC(strings.TrimSpace(value))
+	if err != nil || len(hw) < 6 {
+		return 0, false
+	}
+	return binary.BigEndian.Uint32(hw[len(hw)-4:]), true
 }
 
 func parseIAID(value string) (uint32, bool) {

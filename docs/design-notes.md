@@ -78,18 +78,20 @@ the host's own diagnostics.
 ### 1.2 NTT Home-Gateway Profile Shape
 
 measure: In a NTT home-gateway LAN-side delegation environment, successful
-clients used DUID-LL, IA_PD, Rapid Commit disabled, and `/60` delegated
-prefixes. DHCPv6 Advertise/Reply packets arrived at UDP destination 546, and
-captures must not assume source port 547.
+clients used DUID-LL, a stable IAID, IA_PD, Rapid Commit disabled, and `/60`
+delegated prefixes. DHCPv6 Advertise/Reply packets arrived at UDP destination
+546, and captures must not assume source port 547.
 
 measure: A commercial router's initial Solicit did not include a prefix hint.
 routerd therefore omits exact and length-only prefix hints for
 `ntt-ngn-direct-hikari-denwa` and `ntt-hgw-lan-pd`. Exact hints are not modeled
 as generally harmful, but they are no longer the default shape.
 
-assert: DUID-LL is a strong default for NTT profiles. Option-request contents,
-Reconfigure Accept, and Client FQDN can differ between working clients, so
-routerd does not treat those fields as the deciding profile knobs.
+assert: DUID-LL and a stable IAID are strong defaults for NTT profiles. When
+the operator does not set `spec.iaid`, routerd derives IAID from the last four
+bytes of the uplink MAC address and renders it explicitly. Option-request
+contents, Reconfigure Accept, and Client FQDN can differ between working
+clients, so routerd does not treat those fields as the deciding profile knobs.
 
 assert: The `ntt-ngn-direct-hikari-denwa` and `ntt-hgw-lan-pd` profiles should
 not send exact or length-only prefix hints by default. `prefixLength` remains
@@ -107,9 +109,9 @@ part of routerd's expected-shape model, but the systemd-networkd renderer omits
 assert: DHCPv6-PD acquisition is intentionally narrow: Linux uses
 systemd-networkd and FreeBSD uses KAME/WIDE `dhcp6c`.
 
-assert: NTT profiles default to real MAC-derived DUID-LL. `duidRawData` is an
-explicit override for HA failover, router replacement, or migration. It is not
-the default lab recovery path.
+assert: NTT profiles default to real MAC-derived DUID-LL and MAC-derived IAID.
+`duidRawData` and `iaid` are explicit overrides for HA failover, router
+replacement, or migration. They are not the default lab recovery path.
 
 ## 2. Lab-Specific Issues
 

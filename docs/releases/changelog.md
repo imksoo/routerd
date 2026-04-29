@@ -25,8 +25,9 @@ behavior changes and new resource shapes as the model takes shape.
   inventory/host` shows collected OS inventory.
 - DHCPv6-PD state is stored in the structured
   `ipv6PrefixDelegation.<name>.lease` object. NTT profiles use MAC-derived
-  DUID-LL by default, omit exact prefix hints, and keep `duidRawData` only as
-  an explicit operator override for migration or HA cases.
+  DUID-LL and a MAC-derived IAID by default, omit exact prefix hints, and keep
+  `duidRawData` / `iaid` only as explicit operator overrides for migration or
+  HA cases.
 - Apply now derives delegated LAN IPv6 addresses and DS-Lite tunnel source
   addresses from the current PD state object when available, and removes
   stale routerd-derived IPv6 addresses that share managed suffixes after a PD

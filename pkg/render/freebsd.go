@@ -101,7 +101,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 				Name:         res.Metadata.Name,
 				IfName:       ifname,
 				PrefixLength: api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
-				IAID:         spec.IAID,
+				IAID:         effectiveIPv6PDIAID(profile, spec.IAID, ifname),
 			})
 		case "PPPoEInterface":
 			spec, err := res.PPPoEInterfaceSpec()

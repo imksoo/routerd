@@ -434,12 +434,12 @@ spec:
   - `ntt-ngn-direct-hikari-denwa`: NTT NGN/ONU に直結し、ひかり電話契約を使う構成。
   - `ntt-hgw-lan-pd`: NTT のホームゲートウェイの LAN 側につなぎ、`/60` 単位で再委譲を受ける構成。
 
-  どちらの NTT 系プロファイルも IA_PD のみを要求し、Rapid Commit を無効にし、リンクレイヤ DUID を使い、必要に応じて DHCPv6 Solicit を強制します。委譲される長さの既定は `/60` ですが、systemd-networkd では `PrefixDelegationHint=` をあえて出力しません。動作確認済みクライアントの初回 Solicit に近づけるためです。
+  どちらの NTT 系プロファイルも IA_PD のみを要求し、Rapid Commit を無効にし、リンクレイヤ DUID を使い、`spec.iaid` を省略した場合は上流インターフェースの MAC アドレスから安定した IAID を作ります。必要に応じて DHCPv6 Solicit を強制します。委譲される長さの既定は `/60` ですが、systemd-networkd では `PrefixDelegationHint=` をあえて出力しません。動作確認済みクライアントの初回 Solicit に近づけるためです。
 - routerd は反映のたびに、観測できたプレフィックス委譲の状態をローカルの状態保存領域にある `ipv6PrefixDelegation.<name>.lease` へ記録します。この JSON 値には、現在のプレフィックス、最後に見えたプレフィックス、観測した DUID、IAID、期待される DUID、最後に見えた時刻を保存します。以前の開発版で使っていた `ipv6PrefixDelegation.<name>.lastPrefix` などの個別キーは、現在は自動移行しません。インターフェース名、設定されたプレフィックス長、クライアント種別、プロファイルは、DHCPv6 リースそのものではなく routerd の設定を表すため、別の状態値として残します。下流側の委譲プレフィックスが見えなくなった場合は `currentPrefix` を消しますが、`lastPrefix` は運用者が確認できるように残します。レンダラはこの記録を正確なプレフィックスヒントとして再利用しません。望む定義は `routerctl get ipv6pd` で確認し、現在の委譲プレフィックスと最後に見えた委譲プレフィックスを取り違えず調べるには `routerctl describe ipv6pd/<名前>` を使います。機械処理向けにまとめて見る場合は `routerctl show ipv6pd -o yaml --events` を使います。
-- systemd-networkd と FreeBSD の `dhcp6c` では、取得できる範囲で DHCP の識別情報もリース記録に残します。`dhcp6c` では `/var/db/dhcp6c_duid` から DUID を読み取り、IAID は設定された `iaid`、または `dhcp6c` の既定値である `0` から決めます。NTT 系プロファイルでは、上流インターフェースの MAC アドレスから DHCPv6 のリンクレイヤ DUID を計算し、期待される DUID として残します。これらは表示と識別子の照合に使う観測値であり、望ましい設定そのものではありません。
+- systemd-networkd と FreeBSD の `dhcp6c` では、取得できる範囲で DHCP の識別情報もリース記録に残します。`dhcp6c` では `/var/db/dhcp6c_duid` から DUID を読み取ります。NTT 系プロファイルでは、上流インターフェースの MAC アドレスから DHCPv6 のリンクレイヤ DUID を計算し、期待される DUID として残します。`spec.iaid` が省略された場合は、その MAC アドレスの下位 4 バイトから IAID を作り、明示的に出力します。これらの値は表示と識別子の照合にも使いますが、出力された DUID/IAID は望ましい DHCP 識別子でもあります。
 - リース期限が切れる前の Renew/Rebind は、OS 側の DHCPv6 クライアントの責務です。routerd は通常の反映でこのクライアントを再起動しないようにします。再起動すると、更新として続けられたはずの処理が新規 Solicit や Release に変わることがあるためです。
   現在のプレフィックスが観測できない場合、`plan`、`routerd apply`、デーモン状態には警告を出します。上流リースが切れる前に DHCPv6 クライアントを直すためです。
-- `spec.iaid` は DHCPv6 の IAID を固定します。10 進数、`0x` 付きの 16 進数、または 8 桁の 16 進数で書けます。systemd-networkd では 10 進数の `IAID=` として出力し、FreeBSD の `dhcp6c` では `ia-pd` / `id-assoc pd` の識別子として使います。
+- `spec.iaid` は DHCPv6 の IAID を固定します。10 進数、`0x` 付きの 16 進数、または 8 桁の 16 進数で書けます。systemd-networkd では 10 進数の `IAID=` として出力し、FreeBSD の `dhcp6c` では `ia-pd` / `id-assoc pd` の識別子として使います。NTT 系プロファイルでは、省略時に上流インターフェースの MAC アドレスから安定した IAID を作り、明示的に出力します。
 - `spec.duidType` は、NTT 系プロファイルで省略すると `link-layer` として扱います。systemd-networkd が既定で使う machine-id 由来の DUID を避け、FreeBSD/KAME `dhcp6c` も NTT 系ホームゲートウェイで期待される識別子にそろえるためです。
 - `spec.duidType` と `spec.duidRawData` は DHCPv6 の DUID を固定します。高可用構成の切り替え、ルータ交換、段階的な移行など、上流インターフェースの MAC アドレスから作る DUID とは別の安定した識別子が必要な場合に使います。`duidRawData` は `00:01:...` のようなバイト列表記でも、区切りなしの 16 進数でも書けます。通常は省略し、実際の MAC アドレスから作る DUID-LL を使います。
 - FreeBSD の KAME `dhcp6c` では、NTT 系プロファイルかつ実効 DUID 型が `link-layer` の場合、routerd が `/var/db/dhcp6c_duid` を管理します。既存ファイルが期待する DUID と異なる場合は `.bak.<時刻>` として退避し、期待する DUID を `dhcp6c` 起動前に書き込みます。
