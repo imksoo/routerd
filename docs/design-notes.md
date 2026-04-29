@@ -212,14 +212,19 @@ routerctl describe inventory/host
 
 ### 4.4 Future Design Work
 
-- Improve `IPv6PrefixDelegation` status output for current prefix, last prefix,
-  DUID, IAID, T1/T2, lifetimes, last observed time, and warnings.
-- Display expected and observed DUID/IAID separately.
-- Keep NTT profile defaults conservative: DUID-LL, IA_PD only, and Rapid
-  Commit disabled.
-- Permit inbound DHCPv6 replies to UDP destination 546 without source-port
-  restriction.
+- Observe natural DHCPv6-PD Renew/Rebind behavior on Linux systemd-networkd
+  and FreeBSD `dhcp6c` clients after the current profile cleanup. Record what
+  routerd can reliably expose as status without managing the client timers.
+- Improve `IPv6PrefixDelegation` status when OS clients expose T1/T2 or
+  lifetime data. Current and last prefixes, observed and expected DUID/IAID,
+  last observed time, and warnings should remain distinct.
 - Design how LAN RA/DHCPv6 withdraws stale prefixes when PD disappears.
+- Use `Inventory/host` as an input to future platform advice or rendering for
+  host prerequisites such as virtual bridge multicast behavior, RA acceptance,
+  and service-manager differences.
+- Decide whether the remaining example plugin stubs should stay under
+  `plugins/` or move fully into test fixtures once the trusted local plugin
+  protocol has enough real examples.
 - Keep "DS-Lite without delegated LAN IPv6" as a design candidate. It changes
   ownership and firewall boundaries, so it needs separate validation before
   implementation.
