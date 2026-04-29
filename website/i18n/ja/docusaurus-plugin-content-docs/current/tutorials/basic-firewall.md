@@ -10,7 +10,7 @@ sidebar_position: 4
 次を足します。
 
 - WAN から出る IPv4 トラフィックの送信元 NAT (SNAT)
-- 既定拒否の小さなホームルーター用ファイアウォール一式
+- `Zone` と `FirewallPolicy` で組む、既定拒否の小さなホームルーター用一式
 - IPv6 転送 (IPv6 はグローバルアドレスなので NAT しません)
 
 ## 1. IPv4 アウトバウンドの送信元 NAT
@@ -30,27 +30,76 @@ sidebar_position: 4
 routerd がこれを nftables にレンダリングします。LAN 側のトラフィックは WAN から
 出る際にマスカレードされます。
 
-## 2. ホームルーター用ファイアウォール一式を入れる
+## 2. ゾーンと home-router プリセットの FirewallPolicy を入れる
 
 ```yaml
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: HomeRouterFirewall
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: Zone
       metadata:
-        name: home
+        name: lan
       spec:
-        wan: wan
-        lan: lan
+        interfaces:
+          - lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: Zone
+      metadata:
+        name: wan
+      spec:
+        interfaces:
+          - wan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: default-home
+      spec:
+        preset: home-router
+        input:
+          default: drop
+        forward:
+          default: drop
 ```
 
-この一式は小さな既定拒否の構成です。
+このプリセットは小さな既定拒否の構成です。
 
 - WAN 側から来る新規接続を drop
 - 双方向で established / related フローを許可
 - LAN → WAN を許可
-- LAN → ルーターの DNS、DHCP、ICMP を許可
-- 送信元偽装 (uRPF 違反) を drop
+- LAN → ルーターの DHCP / DNS を許可 (前のチュートリアルで足した LAN 側サービス)
+- **LAN からルーターへの SSH (TCP/22) を許可。** `FirewallPolicy.spec.routerAccess.ssh.fromZones`
+  は省略時に `["lan"]` が既定値になるため、このポリシーを apply した時点で LAN
+  ホストはそのままルーターに `ssh` で入れます。
+- ICMPv6 を input チェインで許可
 
-意図的に保守的な構成です。これを超える許可は明示的なリソースで足します。
+意図的に保守的な構成です。これを超える許可 (WAN からの SSH、サービス公開など) は
+明示的なリソースで足します。
+
+### SSH アクセスの整理
+
+上の YAML だけで:
+
+| 接続元 | ルーターへの SSH | 許可 |
+|---|---|---|
+| LAN ホスト | `ssh root@<router の LAN IP>` | ✅ 可 (LAN が既定の fromZones) |
+| WAN ホスト | `ssh root@<router の WAN IP>` | ❌ 不可 (WAN の input は drop) |
+
+LAN 側 SSH のために専用の管理用インターフェースは **要りません**。別の `mgmt`
+ゾーンが意味を持つのは、管理専用の別 NIC を確保し、設定ミスでロックアウトされない
+ように routerd の apply ガードを掛けたいときです。そのガードを有効にしたいなら:
+
+```yaml
+spec:
+  apply:
+    protectedZones:
+      - mgmt
+  resources:
+    # 通常のゾーンに加えて、mgmt という Zone を定義
+```
+
+`protectedZones` を指定すると、routerd は `FirewallPolicy` の内容にかかわらず、
+列挙したゾーンに対して TCP/22 を常に許可します。リストには定義済みの `Zone` の
+名前を入れます。
 
 ## 3. apply
 
@@ -65,7 +114,8 @@ sudo routerd apply --once \
 sudo nft list ruleset
 ```
 
-`routerd_*` チェイン群への jump と、ホームルーター一式のルールが入っているはずです。
+`routerd_*` チェイン群への jump、input/forward の既定拒否、そして
+`iifname "<lan-iface>" tcp dport 22 accept` (SSH 用) が入っているはずです。
 
 ## 4. LAN クライアントから試す
 
@@ -78,15 +128,18 @@ curl -v https://[2606:2800:220:1:248:1893:25c8:1946]/
 
 # ルーター経由の DNS
 dig @192.168.10.1 example.com
+
+# ルーターへ SSH (既定で許可)
+ssh <user>@192.168.10.1
 ```
 
-ホームルーター一式は LAN のサービスを WAN 側から到達させません。インバウンドの
-公開はオプトインです。
+home-router プリセットは LAN のサービスを WAN 側から到達させません。
+インバウンドの公開はオプトインです。
 
 ## 5. 1 つだけポートを開ける (任意)
 
-たとえば WAN 側に SSH を公開したい場合は `Service` と `PortForward` (または明示的な
-ファイアウォールルール) を加えます。ファイアウォール系のすべての種類は
+たとえば WAN 側に HTTPS を公開したい場合は `ExposeService` リソースを足します。
+ファイアウォール系のすべての種類は
 [API リファレンス](../reference/api-v1alpha1#zone) にあります。
 
 ## 残るもの
@@ -96,10 +149,11 @@ dig @192.168.10.1 example.com
 - WAN の DHCPv4 (任意で IPv6 PD)
 - 静的 LAN アドレスと DHCP / DNS / RA
 - IPv4 SNAT と既定拒否のファイアウォール
+- LAN 側からの SSH を既定で許可
 
 よくある次の一歩:
 
-- ヘルスチェック付きのマルチ WAN (`Ipv4DefaultRoutePolicy` の `healthChecks`)
+- ヘルスチェック付きのマルチ WAN (`IPv4DefaultRoutePolicy` の `healthChecks`)
 - 上流技術別の DS-Lite、MAP-E、PPPoE
 - スプリットホライゾン用の条件付き DNS フォワード
 
