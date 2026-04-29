@@ -109,8 +109,7 @@ assert: `ntt-ngn-direct-hikari-denwa` と `ntt-hgw-lan-pd` では、正確なヒ
 | dnsmasq | cite/assert: LAN 側の DNS、DHCPv4、DHCPv6、RA には有用です。WAN 側の PD クライアントの正にはしません。 | LAN サービスに限定して使います。 |
 
 assert: DHCPv6-PD の取得経路は意図的に絞ります。Linux は systemd-networkd、
-FreeBSD は KAME/WIDE `dhcp6c` を使います。`dhcpcd` は、プラットフォームが選ぶ場合の
-IPv4 DHCP クライアントとして使うことはありますが、FreeBSD の DHCPv6-PD 経路にはしません。
+FreeBSD は KAME/WIDE `dhcp6c` を使います。
 
 assert: NTT 系プロファイルでは、実際の MAC アドレスから作った DUID-LL を既定にします。`duidRawData` は、高可用構成の切り替え、ルータ交換、移行のために明示的に使う上書き設定であり、通常の復旧経路では使いません。
 

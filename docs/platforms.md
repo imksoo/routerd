@@ -65,8 +65,7 @@ parity that the code does not yet provide.
   service.
 - FreeBSD hosts need the base networking tools plus `jq`, `dnsmasq`, `dhcp6`,
   and `mpd5` packages for the current groundwork. The `dhcp6` package
-  provides the `dhcp6c` command and rc.d service used for DHCPv6-PD
-  experiments.
+  provides the `dhcp6c` command and rc.d service used for DHCPv6-PD.
 - The FreeBSD DHCPv6-PD renderer configures delegated prefixes through
   `dhcp6c`. The packaged KAME `dhcp6c` assigns the downstream interface
   identifier itself; routerd observes that address, derives the delegated

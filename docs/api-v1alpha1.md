@@ -493,8 +493,7 @@ How routerd behaves:
   from `/var/db/dhcp6c_duid` and the IAID is derived from the configured `iaid`
   or the `dhcp6c` default of `0`. For NTT profiles it records an expected DUID,
   derived from the uplink MAC as a DHCPv6 link-layer DUID. These values are
-  state memory, not desired configuration; retry logic can use them to prefer
-  renewal-like behavior when a home gateway still remembers a prior lease.
+  state memory for display and identity checks, not desired configuration.
 - The OS DHCPv6 client remains responsible for Renew/Rebind before the lease
   expires. routerd should not normally restart that client during apply,
   because a restart can turn a renewal path into a fresh Solicit or Release.
@@ -547,9 +546,8 @@ How routerd behaves:
   the LAN-side address. With systemd-networkd, the suffix is rendered as
   `Token=`, so `::3` means the LAN interface receives the delegated prefix
   with host identifier `::3`.
-- On FreeBSD, apply can derive the LAN-side address from routerd's stored
-  `IPv6PrefixDelegation` lease when KAME `dhcp6c` has not left a usable
-  downstream address on the interface. routerd then applies the address with
+- On FreeBSD, routerd observes the currently visible delegated prefix and can
+  add the stable LAN-side suffix with
   `ifconfig <ifname> inet6 <address> prefixlen 64 alias`.
 - `spec.sendRA: true` lets dnsmasq advertise the prefix through RA.
 - `spec.announce: true` exposes this address as a candidate for

@@ -112,9 +112,7 @@ part of routerd's expected-shape model, but the systemd-networkd renderer omits
 | dnsmasq | cite/assert: Useful for LAN DNS, DHCPv4, DHCPv6, and RA. It is not the source of truth for WAN PD acquisition. | Keep it for LAN services only. |
 
 assert: DHCPv6-PD acquisition is intentionally narrow: Linux uses
-systemd-networkd and FreeBSD uses KAME/WIDE `dhcp6c`. `dhcpcd` may still be
-used as an IPv4 DHCP client where a platform chooses it, but it is not the
-FreeBSD DHCPv6-PD path.
+systemd-networkd and FreeBSD uses KAME/WIDE `dhcp6c`.
 
 assert: NTT profiles default to real MAC-derived DUID-LL. `duidRawData` is an
 explicit override for HA failover, router replacement, or migration. It is not
