@@ -240,6 +240,17 @@ routerctl describe inventory/host
 - Improve `IPv6PrefixDelegation` status when OS clients expose T1/T2 or
   lifetime data. Current and last prefixes, observed and expected DUID/IAID,
   last observed time, and warnings should remain distinct.
+- Extend `routerctl describe ipv6pd/<name>` so operational checks do not start
+  with raw shell commands. The detail view should include the rendered client
+  config summary, OS service state, last apply action that touched the client,
+  recent relevant service logs when available, and DHCPv6 packet-observation
+  counters if routerd grows a managed capture or event source. Packet captures
+  may still be needed for byte-level diagnosis, but the first health question
+  should be answerable from routerctl.
+- Fix host inventory command detection on FreeBSD. Commands installed under
+  `/usr/local/sbin` such as `dhcp6c` and `dnsmasq` can be available to rc.d but
+  still appear missing if routerd checks with a narrow PATH. Inventory should
+  use platform-aware lookup paths and show the resolved command path.
 - Design how LAN RA/DHCPv6 withdraws stale prefixes when PD disappears.
 - Use `Inventory/host` as an input to future platform advice or rendering for
   host prerequisites such as virtual bridge multicast behavior, RA acceptance,

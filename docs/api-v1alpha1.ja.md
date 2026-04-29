@@ -15,7 +15,63 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 - `spec`
 - 必要に応じて `status`
 
-このページでは、各リソースを書くとルータがどう振る舞うか、設定値を変えると何が変わるか、ホスト側にどんな構成物が現れるかを順に説明します。
+このページでは、各リソースを書くとルーターがどう振る舞うか、設定値を変えると何が変わるか、ホスト側にどんな構成物が現れるかを順に説明します。
+
+## クイックインデックス
+
+長いページです。必要な種類に直接ジャンプできます。
+
+**最上位**
+- `Router` (最上位リソース。下の [API グループ](#api-グループ) を参照)
+- [Inventory](#inventory) (観測専用)
+
+**インターフェース**
+- [Interface](#interface)
+- [PPPoEInterface](#pppoeinterface)
+
+**IPv4 アドレッシング**
+- [IPv4StaticAddress](#ipv4staticaddress)
+- [IPv4DHCPAddress](#ipv4dhcpaddress)
+
+**IPv4 DHCP と DNS の提供 (LAN 側)**
+- [IPv4DHCPServer / IPv4DHCPScope](#ipv4dhcpserver-と-ipv4dhcpscope)
+
+**IPv6 アドレッシングとプレフィックス委譲**
+- [IPv6PrefixDelegation](#ipv6prefixdelegation)
+- [IPv6DelegatedAddress](#ipv6delegatedaddress)
+- [IPv6DHCPAddress](#ipv6dhcpaddress)
+- [IPv6DHCPServer / IPv6DHCPScope](#ipv6dhcpserver-と-ipv6dhcpscope)
+- [SelfAddressPolicy](#selfaddresspolicy)
+- [DNSConditionalForwarder](#dnsconditionalforwarder)
+
+**DS-Lite (IPv6 のみの上流に IPv4 を通す)**
+- [DSLiteTunnel](#dslitetunnel)
+
+**IPv4 経路、NAT、ポリシー**
+- [HealthCheck](#healthcheck)
+- [IPv4DefaultRoutePolicy](#ipv4defaultroutepolicy)
+- [IPv4SourceNAT](#ipv4sourcenat)
+- [IPv4PolicyRoute](#ipv4policyroute)
+- [IPv4PolicyRouteSet](#ipv4policyrouteset)
+- [IPv4ReversePathFilter](#ipv4reversepathfilter)
+
+**MTU**
+- [PathMTUPolicy](#pathmtupolicy)
+
+**ファイアウォール**
+- [Zone](#zone)
+- [FirewallPolicy](#firewallpolicy)
+- [ExposeService](#exposeservice)
+
+**システム / ホスト連携**
+- [NixOSHost](#nixoshost)
+- [Hostname](#hostname)
+- [Sysctl](#sysctl)
+- [NTPClient](#ntpclient)
+- [LogSink](#logsink)
+
+routerd を初めて触る場合は、まず [概念](../concepts/what-is-routerd) を読んでから
+こちらに来てください。このページは概念ではなくフィールドリファレンスです。
 
 ## API グループ
 

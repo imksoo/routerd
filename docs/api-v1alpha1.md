@@ -22,6 +22,62 @@ The resource shape is intentionally Kubernetes-like:
 This page describes what each resource makes the router do, the spec fields
 that change that behavior, and the host artifacts that come out of it.
 
+## Quick index
+
+This is a long page. Jump to the kind you need:
+
+**Top-level**
+- `Router` (the top-level resource — see ["API groups"](#api-groups) below)
+- [Inventory](#inventory) (observation only)
+
+**Interfaces**
+- [Interface](#interface)
+- [PPPoEInterface](#pppoeinterface)
+
+**IPv4 addressing**
+- [IPv4StaticAddress](#ipv4staticaddress)
+- [IPv4DHCPAddress](#ipv4dhcpaddress)
+
+**IPv4 DHCP and DNS service (LAN-side)**
+- [IPv4DHCPServer / IPv4DHCPScope](#ipv4dhcpserver-and-ipv4dhcpscope)
+
+**IPv6 addressing and prefix delegation**
+- [IPv6PrefixDelegation](#ipv6prefixdelegation)
+- [IPv6DelegatedAddress](#ipv6delegatedaddress)
+- [IPv6DHCPAddress](#ipv6dhcpaddress)
+- [IPv6DHCPServer / IPv6DHCPScope](#ipv6dhcpserver-and-ipv6dhcpscope)
+- [SelfAddressPolicy](#selfaddresspolicy)
+- [DNSConditionalForwarder](#dnsconditionalforwarder)
+
+**DS-Lite (IPv6-only WAN with IPv4 over IPv6)**
+- [DSLiteTunnel](#dslitetunnel)
+
+**IPv4 routing, NAT, policy**
+- [HealthCheck](#healthcheck)
+- [IPv4DefaultRoutePolicy](#ipv4defaultroutepolicy)
+- [IPv4SourceNAT](#ipv4sourcenat)
+- [IPv4PolicyRoute](#ipv4policyroute)
+- [IPv4PolicyRouteSet](#ipv4policyrouteset)
+- [IPv4ReversePathFilter](#ipv4reversepathfilter)
+
+**MTU**
+- [PathMTUPolicy](#pathmtupolicy)
+
+**Firewall**
+- [Zone](#zone)
+- [FirewallPolicy](#firewallpolicy)
+- [ExposeService](#exposeservice)
+
+**System and host integration**
+- [NixOSHost](#nixoshost)
+- [Hostname](#hostname)
+- [Sysctl](#sysctl)
+- [NTPClient](#ntpclient)
+- [LogSink](#logsink)
+
+If you are new, read [Concepts](../concepts/what-is-routerd) first; this
+page is the field reference, not the introduction.
+
 ## API groups
 
 - `routerd.net/v1alpha1` for the top-level `Router`.
