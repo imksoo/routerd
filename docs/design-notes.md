@@ -21,6 +21,28 @@ section or remove it.
 
 ## 1. Verified Facts
 
+### 1.0 Source of Truth and Operation Path
+
+assert: routerd's source of truth is the YAML configuration plus the state and
+ownership records written by `routerd apply`. Operators should change router
+behavior by editing files and running apply, not by hand-editing generated
+files or nudging daemons outside the apply path. This keeps operational intent
+reviewable through git history, file diffs, apply output, and the local
+database.
+
+assert: Host services remain owned by the operating system's service manager.
+routerd should use `systemctl` on systemd hosts and `service` / rc.d on
+FreeBSD, instead of sending ad-hoc signals to long-running daemons as the
+normal control path. Direct signals are acceptable only as short-lived
+debugging probes, and the final verification must be repeated through
+`routerd apply --once`.
+
+assert: Renderer changes are not considered tested until the rendered files
+have passed through the same apply path that production uses. Checking
+`routerd render` output is useful, but it is only a preflight step; it does not
+exercise ownership records, service-manager behavior, dependency ordering, or
+the host's own diagnostics.
+
 ### 1.1 RFCs and Public Specifications
 
 - cite: RFC 8415 uses Solicit, Advertise, Request, and Reply for the normal

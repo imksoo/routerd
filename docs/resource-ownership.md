@@ -19,6 +19,30 @@ This page describes how routerd answers those questions. The local ownership
 ledger is central to question 2, and is part of the safety model — it is
 not just a cache.
 
+## Source of truth
+
+routerd is a file-driven router applier. The intended operation path is:
+
+1. Change the YAML configuration.
+2. Validate and inspect the plan.
+3. Run `routerd apply --once` or let the daemon perform the same apply pass.
+4. Inspect `routerctl describe` / `routerctl show`, service state, and packet
+   captures when needed.
+
+This is a deliberate design constraint. Operator intent should be recoverable
+from git history, file diffs, apply output, events, and the local state
+database. Generated files, service restarts, DHCP client behavior, and
+interface changes should therefore be produced through routerd resources and
+the apply path whenever the change is meant to become part of the router's
+configuration.
+
+The host operating system still owns service supervision. routerd should use
+the native service manager for concrete actions: `systemctl` on systemd hosts,
+and `service` / rc.d on FreeBSD. Directly sending HUP or other signals to a
+daemon is a debugging probe, not a configuration workflow. If such a probe is
+used while investigating a problem, the final state must be reproduced through
+YAML and `routerd apply` before the result is treated as valid.
+
 ## How apply works
 
 Each apply pass:

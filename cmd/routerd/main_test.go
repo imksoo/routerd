@@ -100,6 +100,31 @@ ifconfig_vtnet0_ipv6="inet6 accept_rtadv"
 	}
 }
 
+func TestFreeBSDProtectedIfnames(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{
+		Apply: api.ApplyPolicySpec{ProtectedInterfaces: []string{"mgmt"}},
+		Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "vtnet0", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "mgmt"},
+				Spec:     api.InterfaceSpec{IfName: "vtnet2", Managed: true},
+			},
+		},
+	}}
+	got := freeBSDProtectedIfnames(router)
+	if !got["vtnet2"] {
+		t.Fatalf("protected ifnames = %v, want vtnet2", got)
+	}
+	if got["vtnet0"] {
+		t.Fatalf("protected ifnames = %v, did not want vtnet0", got)
+	}
+}
+
 func TestReplaceManagedPPPoEBlocks(t *testing.T) {
 	current := "# existing\nold * value *\n# BEGIN routerd pppoe old\n\"u\" * \"old\" *\n# END routerd pppoe old\n"
 	got := replaceManagedPPPoEBlocks(current, []render.PPPoESecretEntry{

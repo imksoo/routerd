@@ -84,6 +84,16 @@ parity that the code does not yet provide.
   matching rc.conf values changed, or when the service is not running.
   routerd does not expose DHCPv6 Release control; that behavior is left to
   the packaged `dhcp6c` service.
+- FreeBSD apply uses the host's rc.d service entry points. Test changes with
+  `routerd apply --once`; do not validate renderer changes by sending signals
+  directly to `dhcp6c`, because that bypasses rc.d status checks, pid-file
+  handling, and startup diagnostics. If DHCPv6-PD must be restarted manually
+  during investigation, use `service dhcp6c stop` and `service dhcp6c start`
+  while capturing packets.
+- Interfaces listed in `spec.reconcile.protectedInterfaces` are not restarted
+  by FreeBSD `service netif restart <ifname>` during apply. routerd may still
+  update their rc.conf values, but it leaves the live management path alone so
+  a data-plane apply cannot drop operator access.
 - The FreeBSD PPPoE renderer uses `mpd5`. `PPPoEInterface` resources are
   rendered into `/usr/local/etc/mpd5/mpd.conf`, and managed sessions enable
   the `mpd5` rc.d service. Only mark the router that should actively hold a

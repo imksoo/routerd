@@ -2394,12 +2394,37 @@ func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, dhcp6cDUID
 		}
 	}
 	for _, ifname := range compactStringList(restartIfnames) {
+		if freeBSDProtectedIfnames(router)[ifname] {
+			changed = append(changed, "netif:skipped-protected:"+ifname)
+			continue
+		}
 		if err := runLogged("service", "netif", "restart", ifname); err != nil {
 			return changed, err
 		}
 		changed = append(changed, "netif:"+ifname)
 	}
 	return changed, nil
+}
+
+func freeBSDProtectedIfnames(router *api.Router) map[string]bool {
+	aliases := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			continue
+		}
+		aliases[res.Metadata.Name] = spec.IfName
+	}
+	protected := map[string]bool{}
+	for _, name := range effectiveApplyPolicy(router).ProtectedInterfaces {
+		if ifname := aliases[name]; ifname != "" {
+			protected[ifname] = true
+		}
+	}
+	return protected
 }
 
 func freeBSDRCValuesChanged(changed []string, prefix string) bool {
