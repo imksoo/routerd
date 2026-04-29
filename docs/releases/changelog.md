@@ -9,6 +9,10 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- NTT DHCPv6-PD profiles now omit systemd-networkd
+  `PrefixDelegationHint=` by default. The profile still assumes `/60`
+  delegation length, but the initial Solicit is kept closer to the
+  commercial-router packet shape observed in the lab.
 - DHCPv6 DUID handling now preserves explicit `duidRawData` overrides and
   restores real MAC-derived DUID-LL when the override is removed. FreeBSD KAME
   `dhcp6c` DUID files are backed up and rewritten when they differ from the
@@ -23,9 +27,8 @@ behavior changes and new resource shapes as the model takes shape.
   default to `always`.
 - Breaking: removed the HGW workaround fields
   `IPv6PrefixDelegation.spec.convergenceTimeout`, `spec.hintFromState`,
-  `spec.preferredLifetime`, and `spec.validLifetime`. routerd now renders
-  length-only PD hints and leaves DHCPv6 Renew/Rebind behavior to the OS
-  client.
+  `spec.preferredLifetime`, and `spec.validLifetime`. routerd leaves DHCPv6
+  Renew/Rebind behavior to the OS client.
 - CLI and control verbs now use `apply`: `routerd reconcile`,
   `routerctl reconcile`, and the control API apply action were renamed to
   `routerd apply`, `routerctl apply`, and `/apply`. The YAML

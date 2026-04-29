@@ -65,7 +65,7 @@ MAC アドレス、DUID、宅内アドレスは文書用の値に置き換えて
 | サーバー識別子 | measure: Server Identifier は DUID-LL でした。文書では `<HGW-DUID>` とします。 |
 | 寿命 | measure: Reply の T1 は 7200 秒、T2 は 12600 秒、優先寿命と有効寿命は 14400 秒でした。 |
 | 委譲長 | measure: 下流ルーターには `/60` が配られました。これは HGW が上流側で受けたより大きなプレフィックスを分割したものと考えます。 |
-| ヒント | measure: 正確なプレフィックスヒント付きの Solicit でも取得できました。したがって、PR-400NE がすべてのヒントを拒否しているわけではありません。 |
+| ヒント | measure: 正確なプレフィックスヒント付きの Solicit でも取得できました。したがって、PR-400NE がすべてのヒントを拒否しているわけではありません。ただし、動作中ルーターの初回 Solicit にはヒントが無かったため、NTT 系プロファイルでは既定でヒントを出しません。 |
 | Release | observe/assert: 不要な Release はリース表を揺らす可能性があります。`IPv6PrefixDelegation.spec.releasePolicy` でこの方針を明示し、NTT 系プロファイルでは Release を送らない設定を既定にします。 |
 
 検証で使った文書用の対応表:
@@ -87,8 +87,8 @@ observe: PR-400NE が委譲している動作中ルーターと、routerd 検証
 | --- | --- | --- | --- | --- |
 | DUID 種別 | DUID-LL | DUID-LL | DUID-LL | DUID-LL |
 | IA_PD IAID | `<COMMERCIAL-IAID>` | `0` | `<NETWORKD-IAID>` | `1` |
-| プレフィックスヒント | 無し | `2001:db8:0:1220::/60` | `2001:db8:0:1240::/60` | `2001:db8:0:1230::/60` |
-| ヒント寿命 | 無し | `14400/14400` | `0/0` | `0/0` |
+| プレフィックスヒント | 無し | 整理後は無し | 整理後は無し | 実験中は `2001:db8:0:1230::/60` |
+| ヒント寿命 | 無し | 整理後は無し | 整理後は無し | 実験中は `0/0` |
 | 要求オプション | 無し | DNS のみ | DNS、SNTP、NTP など | SIP、DNS、SNTP、NTP など |
 | 再設定許可 | あり | 無し | 無し | あり |
 | クライアント FQDN | 無し | 無し | あり | 無し |
@@ -97,6 +97,10 @@ observe: PR-400NE が委譲している動作中ルーターと、routerd 検証
 assert: DUID-LL は必須に近い前提として扱います。一方で、ヒント、要求オプション、
 クライアント FQDN の有無は、単独では成功/失敗を説明しません。FreeBSD/KAME と
 Ubuntu/systemd-networkd は異なる Solicit でも取得できました。
+
+assert: `ntt-ngn-direct-hikari-denwa` と `ntt-hgw-lan-pd` では、正確なヒントも
+長さだけのヒントも既定では送りません。`prefixLength` は routerd が期待する形を
+表す値として残しますが、systemd-networkd へは `PrefixDelegationHint=` を出力しません。
 
 observe: NixOS/odhcp6c 実験では、PR-400NE から Advertise が届いたにもかかわらず、
 Request/Reply の成立と OS へのプレフィックス反映まで進みませんでした。取得中に
@@ -145,9 +149,9 @@ assert: 復帰時は次を行います。
 
 - odhcp6c のサービス、設定、フック、一時 unit を消す。
 - `/var/lib/systemd/network/` の DHCPv6 lease state を消す。
-- systemd-networkd のみで DUID-LL と安定 IAID を使う。
-- 最初は IX2215 に近い「ヒントなし、要求オプション最小」で試す。
-- 取れなければ文書用 `2001:db8:0:1230::/60` 相当のヒントを明示して再試行する。
+- systemd-networkd のみで DUID-LL を使い、ヒントは出さない。
+- IAID は安定させる。odhcp6c の取引状態や過去の networkd lease ファイルを
+  実験後に持ち越さない。
 - PR-400NE 側に古い DUID/IAID 紐付けが残る可能性があるため、必要ならリースの
   失効を待つ。
 

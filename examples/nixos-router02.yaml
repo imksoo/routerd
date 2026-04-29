@@ -218,7 +218,7 @@ spec:
         name: lan-ipv4
       spec:
         interface: lan
-        address: 192.168.10.2/24
+        address: 192.168.160.2/24
         exclusive: false
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -323,7 +323,7 @@ spec:
           - sourceAddress
           - destinationAddress
         sourceCIDRs:
-          - 192.168.10.0/24
+          - 192.168.160.0/24
         destinationCIDRs:
           - 0.0.0.0/0
         targets:
@@ -353,7 +353,7 @@ spec:
       spec:
         mode: priority
         sourceCIDRs:
-          - 192.168.10.0/24
+          - 192.168.160.0/24
         destinationCIDRs:
           - 0.0.0.0/0
         candidates:
@@ -376,7 +376,7 @@ spec:
       spec:
         outboundInterface: ds-lite-a
         sourceCIDRs:
-          - 192.168.10.0/24
+          - 192.168.160.0/24
         translation:
           type: interfaceAddress
           portMapping:
@@ -391,7 +391,7 @@ spec:
       spec:
         outboundInterface: ds-lite-b
         sourceCIDRs:
-          - 192.168.10.0/24
+          - 192.168.160.0/24
         translation:
           type: interfaceAddress
           portMapping:
@@ -406,7 +406,7 @@ spec:
       spec:
         outboundInterface: ds-lite-c
         sourceCIDRs:
-          - 192.168.10.0/24
+          - 192.168.160.0/24
         translation:
           type: interfaceAddress
           portMapping:
@@ -544,8 +544,8 @@ spec:
       spec:
         server: dhcp4
         interface: lan
-        rangeStart: 192.168.10.120
-        rangeEnd: 192.168.10.129
+        rangeStart: 192.168.160.120
+        rangeEnd: 192.168.160.129
         leaseTime: 12h
         routerSource: interfaceAddress
         dnsSource: self

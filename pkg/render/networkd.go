@@ -179,7 +179,7 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 		buf.WriteString("UseDelegatedPrefix=yes\n")
 		buf.WriteString("WithoutRA=solicit\n")
 	}
-	if source.PrefixLength != 0 {
+	if source.PrefixLength != 0 && !suppressIPv6PDPrefixHint(source.Profile) {
 		hint := source.PrefixHint
 		if hint == "" {
 			hint = fmt.Sprintf("::/%d", source.PrefixLength)
@@ -198,6 +198,15 @@ func EffectiveIPv6PDReleasePolicy(profile, configured string) string {
 		return "never"
 	default:
 		return "always"
+	}
+}
+
+func suppressIPv6PDPrefixHint(profile string) bool {
+	switch profile {
+	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -474,8 +474,10 @@ How routerd behaves:
   - `ntt-hgw-lan-pd` is for a router behind an NTT home gateway that
     delegates `/60` prefixes to the LAN side.
   Both NTT profiles request IA_PD only, disable rapid commit, use a
-  link-layer DUID, force DHCPv6 Solicit when needed, and default the prefix
-  hint to `/60` unless `prefixLength` is set explicitly.
+  link-layer DUID, force DHCPv6 Solicit when needed, and default the expected
+  delegated length to `/60`. For systemd-networkd, routerd deliberately omits
+  `PrefixDelegationHint=` for these profiles so the first Solicit stays close
+  to commercial router behavior observed in the lab.
 - `spec.releasePolicy` controls whether the OS DHCPv6 client sends Release
   when it stops. Values are `default`, `never`, and `always`; an omitted value
   is the same as `default`. The NTT profiles default to `never`, so

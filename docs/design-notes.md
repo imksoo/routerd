@@ -66,7 +66,7 @@ All lab-specific values below are documentation replacements.
 | Server identifier | measure: The Server Identifier was DUID-LL. This document calls it `<HGW-DUID>`. |
 | Lifetimes | measure: Reply contained T1 7200 seconds, T2 12600 seconds, and preferred/valid lifetimes of 14400 seconds. |
 | Delegated length | measure: Downstream routers received `/60` prefixes. Treat this as HGW subdivision of a larger upstream prefix. |
-| Prefix hints | measure: A client succeeded with an exact prefix hint, so PR-400NE does not reject every prefix hint. |
+| Prefix hints | measure: A client succeeded with an exact prefix hint, so PR-400NE does not reject every prefix hint. The NTT profile nevertheless omits prefix hints by default because the working commercial router's initial Solicit did not include one. |
 | Release | observe/assert: Unnecessary Release may disturb the lease table. `IPv6PrefixDelegation.spec.releasePolicy` makes this explicit; NTT profiles default to no Release. |
 
 Documentation replacements used in examples:
@@ -88,8 +88,8 @@ machines. Values are redacted or replaced.
 | --- | --- | --- | --- | --- |
 | DUID type | DUID-LL | DUID-LL | DUID-LL | DUID-LL |
 | IA_PD IAID | `<COMMERCIAL-IAID>` | `0` | `<NETWORKD-IAID>` | `1` |
-| Prefix hint | none | `2001:db8:0:1220::/60` | `2001:db8:0:1240::/60` | `2001:db8:0:1230::/60` |
-| Hint lifetimes | none | `14400/14400` | `0/0` | `0/0` |
+| Prefix hint | none | none after cleanup | none after cleanup | `2001:db8:0:1230::/60` during experiment |
+| Hint lifetimes | none | none after cleanup | none after cleanup | `0/0` during experiment |
 | ORO | none | DNS only | DNS, SNTP, NTP, and related options | SIP, DNS, SNTP, NTP, and related options |
 | Elapsed Time | present | present | present | present |
 | Reconfigure Accept | present | absent | absent | present |
@@ -99,6 +99,11 @@ machines. Values are redacted or replaced.
 assert: DUID-LL is a strong default for NTT profiles. Prefix hints, ORO content,
 and Client FQDN do not by themselves explain success or failure: FreeBSD/KAME
 and Ubuntu/systemd-networkd succeeded with different packet shapes.
+
+assert: The `ntt-ngn-direct-hikari-denwa` and `ntt-hgw-lan-pd` profiles should
+not send exact or length-only prefix hints by default. `prefixLength` remains
+part of routerd's expected-shape model, but the systemd-networkd renderer omits
+`PrefixDelegationHint=` for these profiles.
 
 observe: In the NixOS/odhcp6c experiment, PR-400NE sent Advertise, but the
 client did not complete Request/Reply or install the prefix. The experiment
@@ -149,9 +154,9 @@ assert: Rebuild steps:
 - Remove odhcp6c services, configuration, hooks, and transient units.
 - Remove `/var/lib/systemd/network/` DHCPv6 lease state.
 - Use only systemd-networkd with DUID-LL and a stable IAID.
-- First try a commercial-router-like Solicit with no prefix hint and minimal
-  ORO.
-- If that fails, retry with the documented `2001:db8:0:1230::/60` hint.
+- Use only systemd-networkd with DUID-LL and no prefix hint.
+- Keep IAID stable. Avoid carrying over odhcp6c transaction state or stale
+  networkd lease files from experiments.
 - If stale PR-400NE binding is suspected, wait for lease expiry or clear it
   administratively.
 

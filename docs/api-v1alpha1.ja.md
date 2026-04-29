@@ -383,7 +383,7 @@ spec:
   - `ntt-ngn-direct-hikari-denwa`: NTT NGN/ONU に直結し、ひかり電話契約を使う構成。
   - `ntt-hgw-lan-pd`: NTT のホームゲートウェイの LAN 側につなぎ、`/60` 単位で再委譲を受ける構成。
 
-  どちらの NTT 系プロファイルも IA_PD のみを要求し、rapid commit を無効化、リンクレイヤ DUID を使用、必要に応じて DHCPv6 Solicit を強制し、`prefixLength` を明示しなければ `/60` をヒントにします。
+  どちらの NTT 系プロファイルも IA_PD のみを要求し、Rapid Commit を無効にし、リンクレイヤ DUID を使い、必要に応じて DHCPv6 Solicit を強制します。委譲される長さの既定は `/60` ですが、systemd-networkd では `PrefixDelegationHint=` をあえて出力しません。検証環境で観測した商用ルーターの初回 Solicit に近づけるためです。
 - `spec.releasePolicy` は、OS 側の DHCPv6 クライアントが停止時に Release を送るかどうかを指定します。値は `default`、`never`、`always` です。省略時は `default` と同じです。NTT 系プロファイルでは `never` が既定になり、systemd-networkd には `SendRelease=no`、FreeBSD の `dhcp6c` には `-n` を出力します。それ以外のプロファイルでは `always` が既定です。停止時に上流側の割り当てを解放したい場合だけ、`always` を明示します。
 - routerd は反映のたびに、観測できたプレフィックス委譲の状態をローカルの状態保存領域にある `ipv6PrefixDelegation.<name>.lease` へ記録します。この JSON 値には、現在のプレフィックス、最後に見えたプレフィックス、観測した DUID、IAID、期待される DUID、最後に見えた時刻を保存します。以前の状態ファイルで使っていた `ipv6PrefixDelegation.<name>.lastPrefix` などの個別キーは、読み込み時にこの値へ移します。インターフェース名、設定されたプレフィックス長、クライアント種別、プロファイルは、DHCPv6 リースそのものではなく routerd の設定を表すため、別の状態値として残します。下流側の委譲プレフィックスが見えなくなった場合は `currentPrefix` を消しますが、`lastPrefix` は運用者が確認できるように残します。レンダラはこの記録を正確なプレフィックスヒントとして再利用しません。望む定義は `routerctl get ipv6pd` で確認し、現在の委譲プレフィックスと最後に見えた委譲プレフィックスを取り違えず調べるには `routerctl describe ipv6pd/<名前>` を使います。機械処理向けにまとめて見る場合は `routerctl show ipv6pd -o yaml --events` を使います。
 - systemd-networkd と FreeBSD の `dhcp6c` では、取得できる範囲で DHCP の識別情報もリース記録に残します。`dhcp6c` では `/var/db/dhcp6c_duid` から DUID を読み取り、IAID は設定された `iaid`、または `dhcp6c` の既定値である `0` から決めます。NTT 系プロファイルでは、上流インターフェースの MAC アドレスから DHCPv6 のリンクレイヤ DUID を計算し、期待される DUID として残します。これらは望ましい設定ではなく、観測した状態の記憶です。
