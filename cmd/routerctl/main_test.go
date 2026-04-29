@@ -184,6 +184,50 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 	}
 }
 
+func TestDescribeInventoryHost(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeShowConfig(t, dir)
+	dbPath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if _, err := store.BeginGeneration("test"); err != nil {
+		t.Fatalf("begin generation: %v", err)
+	}
+	status := map[string]any{
+		"os": map[string]any{
+			"goos":          "linux",
+			"kernelName":    "Linux",
+			"kernelRelease": "6.8.0-test",
+		},
+		"virtualization": map[string]any{"type": "kvm"},
+		"serviceManager": "systemd",
+		"commands":       map[string]any{"nft": true, "pf": false},
+	}
+	if err := store.SaveObjectStatus("routerd.net/v1alpha1", "Inventory", "host", status); err != nil {
+		t.Fatalf("save inventory: %v", err)
+	}
+	if err := store.RecordEvent("routerd.net/v1alpha1", "Inventory", "host", "Normal", "InventoryObserved", "host inventory changed"); err != nil {
+		t.Fatalf("record event: %v", err)
+	}
+	if err := store.FinishGeneration(0, "Healthy", nil); err != nil {
+		t.Fatalf("finish generation: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = run([]string{"describe", "inventory/host", "--config", configPath, "--state-file", dbPath, "--ledger-file", dbPath}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("describe inventory: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"Kind:", "Inventory", "Currently observable:", "OS:", "linux", "Virtualization:", "kvm", "Service Manager:", "systemd", "InventoryObserved"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("describe inventory output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestDefaultStatePathUsesPlatformStateDir(t *testing.T) {
 	if got := defaultStatePath(); got == "" || filepath.Base(got) != "routerd.db" {
 		t.Fatalf("default state path = %q", got)

@@ -8,6 +8,10 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
 
 ## 未リリース
 
+- 反映処理の開始時にホスト情報を収集し、SQLite の objects 表へ
+  `routerd.net/v1alpha1/Inventory/host` として保存するようにしました。
+  `routerctl describe inventory/host` で OS、カーネル、仮想化、サービス管理方式、
+  DMI、コマンドの有無を確認できます。
 - `IPv6PrefixDelegation.spec.releasePolicy` を追加しました。DHCPv6 クライアントが停止時に Release を送るかどうかを設定できます。NTT 系プロファイルでは `never` が既定になり、systemd-networkd には `SendRelease=no`、FreeBSD の `dhcp6c` には `-n` を出力します。それ以外のプロファイルでは `always` が既定です。
 - 破壊的変更: ホームゲートウェイ回避用だった
   `IPv6PrefixDelegation.spec.convergenceTimeout`、`spec.hintFromState`、

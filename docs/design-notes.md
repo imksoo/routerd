@@ -256,7 +256,28 @@ The `sqlite3` command is not required to run routerd, but it is useful for
 human debugging. `jq` remains because trusted local plugins use JSON through
 standard input and output.
 
-### 4.3 Future Design Work
+### 4.3 Host Inventory
+
+routerd records one observed host object at apply time:
+`routerd.net/v1alpha1/Inventory/host`. The status JSON contains the Go OS
+name, kernel information from `uname`, virtualization detection, best-effort
+DMI values, the detected service manager, and availability of selected host
+commands such as `nft`, `pf`, `dnsmasq`, `dhcp6c`, and `sysctl`.
+
+assert: Inventory is an observed object, not a desired resource. It does not
+appear in normal authored `spec.resources`, and renderers do not use it in the
+first implementation. The reason to record it now is to make later platform
+decisions explicit: physical versus virtual hosts, systemd versus rc.d, and
+host-level prerequisites such as bridge multicast behavior should be based on
+observed facts rather than guessed in each renderer.
+
+Use:
+
+```sh
+routerctl describe inventory/host
+```
+
+### 4.4 Future Design Work
 
 - Improve `IPv6PrefixDelegation` status output for current prefix, last prefix,
   DUID, IAID, T1/T2, lifetimes, last renewal attempt, and warnings.

@@ -641,6 +641,35 @@ func TestFreeBSDDHCP6CReleasePolicy(t *testing.T) {
 	}
 }
 
+func TestRecordHostInventoryState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := store.BeginGeneration("test"); err != nil {
+		t.Fatalf("begin generation: %v", err)
+	}
+	if err := recordHostInventoryState(store); err != nil {
+		t.Fatalf("record inventory: %v", err)
+	}
+	status := store.ObjectStatus(api.RouterAPIVersion, "Inventory", "host")
+	if status == nil || status["os"] == nil || status["commands"] == nil {
+		t.Fatalf("inventory status = %#v", status)
+	}
+	events := store.Events(api.RouterAPIVersion, "Inventory", "host", 10)
+	if len(events) != 1 || events[0].Reason != "InventoryObserved" {
+		t.Fatalf("events = %#v", events)
+	}
+	if err := recordHostInventoryState(store); err != nil {
+		t.Fatalf("record inventory again: %v", err)
+	}
+	events = store.Events(api.RouterAPIVersion, "Inventory", "host", 10)
+	if len(events) != 1 {
+		t.Fatalf("unchanged inventory should not add event: %#v", events)
+	}
+}
+
 func TestParseRFC4361ClientID(t *testing.T) {
 	identity := parseRFC4361ClientID("ffca53095a0003000102005e102030")
 	if identity.IAID != "ca53095a" {

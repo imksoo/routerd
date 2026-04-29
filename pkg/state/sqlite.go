@@ -442,6 +442,22 @@ func (s *SQLiteStore) ObjectGeneration(apiVersion, kind, name string) int64 {
 	return generation.Int64
 }
 
+func (s *SQLiteStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
+	return s.saveStatus(objectRef{APIVersion: apiVersion, Kind: kind, Name: name}, objectStatus(status))
+}
+
+func (s *SQLiteStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	status, _, err := s.loadStatus(apiVersion, kind, name)
+	if err != nil {
+		return nil
+	}
+	out := map[string]any{}
+	for key, value := range status {
+		out[key] = value
+	}
+	return out
+}
+
 func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, message string) error {
 	_, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, eventType, reason, message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano))

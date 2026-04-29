@@ -49,8 +49,31 @@ Firewall:
 System:
 `Hostname`, `Sysctl`, `NTPClient`, `NixOSHost`, `LogSink`.
 
+Observed-only:
+`Inventory` is written by routerd into the state database as
+`routerd.net/v1alpha1/Inventory/host`. It is not normally written in
+`spec.resources`; inspect it with `routerctl describe inventory/host`.
+
 The set is small on purpose. New kinds are added when the router gains a new
 behavior, not as a generic platform.
+
+### Inventory
+
+`Inventory` records what routerd can observe about the local host before an
+apply run changes router resources. It has no desired `spec`; its `status`
+contains OS and kernel information, virtualization detection, best-effort DMI
+fields, the detected service manager, and whether selected commands are
+available.
+
+```sh
+routerctl describe inventory/host
+routerctl show inventory/host -o yaml
+```
+
+The first implementation records the value only. Renderers do not consume it
+yet. Later platform-specific render decisions can use the same state object
+without guessing whether the host is physical, virtual, systemd-based, or
+rc.d-based.
 
 ## Top-Level Apply Policy
 

@@ -36,7 +36,26 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 システム:
 `Hostname`、`Sysctl`、`NTPClient`、`NixOSHost`、`LogSink`。
 
+観測専用:
+`Inventory` は routerd が状態データベースへ書き込む
+`routerd.net/v1alpha1/Inventory/host` です。通常は `spec.resources` には書きません。
+確認には `routerctl describe inventory/host` を使います。
+
 種類は意識的に絞っています。汎用プラットフォームではなく、ルータとして新しい振る舞いが必要になったときだけ種類を増やします。
+
+### Inventory
+
+`Inventory` は、反映処理の前に routerd がローカルホストから観測できた情報を記録します。
+望ましい状態を表す `spec` はありません。`status` には OS とカーネル、仮想化の判定、
+取得できた DMI 情報、サービス管理方式、いくつかのコマンドが使えるかどうかを保存します。
+
+```sh
+routerctl describe inventory/host
+routerctl show inventory/host -o yaml
+```
+
+この段階では記録するだけで、レンダラはまだ参照しません。次の段階で、物理機か仮想機か、
+systemd か rc.d か、といった違いを推測ではなく観測値に基づいて扱えるようにします。
 
 ## 反映方針
 

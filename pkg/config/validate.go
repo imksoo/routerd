@@ -559,6 +559,13 @@ func validateResource(res api.Resource) error {
 				}
 			}
 		}
+	case "Inventory":
+		if res.APIVersion != api.RouterAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.RouterAPIVersion)
+		}
+		if res.Metadata.Name != "host" {
+			return fmt.Errorf("%s metadata.name must be host", res.ID())
+		}
 	case "Interface":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

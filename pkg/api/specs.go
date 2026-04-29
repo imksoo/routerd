@@ -89,6 +89,8 @@ type NixOSRouterdServiceSpec struct {
 	ExtraFlags    []string `yaml:"extraFlags,omitempty" json:"extraFlags,omitempty"`
 }
 
+type InventorySpec struct{}
+
 type InterfaceSpec struct {
 	IfName  string `yaml:"ifname" json:"ifname"`
 	AdminUp bool   `yaml:"adminUp,omitempty" json:"adminUp,omitempty"`
@@ -469,6 +471,10 @@ func (r Resource) NTPClientSpec() (NTPClientSpec, error) {
 
 func (r Resource) NixOSHostSpec() (NixOSHostSpec, error) {
 	return specAs[NixOSHostSpec](r)
+}
+
+func (r Resource) InventorySpec() (InventorySpec, error) {
+	return specAs[InventorySpec](r)
 }
 
 func (r Resource) InterfaceSpec() (InterfaceSpec, error) {

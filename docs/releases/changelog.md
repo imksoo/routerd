@@ -9,6 +9,10 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- Host OS inventory is now collected at apply time and stored as
+  `routerd.net/v1alpha1/Inventory/host` in the SQLite objects table.
+  `routerctl describe inventory/host` shows OS, kernel, virtualization,
+  service-manager, DMI, and command availability observations.
 - `IPv6PrefixDelegation.spec.releasePolicy` was added to control DHCPv6
   Release behavior. NTT profiles default to `never`, rendering
   systemd-networkd `SendRelease=no` and FreeBSD `dhcp6c -n`; other profiles

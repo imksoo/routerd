@@ -252,6 +252,13 @@ func describeCommand(args []string, stdout, stderr io.Writer) error {
 	if name == "" {
 		return errors.New("describe requires <kind>/<name>")
 	}
+	if kind == "Inventory" {
+		row, err := inventoryShowResource(store, name, opts.EventsLimit)
+		if err != nil {
+			return err
+		}
+		return writeDescribe(stdout, row, store)
+	}
 	resources := selectResources(router.Spec.Resources, kind, name)
 	if len(resources) == 0 {
 		return resourceSelectionError(router.Spec.Resources, kind, name)
@@ -358,6 +365,22 @@ func showCommand(args []string, stdout, stderr io.Writer) error {
 	kind, name, err := parseShowTarget(opts.Target)
 	if err != nil {
 		return err
+	}
+	if kind == "Inventory" {
+		rows, err := inventoryShowResources(store, name, opts.Events)
+		if err != nil {
+			return err
+		}
+		switch opts.Output {
+		case "", "table":
+			return writeShowTable(stdout, rows, opts)
+		case "json":
+			return writeJSON(stdout, rows)
+		case "yaml":
+			return writeYAML(stdout, rows)
+		default:
+			return fmt.Errorf("unsupported output %q", opts.Output)
+		}
 	}
 	resources := selectResources(router.Spec.Resources, kind, name)
 	if len(resources) == 0 {
@@ -523,6 +546,8 @@ func canonicalShowKind(kind string) string {
 		"zones":                "Zone",
 		"hostname":             "Hostname",
 		"host":                 "Hostname",
+		"inventory":            "Inventory",
+		"inv":                  "Inventory",
 		"route":                "IPv4PolicyRouteSet",
 		"routeset":             "IPv4PolicyRouteSet",
 		"ipv4route":            "IPv4PolicyRouteSet",
@@ -621,6 +646,45 @@ func buildShowResources(router *api.Router, resources []api.Resource, store rout
 		rows = append(rows, item)
 	}
 	return rows, nil
+}
+
+func inventoryShowResources(store routerstate.Store, name string, includeEvents bool) ([]showResource, error) {
+	if name != "" && name != "host" {
+		return nil, fmt.Errorf("Inventory/%s not found", name)
+	}
+	row, err := inventoryShowResource(store, "host", 20)
+	if err != nil {
+		return nil, err
+	}
+	if !includeEvents {
+		row.Events = nil
+	}
+	return []showResource{row}, nil
+}
+
+func inventoryShowResource(store routerstate.Store, name string, eventsLimit int) (showResource, error) {
+	objectStore, ok := store.(routerstate.ObjectStatusStore)
+	if !ok {
+		return showResource{}, errors.New("inventory requires SQLite state storage")
+	}
+	status := objectStore.ObjectStatus(api.RouterAPIVersion, "Inventory", name)
+	if len(status) == 0 {
+		return showResource{}, fmt.Errorf("Inventory/%s not found", name)
+	}
+	res := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Inventory"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec:     api.InventorySpec{},
+	}
+	return showResource{
+		APIVersion: res.APIVersion,
+		Kind:       res.Kind,
+		Name:       res.Metadata.Name,
+		Spec:       res.Spec,
+		Observed:   status,
+		State:      status,
+		Events:     eventsForResourceLimit(store, res, eventsLimit),
+	}, nil
 }
 
 func adoptOnlyShowResources(router *api.Router, rows []showResource, ledger resource.Ledger) ([]showResource, error) {
@@ -1006,6 +1070,14 @@ func writeDescribe(stdout io.Writer, row showResource, store routerstate.Store) 
 }
 
 func writeDescribeStatus(w io.Writer, row showResource) {
+	if row.Kind == "Inventory" {
+		fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(len(row.State) > 0))
+		fmt.Fprintf(w, "OS:\t%s\n", displayCell(nestedString(row.State, "os", "goos")))
+		fmt.Fprintf(w, "Kernel:\t%s %s\n", displayCell(nestedString(row.State, "os", "kernelName")), displayCell(nestedString(row.State, "os", "kernelRelease")))
+		fmt.Fprintf(w, "Virtualization:\t%s\n", displayCell(nestedString(row.State, "virtualization", "type")))
+		fmt.Fprintf(w, "Service Manager:\t%s\n", displayCell(stringValue(row.State["serviceManager"])))
+		return
+	}
 	lease, ok := describePDLease(row.State)
 	if ok {
 		fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(lease.CurrentPrefix != ""))
@@ -1022,6 +1094,25 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 	}
 	fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(observable))
 	fmt.Fprintf(w, "Last observed at:\t-\n")
+}
+
+func nestedString(values map[string]any, keys ...string) string {
+	var current any = values
+	for _, key := range keys {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = m[key]
+	}
+	return stringValue(current)
+}
+
+func stringValue(value any) string {
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return ""
 }
 
 func describePDLease(state map[string]any) (routerstate.PDLease, bool) {

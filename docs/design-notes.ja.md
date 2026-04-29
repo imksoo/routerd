@@ -254,7 +254,27 @@ sqlite3 /var/lib/routerd/routerd.db \
 routerd の実行に `sqlite3` コマンドは不要です。人が状態を調べる時には便利です。
 `jq` は、信頼済みローカルプラグインが JSON を扱うために残します。
 
-### 4.3 今後の設計作業
+### 4.3 ホスト情報
+
+routerd は反映処理の開始時に、観測したホスト情報を
+`routerd.net/v1alpha1/Inventory/host` として保存します。状態 JSON には
+Go の OS 名、`uname` から得たカーネル情報、仮想化の判定、取得できた DMI 情報、
+サービス管理方式、`nft`、`pf`、`dnsmasq`、`dhcp6c`、`sysctl` などのコマンドが
+使えるかどうかを記録します。
+
+assert: Inventory は観測値であり、望ましい設定を表すリソースではありません。
+通常の `spec.resources` には書かず、最初の実装ではレンダラも参照しません。
+今ここで保存する理由は、後で物理機か仮想機か、systemd か rc.d か、ブリッジの
+マルチキャスト設定のようなホスト前提を、レンダラごとの推測ではなく観測事実として
+扱えるようにするためです。
+
+確認には次を使います。
+
+```sh
+routerctl describe inventory/host
+```
+
+### 4.4 今後の設計作業
 
 - `IPv6PrefixDelegation` の状態表示を強化し、現在値、最後に見えた値、
   DUID、IAID、T1/T2、寿命、最後の更新試行、警告を明確に出します。

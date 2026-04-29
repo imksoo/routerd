@@ -49,6 +49,11 @@ type ObjectGenerationReader interface {
 	ObjectGeneration(apiVersion, kind, name string) int64
 }
 
+type ObjectStatusStore interface {
+	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
+	ObjectStatus(apiVersion, kind, name string) map[string]any
+}
+
 type Event struct {
 	ID         int64     `json:"id" yaml:"id"`
 	APIVersion string    `json:"apiVersion" yaml:"apiVersion"`

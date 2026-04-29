@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
 	"routerd/pkg/eventlog"
+	"routerd/pkg/inventory"
 	"routerd/pkg/observe"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
@@ -467,6 +469,29 @@ func recordWarningEvents(router *api.Router, store routerstate.Store, warnings [
 	}
 }
 
+func recordHostInventoryState(store routerstate.Store) error {
+	objectStore, ok := store.(routerstate.ObjectStatusStore)
+	if !ok {
+		return nil
+	}
+	status := inventoryStatusMap(inventory.Collect())
+	previous := objectStore.ObjectStatus(api.RouterAPIVersion, "Inventory", "host")
+	if err := objectStore.SaveObjectStatus(api.RouterAPIVersion, "Inventory", "host", status); err != nil {
+		return err
+	}
+	if recorder, ok := store.(routerstate.EventRecorder); ok && !reflect.DeepEqual(previous, status) {
+		_ = recorder.RecordEvent(api.RouterAPIVersion, "Inventory", "host", "Normal", "InventoryObserved", "host inventory changed")
+	}
+	return nil
+}
+
+func inventoryStatusMap(status inventory.Status) map[string]any {
+	data, _ := json.Marshal(status)
+	out := map[string]any{}
+	_ = json.Unmarshal(data, &out)
+	return out
+}
+
 func compactStringList(values []string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -498,6 +523,11 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 				_ = store.FinishGeneration(generation, "Errored", nil)
 			}
 		}()
+	}
+	if !opts.DryRun {
+		if err := recordHostInventoryState(stateStore); err != nil {
+			return nil, err
+		}
 	}
 	stateChanges, err := recordObservedPrefixDelegationState(router, stateStore)
 	if err != nil {
