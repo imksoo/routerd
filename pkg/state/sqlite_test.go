@@ -19,7 +19,6 @@ func TestSQLiteStorePersistsAndSupportsJSON1(t *testing.T) {
 	lease := PDLease{
 		LastPrefix:     "2001:db8:1200:1210::/60",
 		LastObservedAt: time.Now().UTC().Format(time.RFC3339),
-		ValidLifetime:  "14400",
 	}
 	store.Set("ipv6PrefixDelegation.wan-pd.lease", EncodePDLease(lease), "test")
 	if err := store.Close(); err != nil {

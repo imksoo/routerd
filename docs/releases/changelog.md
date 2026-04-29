@@ -9,10 +9,11 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
-- `IPv6PrefixDelegation.spec.preferredLifetime` and `spec.validLifetime` can
-  now tune FreeBSD KAME `dhcp6c` prefix-hint lifetimes. NTT profiles default
-  those hint lifetimes to `14400 14400` instead of `infinity` to match the
-  observed PR-400NE DHCPv6-PD lease lifetime.
+- Breaking: removed the HGW workaround fields
+  `IPv6PrefixDelegation.spec.convergenceTimeout`, `spec.hintFromState`,
+  `spec.preferredLifetime`, and `spec.validLifetime`. routerd now renders
+  length-only PD hints and leaves DHCPv6 Renew/Rebind behavior to the OS
+  client.
 - CLI and control verbs now use `apply`: `routerd reconcile`,
   `routerctl reconcile`, and the control API apply action were renamed to
   `routerd apply`, `routerctl apply`, and `/apply`. The YAML
@@ -34,8 +35,6 @@ behavior changes and new resource shapes as the model takes shape.
 - FreeBSD/KAME `dhcp6c` DUID files are now managed for NTT profiles whose
   effective DUID type is `link-layer`; non-DUID-LL files are backed up before
   routerd writes a MAC-derived DUID-LL.
-- Apply now asks the OS DHCPv6-PD client to renew once when a remembered
-  lease is missing locally but still within its recorded valid lifetime.
 - FreeBSD remote install hardening: `ROUTERD_OS=freebsd` now builds
   FreeBSD binaries and uses FreeBSD runtime directories even when invoked
   from a Linux workstation.
@@ -44,9 +43,6 @@ behavior changes and new resource shapes as the model takes shape.
   the packaged client.
 - FreeBSD PPPoE rendering now emits `mpd5` configuration and can start the
   `mpd5` rc.d service for managed `PPPoEInterface` sessions.
-- `IPv6PrefixDelegation.spec.convergenceTimeout` keeps recently observed
-  delegated prefixes stable while DHCPv6-PD is converging; NTT profiles
-  default this grace period to five minutes.
 - FreeBSD apply now observes delegated prefixes from downstream
   `ifconfig` output, applies stable `IPv6DelegatedAddress` aliases, and avoids
   restarting `dhcp6c` unless its configuration changed or the service is down.

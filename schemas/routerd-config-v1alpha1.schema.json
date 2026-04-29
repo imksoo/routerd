@@ -1092,9 +1092,6 @@
                       "client": {
                         "type": "string"
                       },
-                      "convergenceTimeout": {
-                        "type": "string"
-                      },
                       "duidRawData": {
                         "type": "string"
                       },
@@ -1108,16 +1105,10 @@
                         ],
                         "type": "string"
                       },
-                      "hintFromState": {
-                        "type": "boolean"
-                      },
                       "iaid": {
                         "type": "string"
                       },
                       "interface": {
-                        "type": "string"
-                      },
-                      "preferredLifetime": {
                         "type": "string"
                       },
                       "prefixLength": {
@@ -1135,9 +1126,6 @@
                       },
                       "required": {
                         "type": "boolean"
-                      },
-                      "validLifetime": {
-                        "type": "string"
                       }
                     },
                     "required": [

@@ -2,26 +2,17 @@ package state
 
 import (
 	"encoding/json"
-	"net/netip"
-	"strconv"
 	"strings"
-	"time"
 )
 
 type PDLease struct {
-	CurrentPrefix      string `json:"currentPrefix,omitempty"`
-	LastPrefix         string `json:"lastPrefix,omitempty"`
-	LastObservedServer string `json:"lastObservedServer,omitempty"`
-	PreferredLifetime  string `json:"preferredLifetime,omitempty"`
-	ValidLifetime      string `json:"validLifetime,omitempty"`
-	LastObservedAt     string `json:"lastObservedAt,omitempty"`
-	LastMissingAt      string `json:"lastMissingAt,omitempty"`
-	LastRenewAttemptAt string `json:"lastRenewAttemptAt,omitempty"`
-	DUID               string `json:"duid,omitempty"`
-	DUIDText           string `json:"duidText,omitempty"`
-	IAID               string `json:"iaid,omitempty"`
-	ExpectedDUID       string `json:"expectedDUID,omitempty"`
-	IdentitySource     string `json:"identitySource,omitempty"`
+	CurrentPrefix  string `json:"currentPrefix,omitempty"`
+	LastPrefix     string `json:"lastPrefix,omitempty"`
+	LastObservedAt string `json:"lastObservedAt,omitempty"`
+	DUID           string `json:"duid,omitempty"`
+	DUIDText       string `json:"duidText,omitempty"`
+	IAID           string `json:"iaid,omitempty"`
+	ExpectedDUID   string `json:"expectedDUID,omitempty"`
 }
 
 func EncodePDLease(lease PDLease) string {
@@ -58,17 +49,11 @@ func PDLeaseFromStore(store Store, base string) (PDLease, bool) {
 	}
 	mergeString(&lease.CurrentPrefix, "currentPrefix")
 	mergeString(&lease.LastPrefix, "lastPrefix")
-	mergeString(&lease.LastObservedServer, "lastObservedServer")
-	mergeString(&lease.PreferredLifetime, "preferredLifetime")
-	mergeString(&lease.ValidLifetime, "validLifetime")
 	mergeString(&lease.LastObservedAt, "lastObservedAt")
-	mergeString(&lease.LastMissingAt, "lastMissingAt")
-	mergeString(&lease.LastRenewAttemptAt, "lastRenewAttemptAt")
 	mergeString(&lease.DUID, "duid")
 	mergeString(&lease.DUIDText, "duidText")
 	mergeString(&lease.IAID, "iaid")
 	mergeString(&lease.ExpectedDUID, "expectedDUID")
-	mergeString(&lease.IdentitySource, "identitySource")
 	return lease, merged
 }
 
@@ -126,51 +111,4 @@ func isLegacyPDLeaseField(field string) bool {
 		}
 	}
 	return false
-}
-
-func PDLeaseHintPrefix(lease PDLease, now time.Time) (string, bool) {
-	prefix := strings.TrimSpace(lease.LastPrefix)
-	if prefix == "" {
-		return "", false
-	}
-	if _, err := netip.ParsePrefix(prefix); err != nil {
-		return "", false
-	}
-	validLifetime := strings.TrimSpace(lease.ValidLifetime)
-	if validLifetime == "" {
-		return prefix, true
-	}
-	observedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(lease.LastObservedAt))
-	if err != nil {
-		return "", false
-	}
-	lifetime, ok := ParseLeaseLifetime(validLifetime)
-	if !ok {
-		return "", false
-	}
-	if lifetime >= 0 && !now.UTC().Before(observedAt.UTC().Add(lifetime)) {
-		return "", false
-	}
-	return prefix, true
-}
-
-func ParseLeaseLifetime(value string) (time.Duration, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0, false
-	}
-	if strings.EqualFold(value, "infinity") || strings.EqualFold(value, "infinite") {
-		return -1, true
-	}
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
-		if seconds < 0 {
-			return 0, false
-		}
-		return time.Duration(seconds) * time.Second, true
-	}
-	duration, err := time.ParseDuration(value)
-	if err != nil || duration < 0 {
-		return 0, false
-	}
-	return duration, true
 }

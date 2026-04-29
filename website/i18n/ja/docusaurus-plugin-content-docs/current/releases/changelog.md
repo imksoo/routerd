@@ -8,6 +8,11 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
 
 ## 未リリース
 
+- 破壊的変更: ホームゲートウェイ回避用だった
+  `IPv6PrefixDelegation.spec.convergenceTimeout`、`spec.hintFromState`、
+  `spec.preferredLifetime`、`spec.validLifetime` を削除しました。routerd は
+  プレフィックス長だけのヒントを出力し、DHCPv6 の Renew/Rebind は OS 側
+  クライアントに任せます。
 - CLI と制御 API の動詞を `apply` に揃えました。`routerd reconcile`、
   `routerctl reconcile`、制御 API の反映操作は、それぞれ `routerd apply`、
   `routerctl apply`、`/apply` に変わりました。YAML の `spec.reconcile`
@@ -19,12 +24,10 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
 - `routerctl show` を整理。`routerctl show <種別>` と `routerctl show <種別>/<名前>` で、リソース定義、実機状態、所有台帳、routerd の状態履歴をまとめて見られるようになりました。表、JSON、YAML、差分、台帳のみ、取り込み候補のみの表示に対応しています。NAPT やコネクション追跡の情報は `IPv4SourceNAT` の観測状態に移しました。
 - DHCPv6-PD の状態記録を整理。プレフィックスや識別子の個別キーを、構造化された `ipv6PrefixDelegation.<name>.lease` に移すようになりました。
 - FreeBSD/KAME `dhcp6c` の DUID ファイルを NTT 系プロファイルで管理するようになりました。実効 DUID 型が `link-layer` の場合、DUID-LL 以外のファイルは退避し、MAC アドレスから作った DUID-LL を書き込みます。
-- 記録上まだ有効な DHCPv6-PD リースがローカルで見えなくなった場合、反映時に OS 側クライアントへ一度だけ更新を促すようになりました。
 - FreeBSD へのリモート導入を改善。Linux 作業端末から実行しても、`ROUTERD_OS=freebsd` で FreeBSD 向けバイナリをビルドし、FreeBSD の実行時ディレクトリを使うようになりました。
 - リモート依存確認で `jq`、FreeBSD の `dhcp6c`、`mpd5`、`sysrc` を確認するようになりました。
 - FreeBSD の DHCPv6-PD 出力を、パッケージ版の KAME `dhcp6c` が受け付ける構文に変更。
 - FreeBSD の PPPoE 出力で `mpd5` の設定を生成し、管理対象の `PPPoEInterface` セッションがある場合は `mpd5` の rc.d サービスを起動できるようになりました。
-- `IPv6PrefixDelegation.spec.convergenceTimeout` を追加。DHCPv6-PD が収束している間、直前まで見えていた委譲プレフィックスを短時間維持します。NTT 系プロファイルでは既定値を 5 分にしています。
 - FreeBSD の反映処理で、下流側の `ifconfig` 出力から委譲プレフィックスを観測し、`IPv6DelegatedAddress` の安定アドレスを追加するようになりました。`dhcp6c` は設定変更時または停止時だけ再起動します。
 - FreeBSD の反映処理で、保存済みのプレフィックス委譲リースから LAN 側の
   `IPv6DelegatedAddress` を導出できるようになりました。dnsmasq は

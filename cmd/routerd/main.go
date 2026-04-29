@@ -523,9 +523,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		return nil, err
 	}
 	if !opts.DryRun {
-		renewChanges, renewWarnings := renewMissingPrefixDelegations(router, stateStore)
-		stateChanges = append(stateChanges, renewChanges...)
-		result.Warnings = append(result.Warnings, renewWarnings...)
 		recordWarningEvents(router, stateStore, result.Warnings)
 		if err := os.MkdirAll(filepathDir(defaultString(opts.StatePath, defaultStatePath)), 0755); err != nil {
 			return nil, err
@@ -1087,9 +1084,6 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			if identity.DUIDText != "" {
 				lease.DUIDText = identity.DUIDText
 			}
-			if identity.Source != "" {
-				lease.IdentitySource = identity.Source
-			}
 			if expected := expectedPrefixDelegationDUID(ifname, defaultString(spec.Profile, "default")); expected != "" {
 				lease.ExpectedDUID = expected
 			}
@@ -1098,10 +1092,6 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		changes = append(changes, stateChange{Name: base + ".profile", Value: store.Set(base+".profile", defaultString(spec.Profile, "default"), res.ID()+": configured DHCPv6-PD profile")})
 		if prefixLength > 0 {
 			changes = append(changes, stateChange{Name: base + ".prefixLength", Value: store.Set(base+".prefixLength", strconv.Itoa(prefixLength), res.ID()+": configured prefix length")})
-		}
-		convergenceTimeout := effectiveIPv6PDConvergenceTimeout(defaultString(spec.Profile, "default"), spec.ConvergenceTimeout)
-		if convergenceTimeout > 0 {
-			changes = append(changes, stateChange{Name: base + ".convergenceTimeout", Value: store.Set(base+".convergenceTimeout", convergenceTimeout.String(), res.ID()+": configured convergence timeout")})
 		}
 
 		var observedPrefix, observedIfname string
@@ -1122,16 +1112,8 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			}
 		}
 		if observedPrefix == "" {
-			if lease.LastMissingAt == "" {
-				lease.LastMissingAt = store.Now().Format(time.RFC3339)
-				if recorder, ok := store.(routerstate.EventRecorder); ok {
-					_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixMissing", "delegated IPv6 prefix is not observable")
-				}
-			}
-			if retained, ok := retainCurrentPrefixDuringConvergence(pdLeaseCurrentValue(lease), pdLeaseMissingValue(lease), convergenceTimeout, store); ok {
-				lease.CurrentPrefix = retained
-				changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": waiting for DHCPv6-PD convergence")})
-				continue
+			if recorder, ok := store.(routerstate.EventRecorder); ok {
+				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixMissing", "delegated IPv6 prefix is not observable")
 			}
 			lease.CurrentPrefix = ""
 			changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": no delegated prefix observable")})
@@ -1142,7 +1124,6 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		previousPrefix := lease.LastPrefix
 		lease.LastPrefix = observedPrefix
 		lease.LastObservedAt = observedAt
-		lease.LastMissingAt = ""
 		if recorder, ok := store.(routerstate.EventRecorder); ok && previousPrefix != observedPrefix {
 			_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Normal", "PrefixObserved", "observed delegated IPv6 prefix "+observedPrefix)
 		}
@@ -1165,141 +1146,6 @@ func pdLeaseCurrentValue(lease routerstate.PDLease) routerstate.Value {
 		return routerstate.Value{Status: routerstate.StatusUnset, UpdatedAt: updatedAt}
 	}
 	return routerstate.Value{Status: routerstate.StatusSet, Value: lease.CurrentPrefix, UpdatedAt: updatedAt}
-}
-
-func pdLeaseMissingValue(lease routerstate.PDLease) routerstate.Value {
-	if lease.LastMissingAt == "" {
-		return routerstate.Value{Status: routerstate.StatusUnset}
-	}
-	return routerstate.Value{Status: routerstate.StatusSet, Value: lease.LastMissingAt}
-}
-
-func renewMissingPrefixDelegations(router *api.Router, store routerstate.Store) ([]stateChange, []string) {
-	aliases := map[string]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err == nil {
-			aliases[res.Metadata.Name] = spec.IfName
-		}
-	}
-	var changes []stateChange
-	var warnings []string
-	now := store.Now()
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" {
-			continue
-		}
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: cannot inspect DHCPv6-PD renew hook: %v", res.ID(), err))
-			continue
-		}
-		base := "ipv6PrefixDelegation." + res.Metadata.Name
-		lease, _ := routerstate.PDLeaseFromStore(store, base)
-		if !shouldAttemptPDLeaseRenew(lease, now) {
-			continue
-		}
-		ifname := aliases[spec.Interface]
-		if ifname == "" {
-			warnings = append(warnings, fmt.Sprintf("%s: cannot renew DHCPv6-PD because interface %q has no ifname", res.ID(), spec.Interface))
-			continue
-		}
-		client := defaultString(spec.Client, "networkd")
-		if err := runPDLeaseRenewHook(client, ifname); err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: DHCPv6-PD renew hook failed: %v", res.ID(), err))
-			continue
-		}
-		lease.LastRenewAttemptAt = now.Format(time.RFC3339)
-		changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": requested DHCPv6-PD renew")})
-	}
-	return changes, warnings
-}
-
-func shouldAttemptPDLeaseRenew(lease routerstate.PDLease, now time.Time) bool {
-	if lease.CurrentPrefix != "" || lease.LastPrefix == "" || lease.LastMissingAt == "" || lease.LastObservedAt == "" {
-		return false
-	}
-	observedAt, err := time.Parse(time.RFC3339, lease.LastObservedAt)
-	if err != nil {
-		return false
-	}
-	lifetime, ok := routerstate.ParseLeaseLifetime(lease.ValidLifetime)
-	if !ok {
-		return false
-	}
-	if lifetime >= 0 && !now.UTC().Before(observedAt.UTC().Add(lifetime)) {
-		return false
-	}
-	if lease.LastRenewAttemptAt == "" {
-		return true
-	}
-	attemptedAt, err := time.Parse(time.RFC3339, lease.LastRenewAttemptAt)
-	if err != nil {
-		return true
-	}
-	missingAt, err := time.Parse(time.RFC3339, lease.LastMissingAt)
-	if err != nil {
-		return false
-	}
-	return attemptedAt.Before(missingAt)
-}
-
-var runPDLeaseRenewHook = func(client, ifname string) error {
-	switch client {
-	case "networkd":
-		if ifname == "" {
-			return errors.New("empty interface name")
-		}
-		return runLogged("networkctl", "renew", ifname)
-	case "dhcp6c":
-		return signalFreeBSDDHCP6CRenew()
-	default:
-		return fmt.Errorf("unsupported DHCPv6-PD client %q", client)
-	}
-}
-
-func signalFreeBSDDHCP6CRenew() error {
-	pid := strings.TrimSpace(readFirstString("/var/run/dhcp6c.pid"))
-	if pid == "" {
-		if freeBSDServiceExists("dhcp6c") {
-			return runLogged("service", "dhcp6c", "start")
-		}
-		return errors.New("dhcp6c pid file is empty")
-	}
-	return runLogged("kill", "-HUP", pid)
-}
-
-func effectiveIPv6PDConvergenceTimeout(profile, configured string) time.Duration {
-	if configured != "" {
-		if d, err := time.ParseDuration(configured); err == nil && d > 0 {
-			return d
-		}
-	}
-	switch profile {
-	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
-		return 5 * time.Minute
-	default:
-		return 2 * time.Minute
-	}
-}
-
-func retainCurrentPrefixDuringConvergence(current, missing routerstate.Value, timeout time.Duration, store routerstate.Store) (string, bool) {
-	if timeout <= 0 || current.Status != routerstate.StatusSet || current.Value == "" || current.UpdatedAt.IsZero() {
-		return "", false
-	}
-	missingAt := current.UpdatedAt
-	if missing.Status == routerstate.StatusSet && missing.Value != "" {
-		if parsed, err := time.Parse(time.RFC3339, missing.Value); err == nil {
-			missingAt = parsed
-		}
-	}
-	if store.Now().Sub(missingAt) > timeout {
-		return "", false
-	}
-	return current.Value, true
 }
 
 func observedPrefixDelegationIdentity(ifname, client, configuredIAID string) dhcpIdentity {
@@ -1764,9 +1610,6 @@ func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Route
 		}
 		if lease.LastObservedAt != "" {
 			msg += " observed at " + lease.LastObservedAt
-		}
-		if lease.LastMissingAt != "" {
-			msg += ", missing since " + lease.LastMissingAt
 		}
 		msg += ". The OS DHCPv6 client must renew or reacquire PD before the upstream lease expires."
 		result.Warnings = append(result.Warnings, msg)

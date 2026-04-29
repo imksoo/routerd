@@ -188,8 +188,6 @@ spec:
         client: networkd
         profile: ntt-hgw-lan-pd
         prefixLength: 60
-        convergenceTimeout: 5m
-        hintFromState: true
         required: false
 
     - apiVersion: net.routerd.net/v1alpha1

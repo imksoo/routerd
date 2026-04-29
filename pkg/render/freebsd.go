@@ -102,19 +102,17 @@ func FreeBSDWithStateAndPPPoEPasswords(router *api.Router, store routerstate.Sto
 			}
 			dhcp6cIfaces[ifname] = true
 			prefixLength := effectiveIPv6PDPrefixLength(defaultString(spec.Profile, "default"), spec.PrefixLength)
-			prefixHint := prefixHintFromState(res.Metadata.Name, spec, store)
-			if prefixHint == "" && prefixLength > 0 {
+			prefixHint := ""
+			if prefixLength > 0 {
 				prefixHint = fmt.Sprintf("::/%d", prefixLength)
 			}
 			pds = append(pds, freeBSDPD{
-				Name:              res.Metadata.Name,
-				IfName:            ifname,
-				PrefixLength:      prefixLength,
-				IAID:              spec.IAID,
-				PrefixHint:        prefixHint,
-				Profile:           defaultString(spec.Profile, "default"),
-				PreferredLifetime: spec.PreferredLifetime,
-				ValidLifetime:     spec.ValidLifetime,
+				Name:         res.Metadata.Name,
+				IfName:       ifname,
+				PrefixLength: prefixLength,
+				IAID:         spec.IAID,
+				PrefixHint:   prefixHint,
+				Profile:      defaultString(spec.Profile, "default"),
 			})
 		case "PPPoEInterface":
 			spec, err := res.PPPoEInterfaceSpec()
@@ -156,14 +154,12 @@ func FreeBSDWithStateAndPPPoEPasswords(router *api.Router, store routerstate.Sto
 }
 
 type freeBSDPD struct {
-	Name              string
-	IfName            string
-	PrefixLength      int
-	IAID              string
-	PrefixHint        string
-	Profile           string
-	PreferredLifetime string
-	ValidLifetime     string
+	Name         string
+	IfName       string
+	PrefixLength int
+	IAID         string
+	PrefixHint   string
+	Profile      string
 }
 
 type freeBSDPPPoE struct {
@@ -274,7 +270,7 @@ func freeBSDDHCP6C(router *api.Router, aliases map[string]string, pds []freeBSDP
 		buf.WriteString("};\n\n")
 		buf.WriteString(fmt.Sprintf("id-assoc pd %d {\n", iaid))
 		if pd.PrefixHint != "" {
-			buf.WriteString("  prefix " + pd.PrefixHint + " " + freeBSDDHCP6CPrefixHintLifetime(pd) + ";\n")
+			buf.WriteString("  prefix " + pd.PrefixHint + " infinity;\n")
 		}
 		for _, res := range router.Spec.Resources {
 			if res.Kind != "IPv6DelegatedAddress" {
@@ -301,26 +297,6 @@ func freeBSDDHCP6C(router *api.Router, aliases map[string]string, pds []freeBSDP
 		buf.WriteString("};\n\n")
 	}
 	return buf.Bytes(), nil
-}
-
-func freeBSDDHCP6CPrefixHintLifetime(pd freeBSDPD) string {
-	preferred := strings.TrimSpace(pd.PreferredLifetime)
-	valid := strings.TrimSpace(pd.ValidLifetime)
-	if preferred != "" || valid != "" {
-		if preferred == "" {
-			preferred = valid
-		}
-		if valid == "" {
-			valid = preferred
-		}
-		return preferred + " " + valid
-	}
-	switch pd.Profile {
-	case "ntt-ngn-direct-hikari-denwa", "ntt-hgw-lan-pd":
-		return "14400 14400"
-	default:
-		return "infinity"
-	}
 }
 
 func freeBSDDHClient(options map[string]api.IPv4DHCPAddressSpec) []byte {

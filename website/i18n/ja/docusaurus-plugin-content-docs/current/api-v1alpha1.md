@@ -346,12 +346,14 @@ spec:
   client: networkd
   profile: ntt-hgw-lan-pd
   prefixLength: 60
-  convergenceTimeout: 5m
-  hintFromState: true
   iaid: ca53095a
   duidType: link-layer
   duidRawData: 00:01:02:00:5e:10:20:30
 ```
+
+破壊的変更: ホームゲートウェイ回避用だった `convergenceTimeout`、
+`hintFromState`、`preferredLifetime`、`validLifetime` は削除しました。
+古い設定に残っている場合は、そのキーを消してください。
 
 ルータの振る舞い:
 
@@ -362,13 +364,10 @@ spec:
   - `ntt-hgw-lan-pd`: NTT のホームゲートウェイの LAN 側につなぎ、`/60` 単位で再委譲を受ける構成。
 
   どちらの NTT 系プロファイルも IA_PD のみを要求し、rapid commit を無効化、リンクレイヤ DUID を使用、必要に応じて DHCPv6 Solicit を強制し、`prefixLength` を明示しなければ `/60` をヒントにします。
-- `spec.convergenceTimeout` は、過去に見えていた委譲プレフィックスを「なくなった」と判断するまで routerd が待つ時間です。DHCPv6 クライアント自身のパケット再送間隔を変えるものではありません。通常の既定値は `2m`、NTT 系プロファイルでは `5m` です。ホームゲートウェイの再起動直後や、古いリースを覚えている状態では収束に時間がかかることがあるためです。
-- `spec.hintFromState` は既定で `true` です。有効な場合、routerd は最後に観測した委譲プレフィックスを OS 側の DHCPv6 クライアントへプレフィックスヒントとして渡します。ただし、記録された有効寿命を過ぎている場合は使いません。ヒントが古い、存在しない、または無効化されている場合は、`::/60` のようなプレフィックス長だけのヒントに戻します。これはあくまでヒントです。上流は同じプレフィックスを返すことも、別のプレフィックスを返すことも、返さないこともあります。
-- routerd は反映のたびに、観測できたプレフィックス委譲の状態をローカルの状態保存領域にある `ipv6PrefixDelegation.<name>.lease` へ記録します。この JSON 値には、現在のプレフィックス、最後に見えたプレフィックス、観測した DUID、IAID、期待される DUID、識別情報の取得元、最後に見えた時刻、最後に見えなかった時刻、分かる場合のリース寿命を保存します。以前の状態ファイルで使っていた `ipv6PrefixDelegation.<name>.lastPrefix` などの個別キーは、読み込み時にこの値へ移します。インターフェース名、設定されたプレフィックス長、クライアント種別、プロファイル、待ち時間は、DHCPv6 リースそのものではなく routerd の設定を表すため、別の状態値として残します。下流側の委譲プレフィックスが見えなくなった場合でも、待ち時間のあいだは `lease` 内の `currentPrefix` を維持します。待ち時間を過ぎても見えない場合は `currentPrefix` を消しますが、`lastPrefix` は残します。これにより、既知の機器を新規クライアントではなく既存リースの更新相手として扱う上流機器に対応するための足場を残せます。レンダラはこのリース記録をプレフィックスヒントに使います。`routerctl show ipv6pd` は、同じ内容を調査しやすい表形式で表示します。
-- systemd-networkd と FreeBSD の `dhcp6c` では、取得できる範囲で DHCP の識別情報もリース記録に残します。`dhcp6c` では `/var/db/dhcp6c_duid` から DUID を読み取り、IAID は設定された `iaid`、または `dhcp6c` の既定値である `0` から決めます。NTT 系プロファイルでは、上流インターフェースの MAC アドレスから DHCPv6 のリンクレイヤ DUID を計算し、期待される DUID として残します。これらは望ましい設定ではなく、観測した状態の記憶です。再試行処理では、この情報を使って、ホームゲートウェイが以前のリースを覚えている場合に更新に近い動きを優先できます。
+- routerd は反映のたびに、観測できたプレフィックス委譲の状態をローカルの状態保存領域にある `ipv6PrefixDelegation.<name>.lease` へ記録します。この JSON 値には、現在のプレフィックス、最後に見えたプレフィックス、観測した DUID、IAID、期待される DUID、最後に見えた時刻を保存します。以前の状態ファイルで使っていた `ipv6PrefixDelegation.<name>.lastPrefix` などの個別キーは、読み込み時にこの値へ移します。インターフェース名、設定されたプレフィックス長、クライアント種別、プロファイルは、DHCPv6 リースそのものではなく routerd の設定を表すため、別の状態値として残します。下流側の委譲プレフィックスが見えなくなった場合は `currentPrefix` を消しますが、`lastPrefix` は運用者が確認できるように残します。レンダラはこの記録を正確なプレフィックスヒントとして再利用しません。`routerctl show ipv6pd` は、同じ内容を調査しやすい表形式で表示します。
+- systemd-networkd と FreeBSD の `dhcp6c` では、取得できる範囲で DHCP の識別情報もリース記録に残します。`dhcp6c` では `/var/db/dhcp6c_duid` から DUID を読み取り、IAID は設定された `iaid`、または `dhcp6c` の既定値である `0` から決めます。NTT 系プロファイルでは、上流インターフェースの MAC アドレスから DHCPv6 のリンクレイヤ DUID を計算し、期待される DUID として残します。これらは望ましい設定ではなく、観測した状態の記憶です。
 - リース期限が切れる前の Renew/Rebind は、OS 側の DHCPv6 クライアントの責務です。routerd は通常の反映でこのクライアントを再起動しないようにします。再起動すると、更新として続けられたはずの処理が新規 Solicit や Release に変わることがあるためです。
   現在のプレフィックスが観測できない場合、`plan`、`routerd apply`、デーモン状態には警告を出します。上流リースが切れる前に DHCPv6 クライアントを直すためです。
-  実際に反映する場合、現在のプレフィックスが見えず、構造化されたリース記録に最後のプレフィックス、最後に見えた時刻、期限内の有効寿命が残っていれば、routerd はその見失い状態につき一度だけ OS 側クライアントへ更新を促します。systemd-networkd では `networkctl renew <link>` を呼びます。FreeBSD の KAME `dhcp6c` では、実行中の `dhcp6c` に SIGHUP を送ります。試行時刻はリース内の `lastRenewAttemptAt` に残すため、反映のたびに短い間隔で何度も刺激することはありません。
 - `spec.iaid` は DHCPv6 の IAID を固定します。10 進数、`0x` 付きの 16 進数、または 8 桁の 16 進数で書けます。systemd-networkd では 10 進数の `IAID=` として出力し、FreeBSD の `dhcp6c` では `ia-pd` / `id-assoc pd` の識別子として使います。
 - `spec.duidType` は、NTT 系プロファイルで省略すると `link-layer` として扱います。systemd-networkd が既定で使う machine-id 由来の DUID を避け、FreeBSD/KAME `dhcp6c` も NTT 系ホームゲートウェイで期待される識別子にそろえるためです。
 - `spec.duidType` と `spec.duidRawData` は systemd-networkd の DUID 設定を固定します。`duidRawData` は `00:01:...` のようなバイト列表記でも、区切りなしの 16 進数でも書けます。

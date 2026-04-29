@@ -660,17 +660,6 @@ func validateResource(res api.Resource) error {
 		if spec.PrefixLength != 0 && (spec.PrefixLength < 1 || spec.PrefixLength > 128) {
 			return fmt.Errorf("%s spec.prefixLength must be within 1-128", res.ID())
 		}
-		if spec.ConvergenceTimeout != "" {
-			if d, err := time.ParseDuration(spec.ConvergenceTimeout); err != nil || d <= 0 {
-				return fmt.Errorf("%s spec.convergenceTimeout must be a positive duration", res.ID())
-			}
-		}
-		if spec.PreferredLifetime != "" && !validDHCPv6Lifetime(spec.PreferredLifetime) {
-			return fmt.Errorf("%s spec.preferredLifetime must be a positive uint32 second value", res.ID())
-		}
-		if spec.ValidLifetime != "" && !validDHCPv6Lifetime(spec.ValidLifetime) {
-			return fmt.Errorf("%s spec.validLifetime must be a positive uint32 second value", res.ID())
-		}
 		if spec.IAID != "" && !validIAID(spec.IAID) {
 			return fmt.Errorf("%s spec.iaid must be a uint32 decimal value, 0x-prefixed hex value, or 8 hex digits", res.ID())
 		}
@@ -1555,15 +1544,6 @@ func validIAID(value string) bool {
 	}
 	_, err := strconv.ParseUint(value, 10, 32)
 	return err == nil
-}
-
-func validDHCPv6Lifetime(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-	n, err := strconv.ParseUint(value, 10, 32)
-	return err == nil && n > 0
 }
 
 func validDUIDRawData(value string) bool {

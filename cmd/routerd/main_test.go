@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
@@ -573,27 +572,6 @@ func TestParseFreeBSDIfconfigIPv6(t *testing.T) {
 	}
 }
 
-func TestRetainCurrentPrefixDuringConvergence(t *testing.T) {
-	store := routerstate.New()
-	current := routerstate.Value{
-		Status:    routerstate.StatusSet,
-		Value:     "2001:db8:3d60:1240::/60",
-		UpdatedAt: time.Now().UTC().Add(-30 * time.Second),
-	}
-	missing := routerstate.Value{
-		Status: routerstate.StatusSet,
-		Value:  time.Now().UTC().Add(-30 * time.Second).Format(time.RFC3339),
-	}
-	got, ok := retainCurrentPrefixDuringConvergence(current, missing, 5*time.Minute, store)
-	if !ok || got != current.Value {
-		t.Fatalf("retained prefix = %q %v, want current prefix", got, ok)
-	}
-	missing.Value = time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
-	if got, ok := retainCurrentPrefixDuringConvergence(current, missing, 5*time.Minute, store); ok {
-		t.Fatalf("retained expired prefix = %q", got)
-	}
-}
-
 func TestObserveFreeBSDDHCP6CIdentityPayload(t *testing.T) {
 	payload := freeBSDDHCP6CDUIDPayload([]byte{
 		0x0e, 0x00,
@@ -635,86 +613,6 @@ func TestAppendPrefixDelegationStateWarningsWithoutLastPrefix(t *testing.T) {
 	appendPrefixDelegationStateWarnings(result, router, store)
 	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "no delegated prefix has been recorded") {
 		t.Fatalf("warnings = %#v", result.Warnings)
-	}
-}
-
-func TestShouldAttemptPDLeaseRenew(t *testing.T) {
-	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
-	lease := routerstate.PDLease{
-		LastPrefix:         "2001:db8:3d60:1240::/60",
-		LastObservedAt:     now.Add(-30 * time.Minute).Format(time.RFC3339),
-		LastMissingAt:      now.Add(-1 * time.Minute).Format(time.RFC3339),
-		ValidLifetime:      "7200",
-		LastRenewAttemptAt: "",
-	}
-	if !shouldAttemptPDLeaseRenew(lease, now) {
-		t.Fatal("should attempt renew for missing lease within valid lifetime")
-	}
-	lease.LastRenewAttemptAt = now.Format(time.RFC3339)
-	if shouldAttemptPDLeaseRenew(lease, now.Add(time.Minute)) {
-		t.Fatal("should not attempt renew twice for the same missing episode")
-	}
-	lease.LastMissingAt = now.Add(2 * time.Minute).Format(time.RFC3339)
-	if !shouldAttemptPDLeaseRenew(lease, now.Add(3*time.Minute)) {
-		t.Fatal("should attempt again after a new missing episode")
-	}
-	lease.ValidLifetime = "10"
-	if shouldAttemptPDLeaseRenew(lease, now.Add(time.Hour)) {
-		t.Fatal("should not attempt renew after valid lifetime expired")
-	}
-}
-
-func TestRenewMissingPrefixDelegationsCallsHookOnce(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
-			Metadata: api.ObjectMeta{Name: "wan-pd"},
-			Spec: api.IPv6PrefixDelegationSpec{
-				Interface: "wan",
-				Client:    "networkd",
-			},
-		},
-	}}}
-	store := routerstate.New()
-	now := store.Now()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
-		LastPrefix:     "2001:db8:3d60:1240::/60",
-		LastObservedAt: now.Add(-30 * time.Minute).Format(time.RFC3339),
-		LastMissingAt:  now.Add(-time.Minute).Format(time.RFC3339),
-		ValidLifetime:  "7200",
-	}), "test")
-
-	var calls []string
-	oldHook := runPDLeaseRenewHook
-	runPDLeaseRenewHook = func(client, ifname string) error {
-		calls = append(calls, client+"/"+ifname)
-		return nil
-	}
-	defer func() { runPDLeaseRenewHook = oldHook }()
-
-	changes, warnings := renewMissingPrefixDelegations(router, store)
-	if len(warnings) != 0 {
-		t.Fatalf("warnings = %v", warnings)
-	}
-	if len(calls) != 1 || calls[0] != "networkd/ens18" {
-		t.Fatalf("calls = %v, want networkd/ens18", calls)
-	}
-	if len(changes) != 1 || changes[0].Name != "ipv6PrefixDelegation.wan-pd.lease" {
-		t.Fatalf("changes = %+v", changes)
-	}
-	lease, _ := routerstate.DecodePDLease(store.Get("ipv6PrefixDelegation.wan-pd.lease").Value)
-	if lease.LastRenewAttemptAt == "" {
-		t.Fatalf("lease missing renew attempt time: %+v", lease)
-	}
-
-	changes, warnings = renewMissingPrefixDelegations(router, store)
-	if len(warnings) != 0 || len(changes) != 0 || len(calls) != 1 {
-		t.Fatalf("second renew changes=%v warnings=%v calls=%v, want no-op", changes, warnings, calls)
 	}
 }
 

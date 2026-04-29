@@ -429,14 +429,14 @@ spec:
   client: networkd
   profile: ntt-hgw-lan-pd
   prefixLength: 60
-  convergenceTimeout: 5m
-  hintFromState: true
-  preferredLifetime: "14400"
-  validLifetime: "14400"
   iaid: ca53095a
   duidType: link-layer
   duidRawData: 00:01:02:00:5e:10:20:30
 ```
+
+Breaking note: the HGW workaround fields `convergenceTimeout`,
+`hintFromState`, `preferredLifetime`, and `validLifetime` were removed. If an
+older config still contains them, delete those keys.
 
 How routerd behaves:
 
@@ -452,41 +452,21 @@ How routerd behaves:
   Both NTT profiles request IA_PD only, disable rapid commit, use a
   link-layer DUID, force DHCPv6 Solicit when needed, and default the prefix
   hint to `/60` unless `prefixLength` is set explicitly.
-- `spec.convergenceTimeout` is routerd's grace period before it marks a
-  previously observed delegated prefix absent. It does not change the DHCPv6
-  client's packet retry timers. The generic default is `2m`; NTT profiles
-  default to `5m` because some home gateways converge slowly after restart or
-  while old leases are being remembered.
-- `spec.hintFromState` defaults to `true`. When enabled, routerd feeds the
-  last observed delegated prefix back to the OS DHCPv6 client as a prefix
-  hint, as long as the recorded valid lifetime has not elapsed. If the hint is
-  too old, missing, or disabled, routerd falls back to a prefix-length hint
-  such as `::/60`. This is only a hint: an upstream may return the same prefix,
-  a different prefix, or no prefix.
-- `spec.preferredLifetime` and `spec.validLifetime` tune the lifetime values
-  rendered into FreeBSD KAME `dhcp6c` prefix hints. They are positive second
-  values. If omitted, NTT profiles render `14400 14400`, matching the observed
-  PR-400NE lease lifetime; other profiles keep the older `infinity` hint.
 - During apply, routerd records observed prefix-delegation state in
   `ipv6PrefixDelegation.<name>.lease` in the local state store. The lease JSON
   holds the current prefix, last known prefix, observed DUID, IAID, expected
-  DUID, identity source, last observed time, last missing time, and lease
-  lifetime fields when they are known. Older state files that used separate
+  DUID, and last observed time. Older state files that used separate
   keys such as `ipv6PrefixDelegation.<name>.lastPrefix` are migrated into this
   lease value when read. Interface names, configured prefix length, client
-  type, profile, and convergence timeout remain separate state entries because
+  type, and profile remain separate state entries because
   they describe routerd configuration rather than the DHCPv6 lease itself.
   `currentPrefix` inside the lease is cleared when no downstream delegated
-  prefix is visible, but only after the convergence timeout has elapsed.
-  `lastPrefix` is kept.
-  This preserves enough local memory to support
-  upstreams that treat a known client as an existing DHCPv6-PD lease rather
-  than a fresh client.
-  Renderers use this lease record for prefix hints. Use `routerctl get ipv6pd`
-  to see the desired resource definition, `routerctl describe ipv6pd/<name>` to
-  inspect current and last delegated prefixes without mixing them up, and
-  `routerctl show ipv6pd -o yaml --events` for the combined machine-readable
-  view.
+  prefix is visible. `lastPrefix` is kept for operator visibility, not fed
+  back as an exact DHCPv6 hint.
+  Use `routerctl get ipv6pd` to see the desired resource definition,
+  `routerctl describe ipv6pd/<name>` to inspect current and last delegated
+  prefixes without mixing them up, and `routerctl show ipv6pd -o yaml
+  --events` for the combined machine-readable view.
 - For systemd-networkd and FreeBSD `dhcp6c` clients, routerd records observed
   DHCP identity into the lease when available. With `dhcp6c`, the DUID is read
   from `/var/db/dhcp6c_duid` and the IAID is derived from the configured `iaid`
@@ -500,13 +480,6 @@ How routerd behaves:
   If there is no current observable prefix, `plan`, `apply`, and daemon
   status include a warning so the operator can fix the DHCPv6 client before
   the upstream lease expires.
-  During a real apply, if the current prefix is missing but the structured
-  lease still has a last prefix, a last observed time, and an unexpired valid
-  lifetime, routerd asks the OS client to renew once for that missing episode.
-  On systemd-networkd hosts this calls `networkctl renew <link>`. On FreeBSD
-  KAME `dhcp6c` hosts this sends SIGHUP to the running `dhcp6c` process. The
-  attempt time is recorded as `lastRenewAttemptAt` in the lease so apply
-  does not keep poking the client in a tight loop.
 - `spec.iaid` pins the DHCPv6 IAID. It may be written as decimal, `0x`
   prefixed hex, or 8 hex digits. systemd-networkd renders it as a decimal
   `IAID=` value; FreeBSD `dhcp6c` uses it as the `ia-pd` / `id-assoc pd`

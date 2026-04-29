@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"routerd/pkg/api"
 	routerstate "routerd/pkg/state"
@@ -63,7 +62,6 @@ func NetworkdDropinsWithState(router *api.Router, store routerstate.Store) ([]Fi
 			IAID:         spec.IAID,
 			DUIDType:     EffectiveIPv6PDDUIDType(defaultString(spec.Profile, "default"), spec.DUIDType),
 			DUIDRawData:  spec.DUIDRawData,
-			PrefixHint:   prefixHintFromState(res.Metadata.Name, spec, store),
 		}
 	}
 
@@ -180,19 +178,6 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 		}
 		buf.WriteString("PrefixDelegationHint=" + hint + "\n")
 	}
-}
-
-func prefixHintFromState(name string, spec api.IPv6PrefixDelegationSpec, store routerstate.Store) string {
-	if store == nil || (spec.HintFromState != nil && !*spec.HintFromState) {
-		return ""
-	}
-	base := "ipv6PrefixDelegation." + name
-	lease, _ := routerstate.PDLeaseFromStore(store, base)
-	prefix, ok := routerstate.PDLeaseHintPrefix(lease, time.Now().UTC())
-	if !ok {
-		return ""
-	}
-	return prefix
 }
 
 func normalizeIAIDForRender(value string) string {

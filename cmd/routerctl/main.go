@@ -773,13 +773,12 @@ func stateForResource(res api.Resource, store routerstate.Store) map[string]any 
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		lease, _ := routerstate.PDLeaseFromStore(store, base)
 		return map[string]any{
-			"lease":              lease,
-			"client":             stateString(store, base+".client"),
-			"profile":            stateString(store, base+".profile"),
-			"prefixLength":       stateString(store, base+".prefixLength"),
-			"convergenceTimeout": stateString(store, base+".convergenceTimeout"),
-			"uplinkIfname":       stateString(store, base+".uplinkIfname"),
-			"downstreamIfname":   stateString(store, base+".downstreamIfname"),
+			"lease":            lease,
+			"client":           stateString(store, base+".client"),
+			"profile":          stateString(store, base+".profile"),
+			"prefixLength":     stateString(store, base+".prefixLength"),
+			"uplinkIfname":     stateString(store, base+".uplinkIfname"),
+			"downstreamIfname": stateString(store, base+".downstreamIfname"),
 		}
 	case "Hostname":
 		return prefixedState(store, "hostname.")
@@ -1013,7 +1012,6 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 		fmt.Fprintf(w, "Current delegated prefix:\t%s\n", displayCell(lease.CurrentPrefix))
 		fmt.Fprintf(w, "Last delegated prefix:\t%s\n", displayCell(lease.LastPrefix))
 		fmt.Fprintf(w, "Last observed at:\t%s\n", displayCell(lease.LastObservedAt))
-		fmt.Fprintf(w, "Last missing at:\t%s\n", displayCell(lease.LastMissingAt))
 		return
 	}
 	observable := false
@@ -1024,7 +1022,6 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 	}
 	fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(observable))
 	fmt.Fprintf(w, "Last observed at:\t-\n")
-	fmt.Fprintf(w, "Last missing at:\t-\n")
 }
 
 func describePDLease(state map[string]any) (routerstate.PDLease, bool) {
