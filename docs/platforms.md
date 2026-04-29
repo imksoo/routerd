@@ -84,11 +84,9 @@ parity that the code does not yet provide.
   `rtsol` if no IPv6 default route is present, so a router can still learn
   its upstream RA default route.
 - FreeBSD apply restarts `dhcp6c` only when the rendered configuration or
-  matching rc.conf values changed, or when the service is not running. This
-  avoids sending unnecessary DHCPv6 Release messages during routine
-  reconciliation. The renderer also starts `dhcp6c` with `-n`, and the
-  applier uses SIGUSR1 before starting it again, so required restarts avoid
-  releasing the delegated prefix when possible.
+  matching rc.conf values changed, or when the service is not running.
+  routerd does not expose DHCPv6 Release control; that behavior is left to
+  the packaged `dhcp6c` service.
 - The FreeBSD PPPoE renderer uses `mpd5`. `PPPoEInterface` resources are
   rendered into `/usr/local/etc/mpd5/mpd.conf`, and managed sessions enable
   the `mpd5` rc.d service. Only mark the router that should actively hold a

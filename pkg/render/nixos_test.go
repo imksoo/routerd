@@ -117,7 +117,6 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`systemd.network.networks."10-netplan-ens18"`,
 		`DHCP = "yes";`,
 		`IPv6AcceptRA = true;`,
-		`SendRelease = false;`,
 		`systemd.network.networks."10-netplan-ens19"`,
 		`LinkLocalAddressing = "no";`,
 		`systemd.network.networks."10-netplan-ens20"`,

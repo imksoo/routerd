@@ -2369,7 +2369,7 @@ func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, dhcp6cDUID
 			changed = append(changed, dhcp6cPath)
 		}
 		if (fileChanged || duidChanged || freeBSDRCValuesChanged(changed, "dhcp6c_") || !freeBSDServiceRunning("dhcp6c")) && freeBSDServiceExists("dhcp6c") {
-			if err := restartFreeBSDDHCP6C(freeBSDDHCP6CReleasePolicy(router)); err != nil {
+			if err := runLogged("service", "dhcp6c", "restart"); err != nil {
 				return changed, err
 			}
 			changed = append(changed, "service:dhcp6c")
@@ -2487,46 +2487,6 @@ func freeBSDServiceExists(name string) bool {
 
 func freeBSDServiceRunning(name string) bool {
 	return exec.Command("service", name, "status").Run() == nil
-}
-
-func restartFreeBSDDHCP6C(releasePolicy string) error {
-	if releasePolicy == "always" {
-		return runLogged("service", "dhcp6c", "restart")
-	}
-	pid := strings.TrimSpace(readFirstString("/var/run/dhcp6c.pid"))
-	if pid != "" && freeBSDServiceRunning("dhcp6c") {
-		if err := runLogged("kill", "-USR1", pid); err != nil {
-			return err
-		}
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			if !freeBSDServiceRunning("dhcp6c") {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
-	if err := runLogged("service", "dhcp6c", "start"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func freeBSDDHCP6CReleasePolicy(router *api.Router) string {
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" {
-			continue
-		}
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			continue
-		}
-		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		if api.EffectiveIPv6PDReleasePolicy(profile, spec.ReleasePolicy) == "never" {
-			return "never"
-		}
-	}
-	return "always"
 }
 
 func parseFreeBSDRCConf(data []byte) (map[string]string, error) {

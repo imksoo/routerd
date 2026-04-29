@@ -17,14 +17,13 @@ type File struct {
 }
 
 type pdSource struct {
-	Name          string
-	IfName        string
-	Profile       string
-	PrefixLength  int
-	ReleasePolicy string
-	IAID          string
-	DUIDType      string
-	DUIDRawData   string
+	Name         string
+	IfName       string
+	Profile      string
+	PrefixLength int
+	IAID         string
+	DUIDType     string
+	DUIDRawData  string
 }
 
 func NetworkdDropins(router *api.Router) ([]File, error) {
@@ -51,14 +50,13 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 		}
 		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 		pds[res.Metadata.Name] = pdSource{
-			Name:          res.Metadata.Name,
-			IfName:        aliases[spec.Interface],
-			Profile:       profile,
-			PrefixLength:  api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
-			ReleasePolicy: api.EffectiveIPv6PDReleasePolicy(profile, spec.ReleasePolicy),
-			IAID:          spec.IAID,
-			DUIDType:      api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType),
-			DUIDRawData:   spec.DUIDRawData,
+			Name:         res.Metadata.Name,
+			IfName:       aliases[spec.Interface],
+			Profile:      profile,
+			PrefixLength: api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
+			IAID:         spec.IAID,
+			DUIDType:     api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType),
+			DUIDRawData:  spec.DUIDRawData,
 		}
 	}
 
@@ -157,12 +155,6 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 	}
 	if source.DUIDRawData != "" {
 		buf.WriteString("DUIDRawData=" + formatColonHex(source.DUIDRawData) + "\n")
-	}
-	switch source.ReleasePolicy {
-	case "never":
-		buf.WriteString("SendRelease=no\n")
-	case "always":
-		buf.WriteString("SendRelease=yes\n")
 	}
 	switch source.Profile {
 	case api.IPv6PDProfileNTTNGNDirectHikariDenwa, api.IPv6PDProfileNTTHGWLANPD:

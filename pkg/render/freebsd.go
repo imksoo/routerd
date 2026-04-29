@@ -98,11 +98,10 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			dhcp6cIfaces[ifname] = true
 			profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 			pds = append(pds, freeBSDPD{
-				Name:          res.Metadata.Name,
-				IfName:        ifname,
-				PrefixLength:  api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
-				ReleasePolicy: api.EffectiveIPv6PDReleasePolicy(profile, spec.ReleasePolicy),
-				IAID:          spec.IAID,
+				Name:         res.Metadata.Name,
+				IfName:       ifname,
+				PrefixLength: api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
+				IAID:         spec.IAID,
 			})
 		case "PPPoEInterface":
 			spec, err := res.PPPoEInterfaceSpec()
@@ -144,11 +143,10 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 }
 
 type freeBSDPD struct {
-	Name          string
-	IfName        string
-	PrefixLength  int
-	ReleasePolicy string
-	IAID          string
+	Name         string
+	IfName       string
+	PrefixLength int
+	IAID         string
 }
 
 type freeBSDPPPoE struct {
@@ -286,11 +284,6 @@ func freeBSDDHCP6C(router *api.Router, aliases map[string]string, pds []freeBSDP
 }
 
 func freeBSDDHCP6CFlags(pds []freeBSDPD) string {
-	for _, pd := range pds {
-		if pd.ReleasePolicy == "never" {
-			return "-n"
-		}
-	}
 	return ""
 }
 

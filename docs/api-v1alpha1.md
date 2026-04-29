@@ -452,12 +452,12 @@ spec:
   client: networkd
   profile: ntt-hgw-lan-pd
   prefixLength: 60
-  releasePolicy: never
 ```
 
 Breaking note: the HGW workaround fields `convergenceTimeout`,
-`hintFromState`, `preferredLifetime`, and `validLifetime` were removed. If an
-older config still contains them, delete those keys.
+`hintFromState`, `preferredLifetime`, `validLifetime`, and the Release-control
+field `releasePolicy` were removed. If an older config still contains them,
+delete those keys.
 
 How routerd behaves:
 
@@ -475,12 +475,6 @@ How routerd behaves:
   delegated length to `/60`. For systemd-networkd, routerd deliberately omits
   `PrefixDelegationHint=` for these profiles so the first Solicit stays close
   to commercial router behavior observed in the lab.
-- `spec.releasePolicy` controls whether the OS DHCPv6 client sends Release
-  when it stops. Values are `default`, `never`, and `always`; an omitted value
-  is the same as `default`. The NTT profiles default to `never`, so
-  systemd-networkd renders `SendRelease=no` and FreeBSD `dhcp6c` starts with
-  `-n`. Other profiles default to `always`. Set `always` explicitly only when
-  the upstream server should clear the binding on client shutdown.
 - During apply, routerd records observed prefix-delegation state in
   `ipv6PrefixDelegation.<name>.lease` in the local state store. The lease JSON
   holds the current prefix, last known prefix, observed DUID, IAID, expected

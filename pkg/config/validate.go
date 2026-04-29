@@ -664,11 +664,6 @@ func validateResource(res api.Resource) error {
 		default:
 			return fmt.Errorf("%s spec.profile must be default, ntt-ngn-direct-hikari-denwa, or ntt-hgw-lan-pd", res.ID())
 		}
-		switch spec.ReleasePolicy {
-		case "", "default", "never", "always":
-		default:
-			return fmt.Errorf("%s spec.releasePolicy must be default, never, or always", res.ID())
-		}
 		if spec.PrefixLength != 0 && (spec.PrefixLength < 1 || spec.PrefixLength > 128) {
 			return fmt.Errorf("%s spec.prefixLength must be within 1-128", res.ID())
 		}

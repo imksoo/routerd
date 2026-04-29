@@ -19,7 +19,6 @@ type nixOSInterface struct {
 	DHCP4UseDNS      *bool
 	DHCP4RouteMetric int
 	DHCP6            bool
-	DHCP6SendRelease string
 	AcceptRA         bool
 	Addresses        []string
 }
@@ -257,7 +256,6 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 			if iface := interfaces[spec.Interface]; iface != nil {
 				iface.DHCP6 = true
 				iface.AcceptRA = true
-				iface.DHCP6SendRelease = api.EffectiveIPv6PDReleasePolicy(defaultString(spec.Profile, api.IPv6PDProfileDefault), spec.ReleasePolicy)
 			}
 		}
 	}
@@ -312,16 +310,6 @@ func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 		}
 		if iface.DHCP4RouteMetric != 0 {
 			buf.WriteString("      RouteMetric = " + strconv.Itoa(iface.DHCP4RouteMetric) + ";\n")
-		}
-		buf.WriteString("    };\n")
-	}
-	if iface.DHCP6SendRelease != "" {
-		buf.WriteString("    dhcpV6Config = {\n")
-		switch iface.DHCP6SendRelease {
-		case "never":
-			buf.WriteString("      SendRelease = false;\n")
-		case "always":
-			buf.WriteString("      SendRelease = true;\n")
 		}
 		buf.WriteString("    };\n")
 	}

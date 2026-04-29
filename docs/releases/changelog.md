@@ -21,14 +21,11 @@ behavior changes and new resource shapes as the model takes shape.
   `routerd.net/v1alpha1/Inventory/host` in the SQLite objects table.
   `routerctl describe inventory/host` shows OS, kernel, virtualization,
   service-manager, DMI, and command availability observations.
-- `IPv6PrefixDelegation.spec.releasePolicy` was added to control DHCPv6
-  Release behavior. NTT profiles default to `never`, rendering
-  systemd-networkd `SendRelease=no` and FreeBSD `dhcp6c -n`; other profiles
-  default to `always`.
 - Breaking: removed the HGW workaround fields
   `IPv6PrefixDelegation.spec.convergenceTimeout`, `spec.hintFromState`,
-  `spec.preferredLifetime`, and `spec.validLifetime`. routerd leaves DHCPv6
-  Renew/Rebind behavior to the OS client.
+  `spec.preferredLifetime`, `spec.validLifetime`, and the Release-control
+  field `spec.releasePolicy`. routerd leaves DHCPv6 Renew/Rebind and Release
+  behavior to the OS client.
 - CLI and control verbs now use `apply`: `routerd reconcile`,
   `routerctl reconcile`, and the control API apply action were renamed to
   `routerd apply`, `routerctl apply`, and `/apply`. The YAML
@@ -66,9 +63,6 @@ behavior changes and new resource shapes as the model takes shape.
   stored PD lease state, manages dnsmasq through a `routerd_dnsmasq` rc.d
   service, and nudges RA default-route learning with `rtsol` when no IPv6
   default route is present.
-- FreeBSD `dhcp6c` is now started with `-n`, and required restarts use SIGUSR1
-  before starting the service again to avoid unnecessary DHCPv6 Release
-  traffic.
 - FreeBSD DHCPv6-PD identity observation now records the configured IAID and
   the `dhcp6c` DUID file in routerd state.
 - Resource ownership and adoption foundation: every resource kind now

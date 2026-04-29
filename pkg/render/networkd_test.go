@@ -44,8 +44,8 @@ func TestNetworkdDropinsRenderDHCPv6PD(t *testing.T) {
 	if strings.Contains(wan, "PrefixDelegationHint=") {
 		t.Fatalf("wan drop-in should not render a prefix hint for NTT profiles:\n%s", wan)
 	}
-	if !strings.Contains(wan, "SendRelease=no") {
-		t.Fatalf("wan drop-in missing NTT SendRelease default:\n%s", wan)
+	if strings.Contains(wan, "SendRelease=") {
+		t.Fatalf("wan drop-in should leave DHCPv6 Release behavior to networkd:\n%s", wan)
 	}
 	if lanFile.Path == "" {
 		t.Fatal("missing LAN delegated address drop-in")
@@ -111,7 +111,6 @@ func TestNetworkdDropinsRenderNTTFletsProfile(t *testing.T) {
 		"UseDelegatedPrefix=yes",
 		"WithoutRA=solicit",
 		"RapidCommit=no",
-		"SendRelease=no",
 	} {
 		if !strings.Contains(wan, want) {
 			t.Fatalf("wan drop-in missing %q:\n%s", want, wan)
@@ -143,33 +142,6 @@ func TestNetworkdDropinsRenderGenericPrefixHint(t *testing.T) {
 	wan := string(files[0].Data)
 	if !strings.Contains(wan, "PrefixDelegationHint=::/56") {
 		t.Fatalf("generic drop-in missing PrefixDelegationHint:\n%s", wan)
-	}
-}
-
-func TestNetworkdDropinsRenderExplicitReleasePolicyAlways(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{
-			Resources: []api.Resource{
-				netResource("Interface", "wan", api.InterfaceSpec{IfName: "ens18", Managed: false}),
-				netResource("IPv6PrefixDelegation", "wan-pd", api.IPv6PrefixDelegationSpec{
-					Interface:     "wan",
-					Client:        "networkd",
-					Profile:       "ntt-hgw-lan-pd",
-					ReleasePolicy: "always",
-				}),
-			},
-		},
-	}
-	files, err := NetworkdDropins(router)
-	if err != nil {
-		t.Fatalf("render networkd dropins: %v", err)
-	}
-	wan := string(files[0].Data)
-	if !strings.Contains(wan, "SendRelease=yes") {
-		t.Fatalf("wan drop-in missing explicit SendRelease=yes:\n%s", wan)
-	}
-	if strings.Contains(wan, "SendRelease=no") {
-		t.Fatalf("wan drop-in should not include SendRelease=no:\n%s", wan)
 	}
 }
 

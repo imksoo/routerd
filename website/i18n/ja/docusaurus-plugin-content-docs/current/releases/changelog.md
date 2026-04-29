@@ -12,12 +12,11 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
   `routerd.net/v1alpha1/Inventory/host` として保存するようにしました。
   `routerctl describe inventory/host` で OS、カーネル、仮想化、サービス管理方式、
   DMI、コマンドの有無を確認できます。
-- `IPv6PrefixDelegation.spec.releasePolicy` を追加しました。DHCPv6 クライアントが停止時に Release を送るかどうかを設定できます。NTT 系プロファイルでは `never` が既定になり、systemd-networkd には `SendRelease=no`、FreeBSD の `dhcp6c` には `-n` を出力します。それ以外のプロファイルでは `always` が既定です。
 - 破壊的変更: ホームゲートウェイ回避用だった
   `IPv6PrefixDelegation.spec.convergenceTimeout`、`spec.hintFromState`、
-  `spec.preferredLifetime`、`spec.validLifetime` を削除しました。routerd は
-  プレフィックス長だけのヒントを出力し、DHCPv6 の Renew/Rebind は OS 側
-  クライアントに任せます。
+  `spec.preferredLifetime`、`spec.validLifetime` と、Release 制御用の
+  `spec.releasePolicy` を削除しました。routerd は DHCPv6 の Renew/Rebind と
+  Release の挙動を OS 側クライアントに任せます。
 - CLI と制御 API の動詞を `apply` に揃えました。`routerd reconcile`、
   `routerctl reconcile`、制御 API の反映操作は、それぞれ `routerd apply`、
   `routerctl apply`、`/apply` に変わりました。YAML の `spec.reconcile`
@@ -38,7 +37,6 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
   `IPv6DelegatedAddress` を導出できるようになりました。dnsmasq は
   `routerd_dnsmasq` rc.d サービスで管理し、IPv6 既定経路がない場合は
   `rtsol` で上流 RA の取得を促します。
-- FreeBSD の `dhcp6c` を `-n` 付きで起動し、必要な再起動では SIGUSR1 で止めてから起動し直すようにしました。不要な DHCPv6 Release を避けるためです。
 - リソース所有と取り込みの基礎を導入。すべてのリソース種別が管理意図を出すようになり、ローカル所有台帳がホスト側の構成物を記録、`routerd adopt --candidates` が読み取り専用で取り込み候補を表示、反映時には経路と nftables 関連の管理対象構成物の残置候補を報告するようになりました。
 - `routerd adopt --apply` を追加。ホストの状態を変更せず、一致した取り込み候補を台帳に記録します。dry-run でない反映が成功した場合も、台帳が自動で更新されます。
 - 台帳で所有が確認できる DS-Lite トンネル、routerd の nftables テーブル、routerd の systemd サービスについて、残置物のクリーンアップを追加。
