@@ -33,6 +33,7 @@ import (
 	"routerd/pkg/eventlog"
 	"routerd/pkg/inventory"
 	"routerd/pkg/observe"
+	"routerd/pkg/pdmonitor"
 	"routerd/pkg/platform"
 	"routerd/pkg/ralistener"
 	"routerd/pkg/render"
@@ -2307,6 +2308,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	stop := make(chan struct{})
 	defer close(stop)
 	startRAObservation(stop, router, defaultStatePath, logger)
+	startPDHungMonitor(stop, router, defaultStatePath, 30*time.Second, 30*time.Second, logger)
 	if *observeInterval > 0 {
 		go runObserveSchedule(stop, *observeInterval, router, cache, *statusFile, logger)
 	}
@@ -2491,6 +2493,53 @@ func startRAObservation(stop <-chan struct{}, router *api.Router, statePath stri
 		})
 		if err != nil && ctx.Err() == nil {
 			logger.Emit(eventlog.LevelWarning, "ra", "RA observation listener stopped", map[string]string{"error": err.Error()})
+		}
+	}()
+}
+
+func startPDHungMonitor(stop <-chan struct{}, router *api.Router, statePath string, interval, grace time.Duration, logger *eventlog.Logger) {
+	pds := ipv6PrefixDelegationNames(router)
+	if len(pds) == 0 || interval <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				store, err := routerstate.Load(defaultString(statePath, defaultStatePath))
+				if err != nil {
+					logger.Emit(eventlog.LevelWarning, "pd", "PD hung monitor state load failed", map[string]string{"error": err.Error()})
+					continue
+				}
+				results, err := pdmonitor.CheckHung(store, pds, grace)
+				if err != nil {
+					logger.Emit(eventlog.LevelWarning, "pd", "PD hung monitor failed", map[string]string{"error": err.Error()})
+					continue
+				}
+				changed := false
+				for _, result := range results {
+					if !result.Changed {
+						continue
+					}
+					changed = true
+					level := eventlog.LevelWarning
+					message := "DHCPv6-PD renewal appears hung"
+					if !result.Hung {
+						level = eventlog.LevelInfo
+						message = "DHCPv6-PD hung suspicion cleared"
+					}
+					logger.Emit(level, "pd", message, map[string]string{"resource": result.Resource, "reason": result.Reason})
+				}
+				if changed {
+					if err := store.Save(defaultString(statePath, defaultStatePath)); err != nil {
+						logger.Emit(eventlog.LevelWarning, "pd", "PD hung monitor state save failed", map[string]string{"error": err.Error()})
+					}
+				}
+			}
 		}
 	}()
 }

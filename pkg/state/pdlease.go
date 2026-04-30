@@ -28,6 +28,7 @@ type PDLease struct {
 	IAID           string         `json:"iaid,omitempty"`
 	ExpectedDUID   string         `json:"expectedDUID,omitempty"`
 	WANObserved    *PDWANObserved `json:"wanObserved,omitempty"`
+	Hung           *PDHungStatus  `json:"hung,omitempty"`
 }
 
 type PDWANObserved struct {
@@ -37,6 +38,11 @@ type PDWANObserved struct {
 	RAOFlag       string `json:"raOFlag,omitempty"`
 	RAPrefix      string `json:"raPrefix,omitempty"`
 	RAObservedAt  string `json:"raObservedAt,omitempty"`
+}
+
+type PDHungStatus struct {
+	SuspectedAt string `json:"suspectedAt,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 func EncodePDLease(lease PDLease) string {
