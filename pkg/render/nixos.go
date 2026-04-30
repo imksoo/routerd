@@ -422,9 +422,13 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 			if err != nil {
 				return nil, nil, err
 			}
-			if defaultString(spec.Client, "networkd") == "dhcp6c" {
+			switch defaultString(spec.Client, "networkd") {
+			case "dhcp6c":
 				service["wide-dhcpv6"] = true
 				debug["wide-dhcpv6"] = true
+			case "dhcpcd":
+				service["dhcpcd"] = true
+				debug["dhcpcd"] = true
 			}
 		}
 	}

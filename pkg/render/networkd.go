@@ -42,7 +42,7 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 
 	pds := map[string]pdSource{}
 	raIfaces := map[string]bool{}
-	dhcp6cPDIfaces := map[string]bool{}
+	externalPDIfaces := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "IPv6RAAddress":
@@ -73,9 +73,9 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 			DUIDType:     api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType),
 			DUIDRawData:  spec.DUIDRawData,
 		}
-		if defaultString(spec.Client, "networkd") == "dhcp6c" {
+		if isExternalIPv6PDClient(defaultString(spec.Client, "networkd")) {
 			if ifname := aliases[spec.Interface]; ifname != "" {
-				dhcp6cPDIfaces[ifname] = true
+				externalPDIfaces[ifname] = true
 			}
 		}
 	}
@@ -91,7 +91,7 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 	for _, ifname := range raNames {
 		var buf bytes.Buffer
 		buf.WriteString("[Network]\nIPv6AcceptRA=yes\n")
-		if dhcp6cPDIfaces[ifname] {
+		if externalPDIfaces[ifname] {
 			buf.WriteString("\n[IPv6AcceptRA]\nDHCPv6Client=no\nUseDNS=no\nUseDomains=no\n")
 		}
 		files = append(files, File{
@@ -188,6 +188,15 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, nil
+}
+
+func isExternalIPv6PDClient(client string) bool {
+	switch client {
+	case "dhcp6c", "dhcpcd":
+		return true
+	default:
+		return false
+	}
 }
 
 func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {

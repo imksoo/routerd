@@ -45,7 +45,10 @@ func Validate(router *api.Router) error {
 		id     string
 		client string
 	}{}
-	dhcp6CPDByInterface := map[string]string{}
+	externalPDByInterface := map[string]struct {
+		id     string
+		client string
+	}{}
 	for _, res := range router.Spec.Resources {
 		if err := validateResource(res); err != nil {
 			return err
@@ -86,8 +89,11 @@ func Validate(router *api.Router) error {
 			if err != nil {
 				return err
 			}
-			if spec.Client == "dhcp6c" {
-				dhcp6CPDByInterface[spec.Interface] = res.ID()
+			if isExternalIPv6PDClient(spec.Client) {
+				externalPDByInterface[spec.Interface] = struct {
+					id     string
+					client string
+				}{id: res.ID(), client: spec.Client}
 			}
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6DHCPAddress" {
@@ -149,9 +155,9 @@ func Validate(router *api.Router) error {
 			return fmt.Errorf("spec.apply.protectedZones[%d] references missing Zone %q", i, name)
 		}
 	}
-	for iface, pd := range dhcp6CPDByInterface {
-		if dhcp6, ok := dhcp6AddressByInterface[iface]; ok && dhcp6.client != "dhcp6c" {
-			return fmt.Errorf("%s conflicts with %s on interface %q: client=dhcp6c must own DHCPv6 on that interface", pd, dhcp6.id, iface)
+	for iface, pd := range externalPDByInterface {
+		if dhcp6, ok := dhcp6AddressByInterface[iface]; ok && dhcp6.client != pd.client {
+			return fmt.Errorf("%s conflicts with %s on interface %q: client=%s must own DHCPv6 on that interface", pd.id, dhcp6.id, iface, pd.client)
 		}
 	}
 
@@ -398,6 +404,15 @@ func Validate(router *api.Router) error {
 		}
 	}
 	return nil
+}
+
+func isExternalIPv6PDClient(client string) bool {
+	switch client {
+	case "dhcp6c", "dhcpcd":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateApplyPolicy(spec api.ApplyPolicySpec) error {
@@ -687,9 +702,9 @@ func validateResource(res api.Resource) error {
 			return fmt.Errorf("%s spec.interface is required", res.ID())
 		}
 		switch spec.Client {
-		case "", "networkd", "dhcp6c":
+		case "", "networkd", "dhcp6c", "dhcpcd":
 		default:
-			return fmt.Errorf("%s spec.client must be networkd or dhcp6c", res.ID())
+			return fmt.Errorf("%s spec.client must be networkd, dhcp6c, or dhcpcd", res.ID())
 		}
 		switch spec.Profile {
 		case "", api.IPv6PDProfileDefault, api.IPv6PDProfileNTTNGNDirectHikariDenwa, api.IPv6PDProfileNTTHGWLANPD:

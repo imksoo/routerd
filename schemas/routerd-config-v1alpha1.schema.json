@@ -1157,7 +1157,8 @@
                         "enum": [
                           "",
                           "networkd",
-                          "dhcp6c"
+                          "dhcp6c",
+                          "dhcpcd"
                         ],
                         "type": "string"
                       },
