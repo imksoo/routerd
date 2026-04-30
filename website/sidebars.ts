@@ -38,6 +38,13 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Knowledge base',
+      items: [
+        'knowledge-base/dhcpv6-pd-clients',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Reference',
       items: [
         'api-v1alpha1',
