@@ -139,6 +139,36 @@ Response:
 }
 ```
 
+### DHCPv6 client event
+
+```text
+POST /api/control.routerd.net/v1alpha1/dhcp6-event
+```
+
+Managed DHCPv6-PD client hook scripts use this endpoint to report lease
+events back to the daemon. The endpoint is local-only and is not intended as a
+remote management API. routerd stores the event in
+`ipv6PrefixDelegation.<name>.lease`, updates `lastReplyAt` for reply-like
+events, and records a resource event.
+
+Example body:
+
+```json
+{
+  "apiVersion": "control.routerd.net/v1alpha1",
+  "kind": "DHCP6Event",
+  "resource": "wan-pd",
+  "reason": "BOUND6",
+  "prefix": "2001:db8:1200:1230::/60",
+  "iaid": "1",
+  "t1": "7200",
+  "t2": "12600",
+  "pltime": "14400",
+  "vltime": "14400",
+  "serverID": "00030001020000000001"
+}
+```
+
 `dryRun: true` runs the same plan as a regular apply but does not
 change host state. `dryRun: false` (or omitted) applies the result.
 

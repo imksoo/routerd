@@ -478,6 +478,16 @@ YAML で値を固定できます (ルータ移行、HA 切替、replay 試験な
 状態でも、観測または固定された `serverID` を使って Solicit から
 Request-with-claim にフォールバックします。
 
+実装メモ (2026-04-30): デーモンは WAN 側の RA を待ち受け、RA の送信元
+リンクローカルアドレス、そこから推定したリンクレイヤ DUID 候補、M/O フラグ、
+プレフィックス、観測時刻を `lease.wanObserved` に記録します。routerd が管理する
+`dhcp6c` と `dhcpcd` は、DHCPv6 リースイベントを制御 API へ送るローカル
+フックスクリプトを生成します。デーモン内の軽い監視は `lastReplyAt + T1` と
+現在時刻を比べ、想定される更新時刻を過ぎても新しい Reply が無い場合に
+`HGWHungSuspected` をイベントとして残します。`routerctl describe ipv6pd/<名前>` は、
+下流側に委譲アドレスが残っているかどうかとは別に、リース、WAN 側の観測、
+取得段階、次の動作、更新停止の疑いを表示します。
+
 ### 5.3 重要: apply が DHCPv6 クライアントを不用意に壊さないようにする
 
 assert: 生成されたクライアント設定が変わっていない場合、apply は DHCPv6 クライアントを

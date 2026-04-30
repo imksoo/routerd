@@ -79,6 +79,8 @@ func controlSchema() map[string]any {
 			reflectedSchema(controlapi.NAPTTable{}),
 			reflectedSchema(controlapi.ApplyRequest{}),
 			reflectedSchema(controlapi.ApplyResult{}),
+			reflectedSchema(controlapi.DHCP6EventRequest{}),
+			reflectedSchema(controlapi.DHCP6EventResult{}),
 			reflectedSchema(controlapi.Error{}),
 		},
 	}
@@ -140,14 +142,33 @@ func controlOpenAPISchema() map[string]any {
 					},
 				},
 			},
+			controlapi.Prefix + "/dhcp6-event": map[string]any{
+				"post": map[string]any{
+					"operationId": "recordDHCP6Event",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": schemaRef("DHCP6EventRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200":     responseRef("DHCP6EventResult"),
+						"default": responseRef("Error"),
+					},
+				},
+			},
 		},
 		"components": map[string]any{
 			"schemas": map[string]any{
-				"Status":       reflectedSchema(controlapi.Status{}),
-				"NAPTTable":    reflectedSchema(controlapi.NAPTTable{}),
-				"ApplyRequest": reflectedSchema(controlapi.ApplyRequest{}),
-				"ApplyResult":  reflectedSchema(controlapi.ApplyResult{}),
-				"Error":        reflectedSchema(controlapi.Error{}),
+				"Status":            reflectedSchema(controlapi.Status{}),
+				"NAPTTable":         reflectedSchema(controlapi.NAPTTable{}),
+				"ApplyRequest":      reflectedSchema(controlapi.ApplyRequest{}),
+				"ApplyResult":       reflectedSchema(controlapi.ApplyResult{}),
+				"DHCP6EventRequest": reflectedSchema(controlapi.DHCP6EventRequest{}),
+				"DHCP6EventResult":  reflectedSchema(controlapi.DHCP6EventResult{}),
+				"Error":             reflectedSchema(controlapi.Error{}),
 			},
 		},
 	}

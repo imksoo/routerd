@@ -508,6 +508,17 @@ emits per-transaction events in the `events` table, exposes them through
 the controller to fall back from Solicit to Request-with-claim when the HGW
 silently drops Solicit, using the discovered or pinned `serverID`.
 
+Implementation note (2026-04-30): the daemon now listens for WAN Router
+Advertisements and records the RA source link-local address, a derived
+link-layer DUID candidate, M/O flags, prefix, and observation time under
+`lease.wanObserved`. Managed `dhcp6c` and `dhcpcd` render local hook scripts
+that can post DHCPv6 lease events to the control API. A lightweight daemon
+monitor compares `lastReplyAt + T1` with the current time and records
+`HGWHungSuspected` if the expected renewal point passes without a newer Reply.
+`routerctl describe ipv6pd/<name>` shows the lease, WAN observation,
+acquisition phase, next action, and hung suspicion separately from the
+presence of downstream delegated addresses.
+
 ### 5.3 High: Make Apply No-Op Safe for DHCPv6 Clients
 
 assert: Apply must not restart or rewrite a DHCPv6 client unless the rendered

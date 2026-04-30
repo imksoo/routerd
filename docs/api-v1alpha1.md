@@ -544,7 +544,8 @@ How routerd behaves:
 - During apply, routerd records observed prefix-delegation state in
   `ipv6PrefixDelegation.<name>.lease` in the local state store. The lease JSON
   holds the current prefix, last known prefix, observed DUID, IAID, expected
-  DUID, and last observed time. Older pre-release state files that used
+  DUID, last DHCPv6 Reply time, WAN router-advertisement details, acquisition
+  phase, and hung suspicion state. Older pre-release state files that used
   separate keys such as `ipv6PrefixDelegation.<name>.lastPrefix` are no longer
   migrated automatically. Interface names, configured prefix length, client
   type, and profile remain separate state entries because
@@ -554,7 +555,8 @@ How routerd behaves:
   back as an exact DHCPv6 hint.
   Use `routerctl get ipv6pd` to see the desired resource definition,
   `routerctl describe ipv6pd/<name>` to inspect current and last delegated
-  prefixes without mixing them up, and `routerctl show ipv6pd -o yaml
+  prefixes, the latest Reply time, WAN RA source, acquisition phase, and hung
+  suspicion without mixing them up. Use `routerctl show ipv6pd -o yaml
   --events` for the combined machine-readable view.
 - For systemd-networkd and FreeBSD `dhcp6c` clients, routerd records observed
   DHCP identity into the lease when available. With `dhcp6c`, the DUID is read
@@ -566,9 +568,13 @@ How routerd behaves:
 - The OS DHCPv6 client remains responsible for Renew/Rebind before the lease
   expires. routerd should not normally restart that client during apply,
   because a restart can turn a renewal path into a fresh Solicit or Release.
-  If there is no current observable prefix, `plan`, `apply`, and daemon
-  status include a warning so the operator can fix the DHCPv6 client before
-  the upstream lease expires.
+  The daemon records DHCPv6 client hook events when the managed client exposes
+  them and compares `lastReplyAt + T1` with the current time. If that expected
+  renewal window passes without a newer Reply, `routerctl describe
+  ipv6pd/<name>` shows an HGW hung suspicion and the event stream records a
+  warning. If there is no current observable prefix, `plan`, `apply`, and
+  daemon status include a warning so the operator can fix the DHCPv6 client
+  before the upstream lease expires.
 - `spec.iaid` pins the DHCPv6 IAID. It may be written as decimal, `0x`
   prefixed hex, or 8 hex digits. systemd-networkd renders it as a decimal
   `IAID=` value; FreeBSD `dhcp6c` uses it as the `ia-pd` / `id-assoc pd`

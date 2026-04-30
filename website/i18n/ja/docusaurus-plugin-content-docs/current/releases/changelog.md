@@ -9,6 +9,10 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- `routerd serve` now observes WAN Router Advertisements for
+  `IPv6PrefixDelegation`, accepts DHCPv6 client hook events over the local
+  control API, tracks acquisition phase and stalled-renewal suspicion, and
+  exposes those details in `routerctl describe ipv6pd/<name>`.
 - Breaking: routerd now uses `apply` as the user-facing verb. The old
   `reconcile` CLI and control API actions were replaced by `routerd apply`,
   `routerctl apply`, and `/apply`; the YAML `spec.reconcile` policy name stays

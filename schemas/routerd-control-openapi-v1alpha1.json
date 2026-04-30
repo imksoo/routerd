@@ -250,6 +250,89 @@
         ],
         "type": "object"
       },
+      "DHCP6EventRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "clientID": {
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "iaid": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "pltime": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "serverID": {
+            "type": "string"
+          },
+          "sourceLL": {
+            "type": "string"
+          },
+          "sourceMAC": {
+            "type": "string"
+          },
+          "t1": {
+            "type": "string"
+          },
+          "t2": {
+            "type": "string"
+          },
+          "vltime": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "DHCP6EventResult": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          },
+          "apiVersion": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "resource": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind",
+          "accepted",
+          "resource"
+        ],
+        "type": "object"
+      },
       "Error": {
         "additionalProperties": false,
         "properties": {
@@ -480,6 +563,43 @@
               }
             },
             "description": "ApplyResult"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/control.routerd.net/v1alpha1/dhcp6-event": {
+      "post": {
+        "operationId": "recordDHCP6Event",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DHCP6EventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DHCP6EventResult"
+                }
+              }
+            },
+            "description": "DHCP6EventResult"
           },
           "default": {
             "content": {

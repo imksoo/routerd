@@ -427,6 +427,89 @@
         "apiVersion": {
           "type": "string"
         },
+        "clientID": {
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "iaid": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "pltime": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "resource": {
+          "type": "string"
+        },
+        "serverID": {
+          "type": "string"
+        },
+        "sourceLL": {
+          "type": "string"
+        },
+        "sourceMAC": {
+          "type": "string"
+        },
+        "t1": {
+          "type": "string"
+        },
+        "t2": {
+          "type": "string"
+        },
+        "vltime": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "resource"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "apiVersion": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "resource": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "accepted",
+        "resource"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
         "error": {
           "additionalProperties": false,
           "properties": {

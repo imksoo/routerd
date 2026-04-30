@@ -127,6 +127,35 @@ POST /api/control.routerd.net/v1alpha1/apply
 }
 ```
 
+### DHCPv6 クライアントイベント
+
+```text
+POST /api/control.routerd.net/v1alpha1/dhcp6-event
+```
+
+routerd が管理する DHCPv6-PD クライアントのフックスクリプトが、リースイベントを
+デーモンへ返すための入口です。ローカル専用であり、遠隔管理 API ではありません。
+routerd は受け取った内容を `ipv6PrefixDelegation.<name>.lease` に保存し、
+Reply 系のイベントであれば `lastReplyAt` を更新し、リソースイベントにも残します。
+
+例:
+
+```json
+{
+  "apiVersion": "control.routerd.net/v1alpha1",
+  "kind": "DHCP6Event",
+  "resource": "wan-pd",
+  "reason": "BOUND6",
+  "prefix": "2001:db8:1200:1230::/60",
+  "iaid": "1",
+  "t1": "7200",
+  "t2": "12600",
+  "pltime": "14400",
+  "vltime": "14400",
+  "serverID": "00030001020000000001"
+}
+```
+
 `dryRun: true` のときは通常の反映と同じ計画を立てますが、ホストの状態は変更しません。`dryRun: false`（または省略）のときに実際に反映します。
 
 ## 直接叩く例
