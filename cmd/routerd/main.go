@@ -1434,6 +1434,20 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			}
 		}
 		if observedPrefix == "" {
+			if defaultString(spec.Client, "networkd") == "dhcpcd" {
+				if ifname := aliases[spec.Interface]; ifname != "" {
+					if prefix, leaseUpdate, ok := observedDHCPCDDelegatedPrefix(ifname, prefixLength); ok {
+						observedPrefix = prefix
+						lease.ServerID = firstNonEmptyString(leaseUpdate.ServerID, lease.ServerID)
+						lease.T1 = firstNonEmptyString(leaseUpdate.T1, lease.T1)
+						lease.T2 = firstNonEmptyString(leaseUpdate.T2, lease.T2)
+						lease.PLTime = firstNonEmptyString(leaseUpdate.PLTime, lease.PLTime)
+						lease.VLTime = firstNonEmptyString(leaseUpdate.VLTime, lease.VLTime)
+					}
+				}
+			}
+		}
+		if observedPrefix == "" {
 			if recorder, ok := store.(routerstate.EventRecorder); ok {
 				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixMissing", "delegated IPv6 prefix is not observable")
 			}
@@ -1687,6 +1701,47 @@ func delegatedPrefixFromObservedInterface(ifname string, prefixLength int, manag
 		return prefix, true
 	}
 	return delegatedPrefixFromObserved(ipv6Prefixes(ifname), ipv6Addresses(ifname), prefixLength)
+}
+
+func observedDHCPCDDelegatedPrefix(ifname string, prefixLength int) (string, routerstate.PDLease, bool) {
+	out, err := exec.Command("dhcpcd", "-U", "-6", ifname).CombinedOutput()
+	if err != nil {
+		return "", routerstate.PDLease{}, false
+	}
+	return parseDHCPCDDumpLeasePD(out, prefixLength)
+}
+
+func parseDHCPCDDumpLeasePD(out []byte, prefixLength int) (string, routerstate.PDLease, bool) {
+	values := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	lease := routerstate.PDLease{
+		ServerID: values["dhcp6_server_id"],
+		T1:       values["dhcp6_ia_pd1_t1"],
+		T2:       values["dhcp6_ia_pd1_t2"],
+		PLTime:   values["dhcp6_ia_pd1_prefix1_pltime"],
+		VLTime:   values["dhcp6_ia_pd1_prefix1_vltime"],
+	}
+	prefixAddr := values["dhcp6_ia_pd1_prefix1"]
+	if prefixAddr == "" {
+		return "", lease, false
+	}
+	bits := prefixLength
+	if bits <= 0 {
+		if parsed, err := strconv.Atoi(values["dhcp6_ia_pd1_prefix1_length"]); err == nil {
+			bits = parsed
+		}
+	}
+	prefix, err := netip.ParsePrefix(fmt.Sprintf("%s/%d", prefixAddr, bits))
+	if err != nil || !prefix.Addr().Is6() {
+		return "", lease, false
+	}
+	return prefix.Masked().String(), lease, true
 }
 
 func delegatedPrefixFromAddressEntries(entries []ipv6AddressEntry, prefixLength int, ignoredSuffixes map[uint64]bool) (string, bool) {

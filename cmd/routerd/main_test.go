@@ -820,6 +820,32 @@ func TestParseFreeBSDIfconfigIPv6(t *testing.T) {
 	}
 }
 
+func TestParseDHCPCDDumpLeasePD(t *testing.T) {
+	out := []byte(`reason=BOUND6
+interface=ens18
+protocol=dhcp6
+dhcp6_client_id=00030001020000000103
+dhcp6_server_id=00030001020000000001
+dhcp6_ia_pd1_iaid=00000001
+dhcp6_ia_pd1_t1=7200
+dhcp6_ia_pd1_t2=12600
+dhcp6_ia_pd1_prefix1_pltime=14400
+dhcp6_ia_pd1_prefix1_vltime=14400
+dhcp6_ia_pd1_prefix1_length=60
+dhcp6_ia_pd1_prefix1=2001:db8:3d60:1220::
+`)
+	prefix, lease, ok := parseDHCPCDDumpLeasePD(out, 60)
+	if !ok {
+		t.Fatal("parseDHCPCDDumpLeasePD ok = false, want true")
+	}
+	if prefix != "2001:db8:3d60:1220::/60" {
+		t.Fatalf("prefix = %q, want documentation /60", prefix)
+	}
+	if lease.ServerID != "00030001020000000001" || lease.T1 != "7200" || lease.T2 != "12600" || lease.PLTime != "14400" || lease.VLTime != "14400" {
+		t.Fatalf("lease = %#v", lease)
+	}
+}
+
 func TestObserveFreeBSDDHCP6CIdentityPayload(t *testing.T) {
 	payload := freeBSDDHCP6CDUIDPayload([]byte{
 		0x0e, 0x00,
