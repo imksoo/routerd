@@ -201,6 +201,48 @@ func TestControllerSendReleaseUsesZeroLifetimesWithoutReconfigureAccept(t *testi
 	}
 }
 
+func TestControllerSendRequestUsesLifetimeOverrides(t *testing.T) {
+	sender := &fakeSender{}
+	controller := Controller{
+		Sender:        sender,
+		TransactionID: func() (uint32, error) { return 0x010203, nil },
+	}
+	srcMAC := mustMAC(t, "02:00:00:00:01:03")
+	dstMAC := mustMAC(t, "02:00:00:00:00:01")
+	in := SendInput{
+		Resource: ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation", Name: "wan-pd"},
+		Lease: routerstate.PDLease{
+			PriorPrefix: "2001:db8:1200:1240::/60",
+			IAID:        "1",
+			T1:          "7200",
+			T2:          "12600",
+			PLTime:      "14400",
+			VLTime:      "14400",
+		},
+		Identity: Identity{
+			InterfaceName:  "ens18",
+			SourceMAC:      srcMAC,
+			DestinationMAC: dstMAC,
+			SourceIP:       netip.MustParseAddr("fe80::200:ff:fe00:103"),
+			DestinationIP:  netip.MustParseAddr("ff02::1:2"),
+			ClientDUID:     DUIDLL(srcMAC),
+			ServerDUID:     DUIDLL(dstMAC),
+		},
+		T1:                300,
+		T2:                600,
+		PreferredLifetime: 600,
+		ValidLifetime:     900,
+	}
+	if err := controller.SendRequest(context.Background(), nil, in); err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+	payload := dhcpPayload(sender.frame)
+	assertIAPD(t, payload, 1, 300, 600, 600, 900)
+	if !hasOption(payload, optionReconfAccept) {
+		t.Fatalf("request payload missing Reconfigure Accept: % x", payload)
+	}
+}
+
 type fakeSender struct {
 	ifname string
 	frame  []byte

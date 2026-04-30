@@ -66,6 +66,7 @@ var (
 	linuxDHCP6CDUIDPath          = "/var/lib/dhcpv6/dhcp6c_duid"
 	linuxDHCPCDConfigDir         = platformDefaults.SysconfDir
 	linuxDHCPCDDUIDPath          = "/var/lib/dhcpcd/duid"
+	freeBSDDHCPCDDUIDPath        = "/var/db/dhcpcd/duid"
 )
 
 var errNoIPv6PrefixAvailable = errors.New("no IPv6 prefix available")
@@ -255,6 +256,10 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	serverDUIDOverride := fs.String("server-duid", "", "DHCPv6 server DUID override as hex")
 	destinationIPOverride := fs.String("dst-ip", "ff02::1:2", "destination IPv6 address")
 	destinationMACOverride := fs.String("dst-mac", "", "destination Ethernet MAC override")
+	t1Override := fs.Uint("t1", 0, "override IA_PD T1 seconds for request/renew lab packets")
+	t2Override := fs.Uint("t2", 0, "override IA_PD T2 seconds for request/renew lab packets")
+	preferredLifetimeOverride := fs.Uint("preferred-lifetime", 0, "override IA Prefix preferred lifetime seconds for request/renew lab packets")
+	validLifetimeOverride := fs.Uint("valid-lifetime", 0, "override IA Prefix valid lifetime seconds for request/renew lab packets")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -271,6 +276,9 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	}
 	input, err := dhcp6SendInput(router, store, *resourceName, *prefixOverride, *serverDUIDOverride, *destinationIPOverride, *destinationMACOverride)
 	if err != nil {
+		return err
+	}
+	if err := setDHCP6LifetimeOverrides(&input, *t1Override, *t2Override, *preferredLifetimeOverride, *validLifetimeOverride); err != nil {
 		return err
 	}
 	controller := dhcp6control.Controller{Sender: dhcp6control.AFPacketSender{}}
@@ -291,6 +299,29 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "sent DHCPv6 %s for %s on %s prefix=%s iaid=%d\n", action, *resourceName, input.Identity.InterfaceName, input.Prefix, input.IAID)
+	return nil
+}
+
+func setDHCP6LifetimeOverrides(input *dhcp6control.SendInput, t1, t2, preferred, valid uint) error {
+	convert := func(name string, value uint) (uint32, error) {
+		if value > uint(^uint32(0)) {
+			return 0, fmt.Errorf("%s must fit in uint32", name)
+		}
+		return uint32(value), nil
+	}
+	var err error
+	if input.T1, err = convert("--t1", t1); err != nil {
+		return err
+	}
+	if input.T2, err = convert("--t2", t2); err != nil {
+		return err
+	}
+	if input.PreferredLifetime, err = convert("--preferred-lifetime", preferred); err != nil {
+		return err
+	}
+	if input.ValidLifetime, err = convert("--valid-lifetime", valid); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1160,7 +1191,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	var changedFreeBSD []string
 	if err := recordStageError("freebsd-network", func() error {
 		var err error
-		changedFreeBSD, err = applyFreeBSDConfig(router, defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath, defaultFreeBSDDHCP6CDUIDPath, defaultFreeBSDMPD5Path)
+		changedFreeBSD, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath, defaultFreeBSDDHCP6CDUIDPath, defaultFreeBSDMPD5Path)
 		return err
 	}()); err != nil {
 		return nil, err
@@ -2656,7 +2687,7 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 	return changedFiles, nil
 }
 
-func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, dhcp6cDUIDPath, mpd5Path string) ([]string, error) {
+func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, dhcp6cPath, dhcp6cDUIDPath, mpd5Path string) ([]string, error) {
 	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
 		return nil, err
@@ -2716,6 +2747,11 @@ func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, dhcp6cDUID
 			changed = append(changed, "service:dhcp6c")
 		}
 	}
+	dhcpcdChanged, err := applyFreeBSDDHCPCDConfig(router, stateStore)
+	if err != nil {
+		return changed, err
+	}
+	changed = append(changed, dhcpcdChanged...)
 	if len(data.MPD5) > 0 && mpd5Path != "" {
 		if err := os.MkdirAll(filepathDir(mpd5Path), 0755); err != nil {
 			return changed, err
@@ -2831,6 +2867,55 @@ func ensureFreeBSDDHCP6CDUID(router *api.Router, duidPath string) (bool, string,
 		return routerstate.EnsureKAMEDHCP6CDUIDLL(duidPath, mac, time.Now())
 	}
 	return false, "", nil
+}
+
+func applyFreeBSDDHCPCDConfig(router *api.Router, stateStore routerstate.Store) ([]string, error) {
+	if platformDefaults.OS != platform.OSFreeBSD {
+		return nil, nil
+	}
+	binaryPath := dhcpcdBinaryPath()
+	config, err := render.DHCPCDFreeBSDWithLeases(router, binaryPath, platformDefaults.SysconfDir, platformDefaults.RCScriptDir, prefixDelegationLeases(router, stateStore))
+	if err != nil {
+		return nil, err
+	}
+	if len(config.Files) == 0 {
+		return nil, nil
+	}
+	if !dhcpcdAvailable() {
+		return nil, errors.New("dhcpcd is required for IPv6PrefixDelegation client=dhcpcd")
+	}
+	duidChanged, duidBackup, err := ensureDHCPCDDUID(router, freeBSDDHCPCDDUIDPath)
+	if err != nil {
+		return nil, err
+	}
+	var changedFiles []string
+	if duidChanged {
+		changedFiles = append(changedFiles, freeBSDDHCPCDDUIDPath)
+		if duidBackup != "" {
+			changedFiles = append(changedFiles, duidBackup)
+		}
+	}
+	for _, file := range config.Files {
+		if err := os.MkdirAll(filepathDir(file.Path), 0755); err != nil {
+			return nil, fmt.Errorf("create directory for %s: %w", file.Path, err)
+		}
+		changed, err := writeFileIfChanged(file.Path, file.Data, file.Perm)
+		if err != nil {
+			return nil, fmt.Errorf("write dhcpcd file %s: %w", file.Path, err)
+		}
+		if changed {
+			changedFiles = append(changedFiles, file.Path)
+		}
+	}
+	for _, service := range config.Units {
+		if len(changedFiles) > 0 || !freeBSDServiceRunning(service) {
+			if err := runLogged("service", service, "restart"); err != nil {
+				return changedFiles, err
+			}
+			changedFiles = append(changedFiles, "service:"+service)
+		}
+	}
+	return changedFiles, nil
 }
 
 func freeBSDInterfaceMAC(ifname string) (string, error) {
@@ -4895,7 +4980,7 @@ func applyLinuxDHCPCDConfig(router *api.Router, stateStore routerstate.Store) ([
 		return nil, errors.New("dhcpcd is required for IPv6PrefixDelegation client=dhcpcd")
 	}
 
-	duidChanged, duidBackup, err := ensureLinuxDHCPCDDUID(router, linuxDHCPCDDUIDPath)
+	duidChanged, duidBackup, err := ensureDHCPCDDUID(router, linuxDHCPCDDUIDPath)
 	if err != nil {
 		return nil, err
 	}
@@ -5030,7 +5115,7 @@ func ensureLinuxDHCP6CDUID(router *api.Router, duidPath string) (bool, string, e
 	return false, "", nil
 }
 
-func ensureLinuxDHCPCDDUID(router *api.Router, duidPath string) (bool, string, error) {
+func ensureDHCPCDDUID(router *api.Router, duidPath string) (bool, string, error) {
 	if duidPath == "" {
 		return false, "", nil
 	}
@@ -5164,6 +5249,9 @@ func dhcpcdBinaryPath() string {
 	}
 	if _, err := os.Stat("/usr/sbin/dhcpcd"); err == nil {
 		return "/usr/sbin/dhcpcd"
+	}
+	if _, err := os.Stat("/usr/local/sbin/dhcpcd"); err == nil {
+		return "/usr/local/sbin/dhcpcd"
 	}
 	return "/usr/sbin/dhcpcd"
 }

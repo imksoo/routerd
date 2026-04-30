@@ -433,10 +433,17 @@ that preserves IA_PD lifetime semantics across Renew and Rebind. The
 systemd-networkd PD path is not the default for these profiles because lab
 captures showed lifetime `0/0` in Renew/Rebind traffic.
 
-Completion condition: router03 and router01 both render `client: dhcp6c`, can
-acquire PD after the HGW accepts Solicit, and keep the lease through a natural
-T1 Renew. NixOS is complete when router02 has either a packaged `dhcp6c`
-derivation or a documented supported alternative.
+Completion condition: the lab keeps one FreeBSD router on `client: dhcp6c` as
+the control path and runs a second FreeBSD router on `client: dhcpcd` as the
+test path under the same HGW state. Ubuntu and NixOS are then measured with
+`dhcpcd` as follow-up paths. The default only changes after initial acquisition
+and T1 Renew both succeed.
+
+Before the long T1 measurement, run one active Request with shortened requested
+lifetimes (`T1=300`, `T2=600`, `pltime=600`, `vltime=900`) and inspect the HGW
+Reply. If the HGW honours those values, the lab can use a short cycle for
+client comparison. If the HGW overrides them with the normal values, fall back
+to the observed two-hour T1 cycle.
 
 ### 5.2 Critical: DHCPv6 Active Controller (was: Record DHCPv6 Transactions)
 

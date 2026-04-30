@@ -41,12 +41,16 @@ type ResourceRef struct {
 }
 
 type SendInput struct {
-	Resource ResourceRef
-	Spec     api.IPv6PrefixDelegationSpec
-	Lease    routerstate.PDLease
-	Identity Identity
-	Prefix   netip.Prefix
-	IAID     uint32
+	Resource          ResourceRef
+	Spec              api.IPv6PrefixDelegationSpec
+	Lease             routerstate.PDLease
+	Identity          Identity
+	Prefix            netip.Prefix
+	IAID              uint32
+	T1                uint32
+	T2                uint32
+	PreferredLifetime uint32
+	ValidLifetime     uint32
 }
 
 func (c Controller) SendRequest(ctx context.Context, store routerstate.Store, in SendInput) error {
@@ -85,6 +89,18 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 	t2 := activeUint32(firstNonEmpty(in.Lease.T2, "12600"), 12600)
 	preferredLifetime := activeUint32(firstNonEmpty(in.Lease.PLTime, "14400"), 14400)
 	validLifetime := activeUint32(firstNonEmpty(in.Lease.VLTime, "14400"), 14400)
+	if in.T1 != 0 {
+		t1 = in.T1
+	}
+	if in.T2 != 0 {
+		t2 = in.T2
+	}
+	if in.PreferredLifetime != 0 {
+		preferredLifetime = in.PreferredLifetime
+	}
+	if in.ValidLifetime != 0 {
+		validLifetime = in.ValidLifetime
+	}
 	reconfigureAccept := messageType == MessageRequest || messageType == MessageRenew
 	if messageType == MessageRelease {
 		t1 = 0

@@ -102,6 +102,9 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			if err != nil {
 				return FreeBSDConfig{}, err
 			}
+			if defaultString(spec.Client, "dhcp6c") != "dhcp6c" {
+				continue
+			}
 			ifname := aliases[spec.Interface]
 			if ifname == "" {
 				return FreeBSDConfig{}, fmt.Errorf("%s references interface with empty ifname", res.ID())

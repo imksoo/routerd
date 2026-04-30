@@ -95,3 +95,47 @@ func TestDHCPCDRendersLeaseContextWithoutExactPrefixHint(t *testing.T) {
 		t.Fatalf("lease state should not be fed back as an exact dhcpcd prefix hint:\n%s", conf)
 	}
 }
+
+func TestDHCPCDRendersFreeBSDRCScript(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			netResource("Interface", "wan", api.InterfaceSpec{IfName: "vtnet0", Managed: true}),
+			netResource("IPv6PrefixDelegation", "wan-pd", api.IPv6PrefixDelegationSpec{
+				Interface:    "wan",
+				Client:       "dhcpcd",
+				Profile:      "ntt-hgw-lan-pd",
+				PrefixLength: 60,
+			}),
+		}},
+	}
+	config, err := DHCPCDFreeBSDWithLeases(router, "/usr/local/sbin/dhcpcd", "/usr/local/etc/routerd", "/usr/local/etc/rc.d", nil)
+	if err != nil {
+		t.Fatalf("render FreeBSD dhcpcd: %v", err)
+	}
+	if len(config.Files) != 3 {
+		t.Fatalf("len(files) = %d, want 3", len(config.Files))
+	}
+	conf := string(config.Files[0].Data)
+	rc := string(config.Files[2].Data)
+	for _, want := range []string{
+		"interface vtnet0",
+		"ia_pd 1 -",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("dhcpcd.conf missing %q:\n%s", want, conf)
+		}
+	}
+	for _, want := range []string{
+		`name="routerd_dhcpcd_wan_pd"`,
+		`command="/usr/local/sbin/dhcpcd"`,
+		`command_args="-6 -f /usr/local/etc/routerd/dhcpcd-wan-pd.conf vtnet0"`,
+		`pidfile="/var/run/dhcpcd/dhcpcd-vtnet0.pid"`,
+	} {
+		if !strings.Contains(rc, want) {
+			t.Fatalf("rc script missing %q:\n%s", want, rc)
+		}
+	}
+	if len(config.Units) != 1 || config.Units[0] != "routerd-dhcpcd-wan-pd" {
+		t.Fatalf("units = %#v", config.Units)
+	}
+}

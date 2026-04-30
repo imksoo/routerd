@@ -169,7 +169,7 @@ exit 64
 		t.Fatalf("seed DUID changed=%v backup=%q, want initial write", changed, backup)
 	}
 
-	changed, err := applyFreeBSDConfig(router, "", dhcp6cPath, duidPath, "")
+	changed, err := applyFreeBSDConfig(router, nil, "", dhcp6cPath, duidPath, "")
 	if err != nil {
 		t.Fatalf("apply FreeBSD config: %v", err)
 	}

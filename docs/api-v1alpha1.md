@@ -594,15 +594,19 @@ How routerd behaves:
   DHCPv6 packet on the uplink. Request/Renew packets use a fresh transaction ID,
   non-zero T1/T2 and IA Prefix lifetimes, and Reconfigure Accept; Release sends
   zero IA_PD lifetimes and omits Reconfigure Accept.
+  Lab packets can override the requested lifetimes with `--t1`, `--t2`,
+  `--preferred-lifetime`, and `--valid-lifetime`. Use this only to measure
+  whether an upstream server honours shorter requested leases.
 - On FreeBSD with KAME `dhcp6c`, routerd manages `/var/db/dhcp6c_duid` for
   NTT profiles whose effective DUID type is `link-layer`. If the existing file
   differs from the desired DUID, routerd backs it up as `.bak.<timestamp>` and
   writes the desired DUID before starting `dhcp6c`.
-- On Linux with `client: dhcpcd`, routerd manages `/var/lib/dhcpcd/duid` for
-  NTT profiles whose effective DUID type is `link-layer`, renders
-  `dhcpcd-<name>.conf`, and starts `routerd-dhcpcd-<name>.service`. This path
-  is present so the lab can measure dhcpcd before changing any profile
-  defaults.
+- With `client: dhcpcd`, routerd manages the dhcpcd DUID file for NTT
+  profiles whose effective DUID type is `link-layer`, renders
+  `dhcpcd-<name>.conf`, and starts a per-resource service. On Linux this is
+  `routerd-dhcpcd-<name>.service`; on FreeBSD this is a managed rc.d script
+  under `/usr/local/etc/rc.d`. This path is present so the lab can measure
+  dhcpcd before changing any profile defaults.
 
 Some NTT home-gateway environments only advertise IPv6 by RA/SLAAC and never
 answer DHCPv6-PD. Those should not be modeled as `IPv6PrefixDelegation`;
