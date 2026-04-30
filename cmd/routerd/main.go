@@ -33,6 +33,7 @@ import (
 	"routerd/pkg/inventory"
 	"routerd/pkg/observe"
 	"routerd/pkg/platform"
+	"routerd/pkg/ralistener"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
@@ -2304,6 +2305,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 
 	stop := make(chan struct{})
 	defer close(stop)
+	startRAObservation(stop, router, defaultStatePath, logger)
 	if *observeInterval > 0 {
 		go runObserveSchedule(stop, *observeInterval, router, cache, *statusFile, logger)
 	}
@@ -2406,6 +2408,65 @@ func runObserveSchedule(stop <-chan struct{}, interval time.Duration, router *ap
 			logger.Emit(eventlog.LevelDebug, "serve", "scheduled observe completed", map[string]string{"phase": result.Phase})
 		}
 	}
+}
+
+func startRAObservation(stop <-chan struct{}, router *api.Router, statePath string, logger *eventlog.Logger) {
+	pds := ipv6PrefixDelegationNames(router)
+	if len(pds) == 0 {
+		return
+	}
+	if len(pds) > 1 {
+		logger.Emit(eventlog.LevelWarning, "ra", "RA observation disabled for multiple IPv6PrefixDelegation resources until interface-scoped packet info is implemented", map[string]string{"resources": strings.Join(pds, ",")})
+		return
+	}
+	conn, err := net.ListenPacket("ip6:ipv6-icmp", "::")
+	if err != nil {
+		logger.Emit(eventlog.LevelWarning, "ra", "RA observation listener could not start", map[string]string{"error": err.Error()})
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-stop
+		cancel()
+		_ = conn.Close()
+	}()
+	resourceName := pds[0]
+	listener := ralistener.Listener{Conn: conn}
+	go func() {
+		err := listener.Run(ctx, func(obs ralistener.Observation) {
+			store, loadErr := routerstate.Load(defaultString(statePath, defaultStatePath))
+			if loadErr != nil {
+				logger.Emit(eventlog.LevelWarning, "ra", "RA observation state load failed", map[string]string{"error": loadErr.Error()})
+				return
+			}
+			if err := ralistener.ApplyObservation(store, resourceName, obs, "RAObserved"); err != nil {
+				logger.Emit(eventlog.LevelWarning, "ra", "RA observation state update failed", map[string]string{"error": err.Error()})
+				return
+			}
+			if err := store.Save(defaultString(statePath, defaultStatePath)); err != nil {
+				logger.Emit(eventlog.LevelWarning, "ra", "RA observation state save failed", map[string]string{"error": err.Error()})
+				return
+			}
+			logger.Emit(eventlog.LevelInfo, "ra", "observed WAN router advertisement", map[string]string{"resource": resourceName, "source": obs.SourceLinkLocal, "prefix": obs.Prefix})
+		})
+		if err != nil && ctx.Err() == nil {
+			logger.Emit(eventlog.LevelWarning, "ra", "RA observation listener stopped", map[string]string{"error": err.Error()})
+		}
+	}()
+}
+
+func ipv6PrefixDelegationNames(router *api.Router) []string {
+	if router == nil {
+		return nil
+	}
+	var out []string
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6PrefixDelegation" {
+			out = append(out, res.Metadata.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func runApplySchedule(stop <-chan struct{}, interval time.Duration, router *api.Router, opts applyOptions, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {
