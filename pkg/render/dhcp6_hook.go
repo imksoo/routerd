@@ -14,7 +14,7 @@ if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
 	exit 0
 fi
 
-env_json=$(env | jq -Rn 'reduce inputs as $line ({}; ($line | split("="; 2)) as $kv | if ($kv | length) == 2 then . + {($kv[0]): $kv[1]} else . end)')
+env_json=$(env | jq -Rn 'reduce inputs as $line ({}; ($line | index("=")) as $i | if $i then . + {($line[0:$i]): $line[$i+1:]} else . end)')
 reason=${reason:-${REASON:-}}
 payload=$(jq -n \
 	--arg resource %q \

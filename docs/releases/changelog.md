@@ -31,6 +31,9 @@ behavior changes and new resource shapes as the model takes shape.
   `dhcpcd.conf`, hook placeholder, and either a systemd unit or FreeBSD rc.d
   script while keeping the existing profile defaults unchanged until lab Renew
   measurements are complete.
+- Linux DHCPv6-PD client switching now stops stale managed units for the
+  previous client, and the generated dhcpcd hook is file-global so dhcpcd 10
+  actually invokes routerd's local event reporter.
 - `routerd apply` now resolves an omitted `IPv6PrefixDelegation.spec.client`
   from the host OS and profile, supports `--override-client` and
   `--override-profile` for one-shot lab runs, and records known-bad

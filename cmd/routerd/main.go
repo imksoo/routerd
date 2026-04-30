@@ -5188,7 +5188,7 @@ func applyLinuxDHCP6CConfig(router *api.Router, stateStore routerstate.Store) ([
 		return nil, err
 	}
 	if len(config.Files) == 0 {
-		return nil, nil
+		return stopLinuxStalePDClientUnits(router, "dhcp6c")
 	}
 	if !dhcp6cAvailable() {
 		return nil, errors.New("dhcp6c is required for IPv6PrefixDelegation client=dhcp6c")
@@ -5266,6 +5266,11 @@ func applyLinuxDHCP6CConfig(router *api.Router, stateStore routerstate.Store) ([
 			}
 		}
 	}
+	stopped, err := stopLinuxStalePDClientUnits(router, "dhcp6c")
+	if err != nil {
+		return nil, err
+	}
+	changedFiles = append(changedFiles, stopped...)
 	return changedFiles, nil
 }
 
@@ -5357,7 +5362,59 @@ func applyLinuxDHCPCDConfig(router *api.Router, stateStore routerstate.Store) ([
 			}
 		}
 	}
+	stopped, err := stopLinuxStalePDClientUnits(router, "dhcpcd")
+	if err != nil {
+		return nil, err
+	}
+	changedFiles = append(changedFiles, stopped...)
 	return changedFiles, nil
+}
+
+func stopLinuxStalePDClientUnits(router *api.Router, targetClient string) ([]string, error) {
+	if platformDefaults.OS != platform.OSLinux || router == nil {
+		return nil, nil
+	}
+	var changed []string
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6PrefixDelegation" {
+			continue
+		}
+		spec, err := res.IPv6PrefixDelegationSpec()
+		if err != nil {
+			return nil, err
+		}
+		if defaultString(spec.Client, "networkd") == targetClient {
+			continue
+		}
+		unit := linuxPDClientUnitName(res.Metadata.Name, targetClient)
+		if err := runLogged("systemctl", "cat", unit); err != nil {
+			continue
+		}
+		if err := runLogged("systemctl", "disable", "--now", unit); err != nil {
+			return nil, err
+		}
+		changed = append(changed, "service:"+unit+":stop")
+	}
+	return changed, nil
+}
+
+func linuxPDClientUnitName(resourceName, client string) string {
+	return "routerd-" + client + "-" + linuxPDClientSafeName(resourceName) + ".service"
+}
+
+func linuxPDClientSafeName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('-')
+	}
+	if b.Len() == 0 {
+		return "unnamed"
+	}
+	return b.String()
 }
 
 func prefixDelegationLeases(router *api.Router, store routerstate.Store) map[string]routerstate.PDLease {

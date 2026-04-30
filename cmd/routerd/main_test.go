@@ -951,6 +951,13 @@ dhcp6_ia_pd1_prefix1=2001:db8:3d60:1220::
 	}
 }
 
+func TestLinuxPDClientUnitNameSanitizesResourceName(t *testing.T) {
+	got := linuxPDClientUnitName("wan.pd/default", "dhcpcd")
+	if got != "routerd-dhcpcd-wan-pd-default.service" {
+		t.Fatalf("unit = %q", got)
+	}
+}
+
 func TestObserveFreeBSDDHCP6CIdentityPayload(t *testing.T) {
 	payload := freeBSDDHCP6CDUIDPayload([]byte{
 		0x0e, 0x00,

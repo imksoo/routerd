@@ -35,7 +35,11 @@ func TestDHCPCDRendersLinuxConfigHookAndUnit(t *testing.T) {
 	conf := string(config.Files[0].Data)
 	hook := string(config.Files[1].Data)
 	unit := string(config.Files[2].Data)
+	if strings.Contains(conf, "\n  script ") {
+		t.Fatalf("dhcpcd hook must be file-global, not interface-local:\n%s", conf)
+	}
 	for _, want := range []string{
+		"script /usr/local/etc/routerd/dhcpcd-wan-pd.hook\ninterface ens18",
 		"interface ens18",
 		"ipv6rs",
 		"ipv6only",
@@ -55,6 +59,9 @@ func TestDHCPCDRendersLinuxConfigHookAndUnit(t *testing.T) {
 	}
 	if !strings.Contains(hook, `--arg resource "wan-pd"`) || !strings.Contains(hook, `/api/control.routerd.net/v1alpha1/dhcp6-event`) {
 		t.Fatalf("hook script missing resource name:\n%s", hook)
+	}
+	if strings.Contains(hook, `split("="; 2)`) || !strings.Contains(hook, `index("=")`) {
+		t.Fatalf("hook script must parse KEY=VALUE env lines portably:\n%s", hook)
 	}
 	if !strings.Contains(unit, "ExecStart=/usr/sbin/dhcpcd -B -6 -f /usr/local/etc/routerd/dhcpcd-wan-pd.conf ens18") {
 		t.Fatalf("unit missing ExecStart:\n%s", unit)
