@@ -710,6 +710,19 @@ func validateResource(res api.Resource) error {
 		if spec.DUIDRawData != "" && !validDUIDRawData(spec.DUIDRawData) {
 			return fmt.Errorf("%s spec.duidRawData must be hex bytes, with or without colon separators", res.ID())
 		}
+		if spec.ServerID != "" && !validDUIDRawData(spec.ServerID) {
+			return fmt.Errorf("%s spec.serverID must be hex bytes, with or without colon separators", res.ID())
+		}
+		if spec.PriorPrefix != "" {
+			if _, err := netip.ParsePrefix(spec.PriorPrefix); err != nil {
+				return fmt.Errorf("%s spec.priorPrefix is invalid: %w", res.ID(), err)
+			}
+		}
+		switch spec.AcquisitionStrategy {
+		case "", "hybrid", "solicit-only", "request-claim-only":
+		default:
+			return fmt.Errorf("%s spec.acquisitionStrategy must be hybrid, solicit-only, or request-claim-only", res.ID())
+		}
 	case "IPv6DelegatedAddress":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

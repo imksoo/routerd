@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	routerstate "routerd/pkg/state"
 )
 
 type DHCP6CConfig struct {
@@ -23,6 +24,10 @@ const (
 )
 
 func DHCP6C(router *api.Router, binaryPath, configDir, runtimeDir, unitDir string) (DHCP6CConfig, error) {
+	return DHCP6CWithLeases(router, binaryPath, configDir, runtimeDir, unitDir, nil)
+}
+
+func DHCP6CWithLeases(router *api.Router, binaryPath, configDir, runtimeDir, unitDir string, leases map[string]routerstate.PDLease) (DHCP6CConfig, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Interface" {
@@ -66,11 +71,15 @@ func DHCP6C(router *api.Router, binaryPath, configDir, runtimeDir, unitDir strin
 		unit := "routerd-dhcp6c-" + name + ".service"
 		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 		pd := freeBSDPD{
-			Name:         res.Metadata.Name,
-			IfName:       ifname,
-			Profile:      profile,
-			PrefixLength: api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
-			IAID:         strings.TrimSpace(spec.IAID),
+			Name:                res.Metadata.Name,
+			IfName:              ifname,
+			Profile:             profile,
+			PrefixLength:        api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
+			IAID:                strings.TrimSpace(spec.IAID),
+			ServerID:            strings.TrimSpace(spec.ServerID),
+			PriorPrefix:         strings.TrimSpace(spec.PriorPrefix),
+			AcquisitionStrategy: strings.TrimSpace(spec.AcquisitionStrategy),
+			Lease:               leases[res.Metadata.Name],
 		}
 		data, err := dhcp6cConfig(router, aliases, pd)
 		if err != nil {
@@ -97,6 +106,7 @@ func dhcp6cConfig(router *api.Router, aliases map[string]string, pd freeBSDPD) (
 	buf.WriteString("  request domain-name-servers;\n")
 	buf.WriteString("};\n\n")
 	buf.WriteString(fmt.Sprintf("id-assoc pd %d {\n", iaid))
+	writeDHCP6CObservedLeaseComments(&buf, pd)
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "IPv6DelegatedAddress" {
 			continue

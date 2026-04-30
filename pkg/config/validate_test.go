@@ -397,6 +397,26 @@ func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
 	if err := Validate(router); err == nil {
 		t.Fatal("expected invalid IAID to be rejected")
 	}
+
+	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", ServerID: "00030001020000000001", PriorPrefix: "2001:db8:1200:1240::/60", AcquisitionStrategy: "request-claim-only"}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate prefix delegation active controller overrides: %v", err)
+	}
+
+	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", ServerID: "not-a-duid"}
+	if err := Validate(router); err == nil {
+		t.Fatal("expected invalid serverID to be rejected")
+	}
+
+	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", PriorPrefix: "not-a-prefix"}
+	if err := Validate(router); err == nil {
+		t.Fatal("expected invalid priorPrefix to be rejected")
+	}
+
+	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", AcquisitionStrategy: "unknown"}
+	if err := Validate(router); err == nil {
+		t.Fatal("expected invalid acquisitionStrategy to be rejected")
+	}
 }
 
 func TestValidateRejectsDHCP6CAndNetworkdDHCPv6OnSameInterface(t *testing.T) {

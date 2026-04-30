@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	routerstate "routerd/pkg/state"
 )
 
 type FreeBSDConfig struct {
@@ -108,11 +109,14 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			dhcp6cIfaces[ifname] = true
 			profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 			pds = append(pds, freeBSDPD{
-				Name:         res.Metadata.Name,
-				IfName:       ifname,
-				Profile:      profile,
-				PrefixLength: api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
-				IAID:         strings.TrimSpace(spec.IAID),
+				Name:                res.Metadata.Name,
+				IfName:              ifname,
+				Profile:             profile,
+				PrefixLength:        api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
+				IAID:                strings.TrimSpace(spec.IAID),
+				ServerID:            strings.TrimSpace(spec.ServerID),
+				PriorPrefix:         strings.TrimSpace(spec.PriorPrefix),
+				AcquisitionStrategy: strings.TrimSpace(spec.AcquisitionStrategy),
 			})
 		case "PPPoEInterface":
 			spec, err := res.PPPoEInterfaceSpec()
@@ -154,11 +158,15 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 }
 
 type freeBSDPD struct {
-	Name         string
-	IfName       string
-	Profile      string
-	PrefixLength int
-	IAID         string
+	Name                string
+	IfName              string
+	Profile             string
+	PrefixLength        int
+	IAID                string
+	ServerID            string
+	PriorPrefix         string
+	AcquisitionStrategy string
+	Lease               routerstate.PDLease
 }
 
 type freeBSDPPPoE struct {
@@ -268,6 +276,7 @@ func freeBSDDHCP6C(router *api.Router, aliases map[string]string, pds []freeBSDP
 		buf.WriteString("  request domain-name-servers;\n")
 		buf.WriteString("};\n\n")
 		buf.WriteString(fmt.Sprintf("id-assoc pd %d {\n", iaid))
+		writeDHCP6CObservedLeaseComments(&buf, pd)
 		for _, res := range router.Spec.Resources {
 			if res.Kind != "IPv6DelegatedAddress" {
 				continue
@@ -295,6 +304,22 @@ func freeBSDDHCP6C(router *api.Router, aliases map[string]string, pds []freeBSDP
 	return buf.Bytes(), nil
 }
 
+func writeDHCP6CObservedLeaseComments(buf *bytes.Buffer, pd freeBSDPD) {
+	serverID := firstNonEmpty(pd.ServerID, pd.Lease.ServerID)
+	priorPrefix := firstNonEmpty(pd.PriorPrefix, pd.Lease.PriorPrefix, pd.Lease.CurrentPrefix, pd.Lease.LastPrefix)
+	strategy := firstNonEmpty(pd.AcquisitionStrategy, "hybrid")
+	if serverID == "" && priorPrefix == "" && strategy == "hybrid" {
+		return
+	}
+	buf.WriteString("  # routerd acquisition-strategy " + strategy + "\n")
+	if serverID != "" {
+		buf.WriteString("  # routerd observed-server-id " + colonHex(serverID) + "\n")
+	}
+	if priorPrefix != "" {
+		buf.WriteString("  # routerd prior-prefix " + priorPrefix + "\n")
+	}
+}
+
 func colonHex(value string) string {
 	cleaned := strings.NewReplacer(":", "", "-", "", " ", "").Replace(value)
 	if len(cleaned)%2 != 0 {
@@ -312,6 +337,15 @@ func freeBSDDHCP6CFlags(pds []freeBSDPD) string {
 		switch pd.Profile {
 		case api.IPv6PDProfileNTTNGNDirectHikariDenwa, api.IPv6PDProfileNTTHGWLANPD:
 			return "-n"
+		}
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
 		}
 	}
 	return ""

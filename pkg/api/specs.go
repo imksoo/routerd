@@ -178,14 +178,17 @@ type IPv6RAAddressSpec struct {
 }
 
 type IPv6PrefixDelegationSpec struct {
-	Interface    string `yaml:"interface" json:"interface"`
-	Client       string `yaml:"client,omitempty" json:"client,omitempty" jsonschema:"enum=,enum=networkd,enum=dhcp6c"`
-	Profile      string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
-	PrefixLength int    `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
-	IAID         string `yaml:"iaid,omitempty" json:"iaid,omitempty"`
-	DUIDType     string `yaml:"duidType,omitempty" json:"duidType,omitempty" jsonschema:"enum=,enum=vendor,enum=uuid,enum=link-layer-time,enum=link-layer"`
-	DUIDRawData  string `yaml:"duidRawData,omitempty" json:"duidRawData,omitempty"`
-	Required     bool   `yaml:"required,omitempty" json:"required,omitempty"`
+	Interface           string `yaml:"interface" json:"interface"`
+	Client              string `yaml:"client,omitempty" json:"client,omitempty" jsonschema:"enum=,enum=networkd,enum=dhcp6c"`
+	Profile             string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
+	PrefixLength        int    `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
+	IAID                string `yaml:"iaid,omitempty" json:"iaid,omitempty"`
+	DUIDType            string `yaml:"duidType,omitempty" json:"duidType,omitempty" jsonschema:"enum=,enum=vendor,enum=uuid,enum=link-layer-time,enum=link-layer"`
+	DUIDRawData         string `yaml:"duidRawData,omitempty" json:"duidRawData,omitempty"`
+	ServerID            string `yaml:"serverID,omitempty" json:"serverID,omitempty"`
+	PriorPrefix         string `yaml:"priorPrefix,omitempty" json:"priorPrefix,omitempty"`
+	AcquisitionStrategy string `yaml:"acquisitionStrategy,omitempty" json:"acquisitionStrategy,omitempty" jsonschema:"enum=,enum=hybrid,enum=solicit-only,enum=request-claim-only"`
+	Required            bool   `yaml:"required,omitempty" json:"required,omitempty"`
 }
 
 const (

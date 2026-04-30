@@ -28,6 +28,7 @@ import (
 	"routerd/pkg/apply"
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
+	"routerd/pkg/dhcp6control"
 	"routerd/pkg/eventlog"
 	"routerd/pkg/inventory"
 	"routerd/pkg/observe"
@@ -93,6 +94,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return renderCommand(args[1:], stdout)
 	case "apply":
 		return applyCommand(args[1:], stdout)
+	case "dhcp6":
+		return dhcp6Command(args[1:], stdout)
 	case "serve":
 		return serveCommand(args[1:], stdout)
 	case "run":
@@ -229,6 +232,223 @@ func validateCommand(args []string, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "config %s exists\n", *configPath)
 	fmt.Fprintln(stdout, "config is valid")
 	return nil
+}
+
+func dhcp6Command(args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("dhcp6 requires an action: request, renew, or release")
+	}
+	action := args[0]
+	switch action {
+	case "request", "renew", "release":
+	default:
+		return fmt.Errorf("unknown dhcp6 action %q", action)
+	}
+	fs := flag.NewFlagSet("dhcp6 "+action, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", defaultConfigPath, "config path")
+	statePath := fs.String("state-file", defaultStatePath, "routerd state DB file")
+	resourceName := fs.String("resource", "wan-pd", "IPv6PrefixDelegation resource name")
+	prefixOverride := fs.String("prefix", "", "delegated prefix override")
+	serverDUIDOverride := fs.String("server-duid", "", "DHCPv6 server DUID override as hex")
+	destinationIPOverride := fs.String("dst-ip", "ff02::1:2", "destination IPv6 address")
+	destinationMACOverride := fs.String("dst-mac", "", "destination Ethernet MAC override")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	if err := config.Validate(router); err != nil {
+		return err
+	}
+	store, err := routerstate.Load(*statePath)
+	if err != nil {
+		return err
+	}
+	input, err := dhcp6SendInput(router, store, *resourceName, *prefixOverride, *serverDUIDOverride, *destinationIPOverride, *destinationMACOverride)
+	if err != nil {
+		return err
+	}
+	controller := dhcp6control.Controller{Sender: dhcp6control.AFPacketSender{}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	switch action {
+	case "request":
+		err = controller.SendRequest(ctx, store, input)
+	case "renew":
+		err = controller.SendRenew(ctx, store, input)
+	case "release":
+		err = controller.SendRelease(ctx, store, input)
+	}
+	if err != nil {
+		return err
+	}
+	if err := store.Save(*statePath); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "sent DHCPv6 %s for %s on %s prefix=%s iaid=%d\n", action, *resourceName, input.Identity.InterfaceName, input.Prefix, input.IAID)
+	return nil
+}
+
+func dhcp6SendInput(router *api.Router, store routerstate.Store, resourceName, prefixOverride, serverDUIDOverride, destinationIPOverride, destinationMACOverride string) (dhcp6control.SendInput, error) {
+	res, spec, err := ipv6PrefixDelegationResource(router, resourceName)
+	if err != nil {
+		return dhcp6control.SendInput{}, err
+	}
+	aliases, err := interfaceAliases(router)
+	if err != nil {
+		return dhcp6control.SendInput{}, err
+	}
+	ifname := aliases[spec.Interface]
+	if ifname == "" {
+		return dhcp6control.SendInput{}, fmt.Errorf("%s references unknown interface %q", res.ID(), spec.Interface)
+	}
+	link, err := net.InterfaceByName(ifname)
+	if err != nil {
+		return dhcp6control.SendInput{}, fmt.Errorf("lookup interface %s: %w", ifname, err)
+	}
+	sourceIP, err := firstLinkLocalAddr(link)
+	if err != nil {
+		return dhcp6control.SendInput{}, err
+	}
+	destinationIP := netip.MustParseAddr("ff02::1:2")
+	if destinationIPOverride != "" {
+		parsed, err := netip.ParseAddr(destinationIPOverride)
+		if err != nil {
+			return dhcp6control.SendInput{}, fmt.Errorf("parse destination IPv6 address: %w", err)
+		}
+		destinationIP = parsed
+	}
+	var destinationMAC net.HardwareAddr
+	if destinationMACOverride != "" {
+		parsed, err := net.ParseMAC(destinationMACOverride)
+		if err != nil {
+			return dhcp6control.SendInput{}, fmt.Errorf("parse destination MAC: %w", err)
+		}
+		destinationMAC = parsed
+	}
+	if !destinationIP.IsMulticast() && len(destinationMAC) == 0 {
+		return dhcp6control.SendInput{}, fmt.Errorf("destination MAC is required when --dst-ip is unicast")
+	}
+	clientDUID, err := clientDUIDForActiveDHCP6(spec, link.HardwareAddr)
+	if err != nil {
+		return dhcp6control.SendInput{}, err
+	}
+	base := "ipv6PrefixDelegation." + resourceName
+	lease, _ := routerstate.PDLeaseFromStore(store, base)
+	serverDUIDValue := firstNonEmptyString(serverDUIDOverride, spec.ServerID, lease.ServerID)
+	serverDUID, err := dhcp6control.ParseDUID(serverDUIDValue)
+	if err != nil {
+		return dhcp6control.SendInput{}, fmt.Errorf("parse server DUID: %w", err)
+	}
+	if len(serverDUID) == 0 {
+		return dhcp6control.SendInput{}, fmt.Errorf("server DUID is required for active DHCPv6 %s; set spec.serverID or pass --server-duid", resourceName)
+	}
+	prefixValue := firstNonEmptyString(prefixOverride, spec.PriorPrefix, lease.PriorPrefix, lease.CurrentPrefix, lease.LastPrefix, lease.Prefix)
+	prefix, err := netip.ParsePrefix(prefixValue)
+	if err != nil {
+		return dhcp6control.SendInput{}, fmt.Errorf("parse delegated prefix %q: %w", prefixValue, err)
+	}
+	iaid := uint32(0)
+	for _, value := range []string{spec.IAID, lease.IAID} {
+		if parsed, ok := parseUint32Flexible(value); ok {
+			iaid = parsed
+			break
+		}
+	}
+	return dhcp6control.SendInput{
+		Resource: dhcp6control.ResourceRef{APIVersion: res.APIVersion, Kind: res.Kind, Name: res.Metadata.Name},
+		Spec:     spec,
+		Lease:    lease,
+		Identity: dhcp6control.Identity{
+			InterfaceName:  ifname,
+			SourceMAC:      link.HardwareAddr,
+			SourceIP:       sourceIP,
+			DestinationIP:  destinationIP,
+			DestinationMAC: destinationMAC,
+			ClientDUID:     clientDUID,
+			ServerDUID:     serverDUID,
+		},
+		Prefix: prefix,
+		IAID:   iaid,
+	}, nil
+}
+
+func ipv6PrefixDelegationResource(router *api.Router, resourceName string) (api.Resource, api.IPv6PrefixDelegationSpec, error) {
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6PrefixDelegation" || res.Metadata.Name != resourceName {
+			continue
+		}
+		spec, err := res.IPv6PrefixDelegationSpec()
+		if err != nil {
+			return api.Resource{}, api.IPv6PrefixDelegationSpec{}, err
+		}
+		return res, spec, nil
+	}
+	return api.Resource{}, api.IPv6PrefixDelegationSpec{}, fmt.Errorf("IPv6PrefixDelegation %q not found", resourceName)
+}
+
+func interfaceAliases(router *api.Router) (map[string]string, error) {
+	aliases := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			return nil, err
+		}
+		aliases[res.Metadata.Name] = spec.IfName
+	}
+	return aliases, nil
+}
+
+func firstLinkLocalAddr(link *net.Interface) (netip.Addr, error) {
+	addrs, err := link.Addrs()
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("read %s addresses: %w", link.Name, err)
+	}
+	for _, addr := range addrs {
+		var ip net.IP
+		switch value := addr.(type) {
+		case *net.IPNet:
+			ip = value.IP
+		case *net.IPAddr:
+			ip = value.IP
+		}
+		if ip == nil || ip.To4() != nil || !ip.IsLinkLocalUnicast() {
+			continue
+		}
+		parsed, ok := netip.AddrFromSlice(ip.To16())
+		if ok {
+			return parsed, nil
+		}
+	}
+	return netip.Addr{}, fmt.Errorf("interface %s has no link-local IPv6 address", link.Name)
+}
+
+func clientDUIDForActiveDHCP6(spec api.IPv6PrefixDelegationSpec, mac net.HardwareAddr) ([]byte, error) {
+	if spec.DUIDRawData != "" {
+		duid, err := dhcp6control.ParseDUID(spec.DUIDRawData)
+		if err != nil {
+			return nil, fmt.Errorf("parse client DUID raw data: %w", err)
+		}
+		if len(duid) > 0 {
+			return duid, nil
+		}
+	}
+	return dhcp6control.DUIDLL(mac), nil
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func configCommand(args []string, stdout io.Writer, name string) (err error) {
@@ -609,7 +829,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		var dhcp6cChangedFiles []string
 		if err := recordStageError("dhcp6c", func() error {
 			var err error
-			dhcp6cChangedFiles, err = applyLinuxDHCP6CConfig(effectiveRouter)
+			dhcp6cChangedFiles, err = applyLinuxDHCP6CConfig(effectiveRouter, stateStore)
 			return err
 		}()); err != nil {
 			return nil, err
@@ -4552,12 +4772,12 @@ func applyPPPoEConfig(router *api.Router) ([]string, error) {
 	return changedFiles, nil
 }
 
-func applyLinuxDHCP6CConfig(router *api.Router) ([]string, error) {
+func applyLinuxDHCP6CConfig(router *api.Router, stateStore routerstate.Store) ([]string, error) {
 	if platformDefaults.OS != platform.OSLinux {
 		return nil, nil
 	}
 	binaryPath := dhcp6cBinaryPath()
-	config, err := render.DHCP6C(router, binaryPath, linuxDHCP6CConfigDir, platformDefaults.RuntimeDir, platformDefaults.SystemdSystemDir)
+	config, err := render.DHCP6CWithLeases(router, binaryPath, linuxDHCP6CConfigDir, platformDefaults.RuntimeDir, platformDefaults.SystemdSystemDir, prefixDelegationLeases(router, stateStore))
 	if err != nil {
 		return nil, err
 	}
@@ -4641,6 +4861,23 @@ func applyLinuxDHCP6CConfig(router *api.Router) ([]string, error) {
 		}
 	}
 	return changedFiles, nil
+}
+
+func prefixDelegationLeases(router *api.Router, store routerstate.Store) map[string]routerstate.PDLease {
+	if router == nil || store == nil {
+		return nil
+	}
+	leases := map[string]routerstate.PDLease{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6PrefixDelegation" {
+			continue
+		}
+		lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+res.Metadata.Name)
+		if ok {
+			leases[res.Metadata.Name] = lease
+		}
+	}
+	return leases
 }
 
 func ensureLinuxDHCP6CDUID(router *api.Router, duidPath string) (bool, string, error) {
@@ -5001,6 +5238,9 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  render nixos --config <path> [--out <path>]")
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <path>]")
 	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run]")
+	fmt.Fprintln(w, "  dhcp6 renew --config <path> --resource <ipv6-prefix-delegation>")
+	fmt.Fprintln(w, "  dhcp6 request --config <path> --resource <ipv6-prefix-delegation>")
+	fmt.Fprintln(w, "  dhcp6 release --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  serve --config <path> [--socket <path>]")
 	fmt.Fprintln(w, "  run --config <path>")
 	fmt.Fprintln(w, "  status [--status-file <path>]")

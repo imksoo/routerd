@@ -6,13 +6,37 @@ import (
 )
 
 type PDLease struct {
-	CurrentPrefix  string `json:"currentPrefix,omitempty"`
-	LastPrefix     string `json:"lastPrefix,omitempty"`
-	LastObservedAt string `json:"lastObservedAt,omitempty"`
-	DUID           string `json:"duid,omitempty"`
-	DUIDText       string `json:"duidText,omitempty"`
-	IAID           string `json:"iaid,omitempty"`
-	ExpectedDUID   string `json:"expectedDUID,omitempty"`
+	CurrentPrefix  string         `json:"currentPrefix,omitempty"`
+	LastPrefix     string         `json:"lastPrefix,omitempty"`
+	Prefix         string         `json:"prefix,omitempty"`
+	PriorPrefix    string         `json:"priorPrefix,omitempty"`
+	ServerID       string         `json:"serverID,omitempty"`
+	T1             string         `json:"t1,omitempty"`
+	T2             string         `json:"t2,omitempty"`
+	PLTime         string         `json:"pltime,omitempty"`
+	VLTime         string         `json:"vltime,omitempty"`
+	SourceMAC      string         `json:"sourceMAC,omitempty"`
+	SourceLL       string         `json:"sourceLL,omitempty"`
+	LastObservedAt string         `json:"lastObservedAt,omitempty"`
+	LastReplyAt    string         `json:"lastReplyAt,omitempty"`
+	LastSolicitAt  string         `json:"lastSolicitAt,omitempty"`
+	LastRequestAt  string         `json:"lastRequestAt,omitempty"`
+	LastRenewAt    string         `json:"lastRenewAt,omitempty"`
+	LastReleaseAt  string         `json:"lastReleaseAt,omitempty"`
+	DUID           string         `json:"duid,omitempty"`
+	DUIDText       string         `json:"duidText,omitempty"`
+	IAID           string         `json:"iaid,omitempty"`
+	ExpectedDUID   string         `json:"expectedDUID,omitempty"`
+	WANObserved    *PDWANObserved `json:"wanObserved,omitempty"`
+}
+
+type PDWANObserved struct {
+	HGWLinkLocal  string `json:"hgwLinkLocal,omitempty"`
+	HGWMACDerived string `json:"hgwMACDerived,omitempty"`
+	RAMFlag       string `json:"raMFlag,omitempty"`
+	RAOFlag       string `json:"raOFlag,omitempty"`
+	RAPrefix      string `json:"raPrefix,omitempty"`
+	RAObservedAt  string `json:"raObservedAt,omitempty"`
 }
 
 func EncodePDLease(lease PDLease) string {

@@ -1144,6 +1144,15 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "acquisitionStrategy": {
+                        "enum": [
+                          "",
+                          "hybrid",
+                          "solicit-only",
+                          "request-claim-only"
+                        ],
+                        "type": "string"
+                      },
                       "client": {
                         "enum": [
                           "",
@@ -1176,6 +1185,9 @@
                         "minimum": 1,
                         "type": "integer"
                       },
+                      "priorPrefix": {
+                        "type": "string"
+                      },
                       "profile": {
                         "enum": [
                           "default",
@@ -1186,6 +1198,9 @@
                       },
                       "required": {
                         "type": "boolean"
+                      },
+                      "serverID": {
+                        "type": "string"
                       }
                     },
                     "required": [
