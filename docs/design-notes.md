@@ -552,6 +552,48 @@ Completion condition: router02 can use the NTT/HGW PD profile without
 systemd-networkd PD, using a reproducible Nix derivation or a documented
 supported alternative that preserves IA_PD lifetimes.
 
+### 5.8 High: Evaluate `dhcpcd` as the unified WAN client
+
+assert: The current routerd design has split WAN-side acquisition: KAME/WIDE
+`dhcp6c` for the NTT profile, optional `systemd-networkd` for general Linux,
+and an unresolved gap on NixOS. This split exists for historical reasons —
+not because the protocol fundamentally requires multiple clients. A single
+unified client that handles IPv4 DHCP, IPv6 RA/SLAAC, IPv6 DHCPv6 IA_NA,
+and IPv6 DHCPv6-PD on every supported OS would simplify the renderer, the
+test matrix, and the operator experience.
+
+believe: `dhcpcd` (BSD-2 licence, actively maintained by Roy Marples) is the
+best available candidate for that unified role. It is packaged in nixpkgs,
+in FreeBSD ports, and in Debian/Ubuntu apt repositories. It supports IPv4
+DHCP, IPv6 RA, SLAAC, IA_NA, IA_PD, and INIT-REBOOT in a single daemon. Its
+default Renew shape is closer to what the NTT HGW accepts (Renew sends
+server-given T1/T2 verbatim, includes Reconfigure-Accept, and can be
+pinned to multicast) than what `wide-dhcpv6` defaults produce.
+
+assert: The unified-client direction is contingent on lab evidence. routerd
+must not adopt `dhcpcd` as the primary path until lab measurements confirm
+the NTT HGW accepts its Renew packets at the T1 boundary, that its
+INIT-REBOOT bytes are treated the same as the routerd active Request that
+already works, and that its lease state is preservable across `routerd
+apply` cycles without unnecessary client restarts. If `dhcpcd` clears these
+checks, it replaces both `wide-dhcpv6` (5.1) and the NixOS gap (5.7), and
+collapses Section 5's WAN-side surface from "two-or-three clients" to one.
+
+Completion condition: a `dhcpcd` renderer exists alongside the existing
+`dhcp6c` renderer (`pkg/render/dhcpcd.go`); `IPv6PrefixDelegationSpec.client`
+accepts `dhcpcd`; lab measurements on Ubuntu, FreeBSD, and NixOS each show
+a successful initial acquisition and at least one successful natural T1
+Renew with `dhcpcd` against the NTT HGW; design-notes Section 1.3 records
+the per-message-type observed behaviour for `dhcpcd` next to the existing
+`systemd-networkd`, `wide-dhcpv6`, and `dnsmasq` rows; and the NTT profile
+default is updated to whichever client the lab evidence preferred.
+
+assert: If the evaluation succeeds, `dhcpcd` becomes the routerd-recommended
+default for NTT/HGW WAN. `wide-dhcpv6` remains supported for migration
+windows and for environments where `dhcpcd` cannot be installed, but it
+ceases to be the documented default. systemd-networkd's PD path is kept
+opt-in only, as already stated in 5.1.
+
 ## 6. Implementation Phases
 
 assert: Section 5 catalogues replacement requirements but does not sequence
@@ -590,6 +632,39 @@ profiles. Verification is `go test ./...`, `make check-schema`,
 assert: Phase 1 advances 5.1 (final pieces of the dhcp6c primary path),
 5.2 (active controller core), and 5.3 (no-op apply safety, since the new
 listeners must not cause unnecessary client restarts).
+
+#### 6.1.x Phase 1 sub-task: `dhcpcd` evaluation as a Phase 1 candidate
+
+assert: Section 5.8 introduces `dhcpcd` as a candidate unified WAN client.
+Because adopting `dhcpcd` would simplify Phase 1's hook design (`dhcpcd`
+hooks are uniform across OS and easier to integrate than per-OS
+`dhcp6c-script` variants) and would also collapse Section 5.7 (NixOS
+DHCPv6-PD client gap) into the same task, `dhcpcd` evaluation is admitted
+as a Phase 1 sub-task rather than waiting for Phase 4.
+
+The sub-task runs in parallel with the rest of Phase 1:
+
+- Add a `pkg/render/dhcpcd.go` renderer behind
+  `IPv6PrefixDelegationSpec.client = "dhcpcd"`.
+- Run lab measurements on Ubuntu, FreeBSD, and NixOS: initial acquisition
+  via canonical Solicit, at least one natural T1 Renew, and behaviour
+  during a HGW hung-up event for hung detection coverage.
+- If lab evidence clears 5.8's completion condition, switch the
+  NTT/HGW profile default from `dhcp6c` to `dhcpcd`. `dhcp6c` stays
+  supported for migration but is no longer the documented primary.
+- If lab evidence is mixed or negative, keep `dhcp6c` as primary and
+  defer the unified-client work to Phase 4.
+
+believe: The decision point on `dhcpcd` should be made before Phase 2
+opens, because Phase 2's LAN-side resources will be authored against
+whichever WAN client is primary. Phase 2 should not be started against a
+client that is about to be replaced.
+
+assert: Whichever WAN client wins, the routerd active controller from
+Section 5.2 stays in place. The OS DHCPv6 client handles steady-state
+refresh; routerd's `pkg/dhcp6control` handles bootstrap and recovery.
+This separation of concerns is independent of the OS client choice and
+is not negotiated away by adopting `dhcpcd`.
 
 ### 6.2 Phase 2: LAN-side parity with the reference appliance
 
