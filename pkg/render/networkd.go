@@ -42,6 +42,7 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 
 	pds := map[string]pdSource{}
 	raIfaces := map[string]bool{}
+	dhcp6cPDIfaces := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "IPv6RAAddress":
@@ -72,6 +73,11 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 			DUIDType:     api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType),
 			DUIDRawData:  spec.DUIDRawData,
 		}
+		if defaultString(spec.Client, "networkd") == "dhcp6c" {
+			if ifname := aliases[spec.Interface]; ifname != "" {
+				dhcp6cPDIfaces[ifname] = true
+			}
+		}
 	}
 
 	var files []File
@@ -85,6 +91,9 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 	for _, ifname := range raNames {
 		var buf bytes.Buffer
 		buf.WriteString("[Network]\nIPv6AcceptRA=yes\n")
+		if dhcp6cPDIfaces[ifname] {
+			buf.WriteString("\n[IPv6AcceptRA]\nDHCPv6Client=no\nUseDNS=no\nUseDomains=no\n")
+		}
 		files = append(files, File{
 			Path: filepath.Join(networkdDropinDir(ifname), "89-routerd-ipv6-ra.conf"),
 			Data: buf.Bytes(),

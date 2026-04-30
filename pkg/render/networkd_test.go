@@ -178,6 +178,10 @@ func TestNetworkdDropinsSkipDHCP6CPrefixDelegationClient(t *testing.T) {
 			Resources: []api.Resource{
 				netResource("Interface", "wan", api.InterfaceSpec{IfName: "ens18", Managed: false}),
 				netResource("Interface", "lan", api.InterfaceSpec{IfName: "ens19", Managed: false}),
+				netResource("IPv6RAAddress", "wan-ra", api.IPv6RAAddressSpec{
+					Interface: "wan",
+					Managed:   boolPtr(true),
+				}),
 				netResource("IPv6PrefixDelegation", "wan-pd", api.IPv6PrefixDelegationSpec{
 					Interface: "wan",
 					Client:    "dhcp6c",
@@ -195,11 +199,24 @@ func TestNetworkdDropinsSkipDHCP6CPrefixDelegationClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render networkd dropins: %v", err)
 	}
+	ra := findNetworkdTestFile(files, "10-netplan-ens18.network.d/89-routerd-ipv6-ra.conf")
+	if ra.Path == "" {
+		t.Fatal("missing RA drop-in")
+	}
+	for _, want := range []string{"IPv6AcceptRA=yes", "[IPv6AcceptRA]", "DHCPv6Client=no", "UseDNS=no", "UseDomains=no"} {
+		if !strings.Contains(string(ra.Data), want) {
+			t.Fatalf("RA drop-in missing %q:\n%s", want, string(ra.Data))
+		}
+	}
 	for _, file := range files {
 		if strings.Contains(file.Path, "90-routerd-dhcp6-pd.conf") {
 			t.Fatalf("networkd should not render DHCPv6-PD drop-ins for client=dhcp6c: %#v", files)
 		}
 	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func netResource(kind, name string, spec any) api.Resource {

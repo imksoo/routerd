@@ -50,7 +50,7 @@ func TestDHCP6CRendersLinuxConfigAndUnit(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"ExecStart=/usr/sbin/dhcp6c -f -n -c /usr/local/etc/routerd/dhcp6c-wan-pd.conf -p /run/routerd/dhcp6c-wan-pd.pid ens18",
+		"ExecStart=/usr/sbin/dhcp6c -dDf -c /usr/local/etc/routerd/dhcp6c-wan-pd.conf -p /run/routerd/dhcp6c-wan-pd.pid ens18",
 		"Restart=always",
 	} {
 		if !strings.Contains(unit, want) {

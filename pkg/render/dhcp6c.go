@@ -15,6 +15,13 @@ type DHCP6CConfig struct {
 	Units []string
 }
 
+type DHCP6CStyle string
+
+const (
+	DHCP6CStyleLinux   DHCP6CStyle = "linux"
+	DHCP6CStyleFreeBSD DHCP6CStyle = "freebsd"
+)
+
 func DHCP6C(router *api.Router, binaryPath, configDir, runtimeDir, unitDir string) (DHCP6CConfig, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
@@ -71,7 +78,7 @@ func DHCP6C(router *api.Router, binaryPath, configDir, runtimeDir, unitDir strin
 		}
 		config.Files = append(config.Files,
 			ManagedFile{Path: confPath, Data: data, Perm: 0644},
-			ManagedFile{Path: filepath.Join(unitDir, unit), Data: DHCP6CServiceUnit(binaryPath, confPath, pidPath, ifname, res.Metadata.Name, api.IsNTTIPv6PDProfile(profile)), Perm: 0644},
+			ManagedFile{Path: filepath.Join(unitDir, unit), Data: DHCP6CServiceUnit(binaryPath, confPath, pidPath, ifname, res.Metadata.Name, api.IsNTTIPv6PDProfile(profile), DHCP6CStyleLinux), Perm: 0644},
 		)
 		config.Units = append(config.Units, unit)
 	}
@@ -116,9 +123,9 @@ func dhcp6cConfig(router *api.Router, aliases map[string]string, pd freeBSDPD) (
 	return buf.Bytes(), nil
 }
 
-func DHCP6CServiceUnit(binaryPath, configPath, pidPath, ifname, resourceName string, noRelease bool) []byte {
-	flags := []string{"-f"}
-	if noRelease {
+func DHCP6CServiceUnit(binaryPath, configPath, pidPath, ifname, resourceName string, noRelease bool, style DHCP6CStyle) []byte {
+	flags := []string{"-dDf"}
+	if noRelease && style == DHCP6CStyleFreeBSD {
 		flags = append(flags, "-n")
 	}
 	flags = append(flags, "-c", configPath, "-p", pidPath, ifname)
