@@ -240,6 +240,11 @@ especially where cloud-init or existing netplan owns the management
 interface. routerd reports such cases as adoption candidates rather than
 silently taking them over.
 
+For DHCPv6-PD lab work, `routerd apply --once --override-client <client>` and
+`--override-profile <profile>` can override every `IPv6PrefixDelegation` for
+that run without changing the YAML file. Known problematic OS/client/profile
+combinations are reported as warnings rather than hard validation failures.
+
 When a host already carries matching configuration, run
 `routerd adopt --candidates` to inspect the existing artifacts, then
 `routerd adopt --apply` to record them in the local ownership ledger without

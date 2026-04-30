@@ -514,6 +514,24 @@ routerd はこれらを「外部要因の既知故障モード」として、本
   残 lease の正確な可視化、operator（および設定があれば家族など宅内の
   関係者）への通知に限られる。
 
+## L. FreeBSD dhcpcd 試験記録（2026-04-30）
+
+この節は、FreeBSD の `dhcpcd` を NTT プロファイルの既定値にせず、
+明示的なラボ経路として残す理由を記録する。
+
+- **measure**: FreeBSD ラボ VM で既存の `dhcpcd` DUID ファイルを削除すると、
+  `dhcpcd 10.3.1` は NTT NGN プロファイルが必要とする DUID-LL ではなく
+  DUID-LLT を生成した。
+- **measure**: DUID ファイルを手動で DUID-LL（`0003 0001` と WAN MAC）に
+  強制しても、同じ試験窓では PR-400NE から Advertise/Reply は返らなかった。
+- **measure**: WAN 側仮想 NIC の MAC だけを変更して同じ試験を繰り返しても、
+  結果は変わらなかった。少なくともこの観測では「特定 MAC が嫌われている」
+  という説明は弱い。
+- **assert**: FreeBSD の NTT プロファイル既定値は、現時点では KAME/WIDE
+  `dhcp6c` のままとする。FreeBSD `dhcpcd` はこのプロファイルでは既知の
+  問題がある組み合わせとして扱い、routerd は拒否ではなく警告を出す。これにより、
+  将来の再試験は検証規則を変えずに実施できる。
+
 ## 参考リンク
 
 - RFC 8415 — Dynamic Host Configuration Protocol for IPv6 (DHCPv6)

@@ -14,6 +14,27 @@ NTT profiles recommend KAME/WIDE `dhcp6c`.
 | dhcpcd | BSD 2-clause | Active | Handles IPv4/RA/DHCPv6/PD in one daemon. Lab tests show its Solicit includes Vendor-Class and ORO codes (e.g. opt_82, opt_83), so it is not the minimal shape that proves to work |
 | odhcp6c | GPL-2.0 | Active under the OpenWrt project, rarely packaged outside OpenWrt | Widely used in OpenWrt. NTT FLET'S Cross (10G Hikari) deployments report eight-hour disconnections (OpenWrt issue #13454). Needs more validation under PR-400NE |
 
+## routerd selection matrix
+
+routerd keeps multiple client paths because the useful default differs by OS
+and profile. `spec.client` may always be set explicitly. When it is empty,
+`routerd apply` resolves a default for the current host. Lab runs can override
+that choice for one apply with `--override-client` and `--override-profile`.
+
+| OS | Client | NTT profile status | Notes |
+| --- | --- | --- | --- |
+| FreeBSD | `dhcp6c` | verified default | Current production path for FreeBSD. Uses KAME/WIDE `dhcp6c`; routerd keeps service changes idempotent to preserve client state. |
+| FreeBSD | `dhcpcd` | known-bad warning | Lab test produced DUID-LLT when the DUID file was removed, and still received no HGW response after forcing DUID-LL. See Section L of the acquisition notes. |
+| Ubuntu/Linux | `dhcp6c` | verified default for `ntt-*` | Current Linux NTT-profile default. Avoids observed systemd-networkd Renew/Rebind lifetime 0/0 packets. |
+| Ubuntu/Linux | `networkd` | known-bad warning for `ntt-*` | Useful for generic Linux PD, but measured Renew/Rebind packets with IA Prefix lifetime 0/0 against the NTT HGW. |
+| Ubuntu/Linux | `dhcpcd` | candidate | Renderer exists for lab use. Keep explicit until acquisition and Renew are verified for the target environment. |
+| NixOS | `dhcpcd` | candidate default for `ntt-*` | Chosen because nixpkgs does not currently provide a straightforward WIDE `dhcp6c` package path. Needs additional lab confirmation. |
+| NixOS | `networkd` | known-bad warning for `ntt-*` | Same networkd Renew/Rebind lifetime concern as other Linux hosts. |
+
+Known-bad entries are not validation errors. routerd emits an apply warning and
+a `KnownNGCombination` event, then continues. This keeps controlled experiments
+possible while making the risk visible.
+
 ## Behaviour of NTT home gateways (PR-400NE family)
 
 From lab observations and public documentation, the working model is:

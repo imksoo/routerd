@@ -75,6 +75,111 @@ func TestWriteFileIfChanged(t *testing.T) {
 	}
 }
 
+func TestRouterWithIPv6PDClientOptionsResolvesFlavorDefaults(t *testing.T) {
+	router := testRouterWithPrefixDelegation(api.IPv6PrefixDelegationSpec{
+		Interface: "wan",
+		Profile:   api.IPv6PDProfileNTTHGWLANPD,
+	})
+
+	got, warnings, err := routerWithIPv6PDClientOptions(router, applyOptions{}, "linux", false)
+	if err != nil {
+		t.Fatalf("resolve PD options: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	spec, err := got.Spec.Resources[1].IPv6PrefixDelegationSpec()
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	if spec.Client != api.IPv6PDClientDHCP6C {
+		t.Fatalf("client = %q, want dhcp6c", spec.Client)
+	}
+	if spec.Profile != api.IPv6PDProfileNTTHGWLANPD {
+		t.Fatalf("profile = %q, want original profile", spec.Profile)
+	}
+
+	got, warnings, err = routerWithIPv6PDClientOptions(router, applyOptions{}, "linux", true)
+	if err != nil {
+		t.Fatalf("resolve NixOS PD options: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("nixos warnings = %v, want none", warnings)
+	}
+	spec, err = got.Spec.Resources[1].IPv6PrefixDelegationSpec()
+	if err != nil {
+		t.Fatalf("read nixos spec: %v", err)
+	}
+	if spec.Client != api.IPv6PDClientDHCPCD {
+		t.Fatalf("nixos client = %q, want dhcpcd", spec.Client)
+	}
+}
+
+func TestRouterWithIPv6PDClientOptionsOverridesAndWarns(t *testing.T) {
+	router := testRouterWithPrefixDelegation(api.IPv6PrefixDelegationSpec{
+		Interface: "wan",
+		Client:    api.IPv6PDClientDHCP6C,
+		Profile:   api.IPv6PDProfileNTTHGWLANPD,
+	})
+
+	got, warnings, err := routerWithIPv6PDClientOptions(router, applyOptions{
+		OverrideClient: api.IPv6PDClientDHCPCD,
+	}, "freebsd", false)
+	if err != nil {
+		t.Fatalf("resolve overridden PD options: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want one known-ng warning", warnings)
+	}
+	if !strings.Contains(warnings[0], "Known") && !strings.Contains(warnings[0], "known problematic") {
+		t.Fatalf("warning does not describe known problem: %q", warnings[0])
+	}
+	spec, err := got.Spec.Resources[1].IPv6PrefixDelegationSpec()
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	if spec.Client != api.IPv6PDClientDHCPCD {
+		t.Fatalf("client = %q, want override dhcpcd", spec.Client)
+	}
+
+	original, err := router.Spec.Resources[1].IPv6PrefixDelegationSpec()
+	if err != nil {
+		t.Fatalf("read original spec: %v", err)
+	}
+	if original.Client != api.IPv6PDClientDHCP6C {
+		t.Fatalf("original router mutated: client = %q", original.Client)
+	}
+}
+
+func TestRouterWithIPv6PDClientOptionsRejectsInvalidOverride(t *testing.T) {
+	router := testRouterWithPrefixDelegation(api.IPv6PrefixDelegationSpec{Interface: "wan"})
+	if _, _, err := routerWithIPv6PDClientOptions(router, applyOptions{OverrideClient: "bad"}, "linux", false); err == nil {
+		t.Fatal("expected invalid override client to be rejected")
+	}
+	if _, _, err := routerWithIPv6PDClientOptions(router, applyOptions{OverrideProfile: "bad"}, "linux", false); err == nil {
+		t.Fatal("expected invalid override profile to be rejected")
+	}
+}
+
+func testRouterWithPrefixDelegation(spec api.IPv6PrefixDelegationSpec) *api.Router {
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				Metadata: api.ObjectMeta{Name: "wan-pd"},
+				Spec:     spec,
+			},
+		}},
+	}
+}
+
 func TestParseFreeBSDRCConf(t *testing.T) {
 	got, err := parseFreeBSDRCConf([]byte(`# Generated
 gateway_enable="YES"

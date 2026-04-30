@@ -639,6 +639,8 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
+	overrideClient := fs.String("override-client", "", "override IPv6PrefixDelegation client for this apply: networkd, dhcp6c, or dhcpcd")
+	overrideProfile := fs.String("override-profile", "", "override IPv6PrefixDelegation profile for this apply")
 	once := fs.Bool("once", false, "run one apply loop")
 	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
 	if err := fs.Parse(args); err != nil {
@@ -650,6 +652,12 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 	router, err := config.Load(*configPath)
 	if err != nil {
 		return err
+	}
+	if !api.ValidIPv6PDClient(*overrideClient) {
+		return fmt.Errorf("invalid --override-client %q", *overrideClient)
+	}
+	if !api.ValidIPv6PDProfile(*overrideProfile) {
+		return fmt.Errorf("invalid --override-profile %q", *overrideProfile)
 	}
 	logger, err := eventlog.New(router)
 	if err != nil {
@@ -669,6 +677,8 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 		NftablesPath:        *nftablesPath,
 		LedgerPath:          *ledgerPath,
 		StatePath:           defaultStatePath,
+		OverrideClient:      *overrideClient,
+		OverrideProfile:     *overrideProfile,
 		DryRun:              *dryRun,
 		AnnounceDryRunToCLI: true,
 	}
@@ -685,6 +695,8 @@ type applyOptions struct {
 	NftablesPath        string
 	LedgerPath          string
 	StatePath           string
+	OverrideClient      string
+	OverrideProfile     string
 	DryRun              bool
 	AnnounceDryRunToCLI bool
 }
@@ -697,6 +709,56 @@ func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
 	policy.ProtectedInterfaces = compactStringList(policy.ProtectedInterfaces)
 	policy.ProtectedZones = compactStringList(policy.ProtectedZones)
 	return policy
+}
+
+func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName string, nixOS bool) (*api.Router, []string, error) {
+	if router == nil {
+		return nil, nil, errors.New("router is nil")
+	}
+	if !api.ValidIPv6PDClient(opts.OverrideClient) {
+		return nil, nil, fmt.Errorf("invalid IPv6PrefixDelegation client override %q", opts.OverrideClient)
+	}
+	if !api.ValidIPv6PDProfile(opts.OverrideProfile) {
+		return nil, nil, fmt.Errorf("invalid IPv6PrefixDelegation profile override %q", opts.OverrideProfile)
+	}
+
+	out := *router
+	out.Spec.Resources = append([]api.Resource(nil), router.Spec.Resources...)
+	var warnings []string
+	for i := range out.Spec.Resources {
+		res := out.Spec.Resources[i]
+		if res.Kind != "IPv6PrefixDelegation" {
+			continue
+		}
+		spec, err := res.IPv6PrefixDelegationSpec()
+		if err != nil {
+			return nil, nil, err
+		}
+		if opts.OverrideProfile != "" {
+			spec.Profile = opts.OverrideProfile
+		}
+		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
+		if opts.OverrideClient != "" {
+			spec.Client = opts.OverrideClient
+		} else {
+			spec.Client = api.EffectiveIPv6PDClient(osName, nixOS, profile, spec.Client)
+		}
+		if !api.ValidIPv6PDClient(spec.Client) {
+			return nil, nil, fmt.Errorf("%s spec.client is invalid: %q", res.ID(), spec.Client)
+		}
+		if !api.ValidIPv6PDProfile(spec.Profile) {
+			return nil, nil, fmt.Errorf("%s spec.profile is invalid: %q", res.ID(), spec.Profile)
+		}
+		out.Spec.Resources[i].Spec = spec
+		ctx := api.IPv6PDClientContext{OS: strings.ToLower(osName), NixOS: nixOS, Client: spec.Client, Profile: profile}
+		for _, item := range api.MatchKnownIPv6PDNGCombinations(ctx) {
+			warnings = append(warnings, fmt.Sprintf("%s uses known problematic IPv6PrefixDelegation combination os=%s nixos=%t client=%s profile=%s: %s See %s. Continuing because known problematic combinations are warnings, not validation errors.", res.ID(), strings.ToLower(osName), nixOS, spec.Client, profile, item.Reason, item.DocLink))
+		}
+	}
+	if err := config.Validate(&out); err != nil {
+		return nil, nil, err
+	}
+	return &out, warnings, nil
 }
 
 func routerConfigHash(router *api.Router) string {
@@ -715,6 +777,20 @@ func recordWarningEvents(router *api.Router, store routerstate.Store, warnings [
 		for _, res := range router.Spec.Resources {
 			if strings.Contains(warning, res.ID()) {
 				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "ApplyWarning", warning)
+			}
+		}
+	}
+}
+
+func recordKnownNGCombinationEvents(router *api.Router, store routerstate.Store, warnings []string) {
+	recorder, ok := store.(routerstate.EventRecorder)
+	if !ok {
+		return
+	}
+	for _, warning := range warnings {
+		for _, res := range router.Spec.Resources {
+			if strings.Contains(warning, res.ID()) {
+				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "KnownNGCombination", warning)
 			}
 		}
 	}
@@ -758,6 +834,13 @@ func compactStringList(values []string) []string {
 }
 
 func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
+	var optionWarnings []string
+	effectiveConfig, warnings, err := routerWithIPv6PDClientOptions(router, opts, string(platformDefaults.OS), isNixOSHost())
+	if err != nil {
+		return nil, err
+	}
+	router = effectiveConfig
+	optionWarnings = append(optionWarnings, warnings...)
 	stateStore, err := routerstate.Load(defaultString(opts.StatePath, defaultStatePath))
 	if err != nil {
 		return nil, err
@@ -798,6 +881,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	if generation != 0 {
 		result.Generation = generation
 	}
+	result.Warnings = append(result.Warnings, optionWarnings...)
 	appendStatePolicyResults(result, router, stateStore, stateChanges)
 	appendPrefixDelegationStateWarnings(result, router, stateStore)
 	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath); err != nil {
@@ -805,6 +889,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	}
 	if !opts.DryRun {
 		recordWarningEvents(router, stateStore, result.Warnings)
+		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
 		if err := os.MkdirAll(filepathDir(defaultString(opts.StatePath, defaultStatePath)), 0755); err != nil {
 			return nil, err
 		}
@@ -5609,7 +5694,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  adopt --config <path> --apply")
 	fmt.Fprintln(w, "  render nixos --config <path> [--out <path>]")
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <path>]")
-	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run]")
+	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--override-client <client>] [--override-profile <profile>]")
 	fmt.Fprintln(w, "  dhcp6 renew --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  dhcp6 request --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  dhcp6 release --config <path> --resource <ipv6-prefix-delegation>")

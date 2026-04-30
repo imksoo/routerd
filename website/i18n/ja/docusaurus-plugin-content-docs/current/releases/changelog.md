@@ -27,6 +27,10 @@ behavior changes and new resource shapes as the model takes shape.
   `dhcpcd.conf`, hook placeholder, and either a systemd unit or FreeBSD rc.d
   script while keeping the existing profile defaults unchanged until lab Renew
   measurements are complete.
+- `routerd apply` now resolves an omitted `IPv6PrefixDelegation.spec.client`
+  from the host OS and profile, supports `--override-client` and
+  `--override-profile` for one-shot lab runs, and records known-bad
+  OS/client/profile combinations as warnings instead of validation failures.
 - `routerd dhcp6 request|renew` can now override requested T1/T2 and IA Prefix
   lifetimes for lab packets. This is used to test whether an upstream DHCPv6-PD
   server honours shorter leases before waiting for a full production T1 cycle.

@@ -429,7 +429,7 @@ spec:
 
 ルータの振る舞い:
 
-- `spec.client` は OS 側の DHCPv6-PD クライアントを選びます。`networkd` は Linux の systemd-networkd 追加設定を使います。`dhcp6c` は routerd が管理する WIDE/KAME 形式の `dhcp6c.conf` とサービスを使います。`dhcpcd` はリソースごとの `dhcpcd.conf` とサービスを routerd が管理する経路で、WAN 側の DHCPv4、RA/SLAAC、IA_NA、IA_PD を将来そろえるための評価対象です。NTT ホームゲートウェイ向けの構成では、systemd-networkd を推奨経路にしません。現時点では `dhcp6c` を使い、`dhcpcd` は意図してラボ評価する場合だけ使います。同じインターフェースで `dhcp6c` や `dhcpcd` のような外部クライアントがプレフィックス委譲を持つ場合、`IPv6DHCPAddress` を同時に定義しないでください。WAN 側を待ち受ける DHCPv6 クライアントは 1 つに絞ります。
+- `spec.client` は OS 側の DHCPv6-PD クライアントを選びます。`networkd` は Linux の systemd-networkd 追加設定を使います。`dhcp6c` は routerd が管理する WIDE/KAME 形式の `dhcp6c.conf` とサービスを使います。`dhcpcd` はリソースごとの `dhcpcd.conf` とサービスを routerd が管理する経路です。省略時は `routerd apply` が OS とプロファイルから既定値を選びます。FreeBSD は `dhcp6c`、一般 Linux は `networkd`、Linux の NTT 系プロファイルは `dhcp6c`、NixOS の NTT 系プロファイルは `dhcpcd` です。1 回だけ切り替えて試したい場合は `routerd apply --override-client` を使えます。既知の悪い組み合わせは検証エラーではなく、警告とイベントとして表示します。同じインターフェースで `dhcp6c` や `dhcpcd` のような外部クライアントがプレフィックス委譲を持つ場合、`IPv6DHCPAddress` を同時に定義しないでください。WAN 側を待ち受ける DHCPv6 クライアントは 1 つに絞ります。
 - `spec.profile` は既知の上流環境向けにパラメータを切り替えます。
   - `default`: 一般的な DHCPv6-PD。
   - `ntt-ngn-direct-hikari-denwa`: NTT NGN/ONU に直結し、ひかり電話契約を使う構成。

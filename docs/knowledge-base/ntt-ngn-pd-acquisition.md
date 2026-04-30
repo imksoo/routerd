@@ -586,6 +586,25 @@ When `routerctl describe ipv6pd/<name>` shows the Section K.2 warning:
   remaining lease budget, and notification (operator, and where available,
   household members through whatever notification path is configured).
 
+## L. FreeBSD dhcpcd test record (2026-04-30)
+
+This section records why FreeBSD `dhcpcd` is kept as an explicit lab path and
+not as the NTT-profile default.
+
+- **measure**: On a FreeBSD lab VM, removing the existing `dhcpcd` DUID file
+  caused `dhcpcd 10.3.1` to generate DUID-LLT instead of the DUID-LL shape
+  required by the NTT NGN profile.
+- **measure**: Manually forcing the DUID file to DUID-LL
+  (`0003 0001` plus the WAN MAC) did not make the PR-400NE return
+  Advertise/Reply during the same test window.
+- **measure**: Changing only the WAN-side virtual NIC MAC and repeating the
+  same test did not change the result. This weakens the "MAC stigma" theory
+  for the observed FreeBSD `dhcpcd` failure.
+- **assert**: The current FreeBSD NTT-profile default remains KAME/WIDE
+  `dhcp6c`. FreeBSD `dhcpcd` is a known-bad combination for this profile and
+  routerd emits a warning rather than blocking it, so future lab work can
+  still re-test the path without changing validation rules.
+
 ## References
 
 - RFC 8415 — Dynamic Host Configuration Protocol for IPv6 (DHCPv6)

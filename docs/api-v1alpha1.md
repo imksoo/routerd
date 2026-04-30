@@ -519,10 +519,11 @@ How routerd behaves:
 - `spec.client` selects the OS DHCPv6-PD client. `networkd` uses
   systemd-networkd drop-ins on Linux. `dhcp6c` uses a managed WIDE/KAME-style
   `dhcp6c.conf` and service. `dhcpcd` uses a managed per-resource
-  `dhcpcd.conf` and service and is currently an evaluation path for unifying
-  WAN DHCPv4, RA/SLAAC, IA_NA, and IA_PD handling. NTT home-gateway profiles
-  should not use systemd-networkd as the preferred PD path; use `dhcp6c`
-  today, or `dhcpcd` only when intentionally running the lab evaluation.
+  `dhcpcd.conf` and service. When omitted, `routerd apply` resolves an
+  OS/profile default: FreeBSD uses `dhcp6c`; generic Linux uses `networkd`;
+  Linux NTT profiles use `dhcp6c`; NixOS NTT profiles use `dhcpcd`.
+  `routerd apply --override-client` can override this for a single run.
+  Known-bad combinations emit warnings and events, not validation errors.
   Do not also declare an `IPv6DHCPAddress` on the same interface when an
   external client such as `dhcp6c` or `dhcpcd` owns prefix delegation there;
   only one DHCPv6 client should bind the WAN side.
