@@ -63,14 +63,15 @@ func TestDHCPCDRendersLinuxConfigHookAndUnit(t *testing.T) {
 	}
 }
 
-func TestDHCPCDRendersPriorPrefixFromLease(t *testing.T) {
+func TestDHCPCDRendersLeaseContextWithoutExactPrefixHint(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			netResource("Interface", "wan", api.InterfaceSpec{IfName: "ens18", Managed: false}),
 			netResource("IPv6PrefixDelegation", "wan-pd", api.IPv6PrefixDelegationSpec{
-				Interface: "wan",
-				Client:    "dhcpcd",
-				Profile:   "default",
+				Interface:    "wan",
+				Client:       "dhcpcd",
+				Profile:      "ntt-hgw-lan-pd",
+				PrefixLength: 60,
 			}),
 		}},
 	}
@@ -82,7 +83,7 @@ func TestDHCPCDRendersPriorPrefixFromLease(t *testing.T) {
 	}
 	conf := string(config.Files[0].Data)
 	for _, want := range []string{
-		"ia_pd 1/2001:db8:1200:1240::/60",
+		"ia_pd 1/::/60",
 		"# routerd prior-prefix 2001:db8:1200:1240::/60",
 		"# routerd observed-server-id 00:03:00:01:02:00:00:00:00:ff",
 	} {
@@ -90,7 +91,7 @@ func TestDHCPCDRendersPriorPrefixFromLease(t *testing.T) {
 			t.Fatalf("dhcpcd.conf missing %q:\n%s", want, conf)
 		}
 	}
-	if strings.Contains(conf, "nooption rapid_commit") {
-		t.Fatalf("generic profile should not force rapid_commit off:\n%s", conf)
+	if strings.Contains(conf, "ia_pd 1/2001:db8:1200:1240::/60") {
+		t.Fatalf("lease state should not be fed back as an exact dhcpcd prefix hint:\n%s", conf)
 	}
 }

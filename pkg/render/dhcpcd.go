@@ -131,12 +131,6 @@ func dhcpcdIAPD(pd dhcpcdPD) string {
 		iaid = fmt.Sprintf("%d", parsed)
 	}
 	prefix := strings.TrimSpace(pd.PriorPrefix)
-	if prefix == "" {
-		prefix = strings.TrimSpace(pd.Lease.CurrentPrefix)
-	}
-	if prefix == "" {
-		prefix = strings.TrimSpace(pd.Lease.LastPrefix)
-	}
 	if prefix != "" {
 		return iaid + "/" + prefix
 	}
