@@ -182,6 +182,21 @@ assert: `ntt-ngn-direct-hikari-denwa` と `ntt-hgw-lan-pd` では、正確なヒ
 長さだけのヒントも既定では送りません。`prefixLength` は routerd が期待する形を
 表す値として残しますが、systemd-networkd へは `PrefixDelegationHint=` を出力しません。
 
+measure (2026-04-30): 同ラボでは、HGW の post-reboot acceptance window
+（Renew 以外の DHCPv6 メッセージを受理する窓）が 4 分以内に閉じることが
+観測されました。routerd の active Request は 11:16:50 UTC に受理されて
+lab `router03` の binding を refresh しましたが、同じ client から 11:20–11:21
+UTC に発火した active Renew、Release、続けての Request はいずれも Reply を
+受けられませんでした。一貫して受理されたのは自然な T1 境界での maintenance-
+path Renew だけです。したがって routerd は `dhcp6 renew` を診断ツールと位置
+付け、運用上の lease 更新は OS の DHCPv6 client が T1 タイマーで担当します。
+観測された Reply 値 `T1=7200`、`T2=12600`、`pltime=vltime=14400` の下では、
+Renew opportunity は 2 時間ごと 1 回となり、T1 境界を 1 回取りこぼしてから
+vltime expire までは約 2 時間の grace があります。routerd の検出と operator
+通知のサイズはこの 2 時間の予算を基準に決めます。詳細は
+`docs/knowledge-base/ntt-ngn-pd-acquisition.md` の H 節、H.1 節、K.4–K.5 節を
+参照してください。
+
 ### 1.3 OS クライアント実装から分かること
 
 | クライアント | 測定または引用した挙動 | routerd での扱い |

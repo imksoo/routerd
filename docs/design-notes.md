@@ -215,6 +215,21 @@ driven HGW reboot is the only recovery. See
 `docs/knowledge-base/ntt-ngn-pd-acquisition.md` Section K for the detection
 threshold, recovery playbook, and public-report citations.
 
+measure (2026-04-30): The post-reboot HGW acceptance window for non-Renew
+DHCPv6 messages was observed to close within four minutes in this lab.
+routerd's active Request was accepted at 11:16:50 UTC and refreshed the lab
+`router03` binding, but routerd active Renew, Release, and a follow-up
+Request from the same client at 11:20–11:21 UTC all received no Reply.
+Maintenance-path Renew at the natural T1 boundary remained the only
+consistently-honoured operation. routerd therefore treats `dhcp6 renew` as
+a diagnostic tool and lets the OS DHCPv6 client drive operational refresh
+on its T1 timer. With observed Reply values `T1=7200`, `T2=12600`,
+`pltime=vltime=14400`, Renew opportunities are spaced 2 hours apart and a
+single missed T1 boundary leaves about 2 hours of grace before vltime
+expiry; routerd sizes detection and operator notification against that
+2-hour budget. See `docs/knowledge-base/ntt-ngn-pd-acquisition.md`
+Sections H, H.1, and K.4–K.5 for details.
+
 ### 1.3 OS Client Behavior
 
 | Client | Cited or measured behavior | routerd treatment |

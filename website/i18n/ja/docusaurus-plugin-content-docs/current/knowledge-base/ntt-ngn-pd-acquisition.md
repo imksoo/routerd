@@ -208,6 +208,32 @@ IX2215 の lease 更新トランスクリプトから読み取れる成功する
 - **assert**: Renew は D 節の仮説に従い、multicast、新規 xid、非ゼロ T1/T2、`reconfigure-accept` option ありで送出する。
 - **assert**: Server-ID は既定で WAN インターフェイス上の直近 RA から、modified-EUI-64 逆変換で MAC を復元し、
   `0003 0001` を前置して導出する。リソース仕様で override できる。
+- **assert**: `routerd dhcp6 renew` および `routerd dhcp6 release` の CLI
+  サブコマンドは診断・復旧用ツールであり、運用上の lease refresh ツール
+  ではない。HGW は自然な T1 境界で送られる Renew のみを受理し、T1 前に
+  発火された ad-hoc な active Renew は silent drop される（D 節参照）。
+  steady-state の lease 更新は OS の DHCPv6 client（`dhcp6c`）が自身の
+  T1 タイマーで担う。routerd は Reply を記録し lease 状態を可視化するが、
+  HGW が受理する以上の頻度に refresh を前倒ししようとはしない。
+
+### H.1 T1 サイクルと grace window
+
+- **measure**: この HGW の Reply 値は `T1=7200`（2 時間）、`T2=12600`
+  （3.5 時間）、`pltime=vltime=14400`（4 時間）。
+- これらの値の下では、T1 境界での Renew 成功は Reply 受信の瞬間から
+  全タイマーを reset する。次の Renew opportunity はそこからさらに 2 時間後
+  （元割当て基準で T0+4h、最新 Reply 基準で T0'+2h）。
+- **assert**: Renew opportunity は厳密に 2 時間ごと 1 回であり、routerd
+  はその間隔を正当に前倒しできない。自然な T1 境界より前に発火された
+  `dhcp6 renew` は HGW に silent drop される。
+- **measure**: HGW が T1 境界の Renew を最初に無視した瞬間から、`vltime`
+  が切れるまで operator には約 2 時間の grace がある（T1 で Renew → silent
+  drop → T2=3.5h で Rebind 試行 → T0+4h で vltime expire）。この 2 時間の
+  grace window が、routerd の検出・operator 通知のサイズを規定する時間予算
+  である。
+- **observe**: この 2 時間の grace window が、Renew 1 回の取りこぼしが
+  まだ復旧可能である理由でもある。vltime 切れの前のいずれかの時点で HGW
+  を再起動すれば maintenance path が回復し、次の T1 境界の Renew は成功する。
 
 ## I. 運用ランブック（要約）
 
@@ -440,6 +466,14 @@ routerd はこれらを「外部要因の既知故障モード」として、本
 - **measure (2026-04-30 11:16:50 UTC)**: 再起動後、`router03` から routerd
   active Request を送出すると、回復した HGW で受理され、既存 `1240::/60`
   binding を満期近い lifetime に refresh できた。
+- **measure (2026-04-30 11:20:44 UTC)**: 11:16:50 の Request 成功からわずか
+  約 4 分後、同じ `router03` から同じ HGW に対して送出した active CLI の
+  Renew、Release、続けての Request はいずれも DHCPv6 Reply を受け取れな
+  かった。HGW のテーブルは更新されず、binding も解放されなかった。これは
+  HGW がそれ以外は正常（NDP・RA・既存 binding の lease カウンタは影響を
+  受けない）であっても、再起動直後の acceptance window が数分のうちに閉じ
+  得ることを示す。K.5 の運用ランブックは、最初の成功交換の後も window が
+  開き続けていると仮定してはならない。
 - **observe**: HGW が operator 介入なしに自力回復するかは未確認。rabbit51
   報告は auto-reboot 回復を述べているが、本ラボでは auto-recovery 経路は
   未検証。確実に動いた回復手段は手動再起動のみ。
@@ -462,6 +496,10 @@ routerd はこれらを「外部要因の既知故障モード」として、本
    ある）。
 5. 再起動後、routerd の次の Renew で Reply を受け取り、
    `hgwHungSuspectedAt` が解除されることを確認する。
+6. **注意**: HGW を再起動した直後で post-reboot acceptance window 中で
+   あっても、その window は数分以内に閉じ得る（K.4 の 11:20 UTC measure）。
+   最初の成功交換の後の active CLI 利用は best-effort と扱い、正規の運用
+   経路は OS DHCPv6 client が自然な T1 境界で行う refresh に委ねる。
 
 ### K.6 routerd が自動修復できない理由
 

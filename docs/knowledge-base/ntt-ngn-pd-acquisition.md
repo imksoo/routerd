@@ -251,6 +251,34 @@ The IX2215 lease-refresh transcripts show the working Renew shape:
 - **assert**: Server-ID is by default derived from the most recent RA observed
   on the WAN interface, by inverting modified-EUI-64 to recover the MAC and
   prepending `0003 0001`. The resource spec exposes an override.
+- **assert**: `routerd dhcp6 renew` and `routerd dhcp6 release` CLI
+  subcommands are diagnostic and recovery tools, not operational refresh
+  tools. The HGW only honours Renew sent at the natural T1 boundary; an
+  ad-hoc active Renew issued before T1 is silently dropped (see Section D).
+  Steady-state lease refresh stays with the OS DHCPv6 client (`dhcp6c`)
+  running on its own T1 timer. routerd records the Reply and surfaces the
+  lease state, but does not try to accelerate the refresh cadence beyond
+  what the HGW will accept.
+
+### H.1 T1 cycle and grace window
+
+- **measure**: Reply values observed from this HGW are `T1=7200` (2 h),
+  `T2=12600` (3.5 h), `pltime=vltime=14400` (4 h).
+- With these values, a successful Renew at the T1 boundary resets the
+  timers from the moment the Reply is received. The next Renew opportunity
+  is therefore another 2 hours later (T0+4h relative to the original
+  allocation, but T0'+2h relative to the latest Reply).
+- **assert**: Renew opportunities are spaced exactly 2 hours apart and
+  routerd cannot legitimately accelerate that cadence. `dhcp6 renew`
+  issued before the natural T1 boundary is silently dropped by the HGW.
+- **measure**: From the moment the HGW first ignores a T1-boundary Renew,
+  the operator has approximately 2 hours of grace before `vltime` expires
+  (Renew at T1 → silent drop → Rebind retries at T2=3.5 h → vltime expires
+  at T0+4 h). This 2-hour grace window is the time budget routerd must
+  size detection and operator notification against.
+- **observe**: This 2-hour grace window is also why a single missed Renew
+  is recoverable: a HGW reboot any time before vltime expiry restores the
+  maintenance path and the next T1-boundary Renew succeeds.
 
 ## I. Operator runbook (compressed)
 
@@ -503,6 +531,15 @@ condition is a known external failure mode and not a one-off in this lab.
 - **measure (2026-04-30 11:16:50 UTC)**: Following the reboot, routerd's
   active Request from `router03` succeeded against the recovered HGW and
   refreshed the existing `1240::/60` binding to a near-full lease lifetime.
+- **measure (2026-04-30 11:20:44 UTC)**: Active CLI Renew, Release, and a
+  follow-up Request from the same `router03` against the same HGW, issued
+  only about four minutes after the successful 11:16:50 Request, all
+  received no DHCPv6 Reply. The HGW table did not refresh and the binding
+  was not released. This shows the post-reboot acceptance window can close
+  within minutes even while the HGW remains otherwise healthy (NDP, RA, and
+  existing-binding lease counters were unaffected). The operator playbook
+  in K.5 should not assume the window stays open after the first successful
+  exchange.
 - **observe**: It is not confirmed whether the HGW recovers on its own
   without operator intervention. The rabbit51 report cites an auto-reboot
   recovery, but in this lab the auto-recovery path was not exercised; manual
@@ -528,6 +565,11 @@ When `routerctl describe ipv6pd/<name>` shows the Section K.2 warning:
    but has been reported).
 5. After the reboot, confirm that routerd's next Renew elicits a Reply and
    that `hgwHungSuspectedAt` clears.
+6. **Note**: Even when the HGW has just rebooted and is in the post-reboot
+   acceptance window, that window can close within minutes (Section K.4
+   11:20 UTC measure). After the first successful exchange, treat
+   subsequent active CLI use as best-effort; the canonical path forward is
+   to let the OS DHCPv6 client refresh at its natural T1 boundary.
 
 ### K.6 Why routerd cannot fix this automatically
 
