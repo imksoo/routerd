@@ -40,7 +40,7 @@ func TestDHCPCDRendersLinuxConfigHookAndUnit(t *testing.T) {
 		"ipv6rs",
 		"ipv6only",
 		"noipv4",
-		"duid",
+		"duid ll",
 		"nooption rapid_commit",
 		"option domain_name_servers",
 		"ia_pd 1/::/60",

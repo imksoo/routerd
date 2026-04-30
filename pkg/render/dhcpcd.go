@@ -110,9 +110,11 @@ func dhcpcdConfig(pd dhcpcdPD, hookPath string) ([]byte, error) {
 	buf.WriteString("  ipv6rs\n")
 	buf.WriteString("  ipv6only\n")
 	buf.WriteString("  noipv4\n")
-	buf.WriteString("  duid\n")
 	if api.IsNTTIPv6PDProfile(pd.Profile) {
+		buf.WriteString("  duid ll\n")
 		buf.WriteString("  nooption rapid_commit\n")
+	} else {
+		buf.WriteString("  duid\n")
 	}
 	buf.WriteString("  option domain_name_servers\n")
 	if hookPath != "" {

@@ -5085,9 +5085,10 @@ func ensureLinuxDHCPCDDUID(router *api.Router, duidPath string) (bool, string, e
 }
 
 func ensureRawDUIDFile(path string, want []byte, now time.Time) (bool, string, error) {
+	desired := []byte(formatDHCPCDTextDUID(want) + "\n")
 	current, readErr := os.ReadFile(path)
 	if readErr == nil {
-		if bytes.Equal(current, want) {
+		if bytes.Equal(current, desired) {
 			return false, "", nil
 		}
 		backupPath := path + ".bak." + now.UTC().Format("20060102T150405Z")
@@ -5097,7 +5098,7 @@ func ensureRawDUIDFile(path string, want []byte, now time.Time) (bool, string, e
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			return false, backupPath, err
 		}
-		if err := os.WriteFile(path, want, 0600); err != nil {
+		if err := os.WriteFile(path, desired, 0600); err != nil {
 			return false, backupPath, err
 		}
 		return true, backupPath, nil
@@ -5108,10 +5109,19 @@ func ensureRawDUIDFile(path string, want []byte, now time.Time) (bool, string, e
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, "", err
 	}
-	if err := os.WriteFile(path, want, 0600); err != nil {
+	if err := os.WriteFile(path, desired, 0600); err != nil {
 		return false, "", err
 	}
 	return true, "", nil
+}
+
+func formatDHCPCDTextDUID(data []byte) string {
+	encoded := hex.EncodeToString(data)
+	var parts []string
+	for i := 0; i < len(encoded); i += 2 {
+		parts = append(parts, encoded[i:i+2])
+	}
+	return strings.Join(parts, ":")
 }
 
 func dhcp6cAvailable() bool {
