@@ -22,6 +22,10 @@ behavior changes and new resource shapes as the model takes shape.
   managed WIDE/KAME-style `dhcp6c.conf` and systemd unit so NTT home-gateway
   profiles can avoid systemd-networkd Renew/Rebind packets with zero IA Prefix
   lifetimes.
+- Linux `IPv6PrefixDelegation` can now use `client: dhcpcd` as an explicit
+  lab evaluation path. routerd renders a per-resource `dhcpcd.conf`, hook
+  placeholder, and systemd unit while keeping the existing profile defaults
+  unchanged until lab Renew measurements are complete.
 - `IPv6PrefixDelegation` now has manual `serverID`, `priorPrefix`, and
   `acquisitionStrategy` fields for the DHCPv6 active-controller path. Renderers
   can receive the resource status and prefer explicit spec overrides before

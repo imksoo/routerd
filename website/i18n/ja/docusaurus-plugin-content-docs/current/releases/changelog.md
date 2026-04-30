@@ -19,6 +19,9 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
 - Linux の `IPv6PrefixDelegation` で `client: dhcp6c` を使えるようにしました。
   routerd が WIDE/KAME 形式の `dhcp6c.conf` と systemd ユニットを生成し、
   NTT ホームゲートウェイ向け構成で IA Prefix 寿命が 0 の Renew/Rebind を避けられるようにします。
+- Linux の `IPv6PrefixDelegation` で `client: dhcpcd` を明示的なラボ評価経路として使えるようにしました。
+  routerd はリソースごとの `dhcpcd.conf`、フックのひな形、systemd ユニットを生成します。
+  ラボで Renew を測り終えるまでは、既定のプロファイルは変更しません。
 - `IPv6PrefixDelegation` に `serverID`、`priorPrefix`、`acquisitionStrategy` を
   追加しました。DHCPv6 の能動制御では、明示された設定値を優先し、無い場合は
   観測済みのリース状態を使います。

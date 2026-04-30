@@ -218,6 +218,7 @@ vltime expire までは約 2 時間の grace があります。routerd の検出
 | --- | --- | --- |
 | systemd-networkd | cite/measure: `DUIDType=link-layer`、`IAID`、`PrefixDelegationHint`、`WithoutRA` を設定できます。検証した Linux 経路では Renew/Rebind の IA Prefix 寿命が 0 になる場合があります。 | 一般的な Linux DHCPv6-PD では使えますが、NTT HGW向けの推奨経路にはしません。 |
 | KAME/WIDE `dhcp6c` | cite/measure: DUID はファイル、IAID と IA_PD は設定で扱います。ヒント付き Solicit や Renew/Rebind で IA Prefix 寿命を出力できます。 | FreeBSD と、NTT HGW向け Linux の逃げ道として使います。NTT 向けでは DUID-LL ファイルを routerd 管理対象にします。 |
+| `dhcpcd` | cite/believe: IPv4 DHCP、IPv6 RA/SLAAC、IA_NA、IA_PD を 1 つのクライアントで扱えます。Linux、NixOS、FreeBSD で導入できます。このリポジトリでは、Renew/Rebind の実機挙動はまだ測定中です。 | ラボ評価のためにレンダラとサービス経路を追加します。Ubuntu、FreeBSD、NixOS で初回取得と T1 Renew が成功するまで、NTT 向け既定値にはしません。 |
 | dnsmasq | cite/assert: LAN 側の DNS、DHCPv4、DHCPv6、RA には有用です。WAN 側の PD クライアントの正にはしません。 | LAN サービスに限定して使います。 |
 
 assert: DHCPv6-PD の取得経路は意図的に絞ります。一般的な Linux では

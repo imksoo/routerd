@@ -518,11 +518,14 @@ How routerd behaves:
 
 - `spec.client` selects the OS DHCPv6-PD client. `networkd` uses
   systemd-networkd drop-ins on Linux. `dhcp6c` uses a managed WIDE/KAME-style
-  `dhcp6c.conf` and service. NTT home-gateway profiles should use `dhcp6c`
-  on Linux and FreeBSD so Renew/Rebind packets keep non-zero IA Prefix
-  lifetimes. Do not also declare an `IPv6DHCPAddress` on the same interface
-  when `client: dhcp6c` owns prefix delegation there; only one DHCPv6 client
-  should bind the WAN side.
+  `dhcp6c.conf` and service. `dhcpcd` uses a managed per-resource
+  `dhcpcd.conf` and service and is currently an evaluation path for unifying
+  WAN DHCPv4, RA/SLAAC, IA_NA, and IA_PD handling. NTT home-gateway profiles
+  should not use systemd-networkd as the preferred PD path; use `dhcp6c`
+  today, or `dhcpcd` only when intentionally running the lab evaluation.
+  Do not also declare an `IPv6DHCPAddress` on the same interface when an
+  external client such as `dhcp6c` or `dhcpcd` owns prefix delegation there;
+  only one DHCPv6 client should bind the WAN side.
 - `spec.profile` selects a known upstream environment:
   - `default` is generic DHCPv6-PD.
   - `ntt-ngn-direct-hikari-denwa` is for a router connected directly to
@@ -595,6 +598,11 @@ How routerd behaves:
   NTT profiles whose effective DUID type is `link-layer`. If the existing file
   differs from the desired DUID, routerd backs it up as `.bak.<timestamp>` and
   writes the desired DUID before starting `dhcp6c`.
+- On Linux with `client: dhcpcd`, routerd manages `/var/lib/dhcpcd/duid` for
+  NTT profiles whose effective DUID type is `link-layer`, renders
+  `dhcpcd-<name>.conf`, and starts `routerd-dhcpcd-<name>.service`. This path
+  is present so the lab can measure dhcpcd before changing any profile
+  defaults.
 
 Some NTT home-gateway environments only advertise IPv6 by RA/SLAAC and never
 answer DHCPv6-PD. Those should not be modeled as `IPv6PrefixDelegation`;

@@ -182,6 +182,21 @@ assert: `ntt-ngn-direct-hikari-denwa` と `ntt-hgw-lan-pd` では、正確なヒ
 長さだけのヒントも既定では送りません。`prefixLength` は routerd が期待する形を
 表す値として残しますが、systemd-networkd へは `PrefixDelegationHint=` を出力しません。
 
+measure (2026-04-30): NTT HGW (PR-400NE) で、LAN 側の DHCPv6 サーバが
+クライアントからの Solicit / Request / Renew / Rebind / Release / Confirm /
+Information-Request をすべて silent drop する状態が観測されました。
+NDP と RA はその間も正常に流れ続け、HGW のテーブルに残った既存 binding は
+リースカウンタが減るだけで refresh されませんでした。HGW を手動で再起動すると
+DHCPv6 サーバは即座に回復し、その直後に routerd の能動 Request
+(`routerd dhcp6 request`) が成功して lab `router03` の binding を満期近い
+lifetime に refresh できました。同種の DHCPv6 サーバ停止は公開報告でも
+複数件確認できます (rabbit51 2022 PR-600MI、HackMD 2021 Yamaha RTX1200 +
+AsahiNet、azutake 2023 Cisco IOS-XE on FLET'S クロス)。routerd はこれを
+「アクティブ・コントローラーで検出と可視化はできるが自動修復はできない、
+外部要因の既知故障モード」として扱い、復旧は operator による HGW 再起動だけを
+唯一の経路とします。検出閾値、運用手順、公開報告の引用は
+`docs/knowledge-base/ntt-ngn-pd-acquisition.md` の K 節を参照してください。
+
 measure (2026-04-30): 同ラボでは、HGW の post-reboot acceptance window
 （Renew 以外の DHCPv6 メッセージを受理する窓）が 4 分以内に閉じることが
 観測されました。routerd の active Request は 11:16:50 UTC に受理されて
@@ -203,6 +218,7 @@ vltime expire までは約 2 時間の grace があります。routerd の検出
 | --- | --- | --- |
 | systemd-networkd | cite/measure: `DUIDType=link-layer`、`IAID`、`PrefixDelegationHint`、`WithoutRA` を設定できます。検証した Linux 経路では Renew/Rebind の IA Prefix 寿命が 0 になる場合があります。 | 一般的な Linux DHCPv6-PD では使えますが、NTT HGW向けの推奨経路にはしません。 |
 | KAME/WIDE `dhcp6c` | cite/measure: DUID はファイル、IAID と IA_PD は設定で扱います。ヒント付き Solicit や Renew/Rebind で IA Prefix 寿命を出力できます。 | FreeBSD と、NTT HGW向け Linux の逃げ道として使います。NTT 向けでは DUID-LL ファイルを routerd 管理対象にします。 |
+| `dhcpcd` | cite/believe: IPv4 DHCP、IPv6 RA/SLAAC、IA_NA、IA_PD を 1 つのクライアントで扱えます。Linux、NixOS、FreeBSD で導入できます。このリポジトリでは、Renew/Rebind の実機挙動はまだ測定中です。 | ラボ評価のためにレンダラとサービス経路を追加します。Ubuntu、FreeBSD、NixOS で初回取得と T1 Renew が成功するまで、NTT 向け既定値にはしません。 |
 | dnsmasq | cite/assert: LAN 側の DNS、DHCPv4、DHCPv6、RA には有用です。WAN 側の PD クライアントの正にはしません。 | LAN サービスに限定して使います。 |
 
 assert: DHCPv6-PD の取得経路は意図的に絞ります。一般的な Linux では

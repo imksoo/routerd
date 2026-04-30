@@ -429,7 +429,7 @@ spec:
 
 ルータの振る舞い:
 
-- `spec.client` は OS 側の DHCPv6-PD クライアントを選びます。`networkd` は Linux の systemd-networkd 追加設定を使います。`dhcp6c` は routerd が管理する WIDE/KAME 形式の `dhcp6c.conf` とサービスを使います。NTT ホームゲートウェイ向けの構成では、Renew/Rebind の IA Prefix 寿命を 0 にしないため、Linux と FreeBSD のどちらでも `dhcp6c` を使うのが基本です。同じインターフェースで `client: dhcp6c` によるプレフィックス委譲を使う場合、`IPv6DHCPAddress` を同時に定義しないでください。WAN 側を待ち受ける DHCPv6 クライアントは 1 つに絞ります。
+- `spec.client` は OS 側の DHCPv6-PD クライアントを選びます。`networkd` は Linux の systemd-networkd 追加設定を使います。`dhcp6c` は routerd が管理する WIDE/KAME 形式の `dhcp6c.conf` とサービスを使います。`dhcpcd` はリソースごとの `dhcpcd.conf` とサービスを routerd が管理する経路で、WAN 側の DHCPv4、RA/SLAAC、IA_NA、IA_PD を将来そろえるための評価対象です。NTT ホームゲートウェイ向けの構成では、systemd-networkd を推奨経路にしません。現時点では `dhcp6c` を使い、`dhcpcd` は意図してラボ評価する場合だけ使います。同じインターフェースで `dhcp6c` や `dhcpcd` のような外部クライアントがプレフィックス委譲を持つ場合、`IPv6DHCPAddress` を同時に定義しないでください。WAN 側を待ち受ける DHCPv6 クライアントは 1 つに絞ります。
 - `spec.profile` は既知の上流環境向けにパラメータを切り替えます。
   - `default`: 一般的な DHCPv6-PD。
   - `ntt-ngn-direct-hikari-denwa`: NTT NGN/ONU に直結し、ひかり電話契約を使う構成。
@@ -446,6 +446,7 @@ spec:
 - `spec.serverID`、`spec.priorPrefix`、`spec.acquisitionStrategy` は、DHCPv6-PD を能動的に制御する経路のための手動上書きです。通常は、routerd が `IPv6PrefixDelegation` の状態から上流サーバの識別子と過去に委譲されたプレフィックスを観測し、その状態をレンダラや DHCPv6 制御処理へ渡します。観測状態が無い場合や誤っている場合に、復旧や移行のためだけに設定してください。`acquisitionStrategy` は `hybrid`、`solicit-only`、`request-claim-only` のいずれかです。
 - `routerd dhcp6 request|renew|release --resource <名前>` は、ラボ復旧用の低レベルな能動制御入口です。リソースと状態保存領域から DUID、IAID、サーバ識別子、プレフィックスを読み、上流インターフェースから DHCPv6 パケットを直接送ります。Request/Renew は送信ごとに新しい transaction ID を作り、T1/T2 と IA Prefix の寿命を 0 にせず、Reconfigure Accept を含めます。Release は IA_PD の寿命を 0 にし、Reconfigure Accept を含めません。
 - FreeBSD の KAME `dhcp6c` では、NTT 系プロファイルかつ実効 DUID 型が `link-layer` の場合、routerd が `/var/db/dhcp6c_duid` を管理します。既存ファイルが期待する DUID と異なる場合は `.bak.<時刻>` として退避し、期待する DUID を `dhcp6c` 起動前に書き込みます。
+- Linux で `client: dhcpcd` を選んだ場合、NTT 系プロファイルかつ実効 DUID 型が `link-layer` なら、routerd は `/var/lib/dhcpcd/duid` を管理します。`dhcpcd-<名前>.conf` を書き出し、`routerd-dhcpcd-<名前>.service` を起動します。この経路は、既定値を変える前に dhcpcd をラボで測るために用意しています。
 
 NTT のホームゲートウェイには、IPv6 を RA/SLAAC のみで配布し DHCPv6-PD に応答しないモードもあります。これは `IPv6PrefixDelegation` ではモデル化できないため、別途 RA/SLAAC のリソース設計を行う必要があります。
 
