@@ -43,7 +43,7 @@ func TestDHCPCDRendersLinuxConfigHookAndUnit(t *testing.T) {
 		"duid ll",
 		"nooption rapid_commit",
 		"option domain_name_servers",
-		"ia_pd 1/::/60",
+		"ia_pd 1 -",
 		"# routerd acquisition-strategy request-claim-only",
 		"# routerd duid-raw-data 02:00:00:00:01:01",
 		"# routerd observed-server-id 00:03:00:01:02:00:00:00:00:01",
@@ -83,7 +83,7 @@ func TestDHCPCDRendersLeaseContextWithoutExactPrefixHint(t *testing.T) {
 	}
 	conf := string(config.Files[0].Data)
 	for _, want := range []string{
-		"ia_pd 1/::/60",
+		"ia_pd 1 -",
 		"# routerd prior-prefix 2001:db8:1200:1240::/60",
 		"# routerd observed-server-id 00:03:00:01:02:00:00:00:00:ff",
 	} {

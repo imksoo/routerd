@@ -134,6 +134,9 @@ func dhcpcdIAPD(pd dhcpcdPD) string {
 	if prefix != "" {
 		return iaid + "/" + prefix
 	}
+	if api.IsNTTIPv6PDProfile(pd.Profile) {
+		return iaid + " -"
+	}
 	if pd.PrefixLength > 0 {
 		return fmt.Sprintf("%s/::/%d", iaid, pd.PrefixLength)
 	}
