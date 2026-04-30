@@ -422,6 +422,51 @@ func TestAvailableIPv4DefaultRouteCandidatesSkipsDSLiteWithoutLocalAddress(t *te
 	}
 }
 
+func TestApplyDSLiteSkipsAFTRResolutionWithoutDelegatedPrefix(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "ens19"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
+			Metadata: api.ObjectMeta{Name: "lan-ipv6"},
+			Spec: api.IPv6DelegatedAddressSpec{
+				PrefixDelegation: "wan-pd",
+				Interface:        "lan",
+				AddressSuffix:    "::3",
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+			Metadata: api.ObjectMeta{Name: "transix-a"},
+			Spec: api.DSLiteTunnelSpec{
+				Interface:             "wan",
+				TunnelName:            "ds-transix-a",
+				AFTRFQDN:              "invalid.invalid",
+				AFTRDNSServers:        []string{"2001:db8::53"},
+				AFTRAddressOrdinal:    1,
+				LocalAddressSource:    "delegatedAddress",
+				LocalDelegatedAddress: "lan-ipv6",
+				LocalAddressSuffix:    "::100",
+			},
+		},
+	}}}
+	applied, err := applyDSLiteTunnelsWithState(router, routerstate.New())
+	if err != nil {
+		t.Fatalf("apply DS-Lite without delegated prefix: %v", err)
+	}
+	if len(applied) != 1 || applied[0] != "removed-unusable:ds-transix-a" {
+		t.Fatalf("applied = %v, want removed-unusable tunnel", applied)
+	}
+}
+
 func TestStaleIPv4ManagedFwmarkRules(t *testing.T) {
 	desired := map[ipv4FwmarkRule]bool{
 		{Priority: 10, Mark: 0x111, Table: 111}: true,

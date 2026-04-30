@@ -3921,13 +3921,6 @@ func applyDSLiteTunnelsWithState(router *api.Router, store routerstate.Store) ([
 		}
 		ifname := aliases[spec.Interface]
 		tunnelName := defaultString(spec.TunnelName, res.Metadata.Name)
-		remote := spec.RemoteAddress
-		if remote == "" {
-			remote, err = resolveAAAAWithServers(spec.AFTRFQDN, spec.AFTRDNSServers, spec.AFTRAddressOrdinal, spec.AFTRAddressSelection)
-			if err != nil {
-				return nil, fmt.Errorf("%s resolve AFTR: %w", res.ID(), err)
-			}
-		}
 		local, localIfName, err := dsliteLocalAddressWithPrefixes(spec, ifname, aliases, delegated, pdPrefixes)
 		if err != nil {
 			if !errors.Is(err, errNoIPv6PrefixAvailable) {
@@ -3936,6 +3929,13 @@ func applyDSLiteTunnelsWithState(router *api.Router, store routerstate.Store) ([
 			_ = deleteDSLiteTunnel(tunnelName)
 			applied = append(applied, "removed-unusable:"+tunnelName)
 			continue
+		}
+		remote := spec.RemoteAddress
+		if remote == "" {
+			remote, err = resolveAAAAWithServers(spec.AFTRFQDN, spec.AFTRDNSServers, spec.AFTRAddressOrdinal, spec.AFTRAddressSelection)
+			if err != nil {
+				return nil, fmt.Errorf("%s resolve AFTR: %w", res.ID(), err)
+			}
 		}
 		if localIfName != "" {
 			ensured, err := ensureIPv6LocalAddress(localIfName, local)
