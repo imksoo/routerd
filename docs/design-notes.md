@@ -551,3 +551,140 @@ means routerd needs either a derivation or a documented supported client.
 Completion condition: router02 can use the NTT/HGW PD profile without
 systemd-networkd PD, using a reproducible Nix derivation or a documented
 supported alternative that preserves IA_PD lifetimes.
+
+## 6. Implementation Phases
+
+assert: Section 5 catalogues replacement requirements but does not sequence
+them. Section 6 sequences the 5.x items into phases that match how routerd
+moves from "tested in lab next to a working IX2215" to "in production after
+IX2215 has been retired". Each phase lists which 5.x items it advances and
+states what the phase touches (code only, lab traffic, real-network traffic,
+or production-impact traffic) so it is clear when a phase needs a maintenance
+window or operator coordination.
+
+### 6.1 Phase 1: Close out the active controller
+
+Scope: finish the work started under 5.2 so the active controller is observable
+and self-driving end-to-end without manual operator commands.
+
+- Implement the RA listener that records `wanObserved.*` and the derived
+  Server Identifier into `IPv6PrefixDelegation/<name>` status.
+- Implement the dhcp6c hook (or equivalent listener) that records each
+  Reply into `lease.*` and emits a corresponding `events` row.
+- Implement hung detection: T1 boundary plus configurable grace seconds
+  with no Reply triggers `hgwHungSuspectedAt` and a warning surfaced through
+  `routerctl describe ipv6pd/<name>`.
+- Implement the hybrid acquisition strategy declared in
+  `spec.acquisitionStrategy`: Solicit canonical first, fall back to
+  Request-with-claim when Solicit produces no Advertise within a
+  configured retry budget.
+- Documentation: capture the design and operational behavior under
+  `docs/knowledge-base/ntt-ngn-pd-acquisition.md` Section H/H.1/K so the
+  detection thresholds and operator playbook stay in one place.
+
+Phase 1 touches code, generated config, and `objects.status._variables`.
+It does not touch the HGW: lab routers continue to run their existing
+profiles. Verification is `go test ./...`, `make check-schema`,
+`make validate-example`, and `routerctl describe` showing the new fields.
+
+assert: Phase 1 advances 5.1 (final pieces of the dhcp6c primary path),
+5.2 (active controller core), and 5.3 (no-op apply safety, since the new
+listeners must not cause unnecessary client restarts).
+
+### 6.2 Phase 2: LAN-side parity with the reference appliance
+
+Scope: bring the LAN-side resource model up to what IX2215 actually
+delivers to the LAN, so routerd can coexist next to the reference appliance
+during the validation window without LAN clients observing differences.
+
+- Add per-LAN /64 carve from the upstream PD lease to multiple downstream
+  interfaces, fully driven by declarative resources.
+- Extend `IPv6DHCPScope.mode` with stateful IA_NA address assignment for
+  LAN clients that prefer DHCPv6 for addresses.
+- Add IA_PD subdelegation so a downstream router on the routerd LAN can
+  request its own /60 or /64 from routerd, mirroring the reference
+  appliance's subscriber model.
+- Make RA RDNSS and DHCPv6 DNS first-class so SLAAC-only clients (Android,
+  some IoT) get DNS without DHCPv6.
+- Emit the same RA flag shape as the reference appliance (`O=1, M=0`)
+  unless a profile explicitly diverges.
+
+Phase 2 touches code, generated dnsmasq/radvd configuration, and lab LAN
+traffic with real client devices. It does not require a HGW reboot or
+production cutover.
+
+assert: Phase 2 advances 5.4 (RA DNS), 5.5 (stateful IA_NA), and 5.6
+(IA_PD subdelegation). LAN-side correctness is the requirement, not
+additional API surface beyond what those items already imply.
+
+### 6.3 Phase 3: Lab coexistence verification
+
+Scope: run routerd and the reference appliance side by side against the
+real HGW for an extended window, exercising real Renew cycles and at least
+one HGW hung-up event, to confirm Phase 1 detection and Phase 2 LAN-side
+parity in operation.
+
+- Lab routers under routerd run continuously for 24 to 48 hours.
+- Multiple T1 boundaries (each 2 hours apart with the observed HGW values)
+  must pass with successful natural Renew, recorded as `events` rows.
+- Trigger or observe at least one HGW hung-up condition; confirm hung
+  detection fires and operator notification surfaces. The recovery path
+  (operator-driven HGW reboot followed by routerd-driven re-acquisition)
+  must close the lease budget without LAN clients losing IPv6.
+- Capture the resulting `routerctl describe` output as a regression
+  baseline; future code changes must not regress this output.
+
+Phase 3 touches lab traffic and may touch HGW state through normal
+operation. A planned HGW reboot during this phase is acceptable. The
+production HGW must not be reused for destructive tests in this phase.
+
+assert: Phase 3 advances no new 5.x item directly but is the point at
+which Phase 1 and Phase 2 are judged "complete enough to move toward
+production".
+
+### 6.4 Phase 4: NixOS and FreeBSD parity
+
+Scope: cover the operating systems that lab nodes already run, so the
+production cutover does not depend on a single OS.
+
+- Provide a NixOS-friendly DHCPv6-PD client that preserves IA_PD
+  lifetimes; either a packaged `wide-dhcpv6` derivation or a documented
+  alternate client.
+- Port the active controller's raw socket sender to FreeBSD, using
+  whichever interface is appropriate (BPF, divert, or a NetGraph node);
+  keep the Linux AF_PACKET path unchanged.
+- Run Phase 1 verification on each supported OS.
+
+Phase 4 touches code and lab nodes. No HGW or LAN change is implied.
+
+assert: Phase 4 advances 5.7 (NixOS DHCPv6-PD client) and finishes the
+"Linux and FreeBSD where available" promise from 5.1.
+
+### 6.5 Phase 5: Production cutover
+
+Scope: retire the reference appliance and let routerd serve the home LAN.
+
+- Move LAN-side responsibilities from the reference appliance to routerd
+  one segment at a time, validating each move with end-user devices.
+- Operate through at least one full HGW T1/T2/vltime cycle without the
+  reference appliance, confirming hung detection and operator notification
+  perform as designed under real load.
+- Remove the reference appliance from the rack (or power it off and keep
+  it cold-spare for a defined cooldown window) only after the previous
+  step succeeds.
+
+Phase 5 affects production traffic and household members. It requires a
+maintenance window and explicit go/no-go from the operator.
+
+assert: Phase 5 has no remaining 5.x scope by itself. All replacement
+requirements are completed at this point; what is exercised is operational
+fitness, not new design work.
+
+### 6.6 Reading order
+
+believe: For an engineer joining this project, the recommended reading
+order is Section 0 (end goal), Section 5 (replacement requirements),
+Section 6 (phases), then `docs/knowledge-base/ntt-ngn-pd-acquisition.md`
+(why those requirements look the way they do). Section 1 captures evidence
+that grounds the assertions; revisit it when an assertion needs to be
+challenged.
