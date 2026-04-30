@@ -158,6 +158,21 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 		CurrentPrefix:  "2001:db8:1200:1220::/60",
 		LastPrefix:     "2001:db8:1200:1220::/60",
 		LastObservedAt: "2026-04-28T01:02:03Z",
+		LastReplyAt:    "2026-04-28T01:02:04Z",
+		WANObserved: &routerstate.PDWANObserved{
+			HGWLinkLocal:  "fe80::1",
+			HGWMACDerived: "02:00:00:00:00:01",
+			RAMFlag:       "false",
+			RAOFlag:       "true",
+			RAPrefix:      "2001:db8:1200:1::/64",
+			RAObservedAt:  "2026-04-28T01:01:00Z",
+		},
+		Acquisition: &routerstate.PDAcquisitionStatus{
+			Strategy:           "hybrid",
+			Phase:              "acquired",
+			AttemptsSinceReply: 0,
+			NextAction:         "solicit",
+		},
 	}), "test")
 	if err := store.RecordEvent("net.routerd.net/v1alpha1", "IPv6PrefixDelegation", "wan-pd", "Normal", "PrefixObserved", "observed delegated prefix"); err != nil {
 		t.Fatalf("record event: %v", err)
@@ -177,7 +192,7 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 		t.Fatalf("describe pd: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"Currently observable:", "Current delegated prefix:", "Last delegated prefix:", "Last Apply Generation:", "PrefixObserved", "dhcp.ipv6.prefixDelegation/ens18"} {
+	for _, want := range []string{"Currently observable:", "Current delegated prefix:", "Last delegated prefix:", "Last Reply at:", "WAN RA source:", "Acquisition strategy:", "HGW hung suspected:", "Last Apply Generation:", "PrefixObserved", "dhcp.ipv6.prefixDelegation/ens18"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("describe output missing %q:\n%s", want, got)
 		}

@@ -1086,7 +1086,29 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 		fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(lease.CurrentPrefix != ""))
 		fmt.Fprintf(w, "Current delegated prefix:\t%s\n", displayCell(lease.CurrentPrefix))
 		fmt.Fprintf(w, "Last delegated prefix:\t%s\n", displayCell(lease.LastPrefix))
+		fmt.Fprintf(w, "Last Reply at:\t%s\n", displayCell(lease.LastReplyAt))
 		fmt.Fprintf(w, "Last observed at:\t%s\n", displayCell(lease.LastObservedAt))
+		if lease.WANObserved != nil {
+			fmt.Fprintf(w, "WAN RA source:\t%s\n", displayCell(lease.WANObserved.HGWLinkLocal))
+			fmt.Fprintf(w, "WAN RA derived MAC:\t%s\n", displayCell(lease.WANObserved.HGWMACDerived))
+			fmt.Fprintf(w, "WAN RA flags:\tM=%s O=%s\n", displayCell(lease.WANObserved.RAMFlag), displayCell(lease.WANObserved.RAOFlag))
+			fmt.Fprintf(w, "WAN RA prefix:\t%s\n", displayCell(lease.WANObserved.RAPrefix))
+			fmt.Fprintf(w, "WAN RA observed at:\t%s\n", displayCell(lease.WANObserved.RAObservedAt))
+		}
+		if lease.Acquisition != nil {
+			fmt.Fprintf(w, "Acquisition strategy:\t%s\n", displayCell(lease.Acquisition.Strategy))
+			fmt.Fprintf(w, "Acquisition phase:\t%s\n", displayCell(lease.Acquisition.Phase))
+			fmt.Fprintf(w, "Acquisition attempts since reply:\t%d\n", lease.Acquisition.AttemptsSinceReply)
+			fmt.Fprintf(w, "Acquisition next action:\t%s\n", displayCell(lease.Acquisition.NextAction))
+			fmt.Fprintf(w, "Acquisition last attempt at:\t%s\n", displayCell(lease.Acquisition.LastAttemptAt))
+		}
+		if lease.Hung != nil {
+			fmt.Fprintf(w, "HGW hung suspected:\tyes\n")
+			fmt.Fprintf(w, "HGW hung suspected at:\t%s\n", displayCell(lease.Hung.SuspectedAt))
+			fmt.Fprintf(w, "HGW hung reason:\t%s\n", displayCell(lease.Hung.Reason))
+		} else {
+			fmt.Fprintf(w, "HGW hung suspected:\tno\n")
+		}
 		return
 	}
 	observable := false
