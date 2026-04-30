@@ -49,6 +49,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	rc.WriteString("ipv6_gateway_enable=\"YES\"\n")
 
 	dhcp6cIfaces := map[string]bool{}
+	dhcpcdPDIfaces := map[string]bool{}
 	dhclientOptions := map[string]api.IPv4DHCPAddressSpec{}
 	var pds []freeBSDPD
 	var pppoes []freeBSDPPPoE
@@ -102,12 +103,13 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			if err != nil {
 				return FreeBSDConfig{}, err
 			}
-			if defaultString(spec.Client, "dhcp6c") != "dhcp6c" {
-				continue
-			}
 			ifname := aliases[spec.Interface]
 			if ifname == "" {
 				return FreeBSDConfig{}, fmt.Errorf("%s references interface with empty ifname", res.ID())
+			}
+			if defaultString(spec.Client, "dhcp6c") != "dhcp6c" {
+				dhcpcdPDIfaces[ifname] = true
+				continue
 			}
 			dhcp6cIfaces[ifname] = true
 			profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
@@ -142,6 +144,8 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 		rc.WriteString("dhcp6c_enable=\"YES\"\n")
 		rc.WriteString("dhcp6c_interfaces=\"" + strings.Join(sortedFreeBSDMapKeys(dhcp6cIfaces), " ") + "\"\n")
 		rc.WriteString("dhcp6c_flags=\"" + freeBSDDHCP6CFlags(pds) + "\"\n")
+	} else if len(dhcpcdPDIfaces) > 0 {
+		rc.WriteString("dhcp6c_enable=\"NO\"\n")
 	}
 	if hasManagedFreeBSDPPPoE(pppoes) {
 		rc.WriteString("mpd_enable=\"YES\"\n")

@@ -2747,6 +2747,12 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 			changed = append(changed, "service:dhcp6c")
 		}
 	}
+	if rcValues["dhcp6c_enable"] == "NO" && freeBSDServiceExists("dhcp6c") && freeBSDServiceRunning("dhcp6c") {
+		if err := runLogged("service", "dhcp6c", "stop"); err != nil {
+			return changed, err
+		}
+		changed = append(changed, "service:dhcp6c:stop")
+	}
 	dhcpcdChanged, err := applyFreeBSDDHCPCDConfig(router, stateStore)
 	if err != nil {
 		return changed, err

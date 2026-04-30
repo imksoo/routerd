@@ -102,8 +102,11 @@ func TestFreeBSDSkipsDHCPCDPrefixDelegationInDHCP6C(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render FreeBSD: %v", err)
 	}
-	if strings.Contains(string(got.RCConf), "dhcp6c_") {
-		t.Fatalf("FreeBSD rc.conf must not enable dhcp6c for client=dhcpcd:\n%s", got.RCConf)
+	if strings.Contains(string(got.RCConf), "dhcp6c_interfaces") || strings.Contains(string(got.RCConf), "dhcp6c_flags") {
+		t.Fatalf("FreeBSD rc.conf must not render dhcp6c runtime details for client=dhcpcd:\n%s", got.RCConf)
+	}
+	if !strings.Contains(string(got.RCConf), `dhcp6c_enable="NO"`) {
+		t.Fatalf("FreeBSD rc.conf must disable dhcp6c for client=dhcpcd:\n%s", got.RCConf)
 	}
 	if len(got.DHCP6C) != 0 {
 		t.Fatalf("FreeBSD dhcp6c.conf must be empty for client=dhcpcd:\n%s", got.DHCP6C)
