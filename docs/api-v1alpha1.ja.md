@@ -419,7 +419,7 @@ metadata:
   name: wan-pd
 spec:
   interface: wan
-  client: networkd
+  client: dhcp6c
   profile: ntt-hgw-lan-pd
   prefixLength: 60
 ```
@@ -429,7 +429,7 @@ spec:
 
 ルータの振る舞い:
 
-- routerd は systemd-networkd の追加設定を `/etc/systemd/network/10-netplan-<ifname>.network.d/` 配下に書き出し、WAN 側で DHCPv6-PD を要求します。
+- `spec.client` は OS 側の DHCPv6-PD クライアントを選びます。`networkd` は Linux の systemd-networkd 追加設定を使います。`dhcp6c` は routerd が管理する WIDE/KAME 形式の `dhcp6c.conf` とサービスを使います。NTT ホームゲートウェイ向けの構成では、Renew/Rebind の IA Prefix 寿命を 0 にしないため、Linux と FreeBSD のどちらでも `dhcp6c` を使うのが基本です。同じインターフェースで `client: dhcp6c` によるプレフィックス委譲を使う場合、`IPv6DHCPAddress` を同時に定義しないでください。WAN 側を待ち受ける DHCPv6 クライアントは 1 つに絞ります。
 - `spec.profile` は既知の上流環境向けにパラメータを切り替えます。
   - `default`: 一般的な DHCPv6-PD。
   - `ntt-ngn-direct-hikari-denwa`: NTT NGN/ONU に直結し、ひかり電話契約を使う構成。

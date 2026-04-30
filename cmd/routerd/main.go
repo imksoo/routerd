@@ -61,6 +61,8 @@ var (
 	defaultStatePath             = platformDefaults.DBFile()
 	pppoeCHAPSecretsPath         = platformDefaults.PPPoEChapSecretsFile
 	pppoePAPSecretsPath          = platformDefaults.PPPoEPapSecretsFile
+	linuxDHCP6CConfigDir         = platformDefaults.SysconfDir
+	linuxDHCP6CDUIDPath          = "/var/lib/dhcpv6/dhcp6c_duid"
 )
 
 var errNoIPv6PrefixAvailable = errors.New("no IPv6 prefix available")
@@ -604,6 +606,15 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			return nil, err
 		}
 
+		var dhcp6cChangedFiles []string
+		if err := recordStageError("dhcp6c", func() error {
+			var err error
+			dhcp6cChangedFiles, err = applyLinuxDHCP6CConfig(effectiveRouter)
+			return err
+		}()); err != nil {
+			return nil, err
+		}
+
 		var nftablesChangedFiles []string
 		if err := recordStageError("nftables", func() error {
 			nftablesConfig, err := render.NftablesIPv4SourceNAT(effectiveRouter)
@@ -769,6 +780,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			result.Warnings = append(result.Warnings, "skipped ledger orphan cleanup and ownership recording because apply completed with stage errors")
 		}
 		changedFiles := append(networkChangedFiles, dnsmasqChangedFiles...)
+		changedFiles = append(changedFiles, dhcp6cChangedFiles...)
 		changedFiles = append(changedFiles, nftablesChangedFiles...)
 		changedFiles = append(changedFiles, pppoeChangedFiles...)
 		changedFiles = append(changedFiles, timesyncdChangedFiles...)
@@ -785,6 +797,9 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			}
 			if len(dnsmasqChangedFiles) > 0 {
 				fmt.Fprintln(stdout, "applied dnsmasq")
+			}
+			if len(dhcp6cChangedFiles) > 0 {
+				fmt.Fprintln(stdout, "applied DHCPv6-PD client")
 			}
 			if len(nftablesChangedFiles) > 0 {
 				fmt.Fprintln(stdout, "applied nftables")
@@ -838,6 +853,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			"reversePathFilters":  fmt.Sprintf("%d", len(appliedReversePathFilters)),
 			"hostnames":           fmt.Sprintf("%d", len(appliedHostnames)),
 			"ipv6DelegatedAddrs":  fmt.Sprintf("%d", len(appliedIPv6DelegatedAddresses)),
+			"dhcp6cFiles":         fmt.Sprintf("%d", len(dhcp6cChangedFiles)),
 			"pppoeFiles":          fmt.Sprintf("%d", len(pppoeChangedFiles)),
 			"ntpFiles":            fmt.Sprintf("%d", len(timesyncdChangedFiles)),
 			"dsliteTunnels":       fmt.Sprintf("%d", len(appliedTunnels)),
@@ -2593,6 +2609,20 @@ func freeBSDInterfaceMAC(ifname string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("ether address not found")
+}
+
+func interfaceMAC(ifname string) (string, error) {
+	if ifname == "" {
+		return "", errors.New("empty interface name")
+	}
+	iface, err := net.InterfaceByName(ifname)
+	if err != nil {
+		return "", err
+	}
+	if len(iface.HardwareAddr) == 0 {
+		return "", fmt.Errorf("%s has no hardware address", ifname)
+	}
+	return iface.HardwareAddr.String(), nil
 }
 
 func freeBSDServiceExists(name string) bool {
@@ -4520,6 +4550,162 @@ func applyPPPoEConfig(router *api.Router) ([]string, error) {
 		}
 	}
 	return changedFiles, nil
+}
+
+func applyLinuxDHCP6CConfig(router *api.Router) ([]string, error) {
+	if platformDefaults.OS != platform.OSLinux {
+		return nil, nil
+	}
+	binaryPath := dhcp6cBinaryPath()
+	config, err := render.DHCP6C(router, binaryPath, linuxDHCP6CConfigDir, platformDefaults.RuntimeDir, platformDefaults.SystemdSystemDir)
+	if err != nil {
+		return nil, err
+	}
+	if len(config.Files) == 0 {
+		return nil, nil
+	}
+	if !dhcp6cAvailable() {
+		return nil, errors.New("dhcp6c is required for IPv6PrefixDelegation client=dhcp6c")
+	}
+
+	duidChanged, duidBackup, err := ensureLinuxDHCP6CDUID(router, linuxDHCP6CDUIDPath)
+	if err != nil {
+		return nil, err
+	}
+
+	nixOS := isNixOSHost()
+	managedUnits := map[string]bool{}
+	for _, unit := range config.Units {
+		managedUnits[unit] = true
+	}
+	var changedFiles []string
+	if duidChanged {
+		changedFiles = append(changedFiles, linuxDHCP6CDUIDPath)
+		if duidBackup != "" {
+			changedFiles = append(changedFiles, duidBackup)
+		}
+	}
+	for _, file := range config.Files {
+		if strings.HasPrefix(file.Path, "/etc/systemd/system/") && strings.HasSuffix(file.Path, ".service") && nixOS {
+			unit := filepath.Base(file.Path)
+			if !managedUnits[unit] {
+				continue
+			}
+			file.Path = filepath.Join("/run/systemd/system", unit)
+			file.Data = bytes.ReplaceAll(file.Data, []byte("/usr/sbin/dhcp6c "), []byte("/run/current-system/sw/bin/dhcp6c "))
+		}
+		if err := os.MkdirAll(filepathDir(file.Path), 0755); err != nil {
+			return nil, fmt.Errorf("create directory for %s: %w", file.Path, err)
+		}
+		changed, err := writeFileIfChanged(file.Path, file.Data, file.Perm)
+		if err != nil {
+			return nil, fmt.Errorf("write dhcp6c file %s: %w", file.Path, err)
+		}
+		if changed {
+			changedFiles = append(changedFiles, file.Path)
+		}
+	}
+	if containsSystemdUnit(changedFiles) {
+		if err := runLogged("systemctl", "daemon-reload"); err != nil {
+			return nil, err
+		}
+	}
+	for _, unit := range config.Units {
+		if nixOS {
+			if len(changedFiles) > 0 {
+				if err := runLogged("systemctl", "restart", unit); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if err := runLogged("systemctl", "is-active", "--quiet", unit); err != nil {
+				if err := runLogged("systemctl", "start", unit); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		if len(changedFiles) > 0 {
+			if err := runLogged("systemctl", "enable", unit); err != nil {
+				return nil, err
+			}
+			if err := runLogged("systemctl", "restart", unit); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if err := runLogged("systemctl", "is-active", "--quiet", unit); err != nil {
+			if err := runLogged("systemctl", "enable", "--now", unit); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return changedFiles, nil
+}
+
+func ensureLinuxDHCP6CDUID(router *api.Router, duidPath string) (bool, string, error) {
+	if duidPath == "" {
+		return false, "", nil
+	}
+	aliases := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			return false, "", err
+		}
+		aliases[res.Metadata.Name] = spec.IfName
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6PrefixDelegation" {
+			continue
+		}
+		spec, err := res.IPv6PrefixDelegationSpec()
+		if err != nil {
+			return false, "", err
+		}
+		if defaultString(spec.Client, "networkd") != "dhcp6c" {
+			continue
+		}
+		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
+		if !api.IsNTTIPv6PDProfile(profile) || api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType) != "link-layer" {
+			continue
+		}
+		if spec.DUIDRawData != "" {
+			return routerstate.EnsureKAMEDHCP6CDUIDLLRaw(duidPath, spec.DUIDRawData, time.Now())
+		}
+		ifname := aliases[spec.Interface]
+		mac, err := interfaceMAC(ifname)
+		if err != nil {
+			return false, "", fmt.Errorf("%s read interface MAC for DUID-LL: %w", res.ID(), err)
+		}
+		return routerstate.EnsureKAMEDHCP6CDUIDLL(duidPath, mac, time.Now())
+	}
+	return false, "", nil
+}
+
+func dhcp6cAvailable() bool {
+	if _, err := exec.LookPath("dhcp6c"); err == nil {
+		return true
+	}
+	for _, path := range []string{"/usr/sbin/dhcp6c", "/usr/local/sbin/dhcp6c", "/run/current-system/sw/bin/dhcp6c"} {
+		if st, err := os.Stat(path); err == nil && !st.IsDir() && st.Mode()&0111 != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func dhcp6cBinaryPath() string {
+	if isNixOSHost() {
+		return "/run/current-system/sw/bin/dhcp6c"
+	}
+	if _, err := os.Stat("/usr/sbin/dhcp6c"); err == nil {
+		return "/usr/sbin/dhcp6c"
+	}
+	return "/usr/sbin/dhcp6c"
 }
 
 func pppdAvailable() bool {

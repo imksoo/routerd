@@ -41,6 +41,11 @@ func Validate(router *api.Router) error {
 	healthChecks := map[string]bool{}
 	zones := map[string]bool{}
 	staticByInterfaceAddress := map[string]string{}
+	dhcp6AddressByInterface := map[string]struct {
+		id     string
+		client string
+	}{}
+	dhcp6CPDByInterface := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if err := validateResource(res); err != nil {
 			return err
@@ -77,6 +82,23 @@ func Validate(router *api.Router) error {
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6PrefixDelegation" {
 			prefixDelegations[res.Metadata.Name] = true
+			spec, err := res.IPv6PrefixDelegationSpec()
+			if err != nil {
+				return err
+			}
+			if spec.Client == "dhcp6c" {
+				dhcp6CPDByInterface[spec.Interface] = res.ID()
+			}
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6DHCPAddress" {
+			spec, err := res.IPv6DHCPAddressSpec()
+			if err != nil {
+				return err
+			}
+			dhcp6AddressByInterface[spec.Interface] = struct {
+				id     string
+				client string
+			}{id: res.ID(), client: defaultString(spec.Client, "networkd")}
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6DelegatedAddress" {
 			delegatedAddresses[res.Metadata.Name] = true
@@ -125,6 +147,11 @@ func Validate(router *api.Router) error {
 	for i, name := range router.Spec.Apply.ProtectedZones {
 		if !zones[name] {
 			return fmt.Errorf("spec.apply.protectedZones[%d] references missing Zone %q", i, name)
+		}
+	}
+	for iface, pd := range dhcp6CPDByInterface {
+		if dhcp6, ok := dhcp6AddressByInterface[iface]; ok && dhcp6.client != "dhcp6c" {
+			return fmt.Errorf("%s conflicts with %s on interface %q: client=dhcp6c must own DHCPv6 on that interface", pd, dhcp6.id, iface)
 		}
 	}
 
@@ -658,6 +685,11 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.Interface == "" {
 			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		switch spec.Client {
+		case "", "networkd", "dhcp6c":
+		default:
+			return fmt.Errorf("%s spec.client must be networkd or dhcp6c", res.ID())
 		}
 		switch spec.Profile {
 		case "", api.IPv6PDProfileDefault, api.IPv6PDProfileNTTNGNDirectHikariDenwa, api.IPv6PDProfileNTTHGWLANPD:

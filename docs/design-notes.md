@@ -149,12 +149,14 @@ part of routerd's expected-shape model, but the systemd-networkd renderer omits
 
 | Client | Cited or measured behavior | routerd treatment |
 | --- | --- | --- |
-| systemd-networkd | cite/measure: Supports `DUIDType=link-layer`, `IAID`, `PrefixDelegationHint`, and `WithoutRA`. Renew/Rebind IA Prefix lifetimes are zero. | Keep as the default Linux path. routerd compensates for weak notification and state visibility with observation. |
-| KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. Hint-bearing Solicit can carry IA Prefix lifetimes. | Keep as the FreeBSD DHCPv6-PD path. routerd manages DUID-LL files for NTT profiles. |
+| systemd-networkd | cite/measure: Supports `DUIDType=link-layer`, `IAID`, `PrefixDelegationHint`, and `WithoutRA`. Renew/Rebind IA Prefix lifetimes can be zero in the measured Linux path. | Keep it for generic Linux DHCPv6-PD, but do not use it as the preferred NTT home-gateway path. |
+| KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. Hint-bearing Solicit and Renew/Rebind can carry IA Prefix lifetimes. | Use it for FreeBSD and as the Linux escape path for NTT home-gateway profiles. routerd manages DUID-LL files for NTT profiles. |
 | dnsmasq | cite/assert: Useful for LAN DNS, DHCPv4, DHCPv6, and RA. It is not the source of truth for WAN PD acquisition. | Keep it for LAN services only. |
 
-assert: DHCPv6-PD acquisition is intentionally narrow: Linux uses
-systemd-networkd and FreeBSD uses KAME/WIDE `dhcp6c`.
+assert: DHCPv6-PD acquisition is intentionally narrow. Generic Linux can use
+systemd-networkd. NTT home-gateway profiles should use KAME/WIDE `dhcp6c` on
+Linux and FreeBSD because the measured networkd Renew/Rebind shape is not
+accepted by the home gateway.
 
 assert: NTT profiles default to real MAC-derived DUID-LL.
 `duidRawData` and `iaid` are explicit overrides for HA failover, router

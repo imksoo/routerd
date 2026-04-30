@@ -506,7 +506,7 @@ metadata:
   name: wan-pd
 spec:
   interface: wan
-  client: networkd
+  client: dhcp6c
   profile: ntt-hgw-lan-pd
   prefixLength: 60
 ```
@@ -516,9 +516,13 @@ If an older config still contains unknown DHCPv6-PD keys, delete those keys.
 
 How routerd behaves:
 
-- routerd renders systemd-networkd drop-ins under
-  `/etc/systemd/network/10-netplan-<ifname>.network.d/` to ask DHCPv6 for a
-  prefix delegation on the WAN side.
+- `spec.client` selects the OS DHCPv6-PD client. `networkd` uses
+  systemd-networkd drop-ins on Linux. `dhcp6c` uses a managed WIDE/KAME-style
+  `dhcp6c.conf` and service. NTT home-gateway profiles should use `dhcp6c`
+  on Linux and FreeBSD so Renew/Rebind packets keep non-zero IA Prefix
+  lifetimes. Do not also declare an `IPv6DHCPAddress` on the same interface
+  when `client: dhcp6c` owns prefix delegation there; only one DHCPv6 client
+  should bind the WAN side.
 - `spec.profile` selects a known upstream environment:
   - `default` is generic DHCPv6-PD.
   - `ntt-ngn-direct-hikari-denwa` is for a router connected directly to

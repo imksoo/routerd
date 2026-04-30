@@ -18,6 +18,10 @@ behavior changes and new resource shapes as the model takes shape.
 - FreeBSD NTT-profile rendering now starts KAME `dhcp6c` with `-n` so service
   restarts do not send DHCPv6 Release while Renew/Rebind timing remains
   delegated to `dhcp6c`.
+- Linux `IPv6PrefixDelegation` can now use `client: dhcp6c`. This renders a
+  managed WIDE/KAME-style `dhcp6c.conf` and systemd unit so NTT home-gateway
+  profiles can avoid systemd-networkd Renew/Rebind packets with zero IA Prefix
+  lifetimes.
 - FreeBSD apply no longer rewrites `dhcp6c_flags="-n"` on every loop. This
   prevents unnecessary `dhcp6c` restarts and preserves the DHCPv6 client's
   in-memory lease state for natural Renew/Rebind.

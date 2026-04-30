@@ -1145,6 +1145,11 @@
                     "additionalProperties": false,
                     "properties": {
                       "client": {
+                        "enum": [
+                          "",
+                          "networkd",
+                          "dhcp6c"
+                        ],
                         "type": "string"
                       },
                       "duidRawData": {

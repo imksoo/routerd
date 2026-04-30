@@ -13,6 +13,17 @@ func TestNetworkdDropinsRenderDHCPv6PD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load example: %v", err)
 	}
+	for i := range router.Spec.Resources {
+		if router.Spec.Resources[i].Kind != "IPv6PrefixDelegation" {
+			continue
+		}
+		spec, err := router.Spec.Resources[i].IPv6PrefixDelegationSpec()
+		if err != nil {
+			t.Fatalf("read pd spec: %v", err)
+		}
+		spec.Client = "networkd"
+		router.Spec.Resources[i].Spec = spec
+	}
 	files, err := NetworkdDropins(router)
 	if err != nil {
 		t.Fatalf("render networkd dropins: %v", err)
@@ -158,6 +169,36 @@ func TestNetworkdDropinsRenderGenericPrefixHint(t *testing.T) {
 	wan := string(files[0].Data)
 	if !strings.Contains(wan, "PrefixDelegationHint=::/56") {
 		t.Fatalf("generic drop-in missing PrefixDelegationHint:\n%s", wan)
+	}
+}
+
+func TestNetworkdDropinsSkipDHCP6CPrefixDelegationClient(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{
+			Resources: []api.Resource{
+				netResource("Interface", "wan", api.InterfaceSpec{IfName: "ens18", Managed: false}),
+				netResource("Interface", "lan", api.InterfaceSpec{IfName: "ens19", Managed: false}),
+				netResource("IPv6PrefixDelegation", "wan-pd", api.IPv6PrefixDelegationSpec{
+					Interface: "wan",
+					Client:    "dhcp6c",
+					Profile:   "ntt-hgw-lan-pd",
+				}),
+				netResource("IPv6DelegatedAddress", "lan-v6", api.IPv6DelegatedAddressSpec{
+					PrefixDelegation: "wan-pd",
+					Interface:        "lan",
+					AddressSuffix:    "::3",
+				}),
+			},
+		},
+	}
+	files, err := NetworkdDropins(router)
+	if err != nil {
+		t.Fatalf("render networkd dropins: %v", err)
+	}
+	for _, file := range files {
+		if strings.Contains(file.Path, "90-routerd-dhcp6-pd.conf") {
+			t.Fatalf("networkd should not render DHCPv6-PD drop-ins for client=dhcp6c: %#v", files)
+		}
 	}
 }
 

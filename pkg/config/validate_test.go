@@ -399,6 +399,33 @@ func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsDHCP6CAndNetworkdDHCPv6OnSameInterface(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPAddress"},
+				Metadata: api.ObjectMeta{Name: "wan-dhcp6"},
+				Spec:     api.IPv6DHCPAddressSpec{Interface: "wan", Client: "networkd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				Metadata: api.ObjectMeta{Name: "wan-pd"},
+				Spec:     api.IPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcp6c"},
+			},
+		}},
+	}
+	if err := Validate(router); err == nil {
+		t.Fatal("expected DHCPv6 client conflict to be rejected")
+	}
+}
+
 func TestValidateIPv4SourceNATRequiresValidCIDR(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

@@ -35,7 +35,8 @@ Order of investigation:
 
 1. Is the OS DHCPv6 client running?
    - Linux: `networkctl status <wan-iface>`. Look for "DHCPv6 client:
-     enabled".
+     enabled" when `client: networkd` is used. For `client: dhcp6c`, check
+     `systemctl status routerd-dhcp6c-<name>.service`.
    - FreeBSD: `service dhcp6c status`. Look for an active process.
 2. Is the Solicit on the wire?
    - `sudo tcpdump -ni <wan-iface> -nn -vv 'udp port 546 or udp port 547'`
@@ -57,11 +58,11 @@ routerd records the last observed prefix in
 sends a Release, the upstream may free the binding immediately. The
 NTT profile defaults to suppressing Release on shutdown to avoid this.
 
-To verify your DHCPv6 client is not sending Release:
+To verify your DHCPv6 client is not sending Release on a managed restart:
 
-- KAME `dhcp6c`: check that `dhcp6c_flags="-n"` is in `rc.conf`.
-- systemd-networkd: check `SendRelease=no` in the routerd-rendered
-  drop-in.
+- KAME/WIDE `dhcp6c`: check that the managed command includes `-n`.
+- systemd-networkd: avoid using it for NTT home-gateway PD until the
+  Renew/Rebind packet shape is verified in your environment.
 
 ## "routerctl describe shows nothing"
 

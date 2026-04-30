@@ -19,6 +19,7 @@ type File struct {
 type pdSource struct {
 	Name         string
 	IfName       string
+	Client       string
 	Profile      string
 	PrefixLength int
 	IAID         string
@@ -64,6 +65,7 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 		pds[res.Metadata.Name] = pdSource{
 			Name:         res.Metadata.Name,
 			IfName:       aliases[spec.Interface],
+			Client:       defaultString(spec.Client, "networkd"),
 			Profile:      profile,
 			PrefixLength: api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
 			IAID:         strings.TrimSpace(spec.IAID),
@@ -94,12 +96,16 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		ifname := pds[name].IfName
+		source := pds[name]
+		if source.Client != "networkd" {
+			continue
+		}
+		ifname := source.IfName
 		if ifname == "" {
 			return nil, fmt.Errorf("IPv6PrefixDelegation %q has empty ifname", name)
 		}
 		var buf bytes.Buffer
-		writeDHCPv6PD(&buf, pds[name])
+		writeDHCPv6PD(&buf, source)
 		files = append(files, File{
 			Path: filepath.Join(networkdDropinDir(ifname), "90-routerd-dhcp6-pd.conf"),
 			Data: buf.Bytes(),
@@ -116,6 +122,9 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 		}
 		ifname := aliases[spec.Interface]
 		source := pds[spec.PrefixDelegation]
+		if source.Client != "networkd" {
+			continue
+		}
 		if ifname == "" || source.IfName == "" {
 			return nil, fmt.Errorf("%s references interface with empty ifname", res.ID())
 		}

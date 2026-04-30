@@ -216,3 +216,45 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 		}
 	}
 }
+
+func TestNixOSModuleRendersDHCP6CPackageWithoutNetworkdDHCPv6(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NixOSHost"},
+				Metadata: api.ObjectMeta{Name: "host"},
+				Spec:     api.NixOSHostSpec{DebugSystemPackages: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				Metadata: api.ObjectMeta{Name: "wan-pd"},
+				Spec: api.IPv6PrefixDelegationSpec{
+					Interface: "wan",
+					Client:    "dhcp6c",
+					Profile:   "ntt-hgw-lan-pd",
+				},
+			},
+		}},
+	}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatalf("render NixOS module: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "wide-dhcpv6") {
+		t.Fatalf("NixOS module should include wide-dhcpv6 for client=dhcp6c:\n%s", got)
+	}
+	if strings.Contains(got, `DHCP = "ipv6";`) || strings.Contains(got, `DHCP = "yes";`) {
+		t.Fatalf("NixOS module should not enable networkd DHCPv6 for client=dhcp6c:\n%s", got)
+	}
+	if !strings.Contains(got, "IPv6AcceptRA = true;") {
+		t.Fatalf("NixOS module should still accept RA for client=dhcp6c:\n%s", got)
+	}
+}

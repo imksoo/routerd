@@ -154,8 +154,9 @@ make check-remote-deps REMOTE_HOST=user@router.example
 ```
 
 On Ubuntu, the current source install expects host tools such as `systemd`,
-`iproute2`, `dnsmasq`, `nftables`, `conntrack`, `jq`, and `pppd`. `sqlite3` is
-optional for manual state inspection. On FreeBSD, the limited groundwork
+`iproute2`, `dnsmasq`, `nftables`, `conntrack`, `jq`, `pppd`, and
+`wide-dhcpv6-client` when `IPv6PrefixDelegation` uses `client: dhcp6c`.
+`sqlite3` is optional for manual state inspection. On FreeBSD, the limited groundwork
 expects base networking tools plus the `dnsmasq` and `dhcp6` packages so
 `dnsmasq` and `dhcp6c` are available, plus `jq` for local status inspection
 scripts.

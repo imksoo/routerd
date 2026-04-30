@@ -50,10 +50,11 @@ routerd は直近観測したプレフィックスを `/var/lib/routerd/routerd.
 OS の DHCPv6 クライアントを再起動するときに Release を送ると、上流は binding を
 即時解放することがあります。NTT プロファイルは既定で停止時の Release を抑止します。
 
-クライアントが Release を送っていないかの確認:
+管理された再起動で Release を送っていないかの確認:
 
-- KAME `dhcp6c`: `rc.conf` に `dhcp6c_flags="-n"` が入っているか
-- systemd-networkd: routerd が出すドロップインに `SendRelease=no` があるか
+- KAME/WIDE `dhcp6c`: 管理された起動コマンドに `-n` が含まれているか
+- systemd-networkd: NTT ホームゲートウェイ向けの PD では、実環境で
+  Renew/Rebind のパケット形を確認するまで使わない
 
 ## 「routerctl describe が何も出さない」
 

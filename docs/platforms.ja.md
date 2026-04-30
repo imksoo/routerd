@@ -13,7 +13,8 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
   NixOS で動的ローダの差に引っかかることを避けます。
 - `contrib/systemd/routerd.service` の systemd ユニット。
 - 実行時の依存には、制御に使う `iproute2`、`jq`、`dnsmasq`、
-  `nftables`、`conntrack`、PPPoE 利用時の `ppp` に加えて、標準的な
+  `nftables`、`conntrack`、`IPv6PrefixDelegation` で `client: dhcp6c`
+  を使う場合の `wide-dhcpv6-client`、PPPoE 利用時の `ppp` に加えて、標準的な
   調査道具として `dnsutils` の `dig`、`iputils-ping` の `ping`、
   `iputils-tracepath` の `tracepath`、`tcpdump` を含めます。
 - ファイアウォール生成では、WAN 側で受ける DHCPv6 クライアント応答を
@@ -21,7 +22,7 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
   一部のホームゲートウェイがエフェメラルポートから応答するためです。
 - CI でビルド・テスト済み。現在実装されているリソース種別（インター
   フェース別名、IPv4 静的/DHCP、dnsmasq による DHCP/DHCPv6/RA、
-  systemd-networkd ドロップインによる IPv6 PD、条件付き DNS 転送、
+  systemd-networkd ドロップインまたは routerd 管理の `dhcp6c` による IPv6 PD、条件付き DNS 転送、
   PPPoE、DS-Lite、nftables による IPv4 ソース NAT、IPv4 ポリシー
   ルーティング、ヘルスチェック付き IPv4 デフォルトルートポリシー、
   リバースパスフィルタ、MTU 伝搬、最小デフォルト拒否のホームルーター
@@ -48,7 +49,8 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
   を担う、というものです。手書き側の最小例は
   `examples/nixos-edge-configuration.nix` にあります。
 - 現在の NixOS レンダラはホスト設定、依存パッケージ、永続 sysctl、
-  基本的な systemd-networkd の `.network` 宣言を生成します。DNS、パケット、
+  基本的な systemd-networkd の `.network` 宣言を生成します。IPv6-PD で
+  `client: dhcp6c` を使う場合は `wide-dhcpv6` も含められます。DNS、パケット、
   経路 MTU をその場で確認できるよう、`dnsutils`、`iputils`、`tcpdump`、
   `traceroute` も生成パッケージに含めます。残りのリソース種別については、
   引き続き Nix らしい永続設定の生成を実装していく予定です。

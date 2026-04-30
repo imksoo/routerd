@@ -117,7 +117,8 @@ make check-remote-deps REMOTE_HOST=user@router.example
 
 Ubuntu では、現在のソースインストールは `systemd`、`iproute2`、
 `dnsmasq`、`nftables`、`conntrack`、`jq`、`pppd` などのホスト側コマンドを
-前提にします。`sqlite3` は状態確認用の任意コマンドです。FreeBSD ではまだ下地段階ですが、基本のネットワーク
+前提にします。`IPv6PrefixDelegation` で `client: dhcp6c` を使う場合は
+`wide-dhcpv6-client` も必要です。`sqlite3` は状態確認用の任意コマンドです。FreeBSD ではまだ下地段階ですが、基本のネットワーク
 コマンドに加えて、`dnsmasq` と `dhcp6` パッケージに含まれる
 `dnsmasq`、`dhcp6c`、状態確認で使う `jq` が必要です。
 

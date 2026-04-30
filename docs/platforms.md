@@ -12,7 +12,8 @@ parity that the code does not yet provide.
   loader surprises on minimal router hosts and NixOS systems.
 - systemd unit at `contrib/systemd/routerd.service`.
 - Runtime dependencies include the router control tools (`iproute2`, `jq`,
-  `dnsmasq`, `nftables`, `conntrack`, and `ppp` when PPPoE is used) plus
+  `dnsmasq`, `nftables`, `conntrack`, `wide-dhcpv6-client` when
+  `IPv6PrefixDelegation` uses `client: dhcp6c`, and `ppp` when PPPoE is used) plus
   standard diagnostics: `dig` from `dnsutils`, `ping` from `iputils-ping`,
   `tracepath` from `iputils-tracepath`, and `tcpdump`.
 - Firewall rendering permits WAN-side DHCPv6 client replies by UDP
@@ -20,7 +21,7 @@ parity that the code does not yet provide.
   547, because some home gateways reply from ephemeral UDP ports.
 - Installed and tested in CI. All currently implemented resource kinds
   (interface aliases, IPv4 static/DHCP, dnsmasq DHCP/DHCPv6/RA, IPv6 PD
-  through systemd-networkd drop-ins, conditional DNS forwarding, PPPoE,
+  through systemd-networkd drop-ins or managed `dhcp6c`, conditional DNS forwarding, PPPoE,
   DS-Lite, IPv4 source NAT through nftables, IPv4 policy routing, IPv4
   default-route policy with health checks, reverse-path filters, MTU
   propagation, default-deny home-router firewall, sysctl, hostname,
@@ -45,7 +46,8 @@ parity that the code does not yet provide.
   hand-written side of this split.
 - The current NixOS renderer emits host settings, dependency packages,
   persistent sysctl values, and basic systemd-networkd `.network`
-  declarations. It also includes common diagnostics (`dnsutils`, `iputils`,
+  declarations and can include `wide-dhcpv6` when `client: dhcp6c` is used
+  for IPv6-PD. It also includes common diagnostics (`dnsutils`, `iputils`,
   `tcpdump`, and `traceroute`) so router hosts can inspect DNS, packet flow,
   and path MTU without ad hoc package edits. More resource kinds still need
   Nix-native persistent rendering.

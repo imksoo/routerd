@@ -262,7 +262,9 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 				return nil, err
 			}
 			if iface := interfaces[spec.Interface]; iface != nil {
-				iface.DHCP6 = true
+				if defaultString(spec.Client, "networkd") == "networkd" {
+					iface.DHCP6 = true
+				}
 				iface.AcceptRA = true
 			}
 		}
@@ -415,6 +417,15 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 		case "PPPoEInterface":
 			service["ppp"] = true
 			debug["ppp"] = true
+		case "IPv6PrefixDelegation":
+			spec, err := res.IPv6PrefixDelegationSpec()
+			if err != nil {
+				return nil, nil, err
+			}
+			if defaultString(spec.Client, "networkd") == "dhcp6c" {
+				service["wide-dhcpv6"] = true
+				debug["wide-dhcpv6"] = true
+			}
 		}
 	}
 	for _, pkg := range host.AdditionalServicePath {

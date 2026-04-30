@@ -248,15 +248,6 @@ spec:
             - ipv6
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6DHCPAddress
-      metadata:
-        name: wan-dhcp6
-      spec:
-        interface: wan
-        client: networkd
-        required: false
-
-    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6RAAddress
       metadata:
         name: wan-ra
@@ -270,7 +261,7 @@ spec:
         name: wan-pd
       spec:
         interface: wan
-        client: networkd
+        client: dhcp6c
         profile: ntt-hgw-lan-pd
         required: false
 

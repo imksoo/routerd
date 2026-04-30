@@ -13,6 +13,9 @@ routerd は現在プレリリースのソフトウェアです。リソースモ
   `/apply` に置き換わりました。YAML の `spec.reconcile` はそのままです。
 - 破壊的変更: 開発中に追加した DHCPv6-PD 回避用の設定を削除しました。
   DHCPv6 の Renew/Rebind と Release は OS 側クライアントに任せます。
+- Linux の `IPv6PrefixDelegation` で `client: dhcp6c` を使えるようにしました。
+  routerd が WIDE/KAME 形式の `dhcp6c.conf` と systemd ユニットを生成し、
+  NTT ホームゲートウェイ向け構成で IA Prefix 寿命が 0 の Renew/Rebind を避けられるようにします。
 - `routerctl` に `get`、`describe`、`show` を整理しました。`show` は
   望む設定、実機状態、所有台帳、状態履歴、イベントをまとめて表示し、
   NAPT やコネクション追跡は `IPv4SourceNAT` の観測状態として扱います。

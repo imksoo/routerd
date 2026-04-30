@@ -179,7 +179,7 @@ type IPv6RAAddressSpec struct {
 
 type IPv6PrefixDelegationSpec struct {
 	Interface    string `yaml:"interface" json:"interface"`
-	Client       string `yaml:"client,omitempty" json:"client,omitempty"`
+	Client       string `yaml:"client,omitempty" json:"client,omitempty" jsonschema:"enum=,enum=networkd,enum=dhcp6c"`
 	Profile      string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
 	PrefixLength int    `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
 	IAID         string `yaml:"iaid,omitempty" json:"iaid,omitempty"`

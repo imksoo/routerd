@@ -140,12 +140,14 @@ assert: `ntt-ngn-direct-hikari-denwa` と `ntt-hgw-lan-pd` では、正確なヒ
 
 | クライアント | 測定または引用した挙動 | routerd での扱い |
 | --- | --- | --- |
-| systemd-networkd | cite/measure: `DUIDType=link-layer`、`IAID`、`PrefixDelegationHint`、`WithoutRA` を設定できます。Renew/Rebind の IA Prefix 寿命は 0 です。 | Linux の基本経路として残します。通知や詳細状態の見え方は弱いため、routerd 側で観測を補います。 |
-| KAME/WIDE `dhcp6c` | cite/measure: DUID はファイル、IAID と IA_PD は設定で扱います。ヒント付き Solicit では IA Prefix 寿命を出力できます。 | FreeBSD の DHCPv6-PD 経路として残します。NTT 向けでは DUID-LL ファイルを routerd 管理対象にします。 |
+| systemd-networkd | cite/measure: `DUIDType=link-layer`、`IAID`、`PrefixDelegationHint`、`WithoutRA` を設定できます。検証した Linux 経路では Renew/Rebind の IA Prefix 寿命が 0 になる場合があります。 | 一般的な Linux DHCPv6-PD では使えますが、NTT ホームゲートウェイ向けの推奨経路にはしません。 |
+| KAME/WIDE `dhcp6c` | cite/measure: DUID はファイル、IAID と IA_PD は設定で扱います。ヒント付き Solicit や Renew/Rebind で IA Prefix 寿命を出力できます。 | FreeBSD と、NTT ホームゲートウェイ向け Linux の逃げ道として使います。NTT 向けでは DUID-LL ファイルを routerd 管理対象にします。 |
 | dnsmasq | cite/assert: LAN 側の DNS、DHCPv4、DHCPv6、RA には有用です。WAN 側の PD クライアントの正にはしません。 | LAN サービスに限定して使います。 |
 
-assert: DHCPv6-PD の取得経路は意図的に絞ります。Linux は systemd-networkd、
-FreeBSD は KAME/WIDE `dhcp6c` を使います。
+assert: DHCPv6-PD の取得経路は意図的に絞ります。一般的な Linux では
+systemd-networkd を使えます。NTT ホームゲートウェイ向けでは、検証した
+networkd の Renew/Rebind 形が受け入れられなかったため、Linux と FreeBSD の
+どちらでも KAME/WIDE `dhcp6c` を使う方針です。
 
 assert: NTT 系プロファイルでは、実際の MAC アドレスから作った DUID-LL を既定にします。`duidRawData` と `iaid` は、高可用構成の切り替え、ルータ交換、移行のために明示的に使う上書き設定であり、通常の復旧経路では使いません。
 
