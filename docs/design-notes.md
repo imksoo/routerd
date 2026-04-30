@@ -19,6 +19,60 @@ The document uses the following terms to keep facts separate from assumptions.
 If a statement cannot fit one of these labels, move it to the open-issues
 section or remove it.
 
+## 0. Project End Goal
+
+assert: The end goal is for routerd to replace a commercial home-router
+appliance (such as a NEC IX series unit) entirely on a NTT NGN deployment.
+routerd must be a complete home-router replacement, not a complement to one.
+Operationally this means a single routerd VM (or physical host) takes over the
+WAN-side DHCPv6-PD client role, the LAN-side DHCPv6 server role, the LAN-side
+Router Advertisement role, IPv4 transport (DS-Lite or PPPoE) and NAT/firewall.
+
+assert: The reference architecture is a working NEC IX2215 deployment on the
+same NTT NGN circuit. routerd should provide observably equivalent behavior
+from the LAN's point of view: same /60 acquisition behavior, same per-LAN /64
+distribution, same RA flag semantics, same DHCPv6 server response shape for
+LAN clients. Differences from the reference must be deliberate design choices,
+not accidental drift.
+
+assert: While routerd is being built, the reference appliance and routerd
+coexist on the same NGN circuit. routerd labs run as Proxmox VE VMs alongside
+the reference appliance. The transition path is: reference appliance keeps
+serving the LAN; routerd is exercised in parallel against the same HGW;
+once routerd is judged ready, the reference appliance is removed and routerd
+takes over the LAN.
+
+assert: Section 5 turns this end goal into an implementation roadmap. Items in
+that roadmap should be treated as replacement requirements, not optional lab
+polish.
+
+assert: routerd is not constrained to strict IX2215 parity. It is allowed and
+expected to surpass the reference appliance where the declarative model makes
+that natural. The first concrete differentiator already in the MVP scope is
+multiple concurrent DS-Lite tunnels: IX2215's current configuration cannot
+establish more than one DS-Lite tunnel at a time, while routerd's resource
+list is naturally multi-instance and `DSLiteTunnel` resources are applied
+per-instance. Differentiators of this kind should be documented in design
+notes so they are not lost as the project tracks the reference architecture.
+
+assert: routerd provides LAN-side IPv6 segments by carving subprefixes out of
+the WAN-side DHCPv6-PD lease and routing each subprefix to a downstream
+interface. routerd does not use IPv6 ND Proxy and does not place the WAN
+segment on a Linux bridge with LAN ports. Both alternatives expose the LAN to
+the WAN /64 as a single onlink segment, which breaks downstream firewall and
+conntrack assumptions, makes per-LAN policy unworkable, and cannot represent
+multi-LAN topologies cleanly in a declarative model. The PD-based path keeps
+each LAN as a routed segment with its own /64, so firewall zones, conntrack,
+and per-segment RA/DHCPv6 servers can be authored independently.
+
+assert: Because PD is the chosen mechanism for separating WAN and LAN
+segments, stable DHCPv6-PD acquisition and lease maintenance are
+non-negotiable requirements for routerd, not best-effort goals. Any apply
+path, renderer, OS-client choice, or recovery procedure that risks losing the
+upstream PD lease is out of scope for the production profile. Section 5's
+`dhcp6c` primary path and DHCPv6 transaction recorder exist to make that
+stability observable and reviewable.
+
 ## 1. Verified Facts
 
 ### 1.0 Source of Truth and Operation Path
@@ -144,6 +198,22 @@ assert: The `ntt-ngn-direct-hikari-denwa` and `ntt-hgw-lan-pd` profiles should
 not send exact or length-only prefix hints by default. `prefixLength` remains
 part of routerd's expected-shape model, but the systemd-networkd renderer omits
 `PrefixDelegationHint=` for these profiles.
+
+measure (2026-04-30): A NTT HGW (PR-400NE) was observed to enter a state where
+the LAN-side DHCPv6 server silently dropped Solicit, Request, Renew, Rebind,
+Release, Confirm, and Information-Request from clients, while NDP and RA
+continued normally. Existing bindings remained in the HGW table but their
+lease counters only ticked down. A manual HGW reboot recovered the DHCPv6
+server immediately, after which routerd's active Request via
+`routerd dhcp6 request` succeeded and refreshed the lab `router03` binding to
+near-full lifetime. Public reports (rabbit51 2022 on PR-600MI, HackMD on
+Yamaha RTX1200 with AsahiNet 2021, azutake 2023 on Cisco IOS-XE under FLET'S
+Cross) describe analogous DHCPv6 server stalls in this hardware family.
+routerd treats this as a known external failure mode that the active
+controller can detect and surface but cannot fix automatically; operator-
+driven HGW reboot is the only recovery. See
+`docs/knowledge-base/ntt-ngn-pd-acquisition.md` Section K for the detection
+threshold, recovery playbook, and public-report citations.
 
 ### 1.3 OS Client Behavior
 
@@ -334,3 +404,135 @@ routerctl describe inventory/host
 - Keep "DS-Lite without delegated LAN IPv6" as a design candidate. It changes
   ownership and firewall boundaries, so it needs separate validation before
   implementation.
+
+## 5. IX2215 Replacement Roadmap
+
+The following work closes the gap between the current routerd implementation
+and the reference home-router behavior described in Section 0.
+
+### 5.1 Critical: Use `dhcp6c` for NTT/HGW Prefix Delegation
+
+assert: For NTT HGW profiles, Linux and FreeBSD should use a DHCPv6-PD client
+that preserves IA_PD lifetime semantics across Renew and Rebind. The
+systemd-networkd PD path is not the default for these profiles because lab
+captures showed lifetime `0/0` in Renew/Rebind traffic.
+
+Completion condition: router03 and router01 both render `client: dhcp6c`, can
+acquire PD after the HGW accepts Solicit, and keep the lease through a natural
+T1 Renew. NixOS is complete when router02 has either a packaged `dhcp6c`
+derivation or a documented supported alternative.
+
+### 5.2 Critical: DHCPv6 Active Controller (was: Record DHCPv6 Transactions)
+
+assert: A delegated LAN address is not enough evidence that the upstream
+DHCPv6-PD lease is alive. routerd needs packet-derived evidence for the
+DHCPv6 lifecycle, and it must be able to drive that lifecycle actively when
+the OS client's natural timing is not enough.
+
+observe (2026-04-30): Lab tests showed that with one NTT HGW (PR-400NE) the
+fresh Solicit path was unreliable while the Request path with a known Server
+Identifier and an IA_PD claim was accepted. NEC IX2215's `clear ipv6 dhcp
+client` triggered an INIT-REBOOT-style Request and recovered the lease
+without sending any Solicit. routerd-driven Requests from lab routers, using
+the observed HGW Server Identifier and an IA_PD prefix claim, were
+accepted by the HGW and produced new bindings on previously stuck LAN
+routers.
+
+measure (2026-04-30): Active Renew packets that carried an IA_PD prefix with
+T1/T2 set to `0/0` and no Reconfigure Accept option were silently ignored by
+the HGW. Packets used for the controller path must generate a new transaction
+ID for every send, carry the server-provided T1/T2 values when known, default
+to `7200/12600` for the NTT profile when the state is missing, carry
+non-zero IA Prefix lifetimes (`14400/14400` by default), and include
+Reconfigure Accept on Request/Renew. Release is the opposite: it sends
+zero IA_PD lifetimes and does not include Reconfigure Accept.
+
+assert: routerd's DHCPv6 lifecycle support is not a passive recorder.
+It is an active controller. It must be able to send Solicit, Request, Renew,
+Rebind, Confirm, Information-Request, and Release on demand, using lease
+identity recorded in `objects.status._variables`, instead of only relying on
+the OS client's automatic timers. Refresh by waiting for T1/T2 is allowed,
+but must not be the only available path. `routerctl describe ipv6pd/<name>`
+exposes the full controller state, not just the last delegated address.
+
+assert: The persistence rail for the active controller is the existing routerd
+state schema. No new SQLite tables are added. `IPv6PrefixDelegation/<name>`'s
+`objects.status` JSON carries the lease and observation under known field
+names (for example `lease.serverID`, `lease.prefix`, `lease.iaid`, `lease.t1`,
+`lease.t2`, `lease.pltime`, `lease.vltime`, `lease.sourceMAC`,
+`lease.sourceLL`, `lease.lastReplyAt`, `wanObserved.hgwLinkLocal`,
+`wanObserved.raMFlag`, `wanObserved.raOFlag`, `wanObserved.raPrefix`).
+Each Solicit/Advertise/Request/Reply/Renew/Rebind/Release observation is
+recorded as one row in the existing `events` table with a stable
+`reason` (for example `SolicitSent`, `ReplyRecv`, `RequestSent`,
+`RenewSent`, `ReleaseSent`).
+
+assert: The renderer for each DHCPv6 client receives the rendered
+`IPv6PrefixDelegationSpec` together with the corresponding object status as an
+implicit input. The renderer prefers values written explicitly on the spec
+(such as `iaid`, `duidRawData`, and the new override fields like `serverID`
+and `priorPrefix`) and falls back to `objects.status._variables` values when
+the spec leaves them empty. This mirrors the existing IAID/DUID override
+pattern: routerd discovers and records the value automatically; the operator
+may pin a value in YAML when manual control is needed (router migration,
+HA failover, replay tests).
+
+Completion condition: routerd implements the active controller, records
+the lease and `wanObserved` fields under `IPv6PrefixDelegation/<name>` status,
+emits per-transaction events in the `events` table, exposes them through
+`routerctl describe ipv6pd/<name>`, and accepts spec-level overrides for
+`serverID`, `priorPrefix`, and `acquisitionStrategy`. The NTT profile uses
+the controller to fall back from Solicit to Request-with-claim when the HGW
+silently drops Solicit, using the discovered or pinned `serverID`.
+
+### 5.3 High: Make Apply No-Op Safe for DHCPv6 Clients
+
+assert: Apply must not restart or rewrite a DHCPv6 client unless the rendered
+client configuration actually changed. The OS client state is part of the live
+lease and losing it can make recovery depend on the HGW accepting a fresh
+Solicit.
+
+Completion condition: an apply -> apply test proves that unchanged
+`IPv6PrefixDelegation` resources do not restart `dhcp6c`, do not remove lease
+state, and do not rewrite equivalent config files. The daemon apply loop and
+one-shot CLI apply share the same behavior.
+
+### 5.4 High: Make LAN RA DNS Semantics Explicit
+
+assert: LAN clients are not uniform. Some clients consume DHCPv6 DNS options,
+while SLAAC-only clients may need DNS information in RA. routerd should expose
+this deliberately instead of relying on dnsmasq defaults.
+
+Completion condition: `IPv6DHCPScope` or a related resource can express
+whether DNS is advertised through DHCPv6 options, RA RDNSS, both, or neither.
+Generated dnsmasq output and documentation make Android/SLAAC-only behavior
+clear.
+
+### 5.5 Medium: Add Stateful DHCPv6 Address Assignment If Needed
+
+believe: The current home-router target can start with stateless DHCPv6 and RA,
+but IX2215 replacement may eventually need DHCPv6 IA_NA service for clients
+that expect stateful IPv6 addressing.
+
+Completion condition: if required by observed clients, routerd gains a
+stateful IPv6 address scope mode with documented lease storage, address pool
+syntax, and dnsmasq or alternate server rendering.
+
+### 5.6 Medium: Add Downstream IA_PD Subdelegation
+
+believe: The initial replacement can serve a single LAN /64, but full router
+replacement may need to delegate prefixes to downstream routers.
+
+Completion condition: routerd has a resource model for downstream prefix pools,
+subscriber bindings, and delegated prefix lifetimes. It must clearly separate
+upstream PD ownership from downstream PD service ownership.
+
+### 5.7 Medium: Finish the NixOS DHCPv6-PD Client Path
+
+assert: NixOS remains a useful portability target, but it should not block the
+critical Ubuntu/FreeBSD replacement path. The lack of `wide-dhcpv6` in nixpkgs
+means routerd needs either a derivation or a documented supported client.
+
+Completion condition: router02 can use the NTT/HGW PD profile without
+systemd-networkd PD, using a reproducible Nix derivation or a documented
+supported alternative that preserves IA_PD lifetimes.

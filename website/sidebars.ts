@@ -41,6 +41,7 @@ const sidebars: SidebarsConfig = {
       label: 'Knowledge base',
       items: [
         'knowledge-base/dhcpv6-pd-clients',
+        'knowledge-base/ntt-ngn-pd-acquisition',
       ],
     },
     {

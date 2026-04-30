@@ -577,6 +577,20 @@ How routerd behaves:
   MAC, for example during HA failover, router replacement, or a staged
   migration. `duidRawData` accepts either `00:01:...` byte notation or compact
   hex. Leave it unset for the normal real MAC-derived DUID-LL behavior.
+- `spec.serverID`, `spec.priorPrefix`, and `spec.acquisitionStrategy` are
+  manual overrides for the DHCPv6-PD active-control path. The normal path is
+  for routerd to learn the upstream server identifier and previously delegated
+  prefix from `IPv6PrefixDelegation` status, then pass that state to renderers
+  and active DHCPv6 helpers. Set these fields only when recovering or migrating
+  a binding and the observed status is missing or known to be wrong.
+  `acquisitionStrategy` is one of `hybrid`, `solicit-only`, or
+  `request-claim-only`.
+- `routerd dhcp6 request|renew|release --resource <name>` is the low-level
+  active-control entry point for lab recovery. It reads DUID, IAID, server
+  identifier, and prefix data from the resource and state DB, then sends a raw
+  DHCPv6 packet on the uplink. Request/Renew packets use a fresh transaction ID,
+  non-zero T1/T2 and IA Prefix lifetimes, and Reconfigure Accept; Release sends
+  zero IA_PD lifetimes and omits Reconfigure Accept.
 - On FreeBSD with KAME `dhcp6c`, routerd manages `/var/db/dhcp6c_duid` for
   NTT profiles whose effective DUID type is `link-layer`. If the existing file
   differs from the desired DUID, routerd backs it up as `.bak.<timestamp>` and

@@ -18,6 +18,52 @@ MAC アドレス、DUID、宅内アドレスはドキュメント用の値に差
 
 この分類に落とせない文は、未検証事項として扱うか、本文から外します。
 
+## 0. プロジェクトの最終目標
+
+assert: 最終目標は、NTT NGN 回線で稼働している市販ホームルータ（NEC IX シリーズ等）を
+routerd で完全に置き換えることである。routerd は市販ルータの補助ではなく代替である必要がある。
+具体的には、単一の routerd VM（または物理ホスト）が WAN 側の DHCPv6-PD クライアント、
+LAN 側の DHCPv6 サーバ、LAN 側の Router Advertisement、IPv4 経路（DS-Lite または PPPoE）、
+および NAT/ファイアウォールを引き受ける。
+
+assert: 参照アーキテクチャは同じ NTT NGN 回線で稼働中の NEC IX2215 構成である。
+routerd は LAN 視点で観測可能な同等挙動を提供すること:
+同じ /60 取得挙動、同じ /64 ごとの LAN 別配布、同じ RA フラグ意味、同じ
+LAN クライアント向け DHCPv6 サーバ応答形。参照との差異は偶発的なドリフトではなく
+意図的な設計選択でなければならない。
+
+assert: routerd の構築中は参照ルータと routerd が同じ NGN 回線で並存する。routerd の
+lab は参照ルータの脇で Proxmox VE VM として動かす。移行手順は: 参照ルータが LAN を
+提供し続けたまま、同じ HGW に対して routerd を並行で訓練する。routerd が運用に耐えると
+判断できた時点で参照ルータを撤去し、routerd が LAN を引き受ける。
+
+assert: 5章では、この最終目標を実装ロードマップに落とし込みます。この章の項目は
+ラボを整えるための任意作業ではなく、置き換えに必要な要件として扱います。
+
+assert: routerd は IX2215 の機能パリティに縛られません。宣言的モデルが自然に
+許す範囲で参照ルータを超えても良く、超えるべき場合があります。MVP 段階で
+すでに範囲に入っている具体的な差別化として、複数の DS-Lite トンネルの
+同時確立があります。IX2215 の現コンフィグでは DS-Lite トンネルを 1 本しか
+張れませんが、routerd のリストは元々マルチインスタンスで、`DSLiteTunnel`
+リソースは個別に適用されます。この種の差別化点は、参照アーキテクチャを
+追いかけるなかで失われないよう、設計メモに残します。
+
+assert: routerd は WAN 側の DHCPv6-PD で得たリースから LAN ごとのサブプレフィックスを
+切り出し、それぞれを下流インタフェースにルーティングする方式で LAN 側 IPv6 セグメントを
+提供します。IPv6 ND Proxy は使わず、WAN セグメントを LAN ポートと同じ Linux bridge に
+入れる構成も使いません。これらの代替手法は LAN を WAN の /64 に onlink で晒すことになり、
+下流のファイアウォールと conntrack の前提を壊し、LAN 別ポリシーを書けなくし、
+複数 LAN トポロジを宣言的モデルで素直に表現できなくします。PD 方式なら各 LAN は
+独自の /64 を持つルーティングセグメントになるので、ファイアウォールゾーン、conntrack、
+LAN 別の RA/DHCPv6 サーバを独立に書けます。
+
+assert: PD が WAN と LAN を分けるための仕組みとして採用されている以上、
+DHCPv6-PD の安定取得とリース維持は routerd にとって譲歩できない要件であり、
+ベストエフォートではありません。上流 PD リースを失う可能性のある apply 経路、
+レンダラ、OS クライアント選択、復旧手順は本番プロファイルの範囲外とします。
+Section 5 の `dhcp6c` 本線化と DHCPv6 取引記録はこの安定性を観測可能・
+レビュー可能にするために存在します。
+
 ## 1. 検証済み事実
 
 ### 1.0 真実の元と操作経路
@@ -320,3 +366,128 @@ routerctl describe inventory/host
 - プレフィックス委譲がない場合でも、WAN 側 IPv6 到達性で DS-Lite を使う
   構成は設計候補として残します。ただし LAN 側 IPv6 をブリッジまたは通過させる
   構成は所有境界とファイアウォール設計が変わるため、別途検証します。
+
+## 5. IX2215 置き換えロードマップ
+
+この作業一覧は、0章で定めた参照ルータの挙動と、現在の routerd 実装の差を埋める
+ためのものです。
+
+### 5.1 最重要: NTT/HGW のプレフィックス委譲では `dhcp6c` を使う
+
+assert: NTT HGW 向けプロファイルでは、Linux と FreeBSD のどちらでも、
+Renew と Rebind のときに IA_PD の寿命を正しく保てる DHCPv6-PD クライアントを
+使います。ラボの取得結果では systemd-networkd の経路が Renew/Rebind で寿命
+`0/0` を出したため、このプロファイルの既定にはしません。
+
+完了条件: router03 と router01 が `client: dhcp6c` を出力し、HGW が Solicit を
+受理した後にプレフィックスを取得でき、自然な T1 Renew でもリースを維持できること。
+NixOS は、router02 で使える `dhcp6c` の導入方法、または寿命を正しく扱う別の
+対応クライアントが決まった時点で完了とします。
+
+### 5.2 最重要: DHCPv6 アクティブ・コントローラー (旧: DHCPv6 のやり取りを記録する)
+
+assert: LAN 側に委譲アドレスが残っていることだけでは、上流の DHCPv6-PD リースが
+生きている証拠にはなりません。routerd には、パケットから得た DHCPv6 の進行状況が
+必要であり、OS クライアントの自動タイマだけでは足りない場面では能動的に
+ライフサイクルを駆動できる必要があります。
+
+observe (2026-04-30): NTT HGW (PR-400NE) のラボ試験で、新規 Solicit 経路が
+不安定になる時間帯でも、観測済みの Server Identifier と IA_PD の claim を持つ
+Request は HGW に受理されました。NEC IX2215 の `clear ipv6 dhcp client` も
+INIT-REBOOT 風の Request だけを送ってリースを復旧し、Solicit を一切送らずに
+binding を取り戻せました。詰まっていたラボルータからも、観測した HGW Server
+Identifier と IA_PD prefix claim を含む Request を routerd 制御で送出すると、
+HGW が新規 binding を割り当てて応答しました。
+
+measure (2026-04-30): IA_PD prefix を含んでいても T1/T2 が `0/0` で、
+Reconfigure Accept option を含まない能動 Renew は、HGW から応答されませんでした。
+routerd の能動制御が送る Request/Renew は、送信ごとに新しい transaction ID を作り、
+状態に記録された T1/T2 を使います。状態に無い場合、NTT 系プロファイルでは
+`7200/12600` を既定値にします。IA Prefix の寿命も `14400/14400` を既定値として
+0 にせず、Request/Renew には Reconfigure Accept を含めます。一方 Release は
+逆に IA_PD の寿命を 0 にし、Reconfigure Accept を含めません。
+
+assert: routerd の DHCPv6 ライフサイクル機能は受動的な記録器ではなく、能動的な
+コントローラーです。`objects.status._variables` に保持したリース識別情報を
+使って、Solicit、Request、Renew、Rebind、Confirm、Information-Request、Release
+を任意のタイミングで送出できる必要があります。OS クライアントの自動タイマで
+T1/T2 を待つことは引き続き許可されますが、唯一の経路にしてはいけません。
+`routerctl describe ipv6pd/<name>` ではこのコントローラーの全状態を見せ、
+派生アドレスの有無だけでは判断しません。
+
+assert: アクティブ・コントローラーの永続化は既存の routerd state スキーマを
+そのまま使います。新しい SQLite テーブルは作りません。
+`IPv6PrefixDelegation/<name>` の `objects.status` JSON が、決まった field 名で
+リースと観測を持ちます (例: `lease.serverID`, `lease.prefix`, `lease.iaid`,
+`lease.t1`, `lease.t2`, `lease.pltime`, `lease.vltime`, `lease.sourceMAC`,
+`lease.sourceLL`, `lease.lastReplyAt`, `wanObserved.hgwLinkLocal`,
+`wanObserved.raMFlag`, `wanObserved.raOFlag`, `wanObserved.raPrefix`)。
+Solicit/Advertise/Request/Reply/Renew/Rebind/Release の各観測は
+既存の `events` テーブルに `reason=SolicitSent` のような安定した
+reason 名で 1 行ずつ記録します。
+
+assert: 各 DHCPv6 クライアント用の renderer は、`IPv6PrefixDelegationSpec` と
+合わせて、対応するオブジェクトの status を暗黙の入力として受け取ります。
+spec に明示的に書かれた値 (`iaid`、`duidRawData`、新規追加の
+`serverID`、`priorPrefix` 等) が最優先で、spec が空の field は
+`objects.status._variables` の値で埋めます。これは既存の IAID/DUID 上書きの
+パターンと同じで、routerd が観測値を自動で記録し、運用者が必要な時だけ
+YAML で値を固定できます (ルータ移行、HA 切替、replay 試験など)。
+
+完了条件: routerd がアクティブ・コントローラーを実装し、
+`IPv6PrefixDelegation/<name>` status に lease / wanObserved field を記録し、
+`events` テーブルに transaction ごとの行を出し、`routerctl describe ipv6pd/<name>`
+からそれらが見え、spec の `serverID`、`priorPrefix`、`acquisitionStrategy`
+上書きを受け入れること。NTT プロファイルは、HGW が Solicit を黙殺する
+状態でも、観測または固定された `serverID` を使って Solicit から
+Request-with-claim にフォールバックします。
+
+### 5.3 重要: apply が DHCPv6 クライアントを不用意に壊さないようにする
+
+assert: 生成されたクライアント設定が変わっていない場合、apply は DHCPv6 クライアントを
+再起動したり、設定を書き換えたりしてはいけません。OS クライアントの状態は生きている
+リースの一部であり、それを失うと HGW が新規 Solicit を受理するかどうかに復旧が
+左右されます。
+
+完了条件: apply を2回続けて実行するテストで、変更のない `IPv6PrefixDelegation` が
+`dhcp6c` を再起動せず、リース状態を削除せず、同等の設定ファイルを書き直さないことを
+確認します。常駐 apply と一回だけの CLI apply は同じ挙動にします。
+
+### 5.4 重要: LAN 側 RA の DNS 配布を明示する
+
+assert: LAN クライアントは一様ではありません。DHCPv6 の DNS オプションを見る
+クライアントもあれば、SLAAC のみで RA 内の DNS 情報を期待するクライアントもあります。
+routerd は dnsmasq の暗黙挙動に任せず、意図を設定で表せるようにします。
+
+完了条件: `IPv6DHCPScope` または関連リソースで、DNS を DHCPv6 オプション、RA の
+RDNSS、両方、どちらも使わない、のいずれで配るかを表現できること。生成される
+dnsmasq 設定と文書で、Android や SLAAC のみの端末での挙動が分かること。
+
+### 5.5 中位: 必要なら DHCPv6 の状態付きアドレス配布を追加する
+
+believe: 最初のホームルータ置き換えは、状態なし DHCPv6 と RA から始められます。
+ただし、参照ルータと同等の挙動を求める中で、状態付き IPv6 アドレス配布を期待する
+クライアントが見つかる可能性があります。
+
+完了条件: 必要性が観測できた場合に、routerd が状態付き IPv6 アドレスプール、
+リース保存、生成設定を表せること。dnsmasq で足りるか、別サーバが必要かも含めて
+文書化します。
+
+### 5.6 中位: 下流ルータへの IA_PD 再委譲を追加する
+
+believe: 初期の置き換えでは単一 LAN への /64 配布で始められます。ただし、完全な
+ルータ置き換えでは、下流ルータへさらにプレフィックスを委譲する必要が出るかもしれません。
+
+完了条件: 下流向けプレフィックスプール、加入者の対応関係、委譲寿命を表すリソースを
+用意します。上流から受け取ったプレフィックスの所有と、下流へ配るプレフィックスの
+所有を明確に分けます。
+
+### 5.7 中位: NixOS の DHCPv6-PD クライアント経路を仕上げる
+
+assert: NixOS は移植性を見るうえで有用な対象ですが、Ubuntu と FreeBSD による
+置き換え経路を止める理由にはしません。nixpkgs に `wide-dhcpv6` が無いため、
+routerd には再現可能な導入方法か、対応済みの別クライアントが必要です。
+
+完了条件: router02 が systemd-networkd の PD 経路を使わずに、NTT/HGW 向け
+プロファイルを使えること。方法は Nix derivation でも、IA_PD の寿命を正しく扱う
+対応クライアントでもかまいません。

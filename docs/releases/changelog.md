@@ -22,6 +22,14 @@ behavior changes and new resource shapes as the model takes shape.
   managed WIDE/KAME-style `dhcp6c.conf` and systemd unit so NTT home-gateway
   profiles can avoid systemd-networkd Renew/Rebind packets with zero IA Prefix
   lifetimes.
+- `IPv6PrefixDelegation` now has manual `serverID`, `priorPrefix`, and
+  `acquisitionStrategy` fields for the DHCPv6 active-controller path. Renderers
+  can receive the resource status and prefer explicit spec overrides before
+  falling back to observed lease state.
+- Added the first DHCPv6 active-controller command path: `routerd dhcp6
+  request|renew|release --resource <name>`. Request/Renew packets use fresh
+  transaction IDs, non-zero T1/T2 and IA Prefix lifetimes, and Reconfigure
+  Accept; Release sends zero lifetimes without Reconfigure Accept.
 - FreeBSD apply no longer rewrites `dhcp6c_flags="-n"` on every loop. This
   prevents unnecessary `dhcp6c` restarts and preserves the DHCPv6 client's
   in-memory lease state for natural Renew/Rebind.
