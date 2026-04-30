@@ -78,3 +78,29 @@ func TestNAPTHandler(t *testing.T) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
+
+func TestDHCP6EventHandler(t *testing.T) {
+	handler := Handler{
+		DHCP6Event: func(r *http.Request, req DHCP6EventRequest) (*DHCP6EventResult, error) {
+			if req.Resource != "wan-pd" {
+				t.Fatalf("resource = %q, want wan-pd", req.Resource)
+			}
+			if req.Env["reason"] != "BOUND6" {
+				t.Fatalf("env reason = %q, want BOUND6", req.Env["reason"])
+			}
+			result := NewDHCP6EventResult(req.Resource)
+			return &result, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/dhcp6-event", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"DHCP6Event","resource":"wan-pd","env":{"reason":"BOUND6"}}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind": "DHCP6EventResult"`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}

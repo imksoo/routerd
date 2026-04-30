@@ -32,15 +32,17 @@ func TestDHCP6CRendersLinuxConfigAndUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render dhcp6c: %v", err)
 	}
-	if len(config.Files) != 2 {
-		t.Fatalf("len(files) = %d, want 2", len(config.Files))
+	if len(config.Files) != 3 {
+		t.Fatalf("len(files) = %d, want 3", len(config.Files))
 	}
 	conf := string(config.Files[0].Data)
-	unit := string(config.Files[1].Data)
+	hook := string(config.Files[1].Data)
+	unit := string(config.Files[2].Data)
 	for _, want := range []string{
 		"interface ens18",
 		"send ia-pd 0;",
 		"request domain-name-servers;",
+		`script "/usr/local/etc/routerd/dhcp6c-wan-pd.hook";`,
 		"id-assoc pd 0",
 		"prefix-interface ens19",
 		"sla-id 0;",
@@ -48,6 +50,15 @@ func TestDHCP6CRendersLinuxConfigAndUnit(t *testing.T) {
 	} {
 		if !strings.Contains(conf, want) {
 			t.Fatalf("dhcp6c.conf missing %q:\n%s", want, conf)
+		}
+	}
+	for _, want := range []string{
+		`--arg resource "wan-pd"`,
+		`/run/routerd/routerd.sock`,
+		`/api/control.routerd.net/v1alpha1/dhcp6-event`,
+	} {
+		if !strings.Contains(hook, want) {
+			t.Fatalf("hook missing %q:\n%s", want, hook)
 		}
 	}
 	for _, want := range []string{

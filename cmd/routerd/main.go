@@ -29,6 +29,7 @@ import (
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
 	"routerd/pkg/dhcp6control"
+	"routerd/pkg/dhcp6event"
 	"routerd/pkg/eventlog"
 	"routerd/pkg/inventory"
 	"routerd/pkg/observe"
@@ -2363,6 +2364,45 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			apiResult := controlapi.NewApplyResult(result)
 			return &apiResult, nil
 		},
+		DHCP6Event: func(r *http.Request, req controlapi.DHCP6EventRequest) (*controlapi.DHCP6EventResult, error) {
+			if req.Resource == "" {
+				return nil, fmt.Errorf("%w: resource is required", controlapi.ErrBadRequest)
+			}
+			if !containsString(ipv6PrefixDelegationNames(router), req.Resource) {
+				return nil, fmt.Errorf("%w: unknown IPv6PrefixDelegation %q", controlapi.ErrBadRequest, req.Resource)
+			}
+			stateStore, err := routerstate.Load(defaultStatePath)
+			if err != nil {
+				return nil, err
+			}
+			_, err = dhcp6event.Apply(stateStore, dhcp6event.Event{
+				Resource:  req.Resource,
+				Reason:    req.Reason,
+				Prefix:    req.Prefix,
+				IAID:      req.IAID,
+				T1:        req.T1,
+				T2:        req.T2,
+				PLTime:    req.PLTime,
+				VLTime:    req.VLTime,
+				ServerID:  req.ServerID,
+				ClientID:  req.ClientID,
+				SourceLL:  req.SourceLL,
+				SourceMAC: req.SourceMAC,
+				Env:       req.Env,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
+			}
+			if err := stateStore.Save(defaultStatePath); err != nil {
+				return nil, err
+			}
+			logger.Emit(eventlog.LevelInfo, "dhcp6-event", "recorded DHCPv6 event", map[string]string{
+				"resource": req.Resource,
+				"reason":   req.Reason,
+			})
+			result := controlapi.NewDHCP6EventResult(req.Resource)
+			return &result, nil
+		},
 	}
 	server := &http.Server{Handler: handler}
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
@@ -2467,6 +2507,15 @@ func ipv6PrefixDelegationNames(router *api.Router) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func runApplySchedule(stop <-chan struct{}, interval time.Duration, router *api.Router, opts applyOptions, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {

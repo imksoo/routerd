@@ -41,6 +41,29 @@ type ApplyResult struct {
 	Result   apply.Result `json:"result" yaml:"result"`
 }
 
+type DHCP6EventRequest struct {
+	TypeMeta  `json:",inline" yaml:",inline"`
+	Resource  string            `json:"resource" yaml:"resource"`
+	Reason    string            `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Prefix    string            `json:"prefix,omitempty" yaml:"prefix,omitempty"`
+	IAID      string            `json:"iaid,omitempty" yaml:"iaid,omitempty"`
+	T1        string            `json:"t1,omitempty" yaml:"t1,omitempty"`
+	T2        string            `json:"t2,omitempty" yaml:"t2,omitempty"`
+	PLTime    string            `json:"pltime,omitempty" yaml:"pltime,omitempty"`
+	VLTime    string            `json:"vltime,omitempty" yaml:"vltime,omitempty"`
+	ServerID  string            `json:"serverID,omitempty" yaml:"serverID,omitempty"`
+	ClientID  string            `json:"clientID,omitempty" yaml:"clientID,omitempty"`
+	SourceLL  string            `json:"sourceLL,omitempty" yaml:"sourceLL,omitempty"`
+	SourceMAC string            `json:"sourceMAC,omitempty" yaml:"sourceMAC,omitempty"`
+	Env       map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+}
+
+type DHCP6EventResult struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Accepted bool   `json:"accepted" yaml:"accepted"`
+	Resource string `json:"resource" yaml:"resource"`
+}
+
 type NAPTTable struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Metadata ObjectMeta        `json:"metadata" yaml:"metadata"`
@@ -90,6 +113,14 @@ func NewApplyResult(result *apply.Result) ApplyResult {
 	return ApplyResult{
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "ApplyResult"},
 		Result:   *result,
+	}
+}
+
+func NewDHCP6EventResult(resource string) DHCP6EventResult {
+	return DHCP6EventResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DHCP6EventResult"},
+		Accepted: true,
+		Resource: resource,
 	}
 }
 

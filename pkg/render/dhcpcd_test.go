@@ -43,6 +43,7 @@ func TestDHCPCDRendersLinuxConfigHookAndUnit(t *testing.T) {
 		"duid ll",
 		"nooption rapid_commit",
 		"option domain_name_servers",
+		"script /usr/local/etc/routerd/dhcpcd-wan-pd.hook",
 		"ia_pd 1 -",
 		"# routerd acquisition-strategy request-claim-only",
 		"# routerd duid-raw-data 02:00:00:00:01:01",
@@ -52,7 +53,7 @@ func TestDHCPCDRendersLinuxConfigHookAndUnit(t *testing.T) {
 			t.Fatalf("dhcpcd.conf missing %q:\n%s", want, conf)
 		}
 	}
-	if !strings.Contains(hook, "Reserved for future DHCPv6-PD event ingestion for wan-pd") {
+	if !strings.Contains(hook, `--arg resource "wan-pd"`) || !strings.Contains(hook, `/api/control.routerd.net/v1alpha1/dhcp6-event`) {
 		t.Fatalf("hook script missing resource name:\n%s", hook)
 	}
 	if !strings.Contains(unit, "ExecStart=/usr/sbin/dhcpcd -B -6 -f /usr/local/etc/routerd/dhcpcd-wan-pd.conf ens18") {
