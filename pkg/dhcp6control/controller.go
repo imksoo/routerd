@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"routerd/pkg/api"
+	"routerd/pkg/pdstrategy"
 	routerstate "routerd/pkg/state"
 )
 
@@ -143,14 +144,19 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 		lease.PriorPrefix = prefix.String()
 		lease.Prefix = prefix.String()
 		lease.ServerID = firstNonEmpty(in.Spec.ServerID, lease.ServerID)
+		strategy := pdstrategy.EffectiveStrategy(firstNonEmpty(in.Spec.Profile, api.IPv6PDProfileDefault), in.Spec.AcquisitionStrategy)
+		action := pdstrategy.ActionRequestClaim
 		switch leaseTimeField {
 		case "lastRequestAt":
 			lease.LastRequestAt = now.Format(time.RFC3339)
 		case "lastRenewAt":
 			lease.LastRenewAt = now.Format(time.RFC3339)
+			action = pdstrategy.ActionRenew
 		case "lastReleaseAt":
 			lease.LastReleaseAt = now.Format(time.RFC3339)
+			action = pdstrategy.ActionRelease
 		}
+		lease = pdstrategy.RecordAttempt(lease, strategy, action, now)
 		base := "ipv6PrefixDelegation." + in.Resource.Name
 		store.Set(base+".lease", routerstate.EncodePDLease(lease), reason)
 		if recorder, ok := store.(routerstate.EventRecorder); ok {

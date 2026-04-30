@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"routerd/pkg/pdstrategy"
 	routerstate "routerd/pkg/state"
 )
 
@@ -68,6 +69,11 @@ func evaluateLease(now time.Time, resourceName string, lease routerstate.PDLease
 			return HungResult{Resource: resourceName, Hung: true, Reason: lease.Hung.Reason}, lease
 		}
 		lease.Hung = &routerstate.PDHungStatus{SuspectedAt: now.Format(time.RFC3339Nano), Reason: reason}
+		strategy := ""
+		if lease.Acquisition != nil {
+			strategy = lease.Acquisition.Strategy
+		}
+		lease = pdstrategy.UpdateNextAction(lease, strategy, 3)
 		return HungResult{Resource: resourceName, Changed: true, Hung: true, Reason: reason}, lease
 	}
 	if lease.Hung != nil {

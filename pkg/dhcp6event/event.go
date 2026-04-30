@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"routerd/pkg/pdstrategy"
 	routerstate "routerd/pkg/state"
 )
 
@@ -72,6 +73,11 @@ func Apply(store routerstate.Store, event Event) (routerstate.PDLease, error) {
 	reason := firstNonEmpty(event.Reason, "DHCP6Event")
 	if isReplyReason(reason) {
 		lease.LastReplyAt = now
+		strategy := ""
+		if lease.Acquisition != nil {
+			strategy = lease.Acquisition.Strategy
+		}
+		lease = pdstrategy.RecordReply(lease, strategy)
 	}
 	store.Set("ipv6PrefixDelegation."+resource+".lease", routerstate.EncodePDLease(lease), reason)
 	if recorder, ok := store.(routerstate.EventRecorder); ok {
