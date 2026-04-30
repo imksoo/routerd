@@ -393,9 +393,13 @@ func writeNixOSRouterdService(buf *bytes.Buffer, spec api.NixOSRouterdServiceSpe
 func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []string, error) {
 	service := map[string]bool{
 		"conntrack-tools": true,
+		"dnsutils":        true,
 		"iproute2":        true,
+		"iputils":         true,
 		"procps":          true,
 		"systemd":         true,
+		"tcpdump":         true,
+		"traceroute":      true,
 	}
 	debug := map[string]bool{
 		"jq": true,

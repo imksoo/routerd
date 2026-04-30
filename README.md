@@ -60,6 +60,7 @@ Japanese documentation is available in [README.ja.md](README.ja.md).
 - dnsmasq
 - nftables
 - conntrack
+- dig, ping, tcpdump, and tracepath for IPv4/IPv6 diagnostics
 - pppd when using PPPoE
 - sqlite3 is optional for human inspection of the local state database
 
@@ -67,14 +68,17 @@ On Ubuntu:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp
+sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp dnsutils iputils-ping iputils-tracepath tcpdump
 ```
 
 conntrack is also used for diagnostics around multi-tunnel DS-Lite policy
 routing. PPPoE resources rely on pppd and the rp-pppoe plugin shipped by the
-distribution's PPP packages. routerd embeds SQLite support in the static
-binary, so the `sqlite3` command is not required at runtime; install it only
-when you want to inspect `/var/lib/routerd/routerd.db` by hand.
+distribution's PPP packages. `dig`, `ping`, `tcpdump`, and `tracepath` are
+treated as standard router diagnostics because IPv4/IPv6 reachability and
+provider-specific DNS behavior need to be checked from the router itself.
+routerd embeds SQLite support in the static binary, so the `sqlite3` command
+is not required at runtime; install it only when you want to inspect
+`/var/lib/routerd/routerd.db` by hand.
 
 ## Build
 

@@ -8,27 +8,23 @@ func TestIPv6PDProfileDefaults(t *testing.T) {
 		profile          string
 		wantPrefixLength int
 		wantDUIDType     string
-		wantHint         bool
 	}{
 		{
 			name:             "default",
 			profile:          IPv6PDProfileDefault,
 			wantPrefixLength: 0,
-			wantHint:         true,
 		},
 		{
 			name:             "NTT HGW LAN PD",
 			profile:          IPv6PDProfileNTTHGWLANPD,
 			wantPrefixLength: 60,
 			wantDUIDType:     "link-layer",
-			wantHint:         false,
 		},
 		{
 			name:             "NTT NGN direct Hikari Denwa",
 			profile:          IPv6PDProfileNTTNGNDirectHikariDenwa,
 			wantPrefixLength: 60,
 			wantDUIDType:     "link-layer",
-			wantHint:         false,
 		},
 	}
 	for _, tt := range tests {
@@ -38,9 +34,6 @@ func TestIPv6PDProfileDefaults(t *testing.T) {
 			}
 			if got := EffectiveIPv6PDDUIDType(tt.profile, ""); got != tt.wantDUIDType {
 				t.Fatalf("DUID type = %q, want %q", got, tt.wantDUIDType)
-			}
-			if got := ShouldRenderIPv6PDPrefixHint(tt.profile); got != tt.wantHint {
-				t.Fatalf("render prefix hint = %t, want %t", got, tt.wantHint)
 			}
 		})
 	}

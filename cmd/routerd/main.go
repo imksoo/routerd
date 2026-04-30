@@ -1143,7 +1143,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			if ifname == "" {
 				continue
 			}
-			prefix, ok := delegatedPrefixFromObservedInterface(ifname, prefixLength)
+			prefix, ok := delegatedPrefixFromObservedInterface(ifname, prefixLength, delegatedAddressSuffixes(delegatedByPD[res.Metadata.Name]))
 			if ok {
 				observedPrefix = prefix
 				observedIfname = ifname
@@ -1379,8 +1379,49 @@ func parseKeyValueFile(path string) map[string]string {
 	return values
 }
 
-func delegatedPrefixFromObservedInterface(ifname string, prefixLength int) (string, bool) {
+func delegatedAddressSuffixes(resources []api.Resource) map[uint64]bool {
+	out := map[uint64]bool{}
+	for _, res := range resources {
+		if res.Kind != "IPv6DelegatedAddress" {
+			continue
+		}
+		spec, err := res.IPv6DelegatedAddressSpec()
+		if err != nil {
+			continue
+		}
+		addr, err := netip.ParseAddr(defaultString(spec.AddressSuffix, "::"))
+		if err != nil || !addr.Is6() {
+			continue
+		}
+		out[ipv6HostSuffix64(addr)] = true
+	}
+	return out
+}
+
+func delegatedPrefixFromObservedInterface(ifname string, prefixLength int, managedSuffixes map[uint64]bool) (string, bool) {
+	entries := ipv6AddressEntries(ifname)
+	if prefix, ok := delegatedPrefixFromAddressEntries(entries, prefixLength, managedSuffixes); ok {
+		return prefix, true
+	}
 	return delegatedPrefixFromObserved(ipv6Prefixes(ifname), ipv6Addresses(ifname), prefixLength)
+}
+
+func delegatedPrefixFromAddressEntries(entries []ipv6AddressEntry, prefixLength int, ignoredSuffixes map[uint64]bool) (string, bool) {
+	for _, entry := range entries {
+		addr, err := netip.ParseAddr(entry.Address)
+		if err != nil || !addr.Is6() || addr.IsLinkLocalUnicast() || entry.PrefixLen >= 128 {
+			continue
+		}
+		if ignoredSuffixes[ipv6HostSuffix64(addr)] {
+			continue
+		}
+		bits := entry.PrefixLen
+		if prefixLength > 0 && prefixLength <= bits {
+			bits = prefixLength
+		}
+		return netip.PrefixFrom(addr, bits).Masked().String(), true
+	}
+	return "", false
 }
 
 func delegatedPrefixFromObserved(prefixes, addresses []string, prefixLength int) (string, bool) {
@@ -2376,8 +2417,8 @@ func applyFreeBSDConfig(router *api.Router, dhclientPath, dhcp6cPath, dhcp6cDUID
 	var restartIfnames []string
 	for _, key := range sortedStringMapKeys(rcValues) {
 		value := rcValues[key]
-		currentOut, err := exec.Command("sysrc", "-n", key).CombinedOutput()
-		if err == nil && strings.TrimSpace(string(currentOut)) == value {
+		currentOut, err := exec.Command("sysrc", key).CombinedOutput()
+		if err == nil && parseFreeBSDSysrcValue(key, currentOut) == value {
 			continue
 		}
 		if err := runLogged("sysrc", key+"="+value); err != nil {
@@ -2473,6 +2514,15 @@ func freeBSDProtectedIfnames(router *api.Router) map[string]bool {
 		}
 	}
 	return protected
+}
+
+func parseFreeBSDSysrcValue(key string, out []byte) string {
+	line := strings.TrimSpace(string(out))
+	prefix := key + ":"
+	if value, ok := strings.CutPrefix(line, prefix); ok {
+		return strings.TrimSpace(value)
+	}
+	return line
 }
 
 func freeBSDRCValuesChanged(changed []string, prefix string) bool {
@@ -2756,6 +2806,11 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 				return nil, fmt.Errorf("%s derive delegated address: %w", res.ID(), err)
 			}
 		}
+		removed, err := cleanupConflictingIPv6SuffixAddresses(ifname, address, spec.AddressSuffix)
+		if err != nil {
+			return nil, fmt.Errorf("%s cleanup stale delegated address: %w", res.ID(), err)
+		}
+		applied = append(applied, removed...)
 		ensured, err := ensureIPv6LocalAddress(ifname, address)
 		if err != nil {
 			return nil, fmt.Errorf("%s ensure delegated address: %w", res.ID(), err)
@@ -2765,6 +2820,39 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 		}
 	}
 	return applied, nil
+}
+
+func cleanupConflictingIPv6SuffixAddresses(ifname, desiredAddress, suffix string) ([]string, error) {
+	suffixAddr, err := netip.ParseAddr(defaultString(suffix, "::"))
+	if err != nil || !suffixAddr.Is6() {
+		return nil, fmt.Errorf("invalid IPv6 suffix %q", suffix)
+	}
+	var removed []string
+	for _, entry := range conflictingManagedIPv6Addresses(ipv6AddressEntries(ifname), desiredAddress, ipv6HostSuffix64(suffixAddr)) {
+		if err := deleteIPv6LocalAddress(ifname, entry.Address, entry.PrefixLen); err != nil {
+			return removed, err
+		}
+		removed = append(removed, ifname+":"+entry.Address)
+	}
+	return removed, nil
+}
+
+func conflictingManagedIPv6Addresses(entries []ipv6AddressEntry, desiredAddress string, suffix uint64) []ipv6AddressEntry {
+	var out []ipv6AddressEntry
+	for _, entry := range entries {
+		addr, err := netip.ParseAddr(entry.Address)
+		if err != nil || !addr.Is6() || addr.IsLinkLocalUnicast() {
+			continue
+		}
+		if addr.String() == desiredAddress {
+			continue
+		}
+		if ipv6HostSuffix64(addr) != suffix {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 type delegatedIPv6Targets struct {
@@ -4725,6 +4813,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  adopt --config <path> --candidates")
 	fmt.Fprintln(w, "  adopt --config <path> --apply")
 	fmt.Fprintln(w, "  render nixos --config <path> [--out <path>]")
+	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <path>]")
 	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run]")
 	fmt.Fprintln(w, "  serve --config <path> [--socket <path>]")
 	fmt.Fprintln(w, "  run --config <path>")

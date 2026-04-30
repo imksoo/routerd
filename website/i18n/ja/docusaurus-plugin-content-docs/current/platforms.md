@@ -12,6 +12,10 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
   Go バイナリを入れます。これにより、最小構成のルーターホストや
   NixOS で動的ローダの差に引っかかることを避けます。
 - `contrib/systemd/routerd.service` の systemd ユニット。
+- 実行時の依存には、制御に使う `iproute2`、`jq`、`dnsmasq`、
+  `nftables`、`conntrack`、PPPoE 利用時の `ppp` に加えて、標準的な
+  調査道具として `dnsutils` の `dig`、`iputils-ping` の `ping`、
+  `iputils-tracepath` の `tracepath`、`tcpdump` を含めます。
 - ファイアウォール生成では、WAN 側で受ける DHCPv6 クライアント応答を
   UDP 宛先ポート 546 だけで許可します。送信元ポート 547 は要求しません。
   一部のホームゲートウェイがエフェメラルポートから応答するためです。
@@ -44,9 +48,10 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
   を担う、というものです。手書き側の最小例は
   `examples/nixos-edge-configuration.nix` にあります。
 - 現在の NixOS レンダラはホスト設定、依存パッケージ、永続 sysctl、
-  基本的な systemd-networkd の `.network` 宣言を生成します。残りの
-  リソース種別については、引き続き Nix らしい永続設定の生成を実装して
-  いく予定です。
+  基本的な systemd-networkd の `.network` 宣言を生成します。DNS、パケット、
+  経路 MTU をその場で確認できるよう、`dnsutils`、`iputils`、`tcpdump`、
+  `traceroute` も生成パッケージに含めます。残りのリソース種別については、
+  引き続き Nix らしい永続設定の生成を実装していく予定です。
 - ルータとして使う NixOS ホストでは、生成される NixOS 設定で組み込みの
   逆方向経路検査を無効にします。そのうえで routerd のファイアウォールが
   他の Linux と同じく、WAN 側の UDP 宛先ポート 546 を送信元ポートに
@@ -68,8 +73,11 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
   `sysrc`、`service netif`、`service dhcp6c`、routerd が管理する
   dnsmasq の rc.d サービスで適用できます。
 - FreeBSD ホストでは、基本のネットワークコマンドに加えて、`jq`、
-  `dnsmasq`、`dhcp6`、`mpd5` パッケージが必要です。`dhcp6` パッケージには
-  DHCPv6-PD に使う `dhcp6c` コマンドと rc.d サービスが含まれます。
+  `dnsmasq`、`dhcp6`、`bind-tools`、`mpd5` パッケージが必要です。
+  `dhcp6` パッケージには DHCPv6-PD に使う `dhcp6c` コマンドと rc.d
+  サービスが含まれます。`bind-tools` は `dig` のために使います。
+  `ping`、`ping6`、`tcpdump`、`traceroute`、`netstat` は FreeBSD
+  base にある前提です。
 - FreeBSD の DHCPv6-PD レンダラは、`dhcp6c` で委譲プレフィックスを
   設定します。パッケージ版の KAME `dhcp6c` は、下流インターフェースの
   識別子を自身で決めます。routerd はそのアドレスから委譲プレフィックスを

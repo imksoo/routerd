@@ -78,20 +78,67 @@ the host's own diagnostics.
 ### 1.2 NTT Home-Gateway Profile Shape
 
 measure: In a NTT home-gateway LAN-side delegation environment, successful
-clients used DUID-LL, a stable IAID, IA_PD, Rapid Commit disabled, and `/60`
-delegated prefixes. DHCPv6 Advertise/Reply packets arrived at UDP destination
-546, and captures must not assume source port 547.
+clients used DUID-LL, IA_PD, Rapid Commit disabled, and `/60` delegated
+prefixes. DHCPv6 Advertise/Reply packets arrived at UDP destination 546, and
+captures must not assume source port 547.
+
+measure: After a home-gateway reboot, the DHCPv6-PD server can take a few
+minutes to start answering LAN-side clients. During that interval, lab routers
+sent valid Solicit packets without receiving Advertise. Once the server became
+ready, the same simple DUID-LL clients received Advertise/Reply quickly. routerd
+therefore treats "Solicit observed but no reply for tens of seconds immediately
+after HGW reboot" as a readiness observation, not as proof that the client shape
+is invalid.
+
+observe: A newly created lab router with a previously unseen MAC-derived
+DUID-LL sent repeated IA_PD Solicit packets during normal home-gateway uptime
+and received no Advertise within the short observation window. The same capture
+also saw a working router's Renew and another lab router's Rebind, so multicast
+visibility on the capture point was not the limiting factor. This weakens the
+simple "old per-client binding only" explanation; the remaining explanation is
+home-gateway state or timing that affects fresh Solicit outside the reboot
+acquisition window.
+
+observe: On a FreeBSD lab router that had previously received delegation,
+routerd-generated configuration was applied with `routerd apply --once`, then
+KAME `dhcp6c` was stopped and started through rc.d. The resulting minimal fresh
+Solicit used DUID-LL, IA_PD, and only DNS in the option request, matching the
+previously successful shape closely. During normal home-gateway uptime, the
+short capture saw no Advertise/Reply. This weakens a systemd-networkd-only
+packet-shape explanation and strengthens the hypothesis that fresh acquisition
+depends on home-gateway timing or internal state.
+
+observe: A helper that reads the home-gateway delegation table directly showed
+that a working commercial router refreshed its lease roughly two hours after
+the home-gateway reboot. The three lab routers only counted down from the
+leases acquired immediately after reboot and did not show comparable refresh.
+This shows that the home gateway can answer existing-binding Renew/Request
+during normal uptime. The routerd problem is therefore less about shaping fresh
+Solicit packets and more about preserving and observing the acquired lease
+state so Renew/Rebind continues.
+
+measure: In a packet capture from the same time window, the working router's
+Renew included Server ID, `T1=7200`, `T2=12600`, and IA Prefix preferred and
+valid lifetimes of `14400`. Lab Linux routers running systemd-networkd did send
+Renew/Rebind packets, but the IA_PD and IA Prefix lifetimes were all `0`. This
+difference is the highest-priority observation point for explaining why the
+home gateway accepts normal-uptime Renew from the working router while the lab
+Renew/Rebind attempts do not refresh the lease. routerd should surface this
+class of difference from `routerctl describe ipv6pd/<name>`.
 
 measure: A commercial router's initial Solicit did not include a prefix hint.
 routerd therefore omits exact and length-only prefix hints for
 `ntt-ngn-direct-hikari-denwa` and `ntt-hgw-lan-pd`. Exact hints are not modeled
 as generally harmful, but they are no longer the default shape.
 
-assert: DUID-LL and a stable IAID are strong defaults for NTT profiles. When
-the operator does not set `spec.iaid`, routerd derives IAID from the last four
-bytes of the uplink MAC address and renders it explicitly. Option-request
-contents, Reconfigure Accept, and Client FQDN can differ between working
-clients, so routerd does not treat those fields as the deciding profile knobs.
+assert: DUID-LL is the default identity shape for NTT profiles. routerd does
+not derive or render IAID unless the operator explicitly sets `spec.iaid`.
+systemd-networkd can ignore or retain IAID state across reconfiguration, so
+defaulting it in routerd added complexity without a clear benefit. routerd keeps
+the NTT profile minimal and avoids adding extra option-request tuning on top of
+the OS client. systemd-networkd can still emit protocol-maintenance options such
+as SOL_MAX_RT, so routerd should not claim byte-for-byte control of networkd
+Solicit packets unless it replaces the OS client.
 
 assert: The `ntt-ngn-direct-hikari-denwa` and `ntt-hgw-lan-pd` profiles should
 not send exact or length-only prefix hints by default. `prefixLength` remains
@@ -109,9 +156,22 @@ part of routerd's expected-shape model, but the systemd-networkd renderer omits
 assert: DHCPv6-PD acquisition is intentionally narrow: Linux uses
 systemd-networkd and FreeBSD uses KAME/WIDE `dhcp6c`.
 
-assert: NTT profiles default to real MAC-derived DUID-LL and MAC-derived IAID.
+assert: NTT profiles default to real MAC-derived DUID-LL.
 `duidRawData` and `iaid` are explicit overrides for HA failover, router
 replacement, or migration. They are not the default lab recovery path.
+
+assert: On FreeBSD, NTT profile rendering starts `dhcp6c` with `-n` so service
+restart does not send DHCPv6 Release. This is an internal profile behavior, not
+a public configuration knob; routerd still delegates normal Renew/Rebind timing
+to the OS DHCPv6 client.
+
+assert: Apply must preserve a DHCPv6 client's in-memory lease state unless the
+rendered configuration or identity actually changes. FreeBSD `dhcp6c` keeps
+the active exchange state in the running process; restarting it on every apply
+turns a valid lease into repeated fresh Solicit attempts and prevents natural
+Renew/Rebind observation. FreeBSD rc.conf comparison therefore treats `sysrc`
+output as service-manager state and must not rewrite `dhcp6c_flags="-n"` when
+the value is already present.
 
 ## 2. Lab-Specific Issues
 
@@ -242,6 +302,12 @@ routerctl describe inventory/host
 - Improve `IPv6PrefixDelegation` status when OS clients expose T1/T2 or
   lifetime data. Current and last prefixes, observed and expected DUID/IAID,
   last observed time, and warnings should remain distinct.
+- Rework the evidence behind `IPv6PrefixDelegation` observability. A delegated
+  address left on a downstream interface does not prove that the upstream
+  DHCPv6-PD lease is still active. `routerctl describe ipv6pd/<name>` should
+  distinguish derived address presence, OS client lease state, last observed
+  DHCPv6 Reply, T1/T2, and lifetimes. If the only evidence is a derived address,
+  it should show a warning instead of a clean health signal.
 - Extend `routerctl describe ipv6pd/<name>` so operational checks do not start
   with raw shell commands. The detail view should include the rendered client
   config summary, OS service state, last apply action that touched the client,
@@ -253,10 +319,10 @@ routerctl describe inventory/host
   `/usr/local/sbin` such as `dhcp6c` and `dnsmasq` can be available to rc.d but
   still appear missing if routerd checks with a narrow PATH. Inventory should
   use platform-aware lookup paths and show the resolved command path.
-- Complete stale delegated prefix withdrawal. Apply now removes routerd-derived
-  LAN addresses and DS-Lite source addresses that share managed suffixes after
-  a PD change. LAN RA/DHCPv6 withdrawal still needs explicit design so clients
-  stop using an old prefix quickly when PD disappears.
+- Finish stale delegated prefix withdrawal from LAN services. Apply removes
+  routerd-derived LAN addresses and DS-Lite source addresses that share managed
+  suffixes after a PD change. LAN RA/DHCPv6 withdrawal still needs explicit
+  design so clients stop using an old prefix quickly when PD disappears.
 - Use `Inventory/host` as an input to future platform advice or rendering for
   host prerequisites such as virtual bridge multicast behavior, RA acceptance,
   and service-manager differences.

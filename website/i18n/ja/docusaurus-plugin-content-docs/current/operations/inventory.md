@@ -18,7 +18,7 @@ routerd は apply の開始時にホストの素性を小さく観測して
 | 仮想化判定 | `systemd-detect-virt` (Linux)、`kern.vm_guest` (FreeBSD) |
 | DMI ベンダー (取れる範囲) | `/sys/class/dmi/id/sys_vendor` |
 | サービス管理 | systemd / rc.d を判定 |
-| 使えるコマンド | `nft`、`pf`、`dnsmasq`、`dhcp6c`、`sysctl`、... |
+| 使えるコマンド | 制御用の `nft`、`pf`、`dnsmasq`、`dhcp6c`、`sysctl` と、調査用の `dig`、`ping`、`tcpdump`、`tracepath`、`traceroute`、`ss`、`netstat` など |
 
 インベントリは **観測のみ** です。YAML に書きません。
 

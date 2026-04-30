@@ -19,7 +19,7 @@ set so decisions don't have to guess.
 | Virtualization | `systemd-detect-virt` (Linux), `kern.vm_guest` (FreeBSD) |
 | DMI vendor (best effort) | `/sys/class/dmi/id/sys_vendor` |
 | Service manager | systemd / rc.d detection |
-| Available commands | `nft`, `pf`, `dnsmasq`, `dhcp6c`, `sysctl`, ... |
+| Available commands | control tools (`nft`, `pf`, `dnsmasq`, `dhcp6c`, `sysctl`) and diagnostics (`dig`, `ping`, `tcpdump`, `tracepath`, `traceroute`, `ss`, `netstat`, ...) |
 
 Inventory is **observation only**. It is not declared in the YAML.
 

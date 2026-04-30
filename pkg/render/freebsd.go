@@ -110,8 +110,9 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			pds = append(pds, freeBSDPD{
 				Name:         res.Metadata.Name,
 				IfName:       ifname,
+				Profile:      profile,
 				PrefixLength: api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
-				IAID:         effectiveIPv6PDIAID(profile, spec.IAID, ifname),
+				IAID:         strings.TrimSpace(spec.IAID),
 			})
 		case "PPPoEInterface":
 			spec, err := res.PPPoEInterfaceSpec()
@@ -155,6 +156,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 type freeBSDPD struct {
 	Name         string
 	IfName       string
+	Profile      string
 	PrefixLength int
 	IAID         string
 }
@@ -293,7 +295,25 @@ func freeBSDDHCP6C(router *api.Router, aliases map[string]string, pds []freeBSDP
 	return buf.Bytes(), nil
 }
 
+func colonHex(value string) string {
+	cleaned := strings.NewReplacer(":", "", "-", "", " ", "").Replace(value)
+	if len(cleaned)%2 != 0 {
+		return value
+	}
+	var parts []string
+	for i := 0; i < len(cleaned); i += 2 {
+		parts = append(parts, strings.ToLower(cleaned[i:i+2]))
+	}
+	return strings.Join(parts, ":")
+}
+
 func freeBSDDHCP6CFlags(pds []freeBSDPD) string {
+	for _, pd := range pds {
+		switch pd.Profile {
+		case api.IPv6PDProfileNTTNGNDirectHikariDenwa, api.IPv6PDProfileNTTHGWLANPD:
+			return "-n"
+		}
+	}
 	return ""
 }
 

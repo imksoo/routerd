@@ -34,7 +34,10 @@ spec:
             - --status-file
             - /run/routerd/status.json
         additionalPackages:
+          - dnsutils
+          - iputils
           - tcpdump
+          - traceroute
         debugSystemPackages: true
         ssh:
           enabled: true

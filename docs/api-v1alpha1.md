@@ -526,11 +526,13 @@ How routerd behaves:
   - `ntt-hgw-lan-pd` is for a router behind an NTT home gateway that
     delegates `/60` prefixes to the LAN side.
   Both NTT profiles request IA_PD only, disable rapid commit, use a
-  link-layer DUID, use a stable MAC-derived IAID when `spec.iaid` is omitted,
-  force DHCPv6 Solicit when needed, and default the expected delegated length
-  to `/60`. For systemd-networkd, routerd deliberately omits
-  `PrefixDelegationHint=` for these profiles so the first Solicit stays close
-  to known working client behavior.
+  link-layer DUID, force DHCPv6 Solicit when needed, and default the expected
+  delegated length to `/60`. routerd does not derive or render IAID unless
+  `spec.iaid` is explicitly set. For systemd-networkd, routerd deliberately
+  omits `PrefixDelegationHint=`, disables hostname sending, and disables the
+  option-use knobs that are not needed for PD where networkd exposes them.
+  Some protocol-maintenance request options may still be emitted by
+  systemd-networkd itself.
 - During apply, routerd records observed prefix-delegation state in
   `ipv6PrefixDelegation.<name>.lease` in the local state store. The lease JSON
   holds the current prefix, last known prefix, observed DUID, IAID, expected
@@ -549,10 +551,10 @@ How routerd behaves:
 - For systemd-networkd and FreeBSD `dhcp6c` clients, routerd records observed
   DHCP identity into the lease when available. With `dhcp6c`, the DUID is read
   from `/var/db/dhcp6c_duid`. For NTT profiles, routerd records an expected
-  DUID derived from the uplink MAC as a DHCPv6 link-layer DUID, and renders an
-  IAID derived from the last four bytes of that MAC unless `spec.iaid` is set.
-  These values are state memory for display and identity checks, while the
-  rendered DUID/IAID are the desired DHCP identity.
+  DUID derived from the uplink MAC as a DHCPv6 link-layer DUID. These values
+  are state memory for display and identity checks. routerd does not derive or
+  render an IAID by default; use `spec.iaid` only when an operator explicitly
+  needs to pin the DHCP identity.
 - The OS DHCPv6 client remains responsible for Renew/Rebind before the lease
   expires. routerd should not normally restart that client during apply,
   because a restart can turn a renewal path into a fresh Solicit or Release.
@@ -562,8 +564,7 @@ How routerd behaves:
 - `spec.iaid` pins the DHCPv6 IAID. It may be written as decimal, `0x`
   prefixed hex, or 8 hex digits. systemd-networkd renders it as a decimal
   `IAID=` value; FreeBSD `dhcp6c` uses it as the `ia-pd` / `id-assoc pd`
-  identifier. For NTT profiles, omitting `spec.iaid` makes routerd derive a
-  stable IAID from the uplink MAC address and render it explicitly.
+  identifier. Leave it unset for the normal NTT profile path.
 - `spec.duidType` defaults to `link-layer` for NTT profiles when omitted.
   This keeps systemd-networkd away from its default machine-id based DUID and
   keeps FreeBSD/KAME `dhcp6c` aligned with NTT home-gateway expectations.
@@ -1258,7 +1259,8 @@ How routerd behaves:
   `/run/routerd/routerd.sock`, and a `60s` apply interval.
 - `spec.debugSystemPackages` adds operational tools to
   `environment.systemPackages`. The package set is derived from resources,
-  for example `dnsmasq`, `nftables`, `ppp`, and `iproute2`.
+  for example `dnsmasq`, `nftables`, `ppp`, `iproute2`, `dnsutils`,
+  `iputils`, `tcpdump`, and `traceroute`.
 - `Sysctl` resources with `persistent: true` render into
   `boot.kernel.sysctl`. Runtime-only sysctl resources remain the daemon's
   responsibility.

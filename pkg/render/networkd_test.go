@@ -52,6 +52,9 @@ func TestNetworkdDropinsRenderDHCPv6PD(t *testing.T) {
 	if strings.Contains(wan, "PrefixDelegationHint=") {
 		t.Fatalf("wan drop-in should not render a prefix hint for NTT profiles:\n%s", wan)
 	}
+	if strings.Contains(wan, "\nIAID=") {
+		t.Fatalf("wan drop-in should not render IAID unless explicitly configured:\n%s", wan)
+	}
 	if strings.Contains(wan, "SendRelease=") {
 		t.Fatalf("wan drop-in should leave DHCPv6 Release behavior to networkd:\n%s", wan)
 	}
@@ -127,6 +130,11 @@ func TestNetworkdDropinsRenderNTTFletsProfile(t *testing.T) {
 	if strings.Contains(wan, "PrefixDelegationHint=") {
 		t.Fatalf("wan drop-in should not render a prefix hint for NTT profiles:\n%s", wan)
 	}
+	for _, removed := range []string{"SendHostname=", "UseNTP=", "UseSIP=", "UseCaptivePortal=", "RequestOptions="} {
+		if strings.Contains(wan, removed) {
+			t.Fatalf("wan drop-in should keep the NTT profile minimal and not render %q:\n%s", removed, wan)
+		}
+	}
 }
 
 func TestNetworkdDropinsRenderGenericPrefixHint(t *testing.T) {
@@ -150,30 +158,6 @@ func TestNetworkdDropinsRenderGenericPrefixHint(t *testing.T) {
 	wan := string(files[0].Data)
 	if !strings.Contains(wan, "PrefixDelegationHint=::/56") {
 		t.Fatalf("generic drop-in missing PrefixDelegationHint:\n%s", wan)
-	}
-}
-
-func TestIAIDFromMACUsesLastFourOctets(t *testing.T) {
-	got, ok := iaidFromMAC("02:00:00:12:34:56")
-	if !ok {
-		t.Fatal("iaidFromMAC returned !ok")
-	}
-	if got != 0x00123456 {
-		t.Fatalf("iaidFromMAC = %#x, want 0x00123456", got)
-	}
-}
-
-func TestEffectiveIPv6PDIAIDPrefersConfiguredValue(t *testing.T) {
-	got := effectiveIPv6PDIAID(api.IPv6PDProfileNTTHGWLANPD, "00000001", "no-such-interface")
-	if got != "00000001" {
-		t.Fatalf("effectiveIPv6PDIAID = %q, want configured value", got)
-	}
-}
-
-func TestEffectiveIPv6PDIAIDDoesNotDefaultForGenericProfile(t *testing.T) {
-	got := effectiveIPv6PDIAID(api.IPv6PDProfileDefault, "", "no-such-interface")
-	if got != "" {
-		t.Fatalf("effectiveIPv6PDIAID = %q, want empty for generic profile", got)
 	}
 }
 

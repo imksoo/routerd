@@ -11,6 +11,10 @@ parity that the code does not yet provide.
   remote-install tarballs contain static Go binaries. This avoids dynamic
   loader surprises on minimal router hosts and NixOS systems.
 - systemd unit at `contrib/systemd/routerd.service`.
+- Runtime dependencies include the router control tools (`iproute2`, `jq`,
+  `dnsmasq`, `nftables`, `conntrack`, and `ppp` when PPPoE is used) plus
+  standard diagnostics: `dig` from `dnsutils`, `ping` from `iputils-ping`,
+  `tracepath` from `iputils-tracepath`, and `tcpdump`.
 - Firewall rendering permits WAN-side DHCPv6 client replies by UDP
   destination port 546 only. It must not require a server source port of
   547, because some home gateways reply from ephemeral UDP ports.
@@ -41,8 +45,10 @@ parity that the code does not yet provide.
   hand-written side of this split.
 - The current NixOS renderer emits host settings, dependency packages,
   persistent sysctl values, and basic systemd-networkd `.network`
-  declarations. More resource kinds still need Nix-native persistent
-  rendering.
+  declarations. It also includes common diagnostics (`dnsutils`, `iputils`,
+  `tcpdump`, and `traceroute`) so router hosts can inspect DNS, packet flow,
+  and path MTU without ad hoc package edits. More resource kinds still need
+  Nix-native persistent rendering.
 - For router hosts, the generated NixOS module disables the built-in
   reverse-path firewall check. routerd's own firewall rules then apply
   the same DHCPv6 client rule as other Linux targets: accept UDP
@@ -64,8 +70,10 @@ parity that the code does not yet provide.
   `service netif`, `service dhcp6c`, and the routerd-managed dnsmasq rc.d
   service.
 - FreeBSD hosts need the base networking tools plus `jq`, `dnsmasq`, `dhcp6`,
-  and `mpd5` packages for the current groundwork. The `dhcp6` package
-  provides the `dhcp6c` command and rc.d service used for DHCPv6-PD.
+  `bind-tools`, and `mpd5` packages for the current groundwork. The `dhcp6`
+  package provides the `dhcp6c` command and rc.d service used for DHCPv6-PD.
+  `bind-tools` provides `dig`; `ping`, `ping6`, `tcpdump`, `traceroute`, and
+  `netstat` are expected from the base system.
 - The FreeBSD DHCPv6-PD renderer configures delegated prefixes through
   `dhcp6c`. The packaged KAME `dhcp6c` assigns the downstream interface
   identifier itself; routerd observes that address, derives the delegated

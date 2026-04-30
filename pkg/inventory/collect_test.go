@@ -15,6 +15,13 @@ func TestCollectLinuxInventory(t *testing.T) {
 		"nft":                 true,
 		"dnsmasq":             true,
 		"sysctl":              true,
+		"dig":                 true,
+		"ping":                true,
+		"tcpdump":             true,
+		"tracepath":           true,
+		"ip":                  true,
+		"ss":                  true,
+		"journalctl":          true,
 	}
 	files := map[string]string{
 		"/sys/class/dmi/id/sys_vendor":   "QEMU",
@@ -71,7 +78,7 @@ func TestCollectLinuxInventory(t *testing.T) {
 	if got.ServiceManager != "systemd" {
 		t.Fatalf("service manager = %q", got.ServiceManager)
 	}
-	if !got.Commands["nft"] || got.Commands["dhcp6c"] {
+	if !got.Commands["nft"] || !got.Commands["dig"] || !got.Commands["tcpdump"] || !got.Commands["tracepath"] || got.Commands["dhcp6c"] {
 		t.Fatalf("commands = %#v", got.Commands)
 	}
 }
@@ -80,7 +87,7 @@ func TestCollectFreeBSDInventory(t *testing.T) {
 	collector := Collector{
 		GOOS: "freebsd",
 		LookPath: func(name string) (string, error) {
-			if name == "sysctl" || name == "uname" || name == "dhcp6c" {
+			if name == "sysctl" || name == "uname" || name == "dhcp6c" || name == "dig" || name == "ping6" || name == "traceroute" || name == "netstat" || name == "sockstat" || name == "pfctl" {
 				return "/usr/sbin/" + name, nil
 			}
 			return "", exec.ErrNotFound
@@ -105,7 +112,7 @@ func TestCollectFreeBSDInventory(t *testing.T) {
 	if got.ServiceManager != "rc.d" {
 		t.Fatalf("service manager = %q", got.ServiceManager)
 	}
-	if !got.Commands["dhcp6c"] || got.Commands["nft"] {
+	if !got.Commands["dhcp6c"] || !got.Commands["dig"] || !got.Commands["traceroute"] || !got.Commands["netstat"] || got.Commands["nft"] {
 		t.Fatalf("commands = %#v", got.Commands)
 	}
 }

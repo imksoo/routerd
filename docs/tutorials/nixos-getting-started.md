@@ -63,7 +63,8 @@ architecture before you invest in a NixOS configuration.
 
 Clone the repository and enter the dev shell. The shell pre-installs
 every host tool routerd's renderers shell out to (`iproute2`, `nftables`,
-`dnsmasq`, `conntrack-tools`, `ppp`), plus Go and Make:
+`dnsmasq`, `conntrack-tools`, `ppp`) and standard diagnostics (`dnsutils`,
+`iputils`, `tcpdump`, `traceroute`), plus Go and Make:
 
 ```bash
 git clone https://github.com/imksoo/routerd
@@ -89,7 +90,7 @@ they are not installed anywhere.
 routerd ships a NixOS module at `contrib/nix/module.nix`. The module
 installs the `routerd` package, declares the systemd unit, and ensures
 the renderers can find `iproute2`, `nftables`, `dnsmasq`, `conntrack`,
-and `ppp` at runtime.
+`ppp`, `dnsutils`, `iputils`, `tcpdump`, and `traceroute` at runtime.
 
 ### 3.1 Add the flake input
 

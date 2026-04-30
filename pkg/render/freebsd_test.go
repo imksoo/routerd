@@ -34,7 +34,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		`ifconfig_vtnet1="inet 192.168.10.1/24"`,
 		`dhcp6c_enable="YES"`,
 		`dhcp6c_interfaces="vtnet0"`,
-		`dhcp6c_flags=""`,
+		`dhcp6c_flags="-n"`,
 		`mpd_enable="YES"`,
 		`mpd_flags="-b"`,
 	} {
@@ -69,6 +69,9 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	}
 	if strings.Contains(dhcp6c, "prefix ::/60;") {
 		t.Fatalf("dhcp6c output must not render unsupported length-only prefix hints:\n%s", dhcp6c)
+	}
+	if strings.Contains(dhcp6c, "prefix 2001:db8") {
+		t.Fatalf("dhcp6c output must not render explicit prefix hints for the NTT profile:\n%s", dhcp6c)
 	}
 	mpd5 := string(got.MPD5)
 	for _, want := range []string{

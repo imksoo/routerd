@@ -15,6 +15,12 @@ behavior changes and new resource shapes as the model takes shape.
   unchanged.
 - Breaking: removed obsolete pre-release DHCPv6-PD workaround fields. DHCPv6
   Renew/Rebind and Release behavior is delegated to the OS client.
+- FreeBSD NTT-profile rendering now starts KAME `dhcp6c` with `-n` so service
+  restarts do not send DHCPv6 Release while Renew/Rebind timing remains
+  delegated to `dhcp6c`.
+- FreeBSD apply no longer rewrites `dhcp6c_flags="-n"` on every loop. This
+  prevents unnecessary `dhcp6c` restarts and preserves the DHCPv6 client's
+  in-memory lease state for natural Renew/Rebind.
 - `routerctl` now has kubectl-style `get`, `describe`, and `show` verbs.
   `show` combines desired config, observed host state, ownership ledger data,
   state history, and events; NAPT/conntrack inspection is reported under
@@ -25,12 +31,21 @@ behavior changes and new resource shapes as the model takes shape.
   inventory/host` shows collected OS inventory.
 - DHCPv6-PD state is stored in the structured
   `ipv6PrefixDelegation.<name>.lease` object. NTT profiles use MAC-derived
-  DUID-LL and a MAC-derived IAID by default, omit exact prefix hints, and keep
-  `duidRawData` / `iaid` only as explicit operator overrides for migration or
-  HA cases.
+  DUID-LL by default, omit exact prefix hints, suppress DHCPv6 hostname
+  sending, and keep `duidRawData` / `iaid` only as explicit operator
+  overrides for migration or HA cases. NTT profiles also disable networkd
+  DHCPv6 option-use knobs that are not needed for PD where networkd exposes
+  them.
 - `IPv6RAAddress` now models WAN-side RA/SLAAC separately from DHCPv6-PD so
   DS-Lite AFTR DNS lookups can rely on an upstream IPv6 address and RA default
   route.
+- Router diagnostics are now part of the expected host toolset: Linux remote
+  checks require `dig`, `ping`, `tcpdump`, and `tracepath`; FreeBSD checks
+  require `dig` alongside the base `ping`, `ping6`, `tcpdump`, and
+  `traceroute` tools. Host inventory records additional troubleshooting
+  commands when present.
+- dnsmasq conditional forwarding now renders IPv6 upstream DNS addresses in the
+  dnsmasq `server=/domain/addr` form without URL-style brackets.
 - Apply now derives delegated LAN IPv6 addresses and DS-Lite tunnel source
   addresses from the current PD state object when available, and removes
   stale routerd-derived IPv6 addresses that share managed suffixes after a PD

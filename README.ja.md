@@ -33,6 +33,7 @@ routerd は、ルータの設定を YAML で宣言しておくと、その通り
 - dnsmasq
 - nftables
 - conntrack
+- IPv4/IPv6 の調査用に dig、ping、tcpdump、tracepath
 - PPPoE を使う場合は pppd
 - sqlite3 は状態データベースを人が調べる場合だけ任意で使う
 
@@ -40,10 +41,10 @@ Ubuntu の例:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp
+sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp dnsutils iputils-ping iputils-tracepath tcpdump
 ```
 
-conntrack は、複数 DS-Lite トンネルでのポリシールーティングや、フローごとのマーク状態を診断する用途でも使います。PPPoE のリソースは、ディストリビューションに含まれる pppd と rp-pppoe プラグインから動かします。SQLite は静的バイナリに組み込まれるため、実行時に `sqlite3` コマンドは不要です。`/var/lib/routerd/routerd.db` を手作業で確認したい場合だけ入れてください。
+conntrack は、複数 DS-Lite トンネルでのポリシールーティングや、フローごとのマーク状態を診断する用途でも使います。PPPoE のリソースは、ディストリビューションに含まれる pppd と rp-pppoe プラグインから動かします。`dig`、`ping`、`tcpdump`、`tracepath` は、ルータ自身から IPv4/IPv6 の到達性、DNS、経路 MTU、DHCPv6 のパケットを確認するための標準的な調査道具として扱います。SQLite は静的バイナリに組み込まれるため、実行時に `sqlite3` コマンドは不要です。`/var/lib/routerd/routerd.db` を手作業で確認したい場合だけ入れてください。
 
 ## ビルド
 

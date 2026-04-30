@@ -25,12 +25,12 @@ ifeq ($(ROUTERD_OS),freebsd)
 RUNDIR ?= /var/run/routerd
 STATEDIR ?= /var/db/routerd
 INSTALL_SERVICE_TARGET ?= install-rc-freebsd
-SERVICE_DEPS := pf dnsmasq
+SERVICE_DEPS := pf dnsmasq dig ping ping6 tcpdump traceroute netstat
 else
 RUNDIR ?= /run/routerd
 STATEDIR ?= /var/lib/routerd
 INSTALL_SERVICE_TARGET ?= install-systemd
-SERVICE_DEPS := systemctl resolvectl dnsmasq nft conntrack
+SERVICE_DEPS := systemctl resolvectl dnsmasq nft conntrack dig ping tcpdump tracepath
 endif
 
 BUILDDIR ?= bin/$(ROUTERD_OS)$(if $(GOARCH),-$(GOARCH))
@@ -80,10 +80,10 @@ check-remote-deps:
 	@ssh $(REMOTE_HOST) 'missing=0; \
 		remote_os=$$(uname -s); \
 		if [ "$$remote_os" = FreeBSD ]; then \
-			required="sudo tar install ifconfig sysctl sysrc service pfctl dnsmasq dhcp6c mpd5 jq"; \
+			required="sudo tar install ifconfig sysctl sysrc service pfctl dnsmasq dhcp6c mpd5 jq dig ping ping6 tcpdump traceroute netstat"; \
 			optional_ppp=""; \
 		else \
-			required="sudo tar install ip sysctl systemctl resolvectl dnsmasq nft conntrack jq"; \
+			required="sudo tar install ip sysctl systemctl resolvectl dnsmasq nft conntrack jq dig ping tcpdump tracepath"; \
 			optional_ppp="pppd"; \
 		fi; \
 		for cmd in $$required; do \

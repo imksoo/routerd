@@ -75,6 +75,10 @@ in {
         dnsmasq
         conntrack-tools
         ppp
+        dnsutils
+        iputils
+        tcpdump
+        traceroute
         systemd
       ];
 

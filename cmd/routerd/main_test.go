@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
@@ -98,6 +99,94 @@ ifconfig_vtnet0_ipv6="inet6 accept_rtadv"
 	ifnames := freeBSDDHCPClientIfnames([]byte("interface \"vtnet2\" {\n  ignore routers;\n};\n"))
 	if len(ifnames) != 1 || ifnames[0] != "vtnet2" {
 		t.Fatalf("dhclient ifnames = %v, want [vtnet2]", ifnames)
+	}
+}
+
+func TestParseFreeBSDSysrcValue(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		out  string
+		want string
+	}{
+		{name: "dash value", key: "dhcp6c_flags", out: "dhcp6c_flags: -n\n", want: "-n"},
+		{name: "quoted style not emitted", key: "ifconfig_vtnet0", out: "ifconfig_vtnet0: DHCP\n", want: "DHCP"},
+		{name: "fallback raw", key: "missing", out: "NO\n", want: "NO"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseFreeBSDSysrcValue(tt.key, []byte(tt.out)); got != tt.want {
+				t.Fatalf("parseFreeBSDSysrcValue() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyFreeBSDConfigNoopDoesNotRestartDHCP6C(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	marker := filepath.Join(dir, "unexpected-command")
+	writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  gateway_enable) echo "gateway_enable: YES"; exit 0 ;;
+  ipv6_gateway_enable) echo "ipv6_gateway_enable: YES"; exit 0 ;;
+  dhcp6c_enable) echo "dhcp6c_enable: YES"; exit 0 ;;
+  dhcp6c_interfaces) echo "dhcp6c_interfaces: vtnet0"; exit 0 ;;
+  dhcp6c_flags) echo "dhcp6c_flags: -n"; exit 0 ;;
+esac
+echo "$@" >> %q
+exit 64
+`, marker))
+	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "dhcp6c" ] && [ "$2" = "status" ]; then
+  exit 0
+fi
+echo "$@" >> %q
+exit 64
+`, marker))
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcp6c", Profile: "ntt-hgw-lan-pd", DUIDRawData: "020000000101"}},
+	}}}
+	data, err := render.FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	dhcp6cPath := filepath.Join(dir, "dhcp6c.conf")
+	if err := os.WriteFile(dhcp6cPath, data.DHCP6C, 0644); err != nil {
+		t.Fatalf("seed dhcp6c.conf: %v", err)
+	}
+	duidPath := filepath.Join(dir, "dhcp6c_duid")
+	if changed, backup, err := routerstate.EnsureKAMEDHCP6CDUIDLLRaw(duidPath, "020000000101", time.Now()); err != nil {
+		t.Fatalf("seed DUID: %v", err)
+	} else if !changed || backup != "" {
+		t.Fatalf("seed DUID changed=%v backup=%q, want initial write", changed, backup)
+	}
+
+	changed, err := applyFreeBSDConfig(router, "", dhcp6cPath, duidPath, "")
+	if err != nil {
+		t.Fatalf("apply FreeBSD config: %v", err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("changed = %v, want no-op", changed)
+	}
+	if data, err := os.ReadFile(marker); err == nil {
+		t.Fatalf("unexpected mutating command(s):\n%s", data)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("read marker: %v", err)
+	}
+}
+
+func writeExecutable(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0755); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 
@@ -580,6 +669,40 @@ func TestDelegatedPrefixFromObservedIgnoresHostRoute(t *testing.T) {
 		"2001:db8:3d60:1240::2/128",
 	}, nil, 60); ok {
 		t.Fatalf("prefix = %s, want no prefix from host route", got)
+	}
+}
+
+func TestDelegatedPrefixFromAddressEntriesIgnoresManagedSuffixWhenFreshClientAddressExists(t *testing.T) {
+	got, ok := delegatedPrefixFromAddressEntries([]ipv6AddressEntry{
+		{Address: "fe80::1", PrefixLen: 64},
+		{Address: "2001:db8:3d60:1240::1", PrefixLen: 64},
+		{Address: "2001:db8:3d60:1220:be24:11ff:fea3:c1f4", PrefixLen: 64},
+	}, 60, map[uint64]bool{ipv6HostSuffix64(netip.MustParseAddr("::1")): true})
+	if !ok {
+		t.Fatal("delegated prefix not found")
+	}
+	if got != "2001:db8:3d60:1220::/60" {
+		t.Fatalf("prefix = %s, want 2001:db8:3d60:1220::/60", got)
+	}
+}
+
+func TestDelegatedPrefixFromAddressEntriesFallsBackWhenOnlyManagedSuffixExists(t *testing.T) {
+	if got, ok := delegatedPrefixFromAddressEntries([]ipv6AddressEntry{
+		{Address: "2001:db8:3d60:1230::3", PrefixLen: 64},
+	}, 60, map[uint64]bool{ipv6HostSuffix64(netip.MustParseAddr("::3")): true}); ok {
+		t.Fatalf("prefix = %s, want no prefix from filtered managed suffix", got)
+	}
+}
+
+func TestConflictingManagedIPv6Addresses(t *testing.T) {
+	got := conflictingManagedIPv6Addresses([]ipv6AddressEntry{
+		{Address: "fe80::1", PrefixLen: 64},
+		{Address: "2001:db8:3d60:1240::1", PrefixLen: 64},
+		{Address: "2001:db8:3d60:1220::1", PrefixLen: 64},
+		{Address: "2001:db8:3d60:1220::100", PrefixLen: 128},
+	}, "2001:db8:3d60:1220::1", ipv6HostSuffix64(netip.MustParseAddr("::1")))
+	if len(got) != 1 || got[0].Address != "2001:db8:3d60:1240::1" {
+		t.Fatalf("conflicts = %#v, want stale ::1 only", got)
 	}
 }
 

@@ -74,7 +74,28 @@ func (c Collector) Collect() Status {
 	status.Virtualization.Type = c.virtualizationType()
 	status.DMI = c.dmi()
 	status.ServiceManager = c.serviceManager()
-	for _, name := range []string{"systemd-detect-virt", "nft", "pf", "dnsmasq", "dhcp6c", "sysctl"} {
+	for _, name := range []string{
+		"systemd-detect-virt",
+		"nft",
+		"pf",
+		"dnsmasq",
+		"dhcp6c",
+		"sysctl",
+		"dig",
+		"ping",
+		"ping6",
+		"tcpdump",
+		"tracepath",
+		"traceroute",
+		"ip",
+		"ss",
+		"resolvectl",
+		"networkctl",
+		"journalctl",
+		"netstat",
+		"sockstat",
+		"pfctl",
+	} {
 		status.Commands[name] = c.commandExists(name)
 	}
 	return status

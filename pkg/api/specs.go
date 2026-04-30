@@ -223,10 +223,6 @@ func EffectiveIPv6PDDUIDType(profile, configured string) string {
 	return ""
 }
 
-func ShouldRenderIPv6PDPrefixHint(profile string) bool {
-	return !IsNTTIPv6PDProfile(profile)
-}
-
 type IPv6DelegatedAddressSpec struct {
 	PrefixDelegation string           `yaml:"prefixDelegation" json:"prefixDelegation"`
 	Interface        string           `yaml:"interface" json:"interface"`

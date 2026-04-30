@@ -269,7 +269,7 @@ func writeDNSConditionalForwarders(buf *bytes.Buffer, router *api.Router, aliase
 			return fmt.Errorf("%s: %w", res.ID(), err)
 		}
 		for _, server := range servers {
-			buf.WriteString("server=/" + domain + "/" + server + "\n")
+			buf.WriteString("server=/" + domain + "/" + strings.TrimSpace(server) + "\n")
 		}
 	}
 	return nil

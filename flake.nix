@@ -60,6 +60,10 @@
               iproute2
               conntrack-tools
               ppp
+              dnsutils
+              iputils
+              tcpdump
+              traceroute
             ];
           };
 
