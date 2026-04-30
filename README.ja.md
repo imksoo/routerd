@@ -203,6 +203,9 @@ DHCPv6-PD のラボ検証では、`routerd apply --once --override-client <clien
 - [対応プラットフォーム](docs/platforms.ja.md)
 - [はじめに（英語）](docs/tutorials/getting-started.md)
 - [Nix / NixOS から始める（英語）](docs/tutorials/nixos-getting-started.md)
+- [設計メモとロードマップ](docs/design-notes.ja.md)
+- [NTT NGN/HGW の DHCPv6-PD 知識ベース（日本語サイト）](website/i18n/ja/docusaurus-plugin-content-docs/current/knowledge-base/ntt-ngn-pd-acquisition.md)
+- [DHCPv6-PD クライアント対応表（日本語サイト）](website/i18n/ja/docusaurus-plugin-content-docs/current/knowledge-base/dhcpv6-pd-clients.md)
 - [更新履歴（英語）](docs/releases/changelog.md)
 - [英語 README](README.md)
 

@@ -22,8 +22,41 @@ rediscover these traps. Evidence is graded with the labels documented in
 - HGW LAN-side RA flags: `M=0`, `O=1` (`Flags [other stateful]`); prefix info
   for SLAAC is a /64 derived from the HGW's own /60.
 - HGW LAN PD assignment table caps at 15 slots (`1/15`, `2/15`, ..., `15/15`).
-- HGW had been running continuously for several days before the test session.
-  No reboot occurred during the session.
+- HGW had been running continuously for several days before the first
+  steady-state test. Later phases intentionally rebooted it to compare the
+  post-reboot acquisition window with normal uptime.
+
+## State model summary
+
+The lab evidence is easiest to read as a small state machine. The exact timers
+are firmware behavior, not a public API; the diagram records what routerd must
+handle, not what every HGW must implement.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Healthy
+  Healthy --> AcquisitionOpen: HGW reboot / DHCPv6 service starts
+  AcquisitionOpen --> SteadyState: acquisition window closes
+  SteadyState --> Hung: Renew/Request/Release all stop receiving Reply
+  Hung --> AcquisitionOpen: operator reboots HGW
+  SteadyState --> AcquisitionOpen: unknown firmware cycle? (not relied on)
+
+  state AcquisitionOpen {
+    [*] --> AcceptsFreshSolicit
+    AcceptsFreshSolicit: accepts Solicit -> Advertise/Reply
+    AcceptsFreshSolicit: accepts Request/Renew/Release
+  }
+  state SteadyState {
+    [*] --> MaintenanceOnly
+    MaintenanceOnly: accepts valid Request/Renew/Release
+    MaintenanceOnly: often drops fresh Solicit
+  }
+  state Hung {
+    [*] --> SilentDrop
+    SilentDrop: drops Solicit/Request/Renew/Rebind/Release
+    SilentDrop: still emits RA and answers NDP
+  }
+```
 
 ## A. The Solicit path is not reliable on a long-running HGW
 
@@ -604,6 +637,25 @@ not as the NTT-profile default.
   `dhcp6c`. FreeBSD `dhcpcd` is a known-bad combination for this profile and
   routerd emits a warning rather than blocking it, so future lab work can
   still re-test the path without changing validation rules.
+
+## M. Ubuntu dhcpcd test record (2026-04-30)
+
+This section records the first Linux `dhcpcd` renderer test after routerd added
+managed dhcpcd services and hooks.
+
+- **measure**: routerd rendered a per-resource Linux dhcpcd service, stopped a
+  stale managed `dhcp6c` unit that was still bound to UDP/546, and regenerated
+  the dhcpcd hook as a file-global `script` directive so dhcpcd 10 would call
+  it.
+- **measure**: After clearing dhcpcd's lease and DUID files and recreating a
+  DUID-LL from the real WAN MAC, Ubuntu dhcpcd repeatedly sent Solicit with
+  DUID-LL, IA_PD, DNS/opt_82/opt_83 ORO entries, and Vendor-Class.
+- **measure**: During the short steady-state observation the HGW emitted RA and
+  NDP traffic but did not send Advertise or Reply to the Ubuntu dhcpcd client.
+  The existing HGW table entry for that MAC counted down and did not refresh.
+- **assert**: Linux `dhcpcd` remains an explicit lab candidate. Do not promote
+  it to the NTT default until both acquisition and T1 Renew succeed in the
+  target environment.
 
 ## References
 

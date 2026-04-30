@@ -236,7 +236,7 @@ Sections H, H.1, and K.4–K.5 for details.
 | --- | --- | --- |
 | systemd-networkd | cite/measure: Supports `DUIDType=link-layer`, `IAID`, `PrefixDelegationHint`, and `WithoutRA`. Renew/Rebind IA Prefix lifetimes can be zero in the measured Linux path. | Keep it for generic Linux DHCPv6-PD, but do not use it as the preferred NTT home-gateway path. |
 | KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. Hint-bearing Solicit and Renew/Rebind can carry IA Prefix lifetimes. | Use it for FreeBSD and as the Linux escape path for NTT home-gateway profiles. routerd manages DUID-LL files for NTT profiles. |
-| `dhcpcd` | cite/believe: A single active client for IPv4 DHCP, IPv6 RA/SLAAC, IA_NA, and IA_PD. It is packaged on Linux, NixOS, and FreeBSD. Lab Renew/Rebind behaviour is not yet measured in this repository. | Add a renderer and service path for lab evaluation. Do not make it the NTT default until Ubuntu, FreeBSD, and NixOS each show successful initial acquisition and T1 Renew. |
+| `dhcpcd` | cite/measure: A single active client for IPv4 DHCP, IPv6 RA/SLAAC, IA_NA, and IA_PD. It is packaged on Linux, NixOS, and FreeBSD. Ubuntu clean re-acquisition did not receive a HGW Reply in the measured steady-state test. | Keep the renderer and service path for lab evaluation. Do not make it the NTT default until Ubuntu, FreeBSD, and NixOS each show successful initial acquisition and T1 Renew. |
 | dnsmasq | cite/assert: Useful for LAN DNS, DHCPv4, DHCPv6, and RA. It is not the source of truth for WAN PD acquisition. | Keep it for LAN services only. |
 
 assert: DHCPv6-PD acquisition is intentionally narrow. Generic Linux can use
@@ -439,6 +439,12 @@ test path under the same HGW state. Ubuntu and NixOS are then measured with
 `dhcpcd` as follow-up paths. The default only changes after initial acquisition
 and T1 Renew both succeed.
 
+measure (2026-04-30): Ubuntu `dhcpcd` clean re-acquisition sent repeated
+DUID-LL IA_PD Solicit packets under routerd management but received no
+Advertise/Reply from the HGW during the short steady-state test. This keeps
+`dhcpcd` in the explicit lab-candidate bucket rather than promoting it to the
+NTT default.
+
 Before the long T1 measurement, run one active Request with shortened requested
 lifetimes (`T1=300`, `T2=600`, `pltime=600`, `vltime=900`) and inspect the HGW
 Reply. If the HGW honours those values, the lab can use a short cycle for
@@ -519,6 +525,29 @@ monitor compares `lastReplyAt + T1` with the current time and records
 acquisition phase, next action, and hung suspicion separately from the
 presence of downstream delegated addresses.
 
+The active-controller path is intentionally narrow. It starts with the least
+surprising DHCPv6 exchange, then escalates only when observed HGW behavior
+requires it:
+
+```mermaid
+flowchart TD
+  A[IPv6PrefixDelegation apply] --> B{spec.acquisitionStrategy}
+  B -->|solicit-only| C[Send canonical Solicit]
+  B -->|request-claim-only| F[Build Server-ID and IA_PD claim]
+  B -->|hybrid or empty| C
+  C --> D{Advertise or Reply observed?}
+  D -->|yes| G[Record lease.status and Reply event]
+  D -->|no, retry budget exhausted| E{strategy allows fallback?}
+  E -->|no| H[Record PrefixMissing warning]
+  E -->|yes| F
+  F --> I[Send Request with fresh xid, non-zero lifetimes, reconfigure-accept]
+  I --> J{Reply observed?}
+  J -->|yes| G
+  J -->|no| H
+  G --> K[Render downstream PD users and show currentPrefix]
+  H --> L[Keep OS client state, show acquisition phase and next action]
+```
+
 ### 5.3 High: Make Apply No-Op Safe for DHCPv6 Clients
 
 assert: Apply must not restart or rewrite a DHCPv6 client unless the rendered
@@ -589,6 +618,32 @@ Default client resolution happens at apply time when
 | Linux | `default` | `networkd` |
 | Linux | `ntt-*` | `dhcp6c` |
 | NixOS | `ntt-*` | `dhcpcd` |
+
+The same policy can be read as a matrix of implementation maturity:
+
+```mermaid
+flowchart LR
+  subgraph FreeBSD
+    F1[dhcp6c: verified default]
+    F2[dhcpcd: warning for NTT]
+  end
+  subgraph UbuntuLinux["Ubuntu / generic Linux"]
+    L1[dhcp6c: NTT default]
+    L2[networkd: generic default]
+    L3[dhcpcd: lab candidate]
+  end
+  subgraph NixOS
+    N1[dhcpcd: candidate default]
+    N2[networkd: warning for NTT]
+  end
+  F1 --> KB[knowledge-base matrix]
+  F2 --> KB
+  L1 --> KB
+  L2 --> KB
+  L3 --> KB
+  N1 --> KB
+  N2 --> KB
+```
 
 assert: Operators may still set `spec.client` explicitly. Lab runs can also
 override every `IPv6PrefixDelegation` resource for a single apply with
@@ -770,3 +825,7 @@ Section 6 (phases), then `docs/knowledge-base/ntt-ngn-pd-acquisition.md`
 (why those requirements look the way they do). Section 1 captures evidence
 that grounds the assertions; revisit it when an assertion needs to be
 challenged.
+
+After that, read `docs/knowledge-base/dhcpv6-pd-clients.md` for the current
+OS/client matrix and `docs/api-v1alpha1.md` for the exact resource fields and
+`routerctl describe ipv6pd/<name>` investigation workflow.

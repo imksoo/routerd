@@ -11,7 +11,7 @@ NTT profiles recommend KAME/WIDE `dhcp6c`.
 | --- | --- | --- | --- |
 | KAME/WIDE `dhcp6c` (`wide-dhcpv6-client` / `net/dhcp6`) | BSD-style | Upstream `wide-dhcpv6` stopped at 2008-06-15. Distros patch-maintain. The `opnsense/dhcp6c` fork is BSD-3 and active | Carries IA Prefix lifetimes from the previous Reply into Renew/Rebind. Sends packet shapes similar to NEC IX commercial routers |
 | systemd-networkd | LGPL-2.1+ | Active | Has been observed to send Renew/Rebind with IA Prefix `pltime=0 vltime=0` (systemd issue #16356). NTT HGW silently drops these as a "release-like" signal |
-| dhcpcd | BSD 2-clause | Active | Handles IPv4/RA/DHCPv6/PD in one daemon. Lab tests show its Solicit includes Vendor-Class and ORO codes (e.g. opt_82, opt_83), so it is not the minimal shape that proves to work |
+| dhcpcd | BSD 2-clause | Active | Handles IPv4/RA/DHCPv6/PD in one daemon. Lab tests show its Solicit includes Vendor-Class and ORO codes (e.g. opt_82, opt_83). Ubuntu dhcpcd clean re-acquisition did not receive a HGW Reply during a steady-state test, so it remains a lab path |
 | odhcp6c | GPL-2.0 | Active under the OpenWrt project, rarely packaged outside OpenWrt | Widely used in OpenWrt. NTT FLET'S Cross (10G Hikari) deployments report eight-hour disconnections (OpenWrt issue #13454). Needs more validation under PR-400NE |
 
 ## routerd selection matrix
@@ -27,7 +27,7 @@ that choice for one apply with `--override-client` and `--override-profile`.
 | FreeBSD | `dhcpcd` | known-bad warning | Lab test produced DUID-LLT when the DUID file was removed, and still received no HGW response after forcing DUID-LL. See Section L of the acquisition notes. |
 | Ubuntu/Linux | `dhcp6c` | verified default for `ntt-*` | Current Linux NTT-profile default. Avoids observed systemd-networkd Renew/Rebind lifetime 0/0 packets. |
 | Ubuntu/Linux | `networkd` | known-bad warning for `ntt-*` | Useful for generic Linux PD, but measured Renew/Rebind packets with IA Prefix lifetime 0/0 against the NTT HGW. |
-| Ubuntu/Linux | `dhcpcd` | candidate | Renderer exists for lab use. Keep explicit until acquisition and Renew are verified for the target environment. |
+| Ubuntu/Linux | `dhcpcd` | candidate | Renderer exists for lab use. A clean steady-state re-acquisition test sent valid Solicit traffic but received no HGW Reply, so keep it explicit until both acquisition and Renew are verified. |
 | NixOS | `dhcpcd` | candidate default for `ntt-*` | Chosen because nixpkgs does not currently provide a straightforward WIDE `dhcp6c` package path. Needs additional lab confirmation. |
 | NixOS | `networkd` | known-bad warning for `ntt-*` | Same networkd Renew/Rebind lifetime concern as other Linux hosts. |
 
@@ -145,6 +145,12 @@ contradicted.
   (systemd issue #16356). The HGW treats that as a release-like signal and
   silently drops the request, breaking the binding without informing the client.
   routerd's NTT profiles route around networkd by selecting `dhcp6c`.
+- **dhcpcd on Ubuntu** can be run under routerd with a managed per-resource
+  service and hook. In the 2026-04-30 steady-state test it sent repeated
+  Solicit packets with DUID-LL and IA_PD but received no HGW Advertise/Reply.
+  That result does not condemn dhcpcd generally; it means routerd should keep
+  it as an explicit lab choice until acquisition and T1 Renew both pass in the
+  target environment.
 
 ## Server Identifier derivation from RA
 

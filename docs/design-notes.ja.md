@@ -218,7 +218,7 @@ vltime expire までは約 2 時間の grace があります。routerd の検出
 | --- | --- | --- |
 | systemd-networkd | cite/measure: `DUIDType=link-layer`、`IAID`、`PrefixDelegationHint`、`WithoutRA` を設定できます。検証した Linux 経路では Renew/Rebind の IA Prefix 寿命が 0 になる場合があります。 | 一般的な Linux DHCPv6-PD では使えますが、NTT HGW向けの推奨経路にはしません。 |
 | KAME/WIDE `dhcp6c` | cite/measure: DUID はファイル、IAID と IA_PD は設定で扱います。ヒント付き Solicit や Renew/Rebind で IA Prefix 寿命を出力できます。 | FreeBSD と、NTT HGW向け Linux の逃げ道として使います。NTT 向けでは DUID-LL ファイルを routerd 管理対象にします。 |
-| `dhcpcd` | cite/believe: IPv4 DHCP、IPv6 RA/SLAAC、IA_NA、IA_PD を 1 つのクライアントで扱えます。Linux、NixOS、FreeBSD で導入できます。このリポジトリでは、Renew/Rebind の実機挙動はまだ測定中です。 | ラボ評価のためにレンダラとサービス経路を追加します。Ubuntu、FreeBSD、NixOS で初回取得と T1 Renew が成功するまで、NTT 向け既定値にはしません。 |
+| `dhcpcd` | cite/measure: IPv4 DHCP、IPv6 RA/SLAAC、IA_NA、IA_PD を 1 つのクライアントで扱えます。Linux、NixOS、FreeBSD で導入できます。Ubuntu の clean re-acquisition 試験では、通常稼働中の HGW から Reply は返りませんでした。 | ラボ評価用のレンダラとサービス経路として残します。Ubuntu、FreeBSD、NixOS で初回取得と T1 Renew が成功するまで、NTT 向け既定値にはしません。 |
 | dnsmasq | cite/assert: LAN 側の DNS、DHCPv4、DHCPv6、RA には有用です。WAN 側の PD クライアントの正にはしません。 | LAN サービスに限定して使います。 |
 
 assert: DHCPv6-PD の取得経路は意図的に絞ります。一般的な Linux では
@@ -415,6 +415,11 @@ Renew と Rebind のときに IA_PD の寿命を正しく保てる DHCPv6-PD ク
 NixOS でも `dhcpcd` を測ります。初回取得と T1 Renew の両方が成功するまでは、
 既定値は変えません。
 
+measure (2026-04-30): Ubuntu の `dhcpcd` で clean re-acquisition を試したところ、
+routerd 管理下で DUID-LL と IA_PD を含む Solicit は繰り返し送られましたが、
+短時間の通常稼働中試験では HGW から Advertise/Reply は返りませんでした。
+このため `dhcpcd` は NTT 向け既定へ昇格せず、明示的に選ぶラボ候補のままにします。
+
 長い T1 測定に入る前に、短い寿命を要求する能動 Request を 1 回送ります。
 要求値は `T1=300`、`T2=600`、`pltime=600`、`vltime=900` とし、HGW の Reply
 がその値を採用するかを見ます。採用されるなら短い周期で比較試験を回します。
@@ -488,6 +493,28 @@ Request-with-claim にフォールバックします。
 下流側に委譲アドレスが残っているかどうかとは別に、リース、WAN 側の観測、
 取得段階、次の動作、更新停止の疑いを表示します。
 
+アクティブ・コントローラーの経路は意図的に狭くしています。まず最も自然な
+DHCPv6 交換を試し、観測済みの HGW 挙動に必要な場合だけ段階的に強めます。
+
+```mermaid
+flowchart TD
+  A[IPv6PrefixDelegation apply] --> B{spec.acquisitionStrategy}
+  B -->|solicit-only| C[標準形 Solicit を送る]
+  B -->|request-claim-only| F[Server-ID と IA_PD claim を組み立てる]
+  B -->|hybrid または空| C
+  C --> D{Advertise または Reply を観測?}
+  D -->|yes| G[lease.status と Reply event を記録]
+  D -->|no, 再送予算を消費| E{fallback を許可?}
+  E -->|no| H[PrefixMissing warning を記録]
+  E -->|yes| F
+  F --> I[新規 xid、非ゼロ寿命、reconfigure-accept 付き Request を送る]
+  I --> J{Reply を観測?}
+  J -->|yes| G
+  J -->|no| H
+  G --> K[下流 PD 利用リソースを描画し currentPrefix を表示]
+  H --> L[OS client 状態を壊さず、取得段階と次の動作を表示]
+```
+
 ### 5.3 重要: apply が DHCPv6 クライアントを不用意に壊さないようにする
 
 assert: 生成されたクライアント設定が変わっていない場合、apply は DHCPv6 クライアントを
@@ -554,6 +581,32 @@ apply 時上書きを組み合わせる。
 | Linux | `default` | `networkd` |
 | Linux | `ntt-*` | `dhcp6c` |
 | NixOS | `ntt-*` | `dhcpcd` |
+
+同じ方針を、実装の成熟度として見ると次のようになります。
+
+```mermaid
+flowchart LR
+  subgraph FreeBSD
+    F1[dhcp6c: 検証済み既定]
+    F2[dhcpcd: NTT では警告]
+  end
+  subgraph UbuntuLinux["Ubuntu / 一般 Linux"]
+    L1[dhcp6c: NTT 既定]
+    L2[networkd: 一般既定]
+    L3[dhcpcd: ラボ候補]
+  end
+  subgraph NixOS
+    N1[dhcpcd: 候補既定]
+    N2[networkd: NTT では警告]
+  end
+  F1 --> KB[知識ベースの表]
+  F2 --> KB
+  L1 --> KB
+  L2 --> KB
+  L3 --> KB
+  N1 --> KB
+  N2 --> KB
+```
 
 assert: 運用者は `spec.client` を明示してよい。ラボ検証では、1 回の apply に
 限って全 `IPv6PrefixDelegation` リソースを
@@ -719,3 +772,7 @@ Section 5 (置き換え要件)、Section 6 (フェーズ)、その後に
 `docs/knowledge-base/ntt-ngn-pd-acquisition.md` (要件がそうなっている理由)
 の順に読むのが効率的です。Section 1 は assert を支える根拠として残しており、
 assert に反論したくなった時に立ち戻る場所です。
+
+その次に `docs/knowledge-base/dhcpv6-pd-clients.md` で現在の
+OS/クライアント対応表を読み、`docs/api-v1alpha1.md` で正確なリソース field と
+`routerctl describe ipv6pd/<name>` による調査手順を確認します。

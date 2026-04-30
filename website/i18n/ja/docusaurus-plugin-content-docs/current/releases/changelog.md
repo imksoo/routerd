@@ -31,6 +31,9 @@ behavior changes and new resource shapes as the model takes shape.
   `dhcpcd.conf`, hook placeholder, and either a systemd unit or FreeBSD rc.d
   script while keeping the existing profile defaults unchanged until lab Renew
   measurements are complete.
+- Documentation now includes Mermaid diagrams for the NTT HGW state model,
+  the routerd DHCPv6-PD acquisition strategy, and the OS/client selection
+  matrix, plus updated dhcpcd lab notes.
 - `routerd apply` now resolves an omitted `IPv6PrefixDelegation.spec.client`
   from the host OS and profile, supports `--override-client` and
   `--override-profile` for one-shot lab runs, and records known-bad

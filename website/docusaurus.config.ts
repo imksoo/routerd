@@ -12,6 +12,10 @@ const config: Config = {
   organizationName: 'imksoo',
   projectName: 'routerd',
   trailingSlash: false,
+  markdown: {
+    mermaid: true,
+  },
+  themes: ['@docusaurus/theme-mermaid'],
 
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
