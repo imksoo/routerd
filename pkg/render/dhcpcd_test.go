@@ -129,7 +129,7 @@ func TestDHCPCDRendersFreeBSDRCScript(t *testing.T) {
 		`name="routerd_dhcpcd_wan_pd"`,
 		`command="/usr/local/sbin/dhcpcd"`,
 		`command_args="-6 -f /usr/local/etc/routerd/dhcpcd-wan-pd.conf vtnet0"`,
-		`pidfile="/var/run/dhcpcd/dhcpcd-vtnet0.pid"`,
+		`pidfile="/var/run/dhcpcd/vtnet0-6.pid"`,
 	} {
 		if !strings.Contains(rc, want) {
 			t.Fatalf("rc script missing %q:\n%s", want, rc)

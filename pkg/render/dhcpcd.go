@@ -225,7 +225,7 @@ name="%s"
 rcvar="%s_enable"
 command="%s"
 command_args="-6 -f %s %s"
-pidfile="/var/run/dhcpcd/dhcpcd-%s.pid"
+pidfile="/var/run/dhcpcd/%s-6.pid"
 
 load_rc_config "$name"
 : ${%s_enable:=YES}
