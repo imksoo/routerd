@@ -714,6 +714,18 @@ FreeBSD, and NixOS; Linux RSTP dependency checks mention `mstpd`; VXLAN can
 attach to a bridge; and the DHCP/RA designated-server and L2-filter guardrails
 are documented and rendered.
 
+observe: A 5-node lab (router01 FreeBSD, router02 NixOS, router03 Ubuntu
+noble, router04 FreeBSD, router05 Ubuntu noble) joined a single
+`VXLANSegment` (VNI 100, UDP 4789) attached to `br-vxlan-test` with overlay
+`10.99.100.0/24`. After `routerd render nixos` + `nixos-rebuild switch` on
+NixOS and `routerd apply --once` on the Linux/FreeBSD nodes, the 25/25
+overlay ping matrix passed cold and survived a router02 reboot. The
+exercise validated `Independent = true` on the systemd-networkd VXLAN
+netdev, the per-host `routerd-vxlan100-fdb` oneshot service that appends
+all peer flood FDB entries, NixOS firewall openings rendered automatically
+for VXLAN underlay UDP and trusted bridge interfaces, and graceful kernel
+STP fallback on hosts where `mstpd` is no longer packaged (Ubuntu noble).
+
 ## 6. Implementation Phases
 
 assert: Section 5 catalogues replacement requirements but does not sequence
