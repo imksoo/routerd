@@ -264,6 +264,7 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	destinationIPOverride := fs.String("dst-ip", "ff02::1:2", "destination IPv6 address")
 	destinationMACOverride := fs.String("dst-mac", "", "destination Ethernet MAC override")
 	iaidOverride := fs.String("iaid", "", "override IA_PD IAID (decimal or 0xHEX) for active DHCPv6-PD lab packets")
+	clientDUIDOverride := fs.String("client-duid", "", "override Client-ID DUID as hex (no separators or colon-separated) for active DHCPv6-PD lab packets")
 	hopLimitOverride := fs.Uint("hop-limit", 0, "override IPv6 hop limit (1-255) for active DHCPv6-PD lab packets; 0 keeps the routerd default of 255")
 	t1Override := fs.Uint("t1", 0, "override IA_PD T1 seconds for active DHCPv6-PD lab packets")
 	t2Override := fs.Uint("t2", 0, "override IA_PD T2 seconds for active DHCPv6-PD lab packets")
@@ -299,6 +300,16 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 			return fmt.Errorf("--hop-limit %d out of range 1-255", *hopLimitOverride)
 		}
 		input.HopLimit = uint8(*hopLimitOverride)
+	}
+	if *clientDUIDOverride != "" {
+		duid, err := dhcp6control.ParseDUID(*clientDUIDOverride)
+		if err != nil {
+			return fmt.Errorf("parse --client-duid %q: %w", *clientDUIDOverride, err)
+		}
+		if len(duid) == 0 {
+			return fmt.Errorf("--client-duid must not be empty")
+		}
+		input.Identity.ClientDUID = duid
 	}
 	if err := setDHCP6LifetimeOverrides(&input, *t1Override, *t2Override, *preferredLifetimeOverride, *validLifetimeOverride); err != nil {
 		return err
