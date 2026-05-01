@@ -180,6 +180,52 @@ func TestNetworkdDropinsRenderBridge(t *testing.T) {
 	}
 }
 
+func TestNetworkdDropinsRenderVXLANSegment(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "underlay", api.InterfaceSpec{IfName: "ens18", Managed: true}),
+		netResource("Bridge", "br-home", api.BridgeSpec{IfName: "br0", Members: []string{"home-vxlan"}}),
+		netResource("VXLANSegment", "home-vxlan", api.VXLANSegmentSpec{
+			IfName:            "vxlan100",
+			VNI:               100,
+			LocalAddress:      "192.0.2.10",
+			Remotes:           []string{"192.0.2.20", "192.0.2.30"},
+			UnderlayInterface: "underlay",
+			UDPPort:           4789,
+			MTU:               1450,
+			Bridge:            "br-home",
+		}),
+	}}}
+	files, err := NetworkdDropins(router)
+	if err != nil {
+		t.Fatalf("render networkd dropins: %v", err)
+	}
+	netdev := string(findNetworkdTestFile(files, "/etc/systemd/network/31-routerd-vxlan100.netdev").Data)
+	for _, want := range []string{
+		"Name=vxlan100",
+		"Kind=vxlan",
+		"MTUBytes=1450",
+		"VNI=100",
+		"Local=192.0.2.10",
+		"DestinationPort=4789",
+	} {
+		if !strings.Contains(netdev, want) {
+			t.Fatalf("vxlan netdev missing %q:\n%s", want, netdev)
+		}
+	}
+	network := string(findNetworkdTestFile(files, "/etc/systemd/network/31-routerd-vxlan100.network").Data)
+	for _, want := range []string{
+		"Name=vxlan100",
+		"Bridge=br0",
+		"MACAddress=00:00:00:00:00:00",
+		"Destination=192.0.2.20",
+		"Destination=192.0.2.30",
+	} {
+		if !strings.Contains(network, want) {
+			t.Fatalf("vxlan network missing %q:\n%s", want, network)
+		}
+	}
+}
+
 func TestNetworkdDropinsRenderNTTFletsProfile(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{

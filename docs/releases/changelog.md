@@ -9,6 +9,13 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- Added a `VXLANSegment` resource with Linux systemd-networkd, FreeBSD, and
+  NixOS render paths. Linux also renders a default bridge-family nftables
+  L2 filter that blocks DHCPv4, DHCPv6, RA, and neighbor discovery on VXLAN
+  ports unless `spec.l2Filter: none` is set.
+- Added `role: server|transit` to DHCPv4 and DHCPv6 server resources so
+  shared L2 segments can name one designated DHCP/RA server while other
+  routerd hosts remain transit-only.
 - Added a `Bridge` resource with conservative STP/RSTP defaults and
   multicast-snooping disabled by default for virtualized IPv6 labs.
 - Added `IPv4StaticRoute` and `IPv6StaticRoute` resources for explicit static

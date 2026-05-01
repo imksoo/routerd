@@ -220,6 +220,7 @@ intent.
 | `NTPClient` | systemd-timesyncd config |
 | `Interface` | network link |
 | `Bridge` | bridge link and member attachment rendered through systemd-networkd, FreeBSD `rc.conf`, or NixOS networkd config |
+| `VXLANSegment` | VXLAN link, optional bridge attachment, and Linux bridge-family L2 filter rules |
 | `PPPoEInterface` | PPP interface, Linux PPPoE systemd unit and PPP secret files, or FreeBSD mpd5 config and `mpd5` service |
 | `IPv4StaticAddress` | IPv4 address |
 | `IPv4DHCPAddress` | DHCPv4 client binding and renderer-specific route/DNS adoption settings |

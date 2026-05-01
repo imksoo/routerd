@@ -846,6 +846,13 @@
                       "managed": {
                         "type": "boolean"
                       },
+                      "role": {
+                        "enum": [
+                          "server",
+                          "transit"
+                        ],
+                        "type": "string"
+                      },
                       "server": {
                         "enum": [
                           "dnsmasq",
@@ -1379,6 +1386,13 @@
                       },
                       "managed": {
                         "type": "boolean"
+                      },
+                      "role": {
+                        "enum": [
+                          "server",
+                          "transit"
+                        ],
+                        "type": "string"
                       },
                       "server": {
                         "enum": [

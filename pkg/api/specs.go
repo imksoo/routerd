@@ -110,6 +110,19 @@ type BridgeSpec struct {
 	MulticastSnooping *bool    `yaml:"multicastSnooping,omitempty" json:"multicastSnooping,omitempty"`
 }
 
+type VXLANSegmentSpec struct {
+	IfName            string   `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	VNI               int      `yaml:"vni" json:"vni" jsonschema:"minimum=1,maximum=16777215"`
+	LocalAddress      string   `yaml:"localAddress" json:"localAddress"`
+	Remotes           []string `yaml:"remotes,omitempty" json:"remotes,omitempty"`
+	MulticastGroup    string   `yaml:"multicastGroup,omitempty" json:"multicastGroup,omitempty"`
+	UnderlayInterface string   `yaml:"underlayInterface" json:"underlayInterface"`
+	UDPPort           int      `yaml:"udpPort,omitempty" json:"udpPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	MTU               int      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=0"`
+	Bridge            string   `yaml:"bridge,omitempty" json:"bridge,omitempty"`
+	L2Filter          string   `yaml:"l2Filter,omitempty" json:"l2Filter,omitempty" jsonschema:"enum=,enum=default,enum=none"`
+}
+
 type PPPoEInterfaceSpec struct {
 	Interface      string `yaml:"interface" json:"interface"`
 	IfName         string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
@@ -164,6 +177,7 @@ type IPv6StaticRouteSpec struct {
 type IPv4DHCPServerSpec struct {
 	Server           string                `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
 	Managed          bool                  `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Role             string                `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
 	ListenInterfaces []string              `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
 	DNS              IPv4DHCPServerDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
 }
@@ -278,6 +292,7 @@ type IPv6DelegatedAddressSpec struct {
 type IPv6DHCPServerSpec struct {
 	Server           string   `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq"`
 	Managed          bool     `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Role             string   `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
 	ListenInterfaces []string `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
 }
 
@@ -565,6 +580,10 @@ func (r Resource) InterfaceSpec() (InterfaceSpec, error) {
 
 func (r Resource) BridgeSpec() (BridgeSpec, error) {
 	return specAs[BridgeSpec](r)
+}
+
+func (r Resource) VXLANSegmentSpec() (VXLANSegmentSpec, error) {
+	return specAs[VXLANSegmentSpec](r)
 }
 
 func (r Resource) PPPoEInterfaceSpec() (PPPoEInterfaceSpec, error) {

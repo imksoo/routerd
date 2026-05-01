@@ -196,6 +196,49 @@ func TestDnsmasqConfigCanPassThroughDHCPv4DNS(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigSkipsTransitDHCPServerRole(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
+				Metadata: api.ObjectMeta{Name: "dhcp4"},
+				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Managed: true, Role: "transit", ListenInterfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPScope"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcp4"},
+				Spec: api.IPv4DHCPScopeSpec{
+					Server:     "dhcp4",
+					Interface:  "lan",
+					RangeStart: "192.0.2.100",
+					RangeEnd:   "192.0.2.120",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPServer"},
+				Metadata: api.ObjectMeta{Name: "dhcp6"},
+				Spec:     api.IPv6DHCPServerSpec{Server: "dnsmasq", Managed: true, Role: "transit", ListenInterfaces: []string{"lan"}},
+			},
+		}},
+	}
+
+	data, err := DnsmasqConfig(router, DnsmasqRuntime{})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	got := string(data)
+	for _, forbidden := range []string{"dhcp-range", "enable-ra", "interface=ens19"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("dnsmasq output should not include %q for transit roles:\n%s", forbidden, got)
+		}
+	}
+}
+
 func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

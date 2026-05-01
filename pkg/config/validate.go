@@ -66,6 +66,9 @@ func Validate(router *api.Router) error {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "Bridge" {
 			interfaces[res.Metadata.Name] = true
 		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "VXLANSegment" {
+			interfaces[res.Metadata.Name] = true
+		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "PPPoEInterface" {
 			interfaces[res.Metadata.Name] = true
 		}
@@ -202,6 +205,18 @@ func Validate(router *api.Router) error {
 				if member == res.Metadata.Name {
 					return fmt.Errorf("%s spec.members[%d] must not reference the bridge itself", res.ID(), i)
 				}
+			}
+		}
+		if res.Kind == "VXLANSegment" {
+			spec, err := res.VXLANSegmentSpec()
+			if err != nil {
+				return err
+			}
+			if !interfaces[spec.UnderlayInterface] {
+				return fmt.Errorf("%s spec.underlayInterface references missing Interface %q", res.ID(), spec.UnderlayInterface)
+			}
+			if spec.Bridge != "" && !interfaces[spec.Bridge] {
+				return fmt.Errorf("%s spec.bridge references missing Bridge %q", res.ID(), spec.Bridge)
 			}
 		}
 		if res.Kind == "IPv4DHCPScope" {
@@ -706,6 +721,58 @@ func validateResource(res api.Resource) error {
 		if spec.HelloTime != 0 && (spec.HelloTime < 1 || spec.HelloTime > 10) {
 			return fmt.Errorf("%s spec.helloTime must be within 1-10", res.ID())
 		}
+	case "VXLANSegment":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.VXLANSegmentSpec()
+		if err != nil {
+			return err
+		}
+		ifname := defaultString(spec.IfName, res.Metadata.Name)
+		if strings.ContainsAny(ifname, " \t\n/") {
+			return fmt.Errorf("%s spec.ifname contains invalid whitespace or slash", res.ID())
+		}
+		if len(ifname) > 15 {
+			return fmt.Errorf("%s spec.ifname must be 15 characters or fewer", res.ID())
+		}
+		if spec.VNI < 1 || spec.VNI > 16777215 {
+			return fmt.Errorf("%s spec.vni must be within 1-16777215", res.ID())
+		}
+		if _, err := netip.ParseAddr(spec.LocalAddress); err != nil {
+			return fmt.Errorf("%s spec.localAddress must be an IP address", res.ID())
+		}
+		if spec.UnderlayInterface == "" {
+			return fmt.Errorf("%s spec.underlayInterface is required", res.ID())
+		}
+		if len(spec.Remotes) == 0 && spec.MulticastGroup == "" {
+			return fmt.Errorf("%s spec.remotes or spec.multicastGroup is required", res.ID())
+		}
+		if len(spec.Remotes) > 0 && spec.MulticastGroup != "" {
+			return fmt.Errorf("%s spec.remotes and spec.multicastGroup are mutually exclusive", res.ID())
+		}
+		for i, remote := range spec.Remotes {
+			if _, err := netip.ParseAddr(remote); err != nil {
+				return fmt.Errorf("%s spec.remotes[%d] must be an IP address", res.ID(), i)
+			}
+		}
+		if spec.MulticastGroup != "" {
+			addr, err := netip.ParseAddr(spec.MulticastGroup)
+			if err != nil || !addr.Is4() || !addr.IsMulticast() {
+				return fmt.Errorf("%s spec.multicastGroup must be an IPv4 multicast address", res.ID())
+			}
+		}
+		if spec.UDPPort != 0 && (spec.UDPPort < 1 || spec.UDPPort > 65535) {
+			return fmt.Errorf("%s spec.udpPort must be within 1-65535", res.ID())
+		}
+		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
+			return fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
+		}
+		switch spec.L2Filter {
+		case "", "default", "none":
+		default:
+			return fmt.Errorf("%s spec.l2Filter must be default or none", res.ID())
+		}
 	case "PPPoEInterface":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -902,6 +969,11 @@ func validateResource(res api.Resource) error {
 		if err != nil {
 			return err
 		}
+		switch defaultString(spec.Role, "server") {
+		case "server", "transit":
+		default:
+			return fmt.Errorf("%s spec.role must be server or transit", res.ID())
+		}
 		switch spec.Server {
 		case "", "dnsmasq", "kea", "dhcpd":
 		default:
@@ -1032,6 +1104,11 @@ func validateResource(res api.Resource) error {
 		spec, err := res.IPv6DHCPServerSpec()
 		if err != nil {
 			return err
+		}
+		switch defaultString(spec.Role, "server") {
+		case "server", "transit":
+		default:
+			return fmt.Errorf("%s spec.role must be server or transit", res.ID())
 		}
 		switch spec.Server {
 		case "", "dnsmasq":

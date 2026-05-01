@@ -28,6 +28,7 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 **インターフェース**
 - [Interface](#interface)
 - [Bridge](#bridge)
+- [VXLANSegment](#vxlansegment)
 - [PPPoEInterface](#pppoeinterface)
 
 **IPv4 アドレッシング**
@@ -88,7 +89,7 @@ routerd を初めて触る場合は、まず [概念](../concepts/what-is-router
 ## 用意されているリソース
 
 ネットワーク関連:
-`Interface`、`Bridge`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4StaticRoute`、`IPv6StaticRoute`、`IPv4DHCPServer`、`IPv4DHCPScope`、`DHCPv4HostReservation`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
+`Interface`、`Bridge`、`VXLANSegment`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4StaticRoute`、`IPv6StaticRoute`、`IPv4DHCPServer`、`IPv4DHCPScope`、`DHCPv4HostReservation`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
 
 ファイアウォール:
 `Zone`、`FirewallPolicy`、`ExposeService`。
@@ -255,7 +256,7 @@ spec:
 - `spec.managed: true` のとき、routerd はリンクとアドレスの状態を変更できます。ただし cloud-init や netplan が既に握っている場合は奪わず、計画上で「取り込み待ち」として表示します。
 - `spec.managed: false` の場合は観測専用です。別名解決はしますが、リンクとアドレスは触りません。
 
-ホスト側の所有関係や、`/var/lib/routerd/routerd.db` の `artifacts` テーブル のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership) を参照してください。
+ホスト側の所有関係や、`/var/lib/routerd/routerd.db` の `artifacts` テーブル のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership.md) を参照してください。
 
 ### Bridge
 
@@ -286,6 +287,47 @@ spec:
 - `multicastSnooping` の既定は `false` です。仮想化された検証環境では、ブリッジのマルチキャストスヌーピングが IPv6 近隣探索、RA、DHCPv6 の誤診断につながることがあるためです。
 - Linux で RSTP を使う場合は `mstpd` / `mstpctl` が必要です。routerd はリモート依存確認でこれを検出します。ブリッジ自体は systemd-networkd 向けに出力します。
 - FreeBSD では `rc.conf` にブリッジとカーネル側の STP/RSTP 設定を出力します。
+
+### VXLANSegment
+
+`VXLANSegment` は VXLAN リンクを作り、必要に応じて `Bridge` へ接続します。
+複数の routerd ホスト間で L2 セグメントを延ばすためのリソースです。既定では、
+VXLAN 越しに DHCP や RA が流れ込んで重複しないよう保守的に扱います。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: VXLANSegment
+metadata:
+  name: home-vxlan
+spec:
+  ifname: vxlan100
+  vni: 100
+  localAddress: 192.0.2.10
+  remotes:
+    - 192.0.2.20
+    - 192.0.2.30
+  underlayInterface: wan
+  udpPort: 4789
+  mtu: 1450
+  bridge: br-home
+  l2Filter: default
+```
+
+ルータの振る舞い:
+
+- `spec.ifname` は省略できます。省略した場合は `metadata.name` を使います。
+- `spec.underlayInterface` には既存の `Interface` リソース名を書きます。出力先が
+  主に `localAddress` で経路を選ぶ場合でも、下回りの意図を明示します。
+- `remotes` にはユニキャストの相手 VTEP を書きます。`multicastGroup` を使う場合は
+  IPv4 マルチキャストグループを書きます。両方を同時には使えません。
+- `udpPort` の既定は `4789` です。
+- `bridge` を指定すると、VXLAN リンクを既存の `Bridge` リソースへ接続します。
+- `l2Filter` の既定は `default` です。Linux では nftables の `bridge` family を使い、
+  VXLAN ポート上の DHCPv4、DHCPv6、RA、近隣探索を双方向で落とします。
+  これらのパケットを別の制御面で意図的に通す場合だけ `l2Filter: none` を使います。
+- FreeBSD では、ひとつの `VXLANSegment` につき 1 つのユニキャスト相手または
+  1 つのマルチキャストグループを出力します。FreeBSD ホストで複数の相手に
+  点対点 VXLAN を張る場合は、相手ごとにリソースを分けます。
 
 ### PPPoEInterface
 
@@ -468,6 +510,7 @@ spec:
 ルータの振る舞い:
 
 - `spec.listenInterfaces` は dnsmasq に対する許可リストです。スコープは、対応するサーバの `listenInterfaces` に含まれるインターフェースにしか紐付けられません。リストに無いインターフェースは `except-interface` として書き出すため、明示しない限り WAN にサービスを出してしまうことはありません。
+- `spec.role` の既定は `server` です。VXLAN などで同じ L2 セグメントを複数の routerd が共有し、別の 1 台だけを DHCP サーバにしたい場合は `role: transit` を指定します。この場合、ローカルの dnsmasq は DHCP を提供しません。
 - `IPv4DHCPScope.routerSource` はゲートウェイオプションの出し方を決めます。`interfaceAddress` ならルータの LAN アドレス、`static` なら `spec.router` の値、`none` ならオプション自体を出しません。
 - `IPv4DHCPScope.dnsSource` は DNS サーバオプションの出し方を決めます。
   - `dhcp4` と `static` は、DHCPv4 オプションに DNS サーバを直接書き込みます。このスコープでは dnsmasq が 53 番ポートを開く必要はありません。
@@ -643,6 +686,7 @@ spec:
 ルータの振る舞い:
 
 - スコープは `IPv6DelegatedAddress` に紐付くので、WAN 側で受けた DHCPv6-PD の結果に LAN 側のプレフィックスが自動で追従します。
+- `IPv6DHCPServer.spec.role` の既定は `server` です。共有 L2 セグメントに参加するだけで、ローカルから DHCPv6 や RA を出したくないルータでは `role: transit` を指定します。
 - `spec.mode: stateless` のとき、クライアントは SLAAC でアドレスを決め、DHCPv6 からは DNS などのオプションだけを受け取ります。
 - `spec.mode: ra-only` は、DHCPv6 のアドレス払い出しを行わず RA だけを送ります。
 - IPv6 のデフォルト経路は RA で広告します。DHCPv6 自体にデフォルトゲートウェイのオプションはありません。

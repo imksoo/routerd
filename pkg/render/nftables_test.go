@@ -84,6 +84,77 @@ func TestNftablesIPv4SourceNATCanUseDSLiteTunnel(t *testing.T) {
 	}
 }
 
+func TestNftablesVXLANL2Filter(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "underlay"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"},
+				Metadata: api.ObjectMeta{Name: "home-vxlan"},
+				Spec: api.VXLANSegmentSpec{
+					IfName:            "vxlan100",
+					VNI:               100,
+					LocalAddress:      "192.0.2.10",
+					Remotes:           []string{"192.0.2.20"},
+					UnderlayInterface: "underlay",
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"table bridge routerd_l2_filter",
+		`iifname "vxlan100" ether type ip udp sport { 67, 68 } drop`,
+		`oifname "vxlan100" ether type ip6 udp dport { 546, 547 } drop`,
+		`iifname "vxlan100" ether type ip6 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } drop`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesVXLANL2FilterCanBeDisabled(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "underlay"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"},
+				Metadata: api.ObjectMeta{Name: "home-vxlan"},
+				Spec: api.VXLANSegmentSpec{
+					IfName:            "vxlan100",
+					VNI:               100,
+					LocalAddress:      "192.0.2.10",
+					Remotes:           []string{"192.0.2.20"},
+					UnderlayInterface: "underlay",
+					L2Filter:          "none",
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	if strings.Contains(string(data), "routerd_l2_filter") {
+		t.Fatalf("nftables output should not include L2 filter table:\n%s", string(data))
+	}
+}
+
 func TestNftablesIPv4SourceNATAddressPortRange(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

@@ -57,7 +57,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 				return nil, err
 			}
 			server := v4Servers[spec.Server]
-			if defaultString(server.Server, "dnsmasq") == "dnsmasq" && server.Managed {
+			if defaultString(server.Server, "dnsmasq") == "dnsmasq" && server.Managed && defaultString(server.Role, "server") != "transit" {
 				v4Scopes = append(v4Scopes, res)
 			}
 		case "DHCPv4HostReservation":
@@ -72,7 +72,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 				return nil, err
 			}
 			server := v6Servers[spec.Server]
-			if defaultString(server.Server, "dnsmasq") == "dnsmasq" && server.Managed {
+			if defaultString(server.Server, "dnsmasq") == "dnsmasq" && server.Managed && defaultString(server.Role, "server") != "transit" {
 				v6Scopes = append(v6Scopes, res)
 			}
 		}

@@ -20,6 +20,11 @@ func linkAliases(router *api.Router) map[string]string {
 			if err == nil {
 				aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 			}
+		case "VXLANSegment":
+			spec, err := res.VXLANSegmentSpec()
+			if err == nil {
+				aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+			}
 		}
 	}
 	return aliases
@@ -36,6 +41,20 @@ type bridgeConfig struct {
 	MACAddress        string
 	MTU               int
 	MulticastSnooping bool
+}
+
+type vxlanConfig struct {
+	Name           string
+	IfName         string
+	VNI            int
+	LocalAddress   string
+	Remotes        []string
+	MulticastGroup string
+	UnderlayIfName string
+	UDPPort        int
+	MTU            int
+	BridgeIfName   string
+	L2Filter       string
 }
 
 func bridgeConfigs(router *api.Router, aliases map[string]string) ([]bridgeConfig, error) {
@@ -69,4 +88,32 @@ func bridgeConfigs(router *api.Router, aliases map[string]string) ([]bridgeConfi
 	}
 	sort.Slice(bridges, func(i, j int) bool { return bridges[i].IfName < bridges[j].IfName })
 	return bridges, nil
+}
+
+func vxlanConfigs(router *api.Router, aliases map[string]string) ([]vxlanConfig, error) {
+	var vxlans []vxlanConfig
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "VXLANSegment" {
+			continue
+		}
+		spec, err := res.VXLANSegmentSpec()
+		if err != nil {
+			return nil, err
+		}
+		vxlans = append(vxlans, vxlanConfig{
+			Name:           res.Metadata.Name,
+			IfName:         defaultString(spec.IfName, res.Metadata.Name),
+			VNI:            spec.VNI,
+			LocalAddress:   spec.LocalAddress,
+			Remotes:        append([]string(nil), spec.Remotes...),
+			MulticastGroup: spec.MulticastGroup,
+			UnderlayIfName: aliases[spec.UnderlayInterface],
+			UDPPort:        defaultInt(spec.UDPPort, 4789),
+			MTU:            spec.MTU,
+			BridgeIfName:   aliases[spec.Bridge],
+			L2Filter:       defaultString(spec.L2Filter, "default"),
+		})
+	}
+	sort.Slice(vxlans, func(i, j int) bool { return vxlans[i].IfName < vxlans[j].IfName })
+	return vxlans, nil
 }

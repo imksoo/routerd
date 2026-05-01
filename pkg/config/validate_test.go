@@ -823,6 +823,89 @@ func TestValidateBridge(t *testing.T) {
 	}
 }
 
+func TestValidateVXLANSegment(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "underlay"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"},
+				Metadata: api.ObjectMeta{Name: "br-home"},
+				Spec:     api.BridgeSpec{IfName: "br0", Members: []string{"home-vxlan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"},
+				Metadata: api.ObjectMeta{Name: "home-vxlan"},
+				Spec: api.VXLANSegmentSpec{
+					IfName:            "vxlan100",
+					VNI:               100,
+					LocalAddress:      "192.0.2.10",
+					Remotes:           []string{"192.0.2.20", "192.0.2.30"},
+					UnderlayInterface: "underlay",
+					UDPPort:           4789,
+					MTU:               1450,
+					Bridge:            "br-home",
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate vxlan config: %v", err)
+	}
+}
+
+func TestValidateRejectsInvalidVXLANFilterMode(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "underlay"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"},
+				Metadata: api.ObjectMeta{Name: "home-vxlan"},
+				Spec:     api.VXLANSegmentSpec{VNI: 100, LocalAddress: "192.0.2.10", Remotes: []string{"192.0.2.20"}, UnderlayInterface: "underlay", L2Filter: "permit"},
+			},
+		}},
+	}
+
+	if err := Validate(router); err == nil {
+		t.Fatal("expected invalid VXLAN l2Filter to be rejected")
+	}
+}
+
+func TestValidateDHCPServerTransitRole(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
+				Metadata: api.ObjectMeta{Name: "dhcp4"},
+				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Role: "transit"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPServer"},
+				Metadata: api.ObjectMeta{Name: "dhcp6"},
+				Spec:     api.IPv6DHCPServerSpec{Server: "dnsmasq", Role: "transit"},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate transit DHCP roles: %v", err)
+	}
+}
+
 func boolPtr(value bool) *bool {
 	return &value
 }

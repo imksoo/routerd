@@ -33,6 +33,7 @@ This is a long page. Jump to the kind you need:
 **Interfaces**
 - [Interface](#interface)
 - [Bridge](#bridge)
+- [VXLANSegment](#vxlansegment)
 - [PPPoEInterface](#pppoeinterface)
 
 **IPv4 addressing**
@@ -95,7 +96,7 @@ page is the field reference, not the introduction.
 ## Available resource kinds
 
 Networking:
-`Interface`, `Bridge`, `PPPoEInterface`, `IPv4StaticAddress`, `IPv4DHCPAddress`,
+`Interface`, `Bridge`, `VXLANSegment`, `PPPoEInterface`, `IPv4StaticAddress`, `IPv4DHCPAddress`,
 `IPv4StaticRoute`, `IPv6StaticRoute`, `IPv4DHCPServer`, `IPv4DHCPScope`, `IPv6DHCPAddress`, `IPv6PrefixDelegation`,
 `DHCPv4HostReservation`, `IPv6DelegatedAddress`, `IPv6DHCPServer`, `IPv6DHCPScope`,
 `SelfAddressPolicy`, `DNSConditionalForwarder`, `DSLiteTunnel`,
@@ -345,6 +346,50 @@ How routerd behaves:
 - On FreeBSD, routerd renders the bridge through `rc.conf` with kernel bridge
   STP/RSTP settings.
 
+### VXLANSegment
+
+`VXLANSegment` creates a VXLAN link and can attach it to a `Bridge`. It is
+intended for controlled L2 extension between routerd hosts, with conservative
+defaults that avoid leaking DHCP or router advertisements across the tunnel.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: VXLANSegment
+metadata:
+  name: home-vxlan
+spec:
+  ifname: vxlan100
+  vni: 100
+  localAddress: 192.0.2.10
+  remotes:
+    - 192.0.2.20
+    - 192.0.2.30
+  underlayInterface: wan
+  udpPort: 4789
+  mtu: 1450
+  bridge: br-home
+  l2Filter: default
+```
+
+How routerd behaves:
+
+- `spec.ifname` is optional. When omitted, routerd uses `metadata.name`.
+- `spec.underlayInterface` names an existing `Interface` resource. The
+  underlay path is explicit even when the renderer mainly relies on
+  `localAddress` to select the route.
+- Use either `remotes` for unicast peers or `multicastGroup` for an IPv4
+  multicast group. They are mutually exclusive.
+- `udpPort` defaults to `4789`.
+- `bridge` attaches the VXLAN link to an existing `Bridge` resource.
+- `l2Filter` defaults to `default`. On Linux this renders an nftables
+  `bridge` family table that drops DHCPv4, DHCPv6, router advertisements, and
+  neighbor-discovery packets on the VXLAN port in both directions. Set
+  `l2Filter: none` only when another control plane deliberately owns those
+  packets across the VXLAN.
+- FreeBSD rendering currently supports one unicast remote or one multicast
+  group per `VXLANSegment`. Use one resource per peer if a FreeBSD host needs
+  multiple point-to-point VXLAN links.
+
 ### PPPoEInterface
 
 `PPPoEInterface` brings up a PPPoE session on top of an existing
@@ -555,6 +600,10 @@ How routerd behaves:
   bind to interfaces listed by their server. Anything not listed is
   rendered as `except-interface`, so a WAN never serves DHCP/DNS unless it
   is explicitly named.
+- `spec.role` defaults to `server`. Set `role: transit` on routers that only
+  bridge or forward the L2 segment and must not serve DHCP from their local
+  dnsmasq instance. This is useful when several routerd hosts share a VXLAN
+  segment and only one host is the designated DHCP server.
 - `IPv4DHCPScope.routerSource` controls the gateway option:
   `interfaceAddress` advertises the router's LAN address, `static` uses
   `spec.router`, `none` omits the option.
@@ -850,6 +899,9 @@ How routerd behaves:
 
 - The scope binds to `IPv6DelegatedAddress`, so the LAN prefix automatically
   follows whatever WAN-side DHCPv6-PD hands out.
+- `IPv6DHCPServer.spec.role` defaults to `server`. Set `role: transit` on
+  routers that participate in a shared L2 segment but must not send local
+  DHCPv6 or RA through dnsmasq.
 - `spec.mode: stateless` lets clients pick their own address through SLAAC
   while still receiving DHCPv6 options such as DNS.
 - `spec.mode: ra-only` sends RA without DHCPv6 address assignment.

@@ -103,6 +103,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "VXLANSegment":
+		var spec VXLANSegmentSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "PPPoEInterface":
 		var spec PPPoEInterfaceSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

@@ -43,6 +43,18 @@ type nixOSBridge struct {
 	MulticastSnooping bool
 }
 
+type nixOSVXLAN struct {
+	Name           string
+	IfName         string
+	VNI            int
+	LocalAddress   string
+	Remotes        []string
+	MulticastGroup string
+	UDPPort        int
+	MTU            int
+	Bridge         string
+}
+
 func NixOSModule(router *api.Router) ([]byte, error) {
 	host, err := nixOSHost(router)
 	if err != nil {
@@ -53,6 +65,10 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	bridges, err := nixOSBridges(router)
+	if err != nil {
+		return nil, err
+	}
+	vxlans, err := nixOSVXLANS(router)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +108,9 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		buf.WriteString("  systemd.network.enable = true;\n")
 		for _, bridge := range bridges {
 			writeNixOSBridge(&buf, bridge)
+		}
+		for _, vxlan := range vxlans {
+			writeNixOSVXLAN(&buf, vxlan)
 		}
 		for _, iface := range interfaces {
 			writeNixOSNetwork(&buf, iface)
@@ -260,6 +279,21 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 		}
 		names = append(names, res.Metadata.Name)
 	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "VXLANSegment" {
+			continue
+		}
+		spec, err := res.VXLANSegmentSpec()
+		if err != nil {
+			return nil, err
+		}
+		interfaces[res.Metadata.Name] = &nixOSInterface{
+			Name:    res.Metadata.Name,
+			IfName:  defaultString(spec.IfName, res.Metadata.Name),
+			AdminUp: true,
+		}
+		names = append(names, res.Metadata.Name)
+	}
 	aliases := linkAliases(router)
 	bridges, err := bridgeConfigs(router, aliases)
 	if err != nil {
@@ -377,6 +411,28 @@ func nixOSBridges(router *api.Router) ([]nixOSBridge, error) {
 	return out, nil
 }
 
+func nixOSVXLANS(router *api.Router) ([]nixOSVXLAN, error) {
+	vxlans, err := vxlanConfigs(router, linkAliases(router))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]nixOSVXLAN, 0, len(vxlans))
+	for _, vxlan := range vxlans {
+		out = append(out, nixOSVXLAN{
+			Name:           vxlan.Name,
+			IfName:         vxlan.IfName,
+			VNI:            vxlan.VNI,
+			LocalAddress:   vxlan.LocalAddress,
+			Remotes:        vxlan.Remotes,
+			MulticastGroup: vxlan.MulticastGroup,
+			UDPPort:        vxlan.UDPPort,
+			MTU:            vxlan.MTU,
+			Bridge:         vxlan.BridgeIfName,
+		})
+	}
+	return out, nil
+}
+
 func writeNixOSBridge(buf *bytes.Buffer, bridge nixOSBridge) {
 	buf.WriteString("  systemd.network.netdevs." + nixString("30-routerd-"+bridge.IfName) + " = {\n")
 	buf.WriteString("    netdevConfig = {\n")
@@ -396,6 +452,45 @@ func writeNixOSBridge(buf *bytes.Buffer, bridge nixOSBridge) {
 	buf.WriteString("      HelloTimeSec = " + strconv.Itoa(bridge.HelloTime) + ";\n")
 	buf.WriteString("    };\n")
 	buf.WriteString("  };\n")
+}
+
+func writeNixOSVXLAN(buf *bytes.Buffer, vxlan nixOSVXLAN) {
+	buf.WriteString("  systemd.network.netdevs." + nixString("31-routerd-"+vxlan.IfName) + " = {\n")
+	buf.WriteString("    netdevConfig = {\n")
+	buf.WriteString("      Name = " + nixString(vxlan.IfName) + ";\n")
+	buf.WriteString("      Kind = \"vxlan\";\n")
+	if vxlan.MTU != 0 {
+		buf.WriteString("      MTUBytes = " + strconv.Itoa(vxlan.MTU) + ";\n")
+	}
+	buf.WriteString("    };\n")
+	buf.WriteString("    vxlanConfig = {\n")
+	buf.WriteString("      VNI = " + strconv.Itoa(vxlan.VNI) + ";\n")
+	buf.WriteString("      Local = " + nixString(vxlan.LocalAddress) + ";\n")
+	if vxlan.MulticastGroup != "" {
+		buf.WriteString("      Group = " + nixString(vxlan.MulticastGroup) + ";\n")
+	} else if len(vxlan.Remotes) == 1 {
+		buf.WriteString("      Remote = " + nixString(vxlan.Remotes[0]) + ";\n")
+	}
+	buf.WriteString("      DestinationPort = " + strconv.Itoa(vxlan.UDPPort) + ";\n")
+	buf.WriteString("    };\n")
+	buf.WriteString("  };\n")
+	if vxlan.Bridge != "" || len(vxlan.Remotes) > 1 {
+		buf.WriteString("  systemd.network.networks." + nixString("31-routerd-"+vxlan.IfName) + " = {\n")
+		buf.WriteString("    matchConfig.Name = " + nixString(vxlan.IfName) + ";\n")
+		buf.WriteString("    networkConfig = {\n")
+		if vxlan.Bridge != "" {
+			buf.WriteString("      Bridge = " + nixString(vxlan.Bridge) + ";\n")
+		}
+		buf.WriteString("    };\n")
+		if len(vxlan.Remotes) > 1 {
+			buf.WriteString("    bridgeFDBs = [\n")
+			for _, remote := range vxlan.Remotes {
+				buf.WriteString("      { MACAddress = \"00:00:00:00:00:00\"; Destination = " + nixString(remote) + "; }\n")
+			}
+			buf.WriteString("    ];\n")
+		}
+		buf.WriteString("  };\n")
+	}
 }
 
 func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
@@ -554,6 +649,9 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 				service["mstpd"] = true
 				debug["mstpd"] = true
 			}
+		case "VXLANSegment":
+			service["nftables"] = true
+			debug["nftables"] = true
 		case "IPv4DHCPServer", "IPv4DHCPScope", "IPv6DHCPServer", "IPv6DHCPScope", "DNSConditionalForwarder":
 			service["dnsmasq"] = true
 			debug["dnsmasq"] = true
