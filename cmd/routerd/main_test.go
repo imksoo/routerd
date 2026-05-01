@@ -1003,6 +1003,67 @@ func TestAppendPrefixDelegationStateWarningsWithoutLastPrefix(t *testing.T) {
 	}
 }
 
+func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if _, err := store.BeginGeneration("test"); err != nil {
+		t.Fatalf("begin generation: %v", err)
+	}
+	store.Set("ipv6PrefixDelegation.wan-pd.client", "networkd", "old client")
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
+		LastPrefix: "2001:db8:3d60:1240::/60",
+		DUID:       "00030001020000000001",
+		DUIDText:   "00:03:00:01:02:00:00:00:00:01",
+		IAID:       "3394439514",
+	}), "old lease")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+			Metadata: api.ObjectMeta{Name: "wan-pd"},
+			Spec: api.IPv6PrefixDelegationSpec{
+				Interface: "wan",
+				Client:    "dhcpcd",
+				Profile:   "ntt-hgw-lan-pd",
+			},
+		},
+	}}}
+	if _, err := recordObservedPrefixDelegationState(router, store); err != nil {
+		t.Fatalf("record PD state: %v", err)
+	}
+	lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
+	if !ok {
+		t.Fatal("lease missing")
+	}
+	if lease.DUID != "" || lease.DUIDText != "" || lease.IAID != "" {
+		t.Fatalf("identity was not cleared: %+v", lease)
+	}
+	if lease.LastPrefix != "2001:db8:3d60:1240::/60" {
+		t.Fatalf("last prefix = %q, want preserved", lease.LastPrefix)
+	}
+	if got := store.Get("ipv6PrefixDelegation.wan-pd.client").Value; got != "dhcpcd" {
+		t.Fatalf("client = %q, want dhcpcd", got)
+	}
+	events := store.Events(api.NetAPIVersion, "IPv6PrefixDelegation", "wan-pd", 10)
+	found := false
+	for _, event := range events {
+		if event.Reason == "PDClientChanged" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("PDClientChanged event missing: %+v", events)
+	}
+}
+
 func TestRecordHostInventoryState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := routerstate.OpenSQLite(path)

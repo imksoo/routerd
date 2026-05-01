@@ -1512,12 +1512,23 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			return nil, err
 		}
 		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
+		client := defaultString(spec.Client, "networkd")
 		prefixLength := api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		lease, _ := routerstate.PDLeaseFromStore(store, base)
+		previousClient := store.Get(base + ".client").Value
+		if previousClient != "" && previousClient != client {
+			var cleared bool
+			lease, cleared = routerstate.ClearPDLeaseObservedIdentity(lease)
+			if cleared {
+				if recorder, ok := store.(routerstate.EventRecorder); ok {
+					_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Normal", "PDClientChanged", fmt.Sprintf("cleared observed DHCPv6 identity after client changed from %s to %s", previousClient, client))
+				}
+			}
+		}
 		if ifname := aliases[spec.Interface]; ifname != "" {
 			changes = append(changes, stateChange{Name: base + ".uplinkIfname", Value: store.Set(base+".uplinkIfname", ifname, res.ID()+": observed uplink interface")})
-			identity := observedPrefixDelegationIdentity(ifname, defaultString(spec.Client, "networkd"), spec.IAID)
+			identity := observedPrefixDelegationIdentity(ifname, client, spec.IAID)
 			if identity.IAID != "" {
 				lease.IAID = identity.IAID
 			}
@@ -1531,7 +1542,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 				lease.ExpectedDUID = expected
 			}
 		}
-		changes = append(changes, stateChange{Name: base + ".client", Value: store.Set(base+".client", defaultString(spec.Client, "networkd"), res.ID()+": configured DHCPv6-PD client")})
+		changes = append(changes, stateChange{Name: base + ".client", Value: store.Set(base+".client", client, res.ID()+": configured DHCPv6-PD client")})
 		changes = append(changes, stateChange{Name: base + ".profile", Value: store.Set(base+".profile", profile, res.ID()+": configured DHCPv6-PD profile")})
 		if prefixLength > 0 {
 			changes = append(changes, stateChange{Name: base + ".prefixLength", Value: store.Set(base+".prefixLength", strconv.Itoa(prefixLength), res.ID()+": configured prefix length")})
@@ -1555,7 +1566,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			}
 		}
 		if observedPrefix == "" {
-			if defaultString(spec.Client, "networkd") == "dhcpcd" {
+			if client == "dhcpcd" {
 				if ifname := aliases[spec.Interface]; ifname != "" {
 					if prefix, leaseUpdate, ok := observedDHCPCDDelegatedPrefix(ifname, prefixLength); ok {
 						observedPrefix = prefix

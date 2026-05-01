@@ -47,6 +47,10 @@ behavior changes and new resource shapes as the model takes shape.
   `IPv6PrefixDelegation` client default as apply. NTT-profile resources with an
   omitted client no longer render networkd DHCPv6-PD blocks; only the
   neutralizing drop-in remains as a stale-file guard.
+- `routerd apply` now clears observed DHCPv6 identity fields in
+  `IPv6PrefixDelegation` status when the effective client changes, preventing
+  stale networkd IAID/DUID values from appearing after a move to `dhcpcd` or
+  `dhcp6c`.
 - Linux NTT-profile `IPv6PrefixDelegation` now defaults to `client: dhcpcd`,
   including on NixOS. `client: dhcp6c` remains a supported explicit fallback
   for migration and controlled comparison.

@@ -103,3 +103,11 @@ func DecodePDLease(value string) (PDLease, bool) {
 func PDLeaseFromStore(store Store, base string) (PDLease, bool) {
 	return DecodePDLease(store.Get(base + ".lease").Value)
 }
+
+func ClearPDLeaseObservedIdentity(lease PDLease) (PDLease, bool) {
+	changed := lease.DUID != "" || lease.DUIDText != "" || lease.IAID != ""
+	lease.DUID = ""
+	lease.DUIDText = ""
+	lease.IAID = ""
+	return lease, changed
+}
