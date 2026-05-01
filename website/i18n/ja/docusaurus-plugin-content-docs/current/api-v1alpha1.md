@@ -429,7 +429,7 @@ spec:
 
 ルータの振る舞い:
 
-- `spec.client` は OS 側の DHCPv6-PD クライアントを選びます。`networkd` は Linux の systemd-networkd 追加設定を使います。`dhcp6c` は routerd が管理する WIDE/KAME 形式の `dhcp6c.conf` とサービスを使います。`dhcpcd` はリソースごとの `dhcpcd.conf` とサービスを routerd が管理する経路です。省略時は `routerd apply` が OS とプロファイルから既定値を選びます。FreeBSD は `dhcp6c`、一般 Linux は `networkd`、Linux の NTT 系プロファイルは `dhcp6c`、NixOS の NTT 系プロファイルは `dhcpcd` です。1 回だけ切り替えて試したい場合は `routerd apply --override-client` を使えます。既知の悪い組み合わせは検証エラーではなく、警告とイベントとして表示します。同じインターフェースで `dhcp6c` や `dhcpcd` のような外部クライアントがプレフィックス委譲を持つ場合、`IPv6DHCPAddress` を同時に定義しないでください。WAN 側を待ち受ける DHCPv6 クライアントは 1 つに絞ります。
+- `spec.client` は OS 側の DHCPv6-PD クライアントを選びます。`networkd` は Linux の systemd-networkd 追加設定を使います。`dhcp6c` は routerd が管理する WIDE/KAME 形式の `dhcp6c.conf` とサービスを使います。`dhcpcd` はリソースごとの `dhcpcd.conf` とサービスを routerd が管理する経路です。省略時は `routerd apply` が OS とプロファイルから既定値を選びます。FreeBSD は `dhcp6c`、一般 Linux は `networkd`、NixOS を含む Linux の NTT 系プロファイルは `dhcpcd` です。Linux で `dhcp6c` を明示する経路は、移行や比較検証のための対応済みの代替手段として残します。1 回だけ切り替えて試したい場合は `routerd apply --override-client` を使えます。既知の悪い組み合わせは検証エラーではなく、警告とイベントとして表示します。同じインターフェースで `dhcp6c` や `dhcpcd` のような外部クライアントがプレフィックス委譲を持つ場合、`IPv6DHCPAddress` を同時に定義しないでください。WAN 側を待ち受ける DHCPv6 クライアントは 1 つに絞ります。
 - `spec.profile` は既知の上流環境向けにパラメータを切り替えます。
   - `default`: 一般的な DHCPv6-PD。
   - `ntt-ngn-direct-hikari-denwa`: NTT NGN/ONU に直結し、ひかり電話契約を使う構成。
@@ -449,7 +449,7 @@ spec:
   この経路で送ったパケットは、最近の DHCPv6 送信履歴としてリソース状態に記録します。記録にはメッセージ種別、transaction ID、IAID、プレフィックス、T1/T2、IA Prefix の寿命、Reconfigure Accept の有無を含めます。
   デーモンとして動く場合、routerd は対応しているプラットフォームで `IPv6PrefixDelegation` ごとの上流インターフェースに受動的な DHCPv6 パケット記録器を起動します。Linux では AF_PACKET を使うため、UDP 546/547 を bind せず、DHCPv6 クライアントと競合せずにフレームを観測します。観測した Solicit、Advertise、Request、Renew、Rebind、Reply、Release は、`routerctl describe ipv6pd/<名前>` が表示する最近のトランザクション一覧に追記されます。
 - FreeBSD の KAME `dhcp6c` では、NTT 系プロファイルかつ実効 DUID 型が `link-layer` の場合、routerd が `/var/db/dhcp6c_duid` を管理します。既存ファイルが期待する DUID と異なる場合は `.bak.<時刻>` として退避し、期待する DUID を `dhcp6c` 起動前に書き込みます。
-- `client: dhcpcd` を選んだ場合、NTT 系プロファイルかつ実効 DUID 型が `link-layer` なら、routerd は dhcpcd の DUID ファイルを管理します。`dhcpcd-<名前>.conf` を書き出し、リソースごとのサービスを起動します。Linux では `routerd-dhcpcd-<名前>.service`、FreeBSD では `/usr/local/etc/rc.d` 配下の rc.d スクリプトを管理します。この経路は、既定値を変える前に dhcpcd をラボで測るために用意しています。
+- `client: dhcpcd` を選んだ場合、NTT 系プロファイルかつ実効 DUID 型が `link-layer` なら、routerd は dhcpcd の DUID ファイルを管理します。`dhcpcd-<名前>.conf` を書き出し、リソースごとのサービスを起動します。Linux では `routerd-dhcpcd-<名前>.service`、FreeBSD では `/usr/local/etc/rc.d` 配下の rc.d スクリプトを管理します。Linux の NTT 系プロファイルではこの経路が既定です。FreeBSD では明示したときだけ使うラボ経路で、NTT 系プロファイルでは警告対象です。
 
 NTT のホームゲートウェイには、IPv6 を RA/SLAAC のみで配布し DHCPv6-PD に応答しないモードもあります。これは `IPv6PrefixDelegation` ではモデル化できないため、別途 RA/SLAAC のリソース設計を行う必要があります。
 

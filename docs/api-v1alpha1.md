@@ -521,7 +521,9 @@ How routerd behaves:
   `dhcp6c.conf` and service. `dhcpcd` uses a managed per-resource
   `dhcpcd.conf` and service. When omitted, `routerd apply` resolves an
   OS/profile default: FreeBSD uses `dhcp6c`; generic Linux uses `networkd`;
-  Linux NTT profiles use `dhcp6c`; NixOS NTT profiles use `dhcpcd`.
+  Linux NTT profiles, including NixOS, use `dhcpcd`.
+  `dhcp6c` remains a supported explicit Linux fallback for migration and
+  controlled comparison.
   `routerd apply --override-client` can override this for a single run.
   Known-bad combinations emit warnings and events, not validation errors.
   Do not also declare an `IPv6DHCPAddress` on the same interface when an
@@ -623,8 +625,8 @@ How routerd behaves:
   profiles whose effective DUID type is `link-layer`, renders
   `dhcpcd-<name>.conf`, and starts a per-resource service. On Linux this is
   `routerd-dhcpcd-<name>.service`; on FreeBSD this is a managed rc.d script
-  under `/usr/local/etc/rc.d`. This path is present so the lab can measure
-  dhcpcd before changing any profile defaults.
+  under `/usr/local/etc/rc.d`. This is the Linux NTT-profile default. On
+  FreeBSD it remains an explicit lab path and is warned for NTT profiles.
 
 Some NTT home-gateway environments only advertise IPv6 by RA/SLAAC and never
 answer DHCPv6-PD. Those should not be modeled as `IPv6PrefixDelegation`;

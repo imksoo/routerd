@@ -403,22 +403,23 @@ routerctl describe inventory/host
 この作業一覧は、0章で定めた参照ルータの挙動と、現在の routerd 実装の差を埋める
 ためのものです。
 
-### 5.1 最重要: NTT/HGW のプレフィックス委譲では `dhcp6c` を使う
+### 5.1 最重要: NTT/HGW のプレフィックス委譲は OS ごとに経路を選ぶ
 
-assert: NTT HGW 向けプロファイルでは、Linux と FreeBSD のどちらでも、
-Renew と Rebind のときに IA_PD の寿命を正しく保てる DHCPv6-PD クライアントを
-使います。ラボの取得結果では systemd-networkd の経路が Renew/Rebind で寿命
-`0/0` を出したため、このプロファイルの既定にはしません。
+assert: NTT HGW 向けプロファイルでは、Linux は `dhcpcd`、FreeBSD は
+KAME/WIDE `dhcp6c` を既定にします。どちらも、ラボで観測した
+systemd-networkd の Renew/Rebind 寿命 `0/0` 問題を避けるための経路です。
+Linux の `dhcp6c` は、移行や比較検証のための対応済みの代替経路として残します。
 
 完了条件: FreeBSD の 1 台を `client: dhcp6c` の対照系として残し、もう 1 台を
 `client: dhcpcd` の試験系として同じ HGW 状態で測ります。その後、Ubuntu と
-NixOS でも `dhcpcd` を測ります。初回取得と T1 Renew の両方が成功するまでは、
-既定値は変えません。
+NixOS では Linux 経路として `dhcpcd` を測ります。Linux の既定値は `dhcpcd` に
+移しましたが、T1 の長時間 Renew 観測は Phase 3 に残します。
 
 measure (2026-04-30): Ubuntu の `dhcpcd` で clean re-acquisition を試したところ、
 routerd 管理下で DUID-LL と IA_PD を含む Solicit は繰り返し送られましたが、
 短時間の通常稼働中試験では HGW から Advertise/Reply は返りませんでした。
-このため `dhcpcd` は NTT 向け既定へ昇格せず、明示的に選ぶラボ候補のままにします。
+その後のラボ作業で `dhcpcd` を Linux の本線にしましたが、T1 Renew の長時間観測は
+引き続き残作業として追います。
 
 長い T1 測定に入る前に、短い寿命を要求する能動 Request を 1 回送ります。
 要求値は `T1=300`、`T2=600`、`pltime=600`、`vltime=900` とし、HGW の Reply
@@ -579,7 +580,7 @@ apply 時上書きを組み合わせる。
 | --- | --- | --- |
 | FreeBSD | 任意 | `dhcp6c` |
 | Linux | `default` | `networkd` |
-| Linux | `ntt-*` | `dhcp6c` |
+| Linux | `ntt-*` | `dhcpcd` |
 | NixOS | `ntt-*` | `dhcpcd` |
 
 同じ方針を、実装の成熟度として見ると次のようになります。
@@ -591,12 +592,12 @@ flowchart LR
     F2[dhcpcd: NTT では警告]
   end
   subgraph UbuntuLinux["Ubuntu / 一般 Linux"]
-    L1[dhcp6c: NTT 既定]
+    L1[dhcpcd: NTT 既定]
     L2[networkd: 一般既定]
-    L3[dhcpcd: ラボ候補]
+    L3[dhcp6c: 対応済みの代替経路]
   end
   subgraph NixOS
-    N1[dhcpcd: 候補既定]
+    N1[dhcpcd: NTT 既定]
     N2[networkd: NTT では警告]
   end
   F1 --> KB[知識ベースの表]

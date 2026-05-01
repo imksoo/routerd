@@ -2,16 +2,16 @@
 
 routerd は WAN 側の DHCPv6 Prefix Delegation を OS の DHCPv6 クライアントに任せます。
 このページは、ラボの実機観測（NTT フレッツ光ネクスト + PR-400NE HGW配下）から得られた
-クライアント実装ごとの挙動の差と、なぜ routerd の NTT 系プロファイルでは KAME/WIDE `dhcp6c` を
-推奨するかをまとめます。
+クライアント実装ごとの挙動の差と、なぜ routerd の Linux 向け NTT 系プロファイルでは
+`dhcpcd` を既定にし、FreeBSD では KAME/WIDE `dhcp6c` を使い続けるかをまとめます。
 
 ## 主要クライアントの比較
 
 | 実装 | ライセンス | 上流の状況 | NTT NGN 配下での挙動 |
 | --- | --- | --- | --- |
-| KAME/WIDE `dhcp6c` (`wide-dhcpv6-client` / `net/dhcp6`) | BSD 系 | 上流の `wide-dhcpv6` は 2008-06-15 で停止。各ディストリビューションがパッチ適用で延命中。OPNsense fork (`opnsense/dhcp6c`) は BSD-3 で active | Renew/Rebind の IA Prefix lifetime を直前の Reply から保持し、再送信できる。NEC IX 系の商用ルータと同じ形のパケットを送れる |
+| KAME/WIDE `dhcp6c` (`wide-dhcpv6-client` / `net/dhcp6`) | BSD 系 | 上流の `wide-dhcpv6` は 2008-06-15 で停止。各ディストリビューションがパッチ適用で延命中。OPNsense fork (`opnsense/dhcp6c`) は BSD-3 で active | Renew/Rebind の IA Prefix lifetime を直前の Reply から保持し、再送信できる。NEC IX 系の商用ルータと同じ形のパケットを送れる。FreeBSD では既定、Linux では移行や比較検証のための代替経路として残す |
 | systemd-networkd | LGPL-2.1+ | active | Renew/Rebind の IA Prefix lifetime を 0/0 で送る場合がある（systemd issue #16356）。NTT HGW はこれを「prefix 不要」のシグナルとして扱い黙殺する |
-| dhcpcd | BSD 2-clause | active | 単独で IPv4/RA/DHCPv6/PD を扱える。ただし NTT HGW 配下の検証では、Vendor-Class option や ORO の opt_82/opt_83 を含む。Ubuntu の dhcpcd で通常稼働中の再取得を試したが HGW から Reply は返らなかったため、現時点ではラボ用経路に留める |
+| dhcpcd | BSD 2-clause | active | 単独で IPv4/RA/DHCPv6/PD を扱える。Linux では有力な経路として動作確認を進めており、T1 の長時間 Renew 観測は Phase 3 に残す。Linux の NTT 系プロファイルでは既定にする |
 | odhcp6c | GPL-2.0 | OpenWrt プロジェクト配下で active。OpenWrt 以外の distro パッケージは少ない | OpenWrt 系で広く使われるが、NTT 10G ひかり（フレッツ クロス）で 8 時間ごとに切断する報告がある（OpenWrt issue #13454）。NTT HGW 向けは追加検証が必要 |
 
 ## routerd の選択表
@@ -26,10 +26,10 @@ routerd は複数のクライアント経路を残します。OS とプロファ
 | --- | --- | --- | --- |
 | FreeBSD | `dhcp6c` | 検証済みの既定 | FreeBSD の現行本線。KAME/WIDE `dhcp6c` を使う。routerd は不要なサービス変更を避け、クライアント状態を保つ。 |
 | FreeBSD | `dhcpcd` | 既知の問題として警告 | DUID ファイル削除時に DUID-LLT を作り、DUID-LL を強制しても HGW から応答がなかった。取得メモの Section L を参照。 |
-| Ubuntu/Linux | `dhcp6c` | `ntt-*` の検証済み既定 | Linux の NTT プロファイル本線。systemd-networkd の Renew/Rebind 寿命 0/0 問題を避ける。 |
+| Ubuntu/Linux | `dhcpcd` | `ntt-*` の既定 | Linux の NTT プロファイル本線。Ubuntu と NixOS で同じ経路を使い、systemd-networkd の DHCPv6-PD に依存しない。T1 の長時間 Renew 観測は Phase 3 に残す。 |
+| Ubuntu/Linux | `dhcp6c` | 対応済みの代替経路 | 移行や比較検証のために明示指定できる。systemd-networkd の Renew/Rebind 寿命 0/0 問題は避けられるが、既定値ではない。 |
 | Ubuntu/Linux | `networkd` | `ntt-*` では既知の問題として警告 | 一般的な Linux PD では有用。ただし NTT HGW では IA Prefix 寿命 0/0 の Renew/Rebind を観測した。 |
-| Ubuntu/Linux | `dhcpcd` | 候補 | レンダラはラボ用に存在する。通常稼働中の再取得試験では Solicit は出たが HGW から Reply は返らなかった。対象環境で初回取得と Renew を確認するまでは明示指定に留める。 |
-| NixOS | `dhcpcd` | `ntt-*` の候補既定 | nixpkgs で WIDE `dhcp6c` を素直に使う経路がないための候補。追加検証が必要。 |
+| NixOS | `dhcpcd` | `ntt-*` の既定 | Linux の NTT プロファイルと同じ既定。nixpkgs で WIDE `dhcp6c` を素直に使う経路がないことも理由のひとつ。 |
 | NixOS | `networkd` | `ntt-*` では既知の問題として警告 | 他の Linux と同じく networkd Renew/Rebind 寿命問題を避ける。 |
 
 既知の問題がある組み合わせは検証エラーではありません。routerd は apply 警告と
@@ -64,8 +64,9 @@ routerd は複数のクライアント経路を残します。OS とプロファ
 
 ## routerd での扱い
 
-- 既定の Linux 経路は `systemd-networkd`。ただし NTT 系プロファイル（`ntt-ngn-direct-hikari-denwa`、
-  `ntt-hgw-lan-pd`）では `IPv6PrefixDelegation.spec.client: dhcp6c` を選んで KAME/WIDE `dhcp6c` を使うのが推奨。
+- 一般 Linux の既定経路は `systemd-networkd`。ただし NTT 系プロファイル（`ntt-ngn-direct-hikari-denwa`、
+  `ntt-hgw-lan-pd`）では `IPv6PrefixDelegation.spec.client: dhcpcd` を既定にする。
+- Linux の `client: dhcp6c` は、移行や比較検証のために明示指定できる対応済みの代替経路として残す。既知の問題としては扱わない。
 - FreeBSD は `dhcp6c`（ports `net/dhcp6`）が既定。base の `dhclient` は IPv4 のみで PD 不可。
 - routerd の `apply` は OS DHCPv6 クライアントの内部 lease 状態を温存することを最優先にする。
   rc.conf や drop-in に変更がない限りサービスを restart しない。
@@ -131,11 +132,11 @@ NTT NGN HGW 配下での連続稼働中 PD 取得
   それ以外は NTT NGN 上で HGW が要求する形に違反する。
 - **systemd-networkd** は Renew/Rebind の IA Prefix を `pltime=0 vltime=0` で送る場合がある（systemd issue #16356）。
   HGW はこれを release 相当のシグナルとして silently drop し、binding が壊れたまま client は気づかない。
-  routerd の NTT 系プロファイルは networkd を避けて `dhcp6c` 経路に切り替える。
+  routerd の Linux 向け NTT 系プロファイルは networkd を避けて `dhcpcd` 経路に切り替える。
 - **Ubuntu 上の dhcpcd** は、routerd が管理するリソース単位の service と hook で動かせる。
   2026-04-30 の通常稼働中試験では、DUID-LL と IA_PD を含む Solicit を繰り返し送ったが、
   HGW から Advertise/Reply は返らなかった。これは dhcpcd 全般を否定するものではないが、
-  対象環境で取得と T1 Renew が両方成功するまでは、明示的なラボ選択肢として扱う。
+  その後のラボ作業で Linux の NTT 系既定にした。T1 Renew の長時間観測は Phase 3 の検証として残す。
 
 ## Server Identifier の RA からの導出
 

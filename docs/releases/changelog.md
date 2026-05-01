@@ -28,6 +28,9 @@ behavior changes and new resource shapes as the model takes shape.
   `IPv6PrefixDelegation` on supported platforms. The Linux implementation uses
   AF_PACKET to observe UDP 546/547 without binding those ports, and records
   observed transactions into the same status history.
+- Linux NTT-profile `IPv6PrefixDelegation` now defaults to `client: dhcpcd`,
+  including on NixOS. `client: dhcp6c` remains a supported explicit fallback
+  for migration and controlled comparison.
 - Breaking: routerd now uses `apply` as the user-facing verb. The old
   `reconcile` CLI and control API actions were replaced by `routerd apply`,
   `routerctl apply`, and `/apply`; the YAML `spec.reconcile` policy name stays
@@ -41,11 +44,10 @@ behavior changes and new resource shapes as the model takes shape.
   managed WIDE/KAME-style `dhcp6c.conf` and systemd unit so NTT home-gateway
   profiles can avoid systemd-networkd Renew/Rebind packets with zero IA Prefix
   lifetimes.
-- `IPv6PrefixDelegation` can now use `client: dhcpcd` as an explicit lab
-  evaluation path on Linux and FreeBSD. routerd renders a per-resource
-  `dhcpcd.conf`, hook placeholder, and either a systemd unit or FreeBSD rc.d
-  script while keeping the existing profile defaults unchanged until lab Renew
-  measurements are complete.
+- `IPv6PrefixDelegation` can now use `client: dhcpcd`. It is the Linux
+  NTT-profile default and remains an explicit lab path on FreeBSD. routerd
+  renders a per-resource `dhcpcd.conf`, hook placeholder, and either a systemd
+  unit or FreeBSD rc.d script.
 - Linux DHCPv6-PD client switching now stops stale managed units for the
   previous client, and the generated dhcpcd hook is file-global so dhcpcd 10
   actually invokes routerd's local event reporter.

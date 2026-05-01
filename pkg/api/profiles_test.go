@@ -13,7 +13,7 @@ func TestEffectiveIPv6PDClient(t *testing.T) {
 	}{
 		{name: "freebsd default", osName: "freebsd", want: IPv6PDClientDHCP6C},
 		{name: "linux default profile", osName: "linux", profile: IPv6PDProfileDefault, want: IPv6PDClientNetworkd},
-		{name: "linux ntt profile", osName: "linux", profile: IPv6PDProfileNTTHGWLANPD, want: IPv6PDClientDHCP6C},
+		{name: "linux ntt profile", osName: "linux", profile: IPv6PDProfileNTTHGWLANPD, want: IPv6PDClientDHCPCD},
 		{name: "nixos ntt profile", osName: "linux", nixOS: true, profile: IPv6PDProfileNTTHGWLANPD, want: IPv6PDClientDHCPCD},
 		{name: "configured wins", osName: "linux", nixOS: true, profile: IPv6PDProfileNTTHGWLANPD, configured: IPv6PDClientNetworkd, want: IPv6PDClientNetworkd},
 		{name: "unknown os", osName: "plan9", want: IPv6PDClientNetworkd},

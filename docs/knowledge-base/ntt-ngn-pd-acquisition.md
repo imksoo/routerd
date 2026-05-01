@@ -653,9 +653,9 @@ managed dhcpcd services and hooks.
 - **measure**: During the short steady-state observation the HGW emitted RA and
   NDP traffic but did not send Advertise or Reply to the Ubuntu dhcpcd client.
   The existing HGW table entry for that MAC counted down and did not refresh.
-- **assert**: Linux `dhcpcd` remains an explicit lab candidate. Do not promote
-  it to the NTT default until both acquisition and T1 Renew succeed in the
-  target environment.
+- **assert**: Linux `dhcpcd` is now the NTT-profile default. This section is
+  still useful as a reminder that long-running T1 Renew observation remains a
+  required Phase 3 validation item.
 
 ## References
 

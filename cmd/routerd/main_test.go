@@ -92,8 +92,8 @@ func TestRouterWithIPv6PDClientOptionsResolvesFlavorDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read spec: %v", err)
 	}
-	if spec.Client != api.IPv6PDClientDHCP6C {
-		t.Fatalf("client = %q, want dhcp6c", spec.Client)
+	if spec.Client != api.IPv6PDClientDHCPCD {
+		t.Fatalf("client = %q, want dhcpcd", spec.Client)
 	}
 	if spec.Profile != api.IPv6PDProfileNTTHGWLANPD {
 		t.Fatalf("profile = %q, want original profile", spec.Profile)

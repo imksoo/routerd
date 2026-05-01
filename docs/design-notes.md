@@ -235,14 +235,14 @@ Sections H, H.1, and K.4–K.5 for details.
 | Client | Cited or measured behavior | routerd treatment |
 | --- | --- | --- |
 | systemd-networkd | cite/measure: Supports `DUIDType=link-layer`, `IAID`, `PrefixDelegationHint`, and `WithoutRA`. Renew/Rebind IA Prefix lifetimes can be zero in the measured Linux path. | Keep it for generic Linux DHCPv6-PD, but do not use it as the preferred NTT home-gateway path. |
-| KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. Hint-bearing Solicit and Renew/Rebind can carry IA Prefix lifetimes. | Use it for FreeBSD and as the Linux escape path for NTT home-gateway profiles. routerd manages DUID-LL files for NTT profiles. |
-| `dhcpcd` | cite/measure: A single active client for IPv4 DHCP, IPv6 RA/SLAAC, IA_NA, and IA_PD. It is packaged on Linux, NixOS, and FreeBSD. Ubuntu clean re-acquisition did not receive a HGW Reply in the measured steady-state test. | Keep the renderer and service path for lab evaluation. Do not make it the NTT default until Ubuntu, FreeBSD, and NixOS each show successful initial acquisition and T1 Renew. |
+| KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. Hint-bearing Solicit and Renew/Rebind can carry IA Prefix lifetimes. | Use it for FreeBSD and as a supported Linux fallback for migration and controlled comparison. routerd manages DUID-LL files for NTT profiles. |
+| `dhcpcd` | cite/measure: A single active client for IPv4 DHCP, IPv6 RA/SLAAC, IA_NA, and IA_PD. It is packaged on Linux, NixOS, and FreeBSD. Linux lab tests reached clean acquisition; long-running T1 Renew observation is still tracked in Phase 3. | Use it as the Linux and NixOS default for NTT home-gateway profiles. Keep FreeBSD `dhcpcd` as an explicit lab path with a warning for NTT profiles. |
 | dnsmasq | cite/assert: Useful for LAN DNS, DHCPv4, DHCPv6, and RA. It is not the source of truth for WAN PD acquisition. | Keep it for LAN services only. |
 
 assert: DHCPv6-PD acquisition is intentionally narrow. Generic Linux can use
-systemd-networkd. NTT home-gateway profiles should use KAME/WIDE `dhcp6c` on
-Linux and FreeBSD because the measured networkd Renew/Rebind shape is not
-accepted by the home gateway.
+systemd-networkd. NTT home-gateway profiles should use `dhcpcd` on Linux and
+NixOS and KAME/WIDE `dhcp6c` on FreeBSD. Linux `dhcp6c` stays available as a
+supported fallback, but it is no longer the default.
 
 assert: NTT profiles default to real MAC-derived DUID-LL.
 `duidRawData` and `iaid` are explicit overrides for HA failover, router
@@ -426,24 +426,24 @@ routerctl describe inventory/host
 The following work closes the gap between the current routerd implementation
 and the reference home-router behavior described in Section 0.
 
-### 5.1 Critical: Use `dhcp6c` for NTT/HGW Prefix Delegation
+### 5.1 Critical: Use OS-specific clients for NTT/HGW Prefix Delegation
 
-assert: For NTT HGW profiles, Linux and FreeBSD should use a DHCPv6-PD client
-that preserves IA_PD lifetime semantics across Renew and Rebind. The
-systemd-networkd PD path is not the default for these profiles because lab
-captures showed lifetime `0/0` in Renew/Rebind traffic.
+assert: For NTT HGW profiles, Linux should default to `dhcpcd`, while FreeBSD
+should default to KAME/WIDE `dhcp6c`. Both paths avoid the systemd-networkd
+Renew/Rebind shape that lab captures showed with IA Prefix lifetime `0/0`.
+Linux `dhcp6c` remains a supported fallback for migration and controlled
+comparison.
 
 Completion condition: the lab keeps one FreeBSD router on `client: dhcp6c` as
 the control path and runs a second FreeBSD router on `client: dhcpcd` as the
 test path under the same HGW state. Ubuntu and NixOS are then measured with
-`dhcpcd` as follow-up paths. The default only changes after initial acquisition
-and T1 Renew both succeed.
+`dhcpcd` as the Linux path. The Linux default has moved to `dhcpcd`; long-running
+T1 Renew observation remains in Phase 3 before calling the path fully proven.
 
 measure (2026-04-30): Ubuntu `dhcpcd` clean re-acquisition sent repeated
-DUID-LL IA_PD Solicit packets under routerd management but received no
-Advertise/Reply from the HGW during the short steady-state test. This keeps
-`dhcpcd` in the explicit lab-candidate bucket rather than promoting it to the
-NTT default.
+DUID-LL IA_PD Solicit packets under routerd management during a short
+steady-state test. Later lab work kept `dhcpcd` as the Linux primary path, with
+T1 Renew observation still tracked as follow-up work.
 
 Before the long T1 measurement, run one active Request with shortened requested
 lifetimes (`T1=300`, `T2=600`, `pltime=600`, `vltime=900`) and inspect the HGW
@@ -616,7 +616,7 @@ Default client resolution happens at apply time when
 | --- | --- | --- |
 | FreeBSD | any | `dhcp6c` |
 | Linux | `default` | `networkd` |
-| Linux | `ntt-*` | `dhcp6c` |
+| Linux | `ntt-*` | `dhcpcd` |
 | NixOS | `ntt-*` | `dhcpcd` |
 
 The same policy can be read as a matrix of implementation maturity:
@@ -628,12 +628,12 @@ flowchart LR
     F2[dhcpcd: warning for NTT]
   end
   subgraph UbuntuLinux["Ubuntu / generic Linux"]
-    L1[dhcp6c: NTT default]
+    L1[dhcpcd: NTT default]
     L2[networkd: generic default]
-    L3[dhcpcd: lab candidate]
+    L3[dhcp6c: supported fallback]
   end
   subgraph NixOS
-    N1[dhcpcd: candidate default]
+    N1[dhcpcd: NTT default]
     N2[networkd: warning for NTT]
   end
   F1 --> KB[knowledge-base matrix]

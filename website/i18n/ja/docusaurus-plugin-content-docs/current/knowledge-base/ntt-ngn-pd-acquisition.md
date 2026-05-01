@@ -581,8 +581,8 @@ routerd はこれらを「外部要因の既知故障モード」として、本
 - **measure**: 短時間の通常稼働中観測では、HGW は RA と NDP は出していたが、
   Ubuntu dhcpcd クライアントへ Advertise/Reply は返さなかった。HGW 表の
   当該 MAC の既存エントリは残時間が減るだけで、更新されなかった。
-- **assert**: Linux `dhcpcd` は明示的に選ぶラボ候補のままとする。対象環境で
-  取得と T1 Renew の両方が成功するまで、NTT 向け既定にはしない。
+- **assert**: Linux `dhcpcd` は NTT 系プロファイルの既定にした。この節は、
+  T1 Renew の長時間観測を Phase 3 の検証として残すための注意点として扱う。
 
 ## 参考リンク
 

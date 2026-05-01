@@ -74,11 +74,8 @@ func EffectiveIPv6PDClient(osName string, nixOS bool, profile, configured string
 	case "freebsd":
 		return IPv6PDClientDHCP6C
 	case "linux":
-		if nixOS && IsNTTIPv6PDProfile(effectiveProfile) {
-			return IPv6PDClientDHCPCD
-		}
 		if IsNTTIPv6PDProfile(effectiveProfile) {
-			return IPv6PDClientDHCP6C
+			return IPv6PDClientDHCPCD
 		}
 		return IPv6PDClientNetworkd
 	default:
