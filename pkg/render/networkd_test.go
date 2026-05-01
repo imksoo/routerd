@@ -210,9 +210,22 @@ func TestNetworkdDropinsSkipExternalPrefixDelegationClient(t *testing.T) {
 					t.Fatalf("RA drop-in missing %q:\n%s", want, string(ra.Data))
 				}
 			}
-			for _, file := range files {
-				if strings.Contains(file.Path, "90-routerd-dhcp6-pd.conf") {
-					t.Fatalf("networkd should not render DHCPv6-PD drop-ins for client=%s: %#v", client, files)
+			wan := findNetworkdTestFile(files, "10-netplan-ens18.network.d/90-routerd-dhcp6-pd.conf")
+			lan := findNetworkdTestFile(files, "10-netplan-ens19.network.d/90-routerd-dhcp6-pd.conf")
+			for _, file := range []File{wan, lan} {
+				if file.Path == "" {
+					t.Fatalf("missing neutralizing DHCPv6-PD drop-in for client=%s: %#v", client, files)
+				}
+				data := string(file.Data)
+				for _, want := range []string{"IPv6AcceptRA=yes", "DHCPv6Client=no", "UseDNS=no", "UseDomains=no"} {
+					if !strings.Contains(data, want) {
+						t.Fatalf("disabled drop-in missing %q:\n%s", want, data)
+					}
+				}
+				for _, unwanted := range []string{"DHCP=yes", "DHCPPrefixDelegation=yes", "UseDelegatedPrefix=yes"} {
+					if strings.Contains(data, unwanted) {
+						t.Fatalf("disabled drop-in should not contain %q:\n%s", unwanted, data)
+					}
 				}
 			}
 		})

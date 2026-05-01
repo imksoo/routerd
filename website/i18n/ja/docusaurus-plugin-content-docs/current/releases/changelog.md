@@ -39,6 +39,10 @@ behavior changes and new resource shapes as the model takes shape.
 - NixOS rendering now uses the same effective IPv6PrefixDelegation client
   default as apply, so omitted NTT-profile clients render `dhcpcd` packages
   and avoid enabling systemd-networkd DHCPv6-PD.
+- Switching IPv6PrefixDelegation away from systemd-networkd now writes
+  neutralizing networkd drop-ins for the WAN and delegated LAN interfaces, so
+  stale `90-routerd-dhcp6-pd.conf` files cannot keep networkd sending DHCPv6-PD
+  packets in parallel with `dhcp6c` or `dhcpcd`.
 - Linux NTT-profile `IPv6PrefixDelegation` now defaults to `client: dhcpcd`,
   including on NixOS. `client: dhcp6c` remains a supported explicit fallback
   for migration and controlled comparison.
