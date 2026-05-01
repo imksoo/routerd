@@ -522,8 +522,8 @@ How routerd behaves:
   `dhcpcd.conf` and service. When omitted, `routerd apply` resolves an
   OS/profile default: FreeBSD uses `dhcp6c`; generic Linux uses `networkd`;
   Linux NTT profiles, including NixOS, use `dhcpcd`.
-  `dhcp6c` remains a supported explicit Linux fallback for migration and
-  controlled comparison.
+  `dhcp6c` remains a supported explicit Linux fallback only, for migration and
+  controlled comparison; new Linux NTT examples should use `dhcpcd`.
   `routerd apply --override-client` can override this for a single run.
   Known-bad combinations emit warnings and events, not validation errors.
   Do not also declare an `IPv6DHCPAddress` on the same interface when an

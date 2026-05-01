@@ -53,7 +53,8 @@ behavior changes and new resource shapes as the model takes shape.
   `dhcp6c`.
 - Linux NTT-profile `IPv6PrefixDelegation` now defaults to `client: dhcpcd`,
   including on NixOS. `client: dhcp6c` remains a supported explicit fallback
-  for migration and controlled comparison.
+  for migration and controlled comparison, but new examples should not select
+  it by default.
 - Breaking: routerd now uses `apply` as the user-facing verb. The old
   `reconcile` CLI and control API actions were replaced by `routerd apply`,
   `routerctl apply`, and `/apply`; the YAML `spec.reconcile` policy name stays

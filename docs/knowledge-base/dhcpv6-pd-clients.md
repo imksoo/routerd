@@ -4,13 +4,13 @@ routerd delegates WAN-side DHCPv6 Prefix Delegation to the operating system's DH
 This page summarises lab observations from a NTT FLET'S Hikari Next + PR-400NE home gateway
 deployment, the differences between client implementations seen there, and why routerd's
 NTT profiles default to `dhcpcd` on Linux while keeping KAME/WIDE `dhcp6c`
-as the FreeBSD default and a Linux fallback.
+as the FreeBSD default and an explicit Linux fallback only.
 
 ## Comparison
 
 | Implementation | Licence | Upstream status | Behaviour under NTT NGN |
 | --- | --- | --- | --- |
-| KAME/WIDE `dhcp6c` (`wide-dhcpv6-client` / `net/dhcp6`) | BSD-style | Upstream `wide-dhcpv6` stopped at 2008-06-15. Distros patch-maintain. The `opnsense/dhcp6c` fork is BSD-3 and active | Carries IA Prefix lifetimes from the previous Reply into Renew/Rebind. Sends packet shapes similar to NEC IX commercial routers. FreeBSD uses it as the default; Linux keeps it as a supported fallback |
+| KAME/WIDE `dhcp6c` (`wide-dhcpv6-client` / `net/dhcp6`) | BSD-style | Upstream `wide-dhcpv6` stopped at 2008-06-15. Distros patch-maintain. The `opnsense/dhcp6c` fork is BSD-3 and active | Carries IA Prefix lifetimes from the previous Reply into Renew/Rebind. Sends packet shapes similar to NEC IX commercial routers. FreeBSD uses it as the default; Linux keeps it only as an explicit fallback |
 | systemd-networkd | LGPL-2.1+ | Active | Has been observed to send Renew/Rebind with IA Prefix `pltime=0 vltime=0` (systemd issue #16356). NTT HGW silently drops these as a "release-like" signal |
 | dhcpcd | BSD 2-clause | Active | Handles IPv4/RA/DHCPv6/PD in one daemon. Lab tests showed a viable Linux path; long-running T1 Renew observation remains part of Phase 3. Linux NTT profiles default to this path |
 | odhcp6c | GPL-2.0 | Active under the OpenWrt project, rarely packaged outside OpenWrt | Widely used in OpenWrt. NTT FLET'S Cross (10G Hikari) deployments report eight-hour disconnections (OpenWrt issue #13454). Needs more validation under PR-400NE |
@@ -27,7 +27,7 @@ that choice for one apply with `--override-client` and `--override-profile`.
 | FreeBSD | `dhcp6c` | verified default | Current production path for FreeBSD. Uses KAME/WIDE `dhcp6c`; routerd keeps service changes idempotent to preserve client state. |
 | FreeBSD | `dhcpcd` | known-bad warning | Lab test produced DUID-LLT when the DUID file was removed, and still received no HGW response after forcing DUID-LL. See Section L of the acquisition notes. |
 | Ubuntu/Linux | `dhcpcd` | default for `ntt-*` | Current Linux NTT-profile default. Used for Ubuntu and NixOS so the Linux path does not depend on systemd-networkd DHCPv6-PD. Long-running T1 Renew observation remains part of Phase 3. |
-| Ubuntu/Linux | `dhcp6c` | supported fallback | Supported explicit choice for migration and controlled comparison. It avoids observed systemd-networkd Renew/Rebind lifetime 0/0 packets, but is no longer the default. |
+| Ubuntu/Linux | `dhcp6c` | explicit fallback only | Supported explicit choice for migration and controlled comparison. It avoids observed systemd-networkd Renew/Rebind lifetime 0/0 packets, but is no longer the default and should not be used in new examples. |
 | Ubuntu/Linux | `networkd` | known-bad warning for `ntt-*` | Useful for generic Linux PD, but measured Renew/Rebind packets with IA Prefix lifetime 0/0 against the NTT HGW. |
 | NixOS | `dhcpcd` | default for `ntt-*` | Same Linux NTT-profile default. Chosen because nixpkgs does not currently provide a straightforward WIDE `dhcp6c` package path. |
 | NixOS | `networkd` | known-bad warning for `ntt-*` | Same networkd Renew/Rebind lifetime concern as other Linux hosts. |
@@ -67,8 +67,9 @@ From lab observations and public documentation, the working model is:
 - The default generic Linux client is `systemd-networkd`. NTT profiles
   (`ntt-ngn-direct-hikari-denwa`, `ntt-hgw-lan-pd`) default to
   `IPv6PrefixDelegation.spec.client: dhcpcd`.
-- Linux `client: dhcp6c` remains supported as an explicit fallback for migration and
-  controlled comparison. It is not a known-bad combination.
+- Linux `client: dhcp6c` remains supported only as an explicit fallback for
+  migration and controlled comparison. It is not a known-bad combination, but
+  new examples should use `dhcpcd` for NTT profiles.
 - FreeBSD always uses `dhcp6c` from `net/dhcp6`. Base `dhclient` does not handle DHCPv6-PD.
 - `routerd apply` preserves the OS DHCPv6 client's in-memory lease. Services are not restarted
   unless rc.conf or drop-in files actually change.

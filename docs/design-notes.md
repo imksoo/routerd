@@ -235,14 +235,14 @@ Sections H, H.1, and K.4–K.5 for details.
 | Client | Cited or measured behavior | routerd treatment |
 | --- | --- | --- |
 | systemd-networkd | cite/measure: Supports `DUIDType=link-layer`, `IAID`, `PrefixDelegationHint`, and `WithoutRA`. Renew/Rebind IA Prefix lifetimes can be zero in the measured Linux path. | Keep it for generic Linux DHCPv6-PD, but do not use it as the preferred NTT home-gateway path. |
-| KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. Hint-bearing Solicit and Renew/Rebind can carry IA Prefix lifetimes. | Use it for FreeBSD and as a supported Linux fallback for migration and controlled comparison. routerd manages DUID-LL files for NTT profiles. |
+| KAME/WIDE `dhcp6c` | cite/measure: Stores DUID in a file and IAID/IA_PD in config. Hint-bearing Solicit and Renew/Rebind can carry IA Prefix lifetimes. | Use it for FreeBSD and keep it on Linux only as an explicit fallback for migration and controlled comparison. routerd manages DUID-LL files for NTT profiles. |
 | `dhcpcd` | cite/measure: A single active client for IPv4 DHCP, IPv6 RA/SLAAC, IA_NA, and IA_PD. It is packaged on Linux, NixOS, and FreeBSD. Linux lab tests reached clean acquisition; long-running T1 Renew observation is still tracked in Phase 3. | Use it as the Linux and NixOS default for NTT home-gateway profiles. Keep FreeBSD `dhcpcd` as an explicit lab path with a warning for NTT profiles. |
 | dnsmasq | cite/assert: Useful for LAN DNS, DHCPv4, DHCPv6, and RA. It is not the source of truth for WAN PD acquisition. | Keep it for LAN services only. |
 
 assert: DHCPv6-PD acquisition is intentionally narrow. Generic Linux can use
 systemd-networkd. NTT home-gateway profiles should use `dhcpcd` on Linux and
-NixOS and KAME/WIDE `dhcp6c` on FreeBSD. Linux `dhcp6c` stays available as a
-supported fallback, but it is no longer the default.
+NixOS and KAME/WIDE `dhcp6c` on FreeBSD. Linux `dhcp6c` stays available only
+as an explicit fallback, and new examples should not select it by default.
 
 assert: NTT profiles default to real MAC-derived DUID-LL.
 `duidRawData` and `iaid` are explicit overrides for HA failover, router
@@ -431,8 +431,8 @@ and the reference home-router behavior described in Section 0.
 assert: For NTT HGW profiles, Linux should default to `dhcpcd`, while FreeBSD
 should default to KAME/WIDE `dhcp6c`. Both paths avoid the systemd-networkd
 Renew/Rebind shape that lab captures showed with IA Prefix lifetime `0/0`.
-Linux `dhcp6c` remains a supported fallback for migration and controlled
-comparison.
+Linux `dhcp6c` remains an explicit fallback for migration and controlled
+comparison, but it is not the default path.
 
 Completion condition: the lab keeps one FreeBSD router on `client: dhcp6c` as
 the control path and runs a second FreeBSD router on `client: dhcpcd` as the
