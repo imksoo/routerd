@@ -1188,6 +1188,15 @@
                       "interface": {
                         "type": "string"
                       },
+                      "lanFallback": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "suppressOnStale": {
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "prefixLength": {
                         "maximum": 128,
                         "minimum": 1,

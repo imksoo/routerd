@@ -1805,7 +1805,9 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		// evidence backs it. Treat as not-observable so dnsmasq, RA, and the
 		// LAN delegated-address rendering all stop advertising broken IPv6
 		// to downstream clients. The local LastPrefix history is preserved.
-		if !lease.HasFreshTransactionEvidence(store.Now()) {
+		// Operators that want to keep advertising the stale prefix (e.g. for
+		// lab debug) can set spec.lanFallback.suppressOnStale to false.
+		if !lease.HasFreshTransactionEvidence(store.Now()) && api.BoolDefault(spec.LanFallback.SuppressOnStale, true) {
 			if recorder, ok := store.(routerstate.EventRecorder); ok {
 				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixStale", "delegated IPv6 prefix "+observedPrefix+" lacks recent DHCPv6 Reply / valid lifetime; not advertising on LAN")
 			}
