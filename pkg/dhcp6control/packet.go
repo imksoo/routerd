@@ -284,12 +284,14 @@ func BuildEthernetIPv6UDP(spec PacketSpec) ([]byte, error) {
 	ip[0] = 0x60
 	binary.BigEndian.PutUint16(ip[4:6], uint16(ipPayloadLen))
 	ip[6] = ipProtocolUDP
-	// Hop limit 64 matches the working IX2215 reference packet captured on
-	// 2026-05-01 from this lab's PR-400NE HGW. Hop limit 1 was previously
-	// used on the (incorrect) assumption that link-local multicast is fine
-	// at TTL=1, but Proxmox virtual-network paths and the working reference
-	// client both show that 64 is the value the HGW expects.
-	ip[7] = 64
+	// Hop limit 255 (the IPv6 maximum) avoids the failure mode that hit
+	// routerd in this lab: hop limit 1 does not traverse Proxmox VE
+	// virtual-network paths, so the multicast Solicit/Request never reach
+	// the PR-400NE HGW. The working IX2215 reference packet captured on
+	// 2026-05-01 used hop limit 64, which is also enough; 255 is chosen
+	// here because DHCPv6 is link-scoped via the multicast destination
+	// (ff02::1:2) and there is no benefit in capping below the maximum.
+	ip[7] = 255
 	copy(ip[8:24], spec.SourceIP.AsSlice())
 	copy(ip[24:40], spec.DestinationIP.AsSlice())
 
