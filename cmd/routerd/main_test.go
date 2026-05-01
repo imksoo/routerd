@@ -47,46 +47,6 @@ func TestApplyNetworkConfigSkipsUnchangedFiles(t *testing.T) {
 	}
 }
 
-func TestApplyDefaultPruneUsesEscapeHatch(t *testing.T) {
-	t.Setenv("ROUTERD_APPLY_DEFAULT_PRUNE", "")
-	if applyDefaultPrune() {
-		t.Fatal("empty ROUTERD_APPLY_DEFAULT_PRUNE should default to no-prune")
-	}
-	t.Setenv("ROUTERD_APPLY_DEFAULT_PRUNE", "true")
-	if !applyDefaultPrune() {
-		t.Fatal("ROUTERD_APPLY_DEFAULT_PRUNE=true should enable prune")
-	}
-}
-
-func TestCleanupLedgerOwnedOrphansSkippedWithoutPrune(t *testing.T) {
-	dir := t.TempDir()
-	ledgerPath := filepath.Join(dir, "artifacts.json")
-	ledger := resource.NewLedger()
-	ledger.Remember([]resource.Artifact{{
-		Kind:  "linux.ipip6.tunnel",
-		Name:  "stale",
-		Owner: "net.routerd.net/v1alpha1/DSLiteTunnel/stale",
-	}})
-	if err := ledger.Save(ledgerPath); err != nil {
-		t.Fatalf("save ledger: %v", err)
-	}
-	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "test"}}
-	removed, err := cleanupLedgerOwnedOrphansForApply(router, ledgerPath, false, nil)
-	if err != nil {
-		t.Fatalf("cleanup without prune: %v", err)
-	}
-	if len(removed) != 0 {
-		t.Fatalf("removed = %v, want none", removed)
-	}
-	loaded, err := resource.LoadLedger(ledgerPath)
-	if err != nil {
-		t.Fatalf("load ledger: %v", err)
-	}
-	if len(loaded.All()) != 1 {
-		t.Fatalf("ledger artifacts = %v, want unchanged", loaded.All())
-	}
-}
-
 func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")

@@ -1,8 +1,8 @@
 ---
-title: 反映、掃除、削除
+title: 反映と削除
 ---
 
-# 反映、掃除、削除
+# 反映と削除
 
 routerd は kubectl に近い反映モデルを使います。
 
@@ -17,21 +17,14 @@ sudo routerd apply --config lan-services.yaml --once
 `wan.yaml` で反映したリソースは残します。ルーター設定を複数ファイルに
 分ける場合や、段階的に生成する場合はこの使い方を基本にします。
 
-そのファイルを完全な望ましい状態として扱う場合だけ、`--prune` を使います。
+`apply` は、渡したファイルに書かれていないリソースを削除しません。遠隔の
+ルーターで何かを消す前に、残っている構成物を確認します。
 
 ```bash
-sudo routerd apply --config full-router.yaml --once --prune
-```
-
-`--prune` を付けると、今回のファイルに存在しない routerd 所有の構成物を
-削除することがあります。遠隔のルーターでは、必ず先に予行実行します。
-
-```bash
-sudo routerd apply --config full-router.yaml --once --dry-run --prune
 routerctl describe orphans
 ```
 
-意図して消す場合は、明示的な削除を優先します。
+意図して消す場合は、明示的に削除します。
 
 ```bash
 sudo routerd delete IPv6PrefixDelegation/wan-pd

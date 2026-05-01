@@ -122,17 +122,15 @@ Dry-run request body:
 {
   "apiVersion": "control.routerd.net/v1alpha1",
   "kind": "ApplyRequest",
-  "dryRun": true,
-  "prune": false
+  "dryRun": true
 }
 ```
 
 `dryRun: true` runs the same plan as a regular apply but does not change host
-state. `dryRun: false` (or omitted) applies the result. `prune: false` is the
-default kubectl-style additive behavior: routerd updates resources present in
-the current config but leaves previously managed, now-unmentioned resources in
-place. Set `prune: true` to remove routerd-owned orphaned artifacts during the
-apply.
+state. `dryRun: false` (or omitted) applies the result. Apply is additive:
+routerd updates resources present in the current config but leaves previously
+managed, now-unmentioned resources in place. Remove resources with the delete
+endpoint.
 
 Response:
 

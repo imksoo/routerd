@@ -110,16 +110,14 @@ POST /api/control.routerd.net/v1alpha1/apply
 {
   "apiVersion": "control.routerd.net/v1alpha1",
   "kind": "ApplyRequest",
-  "dryRun": true,
-  "prune": false
+  "dryRun": true
 }
 ```
 
 `dryRun: true` のときは通常の反映と同じ計画を立てますが、ホストの状態は変更しません。
-`dryRun: false`（または省略）のときに実際に反映します。`prune: false` が既定で、
+`dryRun: false`（または省略）のときに実際に反映します。反映は追加型です。
 現在の設定に書かれたリソースだけを追加・更新し、以前 routerd が管理していて今回の設定に
-書かれていないものは残します。routerd 所有の残置物をこの反映で削除したい場合だけ
-`prune: true` を指定します。
+書かれていないものは残します。リソースを消す場合は削除用のエンドポイントを使います。
 
 レスポンス:
 

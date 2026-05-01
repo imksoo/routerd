@@ -38,14 +38,11 @@ func TestApplyHandler(t *testing.T) {
 			if !req.DryRun {
 				t.Fatal("DryRun = false, want true")
 			}
-			if !req.Prune {
-				t.Fatal("Prune = false, want true")
-			}
 			result := NewApplyResult(&apply.Result{Phase: "Healthy", Generation: 7})
 			return &result, nil
 		},
 	}
-	req := httptest.NewRequest(http.MethodPost, Prefix+"/apply", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"ApplyRequest","dryRun":true,"prune":true}`))
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/apply", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"ApplyRequest","dryRun":true}`))
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)

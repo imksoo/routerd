@@ -1,8 +1,8 @@
 ---
-title: Apply, prune, and delete
+title: Apply and delete
 ---
 
-# Apply, prune, and delete
+# Apply and delete
 
 routerd uses a kubectl-style apply model.
 
@@ -17,21 +17,14 @@ The second command updates resources in `lan-services.yaml` and leaves the
 resources from `wan.yaml` in place. This is the normal workflow when a router
 configuration is split across several files or generated in stages.
 
-Use `--prune` only when the file is intended to be the complete desired set:
+Apply never deletes resources that are omitted from the submitted file. Check
+possible leftovers before deleting anything from a remote router:
 
 ```bash
-sudo routerd apply --config full-router.yaml --once --prune
-```
-
-With `--prune`, routerd may remove routerd-owned artifacts that are no longer
-present in the applied file. Always dry-run first on a remote router:
-
-```bash
-sudo routerd apply --config full-router.yaml --once --dry-run --prune
 routerctl describe orphans
 ```
 
-For deliberate removal, prefer an explicit delete:
+For deliberate removal, use an explicit delete:
 
 ```bash
 sudo routerd delete IPv6PrefixDelegation/wan-pd

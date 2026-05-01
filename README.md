@@ -243,12 +243,11 @@ include `if`, `pd`, `ipv6pd`, `nat`, `dslite`, `pppoe`, `fw`, `zone`,
 `routerd apply --once` applies managed netplan, systemd-networkd drop-ins,
 dnsmasq, nftables, sysctl values, DS-Lite tunnels, and policy routing. By
 default apply is additive: it updates resources in the current YAML and leaves
-previously managed but now-unmentioned resources in place. Use `--prune` when
-the file is meant to be the complete desired set and routerd-owned orphans
-should be removed. Avoid running it against a remote router until the adoption
-plan is understood, especially where cloud-init or existing netplan owns the
-management interface. routerd reports such cases as adoption candidates rather
-than silently taking them over.
+previously managed but now-unmentioned resources in place. Remove resources
+with explicit `routerd delete` or `routerctl delete` commands. Avoid running it
+against a remote router until the adoption plan is understood, especially where
+cloud-init or existing netplan owns the management interface. routerd reports
+such cases as adoption candidates rather than silently taking them over.
 
 For DHCPv6-PD lab work, `routerd apply --once --override-client <client>` and
 `--override-profile <profile>` can override every `IPv6PrefixDelegation` for

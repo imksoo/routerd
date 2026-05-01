@@ -73,6 +73,22 @@ upstream PD lease is out of scope for the production profile. Section 5's
 `dhcp6c` primary path and DHCPv6 transaction recorder exist to make that
 stability observable and reviewable.
 
+assert: routerd is in the phase where clarity, simplicity, and a small,
+readable control flow are the explicit priority over backwards compatibility.
+At this stage there is one human user, the developer-operator who is also
+the household network operator; there are no external scripts, no external
+CI, and no third-party integrations to protect. When we redesign an
+interface (CLI flag, default behaviour, configuration shape, state DB
+column), we choose the form that future maintainers will understand fastest,
+even if it breaks an earlier shape that the user's own previous scripts
+relied on. We do not carry escape-hatch flags, deprecation shims, or
+"old default available via env var" branches at this stage. Migration help,
+if needed, lives in changelog entries and short upgrade notes, not in the
+code path. This policy is revisited only after routerd is in production at a
+household scale, additional users join, and the breakage cost starts to
+outweigh the clarity gain; until then, breaking changes are acceptable in
+the name of a maintainable codebase.
+
 ## 1. Verified Facts
 
 ### 1.0 Source of Truth and Operation Path
@@ -89,8 +105,8 @@ An apply updates the resources present in the submitted YAML and records their
 ownership, but it does not delete previously managed resources that are absent
 from that YAML. This allows operators to split resources across files without
 one partial file accidentally removing another file's resources. Full cleanup
-requires an explicit `--prune`, and individual removal uses `routerd delete`
-or `routerctl delete`.
+is intentionally modeled as explicit removal through `routerd delete` or
+`routerctl delete`.
 
 assert: Host services remain owned by the operating system's service manager.
 routerd should use `systemctl` on systemd hosts and `service` / rc.d on
