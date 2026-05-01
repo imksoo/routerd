@@ -143,6 +143,8 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`networking.domain = "example.internal";`,
 		`boot.loader.grub.device = "/dev/sda";`,
 		`networking.firewall.checkReversePath = false;`,
+		`networking.firewall.allowedUDPPorts = [ 4789 ];`,
+		`networking.firewall.trustedInterfaces = [ "br0" ];`,
 		`systemd.network.networks."10-netplan-ens18"`,
 		`DHCP = "yes";`,
 		`IPv6AcceptRA = true;`,
