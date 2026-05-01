@@ -604,7 +604,9 @@ How routerd behaves:
   and active DHCPv6 helpers. Set these fields only when recovering or migrating
   a binding and the observed status is missing or known to be wrong.
   `acquisitionStrategy` is one of `hybrid`, `solicit-only`, or
-  `request-claim-only`.
+  `request-claim-only`. In `hybrid`, the OS client still owns the first
+  Solicit. routerd observes that path and sends Request-with-claim only after
+  the configured retry budget is exhausted.
 - `routerd dhcp6 solicit|request|renew|rebind|release --resource <name>` is the low-level
   active-control entry point for lab recovery. It reads DUID, IAID, server
   identifier, and prefix data from the resource and state DB, then sends a raw

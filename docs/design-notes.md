@@ -511,8 +511,9 @@ the lease and `wanObserved` fields under `IPv6PrefixDelegation/<name>` status,
 emits per-transaction events in the `events` table, exposes them through
 `routerctl describe ipv6pd/<name>`, and accepts spec-level overrides for
 `serverID`, `priorPrefix`, and `acquisitionStrategy`. The NTT profile uses
-the controller to fall back from Solicit to Request-with-claim when the HGW
-silently drops Solicit, using the discovered or pinned `serverID`.
+the controller to fall back from the OS client's Solicit path to
+Request-with-claim when the HGW silently drops Solicit, using the discovered or
+pinned `serverID`.
 
 Implementation note (2026-04-30): the daemon now listens for WAN Router
 Advertisements and records the RA source link-local address, a derived
@@ -525,9 +526,13 @@ monitor compares `lastReplyAt + T1` with the current time and records
 acquisition phase, next action, and hung suspicion separately from the
 presence of downstream delegated addresses.
 
-The active-controller path is intentionally narrow. It starts with the least
-surprising DHCPv6 exchange, then escalates only when observed HGW behavior
-requires it:
+The active-controller path is intentionally narrow. With `dhcpcd` as the Linux
+NTT default, routerd does not own the first Solicit itself; it observes the OS
+client and counts missing Advertise/Reply events. `hybrid` therefore means:
+let the OS client attempt canonical acquisition first, then use routerd's raw
+Request-with-claim helper only after the configured retry budget is exhausted.
+It starts with the least surprising DHCPv6 exchange, then escalates only when
+observed HGW behavior requires it:
 
 ```mermaid
 flowchart TD

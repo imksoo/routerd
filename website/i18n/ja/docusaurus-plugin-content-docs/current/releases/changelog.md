@@ -13,6 +13,9 @@ behavior changes and new resource shapes as the model takes shape.
   `IPv6PrefixDelegation`, accepts DHCPv6 client hook events over the local
   control API, tracks acquisition phase and stalled-renewal suspicion, and
   exposes those details in `routerctl describe ipv6pd/<name>`.
+- Documentation now clarifies that `acquisitionStrategy: hybrid` observes the
+  OS client's first Solicit path and only escalates to routerd's raw
+  Request-with-claim helper after the retry budget is exhausted.
 - `routerctl describe ipv6pd/<name>` now shows DHCPv6 identity, last
   Solicit/Request/Renew/Rebind/Release timestamps, T1/T2, preferred and valid
   lifetimes, and calculated lease deadlines.

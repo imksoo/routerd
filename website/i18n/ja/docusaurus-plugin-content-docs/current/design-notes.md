@@ -481,8 +481,8 @@ YAML で値を固定できます (ルータ移行、HA 切替、replay 試験な
 `IPv6PrefixDelegation/<name>` status に lease / wanObserved field を記録し、
 `events` テーブルに transaction ごとの行を出し、`routerctl describe ipv6pd/<name>`
 からそれらが見え、spec の `serverID`、`priorPrefix`、`acquisitionStrategy`
-上書きを受け入れること。NTT プロファイルは、HGW が Solicit を黙殺する
-状態でも、観測または固定された `serverID` を使って Solicit から
+上書きを受け入れること。NTT プロファイルは、OS クライアントの Solicit 経路が
+HGW に黙殺される状態でも、観測または固定された `serverID` を使って
 Request-with-claim にフォールバックします。
 
 実装メモ (2026-04-30): デーモンは WAN 側の RA を待ち受け、RA の送信元
@@ -495,8 +495,12 @@ Request-with-claim にフォールバックします。
 下流側に委譲アドレスが残っているかどうかとは別に、リース、WAN 側の観測、
 取得段階、次の動作、更新停止の疑いを表示します。
 
-アクティブ・コントローラーの経路は意図的に狭くしています。まず最も自然な
-DHCPv6 交換を試し、観測済みの HGW 挙動に必要な場合だけ段階的に強めます。
+アクティブ・コントローラーの経路は意図的に狭くしています。Linux の
+NTT 向け既定が `dhcpcd` になったため、最初の Solicit は routerd ではなく
+OS クライアントが担当します。`hybrid` は、OS クライアントの通常取得を観測し、
+Advertise/Reply が再送予算内に見えない場合だけ routerd の生
+Request-with-claim 補助に進む、という意味です。まず最も自然な DHCPv6 交換を
+試し、観測済みの HGW 挙動に必要な場合だけ段階的に強めます。
 
 ```mermaid
 flowchart TD
