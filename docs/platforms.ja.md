@@ -14,7 +14,8 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
 - `contrib/systemd/routerd.service` の systemd ユニット。
 - 実行時の依存には、制御に使う `iproute2`、`jq`、`dnsmasq`、
   `nftables`、`conntrack`、`IPv6PrefixDelegation` で `client: dhcp6c`
-  を使う場合の `wide-dhcpv6-client`、PPPoE 利用時の `ppp` に加えて、標準的な
+  を使う場合の `wide-dhcpv6-client`、Linux ブリッジで RSTP を使う場合の
+  `mstpd`、PPPoE 利用時の `ppp` に加えて、標準的な
   調査道具として `dnsutils` の `dig`、`iputils-ping` の `ping`、
   `iputils-tracepath` の `tracepath`、`tcpdump` を含めます。
 - ファイアウォール生成では、WAN 側で受ける DHCPv6 クライアント応答を
@@ -23,7 +24,7 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
 - CI でビルド・テスト済み。現在実装されているリソース種別（インター
   フェース別名、IPv4 静的/DHCP、dnsmasq による DHCP/DHCPv6/RA、
   systemd-networkd ドロップインまたは routerd 管理の `dhcp6c` による IPv6 PD、条件付き DNS 転送、
-  PPPoE、DS-Lite、nftables による IPv4 ソース NAT、IPv4 ポリシー
+  systemd-networkd によるブリッジ生成、PPPoE、DS-Lite、nftables による IPv4 ソース NAT、IPv4 ポリシー
   ルーティング、ヘルスチェック付き IPv4 デフォルトルートポリシー、
   リバースパスフィルタ、MTU 伝搬、最小デフォルト拒否のホームルーター
   ファイアウォール、sysctl、ホスト名、systemd-timesyncd、ログ出力先）

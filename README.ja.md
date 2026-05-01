@@ -35,13 +35,14 @@ routerd は、ルータの設定を YAML で宣言しておくと、その通り
 - conntrack
 - IPv4/IPv6 の調査用に dig、ping、tcpdump、tracepath
 - PPPoE を使う場合は pppd
+- Linux の `Bridge` リソースで RSTP を使う場合は mstpd
 - sqlite3 は状態データベースを人が調べる場合だけ任意で使う
 
 Ubuntu の例:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp dnsutils iputils-ping iputils-tracepath tcpdump
+sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp mstpd dnsutils iputils-ping iputils-tracepath tcpdump
 ```
 
 conntrack は、複数 DS-Lite トンネルでのポリシールーティングや、フローごとのマーク状態を診断する用途でも使います。PPPoE のリソースは、ディストリビューションに含まれる pppd と rp-pppoe プラグインから動かします。`dig`、`ping`、`tcpdump`、`tracepath` は、ルータ自身から IPv4/IPv6 の到達性、DNS、経路 MTU、DHCPv6 のパケットを確認するための標準的な調査道具として扱います。SQLite は静的バイナリに組み込まれるため、実行時に `sqlite3` コマンドは不要です。`/var/lib/routerd/routerd.db` を手作業で確認したい場合だけ入れてください。
@@ -118,11 +119,13 @@ make check-remote-deps REMOTE_HOST=user@router.example CONFIG=examples/router-la
 `CONFIG` を渡すと、その設定で使うリソースに合わせて任意コマンドを確認します。
 たとえば `PPPoEInterface` があるときだけ `pppd` を求め、Linux で
 `client: dhcp6c` を明示したときだけ `wide-dhcpv6-client` を求めます。
+Linux の `Bridge` リソースで RSTP が有効な場合は `mstpd` も確認します。
 
 Ubuntu では、現在のソースインストールは `systemd`、`iproute2`、
 `dnsmasq`、`nftables`、`conntrack`、`jq` などのホスト側コマンドを
 前提にします。`IPv6PrefixDelegation` で `client: dhcp6c` を使う場合は
 `wide-dhcpv6-client`、`PPPoEInterface` を使う場合は `pppd` も必要です。
+Linux のブリッジで RSTP を使う場合は `mstpd` も入れてください。
 `sqlite3` は状態確認用の任意コマンドです。FreeBSD ではまだ下地段階ですが、基本のネットワーク
 コマンドに加えて、`dnsmasq` と `dhcp6` パッケージに含まれる
 `dnsmasq`、`dhcp6c`、状態確認で使う `jq` が必要です。

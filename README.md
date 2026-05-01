@@ -62,13 +62,14 @@ Japanese documentation is available in [README.ja.md](README.ja.md).
 - conntrack
 - dig, ping, tcpdump, and tracepath for IPv4/IPv6 diagnostics
 - pppd when using PPPoE
+- mstpd when using Linux `Bridge` resources with RSTP
 - sqlite3 is optional for human inspection of the local state database
 
 On Ubuntu:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp dnsutils iputils-ping iputils-tracepath tcpdump
+sudo apt-get install -y golang-go make iproute2 jq dnsmasq nftables conntrack ppp mstpd dnsutils iputils-ping iputils-tracepath tcpdump
 ```
 
 conntrack is also used for diagnostics around multi-tunnel DS-Lite policy
@@ -156,13 +157,14 @@ make check-remote-deps REMOTE_HOST=user@router.example CONFIG=examples/router-la
 When `CONFIG` is set, optional checks follow the selected resources. For
 example, `pppd` is required only when `PPPoEInterface` is configured, and
 `wide-dhcpv6-client` is required only when the Linux fallback
-`client: dhcp6c` is selected.
+`client: dhcp6c` is selected. Linux `Bridge` resources require `mstpd` when
+RSTP is enabled.
 
 On Ubuntu, the current source install expects host tools such as `systemd`,
 `iproute2`, `dnsmasq`, `nftables`, `conntrack`, and `jq`.
 Install `wide-dhcpv6-client` only when `IPv6PrefixDelegation` explicitly uses
 the Linux fallback `client: dhcp6c`; install `pppd` only when using
-`PPPoEInterface`.
+`PPPoEInterface`; install `mstpd` when using Linux bridge resources with RSTP.
 `sqlite3` is optional for manual state inspection. On FreeBSD, the limited groundwork
 expects base networking tools plus the `dnsmasq` and `dhcp6` packages so
 `dnsmasq` and `dhcp6c` are available, plus `jq` for local status inspection

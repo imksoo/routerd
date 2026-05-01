@@ -162,6 +162,7 @@ routerd 管理範囲外の構成物は、台帳で routerd の所有が確認で
 | `Sysctl` | ホストの sysctl キー |
 | `NTPClient` | systemd-timesyncd の設定 |
 | `Interface` | ネットワークリンク |
+| `Bridge` | systemd-networkd、FreeBSD `rc.conf`、または NixOS の networkd 設定へ出力するブリッジリンクとメンバー接続 |
 | `PPPoEInterface` | PPP インターフェース、Linux の PPPoE systemd ユニットと PPP secret ファイル、または FreeBSD の mpd5 設定と `mpd5` サービス |
 | `IPv4StaticAddress` | IPv4 アドレス |
 | `IPv4DHCPAddress` | DHCPv4 クライアントのバインディングと、出力先ごとの経路/DNS 採用設定 |

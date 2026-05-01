@@ -139,6 +139,47 @@ func TestNetworkdDropinsRenderStaticRoutes(t *testing.T) {
 	}
 }
 
+func TestNetworkdDropinsRenderBridge(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "lan", api.InterfaceSpec{IfName: "ens19", Managed: true}),
+		netResource("Interface", "uplink", api.InterfaceSpec{IfName: "ens20", Managed: true}),
+		netResource("Bridge", "br-home", api.BridgeSpec{
+			IfName:            "br0",
+			Members:           []string{"lan", "uplink"},
+			ForwardDelay:      4,
+			HelloTime:         2,
+			MTU:               1500,
+			MulticastSnooping: boolPtr(false),
+		}),
+	}}}
+	files, err := NetworkdDropins(router)
+	if err != nil {
+		t.Fatalf("render networkd dropins: %v", err)
+	}
+	netdev := string(findNetworkdTestFile(files, "/etc/systemd/network/30-routerd-br0.netdev").Data)
+	for _, want := range []string{
+		"Name=br0",
+		"Kind=bridge",
+		"MTUBytes=1500",
+		"STP=yes",
+		"MulticastSnooping=no",
+		"ForwardDelaySec=4s",
+		"HelloTimeSec=2s",
+	} {
+		if !strings.Contains(netdev, want) {
+			t.Fatalf("bridge netdev missing %q:\n%s", want, netdev)
+		}
+	}
+	lan := string(findNetworkdTestFile(files, "10-netplan-ens19.network.d/88-routerd-bridge.conf").Data)
+	if !strings.Contains(lan, "Bridge=br0") {
+		t.Fatalf("bridge member drop-in missing Bridge=br0:\n%s", lan)
+	}
+	uplink := string(findNetworkdTestFile(files, "10-netplan-ens20.network.d/88-routerd-bridge.conf").Data)
+	if !strings.Contains(uplink, "Bridge=br0") {
+		t.Fatalf("bridge member drop-in missing Bridge=br0:\n%s", uplink)
+	}
+}
+
 func TestNetworkdDropinsRenderNTTFletsProfile(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{

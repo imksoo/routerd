@@ -870,6 +870,9 @@ func canonicalResourceKind(kind string) string {
 		"iface":                 "Interface",
 		"interface":             "Interface",
 		"interfaces":            "Interface",
+		"br":                    "Bridge",
+		"bridge":                "Bridge",
+		"bridges":               "Bridge",
 		"pd":                    "IPv6PrefixDelegation",
 		"ipv6pd":                "IPv6PrefixDelegation",
 		"prefixdelegation":      "IPv6PrefixDelegation",
@@ -914,7 +917,7 @@ func apiVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "IPv6DHCPServer", "IPv6DHCPScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DSLiteTunnel", "StatePolicy", "HealthCheck", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Bridge", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "IPv6DHCPServer", "IPv6DHCPScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DSLiteTunnel", "StatePolicy", "HealthCheck", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -3365,6 +3368,11 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 			return nil, err
 		}
 	} else {
+		if hasNetworkdUnitFiles(changedNetworkdFiles) {
+			if err := runLogged("networkctl", "reload"); err != nil {
+				return nil, err
+			}
+		}
 		for _, ifname := range changedNetworkdInterfaces(changedNetworkdFiles) {
 			if err := runLogged("networkctl", "reconfigure", ifname); err != nil {
 				return nil, err
@@ -6135,9 +6143,21 @@ func writeFileIfChanged(path string, data []byte, perm os.FileMode) (bool, error
 	return true, nil
 }
 
+func hasNetworkdUnitFiles(paths []string) bool {
+	for _, path := range paths {
+		if strings.HasSuffix(path, ".netdev") || (strings.HasSuffix(path, ".network") && !strings.Contains(path, ".network.d/")) {
+			return true
+		}
+	}
+	return false
+}
+
 func changedNetworkdInterfaces(paths []string) []string {
 	var ifnames []string
 	for _, path := range paths {
+		if !strings.Contains(path, ".network.d/") {
+			continue
+		}
 		base := filepathBase(filepathDir(path))
 		if strings.HasSuffix(base, ".network.d") {
 			base = strings.TrimSuffix(base, ".network.d")

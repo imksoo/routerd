@@ -32,6 +32,7 @@ This is a long page. Jump to the kind you need:
 
 **Interfaces**
 - [Interface](#interface)
+- [Bridge](#bridge)
 - [PPPoEInterface](#pppoeinterface)
 
 **IPv4 addressing**
@@ -94,7 +95,7 @@ page is the field reference, not the introduction.
 ## Available resource kinds
 
 Networking:
-`Interface`, `PPPoEInterface`, `IPv4StaticAddress`, `IPv4DHCPAddress`,
+`Interface`, `Bridge`, `PPPoEInterface`, `IPv4StaticAddress`, `IPv4DHCPAddress`,
 `IPv4StaticRoute`, `IPv6StaticRoute`, `IPv4DHCPServer`, `IPv4DHCPScope`, `IPv6DHCPAddress`, `IPv6PrefixDelegation`,
 `DHCPv4HostReservation`, `IPv6DelegatedAddress`, `IPv6DHCPServer`, `IPv6DHCPScope`,
 `SelfAddressPolicy`, `DNSConditionalForwarder`, `DSLiteTunnel`,
@@ -305,6 +306,44 @@ How routerd behaves:
 Host ownership decisions, including the local ledger at
 the `artifacts` table in `/var/lib/routerd/routerd.db`, are described in
 [Resource Ownership](resource-ownership.md).
+
+### Bridge
+
+`Bridge` declares an L2 bridge and enslaves existing interface resources into
+it. It is the base building block for later VXLAN segments.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: Bridge
+metadata:
+  name: br-home
+spec:
+  ifname: br0
+  members:
+    - lan
+  stp: true
+  rstp: true
+  forwardDelay: 4
+  helloTime: 2
+  multicastSnooping: false
+```
+
+How routerd behaves:
+
+- `spec.ifname` is optional. When omitted, routerd uses `metadata.name` as the
+  bridge link name.
+- `members` names existing `Interface` resources. Later VXLAN resources can
+  also attach their generated link to a bridge.
+- STP and RSTP default to enabled. This is conservative for multi-host or
+  tunnel-backed L2 segments.
+- `multicastSnooping` defaults to `false`. This keeps IPv6 neighbor discovery,
+  RA, and DHCPv6 multicast visible in virtualized lab networks where bridge
+  multicast snooping is often a source of false failures.
+- On Linux, RSTP expects `mstpd` / `mstpctl` to be installed. routerd checks
+  for that dependency during remote dependency checks; the bridge itself is
+  rendered through systemd-networkd.
+- On FreeBSD, routerd renders the bridge through `rc.conf` with kernel bridge
+  STP/RSTP settings.
 
 ### PPPoEInterface
 

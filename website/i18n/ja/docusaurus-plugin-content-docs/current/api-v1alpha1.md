@@ -27,6 +27,7 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 
 **インターフェース**
 - [Interface](#interface)
+- [Bridge](#bridge)
 - [PPPoEInterface](#pppoeinterface)
 
 **IPv4 アドレッシング**
@@ -87,7 +88,7 @@ routerd を初めて触る場合は、まず [概念](../concepts/what-is-router
 ## 用意されているリソース
 
 ネットワーク関連:
-`Interface`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4StaticRoute`、`IPv6StaticRoute`、`IPv4DHCPServer`、`IPv4DHCPScope`、`DHCPv4HostReservation`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
+`Interface`、`Bridge`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4StaticRoute`、`IPv6StaticRoute`、`IPv4DHCPServer`、`IPv4DHCPScope`、`DHCPv4HostReservation`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
 
 ファイアウォール:
 `Zone`、`FirewallPolicy`、`ExposeService`。
@@ -255,6 +256,36 @@ spec:
 - `spec.managed: false` の場合は観測専用です。別名解決はしますが、リンクとアドレスは触りません。
 
 ホスト側の所有関係や、`/var/lib/routerd/routerd.db` の `artifacts` テーブル のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership) を参照してください。
+
+### Bridge
+
+`Bridge` は L2 ブリッジを作り、既存のインターフェースリソースを
+メンバーとして収容します。後で VXLAN セグメントを作るときの土台になります。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: Bridge
+metadata:
+  name: br-home
+spec:
+  ifname: br0
+  members:
+    - lan
+  stp: true
+  rstp: true
+  forwardDelay: 4
+  helloTime: 2
+  multicastSnooping: false
+```
+
+ルータの振る舞い:
+
+- `spec.ifname` は省略できます。省略した場合、routerd は `metadata.name` をブリッジのリンク名として使います。
+- `members` には既存の `Interface` リソース名を書きます。今後の VXLAN リソースも、生成したリンクをブリッジへ接続できます。
+- STP と RSTP は既定で有効です。複数ホストやトンネルを含む L2 セグメントでは、ループを避けるため保守的な既定にしています。
+- `multicastSnooping` の既定は `false` です。仮想化された検証環境では、ブリッジのマルチキャストスヌーピングが IPv6 近隣探索、RA、DHCPv6 の誤診断につながることがあるためです。
+- Linux で RSTP を使う場合は `mstpd` / `mstpctl` が必要です。routerd はリモート依存確認でこれを検出します。ブリッジ自体は systemd-networkd 向けに出力します。
+- FreeBSD では `rc.conf` にブリッジとカーネル側の STP/RSTP 設定を出力します。
 
 ### PPPoEInterface
 

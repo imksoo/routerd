@@ -77,20 +77,23 @@ check-build-deps:
 
 check-remote-deps:
 	@test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make check-remote-deps REMOTE_HOST=user@router.example" >&2; exit 2)
-	@need_ppp=unknown; need_dhcp6c=unknown; \
+	@need_ppp=unknown; need_dhcp6c=unknown; need_bridge=unknown; \
 	if [ -n "$(CONFIG)" ] && [ -f "$(CONFIG)" ]; then \
 		grep -q "kind:[[:space:]]*PPPoEInterface" "$(CONFIG)" && need_ppp=1 || need_ppp=0; \
 		grep -q "client:[[:space:]]*dhcp6c" "$(CONFIG)" && need_dhcp6c=1 || need_dhcp6c=0; \
+		grep -q "kind:[[:space:]]*Bridge" "$(CONFIG)" && need_bridge=1 || need_bridge=0; \
 	fi; \
-	ssh $(REMOTE_HOST) "NEED_PPP=$$need_ppp NEED_DHCP6C=$$need_dhcp6c REMOTE_CONFIG=$(REMOTE_CONFIG) sh -c 'missing=0; \
+	ssh $(REMOTE_HOST) "NEED_PPP=$$need_ppp NEED_DHCP6C=$$need_dhcp6c NEED_BRIDGE=$$need_bridge REMOTE_CONFIG=$(REMOTE_CONFIG) sh -c 'missing=0; \
 		remote_os=\$$(uname -s); \
-		need_ppp=\$${NEED_PPP:-unknown}; need_dhcp6c=\$${NEED_DHCP6C:-unknown}; \
+		need_ppp=\$${NEED_PPP:-unknown}; need_dhcp6c=\$${NEED_DHCP6C:-unknown}; need_bridge=\$${NEED_BRIDGE:-unknown}; \
 		if [ \"\$$need_ppp\" = unknown ] && [ -r \"\$$REMOTE_CONFIG\" ]; then grep -q \"kind:[[:space:]]*PPPoEInterface\" \"\$$REMOTE_CONFIG\" && need_ppp=1 || need_ppp=0; fi; \
 		if [ \"\$$need_dhcp6c\" = unknown ] && [ -r \"\$$REMOTE_CONFIG\" ]; then grep -q \"client:[[:space:]]*dhcp6c\" \"\$$REMOTE_CONFIG\" && need_dhcp6c=1 || need_dhcp6c=0; fi; \
-		[ \"\$$need_ppp\" = unknown ] && need_ppp=0; [ \"\$$need_dhcp6c\" = unknown ] && need_dhcp6c=0; \
+		if [ \"\$$need_bridge\" = unknown ] && [ -r \"\$$REMOTE_CONFIG\" ]; then grep -q \"kind:[[:space:]]*Bridge\" \"\$$REMOTE_CONFIG\" && need_bridge=1 || need_bridge=0; fi; \
+		[ \"\$$need_ppp\" = unknown ] && need_ppp=0; [ \"\$$need_dhcp6c\" = unknown ] && need_dhcp6c=0; [ \"\$$need_bridge\" = unknown ] && need_bridge=0; \
 		if [ \"\$$remote_os\" = FreeBSD ]; then required=\"sudo tar install ifconfig sysctl sysrc service pfctl dnsmasq dhcp6c jq dig ping ping6 tcpdump traceroute netstat\"; else required=\"sudo tar install ip sysctl systemctl resolvectl dnsmasq nft conntrack jq dig ping tcpdump tracepath\"; fi; \
 		for cmd in \$$required; do if ! command -v \$$cmd >/dev/null 2>&1; then echo \"missing remote dependency: \$$cmd\" >&2; missing=1; fi; done; \
 		if [ \"\$$remote_os\" != FreeBSD ] && [ \"\$$need_dhcp6c\" = 1 ] && ! command -v dhcp6c >/dev/null 2>&1; then echo \"missing remote dependency: wide-dhcpv6-client / dhcp6c command\" >&2; missing=1; fi; \
+		if [ \"\$$remote_os\" != FreeBSD ] && [ \"\$$need_bridge\" = 1 ] && ! command -v mstpctl >/dev/null 2>&1; then echo \"missing remote dependency: mstpd / mstpctl command for Bridge rstp\" >&2; missing=1; fi; \
 		if [ \"\$$remote_os\" = FreeBSD ] && [ \"\$$need_ppp\" = 1 ] && ! command -v mpd5 >/dev/null 2>&1; then echo \"missing remote dependency: mpd5\" >&2; missing=1; fi; \
 		if [ \"\$$remote_os\" != FreeBSD ] && [ \"\$$need_ppp\" = 1 ] && ! command -v pppd >/dev/null 2>&1 && ! test -x /usr/sbin/pppd; then echo \"missing remote dependency: ppp package / pppd command\" >&2; missing=1; fi; \
 		exit \$$missing'"

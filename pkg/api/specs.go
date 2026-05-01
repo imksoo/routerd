@@ -98,6 +98,18 @@ type InterfaceSpec struct {
 	Owner   string `yaml:"owner,omitempty" json:"owner,omitempty" jsonschema:"enum=routerd,enum=external"`
 }
 
+type BridgeSpec struct {
+	IfName            string   `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	Members           []string `yaml:"members,omitempty" json:"members,omitempty"`
+	STP               *bool    `yaml:"stp,omitempty" json:"stp,omitempty"`
+	RSTP              *bool    `yaml:"rstp,omitempty" json:"rstp,omitempty"`
+	ForwardDelay      int      `yaml:"forwardDelay,omitempty" json:"forwardDelay,omitempty" jsonschema:"minimum=0"`
+	HelloTime         int      `yaml:"helloTime,omitempty" json:"helloTime,omitempty" jsonschema:"minimum=0"`
+	MACAddress        string   `yaml:"macAddress,omitempty" json:"macAddress,omitempty"`
+	MTU               int      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=0"`
+	MulticastSnooping *bool    `yaml:"multicastSnooping,omitempty" json:"multicastSnooping,omitempty"`
+}
+
 type PPPoEInterfaceSpec struct {
 	Interface      string `yaml:"interface" json:"interface"`
 	IfName         string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
@@ -549,6 +561,10 @@ func (r Resource) InventorySpec() (InventorySpec, error) {
 
 func (r Resource) InterfaceSpec() (InterfaceSpec, error) {
 	return specAs[InterfaceSpec](r)
+}
+
+func (r Resource) BridgeSpec() (BridgeSpec, error) {
+	return specAs[BridgeSpec](r)
 }
 
 func (r Resource) PPPoEInterfaceSpec() (PPPoEInterfaceSpec, error) {

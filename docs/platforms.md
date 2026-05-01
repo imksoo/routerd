@@ -13,7 +13,8 @@ parity that the code does not yet provide.
 - systemd unit at `contrib/systemd/routerd.service`.
 - Runtime dependencies include the router control tools (`iproute2`, `jq`,
   `dnsmasq`, `nftables`, `conntrack`, `wide-dhcpv6-client` when
-  `IPv6PrefixDelegation` uses `client: dhcp6c`, and `ppp` when PPPoE is used) plus
+  `IPv6PrefixDelegation` uses `client: dhcp6c`, `mstpd` when Linux bridge
+  RSTP is enabled, and `ppp` when PPPoE is used) plus
   standard diagnostics: `dig` from `dnsutils`, `ping` from `iputils-ping`,
   `tracepath` from `iputils-tracepath`, and `tcpdump`.
 - Firewall rendering permits WAN-side DHCPv6 client replies by UDP
@@ -22,7 +23,7 @@ parity that the code does not yet provide.
 - Installed and tested in CI. All currently implemented resource kinds
   (interface aliases, IPv4 static/DHCP, dnsmasq DHCP/DHCPv6/RA, IPv6 PD
   through systemd-networkd drop-ins or managed `dhcp6c`, conditional DNS forwarding, PPPoE,
-  DS-Lite, IPv4 source NAT through nftables, IPv4 policy routing, IPv4
+  bridge rendering through systemd-networkd, DS-Lite, IPv4 source NAT through nftables, IPv4 policy routing, IPv4
   default-route policy with health checks, reverse-path filters, MTU
   propagation, default-deny home-router firewall, sysctl, hostname,
   systemd-timesyncd, log sinks) work end-to-end.

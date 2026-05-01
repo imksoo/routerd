@@ -63,6 +63,9 @@ func Validate(router *api.Router) error {
 			baseInterfaces[res.Metadata.Name] = true
 			interfaces[res.Metadata.Name] = true
 		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "Bridge" {
+			interfaces[res.Metadata.Name] = true
+		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "PPPoEInterface" {
 			interfaces[res.Metadata.Name] = true
 		}
@@ -185,6 +188,20 @@ func Validate(router *api.Router) error {
 			}
 			if res.Kind == "PPPoEInterface" && !baseInterfaces[name] {
 				return fmt.Errorf("%s spec.interface must reference a base Interface %q", res.ID(), name)
+			}
+		}
+		if res.Kind == "Bridge" {
+			spec, err := res.BridgeSpec()
+			if err != nil {
+				return err
+			}
+			for i, member := range spec.Members {
+				if !interfaces[member] {
+					return fmt.Errorf("%s spec.members[%d] references missing Interface %q", res.ID(), i, member)
+				}
+				if member == res.Metadata.Name {
+					return fmt.Errorf("%s spec.members[%d] must not reference the bridge itself", res.ID(), i)
+				}
 			}
 		}
 		if res.Kind == "IPv4DHCPScope" {
@@ -646,6 +663,48 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.IfName == "" {
 			return fmt.Errorf("%s spec.ifname is required", res.ID())
+		}
+	case "Bridge":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.BridgeSpec()
+		if err != nil {
+			return err
+		}
+		ifname := defaultString(spec.IfName, res.Metadata.Name)
+		if strings.ContainsAny(ifname, " \t\n/") {
+			return fmt.Errorf("%s spec.ifname contains invalid whitespace or slash", res.ID())
+		}
+		if len(ifname) > 15 {
+			return fmt.Errorf("%s spec.ifname must be 15 characters or fewer", res.ID())
+		}
+		if len(spec.Members) == 0 {
+			return fmt.Errorf("%s spec.members must not be empty", res.ID())
+		}
+		seenMembers := map[string]bool{}
+		for i, member := range spec.Members {
+			if strings.TrimSpace(member) == "" {
+				return fmt.Errorf("%s spec.members[%d] must not be empty", res.ID(), i)
+			}
+			if seenMembers[member] {
+				return fmt.Errorf("%s spec.members[%d] duplicates %q", res.ID(), i, member)
+			}
+			seenMembers[member] = true
+		}
+		if spec.MACAddress != "" {
+			if _, err := net.ParseMAC(spec.MACAddress); err != nil {
+				return fmt.Errorf("%s spec.macAddress is invalid: %w", res.ID(), err)
+			}
+		}
+		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
+			return fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
+		}
+		if spec.ForwardDelay != 0 && (spec.ForwardDelay < 2 || spec.ForwardDelay > 30) {
+			return fmt.Errorf("%s spec.forwardDelay must be within 2-30", res.ID())
+		}
+		if spec.HelloTime != 0 && (spec.HelloTime < 1 || spec.HelloTime > 10) {
+			return fmt.Errorf("%s spec.helloTime must be within 1-10", res.ID())
 		}
 	case "PPPoEInterface":
 		if res.APIVersion != api.NetAPIVersion {

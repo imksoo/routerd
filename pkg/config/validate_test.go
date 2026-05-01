@@ -795,6 +795,34 @@ func TestValidateRejectsDuplicateStaticOnSameInterface(t *testing.T) {
 	}
 }
 
+func TestValidateBridge(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"},
+				Metadata: api.ObjectMeta{Name: "br-home"},
+				Spec:     api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, RSTP: boolPtr(true), MulticastSnooping: boolPtr(false)},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+				Metadata: api.ObjectMeta{Name: "bridge-address"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "br-home", Address: "192.0.2.1/24"},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate bridge config: %v", err)
+	}
+}
+
 func boolPtr(value bool) *bool {
 	return &value
 }

@@ -9,6 +9,8 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- Added a `Bridge` resource with conservative STP/RSTP defaults and
+  multicast-snooping disabled by default for virtualized IPv6 labs.
 - Added `IPv4StaticRoute` and `IPv6StaticRoute` resources for explicit static
   routes on Linux systemd-networkd, FreeBSD, and NixOS render paths.
 - Added `DHCPv4HostReservation` for dnsmasq-backed fixed IPv4 leases inside

@@ -75,6 +75,11 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
 			},
 			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"},
+				Metadata: api.ObjectMeta{Name: "br-home"},
+				Spec:     api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, RSTP: boolPtr(true)},
+			},
+			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 				Metadata: api.ObjectMeta{Name: "mgmt"},
 				Spec:     api.InterfaceSpec{IfName: "ens20", Managed: true, Owner: "routerd"},
@@ -128,6 +133,11 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`DHCP = "yes";`,
 		`IPv6AcceptRA = true;`,
 		`systemd.network.networks."10-netplan-ens19"`,
+		`Bridge = "br0";`,
+		`systemd.network.netdevs."30-routerd-br0"`,
+		`Kind = "bridge";`,
+		`STP = true;`,
+		`MulticastSnooping = false;`,
 		`LinkLocalAddressing = "no";`,
 		`systemd.network.networks."10-netplan-ens20"`,
 		`DHCP = "ipv4";`,

@@ -14,6 +14,7 @@ type nixOSInterface struct {
 	Name             string
 	IfName           string
 	AdminUp          bool
+	Bridge           string
 	DHCP4            bool
 	DHCP4UseRoutes   *bool
 	DHCP4UseDNS      *bool
@@ -30,12 +31,28 @@ type nixOSRoute struct {
 	Metric      int
 }
 
+type nixOSBridge struct {
+	Name              string
+	IfName            string
+	STP               bool
+	RSTP              bool
+	ForwardDelay      int
+	HelloTime         int
+	MACAddress        string
+	MTU               int
+	MulticastSnooping bool
+}
+
 func NixOSModule(router *api.Router) ([]byte, error) {
 	host, err := nixOSHost(router)
 	if err != nil {
 		return nil, err
 	}
 	interfaces, err := nixOSInterfaces(router)
+	if err != nil {
+		return nil, err
+	}
+	bridges, err := nixOSBridges(router)
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +90,9 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		buf.WriteString("  networking.useNetworkd = true;\n")
 		buf.WriteString("  networking.firewall.checkReversePath = false;\n")
 		buf.WriteString("  systemd.network.enable = true;\n")
+		for _, bridge := range bridges {
+			writeNixOSBridge(&buf, bridge)
+		}
 		for _, iface := range interfaces {
 			writeNixOSNetwork(&buf, iface)
 		}
@@ -226,6 +246,35 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 		names = append(names, res.Metadata.Name)
 	}
 	for _, res := range router.Spec.Resources {
+		if res.Kind != "Bridge" {
+			continue
+		}
+		spec, err := res.BridgeSpec()
+		if err != nil {
+			return nil, err
+		}
+		interfaces[res.Metadata.Name] = &nixOSInterface{
+			Name:    res.Metadata.Name,
+			IfName:  defaultString(spec.IfName, res.Metadata.Name),
+			AdminUp: true,
+		}
+		names = append(names, res.Metadata.Name)
+	}
+	aliases := linkAliases(router)
+	bridges, err := bridgeConfigs(router, aliases)
+	if err != nil {
+		return nil, err
+	}
+	for _, bridge := range bridges {
+		for _, member := range bridge.Members {
+			for _, iface := range interfaces {
+				if iface.IfName == member {
+					iface.Bridge = bridge.IfName
+				}
+			}
+		}
+	}
+	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "IPv4StaticAddress":
 			spec, err := res.IPv4StaticAddressSpec()
@@ -306,10 +355,53 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 	return out, nil
 }
 
+func nixOSBridges(router *api.Router) ([]nixOSBridge, error) {
+	bridges, err := bridgeConfigs(router, linkAliases(router))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]nixOSBridge, 0, len(bridges))
+	for _, bridge := range bridges {
+		out = append(out, nixOSBridge{
+			Name:              bridge.Name,
+			IfName:            bridge.IfName,
+			STP:               bridge.STP,
+			RSTP:              bridge.RSTP,
+			ForwardDelay:      bridge.ForwardDelay,
+			HelloTime:         bridge.HelloTime,
+			MACAddress:        bridge.MACAddress,
+			MTU:               bridge.MTU,
+			MulticastSnooping: bridge.MulticastSnooping,
+		})
+	}
+	return out, nil
+}
+
+func writeNixOSBridge(buf *bytes.Buffer, bridge nixOSBridge) {
+	buf.WriteString("  systemd.network.netdevs." + nixString("30-routerd-"+bridge.IfName) + " = {\n")
+	buf.WriteString("    netdevConfig = {\n")
+	buf.WriteString("      Name = " + nixString(bridge.IfName) + ";\n")
+	buf.WriteString("      Kind = \"bridge\";\n")
+	if bridge.MACAddress != "" {
+		buf.WriteString("      MACAddress = " + nixString(bridge.MACAddress) + ";\n")
+	}
+	if bridge.MTU != 0 {
+		buf.WriteString("      MTUBytes = " + strconv.Itoa(bridge.MTU) + ";\n")
+	}
+	buf.WriteString("    };\n")
+	buf.WriteString("    bridgeConfig = {\n")
+	buf.WriteString("      STP = " + nixBool(bridge.STP) + ";\n")
+	buf.WriteString("      MulticastSnooping = " + nixBool(bridge.MulticastSnooping) + ";\n")
+	buf.WriteString("      ForwardDelaySec = " + strconv.Itoa(bridge.ForwardDelay) + ";\n")
+	buf.WriteString("      HelloTimeSec = " + strconv.Itoa(bridge.HelloTime) + ";\n")
+	buf.WriteString("    };\n")
+	buf.WriteString("  };\n")
+}
+
 func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 	buf.WriteString("  systemd.network.networks." + nixString("10-netplan-"+iface.IfName) + " = {\n")
 	buf.WriteString("    matchConfig.Name = " + nixString(iface.IfName) + ";\n")
-	if iface.DHCP4 || iface.DHCP6 || iface.AcceptRA || len(iface.Addresses) == 0 {
+	if iface.DHCP4 || iface.DHCP6 || iface.AcceptRA || iface.Bridge != "" || len(iface.Addresses) == 0 {
 		buf.WriteString("    networkConfig = {\n")
 		if iface.DHCP4 && iface.DHCP6 {
 			buf.WriteString("      DHCP = \"yes\";\n")
@@ -323,6 +415,9 @@ func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 		}
 		if len(iface.Addresses) == 0 && !iface.DHCP4 && !iface.DHCP6 && !iface.AcceptRA {
 			buf.WriteString("      LinkLocalAddressing = \"no\";\n")
+		}
+		if iface.Bridge != "" {
+			buf.WriteString("      Bridge = " + nixString(iface.Bridge) + ";\n")
 		}
 		buf.WriteString("    };\n")
 	}
@@ -450,6 +545,15 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 	}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
+		case "Bridge":
+			spec, err := res.BridgeSpec()
+			if err != nil {
+				return nil, nil, err
+			}
+			if api.BoolDefault(spec.RSTP, true) {
+				service["mstpd"] = true
+				debug["mstpd"] = true
+			}
 		case "IPv4DHCPServer", "IPv4DHCPScope", "IPv6DHCPServer", "IPv6DHCPScope", "DNSConditionalForwarder":
 			service["dnsmasq"] = true
 			debug["dnsmasq"] = true

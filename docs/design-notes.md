@@ -693,6 +693,27 @@ as warnings and events; validation rejects only syntax, enum, and required
 field errors; and the knowledge-base matrix remains the source of truth for
 which OS/client/profile combinations are verified, candidate, or known-bad.
 
+### 5.12 Medium: Bridge and VXLAN L2 Segments
+
+assert: routerd should support multi-host LAN segments as a first-class
+router feature, not as an out-of-band shell script. The first step is a
+`Bridge` resource with conservative loop protection: STP and RSTP default to
+enabled, and multicast snooping defaults to disabled because IPv6 neighbor
+discovery, Router Advertisement, and DHCPv6 multicast must remain observable
+in virtualized labs.
+
+The next step is a `VXLANSegment` resource that can attach to a `Bridge`.
+VXLAN ports need an L2 safety filter by default: DHCPv4, DHCPv6, RA, and
+neighbor-discovery packets should not leak across tunnel ports unless the
+operator explicitly disables that guardrail. DHCP and RA resources also need
+a `role` field so one router can be the designated server while other routers
+act as L2 transit nodes for the same segment.
+
+Completion condition: bridge rendering exists for Linux systemd-networkd,
+FreeBSD, and NixOS; Linux RSTP dependency checks mention `mstpd`; VXLAN can
+attach to a bridge; and the DHCP/RA designated-server and L2-filter guardrails
+are documented and rendered.
+
 ## 6. Implementation Phases
 
 assert: Section 5 catalogues replacement requirements but does not sequence
