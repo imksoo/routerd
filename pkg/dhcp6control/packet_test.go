@@ -65,6 +65,84 @@ func TestBuildRequestPacket(t *testing.T) {
 	}
 }
 
+func TestParseDHCPv6RequestSummary(t *testing.T) {
+	srcMAC := mustMAC(t, "02:00:00:00:01:03")
+	dstMAC := mustMAC(t, "02:00:00:00:00:01")
+	payload, err := BuildDHCPv6(PacketSpec{
+		MessageType:       MessageRequest,
+		TransactionID:     0x123456,
+		ClientDUID:        DUIDLL(srcMAC),
+		ServerDUID:        DUIDLL(dstMAC),
+		IAID:              1,
+		T1:                7200,
+		T2:                12600,
+		Prefix:            netip.MustParsePrefix("2001:db8:1200:1240::/60"),
+		PreferredLifetime: 14400,
+		ValidLifetime:     14400,
+		ORO:               []uint16{23},
+		ReconfigureAccept: true,
+	})
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	summary, err := ParseDHCPv6(payload)
+	if err != nil {
+		t.Fatalf("parse payload: %v", err)
+	}
+	if summary.MessageType != MessageRequest || summary.TransactionID != 0x123456 {
+		t.Fatalf("summary header = %+v", summary)
+	}
+	if !bytes.Equal(summary.ClientDUID, DUIDLL(srcMAC)) || !bytes.Equal(summary.ServerDUID, DUIDLL(dstMAC)) {
+		t.Fatalf("summary DUIDs = %+v", summary)
+	}
+	if !summary.ReconfigureAccept || len(summary.ORO) != 1 || summary.ORO[0] != 23 {
+		t.Fatalf("summary options = %+v", summary)
+	}
+	if len(summary.IAPD) != 1 {
+		t.Fatalf("summary IA_PD = %+v", summary.IAPD)
+	}
+	iapd := summary.IAPD[0]
+	if iapd.IAID != 1 || iapd.T1 != 7200 || iapd.T2 != 12600 {
+		t.Fatalf("IA_PD summary = %+v", iapd)
+	}
+	if len(iapd.Prefixes) != 1 || iapd.Prefixes[0].Prefix.String() != "2001:db8:1200:1240::/60" {
+		t.Fatalf("IA Prefix summary = %+v", iapd.Prefixes)
+	}
+	if iapd.Prefixes[0].PreferredLifetime != 14400 || iapd.Prefixes[0].ValidLifetime != 14400 {
+		t.Fatalf("IA Prefix lifetimes = %+v", iapd.Prefixes[0])
+	}
+}
+
+func TestParseDHCPv6SolicitWithoutPrefix(t *testing.T) {
+	srcMAC := mustMAC(t, "02:00:00:00:01:03")
+	payload, err := BuildDHCPv6(PacketSpec{
+		MessageType:       MessageSolicit,
+		TransactionID:     0x010203,
+		ClientDUID:        DUIDLL(srcMAC),
+		IAID:              1,
+		T1:                7200,
+		T2:                12600,
+		ORO:               []uint16{23},
+		ReconfigureAccept: true,
+	})
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	summary, err := ParseDHCPv6(payload)
+	if err != nil {
+		t.Fatalf("parse payload: %v", err)
+	}
+	if summary.MessageType != MessageSolicit || summary.TransactionID != 0x010203 {
+		t.Fatalf("summary header = %+v", summary)
+	}
+	if len(summary.IAPD) != 1 || summary.IAPD[0].IAID != 1 {
+		t.Fatalf("summary IA_PD = %+v", summary.IAPD)
+	}
+	if len(summary.IAPD[0].Prefixes) != 0 {
+		t.Fatalf("solicit unexpectedly had prefixes: %+v", summary.IAPD[0].Prefixes)
+	}
+}
+
 func TestControllerSendRequestUpdatesLease(t *testing.T) {
 	sender := &fakeSender{}
 	store := routerstate.NewJSON()

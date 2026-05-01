@@ -60,6 +60,29 @@ type PacketSpec struct {
 	ReconfigureAccept bool
 }
 
+type MessageSummary struct {
+	MessageType       uint8
+	TransactionID     uint32
+	ClientDUID        []byte
+	ServerDUID        []byte
+	ORO               []uint16
+	ReconfigureAccept bool
+	IAPD              []IAPDSummary
+}
+
+type IAPDSummary struct {
+	IAID     uint32
+	T1       uint32
+	T2       uint32
+	Prefixes []IAPrefixSummary
+}
+
+type IAPrefixSummary struct {
+	Prefix            netip.Prefix
+	PreferredLifetime uint32
+	ValidLifetime     uint32
+}
+
 func DUIDLL(mac net.HardwareAddr) []byte {
 	out := make([]byte, 4+len(mac))
 	binary.BigEndian.PutUint16(out[0:2], 3)
@@ -81,6 +104,93 @@ func ParseDUID(value string) ([]byte, error) {
 		return nil, fmt.Errorf("parse DUID hex: %w", err)
 	}
 	return out, nil
+}
+
+func ParseDHCPv6(payload []byte) (MessageSummary, error) {
+	if len(payload) < 4 {
+		return MessageSummary{}, fmt.Errorf("DHCPv6 payload too short")
+	}
+	summary := MessageSummary{
+		MessageType:   payload[0],
+		TransactionID: uint32(payload[1])<<16 | uint32(payload[2])<<8 | uint32(payload[3]),
+	}
+	if err := parseOptions(payload[4:], func(code uint16, data []byte) error {
+		switch code {
+		case optionClientID:
+			summary.ClientDUID = append([]byte(nil), data...)
+		case optionServerID:
+			summary.ServerDUID = append([]byte(nil), data...)
+		case optionORO:
+			if len(data)%2 != 0 {
+				return fmt.Errorf("ORO option length must be even")
+			}
+			for i := 0; i+2 <= len(data); i += 2 {
+				summary.ORO = append(summary.ORO, binary.BigEndian.Uint16(data[i:i+2]))
+			}
+		case optionReconfAccept:
+			summary.ReconfigureAccept = true
+		case optionIAPD:
+			iapd, err := parseIAPD(data)
+			if err != nil {
+				return err
+			}
+			summary.IAPD = append(summary.IAPD, iapd)
+		}
+		return nil
+	}); err != nil {
+		return MessageSummary{}, err
+	}
+	return summary, nil
+}
+
+func parseIAPD(data []byte) (IAPDSummary, error) {
+	if len(data) < 12 {
+		return IAPDSummary{}, fmt.Errorf("IA_PD option too short")
+	}
+	summary := IAPDSummary{
+		IAID: binary.BigEndian.Uint32(data[0:4]),
+		T1:   binary.BigEndian.Uint32(data[4:8]),
+		T2:   binary.BigEndian.Uint32(data[8:12]),
+	}
+	if err := parseOptions(data[12:], func(code uint16, data []byte) error {
+		if code != optionIAPrefix {
+			return nil
+		}
+		if len(data) < 25 {
+			return fmt.Errorf("IA Prefix option too short")
+		}
+		var addrBytes [16]byte
+		copy(addrBytes[:], data[9:25])
+		addr := netip.AddrFrom16(addrBytes)
+		summary.Prefixes = append(summary.Prefixes, IAPrefixSummary{
+			Prefix:            netip.PrefixFrom(addr, int(data[8])).Masked(),
+			PreferredLifetime: binary.BigEndian.Uint32(data[0:4]),
+			ValidLifetime:     binary.BigEndian.Uint32(data[4:8]),
+		})
+		return nil
+	}); err != nil {
+		return IAPDSummary{}, err
+	}
+	return summary, nil
+}
+
+func parseOptions(data []byte, visit func(code uint16, data []byte) error) error {
+	for i := 0; i < len(data); {
+		if i+4 > len(data) {
+			return fmt.Errorf("truncated DHCPv6 option header")
+		}
+		code := binary.BigEndian.Uint16(data[i : i+2])
+		length := int(binary.BigEndian.Uint16(data[i+2 : i+4]))
+		i += 4
+		if i+length > len(data) {
+			return fmt.Errorf("truncated DHCPv6 option %d", code)
+		}
+		if err := visit(code, data[i:i+length]); err != nil {
+			return err
+		}
+		i += length
+	}
+	return nil
 }
 
 func BuildDHCPv6(spec PacketSpec) ([]byte, error) {
