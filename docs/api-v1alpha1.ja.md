@@ -440,6 +440,7 @@ spec:
 - systemd-networkd と FreeBSD の `dhcp6c` では、取得できる範囲で DHCP の識別情報もリース記録に残します。`dhcp6c` では `/var/db/dhcp6c_duid` から DUID を読み取ります。NTT 系プロファイルでは、上流インターフェースの MAC アドレスから DHCPv6 のリンクレイヤ DUID を計算し、期待される DUID として残します。routerd は既定では IAID を作らず、出力もしません。DHCP 識別子を明示的に固定したい場合だけ `spec.iaid` を使います。
 - リース期限が切れる前の Renew/Rebind は、OS 側の DHCPv6 クライアントの責務です。routerd は通常の反映でこのクライアントを再起動しないようにします。再起動すると、更新として続けられたはずの処理が新規 Solicit や Release に変わることがあるためです。routerd デーモンは、管理している DHCPv6 クライアントから通知できるイベントを取り込み、`lastReplyAt + T1` を過ぎても新しい Reply が無ければ、更新停止の疑いとして状態とイベントに残します。
   現在のプレフィックスが観測できない場合、`plan`、`routerd apply`、デーモン状態には警告を出します。上流リースが切れる前に DHCPv6 クライアントを直すためです。
+- `spec.recovery.mode` は、更新停止を検知した後にデーモンが何をしてよいかを決めます。既定の `manual` は警告とイベントだけを残します。`auto-request` は routerd の能動制御で Request パケットを送り、`auto-rebind` は Rebind パケットを送ります。どちらも状態保存領域にある DUID、IAID、上流サーバ識別子、委譲プレフィックスを使います。自動回復は 5 分に 1 回まで、最大 3 回で止まり、新しい Reply を観測して更新停止状態が消えるまで手動扱いに戻ります。この経路は検証用です。上流の挙動を理解している場合だけ有効にしてください。
 - `spec.iaid` は DHCPv6 の IAID を固定します。10 進数、`0x` 付きの 16 進数、または 8 桁の 16 進数で書けます。systemd-networkd では 10 進数の `IAID=` として出力し、FreeBSD の `dhcp6c` では `ia-pd` / `id-assoc pd` の識別子として使います。通常の NTT 系プロファイルでは省略します。
 - `spec.duidType` は、NTT 系プロファイルで省略すると `link-layer` として扱います。systemd-networkd が既定で使う machine-id 由来の DUID を避け、FreeBSD/KAME `dhcp6c` も NTT 系ホームゲートウェイで期待される識別子にそろえるためです。
 - `spec.duidType` と `spec.duidRawData` は DHCPv6 の DUID を固定します。高可用構成の切り替え、ルータ交換、段階的な移行など、上流インターフェースの MAC アドレスから作る DUID とは別の安定した識別子が必要な場合に使います。`duidRawData` は `00:01:...` のようなバイト列表記でも、区切りなしの 16 進数でも書けます。通常は省略し、実際の MAC アドレスから作る DUID-LL を使います。

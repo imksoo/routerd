@@ -1126,6 +1126,11 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 			fmt.Fprintf(w, "HGW hung suspected:\tyes\n")
 			fmt.Fprintf(w, "HGW hung suspected at:\t%s\n", displayCell(lease.Hung.SuspectedAt))
 			fmt.Fprintf(w, "HGW hung reason:\t%s\n", displayCell(lease.Hung.Reason))
+			fmt.Fprintf(w, "HGW recovery mode:\t%s\n", displayCell(lease.Hung.RecoveryMode))
+			fmt.Fprintf(w, "HGW recovery attempts:\t%d\n", lease.Hung.RecoveryAttempts)
+			fmt.Fprintf(w, "HGW recovery last attempt at:\t%s\n", displayCell(lease.Hung.RecoveryLastAttemptAt))
+			fmt.Fprintf(w, "HGW recovery next attempt at:\t%s\n", displayCell(lease.Hung.RecoveryNextAttemptAt))
+			fmt.Fprintf(w, "HGW recovery exhausted at:\t%s\n", displayCell(lease.Hung.RecoveryExhaustedAt))
 		} else {
 			fmt.Fprintf(w, "HGW hung suspected:\tno\n")
 		}

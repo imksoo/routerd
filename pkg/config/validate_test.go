@@ -417,6 +417,16 @@ func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
 	if err := Validate(router); err == nil {
 		t.Fatal("expected invalid acquisitionStrategy to be rejected")
 	}
+
+	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", Recovery: api.IPv6PDRecoverySpec{Mode: "auto-request"}}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate prefix delegation recovery mode: %v", err)
+	}
+
+	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", Recovery: api.IPv6PDRecoverySpec{Mode: "unknown"}}
+	if err := Validate(router); err == nil {
+		t.Fatal("expected invalid recovery mode to be rejected")
+	}
 }
 
 func TestValidateRejectsExternalPDClientAndNetworkdDHCPv6OnSameInterface(t *testing.T) {

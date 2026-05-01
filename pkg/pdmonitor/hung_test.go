@@ -51,3 +51,83 @@ func TestCheckHungClearsAfterFreshReply(t *testing.T) {
 		t.Fatalf("lease hung status = %#v", lease.Hung)
 	}
 }
+
+func TestCheckHungAutoRequestSchedulesRecovery(t *testing.T) {
+	store := routerstate.New()
+	now := store.Now().UTC()
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
+		CurrentPrefix: "2001:db8:1200:1230::/60",
+		LastReplyAt:   now.Add(-95 * time.Second).Format(time.RFC3339Nano),
+		T1:            "60",
+	}), "test")
+
+	results, err := CheckHungWithPolicies(store, []HungPolicy{{Resource: "wan-pd", RecoveryMode: RecoveryAutoRequest}}, 30*time.Second, 5*time.Minute, 3)
+	if err != nil {
+		t.Fatalf("check hung: %v", err)
+	}
+	if len(results) != 1 || results[0].RecoveryAction != "request" {
+		t.Fatalf("results = %#v", results)
+	}
+	lease, _ := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
+	if lease.Hung == nil || lease.Hung.RecoveryAttempts != 1 || lease.Hung.RecoveryMode != RecoveryAutoRequest {
+		t.Fatalf("lease hung status = %#v", lease.Hung)
+	}
+}
+
+func TestCheckHungRecoveryBackoff(t *testing.T) {
+	store := routerstate.New()
+	now := store.Now().UTC()
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
+		CurrentPrefix: "2001:db8:1200:1230::/60",
+		LastReplyAt:   now.Add(-95 * time.Second).Format(time.RFC3339Nano),
+		T1:            "60",
+		Hung: &routerstate.PDHungStatus{
+			SuspectedAt:           now.Add(-time.Minute).Format(time.RFC3339Nano),
+			Reason:                "old",
+			RecoveryMode:          RecoveryAutoRebind,
+			RecoveryAttempts:      1,
+			RecoveryLastAttemptAt: now.Add(-time.Minute).Format(time.RFC3339Nano),
+		},
+	}), "test")
+
+	results, err := CheckHungWithPolicies(store, []HungPolicy{{Resource: "wan-pd", RecoveryMode: RecoveryAutoRebind}}, 30*time.Second, 5*time.Minute, 3)
+	if err != nil {
+		t.Fatalf("check hung: %v", err)
+	}
+	if len(results) != 1 || results[0].RecoveryAction != "" || results[0].Changed {
+		t.Fatalf("results = %#v", results)
+	}
+	lease, _ := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
+	if lease.Hung == nil || lease.Hung.RecoveryAttempts != 1 {
+		t.Fatalf("lease hung status = %#v", lease.Hung)
+	}
+}
+
+func TestCheckHungRecoveryExhaustsToManual(t *testing.T) {
+	store := routerstate.New()
+	now := store.Now().UTC()
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
+		CurrentPrefix: "2001:db8:1200:1230::/60",
+		LastReplyAt:   now.Add(-95 * time.Second).Format(time.RFC3339Nano),
+		T1:            "60",
+		Hung: &routerstate.PDHungStatus{
+			SuspectedAt:           now.Add(-time.Hour).Format(time.RFC3339Nano),
+			Reason:                "old",
+			RecoveryMode:          RecoveryAutoRequest,
+			RecoveryAttempts:      3,
+			RecoveryLastAttemptAt: now.Add(-10 * time.Minute).Format(time.RFC3339Nano),
+		},
+	}), "test")
+
+	results, err := CheckHungWithPolicies(store, []HungPolicy{{Resource: "wan-pd", RecoveryMode: RecoveryAutoRequest}}, 30*time.Second, 5*time.Minute, 3)
+	if err != nil {
+		t.Fatalf("check hung: %v", err)
+	}
+	if len(results) != 1 || results[0].RecoveryAction != "" || !results[0].Changed {
+		t.Fatalf("results = %#v", results)
+	}
+	lease, _ := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
+	if lease.Hung == nil || lease.Hung.RecoveryMode != RecoveryManual || lease.Hung.RecoveryExhaustedAt == "" {
+		t.Fatalf("lease hung status = %#v", lease.Hung)
+	}
+}

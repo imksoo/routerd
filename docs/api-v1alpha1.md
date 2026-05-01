@@ -577,6 +577,14 @@ How routerd behaves:
   warning. If there is no current observable prefix, `plan`, `apply`, and
   daemon status include a warning so the operator can fix the DHCPv6 client
   before the upstream lease expires.
+- `spec.recovery.mode` controls what the daemon may do after hung detection.
+  The default, `manual`, only records warnings and events. `auto-request`
+  sends a routerd active Request packet, and `auto-rebind` sends a Rebind
+  packet, using the observed DUID, IAID, server identifier, and delegated
+  prefix from the state DB. Automatic recovery is rate-limited to one attempt
+  every five minutes and stops after three failed attempts until a fresh Reply
+  clears the hung state. This path is intended for controlled lab recovery; do
+  not enable it unless the upstream behavior is understood.
 - `spec.iaid` pins the DHCPv6 IAID. It may be written as decimal, `0x`
   prefixed hex, or 8 hex digits. systemd-networkd renders it as a decimal
   `IAID=` value; FreeBSD `dhcp6c` uses it as the `ia-pd` / `id-assoc pd`

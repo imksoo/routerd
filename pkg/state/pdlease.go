@@ -44,8 +44,15 @@ type PDWANObserved struct {
 }
 
 type PDHungStatus struct {
-	SuspectedAt string `json:"suspectedAt,omitempty"`
-	Reason      string `json:"reason,omitempty"`
+	SuspectedAt             string `json:"suspectedAt,omitempty"`
+	Reason                  string `json:"reason,omitempty"`
+	RecoveryMode            string `json:"recoveryMode,omitempty"`
+	RecoveryAttempts        int    `json:"recoveryAttempts,omitempty"`
+	RecoveryLastAttemptAt   string `json:"recoveryLastAttemptAt,omitempty"`
+	RecoveryNextAttemptAt   string `json:"recoveryNextAttemptAt,omitempty"`
+	RecoveryExhaustedAt     string `json:"recoveryExhaustedAt,omitempty"`
+	RecoveryLastError       string `json:"recoveryLastError,omitempty"`
+	RecoveryLastSucceededAt string `json:"recoveryLastSucceededAt,omitempty"`
 }
 
 type PDAcquisitionStatus struct {

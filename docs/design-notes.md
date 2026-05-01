@@ -690,6 +690,11 @@ and self-driving end-to-end without manual operator commands.
 - Implement hung detection: T1 boundary plus configurable grace seconds
   with no Reply triggers `hgwHungSuspectedAt` and a warning surfaced through
   `routerctl describe ipv6pd/<name>`.
+- Add an explicit recovery policy. The default remains manual warning only.
+  When an operator sets `spec.recovery.mode` to `auto-request` or
+  `auto-rebind`, the daemon may send one active Request or Rebind after hung
+  detection, then back off for five minutes. After three failed attempts it
+  stops automatic recovery until a later Reply clears the hung state.
 - Implement the hybrid acquisition strategy declared in
   `spec.acquisitionStrategy`: Solicit canonical first, fall back to
   Request-with-claim when Solicit produces no Advertise within a

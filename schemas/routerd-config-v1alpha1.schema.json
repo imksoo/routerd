@@ -1197,6 +1197,21 @@
                         ],
                         "type": "string"
                       },
+                      "recovery": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "mode": {
+                            "enum": [
+                              "",
+                              "manual",
+                              "auto-request",
+                              "auto-rebind"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "required": {
                         "type": "boolean"
                       },

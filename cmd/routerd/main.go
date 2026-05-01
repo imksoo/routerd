@@ -2614,8 +2614,8 @@ func startDHCP6Recorder(stop <-chan struct{}, router *api.Router, statePath stri
 }
 
 func startPDHungMonitor(stop <-chan struct{}, router *api.Router, statePath string, interval, grace time.Duration, logger *eventlog.Logger) {
-	pds := ipv6PrefixDelegationNames(router)
-	if len(pds) == 0 || interval <= 0 {
+	policies := ipv6PrefixDelegationHungPolicies(router)
+	if len(policies) == 0 || interval <= 0 {
 		return
 	}
 	go func() {
@@ -2631,7 +2631,7 @@ func startPDHungMonitor(stop <-chan struct{}, router *api.Router, statePath stri
 					logger.Emit(eventlog.LevelWarning, "pd", "PD hung monitor state load failed", map[string]string{"error": err.Error()})
 					continue
 				}
-				results, err := pdmonitor.CheckHung(store, pds, grace)
+				results, err := pdmonitor.CheckHungWithPolicies(store, policies, grace, 5*time.Minute, 3)
 				if err != nil {
 					logger.Emit(eventlog.LevelWarning, "pd", "PD hung monitor failed", map[string]string{"error": err.Error()})
 					continue
@@ -2649,6 +2649,14 @@ func startPDHungMonitor(stop <-chan struct{}, router *api.Router, statePath stri
 						message = "DHCPv6-PD hung suspicion cleared"
 					}
 					logger.Emit(level, "pd", message, map[string]string{"resource": result.Resource, "reason": result.Reason})
+					if result.RecoveryAction != "" {
+						if err := attemptPDHungRecovery(router, store, result); err != nil {
+							logger.Emit(eventlog.LevelWarning, "pd", "PD hung recovery failed", map[string]string{"resource": result.Resource, "action": result.RecoveryAction, "error": err.Error()})
+						} else {
+							logger.Emit(eventlog.LevelInfo, "pd", "PD hung recovery packet sent", map[string]string{"resource": result.Resource, "action": result.RecoveryAction})
+						}
+						changed = true
+					}
 				}
 				if changed {
 					if err := store.Save(defaultString(statePath, defaultStatePath)); err != nil {
@@ -2658,6 +2666,56 @@ func startPDHungMonitor(stop <-chan struct{}, router *api.Router, statePath stri
 			}
 		}
 	}()
+}
+
+func ipv6PrefixDelegationHungPolicies(router *api.Router) []pdmonitor.HungPolicy {
+	if router == nil {
+		return nil
+	}
+	var out []pdmonitor.HungPolicy
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "IPv6PrefixDelegation" {
+			continue
+		}
+		spec, err := res.IPv6PrefixDelegationSpec()
+		if err != nil {
+			continue
+		}
+		out = append(out, pdmonitor.HungPolicy{Resource: res.Metadata.Name, RecoveryMode: spec.Recovery.Mode})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Resource < out[j].Resource })
+	return out
+}
+
+func attemptPDHungRecovery(router *api.Router, store routerstate.Store, result pdmonitor.HungResult) error {
+	input, err := dhcp6SendInput(router, store, result.RecoveryAction, result.Resource, "", "", "", "")
+	if err != nil {
+		recordPDRecoveryEvent(store, result.Resource, "Warning", "HGWRecoveryFailed", fmt.Sprintf("cannot prepare DHCPv6 %s recovery: %v", result.RecoveryAction, err))
+		return err
+	}
+	controller := dhcp6control.Controller{Sender: dhcp6control.AFPacketSender{}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	switch result.RecoveryAction {
+	case "request":
+		err = controller.SendRequest(ctx, store, input)
+	case "rebind":
+		err = controller.SendRebind(ctx, store, input)
+	default:
+		err = fmt.Errorf("unsupported recovery action %q", result.RecoveryAction)
+	}
+	if err != nil {
+		recordPDRecoveryEvent(store, result.Resource, "Warning", "HGWRecoveryFailed", fmt.Sprintf("DHCPv6 %s recovery failed: %v", result.RecoveryAction, err))
+		return err
+	}
+	recordPDRecoveryEvent(store, result.Resource, "Normal", "HGWRecoveryAttempted", fmt.Sprintf("sent DHCPv6 %s after hung detection", result.RecoveryAction))
+	return nil
+}
+
+func recordPDRecoveryEvent(store routerstate.Store, resourceName, eventType, reason, message string) {
+	if recorder, ok := store.(routerstate.EventRecorder); ok {
+		_ = recorder.RecordEvent(api.NetAPIVersion, "IPv6PrefixDelegation", resourceName, eventType, reason, message)
+	}
 }
 
 func ipv6PrefixDelegationNames(router *api.Router) []string {

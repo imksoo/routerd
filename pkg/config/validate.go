@@ -738,6 +738,11 @@ func validateResource(res api.Resource) error {
 		default:
 			return fmt.Errorf("%s spec.acquisitionStrategy must be hybrid, solicit-only, or request-claim-only", res.ID())
 		}
+		switch spec.Recovery.Mode {
+		case "", "manual", "auto-request", "auto-rebind":
+		default:
+			return fmt.Errorf("%s spec.recovery.mode must be manual, auto-request, or auto-rebind", res.ID())
+		}
 	case "IPv6DelegatedAddress":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

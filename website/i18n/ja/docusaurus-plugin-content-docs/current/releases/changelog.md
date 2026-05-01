@@ -32,6 +32,10 @@ behavior changes and new resource shapes as the model takes shape.
   FreeBSD routers can record DHCPv6 transactions without binding UDP 546/547.
 - WAN RA observation now uses the FreeBSD BPF backend as well, allowing
   FreeBSD routers to populate `wanObserved.*` and derived HGW Server ID state.
+- `IPv6PrefixDelegation.spec.recovery.mode` now controls daemon-side hung
+  recovery. The default `manual` mode records warnings only; `auto-request`
+  and `auto-rebind` send rate-limited active DHCPv6 packets after hung
+  detection and stop after three failed attempts.
 - Linux NTT-profile `IPv6PrefixDelegation` now defaults to `client: dhcpcd`,
   including on NixOS. `client: dhcp6c` remains a supported explicit fallback
   for migration and controlled comparison.
@@ -52,6 +56,9 @@ behavior changes and new resource shapes as the model takes shape.
   NTT-profile default and remains an explicit lab path on FreeBSD. routerd
   renders a per-resource `dhcpcd.conf`, hook placeholder, and either a systemd
   unit or FreeBSD rc.d script.
+- Linux DHCPv6-PD client switching now stops stale managed units for the
+  previous client, and the generated dhcpcd hook is file-global so dhcpcd 10
+  actually invokes routerd's local event reporter.
 - Documentation now includes Mermaid diagrams for the NTT HGW state model,
   the routerd DHCPv6-PD acquisition strategy, and the OS/client selection
   matrix, plus updated dhcpcd lab notes.
