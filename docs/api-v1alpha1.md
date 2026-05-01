@@ -40,6 +40,7 @@ This is a long page. Jump to the kind you need:
 
 **IPv4 DHCP and DNS service (LAN-side)**
 - [IPv4DHCPServer / IPv4DHCPScope](#ipv4dhcpserver-and-ipv4dhcpscope)
+- [DHCPv4HostReservation](#dhcpv4hostreservation)
 
 **IPv6 addressing and prefix delegation**
 - [IPv6PrefixDelegation](#ipv6prefixdelegation)
@@ -94,7 +95,7 @@ page is the field reference, not the introduction.
 Networking:
 `Interface`, `PPPoEInterface`, `IPv4StaticAddress`, `IPv4DHCPAddress`,
 `IPv4DHCPServer`, `IPv4DHCPScope`, `IPv6DHCPAddress`, `IPv6PrefixDelegation`,
-`IPv6DelegatedAddress`, `IPv6DHCPServer`, `IPv6DHCPScope`,
+`DHCPv4HostReservation`, `IPv6DelegatedAddress`, `IPv6DHCPServer`, `IPv6DHCPScope`,
 `SelfAddressPolicy`, `DNSConditionalForwarder`, `DSLiteTunnel`,
 `StatePolicy`, `HealthCheck`, `IPv4DefaultRoutePolicy`, `IPv4SourceNAT`,
 `IPv4PolicyRoute`, `IPv4PolicyRouteSet`, `IPv4ReversePathFilter`,
@@ -492,6 +493,28 @@ How routerd behaves:
   cloud-init owns it — planning blocks the DHCP scope as well, since
   serving DHCP without owning the interface would race with another
   manager.
+
+### DHCPv4HostReservation
+
+`DHCPv4HostReservation` pins a client MAC address to an address inside an
+existing `IPv4DHCPScope`.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: DHCPv4HostReservation
+metadata:
+  name: printer
+spec:
+  scope: lan-dhcp4
+  macAddress: "02:00:00:00:01:50"
+  ipAddress: "192.168.10.150"
+  hostname: printer
+  leaseTime: infinite
+```
+
+routerd renders this as a dnsmasq `dhcp-host=` line. `hostname` and
+`leaseTime` are optional; when `leaseTime` is omitted, routerd uses the
+referenced scope's lease time.
 
 ## IPv6 addressing and prefix delegation
 

@@ -89,6 +89,59 @@ func TestDnsmasqConfigUsesSelfDNSWithDHCPv4Upstream(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigRendersDHCPv4HostReservation(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.0.2.1/24"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
+				Metadata: api.ObjectMeta{Name: "dhcp4"},
+				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPScope"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcp4"},
+				Spec: api.IPv4DHCPScopeSpec{
+					Server:     "dhcp4",
+					Interface:  "lan",
+					RangeStart: "192.0.2.100",
+					RangeEnd:   "192.0.2.150",
+					LeaseTime:  "12h",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4HostReservation"},
+				Metadata: api.ObjectMeta{Name: "printer"},
+				Spec: api.DHCPv4HostReservationSpec{
+					Scope:      "lan-dhcp4",
+					MACAddress: "02:00:00:00:01:50",
+					IPAddress:  "192.0.2.120",
+					Hostname:   "printer",
+					LeaseTime:  "infinite",
+				},
+			},
+		}},
+	}
+
+	data, err := DnsmasqConfig(router, DnsmasqRuntime{})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	got := string(data)
+	if want := "dhcp-host=02:00:00:00:01:50,192.0.2.120,printer,infinite"; !strings.Contains(got, want) {
+		t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
+	}
+}
+
 func TestDnsmasqConfigCanPassThroughDHCPv4DNS(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

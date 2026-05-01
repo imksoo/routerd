@@ -224,6 +224,7 @@ intent.
 | `IPv4DHCPAddress` | DHCPv4 client binding and renderer-specific route/DNS adoption settings |
 | `IPv4DHCPServer` | dnsmasq config and service; Linux uses `routerd-dnsmasq.service`, FreeBSD uses `/usr/local/etc/rc.d/routerd_dnsmasq` |
 | `IPv4DHCPScope` | dnsmasq DHCPv4 scope |
+| `DHCPv4HostReservation` | dnsmasq DHCPv4 host reservation |
 | `IPv6DHCPAddress` | DHCPv6 client binding |
 | `IPv6PrefixDelegation` | DHCPv6 prefix delegation binding; FreeBSD KAME `dhcp6c` DUID file for NTT link-layer DUID profiles |
 | `IPv6DelegatedAddress` | IPv6 address, including FreeBSD LAN-side aliases derived only from a currently observed delegated prefix |

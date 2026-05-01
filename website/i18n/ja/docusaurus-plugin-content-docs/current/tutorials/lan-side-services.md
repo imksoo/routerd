@@ -50,6 +50,17 @@ sidebar_position: 3
         routerSource: interfaceAddress
         dnsSource: self
         authoritative: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4HostReservation
+      metadata:
+        name: printer
+      spec:
+        scope: lan-dhcp4
+        macAddress: "02:00:00:00:01:50"
+        ipAddress: "192.168.10.150"
+        hostname: printer
+        leaseTime: infinite
 ```
 
 LAN クライアントに渡るもの:
@@ -58,6 +69,7 @@ LAN クライアントに渡るもの:
   (`routerSource: interfaceAddress` でルーターの LAN アドレスを広告するため)
 - `192.168.10.1` への DNS。`upstreamSource: dhcp4` で、WAN の DHCPv4 で学習した
   リゾルバにフォワード
+- プリンタには `192.168.10.150` を固定で配布
 
 ## 2. apply と確認
 

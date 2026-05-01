@@ -35,6 +35,7 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 
 **IPv4 DHCP と DNS の提供 (LAN 側)**
 - [IPv4DHCPServer / IPv4DHCPScope](#ipv4dhcpserver-と-ipv4dhcpscope)
+- [DHCPv4HostReservation](#dhcpv4hostreservation)
 
 **IPv6 アドレッシングとプレフィックス委譲**
 - [IPv6PrefixDelegation](#ipv6prefixdelegation)
@@ -85,7 +86,7 @@ routerd を初めて触る場合は、まず [概念](../concepts/what-is-router
 ## 用意されているリソース
 
 ネットワーク関連:
-`Interface`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4DHCPServer`、`IPv4DHCPScope`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
+`Interface`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4DHCPServer`、`IPv4DHCPScope`、`DHCPv4HostReservation`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
 
 ファイアウォール:
 `Zone`、`FirewallPolicy`、`ExposeService`。
@@ -252,7 +253,7 @@ spec:
 - `spec.managed: true` のとき、routerd はリンクとアドレスの状態を変更できます。ただし cloud-init や netplan が既に握っている場合は奪わず、計画上で「取り込み待ち」として表示します。
 - `spec.managed: false` の場合は観測専用です。別名解決はしますが、リンクとアドレスは触りません。
 
-ホスト側の所有関係や、`/var/lib/routerd/routerd.db` の `artifacts` テーブル のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership.md) を参照してください。
+ホスト側の所有関係や、`/var/lib/routerd/routerd.db` の `artifacts` テーブル のローカル台帳の扱いは [リソース所有と反映モデル](resource-ownership) を参照してください。
 
 ### PPPoEInterface
 
@@ -406,6 +407,28 @@ spec:
   - `none` は DNS オプションそのものを出しません。
 - `spec.interface` がまだ取り込み待ちの状態（cloud-init などが握っている）にある場合、その上で DHCP を提供すると競合するため、計画段階で DHCP スコープも止めます。
 
+### DHCPv4HostReservation
+
+`DHCPv4HostReservation` は、既存の `IPv4DHCPScope` の中で、クライアントの
+MAC アドレスと IPv4 アドレスを固定します。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: DHCPv4HostReservation
+metadata:
+  name: printer
+spec:
+  scope: lan-dhcp4
+  macAddress: "02:00:00:00:01:50"
+  ipAddress: "192.168.10.150"
+  hostname: printer
+  leaseTime: infinite
+```
+
+routerd はこれを dnsmasq の `dhcp-host=` 行として出力します。`hostname` と
+`leaseTime` は省略できます。`leaseTime` を省略した場合は、参照先スコープの
+リース時間を使います。
+
 ## IPv6 アドレッシングとプレフィックス委譲
 
 ### IPv6PrefixDelegation
@@ -429,7 +452,7 @@ spec:
 
 ルータの振る舞い:
 
-- `spec.client` は OS 側の DHCPv6-PD クライアントを選びます。`networkd` は Linux の systemd-networkd 追加設定を使います。`dhcp6c` は routerd が管理する WIDE/KAME 形式の `dhcp6c.conf` とサービスを使います。`dhcpcd` はリソースごとの `dhcpcd.conf` とサービスを routerd が管理する経路です。省略時は `routerd apply` が OS とプロファイルから既定値を選びます。FreeBSD は `dhcp6c`、一般 Linux は `networkd`、NixOS を含む Linux の NTT 系プロファイルは `dhcpcd` です。Linux で `dhcp6c` を明示する経路は、移行や比較検証のために明示した場合だけ使う代替手段として残します。1 回だけ切り替えて試したい場合は `routerd apply --override-client` を使えます。既知の悪い組み合わせは検証エラーではなく、警告とイベントとして表示します。同じインターフェースで `dhcp6c` や `dhcpcd` のような外部クライアントがプレフィックス委譲を持つ場合、`IPv6DHCPAddress` を同時に定義しないでください。WAN 側を待ち受ける DHCPv6 クライアントは 1 つに絞ります。
+- `spec.client` は OS 側の DHCPv6-PD クライアントを選びます。`networkd` は Linux の systemd-networkd 追加設定を使います。`dhcp6c` は routerd が管理する WIDE/KAME 形式の `dhcp6c.conf` とサービスを使います。`dhcpcd` はリソースごとの `dhcpcd.conf` とサービスを routerd が管理する経路です。省略時は `routerd apply` が OS とプロファイルから既定値を選びます。FreeBSD は `dhcp6c`、一般 Linux は `networkd`、NixOS を含む Linux の NTT 系プロファイルは `dhcpcd` です。Linux で `dhcp6c` を明示する経路は、移行や比較検証のための対応済みの代替手段として残します。1 回だけ切り替えて試したい場合は `routerd apply --override-client` を使えます。既知の悪い組み合わせは検証エラーではなく、警告とイベントとして表示します。同じインターフェースで `dhcp6c` や `dhcpcd` のような外部クライアントがプレフィックス委譲を持つ場合、`IPv6DHCPAddress` を同時に定義しないでください。WAN 側を待ち受ける DHCPv6 クライアントは 1 つに絞ります。
 - `spec.profile` は既知の上流環境向けにパラメータを切り替えます。
   - `default`: 一般的な DHCPv6-PD。
   - `ntt-ngn-direct-hikari-denwa`: NTT NGN/ONU に直結し、ひかり電話契約を使う構成。

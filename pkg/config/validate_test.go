@@ -324,6 +324,48 @@ func TestValidateIPv4DHCPScopeRange(t *testing.T) {
 	}
 }
 
+func TestValidateDHCPv4HostReservationRange(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
+				Metadata: api.ObjectMeta{Name: "dhcp4"},
+				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPScope"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcp4"},
+				Spec: api.IPv4DHCPScopeSpec{
+					Server:     "dhcp4",
+					Interface:  "lan",
+					RangeStart: "192.0.2.100",
+					RangeEnd:   "192.0.2.150",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4HostReservation"},
+				Metadata: api.ObjectMeta{Name: "printer"},
+				Spec: api.DHCPv4HostReservationSpec{
+					Scope:      "lan-dhcp4",
+					MACAddress: "02:00:00:00:01:50",
+					IPAddress:  "192.0.2.200",
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err == nil {
+		t.Fatal("expected host reservation outside the scope range to be rejected")
+	}
+}
+
 func TestValidateSelfAddressPolicy(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

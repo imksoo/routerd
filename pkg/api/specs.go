@@ -165,6 +165,14 @@ type IPv4DHCPScopeSpec struct {
 	When          ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
+type DHCPv4HostReservationSpec struct {
+	Scope      string `yaml:"scope" json:"scope"`
+	MACAddress string `yaml:"macAddress" json:"macAddress"`
+	IPAddress  string `yaml:"ipAddress" json:"ipAddress"`
+	Hostname   string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	LeaseTime  string `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
+}
+
 type IPv6DHCPAddressSpec struct {
 	Interface string `yaml:"interface" json:"interface"`
 	Client    string `yaml:"client,omitempty" json:"client,omitempty"`
@@ -547,6 +555,10 @@ func (r Resource) IPv4DHCPServerSpec() (IPv4DHCPServerSpec, error) {
 
 func (r Resource) IPv4DHCPScopeSpec() (IPv4DHCPScopeSpec, error) {
 	return specAs[IPv4DHCPScopeSpec](r)
+}
+
+func (r Resource) DHCPv4HostReservationSpec() (DHCPv4HostReservationSpec, error) {
+	return specAs[DHCPv4HostReservationSpec](r)
 }
 
 func (r Resource) IPv6DHCPAddressSpec() (IPv6DHCPAddressSpec, error) {

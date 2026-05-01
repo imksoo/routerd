@@ -866,33 +866,36 @@ func artifactsForOwner(ledger resource.Ledger, owner string) []resource.Artifact
 func canonicalResourceKind(kind string) string {
 	key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(kind, "-", ""), "_", ""))
 	aliases := map[string]string{
-		"if":                   "Interface",
-		"iface":                "Interface",
-		"interface":            "Interface",
-		"interfaces":           "Interface",
-		"pd":                   "IPv6PrefixDelegation",
-		"ipv6pd":               "IPv6PrefixDelegation",
-		"prefixdelegation":     "IPv6PrefixDelegation",
-		"ipv6prefixdelegation": "IPv6PrefixDelegation",
-		"ipv4static":           "IPv4StaticAddress",
-		"ipv4staticaddress":    "IPv4StaticAddress",
-		"ipv4dhcp":             "IPv4DHCPAddress",
-		"ipv4dhcpaddress":      "IPv4DHCPAddress",
-		"nat":                  "IPv4SourceNAT",
-		"snat":                 "IPv4SourceNAT",
-		"ipv4sourcenat":        "IPv4SourceNAT",
-		"dslite":               "DSLiteTunnel",
-		"dslitetunnel":         "DSLiteTunnel",
-		"pppoe":                "PPPoEInterface",
-		"pppoeinterface":       "PPPoEInterface",
-		"fw":                   "FirewallPolicy",
-		"firewall":             "FirewallPolicy",
-		"firewallpolicy":       "FirewallPolicy",
-		"zone":                 "Zone",
-		"hostname":             "Hostname",
-		"host":                 "Hostname",
-		"route":                "IPv4PolicyRouteSet",
-		"ipv4policyrouteset":   "IPv4PolicyRouteSet",
+		"if":                    "Interface",
+		"iface":                 "Interface",
+		"interface":             "Interface",
+		"interfaces":            "Interface",
+		"pd":                    "IPv6PrefixDelegation",
+		"ipv6pd":                "IPv6PrefixDelegation",
+		"prefixdelegation":      "IPv6PrefixDelegation",
+		"ipv6prefixdelegation":  "IPv6PrefixDelegation",
+		"ipv4static":            "IPv4StaticAddress",
+		"ipv4staticaddress":     "IPv4StaticAddress",
+		"ipv4dhcp":              "IPv4DHCPAddress",
+		"ipv4dhcpaddress":       "IPv4DHCPAddress",
+		"dhcpv4host":            "DHCPv4HostReservation",
+		"dhcpv4hostreservation": "DHCPv4HostReservation",
+		"ipv4dhcpreservation":   "DHCPv4HostReservation",
+		"nat":                   "IPv4SourceNAT",
+		"snat":                  "IPv4SourceNAT",
+		"ipv4sourcenat":         "IPv4SourceNAT",
+		"dslite":                "DSLiteTunnel",
+		"dslitetunnel":          "DSLiteTunnel",
+		"pppoe":                 "PPPoEInterface",
+		"pppoeinterface":        "PPPoEInterface",
+		"fw":                    "FirewallPolicy",
+		"firewall":              "FirewallPolicy",
+		"firewallpolicy":        "FirewallPolicy",
+		"zone":                  "Zone",
+		"hostname":              "Hostname",
+		"host":                  "Hostname",
+		"route":                 "IPv4PolicyRouteSet",
+		"ipv4policyrouteset":    "IPv4PolicyRouteSet",
 	}
 	if canonical, ok := aliases[key]; ok {
 		return canonical
@@ -908,7 +911,7 @@ func apiVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4DHCPServer", "IPv4DHCPScope", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "IPv6DHCPServer", "IPv6DHCPScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DSLiteTunnel", "StatePolicy", "HealthCheck", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "IPv6DHCPServer", "IPv6DHCPScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DSLiteTunnel", "StatePolicy", "HealthCheck", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""

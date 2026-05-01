@@ -127,6 +127,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "DHCPv4HostReservation":
+		var spec DHCPv4HostReservationSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv6DHCPAddress":
 		var spec IPv6DHCPAddressSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

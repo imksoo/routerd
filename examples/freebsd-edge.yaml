@@ -151,6 +151,17 @@ spec:
         authoritative: true
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4HostReservation
+      metadata:
+        name: printer
+      spec:
+        scope: lan-dhcp4
+        macAddress: "02:00:00:00:01:50"
+        ipAddress: 192.0.2.115
+        hostname: printer
+        leaseTime: infinite
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
       metadata:
         name: lan-ipv6-pd-address

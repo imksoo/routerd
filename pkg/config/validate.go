@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ func Validate(router *api.Router) error {
 	interfaces := map[string]bool{}
 	dhcp4Servers := map[string]bool{}
 	dhcp4ServerSpecs := map[string]api.IPv4DHCPServerSpec{}
+	dhcp4Scopes := map[string]api.IPv4DHCPScopeSpec{}
 	dhcp6Servers := map[string]bool{}
 	dhcp6ServerSpecs := map[string]api.IPv6DHCPServerSpec{}
 	dhcp6Scopes := map[string]bool{}
@@ -82,6 +84,13 @@ func Validate(router *api.Router) error {
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6DHCPScope" {
 			dhcp6Scopes[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv4DHCPScope" {
+			spec, err := res.IPv4DHCPScopeSpec()
+			if err != nil {
+				return err
+			}
+			dhcp4Scopes[res.Metadata.Name] = spec
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6PrefixDelegation" {
 			prefixDelegations[res.Metadata.Name] = true
@@ -191,6 +200,25 @@ func Validate(router *api.Router) error {
 			}
 			if spec.DNSInterface != "" && !interfaces[spec.DNSInterface] {
 				return fmt.Errorf("%s references missing DNS Interface %q", res.ID(), spec.DNSInterface)
+			}
+		}
+		if res.Kind == "DHCPv4HostReservation" {
+			spec, err := res.DHCPv4HostReservationSpec()
+			if err != nil {
+				return err
+			}
+			scope, ok := dhcp4Scopes[spec.Scope]
+			if !ok {
+				return fmt.Errorf("%s references missing IPv4DHCPScope %q", res.ID(), spec.Scope)
+			}
+			ip, err := netip.ParseAddr(spec.IPAddress)
+			if err != nil || !ip.Is4() {
+				return fmt.Errorf("%s spec.ipAddress must be an IPv4 address", res.ID())
+			}
+			start := netip.MustParseAddr(scope.RangeStart)
+			end := netip.MustParseAddr(scope.RangeEnd)
+			if ip.Compare(start) < 0 || ip.Compare(end) > 0 {
+				return fmt.Errorf("%s spec.ipAddress must be inside IPv4DHCPScope %q range", res.ID(), spec.Scope)
 			}
 		}
 		if res.Kind == "NTPClient" {
@@ -870,6 +898,35 @@ func validateResource(res api.Resource) error {
 			if err != nil || !addr.Is4() {
 				return fmt.Errorf("%s spec.dnsServers entries must be IPv4 addresses", res.ID())
 			}
+		}
+	case "DHCPv4HostReservation":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DHCPv4HostReservationSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Scope == "" {
+			return fmt.Errorf("%s spec.scope is required", res.ID())
+		}
+		if spec.MACAddress == "" {
+			return fmt.Errorf("%s spec.macAddress is required", res.ID())
+		}
+		if _, err := net.ParseMAC(spec.MACAddress); err != nil {
+			return fmt.Errorf("%s spec.macAddress must be a MAC address", res.ID())
+		}
+		if spec.IPAddress == "" {
+			return fmt.Errorf("%s spec.ipAddress is required", res.ID())
+		}
+		if addr, err := netip.ParseAddr(spec.IPAddress); err != nil || !addr.Is4() {
+			return fmt.Errorf("%s spec.ipAddress must be an IPv4 address", res.ID())
+		}
+		if spec.Hostname != "" && strings.ContainsAny(spec.Hostname, " \t\n,") {
+			return fmt.Errorf("%s spec.hostname must not contain whitespace or commas", res.ID())
+		}
+		if strings.Contains(spec.LeaseTime, ",") {
+			return fmt.Errorf("%s spec.leaseTime must not contain commas", res.ID())
 		}
 	case "IPv6DHCPServer":
 		if res.APIVersion != api.NetAPIVersion {

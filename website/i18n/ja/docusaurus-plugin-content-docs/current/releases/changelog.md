@@ -9,6 +9,8 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- Added `DHCPv4HostReservation` for dnsmasq-backed fixed IPv4 leases inside
+  an existing `IPv4DHCPScope`.
 - SQLite state objects now include `last_applied_path` metadata. This prepares
   routerd for kubectl-style additive apply and explicit delete workflows.
 - Successful apply runs now populate `last_applied_path` for each resource in

@@ -51,6 +51,17 @@ this through a managed `dnsmasq` instance described by an
         routerSource: interfaceAddress
         dnsSource: self
         authoritative: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4HostReservation
+      metadata:
+        name: printer
+      spec:
+        scope: lan-dhcp4
+        macAddress: "02:00:00:00:01:50"
+        ipAddress: "192.168.10.150"
+        hostname: printer
+        leaseTime: infinite
 ```
 
 What this gives LAN clients:
@@ -60,6 +71,7 @@ What this gives LAN clients:
   router's LAN address).
 - DNS resolution at `192.168.10.1`, forwarded toward the resolver
   learned through DHCPv4 on the WAN (`upstreamSource: dhcp4`).
+- A fixed DHCPv4 lease for the printer at `192.168.10.150`.
 
 ## 2. Apply and verify
 

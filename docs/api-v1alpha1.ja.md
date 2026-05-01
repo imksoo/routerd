@@ -35,6 +35,7 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 
 **IPv4 DHCP と DNS の提供 (LAN 側)**
 - [IPv4DHCPServer / IPv4DHCPScope](#ipv4dhcpserver-と-ipv4dhcpscope)
+- [DHCPv4HostReservation](#dhcpv4hostreservation)
 
 **IPv6 アドレッシングとプレフィックス委譲**
 - [IPv6PrefixDelegation](#ipv6prefixdelegation)
@@ -85,7 +86,7 @@ routerd を初めて触る場合は、まず [概念](../concepts/what-is-router
 ## 用意されているリソース
 
 ネットワーク関連:
-`Interface`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4DHCPServer`、`IPv4DHCPScope`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
+`Interface`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4DHCPServer`、`IPv4DHCPScope`、`DHCPv4HostReservation`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
 
 ファイアウォール:
 `Zone`、`FirewallPolicy`、`ExposeService`。
@@ -405,6 +406,28 @@ spec:
     - `upstreamSource: none` は上流フォワーダを持たずに動かします。
   - `none` は DNS オプションそのものを出しません。
 - `spec.interface` がまだ取り込み待ちの状態（cloud-init などが握っている）にある場合、その上で DHCP を提供すると競合するため、計画段階で DHCP スコープも止めます。
+
+### DHCPv4HostReservation
+
+`DHCPv4HostReservation` は、既存の `IPv4DHCPScope` の中で、クライアントの
+MAC アドレスと IPv4 アドレスを固定します。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: DHCPv4HostReservation
+metadata:
+  name: printer
+spec:
+  scope: lan-dhcp4
+  macAddress: "02:00:00:00:01:50"
+  ipAddress: "192.168.10.150"
+  hostname: printer
+  leaseTime: infinite
+```
+
+routerd はこれを dnsmasq の `dhcp-host=` 行として出力します。`hostname` と
+`leaseTime` は省略できます。`leaseTime` を省略した場合は、参照先スコープの
+リース時間を使います。
 
 ## IPv6 アドレッシングとプレフィックス委譲
 
