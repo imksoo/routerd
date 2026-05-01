@@ -63,17 +63,18 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 			return nil, err
 		}
 		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
+		client := effectiveNetworkdIPv6PDClient(profile, spec.Client)
 		pds[res.Metadata.Name] = pdSource{
 			Name:         res.Metadata.Name,
 			IfName:       aliases[spec.Interface],
-			Client:       defaultString(spec.Client, "networkd"),
+			Client:       client,
 			Profile:      profile,
 			PrefixLength: api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
 			IAID:         strings.TrimSpace(spec.IAID),
 			DUIDType:     api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType),
 			DUIDRawData:  spec.DUIDRawData,
 		}
-		if isExternalIPv6PDClient(defaultString(spec.Client, "networkd")) {
+		if isExternalIPv6PDClient(client) {
 			if ifname := aliases[spec.Interface]; ifname != "" {
 				externalPDIfaces[ifname] = true
 			}
@@ -219,6 +220,10 @@ func isExternalIPv6PDClient(client string) bool {
 	default:
 		return false
 	}
+}
+
+func effectiveNetworkdIPv6PDClient(profile, configured string) string {
+	return api.EffectiveIPv6PDClient("linux", false, profile, configured)
 }
 
 func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {

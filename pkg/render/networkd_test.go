@@ -173,7 +173,7 @@ func TestNetworkdDropinsRenderGenericPrefixHint(t *testing.T) {
 }
 
 func TestNetworkdDropinsSkipExternalPrefixDelegationClient(t *testing.T) {
-	for _, client := range []string{"dhcp6c", "dhcpcd"} {
+	for _, client := range []string{"", "dhcp6c", "dhcpcd"} {
 		t.Run(client, func(t *testing.T) {
 			router := &api.Router{
 				Spec: api.RouterSpec{
