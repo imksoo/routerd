@@ -134,7 +134,10 @@ dist:
 remote-install: check-build-deps check-remote-deps dist
 	test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make remote-install REMOTE_HOST=user@router.example" >&2; exit 2)
 	scp $(DISTTAR) $(REMOTE_HOST):$(REMOTE_TAR)
-	ssh $(REMOTE_HOST) 'sudo tar --no-same-owner -C / -xf $(REMOTE_TAR) && rm -f $(REMOTE_TAR)'
+	ssh $(REMOTE_HOST) 'sudo tar --no-same-owner -C / -xf $(REMOTE_TAR) && rm -f $(REMOTE_TAR) && \
+		if [ "$$(uname)" = "FreeBSD" ] && [ -f /usr/local/etc/rc.d/routerd ]; then \
+			sudo sysrc routerd_enable=YES >/dev/null; \
+		fi'
 
 remote-install-config:
 	test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make remote-install-config REMOTE_HOST=user@router.example CONFIG=path/to/router.yaml" >&2; exit 2)
