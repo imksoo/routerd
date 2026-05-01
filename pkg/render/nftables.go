@@ -73,8 +73,12 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 	if len(l2FilterVXLANS) > 0 {
 		writeBridgeL2FilterTable(&buf, l2FilterVXLANS)
 	}
+	bridges, err := bridgeConfigs(router, aliases)
+	if err != nil {
+		return nil, err
+	}
 	if len(firewallPolicies) > 0 {
-		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, exposeServices, router.Spec.Apply.ProtectedZones); err != nil {
+		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, exposeServices, router.Spec.Apply.ProtectedZones, vxlans, bridges); err != nil {
 			return nil, err
 		}
 	}
@@ -140,6 +144,34 @@ func nftOutboundAliases(router *api.Router) (map[string]string, error) {
 	return aliases, nil
 }
 
+type vxlanUnderlayPort struct {
+	IfName  string
+	UDPPort int
+}
+
+func vxlanUnderlayPorts(vxlans []vxlanConfig) []vxlanUnderlayPort {
+	seen := map[string]bool{}
+	var out []vxlanUnderlayPort
+	for _, v := range vxlans {
+		if v.UnderlayIfName == "" {
+			continue
+		}
+		key := v.UnderlayIfName + ":" + strconv.Itoa(v.UDPPort)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, vxlanUnderlayPort{IfName: v.UnderlayIfName, UDPPort: v.UDPPort})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IfName != out[j].IfName {
+			return out[i].IfName < out[j].IfName
+		}
+		return out[i].UDPPort < out[j].UDPPort
+	})
+	return out
+}
+
 func writeBridgeL2FilterTable(buf *bytes.Buffer, vxlans []vxlanConfig) {
 	sort.Slice(vxlans, func(i, j int) bool { return vxlans[i].IfName < vxlans[j].IfName })
 	buf.WriteString("table bridge routerd_l2_filter {\n")
@@ -148,18 +180,18 @@ func writeBridgeL2FilterTable(buf *bytes.Buffer, vxlans []vxlanConfig) {
 	for _, vxlan := range vxlans {
 		ifname := nftQuote(vxlan.IfName)
 		for _, direction := range []string{"iifname", "oifname"} {
-			buf.WriteString("    " + direction + " " + ifname + " ether type ip udp sport { 67, 68 } drop\n")
-			buf.WriteString("    " + direction + " " + ifname + " ether type ip udp dport { 67, 68 } drop\n")
-			buf.WriteString("    " + direction + " " + ifname + " ether type ip6 udp sport { 546, 547 } drop\n")
-			buf.WriteString("    " + direction + " " + ifname + " ether type ip6 udp dport { 546, 547 } drop\n")
-			buf.WriteString("    " + direction + " " + ifname + " ether type ip6 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } drop\n")
+			buf.WriteString("    " + direction + " " + ifname + " ether type ip udp sport { 67, 68 } counter drop\n")
+			buf.WriteString("    " + direction + " " + ifname + " ether type ip udp dport { 67, 68 } counter drop\n")
+			buf.WriteString("    " + direction + " " + ifname + " ether type ip6 udp sport { 546, 547 } counter drop\n")
+			buf.WriteString("    " + direction + " " + ifname + " ether type ip6 udp dport { 546, 547 } counter drop\n")
+			buf.WriteString("    " + direction + " " + ifname + " ether type ip6 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter drop\n")
 		}
 	}
 	buf.WriteString("  }\n")
 	buf.WriteString("}\n")
 }
 
-func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zones []api.Resource, policies []api.Resource, exposes []api.Resource, protectedZones []string) error {
+func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zones []api.Resource, policies []api.Resource, exposes []api.Resource, protectedZones []string, vxlans []vxlanConfig, bridges []bridgeConfig) error {
 	zoneIfnames, err := nftZoneIfnames(aliases, zones)
 	if err != nil {
 		return err
@@ -183,6 +215,12 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	buf.WriteString("    meta l4proto ipv6-icmp accept\n")
 	if wan := zoneIfnames["wan"]; len(wan) > 0 {
 		buf.WriteString("    " + nftIfnameMatch("iifname", wan) + " udp dport 546 accept\n")
+	}
+	for _, ifname := range vxlanUnderlayPorts(vxlans) {
+		buf.WriteString("    iifname " + nftQuote(ifname.IfName) + " udp dport " + strconv.Itoa(ifname.UDPPort) + " counter accept\n")
+	}
+	for _, br := range bridges {
+		buf.WriteString("    iifname " + nftQuote(br.IfName) + " ip protocol icmp accept\n")
 	}
 	for _, zone := range protectedZones {
 		ifnames := zoneIfnames[zone]

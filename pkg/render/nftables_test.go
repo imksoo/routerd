@@ -113,9 +113,9 @@ func TestNftablesVXLANL2Filter(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"table bridge routerd_l2_filter",
-		`iifname "vxlan100" ether type ip udp sport { 67, 68 } drop`,
-		`oifname "vxlan100" ether type ip6 udp dport { 546, 547 } drop`,
-		`iifname "vxlan100" ether type ip6 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } drop`,
+		`iifname "vxlan100" ether type ip udp sport { 67, 68 } counter drop`,
+		`oifname "vxlan100" ether type ip6 udp dport { 546, 547 } counter drop`,
+		`iifname "vxlan100" ether type ip6 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter drop`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
@@ -152,6 +152,77 @@ func TestNftablesVXLANL2FilterCanBeDisabled(t *testing.T) {
 	}
 	if strings.Contains(string(data), "routerd_l2_filter") {
 		t.Fatalf("nftables output should not include L2 filter table:\n%s", string(data))
+	}
+}
+
+func TestNftablesVXLANUnderlayUDPAcceptInputChain(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "underlay"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"},
+				Metadata: api.ObjectMeta{Name: "home-vxlan"},
+				Spec: api.VXLANSegmentSpec{
+					IfName:            "vxlan100",
+					VNI:               100,
+					LocalAddress:      "192.0.2.10",
+					Remotes:           []string{"192.0.2.20"},
+					UnderlayInterface: "underlay",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
+				Metadata: api.ObjectMeta{Name: "default-home"},
+				Spec: api.FirewallPolicySpec{
+					Input:   api.FirewallChainPolicySpec{Default: "drop"},
+					Forward: api.FirewallChainPolicySpec{Default: "drop"},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	want := `iifname "ens18" udp dport 4789 counter accept`
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables output missing VXLAN underlay accept rule %q:\n%s", want, got)
+	}
+}
+
+func TestNftablesBridgeOverlayICMPAccept(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"},
+				Metadata: api.ObjectMeta{Name: "br-vxlan-test"},
+				Spec:     api.BridgeSpec{Members: []string{}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
+				Metadata: api.ObjectMeta{Name: "default-home"},
+				Spec: api.FirewallPolicySpec{
+					Input:   api.FirewallChainPolicySpec{Default: "drop"},
+					Forward: api.FirewallChainPolicySpec{Default: "drop"},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	want := `iifname "br-vxlan-test" ip protocol icmp accept`
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables output missing bridge ICMP accept rule %q:\n%s", want, got)
 	}
 }
 
