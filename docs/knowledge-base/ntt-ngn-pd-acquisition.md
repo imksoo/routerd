@@ -87,6 +87,27 @@ stateDiagram-v2
   for hours. The bootstrap must use Section B's Request path or assume an
   out-of-band trigger to reopen the acquisition window (HGW reboot).
 
+### A.4 2026-05-01 caveat on Section A
+
+- **observe**: On 2026-05-01 a NEC IX2215 issued a fresh Solicit on the same
+  HGW (via `no ipv6 dhcp client / ipv6 dhcp client` to force INIT-REBOOT) and
+  the HGW returned Advertise + Reply — Solicit/Advertise/Reply ran cleanly.
+  The same day `router05` (Linux dhcpcd) acquired a fresh `:1220` binding via
+  canonical Solicit/Advertise/Request/Reply.
+- **observe**: The 34 Solicit variants in this section were all sent from
+  routerd lab VMs whose active sender had multiple packet-shape bugs
+  (IPv6 hop limit `1`, Elapsed-Time before IA_PD, ORO present, Solicit
+  IA_PD carrying T1/T2/lifetimes/prefix). After fixing those in `c7f8b24`
+  the active Solicit packet shape now matches the IX2215 reference exactly,
+  but cold-acquisition Solicit from the previously-failed routerd VMs still
+  did not elicit Advertise as of 2026-05-01 22:25.
+- **assert**: The original Section A assertion "Solicit is not reliable on a
+  long-running HGW" was **a routerd implementation bug, not a HGW
+  characteristic**. Working clients (IX2215, dhcpcd on `router05`) can do
+  Solicit on the same HGW without reboot. Section A's observed failures are
+  retained as historical record but should not be cited as evidence about
+  the HGW.
+
 ## B. Request-direct bootstrap (RFC 8415 §18.2.10.1 INIT-REBOOT plus extension)
 
 The lab confirmed that `Request` (msg-type 3) is honoured by the HGW even when
@@ -141,6 +162,33 @@ when it cannot reboot the HGW.
 - **assert**: routerd must guard against accidentally consuming multiple slots
   by retrying Request without first sending Release for the previous binding.
   The IAID alone is not enough; the HGW issues a new slot per Request.
+
+### B.4 2026-05-01 retraction
+
+- **measure (2026-05-01)**: After fixing routerd's active sender packet shape
+  (`c7f8b24`: IPv6 hop limit, IA_PD before Elapsed-Time, no ORO, Solicit IA_PD
+  with IAID-only and zero T1/T2), an active Request from `router01` was accepted
+  once and the HGW PD table inserted a `1240::/60` binding for the router01 MAC.
+- **measure (2026-05-01)**: Subsequent active Renew, Rebind, and Request from
+  the same router01 — with various IAIDs and Server-IDs — all silently dropped.
+  The HGW PD table entry was not refreshed. tcpdump on `vtnet0` and on the
+  pve02 host bridge `vmbr0` confirmed no HGW Reply on the wire.
+- **observe**: `router05` (Linux/dhcpcd) under the same HGW emits Renew and
+  receives Reply reliably. Its binding came from a canonical
+  Solicit/Advertise/Request/Reply handshake initiated by the OS DHCPv6 client.
+- **assert**: An active-Request-without-Advertise path can produce a "phantom"
+  HGW PD table entry that is **not a fully usable binding**. Without the
+  Advertise/Reply handshake the HGW does not establish the per-client server
+  context that subsequent Renew/Rebind require, so the binding cannot be
+  refreshed and will eventually expire by lifetime.
+- **assert**: routerd's primary acquisition path on this HGW is the OS DHCPv6
+  client (`dhcpcd` on Linux/NixOS, `dhcp6c` on FreeBSD) running the canonical
+  RFC 8415 Solicit/Advertise/Request/Reply sequence. routerd's
+  `routerd dhcp6 request` direct-claim is now a debug/lab tool only; it MUST
+  NOT be used to acquire production bindings.
+- **assert**: The active controller's value remains in the **maintenance**
+  path: Renew, Rebind, and Release on bindings that already have a complete
+  HGW server context (i.e. were acquired via canonical handshake).
 
 ## C. Server Identifier derivation from RA (no prior DHCPv6 history)
 
