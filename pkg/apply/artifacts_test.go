@@ -43,6 +43,9 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ExposeService"}, Metadata: api.ObjectMeta{Name: "https"}, Spec: api.ExposeServiceSpec{}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br-vxlan-test"}, Spec: api.BridgeSpec{}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"}, Metadata: api.ObjectMeta{Name: "lab"}, Spec: api.VXLANSegmentSpec{IfName: "vxlan100", VNI: 100, LocalAddress: "192.0.2.10", UnderlayInterface: "wan", Bridge: "br-vxlan-test"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"}, Metadata: api.ObjectMeta{Name: "lab-v4"}, Spec: api.IPv4StaticRouteSpec{Interface: "lan", Destination: "10.0.0.0/24", Via: "192.168.10.1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"}, Metadata: api.ObjectMeta{Name: "lab-v6"}, Spec: api.IPv6StaticRouteSpec{Interface: "lan", Destination: "2001:db8::/64", Via: "fe80::1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4HostReservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4HostReservationSpec{Scope: "lan-scope", MACAddress: "aa:bb:cc:dd:ee:ff", IPAddress: "192.168.10.50"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"}, Metadata: api.ObjectMeta{Name: "hostname"}, Spec: api.HostnameSpec{Hostname: "router.example"}},
 	}
 

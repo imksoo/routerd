@@ -173,6 +173,32 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		}
 		ifname := defaultString(spec.IfName, res.Metadata.Name)
 		return []resource.Intent{artifact("net.link", ifname, resource.ActionEnsure, "platform-network", nil)}
+	case "IPv4StaticRoute":
+		spec, err := res.IPv4StaticRouteSpec()
+		if err != nil {
+			return nil
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			ifname = spec.Interface
+		}
+		return []resource.Intent{artifact("net.ipv4.route", ifname+":"+spec.Destination, resource.ActionEnsure, "platform-network", map[string]string{"via": spec.Via})}
+	case "IPv6StaticRoute":
+		spec, err := res.IPv6StaticRouteSpec()
+		if err != nil {
+			return nil
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			ifname = spec.Interface
+		}
+		return []resource.Intent{artifact("net.ipv6.route", ifname+":"+spec.Destination, resource.ActionEnsure, "platform-network", map[string]string{"via": spec.Via})}
+	case "DHCPv4HostReservation":
+		spec, err := res.DHCPv4HostReservationSpec()
+		if err != nil {
+			return nil
+		}
+		return []resource.Intent{artifact("dnsmasq.dhcpv4.host", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"scope": spec.Scope, "mac": spec.MACAddress, "ip": spec.IPAddress})}
 	case "Hostname":
 		spec, err := res.HostnameSpec()
 		if err != nil {
