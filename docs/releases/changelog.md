@@ -9,6 +9,73 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+## 0.1.0 (2026-05-01)
+
+First tagged release. The model and apply path now cover a 5-node
+Linux/NixOS/FreeBSD lab in which one VXLAN overlay reaches a 25/25 ping
+matrix and survives a router reboot. The `v1alpha1` API surface (router,
+net, system, firewall) is the working baseline for that experience; later
+releases may rename or replace any of these shapes without a deprecation
+shim while routerd is in this clarity-first phase.
+
+- Apply now auto-allows VXLAN underlay UDP and bridge ICMP in
+  `inet routerd_filter` so a default-deny FirewallPolicy no longer drops
+  the overlay control path. The bridge L2 filter rules render with
+  nftables `counter` so DHCP/RA/ND drop hits are observable.
+- Apply detects newly written systemd-networkd `.netdev` files and runs
+  `systemctl restart systemd-networkd` instead of `networkctl reload`,
+  because reload alone does not always materialize new VXLAN/bridge
+  netdevs on every distribution.
+- `routerd render nixos` now emits `networking.firewall.allowedUDPPorts`
+  for each VXLANSegment underlay UDP port and
+  `networking.firewall.trustedInterfaces` for every bridge that a
+  VXLANSegment explicitly attaches to via `spec.bridge`. Bridges without
+  a VXLAN attachment stay subject to the default firewall policy.
+- The NixOS VXLAN netdev now renders `Independent = true` and a per-host
+  `routerd-vxlan100-fdb` oneshot service that appends
+  `00:00:00:00:00:00 dst <peer>` flood FDB entries for every configured
+  remote, so multi-peer VXLAN overlays survive `nixos-rebuild` and host
+  reboots.
+- `routerd apply` skips the live network stage on NixOS and emits an
+  info note pointing at `routerd render nixos` + `nixos-rebuild switch`
+  as the persistent path. Other stages (nft, dnsmasq, runtime) continue
+  to apply normally.
+- `VXLANSegment`, `Bridge`, `IPv4StaticRoute`, `IPv6StaticRoute`, and
+  `DHCPv4HostReservation` now declare ownership intents
+  (`net.link`, `net.ipv4.route`, `net.ipv6.route`,
+  `nft.table routerd_l2_filter`, `dnsmasq.dhcpv4.host`), so the orphan
+  check no longer reports their managed objects as unowned. A
+  VXLANSegment with `l2Filter: none` does not claim the bridge L2
+  filter table.
+- The FreeBSD VXLAN renderer no longer hard-fails when more than one
+  remote is configured. It uses the first remote as the seed, ignores
+  the rest, and surfaces the limitation as a `FreeBSDConfig.Warnings`
+  entry that the applier propagates to `result.Warnings` and the event
+  log.
+- `make remote-install` now runs `sysrc routerd_enable=YES` post-extract
+  on FreeBSD remotes, so `service routerd ...` works without the rc.d
+  enable warning.
+- `make check-remote-deps` now treats missing `mstpd` / `mstpctl` as a
+  warning instead of a hard error. systemd-networkd falls back to
+  in-kernel STP, which is correct on Ubuntu noble and other
+  distributions that no longer ship the WIDE mstpd package.
+- FreeBSD apply now records the routerd-managed sysrc keys it wrote in
+  the routerd state store and runs `sysrc -x` for any keys present in
+  the previous set but absent from the current render, so renaming a
+  VXLAN/bridge interface no longer leaves stale `ifconfig_<old>` keys
+  in `/etc/rc.conf`.
+- `DnsmasqConfig` now returns warnings instead of erroring when a
+  dnsmasq rule depends on an upstream DHCP lease that the router has
+  not yet observed (`DNSConditionalForwarder.upstreamSource: dhcp4|dhcp6`,
+  `IPv4DHCPScope.dnsSource: dhcp4`, `IPv4DHCPServer.dns.upstreamSource:
+  dhcp4`). The missing rule is skipped and re-rendered on the next
+  apply.
+- A new `nixos-getting-started` section (3.4) documents that NixOS
+  `networking.firewall` (`nixos-fw` chain) runs alongside routerd's
+  nftables tables and is not bypassed; the page lists the expected
+  `allowedUDPPorts` / `trustedInterfaces` settings and the diagnostic
+  pattern when underlay packets are visible to tcpdump but never reach
+  the routerd input chain.
 - Added a `VXLANSegment` resource with Linux systemd-networkd, FreeBSD, and
   NixOS render paths. Linux also renders a default bridge-family nftables
   L2 filter that blocks DHCPv4, DHCPv6, RA, and neighbor discovery on VXLAN

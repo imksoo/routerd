@@ -9,6 +9,70 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+## 0.1.0 (2026-05-01)
+
+最初のタグ付きリリース。Linux/NixOS/FreeBSD 混在の 5 ノードラボで、
+1 本の VXLAN オーバーレイが 25/25 のオーバーレイ ping を冷状態でも
+router 再起動後でも維持することを確認した状態を v0.1.0 と呼ぶ。
+`v1alpha1` API (router、net、system、firewall) はその体験の作業基準で
+あり、明確さ優先のフェーズ中はこれらのシェイプを互換シムなしに名前変更や
+差し替えしてもよい。
+
+- apply が `inet routerd_filter` に VXLAN underlay UDP と bridge ICMP の
+  accept を自動で出すようになった。default-deny FirewallPolicy 配下でも
+  オーバーレイの制御経路が落ちない。bridge L2 フィルタには nftables の
+  `counter` を付け、DHCP/RA/ND の drop hit を観測できるようにした。
+- apply は新規に書いた systemd-networkd の `.netdev` を検出すると、
+  `networkctl reload` ではなく `systemctl restart systemd-networkd` を
+  実行する。reload では新 VXLAN/bridge netdev が常に materialize しない
+  ディストリビューションがあるため。
+- `routerd render nixos` は VXLANSegment の underlay UDP ポートを
+  `networking.firewall.allowedUDPPorts` に、VXLANSegment が
+  `spec.bridge` で明示的に紐付けた bridge を
+  `networking.firewall.trustedInterfaces` に出すようになった。VXLAN を
+  接続していない bridge は既定の firewall ポリシーに従う。
+- NixOS の VXLAN netdev が `Independent = true` と、各ホストで
+  `00:00:00:00:00:00 dst <peer>` の flood FDB エントリを全 remote 分
+  追記する `routerd-vxlan100-fdb` 系の oneshot サービスを生成するように
+  なった。これで multi-peer VXLAN は `nixos-rebuild` や再起動を超えて
+  維持される。
+- `routerd apply` は NixOS では live network ステージをスキップし、
+  `routerd render nixos` + `nixos-rebuild switch` が真の永続経路で
+  あることを info ログで案内するようになった。nft や dnsmasq などの
+  他ステージはそのまま動く。
+- `VXLANSegment`、`Bridge`、`IPv4StaticRoute`、`IPv6StaticRoute`、
+  `DHCPv4HostReservation` が ownership intent を出すようになり
+  (`net.link`、`net.ipv4.route`、`net.ipv6.route`、
+  `nft.table routerd_l2_filter`、`dnsmasq.dhcpv4.host`)、orphan チェック
+  でこれらの管理対象が無所有として報告されなくなった。
+  `l2Filter: none` の VXLANSegment は L2 フィルタテーブルを所有しない。
+- FreeBSD の VXLAN レンダラは、リモートが複数指定された場合でも
+  ハードエラーで止まらず、先頭を seed として採用して残りは
+  `FreeBSDConfig.Warnings` に降格する。`result.Warnings` と event log にも
+  伝搬する。
+- `make remote-install` は FreeBSD リモートで展開後に
+  `sysrc routerd_enable=YES` を実行するようになった。これで
+  `service routerd ...` の rc.d enable 警告が出ない。
+- `make check-remote-deps` は `mstpd` / `mstpctl` 不在を警告として扱う
+  ように変更した。systemd-networkd はカーネル STP に degrade するので
+  Ubuntu noble など mstpd を提供しないディストリビューションでも
+  デプロイが通るようになる。
+- FreeBSD apply は書き込んだ routerd 管理の sysrc キー集合を
+  routerd state store に保存し、次回 apply で前回集合に存在し現在の
+  render に存在しないキーを `sysrc -x` で reclaim するようになった。
+  VXLAN/bridge のインターフェイス名を変えても古い `ifconfig_<old>` が
+  `/etc/rc.conf` に残らない。
+- `DnsmasqConfig` は dnsmasq の rule が未観測の DHCP リース由来の
+  サーバを必要とする場合 (`DNSConditionalForwarder.upstreamSource:
+  dhcp4|dhcp6`、`IPv4DHCPScope.dnsSource: dhcp4`、
+  `IPv4DHCPServer.dns.upstreamSource: dhcp4`) に、エラーで止まらず
+  warnings を返すようになった。該当 rule は次回 apply の観測で出る。
+- nixos-getting-started に 3.4 節を追加し、NixOS の
+  `networking.firewall` (`nixos-fw` chain) が routerd の nftables と
+  並行で動作し routerd では bypass できないこと、必要となる
+  `allowedUDPPorts` / `trustedInterfaces` の設定、underlay パケットが
+  tcpdump では見えるのに routerd の input chain に到達しないときの
+  診断手順を記載した。
 - Added a `VXLANSegment` resource with Linux systemd-networkd, FreeBSD, and
   NixOS render paths. Linux also renders a default bridge-family nftables
   L2 filter that blocks DHCPv4, DHCPv6, RA, and neighbor discovery on VXLAN
