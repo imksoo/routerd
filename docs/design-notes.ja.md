@@ -708,6 +708,67 @@ netdev に `Independent = true` を付ける挙動、各ホストで全ピアの
 信頼するブリッジを NixOS firewall に自動で開ける挙動、`mstpd` が外された
 Ubuntu noble でカーネル STP に degrade する挙動、いずれも実機で確認した。
 
+### 5.13 未解決: HGW phantom binding と HGW state 観測
+
+背景: 2026-05-01 のラボ作業で本リリースが解決していない 2 つの運用ギャップが
+顕在化した。今後の作業の出発点として記録する。
+
+#### 5.13.1 phantom binding の cleanup と lifetime 後の retry
+
+observe: c7f8b24 で揃えた active Request の packet 形は PR-400NE HGW で
+1 回受理され、`router01` の MAC に `2409:10:3d60:1240::/60` が HGW PD
+テーブルに登録された。その後の `router01` からの active Renew/Rebind/Request
+は wire 上で全て silent drop された (`vtnet0` と PVE `vmbr0` の両方で Reply
+無しを確認)。binding は "phantom" 状態 — slot は HGW テーブルに残るが
+Renew/Rebind を受理するための per-client server context が HGW 側に立っていない。
+
+assert: `routerd dhcp6 request` の direct-claim はこの HGW の取得 path として
+使ってはいけない。代わりに routerd は phantom 状態を明示的に検出し、operator
+に提示し、HGW slot の valid lifetime が切れて HGW が slot を再利用可能になった
+タイミングで OS DHCPv6 client に canonical handshake を再試行させるべきである。
+具体的な future work:
+
+- `routerctl describe ipv6pd/<name>` に "phantom binding suspected: HGW
+  table が `<prefix>` を本 client に割当てているが local Reply state が無い"
+  を表示する fields を追加する
+- spec の opt-in option (例: `IPv6PrefixDelegation.spec.acquisitionRetry.
+  afterPhantomVLExpiry`) を追加し、`lease.lastObservedAt + valid lifetime`
+  の時点で OS DHCPv6 client を再起動して clean handshake のチャンスを
+  与える
+- active controller の `routerd dhcp6 request` を、対応リソースに Reply
+  state が無い場合に拒否するように変更し、`--allow-phantom` debug flag を
+  渡された時のみ通すようにする
+
+完了条件: active controller が "no PD → phantom binding" を operator に
+気付かれずに移行させない。apply path が lifetime 待ちを認識する。
+routerctl が operator に対処を案内する。
+
+#### 5.13.2 HGW 側 state の観測性
+
+observe: 2026-05-01 のラボ調査では HGW PD テーブルの読み取りに手書きの
+WebUI スクレイパー (`cd ~/get-hgw-pd && node index.js`) を頼った。routerd
+の状態モデルには HGW の内部状態を見る手段が無いため、「HGW が私の Request
+を silent drop した」のか「私の Request が HGW に届かなかった」のか判別
+できないし、「HGW table は 4/15 slots」なのか「15/15 slots」なのかも
+判別できない。両方とも operator の判断に必要な情報。
+
+assert: routerd は HGW PD テーブルの内容 (slot 数、各 slot の prefix と
+DUID-LL/MAC、残 lifetime) を読み取って
+`IPv6PrefixDelegation/<name>.objects.status._variables.hgwTable` に書き込む
+read-only adapter を持つべきである。SNMP が使える場合は SNMP を優先し、
+HTTP scraping のみが現実的な機種 (PR-400NE WebUI) は小さな interface に
+plug できる構造にする。具体的な future work:
+
+- `pkg/hgwobserve/` package に HGWState、HGWBinding 型と scraper interface
+  を定義
+- 既存 `get-hgw-pd` Node script を Go に移植した PR-400NE 内蔵 adapter
+- `routerctl describe ipv6pd/<name>` と apply の警告 (例: "HGW table が
+  14/15 slots、追加 acquisition は拒否されるかも") に HGW テーブルを反映
+
+完了条件: routerd が「retry するか、active Request にエスカレートするか、
+LAN IPv6 service を縮退するか」の判断を、outgoing packet の結果からの推測
+ではなく HGW state を参照して決められる。
+
 ## 6. 実装フェーズ
 
 assert: Section 5 は置き換え要件を列挙していますが、フェーズには切って

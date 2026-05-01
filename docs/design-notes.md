@@ -753,6 +753,75 @@ all peer flood FDB entries, NixOS firewall openings rendered automatically
 for VXLAN underlay UDP and trusted bridge interfaces, and graceful kernel
 STP fallback on hosts where `mstpd` is no longer packaged (Ubuntu noble).
 
+### 5.13 Open: Phantom HGW PD bindings and HGW state observability
+
+Background: 2026-05-01 lab work exposed two operational gaps that this
+release does not resolve. They are documented here so future work has a
+clear starting point.
+
+#### 5.13.1 Phantom binding cleanup and post-expiry retry
+
+observe: The c7f8b24 active Request packet shape was accepted by the
+PR-400NE HGW once on `router01`, inserting a `2409:10:3d60:1240::/60`
+entry into the HGW PD table for the `router01` MAC. Every subsequent
+active Renew/Rebind/Request from `router01` was silently dropped on the
+wire (`vtnet0` and PVE `vmbr0` confirmed no Reply leg). The binding is a
+"phantom": the HGW table holds the slot but the per-client server context
+required for Renew/Rebind to succeed is missing.
+
+assert: `routerd dhcp6 request` direct-claim must not be used as the
+acquisition path on this HGW. routerd should instead detect the phantom
+state explicitly, surface it to the operator, and schedule a retry only
+after the HGW slot's valid lifetime has expired (so the HGW reclaims the
+slot and a fresh canonical handshake from the OS DHCPv6 client can
+re-acquire). Concrete future work:
+
+- A new `routerctl describe ipv6pd/<name>` field that calls out
+  "phantom binding suspected: HGW table claims `<prefix>` for this
+  client but local Reply state is missing".
+- An optional spec field (e.g. `IPv6PrefixDelegation.spec.acquisitionRetry.
+  afterPhantomVLExpiry`) that, when enabled, restarts the OS DHCPv6
+  client at `lease.lastObservedAt + valid lifetime` so a canonical
+  handshake gets a clean shot once the HGW has freed the slot.
+- A guard in the active controller that refuses `routerd dhcp6 request`
+  when the resource has no Reply state, unless the operator passes a
+  `--allow-phantom` debug flag.
+
+Completion condition: the active controller never silently transitions a
+resource from "no PD" to "phantom binding" without operator awareness;
+the apply path knows to wait out the lifetime; routerctl explains what
+the operator should do.
+
+#### 5.13.2 HGW-side state observability
+
+observe: The 2026-05-01 lab investigation depended on `cd ~/get-hgw-pd
+&& node index.js` (a hand-written WebUI scraper) to read the HGW PD
+table. routerd's own state model has no view into HGW internals, so it
+cannot tell "the HGW silently dropped my Request" from "my Request
+never reached the HGW", and it cannot tell "the HGW table holds 4 of
+15 slots" from "the HGW table holds 15 of 15 slots". Both
+discriminators matter for operator decisions.
+
+assert: routerd should grow a small read-only adapter that pulls HGW PD
+table contents (slot count, per-slot prefix and DUID-LL/MAC, remaining
+lifetime) and writes them under
+`IPv6PrefixDelegation/<name>.objects.status._variables.hgwTable`. Where
+SNMP is available, prefer SNMP. Where only HTTP scraping is feasible
+(PR-400NE WebUI today), structure it behind a small interface so other
+HGW models can plug in. Concrete future work:
+
+- A `pkg/hgwobserve/` package with HGWState, HGWBinding shapes and a
+  scraper interface.
+- A built-in PR-400NE adapter that mirrors the existing `get-hgw-pd`
+  Node script in Go.
+- Reflect HGW table contents in `routerctl describe ipv6pd/<name>` and
+  in apply warnings (e.g. "HGW table is at 14/15 slots; further
+  acquisition may be denied").
+
+Completion condition: routerd decisions about whether to retry, escalate
+to active Request, or degrade LAN IPv6 service can reference HGW state
+instead of inferring from outgoing packet results.
+
 ## 6. Implementation Phases
 
 assert: Section 5 catalogues replacement requirements but does not sequence
