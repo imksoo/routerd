@@ -58,6 +58,11 @@ type ObjectDeleteStore interface {
 	DeleteObject(apiVersion, kind, name string) error
 }
 
+type ObjectApplySourceStore interface {
+	SaveObjectApplySource(apiVersion, kind, name, path string) error
+	ObjectApplySource(apiVersion, kind, name string) string
+}
+
 type Event struct {
 	ID         int64     `json:"id" yaml:"id"`
 	APIVersion string    `json:"apiVersion" yaml:"apiVersion"`

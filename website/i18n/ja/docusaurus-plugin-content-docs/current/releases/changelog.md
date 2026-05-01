@@ -12,6 +12,8 @@ behavior changes and new resource shapes as the model takes shape.
 - SQLite state objects now include `last_applied_path` metadata. This prepares
   routerd for kubectl-style additive apply, prune, and explicit delete
   workflows without changing current apply behavior yet.
+- Successful apply runs now populate `last_applied_path` for each resource in
+  the SQLite state database.
 - `routerd apply` and `routerctl apply` now default to additive no-prune
   behavior. Use `--prune` to remove routerd-owned orphaned artifacts during
   apply, or set `ROUTERD_APPLY_DEFAULT_PRUNE=true` as a temporary escape hatch

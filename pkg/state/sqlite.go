@@ -479,6 +479,25 @@ func (s *SQLiteStore) DeleteObject(apiVersion, kind, name string) error {
 	return err
 }
 
+func (s *SQLiteStore) SaveObjectApplySource(apiVersion, kind, name, path string) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	uid := apiVersion + "/" + kind + "/" + name
+	_, err := s.db.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,last_applied_path,status,created_at,modified_at)
+VALUES(?,?,?,?,1,?,'{}',?,?)
+ON CONFLICT(api_version,kind,name) DO UPDATE SET last_applied_path=excluded.last_applied_path,modified_at=excluded.modified_at`,
+		apiVersion, kind, name, uid, path, now, now)
+	return err
+}
+
+func (s *SQLiteStore) ObjectApplySource(apiVersion, kind, name string) string {
+	var path sql.NullString
+	err := s.db.QueryRow(`SELECT last_applied_path FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&path)
+	if err != nil || !path.Valid {
+		return ""
+	}
+	return path.String
+}
+
 func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, message string) error {
 	_, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, eventType, reason, message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano))

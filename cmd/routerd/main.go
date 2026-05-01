@@ -1370,6 +1370,9 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			if err != nil {
 				return nil, err
 			}
+			if err := recordLastAppliedPath(effectiveRouter, stateStore, opts.ConfigPath); err != nil {
+				return nil, err
+			}
 		} else {
 			result.Warnings = append(result.Warnings, "skipped ledger orphan cleanup and ownership recording because apply completed with stage errors")
 		}
@@ -1605,6 +1608,9 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 		var err error
 		rememberedArtifacts, err = rememberAppliedArtifacts(router, opts.LedgerPath, generation)
 		if err != nil {
+			return nil, err
+		}
+		if err := recordLastAppliedPath(router, stateStore, opts.ConfigPath); err != nil {
 			return nil, err
 		}
 	} else {
@@ -2527,6 +2533,22 @@ func rememberAppliedArtifacts(router *api.Router, ledgerPath string, generation 
 		return 0, err
 	}
 	return len(adoptedArtifactsForResult(artifacts)), nil
+}
+
+func recordLastAppliedPath(router *api.Router, store routerstate.Store, path string) error {
+	if path == "" {
+		return nil
+	}
+	applySourceStore, ok := store.(routerstate.ObjectApplySourceStore)
+	if !ok {
+		return nil
+	}
+	for _, res := range router.Spec.Resources {
+		if err := applySourceStore.SaveObjectApplySource(res.APIVersion, res.Kind, res.Metadata.Name, path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func serveCommand(args []string, stdout io.Writer) (err error) {

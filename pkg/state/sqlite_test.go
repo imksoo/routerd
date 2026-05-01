@@ -177,6 +177,21 @@ VALUES('net.routerd.net/v1alpha1','IPv6PrefixDelegation','wan-pd','net.routerd.n
 	}
 }
 
+func TestSQLiteStoreObjectApplySource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer store.Close()
+	if err := store.SaveObjectApplySource("net.routerd.net/v1alpha1", "Interface", "wan", "/etc/routerd/wan.yaml"); err != nil {
+		t.Fatalf("save apply source: %v", err)
+	}
+	if got := store.ObjectApplySource("net.routerd.net/v1alpha1", "Interface", "wan"); got != "/etc/routerd/wan.yaml" {
+		t.Fatalf("apply source = %q", got)
+	}
+}
+
 func TestSQLiteStoreGenerationsAndEvents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := OpenSQLite(path)
