@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"strings"
 	"time"
 
 	"routerd/pkg/api"
@@ -125,6 +126,9 @@ func ApplyObservation(store routerstate.Store, resourceName string, obs Observat
 		now = store.Now().UTC()
 	}
 	lease, _ := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+resourceName)
+	if !observationBelongsToLease(lease, obs) {
+		return nil
+	}
 	lease = applySummaryToLease(lease, now, obs)
 	store.Set("ipv6PrefixDelegation."+resourceName+".lease", routerstate.EncodePDLease(lease), "DHCP6TransactionObserved")
 	if recorder, ok := store.(routerstate.EventRecorder); ok {
@@ -135,6 +139,26 @@ func ApplyObservation(store routerstate.Store, resourceName string, obs Observat
 		_ = recorder.RecordEvent(api.NetAPIVersion, "IPv6PrefixDelegation", resourceName, "Normal", "DHCP6TransactionObserved", message)
 	}
 	return nil
+}
+
+func observationBelongsToLease(lease routerstate.PDLease, obs Observation) bool {
+	clientDUID := hex.EncodeToString(obs.Summary.ClientDUID)
+	if clientDUID == "" {
+		return lease.ExpectedDUID == "" && lease.DUID == ""
+	}
+	for _, known := range []string{lease.ExpectedDUID, lease.DUID} {
+		if normalizeHex(known) == clientDUID {
+			return true
+		}
+	}
+	return lease.ExpectedDUID == "" && lease.DUID == ""
+}
+
+func normalizeHex(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, ":", "")
+	value = strings.ReplaceAll(value, "-", "")
+	return value
 }
 
 func applySummaryToLease(lease routerstate.PDLease, now time.Time, obs Observation) routerstate.PDLease {

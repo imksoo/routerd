@@ -3,6 +3,7 @@ package dhcp6recorder
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"net/netip"
 	"testing"
@@ -66,6 +67,48 @@ func TestParseFrameAndApplyReply(t *testing.T) {
 	}
 }
 
+func TestApplyObservationSkipsForeignClientDUID(t *testing.T) {
+	ownMAC := mustMAC(t, "02:00:00:00:01:03")
+	foreignMAC := mustMAC(t, "02:00:00:00:02:04")
+	serverMAC := mustMAC(t, "02:00:00:00:00:01")
+	frame, err := dhcp6control.BuildEthernetIPv6UDP(dhcp6control.PacketSpec{
+		MessageType:       dhcp6control.MessageSolicit,
+		TransactionID:     0x010204,
+		SourceMAC:         foreignMAC,
+		DestinationMAC:    serverMAC,
+		SourceIP:          netip.MustParseAddr("fe80::200:ff:fe00:204"),
+		DestinationIP:     netip.MustParseAddr("ff02::1:2"),
+		ClientDUID:        dhcp6control.DUIDLL(foreignMAC),
+		IAID:              1,
+		Prefix:            netip.MustParsePrefix("2001:db8:1200:1250::/60"),
+		PreferredLifetime: 14400,
+		ValidLifetime:     14400,
+	})
+	if err != nil {
+		t.Fatalf("build frame: %v", err)
+	}
+	obs, ok, err := ParseFrame(frame)
+	if err != nil || !ok {
+		t.Fatalf("parse frame ok=%v err=%v", ok, err)
+	}
+	obs.ObservedAt = time.Date(2026, 5, 1, 1, 2, 3, 0, time.UTC)
+	obs.Interface = "ens18"
+	store := routerstate.NewJSON()
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
+		ExpectedDUID: hexDUIDLL(ownMAC),
+	}), "test")
+	if err := ApplyObservation(store, "wan-pd", obs); err != nil {
+		t.Fatalf("apply observation: %v", err)
+	}
+	lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
+	if !ok {
+		t.Fatal("lease missing")
+	}
+	if len(lease.Transactions) != 0 || lease.DUID != "" {
+		t.Fatalf("foreign transaction was recorded: %+v", lease)
+	}
+}
+
 func TestRunSkipsNonDHCPv6Frames(t *testing.T) {
 	source := &fakeSource{frames: [][]byte{{0, 1, 2}}}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -78,6 +121,10 @@ func TestRunSkipsNonDHCPv6Frames(t *testing.T) {
 	if seen != 0 {
 		t.Fatalf("seen = %d", seen)
 	}
+}
+
+func hexDUIDLL(mac net.HardwareAddr) string {
+	return fmt.Sprintf("%x", dhcp6control.DUIDLL(mac))
 }
 
 type fakeSource struct {
