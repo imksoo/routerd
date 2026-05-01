@@ -1489,7 +1489,12 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	var changedFreeBSD []string
 	if err := recordStageError("freebsd-network", func() error {
 		var err error
-		changedFreeBSD, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath, defaultFreeBSDDHCP6CDUIDPath, defaultFreeBSDMPD5Path)
+		var fbWarnings []string
+		changedFreeBSD, fbWarnings, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath, defaultFreeBSDDHCP6CDUIDPath, defaultFreeBSDMPD5Path)
+		for _, w := range fbWarnings {
+			result.Warnings = append(result.Warnings, w)
+			logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "freebsd-network"})
+		}
 		return err
 	}()); err != nil {
 		return nil, err
@@ -3390,14 +3395,15 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 	return changedFiles, nil
 }
 
-func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, dhcp6cPath, dhcp6cDUIDPath, mpd5Path string) ([]string, error) {
+func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, dhcp6cPath, dhcp6cDUIDPath, mpd5Path string) ([]string, []string, error) {
 	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	warnings := append([]string(nil), data.Warnings...)
 	rcValues, err := parseFreeBSDRCConf(data.RCConf)
 	if err != nil {
-		return nil, err
+		return nil, warnings, err
 	}
 	var changed []string
 	var restartIfnames []string
@@ -3408,7 +3414,7 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 			continue
 		}
 		if err := runLogged("sysrc", key+"="+value); err != nil {
-			return changed, err
+			return changed, warnings, err
 		}
 		changed = append(changed, "sysrc:"+key)
 		if ifname := freeBSDIfconfigKeyInterface(key); ifname != "" {
@@ -3418,7 +3424,7 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 	if len(data.DHCPClient) > 0 && dhclientPath != "" {
 		fileChanged, err := writeFileIfChanged(dhclientPath, data.DHCPClient, 0644)
 		if err != nil {
-			return changed, err
+			return changed, warnings, err
 		}
 		if fileChanged {
 			changed = append(changed, dhclientPath)
@@ -3428,7 +3434,7 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 	if len(data.DHCP6C) > 0 && dhcp6cPath != "" {
 		duidChanged, duidBackup, err := ensureFreeBSDDHCP6CDUID(router, dhcp6cDUIDPath)
 		if err != nil {
-			return changed, err
+			return changed, warnings, err
 		}
 		if duidChanged {
 			changed = append(changed, dhcp6cDUIDPath)
@@ -3438,43 +3444,43 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 		}
 		fileChanged, err := writeFileIfChanged(dhcp6cPath, data.DHCP6C, 0644)
 		if err != nil {
-			return changed, err
+			return changed, warnings, err
 		}
 		if fileChanged {
 			changed = append(changed, dhcp6cPath)
 		}
 		if (fileChanged || duidChanged || freeBSDRCValuesChanged(changed, "dhcp6c_") || !freeBSDServiceRunning("dhcp6c")) && freeBSDServiceExists("dhcp6c") {
 			if err := runLogged("service", "dhcp6c", "restart"); err != nil {
-				return changed, err
+				return changed, warnings, err
 			}
 			changed = append(changed, "service:dhcp6c")
 		}
 	}
 	if rcValues["dhcp6c_enable"] == "NO" && freeBSDServiceExists("dhcp6c") && freeBSDServiceRunning("dhcp6c") {
 		if err := runLogged("service", "dhcp6c", "stop"); err != nil {
-			return changed, err
+			return changed, warnings, err
 		}
 		changed = append(changed, "service:dhcp6c:stop")
 	}
 	dhcpcdChanged, err := applyFreeBSDDHCPCDConfig(router, stateStore)
 	if err != nil {
-		return changed, err
+		return changed, warnings, err
 	}
 	changed = append(changed, dhcpcdChanged...)
 	if len(data.MPD5) > 0 && mpd5Path != "" {
 		if err := os.MkdirAll(filepathDir(mpd5Path), 0755); err != nil {
-			return changed, err
+			return changed, warnings, err
 		}
 		fileChanged, err := writeFileIfChanged(mpd5Path, data.MPD5, 0600)
 		if err != nil {
-			return changed, err
+			return changed, warnings, err
 		}
 		if fileChanged {
 			changed = append(changed, mpd5Path)
 		}
 		if (fileChanged || freeBSDRCValuesChanged(changed, "mpd_") || !freeBSDServiceRunning("mpd5")) && rcValues["mpd_enable"] == "YES" && freeBSDServiceExists("mpd5") {
 			if err := runLogged("service", "mpd5", "restart"); err != nil {
-				return changed, err
+				return changed, warnings, err
 			}
 			changed = append(changed, "service:mpd5")
 		}
@@ -3485,11 +3491,11 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 			continue
 		}
 		if err := runLogged("service", "netif", "restart", ifname); err != nil {
-			return changed, err
+			return changed, warnings, err
 		}
 		changed = append(changed, "netif:"+ifname)
 	}
-	return changed, nil
+	return changed, warnings, nil
 }
 
 func freeBSDProtectedIfnames(router *api.Router) map[string]bool {

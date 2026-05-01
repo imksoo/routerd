@@ -125,3 +125,31 @@ func TestFreeBSDSkipsDHCPCDPrefixDelegationInDHCP6C(t *testing.T) {
 		t.Fatalf("FreeBSD dhcp6c.conf must be empty for client=dhcpcd:\n%s", got.DHCP6C)
 	}
 }
+
+func TestFreeBSDVXLANMultipleRemotesEmitsWarningAndUsesSeed(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"}, Metadata: api.ObjectMeta{Name: "lab"}, Spec: api.VXLANSegmentSpec{
+			IfName: "vxlan100", VNI: 100, LocalAddress: "192.0.2.10",
+			Remotes:           []string{"192.0.2.20", "192.0.2.30", "192.0.2.40"},
+			UnderlayInterface: "wan",
+		}},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	if len(got.Warnings) == 0 {
+		t.Fatal("expected at least one warning for multi-remote VXLAN on FreeBSD")
+	}
+	want := "FreeBSD vxlan(4) supports a single unicast remote"
+	if !strings.Contains(got.Warnings[0], want) {
+		t.Fatalf("warning %q does not mention single-remote limitation", got.Warnings[0])
+	}
+	if !strings.Contains(string(got.RCConf), "vxlanremote 192.0.2.20") {
+		t.Fatalf("FreeBSD rc.conf must use the first remote as seed:\n%s", got.RCConf)
+	}
+	if strings.Contains(string(got.RCConf), "vxlanremote 192.0.2.30") || strings.Contains(string(got.RCConf), "vxlanremote 192.0.2.40") {
+		t.Fatalf("FreeBSD rc.conf must not emit additional remotes:\n%s", got.RCConf)
+	}
+}

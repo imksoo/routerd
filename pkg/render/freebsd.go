@@ -17,6 +17,7 @@ type FreeBSDConfig struct {
 	DHCP6C     []byte
 	DHCPClient []byte
 	MPD5       []byte
+	Warnings   []string
 }
 
 func FreeBSD(router *api.Router) (FreeBSDConfig, error) {
@@ -86,9 +87,10 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	if err != nil {
 		return FreeBSDConfig{}, err
 	}
+	var warnings []string
 	for _, vxlan := range vxlans {
 		if len(vxlan.Remotes) > 1 {
-			return FreeBSDConfig{}, fmt.Errorf("VXLANSegment %s: FreeBSD render path supports one unicast remote per resource", vxlan.Name)
+			warnings = append(warnings, fmt.Sprintf("VXLANSegment %s: FreeBSD vxlan(4) supports a single unicast remote; using %s as the seed and ignoring %v. Reach the other peers via a Linux relay or a multicast underlay.", vxlan.Name, vxlan.Remotes[0], vxlan.Remotes[1:]))
 		}
 	}
 	for _, res := range router.Spec.Resources {
@@ -221,7 +223,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	if err != nil {
 		return FreeBSDConfig{}, err
 	}
-	return FreeBSDConfig{RCConf: rc.Bytes(), DHCP6C: dhcp6c, DHCPClient: dhclient, MPD5: mpd5}, nil
+	return FreeBSDConfig{RCConf: rc.Bytes(), DHCP6C: dhcp6c, DHCPClient: dhclient, MPD5: mpd5, Warnings: warnings}, nil
 }
 
 type freeBSDPD struct {
