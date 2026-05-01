@@ -104,6 +104,9 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 		network.WriteString("Name=" + bridge.IfName + "\n\n")
 		network.WriteString("[Network]\n")
 		network.WriteString("ConfigureWithoutCarrier=yes\n")
+		for _, address := range networkdStaticIPv4Addresses(router, aliases, bridge.IfName) {
+			network.WriteString("Address=" + address + "\n")
+		}
 		files = append(files, File{
 			Path: filepath.Join("/etc/systemd/network", "30-routerd-"+bridge.IfName+".network"),
 			Data: network.Bytes(),
@@ -135,12 +138,12 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 		netdev.WriteString("\n[VXLAN]\n")
 		netdev.WriteString(fmt.Sprintf("VNI=%d\n", vxlan.VNI))
 		netdev.WriteString("Local=" + vxlan.LocalAddress + "\n")
-		if vxlan.UnderlayIfName != "" {
-			netdev.WriteString("Independent=no\n")
-		}
+		netdev.WriteString("Independent=yes\n")
+		netdev.WriteString("UDPChecksum=yes\n")
+		netdev.WriteString(fmt.Sprintf("PortRange=%d-%d\n", vxlan.UDPPort, vxlan.UDPPort))
 		if vxlan.MulticastGroup != "" {
 			netdev.WriteString("Group=" + vxlan.MulticastGroup + "\n")
-		} else if len(vxlan.Remotes) == 1 {
+		} else if len(vxlan.Remotes) > 0 {
 			netdev.WriteString("Remote=" + vxlan.Remotes[0] + "\n")
 		}
 		netdev.WriteString(fmt.Sprintf("DestinationPort=%d\n", vxlan.UDPPort))
@@ -153,6 +156,9 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 		network.WriteString("[Match]\n")
 		network.WriteString("Name=" + vxlan.IfName + "\n\n")
 		network.WriteString("[Network]\n")
+		for _, address := range networkdStaticIPv4Addresses(router, aliases, vxlan.IfName) {
+			network.WriteString("Address=" + address + "\n")
+		}
 		if vxlan.BridgeIfName != "" {
 			network.WriteString("Bridge=" + vxlan.BridgeIfName + "\n")
 		}
@@ -368,6 +374,24 @@ func networkdStaticRoutes(router *api.Router, aliases map[string]string) (map[st
 		})
 	}
 	return out, nil
+}
+
+func networkdStaticIPv4Addresses(router *api.Router, aliases map[string]string, ifname string) []string {
+	var addresses []string
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		spec, err := res.IPv4StaticAddressSpec()
+		if err != nil {
+			continue
+		}
+		if aliases[spec.Interface] == ifname {
+			addresses = append(addresses, spec.Address)
+		}
+	}
+	sort.Strings(addresses)
+	return addresses
 }
 
 func networkdPDDisabledDropin(reason string) []byte {

@@ -151,6 +151,7 @@ func TestNetworkdDropinsRenderBridge(t *testing.T) {
 			MTU:               1500,
 			MulticastSnooping: boolPtr(false),
 		}),
+		netResource("IPv4StaticAddress", "br-home-ipv4", api.IPv4StaticAddressSpec{Interface: "br-home", Address: "192.0.2.1/24"}),
 	}}}
 	files, err := NetworkdDropins(router)
 	if err != nil {
@@ -169,6 +170,10 @@ func TestNetworkdDropinsRenderBridge(t *testing.T) {
 		if !strings.Contains(netdev, want) {
 			t.Fatalf("bridge netdev missing %q:\n%s", want, netdev)
 		}
+	}
+	network := string(findNetworkdTestFile(files, "/etc/systemd/network/30-routerd-br0.network").Data)
+	if !strings.Contains(network, "Address=192.0.2.1/24") {
+		t.Fatalf("bridge network missing static address:\n%s", network)
 	}
 	lan := string(findNetworkdTestFile(files, "10-netplan-ens19.network.d/88-routerd-bridge.conf").Data)
 	if !strings.Contains(lan, "Bridge=br0") {
@@ -194,6 +199,7 @@ func TestNetworkdDropinsRenderVXLANSegment(t *testing.T) {
 			MTU:               1450,
 			Bridge:            "br-home",
 		}),
+		netResource("IPv4StaticAddress", "home-vxlan-ipv4", api.IPv4StaticAddressSpec{Interface: "home-vxlan", Address: "192.0.2.2/24"}),
 	}}}
 	files, err := NetworkdDropins(router)
 	if err != nil {
@@ -206,6 +212,10 @@ func TestNetworkdDropinsRenderVXLANSegment(t *testing.T) {
 		"MTUBytes=1450",
 		"VNI=100",
 		"Local=192.0.2.10",
+		"Independent=yes",
+		"UDPChecksum=yes",
+		"PortRange=4789-4789",
+		"Remote=192.0.2.20",
 		"DestinationPort=4789",
 	} {
 		if !strings.Contains(netdev, want) {
@@ -215,6 +225,7 @@ func TestNetworkdDropinsRenderVXLANSegment(t *testing.T) {
 	network := string(findNetworkdTestFile(files, "/etc/systemd/network/31-routerd-vxlan100.network").Data)
 	for _, want := range []string{
 		"Name=vxlan100",
+		"Address=192.0.2.2/24",
 		"Bridge=br0",
 		"MACAddress=00:00:00:00:00:00",
 		"Destination=192.0.2.20",

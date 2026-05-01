@@ -3474,7 +3474,7 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 			changed = append(changed, "service:mpd5")
 		}
 	}
-	for _, ifname := range compactStringList(restartIfnames) {
+	for _, ifname := range orderFreeBSDNetifRestarts(compactStringList(restartIfnames)) {
 		if freeBSDProtectedIfnames(router)[ifname] {
 			changed = append(changed, "netif:skipped-protected:"+ifname)
 			continue
@@ -3693,7 +3693,33 @@ func freeBSDIfconfigKeyInterface(key string) string {
 		return ""
 	}
 	name := strings.TrimPrefix(key, "ifconfig_")
-	return strings.TrimSuffix(name, "_ipv6")
+	name = strings.TrimSuffix(name, "_ipv6")
+	if base, _, ok := strings.Cut(name, "_alias"); ok {
+		return base
+	}
+	return name
+}
+
+func orderFreeBSDNetifRestarts(ifnames []string) []string {
+	out := append([]string(nil), ifnames...)
+	rank := func(name string) int {
+		switch {
+		case strings.HasPrefix(name, "vxlan"):
+			return 0
+		case strings.HasPrefix(name, "bridge"):
+			return 2
+		default:
+			return 1
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, rj := rank(out[i]), rank(out[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return out[i] < out[j]
+	})
+	return out
 }
 
 func freeBSDDHCPClientIfnames(data []byte) []string {

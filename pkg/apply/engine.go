@@ -1315,6 +1315,10 @@ func interfaceAliases(router *api.Router) map[string]string {
 		switch res.Kind {
 		case "Interface":
 			aliases[res.Metadata.Name] = stringSpec(res, "ifname")
+		case "Bridge":
+			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
+		case "VXLANSegment":
+			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
 		case "PPPoEInterface":
 			aliases[res.Metadata.Name] = defaultString(stringSpec(res, "ifname"), "ppp-"+res.Metadata.Name)
 		case "DSLiteTunnel":
@@ -1527,6 +1531,14 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.IfName
 		case "owner":
 			return spec.Owner
+		}
+	case api.BridgeSpec:
+		if key == "ifname" {
+			return spec.IfName
+		}
+	case api.VXLANSegmentSpec:
+		if key == "ifname" {
+			return spec.IfName
 		}
 	case api.PPPoEInterfaceSpec:
 		switch key {

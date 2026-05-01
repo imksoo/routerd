@@ -75,6 +75,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	dhclientOptions := map[string]api.IPv4DHCPAddressSpec{}
 	var staticV4Routes []freeBSDStaticRoute
 	var staticV6Routes []freeBSDStaticRoute
+	staticBridgeV4 := map[string][]string{}
 	var pds []freeBSDPD
 	var pppoes []freeBSDPPPoE
 	bridges, err := bridgeConfigs(router, aliases)
@@ -133,7 +134,11 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 				if err != nil {
 					return FreeBSDConfig{}, fmt.Errorf("%s: %w", res.ID(), err)
 				}
-				rc.WriteString(fmt.Sprintf("ifconfig_%s=\"inet %s\"\n", aliases[spec.Interface], address))
+				if resourceKind(router, spec.Interface) == "Bridge" {
+					staticBridgeV4[aliases[spec.Interface]] = append(staticBridgeV4[aliases[spec.Interface]], address)
+				} else {
+					rc.WriteString(fmt.Sprintf("ifconfig_%s=\"inet %s\"\n", aliases[spec.Interface], address))
+				}
 			}
 		case "IPv4StaticRoute":
 			spec, err := res.IPv4StaticRouteSpec()
@@ -203,6 +208,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	writeFreeBSDClonedInterfaces(&rc, bridges, vxlans)
 	writeFreeBSDVXLANS(&rc, vxlans)
 	writeFreeBSDBridges(&rc, bridges)
+	writeFreeBSDBridgeAliases(&rc, staticBridgeV4)
 	writeFreeBSDStaticRoutes(&rc, staticV4Routes, false)
 	writeFreeBSDStaticRoutes(&rc, staticV6Routes, true)
 
@@ -254,11 +260,7 @@ func writeFreeBSDBridges(buf *bytes.Buffer, bridges []bridgeConfig) {
 		for _, member := range bridge.Members {
 			args = append(args, "addm "+member)
 			if bridge.STP {
-				if bridge.RSTP {
-					args = append(args, "rstp "+member)
-				} else {
-					args = append(args, "stp "+member)
-				}
+				args = append(args, "stp "+member)
 			}
 		}
 		if bridge.MTU != 0 {
@@ -269,6 +271,20 @@ func writeFreeBSDBridges(buf *bytes.Buffer, bridges []bridgeConfig) {
 		}
 		args = append(args, "up")
 		buf.WriteString(fmt.Sprintf("ifconfig_%s=\"%s\"\n", bridge.IfName, strings.Join(args, " ")))
+	}
+}
+
+func writeFreeBSDBridgeAliases(buf *bytes.Buffer, addresses map[string][]string) {
+	var ifnames []string
+	for ifname := range addresses {
+		ifnames = append(ifnames, ifname)
+	}
+	sort.Strings(ifnames)
+	for _, ifname := range ifnames {
+		sort.Strings(addresses[ifname])
+		for i, address := range addresses[ifname] {
+			buf.WriteString(fmt.Sprintf("ifconfig_%s_alias%d=\"inet %s\"\n", ifname, i, address))
+		}
 	}
 }
 
@@ -295,6 +311,15 @@ func writeFreeBSDVXLANS(buf *bytes.Buffer, vxlans []vxlanConfig) {
 		args = append(args, "up")
 		buf.WriteString(fmt.Sprintf("ifconfig_%s=\"%s\"\n", vxlan.IfName, strings.Join(args, " ")))
 	}
+}
+
+func resourceKind(router *api.Router, name string) string {
+	for _, res := range router.Spec.Resources {
+		if res.Metadata.Name == name {
+			return res.Kind
+		}
+	}
+	return ""
 }
 
 func writeFreeBSDClonedInterfaces(buf *bytes.Buffer, bridges []bridgeConfig, vxlans []vxlanConfig) {
