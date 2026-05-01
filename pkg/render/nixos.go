@@ -21,6 +21,13 @@ type nixOSInterface struct {
 	DHCP6            bool
 	AcceptRA         bool
 	Addresses        []string
+	Routes           []nixOSRoute
+}
+
+type nixOSRoute struct {
+	Destination string
+	Gateway     string
+	Metric      int
 }
 
 func NixOSModule(router *api.Router) ([]byte, error) {
@@ -239,6 +246,22 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 				iface.DHCP4UseDNS = spec.UseDNS
 				iface.DHCP4RouteMetric = spec.RouteMetric
 			}
+		case "IPv4StaticRoute":
+			spec, err := res.IPv4StaticRouteSpec()
+			if err != nil {
+				return nil, err
+			}
+			if iface := interfaces[spec.Interface]; iface != nil {
+				iface.Routes = append(iface.Routes, nixOSRoute{Destination: spec.Destination, Gateway: spec.Via, Metric: spec.Metric})
+			}
+		case "IPv6StaticRoute":
+			spec, err := res.IPv6StaticRouteSpec()
+			if err != nil {
+				return nil, err
+			}
+			if iface := interfaces[spec.Interface]; iface != nil {
+				iface.Routes = append(iface.Routes, nixOSRoute{Destination: spec.Destination, Gateway: spec.Via, Metric: spec.Metric})
+			}
 		case "IPv6DHCPAddress":
 			spec, err := res.IPv6DHCPAddressSpec()
 			if err != nil {
@@ -322,6 +345,25 @@ func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 			buf.WriteString("      RouteMetric = " + strconv.Itoa(iface.DHCP4RouteMetric) + ";\n")
 		}
 		buf.WriteString("    };\n")
+	}
+	if len(iface.Routes) > 0 {
+		sort.Slice(iface.Routes, func(i, j int) bool {
+			if iface.Routes[i].Destination == iface.Routes[j].Destination {
+				return iface.Routes[i].Gateway < iface.Routes[j].Gateway
+			}
+			return iface.Routes[i].Destination < iface.Routes[j].Destination
+		})
+		buf.WriteString("    routes = [\n")
+		for _, route := range iface.Routes {
+			buf.WriteString("      { routeConfig = {\n")
+			buf.WriteString("        Destination = " + nixString(route.Destination) + ";\n")
+			buf.WriteString("        Gateway = " + nixString(route.Gateway) + ";\n")
+			if route.Metric != 0 {
+				buf.WriteString("        Metric = " + strconv.Itoa(route.Metric) + ";\n")
+			}
+			buf.WriteString("      }; }\n")
+		}
+		buf.WriteString("    ];\n")
 	}
 	if iface.AdminUp || len(iface.Addresses) == 0 {
 		required := "no"

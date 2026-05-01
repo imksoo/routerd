@@ -9,6 +9,8 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- Added `IPv4StaticRoute` and `IPv6StaticRoute` resources for explicit static
+  routes on Linux systemd-networkd, FreeBSD, and NixOS render paths.
 - Added `DHCPv4HostReservation` for dnsmasq-backed fixed IPv4 leases inside
   an existing `IPv4DHCPScope`.
 - SQLite state objects now include `last_applied_path` metadata. This prepares

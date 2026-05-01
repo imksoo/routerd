@@ -28,14 +28,16 @@ func TestNetworkdDropinsRenderDHCPv6PD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render networkd dropins: %v", err)
 	}
-	if len(files) != 4 {
-		t.Fatalf("len(files) = %d, want 4", len(files))
+	if len(files) != 6 {
+		t.Fatalf("len(files) = %d, want 6", len(files))
 	}
 
 	raFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/89-routerd-ipv6-ra.conf")
 	wanFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/90-routerd-dhcp6-pd.conf")
 	lanFile := findNetworkdTestFile(files, "10-netplan-ens19.network.d/90-routerd-dhcp6-pd.conf")
 	ntpFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/91-routerd-ntp.conf")
+	wanRoutesFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/92-routerd-static-routes.conf")
+	lanRoutesFile := findNetworkdTestFile(files, "10-netplan-ens19.network.d/92-routerd-static-routes.conf")
 	ra := string(raFile.Data)
 	wan := string(wanFile.Data)
 	lan := string(lanFile.Data)
@@ -93,6 +95,12 @@ func TestNetworkdDropinsRenderDHCPv6PD(t *testing.T) {
 	if !strings.Contains(ntp, "NTP=pool.ntp.org") {
 		t.Fatalf("ntp drop-in missing NTP server:\n%s", ntp)
 	}
+	if wanRoutesFile.Path == "" {
+		t.Fatal("missing WAN static route drop-in")
+	}
+	if lanRoutesFile.Path == "" {
+		t.Fatal("missing LAN static route drop-in")
+	}
 }
 
 func findNetworkdTestFile(files []File, suffix string) File {
@@ -102,6 +110,33 @@ func findNetworkdTestFile(files []File, suffix string) File {
 		}
 	}
 	return File{}
+}
+
+func TestNetworkdDropinsRenderStaticRoutes(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "wan", api.InterfaceSpec{IfName: "ens18", Managed: true}),
+		netResource("IPv4StaticRoute", "lab-v4", api.IPv4StaticRouteSpec{Interface: "wan", Destination: "192.0.2.0/24", Via: "198.51.100.1", Metric: 100}),
+		netResource("IPv6StaticRoute", "lab-v6", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:1::/64", Via: "fe80::1", Metric: 200}),
+	}}}
+	files, err := NetworkdDropins(router)
+	if err != nil {
+		t.Fatalf("render networkd dropins: %v", err)
+	}
+	routeFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/92-routerd-static-routes.conf")
+	got := string(routeFile.Data)
+	for _, want := range []string{
+		"Destination=192.0.2.0/24",
+		"Gateway=198.51.100.1",
+		"Metric=100",
+		"Destination=2001:db8:1::/64",
+		"Gateway=fe80::1",
+		"Metric=200",
+		"GatewayOnLink=yes",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("static route drop-in missing %q:\n%s", want, got)
+		}
+	}
 }
 
 func TestNetworkdDropinsRenderNTTFletsProfile(t *testing.T) {

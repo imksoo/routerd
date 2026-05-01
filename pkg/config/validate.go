@@ -172,7 +172,7 @@ func Validate(router *api.Router) error {
 
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4DHCPScope", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface":
+		case "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPScope", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface":
 			name, err := interfaceRef(res)
 			if err != nil {
 				return err
@@ -717,6 +717,44 @@ func validateResource(res api.Resource) error {
 	case "IPv4DHCPAddress", "IPv6DHCPAddress", "IPv6RAAddress":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+	case "IPv4StaticRoute":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.IPv4StaticRouteSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Interface == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		destination, err := netip.ParsePrefix(spec.Destination)
+		if err != nil || !destination.Addr().Is4() {
+			return fmt.Errorf("%s spec.destination must be an IPv4 CIDR", res.ID())
+		}
+		via, err := netip.ParseAddr(spec.Via)
+		if err != nil || !via.Is4() {
+			return fmt.Errorf("%s spec.via must be an IPv4 address", res.ID())
+		}
+	case "IPv6StaticRoute":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.IPv6StaticRouteSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Interface == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		destination, err := netip.ParsePrefix(spec.Destination)
+		if err != nil || !destination.Addr().Is6() {
+			return fmt.Errorf("%s spec.destination must be an IPv6 CIDR", res.ID())
+		}
+		via, err := netip.ParseAddr(spec.Via)
+		if err != nil || !via.Is6() {
+			return fmt.Errorf("%s spec.via must be an IPv6 address", res.ID())
 		}
 	case "IPv6PrefixDelegation":
 		if res.APIVersion != api.NetAPIVersion {
@@ -1711,6 +1749,12 @@ func interfaceRef(res api.Resource) (string, error) {
 		return spec.Interface, err
 	case "IPv4DHCPAddress":
 		spec, err := res.IPv4DHCPAddressSpec()
+		return spec.Interface, err
+	case "IPv4StaticRoute":
+		spec, err := res.IPv4StaticRouteSpec()
+		return spec.Interface, err
+	case "IPv6StaticRoute":
+		spec, err := res.IPv6StaticRouteSpec()
 		return spec.Interface, err
 	case "IPv4DHCPServer", "IPv6DHCPServer":
 		return "", nil

@@ -51,6 +51,8 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	dhcp6cIfaces := map[string]bool{}
 	dhcpcdPDIfaces := map[string]bool{}
 	dhclientOptions := map[string]api.IPv4DHCPAddressSpec{}
+	var staticV4Routes []freeBSDStaticRoute
+	var staticV6Routes []freeBSDStaticRoute
 	var pds []freeBSDPD
 	var pppoes []freeBSDPPPoE
 	for _, res := range router.Spec.Resources {
@@ -98,6 +100,18 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 				}
 				rc.WriteString(fmt.Sprintf("ifconfig_%s=\"inet %s\"\n", aliases[spec.Interface], address))
 			}
+		case "IPv4StaticRoute":
+			spec, err := res.IPv4StaticRouteSpec()
+			if err != nil {
+				return FreeBSDConfig{}, err
+			}
+			staticV4Routes = append(staticV4Routes, freeBSDStaticRoute{Name: res.Metadata.Name, IfName: aliases[spec.Interface], Destination: spec.Destination, Via: spec.Via})
+		case "IPv6StaticRoute":
+			spec, err := res.IPv6StaticRouteSpec()
+			if err != nil {
+				return FreeBSDConfig{}, err
+			}
+			staticV6Routes = append(staticV6Routes, freeBSDStaticRoute{Name: res.Metadata.Name, IfName: aliases[spec.Interface], Destination: spec.Destination, Via: spec.Via})
 		case "IPv6PrefixDelegation":
 			spec, err := res.IPv6PrefixDelegationSpec()
 			if err != nil {
@@ -151,6 +165,8 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 		rc.WriteString("mpd_enable=\"YES\"\n")
 		rc.WriteString("mpd_flags=\"-b\"\n")
 	}
+	writeFreeBSDStaticRoutes(&rc, staticV4Routes, false)
+	writeFreeBSDStaticRoutes(&rc, staticV6Routes, true)
 
 	dhcp6c, err := freeBSDDHCP6C(router, aliases, pds)
 	if err != nil {
@@ -182,6 +198,63 @@ type freeBSDPPPoE struct {
 	LowerIfName string
 	Password    string
 	Spec        api.PPPoEInterfaceSpec
+}
+
+type freeBSDStaticRoute struct {
+	Name        string
+	IfName      string
+	Destination string
+	Via         string
+}
+
+func writeFreeBSDStaticRoutes(buf *bytes.Buffer, routes []freeBSDStaticRoute, ipv6 bool) {
+	if len(routes) == 0 {
+		return
+	}
+	sort.Slice(routes, func(i, j int) bool { return routes[i].Name < routes[j].Name })
+	var names []string
+	for _, route := range routes {
+		names = append(names, freeBSDRouteLabel(route.Name))
+	}
+	if ipv6 {
+		buf.WriteString("ipv6_static_routes=\"" + strings.Join(names, " ") + "\"\n")
+	} else {
+		buf.WriteString("static_routes=\"" + strings.Join(names, " ") + "\"\n")
+	}
+	for _, route := range routes {
+		label := freeBSDRouteLabel(route.Name)
+		via := route.Via
+		if ipv6 && strings.HasPrefix(strings.ToLower(via), "fe80:") && route.IfName != "" && !strings.Contains(via, "%") {
+			via += "%" + route.IfName
+		}
+		if ipv6 {
+			buf.WriteString(fmt.Sprintf("ipv6_route_%s=\"%s %s\"\n", label, route.Destination, via))
+		} else {
+			buf.WriteString(fmt.Sprintf("route_%s=\"-net %s %s\"\n", label, route.Destination, via))
+		}
+	}
+}
+
+func freeBSDRouteLabel(name string) string {
+	label := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '_' || r == '-':
+			return r
+		default:
+			return '_'
+		}
+	}, name)
+	label = strings.ReplaceAll(label, "-", "_")
+	if label == "" {
+		return "route"
+	}
+	return label
 }
 
 func hasManagedFreeBSDPPPoE(pppoes []freeBSDPPPoE) bool {

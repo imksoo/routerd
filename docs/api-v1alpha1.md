@@ -37,6 +37,7 @@ This is a long page. Jump to the kind you need:
 **IPv4 addressing**
 - [IPv4StaticAddress](#ipv4staticaddress)
 - [IPv4DHCPAddress](#ipv4dhcpaddress)
+- [IPv4StaticRoute / IPv6StaticRoute](#ipv4staticroute-and-ipv6staticroute)
 
 **IPv4 DHCP and DNS service (LAN-side)**
 - [IPv4DHCPServer / IPv4DHCPScope](#ipv4dhcpserver-and-ipv4dhcpscope)
@@ -94,7 +95,7 @@ page is the field reference, not the introduction.
 
 Networking:
 `Interface`, `PPPoEInterface`, `IPv4StaticAddress`, `IPv4DHCPAddress`,
-`IPv4DHCPServer`, `IPv4DHCPScope`, `IPv6DHCPAddress`, `IPv6PrefixDelegation`,
+`IPv4StaticRoute`, `IPv6StaticRoute`, `IPv4DHCPServer`, `IPv4DHCPScope`, `IPv6DHCPAddress`, `IPv6PrefixDelegation`,
 `DHCPv4HostReservation`, `IPv6DelegatedAddress`, `IPv6DHCPServer`, `IPv6DHCPScope`,
 `SelfAddressPolicy`, `DNSConditionalForwarder`, `DSLiteTunnel`,
 `StatePolicy`, `HealthCheck`, `IPv4DefaultRoutePolicy`, `IPv4SourceNAT`,
@@ -426,6 +427,47 @@ spec:
   useRoutes: false
   useDNS: false
 ```
+
+### IPv4StaticRoute and IPv6StaticRoute
+
+`IPv4StaticRoute` and `IPv6StaticRoute` install an explicit route through an
+existing `Interface` resource. They are useful for lab networks, management
+segments, and provider-side next hops that are not learned from DHCP or RA.
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4StaticRoute
+metadata:
+  name: lab-v4
+spec:
+  interface: lan
+  destination: 198.51.100.0/24
+  via: 192.168.10.254
+  metric: 100
+```
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6StaticRoute
+metadata:
+  name: lab-v6
+spec:
+  interface: wan
+  destination: 2001:db8:100::/64
+  via: fe80::1
+  metric: 100
+```
+
+How routerd behaves:
+
+- `spec.interface` names an `Interface` resource, not the kernel link name.
+- `destination` must be a CIDR prefix in the matching address family.
+- `via` must be an address in the matching address family.
+- `metric` is optional. When omitted, the renderer uses the operating system
+  default.
+- For an IPv6 link-local next hop, routerd renders the route on the named
+  interface. systemd-networkd also receives the on-link marker it needs for
+  that gateway.
 
 ## IPv4 DHCP and DNS service
 

@@ -222,6 +222,26 @@ spec:
         exclusive: false
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticRoute
+      metadata:
+        name: lab-v4
+      spec:
+        interface: lan
+        destination: 198.51.100.0/24
+        via: 192.0.2.254
+        metric: 100
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6StaticRoute
+      metadata:
+        name: lab-v6
+      spec:
+        interface: wan
+        destination: 2001:db8:100::/64
+        via: fe80::1
+        metric: 100
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
       metadata:
         name: lan-ipv6-pd-address

@@ -881,6 +881,9 @@ func canonicalResourceKind(kind string) string {
 		"dhcpv4host":            "DHCPv4HostReservation",
 		"dhcpv4hostreservation": "DHCPv4HostReservation",
 		"ipv4dhcpreservation":   "DHCPv4HostReservation",
+		"ipv4staticroute":       "IPv4StaticRoute",
+		"ipv6route":             "IPv6StaticRoute",
+		"ipv6staticroute":       "IPv6StaticRoute",
 		"nat":                   "IPv4SourceNAT",
 		"snat":                  "IPv4SourceNAT",
 		"ipv4sourcenat":         "IPv4SourceNAT",
@@ -911,7 +914,7 @@ func apiVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "IPv6DHCPServer", "IPv6DHCPScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DSLiteTunnel", "StatePolicy", "HealthCheck", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "IPv6DHCPServer", "IPv6DHCPScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DSLiteTunnel", "StatePolicy", "HealthCheck", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""

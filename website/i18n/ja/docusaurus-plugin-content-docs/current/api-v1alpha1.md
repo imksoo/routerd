@@ -32,6 +32,7 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 **IPv4 アドレッシング**
 - [IPv4StaticAddress](#ipv4staticaddress)
 - [IPv4DHCPAddress](#ipv4dhcpaddress)
+- [IPv4StaticRoute / IPv6StaticRoute](#ipv4staticroute-と-ipv6staticroute)
 
 **IPv4 DHCP と DNS の提供 (LAN 側)**
 - [IPv4DHCPServer / IPv4DHCPScope](#ipv4dhcpserver-と-ipv4dhcpscope)
@@ -86,7 +87,7 @@ routerd を初めて触る場合は、まず [概念](../concepts/what-is-router
 ## 用意されているリソース
 
 ネットワーク関連:
-`Interface`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4DHCPServer`、`IPv4DHCPScope`、`DHCPv4HostReservation`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
+`Interface`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4StaticRoute`、`IPv6StaticRoute`、`IPv4DHCPServer`、`IPv4DHCPScope`、`DHCPv4HostReservation`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
 
 ファイアウォール:
 `Zone`、`FirewallPolicy`、`ExposeService`。
@@ -353,6 +354,46 @@ spec:
   useRoutes: false
   useDNS: false
 ```
+
+### IPv4StaticRoute と IPv6StaticRoute
+
+`IPv4StaticRoute` と `IPv6StaticRoute` は、既存の `Interface` リソースを通る
+明示的な経路を追加します。DHCP や RA から学習しない検証用ネットワーク、
+管理用セグメント、上流側の個別経路を表すために使います。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4StaticRoute
+metadata:
+  name: lab-v4
+spec:
+  interface: lan
+  destination: 198.51.100.0/24
+  via: 192.168.10.254
+  metric: 100
+```
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv6StaticRoute
+metadata:
+  name: lab-v6
+spec:
+  interface: wan
+  destination: 2001:db8:100::/64
+  via: fe80::1
+  metric: 100
+```
+
+ルータの振る舞い:
+
+- `spec.interface` にはカーネル上のリンク名ではなく、`Interface` リソース名を書きます。
+- `destination` は、リソースのアドレスファミリに合う CIDR プレフィックスです。
+- `via` は、リソースのアドレスファミリに合う次ホップアドレスです。
+- `metric` は省略できます。省略した場合は OS 側の既定に任せます。
+- IPv6 のリンクローカルアドレスを次ホップにする場合、routerd は指定された
+  インターフェース上の経路として出力します。systemd-networkd では、その
+  ゲートウェイをオンリンクとして扱う設定も併せて出力します。
 
 ## IPv4 DHCP と DNS の提供
 

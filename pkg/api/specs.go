@@ -135,6 +135,20 @@ type IPv4DHCPAddressSpec struct {
 	RouteMetric int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
 }
 
+type IPv4StaticRouteSpec struct {
+	Destination string `yaml:"destination" json:"destination"`
+	Via         string `yaml:"via" json:"via"`
+	Interface   string `yaml:"interface" json:"interface"`
+	Metric      int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+}
+
+type IPv6StaticRouteSpec struct {
+	Destination string `yaml:"destination" json:"destination"`
+	Via         string `yaml:"via" json:"via"`
+	Interface   string `yaml:"interface" json:"interface"`
+	Metric      int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+}
+
 type IPv4DHCPServerSpec struct {
 	Server           string                `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
 	Managed          bool                  `yaml:"managed,omitempty" json:"managed,omitempty"`
@@ -547,6 +561,14 @@ func (r Resource) IPv4StaticAddressSpec() (IPv4StaticAddressSpec, error) {
 
 func (r Resource) IPv4DHCPAddressSpec() (IPv4DHCPAddressSpec, error) {
 	return specAs[IPv4DHCPAddressSpec](r)
+}
+
+func (r Resource) IPv4StaticRouteSpec() (IPv4StaticRouteSpec, error) {
+	return specAs[IPv4StaticRouteSpec](r)
+}
+
+func (r Resource) IPv6StaticRouteSpec() (IPv6StaticRouteSpec, error) {
+	return specAs[IPv6StaticRouteSpec](r)
 }
 
 func (r Resource) IPv4DHCPServerSpec() (IPv4DHCPServerSpec, error) {

@@ -222,6 +222,8 @@ intent.
 | `PPPoEInterface` | PPP interface, Linux PPPoE systemd unit and PPP secret files, or FreeBSD mpd5 config and `mpd5` service |
 | `IPv4StaticAddress` | IPv4 address |
 | `IPv4DHCPAddress` | DHCPv4 client binding and renderer-specific route/DNS adoption settings |
+| `IPv4StaticRoute` | Static IPv4 route rendered through systemd-networkd, FreeBSD `rc.conf`, or NixOS networkd config |
+| `IPv6StaticRoute` | Static IPv6 route rendered through systemd-networkd, FreeBSD `rc.conf`, or NixOS networkd config |
 | `IPv4DHCPServer` | dnsmasq config and service; Linux uses `routerd-dnsmasq.service`, FreeBSD uses `/usr/local/etc/rc.d/routerd_dnsmasq` |
 | `IPv4DHCPScope` | dnsmasq DHCPv4 scope |
 | `DHCPv4HostReservation` | dnsmasq DHCPv4 host reservation |

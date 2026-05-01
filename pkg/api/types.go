@@ -115,6 +115,18 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "IPv4StaticRoute":
+		var spec IPv4StaticRouteSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv6StaticRoute":
+		var spec IPv6StaticRouteSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv4DHCPServer":
 		var spec IPv4DHCPServerSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

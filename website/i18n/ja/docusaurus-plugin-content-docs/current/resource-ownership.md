@@ -165,6 +165,8 @@ routerd 管理範囲外の構成物は、台帳で routerd の所有が確認で
 | `PPPoEInterface` | PPP インターフェース、Linux の PPPoE systemd ユニットと PPP secret ファイル、または FreeBSD の mpd5 設定と `mpd5` サービス |
 | `IPv4StaticAddress` | IPv4 アドレス |
 | `IPv4DHCPAddress` | DHCPv4 クライアントのバインディングと、出力先ごとの経路/DNS 採用設定 |
+| `IPv4StaticRoute` | systemd-networkd、FreeBSD `rc.conf`、または NixOS の networkd 設定へ出力する IPv4 静的経路 |
+| `IPv6StaticRoute` | systemd-networkd、FreeBSD `rc.conf`、または NixOS の networkd 設定へ出力する IPv6 静的経路 |
 | `IPv4DHCPServer` | dnsmasq の設定とサービス。Linux では `routerd-dnsmasq.service`、FreeBSD では `/usr/local/etc/rc.d/routerd_dnsmasq` を使う |
 | `IPv4DHCPScope` | dnsmasq の DHCPv4 スコープ |
 | `DHCPv4HostReservation` | dnsmasq の DHCPv4 固定割当 |
