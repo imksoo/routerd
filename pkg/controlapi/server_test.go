@@ -58,6 +58,35 @@ func TestApplyHandler(t *testing.T) {
 	}
 }
 
+func TestDeleteHandler(t *testing.T) {
+	handler := Handler{
+		Delete: func(r *http.Request, req DeleteRequest) (*DeleteResult, error) {
+			if req.Target != "pd/wan-pd" {
+				t.Fatalf("target = %q", req.Target)
+			}
+			if !req.DryRun {
+				t.Fatal("DryRun = false, want true")
+			}
+			return &DeleteResult{
+				TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DeleteResult"},
+				Deleted:  []string{"net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd"},
+				DryRun:   true,
+			}, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/delete", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"DeleteRequest","target":"pd/wan-pd","dryRun":true}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind": "DeleteResult"`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestNAPTHandler(t *testing.T) {
 	handler := Handler{
 		NAPT: func(r *http.Request, req NAPTRequest) (*NAPTTable, error) {

@@ -60,6 +60,25 @@ func (c *Client) Apply(ctx context.Context, request ApplyRequest) (*ApplyResult,
 	return &result, nil
 }
 
+func (c *Client) Delete(ctx context.Context, request DeleteRequest) (*DeleteResult, error) {
+	request.APIVersion = APIVersion
+	request.Kind = "DeleteRequest"
+	data, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/delete", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var result DeleteResult
+	if err := c.do(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *Client) NAPT(ctx context.Context, limit int) (*NAPTTable, error) {
 	path := c.baseURL + Prefix + "/napt"
 	if limit >= 0 {

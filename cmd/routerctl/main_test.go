@@ -110,6 +110,41 @@ func TestShowDiffAndLedgerModes(t *testing.T) {
 	}
 }
 
+func TestDescribeOrphans(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources: []
+`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	statePath := filepath.Join(dir, "state.json")
+	ledgerPath := filepath.Join(dir, "artifacts.json")
+	if err := routerstate.New().Save(statePath); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	ledger := resource.NewLedger()
+	ledger.Remember([]resource.Artifact{{
+		Kind:  "systemd.service",
+		Name:  "routerd-stale.service",
+		Owner: "net.routerd.net/v1alpha1/DSLiteTunnel/stale",
+	}})
+	if err := ledger.Save(ledgerPath); err != nil {
+		t.Fatalf("save ledger: %v", err)
+	}
+	var out bytes.Buffer
+	if err := run([]string{"describe", "orphans", "--config", configPath, "--state-file", statePath, "--ledger-file", ledgerPath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("describe orphans: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "routerd-stale.service") || !strings.Contains(got, "disable and stop systemd service") {
+		t.Fatalf("orphan output = %s", got)
+	}
+}
+
 func TestShowPDLegacySubcommandRemoved(t *testing.T) {
 	configPath := writeShowConfig(t, t.TempDir())
 	dir := t.TempDir()

@@ -336,6 +336,60 @@
         ],
         "type": "object"
       },
+      "DeleteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind",
+          "target"
+        ],
+        "type": "object"
+      },
+      "DeleteResult": {
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "artifacts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "deleted": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind"
+        ],
+        "type": "object"
+      },
       "Error": {
         "additionalProperties": false,
         "properties": {
@@ -566,6 +620,43 @@
               }
             },
             "description": "ApplyResult"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/control.routerd.net/v1alpha1/delete": {
+      "post": {
+        "operationId": "deleteResource",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResult"
+                }
+              }
+            },
+            "description": "DeleteResult"
           },
           "default": {
             "content": {

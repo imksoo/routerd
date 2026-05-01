@@ -744,58 +744,71 @@ func deleteCommand(args []string, stdout io.Writer) error {
 	if len(targets) == 0 {
 		return errors.New("delete requires <kind>/<name> or -f <router.yaml>")
 	}
-	stateStore, err := routerstate.Load(*statePath)
+	result, err := performDeleteTargets(targets, *statePath, *ledgerPath, *dryRun)
 	if err != nil {
 		return err
 	}
-	ledger, err := resource.LoadLedger(*ledgerPath)
-	if err != nil {
-		return err
+	prefix := ""
+	if result.DryRun {
+		prefix = "would "
 	}
-	var deleted []string
+	for _, artifact := range result.Artifacts {
+		fmt.Fprintf(stdout, "%sdelete owned artifact %s\n", prefix, artifact)
+	}
+	for _, item := range result.Deleted {
+		fmt.Fprintf(stdout, "%sdelete %s\n", prefix, item)
+	}
+	return nil
+}
+
+func performDeleteTargets(targets []deleteTarget, statePath, ledgerPath string, dryRun bool) (controlapi.DeleteResult, error) {
+	stateStore, err := routerstate.Load(statePath)
+	if err != nil {
+		return controlapi.DeleteResult{}, err
+	}
+	ledger, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		return controlapi.DeleteResult{}, err
+	}
+	result := controlapi.DeleteResult{TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"}, DryRun: dryRun}
 	for _, target := range targets {
 		owner := target.APIVersion + "/" + target.Kind + "/" + target.Name
 		artifacts := artifactsForOwner(ledger, owner)
-		if *dryRun {
-			fmt.Fprintf(stdout, "would delete %s\n", owner)
-			for _, artifact := range artifacts {
-				fmt.Fprintf(stdout, "would delete owned artifact %s/%s\n", artifact.Kind, artifact.Name)
-			}
-			continue
-		}
 		for _, artifact := range artifacts {
-			label, err := cleanupLedgerOwnedArtifact(artifact)
-			if err != nil {
-				return fmt.Errorf("%s cleanup %s/%s: %w", owner, artifact.Kind, artifact.Name, err)
+			label := artifact.Kind + "/" + artifact.Name
+			if !dryRun {
+				cleaned, err := cleanupLedgerOwnedArtifact(artifact)
+				if err != nil {
+					return result, fmt.Errorf("%s cleanup %s/%s: %w", owner, artifact.Kind, artifact.Name, err)
+				}
+				if cleaned != "" {
+					label = cleaned
+				}
 			}
-			if label != "" {
-				fmt.Fprintf(stdout, "deleted owned artifact %s\n", label)
+			result.Artifacts = append(result.Artifacts, label)
+		}
+		if !dryRun {
+			ledger.Forget(artifacts)
+			if deleter, ok := stateStore.(routerstate.ObjectDeleteStore); ok {
+				if err := deleter.DeleteObject(target.APIVersion, target.Kind, target.Name); err != nil {
+					return result, err
+				}
+			}
+			if recorder, ok := stateStore.(routerstate.EventRecorder); ok {
+				_ = recorder.RecordEvent(target.APIVersion, target.Kind, target.Name, "Normal", "Deleted", "resource deleted by routerd delete")
 			}
 		}
-		ledger.Forget(artifacts)
-		if deleter, ok := stateStore.(routerstate.ObjectDeleteStore); ok {
-			if err := deleter.DeleteObject(target.APIVersion, target.Kind, target.Name); err != nil {
-				return err
-			}
-		}
-		if recorder, ok := stateStore.(routerstate.EventRecorder); ok {
-			_ = recorder.RecordEvent(target.APIVersion, target.Kind, target.Name, "Normal", "Deleted", "resource deleted by routerd delete")
-		}
-		deleted = append(deleted, owner)
-		fmt.Fprintf(stdout, "deleted %s\n", owner)
+		result.Deleted = append(result.Deleted, owner)
 	}
-	if !*dryRun {
-		if err := ledger.Save(*ledgerPath); err != nil {
-			return err
+	if !dryRun {
+		if err := ledger.Save(ledgerPath); err != nil {
+			return result, err
 		}
-		if err := stateStore.Save(*statePath); err != nil {
-			return err
+		if err := stateStore.Save(statePath); err != nil {
+			return result, err
 		}
 	}
-	if len(deleted) == 0 && *dryRun {
-		return nil
-	}
-	return nil
+	return result, nil
 }
 
 type deleteTarget struct {
@@ -2622,6 +2635,20 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			cache.Store(result)
 			apiResult := controlapi.NewApplyResult(result)
 			return &apiResult, nil
+		},
+		Delete: func(r *http.Request, req controlapi.DeleteRequest) (*controlapi.DeleteResult, error) {
+			if req.Target == "" {
+				return nil, controlapi.ErrBadRequest
+			}
+			target, err := deleteTargetFromArg(req.Target)
+			if err != nil {
+				return nil, err
+			}
+			result, err := performDeleteTargets([]deleteTarget{target}, defaultStatePath, *ledgerPath, req.DryRun)
+			if err != nil {
+				return nil, err
+			}
+			return &result, nil
 		},
 		DHCP6Event: func(r *http.Request, req controlapi.DHCP6EventRequest) (*controlapi.DHCP6EventResult, error) {
 			if req.Resource == "" {

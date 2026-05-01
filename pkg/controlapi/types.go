@@ -42,6 +42,19 @@ type ApplyResult struct {
 	Result   apply.Result `json:"result" yaml:"result"`
 }
 
+type DeleteRequest struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Target   string `json:"target" yaml:"target"`
+	DryRun   bool   `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
+}
+
+type DeleteResult struct {
+	TypeMeta  `json:",inline" yaml:",inline"`
+	Deleted   []string `json:"deleted,omitempty" yaml:"deleted,omitempty"`
+	Artifacts []string `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`
+	DryRun    bool     `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
+}
+
 type DHCP6EventRequest struct {
 	TypeMeta  `json:",inline" yaml:",inline"`
 	Resource  string            `json:"resource" yaml:"resource"`

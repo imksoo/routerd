@@ -110,7 +110,7 @@ func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
 	if err := deleteCommand([]string{"--state-file", statePath, "--ledger-file", ledgerPath, "pd/wan-pd"}, &out); err != nil {
 		t.Fatalf("delete command: %v", err)
 	}
-	if !strings.Contains(out.String(), "deleted net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd") {
+	if !strings.Contains(out.String(), "delete net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd") {
 		t.Fatalf("delete output = %s", out.String())
 	}
 	loadedState, err := routerstate.Load(statePath)

@@ -13,6 +13,7 @@ type Handler struct {
 	Status     func(*http.Request) (*Status, error)
 	NAPT       func(*http.Request, NAPTRequest) (*NAPTTable, error)
 	Apply      func(*http.Request, ApplyRequest) (*ApplyResult, error)
+	Delete     func(*http.Request, DeleteRequest) (*DeleteResult, error)
 	DHCP6Event func(*http.Request, DHCP6EventRequest) (*DHCP6EventResult, error)
 }
 
@@ -28,6 +29,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleNAPT(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/apply":
 		h.handleApply(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/delete":
+		h.handleDelete(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/dhcp6-event":
 		h.handleDHCP6Event(w, r)
 	default:
@@ -90,6 +93,37 @@ func (h Handler) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.Apply(r, req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrBadRequest) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if h.Delete == nil {
+		writeError(w, http.StatusNotImplemented, "delete handler is not configured")
+		return
+	}
+	defer r.Body.Close()
+	var req DeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.APIVersion != "" && req.APIVersion != APIVersion {
+		writeError(w, http.StatusBadRequest, "unsupported apiVersion")
+		return
+	}
+	if req.Kind != "" && req.Kind != "DeleteRequest" {
+		writeError(w, http.StatusBadRequest, "unsupported kind")
+		return
+	}
+	result, err := h.Delete(r, req)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, ErrBadRequest) {

@@ -19,6 +19,9 @@ behavior changes and new resource shapes as the model takes shape.
 - `routerd delete <kind>/<name>` and `routerd delete -f <router.yaml>` now
   remove the selected resource objects from state and clean up matching
   routerd-owned artifacts from the ownership ledger.
+- `routerctl delete <kind>/<name>` now calls the daemon delete endpoint, and
+  `routerctl describe orphans` lists routerd-owned orphaned artifacts without
+  removing them.
 - `routerd serve` now observes WAN Router Advertisements for
   `IPv6PrefixDelegation`, accepts DHCPv6 client hook events over the local
   control API, tracks acquisition phase and stalled-renewal suspicion, and

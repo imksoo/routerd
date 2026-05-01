@@ -53,6 +53,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return showCommand(args[1:], stdout, stderr)
 	case "apply":
 		return applyCommand(args[1:], stdout)
+	case "delete":
+		return deleteCommand(args[1:], stdout)
 	case "plan":
 		return applyCommand(append([]string{"--dry-run"}, args[1:]...), stdout)
 	case "help", "-h", "--help":
@@ -94,6 +96,27 @@ func applyCommand(args []string, stdout io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	result, err := controlapi.NewUnixClient(*socketPath).Apply(ctx, controlapi.ApplyRequest{DryRun: *dryRun, Prune: *prune})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, result)
+}
+
+func deleteCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+	dryRun := fs.Bool("dry-run", false, "show what would be deleted without changing host state")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("delete requires <kind>/<name>")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(*socketPath).Delete(ctx, controlapi.DeleteRequest{Target: fs.Arg(0), DryRun: *dryRun})
 	if err != nil {
 		return err
 	}
@@ -250,6 +273,9 @@ func describeCommand(args []string, stdout, stderr io.Writer) error {
 	kind, name, err := parseResourceTarget("describe", opts.Target)
 	if err != nil {
 		return err
+	}
+	if kind == "Orphan" {
+		return writeOrphans(stdout, router, ledger)
 	}
 	if name == "" {
 		return errors.New("describe requires <kind>/<name>")
@@ -553,6 +579,8 @@ func canonicalShowKind(kind string) string {
 		"host":                 "Hostname",
 		"inventory":            "Inventory",
 		"inv":                  "Inventory",
+		"orphan":               "Orphan",
+		"orphans":              "Orphan",
 		"route":                "IPv4PolicyRouteSet",
 		"routeset":             "IPv4PolicyRouteSet",
 		"ipv4route":            "IPv4PolicyRouteSet",
@@ -740,6 +768,40 @@ func ledgerArtifactsForOwner(ledger resource.Ledger, owner string) []resource.Ar
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Identity() < out[j].Identity() })
 	return out
+}
+
+func writeOrphans(stdout io.Writer, router *api.Router, ledger resource.Ledger) error {
+	if err := apply.New().Validate(router); err != nil {
+		return err
+	}
+	aliases := interfaceAliases(router.Spec.Resources)
+	desired := apply.DesiredOwnedArtifacts(router, aliases)
+	desiredIDs := map[string]bool{}
+	for _, artifact := range desired {
+		desiredIDs[artifact.Identity()] = true
+	}
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "KIND\tNAME\tOWNER\tREMEDIATION")
+	for _, artifact := range ledger.All() {
+		if desiredIDs[artifact.Identity()] {
+			continue
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", artifact.Kind, artifact.Name, artifact.Owner, orphanRemediation(artifact))
+	}
+	return w.Flush()
+}
+
+func orphanRemediation(artifact resource.Artifact) string {
+	switch artifact.Kind {
+	case "linux.ipip6.tunnel":
+		return "delete ipip6 tunnel " + artifact.Name
+	case "nft.table":
+		return "delete nft table " + artifact.Attributes["family"] + " " + artifact.Attributes["name"]
+	case "systemd.service":
+		return "disable and stop systemd service " + artifact.Name
+	default:
+		return "review before deleting"
+	}
 }
 
 func eventsForResource(store routerstate.Store, res api.Resource) []routerstate.Event {
@@ -1399,4 +1461,5 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events|--spec|--status] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plan [--socket <path>]")
 	fmt.Fprintln(w, "  apply [--socket <path>] [--dry-run] [--prune]")
+	fmt.Fprintln(w, "  delete <kind>/<name> [--socket <path>] [--dry-run]")
 }

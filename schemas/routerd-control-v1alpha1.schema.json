@@ -430,6 +430,60 @@
         "apiVersion": {
           "type": "string"
         },
+        "dryRun": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "target"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "artifacts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "deleted": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "dryRun": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
         "clientID": {
           "type": "string"
         },

@@ -79,6 +79,8 @@ func controlSchema() map[string]any {
 			reflectedSchema(controlapi.NAPTTable{}),
 			reflectedSchema(controlapi.ApplyRequest{}),
 			reflectedSchema(controlapi.ApplyResult{}),
+			reflectedSchema(controlapi.DeleteRequest{}),
+			reflectedSchema(controlapi.DeleteResult{}),
 			reflectedSchema(controlapi.DHCP6EventRequest{}),
 			reflectedSchema(controlapi.DHCP6EventResult{}),
 			reflectedSchema(controlapi.Error{}),
@@ -116,6 +118,23 @@ func controlOpenAPISchema() map[string]any {
 					},
 					"responses": map[string]any{
 						"200":     responseRef("ApplyResult"),
+						"default": responseRef("Error"),
+					},
+				},
+			},
+			controlapi.Prefix + "/delete": map[string]any{
+				"post": map[string]any{
+					"operationId": "deleteResource",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": schemaRef("DeleteRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200":     responseRef("DeleteResult"),
 						"default": responseRef("Error"),
 					},
 				},
@@ -166,6 +185,8 @@ func controlOpenAPISchema() map[string]any {
 				"NAPTTable":         reflectedSchema(controlapi.NAPTTable{}),
 				"ApplyRequest":      reflectedSchema(controlapi.ApplyRequest{}),
 				"ApplyResult":       reflectedSchema(controlapi.ApplyResult{}),
+				"DeleteRequest":     reflectedSchema(controlapi.DeleteRequest{}),
+				"DeleteResult":      reflectedSchema(controlapi.DeleteResult{}),
 				"DHCP6EventRequest": reflectedSchema(controlapi.DHCP6EventRequest{}),
 				"DHCP6EventResult":  reflectedSchema(controlapi.DHCP6EventResult{}),
 				"Error":             reflectedSchema(controlapi.Error{}),
