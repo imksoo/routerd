@@ -84,6 +84,14 @@ files or nudging daemons outside the apply path. This keeps operational intent
 reviewable through git history, file diffs, apply output, and the local
 database.
 
+assert: `routerd apply` follows kubectl-style additive semantics by default.
+An apply updates the resources present in the submitted YAML and records their
+ownership, but it does not delete previously managed resources that are absent
+from that YAML. This allows operators to split resources across files without
+one partial file accidentally removing another file's resources. Full cleanup
+requires an explicit `--prune`, and individual removal uses `routerd delete`
+or `routerctl delete`.
+
 assert: Host services remain owned by the operating system's service manager.
 routerd should use `systemctl` on systemd hosts and `service` / rc.d on
 FreeBSD, instead of sending ad-hoc signals to long-running daemons as the

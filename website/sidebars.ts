@@ -59,6 +59,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Operations',
       items: [
+        'operations/reconcile',
         'operations/state-database',
         'operations/inventory',
       ],

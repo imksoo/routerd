@@ -147,6 +147,28 @@ Response:
 }
 ```
 
+### Delete
+
+```text
+POST /api/control.routerd.net/v1alpha1/delete
+```
+
+Deletes one resource through the running daemon. The target uses
+`kind/name`, with the same common aliases accepted by `routerctl`.
+
+```json
+{
+  "apiVersion": "control.routerd.net/v1alpha1",
+  "kind": "DeleteRequest",
+  "target": "IPv6PrefixDelegation/wan-pd",
+  "dryRun": true
+}
+```
+
+`dryRun: true` reports the resource and owned artifacts that would be removed.
+Without dry-run, routerd removes matching ownership records and performs the
+cleanup actions it knows for routerd-owned artifacts.
+
 ### DHCPv6 client event
 
 ```text

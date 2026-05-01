@@ -134,6 +134,28 @@ POST /api/control.routerd.net/v1alpha1/apply
 }
 ```
 
+### 削除
+
+```text
+POST /api/control.routerd.net/v1alpha1/delete
+```
+
+動作中のデーモンに、1 つのリソース削除を依頼します。対象は `kind/name` で指定し、
+`routerctl` と同じ主な略称を使えます。
+
+```json
+{
+  "apiVersion": "control.routerd.net/v1alpha1",
+  "kind": "DeleteRequest",
+  "target": "IPv6PrefixDelegation/wan-pd",
+  "dryRun": true
+}
+```
+
+`dryRun: true` のときは、削除対象のリソースと所有構成物を表示するだけです。
+予行実行でない場合、routerd は対応する所有台帳を消し、routerd 所有の構成物について
+知っている削除処理を実行します。
+
 ### DHCPv6 クライアントイベント
 
 ```text
