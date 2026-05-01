@@ -182,6 +182,19 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 			AttemptsSinceReply: 0,
 			NextAction:         "solicit",
 		},
+		Transactions: []routerstate.PDDHCP6Transaction{{
+			ObservedAt:        "2026-04-28T03:02:04Z",
+			Direction:         "sent",
+			MessageType:       "Renew",
+			TransactionID:     "010203",
+			IAID:              "1",
+			Prefix:            "2001:db8:1200:1220::/60",
+			T1:                "7200",
+			T2:                "12600",
+			PreferredLifetime: "14400",
+			ValidLifetime:     "14400",
+			ReconfigureAccept: "true",
+		}},
 	}), "test")
 	if err := store.RecordEvent("net.routerd.net/v1alpha1", "IPv6PrefixDelegation", "wan-pd", "Normal", "PrefixObserved", "observed delegated prefix"); err != nil {
 		t.Fatalf("record event: %v", err)
@@ -219,6 +232,8 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 		"2026-04-28T05:02:04Z",
 		"WAN RA source:",
 		"Acquisition strategy:",
+		"Recent DHCPv6 transactions:",
+		"xid=010203",
 		"HGW hung suspected:",
 		"Last Apply Generation:",
 		"PrefixObserved",

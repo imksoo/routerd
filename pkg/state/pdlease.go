@@ -31,6 +31,7 @@ type PDLease struct {
 	WANObserved    *PDWANObserved       `json:"wanObserved,omitempty"`
 	Hung           *PDHungStatus        `json:"hung,omitempty"`
 	Acquisition    *PDAcquisitionStatus `json:"acquisition,omitempty"`
+	Transactions   []PDDHCP6Transaction `json:"transactions,omitempty"`
 }
 
 type PDWANObserved struct {
@@ -53,6 +54,24 @@ type PDAcquisitionStatus struct {
 	LastAttemptAt      string `json:"lastAttemptAt,omitempty"`
 	AttemptsSinceReply int    `json:"attemptsSinceReply,omitempty"`
 	NextAction         string `json:"nextAction,omitempty"`
+}
+
+type PDDHCP6Transaction struct {
+	ObservedAt        string `json:"observedAt,omitempty"`
+	Direction         string `json:"direction,omitempty"`
+	Interface         string `json:"interface,omitempty"`
+	MessageType       string `json:"messageType,omitempty"`
+	TransactionID     string `json:"transactionID,omitempty"`
+	ClientDUID        string `json:"clientDUID,omitempty"`
+	ServerDUID        string `json:"serverDUID,omitempty"`
+	IAID              string `json:"iaid,omitempty"`
+	Prefix            string `json:"prefix,omitempty"`
+	T1                string `json:"t1,omitempty"`
+	T2                string `json:"t2,omitempty"`
+	PreferredLifetime string `json:"preferredLifetime,omitempty"`
+	ValidLifetime     string `json:"validLifetime,omitempty"`
+	ReconfigureAccept string `json:"reconfigureAccept,omitempty"`
+	Warning           string `json:"warning,omitempty"`
 }
 
 func EncodePDLease(lease PDLease) string {

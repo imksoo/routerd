@@ -446,6 +446,7 @@ spec:
 - `spec.serverID`、`spec.priorPrefix`、`spec.acquisitionStrategy` は、DHCPv6-PD を能動的に制御する経路のための手動上書きです。通常は、routerd が `IPv6PrefixDelegation` の状態から上流サーバの識別子と過去に委譲されたプレフィックスを観測し、その状態をレンダラや DHCPv6 制御処理へ渡します。観測状態が無い場合や誤っている場合に、復旧や移行のためだけに設定してください。`acquisitionStrategy` は `hybrid`、`solicit-only`、`request-claim-only` のいずれかです。
 - `routerd dhcp6 solicit|request|renew|rebind|release --resource <名前>` は、ラボ復旧用の低レベルな能動制御入口です。リソースと状態保存領域から DUID、IAID、サーバ識別子、プレフィックスを読み、上流インターフェースから DHCPv6 パケットを直接送ります。Solicit は過去のプレフィックスやサーバ識別子が無い状態でも送れます。Request/Renew/Rebind は送信ごとに新しい transaction ID を作り、T1/T2 と IA Prefix の寿命を 0 にせず、Reconfigure Accept を含めます。Rebind は Server Identifier を含めません。Release は IA_PD の寿命を 0 にし、Reconfigure Accept を含めません。
   ラボ用のパケットでは、`--t1`、`--t2`、`--preferred-lifetime`、`--valid-lifetime` で要求する寿命を上書きできます。上流サーバが短いリース要求を採用するか測る場合だけ使います。
+  この経路で送ったパケットは、最近の DHCPv6 送信履歴としてリソース状態に記録します。記録にはメッセージ種別、transaction ID、IAID、プレフィックス、T1/T2、IA Prefix の寿命、Reconfigure Accept の有無を含めます。
 - FreeBSD の KAME `dhcp6c` では、NTT 系プロファイルかつ実効 DUID 型が `link-layer` の場合、routerd が `/var/db/dhcp6c_duid` を管理します。既存ファイルが期待する DUID と異なる場合は `.bak.<時刻>` として退避し、期待する DUID を `dhcp6c` 起動前に書き込みます。
 - `client: dhcpcd` を選んだ場合、NTT 系プロファイルかつ実効 DUID 型が `link-layer` なら、routerd は dhcpcd の DUID ファイルを管理します。`dhcpcd-<名前>.conf` を書き出し、リソースごとのサービスを起動します。Linux では `routerd-dhcpcd-<名前>.service`、FreeBSD では `/usr/local/etc/rc.d` 配下の rc.d スクリプトを管理します。この経路は、既定値を変える前に dhcpcd をラボで測るために用意しています。
 

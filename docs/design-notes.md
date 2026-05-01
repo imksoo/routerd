@@ -696,6 +696,10 @@ and self-driving end-to-end without manual operator commands.
   `routerd dhcp6 solicit|request|renew|rebind|release` must record the sent
   attempt into `IPv6PrefixDelegation` status so `routerctl describe` can show
   what was tried before the automatic path is complete.
+- Implement the transaction recorder in two steps: first record routerd-sent
+  active-control packets from the internal packet builder, then attach a
+  receive-side listener so external DHCPv6 clients and HGW replies are captured
+  through the same status shape.
 - Documentation: capture the design and operational behavior under
   `docs/knowledge-base/ntt-ngn-pd-acquisition.md` Section H/H.1/K so the
   detection thresholds and operator playbook stay in one place.

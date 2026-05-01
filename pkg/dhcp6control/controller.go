@@ -3,6 +3,7 @@ package dhcp6control
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/netip"
@@ -148,6 +149,14 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 	if err != nil {
 		return err
 	}
+	payload, err := BuildDHCPv6(packet)
+	if err != nil {
+		return err
+	}
+	summary, err := ParseDHCPv6(payload)
+	if err != nil {
+		return err
+	}
 	if err := c.Sender.SendFrame(ctx, in.Identity.InterfaceName, frame); err != nil {
 		return err
 	}
@@ -176,6 +185,7 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 			lease.LastReleaseAt = now.Format(time.RFC3339)
 			action = pdstrategy.ActionRelease
 		}
+		lease = appendTransaction(lease, now, "sent", in.Identity.InterfaceName, summary)
 		lease = pdstrategy.RecordAttempt(lease, strategy, action, now)
 		base := "ipv6PrefixDelegation." + in.Resource.Name
 		store.Set(base+".lease", routerstate.EncodePDLease(lease), reason)
@@ -184,6 +194,43 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 		}
 	}
 	return nil
+}
+
+func appendTransaction(lease routerstate.PDLease, now time.Time, direction, ifname string, summary MessageSummary) routerstate.PDLease {
+	tx := routerstate.PDDHCP6Transaction{
+		ObservedAt:        now.UTC().Format(time.RFC3339Nano),
+		Direction:         direction,
+		Interface:         ifname,
+		MessageType:       messageName(summary.MessageType),
+		TransactionID:     fmt.Sprintf("%06x", summary.TransactionID),
+		ClientDUID:        hex.EncodeToString(summary.ClientDUID),
+		ServerDUID:        hex.EncodeToString(summary.ServerDUID),
+		ReconfigureAccept: strconv.FormatBool(summary.ReconfigureAccept),
+	}
+	if len(summary.IAPD) > 0 {
+		iapd := summary.IAPD[0]
+		tx.IAID = strconv.FormatUint(uint64(iapd.IAID), 10)
+		tx.T1 = strconv.FormatUint(uint64(iapd.T1), 10)
+		tx.T2 = strconv.FormatUint(uint64(iapd.T2), 10)
+		if len(iapd.Prefixes) > 0 {
+			prefix := iapd.Prefixes[0]
+			tx.Prefix = prefix.Prefix.String()
+			tx.PreferredLifetime = strconv.FormatUint(uint64(prefix.PreferredLifetime), 10)
+			tx.ValidLifetime = strconv.FormatUint(uint64(prefix.ValidLifetime), 10)
+			if prefix.PreferredLifetime == 0 && prefix.ValidLifetime == 0 && summary.MessageType != MessageRelease {
+				tx.Warning = "zero IA Prefix lifetimes"
+			}
+		}
+		if iapd.T1 == 0 && iapd.T2 == 0 && summary.MessageType != MessageRelease {
+			tx.Warning = firstNonEmpty(tx.Warning, "zero IA_PD T1/T2")
+		}
+	}
+	transactions := append([]routerstate.PDDHCP6Transaction{tx}, lease.Transactions...)
+	if len(transactions) > 20 {
+		transactions = transactions[:20]
+	}
+	lease.Transactions = transactions
+	return lease
 }
 
 func activeMessageUsesServerID(messageType uint8) bool {

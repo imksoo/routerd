@@ -185,6 +185,13 @@ func TestControllerSendRequestUpdatesLease(t *testing.T) {
 	if lease.PriorPrefix != "2001:db8:1200:1240::/60" || lease.LastRequestAt != now.Format(time.RFC3339) {
 		t.Fatalf("lease = %+v", lease)
 	}
+	if len(lease.Transactions) != 1 {
+		t.Fatalf("transactions = %+v", lease.Transactions)
+	}
+	tx := lease.Transactions[0]
+	if tx.MessageType != "Request" || tx.TransactionID != "010203" || tx.Prefix != "2001:db8:1200:1240::/60" || tx.ValidLifetime != "14400" {
+		t.Fatalf("transaction = %+v", tx)
+	}
 }
 
 func TestControllerSendSolicitAllowsNoPrefixAndAddsReconfigureAccept(t *testing.T) {
@@ -223,6 +230,9 @@ func TestControllerSendSolicitAllowsNoPrefixAndAddsReconfigureAccept(t *testing.
 	lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
 	if !ok || lease.LastSolicitAt != now.Format(time.RFC3339) {
 		t.Fatalf("lease = %+v ok=%v", lease, ok)
+	}
+	if len(lease.Transactions) != 1 || lease.Transactions[0].MessageType != "Solicit" || lease.Transactions[0].Prefix != "" {
+		t.Fatalf("transactions = %+v", lease.Transactions)
 	}
 }
 

@@ -606,6 +606,9 @@ How routerd behaves:
   Lab packets can override the requested lifetimes with `--t1`, `--t2`,
   `--preferred-lifetime`, and `--valid-lifetime`. Use this only to measure
   whether an upstream server honours shorter requested leases.
+  Packets sent by this active path are recorded in the resource status as
+  recent DHCPv6 transactions, including message type, transaction ID, IAID,
+  prefix, T1/T2, IA Prefix lifetimes, and Reconfigure Accept.
 - On FreeBSD with KAME `dhcp6c`, routerd manages `/var/db/dhcp6c_duid` for
   NTT profiles whose effective DUID type is `link-layer`. If the existing file
   differs from the desired DUID, routerd backs it up as `.bak.<timestamp>` and

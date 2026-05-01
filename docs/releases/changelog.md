@@ -20,6 +20,10 @@ behavior changes and new resource shapes as the model takes shape.
   `request`, `renew`, and `release`. Solicit can be sent without a prior
   prefix or server identifier; Rebind omits Server Identifier while preserving
   non-zero IA_PD lifetimes.
+- DHCPv6 active-control packets sent by routerd are now summarized into
+  `IPv6PrefixDelegation` status as recent transactions so operators can see
+  exactly which message, transaction ID, IAID, lifetimes, and warning markers
+  were used.
 - Breaking: routerd now uses `apply` as the user-facing verb. The old
   `reconcile` CLI and control API actions were replaced by `routerd apply`,
   `routerctl apply`, and `/apply`; the YAML `spec.reconcile` policy name stays

@@ -1129,6 +1129,29 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 		} else {
 			fmt.Fprintf(w, "HGW hung suspected:\tno\n")
 		}
+		if len(lease.Transactions) > 0 {
+			fmt.Fprintln(w, "Recent DHCPv6 transactions:")
+			limit := len(lease.Transactions)
+			if limit > 5 {
+				limit = 5
+			}
+			for _, tx := range lease.Transactions[:limit] {
+				fmt.Fprintf(w, "  %s\t%s\t%s\txid=%s\tiaid=%s\tprefix=%s\tt1=%s\tt2=%s\tpl=%s\tvl=%s\treconf=%s\twarning=%s\n",
+					displayCell(tx.ObservedAt),
+					displayCell(tx.Direction),
+					displayCell(tx.MessageType),
+					displayCell(tx.TransactionID),
+					displayCell(tx.IAID),
+					displayCell(tx.Prefix),
+					displayCell(tx.T1),
+					displayCell(tx.T2),
+					displayCell(tx.PreferredLifetime),
+					displayCell(tx.ValidLifetime),
+					displayCell(tx.ReconfigureAccept),
+					displayCell(tx.Warning),
+				)
+			}
+		}
 		return
 	}
 	observable := false
