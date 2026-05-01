@@ -16,6 +16,60 @@ import (
 	routerstate "routerd/pkg/state"
 )
 
+func TestApplyFilesReportsCreatedAndChanged(t *testing.T) {
+	dir := t.TempDir()
+	netdevPath := filepath.Join(dir, "10-routerd-vxlan100.netdev")
+	dropinPath := filepath.Join(dir, "ens18.network.d", "90-routerd.conf")
+	netdevData := []byte("[NetDev]\nName=vxlan100\nKind=vxlan\n")
+	dropinData := []byte("[Network]\nDHCP=yes\n")
+
+	if err := os.MkdirAll(filepath.Dir(dropinPath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(dropinPath, dropinData, 0644); err != nil {
+		t.Fatalf("seed dropin: %v", err)
+	}
+
+	changed, created, err := applyFiles([]render.File{
+		{Path: netdevPath, Data: netdevData},
+		{Path: dropinPath, Data: dropinData},
+	})
+	if err != nil {
+		t.Fatalf("applyFiles: %v", err)
+	}
+	if len(changed) != 1 || changed[0] != netdevPath {
+		t.Fatalf("changed = %v, want [%s]", changed, netdevPath)
+	}
+	if len(created) != 1 || created[0] != netdevPath {
+		t.Fatalf("created = %v, want [%s]", created, netdevPath)
+	}
+
+	changed, created, err = applyFiles([]render.File{
+		{Path: netdevPath, Data: append(netdevData, '\n')},
+	})
+	if err != nil {
+		t.Fatalf("applyFiles second call: %v", err)
+	}
+	if len(changed) != 1 || changed[0] != netdevPath {
+		t.Fatalf("second call changed = %v", changed)
+	}
+	if len(created) != 0 {
+		t.Fatalf("second call created = %v, want none", created)
+	}
+}
+
+func TestHasNewNetdevFiles(t *testing.T) {
+	if !hasNewNetdevFiles([]string{"/etc/systemd/network/10-vxlan.netdev"}) {
+		t.Fatal("expected new .netdev to be detected")
+	}
+	if hasNewNetdevFiles([]string{"/etc/systemd/network/10-vxlan.network"}) {
+		t.Fatal("plain .network should not trigger new-netdev path")
+	}
+	if hasNewNetdevFiles(nil) {
+		t.Fatal("nil should not trigger")
+	}
+}
+
 func TestApplyNetworkConfigSkipsUnchangedFiles(t *testing.T) {
 	dir := t.TempDir()
 	netplanPath := filepath.Join(dir, "netplan", "90-routerd.yaml")

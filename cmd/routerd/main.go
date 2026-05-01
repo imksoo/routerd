@@ -3344,7 +3344,7 @@ func ipv4ReversePathFilterValue(mode string) (string, error) {
 }
 
 func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []render.File) ([]string, error) {
-	changedNetworkdFiles, err := applyFiles(networkdFiles)
+	changedNetworkdFiles, createdNetworkdFiles, err := applyFiles(networkdFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -3368,6 +3368,10 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 			return nil, err
 		}
 		if err := runLogged("netplan", "apply"); err != nil {
+			return nil, err
+		}
+	} else if hasNewNetdevFiles(createdNetworkdFiles) {
+		if err := runLogged("systemctl", "restart", "systemd-networkd"); err != nil {
 			return nil, err
 		}
 	} else {
@@ -6122,21 +6126,27 @@ func containsSystemdUnit(paths []string) bool {
 	return false
 }
 
-func applyFiles(files []render.File) ([]string, error) {
-	var changedFiles []string
+func applyFiles(files []render.File) (changed, created []string, err error) {
 	for _, file := range files {
-		if err := os.MkdirAll(filepathDir(file.Path), 0755); err != nil {
-			return nil, fmt.Errorf("create directory for %s: %w", file.Path, err)
+		if mkErr := os.MkdirAll(filepathDir(file.Path), 0755); mkErr != nil {
+			return nil, nil, fmt.Errorf("create directory for %s: %w", file.Path, mkErr)
 		}
-		changed, err := writeFileIfChanged(file.Path, file.Data, 0644)
-		if err != nil {
-			return nil, fmt.Errorf("write %s: %w", file.Path, err)
+		existed := false
+		if _, statErr := os.Stat(file.Path); statErr == nil {
+			existed = true
 		}
-		if changed {
-			changedFiles = append(changedFiles, file.Path)
+		didChange, writeErr := writeFileIfChanged(file.Path, file.Data, 0644)
+		if writeErr != nil {
+			return nil, nil, fmt.Errorf("write %s: %w", file.Path, writeErr)
+		}
+		if didChange {
+			changed = append(changed, file.Path)
+			if !existed {
+				created = append(created, file.Path)
+			}
 		}
 	}
-	return changedFiles, nil
+	return changed, created, nil
 }
 
 func filepathDir(path string) string {
@@ -6177,6 +6187,15 @@ func writeFileIfChanged(path string, data []byte, perm os.FileMode) (bool, error
 func hasNetworkdUnitFiles(paths []string) bool {
 	for _, path := range paths {
 		if strings.HasSuffix(path, ".netdev") || (strings.HasSuffix(path, ".network") && !strings.Contains(path, ".network.d/")) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNewNetdevFiles(paths []string) bool {
+	for _, path := range paths {
+		if strings.HasSuffix(path, ".netdev") {
 			return true
 		}
 	}
