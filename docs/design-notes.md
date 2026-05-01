@@ -682,7 +682,9 @@ Scope: finish the work started under 5.2 so the active controller is observable
 and self-driving end-to-end without manual operator commands.
 
 - Implement the RA listener that records `wanObserved.*` and the derived
-  Server Identifier into `IPv6PrefixDelegation/<name>` status.
+  Server Identifier into `IPv6PrefixDelegation/<name>` status. Linux uses the
+  raw ICMPv6 listener; FreeBSD uses the same BPF capture path as the DHCPv6
+  recorder.
 - Implement the dhcp6c hook (or equivalent listener) that records each
   Reply into `lease.*` and emits a corresponding `events` row.
 - Implement hung detection: T1 boundary plus configurable grace seconds

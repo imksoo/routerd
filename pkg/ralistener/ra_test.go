@@ -1,6 +1,7 @@
 package ralistener
 
 import (
+	"encoding/binary"
 	"net"
 	"testing"
 	"time"
@@ -42,6 +43,20 @@ func TestParseRouterAdvertisement(t *testing.T) {
 	}
 	if !obs.ObservedAt.Equal(now) {
 		t.Fatalf("observedAt = %s, want %s", obs.ObservedAt, now)
+	}
+}
+
+func TestICMPv6RAPayloadFromEthernet(t *testing.T) {
+	frame := ethernetIPv6RAFrame(routerAdvertisementFixture())
+	payload, addr, ok := ICMPv6RAPayloadFromEthernet(frame)
+	if !ok {
+		t.Fatal("expected RA frame to parse")
+	}
+	if len(payload) != len(routerAdvertisementFixture()) || payload[0] != icmpv6RouterAdvertisement {
+		t.Fatalf("payload = %x", payload)
+	}
+	if got, want := addr.String(), "[fe80::1eb1:7fff:fe73:76d8]:0"; got != want {
+		t.Fatalf("addr = %s, want %s", got, want)
 	}
 }
 
@@ -90,4 +105,20 @@ func routerAdvertisementFixture() []byte {
 		0, 0, 0, 0, 0, 0, 0, 0,
 	}
 	return p
+}
+
+func ethernetIPv6RAFrame(payload []byte) []byte {
+	frame := make([]byte, 14+40+len(payload))
+	copy(frame[0:6], []byte{0x33, 0x33, 0x00, 0x00, 0x00, 0x01})
+	copy(frame[6:12], []byte{0x1c, 0xb1, 0x7f, 0x73, 0x76, 0xd8})
+	binary.BigEndian.PutUint16(frame[12:14], etherTypeIPv6)
+	ip := frame[14 : 14+40]
+	ip[0] = 0x60
+	binary.BigEndian.PutUint16(ip[4:6], uint16(len(payload)))
+	ip[6] = ipProtocolICMPv6
+	ip[7] = 255
+	copy(ip[8:24], net.ParseIP("fe80::1eb1:7fff:fe73:76d8").To16())
+	copy(ip[24:40], net.ParseIP("ff02::1").To16())
+	copy(frame[14+40:], payload)
+	return frame
 }

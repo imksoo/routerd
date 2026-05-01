@@ -2495,7 +2495,26 @@ func startRAObservation(stop <-chan struct{}, router *api.Router, statePath stri
 		logger.Emit(eventlog.LevelWarning, "ra", "RA observation disabled for multiple IPv6PrefixDelegation resources until interface-scoped packet info is implemented", map[string]string{"resources": strings.Join(pds, ",")})
 		return
 	}
-	conn, err := net.ListenPacket("ip6:ipv6-icmp", "::")
+	aliases, err := interfaceAliases(router)
+	if err != nil {
+		logger.Emit(eventlog.LevelWarning, "ra", "RA observation could not resolve interfaces", map[string]string{"error": err.Error()})
+		return
+	}
+	resourceName := pds[0]
+	ifname := ""
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "IPv6PrefixDelegation" || res.Metadata.Name != resourceName {
+			continue
+		}
+		spec, specErr := res.IPv6PrefixDelegationSpec()
+		if specErr != nil {
+			logger.Emit(eventlog.LevelWarning, "ra", "RA observation skipped invalid resource", map[string]string{"resource": resourceName, "error": specErr.Error()})
+			return
+		}
+		ifname = aliases[spec.Interface]
+		break
+	}
+	conn, err := ralistener.NewPacketConn(ifname)
 	if err != nil {
 		logger.Emit(eventlog.LevelWarning, "ra", "RA observation listener could not start", map[string]string{"error": err.Error()})
 		return
@@ -2506,7 +2525,6 @@ func startRAObservation(stop <-chan struct{}, router *api.Router, statePath stri
 		cancel()
 		_ = conn.Close()
 	}()
-	resourceName := pds[0]
 	listener := ralistener.Listener{Conn: conn}
 	go func() {
 		err := listener.Run(ctx, func(obs ralistener.Observation) {

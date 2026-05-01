@@ -30,6 +30,8 @@ behavior changes and new resource shapes as the model takes shape.
   observed transactions into the same status history.
 - The passive DHCPv6 packet recorder now has a FreeBSD BPF backend, so
   FreeBSD routers can record DHCPv6 transactions without binding UDP 546/547.
+- WAN RA observation now uses the FreeBSD BPF backend as well, allowing
+  FreeBSD routers to populate `wanObserved.*` and derived HGW Server ID state.
 - Linux NTT-profile `IPv6PrefixDelegation` now defaults to `client: dhcpcd`,
   including on NixOS. `client: dhcp6c` remains a supported explicit fallback
   for migration and controlled comparison.

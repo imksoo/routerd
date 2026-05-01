@@ -2,6 +2,7 @@ package ralistener
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 )
 
 const (
+	etherTypeIPv6             = 0x86dd
+	ipProtocolICMPv6          = 58
 	icmpv6RouterAdvertisement = 134
 	ndpOptionSourceLLA        = 1
 	ndpOptionPrefixInfo       = 3
@@ -135,6 +138,33 @@ func Parse(packet []byte, addr net.Addr, observedAt time.Time) (Observation, err
 		return Observation{}, fmt.Errorf("router advertisement has no usable source identity")
 	}
 	return obs, nil
+}
+
+func ICMPv6RAPayloadFromEthernet(frame []byte) ([]byte, net.Addr, bool) {
+	if len(frame) < 14+40+16 {
+		return nil, nil, false
+	}
+	if binary.BigEndian.Uint16(frame[12:14]) != etherTypeIPv6 {
+		return nil, nil, false
+	}
+	ip := frame[14 : 14+40]
+	if ip[0]>>4 != 6 || ip[6] != ipProtocolICMPv6 {
+		return nil, nil, false
+	}
+	payloadLen := int(binary.BigEndian.Uint16(ip[4:6]))
+	payloadStart := 14 + 40
+	if payloadLen < 16 || len(frame) < payloadStart+payloadLen {
+		return nil, nil, false
+	}
+	payload := frame[payloadStart : payloadStart+payloadLen]
+	if payload[0] != icmpv6RouterAdvertisement {
+		return nil, nil, false
+	}
+	source, ok := netip.AddrFromSlice(ip[8:24])
+	if !ok {
+		return nil, nil, false
+	}
+	return append([]byte(nil), payload...), &net.UDPAddr{IP: append(net.IP(nil), source.AsSlice()...)}, true
 }
 
 func sourceAddr(addr net.Addr) (string, bool) {
