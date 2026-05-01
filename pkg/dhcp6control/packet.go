@@ -60,6 +60,11 @@ type PacketSpec struct {
 	ElapsedTime       uint16
 	ORO               []uint16
 	ReconfigureAccept bool
+
+	// HopLimit overrides the IPv6 hop limit field. When zero (the default)
+	// BuildEthernetIPv6UDP uses 255. Lab work needs to vary this value to
+	// reproduce reference clients (IX2215 uses 64, dhcpcd uses 1).
+	HopLimit uint8
 }
 
 type MessageSummary struct {
@@ -284,14 +289,17 @@ func BuildEthernetIPv6UDP(spec PacketSpec) ([]byte, error) {
 	ip[0] = 0x60
 	binary.BigEndian.PutUint16(ip[4:6], uint16(ipPayloadLen))
 	ip[6] = ipProtocolUDP
-	// Hop limit 255 (the IPv6 maximum) avoids the failure mode that hit
-	// routerd in this lab: hop limit 1 does not traverse Proxmox VE
-	// virtual-network paths, so the multicast Solicit/Request never reach
-	// the PR-400NE HGW. The working IX2215 reference packet captured on
-	// 2026-05-01 used hop limit 64, which is also enough; 255 is chosen
-	// here because DHCPv6 is link-scoped via the multicast destination
-	// (ff02::1:2) and there is no benefit in capping below the maximum.
-	ip[7] = 255
+	hop := spec.HopLimit
+	if hop == 0 {
+		// Default 255 (IPv6 max) avoids the failure mode that hit routerd
+		// in this lab: hop limit 1 does not traverse Proxmox VE virtual
+		// network paths, so the multicast Solicit/Request never reaches
+		// the PR-400NE HGW. The working IX2215 reference packet captured
+		// on 2026-05-01 used hop limit 64; both reach the HGW. PacketSpec
+		// can override this for ablation tests against the reference.
+		hop = 255
+	}
+	ip[7] = hop
 	copy(ip[8:24], spec.SourceIP.AsSlice())
 	copy(ip[24:40], spec.DestinationIP.AsSlice())
 

@@ -264,6 +264,7 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	destinationIPOverride := fs.String("dst-ip", "ff02::1:2", "destination IPv6 address")
 	destinationMACOverride := fs.String("dst-mac", "", "destination Ethernet MAC override")
 	iaidOverride := fs.String("iaid", "", "override IA_PD IAID (decimal or 0xHEX) for active DHCPv6-PD lab packets")
+	hopLimitOverride := fs.Uint("hop-limit", 0, "override IPv6 hop limit (1-255) for active DHCPv6-PD lab packets; 0 keeps the routerd default of 255")
 	t1Override := fs.Uint("t1", 0, "override IA_PD T1 seconds for active DHCPv6-PD lab packets")
 	t2Override := fs.Uint("t2", 0, "override IA_PD T2 seconds for active DHCPv6-PD lab packets")
 	preferredLifetimeOverride := fs.Uint("preferred-lifetime", 0, "override IA Prefix preferred lifetime seconds for active DHCPv6-PD lab packets")
@@ -292,6 +293,12 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 			return fmt.Errorf("parse --iaid %q: %w", *iaidOverride, err)
 		}
 		input.IAID = uint32(parsed)
+	}
+	if *hopLimitOverride > 0 {
+		if *hopLimitOverride > 255 {
+			return fmt.Errorf("--hop-limit %d out of range 1-255", *hopLimitOverride)
+		}
+		input.HopLimit = uint8(*hopLimitOverride)
 	}
 	if err := setDHCP6LifetimeOverrides(&input, *t1Override, *t2Override, *preferredLifetimeOverride, *validLifetimeOverride); err != nil {
 		return err

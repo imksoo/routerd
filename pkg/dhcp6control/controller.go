@@ -53,6 +53,7 @@ type SendInput struct {
 	T2                uint32
 	PreferredLifetime uint32
 	ValidLifetime     uint32
+	HopLimit          uint8
 }
 
 func (c Controller) SendRequest(ctx context.Context, store routerstate.Store, in SendInput) error {
@@ -153,6 +154,7 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 		// LAN DNS is served by routerd's dnsmasq stack, not by relayed
 		// HGW DHCPv6 options, so we don't need to ask for option 23.
 		ReconfigureAccept: reconfigureAccept,
+		HopLimit:          in.HopLimit,
 	}
 	trid, err := c.transactionID()
 	if err != nil {
