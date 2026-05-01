@@ -263,6 +263,7 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	serverDUIDOverride := fs.String("server-duid", "", "DHCPv6 server DUID override as hex")
 	destinationIPOverride := fs.String("dst-ip", "ff02::1:2", "destination IPv6 address")
 	destinationMACOverride := fs.String("dst-mac", "", "destination Ethernet MAC override")
+	iaidOverride := fs.String("iaid", "", "override IA_PD IAID (decimal or 0xHEX) for active DHCPv6-PD lab packets")
 	t1Override := fs.Uint("t1", 0, "override IA_PD T1 seconds for active DHCPv6-PD lab packets")
 	t2Override := fs.Uint("t2", 0, "override IA_PD T2 seconds for active DHCPv6-PD lab packets")
 	preferredLifetimeOverride := fs.Uint("preferred-lifetime", 0, "override IA Prefix preferred lifetime seconds for active DHCPv6-PD lab packets")
@@ -284,6 +285,13 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	input, err := dhcp6SendInput(router, store, action, *resourceName, *prefixOverride, *serverDUIDOverride, *destinationIPOverride, *destinationMACOverride)
 	if err != nil {
 		return err
+	}
+	if *iaidOverride != "" {
+		parsed, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimPrefix(*iaidOverride, "0x"), "0X"), parseIAIDBase(*iaidOverride), 32)
+		if err != nil {
+			return fmt.Errorf("parse --iaid %q: %w", *iaidOverride, err)
+		}
+		input.IAID = uint32(parsed)
 	}
 	if err := setDHCP6LifetimeOverrides(&input, *t1Override, *t2Override, *preferredLifetimeOverride, *validLifetimeOverride); err != nil {
 		return err
@@ -311,6 +319,13 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "sent DHCPv6 %s for %s on %s prefix=%s iaid=%d\n", action, *resourceName, input.Identity.InterfaceName, activePrefixDisplay(input.Prefix), input.IAID)
 	return nil
+}
+
+func parseIAIDBase(value string) int {
+	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
+		return 16
+	}
+	return 10
 }
 
 func setDHCP6LifetimeOverrides(input *dhcp6control.SendInput, t1, t2, preferred, valid uint) error {
