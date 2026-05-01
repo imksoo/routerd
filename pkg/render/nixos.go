@@ -117,6 +117,7 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		}
 		for _, vxlan := range vxlans {
 			writeNixOSVXLAN(&buf, vxlan)
+			writeNixOSVXLANFDBService(&buf, vxlan)
 		}
 		for _, iface := range interfaces {
 			writeNixOSNetwork(&buf, iface)
@@ -472,9 +473,10 @@ func writeNixOSVXLAN(buf *bytes.Buffer, vxlan nixOSVXLAN) {
 	buf.WriteString("    vxlanConfig = {\n")
 	buf.WriteString("      VNI = " + strconv.Itoa(vxlan.VNI) + ";\n")
 	buf.WriteString("      Local = " + nixString(vxlan.LocalAddress) + ";\n")
+	buf.WriteString("      Independent = true;\n")
 	if vxlan.MulticastGroup != "" {
 		buf.WriteString("      Group = " + nixString(vxlan.MulticastGroup) + ";\n")
-	} else if len(vxlan.Remotes) == 1 {
+	} else if len(vxlan.Remotes) > 0 {
 		buf.WriteString("      Remote = " + nixString(vxlan.Remotes[0]) + ";\n")
 	}
 	buf.WriteString("      DestinationPort = " + strconv.Itoa(vxlan.UDPPort) + ";\n")
@@ -497,6 +499,34 @@ func writeNixOSVXLAN(buf *bytes.Buffer, vxlan nixOSVXLAN) {
 		}
 		buf.WriteString("  };\n")
 	}
+}
+
+func writeNixOSVXLANFDBService(buf *bytes.Buffer, vxlan nixOSVXLAN) {
+	if vxlan.MulticastGroup != "" || len(vxlan.Remotes) < 2 {
+		return
+	}
+	buf.WriteString("  systemd.services." + nixString("routerd-"+vxlan.IfName+"-fdb") + " = {\n")
+	buf.WriteString("    description = " + nixString("routerd VXLAN flood FDB entries for "+vxlan.IfName) + ";\n")
+	buf.WriteString("    after = [ \"systemd-networkd.service\" ];\n")
+	buf.WriteString("    wants = [ \"systemd-networkd.service\" ];\n")
+	buf.WriteString("    wantedBy = [ \"multi-user.target\" ];\n")
+	buf.WriteString("    path = [ pkgs.iproute2 ];\n")
+	buf.WriteString("    serviceConfig = {\n")
+	buf.WriteString("      Type = \"oneshot\";\n")
+	buf.WriteString("      RemainAfterExit = true;\n")
+	buf.WriteString("    };\n")
+	buf.WriteString("    script = ''\n")
+	buf.WriteString("      set -eu\n")
+	buf.WriteString("      for remote in")
+	for _, remote := range vxlan.Remotes {
+		buf.WriteString(" " + shellSingleQuote(remote))
+	}
+	buf.WriteString("; do\n")
+	buf.WriteString("        bridge fdb show dev " + shellSingleQuote(vxlan.IfName) + " | grep -F \"00:00:00:00:00:00 dst $remote\" >/dev/null || \\\n")
+	buf.WriteString("          bridge fdb append 00:00:00:00:00:00 dev " + shellSingleQuote(vxlan.IfName) + " dst \"$remote\" || true\n")
+	buf.WriteString("      done\n")
+	buf.WriteString("    '';\n")
+	buf.WriteString("  };\n")
 }
 
 func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
@@ -748,6 +778,13 @@ func effectiveNixOSIPv6PDClient(spec api.IPv6PrefixDelegationSpec) string {
 
 func nixString(value string) string {
 	return strconv.Quote(value)
+}
+
+func shellSingleQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func nixSysctlValue(value string) string {
