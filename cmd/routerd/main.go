@@ -296,6 +296,9 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	if err := setDHCP6LifetimeOverrides(&input, *t1Override, *t2Override, *preferredLifetimeOverride, *validLifetimeOverride); err != nil {
 		return err
 	}
+	if action == "request" && input.Lease.LastReplyAt == "" {
+		fmt.Fprintln(stdout, "WARNING: routerd dhcp6 request with no observed Reply will create a phantom HGW PD binding that subsequent Renew/Rebind cannot refresh on this NTT NGN HGW. Acquisition path is the OS DHCPv6 client (dhcpcd / dhcp6c) running canonical Solicit/Advertise/Request/Reply. See docs/knowledge-base/ntt-ngn-pd-acquisition.md Section B.4.")
+	}
 	controller := dhcp6control.Controller{Sender: dhcp6control.AFPacketSender{}}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
