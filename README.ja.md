@@ -112,13 +112,18 @@ make remote-install ROUTERD_OS=freebsd REMOTE_HOST=user@router.example
 リモート側の必須コマンドが揃っているかを確認するには:
 
 ```sh
-make check-remote-deps REMOTE_HOST=user@router.example
+make check-remote-deps REMOTE_HOST=user@router.example CONFIG=examples/router-lab.yaml
 ```
 
+`CONFIG` を渡すと、その設定で使うリソースに合わせて任意コマンドを確認します。
+たとえば `PPPoEInterface` があるときだけ `pppd` を求め、Linux で
+`client: dhcp6c` を明示したときだけ `wide-dhcpv6-client` を求めます。
+
 Ubuntu では、現在のソースインストールは `systemd`、`iproute2`、
-`dnsmasq`、`nftables`、`conntrack`、`jq`、`pppd` などのホスト側コマンドを
+`dnsmasq`、`nftables`、`conntrack`、`jq` などのホスト側コマンドを
 前提にします。`IPv6PrefixDelegation` で `client: dhcp6c` を使う場合は
-`wide-dhcpv6-client` も必要です。`sqlite3` は状態確認用の任意コマンドです。FreeBSD ではまだ下地段階ですが、基本のネットワーク
+`wide-dhcpv6-client`、`PPPoEInterface` を使う場合は `pppd` も必要です。
+`sqlite3` は状態確認用の任意コマンドです。FreeBSD ではまだ下地段階ですが、基本のネットワーク
 コマンドに加えて、`dnsmasq` と `dhcp6` パッケージに含まれる
 `dnsmasq`、`dhcp6c`、状態確認で使う `jq` が必要です。
 

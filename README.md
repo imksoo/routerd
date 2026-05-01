@@ -150,13 +150,19 @@ make remote-install ROUTERD_OS=freebsd REMOTE_HOST=user@router.example
 Check minimum remote host dependencies:
 
 ```sh
-make check-remote-deps REMOTE_HOST=user@router.example
+make check-remote-deps REMOTE_HOST=user@router.example CONFIG=examples/router-lab.yaml
 ```
 
+When `CONFIG` is set, optional checks follow the selected resources. For
+example, `pppd` is required only when `PPPoEInterface` is configured, and
+`wide-dhcpv6-client` is required only when the Linux fallback
+`client: dhcp6c` is selected.
+
 On Ubuntu, the current source install expects host tools such as `systemd`,
-`iproute2`, `dnsmasq`, `nftables`, `conntrack`, `jq`, and `pppd`.
+`iproute2`, `dnsmasq`, `nftables`, `conntrack`, and `jq`.
 Install `wide-dhcpv6-client` only when `IPv6PrefixDelegation` explicitly uses
-the Linux fallback `client: dhcp6c`.
+the Linux fallback `client: dhcp6c`; install `pppd` only when using
+`PPPoEInterface`.
 `sqlite3` is optional for manual state inspection. On FreeBSD, the limited groundwork
 expects base networking tools plus the `dnsmasq` and `dhcp6` packages so
 `dnsmasq` and `dhcp6c` are available, plus `jq` for local status inspection

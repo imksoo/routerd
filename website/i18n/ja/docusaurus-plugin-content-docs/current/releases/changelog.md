@@ -16,6 +16,10 @@ behavior changes and new resource shapes as the model takes shape.
 - Documentation now clarifies that `acquisitionStrategy: hybrid` observes the
   OS client's first Solicit path and only escalates to routerd's raw
   Request-with-claim helper after the retry budget is exhausted.
+- `make check-remote-deps` now uses `CONFIG` or the remote router.yaml to make
+  optional dependency checks resource-aware, so `pppd` is required only when a
+  `PPPoEInterface` is configured and Linux `dhcp6c` is required only when that
+  fallback client is selected.
 - `routerctl describe ipv6pd/<name>` now shows DHCPv6 identity, last
   Solicit/Request/Renew/Rebind/Release timestamps, T1/T2, preferred and valid
   lifetimes, and calculated lease deadlines.
