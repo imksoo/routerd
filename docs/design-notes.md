@@ -592,13 +592,17 @@ upstream PD ownership from downstream PD service ownership.
 
 ### 5.7 Medium: Finish the NixOS DHCPv6-PD Client Path
 
+assert: Resolved by Section 5.8. NixOS now uses the Linux NTT/HGW default
+client path, `dhcpcd`, when `IPv6PrefixDelegation.spec.client` is omitted.
+The notes below remain as historical context for why systemd-networkd and
+WIDE `dhcp6c` were not selected as the default NixOS path.
+
 assert: NixOS remains a useful portability target, but it should not block the
 critical Ubuntu/FreeBSD replacement path. The lack of `wide-dhcpv6` in nixpkgs
 means routerd needs either a derivation or a documented supported client.
 
-Completion condition: router02 can use the NTT/HGW PD profile without
-systemd-networkd PD, using a reproducible Nix derivation or a documented
-supported alternative that preserves IA_PD lifetimes.
+Completion condition: closed. router02 can use the NTT/HGW PD profile without
+systemd-networkd PD through the documented `dhcpcd` path.
 
 ### 5.8 High: Keep a multi-client WAN strategy
 
