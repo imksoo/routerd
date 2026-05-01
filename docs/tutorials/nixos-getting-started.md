@@ -207,6 +207,45 @@ settings live under `NixOSHost.spec.routerdService` instead. That path is
 intended for lab hosts and source-installed binaries; the flake module is
 still the cleaner long-term NixOS integration.
 
+### 3.4 Firewall coexistence
+
+NixOS keeps `networking.firewall.enable = true` by default. That firewall
+is implemented as a separate iptables-nft chain (`nixos-fw`) and runs
+**alongside** the nftables tables that routerd renders (`inet
+routerd_filter`, `bridge routerd_l2_filter`, etc.). routerd does not
+disable or replace the NixOS firewall.
+
+The practical consequence: when routerd renders an accept rule in
+`routerd_filter`, packets must still pass `nixos-fw`. If you adopt a
+resource that listens on a port the NixOS firewall does not allow (a
+common case: VXLAN underlay UDP/4789, or any custom service exposed to
+LAN), traffic is dropped at the NixOS layer before it reaches routerd's
+chain.
+
+Allow the same ports in `configuration.nix`:
+
+```nix
+networking.firewall.allowedUDPPorts = [ 4789 ];   # VXLAN underlay
+networking.firewall.allowedTCPPorts = [ 22 ];     # if you expose ssh
+networking.firewall.trustedInterfaces = [ "br-home" ]; # bridges/LANs
+```
+
+If a routerd-managed bridge or LAN interface should be fully trusted,
+adding it to `trustedInterfaces` is usually the cleanest path: NixOS
+skips its firewall for that interface and lets routerd's policy decide.
+
+To diagnose suspected NixOS firewall drops:
+
+```bash
+sudo iptables -L nixos-fw -n -v --line-numbers
+sudo nft list ruleset                # routerd tables only
+```
+
+A symptom worth memorising: `tcpdump` on the underlay shows the
+expected packet, the corresponding kernel device's RX counter stays at
+zero, and routerd's input-chain counter does not advance either —
+the drop happened in `nixos-fw` before the packet reached routerd.
+
 ## Common pitfalls
 
 - **Flakes not enabled.** If `nix run github:...` errors on
@@ -216,6 +255,8 @@ still the cleaner long-term NixOS integration.
   imported module instead.
 - **Mixing the Ubuntu source install with the NixOS module on the same
   host.** Pick one. On NixOS, prefer the module.
+- **Forgetting that `networking.firewall` runs in parallel with
+  routerd.** See section 3.4. routerd does not disable it.
 - **Expecting full Nix-native rendering for every resource.** The
   current renderer covers host settings, dependency packages, and basic
   systemd-networkd `.network` declarations. Other resource kinds run

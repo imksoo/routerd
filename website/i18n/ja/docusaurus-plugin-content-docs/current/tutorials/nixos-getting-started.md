@@ -210,6 +210,45 @@ sudo nixos-rebuild switch
 です。NixOS として長く運用するなら、最終的には flake モジュールに寄せる
 方が自然です。
 
+### 3.4 ファイアウォールとの共存
+
+NixOS は既定で `networking.firewall.enable = true` のままです。これは
+iptables-nft の独立 chain (`nixos-fw`) として実装されており、routerd が
+出力する nftables テーブル (`inet routerd_filter`、`bridge
+routerd_l2_filter` など) と **並行** に動作します。routerd は NixOS
+firewall を無効化したり置き換えたりはしません。
+
+実用上の影響: routerd の `routerd_filter` で accept ルールを書いても、
+パケットは先に `nixos-fw` を通過する必要があります。NixOS firewall が
+許可していないポートに着信したリソース (代表例: VXLAN underlay の
+UDP/4789、LAN に公開する独自サービス) は、routerd の chain に届く前に
+NixOS 側で drop されます。
+
+`configuration.nix` で同じポートを許可してください:
+
+```nix
+networking.firewall.allowedUDPPorts = [ 4789 ];   # VXLAN underlay
+networking.firewall.allowedTCPPorts = [ 22 ];     # SSH を公開する場合
+networking.firewall.trustedInterfaces = [ "br-home" ]; # bridge / LAN
+```
+
+routerd 管理の bridge / LAN を全面的に信頼してよい場合は、
+`trustedInterfaces` への追加が一番すっきりします。NixOS はその
+インターフェイスでは firewall をスキップし、routerd のポリシーが
+そのまま効きます。
+
+NixOS firewall での drop を疑うときの確認手順:
+
+```bash
+sudo iptables -L nixos-fw -n -v --line-numbers
+sudo nft list ruleset                # routerd 側のテーブルだけ
+```
+
+覚えておくと便利な症状: `tcpdump` で underlay にパケットが到着して
+見えるのに、対応する kernel デバイスの RX カウンタが 0 のまま、
+かつ routerd 側 input chain のカウンタも増えない場合は、`nixos-fw`
+で drop されている可能性が高いです。
+
 ## つまずきやすいところ
 
 - **Flakes が無効。** `nix run github:...` が `experimental-features`
@@ -220,6 +259,8 @@ sudo nixos-rebuild switch
 - **Ubuntu のソースインストールと NixOS モジュールを同じホストで
   併用する。** どちらか一方に統一してください。NixOS ではモジュール側
   を推奨します。
+- **`networking.firewall` が routerd と並行で動いていることを忘れる。**
+  3.4 を参照してください。routerd は無効化しません。
 - **すべてのリソースが Nix ネイティブで生成されると期待する。** 現状
   のレンダラはホスト設定、依存パッケージ、基本的な systemd-networkd
   の `.network` 宣言までです。それ以外のリソース種別は実行時の
