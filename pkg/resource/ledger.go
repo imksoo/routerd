@@ -178,6 +178,7 @@ CREATE TABLE IF NOT EXISTS objects (
   uid TEXT,
   resource_version INTEGER NOT NULL DEFAULT 1,
   observed_generation INTEGER,
+  last_applied_path TEXT,
   status TEXT,
   created_at TEXT NOT NULL,
   modified_at TEXT NOT NULL,
@@ -207,6 +208,15 @@ CREATE TABLE IF NOT EXISTS access_logs (
 `)
 	if err != nil {
 		return err
+	}
+	hasLastAppliedPath, err := l.tableHasColumn("objects", "last_applied_path")
+	if err != nil {
+		return err
+	}
+	if !hasLastAppliedPath {
+		if _, err := l.db.Exec(`ALTER TABLE objects ADD COLUMN last_applied_path TEXT`); err != nil {
+			return err
+		}
 	}
 	return l.migrateLegacyArtifactsTable()
 }

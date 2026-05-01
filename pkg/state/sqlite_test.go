@@ -108,6 +108,75 @@ INSERT INTO state(key,value,status,reason,since,updated_at) VALUES('ipv6PrefixDe
 	}
 }
 
+func TestSQLiteStoreAddsLastAppliedPathColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open fixture db: %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE objects (
+  api_version TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  uid TEXT,
+  resource_version INTEGER NOT NULL DEFAULT 1,
+  observed_generation INTEGER,
+  status TEXT,
+  created_at TEXT NOT NULL,
+  modified_at TEXT NOT NULL,
+  PRIMARY KEY(api_version, kind, name)
+);
+INSERT INTO objects(api_version,kind,name,uid,status,created_at,modified_at)
+VALUES('net.routerd.net/v1alpha1','IPv6PrefixDelegation','wan-pd','net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd','{}','2026-05-01T00:00:00Z','2026-05-01T00:00:00Z');`)
+	if err != nil {
+		t.Fatalf("seed fixture db: %v", err)
+	}
+	_ = db.Close()
+
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("reopen fixture db: %v", err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`PRAGMA table_info(objects)`)
+	if err != nil {
+		t.Fatalf("table info: %v", err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan column: %v", err)
+		}
+		if name == "last_applied_path" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("scan columns: %v", err)
+	}
+	if !found {
+		t.Fatal("objects.last_applied_path column was not added")
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM objects WHERE api_version = 'net.routerd.net/v1alpha1' AND kind = 'IPv6PrefixDelegation' AND name = 'wan-pd'`).Scan(&count); err != nil {
+		t.Fatalf("count existing object: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("existing objects count = %d, want 1", count)
+	}
+}
+
 func TestSQLiteStoreGenerationsAndEvents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := OpenSQLite(path)

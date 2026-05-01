@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS objects (
   uid TEXT,
   resource_version INTEGER NOT NULL DEFAULT 1,
   observed_generation INTEGER,
+  last_applied_path TEXT,
   status TEXT,
   created_at TEXT NOT NULL,
   modified_at TEXT NOT NULL,
@@ -108,8 +109,24 @@ CREATE TABLE IF NOT EXISTS access_logs (
 	if err := s.migrateLegacyStateTable(); err != nil {
 		return err
 	}
+	if err := s.ensureObjectColumns(); err != nil {
+		return err
+	}
 	if err := s.ensureArtifactsTable(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ensureObjectColumns() error {
+	hasLastAppliedPath, err := s.tableHasColumn("objects", "last_applied_path")
+	if err != nil {
+		return err
+	}
+	if !hasLastAppliedPath {
+		if _, err := s.db.Exec(`ALTER TABLE objects ADD COLUMN last_applied_path TEXT`); err != nil {
+			return err
+		}
 	}
 	return nil
 }

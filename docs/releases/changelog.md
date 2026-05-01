@@ -9,6 +9,9 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- SQLite state objects now include `last_applied_path` metadata. This prepares
+  routerd for kubectl-style additive apply, prune, and explicit delete
+  workflows without changing current apply behavior yet.
 - `routerd serve` now observes WAN Router Advertisements for
   `IPv6PrefixDelegation`, accepts DHCPv6 client hook events over the local
   control API, tracks acquisition phase and stalled-renewal suspicion, and
