@@ -2,7 +2,9 @@ package state
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type PDLease struct {
@@ -102,6 +104,31 @@ func DecodePDLease(value string) (PDLease, bool) {
 
 func PDLeaseFromStore(store Store, base string) (PDLease, bool) {
 	return DecodePDLease(store.Get(base + ".lease").Value)
+}
+
+// HasFreshTransactionEvidence reports whether the lease has a recent
+// DHCPv6 Reply with a positive valid lifetime that has not yet expired
+// at the supplied instant. A lease with a CurrentPrefix but no transaction
+// evidence is "drifted" — typically the local LAN address has outlived
+// its upstream PD binding — and must NOT be treated as an authoritative
+// IPv6 service signal for downstream clients.
+func (l PDLease) HasFreshTransactionEvidence(now time.Time) bool {
+	if l.LastReplyAt == "" {
+		return false
+	}
+	if l.VLTime == "" {
+		return false
+	}
+	vl, err := strconv.Atoi(l.VLTime)
+	if err != nil || vl <= 0 {
+		return false
+	}
+	parsed, err := time.Parse(time.RFC3339, l.LastReplyAt)
+	if err != nil {
+		return false
+	}
+	expires := parsed.Add(time.Duration(vl) * time.Second)
+	return now.Before(expires)
 }
 
 func ClearPDLeaseObservedIdentity(lease PDLease) (PDLease, bool) {

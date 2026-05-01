@@ -1782,8 +1782,22 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			continue
 		}
 		observedAt := store.Now().Format(time.RFC3339)
-		lease.CurrentPrefix = observedPrefix
 		previousPrefix := lease.LastPrefix
+		// Stale-detection: a local prefix is observable but no DHCPv6 Reply
+		// evidence backs it. Treat as not-observable so dnsmasq, RA, and the
+		// LAN delegated-address rendering all stop advertising broken IPv6
+		// to downstream clients. The local LastPrefix history is preserved.
+		if !lease.HasFreshTransactionEvidence(store.Now()) {
+			if recorder, ok := store.(routerstate.EventRecorder); ok {
+				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixStale", "delegated IPv6 prefix "+observedPrefix+" lacks recent DHCPv6 Reply / valid lifetime; not advertising on LAN")
+			}
+			lease.CurrentPrefix = ""
+			lease.LastPrefix = observedPrefix
+			lease.LastObservedAt = observedAt
+			changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": stale delegated prefix without transaction evidence")})
+			continue
+		}
+		lease.CurrentPrefix = observedPrefix
 		lease.LastPrefix = observedPrefix
 		lease.LastObservedAt = observedAt
 		if recorder, ok := store.(routerstate.EventRecorder); ok && previousPrefix != observedPrefix {
