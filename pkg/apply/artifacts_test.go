@@ -41,6 +41,8 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "Zone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.ZoneSpec{}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.FirewallPolicySpec{}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ExposeService"}, Metadata: api.ObjectMeta{Name: "https"}, Spec: api.ExposeServiceSpec{}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br-vxlan-test"}, Spec: api.BridgeSpec{}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"}, Metadata: api.ObjectMeta{Name: "lab"}, Spec: api.VXLANSegmentSpec{IfName: "vxlan100", VNI: 100, LocalAddress: "192.0.2.10", UnderlayInterface: "wan", Bridge: "br-vxlan-test"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"}, Metadata: api.ObjectMeta{Name: "hostname"}, Spec: api.HostnameSpec{Hostname: "router.example"}},
 	}
 
@@ -56,6 +58,32 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestVXLANSegmentClaimsL2FilterTable(t *testing.T) {
+	res := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"},
+		Metadata: api.ObjectMeta{Name: "lab"},
+		Spec:     api.VXLANSegmentSpec{IfName: "vxlan100", VNI: 100, LocalAddress: "192.0.2.10", UnderlayInterface: "wan"},
+	}
+	intents := resourceArtifactIntents(res, nil)
+	var hasL2Filter bool
+	for _, intent := range intents {
+		if intent.Artifact.Kind == "nft.table" && intent.Artifact.Name == "routerd_l2_filter" {
+			hasL2Filter = true
+		}
+	}
+	if !hasL2Filter {
+		t.Fatalf("VXLANSegment with default l2Filter must claim routerd_l2_filter, intents=%+v", intents)
+	}
+
+	res.Spec = api.VXLANSegmentSpec{IfName: "vxlan100", VNI: 100, LocalAddress: "192.0.2.10", UnderlayInterface: "wan", L2Filter: "none"}
+	intents = resourceArtifactIntents(res, nil)
+	for _, intent := range intents {
+		if intent.Artifact.Kind == "nft.table" && intent.Artifact.Name == "routerd_l2_filter" {
+			t.Fatalf("VXLANSegment with l2Filter=none must NOT claim routerd_l2_filter, intents=%+v", intents)
+		}
 	}
 }
 

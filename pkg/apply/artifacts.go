@@ -155,6 +155,24 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		return []resource.Intent{artifact("nft.table", "routerd_filter", resource.ActionEnsure, "nft", nil)}
 	case "ExposeService":
 		return []resource.Intent{artifact("nft.table", "routerd_dnat", resource.ActionEnsure, "nft", nil)}
+	case "VXLANSegment":
+		spec, err := res.VXLANSegmentSpec()
+		if err != nil {
+			return nil
+		}
+		ifname := defaultString(spec.IfName, res.Metadata.Name)
+		intents := []resource.Intent{artifact("net.link", ifname, resource.ActionEnsure, "platform-network", nil)}
+		if defaultString(spec.L2Filter, "default") != "none" {
+			intents = append(intents, artifact("nft.table", "routerd_l2_filter", resource.ActionEnsure, "nft", nil))
+		}
+		return intents
+	case "Bridge":
+		spec, err := res.BridgeSpec()
+		if err != nil {
+			return nil
+		}
+		ifname := defaultString(spec.IfName, res.Metadata.Name)
+		return []resource.Intent{artifact("net.link", ifname, resource.ActionEnsure, "platform-network", nil)}
 	case "Hostname":
 		spec, err := res.HostnameSpec()
 		if err != nil {
