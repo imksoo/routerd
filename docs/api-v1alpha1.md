@@ -609,6 +609,12 @@ How routerd behaves:
   Packets sent by this active path are recorded in the resource status as
   recent DHCPv6 transactions, including message type, transaction ID, IAID,
   prefix, T1/T2, IA Prefix lifetimes, and Reconfigure Accept.
+  In daemon mode, routerd also starts a passive DHCPv6 packet recorder on the
+  uplink interface for each `IPv6PrefixDelegation` resource where the platform
+  supports it. On Linux this uses AF_PACKET, so it observes UDP 546/547 frames
+  without binding those UDP ports or competing with the DHCPv6 client. Observed
+  Solicit/Advertise/Request/Renew/Rebind/Reply/Release packets are appended to
+  the same recent transaction list shown by `routerctl describe ipv6pd/<name>`.
 - On FreeBSD with KAME `dhcp6c`, routerd manages `/var/db/dhcp6c_duid` for
   NTT profiles whose effective DUID type is `link-layer`. If the existing file
   differs from the desired DUID, routerd backs it up as `.bak.<timestamp>` and

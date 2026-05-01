@@ -30,6 +30,7 @@ import (
 	"routerd/pkg/controlapi"
 	"routerd/pkg/dhcp6control"
 	"routerd/pkg/dhcp6event"
+	"routerd/pkg/dhcp6recorder"
 	"routerd/pkg/eventlog"
 	"routerd/pkg/inventory"
 	"routerd/pkg/observe"
@@ -2340,6 +2341,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	stop := make(chan struct{})
 	defer close(stop)
 	startRAObservation(stop, router, defaultStatePath, logger)
+	startDHCP6Recorder(stop, router, defaultStatePath, logger)
 	startPDHungMonitor(stop, router, defaultStatePath, 30*time.Second, 30*time.Second, logger)
 	if *observeInterval > 0 {
 		go runObserveSchedule(stop, *observeInterval, router, cache, *statusFile, logger)
@@ -2527,6 +2529,70 @@ func startRAObservation(stop <-chan struct{}, router *api.Router, statePath stri
 			logger.Emit(eventlog.LevelWarning, "ra", "RA observation listener stopped", map[string]string{"error": err.Error()})
 		}
 	}()
+}
+
+func startDHCP6Recorder(stop <-chan struct{}, router *api.Router, statePath string, logger *eventlog.Logger) {
+	aliases, err := interfaceAliases(router)
+	if err != nil {
+		logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 recorder could not resolve interfaces", map[string]string{"error": err.Error()})
+		return
+	}
+	started := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "IPv6PrefixDelegation" {
+			continue
+		}
+		spec, err := res.IPv6PrefixDelegationSpec()
+		if err != nil {
+			logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 recorder skipped invalid resource", map[string]string{"resource": res.Metadata.Name, "error": err.Error()})
+			continue
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 recorder skipped resource with unknown interface", map[string]string{"resource": res.Metadata.Name, "interface": spec.Interface})
+			continue
+		}
+		key := res.Metadata.Name + "\x00" + ifname
+		if started[key] {
+			continue
+		}
+		started[key] = true
+		source, err := dhcp6recorder.NewAFPacketSource(ifname)
+		if err != nil {
+			logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 packet recorder could not start", map[string]string{"resource": res.Metadata.Name, "interface": ifname, "error": err.Error()})
+			continue
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-stop
+			cancel()
+			_ = source.Close()
+		}()
+		resourceName := res.Metadata.Name
+		go func() {
+			err := dhcp6recorder.Run(ctx, source, func(obs dhcp6recorder.Observation) {
+				obs.Interface = ifname
+				store, loadErr := routerstate.Load(defaultString(statePath, defaultStatePath))
+				if loadErr != nil {
+					logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 transaction state load failed", map[string]string{"resource": resourceName, "error": loadErr.Error()})
+					return
+				}
+				if err := dhcp6recorder.ApplyObservation(store, resourceName, obs); err != nil {
+					logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 transaction state update failed", map[string]string{"resource": resourceName, "error": err.Error()})
+					return
+				}
+				if err := store.Save(defaultString(statePath, defaultStatePath)); err != nil {
+					logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 transaction state save failed", map[string]string{"resource": resourceName, "error": err.Error()})
+					return
+				}
+				logger.Emit(eventlog.LevelDebug, "dhcp6-recorder", "recorded DHCPv6 transaction", map[string]string{"resource": resourceName, "interface": ifname, "direction": obs.Direction})
+			})
+			if err != nil && ctx.Err() == nil {
+				logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 packet recorder stopped", map[string]string{"resource": resourceName, "interface": ifname, "error": err.Error()})
+			}
+		}()
+		logger.Emit(eventlog.LevelInfo, "dhcp6-recorder", "DHCPv6 packet recorder started", map[string]string{"resource": resourceName, "interface": ifname})
+	}
 }
 
 func startPDHungMonitor(stop <-chan struct{}, router *api.Router, statePath string, interval, grace time.Duration, logger *eventlog.Logger) {

@@ -700,6 +700,10 @@ and self-driving end-to-end without manual operator commands.
   active-control packets from the internal packet builder, then attach a
   receive-side listener so external DHCPv6 clients and HGW replies are captured
   through the same status shape.
+- The receive-side listener must remain passive. It observes link-layer frames
+  and must not bind UDP 546/547, send packets, restart clients, or mutate link
+  state. Linux uses AF_PACKET for this reason; non-Linux ports need an
+  equivalent passive capture mechanism before enabling the recorder there.
 - Documentation: capture the design and operational behavior under
   `docs/knowledge-base/ntt-ngn-pd-acquisition.md` Section H/H.1/K so the
   detection thresholds and operator playbook stay in one place.

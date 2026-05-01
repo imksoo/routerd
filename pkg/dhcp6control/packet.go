@@ -11,10 +11,12 @@ import (
 
 const (
 	MessageSolicit            uint8 = 1
+	MessageAdvertise          uint8 = 2
 	MessageRequest            uint8 = 3
 	MessageConfirm            uint8 = 4
 	MessageRenew              uint8 = 5
 	MessageRebind             uint8 = 6
+	MessageReply              uint8 = 7
 	MessageRelease            uint8 = 8
 	MessageInformationRequest uint8 = 11
 

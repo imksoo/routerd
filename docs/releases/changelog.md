@@ -24,6 +24,10 @@ behavior changes and new resource shapes as the model takes shape.
   `IPv6PrefixDelegation` status as recent transactions so operators can see
   exactly which message, transaction ID, IAID, lifetimes, and warning markers
   were used.
+- `routerd serve` now starts a passive DHCPv6 packet recorder for
+  `IPv6PrefixDelegation` on supported platforms. The Linux implementation uses
+  AF_PACKET to observe UDP 546/547 without binding those ports, and records
+  observed transactions into the same status history.
 - Breaking: routerd now uses `apply` as the user-facing verb. The old
   `reconcile` CLI and control API actions were replaced by `routerd apply`,
   `routerctl apply`, and `/apply`; the YAML `spec.reconcile` policy name stays
