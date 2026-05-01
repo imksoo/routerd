@@ -54,6 +54,10 @@ type ObjectStatusStore interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
+type ObjectDeleteStore interface {
+	DeleteObject(apiVersion, kind, name string) error
+}
+
 type Event struct {
 	ID         int64     `json:"id" yaml:"id"`
 	APIVersion string    `json:"apiVersion" yaml:"apiVersion"`
@@ -173,4 +177,14 @@ func (s *JSONStore) Variables() map[string]Value {
 		out[key] = value
 	}
 	return out
+}
+
+func (s *JSONStore) DeleteObject(apiVersion, kind, name string) error {
+	for key := range s.Values {
+		ref := objectRefForKey(key)
+		if ref.APIVersion == apiVersion && ref.Kind == kind && ref.Name == name {
+			delete(s.Values, key)
+		}
+	}
+	return nil
 }

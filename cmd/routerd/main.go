@@ -101,6 +101,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return renderCommand(args[1:], stdout)
 	case "apply":
 		return applyCommand(args[1:], stdout)
+	case "delete":
+		return deleteCommand(args[1:], stdout)
 	case "dhcp6":
 		return dhcp6Command(args[1:], stdout)
 	case "serve":
@@ -723,6 +725,184 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 	}
 	_, err = runApplyOnce(router, opts, stdout, logger)
 	return err
+}
+
+func deleteCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	filePath := fs.String("f", "", "router config file whose resources should be deleted")
+	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
+	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
+	dryRun := fs.Bool("dry-run", false, "show what would be deleted without changing host state")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	targets, err := deleteTargets(fs.Args(), *filePath)
+	if err != nil {
+		return err
+	}
+	if len(targets) == 0 {
+		return errors.New("delete requires <kind>/<name> or -f <router.yaml>")
+	}
+	stateStore, err := routerstate.Load(*statePath)
+	if err != nil {
+		return err
+	}
+	ledger, err := resource.LoadLedger(*ledgerPath)
+	if err != nil {
+		return err
+	}
+	var deleted []string
+	for _, target := range targets {
+		owner := target.APIVersion + "/" + target.Kind + "/" + target.Name
+		artifacts := artifactsForOwner(ledger, owner)
+		if *dryRun {
+			fmt.Fprintf(stdout, "would delete %s\n", owner)
+			for _, artifact := range artifacts {
+				fmt.Fprintf(stdout, "would delete owned artifact %s/%s\n", artifact.Kind, artifact.Name)
+			}
+			continue
+		}
+		for _, artifact := range artifacts {
+			label, err := cleanupLedgerOwnedArtifact(artifact)
+			if err != nil {
+				return fmt.Errorf("%s cleanup %s/%s: %w", owner, artifact.Kind, artifact.Name, err)
+			}
+			if label != "" {
+				fmt.Fprintf(stdout, "deleted owned artifact %s\n", label)
+			}
+		}
+		ledger.Forget(artifacts)
+		if deleter, ok := stateStore.(routerstate.ObjectDeleteStore); ok {
+			if err := deleter.DeleteObject(target.APIVersion, target.Kind, target.Name); err != nil {
+				return err
+			}
+		}
+		if recorder, ok := stateStore.(routerstate.EventRecorder); ok {
+			_ = recorder.RecordEvent(target.APIVersion, target.Kind, target.Name, "Normal", "Deleted", "resource deleted by routerd delete")
+		}
+		deleted = append(deleted, owner)
+		fmt.Fprintf(stdout, "deleted %s\n", owner)
+	}
+	if !*dryRun {
+		if err := ledger.Save(*ledgerPath); err != nil {
+			return err
+		}
+		if err := stateStore.Save(*statePath); err != nil {
+			return err
+		}
+	}
+	if len(deleted) == 0 && *dryRun {
+		return nil
+	}
+	return nil
+}
+
+type deleteTarget struct {
+	APIVersion string
+	Kind       string
+	Name       string
+}
+
+func deleteTargets(args []string, filePath string) ([]deleteTarget, error) {
+	if filePath != "" {
+		if len(args) != 0 {
+			return nil, errors.New("delete accepts either -f or <kind>/<name>, not both")
+		}
+		router, err := config.Load(filePath)
+		if err != nil {
+			return nil, err
+		}
+		targets := make([]deleteTarget, 0, len(router.Spec.Resources))
+		for _, res := range router.Spec.Resources {
+			targets = append(targets, deleteTarget{APIVersion: res.APIVersion, Kind: res.Kind, Name: res.Metadata.Name})
+		}
+		return targets, nil
+	}
+	if len(args) != 1 {
+		return nil, errors.New("delete requires exactly one <kind>/<name> target")
+	}
+	target, err := deleteTargetFromArg(args[0])
+	if err != nil {
+		return nil, err
+	}
+	return []deleteTarget{target}, nil
+}
+
+func deleteTargetFromArg(arg string) (deleteTarget, error) {
+	kind, name, ok := strings.Cut(arg, "/")
+	if !ok || kind == "" || name == "" {
+		return deleteTarget{}, fmt.Errorf("invalid delete target %q, want <kind>/<name>", arg)
+	}
+	canonical := canonicalResourceKind(kind)
+	apiVersion := apiVersionForKind(canonical)
+	if apiVersion == "" {
+		return deleteTarget{}, fmt.Errorf("unknown resource kind %q", kind)
+	}
+	return deleteTarget{APIVersion: apiVersion, Kind: canonical, Name: name}, nil
+}
+
+func artifactsForOwner(ledger resource.Ledger, owner string) []resource.Artifact {
+	var out []resource.Artifact
+	for _, artifact := range ledger.All() {
+		if artifact.Owner == owner {
+			out = append(out, artifact)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Identity() < out[j].Identity() })
+	return out
+}
+
+func canonicalResourceKind(kind string) string {
+	key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(kind, "-", ""), "_", ""))
+	aliases := map[string]string{
+		"if":                   "Interface",
+		"iface":                "Interface",
+		"interface":            "Interface",
+		"interfaces":           "Interface",
+		"pd":                   "IPv6PrefixDelegation",
+		"ipv6pd":               "IPv6PrefixDelegation",
+		"prefixdelegation":     "IPv6PrefixDelegation",
+		"ipv6prefixdelegation": "IPv6PrefixDelegation",
+		"ipv4static":           "IPv4StaticAddress",
+		"ipv4staticaddress":    "IPv4StaticAddress",
+		"ipv4dhcp":             "IPv4DHCPAddress",
+		"ipv4dhcpaddress":      "IPv4DHCPAddress",
+		"nat":                  "IPv4SourceNAT",
+		"snat":                 "IPv4SourceNAT",
+		"ipv4sourcenat":        "IPv4SourceNAT",
+		"dslite":               "DSLiteTunnel",
+		"dslitetunnel":         "DSLiteTunnel",
+		"pppoe":                "PPPoEInterface",
+		"pppoeinterface":       "PPPoEInterface",
+		"fw":                   "FirewallPolicy",
+		"firewall":             "FirewallPolicy",
+		"firewallpolicy":       "FirewallPolicy",
+		"zone":                 "Zone",
+		"hostname":             "Hostname",
+		"host":                 "Hostname",
+		"route":                "IPv4PolicyRouteSet",
+		"ipv4policyrouteset":   "IPv4PolicyRouteSet",
+	}
+	if canonical, ok := aliases[key]; ok {
+		return canonical
+	}
+	return kind
+}
+
+func apiVersionForKind(kind string) string {
+	switch kind {
+	case "Zone", "FirewallPolicy", "ExposeService":
+		return api.FirewallAPIVersion
+	case "Hostname", "Sysctl", "NTPClient", "LogSink", "NixOSHost":
+		return api.SystemAPIVersion
+	case "Inventory":
+		return api.RouterAPIVersion
+	case "Interface", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4DHCPServer", "IPv4DHCPScope", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "IPv6DHCPServer", "IPv6DHCPScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DSLiteTunnel", "StatePolicy", "HealthCheck", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+		return api.NetAPIVersion
+	default:
+		return ""
+	}
 }
 
 type applyOptions struct {
@@ -6128,6 +6308,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  render nixos --config <path> [--out <path>]")
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <path>]")
 	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--prune] [--override-client <client>] [--override-profile <profile>]")
+	fmt.Fprintln(w, "  delete <kind>/<name> [--dry-run]")
+	fmt.Fprintln(w, "  delete -f <path> [--dry-run]")
 	fmt.Fprintln(w, "  dhcp6 solicit --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  dhcp6 renew --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  dhcp6 rebind --config <path> --resource <ipv6-prefix-delegation>")

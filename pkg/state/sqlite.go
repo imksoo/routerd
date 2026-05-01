@@ -474,6 +474,11 @@ func (s *SQLiteStore) ObjectStatus(apiVersion, kind, name string) map[string]any
 	return out
 }
 
+func (s *SQLiteStore) DeleteObject(apiVersion, kind, name string) error {
+	_, err := s.db.Exec(`DELETE FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name)
+	return err
+}
+
 func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, message string) error {
 	_, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, eventType, reason, message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano))

@@ -87,6 +87,75 @@ func TestCleanupLedgerOwnedOrphansSkippedWithoutPrune(t *testing.T) {
 	}
 }
 
+func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	ledgerPath := filepath.Join(dir, "artifacts.json")
+	store := routerstate.New()
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{LastPrefix: "2001:db8::/60"}), "test")
+	if err := store.Save(statePath); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	ledger := resource.NewLedger()
+	ledger.Remember([]resource.Artifact{{
+		Kind:  "file",
+		Name:  "/tmp/routerd-test",
+		Owner: "net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd",
+	}})
+	if err := ledger.Save(ledgerPath); err != nil {
+		t.Fatalf("save ledger: %v", err)
+	}
+
+	var out strings.Builder
+	if err := deleteCommand([]string{"--state-file", statePath, "--ledger-file", ledgerPath, "pd/wan-pd"}, &out); err != nil {
+		t.Fatalf("delete command: %v", err)
+	}
+	if !strings.Contains(out.String(), "deleted net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd") {
+		t.Fatalf("delete output = %s", out.String())
+	}
+	loadedState, err := routerstate.Load(statePath)
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	if got := loadedState.Get("ipv6PrefixDelegation.wan-pd.lease"); got.Status != routerstate.StatusUnknown {
+		t.Fatalf("state after delete = %+v, want unknown", got)
+	}
+	loadedLedger, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		t.Fatalf("load ledger: %v", err)
+	}
+	if len(loadedLedger.All()) != 0 {
+		t.Fatalf("ledger after delete = %+v, want empty", loadedLedger.All())
+	}
+}
+
+func TestDeleteCommandFileTargetsRouterResources(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifName: ens18
+`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	targets, err := deleteTargets(nil, configPath)
+	if err != nil {
+		t.Fatalf("delete targets: %v", err)
+	}
+	if len(targets) != 1 || targets[0].Kind != "Interface" || targets[0].Name != "wan" {
+		t.Fatalf("targets = %+v", targets)
+	}
+}
+
 func TestWriteFileIfChanged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.conf")
 

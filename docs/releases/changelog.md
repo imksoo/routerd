@@ -16,6 +16,9 @@ behavior changes and new resource shapes as the model takes shape.
   behavior. Use `--prune` to remove routerd-owned orphaned artifacts during
   apply, or set `ROUTERD_APPLY_DEFAULT_PRUNE=true` as a temporary escape hatch
   for the previous default.
+- `routerd delete <kind>/<name>` and `routerd delete -f <router.yaml>` now
+  remove the selected resource objects from state and clean up matching
+  routerd-owned artifacts from the ownership ledger.
 - `routerd serve` now observes WAN Router Advertisements for
   `IPv6PrefixDelegation`, accepts DHCPv6 client hook events over the local
   control API, tracks acquisition phase and stalled-renewal suspicion, and
