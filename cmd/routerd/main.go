@@ -1167,12 +1167,13 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 
 		var networkChangedFiles []string
 		if err := recordStageError("network", func() error {
+			if isNixOSHost() {
+				logger.Emit(eventlog.LevelInfo, "apply", "skipping live network apply on NixOS; persist network state via 'routerd render nixos' + 'nixos-rebuild switch'", map[string]string{"stage": "network"})
+				return nil
+			}
 			netplanData, err := render.Netplan(effectiveRouter)
 			if err != nil {
 				return err
-			}
-			if isNixOSHost() {
-				netplanData = nil
 			}
 			networkdFiles, err := render.NetworkdDropins(effectiveRouter)
 			if err != nil {
