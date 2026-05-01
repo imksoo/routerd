@@ -223,7 +223,10 @@ func TestControllerSendSolicitAllowsNoPrefixAndAddsReconfigureAccept(t *testing.
 	if payload[0] != MessageSolicit {
 		t.Fatalf("message type = %d, want Solicit", payload[0])
 	}
-	assertIAPDNoPrefix(t, payload, 1, 7200, 12600)
+	// IX2215 reference Solicit carries IA_PD with IAID only; T1/T2 must be
+	// zero and no IA Prefix suboption. Anything else does not get an
+	// Advertise from this lab's PR-400NE HGW.
+	assertIAPDNoPrefix(t, payload, 1, 0, 0)
 	if !hasOption(payload, optionReconfAccept) {
 		t.Fatalf("solicit payload missing Reconfigure Accept: % x", payload)
 	}

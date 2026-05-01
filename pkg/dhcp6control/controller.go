@@ -118,6 +118,18 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 		preferredLifetime = 0
 		validLifetime = 0
 	}
+	if messageType == MessageSolicit {
+		// Solicit must carry IA_PD with IAID only: T1/T2 zero, no IA Prefix
+		// suboption. The reference IX2215 working Solicit observed against
+		// this PR-400NE HGW has exactly this shape; routerd previously
+		// leaked Renew-style T1/T2 and a stale prefix into the Solicit and
+		// got no Advertise.
+		prefix = netip.Prefix{}
+		t1 = 0
+		t2 = 0
+		preferredLifetime = 0
+		validLifetime = 0
+	}
 	serverDUID := in.Identity.ServerDUID
 	if !activeMessageUsesServerID(messageType) {
 		serverDUID = nil
@@ -137,7 +149,9 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 		Prefix:            prefix,
 		PreferredLifetime: preferredLifetime,
 		ValidLifetime:     validLifetime,
-		ORO:               []uint16{23},
+		// ORO is omitted to match the working IX2215 reference packet.
+		// LAN DNS is served by routerd's dnsmasq stack, not by relayed
+		// HGW DHCPv6 options, so we don't need to ask for option 23.
 		ReconfigureAccept: reconfigureAccept,
 	}
 	trid, err := c.transactionID()

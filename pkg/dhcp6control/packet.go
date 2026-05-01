@@ -205,24 +205,37 @@ func BuildDHCPv6(spec PacketSpec) ([]byte, error) {
 	if len(spec.ClientDUID) == 0 {
 		return nil, fmt.Errorf("client DUID is required")
 	}
+	// Option order matches the working IX2215 (NEC IPoE PD client) reference
+	// observed on 2026-05-01 against this PR-400NE HGW:
+	//
+	//   Client-ID, Server-ID (Request/Renew/Rebind/Release), IA_PD,
+	//   Elapsed-Time, Reconfigure-Accept
+	//
+	// The previous routerd order placed Elapsed-Time and ORO before IA_PD,
+	// which empirically did not elicit a Reply. ORO is omitted to match the
+	// reference packet; we don't ask the HGW for DNS via DHCPv6 because LAN
+	// DNS is served by dnsmasq from upstream.
 	var out []byte
 	out = append(out, spec.MessageType, byte(spec.TransactionID>>16), byte(spec.TransactionID>>8), byte(spec.TransactionID))
 	out = appendOption(out, optionClientID, spec.ClientDUID)
 	if len(spec.ServerDUID) > 0 {
 		out = appendOption(out, optionServerID, spec.ServerDUID)
 	}
+	if spec.Prefix.IsValid() {
+		out = appendOption(out, optionIAPD, buildIAPD(spec))
+	} else if messageCarriesIAPD(spec.MessageType) {
+		out = appendOption(out, optionIAPD, buildIAPDNoPrefix(spec))
+	}
 	out = appendOption(out, optionElapsedTime, uint16Bytes(spec.ElapsedTime))
+	// ORO is supported here for callers that need to request specific options
+	// from the server, but routerd's active controller intentionally omits it
+	// to match the working IX2215 reference packet on this PR-400NE HGW.
 	if len(spec.ORO) > 0 {
 		var oro []byte
 		for _, opt := range spec.ORO {
 			oro = append(oro, uint16Bytes(opt)...)
 		}
 		out = appendOption(out, optionORO, oro)
-	}
-	if spec.Prefix.IsValid() {
-		out = appendOption(out, optionIAPD, buildIAPD(spec))
-	} else if messageCarriesIAPD(spec.MessageType) {
-		out = appendOption(out, optionIAPD, buildIAPDNoPrefix(spec))
 	}
 	if spec.ReconfigureAccept {
 		out = appendOption(out, optionReconfAccept, nil)
@@ -271,7 +284,12 @@ func BuildEthernetIPv6UDP(spec PacketSpec) ([]byte, error) {
 	ip[0] = 0x60
 	binary.BigEndian.PutUint16(ip[4:6], uint16(ipPayloadLen))
 	ip[6] = ipProtocolUDP
-	ip[7] = 1
+	// Hop limit 64 matches the working IX2215 reference packet captured on
+	// 2026-05-01 from this lab's PR-400NE HGW. Hop limit 1 was previously
+	// used on the (incorrect) assumption that link-local multicast is fine
+	// at TTL=1, but Proxmox virtual-network paths and the working reference
+	// client both show that 64 is the value the HGW expects.
+	ip[7] = 64
 	copy(ip[8:24], spec.SourceIP.AsSlice())
 	copy(ip[24:40], spec.DestinationIP.AsSlice())
 
