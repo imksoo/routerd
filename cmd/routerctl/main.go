@@ -87,12 +87,13 @@ func applyCommand(args []string, stdout io.Writer) error {
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
 	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
+	prune := fs.Bool("prune", false, "remove routerd-owned resources that are not present in the applied config")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	result, err := controlapi.NewUnixClient(*socketPath).Apply(ctx, controlapi.ApplyRequest{DryRun: *dryRun})
+	result, err := controlapi.NewUnixClient(*socketPath).Apply(ctx, controlapi.ApplyRequest{DryRun: *dryRun, Prune: *prune})
 	if err != nil {
 		return err
 	}
@@ -1397,5 +1398,5 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  show <kind> [--config <path>] [--state-file <path>] [--ledger-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events|--spec|--status] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plan [--socket <path>]")
-	fmt.Fprintln(w, "  apply [--socket <path>] [--dry-run]")
+	fmt.Fprintln(w, "  apply [--socket <path>] [--dry-run] [--prune]")
 }

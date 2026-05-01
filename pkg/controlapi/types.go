@@ -34,6 +34,7 @@ type StatusStatus struct {
 type ApplyRequest struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	DryRun   bool `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
+	Prune    bool `json:"prune,omitempty" yaml:"prune,omitempty"`
 }
 
 type ApplyResult struct {

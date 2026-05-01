@@ -193,7 +193,7 @@ routerctl plan
 sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
-`routerd apply --once` は、routerd が管理対象として認識した netplan、systemd-networkd の追加設定、dnsmasq、nftables、sysctl、DS-Lite トンネル、ポリシールーティングを実機へ反映します。リモートのルータで実行する前に、必ず `plan` と `--dry-run` で挙動を確認してください。cloud-init や既存の netplan が掴んでいるインターフェースを不用意に奪わないよう、引き継ぎが必要な状態は計画上で「取り込み待ち」として表示します。
+`routerd apply --once` は、routerd が管理対象として認識した netplan、systemd-networkd の追加設定、dnsmasq、nftables、sysctl、DS-Lite トンネル、ポリシールーティングを実機へ反映します。既定では追加型の反映です。現在の YAML に書かれたリソースだけを追加・更新し、以前 routerd が管理していて今回の YAML に書かれていないものは残します。その YAML を完全な望ましい状態として扱い、routerd 所有の残置物を削除したい場合だけ `--prune` を指定します。リモートのルータで実行する前に、必ず `plan` と `--dry-run` で挙動を確認してください。cloud-init や既存の netplan が掴んでいるインターフェースを不用意に奪わないよう、引き継ぎが必要な状態は計画上で「取り込み待ち」として表示します。
 
 DHCPv6-PD のラボ検証では、`routerd apply --once --override-client <client>` と `--override-profile <profile>` で、その 1 回だけ全 `IPv6PrefixDelegation` のクライアントやプロファイルを上書きできます。YAML は書き換えません。既知の問題がある OS・クライアント・プロファイルの組み合わせは、検証失敗ではなく警告として表示します。
 

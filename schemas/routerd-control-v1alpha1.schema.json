@@ -183,6 +183,9 @@
         },
         "kind": {
           "type": "string"
+        },
+        "prune": {
+          "type": "boolean"
         }
       },
       "required": [

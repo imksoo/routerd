@@ -679,6 +679,7 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 	overrideProfile := fs.String("override-profile", "", "override IPv6PrefixDelegation profile for this apply")
 	once := fs.Bool("once", false, "run one apply loop")
 	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
+	prune := fs.Bool("prune", applyDefaultPrune(), "remove routerd-owned resources that are not present in the applied config")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -703,6 +704,7 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 	logger.Emit(eventlog.LevelInfo, "apply", "routerd command started", map[string]string{
 		"config": *configPath,
 		"dryRun": fmt.Sprintf("%t", *dryRun),
+		"prune":  fmt.Sprintf("%t", *prune),
 	})
 	opts := applyOptions{
 		ConfigPath:          *configPath,
@@ -716,6 +718,7 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 		OverrideClient:      *overrideClient,
 		OverrideProfile:     *overrideProfile,
 		DryRun:              *dryRun,
+		Prune:               *prune,
 		AnnounceDryRunToCLI: true,
 	}
 	_, err = runApplyOnce(router, opts, stdout, logger)
@@ -734,7 +737,18 @@ type applyOptions struct {
 	OverrideClient      string
 	OverrideProfile     string
 	DryRun              bool
+	Prune               bool
 	AnnounceDryRunToCLI bool
+}
+
+func applyDefaultPrune() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("ROUTERD_APPLY_DEFAULT_PRUNE")))
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
@@ -1061,9 +1075,9 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		}
 
 		var cleanedPreDSLiteOrphans []string
-		if len(applyErrors) == 0 {
+		if len(applyErrors) == 0 && opts.Prune {
 			var err error
-			cleanedPreDSLiteOrphans, err = cleanupLedgerOwnedOrphansMatching(effectiveRouter, opts.LedgerPath, func(artifact resource.Artifact) bool {
+			cleanedPreDSLiteOrphans, err = cleanupLedgerOwnedOrphansForApply(effectiveRouter, opts.LedgerPath, opts.Prune, func(artifact resource.Artifact) bool {
 				return artifact.Kind == "linux.ipip6.tunnel"
 			})
 			if err != nil {
@@ -1081,12 +1095,14 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		}
 
 		var cleanedDelegatedIPv6Addresses []string
-		if err := recordStageError("ipv6-delegated-address-cleanup", func() error {
-			var err error
-			cleanedDelegatedIPv6Addresses, err = cleanupStaleDelegatedIPv6Addresses(effectiveRouter, stateStore)
-			return err
-		}()); err != nil {
-			return nil, err
+		if opts.Prune {
+			if err := recordStageError("ipv6-delegated-address-cleanup", func() error {
+				var err error
+				cleanedDelegatedIPv6Addresses, err = cleanupStaleDelegatedIPv6Addresses(effectiveRouter, stateStore)
+				return err
+			}()); err != nil {
+				return nil, err
+			}
 		}
 
 		var appliedPolicyRoutes []string
@@ -1108,7 +1124,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		}
 
 		var cleanedPolicyRules []string
-		if len(applyErrors) == 0 || !protectedCritical {
+		if opts.Prune && (len(applyErrors) == 0 || !protectedCritical) {
 			if err := recordStageError("ipv4-policy-rule-cleanup", func() error {
 				var err error
 				cleanedPolicyRules, err = cleanupIPv4ManagedFwmarkRules(effectiveRouter)
@@ -1116,7 +1132,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			}()); err != nil {
 				return nil, err
 			}
-		} else {
+		} else if opts.Prune {
 			result.Warnings = append(result.Warnings, "skipped policy-rule cleanup because an earlier progressive apply stage failed")
 		}
 
@@ -1151,9 +1167,11 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		var rememberedArtifacts int
 		if len(applyErrors) == 0 {
 			var err error
-			cleanedLedgerOrphans, err = cleanupLedgerOwnedOrphans(effectiveRouter, opts.LedgerPath)
-			if err != nil {
-				return nil, err
+			if opts.Prune {
+				cleanedLedgerOrphans, err = cleanupLedgerOwnedOrphansForApply(effectiveRouter, opts.LedgerPath, opts.Prune, nil)
+				if err != nil {
+					return nil, err
+				}
 			}
 			rememberedArtifacts, err = rememberAppliedArtifacts(effectiveRouter, opts.LedgerPath, generation)
 			if err != nil {
@@ -2210,6 +2228,16 @@ func cleanupLedgerOwnedOrphans(router *api.Router, ledgerPath string) ([]string,
 	return cleanupLedgerOwnedOrphansMatching(router, ledgerPath, func(resource.Artifact) bool { return true })
 }
 
+func cleanupLedgerOwnedOrphansForApply(router *api.Router, ledgerPath string, prune bool, match func(resource.Artifact) bool) ([]string, error) {
+	if !prune {
+		return nil, nil
+	}
+	if match == nil {
+		return cleanupLedgerOwnedOrphans(router, ledgerPath)
+	}
+	return cleanupLedgerOwnedOrphansMatching(router, ledgerPath, match)
+}
+
 func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, match func(resource.Artifact) bool) ([]string, error) {
 	if ledgerPath == "" {
 		return nil, nil
@@ -2321,6 +2349,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
+	prune := fs.Bool("prune", applyDefaultPrune(), "remove routerd-owned resources that are not present in the applied config")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2338,6 +2367,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		"socket":          *socketPath,
 		"observeInterval": observeInterval.String(),
 		"applyInterval":   applyInterval.String(),
+		"prune":           fmt.Sprintf("%t", *prune),
 	})
 
 	cache := &resultCache{}
@@ -2366,6 +2396,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		NftablesPath:       *nftablesPath,
 		LedgerPath:         *ledgerPath,
 		StatePath:          defaultStatePath,
+		Prune:              *prune,
 	}
 	applyMu := &sync.Mutex{}
 	if *applyInterval > 0 {
@@ -2401,6 +2432,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		Apply: func(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
 			opts := applyOpts
 			opts.DryRun = req.DryRun
+			opts.Prune = req.Prune
 			applyMu.Lock()
 			defer applyMu.Unlock()
 			result, err := runApplyOnce(router, opts, io.Discard, logger)
@@ -6095,7 +6127,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  adopt --config <path> --apply")
 	fmt.Fprintln(w, "  render nixos --config <path> [--out <path>]")
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <path>]")
-	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--override-client <client>] [--override-profile <profile>]")
+	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--prune] [--override-client <client>] [--override-profile <profile>]")
 	fmt.Fprintln(w, "  dhcp6 solicit --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  dhcp6 renew --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  dhcp6 rebind --config <path> --resource <ipv6-prefix-delegation>")
