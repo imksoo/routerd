@@ -1227,7 +1227,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 
 		var dnsmasqChangedFiles []string
 		if err := recordStageError("dnsmasq", func() error {
-			dnsmasqConfig, err := render.DnsmasqConfig(effectiveRouter, render.DnsmasqRuntime{
+			dnsmasqConfig, dnsmasqWarnings, err := render.DnsmasqConfig(effectiveRouter, render.DnsmasqRuntime{
 				DHCPv4DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
 				DHCPv6DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
 				IPv6AddressesByInterface:    observedIPv6AddressesByInterface(effectiveRouter),
@@ -1235,6 +1235,10 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			})
 			if err != nil {
 				return err
+			}
+			for _, w := range dnsmasqWarnings {
+				result.Warnings = append(result.Warnings, w)
+				logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "dnsmasq"})
 			}
 			dnsmasqChangedFiles, err = applyDnsmasqConfig(opts.DnsmasqConfigPath, opts.DnsmasqServicePath, dnsmasqConfig)
 			return err
@@ -1526,7 +1530,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	}
 	var dnsmasqChangedFiles []string
 	if err := recordStageError("dnsmasq", func() error {
-		dnsmasqConfig, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
+		dnsmasqConfig, dnsmasqWarnings, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
 			DHCPv4DNSServersByInterface: observedDNSServersByInterface(router),
 			DHCPv6DNSServersByInterface: observedDNSServersByInterface(router),
 			IPv6AddressesByInterface:    observedIPv6AddressesByInterface(router),
@@ -1535,6 +1539,10 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 		})
 		if err != nil {
 			return err
+		}
+		for _, w := range dnsmasqWarnings {
+			result.Warnings = append(result.Warnings, w)
+			logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "dnsmasq"})
 		}
 		dnsmasqChangedFiles, err = applyDnsmasqConfig(opts.DnsmasqConfigPath, opts.DnsmasqServicePath, dnsmasqConfig)
 		return err

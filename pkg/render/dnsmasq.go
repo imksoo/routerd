@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -18,14 +19,15 @@ type DnsmasqRuntime struct {
 	RuntimeDir                  string
 }
 
-func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
+func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string, error) {
+	var warnings []string
 	aliases, staticIPv4, delegatedIPv6, selfPolicies, err := dnsmasqInputs(router)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	raMTUByScope, err := pathMTURAByScope(router)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var v4Scopes []api.Resource
@@ -38,13 +40,13 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		case "IPv4DHCPServer":
 			spec, err := res.IPv4DHCPServerSpec()
 			if err != nil {
-				return nil, err
+				return nil, warnings, err
 			}
 			v4Servers[res.Metadata.Name] = spec
 		case "IPv6DHCPServer":
 			spec, err := res.IPv6DHCPServerSpec()
 			if err != nil {
-				return nil, err
+				return nil, warnings, err
 			}
 			v6Servers[res.Metadata.Name] = spec
 		}
@@ -54,7 +56,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		case "IPv4DHCPScope":
 			spec, err := res.IPv4DHCPScopeSpec()
 			if err != nil {
-				return nil, err
+				return nil, warnings, err
 			}
 			server := v4Servers[spec.Server]
 			if defaultString(server.Server, "dnsmasq") == "dnsmasq" && server.Managed && defaultString(server.Role, "server") != "transit" {
@@ -63,13 +65,13 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		case "DHCPv4HostReservation":
 			spec, err := res.DHCPv4HostReservationSpec()
 			if err != nil {
-				return nil, err
+				return nil, warnings, err
 			}
 			v4ReservationsByScope[spec.Scope] = append(v4ReservationsByScope[spec.Scope], res)
 		case "IPv6DHCPScope":
 			spec, err := res.IPv6DHCPScopeSpec()
 			if err != nil {
-				return nil, err
+				return nil, warnings, err
 			}
 			server := v6Servers[spec.Server]
 			if defaultString(server.Server, "dnsmasq") == "dnsmasq" && server.Managed && defaultString(server.Role, "server") != "transit" {
@@ -78,7 +80,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		}
 	}
 	if len(v4Scopes) == 0 && len(v6Scopes) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	sort.Slice(v4Scopes, func(i, j int) bool { return v4Scopes[i].Metadata.Name < v4Scopes[j].Metadata.Name })
 	sort.Slice(v6Scopes, func(i, j int) bool { return v6Scopes[i].Metadata.Name < v6Scopes[j].Metadata.Name })
@@ -89,12 +91,12 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 	}
 	v6Scopes, err = activeDnsmasqIPv6Scopes(v6Scopes, delegatedIPv6, runtime)
 	if err != nil {
-		return nil, err
+		return nil, warnings, err
 	}
 
 	dnsEnabled, err := dnsmasqDNSEnabled(v4Scopes, v4Servers, v6Scopes)
 	if err != nil {
-		return nil, err
+		return nil, warnings, err
 	}
 
 	var buf bytes.Buffer
@@ -113,30 +115,30 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 	for _, res := range v4Scopes {
 		spec, err := res.IPv4DHCPScopeSpec()
 		if err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 		server := v4Servers[spec.Server]
 		if !serverListensOn(server.ListenInterfaces, spec.Interface) {
-			return nil, fmt.Errorf("%s interface %q is not listed in IPv4DHCPServer %q listenInterfaces", res.ID(), spec.Interface, spec.Server)
+			return nil, warnings, fmt.Errorf("%s interface %q is not listed in IPv4DHCPServer %q listenInterfaces", res.ID(), spec.Interface, spec.Server)
 		}
 		ifname := aliases[spec.Interface]
 		if ifname == "" {
-			return nil, fmt.Errorf("%s references interface with empty ifname", res.ID())
+			return nil, warnings, fmt.Errorf("%s references interface with empty ifname", res.ID())
 		}
 		renderedScopes = append(renderedScopes, ifname)
 	}
 	for _, res := range v6Scopes {
 		spec, err := res.IPv6DHCPScopeSpec()
 		if err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 		delegated := delegatedIPv6[spec.DelegatedAddress]
 		server := v6Servers[spec.Server]
 		if !serverListensOn(server.ListenInterfaces, delegated.Interface) {
-			return nil, fmt.Errorf("%s delegatedAddress interface %q is not listed in IPv6DHCPServer %q listenInterfaces", res.ID(), delegated.Interface, spec.Server)
+			return nil, warnings, fmt.Errorf("%s delegatedAddress interface %q is not listed in IPv6DHCPServer %q listenInterfaces", res.ID(), delegated.Interface, spec.Server)
 		}
 		if delegated.IfName == "" {
-			return nil, fmt.Errorf("%s references delegated address with empty ifname", res.ID())
+			return nil, warnings, fmt.Errorf("%s references delegated address with empty ifname", res.ID())
 		}
 		renderedScopes = append(renderedScopes, delegated.IfName)
 	}
@@ -145,7 +147,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		var err error
 		listenAddresses, err = dnsmasqListenAddresses(v4Scopes, v6Scopes, aliases, staticIPv4, delegatedIPv6, selfPolicies, runtime)
 		if err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 	}
 	if len(listenAddresses) > 0 {
@@ -165,12 +167,12 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		if len(listenAddresses) > 0 {
 			buf.WriteString("listen-address=" + strings.Join(listenAddresses, ",") + "\n")
 		}
-		if err := writeDnsmasqDNSUpstreams(&buf, v4Scopes, v4Servers, aliases, runtime); err != nil {
-			return nil, err
+		if err := writeDnsmasqDNSUpstreams(&buf, v4Scopes, v4Servers, aliases, runtime, &warnings); err != nil {
+			return nil, warnings, err
 		}
 	}
-	if err := writeDNSConditionalForwarders(&buf, router, aliases, runtime); err != nil {
-		return nil, err
+	if err := writeDNSConditionalForwarders(&buf, router, aliases, runtime, &warnings); err != nil {
+		return nil, warnings, err
 	}
 	if len(v6Scopes) > 0 {
 		buf.WriteString("enable-ra\n")
@@ -179,16 +181,16 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 	for _, res := range v4Scopes {
 		spec, err := res.IPv4DHCPScopeSpec()
 		if err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 		ifname := aliases[spec.Interface]
 		addrPrefix := staticIPv4[spec.Interface]
 		if !addrPrefix.IsValid() {
-			return nil, fmt.Errorf("%s needs an IPv4StaticAddress on %s to derive DHCP netmask/options", res.ID(), spec.Interface)
+			return nil, warnings, fmt.Errorf("%s needs an IPv4StaticAddress on %s to derive DHCP netmask/options", res.ID(), spec.Interface)
 		}
 		netmask, err := ipv4Netmask(addrPrefix.Bits())
 		if err != nil {
-			return nil, fmt.Errorf("%s has invalid IPv4 prefix length: %w", res.ID(), err)
+			return nil, warnings, fmt.Errorf("%s has invalid IPv4 prefix length: %w", res.ID(), err)
 		}
 		leaseTime := defaultString(spec.LeaseTime, "12h")
 		tag := sanitizeDnsmasqTag(res.Metadata.Name)
@@ -210,9 +212,13 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 
 		dnsServers, err := dnsmasqDNSServers(spec, aliases, staticIPv4, runtime)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", res.ID(), err)
-		}
-		if len(dnsServers) == 0 {
+			if errors.Is(err, errObservedDataNotReady) {
+				warnings = append(warnings, fmt.Sprintf("%s: %v; emitting empty DHCP dns-server option until observed", res.ID(), err))
+				buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:dns-server\n", tag))
+			} else {
+				return nil, warnings, fmt.Errorf("%s: %w", res.ID(), err)
+			}
+		} else if len(dnsServers) == 0 {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:dns-server\n", tag))
 		} else {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:dns-server,%s\n", tag, strings.Join(dnsServers, ",")))
@@ -220,7 +226,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		for _, reservation := range v4ReservationsByScope[res.Metadata.Name] {
 			reservationSpec, err := reservation.DHCPv4HostReservationSpec()
 			if err != nil {
-				return nil, err
+				return nil, warnings, err
 			}
 			buf.WriteString("dhcp-host=" + dnsmasqHostReservation(reservationSpec, leaseTime) + "\n")
 		}
@@ -229,7 +235,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 	for _, res := range v6Scopes {
 		spec, err := res.IPv6DHCPScopeSpec()
 		if err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 		delegated := delegatedIPv6[spec.DelegatedAddress]
 		leaseTime := defaultString(spec.LeaseTime, "12h")
@@ -253,7 +259,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		}
 		dnsServers, err := dnsmasqIPv6DNSServers(spec, delegated, selfPolicies[spec.SelfAddressPolicy], aliases, delegatedIPv6, runtime)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", res.ID(), err)
+			return nil, warnings, fmt.Errorf("%s: %w", res.ID(), err)
 		}
 		if len(dnsServers) == 0 {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server\n", tag))
@@ -262,10 +268,10 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, error) {
 		}
 	}
 
-	return buf.Bytes(), nil
+	return buf.Bytes(), warnings, nil
 }
 
-func writeDNSConditionalForwarders(buf *bytes.Buffer, router *api.Router, aliases map[string]string, runtime DnsmasqRuntime) error {
+func writeDNSConditionalForwarders(buf *bytes.Buffer, router *api.Router, aliases map[string]string, runtime DnsmasqRuntime, warnings *[]string) error {
 	var forwarders []api.Resource
 	for _, res := range router.Spec.Resources {
 		if res.Kind == "DNSConditionalForwarder" {
@@ -285,6 +291,10 @@ func writeDNSConditionalForwarders(buf *bytes.Buffer, router *api.Router, aliase
 		domain := strings.Trim(spec.Domain, ".")
 		servers, err := conditionalForwarderServers(spec, aliases, runtime)
 		if err != nil {
+			if errors.Is(err, errObservedDataNotReady) {
+				*warnings = append(*warnings, fmt.Sprintf("%s: %v; skipping conditional forwarder for %s until observed", res.ID(), err, domain))
+				continue
+			}
 			return fmt.Errorf("%s: %w", res.ID(), err)
 		}
 		for _, server := range servers {
@@ -294,6 +304,8 @@ func writeDNSConditionalForwarders(buf *bytes.Buffer, router *api.Router, aliase
 	return nil
 }
 
+var errObservedDataNotReady = errors.New("observed runtime data not yet available")
+
 func conditionalForwarderServers(spec api.DNSConditionalForwarderSpec, aliases map[string]string, runtime DnsmasqRuntime) ([]string, error) {
 	switch defaultString(spec.UpstreamSource, "static") {
 	case "static":
@@ -302,14 +314,14 @@ func conditionalForwarderServers(spec api.DNSConditionalForwarderSpec, aliases m
 		ifname := aliases[spec.UpstreamInterface]
 		servers := filterIPv4Strings(runtime.DHCPv4DNSServersByInterface[ifname])
 		if len(servers) == 0 {
-			return nil, fmt.Errorf("no DHCPv4 DNS servers observed on %s", ifname)
+			return nil, fmt.Errorf("no DHCPv4 DNS servers observed on %s: %w", ifname, errObservedDataNotReady)
 		}
 		return servers, nil
 	case "dhcp6":
 		ifname := aliases[spec.UpstreamInterface]
 		servers := filterGlobalIPv6Strings(runtime.DHCPv6DNSServersByInterface[ifname])
 		if len(servers) == 0 {
-			return nil, fmt.Errorf("no DHCPv6 DNS servers observed on %s", ifname)
+			return nil, fmt.Errorf("no DHCPv6 DNS servers observed on %s: %w", ifname, errObservedDataNotReady)
 		}
 		return servers, nil
 	default:
@@ -404,7 +416,7 @@ func dnsmasqDNSEnabled(v4Scopes []api.Resource, servers map[string]api.IPv4DHCPS
 	return false, nil
 }
 
-func writeDnsmasqDNSUpstreams(buf *bytes.Buffer, scopes []api.Resource, servers map[string]api.IPv4DHCPServerSpec, aliases map[string]string, runtime DnsmasqRuntime) error {
+func writeDnsmasqDNSUpstreams(buf *bytes.Buffer, scopes []api.Resource, servers map[string]api.IPv4DHCPServerSpec, aliases map[string]string, runtime DnsmasqRuntime, warnings *[]string) error {
 	for _, res := range scopes {
 		spec, err := res.IPv4DHCPScopeSpec()
 		if err != nil {
@@ -422,12 +434,13 @@ func writeDnsmasqDNSUpstreams(buf *bytes.Buffer, scopes []api.Resource, servers 
 		switch upstreamSource {
 		case "dhcp4":
 			ifname := aliases[dns.UpstreamInterface]
-			servers := filterIPv4Strings(runtime.DHCPv4DNSServersByInterface[ifname])
-			if len(servers) == 0 {
-				return fmt.Errorf("no DHCPv4 DNS servers observed on %s", ifname)
+			upstream := filterIPv4Strings(runtime.DHCPv4DNSServersByInterface[ifname])
+			if len(upstream) == 0 {
+				*warnings = append(*warnings, fmt.Sprintf("%s: no DHCPv4 DNS servers observed on %s yet; skipping upstream resolver until observed", res.ID(), ifname))
+				continue
 			}
 			buf.WriteString("no-resolv\n")
-			for _, server := range servers {
+			for _, server := range upstream {
 				buf.WriteString("server=" + server + "\n")
 			}
 		case "static":
@@ -568,7 +581,7 @@ func dnsmasqDNSServers(spec api.IPv4DHCPScopeSpec, aliases map[string]string, st
 		ifname := aliases[spec.DNSInterface]
 		servers := filterIPv4Strings(runtime.DHCPv4DNSServersByInterface[ifname])
 		if len(servers) == 0 {
-			return nil, fmt.Errorf("no DHCPv4 DNS servers observed on %s", ifname)
+			return nil, fmt.Errorf("no DHCPv4 DNS servers observed on %s: %w", ifname, errObservedDataNotReady)
 		}
 		return servers, nil
 	case "static":

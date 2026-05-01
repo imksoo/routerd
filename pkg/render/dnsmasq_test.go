@@ -59,7 +59,7 @@ func TestDnsmasqConfigUsesSelfDNSWithDHCPv4Upstream(t *testing.T) {
 		}},
 	}
 
-	data, err := DnsmasqConfig(router, DnsmasqRuntime{
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{
 		DHCPv4DNSServersByInterface: map[string][]string{
 			"ens18": {"192.168.1.66", "192.168.1.67", "2001:db8:3d60:1200::1"},
 		},
@@ -132,7 +132,7 @@ func TestDnsmasqConfigRendersDHCPv4HostReservation(t *testing.T) {
 		}},
 	}
 
-	data, err := DnsmasqConfig(router, DnsmasqRuntime{})
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
 	if err != nil {
 		t.Fatalf("render dnsmasq: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestDnsmasqConfigCanPassThroughDHCPv4DNS(t *testing.T) {
 		}},
 	}
 
-	data, err := DnsmasqConfig(router, DnsmasqRuntime{
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{
 		DHCPv4DNSServersByInterface: map[string][]string{"ens18": {"192.168.1.66"}},
 	})
 	if err != nil {
@@ -227,7 +227,7 @@ func TestDnsmasqConfigSkipsTransitDHCPServerRole(t *testing.T) {
 		}},
 	}
 
-	data, err := DnsmasqConfig(router, DnsmasqRuntime{})
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
 	if err != nil {
 		t.Fatalf("render dnsmasq: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 		}},
 	}
 
-	data, err := DnsmasqConfig(router, DnsmasqRuntime{
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{
 		IPv6AddressesByInterface: map[string][]string{
 			"ens19": {"2001:db8:3d60:1220::100", "2001:db8:3d60:1220::3", "fe80::1"},
 		},
@@ -373,7 +373,7 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 		}},
 	}
 
-	data, err := DnsmasqConfig(router, DnsmasqRuntime{
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{
 		IPv6PrefixesByInterface: map[string][]string{"ens19": {"fe80::/64"}},
 	})
 	if err != nil {
@@ -523,12 +523,72 @@ func TestDnsmasqConfigRendersConditionalForwarder(t *testing.T) {
 			},
 		}},
 	}
-	data, err := DnsmasqConfig(router, DnsmasqRuntime{})
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
 	if err != nil {
 		t.Fatalf("render dnsmasq: %v", err)
 	}
 	if got := string(data); !strings.Contains(got, "server=/gw.transix.jp/2404:1a8:7f01:a::3") {
 		t.Fatalf("dnsmasq output missing conditional forwarder:\n%s", got)
+	}
+}
+
+func TestDnsmasqConfigSkipsDHCP4ConditionalForwarderWhenObservedEmpty(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
+				Metadata: api.ObjectMeta{Name: "dhcp4"},
+				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPScope"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcp4"},
+				Spec: api.IPv4DHCPScopeSpec{
+					Server:       "dhcp4",
+					Interface:    "lan",
+					RangeStart:   "192.168.10.130",
+					RangeEnd:     "192.168.10.139",
+					RouterSource: "interfaceAddress",
+					DNSSource:    "self",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSConditionalForwarder"},
+				Metadata: api.ObjectMeta{Name: "wan-fwd"},
+				Spec: api.DNSConditionalForwarderSpec{
+					Domain:            "example.com",
+					UpstreamSource:    "dhcp4",
+					UpstreamInterface: "wan",
+				},
+			},
+		}},
+	}
+	data, warnings, err := DnsmasqConfig(router, DnsmasqRuntime{
+		DHCPv4DNSServersByInterface: map[string][]string{},
+	})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	if len(warnings) == 0 {
+		t.Fatal("expected a warning when DHCPv4 DNS servers are not yet observed")
+	}
+	if strings.Contains(string(data), "server=/example.com/") {
+		t.Fatalf("forwarder rule must be skipped when observed empty:\n%s", data)
 	}
 }
 
