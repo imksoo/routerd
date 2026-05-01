@@ -28,6 +28,8 @@ behavior changes and new resource shapes as the model takes shape.
   `IPv6PrefixDelegation` on supported platforms. The Linux implementation uses
   AF_PACKET to observe UDP 546/547 without binding those ports, and records
   observed transactions into the same status history.
+- The passive DHCPv6 packet recorder now has a FreeBSD BPF backend, so
+  FreeBSD routers can record DHCPv6 transactions without binding UDP 546/547.
 - Linux NTT-profile `IPv6PrefixDelegation` now defaults to `client: dhcpcd`,
   including on NixOS. `client: dhcp6c` remains a supported explicit fallback
   for migration and controlled comparison.

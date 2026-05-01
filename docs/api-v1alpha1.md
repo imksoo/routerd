@@ -614,7 +614,9 @@ How routerd behaves:
   In daemon mode, routerd also starts a passive DHCPv6 packet recorder on the
   uplink interface for each `IPv6PrefixDelegation` resource where the platform
   supports it. On Linux this uses AF_PACKET, so it observes UDP 546/547 frames
-  without binding those UDP ports or competing with the DHCPv6 client. Observed
+  without binding those UDP ports or competing with the DHCPv6 client. On
+  FreeBSD it uses `/dev/bpf*` with a read-only BPF filter for DHCPv6 and router
+  advertisements. Observed
   Solicit/Advertise/Request/Renew/Rebind/Reply/Release packets are appended to
   the same recent transaction list shown by `routerctl describe ipv6pd/<name>`.
 - On FreeBSD with KAME `dhcp6c`, routerd manages `/var/db/dhcp6c_duid` for
