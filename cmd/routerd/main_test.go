@@ -411,6 +411,52 @@ exit 64
 	}
 }
 
+func TestApplyFreeBSDConfigReclaimsStaleSysrcKeys(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	stateLog := filepath.Join(dir, "sysrc-calls.log")
+	writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+case "$1" in
+  -x) exit 0 ;;
+  *) echo "$1: NO"; exit 0 ;;
+esac
+`, stateLog))
+	writeExecutable(t, filepath.Join(binDir, "service"), `#!/bin/sh
+if [ "$1" = "dhcp6c" ] && [ "$2" = "status" ]; then exit 0; fi
+exit 0
+`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"}},
+	}}}
+
+	store := routerstate.New()
+	store.Set(freebsdSysrcStateKey, "ifconfig_vxlan102,ifconfig_vxlan103,gateway_enable", "test seed")
+
+	_, _, err := applyFreeBSDConfig(router, store, "", "", "", "")
+	if err != nil {
+		t.Fatalf("apply FreeBSD config: %v", err)
+	}
+
+	got, err := os.ReadFile(stateLog)
+	if err != nil {
+		t.Fatalf("read sysrc log: %v", err)
+	}
+	for _, want := range []string{"-x ifconfig_vxlan102", "-x ifconfig_vxlan103"} {
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("sysrc log missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(string(got), "-x gateway_enable") {
+		t.Fatalf("gateway_enable should remain (still in current render): %s", got)
+	}
+}
+
 func writeExecutable(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0755); err != nil {

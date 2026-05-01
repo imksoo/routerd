@@ -45,6 +45,7 @@ import (
 
 const (
 	routerdDnsmasqService = "routerd-dnsmasq.service"
+	freebsdSysrcStateKey  = "freebsd.applyFreeBSDConfig.lastSysrcKeys"
 )
 
 var (
@@ -3407,7 +3408,8 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 	}
 	var changed []string
 	var restartIfnames []string
-	for _, key := range sortedStringMapKeys(rcValues) {
+	newKeys := sortedStringMapKeys(rcValues)
+	for _, key := range newKeys {
 		value := rcValues[key]
 		currentOut, err := exec.Command("sysrc", key).CombinedOutput()
 		if err == nil && parseFreeBSDSysrcValue(key, currentOut) == value {
@@ -3420,6 +3422,28 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 		if ifname := freeBSDIfconfigKeyInterface(key); ifname != "" {
 			restartIfnames = append(restartIfnames, ifname)
 		}
+	}
+	if stateStore != nil {
+		newSet := map[string]bool{}
+		for _, k := range newKeys {
+			newSet[k] = true
+		}
+		prevKeys := strings.Split(stateStore.Get(freebsdSysrcStateKey).Value, ",")
+		for _, oldKey := range prevKeys {
+			oldKey = strings.TrimSpace(oldKey)
+			if oldKey == "" || newSet[oldKey] {
+				continue
+			}
+			if err := runLogged("sysrc", "-x", oldKey); err != nil {
+				warnings = append(warnings, fmt.Sprintf("reclaim sysrc key %s: %v", oldKey, err))
+				continue
+			}
+			changed = append(changed, "sysrc:-x:"+oldKey)
+			if ifname := freeBSDIfconfigKeyInterface(oldKey); ifname != "" {
+				restartIfnames = append(restartIfnames, ifname)
+			}
+		}
+		stateStore.Set(freebsdSysrcStateKey, strings.Join(newKeys, ","), "applyFreeBSDConfig: tracked sysrc keys")
 	}
 	if len(data.DHCPClient) > 0 && dhclientPath != "" {
 		fileChanged, err := writeFileIfChanged(dhclientPath, data.DHCPClient, 0644)
