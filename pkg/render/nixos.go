@@ -424,8 +424,7 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 			}
 			switch effectiveNixOSIPv6PDClient(spec) {
 			case "dhcp6c":
-				service["wide-dhcpv6"] = true
-				debug["wide-dhcpv6"] = true
+				return nil, nil, fmt.Errorf("%s uses client=dhcp6c, but the built-in NixOS renderer does not provide a WIDE dhcp6c package path; use client=dhcpcd or provide a custom NixOS module outside routerd", res.ID())
 			case "dhcpcd":
 				service["dhcpcd"] = true
 				debug["dhcpcd"] = true

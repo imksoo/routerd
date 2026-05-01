@@ -187,7 +187,6 @@ spec:
         name: wan-pd
       spec:
         interface: wan
-        client: dhcp6c
         profile: ntt-hgw-lan-pd
         prefixLength: 60
         required: false

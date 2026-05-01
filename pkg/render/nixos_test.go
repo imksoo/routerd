@@ -217,7 +217,7 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 	}
 }
 
-func TestNixOSModuleRendersDHCP6CPackageWithoutNetworkdDHCPv6(t *testing.T) {
+func TestNixOSModuleRejectsDHCP6CWithoutPackagePath(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -243,19 +243,9 @@ func TestNixOSModuleRendersDHCP6CPackageWithoutNetworkdDHCPv6(t *testing.T) {
 			},
 		}},
 	}
-	data, err := NixOSModule(router)
-	if err != nil {
-		t.Fatalf("render NixOS module: %v", err)
-	}
-	got := string(data)
-	if !strings.Contains(got, "wide-dhcpv6") {
-		t.Fatalf("NixOS module should include wide-dhcpv6 for client=dhcp6c:\n%s", got)
-	}
-	if strings.Contains(got, `DHCP = "ipv6";`) || strings.Contains(got, `DHCP = "yes";`) {
-		t.Fatalf("NixOS module should not enable networkd DHCPv6 for client=dhcp6c:\n%s", got)
-	}
-	if !strings.Contains(got, "IPv6AcceptRA = true;") {
-		t.Fatalf("NixOS module should still accept RA for client=dhcp6c:\n%s", got)
+	_, err := NixOSModule(router)
+	if err == nil || !strings.Contains(err.Error(), "client=dhcp6c") {
+		t.Fatalf("NixOSModule error = %v, want dhcp6c unsupported error", err)
 	}
 }
 

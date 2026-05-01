@@ -506,7 +506,7 @@ metadata:
   name: wan-pd
 spec:
   interface: wan
-  client: dhcp6c
+  client: dhcpcd
   profile: ntt-hgw-lan-pd
   prefixLength: 60
 ```

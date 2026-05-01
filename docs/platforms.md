@@ -46,8 +46,9 @@ parity that the code does not yet provide.
   hand-written side of this split.
 - The current NixOS renderer emits host settings, dependency packages,
   persistent sysctl values, and basic systemd-networkd `.network`
-  declarations and can include `wide-dhcpv6` when `client: dhcp6c` is used
-  for IPv6-PD. It also includes common diagnostics (`dnsutils`, `iputils`,
+  declarations. For NTT-profile IPv6-PD it renders the Linux `dhcpcd` path;
+  the built-in renderer does not provide a WIDE `dhcp6c` package path for
+  NixOS. It also includes common diagnostics (`dnsutils`, `iputils`,
   `tcpdump`, and `traceroute`) so router hosts can inspect DNS, packet flow,
   and path MTU without ad hoc package edits. More resource kinds still need
   Nix-native persistent rendering.

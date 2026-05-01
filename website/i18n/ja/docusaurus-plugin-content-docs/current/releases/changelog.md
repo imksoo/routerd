@@ -20,6 +20,9 @@ behavior changes and new resource shapes as the model takes shape.
   optional dependency checks resource-aware, so `pppd` is required only when a
   `PPPoEInterface` is configured and Linux `dhcp6c` is required only when that
   fallback client is selected.
+- The NixOS renderer now rejects explicit `client: dhcp6c` because nixpkgs does
+  not provide a built-in WIDE dhcp6c package path; NixOS NTT-profile examples
+  use the `dhcpcd` default instead.
 - `routerctl describe ipv6pd/<name>` now shows DHCPv6 identity, last
   Solicit/Request/Renew/Rebind/Release timestamps, T1/T2, preferred and valid
   lifetimes, and calculated lease deadlines.

@@ -49,8 +49,9 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
   を担う、というものです。手書き側の最小例は
   `examples/nixos-edge-configuration.nix` にあります。
 - 現在の NixOS レンダラはホスト設定、依存パッケージ、永続 sysctl、
-  基本的な systemd-networkd の `.network` 宣言を生成します。IPv6-PD で
-  `client: dhcp6c` を使う場合は `wide-dhcpv6` も含められます。DNS、パケット、
+  基本的な systemd-networkd の `.network` 宣言を生成します。NTT 系
+  IPv6-PD では Linux の `dhcpcd` 経路を生成します。組み込みレンダラは
+  NixOS 向けの WIDE `dhcp6c` パッケージ経路を提供しません。DNS、パケット、
   経路 MTU をその場で確認できるよう、`dnsutils`、`iputils`、`tcpdump`、
   `traceroute` も生成パッケージに含めます。残りのリソース種別については、
   引き続き Nix らしい永続設定の生成を実装していく予定です。
