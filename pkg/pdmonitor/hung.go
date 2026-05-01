@@ -35,7 +35,10 @@ const (
 func CheckHung(store routerstate.Store, resourceNames []string, grace time.Duration) ([]HungResult, error) {
 	policies := make([]HungPolicy, 0, len(resourceNames))
 	for _, name := range resourceNames {
-		policies = append(policies, HungPolicy{Resource: name, RecoveryMode: RecoveryManual})
+		// Empty string is normalized to auto-request by normalizedRecoveryMode;
+		// pass it through here so the convenience helper picks up the new
+		// default automatically.
+		policies = append(policies, HungPolicy{Resource: name, RecoveryMode: ""})
 	}
 	return CheckHungWithPolicies(store, policies, grace, 5*time.Minute, 3)
 }
@@ -168,14 +171,20 @@ func scheduleRecovery(now time.Time, mode string, lease routerstate.PDLease, bac
 	}
 }
 
+// normalizedRecoveryMode normalizes the spec.recovery.mode string. An empty
+// (unset) value resolves to auto-request because the 2026-05-01 NTT NGN lab
+// work showed that passive renewal alone — waiting for the OS DHCPv6 client
+// to fire Renew at T1 — is not enough to keep a HGW PD lease alive.
+// Operators must opt out explicitly with "manual" if they do not want
+// routerd to send active Renew/Rebind packets toward the HGW.
 func normalizedRecoveryMode(mode string) string {
 	switch strings.TrimSpace(mode) {
-	case RecoveryAutoRequest:
-		return RecoveryAutoRequest
+	case RecoveryManual:
+		return RecoveryManual
 	case RecoveryAutoRebind:
 		return RecoveryAutoRebind
 	default:
-		return RecoveryManual
+		return RecoveryAutoRequest
 	}
 }
 

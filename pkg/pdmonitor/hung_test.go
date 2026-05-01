@@ -52,6 +52,28 @@ func TestCheckHungClearsAfterFreshReply(t *testing.T) {
 	}
 }
 
+func TestCheckHungEmptyModeDefaultsToAutoRequest(t *testing.T) {
+	store := routerstate.New()
+	now := store.Now().UTC()
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
+		CurrentPrefix: "2001:db8:1200:1230::/60",
+		LastReplyAt:   now.Add(-95 * time.Second).Format(time.RFC3339Nano),
+		T1:            "60",
+	}), "test")
+
+	// Empty RecoveryMode must default to auto-request: waiting for the OS
+	// client to T1-renew is not safe on this NTT NGN HGW per 2026-05-01
+	// observations, so routerd defaults to firing an active Request when a
+	// lease passes the renewal deadline.
+	results, err := CheckHungWithPolicies(store, []HungPolicy{{Resource: "wan-pd", RecoveryMode: ""}}, 30*time.Second, 5*time.Minute, 3)
+	if err != nil {
+		t.Fatalf("check hung: %v", err)
+	}
+	if len(results) != 1 || results[0].RecoveryAction != "request" || results[0].RecoveryMode != RecoveryAutoRequest {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
 func TestCheckHungAutoRequestSchedulesRecovery(t *testing.T) {
 	store := routerstate.New()
 	now := store.Now().UTC()
