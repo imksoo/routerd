@@ -577,6 +577,33 @@ flowchart TD
   H --> L[Keep OS client state, show acquisition phase and next action]
 ```
 
+corrigendum (2026-05-01): The "Request-with-claim helper" path that this
+section originally described as the bootstrap fallback is **not safe to use
+as an acquisition path** on this NTT NGN HGW. 2026-05-01 lab work showed
+that an active Request without a preceding Reply can insert a HGW PD table
+entry yet leave the binding incomplete: every subsequent active Renew or
+Rebind from the same router was silently dropped, the binding was a
+"phantom" without server-side per-client context. KB
+`docs/knowledge-base/ntt-ngn-pd-acquisition.md` Section A.4 / B.4 record
+the retraction. The corrected design position is:
+
+- The OS DHCPv6 client (`dhcpcd` on Linux/NixOS, `dhcp6c` on FreeBSD)
+  performing canonical RFC 8415 Solicit/Advertise/Request/Reply is the
+  primary acquisition path. routerd renders the OS client config and
+  expects the OS client to do the handshake.
+- routerd's active controller is scoped to **maintenance** on bindings
+  that already have a complete HGW server context: Renew, Rebind, Release,
+  and Information-Request work for those.
+- `routerd dhcp6 request` direct-claim now prints a warning when the
+  resource has no recorded Reply: it remains usable as a debug/lab tool
+  but is no longer the documented acquisition fallback.
+- The "hybrid" `acquisitionStrategy` still means "let the OS client try
+  first", but the previous fallback to direct Request-with-claim is no
+  longer asserted as effective. If the OS client's Solicit cannot get an
+  Advertise from the HGW, the operator's options are limited to the
+  knowledge-base Section K.5 playbook (HGW reboot when slots are short,
+  or wait for the lease lifetime to expire and the HGW to "forget").
+
 ### 5.3 High: Make Apply No-Op Safe for DHCPv6 Clients
 
 assert: Apply must not restart or rewrite a DHCPv6 client unless the rendered

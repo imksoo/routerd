@@ -9,6 +9,34 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- **取り下げ**: 2026-04-30 に発見した「NTT NGN PR-400NE HGW で Solicit が
+  drop される時、直接 Request が取得 fallback として有効」という主張は
+  もう保持しない。2026-05-01 のラボ検証で、事前 Reply 無しの Active
+  Request は HGW PD table に entry を作るが binding は不完全 (HGW が
+  以後の Renew / Rebind / Request を全て silent drop する "phantom" 状態)
+  であることを観測した。修正後の方針は
+  `docs/knowledge-base/ntt-ngn-pd-acquisition.md` の Section A.4 / B.4 と
+  `docs/design-notes.md` Section 5.2 訂正に記録した。canonical な RFC 8415
+  Solicit/Advertise/Request/Reply を実行する OS DHCPv6 client が当該 HGW
+  での主要な取得 path。routerd の active controller は HGW server context
+  が完成している binding に対する maintenance (Renew / Rebind / Release /
+  Information-Request) に限定する。
+- routerd の active sender の packet 形を IX2215 の動作確認済 packet に
+  揃えた: IPv6 hop limit 255 (旧 1。Proxmox VE 仮想ネット経路で drop される)、
+  DHCPv6 option 順序を Client-ID / Server-ID / IA_PD / Elapsed-Time /
+  Reconfigure-Accept (旧 Elapsed-Time / ORO / IA_PD)、ORO 無し、Solicit
+  IA_PD を IAID-only で T1/T2 ゼロ (旧 Renew 同等値)。
+- `routerd dhcp6` CLI に `--iaid` を追加。`IPv6PrefixDelegation.spec.iaid`
+  を編集せずに 1 発限りの IAID 上書きが可能に。
+- `routerd dhcp6 request` は Reply 記録の無いリソースで呼び出すと警告を
+  出すようになった (direct-claim Request は当該 HGW で phantom binding を
+  作るため)。
+- `IPv6PrefixDelegation` の observability 判定が DHCPv6 transaction evidence
+  必須になった (`LastReplyAt` + 非ゼロ未失効 `VLTime`)。LAN 委譲アドレスが
+  載っているだけでは `Currently observable: yes` にならない。stale 状態に
+  drift した時は dnsmasq の IPv6 LAN service / RA / 委譲 LAN アドレスの
+  描画を停止し、壊れた IPv6 を下流 client に提供しない。
+
 ## 0.1.0 (2026-05-01)
 
 最初のタグ付きリリース。Linux/NixOS/FreeBSD 混在の 5 ノードラボで、

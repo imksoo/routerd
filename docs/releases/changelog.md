@@ -9,6 +9,35 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- **Retract**: the 2026-04-30 finding that direct DHCPv6 Request to NTT NGN
+  PR-400NE HGW is a viable acquisition fallback when Solicit is dropped is no
+  longer asserted. 2026-05-01 lab work showed that direct-Request without a
+  preceding Reply produces a HGW PD table entry whose binding is incomplete:
+  the HGW silently drops every subsequent Renew, Rebind, and Request from the
+  same router. The corrected position is recorded in
+  `docs/knowledge-base/ntt-ngn-pd-acquisition.md` Sections A.4 and B.4 and in
+  `docs/design-notes.md` Section 5.2 corrigendum. The OS DHCPv6 client running
+  canonical RFC 8415 Solicit/Advertise/Request/Reply is the primary
+  acquisition path on this HGW; routerd's active controller is scoped to
+  maintenance (Renew / Rebind / Release / Information-Request) on bindings
+  that already have a complete HGW server context.
+- routerd's active sender packet shape now matches the IX2215 reference
+  observed on this HGW: IPv6 hop limit 255 (was 1, which Proxmox VE virtual
+  network paths drop), DHCPv6 option order Client-ID / Server-ID / IA_PD /
+  Elapsed-Time / Reconfigure-Accept (was Elapsed-Time / ORO / IA_PD), no ORO,
+  and Solicit IA_PD with IAID-only and zero T1/T2 (was Renew-style values).
+- `routerd dhcp6` CLI gained `--iaid` for one-shot IAID overrides without
+  having to edit `IPv6PrefixDelegation.spec.iaid`.
+- `routerd dhcp6 request` now prints a warning when invoked on a resource
+  with no recorded Reply, since direct-claim Request creates phantom
+  bindings on this HGW.
+- `IPv6PrefixDelegation` observability now requires fresh DHCPv6 transaction
+  evidence (`LastReplyAt` plus a positive, unexpired `VLTime`). A delegated
+  LAN address alone is no longer enough to mark `Currently observable: yes`.
+  When the lease drifts to stale, dnsmasq IPv6 LAN service, RA, and the
+  delegated LAN address rendering all stop so downstream clients are not
+  served broken IPv6.
+
 ## 0.1.0 (2026-05-01)
 
 First tagged release. The model and apply path now cover a 5-node

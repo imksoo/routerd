@@ -540,6 +540,32 @@ flowchart TD
   H --> L[OS client 状態を壊さず、取得段階と次の動作を表示]
 ```
 
+訂正 (2026-05-01): 本節が当初 bootstrap fallback として記述していた
+「Server-ID と IA_PD claim を含む Request の直接送出」は、当該 NTT NGN HGW で
+**取得 path として安全ではない**。2026-05-01 のラボ検証で次が判明:
+事前に Reply を観測していない状態で Active Request を送ると、HGW PD table に
+entry が挿入されるが binding が完成しない。同 router からの後続 Active
+Renew/Rebind は wire 上で確認できる範囲で全て silent drop され、binding は
+HGW 側に per-client server context を持たない "phantom" 状態となる。
+KB `docs/knowledge-base/ntt-ngn-pd-acquisition.md` の Section A.4 / B.4 に
+取り下げを記録した。修正後の設計姿勢は次の通り:
+
+- canonical な RFC 8415 Solicit/Advertise/Request/Reply を実行する OS
+  DHCPv6 client (Linux/NixOS は `dhcpcd`、FreeBSD は `dhcp6c`) が主要な
+  取得 path。routerd は OS client の設定を描画し、handshake は OS client
+  に委ねる。
+- routerd の active controller は **既に HGW server context が完成している
+  binding に対する maintenance** に限定: Renew、Rebind、Release、
+  Information-Request はこれに使える。
+- `routerd dhcp6 request` の direct-claim は、対応リソースに Reply 記録が
+  無い場合に警告を出すようにした。debug / lab tool として残るが、文書化
+  された取得 fallback ではない。
+- `hybrid` `acquisitionStrategy` は引き続き「先に OS client に試させる」を
+  意味するが、過去の direct Request-with-claim への fallback は有効と
+  主張しない。OS client の Solicit に HGW から Advertise が返らない場合、
+  運用側の選択肢は KB Section K.5 の playbook (slot 不足時の HGW 再起動、
+  または lease lifetime 切れ + HGW が "忘れる" のを待つ) に限られる。
+
 ### 5.3 重要: apply が DHCPv6 クライアントを不用意に壊さないようにする
 
 assert: 生成されたクライアント設定が変わっていない場合、apply は DHCPv6 クライアントを
