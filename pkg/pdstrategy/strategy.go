@@ -12,11 +12,13 @@ const (
 	ActionSolicit      = "solicit"
 	ActionRequestClaim = "request-claim"
 	ActionRenew        = "renew"
+	ActionRebind       = "rebind"
 	ActionRelease      = "release"
 	PhaseAcquired      = "acquired"
 	PhaseSoliciting    = "soliciting"
 	PhaseRequesting    = "requesting"
 	PhaseRenewing      = "renewing"
+	PhaseRebinding     = "rebinding"
 	PhaseReleased      = "released"
 )
 
@@ -51,6 +53,8 @@ func RecordAttempt(lease routerstate.PDLease, strategy, action string, now time.
 		status.Phase = PhaseRequesting
 	case ActionRenew:
 		status.Phase = PhaseRenewing
+	case ActionRebind:
+		status.Phase = PhaseRebinding
 	case ActionRelease:
 		status.Phase = PhaseReleased
 	default:

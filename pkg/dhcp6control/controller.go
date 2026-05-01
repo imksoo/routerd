@@ -58,8 +58,16 @@ func (c Controller) SendRequest(ctx context.Context, store routerstate.Store, in
 	return c.send(ctx, store, in, MessageRequest, "RequestSent", "lastRequestAt")
 }
 
+func (c Controller) SendSolicit(ctx context.Context, store routerstate.Store, in SendInput) error {
+	return c.send(ctx, store, in, MessageSolicit, "SolicitSent", "lastSolicitAt")
+}
+
 func (c Controller) SendRenew(ctx context.Context, store routerstate.Store, in SendInput) error {
 	return c.send(ctx, store, in, MessageRenew, "RenewSent", "lastRenewAt")
+}
+
+func (c Controller) SendRebind(ctx context.Context, store routerstate.Store, in SendInput) error {
+	return c.send(ctx, store, in, MessageRebind, "RebindSent", "lastRebindAt")
 }
 
 func (c Controller) SendRelease(ctx context.Context, store routerstate.Store, in SendInput) error {
@@ -78,7 +86,7 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 	if !prefix.IsValid() {
 		var err error
 		prefix, err = activePrefixFromInput(in)
-		if err != nil {
+		if err != nil && activeMessageRequiresPrefix(messageType) {
 			return err
 		}
 	}
@@ -102,12 +110,16 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 	if in.ValidLifetime != 0 {
 		validLifetime = in.ValidLifetime
 	}
-	reconfigureAccept := messageType == MessageRequest || messageType == MessageRenew
+	reconfigureAccept := messageType == MessageSolicit || messageType == MessageRequest || messageType == MessageRenew || messageType == MessageRebind
 	if messageType == MessageRelease {
 		t1 = 0
 		t2 = 0
 		preferredLifetime = 0
 		validLifetime = 0
+	}
+	serverDUID := in.Identity.ServerDUID
+	if !activeMessageUsesServerID(messageType) {
+		serverDUID = nil
 	}
 	packet := PacketSpec{
 		MessageType:       messageType,
@@ -117,7 +129,7 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 		SourceIP:          in.Identity.SourceIP,
 		DestinationIP:     in.Identity.DestinationIP,
 		ClientDUID:        in.Identity.ClientDUID,
-		ServerDUID:        in.Identity.ServerDUID,
+		ServerDUID:        serverDUID,
 		IAID:              iaid,
 		T1:                t1,
 		T2:                t2,
@@ -141,17 +153,25 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 	}
 	if store != nil {
 		lease := in.Lease
-		lease.PriorPrefix = prefix.String()
-		lease.Prefix = prefix.String()
+		if prefix.IsValid() {
+			lease.PriorPrefix = prefix.String()
+			lease.Prefix = prefix.String()
+		}
 		lease.ServerID = firstNonEmpty(in.Spec.ServerID, lease.ServerID)
 		strategy := pdstrategy.EffectiveStrategy(firstNonEmpty(in.Spec.Profile, api.IPv6PDProfileDefault), in.Spec.AcquisitionStrategy)
 		action := pdstrategy.ActionRequestClaim
 		switch leaseTimeField {
+		case "lastSolicitAt":
+			lease.LastSolicitAt = now.Format(time.RFC3339)
+			action = pdstrategy.ActionSolicit
 		case "lastRequestAt":
 			lease.LastRequestAt = now.Format(time.RFC3339)
 		case "lastRenewAt":
 			lease.LastRenewAt = now.Format(time.RFC3339)
 			action = pdstrategy.ActionRenew
+		case "lastRebindAt":
+			lease.LastRebindAt = now.Format(time.RFC3339)
+			action = pdstrategy.ActionRebind
 		case "lastReleaseAt":
 			lease.LastReleaseAt = now.Format(time.RFC3339)
 			action = pdstrategy.ActionRelease
@@ -164,6 +184,24 @@ func (c Controller) send(ctx context.Context, store routerstate.Store, in SendIn
 		}
 	}
 	return nil
+}
+
+func activeMessageUsesServerID(messageType uint8) bool {
+	switch messageType {
+	case MessageRequest, MessageRenew, MessageRelease:
+		return true
+	default:
+		return false
+	}
+}
+
+func activeMessageRequiresPrefix(messageType uint8) bool {
+	switch messageType {
+	case MessageRequest, MessageRenew, MessageRebind, MessageRelease:
+		return true
+	default:
+		return false
+	}
 }
 
 func activePrefixFromInput(in SendInput) (netip.Prefix, error) {
@@ -239,10 +277,14 @@ func (c Controller) transactionID() (uint32, error) {
 
 func messageName(messageType uint8) string {
 	switch messageType {
+	case MessageSolicit:
+		return "Solicit"
 	case MessageRequest:
 		return "Request"
 	case MessageRenew:
 		return "Renew"
+	case MessageRebind:
+		return "Rebind"
 	case MessageRelease:
 		return "Release"
 	default:

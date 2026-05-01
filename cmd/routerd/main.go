@@ -242,11 +242,11 @@ func validateCommand(args []string, stdout io.Writer) error {
 
 func dhcp6Command(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("dhcp6 requires an action: request, renew, or release")
+		return errors.New("dhcp6 requires an action: solicit, request, renew, rebind, or release")
 	}
 	action := args[0]
 	switch action {
-	case "request", "renew", "release":
+	case "solicit", "request", "renew", "rebind", "release":
 	default:
 		return fmt.Errorf("unknown dhcp6 action %q", action)
 	}
@@ -259,10 +259,10 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	serverDUIDOverride := fs.String("server-duid", "", "DHCPv6 server DUID override as hex")
 	destinationIPOverride := fs.String("dst-ip", "ff02::1:2", "destination IPv6 address")
 	destinationMACOverride := fs.String("dst-mac", "", "destination Ethernet MAC override")
-	t1Override := fs.Uint("t1", 0, "override IA_PD T1 seconds for request/renew lab packets")
-	t2Override := fs.Uint("t2", 0, "override IA_PD T2 seconds for request/renew lab packets")
-	preferredLifetimeOverride := fs.Uint("preferred-lifetime", 0, "override IA Prefix preferred lifetime seconds for request/renew lab packets")
-	validLifetimeOverride := fs.Uint("valid-lifetime", 0, "override IA Prefix valid lifetime seconds for request/renew lab packets")
+	t1Override := fs.Uint("t1", 0, "override IA_PD T1 seconds for active DHCPv6-PD lab packets")
+	t2Override := fs.Uint("t2", 0, "override IA_PD T2 seconds for active DHCPv6-PD lab packets")
+	preferredLifetimeOverride := fs.Uint("preferred-lifetime", 0, "override IA Prefix preferred lifetime seconds for active DHCPv6-PD lab packets")
+	validLifetimeOverride := fs.Uint("valid-lifetime", 0, "override IA Prefix valid lifetime seconds for active DHCPv6-PD lab packets")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -277,7 +277,7 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	input, err := dhcp6SendInput(router, store, *resourceName, *prefixOverride, *serverDUIDOverride, *destinationIPOverride, *destinationMACOverride)
+	input, err := dhcp6SendInput(router, store, action, *resourceName, *prefixOverride, *serverDUIDOverride, *destinationIPOverride, *destinationMACOverride)
 	if err != nil {
 		return err
 	}
@@ -288,10 +288,14 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	switch action {
+	case "solicit":
+		err = controller.SendSolicit(ctx, store, input)
 	case "request":
 		err = controller.SendRequest(ctx, store, input)
 	case "renew":
 		err = controller.SendRenew(ctx, store, input)
+	case "rebind":
+		err = controller.SendRebind(ctx, store, input)
 	case "release":
 		err = controller.SendRelease(ctx, store, input)
 	}
@@ -301,7 +305,7 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	if err := store.Save(*statePath); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "sent DHCPv6 %s for %s on %s prefix=%s iaid=%d\n", action, *resourceName, input.Identity.InterfaceName, input.Prefix, input.IAID)
+	fmt.Fprintf(stdout, "sent DHCPv6 %s for %s on %s prefix=%s iaid=%d\n", action, *resourceName, input.Identity.InterfaceName, activePrefixDisplay(input.Prefix), input.IAID)
 	return nil
 }
 
@@ -328,7 +332,7 @@ func setDHCP6LifetimeOverrides(input *dhcp6control.SendInput, t1, t2, preferred,
 	return nil
 }
 
-func dhcp6SendInput(router *api.Router, store routerstate.Store, resourceName, prefixOverride, serverDUIDOverride, destinationIPOverride, destinationMACOverride string) (dhcp6control.SendInput, error) {
+func dhcp6SendInput(router *api.Router, store routerstate.Store, action, resourceName, prefixOverride, serverDUIDOverride, destinationIPOverride, destinationMACOverride string) (dhcp6control.SendInput, error) {
 	res, spec, err := ipv6PrefixDelegationResource(router, resourceName)
 	if err != nil {
 		return dhcp6control.SendInput{}, err
@@ -375,16 +379,19 @@ func dhcp6SendInput(router *api.Router, store routerstate.Store, resourceName, p
 	base := "ipv6PrefixDelegation." + resourceName
 	lease, _ := routerstate.PDLeaseFromStore(store, base)
 	serverDUIDValue := firstNonEmptyString(serverDUIDOverride, spec.ServerID, lease.ServerID)
-	serverDUID, err := dhcp6control.ParseDUID(serverDUIDValue)
-	if err != nil {
-		return dhcp6control.SendInput{}, fmt.Errorf("parse server DUID: %w", err)
-	}
-	if len(serverDUID) == 0 {
-		return dhcp6control.SendInput{}, fmt.Errorf("server DUID is required for active DHCPv6 %s; set spec.serverID or pass --server-duid", resourceName)
+	var serverDUID []byte
+	if activeActionUsesServerID(action) {
+		serverDUID, err = dhcp6control.ParseDUID(serverDUIDValue)
+		if err != nil {
+			return dhcp6control.SendInput{}, fmt.Errorf("parse server DUID: %w", err)
+		}
+		if len(serverDUID) == 0 {
+			return dhcp6control.SendInput{}, fmt.Errorf("server DUID is required for active DHCPv6 %s; set spec.serverID or pass --server-duid", resourceName)
+		}
 	}
 	prefixValue := firstNonEmptyString(prefixOverride, spec.PriorPrefix, lease.PriorPrefix, lease.CurrentPrefix, lease.LastPrefix, lease.Prefix)
 	prefix, err := netip.ParsePrefix(prefixValue)
-	if err != nil {
+	if err != nil && activeActionUsesPrefix(action) {
 		return dhcp6control.SendInput{}, fmt.Errorf("parse delegated prefix %q: %w", prefixValue, err)
 	}
 	iaid := uint32(0)
@@ -410,6 +417,31 @@ func dhcp6SendInput(router *api.Router, store routerstate.Store, resourceName, p
 		Prefix: prefix,
 		IAID:   iaid,
 	}, nil
+}
+
+func activeActionUsesServerID(action string) bool {
+	switch action {
+	case "request", "renew", "release":
+		return true
+	default:
+		return false
+	}
+}
+
+func activeActionUsesPrefix(action string) bool {
+	switch action {
+	case "request", "renew", "rebind", "release":
+		return true
+	default:
+		return false
+	}
+}
+
+func activePrefixDisplay(prefix netip.Prefix) string {
+	if !prefix.IsValid() {
+		return "-"
+	}
+	return prefix.String()
 }
 
 func ipv6PrefixDelegationResource(router *api.Router, resourceName string) (api.Resource, api.IPv6PrefixDelegationSpec, error) {
@@ -5911,7 +5943,9 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  render nixos --config <path> [--out <path>]")
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <path>]")
 	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--override-client <client>] [--override-profile <profile>]")
+	fmt.Fprintln(w, "  dhcp6 solicit --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  dhcp6 renew --config <path> --resource <ipv6-prefix-delegation>")
+	fmt.Fprintln(w, "  dhcp6 rebind --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  dhcp6 request --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  dhcp6 release --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  serve --config <path> [--socket <path>]")

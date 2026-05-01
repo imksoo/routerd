@@ -10,12 +10,13 @@ import (
 )
 
 const (
-	MessageSolicit uint8 = 1
-	MessageRequest uint8 = 3
-	MessageConfirm uint8 = 4
-	MessageRenew   uint8 = 5
-	MessageRebind  uint8 = 6
-	MessageRelease uint8 = 8
+	MessageSolicit            uint8 = 1
+	MessageRequest            uint8 = 3
+	MessageConfirm            uint8 = 4
+	MessageRenew              uint8 = 5
+	MessageRebind             uint8 = 6
+	MessageRelease            uint8 = 8
+	MessageInformationRequest uint8 = 11
 
 	optionClientID     uint16 = 1
 	optionServerID     uint16 = 2
@@ -108,13 +109,22 @@ func BuildDHCPv6(spec PacketSpec) ([]byte, error) {
 	}
 	if spec.Prefix.IsValid() {
 		out = appendOption(out, optionIAPD, buildIAPD(spec))
-	} else if spec.MessageType != MessageConfirm {
+	} else if messageCarriesIAPD(spec.MessageType) {
 		out = appendOption(out, optionIAPD, buildIAPDNoPrefix(spec))
 	}
 	if spec.ReconfigureAccept {
 		out = appendOption(out, optionReconfAccept, nil)
 	}
 	return out, nil
+}
+
+func messageCarriesIAPD(messageType uint8) bool {
+	switch messageType {
+	case MessageSolicit, MessageRequest, MessageRenew, MessageRebind, MessageRelease:
+		return true
+	default:
+		return false
+	}
 }
 
 func BuildEthernetIPv6UDP(spec PacketSpec) ([]byte, error) {

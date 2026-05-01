@@ -13,6 +13,13 @@ behavior changes and new resource shapes as the model takes shape.
   `IPv6PrefixDelegation`, accepts DHCPv6 client hook events over the local
   control API, tracks acquisition phase and stalled-renewal suspicion, and
   exposes those details in `routerctl describe ipv6pd/<name>`.
+- `routerctl describe ipv6pd/<name>` now shows DHCPv6 identity, last
+  Solicit/Request/Renew/Rebind/Release timestamps, T1/T2, preferred and valid
+  lifetimes, and calculated lease deadlines.
+- `routerd dhcp6` now supports `solicit` and `rebind` in addition to
+  `request`, `renew`, and `release`. Solicit can be sent without a prior
+  prefix or server identifier; Rebind omits Server Identifier while preserving
+  non-zero IA_PD lifetimes.
 - Breaking: routerd now uses `apply` as the user-facing verb. The old
   `reconcile` CLI and control API actions were replaced by `routerd apply`,
   `routerctl apply`, and `/apply`; the YAML `spec.reconcile` policy name stays

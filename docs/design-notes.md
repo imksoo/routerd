@@ -692,6 +692,10 @@ and self-driving end-to-end without manual operator commands.
   `spec.acquisitionStrategy`: Solicit canonical first, fall back to
   Request-with-claim when Solicit produces no Advertise within a
   configured retry budget.
+- Keep the low-level manual verbs available for diagnosis:
+  `routerd dhcp6 solicit|request|renew|rebind|release` must record the sent
+  attempt into `IPv6PrefixDelegation` status so `routerctl describe` can show
+  what was tried before the automatic path is complete.
 - Documentation: capture the design and operational behavior under
   `docs/knowledge-base/ntt-ngn-pd-acquisition.md` Section H/H.1/K so the
   detection thresholds and operator playbook stay in one place.

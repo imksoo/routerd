@@ -595,12 +595,14 @@ How routerd behaves:
   a binding and the observed status is missing or known to be wrong.
   `acquisitionStrategy` is one of `hybrid`, `solicit-only`, or
   `request-claim-only`.
-- `routerd dhcp6 request|renew|release --resource <name>` is the low-level
+- `routerd dhcp6 solicit|request|renew|rebind|release --resource <name>` is the low-level
   active-control entry point for lab recovery. It reads DUID, IAID, server
   identifier, and prefix data from the resource and state DB, then sends a raw
-  DHCPv6 packet on the uplink. Request/Renew packets use a fresh transaction ID,
-  non-zero T1/T2 and IA Prefix lifetimes, and Reconfigure Accept; Release sends
-  zero IA_PD lifetimes and omits Reconfigure Accept.
+  DHCPv6 packet on the uplink. Solicit can run without a prior prefix or server
+  identifier. Request/Renew/Rebind packets use a fresh transaction ID, non-zero
+  T1/T2 and IA Prefix lifetimes, and Reconfigure Accept; Rebind intentionally
+  omits Server Identifier. Release sends zero IA_PD lifetimes and omits
+  Reconfigure Accept.
   Lab packets can override the requested lifetimes with `--t1`, `--t2`,
   `--preferred-lifetime`, and `--valid-lifetime`. Use this only to measure
   whether an upstream server honours shorter requested leases.

@@ -109,6 +109,45 @@ func TestControllerSendRequestUpdatesLease(t *testing.T) {
 	}
 }
 
+func TestControllerSendSolicitAllowsNoPrefixAndAddsReconfigureAccept(t *testing.T) {
+	sender := &fakeSender{}
+	store := routerstate.NewJSON()
+	now := time.Date(2026, 4, 30, 9, 31, 0, 0, time.UTC)
+	controller := Controller{
+		Sender:        sender,
+		Now:           func() time.Time { return now },
+		TransactionID: func() (uint32, error) { return 0x010204, nil },
+	}
+	srcMAC := mustMAC(t, "02:00:00:00:01:03")
+	in := SendInput{
+		Resource: ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation", Name: "wan-pd"},
+		Identity: Identity{
+			InterfaceName:  "ens18",
+			SourceMAC:      srcMAC,
+			SourceIP:       netip.MustParseAddr("fe80::200:ff:fe00:103"),
+			DestinationIP:  netip.MustParseAddr("ff02::1:2"),
+			ClientDUID:     DUIDLL(srcMAC),
+			DestinationMAC: dhcp6AllRelayAgentsAndServersMAC,
+		},
+		IAID: 1,
+	}
+	if err := controller.SendSolicit(context.Background(), store, in); err != nil {
+		t.Fatalf("send solicit: %v", err)
+	}
+	payload := dhcpPayload(sender.frame)
+	if payload[0] != MessageSolicit {
+		t.Fatalf("message type = %d, want Solicit", payload[0])
+	}
+	assertIAPDNoPrefix(t, payload, 1, 7200, 12600)
+	if !hasOption(payload, optionReconfAccept) {
+		t.Fatalf("solicit payload missing Reconfigure Accept: % x", payload)
+	}
+	lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
+	if !ok || lease.LastSolicitAt != now.Format(time.RFC3339) {
+		t.Fatalf("lease = %+v ok=%v", lease, ok)
+	}
+}
+
 func TestControllerSendRenewUsesFreshXIDServerLifetimesAndReconfigureAccept(t *testing.T) {
 	sender := &multiSender{}
 	store := routerstate.NewJSON()
@@ -160,6 +199,56 @@ func TestControllerSendRenewUsesFreshXIDServerLifetimesAndReconfigureAccept(t *t
 	assertIAPD(t, first, 1, 7200, 12600, 14400, 14400)
 	if !hasOption(first, optionReconfAccept) {
 		t.Fatalf("renew payload missing Reconfigure Accept: % x", first)
+	}
+}
+
+func TestControllerSendRebindOmitsServerIDAndUsesNonZeroLifetimes(t *testing.T) {
+	sender := &fakeSender{}
+	store := routerstate.NewJSON()
+	now := time.Date(2026, 4, 30, 9, 32, 0, 0, time.UTC)
+	controller := Controller{
+		Sender:        sender,
+		Now:           func() time.Time { return now },
+		TransactionID: func() (uint32, error) { return 0x010205, nil },
+	}
+	srcMAC := mustMAC(t, "02:00:00:00:01:03")
+	in := SendInput{
+		Resource: ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation", Name: "wan-pd"},
+		Lease: routerstate.PDLease{
+			PriorPrefix: "2001:db8:1200:1240::/60",
+			IAID:        "1",
+			T1:          "7200",
+			T2:          "12600",
+			PLTime:      "14400",
+			VLTime:      "14400",
+		},
+		Identity: Identity{
+			InterfaceName:  "ens18",
+			SourceMAC:      srcMAC,
+			DestinationMAC: dhcp6AllRelayAgentsAndServersMAC,
+			SourceIP:       netip.MustParseAddr("fe80::200:ff:fe00:103"),
+			DestinationIP:  netip.MustParseAddr("ff02::1:2"),
+			ClientDUID:     DUIDLL(srcMAC),
+			ServerDUID:     DUIDLL(mustMAC(t, "02:00:00:00:00:01")),
+		},
+	}
+	if err := controller.SendRebind(context.Background(), store, in); err != nil {
+		t.Fatalf("send rebind: %v", err)
+	}
+	payload := dhcpPayload(sender.frame)
+	if payload[0] != MessageRebind {
+		t.Fatalf("message type = %d, want Rebind", payload[0])
+	}
+	if hasOption(payload, optionServerID) {
+		t.Fatalf("rebind payload unexpectedly included Server ID: % x", payload)
+	}
+	assertIAPD(t, payload, 1, 7200, 12600, 14400, 14400)
+	if !hasOption(payload, optionReconfAccept) {
+		t.Fatalf("rebind payload missing Reconfigure Accept: % x", payload)
+	}
+	lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
+	if !ok || lease.LastRebindAt != now.Format(time.RFC3339) {
+		t.Fatalf("lease = %+v ok=%v", lease, ok)
 	}
 }
 
@@ -324,6 +413,23 @@ func assertIAPD(t *testing.T, payload []byte, iaid, t1, t2, preferredLifetime, v
 		i += length
 	}
 	t.Fatalf("missing IA Prefix suboption: % x", data)
+}
+
+func assertIAPDNoPrefix(t *testing.T, payload []byte, iaid, t1, t2 uint32) {
+	t.Helper()
+	data := optionData(payload, optionIAPD)
+	if len(data) != 12 {
+		t.Fatalf("IA_PD length = %d, want 12: % x", len(data), data)
+	}
+	if got := binary.BigEndian.Uint32(data[0:4]); got != iaid {
+		t.Fatalf("IAID = %d, want %d", got, iaid)
+	}
+	if got := binary.BigEndian.Uint32(data[4:8]); got != t1 {
+		t.Fatalf("T1 = %d, want %d", got, t1)
+	}
+	if got := binary.BigEndian.Uint32(data[8:12]); got != t2 {
+		t.Fatalf("T2 = %d, want %d", got, t2)
+	}
 }
 
 func mustMAC(t *testing.T, value string) net.HardwareAddr {

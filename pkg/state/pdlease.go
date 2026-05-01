@@ -22,6 +22,7 @@ type PDLease struct {
 	LastSolicitAt  string               `json:"lastSolicitAt,omitempty"`
 	LastRequestAt  string               `json:"lastRequestAt,omitempty"`
 	LastRenewAt    string               `json:"lastRenewAt,omitempty"`
+	LastRebindAt   string               `json:"lastRebindAt,omitempty"`
 	LastReleaseAt  string               `json:"lastReleaseAt,omitempty"`
 	DUID           string               `json:"duid,omitempty"`
 	DUIDText       string               `json:"duidText,omitempty"`

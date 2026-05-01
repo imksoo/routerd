@@ -11,6 +11,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -1086,8 +1087,27 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 		fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(lease.CurrentPrefix != ""))
 		fmt.Fprintf(w, "Current delegated prefix:\t%s\n", displayCell(lease.CurrentPrefix))
 		fmt.Fprintf(w, "Last delegated prefix:\t%s\n", displayCell(lease.LastPrefix))
+		fmt.Fprintf(w, "Server ID:\t%s\n", displayCell(lease.ServerID))
+		fmt.Fprintf(w, "Client DUID:\t%s\n", displayCell(firstNonEmpty(lease.DUIDText, lease.DUID)))
+		fmt.Fprintf(w, "Expected DUID:\t%s\n", displayCell(lease.ExpectedDUID))
+		fmt.Fprintf(w, "IAID:\t%s\n", displayCell(lease.IAID))
 		fmt.Fprintf(w, "Last Reply at:\t%s\n", displayCell(lease.LastReplyAt))
 		fmt.Fprintf(w, "Last observed at:\t%s\n", displayCell(lease.LastObservedAt))
+		fmt.Fprintf(w, "Last Solicit at:\t%s\n", displayCell(lease.LastSolicitAt))
+		fmt.Fprintf(w, "Last Request at:\t%s\n", displayCell(lease.LastRequestAt))
+		fmt.Fprintf(w, "Last Renew at:\t%s\n", displayCell(lease.LastRenewAt))
+		fmt.Fprintf(w, "Last Rebind at:\t%s\n", displayCell(lease.LastRebindAt))
+		fmt.Fprintf(w, "Last Release at:\t%s\n", displayCell(lease.LastReleaseAt))
+		fmt.Fprintf(w, "T1:\t%s\n", displayLeaseSeconds(lease.T1))
+		fmt.Fprintf(w, "T2:\t%s\n", displayLeaseSeconds(lease.T2))
+		fmt.Fprintf(w, "Preferred lifetime:\t%s\n", displayLeaseSeconds(lease.PLTime))
+		fmt.Fprintf(w, "Valid lifetime:\t%s\n", displayLeaseSeconds(lease.VLTime))
+		if timing := pdLeaseTiming(lease, time.Now().UTC()); len(timing) > 0 {
+			fmt.Fprintf(w, "Next T1 at:\t%s\n", displayCell(timing["t1At"]))
+			fmt.Fprintf(w, "Next T2 at:\t%s\n", displayCell(timing["t2At"]))
+			fmt.Fprintf(w, "Valid lifetime expires at:\t%s\n", displayCell(timing["expiresAt"]))
+			fmt.Fprintf(w, "Valid lifetime remaining:\t%s\n", displayCell(timing["remaining"]))
+		}
 		if lease.WANObserved != nil {
 			fmt.Fprintf(w, "WAN RA source:\t%s\n", displayCell(lease.WANObserved.HGWLinkLocal))
 			fmt.Fprintf(w, "WAN RA derived MAC:\t%s\n", displayCell(lease.WANObserved.HGWMACDerived))
@@ -1146,6 +1166,67 @@ func describePDLease(state map[string]any) (routerstate.PDLease, bool) {
 	}
 	lease, ok := state["lease"].(routerstate.PDLease)
 	return lease, ok
+}
+
+func pdLeaseTiming(lease routerstate.PDLease, now time.Time) map[string]string {
+	base, ok := parseRFC3339Time(lease.LastReplyAt)
+	if !ok {
+		return nil
+	}
+	out := map[string]string{}
+	if seconds, ok := parseLeaseSeconds(lease.T1); ok {
+		out["t1At"] = base.Add(time.Duration(seconds) * time.Second).UTC().Format(time.RFC3339)
+	}
+	if seconds, ok := parseLeaseSeconds(lease.T2); ok {
+		out["t2At"] = base.Add(time.Duration(seconds) * time.Second).UTC().Format(time.RFC3339)
+	}
+	if seconds, ok := parseLeaseSeconds(lease.VLTime); ok {
+		expiresAt := base.Add(time.Duration(seconds) * time.Second).UTC()
+		out["expiresAt"] = expiresAt.Format(time.RFC3339)
+		if !now.IsZero() {
+			remaining := expiresAt.Sub(now).Round(time.Second)
+			if remaining <= 0 {
+				out["remaining"] = "expired"
+			} else {
+				out["remaining"] = remaining.String()
+			}
+		}
+	}
+	return out
+}
+
+func parseRFC3339Time(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		t, err := time.Parse(layout, value)
+		if err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func parseLeaseSeconds(value string) (int64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || seconds < 0 {
+		return 0, false
+	}
+	return seconds, true
+}
+
+func displayLeaseSeconds(value string) string {
+	seconds, ok := parseLeaseSeconds(value)
+	if !ok {
+		return "-"
+	}
+	return fmt.Sprintf("%ds", seconds)
 }
 
 func yesNo(value bool) string {
