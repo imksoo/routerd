@@ -606,15 +606,15 @@ systemd-networkd PD through the documented `dhcpcd` path.
 
 ### 5.8 High: Keep a multi-client WAN strategy
 
-assert: routerd will not force a single DHCPv6-PD client across every OS.
-Lab evidence shows that client behaviour differs enough between FreeBSD,
-Ubuntu, NixOS, and the NTT home-gateway profile that a single "best" daemon
-would hide important operational differences. The design is therefore a
-multi-client strategy with OS-specific defaults, explicit configuration, and
-apply-time overrides for lab work.
+assert: routerd keeps multiple DHCPv6-PD client renderers, but the production
+defaults are now fixed: Linux and NixOS use `dhcpcd` for NTT home-gateway
+profiles, FreeBSD uses KAME/WIDE `dhcp6c`, and generic Linux keeps
+systemd-networkd for non-NTT profiles. `dhcp6c` remains a Linux fallback for
+controlled migration and comparison, and systemd-networkd remains available
+outside the NTT path. Operators may still set `spec.client` explicitly, and
+lab runs may use apply-time override flags without rewriting YAML.
 
-Default client resolution happens at apply time when
-`IPv6PrefixDelegation.spec.client` is empty:
+When `IPv6PrefixDelegation.spec.client` is empty, apply uses:
 
 | Host flavour | Profile | Default client |
 | --- | --- | --- |
@@ -623,7 +623,7 @@ Default client resolution happens at apply time when
 | Linux | `ntt-*` | `dhcpcd` |
 | NixOS | `ntt-*` | `dhcpcd` |
 
-The same policy can be read as a matrix of implementation maturity:
+Implementation maturity is tracked in the knowledge base:
 
 ```mermaid
 flowchart LR
@@ -648,12 +648,6 @@ flowchart LR
   N1 --> KB
   N2 --> KB
 ```
-
-assert: Operators may still set `spec.client` explicitly. Lab runs can also
-override every `IPv6PrefixDelegation` resource for a single apply with
-`routerd apply --override-client <networkd|dhcp6c|dhcpcd>` and may override
-the profile with `--override-profile <name>`. These flags are intentionally
-runtime-only; they do not rewrite the YAML file.
 
 assert: Known bad combinations are warnings, not validation errors. Some
 combinations are wrong for the NTT profile but still useful for another

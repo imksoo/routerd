@@ -573,13 +573,15 @@ routerd には再現可能な導入方法か、対応済みの別クライアン
 
 ### 5.8 重要: WAN 側クライアントを複数方式で扱う
 
-assert: routerd は、全 OS で同じ DHCPv6-PD クライアントを強制しない。
-FreeBSD、Ubuntu、NixOS、NTT ホームゲートウェイ向けプロファイルでは、
-実装ごとの癖が十分に違う。1 つのデーモンに寄せると、その違いを隠して
-運用判断を難しくする。そのため、OS ごとの既定値、明示設定、検証用の
-apply 時上書きを組み合わせる。
+assert: routerd は複数の DHCPv6-PD クライアント生成経路を残します。ただし、
+運用上の既定値は確定済みです。NTT ホームゲートウェイ向けプロファイルでは
+Linux と NixOS は `dhcpcd`、FreeBSD は KAME/WIDE `dhcp6c` を使います。
+NTT 以外の一般的な Linux では systemd-networkd を使います。Linux の
+`dhcp6c` は移行や比較検証のための代替経路として残します。運用者は
+`spec.client` を明示でき、ラボでは YAML を書き換えず apply 時の
+上書きフラグを使えます。
 
-`IPv6PrefixDelegation.spec.client` が空の場合、apply 時に次の既定値を選ぶ。
+`IPv6PrefixDelegation.spec.client` が空の場合、apply は次の既定値を選びます。
 
 | ホスト種別 | プロファイル | 既定クライアント |
 | --- | --- | --- |
@@ -588,7 +590,7 @@ apply 時上書きを組み合わせる。
 | Linux | `ntt-*` | `dhcpcd` |
 | NixOS | `ntt-*` | `dhcpcd` |
 
-同じ方針を、実装の成熟度として見ると次のようになります。
+実装の成熟度は知識ベースで管理します。
 
 ```mermaid
 flowchart LR
@@ -613,12 +615,6 @@ flowchart LR
   N1 --> KB
   N2 --> KB
 ```
-
-assert: 運用者は `spec.client` を明示してよい。ラボ検証では、1 回の apply に
-限って全 `IPv6PrefixDelegation` リソースを
-`routerd apply --override-client <networkd|dhcp6c|dhcpcd>` で上書きできる。
-プロファイルも `--override-profile <name>` で上書きできる。これらは実行時の
-指定であり、YAML ファイルは書き換えない。
 
 assert: 既知の悪い組み合わせは、検証エラーではなく警告にする。ある
 ネットワークでは不適切でも、別の環境や切り分け試験では役に立つ場合が
