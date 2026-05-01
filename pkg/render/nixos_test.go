@@ -279,7 +279,6 @@ func TestNixOSModuleRendersDHCPCDPackageWithoutNetworkdDHCPv6(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "wan-pd"},
 				Spec: api.IPv6PrefixDelegationSpec{
 					Interface: "wan",
-					Client:    "dhcpcd",
 					Profile:   "ntt-hgw-lan-pd",
 				},
 			},
@@ -291,7 +290,7 @@ func TestNixOSModuleRendersDHCPCDPackageWithoutNetworkdDHCPv6(t *testing.T) {
 	}
 	got := string(data)
 	if !strings.Contains(got, "dhcpcd") {
-		t.Fatalf("NixOS module should include dhcpcd for client=dhcpcd:\n%s", got)
+		t.Fatalf("NixOS module should include dhcpcd for omitted NTT-profile client:\n%s", got)
 	}
 	if strings.Contains(got, `DHCP = "ipv6";`) || strings.Contains(got, `DHCP = "yes";`) {
 		t.Fatalf("NixOS module should not enable networkd DHCPv6 for client=dhcpcd:\n%s", got)

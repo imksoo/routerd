@@ -36,6 +36,9 @@ behavior changes and new resource shapes as the model takes shape.
   recovery. The default `manual` mode records warnings only; `auto-request`
   and `auto-rebind` send rate-limited active DHCPv6 packets after hung
   detection and stop after three failed attempts.
+- NixOS rendering now uses the same effective IPv6PrefixDelegation client
+  default as apply, so omitted NTT-profile clients render `dhcpcd` packages
+  and avoid enabling systemd-networkd DHCPv6-PD.
 - Linux NTT-profile `IPv6PrefixDelegation` now defaults to `client: dhcpcd`,
   including on NixOS. `client: dhcp6c` remains a supported explicit fallback
   for migration and controlled comparison.

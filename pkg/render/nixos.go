@@ -262,7 +262,7 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 				return nil, err
 			}
 			if iface := interfaces[spec.Interface]; iface != nil {
-				if defaultString(spec.Client, "networkd") == "networkd" {
+				if effectiveNixOSIPv6PDClient(spec) == "networkd" {
 					iface.DHCP6 = true
 				}
 				iface.AcceptRA = true
@@ -422,7 +422,7 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 			if err != nil {
 				return nil, nil, err
 			}
-			switch defaultString(spec.Client, "networkd") {
+			switch effectiveNixOSIPv6PDClient(spec) {
 			case "dhcp6c":
 				service["wide-dhcpv6"] = true
 				debug["wide-dhcpv6"] = true
@@ -491,6 +491,10 @@ func nixBool(value bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func effectiveNixOSIPv6PDClient(spec api.IPv6PrefixDelegationSpec) string {
+	return api.EffectiveIPv6PDClient("linux", true, spec.Profile, spec.Client)
 }
 
 func nixString(value string) string {
