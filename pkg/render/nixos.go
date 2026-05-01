@@ -108,7 +108,7 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		if udpPorts := nixOSFirewallAllowedUDPPorts(vxlans); len(udpPorts) > 0 {
 			buf.WriteString("  networking.firewall.allowedUDPPorts = [ " + nixIntListSpaced(udpPorts) + " ];\n")
 		}
-		if trusted := nixOSFirewallTrustedInterfaces(bridges); len(trusted) > 0 {
+		if trusted := nixOSFirewallTrustedInterfaces(vxlans); len(trusted) > 0 {
 			buf.WriteString("  networking.firewall.trustedInterfaces = " + nixStringList(trusted) + ";\n")
 		}
 		buf.WriteString("  systemd.network.enable = true;\n")
@@ -798,15 +798,15 @@ func nixOSFirewallAllowedUDPPorts(vxlans []nixOSVXLAN) []int {
 	return ports
 }
 
-func nixOSFirewallTrustedInterfaces(bridges []nixOSBridge) []string {
+func nixOSFirewallTrustedInterfaces(vxlans []nixOSVXLAN) []string {
 	seen := map[string]bool{}
 	var names []string
-	for _, b := range bridges {
-		if b.IfName == "" || seen[b.IfName] {
+	for _, v := range vxlans {
+		if v.Bridge == "" || seen[v.Bridge] {
 			continue
 		}
-		seen[b.IfName] = true
-		names = append(names, b.IfName)
+		seen[v.Bridge] = true
+		names = append(names, v.Bridge)
 	}
 	sort.Strings(names)
 	return names

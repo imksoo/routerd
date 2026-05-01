@@ -268,6 +268,38 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 	}
 }
 
+func TestNixOSModuleOnlyTrustsBridgesAttachedToVXLAN(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NixOSHost"},
+				Metadata: api.ObjectMeta{Name: "host"},
+				Spec:     api.NixOSHostSpec{Hostname: "host"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"},
+				Metadata: api.ObjectMeta{Name: "br-isolated"},
+				Spec:     api.BridgeSpec{IfName: "br-isolated"},
+			},
+		}},
+	}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatalf("render NixOS module: %v", err)
+	}
+	got := string(data)
+	if strings.Contains(got, "trustedInterfaces") {
+		t.Fatalf("Bridge without a VXLANSegment must not be trusted:\n%s", got)
+	}
+}
+
 func TestNixOSModuleRejectsDHCP6CWithoutPackagePath(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
