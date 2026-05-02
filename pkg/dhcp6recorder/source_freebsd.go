@@ -64,7 +64,8 @@ func openBPFDevice() (int, error) {
 }
 
 func configureBPF(fd int, ifname string) error {
-	if err := unix.IoctlSetInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
+	var one uint32 = 1
+	if err := ioctlPtr(fd, uintptr(unix.BIOCIMMEDIATE), unsafe.Pointer(&one)); err != nil {
 		return err
 	}
 	var ifr bpfIfreq

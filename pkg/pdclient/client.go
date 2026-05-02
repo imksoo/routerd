@@ -85,9 +85,6 @@ func New(config Config, transport Transport) (*Client, error) {
 	if len(config.ClientDUID) == 0 {
 		return nil, fmt.Errorf("client DUID is required")
 	}
-	if config.IAID == 0 {
-		config.IAID = 1
-	}
 	if config.WantPrefix == 0 {
 		config.WantPrefix = 60
 	}
@@ -124,6 +121,10 @@ func (c *Client) Handle(ctx context.Context, payload []byte) error {
 	if err != nil {
 		return err
 	}
+	return c.HandleMessage(ctx, msg)
+}
+
+func (c *Client) HandleMessage(ctx context.Context, msg Message) error {
 	if msg.TransactionID != c.lastTransaction {
 		return nil
 	}
@@ -137,7 +138,15 @@ func (c *Client) Handle(ctx context.Context, payload []byte) error {
 	switch {
 	case c.State == StateSoliciting && msg.Type == MessageAdvertise:
 		c.advertise = msg
-		return c.send(ctx, StateRequesting, Message{Type: MessageRequest, ServerDUID: msg.ServerDUID, Prefix: msg.Prefix})
+		return c.send(ctx, StateRequesting, Message{
+			Type:       MessageRequest,
+			ServerDUID: msg.ServerDUID,
+			Prefix:     msg.Prefix,
+			T1:         msg.T1,
+			T2:         msg.T2,
+			Preferred:  msg.Preferred,
+			Valid:      msg.Valid,
+		})
 	case (c.State == StateRequesting || c.State == StateRenewing || c.State == StateRebinding) && msg.Type == MessageReply:
 		c.acceptReply(msg)
 		return nil
