@@ -9,6 +9,17 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- **Retract (later in same retreat)**: An earlier "Unreleased" line said
+  `IPv6PrefixDelegation.spec.recovery.mode` would default to `auto-request`
+  so empty configs would still get active maintenance. After thinking
+  harder about why router02-04 stopped accepting Solicits in the lab, the
+  most likely explanation is that routerd's own active DHCPv6 sender
+  poisoned HGW per-client state by emitting packets in parallel with the
+  OS DHCPv6 client. The conservative default is therefore now `manual`:
+  the hung monitor records `lease.Hung` but does not synthesise any
+  DHCPv6 packet on its own. Operators that want active retry can opt in
+  with `auto-request` or `auto-rebind`. The active controller stays
+  available as `routerd dhcp6 ...` for explicit operator invocation.
 - **Retract**: the 2026-04-30 finding that direct DHCPv6 Request to NTT NGN
   PR-400NE HGW is a viable acquisition fallback when Solicit is dropped is no
   longer asserted. 2026-05-01 lab work showed that direct-Request without a

@@ -9,6 +9,17 @@ behavior changes and new resource shapes as the model takes shape.
 
 ## Unreleased
 
+- **取り下げ (同じ retreat で再度訂正)**: 旧 "Unreleased" に
+  `IPv6PrefixDelegation.spec.recovery.mode` の default を `auto-request` に
+  すると書いていた。「空 config でも maintenance を能動でやる」が動機
+  だったが、router02-04 が Solicit に Advertise を貰えない理由を更に
+  考えた結果、最も可能性の高い説明は **routerd 自身の active DHCPv6
+  sender が OS DHCPv6 client と並行して packet を出して HGW の per-client
+  state を汚染した** こと。保守的な default は `manual` に戻す: hung
+  monitor は `lease.Hung` を記録するだけで、routerd 自身は DHCPv6 packet
+  を合成しない。能動 retry が欲しい operator は `auto-request` や
+  `auto-rebind` を明示で opt-in する。active controller は `routerd dhcp6 ...`
+  CLI として operator の明示呼び出し向けに残る。
 - **取り下げ**: 2026-04-30 に発見した「NTT NGN PR-400NE HGW で Solicit が
   drop される時、直接 Request が取得 fallback として有効」という主張は
   もう保持しない。2026-05-01 のラボ検証で、事前 Reply 無しの Active

@@ -35,10 +35,7 @@ const (
 func CheckHung(store routerstate.Store, resourceNames []string, grace time.Duration) ([]HungResult, error) {
 	policies := make([]HungPolicy, 0, len(resourceNames))
 	for _, name := range resourceNames {
-		// Empty string is normalized to auto-request by normalizedRecoveryMode;
-		// pass it through here so the convenience helper picks up the new
-		// default automatically.
-		policies = append(policies, HungPolicy{Resource: name, RecoveryMode: ""})
+		policies = append(policies, HungPolicy{Resource: name, RecoveryMode: RecoveryManual})
 	}
 	return CheckHungWithPolicies(store, policies, grace, 5*time.Minute, 3)
 }
@@ -171,20 +168,28 @@ func scheduleRecovery(now time.Time, mode string, lease routerstate.PDLease, bac
 	}
 }
 
-// normalizedRecoveryMode normalizes the spec.recovery.mode string. An empty
-// (unset) value resolves to auto-request because the 2026-05-01 NTT NGN lab
-// work showed that passive renewal alone — waiting for the OS DHCPv6 client
-// to fire Renew at T1 — is not enough to keep a HGW PD lease alive.
-// Operators must opt out explicitly with "manual" if they do not want
-// routerd to send active Renew/Rebind packets toward the HGW.
+// normalizedRecoveryMode normalizes the spec.recovery.mode string. The
+// default (empty) value is "manual": the hung monitor records the
+// suspicion in lease.Hung but does not synthesise any DHCPv6 packet.
+//
+// 2026-05-01 lab work showed that routerd-driven active Request/Renew
+// frames sent in parallel to a long-running OS DHCPv6 client can poison
+// the HGW's per-client server context, leaving the binding "phantom" and
+// the HGW silently dropping every subsequent message. The conservative
+// default is therefore to NOT have routerd inject DHCPv6 packets on its
+// own; the OS DHCPv6 client owns the canonical retry cadence.
+//
+// Operators that want routerd to actively retry can opt in explicitly
+// with "auto-request" or "auto-rebind". The active controller remains
+// available as a manually-invoked tool (`routerd dhcp6 renew/release`).
 func normalizedRecoveryMode(mode string) string {
 	switch strings.TrimSpace(mode) {
-	case RecoveryManual:
-		return RecoveryManual
+	case RecoveryAutoRequest:
+		return RecoveryAutoRequest
 	case RecoveryAutoRebind:
 		return RecoveryAutoRebind
 	default:
-		return RecoveryAutoRequest
+		return RecoveryManual
 	}
 }
 

@@ -593,7 +593,10 @@ the retraction. The corrected design position is:
   expects the OS client to do the handshake.
 - routerd's active controller is scoped to **maintenance** on bindings
   that already have a complete HGW server context: Renew, Rebind, Release,
-  and Information-Request work for those.
+  and Information-Request work for those, **but only when invoked
+  explicitly by the operator**. Default `spec.recovery.mode` is now
+  `manual` again: the hung monitor records suspicion in `lease.Hung`
+  but routerd does NOT synthesise DHCPv6 frames on its own.
 - `routerd dhcp6 request` direct-claim now prints a warning when the
   resource has no recorded Reply: it remains usable as a debug/lab tool
   but is no longer the documented acquisition fallback.
@@ -603,6 +606,17 @@ the retraction. The corrected design position is:
   Advertise from the HGW, the operator's options are limited to the
   knowledge-base Section K.5 playbook (HGW reboot when slots are short,
   or wait for the lease lifetime to expire and the HGW to "forget").
+
+assert: routerd treats every active DHCPv6 packet routerd itself sends as
+a potential pollutant. The 2026-05-01 evidence is that routerd active
+Request to a "free" prefix can create a HGW PD table entry without the
+server-side context that Renew/Rebind require, leaving the binding
+phantom and the HGW silently dropping every subsequent message from
+that client. Even Renew sent in parallel with the OS DHCPv6 client's own
+Renew might race or contradict in ways the HGW reconciles by ignoring
+both. routerd therefore stays out of the canonical handshake by
+default and only steps in when the operator explicitly chooses an
+opt-in `recovery.mode`.
 
 ### 5.3 High: Make Apply No-Op Safe for DHCPv6 Clients
 
@@ -792,35 +806,64 @@ resource from "no PD" to "phantom binding" without operator awareness;
 the apply path knows to wait out the lifetime; routerctl explains what
 the operator should do.
 
-#### 5.13.2 HGW-side state observability
+#### 5.13.2 Trust the OS DHCPv6 client; routerd does not monitor the HGW
 
-observe: The 2026-05-01 lab investigation depended on `cd ~/get-hgw-pd
-&& node index.js` (a hand-written WebUI scraper) to read the HGW PD
-table. routerd's own state model has no view into HGW internals, so it
-cannot tell "the HGW silently dropped my Request" from "my Request
-never reached the HGW", and it cannot tell "the HGW table holds 4 of
-15 slots" from "the HGW table holds 15 of 15 slots". Both
-discriminators matter for operator decisions.
+retraction: An earlier draft of this section proposed that routerd grow
+an HGW state adapter (SNMP where available, WebUI scraping for the
+PR-400NE) so apply could reference real HGW state instead of guessing.
+That direction was wrong on two counts:
 
-assert: routerd should grow a small read-only adapter that pulls HGW PD
-table contents (slot count, per-slot prefix and DUID-LL/MAC, remaining
-lifetime) and writes them under
-`IPv6PrefixDelegation/<name>.objects.status._variables.hgwTable`. Where
-SNMP is available, prefer SNMP. Where only HTTP scraping is feasible
-(PR-400NE WebUI today), structure it behind a small interface so other
-HGW models can plug in. Concrete future work:
+- Concretely, the PR-400NE has no SNMP exposure for the PD slot table;
+  the lab evidence came from a hand-written WebUI scraper that an
+  ordinary home user neither owns nor would maintain. A future-work
+  item that depends on a specific HGW model's WebUI HTML is not
+  supportable.
+- Architecturally, the proposal asked one router to monitor another
+  router. routerd's job is to be a DHCPv6-PD client and a LAN router.
+  It should not need privileged visibility into the upstream HGW's
+  internals to decide whether to keep doing its job. Designing for
+  that visibility is a smell: it pushes responsibility outside the
+  client/server contract that DHCPv6 already specifies.
 
-- A `pkg/hgwobserve/` package with HGWState, HGWBinding shapes and a
-  scraper interface.
-- A built-in PR-400NE adapter that mirrors the existing `get-hgw-pd`
-  Node script in Go.
-- Reflect HGW table contents in `routerctl describe ipv6pd/<name>` and
-  in apply warnings (e.g. "HGW table is at 14/15 slots; further
-  acquisition may be denied").
+assert: The corrected direction is the opposite — narrow routerd's
+behaviour around the OS DHCPv6 client and trust the canonical RFC 8415
+retry cadence to do the right thing.
 
-Completion condition: routerd decisions about whether to retry, escalate
-to active Request, or degrade LAN IPv6 service can reference HGW state
-instead of inferring from outgoing packet results.
+- The OS DHCPv6 client (`dhcpcd` on Linux/NixOS, `dhcp6c` on FreeBSD)
+  retransmits Solicit per RFC 8415 §15: IRT/MRT/MRC bound retries that
+  do not give up. routerd should keep that loop running for as long as
+  the resource exists, restart the OS client only when the rendered
+  config actually changes, and not interrupt the OS client's natural
+  retry timing.
+- routerd MUST NOT pretend to know whether the HGW is healthy. If the
+  OS DHCPv6 client cannot acquire after its own retry budget, that is
+  the operator's signal to look at the HGW directly (web UI / vendor
+  tooling), not routerd's signal to send a different DHCPv6 packet
+  shape "to see what works".
+- The active controller stays useful for **maintenance** on Reply-backed
+  bindings (Renew/Rebind/Release/Information-Request). It is not the
+  acquisition path.
+
+Concrete future work in this corrected direction:
+
+- Add an `IPv6PrefixDelegation.spec.acquisitionRetry` block (e.g.
+  `restartAfterIdle: 1h` or `restartOnConfigChange: true`) that bounds
+  how long routerd lets the OS client run without progress before
+  restarting it. Restarting does not change the protocol; it just gives
+  the OS client a clean retransmit timer.
+- Make `routerctl describe ipv6pd/<name>` show the OS client's recent
+  Solicit cadence (we already record Solicit observations) so the
+  operator can see "the client is retrying every X seconds without
+  Advertise" without needing to peek into the HGW.
+- Document explicitly in the operator playbook that "no Advertise after
+  N hours" is a signal to look at the HGW out-of-band, not for routerd
+  to escalate.
+
+Completion condition: routerd's acquisition path is the OS DHCPv6
+client's canonical retry, end of story. routerd does not have, and does
+not grow, an HGW state observer. The only place routerd makes a
+decision about HGW health is in the maintenance path, and even there it
+just observes its own DHCPv6 transactions, not HGW internals.
 
 ## 6. Implementation Phases
 
