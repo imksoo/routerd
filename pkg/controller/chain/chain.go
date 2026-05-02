@@ -19,7 +19,11 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/derived"
+	"routerd/pkg/eventrule"
+	"routerd/pkg/healthcheck"
 	daemonsource "routerd/pkg/source/daemon"
+	"routerd/pkg/wanegress"
 )
 
 type Store interface {
@@ -76,6 +80,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
+
 	pd := PrefixDelegationController{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	lan := LANAddressController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunAddress, Logger: logger}
@@ -85,6 +90,13 @@ func (r *Runner) Start(ctx context.Context) error {
 	ra := IPv6RouterAdvertisementController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRA, Logger: logger}
 	dhcp6 := IPv6DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDHCPv6, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
 	dns := DNSAnswerController{Router: r.Router, Bus: r.Bus, Store: r.Store, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
+	wan := wanegress.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
+	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
+	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
+	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
+	rules.Start(ctx)
+	derivedEvents.Start(ctx)
+	health.Start(ctx)
 	pd.Start(ctx)
 	info.Start(ctx)
 	lan.Start(ctx)
@@ -94,6 +106,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	ra.Start(ctx)
 	dhcp6.Start(ctx)
 	dns.Start(ctx)
+	wan.Start(ctx)
 	return nil
 }
 
