@@ -266,6 +266,8 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	iaidOverride := fs.String("iaid", "", "override IA_PD IAID (decimal or 0xHEX) for active DHCPv6-PD lab packets")
 	clientDUIDOverride := fs.String("client-duid", "", "override Client-ID DUID as hex (no separators or colon-separated) for active DHCPv6-PD lab packets")
 	hopLimitOverride := fs.Uint("hop-limit", 0, "override IPv6 hop limit (1-255) for active DHCPv6-PD lab packets; 0 keeps the routerd default of 255")
+	srcMACOverride := fs.String("src-mac", "", "override source Ethernet MAC (auto-derives IPv6 LL via EUI-64) for active DHCPv6-PD lab packets")
+	srcLLOverride := fs.String("src-ll", "", "override source IPv6 link-local address for active DHCPv6-PD lab packets (used together with --src-mac)")
 	t1Override := fs.Uint("t1", 0, "override IA_PD T1 seconds for active DHCPv6-PD lab packets")
 	t2Override := fs.Uint("t2", 0, "override IA_PD T2 seconds for active DHCPv6-PD lab packets")
 	preferredLifetimeOverride := fs.Uint("preferred-lifetime", 0, "override IA Prefix preferred lifetime seconds for active DHCPv6-PD lab packets")
@@ -311,6 +313,27 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 		}
 		input.Identity.ClientDUID = duid
 	}
+	if *srcMACOverride != "" {
+		mac, err := net.ParseMAC(*srcMACOverride)
+		if err != nil {
+			return fmt.Errorf("parse --src-mac %q: %w", *srcMACOverride, err)
+		}
+		input.Identity.SourceMAC = mac
+		if *srcLLOverride == "" {
+			ll, err := macToEUI64LinkLocal(mac)
+			if err != nil {
+				return fmt.Errorf("derive link-local from --src-mac: %w", err)
+			}
+			input.Identity.SourceIP = ll
+		}
+	}
+	if *srcLLOverride != "" {
+		ll, err := netip.ParseAddr(*srcLLOverride)
+		if err != nil {
+			return fmt.Errorf("parse --src-ll %q: %w", *srcLLOverride, err)
+		}
+		input.Identity.SourceIP = ll
+	}
 	if err := setDHCP6LifetimeOverrides(&input, *t1Override, *t2Override, *preferredLifetimeOverride, *validLifetimeOverride); err != nil {
 		return err
 	}
@@ -340,6 +363,23 @@ func dhcp6Command(args []string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "sent DHCPv6 %s for %s on %s prefix=%s iaid=%d\n", action, *resourceName, input.Identity.InterfaceName, activePrefixDisplay(input.Prefix), input.IAID)
 	return nil
+}
+
+func macToEUI64LinkLocal(mac net.HardwareAddr) (netip.Addr, error) {
+	if len(mac) != 6 {
+		return netip.Addr{}, fmt.Errorf("expected 6-byte MAC, got %d bytes", len(mac))
+	}
+	var addr [16]byte
+	addr[0], addr[1] = 0xfe, 0x80
+	addr[8] = mac[0] ^ 0x02
+	addr[9] = mac[1]
+	addr[10] = mac[2]
+	addr[11] = 0xff
+	addr[12] = 0xfe
+	addr[13] = mac[3]
+	addr[14] = mac[4]
+	addr[15] = mac[5]
+	return netip.AddrFrom16(addr), nil
 }
 
 func parseIAIDBase(value string) int {
