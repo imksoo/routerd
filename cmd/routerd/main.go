@@ -1447,7 +1447,6 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 				if ifname := aliases[spec.Interface]; ifname != "" {
 					if prefix, leaseUpdate, ok := observedDHCPCDDelegatedPrefix(ifname, prefixLength); ok {
 						observedPrefix = prefix
-						lease.ServerID = firstNonEmptyString(leaseUpdate.ServerID, lease.ServerID)
 						lease.T1 = firstNonEmptyString(leaseUpdate.T1, lease.T1)
 						lease.T2 = firstNonEmptyString(leaseUpdate.T2, lease.T2)
 						lease.PLTime = firstNonEmptyString(leaseUpdate.PLTime, lease.PLTime)
@@ -1470,8 +1469,6 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		// evidence backs it. Treat as not-observable so dnsmasq, RA, and the
 		// LAN delegated-address rendering all stop advertising broken IPv6
 		// to downstream clients. The local LastPrefix history is preserved.
-		// Operators that want to keep advertising the stale prefix (e.g. for
-		// lab debug) can set spec.lanFallback.suppressOnStale to false.
 		if !lease.HasFreshTransactionEvidence(store.Now()) {
 			if recorder, ok := store.(routerstate.EventRecorder); ok {
 				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixStale", "delegated IPv6 prefix "+observedPrefix+" lacks recent DHCPv6 Reply / valid lifetime; not advertising on LAN")
@@ -1746,11 +1743,10 @@ func parseDHCPCDDumpLeasePD(out []byte, prefixLength int) (string, routerstate.P
 		values[strings.TrimSpace(key)] = strings.TrimSpace(value)
 	}
 	lease := routerstate.PDLease{
-		ServerID: values["dhcp6_server_id"],
-		T1:       values["dhcp6_ia_pd1_t1"],
-		T2:       values["dhcp6_ia_pd1_t2"],
-		PLTime:   values["dhcp6_ia_pd1_prefix1_pltime"],
-		VLTime:   values["dhcp6_ia_pd1_prefix1_vltime"],
+		T1:     values["dhcp6_ia_pd1_t1"],
+		T2:     values["dhcp6_ia_pd1_t2"],
+		PLTime: values["dhcp6_ia_pd1_prefix1_pltime"],
+		VLTime: values["dhcp6_ia_pd1_prefix1_vltime"],
 	}
 	prefixAddr := values["dhcp6_ia_pd1_prefix1"]
 	if prefixAddr == "" {

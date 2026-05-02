@@ -1124,7 +1124,7 @@ dhcp6_ia_pd1_prefix1=2001:db8:3d60:1220::
 	if prefix != "2001:db8:3d60:1220::/60" {
 		t.Fatalf("prefix = %q, want documentation /60", prefix)
 	}
-	if lease.ServerID != "00030001020000000001" || lease.T1 != "7200" || lease.T2 != "12600" || lease.PLTime != "14400" || lease.VLTime != "14400" {
+	if lease.T1 != "7200" || lease.T2 != "12600" || lease.PLTime != "14400" || lease.VLTime != "14400" {
 		t.Fatalf("lease = %#v", lease)
 	}
 }

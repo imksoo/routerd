@@ -1161,7 +1161,6 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 		fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(lease.CurrentPrefix != ""))
 		fmt.Fprintf(w, "Current delegated prefix:\t%s\n", displayCell(lease.CurrentPrefix))
 		fmt.Fprintf(w, "Last delegated prefix:\t%s\n", displayCell(lease.LastPrefix))
-		fmt.Fprintf(w, "Server ID:\t%s\n", displayCell(lease.ServerID))
 		fmt.Fprintf(w, "Client DUID:\t%s\n", displayCell(firstNonEmpty(lease.DUIDText, lease.DUID)))
 		fmt.Fprintf(w, "Expected DUID:\t%s\n", displayCell(lease.ExpectedDUID))
 		fmt.Fprintf(w, "IAID:\t%s\n", displayCell(lease.IAID))
@@ -1181,55 +1180,6 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 			fmt.Fprintf(w, "Next T2 at:\t%s\n", displayCell(timing["t2At"]))
 			fmt.Fprintf(w, "Valid lifetime expires at:\t%s\n", displayCell(timing["expiresAt"]))
 			fmt.Fprintf(w, "Valid lifetime remaining:\t%s\n", displayCell(timing["remaining"]))
-		}
-		if lease.WANObserved != nil {
-			fmt.Fprintf(w, "WAN RA source:\t%s\n", displayCell(lease.WANObserved.HGWLinkLocal))
-			fmt.Fprintf(w, "WAN RA derived MAC:\t%s\n", displayCell(lease.WANObserved.HGWMACDerived))
-			fmt.Fprintf(w, "WAN RA flags:\tM=%s O=%s\n", displayCell(lease.WANObserved.RAMFlag), displayCell(lease.WANObserved.RAOFlag))
-			fmt.Fprintf(w, "WAN RA prefix:\t%s\n", displayCell(lease.WANObserved.RAPrefix))
-			fmt.Fprintf(w, "WAN RA observed at:\t%s\n", displayCell(lease.WANObserved.RAObservedAt))
-		}
-		if lease.Acquisition != nil {
-			fmt.Fprintf(w, "Acquisition strategy:\t%s\n", displayCell(lease.Acquisition.Strategy))
-			fmt.Fprintf(w, "Acquisition phase:\t%s\n", displayCell(lease.Acquisition.Phase))
-			fmt.Fprintf(w, "Acquisition attempts since reply:\t%d\n", lease.Acquisition.AttemptsSinceReply)
-			fmt.Fprintf(w, "Acquisition next action:\t%s\n", displayCell(lease.Acquisition.NextAction))
-			fmt.Fprintf(w, "Acquisition last attempt at:\t%s\n", displayCell(lease.Acquisition.LastAttemptAt))
-		}
-		if lease.Hung != nil {
-			fmt.Fprintf(w, "HGW hung suspected:\tyes\n")
-			fmt.Fprintf(w, "HGW hung suspected at:\t%s\n", displayCell(lease.Hung.SuspectedAt))
-			fmt.Fprintf(w, "HGW hung reason:\t%s\n", displayCell(lease.Hung.Reason))
-			fmt.Fprintf(w, "HGW recovery mode:\t%s\n", displayCell(lease.Hung.RecoveryMode))
-			fmt.Fprintf(w, "HGW recovery attempts:\t%d\n", lease.Hung.RecoveryAttempts)
-			fmt.Fprintf(w, "HGW recovery last attempt at:\t%s\n", displayCell(lease.Hung.RecoveryLastAttemptAt))
-			fmt.Fprintf(w, "HGW recovery next attempt at:\t%s\n", displayCell(lease.Hung.RecoveryNextAttemptAt))
-			fmt.Fprintf(w, "HGW recovery exhausted at:\t%s\n", displayCell(lease.Hung.RecoveryExhaustedAt))
-		} else {
-			fmt.Fprintf(w, "HGW hung suspected:\tno\n")
-		}
-		if len(lease.Transactions) > 0 {
-			fmt.Fprintln(w, "Recent DHCPv6 transactions:")
-			limit := len(lease.Transactions)
-			if limit > 5 {
-				limit = 5
-			}
-			for _, tx := range lease.Transactions[:limit] {
-				fmt.Fprintf(w, "  %s\t%s\t%s\txid=%s\tiaid=%s\tprefix=%s\tt1=%s\tt2=%s\tpl=%s\tvl=%s\treconf=%s\twarning=%s\n",
-					displayCell(tx.ObservedAt),
-					displayCell(tx.Direction),
-					displayCell(tx.MessageType),
-					displayCell(tx.TransactionID),
-					displayCell(tx.IAID),
-					displayCell(tx.Prefix),
-					displayCell(tx.T1),
-					displayCell(tx.T2),
-					displayCell(tx.PreferredLifetime),
-					displayCell(tx.ValidLifetime),
-					displayCell(tx.ReconfigureAccept),
-					displayCell(tx.Warning),
-				)
-			}
 		}
 		return
 	}
