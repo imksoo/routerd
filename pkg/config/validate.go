@@ -424,6 +424,17 @@ func Validate(router *api.Router) error {
 				}
 			}
 		}
+		if res.Kind == "WANEgressPolicy" {
+			spec, err := res.WANEgressPolicySpec()
+			if err != nil {
+				return err
+			}
+			for i, candidate := range spec.Candidates {
+				if candidate.HealthCheck != "" && !healthChecks[candidate.HealthCheck] {
+					return fmt.Errorf("%s spec.candidates[%d] references missing HealthCheck %q", res.ID(), i, candidate.HealthCheck)
+				}
+			}
+		}
 		if res.Kind == "Zone" {
 			spec, err := res.ZoneSpec()
 			if err != nil {
@@ -678,6 +689,17 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.IfName == "" {
 			return fmt.Errorf("%s spec.ifname is required", res.ID())
+		}
+	case "Link":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.LinkSpec()
+		if err != nil {
+			return err
+		}
+		if spec.IfName != "" && strings.ContainsAny(spec.IfName, " \t\n/") {
+			return fmt.Errorf("%s spec.ifname contains invalid whitespace or slash", res.ID())
 		}
 	case "Bridge":
 		if res.APIVersion != api.NetAPIVersion {
@@ -960,6 +982,63 @@ func validateResource(res api.Resource) error {
 			if strings.HasPrefix(spec.SubnetID, "-") || strings.ContainsAny(spec.SubnetID, " \t\n/") {
 				return fmt.Errorf("%s spec.subnetID must be a non-negative subnet id", res.ID())
 			}
+		}
+	case "DHCPv6Information":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DHCPv6InformationSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Interface == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+	case "IPv6RouterAdvertisement":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.IPv6RouterAdvertisementSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Interface == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		if spec.PrefixSource == "" {
+			return fmt.Errorf("%s spec.prefixSource is required", res.ID())
+		}
+	case "IPv6DHCPv6Server":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.IPv6DHCPv6ServerSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Interface == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		switch spec.Mode {
+		case "", "stateless":
+		default:
+			return fmt.Errorf("%s spec.mode must be stateless", res.ID())
+		}
+	case "DNSAnswerScope":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DNSAnswerScopeSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Interface == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		switch spec.Family {
+		case "", "ipv4", "ipv6":
+		default:
+			return fmt.Errorf("%s spec.family must be ipv4 or ipv6", res.ID())
 		}
 	case "IPv4DHCPServer":
 		if res.APIVersion != api.NetAPIVersion {
@@ -1246,6 +1325,35 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.upstreamServers contains invalid address %q", res.ID(), server)
 			}
 		}
+	case "DNSResolverUpstream":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DNSResolverUpstreamSpec()
+		if err != nil {
+			return err
+		}
+		for i, zone := range spec.Zones {
+			if zone.Zone == "" {
+				return fmt.Errorf("%s spec.zones[%d].zone is required", res.ID(), i)
+			}
+			if strings.ContainsAny(zone.Zone, " \t\n/") {
+				return fmt.Errorf("%s spec.zones[%d].zone contains invalid whitespace or slash", res.ID(), i)
+			}
+			if len(zone.Servers) == 0 {
+				return fmt.Errorf("%s spec.zones[%d].servers is required", res.ID(), i)
+			}
+			for j, server := range zone.Servers {
+				if strings.TrimSpace(server) == "" {
+					return fmt.Errorf("%s spec.zones[%d].servers[%d] must not be empty", res.ID(), i, j)
+				}
+			}
+		}
+		for i, server := range spec.Default.Servers {
+			if strings.TrimSpace(server) == "" {
+				return fmt.Errorf("%s spec.default.servers[%d] must not be empty", res.ID(), i)
+			}
+		}
 	case "DSLiteTunnel":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -1257,11 +1365,17 @@ func validateResource(res api.Resource) error {
 		if spec.Interface == "" {
 			return fmt.Errorf("%s spec.interface is required", res.ID())
 		}
-		if spec.AFTRFQDN == "" && spec.RemoteAddress == "" {
-			return fmt.Errorf("%s spec.aftrFQDN or spec.remoteAddress is required", res.ID())
+		if spec.AFTRSource == "" && spec.AFTRFQDN == "" && spec.AFTRIPv6 == "" && spec.RemoteAddress == "" {
+			return fmt.Errorf("%s spec.aftrSource, spec.aftrFQDN, spec.aftrIPv6, or spec.remoteAddress is required", res.ID())
 		}
 		if spec.AFTRFQDN != "" && strings.ContainsAny(spec.AFTRFQDN, " \t\n/") {
 			return fmt.Errorf("%s spec.aftrFQDN contains invalid whitespace or slash", res.ID())
+		}
+		if spec.AFTRIPv6 != "" {
+			addr, err := netip.ParseAddr(spec.AFTRIPv6)
+			if err != nil || !addr.Is6() {
+				return fmt.Errorf("%s spec.aftrIPv6 must be an IPv6 address", res.ID())
+			}
 		}
 		if spec.AFTRAddressOrdinal < 0 {
 			return fmt.Errorf("%s spec.aftrAddressOrdinal must be greater than 0", res.ID())
@@ -1368,10 +1482,23 @@ func validateResource(res api.Resource) error {
 		if err != nil {
 			return err
 		}
+		switch spec.Daemon {
+		case "", "routerd-healthcheck":
+		default:
+			return fmt.Errorf("%s spec.daemon must be routerd-healthcheck", res.ID())
+		}
 		switch defaultString(spec.Type, "ping") {
 		case "ping":
 		default:
 			return fmt.Errorf("%s spec.type must be ping", res.ID())
+		}
+		switch spec.Protocol {
+		case "", "icmp", "tcp", "dns", "http":
+		default:
+			return fmt.Errorf("%s spec.protocol must be icmp, tcp, dns, or http", res.ID())
+		}
+		if spec.Port < 0 || spec.Port > 65535 {
+			return fmt.Errorf("%s spec.port must be within 0-65535", res.ID())
 		}
 		switch defaultString(spec.Role, "next-hop") {
 		case "link", "next-hop", "internet", "service", "policy":
@@ -1404,7 +1531,7 @@ func validateResource(res api.Resource) error {
 		if defaultString(spec.TargetSource, "auto") == "static" && spec.Target == "" {
 			return fmt.Errorf("%s spec.target is required when targetSource is static", res.ID())
 		}
-		interval := defaultString(spec.Interval, "60s")
+		interval := defaultString(spec.Interval, "30s")
 		if d, err := time.ParseDuration(interval); err != nil || d <= 0 {
 			return fmt.Errorf("%s spec.interval must be a positive duration", res.ID())
 		}
@@ -1414,6 +1541,111 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.HealthyThreshold < 0 || spec.UnhealthyThreshold < 0 {
 			return fmt.Errorf("%s spec.healthyThreshold and spec.unhealthyThreshold must be non-negative", res.ID())
+		}
+	case "WANEgressPolicy":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.WANEgressPolicySpec()
+		if err != nil {
+			return err
+		}
+		switch defaultString(spec.Family, "ipv4") {
+		case "ipv4", "ipv6":
+		default:
+			return fmt.Errorf("%s spec.family must be ipv4 or ipv6", res.ID())
+		}
+		switch defaultString(spec.Selection, "highest-weight-ready") {
+		case "highest-weight-ready", "weighted-ecmp":
+		default:
+			return fmt.Errorf("%s spec.selection must be highest-weight-ready or weighted-ecmp", res.ID())
+		}
+		if spec.Hysteresis != "" {
+			if _, err := time.ParseDuration(spec.Hysteresis); err != nil {
+				return fmt.Errorf("%s spec.hysteresis is invalid: %w", res.ID(), err)
+			}
+		}
+		if len(spec.Candidates) == 0 {
+			return fmt.Errorf("%s spec.candidates is required", res.ID())
+		}
+		for i, candidate := range spec.Candidates {
+			if candidate.Name == "" && candidate.Source == "" {
+				return fmt.Errorf("%s spec.candidates[%d] requires name or source", res.ID(), i)
+			}
+			if candidate.Weight < 0 {
+				return fmt.Errorf("%s spec.candidates[%d].weight must be non-negative", res.ID(), i)
+			}
+		}
+	case "EventRule":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.EventRuleSpec()
+		if err != nil {
+			return err
+		}
+		switch spec.Pattern.Operator {
+		case "all_of", "any_of", "sequence", "window", "absence", "throttle", "debounce", "count":
+		default:
+			return fmt.Errorf("%s spec.pattern.operator must be one of all_of, any_of, sequence, window, absence, throttle, debounce, count", res.ID())
+		}
+		if spec.Pattern.Topic == "" && len(spec.Pattern.Topics) == 0 {
+			if spec.Pattern.Trigger == "" && spec.Pattern.Expected == "" {
+				return fmt.Errorf("%s spec.pattern.topic, spec.pattern.topics, spec.pattern.trigger, or spec.pattern.expected is required", res.ID())
+			}
+		}
+		for field, value := range map[string]string{
+			"duration": spec.Pattern.Duration,
+			"window":   spec.Pattern.Window,
+			"quiet":    spec.Pattern.Quiet,
+			"interval": spec.Pattern.Interval,
+		} {
+			if value != "" {
+				if _, err := time.ParseDuration(value); err != nil {
+					return fmt.Errorf("%s spec.pattern.%s is invalid: %w", res.ID(), field, err)
+				}
+			}
+		}
+		if spec.Pattern.Threshold < 0 {
+			return fmt.Errorf("%s spec.pattern.threshold must be non-negative", res.ID())
+		}
+		if spec.Pattern.Rate < 0 {
+			return fmt.Errorf("%s spec.pattern.rate must be non-negative", res.ID())
+		}
+		if spec.Pattern.CorrelateBy != "" && !validEventRuleCorrelation(spec.Pattern.CorrelateBy) {
+			return fmt.Errorf("%s spec.pattern.correlate_by must be attributes.<key>, resource.{name,kind,apiVersion}, or daemon.{instance,kind}", res.ID())
+		}
+		if spec.Emit.Topic == "" {
+			return fmt.Errorf("%s spec.emit.topic is required", res.ID())
+		}
+	case "DerivedEvent":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DerivedEventSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Topic == "" {
+			return fmt.Errorf("%s spec.topic is required", res.ID())
+		}
+		if len(spec.Inputs) == 0 {
+			return fmt.Errorf("%s spec.inputs is required", res.ID())
+		}
+		switch defaultString(spec.EmitWhen, "all_true") {
+		case "all_true", "any_true":
+		default:
+			return fmt.Errorf("%s spec.emitWhen must be all_true or any_true", res.ID())
+		}
+		switch defaultString(spec.RetractWhen, "any_false") {
+		case "any_false", "all_false":
+		default:
+			return fmt.Errorf("%s spec.retractWhen must be any_false or all_false", res.ID())
+		}
+		if spec.Hysteresis != "" {
+			if _, err := time.ParseDuration(spec.Hysteresis); err != nil {
+				return fmt.Errorf("%s spec.hysteresis is invalid: %w", res.ID(), err)
+			}
 		}
 	case "IPv4DefaultRoutePolicy":
 		if res.APIVersion != api.NetAPIVersion {
@@ -1826,6 +2058,20 @@ func validateResource(res api.Resource) error {
 		if strings.ContainsAny(hostname, " \t\n/") {
 			return fmt.Errorf("%s spec.hostname contains invalid whitespace or slash", res.ID())
 		}
+	case "IPv4Route":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.IPv4RouteSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Destination == "" {
+			return fmt.Errorf("%s spec.destination is required", res.ID())
+		}
+		if _, err := netip.ParsePrefix(spec.Destination); err != nil {
+			return fmt.Errorf("%s spec.destination is invalid: %w", res.ID(), err)
+		}
 	default:
 		return fmt.Errorf("unsupported resource kind %s in %s", res.Kind, res.ID())
 	}
@@ -1876,6 +2122,15 @@ func validHex(value string) bool {
 		}
 	}
 	return true
+}
+
+func validEventRuleCorrelation(value string) bool {
+	switch value {
+	case "resource.name", "resource.kind", "resource.apiVersion", "daemon.instance", "daemon.kind":
+		return true
+	default:
+		return strings.HasPrefix(value, "attributes.") && strings.TrimPrefix(value, "attributes.") != ""
+	}
 }
 
 func interfaceRef(res api.Resource) (string, error) {

@@ -553,6 +553,52 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "Link",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "ifname": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "PPPoEInterface",
                     "type": "string"
                   },
@@ -1292,6 +1338,48 @@
                       "prefixDelegation": {
                         "type": "string"
                       },
+                      "prefixSource": {
+                        "type": "string"
+                      },
+                      "ready_when": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "any_of": {
+                              "items": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "equals": {
+                                      "type": "string"
+                                    },
+                                    "field": {
+                                      "type": "string"
+                                    },
+                                    "not_empty": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "type": "array"
+                            },
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "not_empty": {
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "sendRA": {
                         "type": "boolean"
                       },
@@ -1368,6 +1456,206 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "DHCPv6Information",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "interface": {
+                        "type": "string"
+                      },
+                      "ready_when": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "any_of": {
+                              "items": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "equals": {
+                                      "type": "string"
+                                    },
+                                    "field": {
+                                      "type": "string"
+                                    },
+                                    "not_empty": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "type": "array"
+                            },
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "not_empty": {
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "request": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "interface"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv6RouterAdvertisement",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configPath": {
+                        "type": "string"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "pidFile": {
+                        "type": "string"
+                      },
+                      "preferredLifetime": {
+                        "type": "string"
+                      },
+                      "prefixSource": {
+                        "type": "string"
+                      },
+                      "rdnss": {
+                        "type": "string"
+                      },
+                      "ready_when": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "any_of": {
+                              "items": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "equals": {
+                                      "type": "string"
+                                    },
+                                    "field": {
+                                      "type": "string"
+                                    },
+                                    "not_empty": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "type": "array"
+                            },
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "not_empty": {
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "validLifetime": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "interface"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "IPv6DHCPServer",
                     "type": "string"
                   },
@@ -1410,6 +1698,109 @@
                         "type": "string"
                       }
                     },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv6DHCPv6Server",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configPath": {
+                        "type": "string"
+                      },
+                      "dnsServers": {
+                        "type": "string"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "mode": {
+                        "enum": [
+                          "stateless"
+                        ],
+                        "type": "string"
+                      },
+                      "pidFile": {
+                        "type": "string"
+                      },
+                      "ready_when": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "any_of": {
+                              "items": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "equals": {
+                                      "type": "string"
+                                    },
+                                    "field": {
+                                      "type": "string"
+                                    },
+                                    "not_empty": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "type": "array"
+                            },
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "not_empty": {
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "interface"
+                    ],
                     "type": "object"
                   },
                   "status": {
@@ -1533,6 +1924,116 @@
                     "required": [
                       "server",
                       "delegatedAddress"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DNSAnswerScope",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configPath": {
+                        "type": "string"
+                      },
+                      "delegatedAddress": {
+                        "type": "string"
+                      },
+                      "family": {
+                        "enum": [
+                          "ipv4",
+                          "ipv6"
+                        ],
+                        "type": "string"
+                      },
+                      "hostname": {
+                        "type": "string"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "pidFile": {
+                        "type": "string"
+                      },
+                      "port": {
+                        "type": "integer"
+                      },
+                      "ready_when": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "any_of": {
+                              "items": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "equals": {
+                                      "type": "string"
+                                    },
+                                    "field": {
+                                      "type": "string"
+                                    },
+                                    "not_empty": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "type": "array"
+                            },
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "not_empty": {
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "interface"
                     ],
                     "type": "object"
                   },
@@ -1716,6 +2217,121 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "DNSResolverUpstream",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "default": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "servers": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "ready_when": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "any_of": {
+                              "items": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "equals": {
+                                      "type": "string"
+                                    },
+                                    "field": {
+                                      "type": "string"
+                                    },
+                                    "not_empty": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "type": "array"
+                            },
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "not_empty": {
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "zones": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "servers": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "zone": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "zone"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "DSLiteTunnel",
                     "type": "string"
                   },
@@ -1755,6 +2371,12 @@
                       "aftrFQDN": {
                         "type": "string"
                       },
+                      "aftrIPv6": {
+                        "type": "string"
+                      },
+                      "aftrSource": {
+                        "type": "string"
+                      },
                       "defaultRoute": {
                         "type": "boolean"
                       },
@@ -1781,10 +2403,52 @@
                       "localDelegatedAddress": {
                         "type": "string"
                       },
+                      "localIPv6Source": {
+                        "type": "string"
+                      },
                       "mtu": {
                         "maximum": 65535,
                         "minimum": 1280,
                         "type": "integer"
+                      },
+                      "ready_when": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "any_of": {
+                              "items": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "equals": {
+                                      "type": "string"
+                                    },
+                                    "field": {
+                                      "type": "string"
+                                    },
+                                    "not_empty": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "type": "array"
+                            },
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "not_empty": {
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "remoteAddress": {
                         "type": "string"
@@ -1840,6 +2504,101 @@
                     },
                     "required": [
                       "interface"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv4Route",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "destination": {
+                        "type": "string"
+                      },
+                      "device": {
+                        "type": "string"
+                      },
+                      "metric": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "ready_when": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "any_of": {
+                              "items": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "equals": {
+                                      "type": "string"
+                                    },
+                                    "field": {
+                                      "type": "string"
+                                    },
+                                    "not_empty": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "type": "array"
+                            },
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "not_empty": {
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "destination"
                     ],
                     "type": "object"
                   },
@@ -2025,6 +2784,13 @@
                         ],
                         "type": "string"
                       },
+                      "daemon": {
+                        "enum": [
+                          "",
+                          "routerd-healthcheck"
+                        ],
+                        "type": "string"
+                      },
                       "healthyThreshold": {
                         "minimum": 1,
                         "type": "integer"
@@ -2033,6 +2799,21 @@
                         "type": "string"
                       },
                       "interval": {
+                        "type": "string"
+                      },
+                      "port": {
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "protocol": {
+                        "enum": [
+                          "",
+                          "icmp",
+                          "tcp",
+                          "dns",
+                          "http"
+                        ],
                         "type": "string"
                       },
                       "role": {
@@ -2112,6 +2893,385 @@
                         "type": "object"
                       }
                     },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "WANEgressPolicy",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "candidates": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "device": {
+                              "type": "string"
+                            },
+                            "gateway": {
+                              "type": "string"
+                            },
+                            "healthCheck": {
+                              "type": "string"
+                            },
+                            "metric": {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "ready_when": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "any_of": {
+                                    "items": {
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "equals": {
+                                            "type": "string"
+                                          },
+                                          "field": {
+                                            "type": "string"
+                                          },
+                                          "not_empty": {
+                                            "type": "boolean"
+                                          }
+                                        },
+                                        "type": "object"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "equals": {
+                                    "type": "string"
+                                  },
+                                  "field": {
+                                    "type": "string"
+                                  },
+                                  "not_empty": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "routeTable": {
+                              "maximum": 4294967295,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "source": {
+                              "type": "string"
+                            },
+                            "weight": {
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "family": {
+                        "enum": [
+                          "ipv4",
+                          "ipv6"
+                        ],
+                        "type": "string"
+                      },
+                      "hysteresis": {
+                        "type": "string"
+                      },
+                      "selection": {
+                        "enum": [
+                          "highest-weight-ready",
+                          "weighted-ecmp"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "candidates"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "EventRule",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "emit": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "attributes": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          },
+                          "topic": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "topic"
+                        ],
+                        "type": "object"
+                      },
+                      "pattern": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allow_missing_correlation": {
+                            "type": "boolean"
+                          },
+                          "correlate_by": {
+                            "type": "string"
+                          },
+                          "duration": {
+                            "type": "string"
+                          },
+                          "expected": {
+                            "type": "string"
+                          },
+                          "interval": {
+                            "type": "string"
+                          },
+                          "operator": {
+                            "enum": [
+                              "all_of",
+                              "any_of",
+                              "sequence",
+                              "window",
+                              "absence",
+                              "throttle",
+                              "debounce",
+                              "count"
+                            ],
+                            "type": "string"
+                          },
+                          "quiet": {
+                            "type": "string"
+                          },
+                          "rate": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "strict": {
+                            "type": "boolean"
+                          },
+                          "threshold": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "topic": {
+                            "type": "string"
+                          },
+                          "topics": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "trigger": {
+                            "type": "string"
+                          },
+                          "window": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "operator"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "pattern",
+                      "emit"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DerivedEvent",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "emitInitial": {
+                        "type": "boolean"
+                      },
+                      "emitWhen": {
+                        "enum": [
+                          "all_true",
+                          "any_true"
+                        ],
+                        "type": "string"
+                      },
+                      "hysteresis": {
+                        "type": "string"
+                      },
+                      "inputs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "any_of": {
+                              "items": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "equals": {
+                                      "type": "string"
+                                    },
+                                    "field": {
+                                      "type": "string"
+                                    },
+                                    "not_empty": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "type": "array"
+                            },
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "not_empty": {
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "retractWhen": {
+                        "enum": [
+                          "any_false",
+                          "all_false"
+                        ],
+                        "type": "string"
+                      },
+                      "topic": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "topic",
+                      "inputs"
+                    ],
                     "type": "object"
                   },
                   "status": {

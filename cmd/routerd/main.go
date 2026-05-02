@@ -26,8 +26,10 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
+	"routerd/pkg/bus"
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
+	controllerchain "routerd/pkg/controller/chain"
 	"routerd/pkg/dhcp6control"
 	"routerd/pkg/dhcp6event"
 	"routerd/pkg/dhcp6recorder"
@@ -997,7 +999,7 @@ func apiVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "IPv6DHCPServer", "IPv6DHCPScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DSLiteTunnel", "StatePolicy", "HealthCheck", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Link", "Bridge", "VXLANSegment", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "IPv6DHCPServer", "IPv6DHCPv6Server", "IPv6DHCPScope", "DNSAnswerScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DNSResolverUpstream", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -2610,6 +2612,21 @@ func recordLastAppliedPath(router *api.Router, store routerstate.Store, path str
 	return nil
 }
 
+func parseSocketOverrides(raw string) map[string]string {
+	out := map[string]string{}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		name, socket, ok := strings.Cut(item, "=")
+		if ok && strings.TrimSpace(name) != "" && strings.TrimSpace(socket) != "" {
+			out[strings.TrimSpace(name)] = strings.TrimSpace(socket)
+		}
+	}
+	return out
+}
+
 func serveCommand(args []string, stdout io.Writer) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -2623,6 +2640,17 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
+	controllerChain := fs.Bool("controller-chain", false, "start experimental daemon/bus/controller chain")
+	controllerDryRunAddress := fs.Bool("controller-chain-dry-run-address", true, "do not mutate LAN addresses in the experimental controller chain")
+	controllerDryRunDSLite := fs.Bool("controller-chain-dry-run-dslite", true, "do not mutate DS-Lite tunnels in the experimental controller chain")
+	controllerDryRunRoute := fs.Bool("controller-chain-dry-run-route", true, "do not mutate IPv4 routes in the experimental controller chain")
+	controllerDryRunRA := fs.Bool("controller-chain-dry-run-ra", true, "do not start radvd in the experimental controller chain")
+	controllerDryRunDHCPv6 := fs.Bool("controller-chain-dry-run-dhcpv6", true, "do not start DHCPv6 service in the experimental controller chain")
+	controllerDaemonSockets := fs.String("controller-chain-daemon-sockets", "", "comma-separated resource=unix-socket overrides for the experimental controller chain")
+	controllerDnsmasqCommand := fs.String("controller-chain-dnsmasq-command", "dnsmasq", "dnsmasq command for the experimental controller chain")
+	controllerDnsmasqConfig := fs.String("controller-chain-dnsmasq-config", "/run/routerd/dnsmasq-phase1.conf", "dnsmasq config path for the experimental controller chain")
+	controllerDnsmasqPID := fs.String("controller-chain-dnsmasq-pid", "/run/routerd/dnsmasq-phase1.pid", "dnsmasq pid path for the experimental controller chain")
+	controllerDnsmasqPort := fs.Int("controller-chain-dnsmasq-port", 1053, "dnsmasq listen port for the experimental controller chain")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2653,9 +2681,45 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 
 	stop := make(chan struct{})
 	defer close(stop)
-	startRAObservation(stop, router, defaultStatePath, logger)
-	startDHCP6Recorder(stop, router, defaultStatePath, logger)
-	startPDHungMonitor(stop, router, defaultStatePath, 30*time.Second, 30*time.Second, logger)
+	ctx, cancelControllers := context.WithCancel(context.Background())
+	defer cancelControllers()
+	go func() {
+		<-stop
+		cancelControllers()
+	}()
+	if !*controllerChain {
+		startRAObservation(stop, router, defaultStatePath, logger)
+		startDHCP6Recorder(stop, router, defaultStatePath, logger)
+		startPDHungMonitor(stop, router, defaultStatePath, 30*time.Second, 30*time.Second, logger)
+	}
+	if *controllerChain {
+		stateStore, err := routerstate.OpenSQLite(defaultStatePath)
+		if err != nil {
+			return err
+		}
+		defer stateStore.Close()
+		controllerBus := bus.NewWithStore(stateStore)
+		chainRunner := controllerchain.Runner{
+			Router: router,
+			Bus:    controllerBus,
+			Store:  stateStore,
+			Opts: controllerchain.Options{
+				DaemonSockets:  parseSocketOverrides(*controllerDaemonSockets),
+				DryRunAddress:  *controllerDryRunAddress,
+				DryRunDSLite:   *controllerDryRunDSLite,
+				DryRunRoute:    *controllerDryRunRoute,
+				DryRunRA:       *controllerDryRunRA,
+				DryRunDHCPv6:   *controllerDryRunDHCPv6,
+				DnsmasqCommand: *controllerDnsmasqCommand,
+				DnsmasqConfig:  *controllerDnsmasqConfig,
+				DnsmasqPID:     *controllerDnsmasqPID,
+				DnsmasqPort:    *controllerDnsmasqPort,
+			},
+		}
+		if err := chainRunner.Start(ctx); err != nil {
+			return err
+		}
+	}
 	if *observeInterval > 0 {
 		go runObserveSchedule(stop, *observeInterval, router, cache, *statusFile, logger)
 	}

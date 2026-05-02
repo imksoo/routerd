@@ -12,7 +12,14 @@ type TypeMeta struct {
 }
 
 type ObjectMeta struct {
-	Name string `yaml:"name" json:"name"`
+	Name      string     `yaml:"name" json:"name"`
+	OwnerRefs []OwnerRef `yaml:"ownerRefs,omitempty" json:"ownerRefs,omitempty"`
+}
+
+type OwnerRef struct {
+	APIVersion string `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
+	Kind       string `yaml:"kind" json:"kind"`
+	Name       string `yaml:"name" json:"name"`
 }
 
 type Router struct {
@@ -93,6 +100,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		r.Spec = spec
 	case "Interface":
 		var spec InterfaceSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "Link":
+		var spec LinkSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -181,14 +194,38 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "DHCPv6Information":
+		var spec DHCPv6InformationSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv6RouterAdvertisement":
+		var spec IPv6RouterAdvertisementSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv6DHCPServer":
 		var spec IPv6DHCPServerSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "IPv6DHCPv6Server":
+		var spec IPv6DHCPv6ServerSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv6DHCPScope":
 		var spec IPv6DHCPScopeSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DNSAnswerScope":
+		var spec DNSAnswerScopeSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -205,8 +242,20 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "DNSResolverUpstream":
+		var spec DNSResolverUpstreamSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "DSLiteTunnel":
 		var spec DSLiteTunnelSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv4Route":
+		var spec IPv4RouteSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -219,6 +268,24 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		r.Spec = spec
 	case "HealthCheck":
 		var spec HealthCheckSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "WANEgressPolicy":
+		var spec WANEgressPolicySpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "EventRule":
+		var spec EventRuleSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DerivedEvent":
+		var spec DerivedEventSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
