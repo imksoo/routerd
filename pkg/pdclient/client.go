@@ -43,6 +43,14 @@ type Lease struct {
 	RenewedAt  time.Time
 }
 
+type Information struct {
+	AFTRName     string
+	DNSServers   []netip.Addr
+	SNTPServers  []netip.Addr
+	DomainSearch []string
+	UpdatedAt    time.Time
+}
+
 func (l Lease) RenewAt() time.Time {
 	return l.AcquiredAt.Add(l.T1)
 }
@@ -70,9 +78,11 @@ type Client struct {
 	Transport Transport
 	State     State
 	Lease     Lease
+	Info      Information
 
-	lastTransaction uint32
-	advertise       Message
+	lastTransaction     uint32
+	lastInfoTransaction uint32
+	advertise           Message
 }
 
 func New(config Config, transport Transport) (*Client, error) {
@@ -96,6 +106,10 @@ func (c *Client) Start(ctx context.Context) error {
 }
 
 func (c *Client) Tick(ctx context.Context) error {
+	return c.TickWithMargin(ctx, 0, 0)
+}
+
+func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin time.Duration) error {
 	now := c.now()
 	if c.State == StateBound || c.State == StateRenewing || c.State == StateRebinding {
 		if c.Lease.Valid > 0 && !now.Before(c.Lease.ExpiresAt()) {
@@ -103,17 +117,73 @@ func (c *Client) Tick(ctx context.Context) error {
 			c.Lease = Lease{}
 			return nil
 		}
-		if c.State == StateBound && c.Lease.T1 > 0 && !now.Before(c.Lease.RenewAt()) {
-			return c.send(ctx, StateRenewing, Message{Type: MessageRenew})
+		if c.State == StateBound && c.Lease.T1 > 0 && !now.Before(c.Lease.RenewAt().Add(-renewMargin)) {
+			return c.Renew(ctx)
 		}
-		if (c.State == StateBound || c.State == StateRenewing) && c.Lease.T2 > 0 && !now.Before(c.Lease.RebindAt()) {
-			return c.send(ctx, StateRebinding, Message{Type: MessageRebind})
+		if (c.State == StateBound || c.State == StateRenewing) && c.Lease.T2 > 0 && !now.Before(c.Lease.RebindAt().Add(-rebindMargin)) {
+			return c.Rebind(ctx)
 		}
 	}
 	if c.State == StateIdle || c.State == StateExpired {
 		return c.Start(ctx)
 	}
 	return nil
+}
+
+func (c *Client) Renew(ctx context.Context) error {
+	if !c.Lease.Prefix.IsValid() {
+		return fmt.Errorf("cannot renew without a lease")
+	}
+	return c.send(ctx, StateRenewing, Message{Type: MessageRenew})
+}
+
+func (c *Client) Rebind(ctx context.Context) error {
+	if !c.Lease.Prefix.IsValid() {
+		return fmt.Errorf("cannot rebind without a lease")
+	}
+	return c.send(ctx, StateRebinding, Message{Type: MessageRebind})
+}
+
+func (c *Client) Release(ctx context.Context) error {
+	if !c.Lease.Prefix.IsValid() {
+		return fmt.Errorf("cannot release without a lease")
+	}
+	if err := c.send(ctx, StateIdle, Message{Type: MessageRelease}); err != nil {
+		return err
+	}
+	c.Lease = Lease{}
+	return nil
+}
+
+func (c *Client) InfoRequest(ctx context.Context) error {
+	if c.Transport == nil {
+		return fmt.Errorf("transport is required")
+	}
+	xid, err := c.transaction()
+	if err != nil {
+		return err
+	}
+	msg := Message{
+		Type:          MessageInfoRequest,
+		TransactionID: xid,
+		ClientDUID:    append([]byte(nil), c.Config.ClientDUID...),
+		ORO: []uint16{
+			optionAFTRName,
+			optionDNSServers,
+			optionSNTPServers,
+			optionDomainSearch,
+		},
+	}
+	payload, err := EncodeMessage(msg)
+	if err != nil {
+		return err
+	}
+	c.lastInfoTransaction = xid
+	return c.Transport.Send(ctx, OutboundPacket{
+		Interface: c.Config.Interface,
+		Message:   msg,
+		Payload:   payload,
+	})
 }
 
 func (c *Client) Handle(ctx context.Context, payload []byte) error {
@@ -125,6 +195,13 @@ func (c *Client) Handle(ctx context.Context, payload []byte) error {
 }
 
 func (c *Client) HandleMessage(ctx context.Context, msg Message) error {
+	if msg.TransactionID == c.lastInfoTransaction && msg.Type == MessageReply {
+		if len(msg.ClientDUID) > 0 && !bytes.Equal(msg.ClientDUID, c.Config.ClientDUID) {
+			return nil
+		}
+		c.acceptInformation(msg)
+		return nil
+	}
 	if msg.TransactionID != c.lastTransaction {
 		return nil
 	}
@@ -152,6 +229,16 @@ func (c *Client) HandleMessage(ctx context.Context, msg Message) error {
 		return nil
 	default:
 		return nil
+	}
+}
+
+func (c *Client) acceptInformation(msg Message) {
+	c.Info = Information{
+		AFTRName:     msg.AFTRName,
+		DNSServers:   append([]netip.Addr(nil), msg.DNSServers...),
+		SNTPServers:  append([]netip.Addr(nil), msg.SNTPServers...),
+		DomainSearch: append([]string(nil), msg.DomainSearch...),
+		UpdatedAt:    c.now(),
 	}
 }
 

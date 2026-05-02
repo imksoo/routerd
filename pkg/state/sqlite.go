@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"routerd/pkg/daemonapi"
 )
 
 const (
@@ -43,6 +46,7 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -93,6 +97,7 @@ CREATE TABLE IF NOT EXISTS events (
   generation INTEGER,
   created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS events_type ON events(type, id);
 CREATE TABLE IF NOT EXISTS access_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT,
@@ -112,10 +117,42 @@ CREATE TABLE IF NOT EXISTS access_logs (
 	if err := s.ensureObjectColumns(); err != nil {
 		return err
 	}
+	if err := s.ensureEventColumns(); err != nil {
+		return err
+	}
 	if err := s.ensureArtifactsTable(); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (s *SQLiteStore) ensureEventColumns() error {
+	columns := map[string]string{
+		"topic":                "TEXT",
+		"source_kind":          "TEXT",
+		"source_instance":      "TEXT",
+		"resource_api_version": "TEXT",
+		"resource_kind":        "TEXT",
+		"resource_name":        "TEXT",
+		"severity":             "TEXT",
+		"attributes":           "TEXT",
+	}
+	for column, typ := range columns {
+		hasColumn, err := s.tableHasColumn("events", column)
+		if err != nil {
+			return err
+		}
+		if !hasColumn {
+			if _, err := s.db.Exec(`ALTER TABLE events ADD COLUMN ` + column + ` ` + typ); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := s.db.Exec(`
+CREATE INDEX IF NOT EXISTS events_topic ON events(topic, id);
+CREATE INDEX IF NOT EXISTS events_resource ON events(resource_kind, resource_name, id);
+`)
+	return err
 }
 
 func (s *SQLiteStore) ensureObjectColumns() error {
@@ -502,6 +539,36 @@ func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, mes
 	_, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, eventType, reason, message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano))
 	return err
+}
+
+func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEvent) (string, error) {
+	apiVersion := event.APIVersion
+	kind := event.Kind
+	name := event.Daemon.Name
+	resourceAPI := ""
+	resourceKind := ""
+	resourceName := ""
+	if event.Resource != nil {
+		apiVersion = event.Resource.APIVersion
+		kind = event.Resource.Kind
+		name = event.Resource.Name
+		resourceAPI = event.Resource.APIVersion
+		resourceKind = event.Resource.Kind
+		resourceName = event.Resource.Name
+	}
+	attrs, _ := json.Marshal(event.Attributes)
+	result, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at,topic,source_kind,source_instance,resource_api_version,resource_kind,resource_name,severity,attributes)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		apiVersion, kind, name, event.Type, event.Reason, event.Message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano),
+		event.Type, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, string(attrs))
+	if err != nil {
+		return "", err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d", id), nil
 }
 
 func (s *SQLiteStore) Events(apiVersion, kind, name string, limit int) []Event {

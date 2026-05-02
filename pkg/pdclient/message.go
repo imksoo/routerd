@@ -4,22 +4,29 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/netip"
+	"strings"
 )
 
 const (
-	MessageSolicit   uint8 = 1
-	MessageAdvertise uint8 = 2
-	MessageRequest   uint8 = 3
-	MessageRenew     uint8 = 5
-	MessageRebind    uint8 = 6
-	MessageReply     uint8 = 7
-	MessageRelease   uint8 = 8
+	MessageSolicit     uint8 = 1
+	MessageAdvertise   uint8 = 2
+	MessageRequest     uint8 = 3
+	MessageRenew       uint8 = 5
+	MessageRebind      uint8 = 6
+	MessageReply       uint8 = 7
+	MessageRelease     uint8 = 8
+	MessageInfoRequest uint8 = 11
 
-	optionClientID    uint16 = 1
-	optionServerID    uint16 = 2
-	optionElapsedTime uint16 = 8
-	optionIAPD        uint16 = 25
-	optionIAPrefix    uint16 = 26
+	optionClientID     uint16 = 1
+	optionServerID     uint16 = 2
+	optionORO          uint16 = 6
+	optionElapsedTime  uint16 = 8
+	optionDNSServers   uint16 = 23
+	optionDomainSearch uint16 = 24
+	optionIAPD         uint16 = 25
+	optionIAPrefix     uint16 = 26
+	optionSNTPServers  uint16 = 31
+	optionAFTRName     uint16 = 64
 )
 
 // Message is the minimal DHCPv6 subset required for IA_PD. It represents a
@@ -35,6 +42,11 @@ type Message struct {
 	Prefix        netip.Prefix
 	Preferred     uint32
 	Valid         uint32
+	ORO           []uint16
+	DNSServers    []netip.Addr
+	SNTPServers   []netip.Addr
+	DomainSearch  []string
+	AFTRName      string
 }
 
 func EncodeMessage(msg Message) ([]byte, error) {
@@ -51,6 +63,9 @@ func EncodeMessage(msg Message) ([]byte, error) {
 	out = appendOption(out, optionClientID, msg.ClientDUID)
 	if len(msg.ServerDUID) > 0 {
 		out = appendOption(out, optionServerID, msg.ServerDUID)
+	}
+	if len(msg.ORO) > 0 {
+		out = appendOption(out, optionORO, encodeORO(msg.ORO))
 	}
 	if messageCarriesIAPD(msg.Type) {
 		out = appendOption(out, optionIAPD, encodeIAPD(msg))
@@ -73,6 +88,14 @@ func DecodeMessage(payload []byte) (Message, error) {
 			msg.ClientDUID = append([]byte(nil), data...)
 		case optionServerID:
 			msg.ServerDUID = append([]byte(nil), data...)
+		case optionDNSServers:
+			msg.DNSServers = decodeIPv6Addrs(data)
+		case optionSNTPServers:
+			msg.SNTPServers = decodeIPv6Addrs(data)
+		case optionDomainSearch:
+			msg.DomainSearch = decodeDomainList(data)
+		case optionAFTRName:
+			msg.AFTRName = decodeDomainName(data)
 		case optionIAPD:
 			return decodeIAPD(data, &msg)
 		}
@@ -90,6 +113,16 @@ func messageCarriesIAPD(messageType uint8) bool {
 	}
 }
 
+func encodeORO(codes []uint16) []byte {
+	out := make([]byte, 0, len(codes)*2)
+	var raw [2]byte
+	for _, code := range codes {
+		binary.BigEndian.PutUint16(raw[0:2], code)
+		out = append(out, raw[:]...)
+	}
+	return out
+}
+
 func appendOption(out []byte, code uint16, data []byte) []byte {
 	var header [4]byte
 	binary.BigEndian.PutUint16(header[0:2], code)
@@ -97,6 +130,57 @@ func appendOption(out []byte, code uint16, data []byte) []byte {
 	out = append(out, header[:]...)
 	out = append(out, data...)
 	return out
+}
+
+func decodeIPv6Addrs(data []byte) []netip.Addr {
+	if len(data)%16 != 0 {
+		return nil
+	}
+	out := make([]netip.Addr, 0, len(data)/16)
+	for i := 0; i < len(data); i += 16 {
+		var raw [16]byte
+		copy(raw[:], data[i:i+16])
+		out = append(out, netip.AddrFrom16(raw))
+	}
+	return out
+}
+
+func decodeDomainList(data []byte) []string {
+	var out []string
+	for len(data) > 0 {
+		name, n := decodeDomainNameAt(data)
+		if n <= 0 {
+			return out
+		}
+		if name != "" {
+			out = append(out, name)
+		}
+		data = data[n:]
+	}
+	return out
+}
+
+func decodeDomainName(data []byte) string {
+	name, _ := decodeDomainNameAt(data)
+	return name
+}
+
+func decodeDomainNameAt(data []byte) (string, int) {
+	var labels []string
+	i := 0
+	for i < len(data) {
+		l := int(data[i])
+		i++
+		if l == 0 {
+			return strings.Join(labels, "."), i
+		}
+		if l&0xc0 != 0 || i+l > len(data) {
+			return "", -1
+		}
+		labels = append(labels, string(data[i:i+l]))
+		i += l
+	}
+	return "", -1
 }
 
 func encodeIAPD(msg Message) []byte {

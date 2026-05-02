@@ -33,6 +33,11 @@ type Snapshot struct {
 	RenewAt       time.Time `json:"renewAt,omitempty"`
 	RebindAt      time.Time `json:"rebindAt,omitempty"`
 	ExpiresAt     time.Time `json:"expiresAt,omitempty"`
+	AFTRName      string    `json:"aftrName,omitempty"`
+	DNSServers    []string  `json:"dnsServers,omitempty"`
+	SNTPServers   []string  `json:"sntpServers,omitempty"`
+	DomainSearch  []string  `json:"domainSearch,omitempty"`
+	InfoUpdatedAt time.Time `json:"infoUpdatedAt,omitempty"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 	LastError     string    `json:"lastError,omitempty"`
 }
@@ -58,6 +63,14 @@ func (c *Client) Snapshot() Snapshot {
 		s.RebindAt = c.Lease.RebindAt()
 		s.ExpiresAt = c.Lease.ExpiresAt()
 	}
+	if c.Info.UpdatedAt.IsZero() {
+		return s
+	}
+	s.AFTRName = c.Info.AFTRName
+	s.DNSServers = addrStrings(c.Info.DNSServers)
+	s.SNTPServers = addrStrings(c.Info.SNTPServers)
+	s.DomainSearch = append([]string(nil), c.Info.DomainSearch...)
+	s.InfoUpdatedAt = c.Info.UpdatedAt
 	return s
 }
 
@@ -68,12 +81,14 @@ func (c *Client) Restore(snapshot Snapshot) {
 	}
 	if snapshot.CurrentPrefix == "" {
 		c.Lease = Lease{}
+		c.restoreInformation(snapshot)
 		return
 	}
 	prefix, err := netip.ParsePrefix(snapshot.CurrentPrefix)
 	if err != nil {
 		c.State = StateExpired
 		c.Lease = Lease{}
+		c.restoreInformation(snapshot)
 		return
 	}
 	serverDUID, _ := hex.DecodeString(snapshot.ServerDUID)
@@ -88,4 +103,40 @@ func (c *Client) Restore(snapshot Snapshot) {
 		AcquiredAt: snapshot.AcquiredAt,
 		RenewedAt:  snapshot.UpdatedAt,
 	}
+	c.restoreInformation(snapshot)
+}
+
+func (c *Client) restoreInformation(snapshot Snapshot) {
+	c.Info = Information{
+		AFTRName:     snapshot.AFTRName,
+		DNSServers:   parseAddrStrings(snapshot.DNSServers),
+		SNTPServers:  parseAddrStrings(snapshot.SNTPServers),
+		DomainSearch: append([]string(nil), snapshot.DomainSearch...),
+		UpdatedAt:    snapshot.InfoUpdatedAt,
+	}
+}
+
+func addrStrings(addrs []netip.Addr) []string {
+	if len(addrs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		out = append(out, addr.String())
+	}
+	return out
+}
+
+func parseAddrStrings(values []string) []netip.Addr {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]netip.Addr, 0, len(values))
+	for _, value := range values {
+		addr, err := netip.ParseAddr(value)
+		if err == nil {
+			out = append(out, addr)
+		}
+	}
+	return out
 }
