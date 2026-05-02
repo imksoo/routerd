@@ -375,12 +375,21 @@ fi
 echo "$@" >> %q
 exit 64
 `, marker))
+	writeExecutable(t, filepath.Join(binDir, "ifconfig"), fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "vtnet0" ]; then
+  echo "vtnet0: flags=8863<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> mtu 1500"
+  echo "        ether 02:00:00:00:01:01"
+  exit 0
+fi
+echo "$@" >> %q
+exit 64
+`, marker))
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
 
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcp6c", Profile: "ntt-hgw-lan-pd", DUIDRawData: "020000000101"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcp6c", Profile: "ntt-hgw-lan-pd"}},
 	}}}
 	data, err := render.FreeBSD(router)
 	if err != nil {
@@ -391,7 +400,7 @@ exit 64
 		t.Fatalf("seed dhcp6c.conf: %v", err)
 	}
 	duidPath := filepath.Join(dir, "dhcp6c_duid")
-	if changed, backup, err := routerstate.EnsureKAMEDHCP6CDUIDLLRaw(duidPath, "020000000101", time.Now()); err != nil {
+	if changed, backup, err := routerstate.EnsureKAMEDHCP6CDUIDLL(duidPath, "02:00:00:00:01:01", time.Now()); err != nil {
 		t.Fatalf("seed DUID: %v", err)
 	} else if !changed || backup != "" {
 		t.Fatalf("seed DUID changed=%v backup=%q, want initial write", changed, backup)

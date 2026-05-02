@@ -1472,7 +1472,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		// to downstream clients. The local LastPrefix history is preserved.
 		// Operators that want to keep advertising the stale prefix (e.g. for
 		// lab debug) can set spec.lanFallback.suppressOnStale to false.
-		if !lease.HasFreshTransactionEvidence(store.Now()) && api.BoolDefault(spec.LanFallback.SuppressOnStale, true) {
+		if !lease.HasFreshTransactionEvidence(store.Now()) {
 			if recorder, ok := store.(routerstate.EventRecorder); ok {
 				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixStale", "delegated IPv6 prefix "+observedPrefix+" lacks recent DHCPv6 Reply / valid lifetime; not advertising on LAN")
 			}
@@ -3083,9 +3083,6 @@ func ensureFreeBSDDHCP6CDUID(router *api.Router, duidPath string) (bool, string,
 		ifname := aliases[spec.Interface]
 		if ifname == "" {
 			return false, "", fmt.Errorf("%s references interface with empty ifname", res.ID())
-		}
-		if spec.DUIDRawData != "" {
-			return routerstate.EnsureKAMEDHCP6CDUIDLLRaw(duidPath, spec.DUIDRawData, time.Now())
 		}
 		mac, err := freeBSDInterfaceMAC(ifname)
 		if err != nil {

@@ -915,11 +915,6 @@ func validateResource(res api.Resource) error {
 		if spec.Interface == "" {
 			return fmt.Errorf("%s spec.interface is required", res.ID())
 		}
-		switch spec.Client {
-		case "", "networkd", "dhcp6c", "dhcpcd":
-		default:
-			return fmt.Errorf("%s spec.client must be networkd, dhcp6c, or dhcpcd", res.ID())
-		}
 		switch spec.Profile {
 		case "", api.IPv6PDProfileDefault, api.IPv6PDProfileNTTNGNDirectHikariDenwa, api.IPv6PDProfileNTTHGWLANPD:
 		default:
@@ -935,27 +930,6 @@ func validateResource(res api.Resource) error {
 		case "", "vendor", "uuid", "link-layer-time", "link-layer":
 		default:
 			return fmt.Errorf("%s spec.duidType must be vendor, uuid, link-layer-time, or link-layer", res.ID())
-		}
-		if spec.DUIDRawData != "" && !validDUIDRawData(spec.DUIDRawData) {
-			return fmt.Errorf("%s spec.duidRawData must be hex bytes, with or without colon separators", res.ID())
-		}
-		if spec.ServerID != "" && !validDUIDRawData(spec.ServerID) {
-			return fmt.Errorf("%s spec.serverID must be hex bytes, with or without colon separators", res.ID())
-		}
-		if spec.PriorPrefix != "" {
-			if _, err := netip.ParsePrefix(spec.PriorPrefix); err != nil {
-				return fmt.Errorf("%s spec.priorPrefix is invalid: %w", res.ID(), err)
-			}
-		}
-		switch spec.AcquisitionStrategy {
-		case "", "hybrid", "solicit-only", "request-claim-only":
-		default:
-			return fmt.Errorf("%s spec.acquisitionStrategy must be hybrid, solicit-only, or request-claim-only", res.ID())
-		}
-		switch spec.Recovery.Mode {
-		case "", "manual", "auto-request", "auto-rebind":
-		default:
-			return fmt.Errorf("%s spec.recovery.mode must be manual, auto-request, or auto-rebind", res.ID())
 		}
 	case "IPv6DelegatedAddress":
 		if res.APIVersion != api.NetAPIVersion {
@@ -2093,23 +2067,6 @@ func validIAID(value string) bool {
 	}
 	_, err := strconv.ParseUint(value, 10, 32)
 	return err == nil
-}
-
-func validDUIDRawData(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-	if strings.Contains(value, ":") {
-		parts := strings.Split(value, ":")
-		for _, part := range parts {
-			if len(part) != 2 || !validHex(part) {
-				return false
-			}
-		}
-		return true
-	}
-	return len(value)%2 == 0 && validHex(value)
 }
 
 func validHex(value string) bool {

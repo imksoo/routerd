@@ -243,12 +243,11 @@ func TestNetworkdDropinsRenderNTTFletsProfile(t *testing.T) {
 			Resources: []api.Resource{
 				netResource("Interface", "wan", api.InterfaceSpec{IfName: "ens18", Managed: false}),
 				netResource("IPv6PrefixDelegation", "wan-pd", api.IPv6PrefixDelegationSpec{
-					Interface:   "wan",
-					Client:      "networkd",
-					Profile:     "ntt-hgw-lan-pd",
-					IAID:        "00000001",
-					DUIDType:    "link-layer",
-					DUIDRawData: "000102005e102030",
+					Interface: "wan",
+					Client:    "networkd",
+					Profile:   "ntt-hgw-lan-pd",
+					IAID:      "00000001",
+					DUIDType:  "link-layer",
 				}),
 			},
 		},
@@ -261,7 +260,6 @@ func TestNetworkdDropinsRenderNTTFletsProfile(t *testing.T) {
 	for _, want := range []string{
 		"DUIDType=link-layer",
 		"IAID=1",
-		"DUIDRawData=00:01:02:00:5e:10:20:30",
 		"UseAddress=no",
 		"UseDelegatedPrefix=yes",
 		"WithoutRA=solicit",

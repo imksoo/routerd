@@ -451,10 +451,9 @@ func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
 				Metadata: api.ObjectMeta{Name: "wan-pd"},
 				Spec: api.IPv6PrefixDelegationSpec{
-					Interface:   "wan",
-					IAID:        "00000001",
-					DUIDType:    "link-layer",
-					DUIDRawData: "000102005e102030",
+					Interface: "wan",
+					IAID:      "00000001",
+					DUIDType:  "link-layer",
 				},
 			},
 		}},
@@ -468,34 +467,9 @@ func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
 		t.Fatal("expected invalid IAID to be rejected")
 	}
 
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", ServerID: "00030001020000000001", PriorPrefix: "2001:db8:1200:1240::/60", AcquisitionStrategy: "request-claim-only"}
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate prefix delegation active controller overrides: %v", err)
-	}
-
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", ServerID: "not-a-duid"}
+	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", DUIDType: "unknown"}
 	if err := Validate(router); err == nil {
-		t.Fatal("expected invalid serverID to be rejected")
-	}
-
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", PriorPrefix: "not-a-prefix"}
-	if err := Validate(router); err == nil {
-		t.Fatal("expected invalid priorPrefix to be rejected")
-	}
-
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", AcquisitionStrategy: "unknown"}
-	if err := Validate(router); err == nil {
-		t.Fatal("expected invalid acquisitionStrategy to be rejected")
-	}
-
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", Recovery: api.IPv6PDRecoverySpec{Mode: "auto-request"}}
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate prefix delegation recovery mode: %v", err)
-	}
-
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", Recovery: api.IPv6PDRecoverySpec{Mode: "unknown"}}
-	if err := Validate(router); err == nil {
-		t.Fatal("expected invalid recovery mode to be rejected")
+		t.Fatal("expected invalid duidType to be rejected")
 	}
 }
 

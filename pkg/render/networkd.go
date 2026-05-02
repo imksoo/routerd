@@ -25,7 +25,6 @@ type pdSource struct {
 	PrefixLength int
 	IAID         string
 	DUIDType     string
-	DUIDRawData  string
 }
 
 func NetworkdDropins(router *api.Router) ([]File, error) {
@@ -63,7 +62,6 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 			PrefixLength: api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength),
 			IAID:         strings.TrimSpace(spec.IAID),
 			DUIDType:     api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType),
-			DUIDRawData:  spec.DUIDRawData,
 		}
 		if isExternalIPv6PDClient(client) {
 			if ifname := aliases[spec.Interface]; ifname != "" {
@@ -423,9 +421,6 @@ func writeDHCPv6PD(buf *bytes.Buffer, source pdSource) {
 	}
 	if source.DUIDType != "" {
 		buf.WriteString("DUIDType=" + source.DUIDType + "\n")
-	}
-	if source.DUIDRawData != "" {
-		buf.WriteString("DUIDRawData=" + formatColonHex(source.DUIDRawData) + "\n")
 	}
 	switch source.Profile {
 	case api.IPv6PDProfileNTTNGNDirectHikariDenwa, api.IPv6PDProfileNTTHGWLANPD:

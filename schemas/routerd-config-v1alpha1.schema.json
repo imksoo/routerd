@@ -1197,25 +1197,7 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
-                      "acquisitionStrategy": {
-                        "enum": [
-                          "",
-                          "hybrid",
-                          "solicit-only",
-                          "request-claim-only"
-                        ],
-                        "type": "string"
-                      },
                       "client": {
-                        "enum": [
-                          "",
-                          "networkd",
-                          "dhcp6c",
-                          "dhcpcd"
-                        ],
-                        "type": "string"
-                      },
-                      "duidRawData": {
                         "type": "string"
                       },
                       "duidType": {
@@ -1234,22 +1216,10 @@
                       "interface": {
                         "type": "string"
                       },
-                      "lanFallback": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "suppressOnStale": {
-                            "type": "boolean"
-                          }
-                        },
-                        "type": "object"
-                      },
                       "prefixLength": {
                         "maximum": 128,
                         "minimum": 1,
                         "type": "integer"
-                      },
-                      "priorPrefix": {
-                        "type": "string"
                       },
                       "profile": {
                         "enum": [
@@ -1259,26 +1229,8 @@
                         ],
                         "type": "string"
                       },
-                      "recovery": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "mode": {
-                            "enum": [
-                              "",
-                              "manual",
-                              "auto-request",
-                              "auto-rebind"
-                            ],
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
-                      },
                       "required": {
                         "type": "boolean"
-                      },
-                      "serverID": {
-                        "type": "string"
                       }
                     },
                     "required": [
