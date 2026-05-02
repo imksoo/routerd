@@ -97,7 +97,7 @@ func runCommand(args []string, stdout io.Writer) error {
 		if client.State == pdclient.StateBound {
 			return writeRunResult(stdout, client, transport.sent)
 		}
-		_ = conn.SetReadDeadline(nextReadDeadline(ctx, time.Second))
+		_ = conn.SetReadDeadline(nextReadDeadline(ctx, 3*time.Second))
 		n, _, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if timeoutError(err) && ctx.Err() == nil {
