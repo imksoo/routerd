@@ -66,7 +66,7 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("dhcp.ipv4.client", aliases[spec.Interface], resource.ActionEnsure, defaultString(spec.Client, "dhcpcd"), nil)}
+		return []resource.Intent{artifact("routerd.dhcp4.client", aliases[spec.Interface], resource.ActionEnsure, "routerd-dhcp4-client", nil)}
 	case "IPv4DHCPServer", "IPv6DHCPServer":
 		return []resource.Intent{
 			artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil),
@@ -83,7 +83,7 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("dhcp.ipv6.client", aliases[spec.Interface], resource.ActionEnsure, defaultString(spec.Client, "networkd"), nil)}
+		return []resource.Intent{artifact("routerd.dhcp6.addressClient", aliases[spec.Interface], resource.ActionEnsure, "routerd-dhcp6-client", nil)}
 	case "IPv6RAAddress":
 		spec, err := res.IPv6RAAddressSpec()
 		if err != nil {
@@ -91,17 +91,7 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		}
 		return []resource.Intent{artifact("net.ipv6.ra.client", aliases[spec.Interface], resource.ActionEnsure, "platform-network", nil)}
 	case "IPv6PrefixDelegation":
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			return nil
-		}
-		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		client := defaultString(spec.Client, "networkd")
-		intents := []resource.Intent{artifact("dhcp.ipv6.prefixDelegation", aliases[spec.Interface], resource.ActionEnsure, client, nil)}
-		if client == "dhcp6c" && api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType) == "link-layer" {
-			intents = append(intents, artifact("file", "/var/db/dhcp6c_duid", resource.ActionEnsure, "dhcp6c", map[string]string{"purpose": "dhcpv6-client-duid"}))
-		}
-		return intents
+		return []resource.Intent{artifact("systemd.service", "routerd-dhcp6-client@"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
 	case "IPv6DelegatedAddress":
 		spec, err := res.IPv6DelegatedAddressSpec()
 		if err != nil {

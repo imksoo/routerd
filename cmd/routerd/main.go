@@ -48,22 +48,20 @@ const (
 var (
 	platformDefaults, platformFeatures = platform.Current()
 
-	defaultConfigPath            = platformDefaults.ConfigFile()
-	defaultPluginDir             = platformDefaults.PluginDir
-	defaultNetplanPath           = platformDefaults.NetplanFile
-	defaultDnsmasqConfigPath     = platformDefaults.DnsmasqConfigFile
-	defaultDnsmasqServicePath    = platformDefaults.DnsmasqServiceFile
-	defaultFreeBSDDHClientPath   = platformDefaults.FreeBSDDHClientConfigFile
-	defaultFreeBSDDHCP6CPath     = platformDefaults.FreeBSDDHCP6CConfigFile
-	defaultFreeBSDDHCP6CDUIDPath = platformDefaults.FreeBSDDHCP6CDUIDFile
-	defaultFreeBSDMPD5Path       = platformDefaults.FreeBSDMPD5ConfigFile
-	defaultNftablesPath          = platformDefaults.NftablesFile
-	defaultRouteNftablesPath     = platformDefaults.DefaultRouteNftablesFile
-	defaultTimesyncdPath         = platformDefaults.TimesyncdDropinFile
-	defaultLedgerPath            = platformDefaults.DBFile()
-	defaultStatePath             = platformDefaults.DBFile()
-	pppoeCHAPSecretsPath         = platformDefaults.PPPoEChapSecretsFile
-	pppoePAPSecretsPath          = platformDefaults.PPPoEPapSecretsFile
+	defaultConfigPath          = platformDefaults.ConfigFile()
+	defaultPluginDir           = platformDefaults.PluginDir
+	defaultNetplanPath         = platformDefaults.NetplanFile
+	defaultDnsmasqConfigPath   = platformDefaults.DnsmasqConfigFile
+	defaultDnsmasqServicePath  = platformDefaults.DnsmasqServiceFile
+	defaultFreeBSDDHClientPath = platformDefaults.FreeBSDDHClientConfigFile
+	defaultFreeBSDMPD5Path     = platformDefaults.FreeBSDMPD5ConfigFile
+	defaultNftablesPath        = platformDefaults.NftablesFile
+	defaultRouteNftablesPath   = platformDefaults.DefaultRouteNftablesFile
+	defaultTimesyncdPath       = platformDefaults.TimesyncdDropinFile
+	defaultLedgerPath          = platformDefaults.DBFile()
+	defaultStatePath           = platformDefaults.DBFile()
+	pppoeCHAPSecretsPath       = platformDefaults.PPPoEChapSecretsFile
+	pppoePAPSecretsPath        = platformDefaults.PPPoEPapSecretsFile
 )
 
 var errNoIPv6PrefixAvailable = errors.New("no IPv6 prefix available")
@@ -155,9 +153,6 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	}
 	files := map[string][]byte{
 		"rc.conf.d-routerd": data.RCConf,
-	}
-	if len(data.DHCP6C) > 0 {
-		files["dhcp6c.conf"] = data.DHCP6C
 	}
 	if len(data.DHCPClient) > 0 {
 		files["dhclient.conf"] = data.DHCPClient
@@ -1178,7 +1173,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	if err := recordStageError("freebsd-network", func() error {
 		var err error
 		var fbWarnings []string
-		changedFreeBSD, fbWarnings, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath, defaultFreeBSDDHCP6CDUIDPath, defaultFreeBSDMPD5Path)
+		changedFreeBSD, fbWarnings, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDMPD5Path)
 		for _, w := range fbWarnings {
 			result.Warnings = append(result.Warnings, w)
 			logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "freebsd-network"})
@@ -2885,7 +2880,7 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 	return changedFiles, nil
 }
 
-func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, dhcp6cPath, dhcp6cDUIDPath, mpd5Path string) ([]string, []string, error) {
+func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, mpd5Path string) ([]string, []string, error) {
 	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
 		return nil, nil, err
@@ -2943,37 +2938,6 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 			changed = append(changed, dhclientPath)
 			restartIfnames = append(restartIfnames, freeBSDDHCPClientIfnames(data.DHCPClient)...)
 		}
-	}
-	if len(data.DHCP6C) > 0 && dhcp6cPath != "" {
-		duidChanged, duidBackup, err := ensureFreeBSDDHCP6CDUID(router, dhcp6cDUIDPath)
-		if err != nil {
-			return changed, warnings, err
-		}
-		if duidChanged {
-			changed = append(changed, dhcp6cDUIDPath)
-			if duidBackup != "" {
-				changed = append(changed, duidBackup)
-			}
-		}
-		fileChanged, err := writeFileIfChanged(dhcp6cPath, data.DHCP6C, 0644)
-		if err != nil {
-			return changed, warnings, err
-		}
-		if fileChanged {
-			changed = append(changed, dhcp6cPath)
-		}
-		if (fileChanged || duidChanged || freeBSDRCValuesChanged(changed, "dhcp6c_") || !freeBSDServiceRunning("dhcp6c")) && freeBSDServiceExists("dhcp6c") {
-			if err := runLogged("service", "dhcp6c", "restart"); err != nil {
-				return changed, warnings, err
-			}
-			changed = append(changed, "service:dhcp6c")
-		}
-	}
-	if rcValues["dhcp6c_enable"] == "NO" && freeBSDServiceExists("dhcp6c") && freeBSDServiceRunning("dhcp6c") {
-		if err := runLogged("service", "dhcp6c", "stop"); err != nil {
-			return changed, warnings, err
-		}
-		changed = append(changed, "service:dhcp6c:stop")
 	}
 	if len(data.MPD5) > 0 && mpd5Path != "" {
 		if err := os.MkdirAll(filepathDir(mpd5Path), 0755); err != nil {
@@ -3044,63 +3008,6 @@ func freeBSDRCValuesChanged(changed []string, prefix string) bool {
 		}
 	}
 	return false
-}
-
-func ensureFreeBSDDHCP6CDUID(router *api.Router, duidPath string) (bool, string, error) {
-	if duidPath == "" {
-		return false, "", nil
-	}
-	aliases := map[string]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil {
-			return false, "", err
-		}
-		aliases[res.Metadata.Name] = spec.IfName
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" {
-			continue
-		}
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			return false, "", err
-		}
-		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		if api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType) != "link-layer" {
-			continue
-		}
-		if !api.IsNTTIPv6PDProfile(profile) {
-			continue
-		}
-		ifname := aliases[spec.Interface]
-		if ifname == "" {
-			return false, "", fmt.Errorf("%s references interface with empty ifname", res.ID())
-		}
-		mac, err := freeBSDInterfaceMAC(ifname)
-		if err != nil {
-			return false, "", fmt.Errorf("%s read %s MAC: %w", res.ID(), ifname, err)
-		}
-		return routerstate.EnsureKAMEDHCP6CDUIDLL(duidPath, mac, time.Now())
-	}
-	return false, "", nil
-}
-
-func freeBSDInterfaceMAC(ifname string) (string, error) {
-	out, err := exec.Command("ifconfig", ifname).Output()
-	if err != nil {
-		return "", err
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) >= 2 && fields[0] == "ether" {
-			return fields[1], nil
-		}
-	}
-	return "", fmt.Errorf("ether address not found")
 }
 
 func freeBSDServiceExists(name string) bool {

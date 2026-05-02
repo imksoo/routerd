@@ -108,31 +108,6 @@ default via 192.168.1.1 dev ens18 table 112 metric 600
 	}
 }
 
-func TestIPv6PrefixDelegationDeclaresFreeBSDDUIDArtifact(t *testing.T) {
-	res := api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
-		Metadata: api.ObjectMeta{Name: "wan-pd"},
-		Spec: api.IPv6PrefixDelegationSpec{
-			Interface: "wan",
-			Client:    "dhcp6c",
-			Profile:   "ntt-hgw-lan-pd",
-		},
-	}
-	intents := resourceArtifactIntents(res, map[string]string{"wan": "vtnet0"})
-	found := false
-	for _, intent := range intents {
-		if intent.Artifact.Kind == "file" && intent.Artifact.Name == "/var/db/dhcp6c_duid" {
-			found = true
-			if intent.ApplyWith != "dhcp6c" {
-				t.Fatalf("DUID intent applyWith = %q", intent.ApplyWith)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("DUID file intent missing: %+v", intents)
-	}
-}
-
 func TestParseIfconfigAddressArtifacts(t *testing.T) {
 	got := parseIfconfigAddressArtifacts(`vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
 	inet 192.168.10.1 netmask 0xffffff00 broadcast 192.168.10.255
