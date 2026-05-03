@@ -200,6 +200,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "IPv4DHCPReservation":
+		var spec IPv4DHCPReservationSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv6DHCPAddress":
 		var spec IPv6DHCPAddressSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -250,6 +256,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		r.Spec = spec
 	case "IPv6DHCPScope":
 		var spec IPv6DHCPScopeSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DHCPRelay":
+		var spec DHCPRelaySpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}

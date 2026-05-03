@@ -31,6 +31,7 @@ func Validate(router *api.Router) error {
 	wireGuardInterfaces := map[string]bool{}
 	dhcp4Servers := map[string]bool{}
 	dhcp4ServerSpecs := map[string]api.IPv4DHCPServerSpec{}
+	directDHCP4Servers := map[string]bool{}
 	dhcp4Scopes := map[string]api.IPv4DHCPScopeSpec{}
 	dhcp6Servers := map[string]bool{}
 	dhcp6ServerSpecs := map[string]api.IPv6DHCPServerSpec{}
@@ -90,6 +91,9 @@ func Validate(router *api.Router) error {
 				return err
 			}
 			dhcp4ServerSpecs[res.Metadata.Name] = spec
+			if spec.Interface != "" {
+				directDHCP4Servers[res.Metadata.Name] = true
+			}
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6DHCPServer" {
 			dhcp6Servers[res.Metadata.Name] = true
@@ -318,6 +322,9 @@ func Validate(router *api.Router) error {
 					return fmt.Errorf("%s spec.listenInterfaces[%d] references missing Interface %q", res.ID(), i, name)
 				}
 			}
+			if spec.Interface != "" && !interfaces[spec.Interface] {
+				return fmt.Errorf("%s spec.interface references missing Interface %q", res.ID(), spec.Interface)
+			}
 		}
 		if res.Kind == "IPv6DHCPServer" {
 			spec, err := res.IPv6DHCPServerSpec()
@@ -327,6 +334,30 @@ func Validate(router *api.Router) error {
 			for i, name := range spec.ListenInterfaces {
 				if !interfaces[name] {
 					return fmt.Errorf("%s spec.listenInterfaces[%d] references missing Interface %q", res.ID(), i, name)
+				}
+			}
+		}
+		if res.Kind == "IPv4DHCPReservation" {
+			spec, err := res.IPv4DHCPReservationSpec()
+			if err != nil {
+				return err
+			}
+			if spec.Server != "" {
+				if !directDHCP4Servers[spec.Server] {
+					return fmt.Errorf("%s spec.server references missing direct IPv4DHCPServer %q", res.ID(), spec.Server)
+				}
+			} else if len(directDHCP4Servers) != 1 {
+				return fmt.Errorf("%s spec.server is required when direct IPv4DHCPServer count is not one", res.ID())
+			}
+		}
+		if res.Kind == "DHCPRelay" {
+			spec, err := res.DHCPRelaySpec()
+			if err != nil {
+				return err
+			}
+			for i, name := range spec.Interfaces {
+				if !interfaces[name] {
+					return fmt.Errorf("%s spec.interfaces[%d] references missing Interface %q", res.ID(), i, name)
 				}
 			}
 		}
@@ -1158,6 +1189,23 @@ func validateResource(res api.Resource) error {
 		if spec.PrefixSource == "" {
 			return fmt.Errorf("%s spec.prefixSource is required", res.ID())
 		}
+		if spec.MTU != 0 && (spec.MTU < 1280 || spec.MTU > 65535) {
+			return fmt.Errorf("%s spec.mtu must be within 1280-65535", res.ID())
+		}
+		switch spec.PRFPreference {
+		case "", "low", "medium", "high":
+		default:
+			return fmt.Errorf("%s spec.prfPreference must be low, medium, or high", res.ID())
+		}
+		for _, server := range spec.RDNSS {
+			if strings.HasPrefix(strings.TrimSpace(server), "${") {
+				continue
+			}
+			addr, err := netip.ParseAddr(server)
+			if err != nil || !addr.Is6() {
+				return fmt.Errorf("%s spec.rdnss entries must be IPv6 addresses or status references", res.ID())
+			}
+		}
 	case "IPv6DHCPv6Server":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -1170,9 +1218,29 @@ func validateResource(res api.Resource) error {
 			return fmt.Errorf("%s spec.interface is required", res.ID())
 		}
 		switch spec.Mode {
-		case "", "stateless":
+		case "", "stateless", "stateful", "both":
 		default:
-			return fmt.Errorf("%s spec.mode must be stateless", res.ID())
+			return fmt.Errorf("%s spec.mode must be stateless, stateful, or both", res.ID())
+		}
+		if defaultString(spec.Mode, "stateless") != "stateless" {
+			if spec.AddressPool.Start == "" || spec.AddressPool.End == "" {
+				return fmt.Errorf("%s spec.addressPool.start and spec.addressPool.end are required for stateful modes", res.ID())
+			}
+			if err := validateIPv6AddressPair(spec.AddressPool.Start, spec.AddressPool.End); err != nil {
+				return fmt.Errorf("%s spec.addressPool: %w", res.ID(), err)
+			}
+		}
+		for i, server := range append(append([]string{}, spec.DNSServers...), spec.SNTPServers...) {
+			if strings.ContainsAny(server, "\n\r") {
+				return fmt.Errorf("%s DNS/SNTP server entry %d contains newline", res.ID(), i)
+			}
+			if strings.HasPrefix(strings.TrimSpace(server), "${") {
+				continue
+			}
+			addr, err := netip.ParseAddr(server)
+			if err != nil || !addr.Is6() {
+				return fmt.Errorf("%s DNS/SNTP server entry %q must be IPv6 or a status reference", res.ID(), server)
+			}
 		}
 	case "DNSAnswerScope":
 		if res.APIVersion != api.NetAPIVersion {
@@ -1189,6 +1257,26 @@ func validateResource(res api.Resource) error {
 		case "", "ipv4", "ipv6":
 		default:
 			return fmt.Errorf("%s spec.family must be ipv4 or ipv6", res.ID())
+		}
+		for i, record := range spec.HostRecords {
+			if record.Hostname == "" {
+				return fmt.Errorf("%s spec.hostRecords[%d].hostname is required", res.ID(), i)
+			}
+			if strings.ContainsAny(record.Hostname, " \t\n,") {
+				return fmt.Errorf("%s spec.hostRecords[%d].hostname is invalid", res.ID(), i)
+			}
+			if record.IPv4 != "" {
+				addr, err := netip.ParseAddr(record.IPv4)
+				if err != nil || !addr.Is4() {
+					return fmt.Errorf("%s spec.hostRecords[%d].ipv4 must be an IPv4 address", res.ID(), i)
+				}
+			}
+			if record.IPv6 != "" {
+				addr, err := netip.ParseAddr(record.IPv6)
+				if err != nil || !addr.Is6() {
+					return fmt.Errorf("%s spec.hostRecords[%d].ipv6 must be an IPv6 address", res.ID(), i)
+				}
+			}
 		}
 	case "IPv4DHCPServer":
 		if res.APIVersion != api.NetAPIVersion {
@@ -1231,6 +1319,31 @@ func validateResource(res api.Resource) error {
 		for i, name := range spec.ListenInterfaces {
 			if name == "" {
 				return fmt.Errorf("%s spec.listenInterfaces[%d] must not be empty", res.ID(), i)
+			}
+		}
+		if spec.Interface != "" {
+			if spec.AddressPool.Start == "" || spec.AddressPool.End == "" {
+				return fmt.Errorf("%s spec.addressPool.start and spec.addressPool.end are required when spec.interface is set", res.ID())
+			}
+			if err := validateIPv4AddressPair(spec.AddressPool.Start, spec.AddressPool.End); err != nil {
+				return fmt.Errorf("%s spec.addressPool: %w", res.ID(), err)
+			}
+			if spec.Gateway != "" {
+				addr, err := netip.ParseAddr(spec.Gateway)
+				if err != nil || !addr.Is4() {
+					return fmt.Errorf("%s spec.gateway must be an IPv4 address", res.ID())
+				}
+			}
+			for _, server := range append(append([]string{}, spec.DNSServers...), spec.NTPServers...) {
+				addr, err := netip.ParseAddr(server)
+				if err != nil || !addr.Is4() {
+					return fmt.Errorf("%s dnsServers/ntpServers entries must be IPv4 addresses", res.ID())
+				}
+			}
+			for i, option := range spec.Options {
+				if err := validateDHCPOption(option); err != nil {
+					return fmt.Errorf("%s spec.options[%d]: %w", res.ID(), i, err)
+				}
 			}
 		}
 	case "IPv4DHCPScope":
@@ -1325,6 +1438,51 @@ func validateResource(res api.Resource) error {
 		}
 		if strings.Contains(spec.LeaseTime, ",") {
 			return fmt.Errorf("%s spec.leaseTime must not contain commas", res.ID())
+		}
+	case "IPv4DHCPReservation":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.IPv4DHCPReservationSpec()
+		if err != nil {
+			return err
+		}
+		if spec.MACAddress == "" {
+			return fmt.Errorf("%s spec.macAddress is required", res.ID())
+		}
+		if _, err := net.ParseMAC(spec.MACAddress); err != nil {
+			return fmt.Errorf("%s spec.macAddress must be a MAC address", res.ID())
+		}
+		if spec.IPAddress == "" {
+			return fmt.Errorf("%s spec.ipAddress is required", res.ID())
+		}
+		if addr, err := netip.ParseAddr(spec.IPAddress); err != nil || !addr.Is4() {
+			return fmt.Errorf("%s spec.ipAddress must be an IPv4 address", res.ID())
+		}
+		if spec.Hostname != "" && strings.ContainsAny(spec.Hostname, " \t\n,") {
+			return fmt.Errorf("%s spec.hostname must not contain whitespace or commas", res.ID())
+		}
+		for i, option := range spec.Options {
+			if err := validateDHCPOption(option); err != nil {
+				return fmt.Errorf("%s spec.options[%d]: %w", res.ID(), i, err)
+			}
+		}
+	case "DHCPRelay":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DHCPRelaySpec()
+		if err != nil {
+			return err
+		}
+		if len(spec.Interfaces) == 0 {
+			return fmt.Errorf("%s spec.interfaces is required", res.ID())
+		}
+		if spec.Upstream == "" {
+			return fmt.Errorf("%s spec.upstream is required", res.ID())
+		}
+		if addr, err := netip.ParseAddr(spec.Upstream); err != nil || !addr.Is4() {
+			return fmt.Errorf("%s spec.upstream must be an IPv4 address", res.ID())
 		}
 	case "IPv6DHCPServer":
 		if res.APIVersion != api.NetAPIVersion {
@@ -2264,6 +2422,52 @@ func validEventRuleCorrelation(value string) bool {
 	default:
 		return strings.HasPrefix(value, "attributes.") && strings.TrimPrefix(value, "attributes.") != ""
 	}
+}
+
+func validateIPv4AddressPair(start, end string) error {
+	startAddr, err := netip.ParseAddr(start)
+	if err != nil || !startAddr.Is4() {
+		return fmt.Errorf("start must be an IPv4 address")
+	}
+	endAddr, err := netip.ParseAddr(end)
+	if err != nil || !endAddr.Is4() {
+		return fmt.Errorf("end must be an IPv4 address")
+	}
+	if startAddr.Compare(endAddr) > 0 {
+		return fmt.Errorf("start must be less than or equal to end")
+	}
+	return nil
+}
+
+func validateIPv6AddressPair(start, end string) error {
+	startAddr, err := netip.ParseAddr(start)
+	if err != nil || !startAddr.Is6() {
+		return fmt.Errorf("start must be an IPv6 address")
+	}
+	endAddr, err := netip.ParseAddr(end)
+	if err != nil || !endAddr.Is6() {
+		return fmt.Errorf("end must be an IPv6 address")
+	}
+	if startAddr.Compare(endAddr) > 0 {
+		return fmt.Errorf("start must be less than or equal to end")
+	}
+	return nil
+}
+
+func validateDHCPOption(option api.DHCPOptionSpec) error {
+	if option.Code == 0 && option.Name == "" {
+		return fmt.Errorf("code or name is required")
+	}
+	if option.Code != 0 && option.Name != "" {
+		return fmt.Errorf("code and name are mutually exclusive")
+	}
+	if option.Value == "" {
+		return fmt.Errorf("value is required")
+	}
+	if strings.ContainsAny(option.Name, " \t\n,") || strings.ContainsAny(option.Value, "\n\r") {
+		return fmt.Errorf("contains invalid whitespace or newline")
+	}
+	return nil
 }
 
 func interfaceRef(res api.Resource) (string, error) {

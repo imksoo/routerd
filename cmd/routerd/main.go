@@ -608,7 +608,9 @@ func canonicalResourceKind(kind string) string {
 		"ipv4dhcpaddress":       "IPv4DHCPAddress",
 		"dhcpv4host":            "DHCPv4HostReservation",
 		"dhcpv4hostreservation": "DHCPv4HostReservation",
-		"ipv4dhcpreservation":   "DHCPv4HostReservation",
+		"ipv4dhcpreservation":   "IPv4DHCPReservation",
+		"dhcp4reservation":      "IPv4DHCPReservation",
+		"dhcprelay":             "DHCPRelay",
 		"ipv4staticroute":       "IPv4StaticRoute",
 		"ipv6route":             "IPv6StaticRoute",
 		"ipv6staticroute":       "IPv6StaticRoute",
@@ -642,7 +644,7 @@ func apiVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "IPv6DHCPServer", "IPv6DHCPv6Server", "IPv6DHCPScope", "DNSAnswerScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DNSResolverUpstream", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv4DHCPReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "IPv6DHCPServer", "IPv6DHCPv6Server", "IPv6DHCPScope", "DHCPRelay", "DNSAnswerScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DNSResolverUpstream", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""

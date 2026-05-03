@@ -303,7 +303,7 @@ func (c IPv6RouterAdvertisementController) reconcile(ctx context.Context) error 
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "PrefixMissing"})
 			continue
 		}
-		rdnss := decodeStringList(valueFromStatusRef(c.Store, spec.RDNSS))
+		rdnss := expandServers(c.Store, spec.RDNSS)
 		configPath := firstNonEmpty(spec.ConfigPath, "/run/routerd/radvd-phase2.conf")
 		if err := writeRadvdConfig(configPath, spec.Interface, prefix, rdnss, spec.PreferredLifetime, spec.ValidLifetime); err != nil {
 			return err
@@ -332,6 +332,7 @@ type IPv6DHCPv6ServerController struct {
 	Bus        *bus.Bus
 	Store      Store
 	DryRun     bool
+	Command    string
 	ConfigPath string
 	PIDFile    string
 	Port       int
@@ -350,7 +351,6 @@ func (c IPv6DHCPv6ServerController) Start(ctx context.Context) {
 }
 
 func (c IPv6DHCPv6ServerController) reconcile(ctx context.Context) error {
-	_ = ctx
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "IPv6DHCPv6Server" {
 			continue
@@ -359,14 +359,18 @@ func (c IPv6DHCPv6ServerController) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		dnsServers := decodeStringList(valueFromStatusRef(c.Store, spec.DNSServers))
-		configPath := firstNonEmpty(spec.ConfigPath, suffixedPath(c.ConfigPath, ".conf", "-dhcpv6.conf"), "/run/routerd/dnsmasq-phase2-dhcpv6.conf")
-		pidFile := firstNonEmpty(spec.PIDFile, suffixedPath(c.PIDFile, ".pid", "-dhcpv6.pid"), "/run/routerd/dnsmasq-phase2-dhcpv6.pid")
+		dnsServers := expandServers(c.Store, spec.DNSServers)
+		configPath := firstNonEmpty(c.ConfigPath, "/run/routerd/dnsmasq-phase1.conf")
+		pidFile := firstNonEmpty(c.PIDFile, "/run/routerd/dnsmasq-phase1.pid")
 		port := c.Port
 		if port == 0 {
 			port = 1053
 		}
-		if err := writeDnsmasqDHCPv6Config(configPath, pidFile, spec.Interface, dnsServers, port); err != nil {
+		changed, err := writeDnsmasqConfig(c.Router, c.Store, configPath, pidFile, port)
+		if err != nil {
+			return err
+		}
+		if err := ensureDnsmasq(ctx, c.Command, configPath, pidFile, changed); err != nil {
 			return err
 		}
 		status := map[string]any{"phase": "Applied", "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "dnsServers": dnsServers, "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}

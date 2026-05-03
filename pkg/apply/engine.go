@@ -90,6 +90,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeDHCP(res, aliases, policies, "ipv4", includePlan, &rr)
 		case "IPv4DHCPServer":
 			e.observeIPv4DHCPServer(res, includePlan, &rr)
+		case "IPv4DHCPReservation":
+			e.observeIPv4DHCPReservation(res, includePlan, &rr)
 		case "IPv4DHCPScope":
 			e.observeIPv4DHCPScope(res, aliases, policies, includePlan, &rr)
 		case "IPv6DHCPAddress":
@@ -102,12 +104,16 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv6DelegatedAddress(res, aliases, includePlan, &rr)
 		case "IPv6DHCPServer":
 			e.observeIPv6DHCPServer(res, includePlan, &rr)
+		case "IPv6DHCPv6Server":
+			e.observeIPv6DHCPv6Server(res, includePlan, &rr)
 		case "IPv6DHCPScope":
 			e.observeIPv6DHCPScope(res, includePlan, &rr)
 		case "SelfAddressPolicy":
 			e.observeSelfAddressPolicy(res, includePlan, &rr)
 		case "DNSConditionalForwarder":
 			e.observeDNSConditionalForwarder(res, aliases, includePlan, &rr)
+		case "DHCPRelay":
+			e.observeDHCPRelay(res, aliases, includePlan, &rr)
 		case "DSLiteTunnel":
 			e.observeDSLiteTunnel(res, aliases, includePlan, &rr)
 		case "HealthCheck":
@@ -314,6 +320,34 @@ func (e *Engine) observeIPv6DHCPServer(res api.Resource, includePlan bool, rr *R
 	}
 }
 
+func (e *Engine) observeIPv6DHCPv6Server(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv6DHCPv6ServerSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	mode := defaultString(spec.Mode, "stateless")
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["mode"] = mode
+	if len(spec.DNSServers) > 0 {
+		rr.Observed["dnsServers"] = strings.Join(spec.DNSServers, ",")
+	}
+	if len(spec.SNTPServers) > 0 {
+		rr.Observed["sntpServers"] = strings.Join(spec.SNTPServers, ",")
+	}
+	if len(spec.DomainSearch) > 0 {
+		rr.Observed["domainSearch"] = strings.Join(spec.DomainSearch, ",")
+	}
+	if spec.AddressPool.Start != "" {
+		rr.Observed["rangeStart"] = spec.AddressPool.Start
+		rr.Observed["rangeEnd"] = spec.AddressPool.End
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure dnsmasq DHCPv6 %s service on %s", mode, spec.Interface))
+	}
+}
+
 func (e *Engine) observeIPv6DHCPScope(res api.Resource, includePlan bool, rr *ResourceResult) {
 	spec, err := res.IPv6DHCPScopeSpec()
 	if err != nil {
@@ -388,6 +422,25 @@ func (e *Engine) observeDNSConditionalForwarder(res api.Resource, aliases map[st
 	}
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("forward DNS queries for %s using %s upstreams", spec.Domain, source))
+	}
+}
+
+func (e *Engine) observeDHCPRelay(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPRelaySpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	var ifnames []string
+	for _, name := range spec.Interfaces {
+		ifnames = append(ifnames, aliases[name])
+	}
+	rr.Observed["interfaces"] = strings.Join(spec.Interfaces, ",")
+	rr.Observed["ifnames"] = strings.Join(ifnames, ",")
+	rr.Observed["upstream"] = spec.Upstream
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("relay DHCP from %s to %s", strings.Join(ifnames, ","), spec.Upstream))
 	}
 }
 
@@ -835,6 +888,11 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 	rr.Observed["server"] = server
 	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
 	rr.Observed["listenInterfaces"] = strings.Join(spec.ListenInterfaces, ",")
+	if spec.Interface != "" {
+		rr.Observed["interface"] = spec.Interface
+		rr.Observed["rangeStart"] = spec.AddressPool.Start
+		rr.Observed["rangeEnd"] = spec.AddressPool.End
+	}
 	rr.Observed["dnsEnabled"] = fmt.Sprintf("%t", spec.DNS.Enabled)
 	if spec.DNS.UpstreamSource != "" {
 		rr.Observed["dnsUpstreamSource"] = spec.DNS.UpstreamSource
@@ -866,6 +924,9 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 	if len(spec.ListenInterfaces) > 0 {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("serve dnsmasq only on %s", strings.Join(spec.ListenInterfaces, ",")))
 	}
+	if spec.Interface != "" {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("serve IPv4 DHCP pool %s-%s on %s", spec.AddressPool.Start, spec.AddressPool.End, spec.Interface))
+	}
 	if spec.DNS.Enabled {
 		upstreamSource := defaultString(spec.DNS.UpstreamSource, "system")
 		switch upstreamSource {
@@ -878,6 +939,24 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 		case "none":
 			rr.Plan = append(rr.Plan, "run dnsmasq DNS service without upstream forwarders")
 		}
+	}
+}
+
+func (e *Engine) observeIPv4DHCPReservation(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv4DHCPReservationSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["server"] = spec.Server
+	rr.Observed["macAddress"] = spec.MACAddress
+	rr.Observed["ipAddress"] = spec.IPAddress
+	if spec.Hostname != "" {
+		rr.Observed["hostname"] = spec.Hostname
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("reserve %s for %s", spec.IPAddress, spec.MACAddress))
 	}
 }
 

@@ -112,7 +112,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	dslite := DSLiteTunnelController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
 	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	ra := IPv6RouterAdvertisementController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRA, Logger: logger}
-	dhcp6 := IPv6DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDHCPv6, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
+	dhcp6 := IPv6DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
 	dns := DNSAnswerController{Router: r.Router, Bus: r.Bus, Store: r.Store, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
 	wan := wanegress.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
@@ -131,6 +131,16 @@ func (r *Runner) Start(ctx context.Context) error {
 	dhcp6.Start(ctx)
 	dns.Start(ctx)
 	wan.Start(ctx)
+	if routerNeedsDnsmasq(r.Router) {
+		go func() {
+			if err := renderAndEnsureDnsmasq(ctx, r.Router, r.Store, r.Opts.DnsmasqCommand, r.Opts.DnsmasqConfig, r.Opts.DnsmasqPID, r.Opts.DnsmasqPort); err != nil && logger != nil && ctx.Err() == nil {
+				logger.Warn("initial dnsmasq reconcile failed", "error", err)
+			}
+			if err := dns.reconcile(ctx, ""); err != nil && logger != nil && ctx.Err() == nil {
+				logger.Warn("initial dns answer reconcile failed", "error", err)
+			}
+		}()
+	}
 	return nil
 }
 
@@ -361,13 +371,16 @@ func (c DNSAnswerController) Start(ctx context.Context) {
 }
 
 func (c DNSAnswerController) reconcile(ctx context.Context, delegatedAddress string) error {
-	addressStatus := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", delegatedAddress)
-	if addressStatus["phase"] != "Applied" {
-		return nil
-	}
-	address, _ := addressStatus["address"].(string)
-	if address == "" {
-		return nil
+	var address string
+	if delegatedAddress != "" {
+		addressStatus := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", delegatedAddress)
+		if addressStatus["phase"] != "Applied" {
+			return nil
+		}
+		address, _ = addressStatus["address"].(string)
+		if address == "" {
+			return nil
+		}
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DNSAnswerScope" {
@@ -378,6 +391,9 @@ func (c DNSAnswerController) reconcile(ctx context.Context, delegatedAddress str
 			return err
 		}
 		if spec.DelegatedAddress != "" && spec.DelegatedAddress != delegatedAddress {
+			continue
+		}
+		if spec.DelegatedAddress == "" && delegatedAddress != "" {
 			continue
 		}
 		if spec.Family != "" && spec.Family != "ipv6" {
@@ -417,6 +433,32 @@ func (c DNSAnswerController) reconcile(ctx context.Context, delegatedAddress str
 	return nil
 }
 
+func renderAndEnsureDnsmasq(ctx context.Context, router *api.Router, store Store, command, configPath, pidFile string, port int) error {
+	configPath = firstNonEmpty(configPath, "/run/routerd/dnsmasq-phase1.conf")
+	pidFile = firstNonEmpty(pidFile, "/run/routerd/dnsmasq-phase1.pid")
+	if port == 0 {
+		port = 1053
+	}
+	changed, err := writeDnsmasqConfig(router, store, configPath, pidFile, port)
+	if err != nil {
+		return err
+	}
+	return ensureDnsmasq(ctx, command, configPath, pidFile, changed)
+}
+
+func routerNeedsDnsmasq(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "DNSResolverUpstream", "DNSAnswerScope", "IPv4DHCPServer", "IPv6DHCPv6Server", "IPv6RouterAdvertisement", "DHCPRelay":
+			return true
+		}
+	}
+	return false
+}
+
 func daemonStatus(ctx context.Context, socketPath string) (daemonapi.DaemonStatus, error) {
 	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var dialer net.Dialer
@@ -445,6 +487,10 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
+	for _, line := range dnsmasqLANServiceLines(router, store) {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
 	for _, line := range dnsmasqHostRecordLines(router, store) {
 		b.WriteString(line)
 		b.WriteByte('\n')
@@ -458,6 +504,149 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 		return false, err
 	}
 	return true, os.WriteFile(path, data, 0644)
+}
+
+func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
+	aliases := chainInterfaceAliases(router)
+	var lines []string
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IPv4DHCPServer" {
+			continue
+		}
+		spec, err := resource.IPv4DHCPServerSpec()
+		if err != nil || spec.Interface == "" {
+			continue
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			continue
+		}
+		tag := sanitizeChainTag(resource.Metadata.Name)
+		lines = append(lines, "interface="+ifname)
+		leaseTime := firstNonEmpty(spec.AddressPool.LeaseTime, "12h")
+		lines = append(lines, fmt.Sprintf("dhcp-range=set:%s,%s,%s,%s", tag, spec.AddressPool.Start, spec.AddressPool.End, leaseTime))
+		if spec.Gateway != "" {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:router,%s", tag, spec.Gateway))
+		}
+		if len(spec.DNSServers) > 0 {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:dns-server,%s", tag, strings.Join(spec.DNSServers, ",")))
+		}
+		if len(spec.NTPServers) > 0 {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:ntp-server,%s", tag, strings.Join(spec.NTPServers, ",")))
+		}
+		if spec.Domain != "" {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s", tag, spec.Domain))
+		}
+		for _, option := range spec.Options {
+			lines = append(lines, "dhcp-option=tag:"+tag+","+dnsmasqDHCPOption(option))
+		}
+		for _, reservation := range router.Spec.Resources {
+			if reservation.Kind != "IPv4DHCPReservation" {
+				continue
+			}
+			reservationSpec, err := reservation.IPv4DHCPReservationSpec()
+			if err != nil {
+				continue
+			}
+			if reservationSpec.Server != "" && reservationSpec.Server != resource.Metadata.Name {
+				continue
+			}
+			reservationTag := sanitizeChainTag(reservation.Metadata.Name)
+			lines = append(lines, "dhcp-host="+dnsmasqIPv4Reservation(reservationSpec, reservationTag))
+			for _, option := range reservationSpec.Options {
+				lines = append(lines, "dhcp-option=tag:"+reservationTag+","+dnsmasqDHCPOption(option))
+			}
+		}
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IPv6DHCPv6Server" {
+			continue
+		}
+		spec, err := resource.IPv6DHCPv6ServerSpec()
+		if err != nil {
+			continue
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			ifname = spec.Interface
+		}
+		tag := sanitizeChainTag(resource.Metadata.Name)
+		lines = append(lines, "interface="+ifname, "enable-ra")
+		leaseTime := firstNonEmpty(spec.AddressPool.LeaseTime, spec.LeaseTime, "12h")
+		switch firstNonEmpty(spec.Mode, "stateless") {
+		case "stateful":
+			lines = append(lines, fmt.Sprintf("dhcp-range=set:%s,%s,%s,constructor:%s,64,%s", tag, spec.AddressPool.Start, spec.AddressPool.End, ifname, leaseTime))
+		case "both":
+			lines = append(lines, fmt.Sprintf("dhcp-range=set:%s,%s,%s,constructor:%s,slaac,64,%s", tag, spec.AddressPool.Start, spec.AddressPool.End, ifname, leaseTime))
+		default:
+			lines = append(lines, fmt.Sprintf("dhcp-range=set:%s,::,constructor:%s,ra-stateless,64,%s", tag, ifname, leaseTime))
+		}
+		for _, server := range expandServers(store, spec.DNSServers) {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server,[%s]", tag, strings.Trim(server, "[]")))
+		}
+		if len(spec.DomainSearch) > 0 {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:domain-search,%s", tag, strings.Join(spec.DomainSearch, ",")))
+		}
+		for _, server := range expandServers(store, spec.SNTPServers) {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:sntp-server,[%s]", tag, strings.Trim(server, "[]")))
+		}
+		if spec.RapidCommit {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:rapid-commit", tag))
+		}
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IPv6RouterAdvertisement" {
+			continue
+		}
+		spec, err := resource.IPv6RouterAdvertisementSpec()
+		if err != nil {
+			continue
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			ifname = spec.Interface
+		}
+		lines = append(lines, "interface="+ifname, "enable-ra")
+		var params []string
+		if spec.MTU != 0 {
+			params = append(params, fmt.Sprintf("mtu:%d", spec.MTU))
+		}
+		switch spec.PRFPreference {
+		case "high", "low":
+			params = append(params, spec.PRFPreference)
+		}
+		if spec.ValidLifetime != "" {
+			params = append(params, "0", spec.ValidLifetime)
+		} else if spec.MTU != 0 && (spec.PRFPreference == "high" || spec.PRFPreference == "low") {
+			params = append(params, "0")
+		}
+		if len(params) > 0 {
+			lines = append(lines, fmt.Sprintf("ra-param=%s,%s", ifname, strings.Join(params, ",")))
+		}
+		for _, server := range expandServers(store, spec.RDNSS) {
+			lines = append(lines, fmt.Sprintf("dhcp-option=option6:dns-server,[%s]", strings.Trim(server, "[]")))
+		}
+		if len(spec.DNSSL) > 0 {
+			lines = append(lines, "dhcp-option=option6:domain-search,"+strings.Join(spec.DNSSL, ","))
+		}
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "DHCPRelay" {
+			continue
+		}
+		spec, err := resource.DHCPRelaySpec()
+		if err != nil {
+			continue
+		}
+		for _, iface := range spec.Interfaces {
+			ifname := aliases[iface]
+			if ifname == "" {
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("dhcp-relay=0.0.0.0,%s,%s", spec.Upstream, ifname))
+		}
+	}
+	return lines
 }
 
 func dnsmasqResolverLines(router *api.Router, store Store) []string {
@@ -497,6 +686,23 @@ func dnsmasqHostRecordLines(router *api.Router, store Store) []string {
 			continue
 		}
 		if spec.DelegatedAddress == "" {
+			for _, record := range spec.HostRecords {
+				addresses := compactStrings(record.IPv4, record.IPv6)
+				if record.Hostname != "" && len(addresses) > 0 {
+					lines = append(lines, fmt.Sprintf("host-record=%s,%s", record.Hostname, strings.Join(addresses, ",")))
+				}
+			}
+			if spec.LocalDomain != "" {
+				domain := strings.Trim(spec.LocalDomain, ".")
+				lines = append(lines, "domain="+domain, "local=/"+domain+"/")
+				if spec.DDNS {
+					lines = append(lines, "dhcp-fqdn")
+				}
+			}
+			if spec.DNSSEC {
+				lines = append(lines, "dnssec")
+				lines = append(lines, dnsmasqRootTrustAnchor)
+			}
 			continue
 		}
 		addressStatus := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", spec.DelegatedAddress)
@@ -516,8 +722,81 @@ func dnsmasqHostRecordLines(router *api.Router, store Store) []string {
 			hostname = resource.Metadata.Name + ".routerd.test"
 		}
 		lines = append(lines, fmt.Sprintf("host-record=%s,%s", hostname, hostAddress))
+		for _, record := range spec.HostRecords {
+			addresses := compactStrings(record.IPv4, record.IPv6)
+			if record.Hostname != "" && len(addresses) > 0 {
+				lines = append(lines, fmt.Sprintf("host-record=%s,%s", record.Hostname, strings.Join(addresses, ",")))
+			}
+		}
+		if spec.LocalDomain != "" {
+			domain := strings.Trim(spec.LocalDomain, ".")
+			lines = append(lines, "domain="+domain, "local=/"+domain+"/")
+			if spec.DDNS {
+				lines = append(lines, "dhcp-fqdn")
+			}
+		}
+		if spec.DNSSEC {
+			lines = append(lines, "dnssec")
+			lines = append(lines, dnsmasqRootTrustAnchor)
+		}
 	}
 	return lines
+}
+
+const dnsmasqRootTrustAnchor = "trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D"
+
+func chainInterfaceAliases(router *api.Router) map[string]string {
+	aliases := map[string]string{}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "Interface":
+			spec, err := resource.InterfaceSpec()
+			if err == nil {
+				aliases[resource.Metadata.Name] = spec.IfName
+			}
+		case "Bridge", "VXLANTunnel", "VRF":
+			aliases[resource.Metadata.Name] = resource.Metadata.Name
+		}
+	}
+	return aliases
+}
+
+func dnsmasqDHCPOption(option api.DHCPOptionSpec) string {
+	key := option.Name
+	if key == "" {
+		key = fmt.Sprintf("%d", option.Code)
+	} else {
+		key = "option:" + key
+	}
+	return key + "," + option.Value
+}
+
+func dnsmasqIPv4Reservation(spec api.IPv4DHCPReservationSpec, tag string) string {
+	parts := []string{strings.ToLower(spec.MACAddress)}
+	if tag != "" {
+		parts = append(parts, "set:"+tag)
+	}
+	if spec.Hostname != "" {
+		parts = append(parts, spec.Hostname)
+	}
+	parts = append(parts, spec.IPAddress)
+	return strings.Join(parts, ",")
+}
+
+func sanitizeChainTag(value string) string {
+	value = strings.ReplaceAll(value, "_", "-")
+	value = strings.ReplaceAll(value, ".", "-")
+	return value
+}
+
+func compactStrings(values ...string) []string {
+	var out []string
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, strings.TrimSpace(value))
+		}
+	}
+	return out
 }
 
 func expandServers(store Store, values []string) []string {
@@ -569,11 +848,23 @@ func startDnsmasq(ctx context.Context, command, configPath, pidFile string) erro
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
 	if !waitForFile(pidFile, time.Second) {
+		select {
+		case <-done:
+		default:
+			_ = cmd.Process.Kill()
+			<-done
+		}
 		return fmt.Errorf("dnsmasq did not create pid file %s", pidFile)
 	}
 	_, alive := dnsmasqProcess(pidFile)
 	if !alive {
+		select {
+		case <-done:
+		default:
+		}
 		return fmt.Errorf("dnsmasq is not alive")
 	}
 	return nil

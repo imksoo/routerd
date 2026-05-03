@@ -1217,6 +1217,21 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "addressPool": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "end": {
+                            "type": "string"
+                          },
+                          "leaseTime": {
+                            "type": "string"
+                          },
+                          "start": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "dns": {
                         "additionalProperties": false,
                         "properties": {
@@ -1248,6 +1263,21 @@
                         },
                         "type": "object"
                       },
+                      "dnsServers": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "domain": {
+                        "type": "string"
+                      },
+                      "gateway": {
+                        "type": "string"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
                       "listenInterfaces": {
                         "items": {
                           "type": "string"
@@ -1256,6 +1286,32 @@
                       },
                       "managed": {
                         "type": "boolean"
+                      },
+                      "ntpServers": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "options": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "code": {
+                              "maximum": 65535,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "role": {
                         "enum": [
@@ -1409,6 +1465,85 @@
                       "interface",
                       "rangeStart",
                       "rangeEnd"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IPv4DHCPReservation",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "hostname": {
+                        "type": "string"
+                      },
+                      "ipAddress": {
+                        "type": "string"
+                      },
+                      "macAddress": {
+                        "type": "string"
+                      },
+                      "options": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "code": {
+                              "maximum": 65535,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "server": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "macAddress",
+                      "ipAddress"
                     ],
                     "type": "object"
                   },
@@ -1889,8 +2024,25 @@
                       "configPath": {
                         "type": "string"
                       },
+                      "dnssl": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "interface": {
                         "type": "string"
+                      },
+                      "mFlag": {
+                        "type": "boolean"
+                      },
+                      "mtu": {
+                        "maximum": 65535,
+                        "minimum": 1280,
+                        "type": "integer"
+                      },
+                      "oFlag": {
+                        "type": "boolean"
                       },
                       "pidFile": {
                         "type": "string"
@@ -1901,8 +2053,20 @@
                       "prefixSource": {
                         "type": "string"
                       },
-                      "rdnss": {
+                      "prfPreference": {
+                        "enum": [
+                          "",
+                          "low",
+                          "medium",
+                          "high"
+                        ],
                         "type": "string"
+                      },
+                      "rdnss": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
                       },
                       "ready_when": {
                         "items": {
@@ -2057,23 +2221,55 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "addressPool": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "end": {
+                            "type": "string"
+                          },
+                          "leaseTime": {
+                            "type": "string"
+                          },
+                          "start": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "configPath": {
                         "type": "string"
                       },
                       "dnsServers": {
-                        "type": "string"
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "domainSearch": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
                       },
                       "interface": {
                         "type": "string"
                       },
+                      "leaseTime": {
+                        "type": "string"
+                      },
                       "mode": {
                         "enum": [
-                          "stateless"
+                          "stateless",
+                          "stateful",
+                          "both"
                         ],
                         "type": "string"
                       },
                       "pidFile": {
                         "type": "string"
+                      },
+                      "rapidCommit": {
+                        "type": "boolean"
                       },
                       "ready_when": {
                         "items": {
@@ -2111,6 +2307,12 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "sntpServers": {
+                        "items": {
+                          "type": "string"
                         },
                         "type": "array"
                       }
@@ -2265,6 +2467,62 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "DHCPRelay",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "interfaces": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "upstream": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "interfaces",
+                      "upstream"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "DNSAnswerScope",
                     "type": "string"
                   },
@@ -2287,8 +2545,14 @@
                       "configPath": {
                         "type": "string"
                       },
+                      "ddns": {
+                        "type": "boolean"
+                      },
                       "delegatedAddress": {
                         "type": "string"
+                      },
+                      "dnssec": {
+                        "type": "boolean"
                       },
                       "family": {
                         "enum": [
@@ -2297,10 +2561,34 @@
                         ],
                         "type": "string"
                       },
+                      "hostRecords": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "hostname": {
+                              "type": "string"
+                            },
+                            "ipv4": {
+                              "type": "string"
+                            },
+                            "ipv6": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "hostname"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "hostname": {
                         "type": "string"
                       },
                       "interface": {
+                        "type": "string"
+                      },
+                      "localDomain": {
                         "type": "string"
                       },
                       "pidFile": {

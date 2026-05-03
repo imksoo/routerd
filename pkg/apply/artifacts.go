@@ -98,6 +98,12 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil),
 			artifact("systemd.service", "routerd-dnsmasq.service", resource.ActionEnsure, "systemctl", nil),
 		}
+	case "IPv4DHCPReservation":
+		spec, err := res.IPv4DHCPReservationSpec()
+		if err != nil {
+			return nil
+		}
+		return []resource.Intent{artifact("dnsmasq.dhcpv4.host", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server, "mac": spec.MACAddress, "ip": spec.IPAddress})}
 	case "IPv4DHCPScope":
 		spec, err := res.IPv4DHCPScopeSpec()
 		if err != nil {
@@ -130,6 +136,10 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		return []resource.Intent{artifact("dnsmasq.dhcpv6.scope", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server})}
+	case "IPv6DHCPv6Server":
+		return []resource.Intent{artifact("dnsmasq.dhcpv6.server", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil)}
+	case "DHCPRelay":
+		return []resource.Intent{artifact("dnsmasq.dhcp.relay", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil)}
 	case "SelfAddressPolicy":
 		return []resource.Intent{artifact("routerd.selfAddressPolicy", res.Metadata.Name, resource.ActionEnsure, "routerd", nil)}
 	case "DNSConditionalForwarder":
