@@ -248,7 +248,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "IPv4Route", api.IPv4RouteSpec{}),
 			resourceSchema(api.NetAPIVersion, "StatePolicy", api.StatePolicySpec{}),
 			resourceSchema(api.NetAPIVersion, "HealthCheck", api.HealthCheckSpec{}),
-			resourceSchema(api.NetAPIVersion, "WANEgressPolicy", api.WANEgressPolicySpec{}),
+			resourceSchema(api.NetAPIVersion, "EgressRoutePolicy", api.EgressRoutePolicySpec{}),
 			resourceSchema(api.NetAPIVersion, "EventRule", api.EventRuleSpec{}),
 			resourceSchema(api.NetAPIVersion, "DerivedEvent", api.DerivedEventSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4DefaultRoutePolicy", api.IPv4DefaultRoutePolicySpec{}),

@@ -275,21 +275,25 @@ spec:
     spec:
       destination: 0.0.0.0/0
       device: ${DSLiteTunnel/ds-lite.status.interface}
+      gateway: ${EgressRoutePolicy/ipv4-default.status.selectedGateway}
       ready_when:
       - field: ${DSLiteTunnel/ds-lite.status.phase}
         equals: Up
   - apiVersion: net.routerd.net/v1alpha1
-    kind: WANEgressPolicy
+    kind: EgressRoutePolicy
     metadata:
       name: ipv4-default
     spec:
       family: ipv4
+      destinationCIDRs:
+      - 0.0.0.0/0
       selection: highest-weight-ready
       hysteresis: 30s
       candidates:
       - name: ds-lite
         source: DSLiteTunnel/ds-lite
         device: ${DSLiteTunnel/ds-lite.status.interface}
+        gatewaySource: none
         weight: 80
         healthCheck: internet-tcp443
         ready_when:
@@ -298,6 +302,7 @@ spec:
       - name: dummy-fallback
         source: Link/dummy-fallback
         device: dummy0
+        gatewaySource: none
         weight: 50
         ready_when:
         - field: ${Link/dummy-fallback.status.phase}
@@ -324,6 +329,7 @@ spec:
       targetSource: static
       target: 1.1.1.1
       protocol: tcp
+      sourceInterface: ds-routerd-test
       port: 443
       interval: 30s
       timeout: 3s

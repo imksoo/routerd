@@ -488,6 +488,9 @@ func Validate(router *api.Router) error {
 			if spec.Interface != "" && !interfaces[spec.Interface] && !dsliteTunnels[spec.Interface] {
 				return fmt.Errorf("%s references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.Interface)
 			}
+			if spec.SourceInterface != "" && !interfaces[spec.SourceInterface] && !dsliteTunnels[spec.SourceInterface] {
+				return fmt.Errorf("%s references missing source Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.SourceInterface)
+			}
 		}
 		if res.Kind == "IPv4DefaultRoutePolicy" {
 			spec, err := res.IPv4DefaultRoutePolicySpec()
@@ -506,8 +509,8 @@ func Validate(router *api.Router) error {
 				}
 			}
 		}
-		if res.Kind == "WANEgressPolicy" {
-			spec, err := res.WANEgressPolicySpec()
+		if res.Kind == "EgressRoutePolicy" {
+			spec, err := res.EgressRoutePolicySpec()
 			if err != nil {
 				return err
 			}
@@ -1832,11 +1835,26 @@ func validateResource(res api.Resource) error {
 		if spec.HealthyThreshold < 0 || spec.UnhealthyThreshold < 0 {
 			return fmt.Errorf("%s spec.healthyThreshold and spec.unhealthyThreshold must be non-negative", res.ID())
 		}
-	case "WANEgressPolicy":
+		for field, value := range map[string]string{"via": spec.Via, "sourceAddress": spec.SourceAddress} {
+			if value == "" || strings.Contains(value, "${") {
+				continue
+			}
+			addr, err := netip.ParseAddr(value)
+			if err != nil {
+				return fmt.Errorf("%s spec.%s must be an IP address or status path expression", res.ID(), field)
+			}
+			if spec.AddressFamily == "ipv4" && !addr.Is4() {
+				return fmt.Errorf("%s spec.%s must be IPv4 when addressFamily is ipv4", res.ID(), field)
+			}
+			if spec.AddressFamily == "ipv6" && !addr.Is6() {
+				return fmt.Errorf("%s spec.%s must be IPv6 when addressFamily is ipv6", res.ID(), field)
+			}
+		}
+	case "EgressRoutePolicy":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
 		}
-		spec, err := res.WANEgressPolicySpec()
+		spec, err := res.EgressRoutePolicySpec()
 		if err != nil {
 			return err
 		}
@@ -1849,6 +1867,22 @@ func validateResource(res api.Resource) error {
 		case "highest-weight-ready", "weighted-ecmp":
 		default:
 			return fmt.Errorf("%s spec.selection must be highest-weight-ready or weighted-ecmp", res.ID())
+		}
+		for _, cidr := range spec.DestinationCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil {
+				return fmt.Errorf("%s spec.destinationCIDRs entries must be valid prefixes", res.ID())
+			}
+			switch defaultString(spec.Family, "ipv4") {
+			case "ipv4":
+				if !prefix.Addr().Is4() {
+					return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv4 prefixes when family is ipv4", res.ID())
+				}
+			case "ipv6":
+				if !prefix.Addr().Is6() {
+					return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv6 prefixes when family is ipv6", res.ID())
+				}
+			}
 		}
 		if spec.Hysteresis != "" {
 			if _, err := time.ParseDuration(spec.Hysteresis); err != nil {
@@ -1864,6 +1898,32 @@ func validateResource(res api.Resource) error {
 			}
 			if candidate.Weight < 0 {
 				return fmt.Errorf("%s spec.candidates[%d].weight must be non-negative", res.ID(), i)
+			}
+			source := defaultString(candidate.GatewaySource, "none")
+			switch source {
+			case "none":
+				if candidate.Gateway != "" {
+					return fmt.Errorf("%s spec.candidates[%d].gateway is only valid when gatewaySource is static", res.ID(), i)
+				}
+			case "static":
+				if candidate.Gateway == "" {
+					return fmt.Errorf("%s spec.candidates[%d].gateway is required when gatewaySource is static", res.ID(), i)
+				}
+				if !strings.Contains(candidate.Gateway, "${") {
+					addr, err := netip.ParseAddr(candidate.Gateway)
+					if err != nil {
+						return fmt.Errorf("%s spec.candidates[%d].gateway must be an IP address or status path expression", res.ID(), i)
+					}
+					if defaultString(spec.Family, "ipv4") == "ipv4" && !addr.Is4() {
+						return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv4 address when family is ipv4", res.ID(), i)
+					}
+					if defaultString(spec.Family, "ipv4") == "ipv6" && !addr.Is6() {
+						return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv6 address when family is ipv6", res.ID(), i)
+					}
+				}
+			case "dhcpv4", "dhcpv6":
+			default:
+				return fmt.Errorf("%s spec.candidates[%d].gatewaySource must be static, dhcpv4, dhcpv6, or none", res.ID(), i)
 			}
 		}
 	case "EventRule":
@@ -2380,6 +2440,12 @@ func validateResource(res api.Resource) error {
 		}
 		if _, err := netip.ParsePrefix(spec.Destination); err != nil {
 			return fmt.Errorf("%s spec.destination is invalid: %w", res.ID(), err)
+		}
+		if spec.Gateway != "" && !strings.Contains(spec.Gateway, "${") {
+			addr, err := netip.ParseAddr(spec.Gateway)
+			if err != nil || !addr.Is4() {
+				return fmt.Errorf("%s spec.gateway must be an IPv4 address or status path expression", res.ID())
+			}
 		}
 	default:
 		return fmt.Errorf("unsupported resource kind %s in %s", res.Kind, res.ID())

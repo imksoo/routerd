@@ -231,7 +231,7 @@ type IPv4RouteController struct {
 }
 
 func (c IPv4RouteController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.tunnel.ds-lite.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.tunnel.ds-lite.*", "routerd.lan.route.changed"}}, 32)
 	go func() {
 		for range ch {
 			if err := c.reconcile(ctx); err != nil && c.Logger != nil {
@@ -256,8 +256,12 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			continue
 		}
 		destination := firstNonEmpty(spec.Destination, "0.0.0.0/0")
+		gateway := firstNonEmpty(valueFromStatusRef(c.Store, spec.Gateway), spec.Gateway)
 		if !c.DryRun {
 			args := []string{"route", "replace", destination, "dev", device}
+			if gateway != "" {
+				args = []string{"route", "replace", destination, "via", gateway, "dev", device}
+			}
 			if spec.Metric > 0 {
 				args = append(args, "metric", fmt.Sprintf("%d", spec.Metric))
 			}
@@ -265,13 +269,13 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 				return err
 			}
 		}
-		status := map[string]any{"phase": "Installed", "destination": destination, "device": device, "metric": spec.Metric, "dryRun": c.DryRun, "installedAt": time.Now().UTC().Format(time.RFC3339Nano)}
+		status := map[string]any{"phase": "Installed", "destination": destination, "device": device, "gateway": gateway, "metric": spec.Metric, "dryRun": c.DryRun, "installedAt": time.Now().UTC().Format(time.RFC3339Nano)}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
 			return err
 		}
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.installed", daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: resource.Metadata.Name}
-		event.Attributes = map[string]string{"destination": destination, "device": device, "dryRun": fmt.Sprintf("%t", c.DryRun)}
+		event.Attributes = map[string]string{"destination": destination, "device": device, "gateway": gateway, "dryRun": fmt.Sprintf("%t", c.DryRun)}
 		if err := c.Bus.Publish(ctx, event); err != nil {
 			return err
 		}

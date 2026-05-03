@@ -48,7 +48,7 @@ controller chain はイベントを受け、必要なリソースだけを調整
 
 Phase 2-B で、次の Kind を追加しました。
 
-- `WANEgressPolicy`
+- `EgressRoutePolicy`
 - `EventRule`
 - `DerivedEvent`
 - `HealthCheck`

@@ -33,9 +33,9 @@ func (s *testStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
-func TestControllerRendersDryRunNAT44FromWANEgressPolicy(t *testing.T) {
+func TestControllerRendersDryRunNAT44FromEgressRoutePolicy(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WANEgressPolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.WANEgressPolicySpec{}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-wan"}, Spec: api.NAT44RuleSpec{
 			Type:            "masquerade",
 			EgressPolicyRef: "ipv4-default",
@@ -43,7 +43,7 @@ func TestControllerRendersDryRunNAT44FromWANEgressPolicy(t *testing.T) {
 		}},
 	}}}
 	store := &testStore{}
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "WANEgressPolicy", "ipv4-default", map[string]any{"phase": "Applied", "selectedDevice": "ds-lite"}); err != nil {
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default", map[string]any{"phase": "Applied", "selectedDevice": "ds-lite"}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "nat44.nft")

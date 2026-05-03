@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,6 +53,32 @@ func TestProbeTCPSuccessAndFailure(t *testing.T) {
 	_ = closed.Close()
 	if result := ProbeTCP(context.Background(), api.HealthCheckSpec{Target: host, Port: port}); result.OK {
 		t.Fatalf("tcp failure result = %#v", result)
+	}
+}
+
+func TestProbeTCPSourceAddress(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}()
+	host, port := splitHostPort(t, listener.Addr().String())
+	result := ProbeTCP(context.Background(), api.HealthCheckSpec{Target: host, Port: port, SourceAddress: "127.0.0.1"})
+	if !result.OK {
+		t.Fatalf("tcp sourceAddress result = %#v", result)
+	}
+}
+
+func TestProbeTCPInvalidSourceAddress(t *testing.T) {
+	result := ProbeTCP(context.Background(), api.HealthCheckSpec{Target: "127.0.0.1", Port: 9, SourceAddress: "not-an-ip"})
+	if result.OK || !strings.Contains(result.Message, "sourceAddress") {
+		t.Fatalf("invalid sourceAddress result = %#v", result)
 	}
 }
 

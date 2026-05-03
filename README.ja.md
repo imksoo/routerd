@@ -27,7 +27,7 @@ IPv4 経路、NAT44、WAN 出口選択も同じ流れで扱います。
   ローカルドメイン、DDNS、DNSSEC フラグ、条件付き転送、DoH/DoT/DoQ と
   平文 UDP DNS へのローカル DNS 代理
 - 委譲プレフィックスからの LAN IPv6 アドレス派生
-- `WANEgressPolicy`、`HealthCheck`、`EventRule`、`DerivedEvent` による
+- `EgressRoutePolicy`、`HealthCheck`、`EventRule`、`DerivedEvent` による
   WAN 出口選択
 - IPv4 既定経路、nftables による NAT44、conntrack 集計観測
 - Unix ソケット HTTP+JSON の routerd / デーモン制御 API

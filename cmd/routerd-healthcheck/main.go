@@ -34,6 +34,9 @@ type options struct {
 	target             string
 	protocol           string
 	addressFamily      string
+	via                string
+	sourceInterface    string
+	sourceAddress      string
 	port               int
 	interval           time.Duration
 	timeout            time.Duration
@@ -98,6 +101,9 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.target, "target", "", "probe target")
 	fs.StringVar(&opts.protocol, "protocol", healthcheck.ProtocolTCP, "probe protocol: icmp, tcp, dns, http")
 	fs.StringVar(&opts.addressFamily, "address-family", "", "address family: ipv4 or ipv6")
+	fs.StringVar(&opts.via, "via", "", "gateway IP used by the selected path")
+	fs.StringVar(&opts.sourceInterface, "source-interface", "", "source interface for probes")
+	fs.StringVar(&opts.sourceAddress, "source-address", "", "source IP address for probes")
 	fs.IntVar(&opts.port, "port", 0, "probe port")
 	fs.DurationVar(&opts.interval, "interval", 30*time.Second, "probe interval")
 	fs.DurationVar(&opts.timeout, "timeout", 3*time.Second, "probe timeout")
@@ -146,6 +152,9 @@ func newDaemon(opts options, telemetry *routerotel.Runtime) *daemon {
 		Target:             opts.target,
 		Protocol:           opts.protocol,
 		AddressFamily:      opts.addressFamily,
+		Via:                opts.via,
+		SourceInterface:    opts.sourceInterface,
+		SourceAddress:      opts.sourceAddress,
 		Port:               opts.port,
 		Interval:           opts.interval.String(),
 		Timeout:            opts.timeout.String(),
@@ -227,6 +236,7 @@ func (d *daemon) probeOnce(ctx context.Context) error {
 		attribute.String("routerd.resource.name", d.opts.resource),
 		attribute.String("network.protocol.name", d.spec.Protocol),
 		attribute.String("server.address", d.spec.Target),
+		attribute.String("network.interface.name", d.spec.SourceInterface),
 	))
 	result := healthcheck.Probe(spanCtx, d.spec)
 	if probeCtx.Err() == context.DeadlineExceeded && !result.OK {
@@ -452,6 +462,9 @@ func (d *daemon) statusLocked() daemonapi.DaemonStatus {
 			"lastResult":        d.state.LastResult,
 			"consecutivePassed": strconv.Itoa(d.state.ConsecutivePassed),
 			"consecutiveFailed": strconv.Itoa(d.state.ConsecutiveFailed),
+			"via":               d.spec.Via,
+			"sourceInterface":   d.spec.SourceInterface,
+			"sourceAddress":     d.spec.SourceAddress,
 		},
 	}
 	return daemonapi.DaemonStatus{

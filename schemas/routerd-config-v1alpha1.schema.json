@@ -3293,6 +3293,9 @@
                       "device": {
                         "type": "string"
                       },
+                      "gateway": {
+                        "type": "string"
+                      },
                       "metric": {
                         "minimum": 0,
                         "type": "integer"
@@ -3569,6 +3572,12 @@
                       "socketSource": {
                         "type": "string"
                       },
+                      "sourceAddress": {
+                        "type": "string"
+                      },
+                      "sourceInterface": {
+                        "type": "string"
+                      },
                       "target": {
                         "type": "string"
                       },
@@ -3593,6 +3602,9 @@
                       "unhealthyThreshold": {
                         "minimum": 1,
                         "type": "integer"
+                      },
+                      "via": {
+                        "type": "string"
                       },
                       "when": {
                         "additionalProperties": false,
@@ -3659,7 +3671,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "WANEgressPolicy",
+                    "const": "EgressRoutePolicy",
                     "type": "string"
                   },
                   "metadata": {
@@ -3686,6 +3698,16 @@
                               "type": "string"
                             },
                             "gateway": {
+                              "type": "string"
+                            },
+                            "gatewaySource": {
+                              "enum": [
+                                "",
+                                "static",
+                                "dhcpv4",
+                                "dhcpv6",
+                                "none"
+                              ],
                               "type": "string"
                             },
                             "healthCheck": {
@@ -3751,6 +3773,12 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "destinationCIDRs": {
+                        "items": {
+                          "type": "string"
                         },
                         "type": "array"
                       },

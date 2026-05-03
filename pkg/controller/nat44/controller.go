@@ -166,7 +166,7 @@ func (c Controller) resolveEgressInterface(spec api.NAT44RuleSpec, aliases map[s
 	if policyName == "" {
 		return "", "EgressPolicyMissing"
 	}
-	status := c.Store.ObjectStatus(api.NetAPIVersion, "WANEgressPolicy", policyName)
+	status := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policyName)
 	if fmt.Sprint(status["phase"]) != "Applied" {
 		return "", "EgressPolicyNotApplied"
 	}
@@ -206,7 +206,7 @@ func policyNames(router *api.Router) []string {
 	}
 	var out []string
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind == "WANEgressPolicy" {
+		if resource.Kind == "EgressRoutePolicy" {
 			out = append(out, resource.Metadata.Name)
 		}
 	}

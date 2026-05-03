@@ -9,6 +9,12 @@ routerd は出荷前のソフトウェアです。
 
 ## 0.2.0
 
+- Phase 2.6: `WANEgressPolicy` を `EgressRoutePolicy` に改名しました。
+  互換別名はありません。
+  `destinationCIDRs`、`gateway`、`gatewaySource` を追加しました。
+  `HealthCheck` は `via`、`sourceInterface`、`sourceAddress` で probe の送信経路を指定できます。
+- Phase 2.5: `FirewallZone`、`FirewallPolicy`、`FirewallRule` を追加しました。
+  nftables の `inet routerd_filter` table で状態を持つ firewall を生成します。
 - Phase 2.0: DNS を `DNSZone` と `DNSResolver` に整理しました。
   `routerd-dns-resolver` がローカルゾーン、条件付き転送、DoH、DoT、DoQ、平文 UDP DNS、キャッシュを扱います。
   dnsmasq は DHCPv4、DHCPv6、中継、RA に限定しました。
@@ -32,7 +38,7 @@ routerd は出荷前のソフトウェアです。
   `/proc/net/nf_conntrack` がない環境では、sysctl 由来の集計へ縮退します。
 - Phase 1.5a: dnsmasq による LAN 側サービスを拡張しました。
   DHCPv4、DHCPv6、RA、中継の設定を管理対象 dnsmasq 設定へ統合しました。
-- Phase 2-B: `WANEgressPolicy`、`EventRule`、`DerivedEvent`、`HealthCheck` を追加しました。
+- Phase 2-B: `EgressRoutePolicy`、`EventRule`、`DerivedEvent`、`HealthCheck` を追加しました。
 - Phase 2-A: DHCPv6 情報要求、DS-Lite、IPv4 経路、RA、DHCPv6 サーバーをカスケードに追加しました。
 - Phase 1: DHCPv6-PD から LAN アドレス、DNS 応答へつながる最初の controller chain を追加しました。
 - Phase 0: `routerd-dhcpv6-client`、daemon contract、bus、controller framework を追加しました。

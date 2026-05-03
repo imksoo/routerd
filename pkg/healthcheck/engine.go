@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -218,8 +219,7 @@ func ProbeTCP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
 	if port == 0 {
 		port = 443
 	}
-	dialer := net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(target, fmt.Sprint(port)))
+	conn, err := dialContext(ctx, spec, "tcp", net.JoinHostPort(target, fmt.Sprint(port)))
 	if err != nil {
 		return resultFromError(ctx, err)
 	}
@@ -236,11 +236,10 @@ func ProbeDNS(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
 	if port == 0 {
 		port = 53
 	}
-	dialer := net.Dialer{}
 	resolver := net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, net.JoinHostPort(target, fmt.Sprint(port)))
+			return dialContext(ctx, spec, network, net.JoinHostPort(target, fmt.Sprint(port)))
 		},
 	}
 	if _, err := resolver.LookupIP(ctx, "ip4", "example.com"); err != nil {
@@ -263,7 +262,14 @@ func ProbeHTTP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
 	if err != nil {
 		return ProbeResult{Message: err.Error()}
 	}
-	resp, err := http.DefaultClient.Do(req)
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return dialContext(ctx, spec, network, address)
+		},
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	resp, err := client.Do(req)
 	if err != nil {
 		return resultFromError(ctx, err)
 	}
@@ -288,12 +294,12 @@ func ProbeICMP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
 	var replyType icmp.Type
 	var protocol int
 	if network == "ip4:icmp" {
-		conn, err = icmp.ListenPacket(network, "0.0.0.0")
+		conn, err = icmp.ListenPacket(network, listenAddress(spec, "0.0.0.0"))
 		messageType = ipv4.ICMPTypeEcho
 		replyType = ipv4.ICMPTypeEchoReply
 		protocol = 1
 	} else {
-		conn, err = icmp.ListenPacket(network, "::")
+		conn, err = icmp.ListenPacket(network, listenAddress(spec, "::"))
 		messageType = ipv6.ICMPTypeEchoRequest
 		replyType = ipv6.ICMPTypeEchoReply
 		protocol = 58
@@ -333,6 +339,46 @@ func ProbeICMP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
 			return ProbeResult{OK: true, Message: "icmp echo succeeded from " + peer.String()}
 		}
 	}
+}
+
+func dialContext(ctx context.Context, spec api.HealthCheckSpec, network, address string) (net.Conn, error) {
+	dialer, err := dialerForSpec(spec, network)
+	if err != nil {
+		return nil, err
+	}
+	return dialer.DialContext(ctx, network, address)
+}
+
+func dialerForSpec(spec api.HealthCheckSpec, network string) (net.Dialer, error) {
+	dialer := net.Dialer{}
+	if spec.SourceAddress != "" {
+		addr := net.ParseIP(spec.SourceAddress)
+		if addr == nil {
+			return net.Dialer{}, fmt.Errorf("sourceAddress %q is not an IP address", spec.SourceAddress)
+		}
+		switch {
+		case strings.HasPrefix(network, "tcp"):
+			dialer.LocalAddr = &net.TCPAddr{IP: addr}
+		case strings.HasPrefix(network, "udp"):
+			dialer.LocalAddr = &net.UDPAddr{IP: addr}
+		default:
+			dialer.LocalAddr = &net.IPAddr{IP: addr}
+		}
+	}
+	if spec.SourceInterface != "" {
+		ifname := spec.SourceInterface
+		dialer.Control = func(network, address string, conn syscall.RawConn) error {
+			return bindToDevice(conn, ifname)
+		}
+	}
+	return dialer, nil
+}
+
+func listenAddress(spec api.HealthCheckSpec, fallback string) string {
+	if spec.SourceAddress == "" {
+		return fallback
+	}
+	return spec.SourceAddress
 }
 
 func resultFromError(ctx context.Context, err error) ProbeResult {
@@ -389,6 +435,16 @@ func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, r
 		"consecutiveFailed": fmt.Sprint(state.ConsecutiveFailed),
 		"network.address":   spec.Target,
 		"network.protocol":  defaultString(spec.Protocol, protocolFromType(spec.Type)),
+	}
+	for key, value := range map[string]string{
+		"network.via":            spec.Via,
+		"network.interface.name": spec.SourceInterface,
+		"network.local.address":  spec.SourceAddress,
+	} {
+		if value != "" {
+			event.Attributes[key] = value
+			status[key] = value
+		}
 	}
 	return Evaluation{State: state, Result: nextResult, Event: event, Status: status}
 }
