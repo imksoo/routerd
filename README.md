@@ -28,7 +28,8 @@ Implemented resource areas include:
   PPPoE sessions, and DS-Lite tunnels
 - LAN service through a managed dnsmasq instance: DHCPv4 server/reservations,
   DHCPv6 stateless/stateful/both modes, RA options, host records, local
-  domains, DNSSEC flagging, DDNS, and conditional forwarding
+  domains, DNSSEC flagging, DDNS, conditional forwarding, and local DNS proxy
+  upstreams for DoH, DoT, DoQ, and plain UDP fallback
 - IPv6 delegated LAN address derivation from a DHCPv6-PD prefix
 - WAN egress selection with `WANEgressPolicy`, `HealthCheck`, `EventRule`, and
   `DerivedEvent`

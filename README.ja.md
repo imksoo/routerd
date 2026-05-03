@@ -24,7 +24,8 @@ IPv4 経路、NAT44、WAN 出口選択も同じ流れで扱います。
 - Interface / Link / Bridge / VXLAN / VRF / WireGuard / cloud VPN 向け IPsec の土台
 - WAN 取得: DHCPv6-PD、DHCPv6 Information、DHCPv4 リース、PPPoE、DS-Lite
 - LAN サービス: dnsmasq 統合による DHCPv4、DHCPv6、RA、DNS host record、
-  ローカルドメイン、DDNS、DNSSEC フラグ、条件付き転送
+  ローカルドメイン、DDNS、DNSSEC フラグ、条件付き転送、DoH/DoT/DoQ と
+  平文 UDP DNS へのローカル DNS 代理
 - 委譲プレフィックスからの LAN IPv6 アドレス派生
 - `WANEgressPolicy`、`HealthCheck`、`EventRule`、`DerivedEvent` による
   WAN 出口選択

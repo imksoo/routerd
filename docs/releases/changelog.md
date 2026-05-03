@@ -9,6 +9,10 @@ routerd は出荷前のソフトウェアです。
 
 ## Unreleased
 
+- Phase 1.9-E3: `routerd-doh-proxy` の native backend を拡張しました。
+  DoH、DoT、DoQ、平文 UDP DNS を優先順に並べ、失敗時は下位の上流へ切り替えます。
+- Phase 1.9-E2: router05 で `DoHProxy` を実適用しました。
+  dnsmasq からローカルの `routerd-doh-proxy` へ転送し、NextDNS 側のログ照合まで確認しました。
 - Phase 1.8: 文書を現在のコードに合わせて全面整理しました。
   旧 DHCPv6 クライアント経路、旧 Kind 名、古いラボ前提を利用者向け本文から取り除きました。
 - Phase 1.7: router02 の NixOS 設定を宣言的な `routerd-dhcpv6-client` ユニットへ移しました。
