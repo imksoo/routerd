@@ -40,7 +40,7 @@ select json_extract(status, '$.currentPrefix') as current,
        json_extract(status, '$.lastPrefix') as last,
        json_extract(status, '$.lastObservedAt') as observed_at
 from objects
-where kind = 'IPv6PrefixDelegation';
+where kind = 'DHCPv6PrefixDelegation';
 SQL
 ```
 

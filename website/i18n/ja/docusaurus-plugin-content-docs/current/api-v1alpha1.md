@@ -33,19 +33,19 @@ routerd の設定は宣言的なリソースの集まりです。ひとつひと
 
 **IPv4 アドレッシング**
 - [IPv4StaticAddress](#ipv4staticaddress)
-- [IPv4DHCPAddress](#ipv4dhcpaddress)
+- [DHCPv4Address](#ipv4dhcpaddress)
 - [IPv4StaticRoute / IPv6StaticRoute](#ipv4staticroute-と-ipv6staticroute)
 
 **IPv4 DHCP と DNS の提供 (LAN 側)**
-- [IPv4DHCPServer / IPv4DHCPScope](#ipv4dhcpserver-と-ipv4dhcpscope)
-- [DHCPv4HostReservation](#dhcpv4hostreservation)
+- [DHCPv4Server / DHCPv4Scope](#ipv4dhcpserver-と-ipv4dhcpscope)
+- [DHCPv4Reservation](#dhcpv4reservation)
 
 **IPv6 アドレッシングとプレフィックス委譲**
-- [IPv6PrefixDelegation](#ipv6prefixdelegation)
+- [DHCPv6PrefixDelegation](#ipv6prefixdelegation)
 - [IPv6DelegatedAddress](#ipv6delegatedaddress)
 - [IPv6RAAddress](#ipv6raaddress)
-- [IPv6DHCPAddress](#ipv6dhcpaddress)
-- [IPv6DHCPServer / IPv6DHCPScope](#ipv6dhcpserver-と-ipv6dhcpscope)
+- [DHCPv6Address](#ipv6dhcpaddress)
+- [DHCPv6Server / DHCPv6Scope](#ipv6dhcpserver-と-ipv6dhcpscope)
 - [SelfAddressPolicy](#selfaddresspolicy)
 - [DNSConditionalForwarder](#dnsconditionalforwarder)
 
@@ -89,7 +89,7 @@ routerd を初めて触る場合は、まず [概念](../concepts/what-is-router
 ## 用意されているリソース
 
 ネットワーク関連:
-`Interface`、`Bridge`、`VXLANSegment`、`PPPoEInterface`、`IPv4StaticAddress`、`IPv4DHCPAddress`、`IPv4StaticRoute`、`IPv6StaticRoute`、`IPv4DHCPServer`、`IPv4DHCPScope`、`DHCPv4HostReservation`、`IPv6DHCPAddress`、`IPv6PrefixDelegation`、`IPv6DelegatedAddress`、`IPv6DHCPServer`、`IPv6DHCPScope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
+`Interface`、`Bridge`、`VXLANSegment`、`PPPoEInterface`、`IPv4StaticAddress`、`DHCPv4Address`、`IPv4StaticRoute`、`IPv6StaticRoute`、`DHCPv4Server`、`DHCPv4Scope`、`DHCPv4Reservation`、`DHCPv6Address`、`DHCPv6PrefixDelegation`、`IPv6DelegatedAddress`、`DHCPv6Server`、`DHCPv6Scope`、`SelfAddressPolicy`、`DNSConditionalForwarder`、`DSLiteTunnel`、`StatePolicy`、`HealthCheck`、`IPv4DefaultRoutePolicy`、`IPv4SourceNAT`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4ReversePathFilter`、`PathMTUPolicy`。
 
 ファイアウォール:
 `Zone`、`FirewallPolicy`、`ExposeService`。
@@ -391,15 +391,15 @@ spec:
     allowOverlapReason: overlapping customer network for NAT lab
   ```
 
-### IPv4DHCPAddress
+### DHCPv4Address
 
-`IPv4DHCPAddress` は、上流の DHCPv4 から IPv4 アドレスを取得します。
+`DHCPv4Address` は、上流の DHCPv4 から IPv4 アドレスを取得します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: IPv4DHCPAddress
+kind: DHCPv4Address
 metadata:
-  name: wan-dhcp4
+  name: wan-dhcpv4
 spec:
   interface: wan
   client: dhclient
@@ -417,9 +417,9 @@ spec:
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: IPv4DHCPAddress
+kind: DHCPv4Address
 metadata:
-  name: mgmt-dhcp4
+  name: mgmt-dhcpv4
 spec:
   interface: mgmt
   client: networkd
@@ -470,15 +470,15 @@ spec:
 
 ## IPv4 DHCP と DNS の提供
 
-### IPv4DHCPServer と IPv4DHCPScope
+### DHCPv4Server と DHCPv4Scope
 
 DHCPv4 サービスは、サーバを表すリソースと、そのサーバを 1 本のインターフェースに紐付けるスコープに分かれています。サーバはひとつの dnsmasq インスタンスに対応します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: IPv4DHCPServer
+kind: DHCPv4Server
 metadata:
-  name: dhcp4
+  name: dhcpv4
 spec:
   server: dnsmasq
   managed: true
@@ -486,18 +486,18 @@ spec:
     - lan
   dns:
     enabled: true
-    upstreamSource: dhcp4
+    upstreamSource: dhcpv4
     upstreamInterface: wan
     cacheSize: 1000
 ```
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: IPv4DHCPScope
+kind: DHCPv4Scope
 metadata:
-  name: lan-dhcp4
+  name: lan-dhcpv4
 spec:
-  server: dhcp4
+  server: dhcpv4
   interface: lan
   rangeStart: 192.168.10.100
   rangeEnd: 192.168.10.199
@@ -511,29 +511,29 @@ spec:
 
 - `spec.listenInterfaces` は dnsmasq に対する許可リストです。スコープは、対応するサーバの `listenInterfaces` に含まれるインターフェースにしか紐付けられません。リストに無いインターフェースは `except-interface` として書き出すため、明示しない限り WAN にサービスを出してしまうことはありません。
 - `spec.role` の既定は `server` です。VXLAN などで同じ L2 セグメントを複数の routerd が共有し、別の 1 台だけを DHCP サーバにしたい場合は `role: transit` を指定します。この場合、ローカルの dnsmasq は DHCP を提供しません。
-- `IPv4DHCPScope.routerSource` はゲートウェイオプションの出し方を決めます。`interfaceAddress` ならルータの LAN アドレス、`static` なら `spec.router` の値、`none` ならオプション自体を出しません。
-- `IPv4DHCPScope.dnsSource` は DNS サーバオプションの出し方を決めます。
-  - `dhcp4` と `static` は、DHCPv4 オプションに DNS サーバを直接書き込みます。このスコープでは dnsmasq が 53 番ポートを開く必要はありません。
-  - `self` のとき、ルータ自身の LAN IPv4 アドレスを DNS サーバとして広告し、dnsmasq を DNS フォワーダ兼キャッシュとして動かします。フォワード先は `IPv4DHCPServer.spec.dns` で決まります。
-    - `upstreamSource: dhcp4` は、`upstreamInterface` で DHCPv4 から学習した DNS サーバへ転送します。
+- `DHCPv4Scope.routerSource` はゲートウェイオプションの出し方を決めます。`interfaceAddress` ならルータの LAN アドレス、`static` なら `spec.router` の値、`none` ならオプション自体を出しません。
+- `DHCPv4Scope.dnsSource` は DNS サーバオプションの出し方を決めます。
+  - `dhcpv4` と `static` は、DHCPv4 オプションに DNS サーバを直接書き込みます。このスコープでは dnsmasq が 53 番ポートを開く必要はありません。
+  - `self` のとき、ルータ自身の LAN IPv4 アドレスを DNS サーバとして広告し、dnsmasq を DNS フォワーダ兼キャッシュとして動かします。フォワード先は `DHCPv4Server.spec.dns` で決まります。
+    - `upstreamSource: dhcpv4` は、`upstreamInterface` で DHCPv4 から学習した DNS サーバへ転送します。
     - `upstreamSource: static` は `upstreamServers` を使います。
     - `upstreamSource: system` はホストのリゾルバ設定に従います。
     - `upstreamSource: none` は上流フォワーダを持たずに動かします。
   - `none` は DNS オプションそのものを出しません。
 - `spec.interface` がまだ取り込み待ちの状態（cloud-init などが握っている）にある場合、その上で DHCP を提供すると競合するため、計画段階で DHCP スコープも止めます。
 
-### DHCPv4HostReservation
+### DHCPv4Reservation
 
-`DHCPv4HostReservation` は、既存の `IPv4DHCPScope` の中で、クライアントの
+`DHCPv4Reservation` は、既存の `DHCPv4Scope` の中で、クライアントの
 MAC アドレスと IPv4 アドレスを固定します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: DHCPv4HostReservation
+kind: DHCPv4Reservation
 metadata:
   name: printer
 spec:
-  scope: lan-dhcp4
+  scope: lan-dhcpv4
   macAddress: "02:00:00:00:01:50"
   ipAddress: "192.168.10.150"
   hostname: printer
@@ -546,13 +546,13 @@ routerd はこれを dnsmasq の `dhcp-host=` 行として出力します。`hos
 
 ## IPv6 アドレッシングとプレフィックス委譲
 
-### IPv6PrefixDelegation
+### DHCPv6PrefixDelegation
 
-`IPv6PrefixDelegation` は、上流側のインターフェースで IPv6 プレフィックスの委譲を要求します。
+`DHCPv6PrefixDelegation` は、上流側のインターフェースで IPv6 プレフィックスの委譲を要求します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: IPv6PrefixDelegation
+kind: DHCPv6PrefixDelegation
 metadata:
   name: wan-pd
 spec:
@@ -567,7 +567,7 @@ spec:
 
 ルータの振る舞い:
 
-- `spec.client` は OS 側の DHCPv6-PD クライアントを選びます。`networkd` は Linux の systemd-networkd 追加設定を使います。`dhcp6c` は routerd が管理する WIDE/KAME 形式の `dhcp6c.conf` とサービスを使います。`dhcpcd` はリソースごとの `dhcpcd.conf` とサービスを routerd が管理する経路です。省略時は `routerd apply` が OS とプロファイルから既定値を選びます。FreeBSD は `dhcp6c`、一般 Linux は `networkd`、NixOS を含む Linux の NTT 系プロファイルは `dhcpcd` です。Linux で `dhcp6c` を明示する経路は、移行や比較検証のための対応済みの代替手段として残します。1 回だけ切り替えて試したい場合は `routerd apply --override-client` を使えます。既知の悪い組み合わせは検証エラーではなく、警告とイベントとして表示します。同じインターフェースで `dhcp6c` や `dhcpcd` のような外部クライアントがプレフィックス委譲を持つ場合、`IPv6DHCPAddress` を同時に定義しないでください。WAN 側を待ち受ける DHCPv6 クライアントは 1 つに絞ります。
+- `spec.client` は OS 側の DHCPv6-PD クライアントを選びます。`networkd` は Linux の systemd-networkd 追加設定を使います。`dhcp6c` は routerd が管理する WIDE/KAME 形式の `dhcp6c.conf` とサービスを使います。`dhcpcd` はリソースごとの `dhcpcd.conf` とサービスを routerd が管理する経路です。省略時は `routerd apply` が OS とプロファイルから既定値を選びます。FreeBSD は `dhcp6c`、一般 Linux は `networkd`、NixOS を含む Linux の NTT 系プロファイルは `dhcpcd` です。Linux で `dhcp6c` を明示する経路は、移行や比較検証のための対応済みの代替手段として残します。1 回だけ切り替えて試したい場合は `routerd apply --override-client` を使えます。既知の悪い組み合わせは検証エラーではなく、警告とイベントとして表示します。同じインターフェースで `dhcp6c` や `dhcpcd` のような外部クライアントがプレフィックス委譲を持つ場合、`DHCPv6Address` を同時に定義しないでください。WAN 側を待ち受ける DHCPv6 クライアントは 1 つに絞ります。
 - `spec.profile` は既知の上流環境向けにパラメータを切り替えます。
   - `default`: 一般的な DHCPv6-PD。
   - `ntt-ngn-direct-hikari-denwa`: NTT NGN/ONU に直結し、ひかり電話契約を使う構成。
@@ -582,15 +582,15 @@ spec:
 - `spec.iaid` は DHCPv6 の IAID を固定します。10 進数、`0x` 付きの 16 進数、または 8 桁の 16 進数で書けます。systemd-networkd では 10 進数の `IAID=` として出力し、FreeBSD の `dhcp6c` では `ia-pd` / `id-assoc pd` の識別子として使います。通常の NTT 系プロファイルでは省略します。
 - `spec.duidType` は、NTT 系プロファイルで省略すると `link-layer` として扱います。systemd-networkd が既定で使う machine-id 由来の DUID を避け、FreeBSD/KAME `dhcp6c` も NTT 系ホームゲートウェイで期待される識別子にそろえるためです。
 - `spec.duidType` と `spec.duidRawData` は DHCPv6 の DUID を固定します。高可用構成の切り替え、ルータ交換、段階的な移行など、上流インターフェースの MAC アドレスから作る DUID とは別の安定した識別子が必要な場合に使います。`duidRawData` は `00:01:...` のようなバイト列表記でも、区切りなしの 16 進数でも書けます。通常は省略し、実際の MAC アドレスから作る DUID-LL を使います。
-- `spec.serverID`、`spec.priorPrefix`、`spec.acquisitionStrategy` は、DHCPv6-PD を能動的に制御する経路のための手動上書きです。通常は、routerd が `IPv6PrefixDelegation` の状態から上流サーバの識別子と過去に委譲されたプレフィックスを観測し、その状態をレンダラや DHCPv6 制御処理へ渡します。観測状態が無い場合や誤っている場合に、復旧や移行のためだけに設定してください。`acquisitionStrategy` は `hybrid`、`solicit-only`、`request-claim-only` のいずれかです。`hybrid` では、最初の Solicit は OS クライアントが担当します。routerd はその経路を観測し、再送予算を使い切った後だけ Request-with-claim を送ります。
-- `routerd dhcp6 solicit|request|renew|rebind|release --resource <名前>` は、ラボ復旧用の低レベルな能動制御入口です。リソースと状態保存領域から DUID、IAID、サーバ識別子、プレフィックスを読み、上流インターフェースから DHCPv6 パケットを直接送ります。Solicit は過去のプレフィックスやサーバ識別子が無い状態でも送れます。Request/Renew/Rebind は送信ごとに新しい transaction ID を作り、T1/T2 と IA Prefix の寿命を 0 にせず、Reconfigure Accept を含めます。Rebind は Server Identifier を含めません。Release は IA_PD の寿命を 0 にし、Reconfigure Accept を含めません。
+- `spec.serverID`、`spec.priorPrefix`、`spec.acquisitionStrategy` は、DHCPv6-PD を能動的に制御する経路のための手動上書きです。通常は、routerd が `DHCPv6PrefixDelegation` の状態から上流サーバの識別子と過去に委譲されたプレフィックスを観測し、その状態をレンダラや DHCPv6 制御処理へ渡します。観測状態が無い場合や誤っている場合に、復旧や移行のためだけに設定してください。`acquisitionStrategy` は `hybrid`、`solicit-only`、`request-claim-only` のいずれかです。`hybrid` では、最初の Solicit は OS クライアントが担当します。routerd はその経路を観測し、再送予算を使い切った後だけ Request-with-claim を送ります。
+- `routerd dhcpv6 solicit|request|renew|rebind|release --resource <名前>` は、ラボ復旧用の低レベルな能動制御入口です。リソースと状態保存領域から DUID、IAID、サーバ識別子、プレフィックスを読み、上流インターフェースから DHCPv6 パケットを直接送ります。Solicit は過去のプレフィックスやサーバ識別子が無い状態でも送れます。Request/Renew/Rebind は送信ごとに新しい transaction ID を作り、T1/T2 と IA Prefix の寿命を 0 にせず、Reconfigure Accept を含めます。Rebind は Server Identifier を含めません。Release は IA_PD の寿命を 0 にし、Reconfigure Accept を含めません。
   ラボ用のパケットでは、`--t1`、`--t2`、`--preferred-lifetime`、`--valid-lifetime` で要求する寿命を上書きできます。上流サーバが短いリース要求を採用するか測る場合だけ使います。
   この経路で送ったパケットは、最近の DHCPv6 送信履歴としてリソース状態に記録します。記録にはメッセージ種別、transaction ID、IAID、プレフィックス、T1/T2、IA Prefix の寿命、Reconfigure Accept の有無を含めます。
-  デーモンとして動く場合、routerd は対応しているプラットフォームで `IPv6PrefixDelegation` ごとの上流インターフェースに受動的な DHCPv6 パケット記録器を起動します。Linux では AF_PACKET を使うため、UDP 546/547 を bind せず、DHCPv6 クライアントと競合せずにフレームを観測します。FreeBSD では `/dev/bpf*` を読み取り専用で開き、DHCPv6 とルータ広告だけを見る BPF フィルタを使います。観測した Solicit、Advertise、Request、Renew、Rebind、Reply、Release は、`routerctl describe ipv6pd/<名前>` が表示する最近のトランザクション一覧に追記されます。
+  デーモンとして動く場合、routerd は対応しているプラットフォームで `DHCPv6PrefixDelegation` ごとの上流インターフェースに受動的な DHCPv6 パケット記録器を起動します。Linux では AF_PACKET を使うため、UDP 546/547 を bind せず、DHCPv6 クライアントと競合せずにフレームを観測します。FreeBSD では `/dev/bpf*` を読み取り専用で開き、DHCPv6 とルータ広告だけを見る BPF フィルタを使います。観測した Solicit、Advertise、Request、Renew、Rebind、Reply、Release は、`routerctl describe ipv6pd/<名前>` が表示する最近のトランザクション一覧に追記されます。
 - FreeBSD の KAME `dhcp6c` では、NTT 系プロファイルかつ実効 DUID 型が `link-layer` の場合、routerd が `/var/db/dhcp6c_duid` を管理します。既存ファイルが期待する DUID と異なる場合は `.bak.<時刻>` として退避し、期待する DUID を `dhcp6c` 起動前に書き込みます。
 - `client: dhcpcd` を選んだ場合、NTT 系プロファイルかつ実効 DUID 型が `link-layer` なら、routerd は dhcpcd の DUID ファイルを管理します。`dhcpcd-<名前>.conf` を書き出し、リソースごとのサービスを起動します。Linux では `routerd-dhcpcd-<名前>.service`、FreeBSD では `/usr/local/etc/rc.d` 配下の rc.d スクリプトを管理します。Linux の NTT 系プロファイルではこの経路が既定です。FreeBSD では明示したときだけ使うラボ経路で、NTT 系プロファイルでは警告対象です。
 
-NTT のホームゲートウェイには、IPv6 を RA/SLAAC のみで配布し DHCPv6-PD に応答しないモードもあります。これは `IPv6PrefixDelegation` ではモデル化できないため、別途 RA/SLAAC のリソース設計を行う必要があります。
+NTT のホームゲートウェイには、IPv6 を RA/SLAAC のみで配布し DHCPv6-PD に応答しないモードもあります。これは `DHCPv6PrefixDelegation` ではモデル化できないため、別途 RA/SLAAC のリソース設計を行う必要があります。
 
 ### IPv6DelegatedAddress
 
@@ -640,28 +640,28 @@ spec:
 Linux 系レンダラでは `IPv6AcceptRA=yes` を有効にします。FreeBSD では対象
 インターフェースに `accept_rtadv` と `rtsold` を設定します。
 
-### IPv6DHCPAddress
+### DHCPv6Address
 
-`IPv6DHCPAddress` は上流側のインターフェースで DHCPv6 クライアントを動かし、IA_NA アドレスを取得します。プレフィックス委譲は `IPv6PrefixDelegation` 側の責務で、こちらとは独立しています。
+`DHCPv6Address` は上流側のインターフェースで DHCPv6 クライアントを動かし、IA_NA アドレスを取得します。プレフィックス委譲は `DHCPv6PrefixDelegation` 側の責務で、こちらとは独立しています。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: IPv6DHCPAddress
+kind: DHCPv6Address
 metadata:
-  name: wan-dhcp6
+  name: wan-dhcpv6
 spec:
   interface: wan
   client: networkd
   required: true
 ```
 
-### IPv6DHCPServer と IPv6DHCPScope
+### DHCPv6Server と DHCPv6Scope
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: IPv6DHCPServer
+kind: DHCPv6Server
 metadata:
-  name: dhcp6
+  name: dhcpv6
 spec:
   server: dnsmasq
   managed: true
@@ -671,11 +671,11 @@ spec:
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
-kind: IPv6DHCPScope
+kind: DHCPv6Scope
 metadata:
-  name: lan-dhcp6
+  name: lan-dhcpv6
 spec:
-  server: dhcp6
+  server: dhcpv6
   delegatedAddress: lan-ipv6-pd-address
   mode: stateless
   leaseTime: 12h
@@ -686,7 +686,7 @@ spec:
 ルータの振る舞い:
 
 - スコープは `IPv6DelegatedAddress` に紐付くので、WAN 側で受けた DHCPv6-PD の結果に LAN 側のプレフィックスが自動で追従します。
-- `IPv6DHCPServer.spec.role` の既定は `server` です。共有 L2 セグメントに参加するだけで、ローカルから DHCPv6 や RA を出したくないルータでは `role: transit` を指定します。
+- `DHCPv6Server.spec.role` の既定は `server` です。共有 L2 セグメントに参加するだけで、ローカルから DHCPv6 や RA を出したくないルータでは `role: transit` を指定します。
 - `spec.mode: stateless` のとき、クライアントは SLAAC でアドレスを決め、DHCPv6 からは DNS などのオプションだけを受け取ります。
 - `spec.mode: ra-only` は、DHCPv6 のアドレス払い出しを行わず RA だけを送ります。
 - IPv6 のデフォルト経路は RA で広告します。DHCPv6 自体にデフォルトゲートウェイのオプションはありません。
@@ -719,7 +719,7 @@ spec:
       ordinal: 1
 ```
 
-`IPv6DHCPScope` の `spec.selfAddressPolicy` から参照します。候補は上から順に評価され、最初に解決できたものが採用されます。ポリシーを参照しない場合は、委譲アドレスと `IPv6DelegatedAddress.addressSuffix` の組、サフィックス一致の観測アドレス、観測されたグローバルアドレスの先頭、の順で代替する標準動作になります。
+`DHCPv6Scope` の `spec.selfAddressPolicy` から参照します。候補は上から順に評価され、最初に解決できたものが採用されます。ポリシーを参照しない場合は、委譲アドレスと `IPv6DelegatedAddress.addressSuffix` の組、サフィックス一致の観測アドレス、観測されたグローバルアドレスの先頭、の順で代替する標準動作になります。
 
 ### DNSConditionalForwarder
 
@@ -741,8 +741,8 @@ spec:
 `upstreamSource` で転送先の決め方を選びます。
 
 - `static`: `upstreamServers` を使います。
-- `dhcp4`: `upstreamInterface` で DHCPv4 から学習した DNS サーバを使います。
-- `dhcp6`: `upstreamInterface` で DHCPv6 から学習した DNS サーバを使います。
+- `dhcpv4`: `upstreamInterface` で DHCPv4 から学習した DNS サーバを使います。
+- `dhcpv6`: `upstreamInterface` で DHCPv6 から学習した DNS サーバを使います。
 
 これにより、全体の DNS は広告ブロック用の上流に向けつつ、DS-Lite の AFTR FQDN のように事業者の DNS でしか正しい AAAA が返らない名前だけを事業者 DNS に流す、といった構成が書けます。
 
@@ -850,14 +850,14 @@ spec:
       mark: 273
       routeMetric: 60
       healthCheck: pppoe-v4
-    - name: dhcp4
+    - name: dhcpv4
       interface: wan
-      gatewaySource: dhcp4
+      gatewaySource: dhcpv4
       priority: 30
       table: 112
       mark: 274
       routeMetric: 100
-      healthCheck: wan-dhcp4-v4
+      healthCheck: wan-dhcpv4-v4
 ```
 
 ルータの振る舞い:
@@ -1013,7 +1013,7 @@ spec:
     source: minInterface
   ipv6RA:
     enabled: true
-    scope: lan-dhcp6
+    scope: lan-dhcpv6
   tcpMSSClamp:
     enabled: true
     families:
@@ -1025,7 +1025,7 @@ spec:
 
 - `mtu.source: minInterface` は `toInterfaces` に並べたインターフェースの設定 MTU の最小値を採用します。`Interface` の標準は 1500、`PPPoEInterface` の標準は 1492、`DSLiteTunnel` の標準は 1454 です。各リソースで `spec.mtu` が指定されていればそちらを優先します。
 - `mtu.source: static` は `mtu.value` をそのまま使います。
-- `ipv6RA.enabled: true` のとき、参照した `IPv6DHCPScope` を経由して RA で MTU を広告します。dnsmasq では `ra-param=ens19,1454` のように書き出されます。
+- `ipv6RA.enabled: true` のとき、参照した `DHCPv6Scope` を経由して RA で MTU を広告します。dnsmasq では `ra-param=ens19,1454` のように書き出されます。
 - `tcpMSSClamp.enabled: true` のとき、nftables の forward チェインに MSS クランプのルールを入れます。MSS は実効 MTU から計算し、IPv4 で 40 バイト、IPv6 で 60 バイトを引きます。`families` を省略すると IPv4 / IPv6 の両方を有効にします。
 
 ## ファイアウォール

@@ -604,7 +604,7 @@ func objectRefForKey(key string) objectRef {
 	if rest, ok := strings.CutPrefix(key, "ipv6PrefixDelegation."); ok {
 		name, field, ok := strings.Cut(rest, ".")
 		if ok && name != "" && field != "" {
-			return objectRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "IPv6PrefixDelegation", Name: name, Field: field}
+			return objectRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: name, Field: field}
 		}
 	}
 	return objectRef{APIVersion: stateAPIVersion, Kind: stateKind, Name: key, Field: "value"}
@@ -740,7 +740,7 @@ func decodeValue(raw any) (Value, bool) {
 
 func variablesFromObject(apiVersion, kind, name string, status objectStatus) map[string]Value {
 	out := map[string]Value{}
-	if apiVersion == "net.routerd.net/v1alpha1" && kind == "IPv6PrefixDelegation" {
+	if apiVersion == "net.routerd.net/v1alpha1" && kind == "DHCPv6PrefixDelegation" {
 		if value, ok := valueFromStatus(status, "lease"); ok {
 			out["ipv6PrefixDelegation."+name+".lease"] = value
 		}

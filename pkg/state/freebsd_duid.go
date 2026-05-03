@@ -21,7 +21,7 @@ type KAMEDUIDInfo struct {
 	Type            uint16
 }
 
-func KAMEDHCP6CDUIDLLFromMAC(mac string) ([]byte, error) {
+func KAMEDHCPv6CDUIDLLFromMAC(mac string) ([]byte, error) {
 	parts := strings.Split(strings.ToLower(strings.TrimSpace(mac)), ":")
 	if len(parts) != 6 {
 		return nil, fmt.Errorf("invalid MAC address %q", mac)
@@ -43,7 +43,7 @@ func KAMEDHCP6CDUIDLLFromMAC(mac string) ([]byte, error) {
 	return data, nil
 }
 
-func KAMEDHCP6CDUIDLLFromRawData(raw string) ([]byte, error) {
+func KAMEDHCPv6CDUIDLLFromRawData(raw string) ([]byte, error) {
 	cleaned := strings.ReplaceAll(strings.TrimSpace(raw), ":", "")
 	payload, err := hex.DecodeString(cleaned)
 	if err != nil {
@@ -60,7 +60,7 @@ func KAMEDHCP6CDUIDLLFromRawData(raw string) ([]byte, error) {
 	return data, nil
 }
 
-func ParseKAMEDHCP6CDUID(data []byte) KAMEDUIDInfo {
+func ParseKAMEDHCPv6CDUID(data []byte) KAMEDUIDInfo {
 	payload := data
 	hasLength := false
 	if len(data) >= 2 {
@@ -82,23 +82,23 @@ func ParseKAMEDHCP6CDUID(data []byte) KAMEDUIDInfo {
 	return KAMEDUIDInfo{HasLengthPrefix: hasLength, Payload: payload, Type: typ}
 }
 
-func EnsureKAMEDHCP6CDUIDLL(path, mac string, now time.Time) (changed bool, backupPath string, err error) {
-	want, err := KAMEDHCP6CDUIDLLFromMAC(mac)
+func EnsureKAMEDHCPv6CDUIDLL(path, mac string, now time.Time) (changed bool, backupPath string, err error) {
+	want, err := KAMEDHCPv6CDUIDLLFromMAC(mac)
 	if err != nil {
 		return false, "", err
 	}
-	return EnsureKAMEDHCP6CDUID(path, want, now)
+	return EnsureKAMEDHCPv6CDUID(path, want, now)
 }
 
-func EnsureKAMEDHCP6CDUIDLLRaw(path, raw string, now time.Time) (changed bool, backupPath string, err error) {
-	want, err := KAMEDHCP6CDUIDLLFromRawData(raw)
+func EnsureKAMEDHCPv6CDUIDLLRaw(path, raw string, now time.Time) (changed bool, backupPath string, err error) {
+	want, err := KAMEDHCPv6CDUIDLLFromRawData(raw)
 	if err != nil {
 		return false, "", err
 	}
-	return EnsureKAMEDHCP6CDUID(path, want, now)
+	return EnsureKAMEDHCPv6CDUID(path, want, now)
 }
 
-func EnsureKAMEDHCP6CDUID(path string, want []byte, now time.Time) (changed bool, backupPath string, err error) {
+func EnsureKAMEDHCPv6CDUID(path string, want []byte, now time.Time) (changed bool, backupPath string, err error) {
 	current, readErr := os.ReadFile(path)
 	if readErr == nil {
 		if string(current) == string(want) {

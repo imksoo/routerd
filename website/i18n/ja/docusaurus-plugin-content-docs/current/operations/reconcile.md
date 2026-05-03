@@ -27,8 +27,8 @@ routerctl describe orphans
 意図して消す場合は、明示的に削除します。
 
 ```bash
-sudo routerd delete IPv6PrefixDelegation/wan-pd
-routerctl delete IPv6PrefixDelegation/wan-pd
+sudo routerd delete DHCPv6PrefixDelegation/wan-pd
+routerctl delete DHCPv6PrefixDelegation/wan-pd
 ```
 
 `routerd delete -f old-resource.yaml` は、その Router YAML に書かれた

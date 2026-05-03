@@ -23,11 +23,11 @@ import (
 	"golang.org/x/sys/unix"
 
 	"routerd/pkg/daemonapi"
-	"routerd/pkg/dhcp4client"
+	"routerd/pkg/dhcpv4client"
 	routerotel "routerd/pkg/otel"
 )
 
-const daemonKind = "routerd-dhcp4-client"
+const daemonKind = "routerd-dhcpv4-client"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
@@ -71,7 +71,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var opts options
-	fs.StringVar(&opts.resource, "resource", "wan-dhcp4", "resource name")
+	fs.StringVar(&opts.resource, "resource", "wan-dhcpv4", "resource name")
 	fs.StringVar(&opts.ifname, "interface", "", "uplink interface name")
 	fs.StringVar(&opts.hostname, "hostname", "", "DHCP option 12 hostname")
 	fs.StringVar(&opts.requestedAddress, "requested-address", "", "DHCP option 50 requested IPv4 address")
@@ -89,13 +89,13 @@ func parseOptions(name string, args []string) (options, error) {
 		return options{}, errors.New("--interface is required")
 	}
 	if opts.socketPath == "" {
-		opts.socketPath = filepath.Join("/run/routerd/dhcp4-client", opts.resource+".sock")
+		opts.socketPath = filepath.Join("/run/routerd/dhcpv4-client", opts.resource+".sock")
 	}
 	if opts.leaseFile == "" {
-		opts.leaseFile = filepath.Join("/var/lib/routerd/dhcp4-client", opts.resource, "lease.json")
+		opts.leaseFile = filepath.Join("/var/lib/routerd/dhcpv4-client", opts.resource, "lease.json")
 	}
 	if opts.eventFile == "" {
-		opts.eventFile = filepath.Join("/var/lib/routerd/dhcp4-client", opts.resource, "events.jsonl")
+		opts.eventFile = filepath.Join("/var/lib/routerd/dhcpv4-client", opts.resource, "events.jsonl")
 	}
 	return opts, nil
 }
@@ -136,21 +136,21 @@ func daemonCommand(args []string) error {
 		return err
 	}
 	d.telemetry = telemetry
-	d.leaseGauge, _ = telemetry.Meter.Int64Gauge("routerd.dhcp4.client.lease.state")
-	d.renewCounter, _ = telemetry.Meter.Int64Counter("routerd.dhcp4.client.renew")
+	d.leaseGauge, _ = telemetry.Meter.Int64Gauge("routerd.dhcpv4.client.lease.state")
+	d.renewCounter, _ = telemetry.Meter.Int64Counter("routerd.dhcpv4.client.renew")
 	return d.Run(context.Background())
 }
 
-type dhcp4Daemon struct {
+type dhcpv4Daemon struct {
 	opts       options
 	ifi        *net.Interface
 	conn       *net.UDPConn
 	startedAt  time.Time
 	mu         sync.Mutex
 	cond       *sync.Cond
-	state      dhcp4client.State
+	state      dhcpv4client.State
 	xid        uint32
-	lease      dhcp4client.Lease
+	lease      dhcpv4client.Lease
 	events     []daemonapi.DaemonEvent
 	nextCursor uint64
 
@@ -164,21 +164,21 @@ type eventsResponse struct {
 	Events []daemonapi.DaemonEvent `json:"events"`
 }
 
-func newDaemon(opts options) (*dhcp4Daemon, error) {
+func newDaemon(opts options) (*dhcpv4Daemon, error) {
 	ifi, err := net.InterfaceByName(opts.ifname)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := listenDHCP4(opts.ifname)
+	conn, err := listenDHCPv4(opts.ifname)
 	if err != nil {
 		return nil, err
 	}
-	d := &dhcp4Daemon{opts: opts, ifi: ifi, conn: conn, startedAt: time.Now().UTC(), state: dhcp4client.StateIdle}
+	d := &dhcpv4Daemon{opts: opts, ifi: ifi, conn: conn, startedAt: time.Now().UTC(), state: dhcpv4client.StateIdle}
 	d.cond = sync.NewCond(&d.mu)
 	return d, nil
 }
 
-func (d *dhcp4Daemon) Run(ctx context.Context) error {
+func (d *dhcpv4Daemon) Run(ctx context.Context) error {
 	defer d.conn.Close()
 	if err := d.prepareFilesystem(); err != nil {
 		return err
@@ -194,7 +194,7 @@ func (d *dhcp4Daemon) Run(ctx context.Context) error {
 	go func() { _ = server.Serve(listener) }()
 	d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "Started", "DHCPv4 client daemon started", nil)
 	if err := d.acquire(ctx); err != nil {
-		d.publish("routerd.dhcp4.client.acquire.failed", daemonapi.SeverityWarning, "AcquireFailed", err.Error(), nil)
+		d.publish("routerd.dhcpv4.client.acquire.failed", daemonapi.SeverityWarning, "AcquireFailed", err.Error(), nil)
 	}
 	d.publish(daemonapi.EventDaemonReady, daemonapi.SeverityInfo, "Ready", "DHCPv4 client daemon is ready", nil)
 	buf := make([]byte, 1500)
@@ -204,7 +204,7 @@ func (d *dhcp4Daemon) Run(ctx context.Context) error {
 		}
 		if d.shouldRenew() {
 			if err := d.renew(ctx); err != nil {
-				d.publish("routerd.dhcp4.client.renew.failed", daemonapi.SeverityWarning, "RenewFailed", err.Error(), nil)
+				d.publish("routerd.dhcpv4.client.renew.failed", daemonapi.SeverityWarning, "RenewFailed", err.Error(), nil)
 			}
 		}
 		_ = d.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
@@ -219,15 +219,15 @@ func (d *dhcp4Daemon) Run(ctx context.Context) error {
 	}
 }
 
-func (d *dhcp4Daemon) acquire(ctx context.Context) error {
+func (d *dhcpv4Daemon) acquire(ctx context.Context) error {
 	d.mu.Lock()
-	d.state = dhcp4client.StateDiscovering
-	d.xid = dhcp4client.NewXID()
+	d.state = dhcpv4client.StateDiscovering
+	d.xid = dhcpv4client.NewXID()
 	d.mu.Unlock()
-	if err := d.send(ctx, dhcp4client.MessageDiscover, dhcp4client.Message{}); err != nil {
+	if err := d.send(ctx, dhcpv4client.MessageDiscover, dhcpv4client.Message{}); err != nil {
 		return err
 	}
-	d.publish("routerd.dhcp4.client.discover.sent", daemonapi.SeverityInfo, "DiscoverSent", "sent DHCPv4 Discover", nil)
+	d.publish("routerd.dhcpv4.client.discover.sent", daemonapi.SeverityInfo, "DiscoverSent", "sent DHCPv4 Discover", nil)
 	deadline, _ := ctx.Deadline()
 	if deadline.IsZero() {
 		deadline = time.Now().Add(30 * time.Second)
@@ -238,62 +238,62 @@ func (d *dhcp4Daemon) acquire(ctx context.Context) error {
 		n, _, err := d.conn.ReadFromUDP(buf)
 		if err != nil {
 			if timeoutError(err) {
-				_ = d.send(ctx, dhcp4client.MessageDiscover, dhcp4client.Message{})
+				_ = d.send(ctx, dhcpv4client.MessageDiscover, dhcpv4client.Message{})
 				continue
 			}
 			return err
 		}
-		msg, err := dhcp4client.Decode(buf[:n])
+		msg, err := dhcpv4client.Decode(buf[:n])
 		if err != nil || msg.XID != d.xid {
 			continue
 		}
-		if msg.MessageType() == dhcp4client.MessageOffer {
-			d.publish("routerd.dhcp4.client.offer.received", daemonapi.SeverityInfo, "OfferReceived", "received DHCPv4 Offer", map[string]string{"address": msg.YIAddr.String()})
+		if msg.MessageType() == dhcpv4client.MessageOffer {
+			d.publish("routerd.dhcpv4.client.offer.received", daemonapi.SeverityInfo, "OfferReceived", "received DHCPv4 Offer", map[string]string{"address": msg.YIAddr.String()})
 			d.mu.Lock()
-			d.state = dhcp4client.StateRequesting
+			d.state = dhcpv4client.StateRequesting
 			d.mu.Unlock()
-			if err := d.send(ctx, dhcp4client.MessageRequest, msg); err != nil {
+			if err := d.send(ctx, dhcpv4client.MessageRequest, msg); err != nil {
 				return err
 			}
-			d.publish("routerd.dhcp4.client.request.sent", daemonapi.SeverityInfo, "RequestSent", "sent DHCPv4 Request", nil)
+			d.publish("routerd.dhcpv4.client.request.sent", daemonapi.SeverityInfo, "RequestSent", "sent DHCPv4 Request", nil)
 			continue
 		}
-		if msg.MessageType() == dhcp4client.MessageACK {
+		if msg.MessageType() == dhcpv4client.MessageACK {
 			return d.bind(ctx, msg)
 		}
-		if msg.MessageType() == dhcp4client.MessageNAK {
+		if msg.MessageType() == dhcpv4client.MessageNAK {
 			return errors.New("DHCPv4 server returned NAK")
 		}
 	}
 	return context.DeadlineExceeded
 }
 
-func (d *dhcp4Daemon) renew(ctx context.Context) error {
+func (d *dhcpv4Daemon) renew(ctx context.Context) error {
 	d.mu.Lock()
-	d.state = dhcp4client.StateRenewing
-	d.xid = dhcp4client.NewXID()
+	d.state = dhcpv4client.StateRenewing
+	d.xid = dhcpv4client.NewXID()
 	d.mu.Unlock()
 	if d.renewCounter != nil {
 		d.renewCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
 	}
-	if err := d.send(ctx, dhcp4client.MessageRequest, dhcp4client.Message{}); err != nil {
+	if err := d.send(ctx, dhcpv4client.MessageRequest, dhcpv4client.Message{}); err != nil {
 		return err
 	}
-	d.publish("routerd.dhcp4.client.renew.sent", daemonapi.SeverityInfo, "RenewSent", "sent DHCPv4 Renew", nil)
+	d.publish("routerd.dhcpv4.client.renew.sent", daemonapi.SeverityInfo, "RenewSent", "sent DHCPv4 Renew", nil)
 	return nil
 }
 
-func (d *dhcp4Daemon) handlePacket(ctx context.Context, packet []byte) error {
-	msg, err := dhcp4client.Decode(packet)
+func (d *dhcpv4Daemon) handlePacket(ctx context.Context, packet []byte) error {
+	msg, err := dhcpv4client.Decode(packet)
 	if err != nil || msg.XID != d.xid {
 		return nil
 	}
 	switch msg.MessageType() {
-	case dhcp4client.MessageACK:
+	case dhcpv4client.MessageACK:
 		return d.bind(ctx, msg)
-	case dhcp4client.MessageNAK:
+	case dhcpv4client.MessageNAK:
 		d.mu.Lock()
-		d.state = dhcp4client.StateExpired
+		d.state = dhcpv4client.StateExpired
 		d.mu.Unlock()
 		return d.saveLease()
 	default:
@@ -301,43 +301,43 @@ func (d *dhcp4Daemon) handlePacket(ctx context.Context, packet []byte) error {
 	}
 }
 
-func (d *dhcp4Daemon) bind(_ context.Context, msg dhcp4client.Message) error {
-	lease := dhcp4client.LeaseFromACK(msg, time.Now().UTC())
+func (d *dhcpv4Daemon) bind(_ context.Context, msg dhcpv4client.Message) error {
+	lease := dhcpv4client.LeaseFromACK(msg, time.Now().UTC())
 	d.mu.Lock()
 	d.lease = lease
-	d.state = dhcp4client.StateBound
+	d.state = dhcpv4client.StateBound
 	d.mu.Unlock()
 	if err := d.saveLease(); err != nil {
 		return err
 	}
-	d.publish("routerd.dhcp4.client.lease.bound", daemonapi.SeverityInfo, "LeaseBound", "DHCPv4 lease bound", map[string]string{"address": lease.Address.String(), "gateway": lease.DefaultGateway.String()})
+	d.publish("routerd.dhcpv4.client.lease.bound", daemonapi.SeverityInfo, "LeaseBound", "DHCPv4 lease bound", map[string]string{"address": lease.Address.String(), "gateway": lease.DefaultGateway.String()})
 	return nil
 }
 
-func (d *dhcp4Daemon) send(ctx context.Context, msgType byte, reply dhcp4client.Message) error {
-	opts := dhcp4client.RequestOptions(d.config(), reply)
-	packet := dhcp4client.EncodeRequest(msgType, d.xid, d.ifi.HardwareAddr, opts)
+func (d *dhcpv4Daemon) send(ctx context.Context, msgType byte, reply dhcpv4client.Message) error {
+	opts := dhcpv4client.RequestOptions(d.config(), reply)
+	packet := dhcpv4client.EncodeRequest(msgType, d.xid, d.ifi.HardwareAddr, opts)
 	_, err := d.conn.WriteToUDP(packet, &net.UDPAddr{IP: net.IPv4bcast, Port: 67})
 	return err
 }
 
-func (d *dhcp4Daemon) config() dhcp4client.Config {
-	return dhcp4client.Config{Resource: d.opts.resource, Interface: d.opts.ifname, HardwareAddr: d.ifi.HardwareAddr, Hostname: d.opts.hostname, RequestedAddress: d.opts.requestedAddress, ClassID: d.opts.classID, ClientID: d.opts.clientID}
+func (d *dhcpv4Daemon) config() dhcpv4client.Config {
+	return dhcpv4client.Config{Resource: d.opts.resource, Interface: d.opts.ifname, HardwareAddr: d.ifi.HardwareAddr, Hostname: d.opts.hostname, RequestedAddress: d.opts.requestedAddress, ClassID: d.opts.classID, ClientID: d.opts.clientID}
 }
 
-func (d *dhcp4Daemon) shouldRenew() bool {
+func (d *dhcpv4Daemon) shouldRenew() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.state == dhcp4client.StateBound && !d.lease.RenewAt().IsZero() && time.Now().After(d.lease.RenewAt())
+	return d.state == dhcpv4client.StateBound && !d.lease.RenewAt().IsZero() && time.Now().After(d.lease.RenewAt())
 }
 
-func (d *dhcp4Daemon) snapshotLocked() dhcp4client.Snapshot {
+func (d *dhcpv4Daemon) snapshotLocked() dhcpv4client.Snapshot {
 	now := time.Now().UTC()
-	s := dhcp4client.SnapshotFromLease(d.opts.resource, d.opts.ifname, d.state, d.lease, now)
+	s := dhcpv4client.SnapshotFromLease(d.opts.resource, d.opts.ifname, d.state, d.lease, now)
 	return s
 }
 
-func (d *dhcp4Daemon) restoreLease() error {
+func (d *dhcpv4Daemon) restoreLease() error {
 	data, err := os.ReadFile(d.opts.leaseFile)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -345,18 +345,18 @@ func (d *dhcp4Daemon) restoreLease() error {
 	if err != nil {
 		return err
 	}
-	var snapshot dhcp4client.Snapshot
+	var snapshot dhcpv4client.Snapshot
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return err
 	}
 	d.mu.Lock()
 	d.state = snapshot.State
-	d.lease = dhcp4client.LeaseFromSnapshot(snapshot)
+	d.lease = dhcpv4client.LeaseFromSnapshot(snapshot)
 	d.mu.Unlock()
 	return nil
 }
 
-func (d *dhcp4Daemon) saveLease() error {
+func (d *dhcpv4Daemon) saveLease() error {
 	d.mu.Lock()
 	snapshot := d.snapshotLocked()
 	d.mu.Unlock()
@@ -374,7 +374,7 @@ func (d *dhcp4Daemon) saveLease() error {
 	return os.Rename(tmp, d.opts.leaseFile)
 }
 
-func (d *dhcp4Daemon) prepareFilesystem() error {
+func (d *dhcpv4Daemon) prepareFilesystem() error {
 	if err := os.MkdirAll(filepath.Dir(d.opts.socketPath), 0755); err != nil {
 		return err
 	}
@@ -385,7 +385,7 @@ func (d *dhcp4Daemon) prepareFilesystem() error {
 	return nil
 }
 
-func (d *dhcp4Daemon) httpServer() (*http.Server, net.Listener, error) {
+func (d *dhcpv4Daemon) httpServer() (*http.Server, net.Listener, error) {
 	listener, err := net.Listen("unix", d.opts.socketPath)
 	if err != nil {
 		return nil, nil, err
@@ -400,11 +400,11 @@ func (d *dhcp4Daemon) httpServer() (*http.Server, net.Listener, error) {
 	return &http.Server{Handler: mux}, listener, nil
 }
 
-func (d *dhcp4Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
+func (d *dhcpv4Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	d.mu.Lock()
 	snapshot := d.snapshotLocked()
 	if d.leaseGauge != nil {
-		d.leaseGauge.Record(context.Background(), stateValue(snapshot.State), metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource), attribute.String("routerd.dhcp4.state", string(snapshot.State))))
+		d.leaseGauge.Record(context.Background(), stateValue(snapshot.State), metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource), attribute.String("routerd.dhcpv4.state", string(snapshot.State))))
 	}
 	d.mu.Unlock()
 	status := daemonapi.NewStatus(d.daemonRef())
@@ -418,7 +418,7 @@ func (d *dhcp4Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		Since:    snapshot.UpdatedAt,
 		Conditions: []daemonapi.Condition{{
 			Type:               "LeaseReady",
-			Status:             conditionStatus(snapshot.State == dhcp4client.StateBound),
+			Status:             conditionStatus(snapshot.State == dhcpv4client.StateBound),
 			Reason:             string(snapshot.State),
 			LastTransitionTime: snapshot.UpdatedAt,
 		}},
@@ -437,7 +437,7 @@ func (d *dhcp4Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	writeHTTPJSON(w, status)
 }
 
-func (d *dhcp4Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
+func (d *dhcpv4Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	topic := r.URL.Query().Get("topic")
 	since := r.URL.Query().Get("since")
 	d.mu.Lock()
@@ -446,7 +446,7 @@ func (d *dhcp4Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, eventsResponse{Cursor: cursor, Events: events})
 }
 
-func (d *dhcp4Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
+func (d *dhcpv4Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -459,7 +459,7 @@ func (d *dhcp4Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 		err = d.renew(r.Context())
 	case daemonapi.CommandRelease:
 		d.mu.Lock()
-		d.state = dhcp4client.StateReleased
+		d.state = dhcpv4client.StateReleased
 		d.mu.Unlock()
 		err = d.saveLease()
 	case daemonapi.CommandReload:
@@ -479,7 +479,7 @@ func (d *dhcp4Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, result)
 }
 
-func (d *dhcp4Daemon) publish(eventType, severity, reason, message string, attrs map[string]string) {
+func (d *dhcpv4Daemon) publish(eventType, severity, reason, message string, attrs map[string]string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	event := daemonapi.NewEvent(d.daemonRef(), eventType, severity)
@@ -497,7 +497,7 @@ func (d *dhcp4Daemon) publish(eventType, severity, reason, message string, attrs
 	d.cond.Broadcast()
 }
 
-func (d *dhcp4Daemon) appendEventFileLocked(event daemonapi.DaemonEvent) {
+func (d *dhcpv4Daemon) appendEventFileLocked(event daemonapi.DaemonEvent) {
 	if d.opts.eventFile == "" {
 		return
 	}
@@ -510,7 +510,7 @@ func (d *dhcp4Daemon) appendEventFileLocked(event daemonapi.DaemonEvent) {
 	_ = json.NewEncoder(file).Encode(event)
 }
 
-func (d *dhcp4Daemon) restoreEvents() error {
+func (d *dhcpv4Daemon) restoreEvents() error {
 	file, err := os.Open(d.opts.eventFile)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -533,7 +533,7 @@ func (d *dhcp4Daemon) restoreEvents() error {
 	return scanner.Err()
 }
 
-func (d *dhcp4Daemon) eventsSinceLocked(since, topic string) ([]daemonapi.DaemonEvent, string) {
+func (d *dhcpv4Daemon) eventsSinceLocked(since, topic string) ([]daemonapi.DaemonEvent, string) {
 	var out []daemonapi.DaemonEvent
 	cursor := since
 	sinceID, _ := strconv.ParseUint(since, 10, 64)
@@ -551,11 +551,11 @@ func (d *dhcp4Daemon) eventsSinceLocked(since, topic string) ([]daemonapi.Daemon
 	return out, cursor
 }
 
-func (d *dhcp4Daemon) daemonRef() daemonapi.DaemonRef {
+func (d *dhcpv4Daemon) daemonRef() daemonapi.DaemonRef {
 	return daemonapi.DaemonRef{Name: daemonKind + "-" + d.opts.resource, Kind: daemonKind, Instance: d.opts.resource}
 }
 
-func listenDHCP4(ifname string) (*net.UDPConn, error) {
+func listenDHCPv4(ifname string) (*net.UDPConn, error) {
 	lc := net.ListenConfig{Control: func(network, address string, c syscall.RawConn) error {
 		var sockErr error
 		if err := c.Control(func(fd uintptr) {
@@ -578,34 +578,34 @@ func listenDHCP4(ifname string) (*net.UDPConn, error) {
 	return pc.(*net.UDPConn), nil
 }
 
-func resourcePhase(state dhcp4client.State) string {
+func resourcePhase(state dhcpv4client.State) string {
 	switch state {
-	case dhcp4client.StateBound:
+	case dhcpv4client.StateBound:
 		return daemonapi.ResourcePhaseBound
-	case dhcp4client.StateDiscovering, dhcp4client.StateRequesting:
+	case dhcpv4client.StateDiscovering, dhcpv4client.StateRequesting:
 		return daemonapi.ResourcePhaseAcquiring
-	case dhcp4client.StateRenewing:
+	case dhcpv4client.StateRenewing:
 		return daemonapi.ResourcePhaseRefreshing
-	case dhcp4client.StateRebinding:
+	case dhcpv4client.StateRebinding:
 		return daemonapi.ResourcePhaseRebinding
-	case dhcp4client.StateExpired:
+	case dhcpv4client.StateExpired:
 		return daemonapi.ResourcePhaseExpired
-	case dhcp4client.StateReleased:
+	case dhcpv4client.StateReleased:
 		return daemonapi.ResourcePhaseReleased
 	default:
 		return daemonapi.ResourcePhaseIdle
 	}
 }
 
-func stateValue(state dhcp4client.State) int64 {
+func stateValue(state dhcpv4client.State) int64 {
 	switch state {
-	case dhcp4client.StateBound:
+	case dhcpv4client.StateBound:
 		return 4
-	case dhcp4client.StateRenewing:
+	case dhcpv4client.StateRenewing:
 		return 5
-	case dhcp4client.StateRebinding:
+	case dhcpv4client.StateRebinding:
 		return 6
-	case dhcp4client.StateExpired:
+	case dhcpv4client.StateExpired:
 		return 7
 	default:
 		return 0
@@ -650,5 +650,5 @@ func writeJSON(w io.Writer, value any) error {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "routerd-dhcp4-client [daemon|selftest|once] --interface IFNAME [--resource NAME]")
+	fmt.Fprintln(w, "routerd-dhcpv4-client [daemon|selftest|once] --interface IFNAME [--resource NAME]")
 }

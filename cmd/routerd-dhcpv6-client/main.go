@@ -29,7 +29,7 @@ import (
 	"routerd/pkg/pdclient"
 )
 
-const daemonKind = "routerd-dhcp6-client"
+const daemonKind = "routerd-dhcpv6-client"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -109,13 +109,13 @@ func parseOptions(name string, args []string) (options, error) {
 		return options{}, errors.New("--src-mac requires raw Ethernet transport, which is not implemented in Phase 0")
 	}
 	if opts.socketPath == "" {
-		opts.socketPath = filepath.Join("/run/routerd/dhcp6-client", opts.resource+".sock")
+		opts.socketPath = filepath.Join("/run/routerd/dhcpv6-client", opts.resource+".sock")
 	}
 	if opts.leaseFile == "" {
-		opts.leaseFile = filepath.Join("/var/lib/routerd/dhcp6-client", opts.resource, "lease.json")
+		opts.leaseFile = filepath.Join("/var/lib/routerd/dhcpv6-client", opts.resource, "lease.json")
 	}
 	if opts.eventFile == "" {
-		opts.eventFile = filepath.Join("/var/lib/routerd/dhcp6-client", opts.resource, "events.jsonl")
+		opts.eventFile = filepath.Join("/var/lib/routerd/dhcpv6-client", opts.resource, "events.jsonl")
 	}
 	return opts, nil
 }
@@ -130,7 +130,7 @@ func daemonCommand(args []string, _ io.Writer) error {
 		return err
 	}
 	defer telemetry.Shutdown(context.Background())
-	daemon, err := newDHCP6Daemon(opts)
+	daemon, err := newDHCPv6Daemon(opts)
 	if err != nil {
 		return err
 	}
@@ -147,7 +147,7 @@ func onceCommand(args []string, stdout io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()
 
-	daemon, err := newDHCP6Daemon(opts)
+	daemon, err := newDHCPv6Daemon(opts)
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func onceCommand(args []string, stdout io.Writer) error {
 	}
 }
 
-type dhcp6Daemon struct {
+type dhcpv6Daemon struct {
 	opts       options
 	ifi        *net.Interface
 	clientDUID []byte
@@ -219,7 +219,7 @@ type eventsResponse struct {
 	More   bool                    `json:"more,omitempty"`
 }
 
-func newDHCP6Daemon(opts options) (*dhcp6Daemon, error) {
+func newDHCPv6Daemon(opts options) (*dhcpv6Daemon, error) {
 	ifi, err := net.InterfaceByName(opts.ifname)
 	if err != nil {
 		return nil, err
@@ -231,7 +231,7 @@ func newDHCP6Daemon(opts options) (*dhcp6Daemon, error) {
 			return nil, fmt.Errorf("client DUID: %w", err)
 		}
 	}
-	conn, err := listenDHCP6(opts.srcLL, opts.ifname, opts.listenPort)
+	conn, err := listenDHCPv6(opts.srcLL, opts.ifname, opts.listenPort)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +247,7 @@ func newDHCP6Daemon(opts options) (*dhcp6Daemon, error) {
 		_ = conn.Close()
 		return nil, err
 	}
-	d := &dhcp6Daemon{
+	d := &dhcpv6Daemon{
 		opts:       opts,
 		ifi:        ifi,
 		clientDUID: clientDUID,
@@ -262,16 +262,16 @@ func newDHCP6Daemon(opts options) (*dhcp6Daemon, error) {
 	return d, nil
 }
 
-func (d *dhcp6Daemon) initTelemetry() {
+func (d *dhcpv6Daemon) initTelemetry() {
 	if d.telemetry == nil {
 		d.telemetry = &routerotel.Runtime{ServiceName: daemonKind}
 	}
 	d.telemetry.Ensure()
-	d.leaseGauge = d.telemetry.Gauge("routerd.dhcp6.client.lease.state")
-	d.renewCounter = d.telemetry.Counter("routerd.dhcp6.client.renew")
+	d.leaseGauge = d.telemetry.Gauge("routerd.dhcpv6.client.lease.state")
+	d.renewCounter = d.telemetry.Counter("routerd.dhcpv6.client.renew")
 }
 
-func (d *dhcp6Daemon) Run(ctx context.Context) error {
+func (d *dhcpv6Daemon) Run(ctx context.Context) error {
 	defer d.conn.Close()
 	if err := d.prepareFilesystem(); err != nil {
 		return err
@@ -319,13 +319,13 @@ func (d *dhcp6Daemon) Run(ctx context.Context) error {
 	}
 }
 
-func (d *dhcp6Daemon) startClient(ctx context.Context) error {
+func (d *dhcpv6Daemon) startClient(ctx context.Context) error {
 	d.mu.Lock()
 	var sentSolicit bool
 	defer func() {
 		d.mu.Unlock()
 		if sentSolicit {
-			d.publish(daemonapi.EventDHCP6SolicitSent, daemonapi.SeverityInfo, "SolicitSent", "sent DHCPv6 Solicit", nil)
+			d.publish(daemonapi.EventDHCPv6SolicitSent, daemonapi.SeverityInfo, "SolicitSent", "sent DHCPv6 Solicit", nil)
 		}
 	}()
 	if d.client.State == pdclient.StateBound {
@@ -341,7 +341,7 @@ func (d *dhcp6Daemon) startClient(ctx context.Context) error {
 	return d.saveLeaseLocked(ctx)
 }
 
-func (d *dhcp6Daemon) handlePayload(ctx context.Context, payload []byte) error {
+func (d *dhcpv6Daemon) handlePayload(ctx context.Context, payload []byte) error {
 	msg, err := pdclient.DecodeMessage(payload)
 	if err != nil {
 		return nil
@@ -363,10 +363,10 @@ func (d *dhcp6Daemon) handlePayload(ctx context.Context, payload []byte) error {
 	return nil
 }
 
-func (d *dhcp6Daemon) tick(ctx context.Context) error {
+func (d *dhcpv6Daemon) tick(ctx context.Context) error {
 	d.mu.Lock()
 	before := d.client.Snapshot()
-	spanCtx, span := d.telemetry.Tracer.Start(ctx, "dhcp6.tick", trace.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
+	spanCtx, span := d.telemetry.Tracer.Start(ctx, "dhcpv6.tick", trace.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
 	err := d.client.TickWithMargin(ctx, d.opts.renewMargin, d.opts.rebindMargin)
 	after := d.client.Snapshot()
 	if err == nil && snapshotChanged(before, after) {
@@ -384,7 +384,7 @@ func (d *dhcp6Daemon) tick(ctx context.Context) error {
 	return nil
 }
 
-func (d *dhcp6Daemon) restoreLease(ctx context.Context) error {
+func (d *dhcpv6Daemon) restoreLease(ctx context.Context) error {
 	data, err := os.ReadFile(d.opts.leaseFile)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -403,7 +403,7 @@ func (d *dhcp6Daemon) restoreLease(ctx context.Context) error {
 	return err
 }
 
-func (d *dhcp6Daemon) saveLeaseLocked(_ context.Context) error {
+func (d *dhcpv6Daemon) saveLeaseLocked(_ context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(d.opts.leaseFile), 0755); err != nil {
 		return err
 	}
@@ -418,7 +418,7 @@ func (d *dhcp6Daemon) saveLeaseLocked(_ context.Context) error {
 	return os.Rename(tmp, d.opts.leaseFile)
 }
 
-func (d *dhcp6Daemon) prepareFilesystem() error {
+func (d *dhcpv6Daemon) prepareFilesystem() error {
 	if err := os.MkdirAll(filepath.Dir(d.opts.socketPath), 0755); err != nil {
 		return err
 	}
@@ -429,7 +429,7 @@ func (d *dhcp6Daemon) prepareFilesystem() error {
 	return nil
 }
 
-func (d *dhcp6Daemon) restoreEvents() error {
+func (d *dhcpv6Daemon) restoreEvents() error {
 	file, err := os.Open(d.opts.eventFile)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -455,7 +455,7 @@ func (d *dhcp6Daemon) restoreEvents() error {
 	return scanner.Err()
 }
 
-func (d *dhcp6Daemon) httpServer() (*http.Server, net.Listener, error) {
+func (d *dhcpv6Daemon) httpServer() (*http.Server, net.Listener, error) {
 	listener, err := net.Listen("unix", d.opts.socketPath)
 	if err != nil {
 		return nil, nil, err
@@ -469,18 +469,18 @@ func (d *dhcp6Daemon) httpServer() (*http.Server, net.Listener, error) {
 	return &http.Server{Handler: mux}, listener, nil
 }
 
-func (d *dhcp6Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
+func (d *dhcpv6Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	d.mu.Lock()
 	status := d.statusLocked()
 	d.mu.Unlock()
 	writeHTTPJSON(w, status)
 }
 
-func (d *dhcp6Daemon) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+func (d *dhcpv6Daemon) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeHTTPJSON(w, map[string]string{"status": daemonapi.HealthOK})
 }
 
-func (d *dhcp6Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
+func (d *dhcpv6Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	topic := r.URL.Query().Get("topic")
 	since := r.URL.Query().Get("since")
 	wait, _ := time.ParseDuration(r.URL.Query().Get("wait"))
@@ -506,7 +506,7 @@ func (d *dhcp6Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (d *dhcp6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
+func (d *dhcpv6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -557,13 +557,13 @@ func (d *dhcp6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 	result.Accepted = true
 	result.Message = "accepted"
 	if infoRequestSent {
-		d.publish(daemonapi.EventDHCP6InfoRequestSent, daemonapi.SeverityInfo, "InfoRequestSent", "sent DHCPv6 Information-request", nil)
+		d.publish(daemonapi.EventDHCPv6InfoRequestSent, daemonapi.SeverityInfo, "InfoRequestSent", "sent DHCPv6 Information-request", nil)
 	}
 	d.publish(daemonapi.EventCommandExecuted, daemonapi.SeverityInfo, "CommandExecuted", command, map[string]string{"command": command})
 	writeHTTPJSON(w, result)
 }
 
-func (d *dhcp6Daemon) handleConfigUpdate(w http.ResponseWriter, _ *http.Request) {
+func (d *dhcpv6Daemon) handleConfigUpdate(w http.ResponseWriter, _ *http.Request) {
 	writeHTTPJSON(w, daemonapi.CommandResult{
 		TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandResult},
 		Command:  "config/update",
@@ -572,14 +572,14 @@ func (d *dhcp6Daemon) handleConfigUpdate(w http.ResponseWriter, _ *http.Request)
 	})
 }
 
-func (d *dhcp6Daemon) statusLocked() daemonapi.DaemonStatus {
+func (d *dhcpv6Daemon) statusLocked() daemonapi.DaemonStatus {
 	snapshot := d.client.Snapshot()
 	d.leaseGauge.Record(context.Background(), leaseStateValue(snapshot.State), metric.WithAttributes(
 		attribute.String("routerd.resource.name", d.opts.resource),
-		attribute.String("routerd.dhcp6.state", string(snapshot.State)),
+		attribute.String("routerd.dhcpv6.state", string(snapshot.State)),
 	))
 	resourceStatus := daemonapi.ResourceStatus{
-		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "IPv6PrefixDelegation", Name: d.opts.resource},
+		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: d.opts.resource},
 		Phase:    resourcePhase(snapshot.State),
 		Health:   daemonapi.HealthOK,
 		Since:    snapshot.UpdatedAt,
@@ -612,7 +612,7 @@ func (d *dhcp6Daemon) statusLocked() daemonapi.DaemonStatus {
 	}
 }
 
-func (d *dhcp6Daemon) eventsSinceLocked(since, topic string) ([]daemonapi.DaemonEvent, string) {
+func (d *dhcpv6Daemon) eventsSinceLocked(since, topic string) ([]daemonapi.DaemonEvent, string) {
 	var out []daemonapi.DaemonEvent
 	cursor := since
 	sinceID, _ := strconv.ParseUint(since, 10, 64)
@@ -630,16 +630,16 @@ func (d *dhcp6Daemon) eventsSinceLocked(since, topic string) ([]daemonapi.Daemon
 	return out, cursor
 }
 
-func (d *dhcp6Daemon) publishReceiveEvent(msg pdclient.Message) {
+func (d *dhcpv6Daemon) publishReceiveEvent(msg pdclient.Message) {
 	switch msg.Type {
 	case pdclient.MessageAdvertise:
-		d.publish(daemonapi.EventDHCP6AdvertiseReceived, daemonapi.SeverityInfo, "AdvertiseReceived", "received DHCPv6 Advertise", nil)
+		d.publish(daemonapi.EventDHCPv6AdvertiseReceived, daemonapi.SeverityInfo, "AdvertiseReceived", "received DHCPv6 Advertise", nil)
 	case pdclient.MessageReply:
-		d.publish(daemonapi.EventDHCP6ReplyReceived, daemonapi.SeverityInfo, "ReplyReceived", "received DHCPv6 Reply", nil)
+		d.publish(daemonapi.EventDHCPv6ReplyReceived, daemonapi.SeverityInfo, "ReplyReceived", "received DHCPv6 Reply", nil)
 	}
 }
 
-func (d *dhcp6Daemon) publishStateEvents(before, after pdclient.Snapshot) {
+func (d *dhcpv6Daemon) publishStateEvents(before, after pdclient.Snapshot) {
 	if before.State == after.State && before.CurrentPrefix == after.CurrentPrefix && !infoChanged(before, after) {
 		return
 	}
@@ -647,19 +647,19 @@ func (d *dhcp6Daemon) publishStateEvents(before, after pdclient.Snapshot) {
 		attrs := map[string]string{"prefix": after.CurrentPrefix}
 		switch {
 		case after.State == pdclient.StateRequesting && before.State == pdclient.StateSoliciting:
-			d.publish(daemonapi.EventDHCP6RequestSent, daemonapi.SeverityInfo, "RequestSent", "sent DHCPv6 Request", nil)
+			d.publish(daemonapi.EventDHCPv6RequestSent, daemonapi.SeverityInfo, "RequestSent", "sent DHCPv6 Request", nil)
 		case after.State == pdclient.StateBound && before.State == pdclient.StateRenewing:
-			d.publish(daemonapi.EventDHCP6PrefixRenewed, daemonapi.SeverityInfo, "PrefixRenewed", "delegated prefix renewed", attrs)
+			d.publish(daemonapi.EventDHCPv6PrefixRenewed, daemonapi.SeverityInfo, "PrefixRenewed", "delegated prefix renewed", attrs)
 		case after.State == pdclient.StateBound && before.State == pdclient.StateRebinding:
-			d.publish(daemonapi.EventDHCP6PrefixRebound, daemonapi.SeverityInfo, "PrefixRebound", "delegated prefix rebound", attrs)
+			d.publish(daemonapi.EventDHCPv6PrefixRebound, daemonapi.SeverityInfo, "PrefixRebound", "delegated prefix rebound", attrs)
 		case after.State == pdclient.StateBound:
-			d.publish(daemonapi.EventDHCP6PrefixBound, daemonapi.SeverityInfo, "PrefixBound", "delegated prefix bound", attrs)
+			d.publish(daemonapi.EventDHCPv6PrefixBound, daemonapi.SeverityInfo, "PrefixBound", "delegated prefix bound", attrs)
 		case after.State == pdclient.StateExpired:
-			d.publish(daemonapi.EventDHCP6PrefixExpired, daemonapi.SeverityWarning, "PrefixExpired", "delegated prefix expired", nil)
+			d.publish(daemonapi.EventDHCPv6PrefixExpired, daemonapi.SeverityWarning, "PrefixExpired", "delegated prefix expired", nil)
 		}
 	}
 	if infoChanged(before, after) {
-		d.publish(daemonapi.EventDHCP6InfoReplyReceived, daemonapi.SeverityInfo, "InfoReplyReceived", "received DHCPv6 information Reply", map[string]string{
+		d.publish(daemonapi.EventDHCPv6InfoReplyReceived, daemonapi.SeverityInfo, "InfoReplyReceived", "received DHCPv6 information Reply", map[string]string{
 			"aftrName":     after.AFTRName,
 			"dnsServers":   strings.Join(after.DNSServers, ","),
 			"sntpServers":  strings.Join(after.SNTPServers, ","),
@@ -668,13 +668,13 @@ func (d *dhcp6Daemon) publishStateEvents(before, after pdclient.Snapshot) {
 	}
 }
 
-func (d *dhcp6Daemon) publish(topic, severity, reason, message string, attrs map[string]string) {
+func (d *dhcpv6Daemon) publish(topic, severity, reason, message string, attrs map[string]string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.nextCursor++
 	event := daemonapi.NewEvent(d.daemonRef(), topic, severity)
 	event.Cursor = strconv.FormatUint(d.nextCursor, 10)
-	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "IPv6PrefixDelegation", Name: d.opts.resource}
+	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: d.opts.resource}
 	event.Reason = reason
 	event.Message = message
 	event.Attributes = attrs
@@ -689,7 +689,7 @@ func (d *dhcp6Daemon) publish(topic, severity, reason, message string, attrs map
 	}
 }
 
-func (d *dhcp6Daemon) appendEventFileLocked(event daemonapi.DaemonEvent) {
+func (d *dhcpv6Daemon) appendEventFileLocked(event daemonapi.DaemonEvent) {
 	if err := os.MkdirAll(filepath.Dir(d.opts.eventFile), 0755); err != nil {
 		return
 	}
@@ -701,11 +701,11 @@ func (d *dhcp6Daemon) appendEventFileLocked(event daemonapi.DaemonEvent) {
 	_ = json.NewEncoder(file).Encode(event)
 }
 
-func (d *dhcp6Daemon) daemonRef() daemonapi.DaemonRef {
+func (d *dhcpv6Daemon) daemonRef() daemonapi.DaemonRef {
 	return daemonapi.DaemonRef{Name: daemonKind + "-" + d.opts.resource, Kind: daemonKind, Instance: d.opts.resource}
 }
 
-func (d *dhcp6Daemon) resultLocked() struct {
+func (d *dhcpv6Daemon) resultLocked() struct {
 	Snapshot pdclient.Snapshot `json:"snapshot"`
 	Sent     []sentPacket      `json:"sent"`
 	Packets  []packetRecord    `json:"packets"`
@@ -828,7 +828,7 @@ func sendDHCPv6Multicast(conn *net.UDPConn, ifindex, hopLimit int, payload []byt
 	return sockErr
 }
 
-func listenDHCP6(srcLL, ifname string, port int) (*net.UDPConn, error) {
+func listenDHCPv6(srcLL, ifname string, port int) (*net.UDPConn, error) {
 	addr := &net.UDPAddr{IP: net.IPv6unspecified, Port: port}
 	if srcLL != "" {
 		ip := net.ParseIP(srcLL)
@@ -1111,7 +1111,7 @@ func hasFlag(args []string, name string) bool {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: routerd-dhcp6-client [--once] --interface IFACE [flags]")
+	fmt.Fprintln(w, "usage: routerd-dhcpv6-client [--once] --interface IFACE [flags]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  daemon     run the Unix-socket HTTP+JSON daemon")

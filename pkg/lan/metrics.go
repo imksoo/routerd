@@ -8,14 +8,14 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-func RecordDHCP4LeaseGranted(ctx context.Context, iface string) {
-	counter, _ := otel.Meter("routerd.lan").Int64Counter("routerd.dhcp4.server.lease.granted")
+func RecordDHCPv4LeaseGranted(ctx context.Context, iface string) {
+	counter, _ := otel.Meter("routerd.lan").Int64Counter("routerd.dhcpv4.server.lease.granted")
 	counter.Add(ctx, 1, metric.WithAttributes(attribute.String("routerd.interface", iface)))
 }
 
-func RecordDHCP6LeaseGranted(ctx context.Context, iface, mode string) {
-	counter, _ := otel.Meter("routerd.lan").Int64Counter("routerd.dhcp6.server.lease.granted")
-	counter.Add(ctx, 1, metric.WithAttributes(attribute.String("routerd.interface", iface), attribute.String("routerd.dhcp6.mode", mode)))
+func RecordDHCPv6LeaseGranted(ctx context.Context, iface, mode string) {
+	counter, _ := otel.Meter("routerd.lan").Int64Counter("routerd.dhcpv6.server.lease.granted")
+	counter.Add(ctx, 1, metric.WithAttributes(attribute.String("routerd.interface", iface), attribute.String("routerd.dhcpv6.mode", mode)))
 }
 
 func RecordRASent(ctx context.Context, iface string) {

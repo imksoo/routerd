@@ -1,4 +1,4 @@
-package dhcp4client
+package dhcpv4client
 
 import (
 	"net/netip"

@@ -1,4 +1,4 @@
-package dhcp4server
+package dhcpv4server
 
 import (
 	"fmt"
@@ -15,8 +15,8 @@ type Config struct {
 	DNSServers   []string
 	NTPServers   []string
 	Domain       string
-	Options      []api.DHCPOptionSpec
-	Reservations []api.IPv4DHCPReservationSpec
+	Options      []api.DHCPv4OptionSpec
+	Reservations []api.DHCPv4ReservationSpec
 }
 
 func RenderDnsmasqLines(cfg Config) []string {
@@ -50,14 +50,14 @@ func RenderDnsmasqLines(cfg Config) []string {
 	return lines
 }
 
-func optionKey(option api.DHCPOptionSpec) string {
+func optionKey(option api.DHCPv4OptionSpec) string {
 	if option.Name != "" {
 		return "option:" + option.Name
 	}
 	return fmt.Sprintf("%d", option.Code)
 }
 
-func reservationLine(spec api.IPv4DHCPReservationSpec) string {
+func reservationLine(spec api.DHCPv4ReservationSpec) string {
 	parts := []string{strings.ToLower(spec.MACAddress)}
 	if spec.Hostname != "" {
 		parts = append(parts, spec.Hostname)

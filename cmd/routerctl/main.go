@@ -546,74 +546,75 @@ func parseResourceTarget(verb, target string) (string, string, error) {
 func canonicalShowKind(kind string) string {
 	key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(kind, "-", ""), "_", ""))
 	aliases := map[string]string{
-		"if":                    "Interface",
-		"iface":                 "Interface",
-		"interface":             "Interface",
-		"interfaces":            "Interface",
-		"br":                    "Bridge",
-		"bridge":                "Bridge",
-		"bridges":               "Bridge",
-		"vxlan":                 "VXLANSegment",
-		"vxlans":                "VXLANSegment",
-		"vxlansegment":          "VXLANSegment",
-		"wireguard":             "WireGuardInterface",
-		"wg":                    "WireGuardInterface",
-		"wireguardinterface":    "WireGuardInterface",
-		"wireguardpeer":         "WireGuardPeer",
-		"wgpeer":                "WireGuardPeer",
-		"ipsec":                 "IPsecConnection",
-		"ipsecconnection":       "IPsecConnection",
-		"vrf":                   "VRF",
-		"vxlantunnel":           "VXLANTunnel",
-		"pd":                    "IPv6PrefixDelegation",
-		"ipv6pd":                "IPv6PrefixDelegation",
-		"prefixdelegation":      "IPv6PrefixDelegation",
-		"ipv6prefixdelegation":  "IPv6PrefixDelegation",
-		"ipv4static":            "IPv4StaticAddress",
-		"ipv4staticaddress":     "IPv4StaticAddress",
-		"ipv4dhcp":              "IPv4DHCPAddress",
-		"ipv4dhcpaddress":       "IPv4DHCPAddress",
-		"dhcp4lease":            "DHCPv4Lease",
-		"dhcpv4lease":           "DHCPv4Lease",
-		"ipv4dhcplease":         "DHCPv4Lease",
-		"dhcpv4host":            "DHCPv4HostReservation",
-		"dhcpv4hostreservation": "DHCPv4HostReservation",
-		"ipv4dhcpreservation":   "IPv4DHCPReservation",
-		"dhcp4reservation":      "IPv4DHCPReservation",
-		"dhcprelay":             "DHCPRelay",
-		"ipv4staticroute":       "IPv4StaticRoute",
-		"ipv6route":             "IPv6StaticRoute",
-		"ipv6staticroute":       "IPv6StaticRoute",
-		"ipv6ra":                "IPv6RAAddress",
-		"ipv6raaddress":         "IPv6RAAddress",
-		"slaac":                 "IPv6RAAddress",
-		"nat":                   "IPv4SourceNAT",
-		"snat":                  "IPv4SourceNAT",
-		"ipv4nat":               "IPv4SourceNAT",
-		"ipv4sourcenat":         "IPv4SourceNAT",
-		"nat44":                 "NAT44Rule",
-		"nat44rule":             "NAT44Rule",
-		"dslite":                "DSLiteTunnel",
-		"dslitetunnel":          "DSLiteTunnel",
-		"pppoe":                 "PPPoEInterface",
-		"pppoeinterface":        "PPPoEInterface",
-		"pppoesession":          "PPPoESession",
-		"pppoeclient":           "PPPoESession",
-		"fw":                    "FirewallPolicy",
-		"firewall":              "FirewallPolicy",
-		"firewallpolicy":        "FirewallPolicy",
-		"zone":                  "Zone",
-		"zones":                 "Zone",
-		"hostname":              "Hostname",
-		"host":                  "Hostname",
-		"inventory":             "Inventory",
-		"inv":                   "Inventory",
-		"orphan":                "Orphan",
-		"orphans":               "Orphan",
-		"route":                 "IPv4PolicyRouteSet",
-		"routeset":              "IPv4PolicyRouteSet",
-		"ipv4route":             "IPv4PolicyRouteSet",
-		"ipv4policyrouteset":    "IPv4PolicyRouteSet",
+		"if":                     "Interface",
+		"iface":                  "Interface",
+		"interface":              "Interface",
+		"interfaces":             "Interface",
+		"br":                     "Bridge",
+		"bridge":                 "Bridge",
+		"bridges":                "Bridge",
+		"vxlan":                  "VXLANSegment",
+		"vxlans":                 "VXLANSegment",
+		"vxlansegment":           "VXLANSegment",
+		"wireguard":              "WireGuardInterface",
+		"wg":                     "WireGuardInterface",
+		"wireguardinterface":     "WireGuardInterface",
+		"wireguardpeer":          "WireGuardPeer",
+		"wgpeer":                 "WireGuardPeer",
+		"ipsec":                  "IPsecConnection",
+		"ipsecconnection":        "IPsecConnection",
+		"vrf":                    "VRF",
+		"vxlantunnel":            "VXLANTunnel",
+		"pd":                     "DHCPv6PrefixDelegation",
+		"dhcpv6pd":               "DHCPv6PrefixDelegation",
+		"prefixdelegation":       "DHCPv6PrefixDelegation",
+		"dhcpv6prefixdelegation": "DHCPv6PrefixDelegation",
+		"ipv4static":             "IPv4StaticAddress",
+		"ipv4staticaddress":      "IPv4StaticAddress",
+		"dhcpv4address":          "DHCPv4Address",
+		"dhcpv4lease":            "DHCPv4Lease",
+		"dhcpv4server":           "DHCPv4Server",
+		"dhcpv4scope":            "DHCPv4Scope",
+		"dhcpv4reservation":      "DHCPv4Reservation",
+		"dhcpv4relay":            "DHCPv4Relay",
+		"dhcprelay":              "DHCPv4Relay",
+		"dhcpv6address":          "DHCPv6Address",
+		"dhcpv6server":           "DHCPv6Server",
+		"dhcpv6scope":            "DHCPv6Scope",
+		"dhcpv6information":      "DHCPv6Information",
+		"ipv6ra":                 "IPv6RAAddress",
+		"ipv4staticroute":        "IPv4StaticRoute",
+		"ipv6route":              "IPv6StaticRoute",
+		"ipv6staticroute":        "IPv6StaticRoute",
+		"ipv6raaddress":          "IPv6RAAddress",
+		"slaac":                  "IPv6RAAddress",
+		"nat":                    "IPv4SourceNAT",
+		"snat":                   "IPv4SourceNAT",
+		"ipv4nat":                "IPv4SourceNAT",
+		"ipv4sourcenat":          "IPv4SourceNAT",
+		"nat44":                  "NAT44Rule",
+		"nat44rule":              "NAT44Rule",
+		"dslite":                 "DSLiteTunnel",
+		"dslitetunnel":           "DSLiteTunnel",
+		"pppoe":                  "PPPoEInterface",
+		"pppoeinterface":         "PPPoEInterface",
+		"pppoesession":           "PPPoESession",
+		"pppoeclient":            "PPPoESession",
+		"fw":                     "FirewallPolicy",
+		"firewall":               "FirewallPolicy",
+		"firewallpolicy":         "FirewallPolicy",
+		"zone":                   "Zone",
+		"zones":                  "Zone",
+		"hostname":               "Hostname",
+		"host":                   "Hostname",
+		"inventory":              "Inventory",
+		"inv":                    "Inventory",
+		"orphan":                 "Orphan",
+		"orphans":                "Orphan",
+		"route":                  "IPv4PolicyRouteSet",
+		"routeset":               "IPv4PolicyRouteSet",
+		"ipv4route":              "IPv4PolicyRouteSet",
+		"ipv4policyrouteset":     "IPv4PolicyRouteSet",
 	}
 	if canonical, ok := aliases[key]; ok {
 		return canonical
@@ -853,14 +854,14 @@ func observeResource(res api.Resource, aliases map[string]string, opts showOptio
 	case "IPv4StaticAddress":
 		spec, _ := res.IPv4StaticAddressSpec()
 		return map[string]any{"interface": aliases[spec.Interface], "addresses": interfaceIPv4Addresses(aliases[spec.Interface])}
-	case "IPv4DHCPAddress":
-		spec, _ := res.IPv4DHCPAddressSpec()
+	case "DHCPv4Address":
+		spec, _ := res.DHCPv4AddressSpec()
 		return map[string]any{"interface": aliases[spec.Interface], "addresses": interfaceIPv4Addresses(aliases[spec.Interface])}
 	case "DHCPv4Lease":
 		spec, _ := res.DHCPv4LeaseSpec()
 		return map[string]any{"interface": aliases[spec.Interface]}
-	case "IPv6PrefixDelegation":
-		spec, _ := res.IPv6PrefixDelegationSpec()
+	case "DHCPv6PrefixDelegation":
+		spec, _ := res.DHCPv6PrefixDelegationSpec()
 		return map[string]any{"interface": aliases[spec.Interface]}
 	case "IPv4SourceNAT":
 		table, err := observe.NAPT(opts.NAPTLimit)
@@ -935,7 +936,7 @@ func interfaceIPv4Addresses(ifname string) []string {
 
 func stateForResource(res api.Resource, store routerstate.Store) map[string]any {
 	switch res.Kind {
-	case "IPv6PrefixDelegation":
+	case "DHCPv6PrefixDelegation":
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		lease, _ := routerstate.PDLeaseFromStore(store, base)
 		return map[string]any{
@@ -957,7 +958,7 @@ func statePrefixForKind(kind, name string) string {
 	prefixes := map[string]string{
 		"Interface":         "interface.",
 		"IPv4StaticAddress": "ipv4StaticAddress.",
-		"IPv4DHCPAddress":   "ipv4DHCPAddress.",
+		"DHCPv4Address":     "ipv4DHCPAddress.",
 		"DHCPv4Lease":       "dhcpv4Lease.",
 		"IPv4SourceNAT":     "ipv4SourceNAT.",
 		"DSLiteTunnel":      "dsLiteTunnel.",

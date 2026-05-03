@@ -1227,7 +1227,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "IPv4DHCPAddress",
+                    "const": "DHCPv4Address",
                     "type": "string"
                   },
                   "metadata": {
@@ -1353,7 +1353,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "IPv4DHCPServer",
+                    "const": "DHCPv4Server",
                     "type": "string"
                   },
                   "metadata": {
@@ -1408,7 +1408,7 @@
                           },
                           "upstreamSource": {
                             "enum": [
-                              "dhcp4",
+                              "dhcpv4",
                               "static",
                               "system",
                               "none"
@@ -1507,7 +1507,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "IPv4DHCPScope",
+                    "const": "DHCPv4Scope",
                     "type": "string"
                   },
                   "metadata": {
@@ -1540,7 +1540,7 @@
                       },
                       "dnsSource": {
                         "enum": [
-                          "dhcp4",
+                          "dhcpv4",
                           "static",
                           "self",
                           "none"
@@ -1644,7 +1644,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "IPv4DHCPReservation",
+                    "const": "DHCPv4Reservation",
                     "type": "string"
                   },
                   "metadata": {
@@ -1669,6 +1669,9 @@
                       "ipAddress": {
                         "type": "string"
                       },
+                      "leaseTime": {
+                        "type": "string"
+                      },
                       "macAddress": {
                         "type": "string"
                       },
@@ -1691,6 +1694,9 @@
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "scope": {
+                        "type": "string"
                       },
                       "server": {
                         "type": "string"
@@ -1723,7 +1729,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "IPv6DHCPAddress",
+                    "const": "DHCPv6Address",
                     "type": "string"
                   },
                   "metadata": {
@@ -1833,7 +1839,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "IPv6PrefixDelegation",
+                    "const": "DHCPv6PrefixDelegation",
                     "type": "string"
                   },
                   "metadata": {
@@ -2292,72 +2298,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "IPv6DHCPServer",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "listenInterfaces": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "managed": {
-                        "type": "boolean"
-                      },
-                      "role": {
-                        "enum": [
-                          "server",
-                          "transit"
-                        ],
-                        "type": "string"
-                      },
-                      "server": {
-                        "enum": [
-                          "dnsmasq"
-                        ],
-                        "type": "string"
-                      }
-                    },
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "IPv6DHCPv6Server",
+                    "const": "DHCPv6Server",
                     "type": "string"
                   },
                   "metadata": {
@@ -2412,6 +2353,15 @@
                       "leaseTime": {
                         "type": "string"
                       },
+                      "listenInterfaces": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "managed": {
+                        "type": "boolean"
+                      },
                       "mode": {
                         "enum": [
                           "stateless",
@@ -2465,6 +2415,19 @@
                         },
                         "type": "array"
                       },
+                      "role": {
+                        "enum": [
+                          "server",
+                          "transit"
+                        ],
+                        "type": "string"
+                      },
+                      "server": {
+                        "enum": [
+                          "dnsmasq"
+                        ],
+                        "type": "string"
+                      },
                       "sntpServers": {
                         "items": {
                           "type": "string"
@@ -2472,9 +2435,6 @@
                         "type": "array"
                       }
                     },
-                    "required": [
-                      "interface"
-                    ],
                     "type": "object"
                   },
                   "status": {
@@ -2498,7 +2458,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "IPv6DHCPScope",
+                    "const": "DHCPv6Scope",
                     "type": "string"
                   },
                   "metadata": {
@@ -2622,7 +2582,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "DHCPRelay",
+                    "const": "DHCPv4Relay",
                     "type": "string"
                   },
                   "metadata": {
@@ -2945,8 +2905,8 @@
                       "upstreamSource": {
                         "enum": [
                           "static",
-                          "dhcp4",
-                          "dhcp6"
+                          "dhcpv4",
+                          "dhcpv6"
                         ],
                         "type": "string"
                       }
@@ -3439,8 +3399,8 @@
                                     "upstreamSource": {
                                       "enum": [
                                         "static",
-                                        "dhcp4",
-                                        "dhcp6",
+                                        "dhcpv4",
+                                        "dhcpv6",
                                         "system"
                                       ],
                                       "type": "string"
@@ -4087,7 +4047,7 @@
                             "gatewaySource": {
                               "enum": [
                                 "none",
-                                "dhcp4",
+                                "dhcpv4",
                                 "static"
                               ],
                               "type": "string"

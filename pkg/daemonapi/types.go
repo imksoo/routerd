@@ -72,17 +72,17 @@ const (
 	EventCommandRejected = "routerd.daemon.command.rejected"
 	EventHealthChanged   = "routerd.daemon.health.changed"
 
-	EventDHCP6SolicitSent       = "routerd.dhcp6.client.solicit.sent"
-	EventDHCP6AdvertiseReceived = "routerd.dhcp6.client.advertise.received"
-	EventDHCP6RequestSent       = "routerd.dhcp6.client.request.sent"
-	EventDHCP6ReplyReceived     = "routerd.dhcp6.client.reply.received"
-	EventDHCP6InfoRequestSent   = "routerd.dhcp6.client.info-request.sent"
-	EventDHCP6InfoReplyReceived = "routerd.dhcp6.client.info.reply"
-	EventDHCP6PrefixBound       = "routerd.dhcp6.client.prefix.bound"
-	EventDHCP6PrefixRenewed     = "routerd.dhcp6.client.prefix.renewed"
-	EventDHCP6PrefixRebound     = "routerd.dhcp6.client.prefix.rebound"
-	EventDHCP6PrefixExpired     = "routerd.dhcp6.client.prefix.expired"
-	EventDHCP6ServerLost        = "routerd.dhcp6.client.server.lost"
+	EventDHCPv6SolicitSent       = "routerd.dhcpv6.client.solicit.sent"
+	EventDHCPv6AdvertiseReceived = "routerd.dhcpv6.client.advertise.received"
+	EventDHCPv6RequestSent       = "routerd.dhcpv6.client.request.sent"
+	EventDHCPv6ReplyReceived     = "routerd.dhcpv6.client.reply.received"
+	EventDHCPv6InfoRequestSent   = "routerd.dhcpv6.client.info-request.sent"
+	EventDHCPv6InfoReplyReceived = "routerd.dhcpv6.client.info.reply"
+	EventDHCPv6PrefixBound       = "routerd.dhcpv6.client.prefix.bound"
+	EventDHCPv6PrefixRenewed     = "routerd.dhcpv6.client.prefix.renewed"
+	EventDHCPv6PrefixRebound     = "routerd.dhcpv6.client.prefix.rebound"
+	EventDHCPv6PrefixExpired     = "routerd.dhcpv6.client.prefix.expired"
+	EventDHCPv6ServerLost        = "routerd.dhcpv6.client.server.lost"
 )
 
 type TypeMeta struct {

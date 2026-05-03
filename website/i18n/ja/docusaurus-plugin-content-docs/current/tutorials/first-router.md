@@ -63,13 +63,13 @@ spec:
 
 ## 3. WAN に IPv4 アドレスをもらう
 
-`IPv4DHCPAddress` を追加します。
+`DHCPv4Address` を追加します。
 
 ```yaml
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DHCPAddress
+      kind: DHCPv4Address
       metadata:
-        name: wan-dhcp4
+        name: wan-dhcpv4
       spec:
         interface: wan
         client: dhclient

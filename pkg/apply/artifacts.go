@@ -71,14 +71,14 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		return []resource.Intent{artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "platform-network", nil)}
-	case "IPv4DHCPAddress":
-		spec, err := res.IPv4DHCPAddressSpec()
+	case "DHCPv4Address":
+		spec, err := res.DHCPv4AddressSpec()
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("routerd.dhcp4.client", aliases[spec.Interface], resource.ActionEnsure, "routerd-dhcp4-client", nil)}
+		return []resource.Intent{artifact("routerd.dhcpv4.client", aliases[spec.Interface], resource.ActionEnsure, "routerd-dhcpv4-client", nil)}
 	case "DHCPv4Lease":
-		return []resource.Intent{artifact("routerd.dhcp4.client", res.Metadata.Name, resource.ActionEnsure, "routerd-dhcp4-client", nil)}
+		return []resource.Intent{artifact("routerd.dhcpv4.client", res.Metadata.Name, resource.ActionEnsure, "routerd-dhcpv4-client", nil)}
 	case "WireGuardInterface":
 		return []resource.Intent{artifact("net.wireguard.interface", res.Metadata.Name, resource.ActionEnsure, "wg", nil)}
 	case "WireGuardPeer":
@@ -105,52 +105,50 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		return []resource.Intent{artifact("net.vxlan.tunnel", defaultString(spec.IfName, res.Metadata.Name), resource.ActionEnsure, "ip-link", map[string]string{"vni": fmt.Sprintf("%d", spec.VNI)})}
-	case "IPv4DHCPServer", "IPv6DHCPServer":
+	case "DHCPv4Server", "DHCPv6Server":
 		return []resource.Intent{
 			artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil),
 			artifact("systemd.service", "routerd-dnsmasq.service", resource.ActionEnsure, "systemctl", nil),
 		}
-	case "IPv4DHCPReservation":
-		spec, err := res.IPv4DHCPReservationSpec()
+	case "DHCPv4Reservation":
+		spec, err := res.DHCPv4ReservationSpec()
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("dnsmasq.dhcpv4.host", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server, "mac": spec.MACAddress, "ip": spec.IPAddress})}
-	case "IPv4DHCPScope":
-		spec, err := res.IPv4DHCPScopeSpec()
+		return []resource.Intent{artifact("dnsmasq.dhcpv4.host", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server, "scope": spec.Scope, "mac": spec.MACAddress, "ip": spec.IPAddress})}
+	case "DHCPv4Scope":
+		spec, err := res.DHCPv4ScopeSpec()
 		if err != nil {
 			return nil
 		}
 		return []resource.Intent{artifact("dnsmasq.dhcpv4.scope", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server})}
-	case "IPv6DHCPAddress":
-		spec, err := res.IPv6DHCPAddressSpec()
+	case "DHCPv6Address":
+		spec, err := res.DHCPv6AddressSpec()
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("routerd.dhcp6.addressClient", aliases[spec.Interface], resource.ActionEnsure, "routerd-dhcp6-client", nil)}
+		return []resource.Intent{artifact("routerd.dhcpv6.addressClient", aliases[spec.Interface], resource.ActionEnsure, "routerd-dhcpv6-client", nil)}
 	case "IPv6RAAddress":
 		spec, err := res.IPv6RAAddressSpec()
 		if err != nil {
 			return nil
 		}
 		return []resource.Intent{artifact("net.ipv6.ra.client", aliases[spec.Interface], resource.ActionEnsure, "platform-network", nil)}
-	case "IPv6PrefixDelegation":
-		return []resource.Intent{artifact("systemd.service", "routerd-dhcp6-client@"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
+	case "DHCPv6PrefixDelegation":
+		return []resource.Intent{artifact("systemd.service", "routerd-dhcpv6-client@"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
 	case "IPv6DelegatedAddress":
 		spec, err := res.IPv6DelegatedAddressSpec()
 		if err != nil {
 			return nil
 		}
 		return []resource.Intent{artifact("net.ipv6.address", aliases[spec.Interface]+":"+spec.AddressSuffix, resource.ActionEnsure, "platform-network", nil)}
-	case "IPv6DHCPScope":
-		spec, err := res.IPv6DHCPScopeSpec()
+	case "DHCPv6Scope":
+		spec, err := res.DHCPv6ScopeSpec()
 		if err != nil {
 			return nil
 		}
 		return []resource.Intent{artifact("dnsmasq.dhcpv6.scope", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server})}
-	case "IPv6DHCPv6Server":
-		return []resource.Intent{artifact("dnsmasq.dhcpv6.server", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil)}
-	case "DHCPRelay":
+	case "DHCPv4Relay":
 		return []resource.Intent{artifact("dnsmasq.dhcp.relay", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil)}
 	case "SelfAddressPolicy":
 		return []resource.Intent{artifact("routerd.selfAddressPolicy", res.Metadata.Name, resource.ActionEnsure, "routerd", nil)}
@@ -233,12 +231,6 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			ifname = spec.Interface
 		}
 		return []resource.Intent{artifact("net.ipv6.route", ifname+":"+spec.Destination, resource.ActionEnsure, "platform-network", map[string]string{"via": spec.Via})}
-	case "DHCPv4HostReservation":
-		spec, err := res.DHCPv4HostReservationSpec()
-		if err != nil {
-			return nil
-		}
-		return []resource.Intent{artifact("dnsmasq.dhcpv4.host", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"scope": spec.Scope, "mac": spec.MACAddress, "ip": spec.IPAddress})}
 	case "Hostname":
 		spec, err := res.HostnameSpec()
 		if err != nil {

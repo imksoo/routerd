@@ -10,17 +10,17 @@ import (
 
 func TestPublishSubscribeWithTopicGlobAndResource(t *testing.T) {
 	b := New()
-	resource := daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "IPv6PrefixDelegation", Name: "wan-pd"}
+	resource := daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: "wan-pd"}
 	ch, cancel := b.Subscribe(context.Background(), Subscription{
-		Topics:   []string{"routerd.dhcp6.client.prefix.*"},
+		Topics:   []string{"routerd.dhcpv6.client.prefix.*"},
 		Resource: &resource,
 	}, 2)
 	defer cancel()
 
 	if err := b.Publish(context.Background(), daemonapi.DaemonEvent{
-		Daemon:   daemonapi.DaemonRef{Name: "wan-pd", Kind: "routerd-dhcp6-client"},
+		Daemon:   daemonapi.DaemonRef{Name: "wan-pd", Kind: "routerd-dhcpv6-client"},
 		Resource: &resource,
-		Type:     daemonapi.EventDHCP6PrefixBound,
+		Type:     daemonapi.EventDHCPv6PrefixBound,
 		Severity: daemonapi.SeverityInfo,
 	}); err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func TestPublishSubscribeWithTopicGlobAndResource(t *testing.T) {
 		if event.Cursor == "" {
 			t.Fatal("cursor was not assigned")
 		}
-		if event.Type != daemonapi.EventDHCP6PrefixBound {
+		if event.Type != daemonapi.EventDHCPv6PrefixBound {
 			t.Fatalf("event type = %q", event.Type)
 		}
 	case <-time.After(time.Second):
@@ -45,11 +45,11 @@ func TestMatchTopic(t *testing.T) {
 		topic   string
 		want    bool
 	}{
-		{"routerd.dhcp6.client.prefix.*", "routerd.dhcp6.client.prefix.bound", true},
-		{"routerd.dhcp6.**", "routerd.dhcp6.client.prefix.bound", true},
-		{"routerd.*.client", "routerd.dhcp6.client", true},
-		{"routerd.*.client", "routerd.dhcp6.client.prefix", false},
-		{"routerd.daemon.**", "routerd.dhcp6.client.prefix.bound", false},
+		{"routerd.dhcpv6.client.prefix.*", "routerd.dhcpv6.client.prefix.bound", true},
+		{"routerd.dhcpv6.**", "routerd.dhcpv6.client.prefix.bound", true},
+		{"routerd.*.client", "routerd.dhcpv6.client", true},
+		{"routerd.*.client", "routerd.dhcpv6.client.prefix", false},
+		{"routerd.daemon.**", "routerd.dhcpv6.client.prefix.bound", false},
 	}
 	for _, tt := range tests {
 		if got := MatchTopic(tt.pattern, tt.topic); got != tt.want {

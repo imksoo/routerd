@@ -31,7 +31,7 @@ func TestSQLiteStorePersistsAndSupportsJSON1(t *testing.T) {
 	}
 	defer db.Close()
 	var prefix string
-	err = db.QueryRow(`SELECT json_extract(status, '$.lastPrefix') FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, "net.routerd.net/v1alpha1", "IPv6PrefixDelegation", "wan-pd").Scan(&prefix)
+	err = db.QueryRow(`SELECT json_extract(status, '$.lastPrefix') FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, "net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", "wan-pd").Scan(&prefix)
 	if err != nil {
 		t.Fatalf("json_extract lease prefix: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestSQLiteStoreAddsLastAppliedPathColumn(t *testing.T) {
   PRIMARY KEY(api_version, kind, name)
 );
 INSERT INTO objects(api_version,kind,name,uid,status,created_at,modified_at)
-VALUES('net.routerd.net/v1alpha1','IPv6PrefixDelegation','wan-pd','net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd','{}','2026-05-01T00:00:00Z','2026-05-01T00:00:00Z');`)
+VALUES('net.routerd.net/v1alpha1','DHCPv6PrefixDelegation','wan-pd','net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd','{}','2026-05-01T00:00:00Z','2026-05-01T00:00:00Z');`)
 	if err != nil {
 		t.Fatalf("seed fixture db: %v", err)
 	}
@@ -169,7 +169,7 @@ VALUES('net.routerd.net/v1alpha1','IPv6PrefixDelegation','wan-pd','net.routerd.n
 		t.Fatal("objects.last_applied_path column was not added")
 	}
 	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM objects WHERE api_version = 'net.routerd.net/v1alpha1' AND kind = 'IPv6PrefixDelegation' AND name = 'wan-pd'`).Scan(&count); err != nil {
+	if err := db.QueryRow(`SELECT count(*) FROM objects WHERE api_version = 'net.routerd.net/v1alpha1' AND kind = 'DHCPv6PrefixDelegation' AND name = 'wan-pd'`).Scan(&count); err != nil {
 		t.Fatalf("count existing object: %v", err)
 	}
 	if count != 1 {
@@ -204,7 +204,7 @@ func TestSQLiteStoreGenerationsAndEvents(t *testing.T) {
 		t.Fatalf("begin generation: %v", err)
 	}
 	store.Set("ipv6PrefixDelegation.wan-pd.lease", EncodePDLease(PDLease{LastPrefix: "2001:db8:1200:1210::/60"}), "test")
-	if err := store.RecordEvent("net.routerd.net/v1alpha1", "IPv6PrefixDelegation", "wan-pd", "Normal", "PrefixObserved", "observed prefix"); err != nil {
+	if err := store.RecordEvent("net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", "wan-pd", "Normal", "PrefixObserved", "observed prefix"); err != nil {
 		t.Fatalf("record event: %v", err)
 	}
 	if err := store.FinishGeneration(generation, "Healthy", []string{"warning"}); err != nil {
@@ -217,13 +217,13 @@ func TestSQLiteStoreGenerationsAndEvents(t *testing.T) {
 	}
 	defer db.Close()
 	var observedGeneration int64
-	if err := db.QueryRow(`SELECT observed_generation FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, "net.routerd.net/v1alpha1", "IPv6PrefixDelegation", "wan-pd").Scan(&observedGeneration); err != nil {
+	if err := db.QueryRow(`SELECT observed_generation FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, "net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", "wan-pd").Scan(&observedGeneration); err != nil {
 		t.Fatalf("read observed generation: %v", err)
 	}
 	if observedGeneration != generation {
 		t.Fatalf("observed generation = %d, want %d", observedGeneration, generation)
 	}
-	events := store.Events("net.routerd.net/v1alpha1", "IPv6PrefixDelegation", "wan-pd", 10)
+	events := store.Events("net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", "wan-pd", 10)
 	if len(events) != 1 || events[0].Generation != generation || events[0].Reason != "PrefixObserved" {
 		t.Fatalf("events = %+v", events)
 	}

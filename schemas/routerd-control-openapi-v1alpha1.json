@@ -250,7 +250,7 @@
         ],
         "type": "object"
       },
-      "DHCP6EventRequest": {
+      "DHCPv6EventRequest": {
         "additionalProperties": false,
         "properties": {
           "apiVersion": {
@@ -309,7 +309,7 @@
         ],
         "type": "object"
       },
-      "DHCP6EventResult": {
+      "DHCPv6EventResult": {
         "additionalProperties": false,
         "properties": {
           "accepted": {
@@ -668,14 +668,14 @@
         }
       }
     },
-    "/api/control.routerd.net/v1alpha1/dhcp6-event": {
+    "/api/control.routerd.net/v1alpha1/dhcpv6-event": {
       "post": {
-        "operationId": "recordDHCP6Event",
+        "operationId": "recordDHCPv6Event",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DHCP6EventRequest"
+                "$ref": "#/components/schemas/DHCPv6EventRequest"
               }
             }
           },
@@ -686,11 +686,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DHCP6EventResult"
+                  "$ref": "#/components/schemas/DHCPv6EventResult"
                 }
               }
             },
-            "description": "DHCP6EventResult"
+            "description": "DHCPv6EventResult"
           },
           "default": {
             "content": {

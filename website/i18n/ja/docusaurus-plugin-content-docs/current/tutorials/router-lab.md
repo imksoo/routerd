@@ -32,7 +32,7 @@ routerd plan --config examples/router-lab.yaml
 ラボ設定では、dnsmasq インスタンスを 1 つ立て、LAN に紐付けています。
 
 ```yaml
-kind: IPv4DHCPServer
+kind: DHCPv4Server
 spec:
   server: dnsmasq
   managed: true

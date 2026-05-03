@@ -21,13 +21,13 @@ type netplanNetwork struct {
 }
 
 type netplanEthernet struct {
-	Optional       bool                  `yaml:"optional,omitempty"`
-	DHCP4          bool                  `yaml:"dhcp4"`
-	DHCP4Overrides *netplanDHCPOverrides `yaml:"dhcp4-overrides,omitempty"`
-	DHCP6          bool                  `yaml:"dhcp6"`
-	AcceptRA       bool                  `yaml:"accept-ra"`
-	LinkLocal      []string              `yaml:"link-local"`
-	Addresses      []string              `yaml:"addresses,omitempty"`
+	Optional        bool                  `yaml:"optional,omitempty"`
+	DHCPv4          bool                  `yaml:"dhcp4"`
+	DHCPv4Overrides *netplanDHCPOverrides `yaml:"dhcp4-overrides,omitempty"`
+	DHCPv6          bool                  `yaml:"dhcp6"`
+	AcceptRA        bool                  `yaml:"accept-ra"`
+	LinkLocal       []string              `yaml:"link-local"`
+	Addresses       []string              `yaml:"addresses,omitempty"`
 }
 
 type netplanDHCPOverrides struct {
@@ -37,17 +37,17 @@ type netplanDHCPOverrides struct {
 }
 
 type netplanInterface struct {
-	Name             string
-	IfName           string
-	AdminUp          bool
-	Addresses        []string
-	DHCP4            bool
-	DHCP4UseRoutes   *bool
-	DHCP4UseDNS      *bool
-	DHCP4RouteMetric int
-	DHCP6            bool
-	AcceptRA         bool
-	IPv6LinkLocal    bool
+	Name              string
+	IfName            string
+	AdminUp           bool
+	Addresses         []string
+	DHCPv4            bool
+	DHCPv4UseRoutes   *bool
+	DHCPv4UseDNS      *bool
+	DHCPv4RouteMetric int
+	DHCPv6            bool
+	AcceptRA          bool
+	IPv6LinkLocal     bool
 }
 
 func Netplan(router *api.Router) ([]byte, error) {
@@ -87,24 +87,24 @@ func Netplan(router *api.Router) ([]byte, error) {
 			if iface := interfaces[spec.Interface]; iface != nil {
 				iface.Addresses = append(iface.Addresses, spec.Address)
 			}
-		case "IPv4DHCPAddress":
-			spec, err := res.IPv4DHCPAddressSpec()
+		case "DHCPv4Address":
+			spec, err := res.DHCPv4AddressSpec()
 			if err != nil {
 				return nil, err
 			}
 			if iface := interfaces[spec.Interface]; iface != nil {
-				iface.DHCP4 = true
-				iface.DHCP4UseRoutes = spec.UseRoutes
-				iface.DHCP4UseDNS = spec.UseDNS
-				iface.DHCP4RouteMetric = spec.RouteMetric
+				iface.DHCPv4 = true
+				iface.DHCPv4UseRoutes = spec.UseRoutes
+				iface.DHCPv4UseDNS = spec.UseDNS
+				iface.DHCPv4RouteMetric = spec.RouteMetric
 			}
-		case "IPv6DHCPAddress":
-			spec, err := res.IPv6DHCPAddressSpec()
+		case "DHCPv6Address":
+			spec, err := res.DHCPv6AddressSpec()
 			if err != nil {
 				return nil, err
 			}
 			if iface := interfaces[spec.Interface]; iface != nil {
-				iface.DHCP6 = true
+				iface.DHCPv6 = true
 				iface.IPv6LinkLocal = true
 			}
 		case "IPv6RAAddress":
@@ -142,21 +142,21 @@ func Netplan(router *api.Router) ([]byte, error) {
 			linkLocal = []string{"ipv6"}
 		}
 		var dhcp4Overrides *netplanDHCPOverrides
-		if iface.DHCP4UseRoutes != nil || iface.DHCP4UseDNS != nil || iface.DHCP4RouteMetric != 0 {
+		if iface.DHCPv4UseRoutes != nil || iface.DHCPv4UseDNS != nil || iface.DHCPv4RouteMetric != 0 {
 			dhcp4Overrides = &netplanDHCPOverrides{
-				UseRoutes:   iface.DHCP4UseRoutes,
-				UseDNS:      iface.DHCP4UseDNS,
-				RouteMetric: iface.DHCP4RouteMetric,
+				UseRoutes:   iface.DHCPv4UseRoutes,
+				UseDNS:      iface.DHCPv4UseDNS,
+				RouteMetric: iface.DHCPv4RouteMetric,
 			}
 		}
 		ethernets[iface.IfName] = netplanEthernet{
-			Optional:       true,
-			DHCP4:          iface.DHCP4,
-			DHCP4Overrides: dhcp4Overrides,
-			DHCP6:          iface.DHCP6,
-			AcceptRA:       iface.DHCP6 || iface.AcceptRA,
-			LinkLocal:      linkLocal,
-			Addresses:      iface.Addresses,
+			Optional:        true,
+			DHCPv4:          iface.DHCPv4,
+			DHCPv4Overrides: dhcp4Overrides,
+			DHCPv6:          iface.DHCPv6,
+			AcceptRA:        iface.DHCPv6 || iface.AcceptRA,
+			LinkLocal:       linkLocal,
+			Addresses:       iface.Addresses,
 		}
 	}
 

@@ -110,7 +110,7 @@ func TestPlanKeepsExternalWANObserveOnly(t *testing.T) {
 		t.Fatalf("plan: %v", err)
 	}
 
-	wanDHCP := findResult(result, "net.routerd.net/v1alpha1/IPv4DHCPAddress/wan-dhcp4")
+	wanDHCP := findResult(result, "net.routerd.net/v1alpha1/DHCPv4Address/wan-dhcpv4")
 	if wanDHCP == nil {
 		t.Fatal("missing wan dhcp result")
 	}
@@ -246,7 +246,7 @@ func TestPlanAllowsDHCPScopeWhenNetplanCanManageInterface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	scope := findResult(result, "net.routerd.net/v1alpha1/IPv4DHCPScope/lan-dhcp4")
+	scope := findResult(result, "net.routerd.net/v1alpha1/DHCPv4Scope/lan-dhcpv4")
 	if scope == nil {
 		t.Fatal("missing DHCP scope result")
 	}

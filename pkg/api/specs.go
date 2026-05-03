@@ -216,7 +216,7 @@ type IPv4StaticAddressSpec struct {
 	AllowOverlapReason string `yaml:"allowOverlapReason,omitempty" json:"allowOverlapReason,omitempty"`
 }
 
-type IPv4DHCPAddressSpec struct {
+type DHCPv4AddressSpec struct {
 	Interface   string `yaml:"interface" json:"interface"`
 	Client      string `yaml:"client,omitempty" json:"client,omitempty"`
 	Required    bool   `yaml:"required,omitempty" json:"required,omitempty"`
@@ -247,24 +247,24 @@ type IPv6StaticRouteSpec struct {
 	Metric      int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
 }
 
-type IPv4DHCPServerSpec struct {
-	Server           string                `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
-	Managed          bool                  `yaml:"managed,omitempty" json:"managed,omitempty"`
-	Role             string                `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
-	ListenInterfaces []string              `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
-	DNS              IPv4DHCPServerDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
-	Interface        string                `yaml:"interface,omitempty" json:"interface,omitempty"`
-	AddressPool      DHCPAddressPoolSpec   `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
-	Gateway          string                `yaml:"gateway,omitempty" json:"gateway,omitempty"`
-	DNSServers       []string              `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
-	NTPServers       []string              `yaml:"ntpServers,omitempty" json:"ntpServers,omitempty"`
-	Domain           string                `yaml:"domain,omitempty" json:"domain,omitempty"`
-	Options          []DHCPOptionSpec      `yaml:"options,omitempty" json:"options,omitempty"`
+type DHCPv4ServerSpec struct {
+	Server           string              `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
+	Managed          bool                `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Role             string              `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
+	ListenInterfaces []string            `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
+	DNS              DHCPv4ServerDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
+	Interface        string              `yaml:"interface,omitempty" json:"interface,omitempty"`
+	AddressPool      DHCPAddressPoolSpec `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
+	Gateway          string              `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	DNSServers       []string            `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
+	NTPServers       []string            `yaml:"ntpServers,omitempty" json:"ntpServers,omitempty"`
+	Domain           string              `yaml:"domain,omitempty" json:"domain,omitempty"`
+	Options          []DHCPv4OptionSpec  `yaml:"options,omitempty" json:"options,omitempty"`
 }
 
-type IPv4DHCPServerDNSSpec struct {
+type DHCPv4ServerDNSSpec struct {
 	Enabled           bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	UpstreamSource    string   `yaml:"upstreamSource,omitempty" json:"upstreamSource,omitempty" jsonschema:"enum=dhcp4,enum=static,enum=system,enum=none"`
+	UpstreamSource    string   `yaml:"upstreamSource,omitempty" json:"upstreamSource,omitempty" jsonschema:"enum=dhcpv4,enum=static,enum=system,enum=none"`
 	UpstreamInterface string   `yaml:"upstreamInterface,omitempty" json:"upstreamInterface,omitempty"`
 	UpstreamServers   []string `yaml:"upstreamServers,omitempty" json:"upstreamServers,omitempty"`
 	CacheSize         int      `yaml:"cacheSize,omitempty" json:"cacheSize,omitempty" jsonschema:"minimum=0"`
@@ -276,13 +276,13 @@ type DHCPAddressPoolSpec struct {
 	LeaseTime string `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
 }
 
-type DHCPOptionSpec struct {
+type DHCPv4OptionSpec struct {
 	Code  int    `yaml:"code,omitempty" json:"code,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	Name  string `yaml:"name,omitempty" json:"name,omitempty"`
 	Value string `yaml:"value,omitempty" json:"value,omitempty"`
 }
 
-type IPv4DHCPScopeSpec struct {
+type DHCPv4ScopeSpec struct {
 	Server        string           `yaml:"server" json:"server"`
 	Interface     string           `yaml:"interface" json:"interface"`
 	RangeStart    string           `yaml:"rangeStart" json:"rangeStart"`
@@ -290,30 +290,24 @@ type IPv4DHCPScopeSpec struct {
 	LeaseTime     string           `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
 	RouterSource  string           `yaml:"routerSource,omitempty" json:"routerSource,omitempty" jsonschema:"enum=interfaceAddress,enum=static,enum=none"`
 	Router        string           `yaml:"router,omitempty" json:"router,omitempty"`
-	DNSSource     string           `yaml:"dnsSource,omitempty" json:"dnsSource,omitempty" jsonschema:"enum=dhcp4,enum=static,enum=self,enum=none"`
+	DNSSource     string           `yaml:"dnsSource,omitempty" json:"dnsSource,omitempty" jsonschema:"enum=dhcpv4,enum=static,enum=self,enum=none"`
 	DNSInterface  string           `yaml:"dnsInterface,omitempty" json:"dnsInterface,omitempty"`
 	DNSServers    []string         `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
 	Authoritative bool             `yaml:"authoritative,omitempty" json:"authoritative,omitempty"`
 	When          ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
-type DHCPv4HostReservationSpec struct {
-	Scope      string `yaml:"scope" json:"scope"`
-	MACAddress string `yaml:"macAddress" json:"macAddress"`
-	IPAddress  string `yaml:"ipAddress" json:"ipAddress"`
-	Hostname   string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
-	LeaseTime  string `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
+type DHCPv4ReservationSpec struct {
+	Scope      string             `yaml:"scope,omitempty" json:"scope,omitempty"`
+	Server     string             `yaml:"server,omitempty" json:"server,omitempty"`
+	MACAddress string             `yaml:"macAddress" json:"macAddress"`
+	Hostname   string             `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	IPAddress  string             `yaml:"ipAddress" json:"ipAddress"`
+	LeaseTime  string             `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
+	Options    []DHCPv4OptionSpec `yaml:"options,omitempty" json:"options,omitempty"`
 }
 
-type IPv4DHCPReservationSpec struct {
-	Server     string           `yaml:"server,omitempty" json:"server,omitempty"`
-	MACAddress string           `yaml:"macAddress" json:"macAddress"`
-	Hostname   string           `yaml:"hostname,omitempty" json:"hostname,omitempty"`
-	IPAddress  string           `yaml:"ipAddress" json:"ipAddress"`
-	Options    []DHCPOptionSpec `yaml:"options,omitempty" json:"options,omitempty"`
-}
-
-type IPv6DHCPAddressSpec struct {
+type DHCPv6AddressSpec struct {
 	Interface string `yaml:"interface" json:"interface"`
 	Client    string `yaml:"client,omitempty" json:"client,omitempty"`
 	Required  bool   `yaml:"required,omitempty" json:"required,omitempty"`
@@ -325,7 +319,7 @@ type IPv6RAAddressSpec struct {
 	Required  bool   `yaml:"required,omitempty" json:"required,omitempty"`
 }
 
-type IPv6PrefixDelegationSpec struct {
+type DHCPv6PrefixDelegationSpec struct {
 	Interface    string `yaml:"interface" json:"interface"`
 	Client       string `yaml:"client,omitempty" json:"client,omitempty"`
 	Profile      string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
@@ -438,33 +432,30 @@ type IPv6RouterAdvertisementSpec struct {
 	ReadyWhen         []ReadyWhenSpec `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
 }
 
-type IPv6DHCPv6ServerSpec struct {
-	Interface    string              `yaml:"interface" json:"interface"`
-	Mode         string              `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=stateful,enum=both"`
-	AddressPool  DHCPAddressPoolSpec `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
-	DNSServers   []string            `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
-	SNTPServers  []string            `yaml:"sntpServers,omitempty" json:"sntpServers,omitempty"`
-	DomainSearch []string            `yaml:"domainSearch,omitempty" json:"domainSearch,omitempty"`
-	LeaseTime    string              `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
-	RapidCommit  bool                `yaml:"rapidCommit,omitempty" json:"rapidCommit,omitempty"`
-	ConfigPath   string              `yaml:"configPath,omitempty" json:"configPath,omitempty"`
-	PIDFile      string              `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
-	ReadyWhen    []ReadyWhenSpec     `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
+type DHCPv6ServerSpec struct {
+	Server           string              `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq"`
+	Managed          bool                `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Role             string              `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
+	ListenInterfaces []string            `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
+	Interface        string              `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Mode             string              `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=stateful,enum=both"`
+	AddressPool      DHCPAddressPoolSpec `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
+	DNSServers       []string            `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
+	SNTPServers      []string            `yaml:"sntpServers,omitempty" json:"sntpServers,omitempty"`
+	DomainSearch     []string            `yaml:"domainSearch,omitempty" json:"domainSearch,omitempty"`
+	LeaseTime        string              `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
+	RapidCommit      bool                `yaml:"rapidCommit,omitempty" json:"rapidCommit,omitempty"`
+	ConfigPath       string              `yaml:"configPath,omitempty" json:"configPath,omitempty"`
+	PIDFile          string              `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
+	ReadyWhen        []ReadyWhenSpec     `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
 }
 
-type DHCPRelaySpec struct {
+type DHCPv4RelaySpec struct {
 	Interfaces []string `yaml:"interfaces" json:"interfaces"`
 	Upstream   string   `yaml:"upstream" json:"upstream"`
 }
 
-type IPv6DHCPServerSpec struct {
-	Server           string   `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq"`
-	Managed          bool     `yaml:"managed,omitempty" json:"managed,omitempty"`
-	Role             string   `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
-	ListenInterfaces []string `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
-}
-
-type IPv6DHCPScopeSpec struct {
+type DHCPv6ScopeSpec struct {
 	Server            string           `yaml:"server" json:"server"`
 	DelegatedAddress  string           `yaml:"delegatedAddress" json:"delegatedAddress"`
 	Mode              string           `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=ra-only"`
@@ -506,7 +497,7 @@ type SelfAddressPolicyCandidate struct {
 
 type DNSConditionalForwarderSpec struct {
 	Domain            string   `yaml:"domain" json:"domain"`
-	UpstreamSource    string   `yaml:"upstreamSource,omitempty" json:"upstreamSource,omitempty" jsonschema:"enum=static,enum=dhcp4,enum=dhcp6"`
+	UpstreamSource    string   `yaml:"upstreamSource,omitempty" json:"upstreamSource,omitempty" jsonschema:"enum=static,enum=dhcpv4,enum=dhcpv6"`
 	UpstreamInterface string   `yaml:"upstreamInterface,omitempty" json:"upstreamInterface,omitempty"`
 	UpstreamServers   []string `yaml:"upstreamServers,omitempty" json:"upstreamServers,omitempty"`
 }
@@ -568,12 +559,12 @@ type StateValueSpec struct {
 }
 
 type StateConditionSpec struct {
-	IPv6PrefixDelegation StateIPv6PrefixDelegationCondition `yaml:"ipv6PrefixDelegation,omitempty" json:"ipv6PrefixDelegation,omitempty"`
-	IPv6Address          StateIPv6AddressCondition          `yaml:"ipv6Address,omitempty" json:"ipv6Address,omitempty"`
-	DNSResolve           StateDNSResolveCondition           `yaml:"dnsResolve,omitempty" json:"dnsResolve,omitempty"`
+	DHCPv6PrefixDelegation StateDHCPv6PrefixDelegationCondition `yaml:"ipv6PrefixDelegation,omitempty" json:"ipv6PrefixDelegation,omitempty"`
+	IPv6Address            StateIPv6AddressCondition            `yaml:"ipv6Address,omitempty" json:"ipv6Address,omitempty"`
+	DNSResolve             StateDNSResolveCondition             `yaml:"dnsResolve,omitempty" json:"dnsResolve,omitempty"`
 }
 
-type StateIPv6PrefixDelegationCondition struct {
+type StateDHCPv6PrefixDelegationCondition struct {
 	Resource       string `yaml:"resource,omitempty" json:"resource,omitempty"`
 	Available      *bool  `yaml:"available,omitempty" json:"available,omitempty"`
 	UnavailableFor string `yaml:"unavailableFor,omitempty" json:"unavailableFor,omitempty"`
@@ -587,7 +578,7 @@ type StateIPv6AddressCondition struct {
 type StateDNSResolveCondition struct {
 	Name              string   `yaml:"name,omitempty" json:"name,omitempty"`
 	Type              string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=AAAA"`
-	UpstreamSource    string   `yaml:"upstreamSource,omitempty" json:"upstreamSource,omitempty" jsonschema:"enum=static,enum=dhcp4,enum=dhcp6,enum=system"`
+	UpstreamSource    string   `yaml:"upstreamSource,omitempty" json:"upstreamSource,omitempty" jsonschema:"enum=static,enum=dhcpv4,enum=dhcpv6,enum=system"`
 	UpstreamInterface string   `yaml:"upstreamInterface,omitempty" json:"upstreamInterface,omitempty"`
 	UpstreamServers   []string `yaml:"upstreamServers,omitempty" json:"upstreamServers,omitempty"`
 }
@@ -676,7 +667,7 @@ type IPv4DefaultRoutePolicyCandidate struct {
 	Name          string           `yaml:"name,omitempty" json:"name,omitempty"`
 	Interface     string           `yaml:"interface,omitempty" json:"interface,omitempty"`
 	RouteSet      string           `yaml:"routeSet,omitempty" json:"routeSet,omitempty"`
-	GatewaySource string           `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=none,enum=dhcp4,enum=static"`
+	GatewaySource string           `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=none,enum=dhcpv4,enum=static"`
 	Gateway       string           `yaml:"gateway,omitempty" json:"gateway,omitempty"`
 	Priority      int              `yaml:"priority" json:"priority" jsonschema:"minimum=1"`
 	Table         int              `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=1,maximum=4294967295"`
@@ -883,8 +874,8 @@ func (r Resource) IPv4StaticAddressSpec() (IPv4StaticAddressSpec, error) {
 	return specAs[IPv4StaticAddressSpec](r)
 }
 
-func (r Resource) IPv4DHCPAddressSpec() (IPv4DHCPAddressSpec, error) {
-	return specAs[IPv4DHCPAddressSpec](r)
+func (r Resource) DHCPv4AddressSpec() (DHCPv4AddressSpec, error) {
+	return specAs[DHCPv4AddressSpec](r)
 }
 
 func (r Resource) DHCPv4LeaseSpec() (DHCPv4LeaseSpec, error) {
@@ -899,32 +890,28 @@ func (r Resource) IPv6StaticRouteSpec() (IPv6StaticRouteSpec, error) {
 	return specAs[IPv6StaticRouteSpec](r)
 }
 
-func (r Resource) IPv4DHCPServerSpec() (IPv4DHCPServerSpec, error) {
-	return specAs[IPv4DHCPServerSpec](r)
+func (r Resource) DHCPv4ServerSpec() (DHCPv4ServerSpec, error) {
+	return specAs[DHCPv4ServerSpec](r)
 }
 
-func (r Resource) IPv4DHCPScopeSpec() (IPv4DHCPScopeSpec, error) {
-	return specAs[IPv4DHCPScopeSpec](r)
+func (r Resource) DHCPv4ScopeSpec() (DHCPv4ScopeSpec, error) {
+	return specAs[DHCPv4ScopeSpec](r)
 }
 
-func (r Resource) DHCPv4HostReservationSpec() (DHCPv4HostReservationSpec, error) {
-	return specAs[DHCPv4HostReservationSpec](r)
+func (r Resource) DHCPv4ReservationSpec() (DHCPv4ReservationSpec, error) {
+	return specAs[DHCPv4ReservationSpec](r)
 }
 
-func (r Resource) IPv4DHCPReservationSpec() (IPv4DHCPReservationSpec, error) {
-	return specAs[IPv4DHCPReservationSpec](r)
-}
-
-func (r Resource) IPv6DHCPAddressSpec() (IPv6DHCPAddressSpec, error) {
-	return specAs[IPv6DHCPAddressSpec](r)
+func (r Resource) DHCPv6AddressSpec() (DHCPv6AddressSpec, error) {
+	return specAs[DHCPv6AddressSpec](r)
 }
 
 func (r Resource) IPv6RAAddressSpec() (IPv6RAAddressSpec, error) {
 	return specAs[IPv6RAAddressSpec](r)
 }
 
-func (r Resource) IPv6PrefixDelegationSpec() (IPv6PrefixDelegationSpec, error) {
-	return specAs[IPv6PrefixDelegationSpec](r)
+func (r Resource) DHCPv6PrefixDelegationSpec() (DHCPv6PrefixDelegationSpec, error) {
+	return specAs[DHCPv6PrefixDelegationSpec](r)
 }
 
 func (r Resource) IPv6DelegatedAddressSpec() (IPv6DelegatedAddressSpec, error) {
@@ -943,20 +930,16 @@ func (r Resource) IPv6RouterAdvertisementSpec() (IPv6RouterAdvertisementSpec, er
 	return specAs[IPv6RouterAdvertisementSpec](r)
 }
 
-func (r Resource) IPv6DHCPServerSpec() (IPv6DHCPServerSpec, error) {
-	return specAs[IPv6DHCPServerSpec](r)
+func (r Resource) DHCPv6ServerSpec() (DHCPv6ServerSpec, error) {
+	return specAs[DHCPv6ServerSpec](r)
 }
 
-func (r Resource) IPv6DHCPv6ServerSpec() (IPv6DHCPv6ServerSpec, error) {
-	return specAs[IPv6DHCPv6ServerSpec](r)
+func (r Resource) DHCPv4RelaySpec() (DHCPv4RelaySpec, error) {
+	return specAs[DHCPv4RelaySpec](r)
 }
 
-func (r Resource) DHCPRelaySpec() (DHCPRelaySpec, error) {
-	return specAs[DHCPRelaySpec](r)
-}
-
-func (r Resource) IPv6DHCPScopeSpec() (IPv6DHCPScopeSpec, error) {
-	return specAs[IPv6DHCPScopeSpec](r)
+func (r Resource) DHCPv6ScopeSpec() (DHCPv6ScopeSpec, error) {
+	return specAs[DHCPv6ScopeSpec](r)
 }
 
 func (r Resource) SelfAddressPolicySpec() (SelfAddressPolicySpec, error) {
