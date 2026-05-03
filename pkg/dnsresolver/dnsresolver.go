@@ -29,7 +29,7 @@ func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
 		spec.Listen = []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 5053}}
 	}
 	for i := range spec.Listen {
-		if len(spec.Listen[i].Addresses) == 0 {
+		if len(spec.Listen[i].Addresses) == 0 && len(spec.Listen[i].AddressSources) == 0 {
 			spec.Listen[i].Addresses = []string{"127.0.0.1"}
 		}
 		if spec.Listen[i].Port == 0 {
@@ -68,9 +68,17 @@ func Validate(spec api.DNSResolverSpec) error {
 		if listen.Port < 1 || listen.Port > 65535 {
 			return fmt.Errorf("listen port must be between 1 and 65535")
 		}
+		if len(listen.Addresses) == 0 && len(listen.AddressSources) == 0 {
+			return fmt.Errorf("listen %q requires addresses or addressSources", listen.Name)
+		}
 		for _, address := range listen.Addresses {
 			if net.ParseIP(strings.TrimSpace(address)) == nil {
 				return fmt.Errorf("listen address %q must be an IP address", address)
+			}
+		}
+		for _, source := range listen.AddressSources {
+			if !isStatusExpression(source.Field) {
+				return fmt.Errorf("listen address source %q must be a status reference", source.Field)
 			}
 		}
 	}

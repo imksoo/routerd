@@ -20,6 +20,30 @@ func TestValidateAcceptsDNSResolverSources(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsListenAddressSources(t *testing.T) {
+	err := Validate(api.DNSResolverSpec{
+		Listen: []api.DNSResolverListenSpec{{
+			Addresses:      []string{"172.18.0.1"},
+			AddressSources: []api.DNSResolverListenAddressSourceSpec{{Field: "${IPv6DelegatedAddress/lan-base.status.address}"}},
+			Port:           53,
+		}},
+		Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateRejectsListenAddressStatusReference(t *testing.T) {
+	err := Validate(api.DNSResolverSpec{
+		Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"${IPv6DelegatedAddress/lan-base.status.address}"}, Port: 53}},
+		Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
 func TestValidateRejectsUnsupportedUpstreamScheme(t *testing.T) {
 	err := Validate(api.DNSResolverSpec{
 		Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"http://dns.example/query"}}},

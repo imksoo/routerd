@@ -30,6 +30,23 @@ It tries upstreams by priority and falls back when a higher source fails.
 Each entry can select a subset of source names.
 This allows LAN and VPN listeners to behave differently while sharing one resolver resource.
 
+Use `listen[].addressSources` when a listen address comes from another
+resource status. This keeps the dependency explicit and lets the controller
+reconfigure the daemon when the source resource changes.
+
+```yaml
+listen:
+  - name: lan
+    addresses:
+      - 172.18.0.1
+    addressSources:
+      - field: ${IPv6DelegatedAddress/lan-base.status.address}
+    port: 53
+```
+
+If a required address source is not available yet, the resolver stays
+`Pending(AddressUnresolved)` instead of starting with a stale address.
+
 ## Network-constrained upstreams
 
 `sources[].viaInterface` binds outgoing queries to a specific interface on Linux.

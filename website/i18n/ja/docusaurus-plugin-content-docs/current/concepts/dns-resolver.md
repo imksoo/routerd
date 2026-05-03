@@ -31,6 +31,25 @@ Phase 2.0 では、DNS を 2 つの Kind に分けます。
 各待ち受けは、利用する応答元の部分集合を選べます。
 これにより、LAN と VPN で異なる応答を返せます。
 
+待ち受けアドレスがほかのリソース状態から決まる場合は、
+`listen[].addressSources` を使います。
+依存関係が設定上で明示されます。
+参照先のリソースが変わると、コントローラーは DNS リゾルバーを再設定します。
+
+```yaml
+listen:
+  - name: lan
+    addresses:
+      - 172.18.0.1
+    addressSources:
+      - field: ${IPv6DelegatedAddress/lan-base.status.address}
+    port: 53
+```
+
+必須のアドレス参照がまだ解決できない場合、
+リゾルバーは古いアドレスで起動しません。
+その代わり `Pending(AddressUnresolved)` になります。
+
 ## 制限されたネットワークの上流
 
 `sources[].viaInterface` は、Linux で送信インターフェースを固定します。

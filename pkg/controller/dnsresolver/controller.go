@@ -51,10 +51,14 @@ func (c Controller) Start(ctx context.Context) {
 	if c.Bus == nil {
 		return
 	}
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcp.lease.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}, Filter: c.eventRelevant}, 64)
 	go func() {
 		for event := range ch {
-			_ = c.forwardLeaseEvent(ctx, event)
+			if strings.HasPrefix(event.Type, "routerd.dhcp.lease.") {
+				_ = c.forwardLeaseEvent(ctx, event)
+				continue
+			}
+			_ = c.Reconcile(ctx)
 		}
 	}()
 }
@@ -72,7 +76,16 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 		spec = dnsresolver.NormalizeSpec(spec)
-		spec = c.expandSpec(spec)
+		spec, pending, err := c.expandSpec(spec)
+		if err != nil {
+			return err
+		}
+		if pending != "" {
+			if err := c.saveStatus(resource.Metadata.Name, spec, "Pending", pending); err != nil {
+				return err
+			}
+			continue
+		}
 		config, err := c.runtimeConfig(resource.Metadata.Name, spec)
 		if err != nil {
 			return err
@@ -114,12 +127,33 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 	return config, nil
 }
 
-func (c Controller) expandSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
+func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, string, error) {
+	for i := range spec.Listen {
+		addresses, pending := expandListenAddresses(c.Store, spec.Listen[i])
+		if pending != "" {
+			return spec, pending, nil
+		}
+		spec.Listen[i].Addresses = addresses
+		spec.Listen[i].AddressSources = nil
+	}
 	for i := range spec.Sources {
 		spec.Sources[i].Upstreams = expandUpstreams(c.Store, spec.Sources[i].Upstreams)
 		spec.Sources[i].BootstrapResolver = expandStrings(c.Store, spec.Sources[i].BootstrapResolver)
 	}
-	return spec
+	if err := dnsresolver.Validate(spec); err != nil {
+		return spec, "", err
+	}
+	return spec, "", nil
+}
+
+func (c Controller) eventRelevant(event daemonapi.DaemonEvent) bool {
+	if strings.HasPrefix(event.Type, "routerd.dhcp.lease.") {
+		return true
+	}
+	if event.Resource == nil {
+		return false
+	}
+	return dnsResolverDependsOn(c.Router, *event.Resource)
 }
 
 func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNSResolverSpec, config dnsresolver.RuntimeConfig) error {
@@ -173,15 +207,24 @@ func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNS
 
 func (c Controller) saveStatus(name string, spec api.DNSResolverSpec, phase, message string) error {
 	status := map[string]any{
-		"phase":     phase,
-		"listeners": len(spec.Listen),
-		"sources":   len(spec.Sources),
-		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"phase":           phase,
+		"listeners":       len(spec.Listen),
+		"listenAddresses": resolvedListenAddresses(spec),
+		"sources":         len(spec.Sources),
+		"updatedAt":       time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if message != "" {
 		status["message"] = message
 	}
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DNSResolver", name, status)
+}
+
+func resolvedListenAddresses(spec api.DNSResolverSpec) []string {
+	var out []string
+	for _, listen := range spec.Listen {
+		out = append(out, listen.Addresses...)
+	}
+	return compactStrings(out)
 }
 
 func (c Controller) forwardLeaseEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
@@ -262,6 +305,47 @@ func expandStrings(store Store, values []string) []string {
 	return out
 }
 
+func expandListenAddresses(store Store, listen api.DNSResolverListenSpec) ([]string, string) {
+	var out []string
+	for _, value := range listen.Addresses {
+		trimmed := strings.TrimSpace(value)
+		resolved := valueFromStatusRef(store, value)
+		if isStatusRef(trimmed) && strings.TrimSpace(resolved) == "" {
+			return nil, "AddressUnresolved: " + trimmed
+		}
+		if list := decodeStringList(resolved); len(list) > 0 {
+			for _, item := range list {
+				if strings.TrimSpace(item) != "" {
+					out = append(out, strings.TrimSpace(item))
+				}
+			}
+			continue
+		}
+		if strings.TrimSpace(resolved) != "" {
+			out = append(out, strings.TrimSpace(resolved))
+		}
+	}
+	for _, source := range listen.AddressSources {
+		resolved := valueFromStatusRef(store, source.Field)
+		if strings.TrimSpace(resolved) == "" {
+			if source.Optional {
+				continue
+			}
+			return nil, "AddressUnresolved: " + source.Field
+		}
+		if list := decodeStringList(resolved); len(list) > 0 {
+			for _, item := range list {
+				if strings.TrimSpace(item) != "" {
+					out = append(out, strings.TrimSpace(item))
+				}
+			}
+			continue
+		}
+		out = append(out, strings.TrimSpace(resolved))
+	}
+	return compactStrings(out), ""
+}
+
 func expandUpstreams(store Store, values []string) []string {
 	var out []string
 	for _, value := range values {
@@ -279,6 +363,90 @@ func expandUpstreams(store Store, values []string) []string {
 		}
 	}
 	return out
+}
+
+func isStatusRef(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") && strings.Contains(value, ".status.")
+}
+
+func compactStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func dnsResolverDependsOn(router *api.Router, ref daemonapi.ResourceRef) bool {
+	if router == nil || ref.APIVersion != api.NetAPIVersion {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "DNSResolver" {
+			continue
+		}
+		spec, err := resource.DNSResolverSpec()
+		if err != nil {
+			continue
+		}
+		for _, dep := range dnsResolverStatusRefs(spec) {
+			if dep == ref {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dnsResolverStatusRefs(spec api.DNSResolverSpec) []daemonapi.ResourceRef {
+	var refs []daemonapi.ResourceRef
+	add := func(expr string) {
+		kind, name, ok := statusRefResource(expr)
+		if ok {
+			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: kind, Name: name})
+		}
+	}
+	for _, listen := range spec.Listen {
+		for _, source := range listen.AddressSources {
+			add(source.Field)
+		}
+		for _, address := range listen.Addresses {
+			add(address)
+		}
+	}
+	for _, source := range spec.Sources {
+		for _, upstream := range source.Upstreams {
+			add(upstream)
+		}
+		for _, resolver := range source.BootstrapResolver {
+			add(resolver)
+		}
+	}
+	return refs
+}
+
+func statusRefResource(expr string) (string, string, bool) {
+	expr = strings.TrimSpace(expr)
+	if !isStatusRef(expr) {
+		return "", "", false
+	}
+	inner := strings.TrimSuffix(strings.TrimPrefix(expr, "${"), "}")
+	left, _, ok := strings.Cut(inner, ".status.")
+	if !ok {
+		return "", "", false
+	}
+	kind, name, ok := strings.Cut(left, "/")
+	if !ok || kind == "" || name == "" {
+		return "", "", false
+	}
+	return kind, name, true
 }
 
 func decodeStringList(raw string) []string {
