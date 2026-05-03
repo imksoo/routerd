@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -25,16 +24,20 @@ import (
 )
 
 type options struct {
-	resource      string
-	backend       string
-	listenAddress string
-	listenPort    int
-	upstreams     []string
-	command       string
-	socketPath    string
-	stateFile     string
-	eventFile     string
-	dryRun        bool
+	resource       string
+	backend        string
+	listenAddress  string
+	listenPort     int
+	upstreams      []string
+	healthInterval time.Duration
+	healthTimeout  time.Duration
+	failThreshold  int
+	passThreshold  int
+	command        string
+	socketPath     string
+	stateFile      string
+	eventFile      string
+	dryRun         bool
 }
 
 type daemon struct {
@@ -44,6 +47,7 @@ type daemon struct {
 	phase     string
 	health    string
 	process   *os.Process
+	upstreams *upstreamPool
 
 	mu         sync.Mutex
 	cond       *sync.Cond
@@ -84,11 +88,17 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.SetOutput(io.Discard)
 	opts := options{}
 	var upstreams string
+	var healthInterval string
+	var healthTimeout string
 	fs.StringVar(&opts.resource, "resource", "doh", "resource name")
 	fs.StringVar(&opts.backend, "backend", dohproxy.BackendNative, "backend: native, cloudflared, or dnscrypt")
 	fs.StringVar(&opts.listenAddress, "listen-address", "127.0.0.1", "stub resolver listen address")
 	fs.IntVar(&opts.listenPort, "listen-port", 5053, "stub resolver listen port")
-	fs.StringVar(&upstreams, "upstream", "", "comma-separated DoH upstream URLs")
+	fs.StringVar(&upstreams, "upstream", "", "comma-separated DNS upstream URLs")
+	fs.StringVar(&healthInterval, "health-interval", "15s", "upstream health probe interval")
+	fs.StringVar(&healthTimeout, "health-timeout", "3s", "upstream health probe timeout")
+	fs.IntVar(&opts.failThreshold, "health-fail-threshold", 3, "consecutive failures before an upstream is marked down")
+	fs.IntVar(&opts.passThreshold, "health-pass-threshold", 2, "consecutive successes before an upstream is marked healthy")
 	fs.StringVar(&opts.command, "command", "", "backend command path")
 	fs.StringVar(&opts.socketPath, "socket", "", "Unix socket path")
 	fs.StringVar(&opts.stateFile, "state-file", "", "state JSON path")
@@ -96,6 +106,15 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "do not start backend process")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
+	}
+	var err error
+	opts.healthInterval, err = time.ParseDuration(healthInterval)
+	if err != nil {
+		return options{}, fmt.Errorf("parse health interval: %w", err)
+	}
+	opts.healthTimeout, err = time.ParseDuration(healthTimeout)
+	if err != nil {
+		return options{}, fmt.Errorf("parse health timeout: %w", err)
 	}
 	for _, upstream := range strings.Split(upstreams, ",") {
 		if strings.TrimSpace(upstream) != "" {
@@ -153,10 +172,16 @@ func specFromOptions(opts options) api.DoHProxySpec {
 		ListenAddress: opts.listenAddress,
 		ListenPort:    opts.listenPort,
 		Upstreams:     opts.upstreams,
-		Command:       opts.command,
-		StateFile:     opts.stateFile,
-		EventFile:     opts.eventFile,
-		SocketPath:    opts.socketPath,
+		Healthcheck: api.DoHProxyHealthcheckSpec{
+			Interval:      opts.healthInterval.String(),
+			Timeout:       opts.healthTimeout.String(),
+			FailThreshold: opts.failThreshold,
+			PassThreshold: opts.passThreshold,
+		},
+		Command:    opts.command,
+		StateFile:  opts.stateFile,
+		EventFile:  opts.eventFile,
+		SocketPath: opts.socketPath,
 	})
 }
 
@@ -224,6 +249,17 @@ func (d *daemon) startBackend(ctx context.Context) error {
 }
 
 func (d *daemon) startNativeBackend(ctx context.Context) error {
+	pool, err := newUpstreamPool(d.spec.Upstreams, upstreamPoolConfig{
+		ProbeInterval: d.opts.healthInterval,
+		ProbeTimeout:  d.opts.healthTimeout,
+		FailThreshold: d.opts.failThreshold,
+		PassThreshold: d.opts.passThreshold,
+	})
+	if err != nil {
+		return err
+	}
+	d.upstreams = pool
+	pool.Start(ctx, d.publish)
 	address := net.JoinHostPort(d.spec.ListenAddress, fmt.Sprintf("%d", d.spec.ListenPort))
 	udpConn, err := net.ListenPacket("udp", address)
 	if err != nil {
@@ -253,7 +289,7 @@ func (d *daemon) serveUDP(ctx context.Context, conn net.PacketConn) {
 		}
 		query := append([]byte(nil), buf[:n]...)
 		go func() {
-			resp, err := d.exchangeDoH(ctx, query)
+			resp, err := d.exchangeDNS(ctx, query)
 			if err != nil {
 				d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityWarning, "QueryFailed", err.Error(), nil)
 				return
@@ -283,7 +319,7 @@ func (d *daemon) handleTCP(ctx context.Context, conn net.Conn) {
 	if _, err := io.ReadFull(conn, query); err != nil {
 		return
 	}
-	resp, err := d.exchangeDoH(ctx, query)
+	resp, err := d.exchangeDNS(ctx, query)
 	if err != nil {
 		d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityWarning, "QueryFailed", err.Error(), nil)
 		return
@@ -295,26 +331,11 @@ func (d *daemon) handleTCP(ctx context.Context, conn net.Conn) {
 	_, _ = conn.Write(resp)
 }
 
-func (d *daemon) exchangeDoH(ctx context.Context, query []byte) ([]byte, error) {
-	if len(d.spec.Upstreams) == 0 {
-		return nil, fmt.Errorf("no DoH upstream configured")
+func (d *daemon) exchangeDNS(ctx context.Context, query []byte) ([]byte, error) {
+	if d.upstreams == nil {
+		return nil, fmt.Errorf("no DNS upstream configured")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.spec.Upstreams[0], bytes.NewReader(query))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/dns-message")
-	req.Header.Set("Accept", "application/dns-message")
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("DoH upstream returned %s", resp.Status)
-	}
-	return io.ReadAll(resp.Body)
+	return d.upstreams.Exchange(ctx, query, d.publish)
 }
 
 func (d *daemon) stopBackend() {
@@ -377,9 +398,17 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 		Since:    d.startedAt,
 		Conditions: []daemonapi.Condition{{Type: "Ready", Status: conditionStatus(d.health == daemonapi.HealthOK), Reason: d.phase,
 			LastTransitionTime: d.startedAt}},
-		Observed: map[string]string{"backend": d.spec.Backend, "listenAddress": d.spec.ListenAddress, "listenPort": fmt.Sprintf("%d", d.spec.ListenPort)},
+		Observed: d.observedStatus(),
 	}}
 	return status
+}
+
+func (d *daemon) observedStatus() map[string]string {
+	observed := map[string]string{"backend": d.spec.Backend, "listenAddress": d.spec.ListenAddress, "listenPort": fmt.Sprintf("%d", d.spec.ListenPort)}
+	if d.upstreams != nil {
+		observed["upstreams"] = d.upstreams.Summary()
+	}
+	return observed
 }
 
 func (d *daemon) eventsSince(since string) eventsResponse {
@@ -423,7 +452,10 @@ func (d *daemon) setState(phase, health string) {
 	d.mu.Lock()
 	d.phase = phase
 	d.health = health
-	state := map[string]string{"phase": d.phase, "health": d.health, "backend": d.spec.Backend, "listenAddress": d.spec.ListenAddress, "listenPort": fmt.Sprintf("%d", d.spec.ListenPort)}
+	state := map[string]any{"phase": d.phase, "health": d.health, "backend": d.spec.Backend, "listenAddress": d.spec.ListenAddress, "listenPort": d.spec.ListenPort}
+	if d.upstreams != nil {
+		state["upstreams"] = d.upstreams.Snapshot()
+	}
 	d.mu.Unlock()
 	data, _ := json.MarshalIndent(state, "", "  ")
 	_ = os.WriteFile(d.opts.stateFile, append(data, '\n'), 0o644)

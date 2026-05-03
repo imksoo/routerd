@@ -3182,6 +3182,26 @@
                       "eventFile": {
                         "type": "string"
                       },
+                      "healthcheck": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "failThreshold": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "interval": {
+                            "type": "string"
+                          },
+                          "passThreshold": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "timeout": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "listenAddress": {
                         "type": "string"
                       },

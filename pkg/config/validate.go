@@ -596,9 +596,27 @@ func validateDoHProxySpec(resourceID string, spec api.DoHProxySpec) error {
 		if strings.TrimSpace(upstream) == "" {
 			return fmt.Errorf("%s spec.upstreams[%d] must not be empty", resourceID, i)
 		}
-		if !strings.HasPrefix(upstream, "https://") {
-			return fmt.Errorf("%s spec.upstreams[%d] must use https", resourceID, i)
+		switch {
+		case strings.HasPrefix(upstream, "https://"),
+			strings.HasPrefix(upstream, "tls://"),
+			strings.HasPrefix(upstream, "quic://"),
+			strings.HasPrefix(upstream, "udp://"):
+		default:
+			return fmt.Errorf("%s spec.upstreams[%d] must use https, tls, quic, or udp", resourceID, i)
 		}
+	}
+	if strings.TrimSpace(spec.Healthcheck.Interval) != "" {
+		if _, err := time.ParseDuration(spec.Healthcheck.Interval); err != nil {
+			return fmt.Errorf("%s spec.healthcheck.interval must be a duration", resourceID)
+		}
+	}
+	if strings.TrimSpace(spec.Healthcheck.Timeout) != "" {
+		if _, err := time.ParseDuration(spec.Healthcheck.Timeout); err != nil {
+			return fmt.Errorf("%s spec.healthcheck.timeout must be a duration", resourceID)
+		}
+	}
+	if spec.Healthcheck.FailThreshold < 0 || spec.Healthcheck.PassThreshold < 0 {
+		return fmt.Errorf("%s spec.healthcheck thresholds must not be negative", resourceID)
 	}
 	return nil
 }

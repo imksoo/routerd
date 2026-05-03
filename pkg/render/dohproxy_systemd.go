@@ -25,6 +25,12 @@ func DoHProxySystemdUnit(name string, spec api.DoHProxySpec, binaryPath string) 
 	if len(spec.Upstreams) > 0 {
 		args = append(args, "--upstream", strconv.Quote(strings.Join(spec.Upstreams, ",")))
 	}
+	args = append(args,
+		"--health-interval", strconv.Quote(spec.Healthcheck.Interval),
+		"--health-timeout", strconv.Quote(spec.Healthcheck.Timeout),
+		"--health-fail-threshold", fmt.Sprintf("%d", spec.Healthcheck.FailThreshold),
+		"--health-pass-threshold", fmt.Sprintf("%d", spec.Healthcheck.PassThreshold),
+	)
 	if spec.Command != "" {
 		args = append(args, "--command", strconv.Quote(spec.Command))
 	}

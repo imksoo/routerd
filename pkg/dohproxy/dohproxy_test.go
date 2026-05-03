@@ -40,8 +40,30 @@ func TestNativeCommandUsesInternalServer(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsPlainDNSURL(t *testing.T) {
-	err := Validate(api.DoHProxySpec{Upstreams: []string{"http://1.1.1.1/dns-query"}})
+func TestValidateAcceptsNativeDNSUpstreamSchemes(t *testing.T) {
+	err := Validate(api.DoHProxySpec{
+		Backend: BackendNative,
+		Upstreams: []string{
+			"https://1.1.1.1/dns-query",
+			"tls://dns.example",
+			"quic://dns.example:853",
+			"udp://[2001:db8::53]:53",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateRejectsUnsupportedDNSURL(t *testing.T) {
+	err := Validate(api.DoHProxySpec{Backend: BackendNative, Upstreams: []string{"http://1.1.1.1/dns-query"}})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestExternalBackendsStillRequireHTTPS(t *testing.T) {
+	err := Validate(api.DoHProxySpec{Backend: BackendCloudflared, Upstreams: []string{"tls://dns.example"}})
 	if err == nil {
 		t.Fatal("expected validation error")
 	}

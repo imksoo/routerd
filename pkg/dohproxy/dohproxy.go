@@ -3,6 +3,7 @@ package dohproxy
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"strings"
 
 	"routerd/pkg/api"
@@ -25,6 +26,18 @@ func NormalizeSpec(spec api.DoHProxySpec) api.DoHProxySpec {
 	if spec.ListenPort == 0 {
 		spec.ListenPort = 5053
 	}
+	if strings.TrimSpace(spec.Healthcheck.Interval) == "" {
+		spec.Healthcheck.Interval = "15s"
+	}
+	if strings.TrimSpace(spec.Healthcheck.Timeout) == "" {
+		spec.Healthcheck.Timeout = "3s"
+	}
+	if spec.Healthcheck.FailThreshold == 0 {
+		spec.Healthcheck.FailThreshold = 3
+	}
+	if spec.Healthcheck.PassThreshold == 0 {
+		spec.Healthcheck.PassThreshold = 2
+	}
 	return spec
 }
 
@@ -45,8 +58,21 @@ func Validate(spec api.DoHProxySpec) error {
 		return fmt.Errorf("at least one upstream is required")
 	}
 	for _, upstream := range spec.Upstreams {
-		if !strings.HasPrefix(strings.TrimSpace(upstream), "https://") {
-			return fmt.Errorf("DoH upstream %q must use https", upstream)
+		parsed, err := url.Parse(strings.TrimSpace(upstream))
+		if err != nil || parsed.Scheme == "" {
+			return fmt.Errorf("invalid DNS upstream %q", upstream)
+		}
+		switch spec.Backend {
+		case BackendNative:
+			switch parsed.Scheme {
+			case "https", "tls", "quic", "udp":
+			default:
+				return fmt.Errorf("DNS upstream %q must use https, tls, quic, or udp", upstream)
+			}
+		default:
+			if parsed.Scheme != "https" {
+				return fmt.Errorf("external DoH upstream %q must use https", upstream)
+			}
 		}
 	}
 	return nil

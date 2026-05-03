@@ -100,6 +100,10 @@ func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DoH
 		"--listen-address", spec.ListenAddress,
 		"--listen-port", strconv.Itoa(spec.ListenPort),
 		"--upstream", joinCSV(spec.Upstreams),
+		"--health-interval", spec.Healthcheck.Interval,
+		"--health-timeout", spec.Healthcheck.Timeout,
+		"--health-fail-threshold", strconv.Itoa(spec.Healthcheck.FailThreshold),
+		"--health-pass-threshold", strconv.Itoa(spec.Healthcheck.PassThreshold),
 		"--socket", firstNonEmpty(spec.SocketPath, filepath.Join("/run/routerd/doh-proxy", name+".sock")),
 		"--state-file", firstNonEmpty(spec.StateFile, filepath.Join("/var/lib/routerd/doh-proxy", name, "state.json")),
 		"--event-file", firstNonEmpty(spec.EventFile, filepath.Join("/var/lib/routerd/doh-proxy", name, "events.jsonl")),
@@ -130,6 +134,7 @@ func (c Controller) saveStatus(name string, spec api.DoHProxySpec, phase, messag
 		"backend":       spec.Backend,
 		"listenAddress": spec.ListenAddress,
 		"listenPort":    spec.ListenPort,
+		"upstreams":     spec.Upstreams,
 		"updatedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if message != "" {
@@ -147,7 +152,15 @@ func processAlive(process *os.Process) bool {
 }
 
 func sameProxySpec(a, b api.DoHProxySpec) bool {
-	return a.Backend == b.Backend && a.ListenAddress == b.ListenAddress && a.ListenPort == b.ListenPort && joinCSV(a.Upstreams) == joinCSV(b.Upstreams) && a.Command == b.Command
+	return a.Backend == b.Backend &&
+		a.ListenAddress == b.ListenAddress &&
+		a.ListenPort == b.ListenPort &&
+		joinCSV(a.Upstreams) == joinCSV(b.Upstreams) &&
+		a.Healthcheck.Interval == b.Healthcheck.Interval &&
+		a.Healthcheck.Timeout == b.Healthcheck.Timeout &&
+		a.Healthcheck.FailThreshold == b.Healthcheck.FailThreshold &&
+		a.Healthcheck.PassThreshold == b.Healthcheck.PassThreshold &&
+		a.Command == b.Command
 }
 
 func joinCSV(values []string) string {

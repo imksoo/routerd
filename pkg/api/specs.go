@@ -605,15 +605,23 @@ func (s DNSResolverServerSpec) StubAddress() string {
 }
 
 type DoHProxySpec struct {
-	Backend       string   `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=native,enum=cloudflared,enum=dnscrypt"`
-	ListenAddress string   `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
-	ListenPort    int      `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
-	Upstreams     []string `yaml:"upstreams" json:"upstreams"`
-	Command       string   `yaml:"command,omitempty" json:"command,omitempty"`
-	ConfigPath    string   `yaml:"configPath,omitempty" json:"configPath,omitempty"`
-	StateFile     string   `yaml:"stateFile,omitempty" json:"stateFile,omitempty"`
-	EventFile     string   `yaml:"eventFile,omitempty" json:"eventFile,omitempty"`
-	SocketPath    string   `yaml:"socketPath,omitempty" json:"socketPath,omitempty"`
+	Backend       string                  `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=native,enum=cloudflared,enum=dnscrypt"`
+	ListenAddress string                  `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
+	ListenPort    int                     `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	Upstreams     []string                `yaml:"upstreams" json:"upstreams"`
+	Healthcheck   DoHProxyHealthcheckSpec `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
+	Command       string                  `yaml:"command,omitempty" json:"command,omitempty"`
+	ConfigPath    string                  `yaml:"configPath,omitempty" json:"configPath,omitempty"`
+	StateFile     string                  `yaml:"stateFile,omitempty" json:"stateFile,omitempty"`
+	EventFile     string                  `yaml:"eventFile,omitempty" json:"eventFile,omitempty"`
+	SocketPath    string                  `yaml:"socketPath,omitempty" json:"socketPath,omitempty"`
+}
+
+type DoHProxyHealthcheckSpec struct {
+	Interval      string `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Timeout       string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	FailThreshold int    `yaml:"failThreshold,omitempty" json:"failThreshold,omitempty" jsonschema:"minimum=1"`
+	PassThreshold int    `yaml:"passThreshold,omitempty" json:"passThreshold,omitempty" jsonschema:"minimum=1"`
 }
 
 type DSLiteTunnelSpec struct {

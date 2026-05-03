@@ -14,7 +14,14 @@ spec:
       listenPort: 5053
       upstreams:
       - https://1.1.1.1/dns-query
-      - https://1.0.0.1/dns-query
+      - tls://dns.google
+      - quic://dns.google
+      - udp://8.8.8.8:53
+      healthcheck:
+        interval: 15s
+        timeout: 3s
+        failThreshold: 3
+        passThreshold: 2
   - apiVersion: net.routerd.net/v1alpha1
     kind: DNSResolverUpstream
     metadata:
