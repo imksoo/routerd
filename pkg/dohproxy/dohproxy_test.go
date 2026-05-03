@@ -1,0 +1,44 @@
+package dohproxy
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+
+	"routerd/pkg/api"
+)
+
+func TestCloudflaredCommand(t *testing.T) {
+	command, args, err := Command(api.DoHProxySpec{
+		ListenAddress: "127.0.0.1",
+		ListenPort:    5053,
+		Upstreams:     []string{"https://1.1.1.1/dns-query", "https://dns.google/dns-query"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command != "cloudflared" {
+		t.Fatalf("command = %q", command)
+	}
+	want := []string{"proxy-dns", "--address", "127.0.0.1", "--port", "5053", "--upstream", "https://1.1.1.1/dns-query", "--upstream", "https://dns.google/dns-query"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v", args)
+	}
+}
+
+func TestValidateRejectsPlainDNSURL(t *testing.T) {
+	err := Validate(api.DoHProxySpec{Upstreams: []string{"http://1.1.1.1/dns-query"}})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestDNSCryptConfig(t *testing.T) {
+	config, err := DNSCryptConfig(api.DoHProxySpec{Backend: BackendDNSCrypt, Upstreams: []string{"https://dns.google/dns-query"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(config, "listen_addresses = ['127.0.0.1:5053']") || !strings.Contains(config, "https://dns.google/dns-query") {
+		t.Fatalf("unexpected config:\n%s", config)
+	}
+}

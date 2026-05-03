@@ -556,6 +556,53 @@ func Validate(router *api.Router) error {
 	return nil
 }
 
+func validateDNSResolverServer(resourceID, field string, server api.DNSResolverServerSpec) error {
+	switch server.Type {
+	case "", "static":
+		if strings.TrimSpace(server.String()) == "" {
+			return fmt.Errorf("%s %s must not be empty", resourceID, field)
+		}
+	case "doh":
+		if strings.TrimSpace(server.URL) == "" {
+			return fmt.Errorf("%s %s.url is required when type is doh", resourceID, field)
+		}
+		if !strings.HasPrefix(server.URL, "https://") {
+			return fmt.Errorf("%s %s.url must use https", resourceID, field)
+		}
+		if server.ListenPort < 0 || server.ListenPort > 65535 {
+			return fmt.Errorf("%s %s.listenPort must be between 1 and 65535", resourceID, field)
+		}
+		if server.Backend != "" && server.Backend != "cloudflared" && server.Backend != "dnscrypt" {
+			return fmt.Errorf("%s %s.backend must be cloudflared or dnscrypt", resourceID, field)
+		}
+	default:
+		return fmt.Errorf("%s %s.type must be static or doh", resourceID, field)
+	}
+	return nil
+}
+
+func validateDoHProxySpec(resourceID string, spec api.DoHProxySpec) error {
+	backend := defaultString(spec.Backend, "cloudflared")
+	if backend != "cloudflared" && backend != "dnscrypt" {
+		return fmt.Errorf("%s spec.backend must be cloudflared or dnscrypt", resourceID)
+	}
+	if spec.ListenPort < 0 || spec.ListenPort > 65535 {
+		return fmt.Errorf("%s spec.listenPort must be between 1 and 65535", resourceID)
+	}
+	if len(spec.Upstreams) == 0 {
+		return fmt.Errorf("%s spec.upstreams is required", resourceID)
+	}
+	for i, upstream := range spec.Upstreams {
+		if strings.TrimSpace(upstream) == "" {
+			return fmt.Errorf("%s spec.upstreams[%d] must not be empty", resourceID, i)
+		}
+		if !strings.HasPrefix(upstream, "https://") {
+			return fmt.Errorf("%s spec.upstreams[%d] must use https", resourceID, i)
+		}
+	}
+	return nil
+}
+
 func isExternalIPv6PDClient(client string) bool {
 	switch client {
 	case "dhcp6c", "dhcpcd":
@@ -1681,15 +1728,26 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.zones[%d].servers is required", res.ID(), i)
 			}
 			for j, server := range zone.Servers {
-				if strings.TrimSpace(server) == "" {
-					return fmt.Errorf("%s spec.zones[%d].servers[%d] must not be empty", res.ID(), i, j)
+				if err := validateDNSResolverServer(res.ID(), fmt.Sprintf("spec.zones[%d].servers[%d]", i, j), server); err != nil {
+					return err
 				}
 			}
 		}
 		for i, server := range spec.Default.Servers {
-			if strings.TrimSpace(server) == "" {
-				return fmt.Errorf("%s spec.default.servers[%d] must not be empty", res.ID(), i)
+			if err := validateDNSResolverServer(res.ID(), fmt.Sprintf("spec.default.servers[%d]", i), server); err != nil {
+				return err
 			}
+		}
+	case "DoHProxy":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DoHProxySpec()
+		if err != nil {
+			return err
+		}
+		if err := validateDoHProxySpec(res.ID(), spec); err != nil {
+			return err
 		}
 	case "DSLiteTunnel":
 		if res.APIVersion != api.NetAPIVersion {

@@ -179,6 +179,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 	if err := writeDNSConditionalForwarders(&buf, router, aliases, runtime, &warnings); err != nil {
 		return nil, warnings, err
 	}
+	writeDNSResolverUpstreams(&buf, router)
 	if len(v6Scopes) > 0 {
 		buf.WriteString("enable-ra\n")
 	}
@@ -530,6 +531,53 @@ func writeDNSConditionalForwarders(buf *bytes.Buffer, router *api.Router, aliase
 		}
 	}
 	return nil
+}
+
+func writeDNSResolverUpstreams(buf *bytes.Buffer, router *api.Router) {
+	var resources []api.Resource
+	for _, res := range router.Spec.Resources {
+		if res.Kind == "DNSResolverUpstream" {
+			resources = append(resources, res)
+		}
+	}
+	if len(resources) == 0 {
+		return
+	}
+	sort.Slice(resources, func(i, j int) bool { return resources[i].Metadata.Name < resources[j].Metadata.Name })
+	buf.WriteString("\n")
+	for _, res := range resources {
+		spec, err := res.DNSResolverUpstreamSpec()
+		if err != nil {
+			continue
+		}
+		for _, server := range dnsResolverServerStrings(spec.Default.Servers) {
+			buf.WriteString("server=" + server + "\n")
+		}
+		for _, zone := range spec.Zones {
+			domain := strings.Trim(strings.TrimSpace(zone.Zone), ".")
+			for _, server := range dnsResolverServerStrings(zone.Servers) {
+				if domain == "" {
+					buf.WriteString("server=" + server + "\n")
+					continue
+				}
+				buf.WriteString("server=/" + domain + "/" + server + "\n")
+			}
+		}
+	}
+}
+
+func dnsResolverServerStrings(servers []api.DNSResolverServerSpec) []string {
+	var out []string
+	for _, server := range servers {
+		if server.IsDoH() {
+			out = append(out, server.StubAddress())
+			continue
+		}
+		if strings.TrimSpace(server.String()) != "" {
+			out = append(out, strings.TrimSpace(server.String()))
+		}
+	}
+	return out
 }
 
 var errObservedDataNotReady = errors.New("observed runtime data not yet available")

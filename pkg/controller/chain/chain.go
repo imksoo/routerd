@@ -22,6 +22,7 @@ import (
 	"routerd/pkg/conntrack"
 	"routerd/pkg/controller/conntrackobserver"
 	"routerd/pkg/controller/dhcpv4lease"
+	dohproxycontroller "routerd/pkg/controller/dohproxy"
 	"routerd/pkg/controller/nat44"
 	"routerd/pkg/controller/pppoesession"
 	"routerd/pkg/daemonapi"
@@ -177,6 +178,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
 	dhcp4Lease := dhcpv4lease.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Lease, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
+	dohProxy := dohproxycontroller.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: true}
 	dns := DNSAnswerController{Router: r.Router, Bus: r.Bus, Store: r.Store, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
 	wan := wanegress.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
@@ -197,6 +199,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	dhcpv6.Start(ctx)
 	dhcp4Lease.Start(ctx)
 	pppoeSession.Start(ctx)
+	dohProxy.Start(ctx)
 	dns.Start(ctx)
 	wan.Start(ctx)
 	nat.Start(ctx)
@@ -801,15 +804,16 @@ func dnsmasqResolverLines(router *api.Router, store Store) []string {
 		if err != nil {
 			continue
 		}
-		for _, server := range expandServers(store, spec.Default.Servers) {
+		for _, server := range expandResolverServers(store, spec.Default.Servers) {
 			lines = append(lines, "server="+server)
 		}
 		for _, zone := range spec.Zones {
 			cleanZone := strings.Trim(strings.TrimSpace(zone.Zone), ".")
-			if cleanZone == "" {
-				continue
-			}
-			for _, server := range expandServers(store, zone.Servers) {
+			for _, server := range expandResolverServers(store, zone.Servers) {
+				if cleanZone == "" {
+					lines = append(lines, "server="+server)
+					continue
+				}
 				lines = append(lines, fmt.Sprintf("server=/%s/%s", cleanZone, server))
 			}
 		}
@@ -945,6 +949,25 @@ func expandServers(store Store, values []string) []string {
 	var out []string
 	for _, value := range values {
 		resolved := valueFromStatusRef(store, value)
+		if list := decodeStringList(resolved); len(list) > 0 {
+			out = append(out, list...)
+			continue
+		}
+		if strings.TrimSpace(resolved) != "" {
+			out = append(out, strings.TrimSpace(resolved))
+		}
+	}
+	return out
+}
+
+func expandResolverServers(store Store, values []api.DNSResolverServerSpec) []string {
+	var out []string
+	for _, value := range values {
+		if value.IsDoH() {
+			out = append(out, value.StubAddress())
+			continue
+		}
+		resolved := valueFromStatusRef(store, value.String())
 		if list := decodeStringList(resolved); len(list) > 0 {
 			out = append(out, list...)
 			continue

@@ -31,9 +31,9 @@ func TestDNSResolverUpstreamLinesExpandStatusReferences(t *testing.T) {
 			Metadata: api.ObjectMeta{Name: "ngn"},
 			Spec: api.DNSResolverUpstreamSpec{
 				Zones: []api.DNSResolverZoneSpec{
-					{Zone: "transix.jp.", Servers: []string{"${DHCPv6Information/wan-info.status.dnsServers}"}},
+					{Zone: "transix.jp.", Servers: []api.DNSResolverServerSpec{{Address: "${DHCPv6Information/wan-info.status.dnsServers}"}}},
 				},
-				Default: api.DNSResolverDefaultSpec{Servers: []string{"2001:4860:4860::8888"}},
+				Default: api.DNSResolverDefaultSpec{Servers: []api.DNSResolverServerSpec{{Address: "2001:4860:4860::8888"}}},
 			},
 		},
 	}}}
@@ -50,6 +50,30 @@ func TestDNSResolverUpstreamLinesExpandStatusReferences(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("resolver lines = %#v, want %#v", got, want)
+	}
+}
+
+func TestDNSResolverUpstreamLinesRenderDoHStub(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolverUpstream"},
+			Metadata: api.ObjectMeta{Name: "doh"},
+			Spec: api.DNSResolverUpstreamSpec{
+				Zones: []api.DNSResolverZoneSpec{{
+					Zone: ".",
+					Servers: []api.DNSResolverServerSpec{{
+						Type:          "doh",
+						URL:           "https://1.1.1.1/dns-query",
+						ListenAddress: "127.0.0.1",
+						ListenPort:    5053,
+					}},
+				}},
+			},
+		},
+	}}}
+	got := dnsmasqResolverLines(router, mapStore{})
+	if !reflect.DeepEqual(got, []string{"server=127.0.0.1#5053"}) {
+		t.Fatalf("resolver lines = %#v", got)
 	}
 }
 

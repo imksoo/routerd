@@ -39,6 +39,7 @@ ROUTERCTL_BIN := $(BUILDDIR)/routerctl
 ROUTERD_DHCPv4_CLIENT_BIN := $(BUILDDIR)/routerd-dhcpv4-client
 ROUTERD_DHCPv6_CLIENT_BIN := $(BUILDDIR)/routerd-dhcpv6-client
 ROUTERD_HEALTHCHECK_BIN := $(BUILDDIR)/routerd-healthcheck
+ROUTERD_DOH_PROXY_BIN := $(BUILDDIR)/routerd-doh-proxy
 GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
@@ -56,6 +57,7 @@ build:
 	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCPv4_CLIENT_BIN) ./cmd/routerd-dhcpv4-client
 	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCPv6_CLIENT_BIN) ./cmd/routerd-dhcpv6-client
 	$(GO_BUILD_ENV) go build -o $(ROUTERD_HEALTHCHECK_BIN) ./cmd/routerd-healthcheck
+	$(GO_BUILD_ENV) go build -o $(ROUTERD_DOH_PROXY_BIN) ./cmd/routerd-doh-proxy
 
 generate-schema:
 	install -d schemas
@@ -111,6 +113,7 @@ install: check-build-deps build
 	install -m 0755 $(ROUTERD_DHCPv4_CLIENT_BIN) $(DESTDIR)$(BINDIR)/routerd-dhcpv4-client
 	install -m 0755 $(ROUTERD_DHCPv6_CLIENT_BIN) $(DESTDIR)$(BINDIR)/routerd-dhcpv6-client
 	install -m 0755 $(ROUTERD_HEALTHCHECK_BIN) $(DESTDIR)$(BINDIR)/routerd-healthcheck
+	install -m 0755 $(ROUTERD_DOH_PROXY_BIN) $(DESTDIR)$(BINDIR)/routerd-doh-proxy
 	install -d $(DESTDIR)$(SYSCONFDIR)
 	install -m 0644 examples/basic-static.yaml $(DESTDIR)$(SYSCONFDIR)/router.yaml.example
 	install -d $(DESTDIR)$(SYSCONFDIR)/examples

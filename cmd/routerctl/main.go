@@ -596,6 +596,8 @@ func canonicalShowKind(kind string) string {
 		"nat44rule":              "NAT44Rule",
 		"dslite":                 "DSLiteTunnel",
 		"dslitetunnel":           "DSLiteTunnel",
+		"doh":                    "DoHProxy",
+		"dohproxy":               "DoHProxy",
 		"pppoe":                  "PPPoEInterface",
 		"pppoeinterface":         "PPPoEInterface",
 		"pppoesession":           "PPPoESession",
