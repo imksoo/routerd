@@ -227,6 +227,42 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
+	go func() {
+		for _, resource := range r.Router.Spec.Resources {
+			if resource.Kind != "DHCPv6PrefixDelegation" {
+				continue
+			}
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation", Name: resource.Metadata.Name}
+			if err := pd.reconcile(ctx, event); err != nil {
+				if logger != nil && ctx.Err() == nil {
+					logger.Warn("initial prefix delegation reconcile failed", "resource", resource.Metadata.Name, "error", err)
+				}
+				continue
+			}
+			if err := lan.reconcile(ctx, resource.Metadata.Name); err != nil && logger != nil && ctx.Err() == nil {
+				logger.Warn("initial lan address reconcile failed", "pd", resource.Metadata.Name, "error", err)
+			}
+			if err := info.reconcile(ctx, resource.Metadata.Name, true); err != nil && logger != nil && ctx.Err() == nil {
+				logger.Warn("initial dhcpv6 information reconcile failed", "pd", resource.Metadata.Name, "error", err)
+			}
+		}
+		if err := resolver.reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
+			logger.Warn("initial dns resolver upstream reconcile failed", "error", err)
+		}
+		if err := dslite.reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
+			logger.Warn("initial dslite tunnel reconcile failed", "error", err)
+		}
+		if err := route.reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
+			logger.Warn("initial ipv4 route reconcile failed", "error", err)
+		}
+		if err := wan.Reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
+			logger.Warn("initial wan egress reconcile failed", "error", err)
+		}
+		if err := nat.Reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
+			logger.Warn("initial nat44 reconcile failed", "error", err)
+		}
+	}()
 	return nil
 }
 

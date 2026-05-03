@@ -753,6 +753,41 @@ ConfigWatcher + Loader → routerd internal model
 
 `pkg/platform/<os>.go` で抽象化。
 
+NixOS の初期実装では `services.routerd.*` module namespace ではなく、
+`routerd-generated.nix` に concrete systemd unit を直接 emit する。router02 では
+`/run/systemd/system` の transient unit を廃止し、以下の形で
+`nixos-rebuild test` → `nixos-rebuild switch` 済み。
+
+```nix
+systemd.services."routerd-dhcpv6-client@wan-pd" = {
+  description = "routerd DHCPv6 client wan-pd";
+  after = [ "network-online.target" ];
+  wants = [ "network-online.target" ];
+  wantedBy = [ "multi-user.target" ];
+  path = with pkgs; [ iproute2 ];
+  serviceConfig = {
+    Type = "simple";
+    ExecStart = lib.concatStringsSep " " [
+      "/usr/local/sbin/routerd-dhcpv6-client"
+      "--resource" "wan-pd"
+      "--interface" "ens18"
+      "--socket" "/run/routerd/dhcpv6-client/wan-pd.sock"
+      "--lease-file" "/var/lib/routerd/dhcpv6-client/wan-pd/lease.json"
+      "--event-file" "/var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl"
+    ];
+    Restart = "always";
+    RestartSec = "5s";
+    RuntimeDirectory = "routerd/dhcpv6-client";
+    StateDirectory = "routerd/dhcpv6-client";
+    ProtectSystem = "strict";
+    ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" ];
+    RestrictAddressFamilies = [ "AF_UNIX" "AF_INET6" "AF_NETLINK" ];
+    CapabilityBoundingSet = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
+    AmbientCapabilities = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
+  };
+};
+```
+
 ### 13.2 kernel 操作の抽象
 
 | 操作 | Linux | FreeBSD | NixOS |
@@ -859,7 +894,11 @@ spec:
 kind: DSLiteTunnel
 metadata: { name: ds-lite }
 spec:
-  localIPv6Source: ${DHCPv6PrefixDelegation/wan-pd.status.currentPrefix}
+  interface: wan
+  tunnelName: ds-lite0
+  localAddressSource: delegatedAddress
+  localDelegatedAddress: lan
+  localAddressSuffix: "::3"
   aftrSource:      ${DHCPv6Information/wan-info.status.aftrName}
   # NGN HGW 経由では aftrSource が空になり得る。
   # AFTR FQDN は public DNS ではなく routerd 管理 dnsmasq の条件付きフォワーダー経由で解決する。
@@ -902,6 +941,26 @@ spec:
 PD bound から AAAA 応答開始まで ~1.5s (詳細 timeline は前 doc eventbus § 17.2)。
 
 逆向き (PD 失効 → AAAA 停止) は ownerRefs cascade で自動。
+
+### 14.1 DS-Lite real install notes
+
+router05 の実反映では `routerd-dhcpv6-client` からの RDNSS を
+`DNSResolverUpstream` に流し、routerd 管理 dnsmasq 経由で
+`gw.transix.jp` の AAAA を解決してから tunnel を作る。NGN HGW 経由では
+DHCPv6 Information Reply に AFTR option が落ちないため、production path は
+`aftrFQDN` または `aftrIPv6` の static fallback である。
+
+`DSLiteTunnel` は delegated prefix から local endpoint `/128` を導出し、
+`localDelegatedAddress` の interface に materialize してから ip6tnl を作成する。
+これにより controller chain を再起動しても、PD daemon がすでに Bound の状態から
+初期 status を bootstrap して `DSLiteTunnel -> IPv4Route -> WANEgressPolicy -> NAT44Rule`
+まで再収束できる。
+
+router05 validation (2026-05-03): `ds-routerd-test@ens18` を実作成、
+`gw.transix.jp` を条件付き forwarder 経由で解決、IPv4 default route を tunnel に向け、
+`curl -4 https://www.google.com` が成功した。NAT44 は `routerd_nat` table を controller が
+再生成し、RFC1918 LAN source を `ds-routerd-test` へ masquerade する。
+router02/router04 の PD daemon soak には影響なし。
 
 ---
 
@@ -1043,7 +1102,7 @@ memory 「PD broken 時に AAAA 出さない」「PD 取得は時間と共に必
 |-------|------|------|
 | **0. 土台** | `pkg/daemonapi` 拡張、`pkg/bus`、`pkg/source`、`pkg/controller/framework`、`cmd/routerd-dhcpv6-client` (PD daemon、ablation flag 移植) | pve05 で daemon 単体起動 + PD 取得 |
 | **1. 1 chain** | `LANAddressController`、`DNSAnswerController`、`PrefixDelegationController` を実装。daemon → bus → controller → sink の 1 chain を動かす | PD bound から dnsmasq AAAA 開始まで < 5s 計測 |
-| **1.5 LAN/WAN service** | dnsmasq wrap を拡張し、`DHCPv4Server`, `DHCPv4Reservation`, `DHCPv6Server` stateful/stateless/both, `IPv6RouterAdvertisement` PIO/RDNSS/DNSSL/M/O flag, `DHCPv4Relay`, `DNSAnswerScope` hostRecords/local domain/DDNS/DNSSEC を同一 instance に統合。続けて `NAT44Rule` の outbound NAPT と `/proc/net/nf_conntrack` aggregate observer を追加する。stateful firewall/filter chain は棚上げし no-op のまま | router05 dry-run で port 1053 test instance の config 出力と syntax、nftables NAT ruleset text、conntrack procfs snapshot を確認 |
+| **1.5 LAN/WAN service** | dnsmasq wrap を拡張し、`DHCPv4Server`, `DHCPv4Reservation`, `DHCPv6Server` stateful/stateless/both, `IPv6RouterAdvertisement` PIO/RDNSS/DNSSL/M/O flag, `DHCPv4Relay`, `DNSAnswerScope` hostRecords/local domain/DDNS/DNSSEC を同一 instance に統合。続けて `NAT44Rule` の outbound NAPT と `/proc/net/nf_conntrack` aggregate observer を追加し、router05 で DS-Lite tunnel / IPv4 default route / NAT44 を dry-run 解除する。stateful firewall/filter chain は棚上げし no-op のまま | router05 で port 1053 test instance の config 出力と syntax、AFTR 条件付き DNS resolve、`ds-routerd-test` 実 tunnel、IPv4 `curl`、nftables NAT table、conntrack procfs snapshot を確認 |
 | **2. cascade** | `IPv6RouterAdvertisement`, `DHCPv6Information`, `DSLiteTunnel`, `IPv4Route` 関連 controller、`WANEgressPolicy`、`HealthCheck`、`EventRule`、`DerivedEvent` engine | PD → DS-Lite → AAAA cascade 全 ~1.5s で完走 |
 | **3. config 取扱** | `ConfigWatcher` (notify only)、`ConfigLoader` (明示 trigger)、`routerctl plan/apply/confirm`、commit-confirmed | リモート設定変更 → SSH 切断 → 自動 rollback テスト |
 | **4. demolition** | § 18.2 を一気に削除、`pkg/api/specs.go` 縮小、`pkg/apply/engine.go` 縮小、`pkg/state/pdlease.go` 簡略化、test fixture 全更新 | go test ./... 通過、pve05-07 全 host で 24h × 2 cycle 安定 |

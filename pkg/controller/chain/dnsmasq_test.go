@@ -151,3 +151,30 @@ func TestDSLiteTunnelResolveRemoteDirectIPv6SkipsDNS(t *testing.T) {
 		t.Fatalf("resolved name=%q remote=%q", name, remote)
 	}
 }
+
+func TestDSLiteTunnelLocalDelegatedAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lo"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.IPv6DelegatedAddressSpec{
+			Interface:     "lo",
+			PrefixSource:  "${DHCPv6PrefixDelegation/wan-pd.status.currentPrefix}",
+			SubnetID:      "1",
+			AddressSuffix: "::1",
+		}},
+	}}}
+	store := mapStore{
+		api.NetAPIVersion + "/DHCPv6PrefixDelegation/wan-pd": {"currentPrefix": "2409:10:3d60:1220::/60"},
+	}
+	controller := DSLiteTunnelController{Router: router, Store: store}
+	local, ifname, err := controller.localAddress(api.DSLiteTunnelSpec{
+		LocalAddressSource:    "delegatedAddress",
+		LocalDelegatedAddress: "lan",
+		LocalAddressSuffix:    "::3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local != "2409:10:3d60:1221::3" || ifname != "lo" {
+		t.Fatalf("local=%q ifname=%q", local, ifname)
+	}
+}
