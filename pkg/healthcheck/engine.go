@@ -144,6 +144,7 @@ func (c *Controller) runResource(ctx context.Context, resource api.Resource) {
 }
 
 func (c *Controller) ProbeOnce(ctx context.Context, resource api.Resource, spec api.HealthCheckSpec) error {
+	spec = ResolveSpec(c.Router, spec)
 	timeout := durationOr(spec.Timeout, 3*time.Second)
 	if timeout <= 0 {
 		timeout = 3 * time.Second
@@ -193,6 +194,15 @@ func (c *Controller) saveEventStatus(event daemonapi.DaemonEvent) {
 		status["message"] = event.Message
 	}
 	_ = c.Store.SaveObjectStatus(event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name, status)
+}
+
+// ResolveSpec converts routerd resource names to the OS interface names used
+// by probe runtime calls. Standalone daemon flags still accept raw OS names.
+func ResolveSpec(router *api.Router, spec api.HealthCheckSpec) api.HealthCheckSpec {
+	if strings.TrimSpace(spec.SourceInterface) != "" {
+		spec.SourceInterface = resolveInterfaceName(router, spec.SourceInterface)
+	}
+	return spec
 }
 
 func Probe(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
@@ -374,6 +384,53 @@ func dialerForSpec(spec api.HealthCheckSpec, network string) (net.Dialer, error)
 	return dialer, nil
 }
 
+func resolveInterfaceName(router *api.Router, name string) string {
+	name = strings.TrimSpace(name)
+	if router == nil || name == "" {
+		return name
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Metadata.Name != name {
+			continue
+		}
+		switch resource.Kind {
+		case "Interface":
+			spec, err := resource.InterfaceSpec()
+			if err == nil && strings.TrimSpace(spec.IfName) != "" {
+				return spec.IfName
+			}
+		case "DSLiteTunnel":
+			spec, err := resource.DSLiteTunnelSpec()
+			if err == nil {
+				return firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
+			}
+		case "PPPoEInterface":
+			spec, err := resource.PPPoEInterfaceSpec()
+			if err == nil {
+				return firstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
+			}
+		case "Bridge":
+			spec, err := resource.BridgeSpec()
+			if err == nil {
+				return firstNonEmpty(spec.IfName, resource.Metadata.Name)
+			}
+		case "VRF":
+			spec, err := resource.VRFSpec()
+			if err == nil {
+				return firstNonEmpty(spec.IfName, resource.Metadata.Name)
+			}
+		case "VXLANTunnel":
+			spec, err := resource.VXLANTunnelSpec()
+			if err == nil {
+				return firstNonEmpty(spec.IfName, resource.Metadata.Name)
+			}
+		case "WireGuardInterface":
+			return resource.Metadata.Name
+		}
+	}
+	return name
+}
+
 func listenAddress(spec api.HealthCheckSpec, fallback string) string {
 	if spec.SourceAddress == "" {
 		return fallback
@@ -535,6 +592,15 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func resolveICMPTarget(ctx context.Context, target, family string) (net.IP, string, error) {

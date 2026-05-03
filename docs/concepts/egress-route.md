@@ -80,6 +80,10 @@ spec:
 ```
 
 On Linux, `routerd-healthcheck` uses `SO_BINDTODEVICE` for
-`sourceInterface`. It also binds to `sourceAddress` when that field is set.
-`via` records the intended gateway for the probe path. Route installation still
-belongs to route policy resources.
+`sourceInterface`. In routerd config, `sourceInterface` names an `Interface`,
+`DSLiteTunnel`, or similar network resource. routerd resolves that resource to
+the OS interface name before running the probe. Standalone
+`routerd-healthcheck` flags still take the OS interface name directly. It also
+binds to `sourceAddress` when that field is set. `via` records the intended
+gateway for the probe path. Route installation still belongs to route policy
+resources.

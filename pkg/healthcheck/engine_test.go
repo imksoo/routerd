@@ -82,6 +82,64 @@ func TestProbeTCPInvalidSourceAddress(t *testing.T) {
 	}
 }
 
+func TestResolveSpecSourceInterfaceResourceNames(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "ens19"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+			Metadata: api.ObjectMeta{Name: "ds-lite"},
+			Spec:     api.DSLiteTunnelSpec{TunnelName: "ds-routerd"},
+		},
+	}}}
+	if got := ResolveSpec(router, api.HealthCheckSpec{SourceInterface: "lan"}).SourceInterface; got != "ens19" {
+		t.Fatalf("Interface sourceInterface resolved to %q", got)
+	}
+	if got := ResolveSpec(router, api.HealthCheckSpec{SourceInterface: "ds-lite"}).SourceInterface; got != "ds-routerd" {
+		t.Fatalf("DSLite sourceInterface resolved to %q", got)
+	}
+	if got := ResolveSpec(router, api.HealthCheckSpec{SourceInterface: "eth-test"}).SourceInterface; got != "eth-test" {
+		t.Fatalf("raw sourceInterface resolved to %q", got)
+	}
+}
+
+func TestControllerProbeUsesResolvedSourceInterface(t *testing.T) {
+	store := mapStore{}
+	seen := make(chan api.HealthCheckSpec, 1)
+	controller := &Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19"},
+			},
+		}}},
+		Bus:   bus.New(),
+		Store: store,
+		Now:   fixedNow(),
+		Probe: func(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
+			seen <- spec
+			return ProbeResult{OK: true}
+		},
+	}
+	resource := healthResource("internet")
+	resource.Spec = api.HealthCheckSpec{Target: "1.1.1.1", SourceInterface: "lan"}
+	spec, err := resource.HealthCheckSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.ProbeOnce(context.Background(), resource, spec); err != nil {
+		t.Fatal(err)
+	}
+	got := <-seen
+	if got.SourceInterface != "ens19" {
+		t.Fatalf("probe sourceInterface = %q", got.SourceInterface)
+	}
+}
+
 func TestProbeDNSSuccessAndFailure(t *testing.T) {
 	packet, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {

@@ -82,6 +82,10 @@ spec:
 
 Linux では、`routerd-healthcheck` が `sourceInterface` に
 `SO_BINDTODEVICE` を使います。
+routerd の設定では、`sourceInterface` に `Interface` や
+`DSLiteTunnel` などのネットワークリソース名を書きます。
+routerd は probe を実行する前に、リソース名を OS のインターフェース名へ解決します。
+単体の `routerd-healthcheck` の引数では、OS のインターフェース名を直接指定します。
 `sourceAddress` がある場合は、送信元アドレスを bind します。
 `via` は probe 経路の gateway を記録します。
 経路の作成は route policy リソースが担当します。
