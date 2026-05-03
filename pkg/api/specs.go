@@ -210,6 +210,14 @@ type IPv4DHCPAddressSpec struct {
 	RouteMetric int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
 }
 
+type DHCPv4LeaseSpec struct {
+	Interface        string `yaml:"interface" json:"interface"`
+	Hostname         string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	RequestedAddress string `yaml:"requestedAddress,omitempty" json:"requestedAddress,omitempty"`
+	ClassID          string `yaml:"classID,omitempty" json:"classID,omitempty"`
+	ClientID         string `yaml:"clientID,omitempty" json:"clientID,omitempty"`
+}
+
 type IPv4StaticRouteSpec struct {
 	Destination string `yaml:"destination" json:"destination"`
 	Via         string `yaml:"via" json:"via"`
@@ -858,6 +866,10 @@ func (r Resource) IPv4StaticAddressSpec() (IPv4StaticAddressSpec, error) {
 
 func (r Resource) IPv4DHCPAddressSpec() (IPv4DHCPAddressSpec, error) {
 	return specAs[IPv4DHCPAddressSpec](r)
+}
+
+func (r Resource) DHCPv4LeaseSpec() (DHCPv4LeaseSpec, error) {
+	return specAs[DHCPv4LeaseSpec](r)
 }
 
 func (r Resource) IPv4StaticRouteSpec() (IPv4StaticRouteSpec, error) {

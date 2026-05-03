@@ -67,6 +67,8 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		return []resource.Intent{artifact("routerd.dhcp4.client", aliases[spec.Interface], resource.ActionEnsure, "routerd-dhcp4-client", nil)}
+	case "DHCPv4Lease":
+		return []resource.Intent{artifact("routerd.dhcp4.client", res.Metadata.Name, resource.ActionEnsure, "routerd-dhcp4-client", nil)}
 	case "WireGuardInterface":
 		return []resource.Intent{artifact("net.wireguard.interface", res.Metadata.Name, resource.ActionEnsure, "wg", nil)}
 	case "WireGuardPeer":

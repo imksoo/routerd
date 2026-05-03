@@ -88,6 +88,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
 		case "IPv4DHCPAddress":
 			e.observeDHCP(res, aliases, policies, "ipv4", includePlan, &rr)
+		case "DHCPv4Lease":
+			e.observeDHCPv4Lease(res, aliases, policies, includePlan, &rr)
 		case "IPv4DHCPServer":
 			e.observeIPv4DHCPServer(res, includePlan, &rr)
 		case "IPv4DHCPReservation":
@@ -1366,6 +1368,46 @@ func (e *Engine) observeDHCP(res api.Resource, aliases map[string]string, polici
 	}
 }
 
+func (e *Engine) observeDHCPv4Lease(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPv4LeaseSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := aliases[spec.Interface]
+	policy := policies[spec.Interface]
+
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["ifname"] = ifname
+	rr.Observed["client"] = "routerd-dhcp4-client"
+	if spec.Hostname != "" {
+		rr.Observed["hostname"] = spec.Hostname
+	}
+	if spec.RequestedAddress != "" {
+		rr.Observed["requestedAddress"] = spec.RequestedAddress
+	}
+	if spec.ClassID != "" {
+		rr.Observed["classID"] = spec.ClassID
+	}
+	if spec.ClientID != "" {
+		rr.Observed["clientID"] = spec.ClientID
+	}
+
+	if includePlan {
+		if !policy.Managed || policy.Owner == "external" {
+			rr.Plan = append(rr.Plan, "observe daemon lease only; referenced interface is externally managed")
+			return
+		}
+		if policy.RequiresAdoption {
+			rr.Phase = "RequiresAdoption"
+			rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd applies DHCPv4 lease")
+			return
+		}
+		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-dhcp4-client for %s and apply DHCPv4 address/default route from daemon status", ifname))
+	}
+}
+
 func (e *Engine) observeIPv6RAAddress(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
 	iface := stringSpec(res, "interface")
 	ifname := aliases[iface]
@@ -1810,6 +1852,19 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.Interface
 		case "client":
 			return spec.Client
+		}
+	case api.DHCPv4LeaseSpec:
+		switch key {
+		case "interface":
+			return spec.Interface
+		case "hostname":
+			return spec.Hostname
+		case "requestedAddress":
+			return spec.RequestedAddress
+		case "classID":
+			return spec.ClassID
+		case "clientID":
+			return spec.ClientID
 		}
 	case api.IPv4DHCPServerSpec:
 		switch key {

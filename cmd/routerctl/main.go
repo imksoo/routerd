@@ -573,6 +573,9 @@ func canonicalShowKind(kind string) string {
 		"ipv4staticaddress":     "IPv4StaticAddress",
 		"ipv4dhcp":              "IPv4DHCPAddress",
 		"ipv4dhcpaddress":       "IPv4DHCPAddress",
+		"dhcp4lease":            "DHCPv4Lease",
+		"dhcpv4lease":           "DHCPv4Lease",
+		"ipv4dhcplease":         "DHCPv4Lease",
 		"dhcpv4host":            "DHCPv4HostReservation",
 		"dhcpv4hostreservation": "DHCPv4HostReservation",
 		"ipv4dhcpreservation":   "IPv4DHCPReservation",
@@ -851,6 +854,9 @@ func observeResource(res api.Resource, aliases map[string]string, opts showOptio
 	case "IPv4DHCPAddress":
 		spec, _ := res.IPv4DHCPAddressSpec()
 		return map[string]any{"interface": aliases[spec.Interface], "addresses": interfaceIPv4Addresses(aliases[spec.Interface])}
+	case "DHCPv4Lease":
+		spec, _ := res.DHCPv4LeaseSpec()
+		return map[string]any{"interface": aliases[spec.Interface]}
 	case "IPv6PrefixDelegation":
 		spec, _ := res.IPv6PrefixDelegationSpec()
 		return map[string]any{"interface": aliases[spec.Interface]}
@@ -947,6 +953,7 @@ func statePrefixForKind(kind, name string) string {
 		"Interface":         "interface.",
 		"IPv4StaticAddress": "ipv4StaticAddress.",
 		"IPv4DHCPAddress":   "ipv4DHCPAddress.",
+		"DHCPv4Lease":       "dhcpv4Lease.",
 		"IPv4SourceNAT":     "ipv4SourceNAT.",
 		"DSLiteTunnel":      "dsLiteTunnel.",
 		"PPPoEInterface":    "pppoeInterface.",

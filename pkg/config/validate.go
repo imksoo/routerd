@@ -193,7 +193,7 @@ func Validate(router *api.Router) error {
 
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPScope", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface":
+		case "IPv4StaticAddress", "IPv4DHCPAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPScope", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface":
 			name, err := interfaceRef(res)
 			if err != nil {
 				return err
@@ -1072,6 +1072,26 @@ func validateResource(res api.Resource) error {
 	case "IPv4DHCPAddress", "IPv6DHCPAddress", "IPv6RAAddress":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+	case "DHCPv4Lease":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DHCPv4LeaseSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Interface == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		if spec.RequestedAddress != "" {
+			addr, err := netip.ParseAddr(spec.RequestedAddress)
+			if err != nil || !addr.Is4() {
+				return fmt.Errorf("%s spec.requestedAddress must be an IPv4 address", res.ID())
+			}
+		}
+		if strings.ContainsAny(spec.Hostname, " \t\n\r") {
+			return fmt.Errorf("%s spec.hostname must not contain whitespace", res.ID())
 		}
 	case "IPv4StaticRoute":
 		if res.APIVersion != api.NetAPIVersion {
@@ -2511,6 +2531,9 @@ func interfaceRef(res api.Resource) (string, error) {
 		return spec.Interface, err
 	case "IPv4DHCPAddress":
 		spec, err := res.IPv4DHCPAddressSpec()
+		return spec.Interface, err
+	case "DHCPv4Lease":
+		spec, err := res.DHCPv4LeaseSpec()
 		return spec.Interface, err
 	case "IPv4StaticRoute":
 		spec, err := res.IPv4StaticRouteSpec()

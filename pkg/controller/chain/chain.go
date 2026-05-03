@@ -20,6 +20,7 @@ import (
 	"routerd/pkg/bus"
 	"routerd/pkg/conntrack"
 	"routerd/pkg/controller/conntrackobserver"
+	"routerd/pkg/controller/dhcp4lease"
 	"routerd/pkg/controller/nat44"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/derived"
@@ -41,6 +42,7 @@ type Options struct {
 	DryRunRoute       bool
 	DryRunRA          bool
 	DryRunDHCPv6      bool
+	DryRunDHCP4Lease  bool
 	DryRunNAT         bool
 	DnsmasqCommand    string
 	DnsmasqConfig     string
@@ -88,6 +90,26 @@ func (r *Runner) Start(ctx context.Context) error {
 		}()
 	}
 	for _, resource := range r.Router.Spec.Resources {
+		if resource.Kind != "DHCPv4Lease" {
+			continue
+		}
+		name := resource.Metadata.Name
+		socket := r.Opts.DaemonSockets[name]
+		if socket == "" {
+			socket = filepath.Join("/run/routerd/dhcp4-client", name+".sock")
+		}
+		source := daemonsource.DaemonSource{
+			Daemon:    daemonapi.DaemonRef{Name: "routerd-dhcp4-client-" + name, Kind: "routerd-dhcp4-client", Instance: name},
+			Socket:    socket,
+			Publisher: r.Bus,
+		}
+		go func() {
+			if err := source.Run(ctx); err != nil && ctx.Err() == nil {
+				logger.Warn("dhcp4 daemon source stopped", "resource", name, "error", err)
+			}
+		}()
+	}
+	for _, resource := range r.Router.Spec.Resources {
 		if resource.Kind != "HealthCheck" {
 			continue
 		}
@@ -120,6 +142,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	ra := IPv6RouterAdvertisementController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRA, Logger: logger}
 	dhcp6 := IPv6DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
+	dhcp4Lease := dhcp4lease.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCP4Lease, Logger: logger}
 	dns := DNSAnswerController{Router: r.Router, Bus: r.Bus, Store: r.Store, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
 	wan := wanegress.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
@@ -138,10 +161,21 @@ func (r *Runner) Start(ctx context.Context) error {
 	route.Start(ctx)
 	ra.Start(ctx)
 	dhcp6.Start(ctx)
+	dhcp4Lease.Start(ctx)
 	dns.Start(ctx)
 	wan.Start(ctx)
 	nat.Start(ctx)
 	conntrackObs.Start(ctx)
+	go func() {
+		for _, resource := range r.Router.Spec.Resources {
+			if resource.Kind != "DHCPv4Lease" {
+				continue
+			}
+			if err := dhcp4Lease.Reconcile(ctx, resource.Metadata.Name); err != nil && logger != nil && ctx.Err() == nil {
+				logger.Warn("initial dhcp4 lease reconcile failed", "resource", resource.Metadata.Name, "error", err)
+			}
+		}
+	}()
 	if routerNeedsDnsmasq(r.Router) {
 		go func() {
 			if err := renderAndEnsureDnsmasq(ctx, r.Router, r.Store, r.Opts.DnsmasqCommand, r.Opts.DnsmasqConfig, r.Opts.DnsmasqPID, r.Opts.DnsmasqPort); err != nil && logger != nil && ctx.Err() == nil {
