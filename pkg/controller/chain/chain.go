@@ -22,6 +22,7 @@ import (
 	"routerd/pkg/controller/conntrackobserver"
 	"routerd/pkg/controller/dhcp4lease"
 	"routerd/pkg/controller/nat44"
+	"routerd/pkg/controller/pppoesession"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/derived"
 	"routerd/pkg/eventrule"
@@ -36,22 +37,23 @@ type Store interface {
 }
 
 type Options struct {
-	DaemonSockets     map[string]string
-	DryRunAddress     bool
-	DryRunDSLite      bool
-	DryRunRoute       bool
-	DryRunRA          bool
-	DryRunDHCPv6      bool
-	DryRunDHCP4Lease  bool
-	DryRunNAT         bool
-	DnsmasqCommand    string
-	DnsmasqConfig     string
-	DnsmasqPID        string
-	DnsmasqPort       int
-	NftablesPath      string
-	NftCommand        string
-	ConntrackInterval time.Duration
-	Logger            *slog.Logger
+	DaemonSockets      map[string]string
+	DryRunAddress      bool
+	DryRunDSLite       bool
+	DryRunRoute        bool
+	DryRunRA           bool
+	DryRunDHCPv6       bool
+	DryRunDHCP4Lease   bool
+	DryRunPPPoESession bool
+	DryRunNAT          bool
+	DnsmasqCommand     string
+	DnsmasqConfig      string
+	DnsmasqPID         string
+	DnsmasqPort        int
+	NftablesPath       string
+	NftCommand         string
+	ConntrackInterval  time.Duration
+	Logger             *slog.Logger
 }
 
 type Runner struct {
@@ -133,6 +135,33 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
+	for _, resource := range r.Router.Spec.Resources {
+		if resource.Kind != "PPPoESession" {
+			continue
+		}
+		spec, err := resource.PPPoESessionSpec()
+		if err != nil {
+			continue
+		}
+		name := resource.Metadata.Name
+		socket := spec.SocketSource
+		if socket == "" {
+			socket = r.Opts.DaemonSockets[name]
+		}
+		if socket == "" {
+			socket = filepath.Join("/run/routerd/pppoe-client", name+".sock")
+		}
+		source := daemonsource.DaemonSource{
+			Daemon:    daemonapi.DaemonRef{Name: "routerd-pppoe-client-" + name, Kind: "routerd-pppoe-client", Instance: name},
+			Socket:    socket,
+			Publisher: r.Bus,
+		}
+		go func() {
+			if err := source.Run(ctx); err != nil && ctx.Err() == nil {
+				logger.Warn("pppoe daemon source stopped", "resource", name, "error", err)
+			}
+		}()
+	}
 
 	pd := PrefixDelegationController{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
@@ -143,6 +172,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	ra := IPv6RouterAdvertisementController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRA, Logger: logger}
 	dhcp6 := IPv6DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
 	dhcp4Lease := dhcp4lease.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCP4Lease, Logger: logger}
+	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
 	dns := DNSAnswerController{Router: r.Router, Bus: r.Bus, Store: r.Store, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
 	wan := wanegress.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
@@ -162,6 +192,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	ra.Start(ctx)
 	dhcp6.Start(ctx)
 	dhcp4Lease.Start(ctx)
+	pppoeSession.Start(ctx)
 	dns.Start(ctx)
 	wan.Start(ctx)
 	nat.Start(ctx)
@@ -173,6 +204,16 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 			if err := dhcp4Lease.Reconcile(ctx, resource.Metadata.Name); err != nil && logger != nil && ctx.Err() == nil {
 				logger.Warn("initial dhcp4 lease reconcile failed", "resource", resource.Metadata.Name, "error", err)
+			}
+		}
+	}()
+	go func() {
+		for _, resource := range r.Router.Spec.Resources {
+			if resource.Kind != "PPPoESession" {
+				continue
+			}
+			if err := pppoeSession.Reconcile(ctx, resource.Metadata.Name); err != nil && logger != nil && ctx.Err() == nil {
+				logger.Warn("initial pppoe session reconcile failed", "resource", resource.Metadata.Name, "error", err)
 			}
 		}
 	}()

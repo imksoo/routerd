@@ -74,6 +74,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], includePlan, &rr)
 		case "PPPoEInterface":
 			e.observePPPoEInterface(res, aliases, includePlan, &rr)
+		case "PPPoESession":
+			e.observePPPoESession(res, aliases, includePlan, &rr)
 		case "WireGuardInterface":
 			e.observeWireGuardInterface(res, includePlan, &rr)
 		case "WireGuardPeer":
@@ -530,6 +532,31 @@ func (e *Engine) observePPPoEInterface(res api.Resource, aliases map[string]stri
 		if spec.Managed {
 			rr.Plan = append(rr.Plan, fmt.Sprintf("manage systemd unit routerd-pppoe-%s.service", res.Metadata.Name))
 		}
+	}
+}
+
+func (e *Engine) observePPPoESession(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.PPPoESessionSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	lowerIfName := aliases[spec.Interface]
+	auth := defaultString(spec.AuthMethod, "chap")
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["lowerIfname"] = lowerIfName
+	rr.Observed["client"] = "routerd-pppoe-client"
+	rr.Observed["authMethod"] = auth
+	rr.Observed["username"] = spec.Username
+	if spec.ServiceName != "" {
+		rr.Observed["serviceName"] = spec.ServiceName
+	}
+	if spec.ACName != "" {
+		rr.Observed["acName"] = spec.ACName
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-pppoe-client for %s and observe PPPoE IPCP status from daemon", lowerIfName))
 	}
 }
 
@@ -1836,6 +1863,15 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.IfName
 		case "interface":
 			return spec.Interface
+		}
+	case api.PPPoESessionSpec:
+		switch key {
+		case "interface":
+			return spec.Interface
+		case "authMethod":
+			return spec.AuthMethod
+		case "username":
+			return spec.Username
 		}
 	case api.IPv4StaticAddressSpec:
 		switch key {

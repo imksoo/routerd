@@ -55,6 +55,16 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			artifact("file", "/usr/local/etc/mpd5/mpd.conf", resource.ActionEnsure, "mpd5", nil),
 			artifact("rc.d.service", "mpd5", resource.ActionEnsure, "service", nil),
 		}
+	case "PPPoESession":
+		spec, err := res.PPPoESessionSpec()
+		if err != nil {
+			return nil
+		}
+		ifname := defaultString(spec.Interface, res.Metadata.Name)
+		return []resource.Intent{
+			artifact("routerd.pppoe.client", res.Metadata.Name, resource.ActionEnsure, "routerd-pppoe-client", map[string]string{"interface": ifname}),
+			artifact("unix.socket", "/run/routerd/pppoe-client/"+res.Metadata.Name+".sock", resource.ActionEnsure, "routerd-pppoe-client", nil),
+		}
 	case "IPv4StaticAddress":
 		spec, err := res.IPv4StaticAddressSpec()
 		if err != nil {

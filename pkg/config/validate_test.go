@@ -188,6 +188,38 @@ func TestValidatePPPoEInterfaceRequiresOnePasswordSource(t *testing.T) {
 	}
 }
 
+func TestValidatePPPoESession(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan-ether"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
+				Metadata: api.ObjectMeta{Name: "softether"},
+				Spec: api.PPPoESessionSpec{
+					Interface:       "wan-ether",
+					AuthMethod:      "chap",
+					Username:        "open@open.ad.jp",
+					Password:        "open",
+					MTU:             1454,
+					MRU:             1454,
+					LCPEchoInterval: 30,
+					LCPEchoFailure:  4,
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate PPPoE session: %v", err)
+	}
+}
+
 func TestValidateTierSResources(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

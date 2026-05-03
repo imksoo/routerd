@@ -220,6 +220,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "Interface", api.InterfaceSpec{}),
 			resourceSchema(api.NetAPIVersion, "Link", api.LinkSpec{}),
 			resourceSchema(api.NetAPIVersion, "PPPoEInterface", api.PPPoEInterfaceSpec{}),
+			resourceSchema(api.NetAPIVersion, "PPPoESession", api.PPPoESessionSpec{}),
 			resourceSchema(api.NetAPIVersion, "WireGuardInterface", api.WireGuardInterfaceSpec{}),
 			resourceSchema(api.NetAPIVersion, "WireGuardPeer", api.WireGuardPeerSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPsecConnection", api.IPsecConnectionSpec{}),

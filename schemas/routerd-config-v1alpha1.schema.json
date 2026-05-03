@@ -706,6 +706,100 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "PPPoESession",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "acName": {
+                        "type": "string"
+                      },
+                      "authMethod": {
+                        "enum": [
+                          "chap",
+                          "pap",
+                          "both"
+                        ],
+                        "type": "string"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "lcpEchoFailure": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "lcpEchoInterval": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "mru": {
+                        "maximum": 1500,
+                        "minimum": 576,
+                        "type": "integer"
+                      },
+                      "mtu": {
+                        "maximum": 1500,
+                        "minimum": 576,
+                        "type": "integer"
+                      },
+                      "password": {
+                        "type": "string"
+                      },
+                      "passwordFile": {
+                        "type": "string"
+                      },
+                      "serviceName": {
+                        "type": "string"
+                      },
+                      "socketSource": {
+                        "type": "string"
+                      },
+                      "username": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "interface",
+                      "username"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "WireGuardInterface",
                     "type": "string"
                   },

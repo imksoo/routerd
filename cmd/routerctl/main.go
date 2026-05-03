@@ -597,6 +597,8 @@ func canonicalShowKind(kind string) string {
 		"dslitetunnel":          "DSLiteTunnel",
 		"pppoe":                 "PPPoEInterface",
 		"pppoeinterface":        "PPPoEInterface",
+		"pppoesession":          "PPPoESession",
+		"pppoeclient":           "PPPoESession",
 		"fw":                    "FirewallPolicy",
 		"firewall":              "FirewallPolicy",
 		"firewallpolicy":        "FirewallPolicy",
@@ -872,6 +874,9 @@ func observeResource(res api.Resource, aliases map[string]string, opts showOptio
 	case "PPPoEInterface":
 		spec, _ := res.PPPoEInterfaceSpec()
 		return observeInterface(firstNonEmpty(spec.IfName, "ppp-"+res.Metadata.Name))
+	case "PPPoESession":
+		spec, _ := res.PPPoESessionSpec()
+		return map[string]any{"interface": aliases[spec.Interface]}
 	case "Hostname":
 		hostname, err := os.Hostname()
 		if err != nil {
@@ -957,6 +962,7 @@ func statePrefixForKind(kind, name string) string {
 		"IPv4SourceNAT":     "ipv4SourceNAT.",
 		"DSLiteTunnel":      "dsLiteTunnel.",
 		"PPPoEInterface":    "pppoeInterface.",
+		"PPPoESession":      "pppoeSession.",
 		"FirewallPolicy":    "firewallPolicy.",
 		"Zone":              "zone.",
 	}

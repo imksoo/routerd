@@ -81,7 +81,7 @@ func Validate(router *api.Router) error {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "VXLANTunnel" {
 			interfaces[res.Metadata.Name] = true
 		}
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "PPPoEInterface" {
+		if res.APIVersion == api.NetAPIVersion && (res.Kind == "PPPoEInterface" || res.Kind == "PPPoESession") {
 			interfaces[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv4DHCPServer" {
@@ -193,7 +193,7 @@ func Validate(router *api.Router) error {
 
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4StaticAddress", "IPv4DHCPAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPScope", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface":
+		case "IPv4StaticAddress", "IPv4DHCPAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPScope", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface", "PPPoESession":
 			name, err := interfaceRef(res)
 			if err != nil {
 				return err
@@ -204,7 +204,7 @@ func Validate(router *api.Router) error {
 			if !interfaces[name] {
 				return fmt.Errorf("%s references missing Interface %q", res.ID(), name)
 			}
-			if res.Kind == "PPPoEInterface" && !baseInterfaces[name] {
+			if (res.Kind == "PPPoEInterface" || res.Kind == "PPPoESession") && !baseInterfaces[name] {
 				return fmt.Errorf("%s spec.interface must reference a base Interface %q", res.ID(), name)
 			}
 		}
@@ -1050,6 +1050,43 @@ func validateResource(res api.Resource) error {
 		case "", "plain":
 		default:
 			return fmt.Errorf("%s spec.secretEncoding must be plain", res.ID())
+		}
+	case "PPPoESession":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.PPPoESessionSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Interface == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		if spec.Username == "" {
+			return fmt.Errorf("%s spec.username is required", res.ID())
+		}
+		if spec.Password == "" && spec.PasswordFile == "" {
+			return fmt.Errorf("%s spec.password or spec.passwordFile is required", res.ID())
+		}
+		if spec.Password != "" && spec.PasswordFile != "" {
+			return fmt.Errorf("%s spec.password and spec.passwordFile are mutually exclusive", res.ID())
+		}
+		switch spec.AuthMethod {
+		case "", "chap", "pap", "both":
+		default:
+			return fmt.Errorf("%s spec.authMethod must be chap, pap, or both", res.ID())
+		}
+		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 1500) {
+			return fmt.Errorf("%s spec.mtu must be within 576-1500", res.ID())
+		}
+		if spec.MRU != 0 && (spec.MRU < 576 || spec.MRU > 1500) {
+			return fmt.Errorf("%s spec.mru must be within 576-1500", res.ID())
+		}
+		if spec.LCPEchoInterval < 0 || spec.LCPEchoFailure < 0 {
+			return fmt.Errorf("%s spec.lcpEchoInterval and spec.lcpEchoFailure must be non-negative", res.ID())
+		}
+		if strings.ContainsAny(spec.ServiceName, "\n\r") || strings.ContainsAny(spec.ACName, "\n\r") {
+			return fmt.Errorf("%s spec.serviceName and spec.acName must not contain newlines", res.ID())
 		}
 	case "IPv4StaticAddress":
 		if res.APIVersion != api.NetAPIVersion {
@@ -2567,6 +2604,9 @@ func interfaceRef(res api.Resource) (string, error) {
 		return spec.Interface, err
 	case "PPPoEInterface":
 		spec, err := res.PPPoEInterfaceSpec()
+		return spec.Interface, err
+	case "PPPoESession":
+		spec, err := res.PPPoESessionSpec()
 		return spec.Interface, err
 	default:
 		return "", fmt.Errorf("%s has no interface reference", res.ID())

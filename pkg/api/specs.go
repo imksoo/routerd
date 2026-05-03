@@ -193,6 +193,21 @@ type PPPoEInterfaceSpec struct {
 	SecretEncoding string `yaml:"secretEncoding,omitempty" json:"secretEncoding,omitempty" jsonschema:"enum=plain"`
 }
 
+type PPPoESessionSpec struct {
+	Interface       string `yaml:"interface" json:"interface"`
+	AuthMethod      string `yaml:"authMethod,omitempty" json:"authMethod,omitempty" jsonschema:"enum=chap,enum=pap,enum=both"`
+	Username        string `yaml:"username" json:"username"`
+	Password        string `yaml:"password,omitempty" json:"password,omitempty"`
+	PasswordFile    string `yaml:"passwordFile,omitempty" json:"passwordFile,omitempty"`
+	MTU             int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=1500"`
+	MRU             int    `yaml:"mru,omitempty" json:"mru,omitempty" jsonschema:"minimum=576,maximum=1500"`
+	ServiceName     string `yaml:"serviceName,omitempty" json:"serviceName,omitempty"`
+	ACName          string `yaml:"acName,omitempty" json:"acName,omitempty"`
+	LCPEchoInterval int    `yaml:"lcpEchoInterval,omitempty" json:"lcpEchoInterval,omitempty" jsonschema:"minimum=0"`
+	LCPEchoFailure  int    `yaml:"lcpEchoFailure,omitempty" json:"lcpEchoFailure,omitempty" jsonschema:"minimum=0"`
+	SocketSource    string `yaml:"socketSource,omitempty" json:"socketSource,omitempty"`
+}
+
 type IPv4StaticAddressSpec struct {
 	Interface          string `yaml:"interface" json:"interface"`
 	Address            string `yaml:"address" json:"address"`
@@ -858,6 +873,10 @@ func (r Resource) VXLANTunnelSpec() (VXLANTunnelSpec, error) {
 
 func (r Resource) PPPoEInterfaceSpec() (PPPoEInterfaceSpec, error) {
 	return specAs[PPPoEInterfaceSpec](r)
+}
+
+func (r Resource) PPPoESessionSpec() (PPPoESessionSpec, error) {
+	return specAs[PPPoESessionSpec](r)
 }
 
 func (r Resource) IPv4StaticAddressSpec() (IPv4StaticAddressSpec, error) {
