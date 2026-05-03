@@ -5,8 +5,8 @@ sidebar_position: 3
 
 # LAN 側サービス
 
-LAN 側の DHCP、DNS、IPv6 RA は、管理対象 dnsmasq インスタンスで提供します。
-routerd は複数のリソースから 1 つの dnsmasq 設定を生成します。
+LAN 側の DHCP と IPv6 RA は管理対象 dnsmasq インスタンスが、DNS は `routerd-dns-resolver` がそれぞれ提供します。
+routerd は複数のリソースから dnsmasq 設定 (DHCP/RA 用) と DNS リゾルバー設定 (`DNSResolver`) を生成します。
 
 ## DHCPv4
 
@@ -90,5 +90,5 @@ Android は DHCPv6 の DNS だけでは名前解決できないためです。
       ddns: true
 ```
 
-最初は予行実行で dnsmasq 設定だけを確認します。
+最初は予行実行で dnsmasq 設定と `DNSResolver` の設定を確認します。
 実際に LAN 端末へ配るのは、管理経路と戻し方を確認してからにしてください。

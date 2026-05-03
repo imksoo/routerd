@@ -44,7 +44,8 @@ routerd 本体はそれらの状態を読み、LAN 側サービス、経路、DN
 
 - DHCPv6-PD で受け取ったプレフィックスを LAN へ展開します。
 - DHCPv6 情報要求、条件付き DNS 転送、DS-Lite、NAT44 を組み合わせます。
-- DHCPv4 クライアント、DHCPv4 サーバー、DHCPv6 サーバー、RA、DNS 応答を dnsmasq で提供します。
+- DHCPv4 サーバー、DHCPv6 サーバー、RA は管理対象 dnsmasq が、DNS の応答と転送は `routerd-dns-resolver` がそれぞれ提供します。
+- DHCPv4 クライアントは `routerd-dhcpv4-client` が担当します。
 - PPPoE、WireGuard、VXLAN、VRF、IPsec 設定生成の土台を扱います。
 - WANEgressPolicy、HealthCheck、EventRule、DerivedEvent で状態に応じた選択を行います。
 - OpenTelemetry の設定がある場合は、メトリクス、ログ、トレースを送信できます。

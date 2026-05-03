@@ -44,14 +44,30 @@ curl --unix-socket /run/routerd/dhcpv4-client/wan.sock http://unix/v1/status
 
 ## dnsmasq
 
-dnsmasq は複数リソースから 1 つの設定を生成します。
-DHCPv4、DHCPv6、RA、DNS 応答、条件付き転送が同じインスタンスに入ります。
+Phase 2.0 以降、dnsmasq は DHCPv4、DHCPv6、DHCP 中継、RA だけを担当します。
+DNS の応答と転送は `routerd-dns-resolver` が受け持ちます。
 
 確認する点:
 
 - 生成された設定に期待する `dhcp-range` があるか。
-- `server=/zone/server` が条件付き転送として入っているか。
-- テスト用に別ポートで動かしている場合、設定どおりのポートを使っているか。
+- `port=0` で DNS 機能が止まっているか (DNS は `routerd-dns-resolver` の責務)。
+- `dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay` が含まれているか (DHCP リース変化を routerd へ通知する経路)。
+- `enable-ra` が必要な構成で入っているか。
+
+## DNS リゾルバー
+
+```bash
+sudo curl --unix-socket /run/routerd/dns-resolver/<resource>.sock http://unix/v1/healthz
+dig @192.168.160.5 router.lab.example A
+dig @192.168.160.5 nwadmin03.lab.example A
+```
+
+`DNSResolver` の動作確認は次の流れで行います。
+
+- 待ち受けが想定アドレスとポートで開いているか (`ss -lnup`)。
+- ローカル権威ゾーンが応答するか (`DNSZone` の手動レコードと DHCP 由来レコード)。
+- 条件付き転送が指定上流へ届いているか (`forward` 応答元、たとえば `transix.jp`)。
+- 既定上流が DoH / DoT / DoQ / 平文 UDP のいずれで応答しているか (`/v1/status` の `sources[].upstreams` を見ます)。
 
 ## DS-Lite
 
