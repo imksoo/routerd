@@ -5,12 +5,12 @@ slug: /how-to/dns-private-upstream
 
 # 暗号化 DNS 上流
 
-routerd は、ローカル DNS 代理を起動できます。
-管理対象の dnsmasq は、LAN からの通常の DNS 問い合わせをローカル代理へ転送します。
-代理は、設定された優先順で上流 DNS を選びます。
+routerd は、ローカル DNS プロキシーを起動できます。
+管理対象の dnsmasq は、LAN からの通常の DNS 問い合わせをローカルプロキシーへ転送します。
+プロキシーは、設定された優先順で上流 DNS を選びます。
 
 デーモン名は当面 `routerd-doh-proxy` のままです。
-native backend は、次の URL 形式を扱います。
+組み込みバックエンド (`backend: native`) は、次の URL 形式を扱います。
 
 | URL 形式 | プロトコル | 既定ポート |
 | --- | --- | --- |
@@ -64,9 +64,9 @@ routerd は、正常な上流のうち最も上にあるものを使います。
 ## 注意
 
 cloudflared 2026.2.0 では `proxy-dns` が削除されました。
-新しい設定では `backend: native` を使います。
-`cloudflared` と `dnscrypt` の外部 backend は、過去の実験用として API に残しています。
-router05 のラボでは native backend を使います。
+新しい設定では組み込みバックエンド (`backend: native`) を使います。
+`cloudflared` と `dnscrypt` の外部バックエンドは、過去の実験用として API に残しています。
+router05 のラボでも組み込みバックエンドを使っています。
 
 プロバイダー固有のアカウント識別子は、共有する設定例に書かないでください。
 本番用の URL は、そのホストだけの YAML に書きます。

@@ -83,7 +83,7 @@ DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
 | `DHCPv6Scope` | DHCPv6 の範囲を表します。 |
 | `DNSAnswerScope` | host-record、ローカルドメイン、DDNS、DNSSEC などの dnsmasq DNS 応答を表します。 |
 | `DNSResolverUpstream` | 既定の上流 DNS と、ゾーンごとの条件付き転送を表します。 |
-| `DoHProxy` | dnsmasq から参照するローカル DNS 代理です。DoH、DoT、DoQ、平文 UDP DNS を優先順に扱います。 |
+| `DoHProxy` | dnsmasq から参照するローカル DNS プロキシーです。DoH、DoT、DoQ、平文 UDP DNS を優先順に扱います。 |
 | `DNSConditionalForwarder` | 条件付き DNS 転送の互換的な入口です。 |
 
 Android は DHCPv6 の DNS だけでは名前解決を完結できないため、IPv6 LAN では `IPv6RouterAdvertisement.spec.rdnss` を設定します。
