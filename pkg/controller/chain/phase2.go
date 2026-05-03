@@ -337,15 +337,16 @@ func (c IPv6RouterAdvertisementController) reconcile(ctx context.Context) error 
 }
 
 type DHCPv6ServerController struct {
-	Router     *api.Router
-	Bus        *bus.Bus
-	Store      Store
-	DryRun     bool
-	Command    string
-	ConfigPath string
-	PIDFile    string
-	Port       int
-	Logger     *slog.Logger
+	Router          *api.Router
+	Bus             *bus.Bus
+	Store           Store
+	DryRun          bool
+	Command         string
+	ConfigPath      string
+	PIDFile         string
+	Port            int
+	ListenAddresses []string
+	Logger          *slog.Logger
 }
 
 func (c DHCPv6ServerController) Start(ctx context.Context) {
@@ -375,7 +376,7 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 		if port == 0 {
 			port = 1053
 		}
-		changed, err := writeDnsmasqConfig(c.Router, c.Store, configPath, pidFile, port)
+		changed, err := writeDnsmasqConfig(c.Router, c.Store, configPath, pidFile, port, c.ListenAddresses)
 		if err != nil {
 			return err
 		}

@@ -1,7 +1,10 @@
 package chain
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"routerd/pkg/api"
@@ -129,6 +132,38 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 		if !containsLine(records, want) {
 			t.Fatalf("dnsmasq host lines missing %q:\n%#v", want, records)
 		}
+	}
+}
+
+func TestWriteDnsmasqConfigUsesListenAddresses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dnsmasq.conf")
+	changed, err := writeDnsmasqConfig(&api.Router{}, mapStore{}, path, "/run/routerd/test.pid", 53, []string{"127.0.0.1", "192.168.160.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("first write should report changed")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "listen-address=127.0.0.1,192.168.160.5\n") {
+		t.Fatalf("dnsmasq config did not contain custom listen-address:\n%s", data)
+	}
+}
+
+func TestWriteDnsmasqConfigDefaultsToLocalhost(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dnsmasq.conf")
+	if _, err := writeDnsmasqConfig(&api.Router{}, mapStore{}, path, "/run/routerd/test.pid", 1053, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "listen-address=127.0.0.1\n") {
+		t.Fatalf("dnsmasq config did not default to localhost:\n%s", data)
 	}
 }
 

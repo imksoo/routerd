@@ -2248,6 +2248,17 @@ func parseSocketOverrides(raw string) map[string]string {
 	return out
 }
 
+func parseCSV(raw string) []string {
+	var out []string
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 func serveCommand(args []string, stdout io.Writer) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -2275,6 +2286,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDnsmasqConfig := fs.String("controller-chain-dnsmasq-config", "/run/routerd/dnsmasq-phase1.conf", "dnsmasq config path for the experimental controller chain")
 	controllerDnsmasqPID := fs.String("controller-chain-dnsmasq-pid", "/run/routerd/dnsmasq-phase1.pid", "dnsmasq pid path for the experimental controller chain")
 	controllerDnsmasqPort := fs.Int("controller-chain-dnsmasq-port", 1053, "dnsmasq listen port for the experimental controller chain")
+	controllerDnsmasqListen := fs.String("controller-chain-dnsmasq-listen-addresses", "127.0.0.1", "comma-separated dnsmasq listen addresses for the experimental controller chain")
 	controllerNftablesPath := fs.String("controller-chain-nftables-file", "/run/routerd/nat44.nft", "nftables ruleset output path for the experimental controller chain")
 	controllerNftCommand := fs.String("controller-chain-nft-command", "nft", "nft command for the experimental controller chain")
 	controllerConntrackInterval := fs.Duration("controller-chain-conntrack-interval", 30*time.Second, "conntrack observer interval for the experimental controller chain")
@@ -2339,6 +2351,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 				DnsmasqConfig:      *controllerDnsmasqConfig,
 				DnsmasqPID:         *controllerDnsmasqPID,
 				DnsmasqPort:        *controllerDnsmasqPort,
+				DnsmasqListen:      parseCSV(*controllerDnsmasqListen),
 				NftablesPath:       *controllerNftablesPath,
 				NftCommand:         *controllerNftCommand,
 				ConntrackInterval:  *controllerConntrackInterval,
