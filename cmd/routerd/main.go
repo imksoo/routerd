@@ -617,6 +617,8 @@ func canonicalResourceKind(kind string) string {
 		"nat":                   "IPv4SourceNAT",
 		"snat":                  "IPv4SourceNAT",
 		"ipv4sourcenat":         "IPv4SourceNAT",
+		"nat44":                 "NAT44Rule",
+		"nat44rule":             "NAT44Rule",
 		"dslite":                "DSLiteTunnel",
 		"dslitetunnel":          "DSLiteTunnel",
 		"pppoe":                 "PPPoEInterface",
@@ -644,7 +646,7 @@ func apiVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv4DHCPReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "IPv6DHCPServer", "IPv6DHCPv6Server", "IPv6DHCPScope", "DHCPRelay", "DNSAnswerScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DNSResolverUpstream", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv4DHCPReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "IPv6DHCPServer", "IPv6DHCPv6Server", "IPv6DHCPScope", "DHCPRelay", "DNSAnswerScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DNSResolverUpstream", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -2259,11 +2261,15 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDryRunRoute := fs.Bool("controller-chain-dry-run-route", true, "do not mutate IPv4 routes in the experimental controller chain")
 	controllerDryRunRA := fs.Bool("controller-chain-dry-run-ra", true, "do not start radvd in the experimental controller chain")
 	controllerDryRunDHCPv6 := fs.Bool("controller-chain-dry-run-dhcpv6", true, "do not start DHCPv6 service in the experimental controller chain")
+	controllerDryRunNAT := fs.Bool("controller-chain-dry-run-nat", true, "do not apply nftables NAT rules in the experimental controller chain")
 	controllerDaemonSockets := fs.String("controller-chain-daemon-sockets", "", "comma-separated resource=unix-socket overrides for the experimental controller chain")
 	controllerDnsmasqCommand := fs.String("controller-chain-dnsmasq-command", "dnsmasq", "dnsmasq command for the experimental controller chain")
 	controllerDnsmasqConfig := fs.String("controller-chain-dnsmasq-config", "/run/routerd/dnsmasq-phase1.conf", "dnsmasq config path for the experimental controller chain")
 	controllerDnsmasqPID := fs.String("controller-chain-dnsmasq-pid", "/run/routerd/dnsmasq-phase1.pid", "dnsmasq pid path for the experimental controller chain")
 	controllerDnsmasqPort := fs.Int("controller-chain-dnsmasq-port", 1053, "dnsmasq listen port for the experimental controller chain")
+	controllerNftablesPath := fs.String("controller-chain-nftables-file", "/run/routerd/nat44.nft", "nftables ruleset output path for the experimental controller chain")
+	controllerNftCommand := fs.String("controller-chain-nft-command", "nft", "nft command for the experimental controller chain")
+	controllerConntrackInterval := fs.Duration("controller-chain-conntrack-interval", 30*time.Second, "conntrack observer interval for the experimental controller chain")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2312,16 +2318,20 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			Bus:    controllerBus,
 			Store:  stateStore,
 			Opts: controllerchain.Options{
-				DaemonSockets:  parseSocketOverrides(*controllerDaemonSockets),
-				DryRunAddress:  *controllerDryRunAddress,
-				DryRunDSLite:   *controllerDryRunDSLite,
-				DryRunRoute:    *controllerDryRunRoute,
-				DryRunRA:       *controllerDryRunRA,
-				DryRunDHCPv6:   *controllerDryRunDHCPv6,
-				DnsmasqCommand: *controllerDnsmasqCommand,
-				DnsmasqConfig:  *controllerDnsmasqConfig,
-				DnsmasqPID:     *controllerDnsmasqPID,
-				DnsmasqPort:    *controllerDnsmasqPort,
+				DaemonSockets:     parseSocketOverrides(*controllerDaemonSockets),
+				DryRunAddress:     *controllerDryRunAddress,
+				DryRunDSLite:      *controllerDryRunDSLite,
+				DryRunRoute:       *controllerDryRunRoute,
+				DryRunRA:          *controllerDryRunRA,
+				DryRunDHCPv6:      *controllerDryRunDHCPv6,
+				DryRunNAT:         *controllerDryRunNAT,
+				DnsmasqCommand:    *controllerDnsmasqCommand,
+				DnsmasqConfig:     *controllerDnsmasqConfig,
+				DnsmasqPID:        *controllerDnsmasqPID,
+				DnsmasqPort:       *controllerDnsmasqPort,
+				NftablesPath:      *controllerNftablesPath,
+				NftCommand:        *controllerNftCommand,
+				ConntrackInterval: *controllerConntrackInterval,
 			},
 		}
 		if err := chainRunner.Start(ctx); err != nil {

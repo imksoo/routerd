@@ -588,6 +588,8 @@ func canonicalShowKind(kind string) string {
 		"snat":                  "IPv4SourceNAT",
 		"ipv4nat":               "IPv4SourceNAT",
 		"ipv4sourcenat":         "IPv4SourceNAT",
+		"nat44":                 "NAT44Rule",
+		"nat44rule":             "NAT44Rule",
 		"dslite":                "DSLiteTunnel",
 		"dslitetunnel":          "DSLiteTunnel",
 		"pppoe":                 "PPPoEInterface",

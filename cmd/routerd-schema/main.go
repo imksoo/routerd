@@ -253,6 +253,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "DerivedEvent", api.DerivedEventSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4DefaultRoutePolicy", api.IPv4DefaultRoutePolicySpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4SourceNAT", api.IPv4SourceNATSpec{}),
+			resourceSchema(api.NetAPIVersion, "NAT44Rule", api.NAT44RuleSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4PolicyRoute", api.IPv4PolicyRouteSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4PolicyRouteSet", api.IPv4PolicyRouteSetSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4ReversePathFilter", api.IPv4ReversePathFilterSpec{}),

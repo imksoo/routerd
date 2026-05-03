@@ -670,6 +670,14 @@ type IPv4SourceNATSpec struct {
 	When              ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
+type NAT44RuleSpec struct {
+	Type            string   `yaml:"type" json:"type" jsonschema:"enum=masquerade,enum=snat"`
+	EgressInterface string   `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
+	EgressPolicyRef string   `yaml:"egressPolicyRef,omitempty" json:"egressPolicyRef,omitempty"`
+	SourceRanges    []string `yaml:"sourceRanges" json:"sourceRanges"`
+	SNATAddress     string   `yaml:"snatAddress,omitempty" json:"snatAddress,omitempty"`
+}
+
 type IPv4PolicyRouteSpec struct {
 	OutboundInterface   string   `yaml:"outboundInterface" json:"outboundInterface"`
 	Table               int      `yaml:"table" json:"table" jsonschema:"minimum=1,maximum=4294967295"`
@@ -966,6 +974,10 @@ func (r Resource) IPv4DefaultRoutePolicySpec() (IPv4DefaultRoutePolicySpec, erro
 
 func (r Resource) IPv4SourceNATSpec() (IPv4SourceNATSpec, error) {
 	return specAs[IPv4SourceNATSpec](r)
+}
+
+func (r Resource) NAT44RuleSpec() (NAT44RuleSpec, error) {
+	return specAs[NAT44RuleSpec](r)
 }
 
 func (r Resource) IPv4PolicyRouteSpec() (IPv4PolicyRouteSpec, error) {

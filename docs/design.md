@@ -605,7 +605,7 @@ verb は 過去形 / 受動態 (`sent, received, bound, renewed, expired, starte
 
 ### 10.6 API resource Kind (新規追加)
 
-H 必須: `IPv6PrefixDelegation`, `IPv6DelegatedAddress`, `IPv6RouterAdvertisement` (LAN 送出), `IPv6RAObservation` (WAN 受信、旧 `IPv6RAAddress`), `IPv6DHCPv6Server`, `IPv4DHCPServer`, `IPv4DHCPReservation`, `DHCPRelay`, `IPv4Address`, `IPv4Route`, `Link`, `Bridge`, `VLAN`, `NAT44Rule`, `Firewall*`, `DNSAnswerScope`, `DNSResolverUpstream`, `WANEgressPolicy`, `HealthCheck`, `EventRule`, `DerivedEvent`
+H 必須: `IPv6PrefixDelegation`, `IPv6DelegatedAddress`, `IPv6RouterAdvertisement` (LAN 送出), `IPv6RAObservation` (WAN 受信、旧 `IPv6RAAddress`), `IPv6DHCPv6Server`, `IPv4DHCPServer`, `IPv4DHCPReservation`, `DHCPRelay`, `IPv4Address`, `IPv4Route`, `Link`, `Bridge`, `VLAN`, `NAT44Rule`, `ConntrackObserver`, `Firewall*`, `DNSAnswerScope`, `DNSResolverUpstream`, `WANEgressPolicy`, `HealthCheck`, `EventRule`, `DerivedEvent`
 
 H+ オプション: `DSLiteTunnel`, `WireGuardInterface`, `WireGuardPeer`, `MAPETunnel` (将来)
 
@@ -1043,7 +1043,7 @@ memory 「PD broken 時に AAAA 出さない」「PD 取得は時間と共に必
 |-------|------|------|
 | **0. 土台** | `pkg/daemonapi` 拡張、`pkg/bus`、`pkg/source`、`pkg/controller/framework`、`cmd/routerd-dhcp6-client` (PD daemon、ablation flag 移植) | pve05 で daemon 単体起動 + PD 取得 |
 | **1. 1 chain** | `LANAddressController`、`DNSAnswerController`、`PrefixDelegationController` を実装。daemon → bus → controller → sink の 1 chain を動かす | PD bound から dnsmasq AAAA 開始まで < 5s 計測 |
-| **1.5 LAN/WAN service** | dnsmasq wrap を拡張し、`IPv4DHCPServer`, `IPv4DHCPReservation`, `IPv6DHCPv6Server` stateful/stateless/both, `IPv6RouterAdvertisement` PIO/RDNSS/DNSSL/M/O flag, `DHCPRelay`, `DNSAnswerScope` hostRecords/local domain/DDNS/DNSSEC を同一 instance に統合 | router05 dry-run で port 1053 test instance の config 出力と syntax を確認 |
+| **1.5 LAN/WAN service** | dnsmasq wrap を拡張し、`IPv4DHCPServer`, `IPv4DHCPReservation`, `IPv6DHCPv6Server` stateful/stateless/both, `IPv6RouterAdvertisement` PIO/RDNSS/DNSSL/M/O flag, `DHCPRelay`, `DNSAnswerScope` hostRecords/local domain/DDNS/DNSSEC を同一 instance に統合。続けて `NAT44Rule` の outbound NAPT と `/proc/net/nf_conntrack` aggregate observer を追加する。stateful firewall/filter chain は棚上げし no-op のまま | router05 dry-run で port 1053 test instance の config 出力と syntax、nftables NAT ruleset text、conntrack procfs snapshot を確認 |
 | **2. cascade** | `IPv6RouterAdvertisement`, `DHCPv6Information`, `DSLiteTunnel`, `IPv4Route` 関連 controller、`WANEgressPolicy`、`HealthCheck`、`EventRule`、`DerivedEvent` engine | PD → DS-Lite → AAAA cascade 全 ~1.5s で完走 |
 | **3. config 取扱** | `ConfigWatcher` (notify only)、`ConfigLoader` (明示 trigger)、`routerctl plan/apply/confirm`、commit-confirmed | リモート設定変更 → SSH 切断 → 自動 rollback テスト |
 | **4. demolition** | § 18.2 を一気に削除、`pkg/api/specs.go` 縮小、`pkg/apply/engine.go` 縮小、`pkg/state/pdlease.go` 簡略化、test fixture 全更新 | go test ./... 通過、pve05-07 全 host で 24h × 2 cycle 安定 |

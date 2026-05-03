@@ -585,6 +585,31 @@ func TestValidateIPv4SourceNATRequiresValidCIDR(t *testing.T) {
 	}
 }
 
+func TestValidateNAT44Rule(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
+				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
+				Spec: api.NAT44RuleSpec{
+					Type:            "masquerade",
+					EgressPolicyRef: "ipv4-default",
+					SourceRanges:    []string{"192.168.0.0/16"},
+				},
+			},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate NAT44Rule: %v", err)
+	}
+	router.Spec.Resources[0].Spec = api.NAT44RuleSpec{Type: "snat", EgressInterface: "wan", SourceRanges: []string{"192.168.0.0/16"}}
+	if err := Validate(router); err == nil {
+		t.Fatal("expected snat without snatAddress to be rejected")
+	}
+}
+
 func TestValidateIPv4SourceNATRejectsInvalidPortRange(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

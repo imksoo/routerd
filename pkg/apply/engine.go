@@ -122,6 +122,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv4DefaultRoutePolicy(res, aliases, includePlan, &rr)
 		case "IPv4SourceNAT":
 			e.observeIPv4SourceNAT(res, aliases, policies, includePlan, &rr)
+		case "NAT44Rule":
+			e.observeNAT44Rule(res, aliases, includePlan, &rr)
 		case "IPv4PolicyRoute":
 			e.observeIPv4PolicyRoute(res, aliases, policies, includePlan, &rr)
 		case "IPv4PolicyRouteSet":
@@ -693,6 +695,37 @@ func (e *Engine) observeIPv4SourceNAT(res api.Resource, aliases map[string]strin
 	case "range":
 		rr.Plan = append(rr.Plan, fmt.Sprintf("map source ports to %d-%d", spec.Translation.PortMapping.Start, spec.Translation.PortMapping.End))
 	}
+}
+
+func (e *Engine) observeNAT44Rule(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.NAT44RuleSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	if spec.EgressInterface != "" {
+		rr.Observed["egressInterface"] = spec.EgressInterface
+		if ifname := aliases[spec.EgressInterface]; ifname != "" {
+			rr.Observed["egressIfname"] = ifname
+		}
+	}
+	if spec.EgressPolicyRef != "" {
+		rr.Observed["egressPolicyRef"] = spec.EgressPolicyRef
+	}
+	rr.Observed["type"] = spec.Type
+	rr.Observed["sourceRanges"] = strings.Join(spec.SourceRanges, ",")
+	if spec.SNATAddress != "" {
+		rr.Observed["snatAddress"] = spec.SNATAddress
+	}
+	if !includePlan {
+		return
+	}
+	if spec.EgressInterface != "" {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure NAT44 %s for %s via %s", spec.Type, strings.Join(spec.SourceRanges, ","), defaultString(aliases[spec.EgressInterface], spec.EgressInterface)))
+		return
+	}
+	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure NAT44 %s for %s via selected device from WANEgressPolicy/%s", spec.Type, strings.Join(spec.SourceRanges, ","), spec.EgressPolicyRef))
 }
 
 func (e *Engine) observeIPv4PolicyRoute(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {

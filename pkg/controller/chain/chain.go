@@ -18,6 +18,9 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
+	"routerd/pkg/conntrack"
+	"routerd/pkg/controller/conntrackobserver"
+	"routerd/pkg/controller/nat44"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/derived"
 	"routerd/pkg/eventrule"
@@ -32,17 +35,21 @@ type Store interface {
 }
 
 type Options struct {
-	DaemonSockets  map[string]string
-	DryRunAddress  bool
-	DryRunDSLite   bool
-	DryRunRoute    bool
-	DryRunRA       bool
-	DryRunDHCPv6   bool
-	DnsmasqCommand string
-	DnsmasqConfig  string
-	DnsmasqPID     string
-	DnsmasqPort    int
-	Logger         *slog.Logger
+	DaemonSockets     map[string]string
+	DryRunAddress     bool
+	DryRunDSLite      bool
+	DryRunRoute       bool
+	DryRunRA          bool
+	DryRunDHCPv6      bool
+	DryRunNAT         bool
+	DnsmasqCommand    string
+	DnsmasqConfig     string
+	DnsmasqPID        string
+	DnsmasqPort       int
+	NftablesPath      string
+	NftCommand        string
+	ConntrackInterval time.Duration
+	Logger            *slog.Logger
 }
 
 type Runner struct {
@@ -118,6 +125,8 @@ func (r *Runner) Start(ctx context.Context) error {
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
+	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunNAT, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
+	conntrackObs := conntrackobserver.Controller{Bus: r.Bus, Store: r.Store, Paths: conntrack.DefaultPaths(), Interval: r.Opts.ConntrackInterval, Logger: logger}
 	rules.Start(ctx)
 	derivedEvents.Start(ctx)
 	health.Start(ctx)
@@ -131,6 +140,8 @@ func (r *Runner) Start(ctx context.Context) error {
 	dhcp6.Start(ctx)
 	dns.Start(ctx)
 	wan.Start(ctx)
+	nat.Start(ctx)
+	conntrackObs.Start(ctx)
 	if routerNeedsDnsmasq(r.Router) {
 		go func() {
 			if err := renderAndEnsureDnsmasq(ctx, r.Router, r.Store, r.Opts.DnsmasqCommand, r.Opts.DnsmasqConfig, r.Opts.DnsmasqPID, r.Opts.DnsmasqPort); err != nil && logger != nil && ctx.Err() == nil {

@@ -2095,6 +2095,40 @@ func validateResource(res api.Resource) error {
 		default:
 			return fmt.Errorf("%s spec.translation.portMapping.type must be auto, preserve, or range", res.ID())
 		}
+	case "NAT44Rule":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.NAT44RuleSpec()
+		if err != nil {
+			return err
+		}
+		switch spec.Type {
+		case "masquerade", "snat":
+		default:
+			return fmt.Errorf("%s spec.type must be masquerade or snat", res.ID())
+		}
+		if spec.EgressInterface == "" && spec.EgressPolicyRef == "" {
+			return fmt.Errorf("%s spec.egressInterface or spec.egressPolicyRef is required", res.ID())
+		}
+		if len(spec.SourceRanges) == 0 {
+			return fmt.Errorf("%s spec.sourceRanges is required", res.ID())
+		}
+		for _, cidr := range spec.SourceRanges {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return fmt.Errorf("%s spec.sourceRanges entries must be IPv4 prefixes", res.ID())
+			}
+		}
+		if spec.Type == "snat" {
+			addr, err := netip.ParseAddr(spec.SNATAddress)
+			if err != nil || !addr.Is4() {
+				return fmt.Errorf("%s spec.snatAddress must be an IPv4 address when type is snat", res.ID())
+			}
+		}
+		if spec.Type == "masquerade" && spec.SNATAddress != "" {
+			return fmt.Errorf("%s spec.snatAddress is only valid when type is snat", res.ID())
+		}
 	case "IPv4PolicyRoute":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

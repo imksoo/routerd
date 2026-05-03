@@ -4209,6 +4209,75 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "NAT44Rule",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "egressInterface": {
+                        "type": "string"
+                      },
+                      "egressPolicyRef": {
+                        "type": "string"
+                      },
+                      "snatAddress": {
+                        "type": "string"
+                      },
+                      "sourceRanges": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "type": {
+                        "enum": [
+                          "masquerade",
+                          "snat"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "sourceRanges"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "IPv4PolicyRoute",
                     "type": "string"
                   },

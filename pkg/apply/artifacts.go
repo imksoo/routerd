@@ -156,6 +156,8 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		return ipv4DefaultRoutePolicyArtifacts(res, aliases)
 	case "IPv4SourceNAT":
 		return []resource.Intent{artifact("nft.table", "routerd_nat", resource.ActionEnsure, "nft", nil)}
+	case "NAT44Rule":
+		return []resource.Intent{artifact("nft.table", "routerd_nat", resource.ActionEnsure, "nft", nil)}
 	case "IPv4PolicyRoute":
 		return ipv4PolicyRouteArtifacts(res, aliases)
 	case "IPv4PolicyRouteSet":

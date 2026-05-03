@@ -84,6 +84,56 @@ func TestNftablesIPv4SourceNATCanUseDSLiteTunnel(t *testing.T) {
 	}
 }
 
+func TestNftablesNAT44Rule(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
+				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
+				Spec: api.NAT44RuleSpec{
+					Type:            "masquerade",
+					EgressInterface: "wan",
+					SourceRanges:    []string{"192.168.10.0/24", "10.0.0.0/8"},
+				},
+			},
+		}},
+	}
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`oifname "ens18" ip saddr 10.0.0.0/8 masquerade`,
+		`oifname "ens18" ip saddr 192.168.10.0/24 masquerade`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesNAT44ResolvedSNATRule(t *testing.T) {
+	data, err := NftablesNAT44Rules([]NAT44RenderRule{{
+		Name:            "lan-to-wan",
+		Type:            "snat",
+		EgressInterface: "ppp0",
+		SourceRanges:    []string{"192.168.10.0/24"},
+		SNATAddress:     "198.51.100.10",
+	}})
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	if !strings.Contains(string(data), `oifname "ppp0" ip saddr 192.168.10.0/24 snat to 198.51.100.10`) {
+		t.Fatalf("nftables output missing snat rule:\n%s", string(data))
+	}
+}
+
 func TestNftablesVXLANL2Filter(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
