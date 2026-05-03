@@ -444,14 +444,16 @@ EventRule = stream → stream、DerivedEvent = state → event。使い分け。
 
 Phase 2-B.3 の DerivedEvent engine は status path を評価して `<topic>.asserted` / `<topic>.retracted` を publish する。`hysteresis` は publish 前の安定確認時間で、timer 中に入力が戻った場合は pending transition を cancel する。`emitInitial` は default false で、起動時の初期評価では event を出さず status だけを materialize する。status は `phase`, `asserted`, `pendingTransition`, `lastAssertedAt`, `lastRetractedAt` を持つ。
 
-### 8.4 HealthCheck (Phase 2-B.4a)
+### 8.4 HealthCheck (Phase 2-B.4a/b)
 
-最初の HealthCheck は routerd 本体内 goroutine で probe を実行する。`protocol: tcp|dns|http` を扱い、`icmp` は raw socket capability 分離が必要なため Phase 2-B.4b の `routerd-healthcheck@<name>` daemon に切り出してから有効化する。
+Phase 2-B.4a では routerd 本体内 goroutine の embedded probe を先に実装し、Phase 2-B.4b で `routerd-healthcheck@<name>` daemon に分離する。production path は daemon。embedded は test / development 用に残す。
 
 ```yaml
 kind: HealthCheck
 metadata: { name: internet-tcp443 }
 spec:
+  daemon: routerd-healthcheck
+  socketSource: /run/routerd/healthcheck/internet-tcp443.sock
   targetSource: static
   target: 1.1.1.1
   protocol: tcp
@@ -464,7 +466,9 @@ spec:
 
 probe ごとに `routerd.healthcheck.<name>.passed|failed|timeout` を publish し、status は `phase`, `lastResult`, `lastCheckedAt`, `lastTransitionAt`, `consecutivePassed`, `consecutiveFailed` を持つ。state machine は `Unknown → Passing → Healthy ↔ Failing → Unhealthy`。WANEgressPolicy の candidate が `healthCheck: <name>` を持つ場合は `HealthCheck/<name>.status.phase == Healthy` を ready 条件に追加する。
 
-Phase 2-B.4b では `routerd-healthcheck@<name>` daemon に分離し、`cap_net_raw` を daemon だけに与えて ICMP probe を有効化する。in-process probe は移行期間の実験実装として扱う。
+`routerd-healthcheck` は `protocol: icmp|tcp|dns|http` を扱う。ICMP は raw socket が必要なので systemd unit では daemon だけに `CAP_NET_RAW` を与える。`POST /v1/commands/renew` は「即時 probe 実行」を意味する。state は `/var/lib/routerd/healthcheck/<name>/state.json` に永続化し、events は `/var/lib/routerd/healthcheck/<name>/events.jsonl` に append する。
+
+OTel は `pkg/otel` の薄い wrapper で全 daemon / routerd 本体に共通導入する。`OTEL_EXPORTER_OTLP_ENDPOINT` 系 env var が未設定なら exporter は起動しない。設定時は slog bridge logs、probe / Renew / controller reconcile metrics、主要 operation span を OTLP へ出す。
 
 ### 8.5 Layer D: Workflow (saga, optional, Phase 4+)
 
@@ -574,6 +578,7 @@ routerd-healthcheck
 | NixOS module | `services.routerd.<pCamel><rCamel>.<resource>` | `services.routerd.dhcp6Client.wan-pd` |
 | Unix socket | `/run/routerd/<p>-<r>/<resource>.sock` | `/run/routerd/dhcp6-client/wan-pd.sock` |
 | lease file | `/var/lib/routerd/<p>-<r>/<resource>/lease.json` | `/var/lib/routerd/dhcp6-client/wan-pd/lease.json` |
+| state file | `/var/lib/routerd/<p>-<r>/<resource>/state.json` | `/var/lib/routerd/healthcheck/internet-icmp/state.json` |
 | event ring | `/var/lib/routerd/<p>-<r>/<resource>/events.jsonl` | (同 dir) |
 | journal id | binary 名と一致 | `routerd-dhcp6-client` |
 | DaemonRef | `Kind=binary, Instance=resource` | `{ Kind: routerd-dhcp6-client, Instance: wan-pd }` |
@@ -632,9 +637,11 @@ POST /v1/commands/{renew,rebind,release,reload,stop,start,flush}
 POST /v1/config/update                      # routerd 側からの config push
 ```
 
+一部 daemon は verb を protocol 用語に map する。例: `routerd-healthcheck` の `renew` は lease renew ではなく即時 probe trigger。
+
 ### 11.3 lifecycle
 
-- daemon 起動時 lease file (`<lease-dir>/lease.json`) から `Restore()` → bus に `routerd.daemon.lifecycle.started` を publish
+- daemon 起動時 lease / state file (`<lease-dir>/lease.json` or `<state-dir>/state.json`) から `Restore()` → bus に `routerd.daemon.lifecycle.started` を publish
 - 準備完了 → `routerd.daemon.lifecycle.ready`
 - protocol state 変化のたびに event publish + lease file atomic write (rename)
 - event ring (1000 件) を内部保持 + `events.jsonl` に append

@@ -2778,6 +2778,9 @@
                         ],
                         "type": "string"
                       },
+                      "socketSource": {
+                        "type": "string"
+                      },
                       "target": {
                         "type": "string"
                       },

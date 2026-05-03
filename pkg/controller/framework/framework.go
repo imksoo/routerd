@@ -10,6 +10,7 @@ import (
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/lock"
+	routerotel "routerd/pkg/otel"
 )
 
 type Controller interface {
@@ -98,7 +99,7 @@ func runLocked(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLo
 			logger.Error("controller panic recovered", "controller", name, "panic", recovered)
 		}
 	}()
-	if err := fn(ctx); err != nil {
+	if err := routerotel.Reconcile(ctx, name, fn); err != nil {
 		logger.Warn("controller reconcile failed", "controller", name, "error", err)
 	}
 }

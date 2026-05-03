@@ -33,6 +33,7 @@ import (
 	"routerd/pkg/eventlog"
 	"routerd/pkg/inventory"
 	"routerd/pkg/observe"
+	routerotel "routerd/pkg/otel"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
@@ -74,6 +75,11 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
+	telemetry, err := routerotel.Setup(context.Background(), "routerd")
+	if err != nil {
+		return err
+	}
+	defer telemetry.Shutdown(context.Background())
 	if len(args) == 0 {
 		usage(stderr)
 		return errors.New("missing command")

@@ -7,9 +7,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
@@ -48,6 +53,23 @@ type ProbeResult struct {
 
 type ProbeFunc func(ctx context.Context, spec api.HealthCheckSpec) ProbeResult
 
+type State struct {
+	Phase             string    `json:"phase"`
+	LastResult        string    `json:"lastResult,omitempty"`
+	LastMessage       string    `json:"message,omitempty"`
+	LastTransitionAt  time.Time `json:"lastTransitionAt,omitempty"`
+	LastCheckedAt     time.Time `json:"lastCheckedAt,omitempty"`
+	ConsecutivePassed int       `json:"consecutivePassed,omitempty"`
+	ConsecutiveFailed int       `json:"consecutiveFailed,omitempty"`
+}
+
+type Evaluation struct {
+	State  State
+	Result string
+	Event  daemonapi.DaemonEvent
+	Status map[string]any
+}
+
 type Controller struct {
 	Router *api.Router
 	Bus    *bus.Bus
@@ -57,17 +79,7 @@ type Controller struct {
 	Logger *slog.Logger
 
 	mu    sync.Mutex
-	state map[string]*checkState
-}
-
-type checkState struct {
-	phase             string
-	lastResult        string
-	lastMessage       string
-	lastTransitionAt  time.Time
-	lastCheckedAt     time.Time
-	consecutivePassed int
-	consecutiveFailed int
+	state map[string]*State
 }
 
 type ProbeDaemon interface {
@@ -79,8 +91,21 @@ func (c *Controller) Start(ctx context.Context) {
 	if c.Router == nil || c.Bus == nil || c.Store == nil {
 		return
 	}
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.healthcheck.*.*"}}, 64)
+	go func() {
+		for event := range ch {
+			if event.Resource == nil || event.Resource.Kind != "HealthCheck" {
+				continue
+			}
+			c.saveEventStatus(event)
+		}
+	}()
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "HealthCheck" {
+			continue
+		}
+		spec, err := resource.HealthCheckSpec()
+		if err == nil && (spec.Daemon == DaemonKind || spec.SocketSource != "") {
 			continue
 		}
 		resource := resource
@@ -140,62 +165,33 @@ func (c *Controller) applyResult(ctx context.Context, resource api.Resource, spe
 	now := c.now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	if state.phase == "" {
-		state.phase = PhaseUnknown
-		state.lastTransitionAt = now
-	}
-	nextResult := ResultFailed
-	if result.Timeout {
-		nextResult = ResultTimeout
-	} else if result.OK {
-		nextResult = ResultPassed
-	}
-	state.lastResult = nextResult
-	state.lastMessage = result.Message
-	state.lastCheckedAt = now
-	if result.OK {
-		state.consecutivePassed++
-		state.consecutiveFailed = 0
-		if state.consecutivePassed >= healthyThreshold(spec) {
-			c.transition(state, PhaseHealthy, now)
-		} else {
-			c.transition(state, PhasePassing, now)
-		}
-	} else {
-		state.consecutiveFailed++
-		state.consecutivePassed = 0
-		if state.consecutiveFailed >= unhealthyThreshold(spec) {
-			c.transition(state, PhaseUnhealthy, now)
-		} else {
-			c.transition(state, PhaseFailing, now)
-		}
-	}
-	status := map[string]any{
-		"phase":             state.phase,
-		"lastResult":        state.lastResult,
-		"lastCheckedAt":     state.lastCheckedAt.UTC().Format(time.RFC3339Nano),
-		"lastTransitionAt":  state.lastTransitionAt.UTC().Format(time.RFC3339Nano),
-		"consecutivePassed": state.consecutivePassed,
-		"consecutiveFailed": state.consecutiveFailed,
-	}
-	if state.lastMessage != "" {
-		status["message"] = state.lastMessage
-	}
-	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", resource.Metadata.Name, status); err != nil {
+	evaluation := ApplyResult(resource, spec, *state, result, now)
+	*state = evaluation.State
+	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", resource.Metadata.Name, evaluation.Status); err != nil {
 		return err
 	}
-	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: DaemonKind + "-" + resource.Metadata.Name, Kind: DaemonKind, Instance: resource.Metadata.Name}, "routerd.healthcheck."+resource.Metadata.Name+"."+nextResult, daemonapi.SeverityInfo)
-	event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: resource.Metadata.Name}
-	event.Reason = "HealthCheckProbe"
-	event.Message = state.lastMessage
-	event.Attributes = map[string]string{
-		"phase":             state.phase,
-		"result":            nextResult,
-		"consecutivePassed": fmt.Sprint(state.consecutivePassed),
-		"consecutiveFailed": fmt.Sprint(state.consecutiveFailed),
+	return c.Bus.Publish(ctx, evaluation.Event)
+}
+
+func (c *Controller) saveEventStatus(event daemonapi.DaemonEvent) {
+	status := map[string]any{}
+	for key, value := range event.Attributes {
+		status[key] = value
 	}
-	return c.Bus.Publish(ctx, event)
+	if phase := event.Attributes["phase"]; phase != "" {
+		status["phase"] = phase
+	}
+	if result := event.Attributes["result"]; result != "" {
+		status["lastResult"] = result
+	}
+	status["lastCheckedAt"] = event.Time.UTC().Format(time.RFC3339Nano)
+	if status["lastTransitionAt"] == nil {
+		status["lastTransitionAt"] = event.Time.UTC().Format(time.RFC3339Nano)
+	}
+	if event.Message != "" {
+		status["message"] = event.Message
+	}
+	_ = c.Store.SaveObjectStatus(event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name, status)
 }
 
 func Probe(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
@@ -207,7 +203,7 @@ func Probe(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
 	case ProtocolHTTP:
 		return ProbeHTTP(ctx, spec)
 	case ProtocolICMP:
-		return ProbeResult{Message: "icmp requires the external routerd-healthcheck daemon"}
+		return ProbeICMP(ctx, spec)
 	default:
 		return ProbeResult{Message: "unsupported healthcheck protocol"}
 	}
@@ -278,6 +274,67 @@ func ProbeHTTP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
 	return ProbeResult{Message: fmt.Sprintf("http status %d", resp.StatusCode)}
 }
 
+func ProbeICMP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
+	target := strings.TrimSpace(spec.Target)
+	if target == "" {
+		return ProbeResult{Message: "target is required"}
+	}
+	ip, network, err := resolveICMPTarget(ctx, target, spec.AddressFamily)
+	if err != nil {
+		return resultFromError(ctx, err)
+	}
+	var conn *icmp.PacketConn
+	var messageType icmp.Type
+	var replyType icmp.Type
+	var protocol int
+	if network == "ip4:icmp" {
+		conn, err = icmp.ListenPacket(network, "0.0.0.0")
+		messageType = ipv4.ICMPTypeEcho
+		replyType = ipv4.ICMPTypeEchoReply
+		protocol = 1
+	} else {
+		conn, err = icmp.ListenPacket(network, "::")
+		messageType = ipv6.ICMPTypeEchoRequest
+		replyType = ipv6.ICMPTypeEchoReply
+		protocol = 58
+	}
+	if err != nil {
+		return resultFromError(ctx, err)
+	}
+	defer conn.Close()
+	identifier := os.Getpid() & 0xffff
+	msg := icmp.Message{
+		Type: messageType,
+		Code: 0,
+		Body: &icmp.Echo{ID: identifier, Seq: 1, Data: []byte("routerd-healthcheck")},
+	}
+	payload, err := msg.Marshal(nil)
+	if err != nil {
+		return ProbeResult{Message: err.Error()}
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	if _, err := conn.WriteTo(payload, &net.IPAddr{IP: ip}); err != nil {
+		return resultFromError(ctx, err)
+	}
+	buf := make([]byte, 1500)
+	for {
+		n, peer, err := conn.ReadFrom(buf)
+		if err != nil {
+			return resultFromError(ctx, err)
+		}
+		parsed, err := icmp.ParseMessage(protocol, buf[:n])
+		if err != nil {
+			continue
+		}
+		echo, ok := parsed.Body.(*icmp.Echo)
+		if parsed.Type == replyType && ok && echo.ID == identifier {
+			return ProbeResult{OK: true, Message: "icmp echo succeeded from " + peer.String()}
+		}
+	}
+}
+
 func resultFromError(ctx context.Context, err error) ProbeResult {
 	if ctx.Err() == context.DeadlineExceeded {
 		return ProbeResult{Timeout: true, Message: err.Error()}
@@ -289,20 +346,82 @@ func resultFromError(ctx context.Context, err error) ProbeResult {
 	return ProbeResult{Message: err.Error()}
 }
 
-func (c *Controller) transition(state *checkState, phase string, now time.Time) {
-	if state.phase != phase {
-		state.phase = phase
-		state.lastTransitionAt = now
+func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, result ProbeResult, now time.Time) Evaluation {
+	if state.Phase == "" {
+		state.Phase = PhaseUnknown
+		state.LastTransitionAt = now
+	}
+	nextResult := ResultFailed
+	if result.Timeout {
+		nextResult = ResultTimeout
+	} else if result.OK {
+		nextResult = ResultPassed
+	}
+	state.LastResult = nextResult
+	state.LastMessage = result.Message
+	state.LastCheckedAt = now
+	if result.OK {
+		state.ConsecutivePassed++
+		state.ConsecutiveFailed = 0
+		if state.ConsecutivePassed >= healthyThreshold(spec) {
+			transition(&state, PhaseHealthy, now)
+		} else {
+			transition(&state, PhasePassing, now)
+		}
+	} else {
+		state.ConsecutiveFailed++
+		state.ConsecutivePassed = 0
+		if state.ConsecutiveFailed >= unhealthyThreshold(spec) {
+			transition(&state, PhaseUnhealthy, now)
+		} else {
+			transition(&state, PhaseFailing, now)
+		}
+	}
+	status := StatusMap(state)
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: DaemonKind + "-" + resource.Metadata.Name, Kind: DaemonKind, Instance: resource.Metadata.Name}, "routerd.healthcheck."+resource.Metadata.Name+"."+nextResult, daemonapi.SeverityInfo)
+	event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: resource.Metadata.Name}
+	event.Reason = "HealthCheckProbe"
+	event.Message = state.LastMessage
+	event.Attributes = map[string]string{
+		"phase":             state.Phase,
+		"result":            nextResult,
+		"consecutivePassed": fmt.Sprint(state.ConsecutivePassed),
+		"consecutiveFailed": fmt.Sprint(state.ConsecutiveFailed),
+		"network.address":   spec.Target,
+		"network.protocol":  defaultString(spec.Protocol, protocolFromType(spec.Type)),
+	}
+	return Evaluation{State: state, Result: nextResult, Event: event, Status: status}
+}
+
+func StatusMap(state State) map[string]any {
+	status := map[string]any{
+		"phase":             state.Phase,
+		"lastResult":        state.LastResult,
+		"lastCheckedAt":     state.LastCheckedAt.UTC().Format(time.RFC3339Nano),
+		"lastTransitionAt":  state.LastTransitionAt.UTC().Format(time.RFC3339Nano),
+		"consecutivePassed": state.ConsecutivePassed,
+		"consecutiveFailed": state.ConsecutiveFailed,
+	}
+	if state.LastMessage != "" {
+		status["message"] = state.LastMessage
+	}
+	return status
+}
+
+func transition(state *State, phase string, now time.Time) {
+	if state.Phase != phase {
+		state.Phase = phase
+		state.LastTransitionAt = now
 	}
 }
 
-func (c *Controller) resourceState(name string) *checkState {
+func (c *Controller) resourceState(name string) *State {
 	c.init()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	state := c.state[name]
 	if state == nil {
-		state = &checkState{phase: PhaseUnknown}
+		state = &State{Phase: PhaseUnknown}
 		c.state[name] = state
 	}
 	return state
@@ -312,7 +431,7 @@ func (c *Controller) init() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.state == nil {
-		c.state = map[string]*checkState{}
+		c.state = map[string]*State{}
 	}
 }
 
@@ -360,4 +479,32 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func resolveICMPTarget(ctx context.Context, target, family string) (net.IP, string, error) {
+	if ip := net.ParseIP(target); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			return ip4, "ip4:icmp", nil
+		}
+		return ip.To16(), "ip6:ipv6-icmp", nil
+	}
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, target)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, addr := range addrs {
+		if family == "ipv6" {
+			if addr.IP.To4() == nil {
+				return addr.IP, "ip6:ipv6-icmp", nil
+			}
+			continue
+		}
+		if addr.IP.To4() != nil {
+			return addr.IP.To4(), "ip4:icmp", nil
+		}
+		if family != "ipv4" {
+			return addr.IP, "ip6:ipv6-icmp", nil
+		}
+	}
+	return nil, "", fmt.Errorf("no %s address found for %s", defaultString(family, "IP"), target)
 }

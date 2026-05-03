@@ -19,9 +19,13 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sys/unix"
 
 	"routerd/pkg/daemonapi"
+	routerotel "routerd/pkg/otel"
 	"routerd/pkg/pdclient"
 )
 
@@ -121,10 +125,17 @@ func daemonCommand(args []string, _ io.Writer) error {
 	if err != nil {
 		return err
 	}
+	telemetry, err := routerotel.Setup(context.Background(), daemonKind, attribute.String("routerd.resource.name", opts.resource))
+	if err != nil {
+		return err
+	}
+	defer telemetry.Shutdown(context.Background())
 	daemon, err := newDHCP6Daemon(opts)
 	if err != nil {
 		return err
 	}
+	daemon.telemetry = telemetry
+	daemon.initTelemetry()
 	return daemon.Run(context.Background())
 }
 
@@ -196,6 +207,10 @@ type dhcp6Daemon struct {
 	events     []daemonapi.DaemonEvent
 	nextCursor uint64
 	recorder   *packetRecorder
+
+	telemetry    *routerotel.Runtime
+	leaseGauge   metric.Int64Gauge
+	renewCounter metric.Int64Counter
 }
 
 type eventsResponse struct {
@@ -243,7 +258,17 @@ func newDHCP6Daemon(opts options) (*dhcp6Daemon, error) {
 		recorder:   recorder,
 	}
 	d.cond = sync.NewCond(&d.mu)
+	d.initTelemetry()
 	return d, nil
+}
+
+func (d *dhcp6Daemon) initTelemetry() {
+	if d.telemetry == nil {
+		d.telemetry = &routerotel.Runtime{ServiceName: daemonKind}
+	}
+	d.telemetry.Ensure()
+	d.leaseGauge = d.telemetry.Gauge("routerd.dhcp6.client.lease.state")
+	d.renewCounter = d.telemetry.Counter("routerd.dhcp6.client.renew")
 }
 
 func (d *dhcp6Daemon) Run(ctx context.Context) error {
@@ -341,14 +366,19 @@ func (d *dhcp6Daemon) handlePayload(ctx context.Context, payload []byte) error {
 func (d *dhcp6Daemon) tick(ctx context.Context) error {
 	d.mu.Lock()
 	before := d.client.Snapshot()
+	spanCtx, span := d.telemetry.Tracer.Start(ctx, "dhcp6.tick", trace.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
 	err := d.client.TickWithMargin(ctx, d.opts.renewMargin, d.opts.rebindMargin)
 	after := d.client.Snapshot()
 	if err == nil && snapshotChanged(before, after) {
 		err = d.saveLeaseLocked(ctx)
 	}
 	d.mu.Unlock()
+	span.End()
 	if err != nil {
 		return err
+	}
+	if before.State != pdclient.StateRenewing && after.State == pdclient.StateRenewing {
+		d.renewCounter.Add(spanCtx, 1, metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
 	}
 	d.publishStateEvents(before, after)
 	return nil
@@ -544,6 +574,10 @@ func (d *dhcp6Daemon) handleConfigUpdate(w http.ResponseWriter, _ *http.Request)
 
 func (d *dhcp6Daemon) statusLocked() daemonapi.DaemonStatus {
 	snapshot := d.client.Snapshot()
+	d.leaseGauge.Record(context.Background(), leaseStateValue(snapshot.State), metric.WithAttributes(
+		attribute.String("routerd.resource.name", d.opts.resource),
+		attribute.String("routerd.dhcp6.state", string(snapshot.State)),
+	))
 	resourceStatus := daemonapi.ResourceStatus{
 		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "IPv6PrefixDelegation", Name: d.opts.resource},
 		Phase:    resourcePhase(snapshot.State),
@@ -650,6 +684,9 @@ func (d *dhcp6Daemon) publish(topic, severity, reason, message string, attrs map
 	}
 	d.appendEventFileLocked(event)
 	d.cond.Broadcast()
+	if d.telemetry != nil && d.telemetry.Enabled && d.telemetry.Logger != nil {
+		d.telemetry.Logger.Info(message, "event.type", topic, "resource", d.opts.resource, "reason", reason)
+	}
 }
 
 func (d *dhcp6Daemon) appendEventFileLocked(event daemonapi.DaemonEvent) {
@@ -973,6 +1010,19 @@ func conditionStatus(ok bool) string {
 		return daemonapi.ConditionTrue
 	}
 	return daemonapi.ConditionFalse
+}
+
+func leaseStateValue(state pdclient.State) int64 {
+	switch state {
+	case pdclient.StateBound:
+		return 2
+	case pdclient.StateRenewing, pdclient.StateRebinding:
+		return 1
+	case pdclient.StateExpired:
+		return -2
+	default:
+		return 0
+	}
 }
 
 func snapshotChanged(a, b pdclient.Snapshot) bool {

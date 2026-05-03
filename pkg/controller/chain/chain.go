@@ -80,6 +80,30 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
+	for _, resource := range r.Router.Spec.Resources {
+		if resource.Kind != "HealthCheck" {
+			continue
+		}
+		spec, err := resource.HealthCheckSpec()
+		if err != nil || spec.SocketSource == "embedded" || (spec.Daemon == "" && spec.SocketSource == "") {
+			continue
+		}
+		name := resource.Metadata.Name
+		socket := spec.SocketSource
+		if socket == "" {
+			socket = filepath.Join("/run/routerd/healthcheck", name+".sock")
+		}
+		source := daemonsource.DaemonSource{
+			Daemon:    daemonapi.DaemonRef{Name: "routerd-healthcheck-" + name, Kind: "routerd-healthcheck", Instance: name},
+			Socket:    socket,
+			Publisher: r.Bus,
+		}
+		go func() {
+			if err := source.Run(ctx); err != nil && ctx.Err() == nil {
+				logger.Warn("healthcheck daemon source stopped", "resource", name, "error", err)
+			}
+		}()
+	}
 
 	pd := PrefixDelegationController{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
