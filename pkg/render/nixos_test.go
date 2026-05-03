@@ -271,6 +271,7 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 		`"--status-file"`,
 		`"/run/routerd/status.json"`,
 		`RuntimeDirectory = "routerd";`,
+		`RuntimeDirectoryPreserve = "yes";`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("NixOS routerd service missing %q:\n%s", want, got)

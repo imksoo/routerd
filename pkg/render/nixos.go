@@ -670,6 +670,7 @@ func writeNixOSRouterdService(buf *bytes.Buffer, spec api.NixOSRouterdServiceSpe
 	buf.WriteString("      Restart = \"always\";\n")
 	buf.WriteString("      RestartSec = \"2s\";\n")
 	buf.WriteString("      RuntimeDirectory = \"routerd\";\n")
+	buf.WriteString("      RuntimeDirectoryPreserve = \"yes\";\n")
 	buf.WriteString("      StateDirectory = \"routerd\";\n")
 	buf.WriteString("    };\n")
 	buf.WriteString("  };\n")
