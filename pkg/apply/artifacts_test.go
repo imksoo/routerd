@@ -12,6 +12,9 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 		"lan":       "ens19",
 		"wan-pppoe": "ppp0",
 		"transix-a": "ds-transix-a",
+		"wg-lab":    "wg-lab",
+		"vrf-guest": "vrf-guest",
+		"vx240":     "vx240",
 	}
 	resources := []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogSink"}, Metadata: api.ObjectMeta{Name: "syslog"}, Spec: api.LogSinkSpec{Type: "syslog"}},
@@ -19,21 +22,32 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"}, Metadata: api.ObjectMeta{Name: "time"}, Spec: api.NTPClientSpec{Provider: "systemd-timesyncd"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "wan-pppoe"}, Spec: api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan-session"}, Spec: api.PPPoESessionSpec{Interface: "wan", Username: "user", Password: "secret"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-lab"}, Spec: api.WireGuardInterfaceSpec{ListenPort: 51820}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"}, Metadata: api.ObjectMeta{Name: "peer-a"}, Spec: api.WireGuardPeerSpec{Interface: "wg-lab", PublicKey: "pub", AllowedIPs: []string{"10.44.0.2/32"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"}, Metadata: api.ObjectMeta{Name: "aws-a"}, Spec: api.IPsecConnectionSpec{LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.10", PreSharedKey: "secret", LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VRF"}, Metadata: api.ObjectMeta{Name: "vrf-guest"}, Spec: api.VRFSpec{RouteTable: 1001}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx240"}, Spec: api.VXLANTunnelSpec{VNI: 240, LocalAddress: "10.44.0.1", UnderlayInterface: "wg-lab", Peers: []string{"10.44.0.2"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPAddress"}, Metadata: api.ObjectMeta{Name: "wan-v4"}, Spec: api.IPv4DHCPAddressSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan-lease"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"}, Metadata: api.ObjectMeta{Name: "dhcp4"}, Spec: api.IPv4DHCPServerSpec{Server: "dnsmasq"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPScope"}, Metadata: api.ObjectMeta{Name: "lan-scope"}, Spec: api.IPv4DHCPScopeSpec{Server: "dhcp4", Interface: "lan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPAddress"}, Metadata: api.ObjectMeta{Name: "wan-v6"}, Spec: api.IPv6DHCPAddressSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPReservation"}, Metadata: api.ObjectMeta{Name: "printer-v2"}, Spec: api.IPv4DHCPReservationSpec{Server: "dhcp4", MACAddress: "aa:bb:cc:dd:ee:01", IPAddress: "192.168.10.51"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DelegatedAddressSpec{Interface: "lan", AddressSuffix: "::3"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPServer"}, Metadata: api.ObjectMeta{Name: "dhcp6"}, Spec: api.IPv6DHCPServerSpec{Server: "dnsmasq"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "dhcp6-v2"}, Spec: api.IPv6DHCPv6ServerSpec{Interface: "lan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPScope"}, Metadata: api.ObjectMeta{Name: "lan-v6-scope"}, Spec: api.IPv6DHCPScopeSpec{Server: "dhcp6"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPRelay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPRelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "SelfAddressPolicy"}, Metadata: api.ObjectMeta{Name: "self"}, Spec: api.SelfAddressPolicySpec{AddressFamily: "ipv6"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSConditionalForwarder"}, Metadata: api.ObjectMeta{Name: "aftr"}, Spec: api.DNSConditionalForwarderSpec{Domain: "gw.transix.jp"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "transix-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-transix-a"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "wan-check"}, Spec: api.HealthCheckSpec{Type: "ping"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default-v4"}, Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{{Name: "pppoe", Interface: "wan-pppoe", Priority: 10, Mark: 0x111, Table: 111}}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"}, Metadata: api.ObjectMeta{Name: "nat"}, Spec: api.IPv4SourceNATSpec{OutboundInterface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "nat44"}, Spec: api.NAT44RuleSpec{Type: "masquerade", EgressInterface: "wan", SourceRanges: []string{"192.168.0.0/16"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRoute"}, Metadata: api.ObjectMeta{Name: "policy"}, Spec: api.IPv4PolicyRouteSpec{OutboundInterface: "wan", Priority: 100, Mark: 0x120, Table: 120}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "set"}, Spec: api.IPv4PolicyRouteSetSpec{Targets: []api.IPv4PolicyRouteTarget{{OutboundInterface: "transix-a", Priority: 10000, Mark: 0x100, Table: 100}}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4ReversePathFilter"}, Metadata: api.ObjectMeta{Name: "rp"}, Spec: api.IPv4ReversePathFilterSpec{Target: "interface", Interface: "lan"}},
@@ -105,31 +119,6 @@ default via 192.168.1.1 dev ens18 table 112 metric 600
 	}
 	if got[1].Name != "table=112" || got[1].Attributes["ifname"] != "ens18" {
 		t.Fatalf("second artifact = %+v, want table=112 ifname=ens18", got[1])
-	}
-}
-
-func TestIPv6PrefixDelegationDeclaresFreeBSDDUIDArtifact(t *testing.T) {
-	res := api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
-		Metadata: api.ObjectMeta{Name: "wan-pd"},
-		Spec: api.IPv6PrefixDelegationSpec{
-			Interface: "wan",
-			Client:    "dhcp6c",
-			Profile:   "ntt-hgw-lan-pd",
-		},
-	}
-	intents := resourceArtifactIntents(res, map[string]string{"wan": "vtnet0"})
-	found := false
-	for _, intent := range intents {
-		if intent.Artifact.Kind == "file" && intent.Artifact.Name == "/var/db/dhcp6c_duid" {
-			found = true
-			if intent.ApplyWith != "dhcp6c" {
-				t.Fatalf("DUID intent applyWith = %q", intent.ApplyWith)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("DUID file intent missing: %+v", intents)
 	}
 }
 

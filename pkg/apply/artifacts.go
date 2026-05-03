@@ -55,6 +55,16 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			artifact("file", "/usr/local/etc/mpd5/mpd.conf", resource.ActionEnsure, "mpd5", nil),
 			artifact("rc.d.service", "mpd5", resource.ActionEnsure, "service", nil),
 		}
+	case "PPPoESession":
+		spec, err := res.PPPoESessionSpec()
+		if err != nil {
+			return nil
+		}
+		ifname := defaultString(spec.Interface, res.Metadata.Name)
+		return []resource.Intent{
+			artifact("routerd.pppoe.client", res.Metadata.Name, resource.ActionEnsure, "routerd-pppoe-client", map[string]string{"interface": ifname}),
+			artifact("unix.socket", "/run/routerd/pppoe-client/"+res.Metadata.Name+".sock", resource.ActionEnsure, "routerd-pppoe-client", nil),
+		}
 	case "IPv4StaticAddress":
 		spec, err := res.IPv4StaticAddressSpec()
 		if err != nil {
@@ -66,12 +76,46 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("dhcp.ipv4.client", aliases[spec.Interface], resource.ActionEnsure, defaultString(spec.Client, "dhcpcd"), nil)}
+		return []resource.Intent{artifact("routerd.dhcp4.client", aliases[spec.Interface], resource.ActionEnsure, "routerd-dhcp4-client", nil)}
+	case "DHCPv4Lease":
+		return []resource.Intent{artifact("routerd.dhcp4.client", res.Metadata.Name, resource.ActionEnsure, "routerd-dhcp4-client", nil)}
+	case "WireGuardInterface":
+		return []resource.Intent{artifact("net.wireguard.interface", res.Metadata.Name, resource.ActionEnsure, "wg", nil)}
+	case "WireGuardPeer":
+		spec, err := res.WireGuardPeerSpec()
+		if err != nil {
+			return nil
+		}
+		return []resource.Intent{artifact("net.wireguard.peer", spec.Interface+"/"+res.Metadata.Name, resource.ActionEnsure, "wg", map[string]string{"interface": spec.Interface})}
+	case "IPsecConnection":
+		return []resource.Intent{
+			artifact("ipsec.swanctl.connection", res.Metadata.Name, resource.ActionEnsure, "swanctl", nil),
+			artifact("file", "/usr/local/etc/swanctl/conf.d/routerd-"+res.Metadata.Name+".conf", resource.ActionEnsure, "file", nil),
+		}
+	case "VRF":
+		spec, err := res.VRFSpec()
+		if err != nil {
+			return nil
+		}
+		ifname := defaultString(spec.IfName, res.Metadata.Name)
+		return []resource.Intent{artifact("net.vrf", ifname, resource.ActionEnsure, "ip-link", map[string]string{"routeTable": fmt.Sprintf("%d", spec.RouteTable)})}
+	case "VXLANTunnel":
+		spec, err := res.VXLANTunnelSpec()
+		if err != nil {
+			return nil
+		}
+		return []resource.Intent{artifact("net.vxlan.tunnel", defaultString(spec.IfName, res.Metadata.Name), resource.ActionEnsure, "ip-link", map[string]string{"vni": fmt.Sprintf("%d", spec.VNI)})}
 	case "IPv4DHCPServer", "IPv6DHCPServer":
 		return []resource.Intent{
 			artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil),
 			artifact("systemd.service", "routerd-dnsmasq.service", resource.ActionEnsure, "systemctl", nil),
 		}
+	case "IPv4DHCPReservation":
+		spec, err := res.IPv4DHCPReservationSpec()
+		if err != nil {
+			return nil
+		}
+		return []resource.Intent{artifact("dnsmasq.dhcpv4.host", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server, "mac": spec.MACAddress, "ip": spec.IPAddress})}
 	case "IPv4DHCPScope":
 		spec, err := res.IPv4DHCPScopeSpec()
 		if err != nil {
@@ -83,7 +127,7 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("dhcp.ipv6.client", aliases[spec.Interface], resource.ActionEnsure, defaultString(spec.Client, "networkd"), nil)}
+		return []resource.Intent{artifact("routerd.dhcp6.addressClient", aliases[spec.Interface], resource.ActionEnsure, "routerd-dhcp6-client", nil)}
 	case "IPv6RAAddress":
 		spec, err := res.IPv6RAAddressSpec()
 		if err != nil {
@@ -91,17 +135,7 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		}
 		return []resource.Intent{artifact("net.ipv6.ra.client", aliases[spec.Interface], resource.ActionEnsure, "platform-network", nil)}
 	case "IPv6PrefixDelegation":
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			return nil
-		}
-		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		client := defaultString(spec.Client, "networkd")
-		intents := []resource.Intent{artifact("dhcp.ipv6.prefixDelegation", aliases[spec.Interface], resource.ActionEnsure, client, nil)}
-		if client == "dhcp6c" && api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType) == "link-layer" {
-			intents = append(intents, artifact("file", "/var/db/dhcp6c_duid", resource.ActionEnsure, "dhcp6c", map[string]string{"purpose": "dhcpv6-client-duid"}))
-		}
-		return intents
+		return []resource.Intent{artifact("systemd.service", "routerd-dhcp6-client@"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
 	case "IPv6DelegatedAddress":
 		spec, err := res.IPv6DelegatedAddressSpec()
 		if err != nil {
@@ -114,6 +148,10 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		return []resource.Intent{artifact("dnsmasq.dhcpv6.scope", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", map[string]string{"server": spec.Server})}
+	case "IPv6DHCPv6Server":
+		return []resource.Intent{artifact("dnsmasq.dhcpv6.server", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil)}
+	case "DHCPRelay":
+		return []resource.Intent{artifact("dnsmasq.dhcp.relay", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil)}
 	case "SelfAddressPolicy":
 		return []resource.Intent{artifact("routerd.selfAddressPolicy", res.Metadata.Name, resource.ActionEnsure, "routerd", nil)}
 	case "DNSConditionalForwarder":
@@ -129,6 +167,8 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 	case "IPv4DefaultRoutePolicy":
 		return ipv4DefaultRoutePolicyArtifacts(res, aliases)
 	case "IPv4SourceNAT":
+		return []resource.Intent{artifact("nft.table", "routerd_nat", resource.ActionEnsure, "nft", nil)}
+	case "NAT44Rule":
 		return []resource.Intent{artifact("nft.table", "routerd_nat", resource.ActionEnsure, "nft", nil)}
 	case "IPv4PolicyRoute":
 		return ipv4PolicyRouteArtifacts(res, aliases)

@@ -74,12 +74,28 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], includePlan, &rr)
 		case "PPPoEInterface":
 			e.observePPPoEInterface(res, aliases, includePlan, &rr)
+		case "PPPoESession":
+			e.observePPPoESession(res, aliases, includePlan, &rr)
+		case "WireGuardInterface":
+			e.observeWireGuardInterface(res, includePlan, &rr)
+		case "WireGuardPeer":
+			e.observeWireGuardPeer(res, aliases, includePlan, &rr)
+		case "IPsecConnection":
+			e.observeIPsecConnection(res, includePlan, &rr)
+		case "VRF":
+			e.observeVRF(res, aliases, includePlan, &rr)
+		case "VXLANTunnel":
+			e.observeVXLANTunnel(res, aliases, includePlan, &rr)
 		case "IPv4StaticAddress":
 			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
 		case "IPv4DHCPAddress":
 			e.observeDHCP(res, aliases, policies, "ipv4", includePlan, &rr)
+		case "DHCPv4Lease":
+			e.observeDHCPv4Lease(res, aliases, policies, includePlan, &rr)
 		case "IPv4DHCPServer":
 			e.observeIPv4DHCPServer(res, includePlan, &rr)
+		case "IPv4DHCPReservation":
+			e.observeIPv4DHCPReservation(res, includePlan, &rr)
 		case "IPv4DHCPScope":
 			e.observeIPv4DHCPScope(res, aliases, policies, includePlan, &rr)
 		case "IPv6DHCPAddress":
@@ -92,12 +108,16 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv6DelegatedAddress(res, aliases, includePlan, &rr)
 		case "IPv6DHCPServer":
 			e.observeIPv6DHCPServer(res, includePlan, &rr)
+		case "IPv6DHCPv6Server":
+			e.observeIPv6DHCPv6Server(res, includePlan, &rr)
 		case "IPv6DHCPScope":
 			e.observeIPv6DHCPScope(res, includePlan, &rr)
 		case "SelfAddressPolicy":
 			e.observeSelfAddressPolicy(res, includePlan, &rr)
 		case "DNSConditionalForwarder":
 			e.observeDNSConditionalForwarder(res, aliases, includePlan, &rr)
+		case "DHCPRelay":
+			e.observeDHCPRelay(res, aliases, includePlan, &rr)
 		case "DSLiteTunnel":
 			e.observeDSLiteTunnel(res, aliases, includePlan, &rr)
 		case "HealthCheck":
@@ -106,6 +126,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv4DefaultRoutePolicy(res, aliases, includePlan, &rr)
 		case "IPv4SourceNAT":
 			e.observeIPv4SourceNAT(res, aliases, policies, includePlan, &rr)
+		case "NAT44Rule":
+			e.observeNAT44Rule(res, aliases, includePlan, &rr)
 		case "IPv4PolicyRoute":
 			e.observeIPv4PolicyRoute(res, aliases, policies, includePlan, &rr)
 		case "IPv4PolicyRouteSet":
@@ -304,6 +326,34 @@ func (e *Engine) observeIPv6DHCPServer(res api.Resource, includePlan bool, rr *R
 	}
 }
 
+func (e *Engine) observeIPv6DHCPv6Server(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv6DHCPv6ServerSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	mode := defaultString(spec.Mode, "stateless")
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["mode"] = mode
+	if len(spec.DNSServers) > 0 {
+		rr.Observed["dnsServers"] = strings.Join(spec.DNSServers, ",")
+	}
+	if len(spec.SNTPServers) > 0 {
+		rr.Observed["sntpServers"] = strings.Join(spec.SNTPServers, ",")
+	}
+	if len(spec.DomainSearch) > 0 {
+		rr.Observed["domainSearch"] = strings.Join(spec.DomainSearch, ",")
+	}
+	if spec.AddressPool.Start != "" {
+		rr.Observed["rangeStart"] = spec.AddressPool.Start
+		rr.Observed["rangeEnd"] = spec.AddressPool.End
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure dnsmasq DHCPv6 %s service on %s", mode, spec.Interface))
+	}
+}
+
 func (e *Engine) observeIPv6DHCPScope(res api.Resource, includePlan bool, rr *ResourceResult) {
 	spec, err := res.IPv6DHCPScopeSpec()
 	if err != nil {
@@ -378,6 +428,25 @@ func (e *Engine) observeDNSConditionalForwarder(res api.Resource, aliases map[st
 	}
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("forward DNS queries for %s using %s upstreams", spec.Domain, source))
+	}
+}
+
+func (e *Engine) observeDHCPRelay(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPRelaySpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	var ifnames []string
+	for _, name := range spec.Interfaces {
+		ifnames = append(ifnames, aliases[name])
+	}
+	rr.Observed["interfaces"] = strings.Join(spec.Interfaces, ",")
+	rr.Observed["ifnames"] = strings.Join(ifnames, ",")
+	rr.Observed["upstream"] = spec.Upstream
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("relay DHCP from %s to %s", strings.Join(ifnames, ","), spec.Upstream))
 	}
 }
 
@@ -466,6 +535,143 @@ func (e *Engine) observePPPoEInterface(res api.Resource, aliases map[string]stri
 	}
 }
 
+func (e *Engine) observePPPoESession(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.PPPoESessionSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	lowerIfName := aliases[spec.Interface]
+	auth := defaultString(spec.AuthMethod, "chap")
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["lowerIfname"] = lowerIfName
+	rr.Observed["client"] = "routerd-pppoe-client"
+	rr.Observed["authMethod"] = auth
+	rr.Observed["username"] = spec.Username
+	if spec.ServiceName != "" {
+		rr.Observed["serviceName"] = spec.ServiceName
+	}
+	if spec.ACName != "" {
+		rr.Observed["acName"] = spec.ACName
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-pppoe-client for %s and observe PPPoE IPCP status from daemon", lowerIfName))
+	}
+}
+
+func (e *Engine) observeWireGuardInterface(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.WireGuardInterfaceSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["ifname"] = res.Metadata.Name
+	if spec.ListenPort != 0 {
+		rr.Observed["listenPort"] = fmt.Sprintf("%d", spec.ListenPort)
+	}
+	if spec.MTU != 0 {
+		rr.Observed["mtu"] = fmt.Sprintf("%d", spec.MTU)
+	}
+	if spec.FwMark != 0 {
+		rr.Observed["fwmark"] = fmt.Sprintf("%d", spec.FwMark)
+	}
+	if spec.Table != 0 {
+		rr.Observed["table"] = fmt.Sprintf("%d", spec.Table)
+	}
+	if out, err := e.Command("wg", "show", res.Metadata.Name, "dump"); err == nil && len(bytes.TrimSpace(out)) > 0 {
+		rr.Observed["wgAvailable"] = "true"
+	} else if includePlan {
+		rr.Warnings = append(rr.Warnings, "wg is required to observe WireGuard runtime status")
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure WireGuard interface %s", res.Metadata.Name))
+	}
+}
+
+func (e *Engine) observeWireGuardPeer(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.WireGuardPeerSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["ifname"] = aliases[spec.Interface]
+	rr.Observed["publicKey"] = spec.PublicKey
+	rr.Observed["allowedIPs"] = strings.Join(spec.AllowedIPs, ",")
+	if spec.Endpoint != "" {
+		rr.Observed["endpoint"] = spec.Endpoint
+	}
+	if spec.PersistentKeepalive != 0 {
+		rr.Observed["persistentKeepalive"] = fmt.Sprintf("%d", spec.PersistentKeepalive)
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure WireGuard peer %s on %s", res.Metadata.Name, aliases[spec.Interface]))
+	}
+}
+
+func (e *Engine) observeIPsecConnection(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPsecConnectionSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["localAddress"] = spec.LocalAddress
+	rr.Observed["remoteAddress"] = spec.RemoteAddress
+	rr.Observed["leftSubnet"] = spec.LeftSubnet
+	rr.Observed["rightSubnet"] = spec.RightSubnet
+	if spec.CloudProviderHint != "" {
+		rr.Observed["cloudProviderHint"] = spec.CloudProviderHint
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("render swanctl connection %s for cloud VPN peer %s", res.Metadata.Name, spec.RemoteAddress))
+	}
+}
+
+func (e *Engine) observeVRF(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.VRFSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := defaultString(spec.IfName, res.Metadata.Name)
+	rr.Observed["ifname"] = ifname
+	rr.Observed["routeTable"] = fmt.Sprintf("%d", spec.RouteTable)
+	rr.Observed["members"] = strings.Join(spec.Members, ",")
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure Linux VRF %s with route table %d", ifname, spec.RouteTable))
+		for _, member := range spec.Members {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("enslave %s to VRF %s", aliases[member], ifname))
+		}
+	}
+}
+
+func (e *Engine) observeVXLANTunnel(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.VXLANTunnelSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := defaultString(spec.IfName, res.Metadata.Name)
+	rr.Observed["ifname"] = ifname
+	rr.Observed["vni"] = fmt.Sprintf("%d", spec.VNI)
+	rr.Observed["localAddress"] = spec.LocalAddress
+	rr.Observed["underlayInterface"] = spec.UnderlayInterface
+	rr.Observed["underlayIfname"] = aliases[spec.UnderlayInterface]
+	rr.Observed["peers"] = strings.Join(spec.Peers, ",")
+	if spec.Bridge != "" {
+		rr.Observed["bridge"] = spec.Bridge
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
+	}
+}
+
 func (e *Engine) observeIPv4SourceNAT(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
 	spec, err := res.IPv4SourceNATSpec()
 	if err != nil {
@@ -518,6 +724,37 @@ func (e *Engine) observeIPv4SourceNAT(res api.Resource, aliases map[string]strin
 	case "range":
 		rr.Plan = append(rr.Plan, fmt.Sprintf("map source ports to %d-%d", spec.Translation.PortMapping.Start, spec.Translation.PortMapping.End))
 	}
+}
+
+func (e *Engine) observeNAT44Rule(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.NAT44RuleSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	if spec.EgressInterface != "" {
+		rr.Observed["egressInterface"] = spec.EgressInterface
+		if ifname := aliases[spec.EgressInterface]; ifname != "" {
+			rr.Observed["egressIfname"] = ifname
+		}
+	}
+	if spec.EgressPolicyRef != "" {
+		rr.Observed["egressPolicyRef"] = spec.EgressPolicyRef
+	}
+	rr.Observed["type"] = spec.Type
+	rr.Observed["sourceRanges"] = strings.Join(spec.SourceRanges, ",")
+	if spec.SNATAddress != "" {
+		rr.Observed["snatAddress"] = spec.SNATAddress
+	}
+	if !includePlan {
+		return
+	}
+	if spec.EgressInterface != "" {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure NAT44 %s for %s via %s", spec.Type, strings.Join(spec.SourceRanges, ","), defaultString(aliases[spec.EgressInterface], spec.EgressInterface)))
+		return
+	}
+	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure NAT44 %s for %s via selected device from WANEgressPolicy/%s", spec.Type, strings.Join(spec.SourceRanges, ","), spec.EgressPolicyRef))
 }
 
 func (e *Engine) observeIPv4PolicyRoute(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
@@ -713,6 +950,11 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 	rr.Observed["server"] = server
 	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
 	rr.Observed["listenInterfaces"] = strings.Join(spec.ListenInterfaces, ",")
+	if spec.Interface != "" {
+		rr.Observed["interface"] = spec.Interface
+		rr.Observed["rangeStart"] = spec.AddressPool.Start
+		rr.Observed["rangeEnd"] = spec.AddressPool.End
+	}
 	rr.Observed["dnsEnabled"] = fmt.Sprintf("%t", spec.DNS.Enabled)
 	if spec.DNS.UpstreamSource != "" {
 		rr.Observed["dnsUpstreamSource"] = spec.DNS.UpstreamSource
@@ -744,6 +986,9 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 	if len(spec.ListenInterfaces) > 0 {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("serve dnsmasq only on %s", strings.Join(spec.ListenInterfaces, ",")))
 	}
+	if spec.Interface != "" {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("serve IPv4 DHCP pool %s-%s on %s", spec.AddressPool.Start, spec.AddressPool.End, spec.Interface))
+	}
 	if spec.DNS.Enabled {
 		upstreamSource := defaultString(spec.DNS.UpstreamSource, "system")
 		switch upstreamSource {
@@ -756,6 +1001,24 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 		case "none":
 			rr.Plan = append(rr.Plan, "run dnsmasq DNS service without upstream forwarders")
 		}
+	}
+}
+
+func (e *Engine) observeIPv4DHCPReservation(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPv4DHCPReservationSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["server"] = spec.Server
+	rr.Observed["macAddress"] = spec.MACAddress
+	rr.Observed["ipAddress"] = spec.IPAddress
+	if spec.Hostname != "" {
+		rr.Observed["hostname"] = spec.Hostname
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("reserve %s for %s", spec.IPAddress, spec.MACAddress))
 	}
 }
 
@@ -1132,6 +1395,46 @@ func (e *Engine) observeDHCP(res api.Resource, aliases map[string]string, polici
 	}
 }
 
+func (e *Engine) observeDHCPv4Lease(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPv4LeaseSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := aliases[spec.Interface]
+	policy := policies[spec.Interface]
+
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["ifname"] = ifname
+	rr.Observed["client"] = "routerd-dhcp4-client"
+	if spec.Hostname != "" {
+		rr.Observed["hostname"] = spec.Hostname
+	}
+	if spec.RequestedAddress != "" {
+		rr.Observed["requestedAddress"] = spec.RequestedAddress
+	}
+	if spec.ClassID != "" {
+		rr.Observed["classID"] = spec.ClassID
+	}
+	if spec.ClientID != "" {
+		rr.Observed["clientID"] = spec.ClientID
+	}
+
+	if includePlan {
+		if !policy.Managed || policy.Owner == "external" {
+			rr.Plan = append(rr.Plan, "observe daemon lease only; referenced interface is externally managed")
+			return
+		}
+		if policy.RequiresAdoption {
+			rr.Phase = "RequiresAdoption"
+			rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd applies DHCPv4 lease")
+			return
+		}
+		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-dhcp4-client for %s and apply DHCPv4 address/default route from daemon status", ifname))
+	}
+}
+
 func (e *Engine) observeIPv6RAAddress(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
 	iface := stringSpec(res, "interface")
 	ifname := aliases[iface]
@@ -1318,6 +1621,12 @@ func interfaceAliases(router *api.Router) map[string]string {
 		case "Bridge":
 			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
 		case "VXLANSegment":
+			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
+		case "WireGuardInterface":
+			aliases[res.Metadata.Name] = res.Metadata.Name
+		case "VRF":
+			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
+		case "VXLANTunnel":
 			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
 		case "PPPoEInterface":
 			aliases[res.Metadata.Name] = defaultString(stringSpec(res, "ifname"), "ppp-"+res.Metadata.Name)
@@ -1540,12 +1849,29 @@ func stringSpec(res api.Resource, key string) string {
 		if key == "ifname" {
 			return spec.IfName
 		}
+	case api.VRFSpec:
+		if key == "ifname" {
+			return spec.IfName
+		}
+	case api.VXLANTunnelSpec:
+		if key == "ifname" {
+			return spec.IfName
+		}
 	case api.PPPoEInterfaceSpec:
 		switch key {
 		case "ifname":
 			return spec.IfName
 		case "interface":
 			return spec.Interface
+		}
+	case api.PPPoESessionSpec:
+		switch key {
+		case "interface":
+			return spec.Interface
+		case "authMethod":
+			return spec.AuthMethod
+		case "username":
+			return spec.Username
 		}
 	case api.IPv4StaticAddressSpec:
 		switch key {
@@ -1562,6 +1888,19 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.Interface
 		case "client":
 			return spec.Client
+		}
+	case api.DHCPv4LeaseSpec:
+		switch key {
+		case "interface":
+			return spec.Interface
+		case "hostname":
+			return spec.Hostname
+		case "requestedAddress":
+			return spec.RequestedAddress
+		case "classID":
+			return spec.ClassID
+		case "clientID":
+			return spec.ClientID
 		}
 	case api.IPv4DHCPServerSpec:
 		switch key {

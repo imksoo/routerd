@@ -79,7 +79,8 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 			}
 		}
 	}
-	if len(v4Scopes) == 0 && len(v6Scopes) == 0 {
+	hasDirect := hasDirectDnsmasqLANService(router)
+	if len(v4Scopes) == 0 && len(v6Scopes) == 0 && !hasDirect {
 		return nil, nil, nil
 	}
 	sort.Slice(v4Scopes, func(i, j int) bool { return v4Scopes[i].Metadata.Name < v4Scopes[j].Metadata.Name })
@@ -97,6 +98,9 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 	dnsEnabled, err := dnsmasqDNSEnabled(v4Scopes, v4Servers, v6Scopes)
 	if err != nil {
 		return nil, warnings, err
+	}
+	if hasDirect {
+		dnsEnabled = true
 	}
 
 	var buf bytes.Buffer
@@ -142,6 +146,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 		}
 		renderedScopes = append(renderedScopes, delegated.IfName)
 	}
+	renderedScopes = append(renderedScopes, directDnsmasqIfnames(router, aliases)...)
 	var listenAddresses []string
 	if dnsEnabled {
 		var err error
@@ -177,6 +182,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 	if len(v6Scopes) > 0 {
 		buf.WriteString("enable-ra\n")
 	}
+	writeDirectDnsmasqLANService(&buf, router, aliases)
 
 	for _, res := range v4Scopes {
 		spec, err := res.IPv4DHCPScopeSpec()
@@ -270,6 +276,223 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 
 	return buf.Bytes(), warnings, nil
 }
+
+func hasDirectDnsmasqLANService(router *api.Router) bool {
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "IPv4DHCPServer":
+			spec, err := res.IPv4DHCPServerSpec()
+			if err == nil && spec.Interface != "" {
+				return true
+			}
+		case "IPv6DHCPv6Server", "IPv6RouterAdvertisement", "DHCPRelay":
+			return true
+		case "DNSAnswerScope":
+			spec, err := res.DNSAnswerScopeSpec()
+			if err == nil && (len(spec.HostRecords) > 0 || spec.LocalDomain != "" || spec.DNSSEC) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func directDnsmasqIfnames(router *api.Router, aliases map[string]string) []string {
+	var ifnames []string
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "IPv4DHCPServer":
+			spec, err := res.IPv4DHCPServerSpec()
+			if err == nil && spec.Interface != "" && aliases[spec.Interface] != "" {
+				ifnames = append(ifnames, aliases[spec.Interface])
+			}
+		case "IPv6DHCPv6Server", "IPv6RouterAdvertisement":
+			var iface string
+			if res.Kind == "IPv6DHCPv6Server" {
+				spec, err := res.IPv6DHCPv6ServerSpec()
+				if err == nil {
+					iface = spec.Interface
+				}
+			} else {
+				spec, err := res.IPv6RouterAdvertisementSpec()
+				if err == nil {
+					iface = spec.Interface
+				}
+			}
+			if aliases[iface] != "" {
+				ifnames = append(ifnames, aliases[iface])
+			}
+		case "DHCPRelay":
+			spec, err := res.DHCPRelaySpec()
+			if err == nil {
+				for _, iface := range spec.Interfaces {
+					if aliases[iface] != "" {
+						ifnames = append(ifnames, aliases[iface])
+					}
+				}
+			}
+		}
+	}
+	return uniqueStrings(ifnames)
+}
+
+func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases map[string]string) {
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv4DHCPServer" {
+			continue
+		}
+		spec, err := res.IPv4DHCPServerSpec()
+		if err != nil || spec.Interface == "" {
+			continue
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			continue
+		}
+		tag := sanitizeDnsmasqTag(res.Metadata.Name)
+		buf.WriteString("\n")
+		buf.WriteString("interface=" + ifname + "\n")
+		leaseTime := defaultString(spec.AddressPool.LeaseTime, "12h")
+		buf.WriteString(fmt.Sprintf("dhcp-range=set:%s,%s,%s,%s\n", tag, spec.AddressPool.Start, spec.AddressPool.End, leaseTime))
+		if spec.Gateway != "" {
+			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:router,%s\n", tag, spec.Gateway))
+		}
+		if len(spec.DNSServers) > 0 {
+			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:dns-server,%s\n", tag, strings.Join(spec.DNSServers, ",")))
+		}
+		if len(spec.NTPServers) > 0 {
+			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:ntp-server,%s\n", tag, strings.Join(spec.NTPServers, ",")))
+		}
+		if spec.Domain != "" {
+			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s\n", tag, spec.Domain))
+		}
+		for _, option := range spec.Options {
+			buf.WriteString("dhcp-option=tag:" + tag + "," + dnsmasqDHCPOption(option) + "\n")
+		}
+		for _, reservation := range router.Spec.Resources {
+			if reservation.Kind != "IPv4DHCPReservation" {
+				continue
+			}
+			reservationSpec, err := reservation.IPv4DHCPReservationSpec()
+			if err != nil || (reservationSpec.Server != "" && reservationSpec.Server != res.Metadata.Name) {
+				continue
+			}
+			reservationTag := sanitizeDnsmasqTag(reservation.Metadata.Name)
+			buf.WriteString("dhcp-host=" + dnsmasqIPv4Reservation(reservationSpec, reservationTag) + "\n")
+			for _, option := range reservationSpec.Options {
+				buf.WriteString("dhcp-option=tag:" + reservationTag + "," + dnsmasqDHCPOption(option) + "\n")
+			}
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6DHCPv6Server" {
+			continue
+		}
+		spec, err := res.IPv6DHCPv6ServerSpec()
+		if err != nil {
+			continue
+		}
+		ifname := defaultString(aliases[spec.Interface], spec.Interface)
+		tag := sanitizeDnsmasqTag(res.Metadata.Name)
+		buf.WriteString("\n")
+		buf.WriteString("interface=" + ifname + "\n")
+		buf.WriteString("enable-ra\n")
+		leaseTime := defaultString(defaultString(spec.AddressPool.LeaseTime, spec.LeaseTime), "12h")
+		switch defaultString(spec.Mode, "stateless") {
+		case "stateful":
+			buf.WriteString(fmt.Sprintf("dhcp-range=set:%s,%s,%s,constructor:%s,64,%s\n", tag, spec.AddressPool.Start, spec.AddressPool.End, ifname, leaseTime))
+		case "both":
+			buf.WriteString(fmt.Sprintf("dhcp-range=set:%s,%s,%s,constructor:%s,slaac,64,%s\n", tag, spec.AddressPool.Start, spec.AddressPool.End, ifname, leaseTime))
+		default:
+			buf.WriteString(fmt.Sprintf("dhcp-range=set:%s,::,constructor:%s,ra-stateless,64,%s\n", tag, ifname, leaseTime))
+		}
+		for _, server := range spec.DNSServers {
+			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server,[%s]\n", tag, strings.Trim(server, "[]")))
+		}
+		if len(spec.DomainSearch) > 0 {
+			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:domain-search,%s\n", tag, strings.Join(spec.DomainSearch, ",")))
+		}
+		for _, server := range spec.SNTPServers {
+			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:sntp-server,[%s]\n", tag, strings.Trim(server, "[]")))
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv6RouterAdvertisement" {
+			continue
+		}
+		spec, err := res.IPv6RouterAdvertisementSpec()
+		if err != nil {
+			continue
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			ifname = spec.Interface
+		}
+		buf.WriteString("interface=" + ifname + "\n")
+		buf.WriteString("enable-ra\n")
+		var params []string
+		if spec.MTU != 0 {
+			params = append(params, fmt.Sprintf("mtu:%d", spec.MTU))
+		}
+		switch spec.PRFPreference {
+		case "high", "low":
+			params = append(params, spec.PRFPreference)
+		}
+		if spec.ValidLifetime != "" {
+			params = append(params, "0", spec.ValidLifetime)
+		} else if spec.MTU != 0 && (spec.PRFPreference == "high" || spec.PRFPreference == "low") {
+			params = append(params, "0")
+		}
+		if len(params) > 0 {
+			buf.WriteString(fmt.Sprintf("ra-param=%s,%s\n", ifname, strings.Join(params, ",")))
+		}
+		for _, server := range spec.RDNSS {
+			buf.WriteString(fmt.Sprintf("dhcp-option=option6:dns-server,[%s]\n", strings.Trim(server, "[]")))
+		}
+		if len(spec.DNSSL) > 0 {
+			buf.WriteString("dhcp-option=option6:domain-search," + strings.Join(spec.DNSSL, ",") + "\n")
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind == "DHCPRelay" {
+			spec, err := res.DHCPRelaySpec()
+			if err == nil {
+				for _, iface := range spec.Interfaces {
+					if ifname := aliases[iface]; ifname != "" {
+						buf.WriteString(fmt.Sprintf("dhcp-relay=0.0.0.0,%s,%s\n", spec.Upstream, ifname))
+					}
+				}
+			}
+		}
+		if res.Kind != "DNSAnswerScope" {
+			continue
+		}
+		spec, err := res.DNSAnswerScopeSpec()
+		if err != nil {
+			continue
+		}
+		for _, record := range spec.HostRecords {
+			addresses := compactDNSRecordAddresses(record.IPv4, record.IPv6)
+			if record.Hostname != "" && len(addresses) > 0 {
+				buf.WriteString(fmt.Sprintf("host-record=%s,%s\n", record.Hostname, strings.Join(addresses, ",")))
+			}
+		}
+		if spec.LocalDomain != "" {
+			domain := strings.Trim(spec.LocalDomain, ".")
+			buf.WriteString("domain=" + domain + "\n")
+			buf.WriteString("local=/" + domain + "/\n")
+			if spec.DDNS {
+				buf.WriteString("dhcp-fqdn\n")
+			}
+		}
+		if spec.DNSSEC {
+			buf.WriteString("dnssec\n")
+			buf.WriteString(dnsmasqRootTrustAnchor + "\n")
+		}
+	}
+}
+
+const dnsmasqRootTrustAnchor = "trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D"
 
 func writeDNSConditionalForwarders(buf *bytes.Buffer, router *api.Router, aliases map[string]string, runtime DnsmasqRuntime, warnings *[]string) error {
 	var forwarders []api.Resource
@@ -608,6 +831,38 @@ func dnsmasqHostReservation(spec api.DHCPv4HostReservationSpec, scopeLeaseTime s
 		parts = append(parts, leaseTime)
 	}
 	return strings.Join(parts, ",")
+}
+
+func dnsmasqIPv4Reservation(spec api.IPv4DHCPReservationSpec, tag string) string {
+	parts := []string{strings.ToLower(spec.MACAddress)}
+	if tag != "" {
+		parts = append(parts, "set:"+tag)
+	}
+	if spec.Hostname != "" {
+		parts = append(parts, spec.Hostname)
+	}
+	parts = append(parts, spec.IPAddress)
+	return strings.Join(parts, ",")
+}
+
+func dnsmasqDHCPOption(option api.DHCPOptionSpec) string {
+	key := option.Name
+	if key == "" {
+		key = fmt.Sprintf("%d", option.Code)
+	} else {
+		key = "option:" + key
+	}
+	return key + "," + option.Value
+}
+
+func compactDNSRecordAddresses(values ...string) []string {
+	var out []string
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, strings.TrimSpace(value))
+		}
+	}
+	return out
 }
 
 func dnsmasqIPv6DNSServers(spec api.IPv6DHCPScopeSpec, delegated delegatedIPv6Address, policy api.SelfAddressPolicySpec, aliases map[string]string, delegatedAddresses map[string]delegatedIPv6Address, runtime DnsmasqRuntime) ([]string, error) {

@@ -146,8 +146,7 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`networking.firewall.allowedUDPPorts = [ 4789 ];`,
 		`networking.firewall.trustedInterfaces = [ "br0" ];`,
 		`systemd.network.networks."10-netplan-ens18"`,
-		`DHCP = "yes";`,
-		`IPv6AcceptRA = true;`,
+		`DHCP = "ipv4";`,
 		`systemd.network.networks."10-netplan-ens19"`,
 		`Bridge = "br0";`,
 		`systemd.network.netdevs."30-routerd-br0"`,
@@ -304,7 +303,7 @@ func TestNixOSModuleOnlyTrustsBridgesAttachedToVXLAN(t *testing.T) {
 	}
 }
 
-func TestNixOSModuleRejectsDHCP6CWithoutPackagePath(t *testing.T) {
+func TestNixOSModuleIgnoresLegacyPrefixDelegationClient(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -330,49 +329,14 @@ func TestNixOSModuleRejectsDHCP6CWithoutPackagePath(t *testing.T) {
 			},
 		}},
 	}
-	_, err := NixOSModule(router)
-	if err == nil || !strings.Contains(err.Error(), "client=dhcp6c") {
-		t.Fatalf("NixOSModule error = %v, want dhcp6c unsupported error", err)
-	}
-}
-
-func TestNixOSModuleRendersDHCPCDPackageWithoutNetworkdDHCPv6(t *testing.T) {
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NixOSHost"},
-				Metadata: api.ObjectMeta{Name: "host"},
-				Spec:     api.NixOSHostSpec{DebugSystemPackages: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
-				Metadata: api.ObjectMeta{Name: "wan-pd"},
-				Spec: api.IPv6PrefixDelegationSpec{
-					Interface: "wan",
-					Profile:   "ntt-hgw-lan-pd",
-				},
-			},
-		}},
-	}
 	data, err := NixOSModule(router)
 	if err != nil {
 		t.Fatalf("render NixOS module: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, "dhcpcd") {
-		t.Fatalf("NixOS module should include dhcpcd for omitted NTT-profile client:\n%s", got)
-	}
-	if strings.Contains(got, `DHCP = "ipv6";`) || strings.Contains(got, `DHCP = "yes";`) {
-		t.Fatalf("NixOS module should not enable networkd DHCPv6 for client=dhcpcd:\n%s", got)
-	}
-	if !strings.Contains(got, "IPv6AcceptRA = true;") {
-		t.Fatalf("NixOS module should still accept RA for client=dhcpcd:\n%s", got)
+	for _, unwanted := range []string{"dhcpcd", "dhcp6c", `DHCP = "ipv6";`, `DHCP = "yes";`, "IPv6AcceptRA = true;"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("NixOS module should ignore legacy PD client rendering %q:\n%s", unwanted, got)
+		}
 	}
 }

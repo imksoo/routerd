@@ -142,6 +142,81 @@ func TestDnsmasqConfigRendersDHCPv4HostReservation(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.IPv4DHCPServerSpec{
+				Managed:     true,
+				Interface:   "lan",
+				AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+				Gateway:     "192.168.10.1",
+				DNSServers:  []string{"192.168.10.1"},
+				NTPServers:  []string{"192.168.10.1"},
+				Domain:      "lan",
+				Options:     []api.DHCPOptionSpec{{Name: "domain-search", Value: "lan"}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPReservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.IPv4DHCPReservationSpec{
+				Server:     "lan-v4",
+				MACAddress: "02:00:00:00:01:50",
+				Hostname:   "printer",
+				IPAddress:  "192.168.10.150",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DHCPv6ServerSpec{
+				Interface:    "lan",
+				Mode:         "both",
+				AddressPool:  api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "6h"},
+				DNSServers:   []string{"2001:db8::53"},
+				SNTPServers:  []string{"2001:db8::123"},
+				DomainSearch: []string{"lan"},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{
+				Interface:         "lan",
+				PrefixSource:      "${IPv6DelegatedAddress/lan.status.address}",
+				RDNSS:             []string{"2001:db8::53"},
+				DNSSL:             []string{"lan"},
+				MTU:               1500,
+				PRFPreference:     "high",
+				ValidLifetime:     "7200",
+				PreferredLifetime: "3600",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSAnswerScope"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DNSAnswerScopeSpec{
+				Interface:   "lan",
+				LocalDomain: "lan",
+				DDNS:        true,
+				DNSSEC:      true,
+				HostRecords: []api.DNSHostRecord{{Hostname: "router.lan", IPv4: "192.168.10.1", IPv6: "2001:db8::1"}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPRelay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPRelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
+		}},
+	}
+
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"dhcp-range=set:lan-v4,192.168.10.100,192.168.10.199,8h",
+		"dhcp-option=tag:lan-v4,option:router,192.168.10.1",
+		"dhcp-host=02:00:00:00:01:50,set:printer,printer,192.168.10.150",
+		"dhcp-range=set:lan-v6,::100,::1ff,constructor:ens19,slaac,64,6h",
+		"dhcp-option=tag:lan-v6,option6:dns-server,[2001:db8::53]",
+		"ra-param=ens19,mtu:1500,high,0,7200",
+		"dhcp-option=option6:domain-search,lan",
+		"host-record=router.lan,192.168.10.1,2001:db8::1",
+		"domain=lan",
+		"local=/lan/",
+		"dhcp-fqdn",
+		"dnssec",
+		"dhcp-relay=0.0.0.0,192.0.2.53,ens19",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestDnsmasqConfigCanPassThroughDHCPv4DNS(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

@@ -12,7 +12,14 @@ type TypeMeta struct {
 }
 
 type ObjectMeta struct {
-	Name string `yaml:"name" json:"name"`
+	Name      string     `yaml:"name" json:"name"`
+	OwnerRefs []OwnerRef `yaml:"ownerRefs,omitempty" json:"ownerRefs,omitempty"`
+}
+
+type OwnerRef struct {
+	APIVersion string `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
+	Kind       string `yaml:"kind" json:"kind"`
+	Name       string `yaml:"name" json:"name"`
 }
 
 type Router struct {
@@ -97,6 +104,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "Link":
+		var spec LinkSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "Bridge":
 		var spec BridgeSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -109,8 +122,44 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "WireGuardInterface":
+		var spec WireGuardInterfaceSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "WireGuardPeer":
+		var spec WireGuardPeerSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPsecConnection":
+		var spec IPsecConnectionSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "VRF":
+		var spec VRFSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "VXLANTunnel":
+		var spec VXLANTunnelSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "PPPoEInterface":
 		var spec PPPoEInterfaceSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "PPPoESession":
+		var spec PPPoESessionSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -123,6 +172,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		r.Spec = spec
 	case "IPv4DHCPAddress":
 		var spec IPv4DHCPAddressSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DHCPv4Lease":
+		var spec DHCPv4LeaseSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -157,6 +212,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "IPv4DHCPReservation":
+		var spec IPv4DHCPReservationSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv6DHCPAddress":
 		var spec IPv6DHCPAddressSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -181,14 +242,44 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "DHCPv6Information":
+		var spec DHCPv6InformationSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv6RouterAdvertisement":
+		var spec IPv6RouterAdvertisementSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv6DHCPServer":
 		var spec IPv6DHCPServerSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "IPv6DHCPv6Server":
+		var spec IPv6DHCPv6ServerSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv6DHCPScope":
 		var spec IPv6DHCPScopeSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DHCPRelay":
+		var spec DHCPRelaySpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DNSAnswerScope":
+		var spec DNSAnswerScopeSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -205,8 +296,20 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "DNSResolverUpstream":
+		var spec DNSResolverUpstreamSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "DSLiteTunnel":
 		var spec DSLiteTunnelSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "IPv4Route":
+		var spec IPv4RouteSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -223,6 +326,24 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "WANEgressPolicy":
+		var spec WANEgressPolicySpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "EventRule":
+		var spec EventRuleSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "DerivedEvent":
+		var spec DerivedEventSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv4DefaultRoutePolicy":
 		var spec IPv4DefaultRoutePolicySpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -231,6 +352,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		r.Spec = spec
 	case "IPv4SourceNAT":
 		var spec IPv4SourceNATSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "NAT44Rule":
+		var spec NAT44RuleSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}

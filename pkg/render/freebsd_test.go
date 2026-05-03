@@ -35,11 +35,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	for _, want := range []string{
 		`ifconfig_vtnet0="DHCP"`,
 		`ifconfig_vtnet2="DHCP"`,
-		`ifconfig_vtnet0_ipv6="inet6 accept_rtadv"`,
 		`ifconfig_vtnet1="inet 192.168.10.1/24"`,
-		`dhcp6c_enable="YES"`,
-		`dhcp6c_interfaces="vtnet0"`,
-		`dhcp6c_flags="-n"`,
 		`mpd_enable="YES"`,
 		`mpd_flags="-b"`,
 		`cloned_interfaces="vxlan100 bridge0"`,
@@ -65,26 +61,10 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 			t.Fatalf("dhclient output missing %q:\n%s", want, dhclient)
 		}
 	}
-	dhcp6c := string(got.DHCP6C)
-	for _, want := range []string{
-		"interface vtnet0",
-		"send ia-pd 1",
-		"id-assoc pd 1",
-		"prefix-interface vtnet1",
-		"sla-len 4",
-	} {
-		if !strings.Contains(dhcp6c, want) {
-			t.Fatalf("dhcp6c output missing %q:\n%s", want, dhcp6c)
+	for _, unwanted := range []string{"dhcp6c_enable", "dhcp6c_interfaces", "dhcp6c_flags"} {
+		if strings.Contains(rc, unwanted) {
+			t.Fatalf("FreeBSD rc.conf must not render legacy DHCPv6 client key %q:\n%s", unwanted, rc)
 		}
-	}
-	if strings.Contains(dhcp6c, "ifid") {
-		t.Fatalf("dhcp6c output must not include unsupported ifid statement:\n%s", dhcp6c)
-	}
-	if strings.Contains(dhcp6c, "prefix ::/60;") {
-		t.Fatalf("dhcp6c output must not render unsupported length-only prefix hints:\n%s", dhcp6c)
-	}
-	if strings.Contains(dhcp6c, "prefix 2001:db8") {
-		t.Fatalf("dhcp6c output must not render explicit prefix hints for the NTT profile:\n%s", dhcp6c)
 	}
 	mpd5 := string(got.MPD5)
 	for _, want := range []string{
@@ -106,7 +86,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	}
 }
 
-func TestFreeBSDSkipsDHCPCDPrefixDelegationInDHCP6C(t *testing.T) {
+func TestFreeBSDIgnoresPrefixDelegationClientRenderer(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcpcd", Profile: "ntt-hgw-lan-pd", PrefixLength: 60}},
@@ -115,14 +95,8 @@ func TestFreeBSDSkipsDHCPCDPrefixDelegationInDHCP6C(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render FreeBSD: %v", err)
 	}
-	if strings.Contains(string(got.RCConf), "dhcp6c_interfaces") || strings.Contains(string(got.RCConf), "dhcp6c_flags") {
-		t.Fatalf("FreeBSD rc.conf must not render dhcp6c runtime details for client=dhcpcd:\n%s", got.RCConf)
-	}
-	if !strings.Contains(string(got.RCConf), `dhcp6c_enable="NO"`) {
-		t.Fatalf("FreeBSD rc.conf must disable dhcp6c for client=dhcpcd:\n%s", got.RCConf)
-	}
-	if len(got.DHCP6C) != 0 {
-		t.Fatalf("FreeBSD dhcp6c.conf must be empty for client=dhcpcd:\n%s", got.DHCP6C)
+	if strings.Contains(string(got.RCConf), "dhcp6c_") {
+		t.Fatalf("FreeBSD rc.conf must not render legacy dhcp6c runtime details:\n%s", got.RCConf)
 	}
 }
 

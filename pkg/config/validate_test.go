@@ -188,6 +188,92 @@ func TestValidatePPPoEInterfaceRequiresOnePasswordSource(t *testing.T) {
 	}
 }
 
+func TestValidatePPPoESession(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan-ether"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
+				Metadata: api.ObjectMeta{Name: "softether"},
+				Spec: api.PPPoESessionSpec{
+					Interface:       "wan-ether",
+					AuthMethod:      "chap",
+					Username:        "open@open.ad.jp",
+					Password:        "open",
+					MTU:             1454,
+					MRU:             1454,
+					LCPEchoInterval: 30,
+					LCPEchoFailure:  4,
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate PPPoE session: %v", err)
+	}
+}
+
+func TestValidateTierSResources(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br240"}, Spec: api.BridgeSpec{IfName: "br240", Members: []string{"vx240"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-lab"}, Spec: api.WireGuardInterfaceSpec{ListenPort: 51820, MTU: 1420}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"}, Metadata: api.ObjectMeta{Name: "peer-a"}, Spec: api.WireGuardPeerSpec{Interface: "wg-lab", PublicKey: "pub", AllowedIPs: []string{"10.44.0.2/32"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"}, Metadata: api.ObjectMeta{Name: "aws-a"}, Spec: api.IPsecConnectionSpec{LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.10", PreSharedKey: "secret", LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16", CloudProviderHint: "aws"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VRF"}, Metadata: api.ObjectMeta{Name: "vrf-guest"}, Spec: api.VRFSpec{RouteTable: 1001, Members: []string{"wg-lab"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx240"}, Spec: api.VXLANTunnelSpec{VNI: 240, LocalAddress: "10.44.0.1", UnderlayInterface: "wg-lab", Peers: []string{"10.44.0.2"}, Bridge: "br240"}},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate Tier S resources: %v", err)
+	}
+}
+
+func TestValidatePhase15LANServiceKinds(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.IPv4DHCPServerSpec{
+				Interface:   "lan",
+				AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+				Gateway:     "192.168.10.1",
+				DNSServers:  []string{"192.168.10.1"},
+				NTPServers:  []string{"192.168.10.1"},
+				Options:     []api.DHCPOptionSpec{{Name: "domain-search", Value: "lan"}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPReservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.IPv4DHCPReservationSpec{Server: "lan-v4", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.168.10.150"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DHCPv6ServerSpec{
+				Interface:    "lan",
+				Mode:         "both",
+				AddressPool:  api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "6h"},
+				DNSServers:   []string{"2001:db8::53"},
+				SNTPServers:  []string{"2001:db8::123"},
+				DomainSearch: []string{"lan"},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PrefixSource: "${IPv6DelegatedAddress/lan.status.prefix}", RDNSS: []string{"2001:db8::53"}, DNSSL: []string{"lan"}, MTU: 1500, PRFPreference: "high"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSAnswerScope"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DNSAnswerScopeSpec{Interface: "lan", LocalDomain: "lan", HostRecords: []api.DNSHostRecord{{Hostname: "router.lan", IPv4: "192.168.10.1", IPv6: "2001:db8::1"}}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPRelay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPRelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate Phase 1.5 LAN service kinds: %v", err)
+	}
+}
+
 func TestValidateIPv4DefaultRoutePolicyStaticRequiresGateway(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -451,10 +537,9 @@ func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
 				Metadata: api.ObjectMeta{Name: "wan-pd"},
 				Spec: api.IPv6PrefixDelegationSpec{
-					Interface:   "wan",
-					IAID:        "00000001",
-					DUIDType:    "link-layer",
-					DUIDRawData: "000102005e102030",
+					Interface: "wan",
+					IAID:      "00000001",
+					DUIDType:  "link-layer",
 				},
 			},
 		}},
@@ -468,34 +553,9 @@ func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
 		t.Fatal("expected invalid IAID to be rejected")
 	}
 
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", ServerID: "00030001020000000001", PriorPrefix: "2001:db8:1200:1240::/60", AcquisitionStrategy: "request-claim-only"}
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate prefix delegation active controller overrides: %v", err)
-	}
-
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", ServerID: "not-a-duid"}
+	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", DUIDType: "unknown"}
 	if err := Validate(router); err == nil {
-		t.Fatal("expected invalid serverID to be rejected")
-	}
-
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", PriorPrefix: "not-a-prefix"}
-	if err := Validate(router); err == nil {
-		t.Fatal("expected invalid priorPrefix to be rejected")
-	}
-
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", AcquisitionStrategy: "unknown"}
-	if err := Validate(router); err == nil {
-		t.Fatal("expected invalid acquisitionStrategy to be rejected")
-	}
-
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", Recovery: api.IPv6PDRecoverySpec{Mode: "auto-request"}}
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate prefix delegation recovery mode: %v", err)
-	}
-
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", Recovery: api.IPv6PDRecoverySpec{Mode: "unknown"}}
-	if err := Validate(router); err == nil {
-		t.Fatal("expected invalid recovery mode to be rejected")
+		t.Fatal("expected invalid duidType to be rejected")
 	}
 }
 
@@ -554,6 +614,31 @@ func TestValidateIPv4SourceNATRequiresValidCIDR(t *testing.T) {
 
 	if err := Validate(router); err == nil {
 		t.Fatal("expected invalid NAT source CIDR to be rejected")
+	}
+}
+
+func TestValidateNAT44Rule(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
+				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
+				Spec: api.NAT44RuleSpec{
+					Type:            "masquerade",
+					EgressPolicyRef: "ipv4-default",
+					SourceRanges:    []string{"192.168.0.0/16"},
+				},
+			},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate NAT44Rule: %v", err)
+	}
+	router.Spec.Resources[0].Spec = api.NAT44RuleSpec{Type: "snat", EgressInterface: "wan", SourceRanges: []string{"192.168.0.0/16"}}
+	if err := Validate(router); err == nil {
+		t.Fatal("expected snat without snatAddress to be rejected")
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
@@ -350,67 +349,6 @@ func TestParseFreeBSDSysrcValue(t *testing.T) {
 	}
 }
 
-func TestApplyFreeBSDConfigNoopDoesNotRestartDHCP6C(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	marker := filepath.Join(dir, "unexpected-command")
-	writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf(`#!/bin/sh
-case "$1" in
-  gateway_enable) echo "gateway_enable: YES"; exit 0 ;;
-  ipv6_gateway_enable) echo "ipv6_gateway_enable: YES"; exit 0 ;;
-  dhcp6c_enable) echo "dhcp6c_enable: YES"; exit 0 ;;
-  dhcp6c_interfaces) echo "dhcp6c_interfaces: vtnet0"; exit 0 ;;
-  dhcp6c_flags) echo "dhcp6c_flags: -n"; exit 0 ;;
-esac
-echo "$@" >> %q
-exit 64
-`, marker))
-	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
-if [ "$1" = "dhcp6c" ] && [ "$2" = "status" ]; then
-  exit 0
-fi
-echo "$@" >> %q
-exit 64
-`, marker))
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
-
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcp6c", Profile: "ntt-hgw-lan-pd", DUIDRawData: "020000000101"}},
-	}}}
-	data, err := render.FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	dhcp6cPath := filepath.Join(dir, "dhcp6c.conf")
-	if err := os.WriteFile(dhcp6cPath, data.DHCP6C, 0644); err != nil {
-		t.Fatalf("seed dhcp6c.conf: %v", err)
-	}
-	duidPath := filepath.Join(dir, "dhcp6c_duid")
-	if changed, backup, err := routerstate.EnsureKAMEDHCP6CDUIDLLRaw(duidPath, "020000000101", time.Now()); err != nil {
-		t.Fatalf("seed DUID: %v", err)
-	} else if !changed || backup != "" {
-		t.Fatalf("seed DUID changed=%v backup=%q, want initial write", changed, backup)
-	}
-
-	changed, _, err := applyFreeBSDConfig(router, nil, "", dhcp6cPath, duidPath, "")
-	if err != nil {
-		t.Fatalf("apply FreeBSD config: %v", err)
-	}
-	if len(changed) != 0 {
-		t.Fatalf("changed = %v, want no-op", changed)
-	}
-	if data, err := os.ReadFile(marker); err == nil {
-		t.Fatalf("unexpected mutating command(s):\n%s", data)
-	} else if !os.IsNotExist(err) {
-		t.Fatalf("read marker: %v", err)
-	}
-}
-
 func TestApplyFreeBSDConfigReclaimsStaleSysrcKeys(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
@@ -438,7 +376,7 @@ exit 0
 	store := routerstate.New()
 	store.Set(freebsdSysrcStateKey, "ifconfig_vxlan102,ifconfig_vxlan103,gateway_enable", "test seed")
 
-	_, _, err := applyFreeBSDConfig(router, store, "", "", "", "")
+	_, _, err := applyFreeBSDConfig(router, store, "", "")
 	if err != nil {
 		t.Fatalf("apply FreeBSD config: %v", err)
 	}
@@ -1115,7 +1053,7 @@ dhcp6_ia_pd1_prefix1=2001:db8:3d60:1220::
 	if prefix != "2001:db8:3d60:1220::/60" {
 		t.Fatalf("prefix = %q, want documentation /60", prefix)
 	}
-	if lease.ServerID != "00030001020000000001" || lease.T1 != "7200" || lease.T2 != "12600" || lease.PLTime != "14400" || lease.VLTime != "14400" {
+	if lease.T1 != "7200" || lease.T2 != "12600" || lease.PLTime != "14400" || lease.VLTime != "14400" {
 		t.Fatalf("lease = %#v", lease)
 	}
 }

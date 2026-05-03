@@ -36,6 +36,8 @@ endif
 BUILDDIR ?= bin/$(ROUTERD_OS)$(if $(GOARCH),-$(GOARCH))
 ROUTERD_BIN := $(BUILDDIR)/routerd
 ROUTERCTL_BIN := $(BUILDDIR)/routerctl
+ROUTERD_DHCP6_CLIENT_BIN := $(BUILDDIR)/routerd-dhcp6-client
+ROUTERD_HEALTHCHECK_BIN := $(BUILDDIR)/routerd-healthcheck
 GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
@@ -50,6 +52,8 @@ build:
 	install -d $(BUILDDIR)
 	$(GO_BUILD_ENV) go build -o $(ROUTERD_BIN) ./cmd/routerd
 	$(GO_BUILD_ENV) go build -o $(ROUTERCTL_BIN) ./cmd/routerctl
+	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCP6_CLIENT_BIN) ./cmd/routerd-dhcp6-client
+	$(GO_BUILD_ENV) go build -o $(ROUTERD_HEALTHCHECK_BIN) ./cmd/routerd-healthcheck
 
 generate-schema:
 	install -d schemas
@@ -102,6 +106,8 @@ install: check-build-deps build
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 $(ROUTERD_BIN) $(DESTDIR)$(BINDIR)/routerd
 	install -m 0755 $(ROUTERCTL_BIN) $(DESTDIR)$(BINDIR)/routerctl
+	install -m 0755 $(ROUTERD_DHCP6_CLIENT_BIN) $(DESTDIR)$(BINDIR)/routerd-dhcp6-client
+	install -m 0755 $(ROUTERD_HEALTHCHECK_BIN) $(DESTDIR)$(BINDIR)/routerd-healthcheck
 	install -d $(DESTDIR)$(SYSCONFDIR)
 	install -m 0644 examples/basic-static.yaml $(DESTDIR)$(SYSCONFDIR)/router.yaml.example
 	install -d $(DESTDIR)$(SYSCONFDIR)/examples

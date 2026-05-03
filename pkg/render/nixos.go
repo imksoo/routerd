@@ -19,7 +19,6 @@ type nixOSInterface struct {
 	DHCP4UseRoutes   *bool
 	DHCP4UseDNS      *bool
 	DHCP4RouteMetric int
-	DHCP6            bool
 	AcceptRA         bool
 	Addresses        []string
 	Routes           []nixOSRoute
@@ -352,32 +351,12 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 			if iface := interfaces[spec.Interface]; iface != nil {
 				iface.Routes = append(iface.Routes, nixOSRoute{Destination: spec.Destination, Gateway: spec.Via, Metric: spec.Metric})
 			}
-		case "IPv6DHCPAddress":
-			spec, err := res.IPv6DHCPAddressSpec()
-			if err != nil {
-				return nil, err
-			}
-			if iface := interfaces[spec.Interface]; iface != nil {
-				iface.DHCP6 = true
-				iface.AcceptRA = true
-			}
 		case "IPv6RAAddress":
 			spec, err := res.IPv6RAAddressSpec()
 			if err != nil {
 				return nil, err
 			}
 			if iface := interfaces[spec.Interface]; iface != nil && api.BoolDefault(spec.Managed, true) {
-				iface.AcceptRA = true
-			}
-		case "IPv6PrefixDelegation":
-			spec, err := res.IPv6PrefixDelegationSpec()
-			if err != nil {
-				return nil, err
-			}
-			if iface := interfaces[spec.Interface]; iface != nil {
-				if effectiveNixOSIPv6PDClient(spec) == "networkd" {
-					iface.DHCP6 = true
-				}
 				iface.AcceptRA = true
 			}
 		}
@@ -532,19 +511,15 @@ func writeNixOSVXLANFDBService(buf *bytes.Buffer, vxlan nixOSVXLAN) {
 func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 	buf.WriteString("  systemd.network.networks." + nixString("10-netplan-"+iface.IfName) + " = {\n")
 	buf.WriteString("    matchConfig.Name = " + nixString(iface.IfName) + ";\n")
-	if iface.DHCP4 || iface.DHCP6 || iface.AcceptRA || iface.Bridge != "" || len(iface.Addresses) == 0 {
+	if iface.DHCP4 || iface.AcceptRA || iface.Bridge != "" || len(iface.Addresses) == 0 {
 		buf.WriteString("    networkConfig = {\n")
-		if iface.DHCP4 && iface.DHCP6 {
-			buf.WriteString("      DHCP = \"yes\";\n")
-		} else if iface.DHCP4 {
+		if iface.DHCP4 {
 			buf.WriteString("      DHCP = \"ipv4\";\n")
-		} else if iface.DHCP6 {
-			buf.WriteString("      DHCP = \"ipv6\";\n")
 		}
 		if iface.AcceptRA {
 			buf.WriteString("      IPv6AcceptRA = true;\n")
 		}
-		if len(iface.Addresses) == 0 && !iface.DHCP4 && !iface.DHCP6 && !iface.AcceptRA {
+		if len(iface.Addresses) == 0 && !iface.DHCP4 && !iface.AcceptRA {
 			buf.WriteString("      LinkLocalAddressing = \"no\";\n")
 		}
 		if iface.Bridge != "" {
@@ -593,7 +568,7 @@ func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 	}
 	if iface.AdminUp || len(iface.Addresses) == 0 {
 		required := "no"
-		if iface.DHCP4 || iface.DHCP6 || len(iface.Addresses) > 0 {
+		if iface.DHCP4 || len(iface.Addresses) > 0 {
 			required = "routable"
 		}
 		buf.WriteString("    linkConfig.RequiredForOnline = " + nixString(required) + ";\n")
@@ -697,18 +672,6 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 		case "PPPoEInterface":
 			service["ppp"] = true
 			debug["ppp"] = true
-		case "IPv6PrefixDelegation":
-			spec, err := res.IPv6PrefixDelegationSpec()
-			if err != nil {
-				return nil, nil, err
-			}
-			switch effectiveNixOSIPv6PDClient(spec) {
-			case "dhcp6c":
-				return nil, nil, fmt.Errorf("%s uses client=dhcp6c, but the built-in NixOS renderer does not provide a WIDE dhcp6c package path; use client=dhcpcd or provide a custom NixOS module outside routerd", res.ID())
-			case "dhcpcd":
-				service["dhcpcd"] = true
-				debug["dhcpcd"] = true
-			}
 		}
 	}
 	for _, pkg := range host.AdditionalServicePath {
@@ -770,10 +733,6 @@ func nixBool(value bool) string {
 		return "true"
 	}
 	return "false"
-}
-
-func effectiveNixOSIPv6PDClient(spec api.IPv6PrefixDelegationSpec) string {
-	return api.EffectiveIPv6PDClient("linux", true, spec.Profile, spec.Client)
 }
 
 func nixString(value string) string {

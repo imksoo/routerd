@@ -26,17 +26,15 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
+	"routerd/pkg/bus"
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
-	"routerd/pkg/dhcp6control"
-	"routerd/pkg/dhcp6event"
-	"routerd/pkg/dhcp6recorder"
+	controllerchain "routerd/pkg/controller/chain"
 	"routerd/pkg/eventlog"
 	"routerd/pkg/inventory"
 	"routerd/pkg/observe"
-	"routerd/pkg/pdmonitor"
+	routerotel "routerd/pkg/otel"
 	"routerd/pkg/platform"
-	"routerd/pkg/ralistener"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
@@ -51,27 +49,20 @@ const (
 var (
 	platformDefaults, platformFeatures = platform.Current()
 
-	defaultConfigPath            = platformDefaults.ConfigFile()
-	defaultPluginDir             = platformDefaults.PluginDir
-	defaultNetplanPath           = platformDefaults.NetplanFile
-	defaultDnsmasqConfigPath     = platformDefaults.DnsmasqConfigFile
-	defaultDnsmasqServicePath    = platformDefaults.DnsmasqServiceFile
-	defaultFreeBSDDHClientPath   = platformDefaults.FreeBSDDHClientConfigFile
-	defaultFreeBSDDHCP6CPath     = platformDefaults.FreeBSDDHCP6CConfigFile
-	defaultFreeBSDDHCP6CDUIDPath = platformDefaults.FreeBSDDHCP6CDUIDFile
-	defaultFreeBSDMPD5Path       = platformDefaults.FreeBSDMPD5ConfigFile
-	defaultNftablesPath          = platformDefaults.NftablesFile
-	defaultRouteNftablesPath     = platformDefaults.DefaultRouteNftablesFile
-	defaultTimesyncdPath         = platformDefaults.TimesyncdDropinFile
-	defaultLedgerPath            = platformDefaults.DBFile()
-	defaultStatePath             = platformDefaults.DBFile()
-	pppoeCHAPSecretsPath         = platformDefaults.PPPoEChapSecretsFile
-	pppoePAPSecretsPath          = platformDefaults.PPPoEPapSecretsFile
-	linuxDHCP6CConfigDir         = platformDefaults.SysconfDir
-	linuxDHCP6CDUIDPath          = "/var/lib/dhcpv6/dhcp6c_duid"
-	linuxDHCPCDConfigDir         = platformDefaults.SysconfDir
-	linuxDHCPCDDUIDPath          = "/var/lib/dhcpcd/duid"
-	freeBSDDHCPCDDUIDPath        = "/var/db/dhcpcd/duid"
+	defaultConfigPath          = platformDefaults.ConfigFile()
+	defaultPluginDir           = platformDefaults.PluginDir
+	defaultNetplanPath         = platformDefaults.NetplanFile
+	defaultDnsmasqConfigPath   = platformDefaults.DnsmasqConfigFile
+	defaultDnsmasqServicePath  = platformDefaults.DnsmasqServiceFile
+	defaultFreeBSDDHClientPath = platformDefaults.FreeBSDDHClientConfigFile
+	defaultFreeBSDMPD5Path     = platformDefaults.FreeBSDMPD5ConfigFile
+	defaultNftablesPath        = platformDefaults.NftablesFile
+	defaultRouteNftablesPath   = platformDefaults.DefaultRouteNftablesFile
+	defaultTimesyncdPath       = platformDefaults.TimesyncdDropinFile
+	defaultLedgerPath          = platformDefaults.DBFile()
+	defaultStatePath           = platformDefaults.DBFile()
+	pppoeCHAPSecretsPath       = platformDefaults.PPPoEChapSecretsFile
+	pppoePAPSecretsPath        = platformDefaults.PPPoEPapSecretsFile
 )
 
 var errNoIPv6PrefixAvailable = errors.New("no IPv6 prefix available")
@@ -84,6 +75,11 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
+	telemetry, err := routerotel.Setup(context.Background(), "routerd")
+	if err != nil {
+		return err
+	}
+	defer telemetry.Shutdown(context.Background())
 	if len(args) == 0 {
 		usage(stderr)
 		return errors.New("missing command")
@@ -104,8 +100,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return applyCommand(args[1:], stdout)
 	case "delete":
 		return deleteCommand(args[1:], stdout)
-	case "dhcp6":
-		return dhcp6Command(args[1:], stdout)
 	case "serve":
 		return serveCommand(args[1:], stdout)
 	case "run":
@@ -165,9 +159,6 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	}
 	files := map[string][]byte{
 		"rc.conf.d-routerd": data.RCConf,
-	}
-	if len(data.DHCP6C) > 0 {
-		files["dhcp6c.conf"] = data.DHCP6C
 	}
 	if len(data.DHCPClient) > 0 {
 		files["dhclient.conf"] = data.DHCPClient
@@ -242,361 +233,6 @@ func validateCommand(args []string, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "config %s exists\n", *configPath)
 	fmt.Fprintln(stdout, "config is valid")
 	return nil
-}
-
-func dhcp6Command(args []string, stdout io.Writer) error {
-	if len(args) == 0 {
-		return errors.New("dhcp6 requires an action: solicit, request, renew, rebind, or release")
-	}
-	action := args[0]
-	switch action {
-	case "solicit", "request", "renew", "rebind", "release":
-	default:
-		return fmt.Errorf("unknown dhcp6 action %q", action)
-	}
-	fs := flag.NewFlagSet("dhcp6 "+action, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	configPath := fs.String("config", defaultConfigPath, "config path")
-	statePath := fs.String("state-file", defaultStatePath, "routerd state DB file")
-	resourceName := fs.String("resource", "wan-pd", "IPv6PrefixDelegation resource name")
-	prefixOverride := fs.String("prefix", "", "delegated prefix override")
-	serverDUIDOverride := fs.String("server-duid", "", "DHCPv6 server DUID override as hex")
-	destinationIPOverride := fs.String("dst-ip", "ff02::1:2", "destination IPv6 address")
-	destinationMACOverride := fs.String("dst-mac", "", "destination Ethernet MAC override")
-	iaidOverride := fs.String("iaid", "", "override IA_PD IAID (decimal or 0xHEX) for active DHCPv6-PD lab packets")
-	clientDUIDOverride := fs.String("client-duid", "", "override Client-ID DUID as hex (no separators or colon-separated) for active DHCPv6-PD lab packets")
-	hopLimitOverride := fs.Uint("hop-limit", 0, "override IPv6 hop limit (1-255) for active DHCPv6-PD lab packets; 0 keeps the routerd default of 255")
-	srcMACOverride := fs.String("src-mac", "", "override source Ethernet MAC (auto-derives IPv6 LL via EUI-64) for active DHCPv6-PD lab packets")
-	srcLLOverride := fs.String("src-ll", "", "override source IPv6 link-local address for active DHCPv6-PD lab packets (used together with --src-mac)")
-	t1Override := fs.Uint("t1", 0, "override IA_PD T1 seconds for active DHCPv6-PD lab packets")
-	t2Override := fs.Uint("t2", 0, "override IA_PD T2 seconds for active DHCPv6-PD lab packets")
-	preferredLifetimeOverride := fs.Uint("preferred-lifetime", 0, "override IA Prefix preferred lifetime seconds for active DHCPv6-PD lab packets")
-	validLifetimeOverride := fs.Uint("valid-lifetime", 0, "override IA Prefix valid lifetime seconds for active DHCPv6-PD lab packets")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
-	}
-	router, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-	if err := config.Validate(router); err != nil {
-		return err
-	}
-	store, err := routerstate.Load(*statePath)
-	if err != nil {
-		return err
-	}
-	input, err := dhcp6SendInput(router, store, action, *resourceName, *prefixOverride, *serverDUIDOverride, *destinationIPOverride, *destinationMACOverride)
-	if err != nil {
-		return err
-	}
-	if *iaidOverride != "" {
-		parsed, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimPrefix(*iaidOverride, "0x"), "0X"), parseIAIDBase(*iaidOverride), 32)
-		if err != nil {
-			return fmt.Errorf("parse --iaid %q: %w", *iaidOverride, err)
-		}
-		input.IAID = uint32(parsed)
-	}
-	if *hopLimitOverride > 0 {
-		if *hopLimitOverride > 255 {
-			return fmt.Errorf("--hop-limit %d out of range 1-255", *hopLimitOverride)
-		}
-		input.HopLimit = uint8(*hopLimitOverride)
-	}
-	if *clientDUIDOverride != "" {
-		duid, err := dhcp6control.ParseDUID(*clientDUIDOverride)
-		if err != nil {
-			return fmt.Errorf("parse --client-duid %q: %w", *clientDUIDOverride, err)
-		}
-		if len(duid) == 0 {
-			return fmt.Errorf("--client-duid must not be empty")
-		}
-		input.Identity.ClientDUID = duid
-	}
-	if *srcMACOverride != "" {
-		mac, err := net.ParseMAC(*srcMACOverride)
-		if err != nil {
-			return fmt.Errorf("parse --src-mac %q: %w", *srcMACOverride, err)
-		}
-		input.Identity.SourceMAC = mac
-		if *srcLLOverride == "" {
-			ll, err := macToEUI64LinkLocal(mac)
-			if err != nil {
-				return fmt.Errorf("derive link-local from --src-mac: %w", err)
-			}
-			input.Identity.SourceIP = ll
-		}
-	}
-	if *srcLLOverride != "" {
-		ll, err := netip.ParseAddr(*srcLLOverride)
-		if err != nil {
-			return fmt.Errorf("parse --src-ll %q: %w", *srcLLOverride, err)
-		}
-		input.Identity.SourceIP = ll
-	}
-	if err := setDHCP6LifetimeOverrides(&input, *t1Override, *t2Override, *preferredLifetimeOverride, *validLifetimeOverride); err != nil {
-		return err
-	}
-	if action == "request" && input.Lease.LastReplyAt == "" {
-		fmt.Fprintln(stdout, "WARNING: routerd dhcp6 request with no observed Reply will create a phantom HGW PD binding that subsequent Renew/Rebind cannot refresh on this NTT NGN HGW. Acquisition path is the OS DHCPv6 client (dhcpcd / dhcp6c) running canonical Solicit/Advertise/Request/Reply. See docs/knowledge-base/ntt-ngn-pd-acquisition.md Section B.4.")
-	}
-	controller := dhcp6control.Controller{Sender: dhcp6control.AFPacketSender{}}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	switch action {
-	case "solicit":
-		err = controller.SendSolicit(ctx, store, input)
-	case "request":
-		err = controller.SendRequest(ctx, store, input)
-	case "renew":
-		err = controller.SendRenew(ctx, store, input)
-	case "rebind":
-		err = controller.SendRebind(ctx, store, input)
-	case "release":
-		err = controller.SendRelease(ctx, store, input)
-	}
-	if err != nil {
-		return err
-	}
-	if err := store.Save(*statePath); err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "sent DHCPv6 %s for %s on %s prefix=%s iaid=%d\n", action, *resourceName, input.Identity.InterfaceName, activePrefixDisplay(input.Prefix), input.IAID)
-	return nil
-}
-
-func macToEUI64LinkLocal(mac net.HardwareAddr) (netip.Addr, error) {
-	if len(mac) != 6 {
-		return netip.Addr{}, fmt.Errorf("expected 6-byte MAC, got %d bytes", len(mac))
-	}
-	var addr [16]byte
-	addr[0], addr[1] = 0xfe, 0x80
-	addr[8] = mac[0] ^ 0x02
-	addr[9] = mac[1]
-	addr[10] = mac[2]
-	addr[11] = 0xff
-	addr[12] = 0xfe
-	addr[13] = mac[3]
-	addr[14] = mac[4]
-	addr[15] = mac[5]
-	return netip.AddrFrom16(addr), nil
-}
-
-func parseIAIDBase(value string) int {
-	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
-		return 16
-	}
-	return 10
-}
-
-func setDHCP6LifetimeOverrides(input *dhcp6control.SendInput, t1, t2, preferred, valid uint) error {
-	convert := func(name string, value uint) (uint32, error) {
-		if value > uint(^uint32(0)) {
-			return 0, fmt.Errorf("%s must fit in uint32", name)
-		}
-		return uint32(value), nil
-	}
-	var err error
-	if input.T1, err = convert("--t1", t1); err != nil {
-		return err
-	}
-	if input.T2, err = convert("--t2", t2); err != nil {
-		return err
-	}
-	if input.PreferredLifetime, err = convert("--preferred-lifetime", preferred); err != nil {
-		return err
-	}
-	if input.ValidLifetime, err = convert("--valid-lifetime", valid); err != nil {
-		return err
-	}
-	return nil
-}
-
-func dhcp6SendInput(router *api.Router, store routerstate.Store, action, resourceName, prefixOverride, serverDUIDOverride, destinationIPOverride, destinationMACOverride string) (dhcp6control.SendInput, error) {
-	res, spec, err := ipv6PrefixDelegationResource(router, resourceName)
-	if err != nil {
-		return dhcp6control.SendInput{}, err
-	}
-	aliases, err := interfaceAliases(router)
-	if err != nil {
-		return dhcp6control.SendInput{}, err
-	}
-	ifname := aliases[spec.Interface]
-	if ifname == "" {
-		return dhcp6control.SendInput{}, fmt.Errorf("%s references unknown interface %q", res.ID(), spec.Interface)
-	}
-	link, err := net.InterfaceByName(ifname)
-	if err != nil {
-		return dhcp6control.SendInput{}, fmt.Errorf("lookup interface %s: %w", ifname, err)
-	}
-	sourceIP, err := firstLinkLocalAddr(link)
-	if err != nil {
-		return dhcp6control.SendInput{}, err
-	}
-	destinationIP := netip.MustParseAddr("ff02::1:2")
-	if destinationIPOverride != "" {
-		parsed, err := netip.ParseAddr(destinationIPOverride)
-		if err != nil {
-			return dhcp6control.SendInput{}, fmt.Errorf("parse destination IPv6 address: %w", err)
-		}
-		destinationIP = parsed
-	}
-	var destinationMAC net.HardwareAddr
-	if destinationMACOverride != "" {
-		parsed, err := net.ParseMAC(destinationMACOverride)
-		if err != nil {
-			return dhcp6control.SendInput{}, fmt.Errorf("parse destination MAC: %w", err)
-		}
-		destinationMAC = parsed
-	}
-	if !destinationIP.IsMulticast() && len(destinationMAC) == 0 {
-		return dhcp6control.SendInput{}, fmt.Errorf("destination MAC is required when --dst-ip is unicast")
-	}
-	clientDUID, err := clientDUIDForActiveDHCP6(spec, link.HardwareAddr)
-	if err != nil {
-		return dhcp6control.SendInput{}, err
-	}
-	base := "ipv6PrefixDelegation." + resourceName
-	lease, _ := routerstate.PDLeaseFromStore(store, base)
-	serverDUIDValue := firstNonEmptyString(serverDUIDOverride, spec.ServerID, lease.ServerID)
-	var serverDUID []byte
-	if activeActionUsesServerID(action) {
-		serverDUID, err = dhcp6control.ParseDUID(serverDUIDValue)
-		if err != nil {
-			return dhcp6control.SendInput{}, fmt.Errorf("parse server DUID: %w", err)
-		}
-		if len(serverDUID) == 0 {
-			return dhcp6control.SendInput{}, fmt.Errorf("server DUID is required for active DHCPv6 %s; set spec.serverID or pass --server-duid", resourceName)
-		}
-	}
-	prefixValue := firstNonEmptyString(prefixOverride, spec.PriorPrefix, lease.PriorPrefix, lease.CurrentPrefix, lease.LastPrefix, lease.Prefix)
-	prefix, err := netip.ParsePrefix(prefixValue)
-	if err != nil && activeActionUsesPrefix(action) {
-		return dhcp6control.SendInput{}, fmt.Errorf("parse delegated prefix %q: %w", prefixValue, err)
-	}
-	iaid := uint32(0)
-	for _, value := range []string{spec.IAID, lease.IAID} {
-		if parsed, ok := parseUint32Flexible(value); ok {
-			iaid = parsed
-			break
-		}
-	}
-	return dhcp6control.SendInput{
-		Resource: dhcp6control.ResourceRef{APIVersion: res.APIVersion, Kind: res.Kind, Name: res.Metadata.Name},
-		Spec:     spec,
-		Lease:    lease,
-		Identity: dhcp6control.Identity{
-			InterfaceName:  ifname,
-			SourceMAC:      link.HardwareAddr,
-			SourceIP:       sourceIP,
-			DestinationIP:  destinationIP,
-			DestinationMAC: destinationMAC,
-			ClientDUID:     clientDUID,
-			ServerDUID:     serverDUID,
-		},
-		Prefix: prefix,
-		IAID:   iaid,
-	}, nil
-}
-
-func activeActionUsesServerID(action string) bool {
-	switch action {
-	case "request", "renew", "release":
-		return true
-	default:
-		return false
-	}
-}
-
-func activeActionUsesPrefix(action string) bool {
-	switch action {
-	case "request", "renew", "rebind", "release":
-		return true
-	default:
-		return false
-	}
-}
-
-func activePrefixDisplay(prefix netip.Prefix) string {
-	if !prefix.IsValid() {
-		return "-"
-	}
-	return prefix.String()
-}
-
-func ipv6PrefixDelegationResource(router *api.Router, resourceName string) (api.Resource, api.IPv6PrefixDelegationSpec, error) {
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" || res.Metadata.Name != resourceName {
-			continue
-		}
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			return api.Resource{}, api.IPv6PrefixDelegationSpec{}, err
-		}
-		return res, spec, nil
-	}
-	return api.Resource{}, api.IPv6PrefixDelegationSpec{}, fmt.Errorf("IPv6PrefixDelegation %q not found", resourceName)
-}
-
-func interfaceAliases(router *api.Router) (map[string]string, error) {
-	aliases := map[string]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil {
-			return nil, err
-		}
-		aliases[res.Metadata.Name] = spec.IfName
-	}
-	return aliases, nil
-}
-
-func firstLinkLocalAddr(link *net.Interface) (netip.Addr, error) {
-	addrs, err := link.Addrs()
-	if err != nil {
-		return netip.Addr{}, fmt.Errorf("read %s addresses: %w", link.Name, err)
-	}
-	for _, addr := range addrs {
-		var ip net.IP
-		switch value := addr.(type) {
-		case *net.IPNet:
-			ip = value.IP
-		case *net.IPAddr:
-			ip = value.IP
-		}
-		if ip == nil || ip.To4() != nil || !ip.IsLinkLocalUnicast() {
-			continue
-		}
-		parsed, ok := netip.AddrFromSlice(ip.To16())
-		if ok {
-			return parsed, nil
-		}
-	}
-	return netip.Addr{}, fmt.Errorf("interface %s has no link-local IPv6 address", link.Name)
-}
-
-func clientDUIDForActiveDHCP6(spec api.IPv6PrefixDelegationSpec, mac net.HardwareAddr) ([]byte, error) {
-	if spec.DUIDRawData != "" {
-		duid, err := dhcp6control.ParseDUID(spec.DUIDRawData)
-		if err != nil {
-			return nil, fmt.Errorf("parse client DUID raw data: %w", err)
-		}
-		if len(duid) > 0 {
-			return duid, nil
-		}
-	}
-	return dhcp6control.DUIDLL(mac), nil
-}
-
-func firstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func configCommand(args []string, stdout io.Writer, name string) (err error) {
@@ -953,6 +589,15 @@ func canonicalResourceKind(kind string) string {
 		"vxlan":                 "VXLANSegment",
 		"vxlans":                "VXLANSegment",
 		"vxlansegment":          "VXLANSegment",
+		"wireguard":             "WireGuardInterface",
+		"wg":                    "WireGuardInterface",
+		"wireguardinterface":    "WireGuardInterface",
+		"wireguardpeer":         "WireGuardPeer",
+		"wgpeer":                "WireGuardPeer",
+		"ipsec":                 "IPsecConnection",
+		"ipsecconnection":       "IPsecConnection",
+		"vrf":                   "VRF",
+		"vxlantunnel":           "VXLANTunnel",
 		"pd":                    "IPv6PrefixDelegation",
 		"ipv6pd":                "IPv6PrefixDelegation",
 		"prefixdelegation":      "IPv6PrefixDelegation",
@@ -961,19 +606,28 @@ func canonicalResourceKind(kind string) string {
 		"ipv4staticaddress":     "IPv4StaticAddress",
 		"ipv4dhcp":              "IPv4DHCPAddress",
 		"ipv4dhcpaddress":       "IPv4DHCPAddress",
+		"dhcp4lease":            "DHCPv4Lease",
+		"dhcpv4lease":           "DHCPv4Lease",
+		"ipv4dhcplease":         "DHCPv4Lease",
 		"dhcpv4host":            "DHCPv4HostReservation",
 		"dhcpv4hostreservation": "DHCPv4HostReservation",
-		"ipv4dhcpreservation":   "DHCPv4HostReservation",
+		"ipv4dhcpreservation":   "IPv4DHCPReservation",
+		"dhcp4reservation":      "IPv4DHCPReservation",
+		"dhcprelay":             "DHCPRelay",
 		"ipv4staticroute":       "IPv4StaticRoute",
 		"ipv6route":             "IPv6StaticRoute",
 		"ipv6staticroute":       "IPv6StaticRoute",
 		"nat":                   "IPv4SourceNAT",
 		"snat":                  "IPv4SourceNAT",
 		"ipv4sourcenat":         "IPv4SourceNAT",
+		"nat44":                 "NAT44Rule",
+		"nat44rule":             "NAT44Rule",
 		"dslite":                "DSLiteTunnel",
 		"dslitetunnel":          "DSLiteTunnel",
 		"pppoe":                 "PPPoEInterface",
 		"pppoeinterface":        "PPPoEInterface",
+		"pppoesession":          "PPPoESession",
+		"pppoeclient":           "PPPoESession",
 		"fw":                    "FirewallPolicy",
 		"firewall":              "FirewallPolicy",
 		"firewallpolicy":        "FirewallPolicy",
@@ -997,7 +651,7 @@ func apiVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "PPPoEInterface", "IPv4StaticAddress", "IPv4DHCPAddress", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "IPv6DHCPServer", "IPv6DHCPScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DSLiteTunnel", "StatePolicy", "HealthCheck", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "IPv4DHCPAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv4DHCPReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "IPv6DHCPServer", "IPv6DHCPv6Server", "IPv6DHCPScope", "DHCPRelay", "DNSAnswerScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DNSResolverUpstream", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -1262,24 +916,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			return nil, err
 		}
 
-		var dhcp6cChangedFiles []string
-		if err := recordStageError("dhcp6c", func() error {
-			var err error
-			dhcp6cChangedFiles, err = applyLinuxDHCP6CConfig(effectiveRouter, stateStore)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var dhcpcdChangedFiles []string
-		if err := recordStageError("dhcpcd", func() error {
-			var err error
-			dhcpcdChangedFiles, err = applyLinuxDHCPCDConfig(effectiveRouter, stateStore)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
 		var nftablesChangedFiles []string
 		if err := recordStageError("nftables", func() error {
 			nftablesConfig, err := render.NftablesIPv4SourceNAT(effectiveRouter)
@@ -1421,8 +1057,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			result.Warnings = append(result.Warnings, "skipped ledger orphan cleanup and ownership recording because apply completed with stage errors")
 		}
 		changedFiles := append(networkChangedFiles, dnsmasqChangedFiles...)
-		changedFiles = append(changedFiles, dhcp6cChangedFiles...)
-		changedFiles = append(changedFiles, dhcpcdChangedFiles...)
 		changedFiles = append(changedFiles, nftablesChangedFiles...)
 		changedFiles = append(changedFiles, pppoeChangedFiles...)
 		changedFiles = append(changedFiles, timesyncdChangedFiles...)
@@ -1439,12 +1073,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			}
 			if len(dnsmasqChangedFiles) > 0 {
 				fmt.Fprintln(stdout, "applied dnsmasq")
-			}
-			if len(dhcp6cChangedFiles) > 0 {
-				fmt.Fprintln(stdout, "applied DHCPv6-PD client")
-			}
-			if len(dhcpcdChangedFiles) > 0 {
-				fmt.Fprintln(stdout, "applied dhcpcd DHCPv6-PD client")
 			}
 			if len(nftablesChangedFiles) > 0 {
 				fmt.Fprintln(stdout, "applied nftables")
@@ -1498,8 +1126,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			"reversePathFilters":  fmt.Sprintf("%d", len(appliedReversePathFilters)),
 			"hostnames":           fmt.Sprintf("%d", len(appliedHostnames)),
 			"ipv6DelegatedAddrs":  fmt.Sprintf("%d", len(appliedIPv6DelegatedAddresses)),
-			"dhcp6cFiles":         fmt.Sprintf("%d", len(dhcp6cChangedFiles)),
-			"dhcpcdFiles":         fmt.Sprintf("%d", len(dhcpcdChangedFiles)),
 			"pppoeFiles":          fmt.Sprintf("%d", len(pppoeChangedFiles)),
 			"ntpFiles":            fmt.Sprintf("%d", len(timesyncdChangedFiles)),
 			"dsliteTunnels":       fmt.Sprintf("%d", len(appliedTunnels)),
@@ -1571,7 +1197,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	if err := recordStageError("freebsd-network", func() error {
 		var err error
 		var fbWarnings []string
-		changedFreeBSD, fbWarnings, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDDHCP6CPath, defaultFreeBSDDHCP6CDUIDPath, defaultFreeBSDMPD5Path)
+		changedFreeBSD, fbWarnings, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDMPD5Path)
 		for _, w := range fbWarnings {
 			result.Warnings = append(result.Warnings, w)
 			logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "freebsd-network"})
@@ -1840,7 +1466,6 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 				if ifname := aliases[spec.Interface]; ifname != "" {
 					if prefix, leaseUpdate, ok := observedDHCPCDDelegatedPrefix(ifname, prefixLength); ok {
 						observedPrefix = prefix
-						lease.ServerID = firstNonEmptyString(leaseUpdate.ServerID, lease.ServerID)
 						lease.T1 = firstNonEmptyString(leaseUpdate.T1, lease.T1)
 						lease.T2 = firstNonEmptyString(leaseUpdate.T2, lease.T2)
 						lease.PLTime = firstNonEmptyString(leaseUpdate.PLTime, lease.PLTime)
@@ -1863,9 +1488,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		// evidence backs it. Treat as not-observable so dnsmasq, RA, and the
 		// LAN delegated-address rendering all stop advertising broken IPv6
 		// to downstream clients. The local LastPrefix history is preserved.
-		// Operators that want to keep advertising the stale prefix (e.g. for
-		// lab debug) can set spec.lanFallback.suppressOnStale to false.
-		if !lease.HasFreshTransactionEvidence(store.Now()) && api.BoolDefault(spec.LanFallback.SuppressOnStale, true) {
+		if !lease.HasFreshTransactionEvidence(store.Now()) {
 			if recorder, ok := store.(routerstate.EventRecorder); ok {
 				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixStale", "delegated IPv6 prefix "+observedPrefix+" lacks recent DHCPv6 Reply / valid lifetime; not advertising on LAN")
 			}
@@ -2139,11 +1762,10 @@ func parseDHCPCDDumpLeasePD(out []byte, prefixLength int) (string, routerstate.P
 		values[strings.TrimSpace(key)] = strings.TrimSpace(value)
 	}
 	lease := routerstate.PDLease{
-		ServerID: values["dhcp6_server_id"],
-		T1:       values["dhcp6_ia_pd1_t1"],
-		T2:       values["dhcp6_ia_pd1_t2"],
-		PLTime:   values["dhcp6_ia_pd1_prefix1_pltime"],
-		VLTime:   values["dhcp6_ia_pd1_prefix1_vltime"],
+		T1:     values["dhcp6_ia_pd1_t1"],
+		T2:     values["dhcp6_ia_pd1_t2"],
+		PLTime: values["dhcp6_ia_pd1_prefix1_pltime"],
+		VLTime: values["dhcp6_ia_pd1_prefix1_vltime"],
 	}
 	prefixAddr := values["dhcp6_ia_pd1_prefix1"]
 	if prefixAddr == "" {
@@ -2610,6 +2232,21 @@ func recordLastAppliedPath(router *api.Router, store routerstate.Store, path str
 	return nil
 }
 
+func parseSocketOverrides(raw string) map[string]string {
+	out := map[string]string{}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		name, socket, ok := strings.Cut(item, "=")
+		if ok && strings.TrimSpace(name) != "" && strings.TrimSpace(socket) != "" {
+			out[strings.TrimSpace(name)] = strings.TrimSpace(socket)
+		}
+	}
+	return out
+}
+
 func serveCommand(args []string, stdout io.Writer) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -2623,6 +2260,23 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
+	controllerChain := fs.Bool("controller-chain", false, "start experimental daemon/bus/controller chain")
+	controllerDryRunAddress := fs.Bool("controller-chain-dry-run-address", true, "do not mutate LAN addresses in the experimental controller chain")
+	controllerDryRunDSLite := fs.Bool("controller-chain-dry-run-dslite", true, "do not mutate DS-Lite tunnels in the experimental controller chain")
+	controllerDryRunRoute := fs.Bool("controller-chain-dry-run-route", true, "do not mutate IPv4 routes in the experimental controller chain")
+	controllerDryRunRA := fs.Bool("controller-chain-dry-run-ra", true, "do not start radvd in the experimental controller chain")
+	controllerDryRunDHCPv6 := fs.Bool("controller-chain-dry-run-dhcpv6", true, "do not start DHCPv6 service in the experimental controller chain")
+	controllerDryRunDHCP4Lease := fs.Bool("controller-chain-dry-run-dhcp4lease", true, "do not apply DHCPv4 lease address/default route in the experimental controller chain")
+	controllerDryRunPPPoESession := fs.Bool("controller-chain-dry-run-pppoesession", true, "do not apply PPPoE session route/DNS in the experimental controller chain")
+	controllerDryRunNAT := fs.Bool("controller-chain-dry-run-nat", true, "do not apply nftables NAT rules in the experimental controller chain")
+	controllerDaemonSockets := fs.String("controller-chain-daemon-sockets", "", "comma-separated resource=unix-socket overrides for the experimental controller chain")
+	controllerDnsmasqCommand := fs.String("controller-chain-dnsmasq-command", "dnsmasq", "dnsmasq command for the experimental controller chain")
+	controllerDnsmasqConfig := fs.String("controller-chain-dnsmasq-config", "/run/routerd/dnsmasq-phase1.conf", "dnsmasq config path for the experimental controller chain")
+	controllerDnsmasqPID := fs.String("controller-chain-dnsmasq-pid", "/run/routerd/dnsmasq-phase1.pid", "dnsmasq pid path for the experimental controller chain")
+	controllerDnsmasqPort := fs.Int("controller-chain-dnsmasq-port", 1053, "dnsmasq listen port for the experimental controller chain")
+	controllerNftablesPath := fs.String("controller-chain-nftables-file", "/run/routerd/nat44.nft", "nftables ruleset output path for the experimental controller chain")
+	controllerNftCommand := fs.String("controller-chain-nft-command", "nft", "nft command for the experimental controller chain")
+	controllerConntrackInterval := fs.Duration("controller-chain-conntrack-interval", 30*time.Second, "conntrack observer interval for the experimental controller chain")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2653,9 +2307,46 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 
 	stop := make(chan struct{})
 	defer close(stop)
-	startRAObservation(stop, router, defaultStatePath, logger)
-	startDHCP6Recorder(stop, router, defaultStatePath, logger)
-	startPDHungMonitor(stop, router, defaultStatePath, 30*time.Second, 30*time.Second, logger)
+	ctx, cancelControllers := context.WithCancel(context.Background())
+	defer cancelControllers()
+	go func() {
+		<-stop
+		cancelControllers()
+	}()
+	if *controllerChain {
+		stateStore, err := routerstate.OpenSQLite(defaultStatePath)
+		if err != nil {
+			return err
+		}
+		defer stateStore.Close()
+		controllerBus := bus.NewWithStore(stateStore)
+		chainRunner := controllerchain.Runner{
+			Router: router,
+			Bus:    controllerBus,
+			Store:  stateStore,
+			Opts: controllerchain.Options{
+				DaemonSockets:      parseSocketOverrides(*controllerDaemonSockets),
+				DryRunAddress:      *controllerDryRunAddress,
+				DryRunDSLite:       *controllerDryRunDSLite,
+				DryRunRoute:        *controllerDryRunRoute,
+				DryRunRA:           *controllerDryRunRA,
+				DryRunDHCPv6:       *controllerDryRunDHCPv6,
+				DryRunDHCP4Lease:   *controllerDryRunDHCP4Lease,
+				DryRunPPPoESession: *controllerDryRunPPPoESession,
+				DryRunNAT:          *controllerDryRunNAT,
+				DnsmasqCommand:     *controllerDnsmasqCommand,
+				DnsmasqConfig:      *controllerDnsmasqConfig,
+				DnsmasqPID:         *controllerDnsmasqPID,
+				DnsmasqPort:        *controllerDnsmasqPort,
+				NftablesPath:       *controllerNftablesPath,
+				NftCommand:         *controllerNftCommand,
+				ConntrackInterval:  *controllerConntrackInterval,
+			},
+		}
+		if err := chainRunner.Start(ctx); err != nil {
+			return err
+		}
+	}
 	if *observeInterval > 0 {
 		go runObserveSchedule(stop, *observeInterval, router, cache, *statusFile, logger)
 	}
@@ -2727,45 +2418,6 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			}
 			return &result, nil
 		},
-		DHCP6Event: func(r *http.Request, req controlapi.DHCP6EventRequest) (*controlapi.DHCP6EventResult, error) {
-			if req.Resource == "" {
-				return nil, fmt.Errorf("%w: resource is required", controlapi.ErrBadRequest)
-			}
-			if !containsString(ipv6PrefixDelegationNames(router), req.Resource) {
-				return nil, fmt.Errorf("%w: unknown IPv6PrefixDelegation %q", controlapi.ErrBadRequest, req.Resource)
-			}
-			stateStore, err := routerstate.Load(defaultStatePath)
-			if err != nil {
-				return nil, err
-			}
-			_, err = dhcp6event.Apply(stateStore, dhcp6event.Event{
-				Resource:  req.Resource,
-				Reason:    req.Reason,
-				Prefix:    req.Prefix,
-				IAID:      req.IAID,
-				T1:        req.T1,
-				T2:        req.T2,
-				PLTime:    req.PLTime,
-				VLTime:    req.VLTime,
-				ServerID:  req.ServerID,
-				ClientID:  req.ClientID,
-				SourceLL:  req.SourceLL,
-				SourceMAC: req.SourceMAC,
-				Env:       req.Env,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
-			}
-			if err := stateStore.Save(defaultStatePath); err != nil {
-				return nil, err
-			}
-			logger.Emit(eventlog.LevelInfo, "dhcp6-event", "recorded DHCPv6 event", map[string]string{
-				"resource": req.Resource,
-				"reason":   req.Reason,
-			})
-			result := controlapi.NewDHCP6EventResult(req.Resource)
-			return &result, nil
-		},
 	}
 	server := &http.Server{Handler: handler}
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
@@ -2810,238 +2462,6 @@ func runObserveSchedule(stop <-chan struct{}, interval time.Duration, router *ap
 			}
 			logger.Emit(eventlog.LevelDebug, "serve", "scheduled observe completed", map[string]string{"phase": result.Phase})
 		}
-	}
-}
-
-func startRAObservation(stop <-chan struct{}, router *api.Router, statePath string, logger *eventlog.Logger) {
-	pds := ipv6PrefixDelegationNames(router)
-	if len(pds) == 0 {
-		return
-	}
-	if len(pds) > 1 {
-		logger.Emit(eventlog.LevelWarning, "ra", "RA observation disabled for multiple IPv6PrefixDelegation resources until interface-scoped packet info is implemented", map[string]string{"resources": strings.Join(pds, ",")})
-		return
-	}
-	aliases, err := interfaceAliases(router)
-	if err != nil {
-		logger.Emit(eventlog.LevelWarning, "ra", "RA observation could not resolve interfaces", map[string]string{"error": err.Error()})
-		return
-	}
-	resourceName := pds[0]
-	ifname := ""
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.NetAPIVersion || res.Kind != "IPv6PrefixDelegation" || res.Metadata.Name != resourceName {
-			continue
-		}
-		spec, specErr := res.IPv6PrefixDelegationSpec()
-		if specErr != nil {
-			logger.Emit(eventlog.LevelWarning, "ra", "RA observation skipped invalid resource", map[string]string{"resource": resourceName, "error": specErr.Error()})
-			return
-		}
-		ifname = aliases[spec.Interface]
-		break
-	}
-	conn, err := ralistener.NewPacketConn(ifname)
-	if err != nil {
-		logger.Emit(eventlog.LevelWarning, "ra", "RA observation listener could not start", map[string]string{"error": err.Error()})
-		return
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		<-stop
-		cancel()
-		_ = conn.Close()
-	}()
-	listener := ralistener.Listener{Conn: conn}
-	go func() {
-		err := listener.Run(ctx, func(obs ralistener.Observation) {
-			store, loadErr := routerstate.Load(defaultString(statePath, defaultStatePath))
-			if loadErr != nil {
-				logger.Emit(eventlog.LevelWarning, "ra", "RA observation state load failed", map[string]string{"error": loadErr.Error()})
-				return
-			}
-			if err := ralistener.ApplyObservation(store, resourceName, obs, "RAObserved"); err != nil {
-				logger.Emit(eventlog.LevelWarning, "ra", "RA observation state update failed", map[string]string{"error": err.Error()})
-				return
-			}
-			if err := store.Save(defaultString(statePath, defaultStatePath)); err != nil {
-				logger.Emit(eventlog.LevelWarning, "ra", "RA observation state save failed", map[string]string{"error": err.Error()})
-				return
-			}
-			logger.Emit(eventlog.LevelInfo, "ra", "observed WAN router advertisement", map[string]string{"resource": resourceName, "source": obs.SourceLinkLocal, "prefix": obs.Prefix})
-		})
-		if err != nil && ctx.Err() == nil {
-			logger.Emit(eventlog.LevelWarning, "ra", "RA observation listener stopped", map[string]string{"error": err.Error()})
-		}
-	}()
-}
-
-func startDHCP6Recorder(stop <-chan struct{}, router *api.Router, statePath string, logger *eventlog.Logger) {
-	aliases, err := interfaceAliases(router)
-	if err != nil {
-		logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 recorder could not resolve interfaces", map[string]string{"error": err.Error()})
-		return
-	}
-	started := map[string]bool{}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.NetAPIVersion || res.Kind != "IPv6PrefixDelegation" {
-			continue
-		}
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 recorder skipped invalid resource", map[string]string{"resource": res.Metadata.Name, "error": err.Error()})
-			continue
-		}
-		ifname := aliases[spec.Interface]
-		if ifname == "" {
-			logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 recorder skipped resource with unknown interface", map[string]string{"resource": res.Metadata.Name, "interface": spec.Interface})
-			continue
-		}
-		key := res.Metadata.Name + "\x00" + ifname
-		if started[key] {
-			continue
-		}
-		started[key] = true
-		source, err := dhcp6recorder.NewAFPacketSource(ifname)
-		if err != nil {
-			logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 packet recorder could not start", map[string]string{"resource": res.Metadata.Name, "interface": ifname, "error": err.Error()})
-			continue
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		go func() {
-			<-stop
-			cancel()
-			_ = source.Close()
-		}()
-		resourceName := res.Metadata.Name
-		go func() {
-			err := dhcp6recorder.Run(ctx, source, func(obs dhcp6recorder.Observation) {
-				obs.Interface = ifname
-				store, loadErr := routerstate.Load(defaultString(statePath, defaultStatePath))
-				if loadErr != nil {
-					logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 transaction state load failed", map[string]string{"resource": resourceName, "error": loadErr.Error()})
-					return
-				}
-				if err := dhcp6recorder.ApplyObservation(store, resourceName, obs); err != nil {
-					logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 transaction state update failed", map[string]string{"resource": resourceName, "error": err.Error()})
-					return
-				}
-				if err := store.Save(defaultString(statePath, defaultStatePath)); err != nil {
-					logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 transaction state save failed", map[string]string{"resource": resourceName, "error": err.Error()})
-					return
-				}
-				logger.Emit(eventlog.LevelDebug, "dhcp6-recorder", "recorded DHCPv6 transaction", map[string]string{"resource": resourceName, "interface": ifname, "direction": obs.Direction})
-			})
-			if err != nil && ctx.Err() == nil {
-				logger.Emit(eventlog.LevelWarning, "dhcp6-recorder", "DHCPv6 packet recorder stopped", map[string]string{"resource": resourceName, "interface": ifname, "error": err.Error()})
-			}
-		}()
-		logger.Emit(eventlog.LevelInfo, "dhcp6-recorder", "DHCPv6 packet recorder started", map[string]string{"resource": resourceName, "interface": ifname})
-	}
-}
-
-func startPDHungMonitor(stop <-chan struct{}, router *api.Router, statePath string, interval, grace time.Duration, logger *eventlog.Logger) {
-	policies := ipv6PrefixDelegationHungPolicies(router)
-	if len(policies) == 0 || interval <= 0 {
-		return
-	}
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				store, err := routerstate.Load(defaultString(statePath, defaultStatePath))
-				if err != nil {
-					logger.Emit(eventlog.LevelWarning, "pd", "PD hung monitor state load failed", map[string]string{"error": err.Error()})
-					continue
-				}
-				results, err := pdmonitor.CheckHungWithPolicies(store, policies, grace, 5*time.Minute, 3)
-				if err != nil {
-					logger.Emit(eventlog.LevelWarning, "pd", "PD hung monitor failed", map[string]string{"error": err.Error()})
-					continue
-				}
-				changed := false
-				for _, result := range results {
-					if !result.Changed {
-						continue
-					}
-					changed = true
-					level := eventlog.LevelWarning
-					message := "DHCPv6-PD renewal appears hung"
-					if !result.Hung {
-						level = eventlog.LevelInfo
-						message = "DHCPv6-PD hung suspicion cleared"
-					}
-					logger.Emit(level, "pd", message, map[string]string{"resource": result.Resource, "reason": result.Reason})
-					if result.RecoveryAction != "" {
-						if err := attemptPDHungRecovery(router, store, result); err != nil {
-							logger.Emit(eventlog.LevelWarning, "pd", "PD hung recovery failed", map[string]string{"resource": result.Resource, "action": result.RecoveryAction, "error": err.Error()})
-						} else {
-							logger.Emit(eventlog.LevelInfo, "pd", "PD hung recovery packet sent", map[string]string{"resource": result.Resource, "action": result.RecoveryAction})
-						}
-						changed = true
-					}
-				}
-				if changed {
-					if err := store.Save(defaultString(statePath, defaultStatePath)); err != nil {
-						logger.Emit(eventlog.LevelWarning, "pd", "PD hung monitor state save failed", map[string]string{"error": err.Error()})
-					}
-				}
-			}
-		}
-	}()
-}
-
-func ipv6PrefixDelegationHungPolicies(router *api.Router) []pdmonitor.HungPolicy {
-	if router == nil {
-		return nil
-	}
-	var out []pdmonitor.HungPolicy
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.NetAPIVersion || res.Kind != "IPv6PrefixDelegation" {
-			continue
-		}
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			continue
-		}
-		out = append(out, pdmonitor.HungPolicy{Resource: res.Metadata.Name, RecoveryMode: spec.Recovery.Mode})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Resource < out[j].Resource })
-	return out
-}
-
-func attemptPDHungRecovery(router *api.Router, store routerstate.Store, result pdmonitor.HungResult) error {
-	input, err := dhcp6SendInput(router, store, result.RecoveryAction, result.Resource, "", "", "", "")
-	if err != nil {
-		recordPDRecoveryEvent(store, result.Resource, "Warning", "HGWRecoveryFailed", fmt.Sprintf("cannot prepare DHCPv6 %s recovery: %v", result.RecoveryAction, err))
-		return err
-	}
-	controller := dhcp6control.Controller{Sender: dhcp6control.AFPacketSender{}}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	switch result.RecoveryAction {
-	case "request":
-		err = controller.SendRequest(ctx, store, input)
-	case "rebind":
-		err = controller.SendRebind(ctx, store, input)
-	default:
-		err = fmt.Errorf("unsupported recovery action %q", result.RecoveryAction)
-	}
-	if err != nil {
-		recordPDRecoveryEvent(store, result.Resource, "Warning", "HGWRecoveryFailed", fmt.Sprintf("DHCPv6 %s recovery failed: %v", result.RecoveryAction, err))
-		return err
-	}
-	recordPDRecoveryEvent(store, result.Resource, "Normal", "HGWRecoveryAttempted", fmt.Sprintf("sent DHCPv6 %s after hung detection", result.RecoveryAction))
-	return nil
-}
-
-func recordPDRecoveryEvent(store routerstate.Store, resourceName, eventType, reason, message string) {
-	if recorder, ok := store.(routerstate.EventRecorder); ok {
-		_ = recorder.RecordEvent(api.NetAPIVersion, "IPv6PrefixDelegation", resourceName, eventType, reason, message)
 	}
 }
 
@@ -3496,7 +2916,7 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 	return changedFiles, nil
 }
 
-func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, dhcp6cPath, dhcp6cDUIDPath, mpd5Path string) ([]string, []string, error) {
+func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, mpd5Path string) ([]string, []string, error) {
 	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
 		return nil, nil, err
@@ -3555,42 +2975,6 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 			restartIfnames = append(restartIfnames, freeBSDDHCPClientIfnames(data.DHCPClient)...)
 		}
 	}
-	if len(data.DHCP6C) > 0 && dhcp6cPath != "" {
-		duidChanged, duidBackup, err := ensureFreeBSDDHCP6CDUID(router, dhcp6cDUIDPath)
-		if err != nil {
-			return changed, warnings, err
-		}
-		if duidChanged {
-			changed = append(changed, dhcp6cDUIDPath)
-			if duidBackup != "" {
-				changed = append(changed, duidBackup)
-			}
-		}
-		fileChanged, err := writeFileIfChanged(dhcp6cPath, data.DHCP6C, 0644)
-		if err != nil {
-			return changed, warnings, err
-		}
-		if fileChanged {
-			changed = append(changed, dhcp6cPath)
-		}
-		if (fileChanged || duidChanged || freeBSDRCValuesChanged(changed, "dhcp6c_") || !freeBSDServiceRunning("dhcp6c")) && freeBSDServiceExists("dhcp6c") {
-			if err := runLogged("service", "dhcp6c", "restart"); err != nil {
-				return changed, warnings, err
-			}
-			changed = append(changed, "service:dhcp6c")
-		}
-	}
-	if rcValues["dhcp6c_enable"] == "NO" && freeBSDServiceExists("dhcp6c") && freeBSDServiceRunning("dhcp6c") {
-		if err := runLogged("service", "dhcp6c", "stop"); err != nil {
-			return changed, warnings, err
-		}
-		changed = append(changed, "service:dhcp6c:stop")
-	}
-	dhcpcdChanged, err := applyFreeBSDDHCPCDConfig(router, stateStore)
-	if err != nil {
-		return changed, warnings, err
-	}
-	changed = append(changed, dhcpcdChanged...)
 	if len(data.MPD5) > 0 && mpd5Path != "" {
 		if err := os.MkdirAll(filepathDir(mpd5Path), 0755); err != nil {
 			return changed, warnings, err
@@ -3660,129 +3044,6 @@ func freeBSDRCValuesChanged(changed []string, prefix string) bool {
 		}
 	}
 	return false
-}
-
-func ensureFreeBSDDHCP6CDUID(router *api.Router, duidPath string) (bool, string, error) {
-	if duidPath == "" {
-		return false, "", nil
-	}
-	aliases := map[string]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil {
-			return false, "", err
-		}
-		aliases[res.Metadata.Name] = spec.IfName
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" {
-			continue
-		}
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			return false, "", err
-		}
-		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		if api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType) != "link-layer" {
-			continue
-		}
-		if !api.IsNTTIPv6PDProfile(profile) {
-			continue
-		}
-		ifname := aliases[spec.Interface]
-		if ifname == "" {
-			return false, "", fmt.Errorf("%s references interface with empty ifname", res.ID())
-		}
-		if spec.DUIDRawData != "" {
-			return routerstate.EnsureKAMEDHCP6CDUIDLLRaw(duidPath, spec.DUIDRawData, time.Now())
-		}
-		mac, err := freeBSDInterfaceMAC(ifname)
-		if err != nil {
-			return false, "", fmt.Errorf("%s read %s MAC: %w", res.ID(), ifname, err)
-		}
-		return routerstate.EnsureKAMEDHCP6CDUIDLL(duidPath, mac, time.Now())
-	}
-	return false, "", nil
-}
-
-func applyFreeBSDDHCPCDConfig(router *api.Router, stateStore routerstate.Store) ([]string, error) {
-	if platformDefaults.OS != platform.OSFreeBSD {
-		return nil, nil
-	}
-	binaryPath := dhcpcdBinaryPath()
-	config, err := render.DHCPCDFreeBSDWithLeases(router, binaryPath, platformDefaults.SysconfDir, platformDefaults.RCScriptDir, prefixDelegationLeases(router, stateStore))
-	if err != nil {
-		return nil, err
-	}
-	if len(config.Files) == 0 {
-		return nil, nil
-	}
-	if !dhcpcdAvailable() {
-		return nil, errors.New("dhcpcd is required for IPv6PrefixDelegation client=dhcpcd")
-	}
-	duidChanged, duidBackup, err := ensureDHCPCDDUID(router, freeBSDDHCPCDDUIDPath)
-	if err != nil {
-		return nil, err
-	}
-	var changedFiles []string
-	if duidChanged {
-		changedFiles = append(changedFiles, freeBSDDHCPCDDUIDPath)
-		if duidBackup != "" {
-			changedFiles = append(changedFiles, duidBackup)
-		}
-	}
-	for _, file := range config.Files {
-		if err := os.MkdirAll(filepathDir(file.Path), 0755); err != nil {
-			return nil, fmt.Errorf("create directory for %s: %w", file.Path, err)
-		}
-		changed, err := writeFileIfChanged(file.Path, file.Data, file.Perm)
-		if err != nil {
-			return nil, fmt.Errorf("write dhcpcd file %s: %w", file.Path, err)
-		}
-		if changed {
-			changedFiles = append(changedFiles, file.Path)
-		}
-	}
-	for _, service := range config.Units {
-		if len(changedFiles) > 0 || !freeBSDServiceRunning(service) {
-			if err := runLogged("service", service, "restart"); err != nil {
-				return changedFiles, err
-			}
-			changedFiles = append(changedFiles, "service:"+service)
-		}
-	}
-	return changedFiles, nil
-}
-
-func freeBSDInterfaceMAC(ifname string) (string, error) {
-	out, err := exec.Command("ifconfig", ifname).Output()
-	if err != nil {
-		return "", err
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) >= 2 && fields[0] == "ether" {
-			return fields[1], nil
-		}
-	}
-	return "", fmt.Errorf("ether address not found")
-}
-
-func interfaceMAC(ifname string) (string, error) {
-	if ifname == "" {
-		return "", errors.New("empty interface name")
-	}
-	iface, err := net.InterfaceByName(ifname)
-	if err != nil {
-		return "", err
-	}
-	if len(iface.HardwareAddr) == 0 {
-		return "", fmt.Errorf("%s has no hardware address", ifname)
-	}
-	return iface.HardwareAddr.String(), nil
 }
 
 func freeBSDServiceExists(name string) bool {
@@ -5740,224 +5001,21 @@ func applyPPPoEConfig(router *api.Router) ([]string, error) {
 	return changedFiles, nil
 }
 
-func applyLinuxDHCP6CConfig(router *api.Router, stateStore routerstate.Store) ([]string, error) {
-	if platformDefaults.OS != platform.OSLinux {
-		return nil, nil
+func prefixDelegationLeases(router *api.Router, store routerstate.Store) map[string]routerstate.PDLease {
+	if router == nil || store == nil {
+		return nil
 	}
-	binaryPath := dhcp6cBinaryPath()
-	config, err := render.DHCP6CWithLeases(router, binaryPath, linuxDHCP6CConfigDir, platformDefaults.RuntimeDir, platformDefaults.SystemdSystemDir, prefixDelegationLeases(router, stateStore))
-	if err != nil {
-		return nil, err
-	}
-	if len(config.Files) == 0 {
-		return stopLinuxStalePDClientUnits(router, "dhcp6c")
-	}
-	if !dhcp6cAvailable() {
-		return nil, errors.New("dhcp6c is required for IPv6PrefixDelegation client=dhcp6c")
-	}
-
-	duidChanged, duidBackup, err := ensureLinuxDHCP6CDUID(router, linuxDHCP6CDUIDPath)
-	if err != nil {
-		return nil, err
-	}
-
-	nixOS := isNixOSHost()
-	managedUnits := map[string]bool{}
-	for _, unit := range config.Units {
-		managedUnits[unit] = true
-	}
-	var changedFiles []string
-	if duidChanged {
-		changedFiles = append(changedFiles, linuxDHCP6CDUIDPath)
-		if duidBackup != "" {
-			changedFiles = append(changedFiles, duidBackup)
-		}
-	}
-	for _, file := range config.Files {
-		if strings.HasPrefix(file.Path, "/etc/systemd/system/") && strings.HasSuffix(file.Path, ".service") && nixOS {
-			unit := filepath.Base(file.Path)
-			if !managedUnits[unit] {
-				continue
-			}
-			file.Path = filepath.Join("/run/systemd/system", unit)
-			file.Data = bytes.ReplaceAll(file.Data, []byte("/usr/sbin/dhcp6c "), []byte("/run/current-system/sw/bin/dhcp6c "))
-		}
-		if err := os.MkdirAll(filepathDir(file.Path), 0755); err != nil {
-			return nil, fmt.Errorf("create directory for %s: %w", file.Path, err)
-		}
-		changed, err := writeFileIfChanged(file.Path, file.Data, file.Perm)
-		if err != nil {
-			return nil, fmt.Errorf("write dhcp6c file %s: %w", file.Path, err)
-		}
-		if changed {
-			changedFiles = append(changedFiles, file.Path)
-		}
-	}
-	if containsSystemdUnit(changedFiles) {
-		if err := runLogged("systemctl", "daemon-reload"); err != nil {
-			return nil, err
-		}
-	}
-	for _, unit := range config.Units {
-		if nixOS {
-			if len(changedFiles) > 0 {
-				if err := runLogged("systemctl", "restart", unit); err != nil {
-					return nil, err
-				}
-				continue
-			}
-			if err := runLogged("systemctl", "is-active", "--quiet", unit); err != nil {
-				if err := runLogged("systemctl", "start", unit); err != nil {
-					return nil, err
-				}
-			}
-			continue
-		}
-		if len(changedFiles) > 0 {
-			if err := runLogged("systemctl", "enable", unit); err != nil {
-				return nil, err
-			}
-			if err := runLogged("systemctl", "restart", unit); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if err := runLogged("systemctl", "is-active", "--quiet", unit); err != nil {
-			if err := runLogged("systemctl", "enable", "--now", unit); err != nil {
-				return nil, err
-			}
-		}
-	}
-	stopped, err := stopLinuxStalePDClientUnits(router, "dhcp6c")
-	if err != nil {
-		return nil, err
-	}
-	changedFiles = append(changedFiles, stopped...)
-	return changedFiles, nil
-}
-
-func applyLinuxDHCPCDConfig(router *api.Router, stateStore routerstate.Store) ([]string, error) {
-	if platformDefaults.OS != platform.OSLinux {
-		return nil, nil
-	}
-	binaryPath := dhcpcdBinaryPath()
-	config, err := render.DHCPCDWithLeases(router, binaryPath, linuxDHCPCDConfigDir, platformDefaults.RuntimeDir, platformDefaults.SystemdSystemDir, prefixDelegationLeases(router, stateStore))
-	if err != nil {
-		return nil, err
-	}
-	if len(config.Files) == 0 {
-		return nil, nil
-	}
-	if !dhcpcdAvailable() {
-		return nil, errors.New("dhcpcd is required for IPv6PrefixDelegation client=dhcpcd")
-	}
-
-	duidChanged, duidBackup, err := ensureDHCPCDDUID(router, linuxDHCPCDDUIDPath)
-	if err != nil {
-		return nil, err
-	}
-
-	nixOS := isNixOSHost()
-	managedUnits := map[string]bool{}
-	for _, unit := range config.Units {
-		managedUnits[unit] = true
-	}
-	var changedFiles []string
-	if duidChanged {
-		changedFiles = append(changedFiles, linuxDHCPCDDUIDPath)
-		if duidBackup != "" {
-			changedFiles = append(changedFiles, duidBackup)
-		}
-	}
-	for _, file := range config.Files {
-		if strings.HasPrefix(file.Path, "/etc/systemd/system/") && strings.HasSuffix(file.Path, ".service") && nixOS {
-			unit := filepath.Base(file.Path)
-			if !managedUnits[unit] {
-				continue
-			}
-			file.Path = filepath.Join("/run/systemd/system", unit)
-			file.Data = bytes.ReplaceAll(file.Data, []byte("/usr/sbin/dhcpcd "), []byte("/run/current-system/sw/bin/dhcpcd "))
-		}
-		if err := os.MkdirAll(filepathDir(file.Path), 0755); err != nil {
-			return nil, fmt.Errorf("create directory for %s: %w", file.Path, err)
-		}
-		changed, err := writeFileIfChanged(file.Path, file.Data, file.Perm)
-		if err != nil {
-			return nil, fmt.Errorf("write dhcpcd file %s: %w", file.Path, err)
-		}
-		if changed {
-			changedFiles = append(changedFiles, file.Path)
-		}
-	}
-	if containsSystemdUnit(changedFiles) {
-		if err := runLogged("systemctl", "daemon-reload"); err != nil {
-			return nil, err
-		}
-	}
-	for _, unit := range config.Units {
-		if nixOS {
-			if len(changedFiles) > 0 {
-				if err := runLogged("systemctl", "restart", unit); err != nil {
-					return nil, err
-				}
-				continue
-			}
-			if err := runLogged("systemctl", "is-active", "--quiet", unit); err != nil {
-				if err := runLogged("systemctl", "start", unit); err != nil {
-					return nil, err
-				}
-			}
-			continue
-		}
-		if len(changedFiles) > 0 {
-			if err := runLogged("systemctl", "enable", unit); err != nil {
-				return nil, err
-			}
-			if err := runLogged("systemctl", "restart", unit); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if err := runLogged("systemctl", "is-active", "--quiet", unit); err != nil {
-			if err := runLogged("systemctl", "enable", "--now", unit); err != nil {
-				return nil, err
-			}
-		}
-	}
-	stopped, err := stopLinuxStalePDClientUnits(router, "dhcpcd")
-	if err != nil {
-		return nil, err
-	}
-	changedFiles = append(changedFiles, stopped...)
-	return changedFiles, nil
-}
-
-func stopLinuxStalePDClientUnits(router *api.Router, targetClient string) ([]string, error) {
-	if platformDefaults.OS != platform.OSLinux || router == nil {
-		return nil, nil
-	}
-	var changed []string
+	leases := map[string]routerstate.PDLease{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "IPv6PrefixDelegation" {
 			continue
 		}
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			return nil, err
+		lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+res.Metadata.Name)
+		if ok {
+			leases[res.Metadata.Name] = lease
 		}
-		if defaultString(spec.Client, "networkd") == targetClient {
-			continue
-		}
-		unit := linuxPDClientUnitName(res.Metadata.Name, targetClient)
-		if err := runLogged("systemctl", "cat", unit); err != nil {
-			continue
-		}
-		if err := runLogged("systemctl", "disable", "--now", unit); err != nil {
-			return nil, err
-		}
-		changed = append(changed, "service:"+unit+":stop")
 	}
-	return changed, nil
+	return leases
 }
 
 func linuxPDClientUnitName(resourceName, client string) string {
@@ -5977,207 +5035,6 @@ func linuxPDClientSafeName(name string) string {
 		return "unnamed"
 	}
 	return b.String()
-}
-
-func prefixDelegationLeases(router *api.Router, store routerstate.Store) map[string]routerstate.PDLease {
-	if router == nil || store == nil {
-		return nil
-	}
-	leases := map[string]routerstate.PDLease{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" {
-			continue
-		}
-		lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+res.Metadata.Name)
-		if ok {
-			leases[res.Metadata.Name] = lease
-		}
-	}
-	return leases
-}
-
-func ensureLinuxDHCP6CDUID(router *api.Router, duidPath string) (bool, string, error) {
-	if duidPath == "" {
-		return false, "", nil
-	}
-	aliases := map[string]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil {
-			return false, "", err
-		}
-		aliases[res.Metadata.Name] = spec.IfName
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" {
-			continue
-		}
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			return false, "", err
-		}
-		if defaultString(spec.Client, "networkd") != "dhcp6c" {
-			continue
-		}
-		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		if !api.IsNTTIPv6PDProfile(profile) || api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType) != "link-layer" {
-			continue
-		}
-		if spec.DUIDRawData != "" {
-			return routerstate.EnsureKAMEDHCP6CDUIDLLRaw(duidPath, spec.DUIDRawData, time.Now())
-		}
-		ifname := aliases[spec.Interface]
-		mac, err := interfaceMAC(ifname)
-		if err != nil {
-			return false, "", fmt.Errorf("%s read interface MAC for DUID-LL: %w", res.ID(), err)
-		}
-		return routerstate.EnsureKAMEDHCP6CDUIDLL(duidPath, mac, time.Now())
-	}
-	return false, "", nil
-}
-
-func ensureDHCPCDDUID(router *api.Router, duidPath string) (bool, string, error) {
-	if duidPath == "" {
-		return false, "", nil
-	}
-	aliases := map[string]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil {
-			return false, "", err
-		}
-		aliases[res.Metadata.Name] = spec.IfName
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" {
-			continue
-		}
-		spec, err := res.IPv6PrefixDelegationSpec()
-		if err != nil {
-			return false, "", err
-		}
-		if defaultString(spec.Client, "networkd") != "dhcpcd" {
-			continue
-		}
-		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
-		if !api.IsNTTIPv6PDProfile(profile) || api.EffectiveIPv6PDDUIDType(profile, spec.DUIDType) != "link-layer" {
-			continue
-		}
-		var want []byte
-		if spec.DUIDRawData != "" {
-			kame, err := routerstate.KAMEDHCP6CDUIDLLFromRawData(spec.DUIDRawData)
-			if err != nil {
-				return false, "", err
-			}
-			want = routerstate.ParseKAMEDHCP6CDUID(kame).Payload
-		} else {
-			ifname := aliases[spec.Interface]
-			mac, err := interfaceMAC(ifname)
-			if err != nil {
-				return false, "", fmt.Errorf("%s read interface MAC for DUID-LL: %w", res.ID(), err)
-			}
-			kame, err := routerstate.KAMEDHCP6CDUIDLLFromMAC(mac)
-			if err != nil {
-				return false, "", err
-			}
-			want = routerstate.ParseKAMEDHCP6CDUID(kame).Payload
-		}
-		return ensureRawDUIDFile(duidPath, want, time.Now())
-	}
-	return false, "", nil
-}
-
-func ensureRawDUIDFile(path string, want []byte, now time.Time) (bool, string, error) {
-	desired := []byte(formatDHCPCDTextDUID(want) + "\n")
-	current, readErr := os.ReadFile(path)
-	if readErr == nil {
-		if bytes.Equal(current, desired) {
-			return false, "", nil
-		}
-		backupPath := path + ".bak." + now.UTC().Format("20060102T150405Z")
-		if err := os.Rename(path, backupPath); err != nil {
-			return false, "", err
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return false, backupPath, err
-		}
-		if err := os.WriteFile(path, desired, 0600); err != nil {
-			return false, backupPath, err
-		}
-		return true, backupPath, nil
-	}
-	if !os.IsNotExist(readErr) {
-		return false, "", readErr
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return false, "", err
-	}
-	if err := os.WriteFile(path, desired, 0600); err != nil {
-		return false, "", err
-	}
-	return true, "", nil
-}
-
-func formatDHCPCDTextDUID(data []byte) string {
-	encoded := hex.EncodeToString(data)
-	var parts []string
-	for i := 0; i < len(encoded); i += 2 {
-		parts = append(parts, encoded[i:i+2])
-	}
-	return strings.Join(parts, ":")
-}
-
-func dhcp6cAvailable() bool {
-	if _, err := exec.LookPath("dhcp6c"); err == nil {
-		return true
-	}
-	for _, path := range []string{"/usr/sbin/dhcp6c", "/usr/local/sbin/dhcp6c", "/run/current-system/sw/bin/dhcp6c"} {
-		if st, err := os.Stat(path); err == nil && !st.IsDir() && st.Mode()&0111 != 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func dhcp6cBinaryPath() string {
-	if isNixOSHost() {
-		return "/run/current-system/sw/bin/dhcp6c"
-	}
-	if _, err := os.Stat("/usr/sbin/dhcp6c"); err == nil {
-		return "/usr/sbin/dhcp6c"
-	}
-	return "/usr/sbin/dhcp6c"
-}
-
-func dhcpcdAvailable() bool {
-	if _, err := exec.LookPath("dhcpcd"); err == nil {
-		return true
-	}
-	for _, path := range []string{"/usr/sbin/dhcpcd", "/usr/local/sbin/dhcpcd", "/run/current-system/sw/bin/dhcpcd"} {
-		if st, err := os.Stat(path); err == nil && !st.IsDir() && st.Mode()&0111 != 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func dhcpcdBinaryPath() string {
-	if isNixOSHost() {
-		return "/run/current-system/sw/bin/dhcpcd"
-	}
-	if _, err := os.Stat("/usr/sbin/dhcpcd"); err == nil {
-		return "/usr/sbin/dhcpcd"
-	}
-	if _, err := os.Stat("/usr/local/sbin/dhcpcd"); err == nil {
-		return "/usr/local/sbin/dhcpcd"
-	}
-	return "/usr/sbin/dhcpcd"
 }
 
 func pppdAvailable() bool {
@@ -6381,6 +5238,15 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func runLogged(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	out, err := cmd.CombinedOutput()
@@ -6502,11 +5368,6 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--override-client <client>] [--override-profile <profile>]")
 	fmt.Fprintln(w, "  delete <kind>/<name> [--dry-run]")
 	fmt.Fprintln(w, "  delete -f <path> [--dry-run]")
-	fmt.Fprintln(w, "  dhcp6 solicit --config <path> --resource <ipv6-prefix-delegation>")
-	fmt.Fprintln(w, "  dhcp6 renew --config <path> --resource <ipv6-prefix-delegation>")
-	fmt.Fprintln(w, "  dhcp6 rebind --config <path> --resource <ipv6-prefix-delegation>")
-	fmt.Fprintln(w, "  dhcp6 request --config <path> --resource <ipv6-prefix-delegation>")
-	fmt.Fprintln(w, "  dhcp6 release --config <path> --resource <ipv6-prefix-delegation>")
 	fmt.Fprintln(w, "  serve --config <path> [--socket <path>]")
 	fmt.Fprintln(w, "  run --config <path>")
 	fmt.Fprintln(w, "  status [--status-file <path>]")
