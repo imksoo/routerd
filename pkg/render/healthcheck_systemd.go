@@ -6,16 +6,19 @@ import (
 )
 
 type HealthCheckSystemdOptions struct {
-	BinaryPath string
-	Resource   string
-	Target     string
-	Protocol   string
-	Port       int
-	Interval   string
-	Timeout    string
-	SocketPath string
-	StateFile  string
-	EventFile  string
+	BinaryPath      string
+	Resource        string
+	Target          string
+	Protocol        string
+	Via             string
+	SourceInterface string
+	SourceAddress   string
+	Port            int
+	Interval        string
+	Timeout         string
+	SocketPath      string
+	StateFile       string
+	EventFile       string
 }
 
 func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
@@ -33,6 +36,15 @@ func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
 	}
 	if options.Protocol != "" {
 		args += " --protocol " + strconv.Quote(options.Protocol)
+	}
+	if options.Via != "" {
+		args += " --via " + strconv.Quote(options.Via)
+	}
+	if options.SourceInterface != "" {
+		args += " --source-interface " + strconv.Quote(options.SourceInterface)
+	}
+	if options.SourceAddress != "" {
+		args += " --source-address " + strconv.Quote(options.SourceAddress)
 	}
 	if options.Port != 0 {
 		args += fmt.Sprintf(" --port %d", options.Port)
