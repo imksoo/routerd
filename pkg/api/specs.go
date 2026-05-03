@@ -424,10 +424,16 @@ type DNSResolverSpec struct {
 }
 
 type DNSResolverListenSpec struct {
-	Name      string   `yaml:"name,omitempty" json:"name,omitempty"`
-	Addresses []string `yaml:"addresses" json:"addresses"`
-	Port      int      `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
-	Sources   []string `yaml:"sources,omitempty" json:"sources,omitempty"`
+	Name           string                               `yaml:"name,omitempty" json:"name,omitempty"`
+	Addresses      []string                             `yaml:"addresses,omitempty" json:"addresses,omitempty"`
+	AddressSources []DNSResolverListenAddressSourceSpec `yaml:"addressSources,omitempty" json:"addressSources,omitempty"`
+	Port           int                                  `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	Sources        []string                             `yaml:"sources,omitempty" json:"sources,omitempty"`
+}
+
+type DNSResolverListenAddressSourceSpec struct {
+	Field    string `yaml:"field" json:"field"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 type DNSResolverSourceSpec struct {

@@ -2933,6 +2933,24 @@
                         "items": {
                           "additionalProperties": false,
                           "properties": {
+                            "addressSources": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "field": {
+                                    "type": "string"
+                                  },
+                                  "optional": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "field"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
                             "addresses": {
                               "items": {
                                 "type": "string"
@@ -2954,9 +2972,6 @@
                               "type": "array"
                             }
                           },
-                          "required": [
-                            "addresses"
-                          ],
                           "type": "object"
                         },
                         "type": "array"
