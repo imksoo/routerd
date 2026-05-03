@@ -28,10 +28,10 @@ import (
 	"routerd/pkg/controller/pppoesession"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/derived"
+	"routerd/pkg/egressroute"
 	"routerd/pkg/eventrule"
 	"routerd/pkg/healthcheck"
 	daemonsource "routerd/pkg/source/daemon"
-	"routerd/pkg/wanegress"
 )
 
 var dnsmasqMu sync.Mutex
@@ -183,7 +183,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	dhcp4Lease := dhcpv4lease.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Lease, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDNSResolver}
-	wan := wanegress.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
+	wan := egressroute.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
@@ -265,7 +265,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			logger.Warn("initial ipv4 route reconcile failed", "error", err)
 		}
 		if err := wan.Reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
-			logger.Warn("initial wan egress reconcile failed", "error", err)
+			logger.Warn("initial egress route reconcile failed", "error", err)
 		}
 		if err := nat.Reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
 			logger.Warn("initial nat44 reconcile failed", "error", err)

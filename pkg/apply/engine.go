@@ -752,7 +752,7 @@ func (e *Engine) observeNAT44Rule(res api.Resource, aliases map[string]string, i
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure NAT44 %s for %s via %s", spec.Type, strings.Join(spec.SourceRanges, ","), defaultString(aliases[spec.EgressInterface], spec.EgressInterface)))
 		return
 	}
-	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure NAT44 %s for %s via selected device from WANEgressPolicy/%s", spec.Type, strings.Join(spec.SourceRanges, ","), spec.EgressPolicyRef))
+	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure NAT44 %s for %s via selected device from EgressRoutePolicy/%s", spec.Type, strings.Join(spec.SourceRanges, ","), spec.EgressPolicyRef))
 }
 
 func (e *Engine) observeIPv4PolicyRoute(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {

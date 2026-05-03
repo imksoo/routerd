@@ -39,7 +39,7 @@ Current implemented scope includes:
 - Path MTU propagation and TCP MSS clamping
 - firewall resource groundwork; stateful filter rendering is still postponed
 - WireGuard, IPsec, VRF, and VXLAN resource groundwork
-- WANEgressPolicy, EventRule, DerivedEvent, and HealthCheck controllers
+- EgressRoutePolicy, EventRule, DerivedEvent, and HealthCheck controllers
 - OpenTelemetry SDK integration hooks
 - sysctl, hostname, NTP client, and log sink resources
 - plugin protocol

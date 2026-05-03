@@ -579,6 +579,7 @@ type DSLiteTunnelSpec struct {
 type IPv4RouteSpec struct {
 	Destination string          `yaml:"destination" json:"destination"`
 	Device      string          `yaml:"device,omitempty" json:"device,omitempty"`
+	Gateway     string          `yaml:"gateway,omitempty" json:"gateway,omitempty"`
 	Metric      int             `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
 	ReadyWhen   []ReadyWhenSpec `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
 }
@@ -628,6 +629,9 @@ type HealthCheckSpec struct {
 	Target             string           `yaml:"target,omitempty" json:"target,omitempty"`
 	TargetSource       string           `yaml:"targetSource,omitempty" json:"targetSource,omitempty" jsonschema:"enum=auto,enum=static,enum=defaultGateway,enum=dsliteRemote"`
 	Interface          string           `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Via                string           `yaml:"via,omitempty" json:"via,omitempty"`
+	SourceInterface    string           `yaml:"sourceInterface,omitempty" json:"sourceInterface,omitempty"`
+	SourceAddress      string           `yaml:"sourceAddress,omitempty" json:"sourceAddress,omitempty"`
 	Protocol           string           `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=,enum=icmp,enum=tcp,enum=dns,enum=http"`
 	Port               int              `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=0,maximum=65535"`
 	Interval           string           `yaml:"interval,omitempty" json:"interval,omitempty"`
@@ -637,23 +641,25 @@ type HealthCheckSpec struct {
 	When               ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
-type WANEgressPolicySpec struct {
-	Family     string                     `yaml:"family,omitempty" json:"family,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
-	Selection  string                     `yaml:"selection,omitempty" json:"selection,omitempty" jsonschema:"enum=highest-weight-ready,enum=weighted-ecmp"`
-	Hysteresis string                     `yaml:"hysteresis,omitempty" json:"hysteresis,omitempty"`
-	Candidates []WANEgressPolicyCandidate `yaml:"candidates" json:"candidates"`
+type EgressRoutePolicySpec struct {
+	Family           string                       `yaml:"family,omitempty" json:"family,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
+	DestinationCIDRs []string                     `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	Selection        string                       `yaml:"selection,omitempty" json:"selection,omitempty" jsonschema:"enum=highest-weight-ready,enum=weighted-ecmp"`
+	Hysteresis       string                       `yaml:"hysteresis,omitempty" json:"hysteresis,omitempty"`
+	Candidates       []EgressRoutePolicyCandidate `yaml:"candidates" json:"candidates"`
 }
 
-type WANEgressPolicyCandidate struct {
-	Name        string          `yaml:"name,omitempty" json:"name,omitempty"`
-	Source      string          `yaml:"source,omitempty" json:"source,omitempty"`
-	Device      string          `yaml:"device,omitempty" json:"device,omitempty"`
-	Gateway     string          `yaml:"gateway,omitempty" json:"gateway,omitempty"`
-	RouteTable  int             `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	Metric      int             `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
-	Weight      int             `yaml:"weight,omitempty" json:"weight,omitempty" jsonschema:"minimum=0"`
-	HealthCheck string          `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
-	ReadyWhen   []ReadyWhenSpec `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
+type EgressRoutePolicyCandidate struct {
+	Name          string          `yaml:"name,omitempty" json:"name,omitempty"`
+	Source        string          `yaml:"source,omitempty" json:"source,omitempty"`
+	Device        string          `yaml:"device,omitempty" json:"device,omitempty"`
+	Gateway       string          `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	GatewaySource string          `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=,enum=static,enum=dhcpv4,enum=dhcpv6,enum=none"`
+	RouteTable    int             `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	Metric        int             `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+	Weight        int             `yaml:"weight,omitempty" json:"weight,omitempty" jsonschema:"minimum=0"`
+	HealthCheck   string          `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
+	ReadyWhen     []ReadyWhenSpec `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
 }
 
 type EventRuleSpec struct {
@@ -986,8 +992,8 @@ func (r Resource) HealthCheckSpec() (HealthCheckSpec, error) {
 	return specAs[HealthCheckSpec](r)
 }
 
-func (r Resource) WANEgressPolicySpec() (WANEgressPolicySpec, error) {
-	return specAs[WANEgressPolicySpec](r)
+func (r Resource) EgressRoutePolicySpec() (EgressRoutePolicySpec, error) {
+	return specAs[EgressRoutePolicySpec](r)
 }
 
 func (r Resource) EventRuleSpec() (EventRuleSpec, error) {

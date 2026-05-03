@@ -1,4 +1,4 @@
-package wanegress
+package egressroute
 
 import (
 	"context"
@@ -43,15 +43,16 @@ type Controller struct {
 }
 
 type CandidateState struct {
-	Name       string
-	Source     string
-	Device     string
-	Gateway    string
-	RouteTable int
-	Metric     int
-	Ready      bool
-	Weight     int
-	Index      int
+	Name          string
+	Source        string
+	Device        string
+	Gateway       string
+	GatewaySource string
+	RouteTable    int
+	Metric        int
+	Ready         bool
+	Weight        int
+	Index         int
 }
 
 type Selection struct {
@@ -96,14 +97,14 @@ func (c Controller) Start(ctx context.Context) {
 
 func (c Controller) reconcileLogged(ctx context.Context) {
 	if err := c.Reconcile(ctx); err != nil && c.Logger != nil {
-		c.Logger.Warn("wan egress reconcile failed", "error", err)
+		c.Logger.Warn("egress route reconcile failed", "error", err)
 	}
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
 	now := c.now()
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "WANEgressPolicy" {
+		if resource.Kind != "EgressRoutePolicy" {
 			continue
 		}
 		if err := c.reconcilePolicy(ctx, resource, now); err != nil {
@@ -114,7 +115,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 }
 
 func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, now time.Time) error {
-	spec, err := resource.WANEgressPolicySpec()
+	spec, err := resource.EgressRoutePolicySpec()
 	if err != nil {
 		return err
 	}
@@ -124,16 +125,16 @@ func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, 
 			"reason":  ReasonUnsupported,
 			"message": fmt.Sprintf("selection %q is reserved but not implemented", selection),
 		}
-		return c.Store.SaveObjectStatus(api.NetAPIVersion, "WANEgressPolicy", resource.Metadata.Name, status)
+		return c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name, status)
 	}
 	candidates := c.candidateStates(spec)
 	selected, ok := selectHighestWeightReady(candidates)
 	if !ok {
 		status := map[string]any{"phase": PhasePending, "reason": ReasonNoReadyCandidates, "candidates": statusCandidates(candidates)}
-		return c.Store.SaveObjectStatus(api.NetAPIVersion, "WANEgressPolicy", resource.Metadata.Name, status)
+		return c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name, status)
 	}
 
-	previous := c.Store.ObjectStatus(api.NetAPIVersion, "WANEgressPolicy", resource.Metadata.Name)
+	previous := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name)
 	previousName, _ := previous["selectedCandidate"].(string)
 	lastTransitionAt := parseTime(fmt.Sprint(previous["lastTransitionAt"]))
 	hysteresis := parseDurationOrDefault(spec.Hysteresis, 30*time.Second)
@@ -155,37 +156,41 @@ func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, 
 		}
 	}
 	status := map[string]any{
-		"phase":              PhaseApplied,
-		"selectedCandidate":  selected.Name,
-		"selectedSource":     selected.Source,
-		"selectedDevice":     selected.Device,
-		"selectedGateway":    selected.Gateway,
-		"selectedRouteTable": selected.RouteTable,
-		"selectedMetric":     selected.Metric,
-		"selectedWeight":     selected.Weight,
-		"lastTransitionAt":   transitionAt.UTC().Format(time.RFC3339Nano),
-		"hysteresis":         hysteresis.String(),
-		"dryRun":             true,
-		"candidates":         statusCandidates(candidates),
+		"phase":                 PhaseApplied,
+		"family":                defaultString(spec.Family, "ipv4"),
+		"destinationCIDRs":      destinationCIDRs(spec),
+		"selectedCandidate":     selected.Name,
+		"selectedSource":        selected.Source,
+		"selectedDevice":        selected.Device,
+		"selectedGateway":       selected.Gateway,
+		"selectedGatewaySource": selected.GatewaySource,
+		"selectedRouteTable":    selected.RouteTable,
+		"selectedMetric":        selected.Metric,
+		"selectedWeight":        selected.Weight,
+		"lastTransitionAt":      transitionAt.UTC().Format(time.RFC3339Nano),
+		"hysteresis":            hysteresis.String(),
+		"dryRun":                true,
+		"candidates":            statusCandidates(candidates),
 	}
-	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "WANEgressPolicy", resource.Metadata.Name, status); err != nil {
+	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", resource.Metadata.Name, status); err != nil {
 		return err
 	}
 	if changed {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, EventRouteChanged, daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "WANEgressPolicy", Name: resource.Metadata.Name}
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy", Name: resource.Metadata.Name}
 		event.Attributes = map[string]string{
-			"selectedCandidate": selected.Name,
-			"selectedDevice":    selected.Device,
-			"selectedGateway":   selected.Gateway,
-			"dryRun":            "true",
+			"selectedCandidate":     selected.Name,
+			"selectedDevice":        selected.Device,
+			"selectedGateway":       selected.Gateway,
+			"selectedGatewaySource": selected.GatewaySource,
+			"dryRun":                "true",
 		}
 		return c.Bus.Publish(ctx, event)
 	}
 	return nil
 }
 
-func (c Controller) candidateStates(spec api.WANEgressPolicySpec) []CandidateState {
+func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateState {
 	out := make([]CandidateState, 0, len(spec.Candidates))
 	for i, candidate := range spec.Candidates {
 		name := candidate.Name
@@ -196,21 +201,22 @@ func (c Controller) candidateStates(spec api.WANEgressPolicySpec) []CandidateSta
 			name = "candidate-" + strconv.Itoa(i)
 		}
 		out = append(out, CandidateState{
-			Name:       name,
-			Source:     candidate.Source,
-			Device:     valueFromRef(c.Store, candidate.Device),
-			Gateway:    valueFromRef(c.Store, candidate.Gateway),
-			RouteTable: candidate.RouteTable,
-			Metric:     candidate.Metric,
-			Ready:      c.ready(candidate),
-			Weight:     candidate.Weight,
-			Index:      i,
+			Name:          name,
+			Source:        candidate.Source,
+			Device:        valueFromRef(c.Store, candidate.Device),
+			Gateway:       valueFromRef(c.Store, candidate.Gateway),
+			GatewaySource: defaultString(candidate.GatewaySource, "none"),
+			RouteTable:    candidate.RouteTable,
+			Metric:        candidate.Metric,
+			Ready:         c.ready(candidate),
+			Weight:        candidate.Weight,
+			Index:         i,
 		})
 	}
 	return out
 }
 
-func (c Controller) ready(candidate api.WANEgressPolicyCandidate) bool {
+func (c Controller) ready(candidate api.EgressRoutePolicyCandidate) bool {
 	if candidate.HealthCheck != "" {
 		status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", candidate.HealthCheck)
 		if fmt.Sprint(status["phase"]) != "Healthy" {
@@ -358,17 +364,28 @@ func statusCandidates(candidates []CandidateState) []map[string]any {
 	out := make([]map[string]any, 0, len(candidates))
 	for _, candidate := range candidates {
 		out = append(out, map[string]any{
-			"name":       candidate.Name,
-			"source":     candidate.Source,
-			"device":     candidate.Device,
-			"gateway":    candidate.Gateway,
-			"routeTable": candidate.RouteTable,
-			"metric":     candidate.Metric,
-			"weight":     candidate.Weight,
-			"ready":      candidate.Ready,
+			"name":          candidate.Name,
+			"source":        candidate.Source,
+			"device":        candidate.Device,
+			"gateway":       candidate.Gateway,
+			"gatewaySource": candidate.GatewaySource,
+			"routeTable":    candidate.RouteTable,
+			"metric":        candidate.Metric,
+			"weight":        candidate.Weight,
+			"ready":         candidate.Ready,
 		})
 	}
 	return out
+}
+
+func destinationCIDRs(spec api.EgressRoutePolicySpec) []string {
+	if len(spec.DestinationCIDRs) > 0 {
+		return spec.DestinationCIDRs
+	}
+	if defaultString(spec.Family, "ipv4") == "ipv6" {
+		return []string{"::/0"}
+	}
+	return []string{"0.0.0.0/0"}
 }
 
 func parseDurationOrDefault(value string, fallback time.Duration) time.Duration {

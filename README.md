@@ -31,7 +31,7 @@ Implemented resource areas include:
   domains, DNSSEC flagging, DDNS, conditional forwarding, and local DNS proxy
   upstreams for DoH, DoT, DoQ, and plain UDP fallback
 - IPv6 delegated LAN address derivation from a DHCPv6-PD prefix
-- WAN egress selection with `WANEgressPolicy`, `HealthCheck`, `EventRule`, and
+- egress route selection with `EgressRoutePolicy`, `HealthCheck`, `EventRule`, and
   `DerivedEvent`
 - IPv4 default routes, NAT44 through nftables, and aggregate conntrack
   observation
