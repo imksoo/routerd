@@ -184,6 +184,13 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`services.timesyncd.servers = [ "pool.ntp.org" ];`,
 		`"net.ipv4.ip_forward" = 1;`,
 		`nftables`,
+		`systemd.services."routerd-dhcpv6-client@wan-pd"`,
+		`ExecStart = lib.concatStringsSep " " [`,
+		`"/usr/local/sbin/routerd-dhcpv6-client"`,
+		`"--interface"`,
+		`"ens18"`,
+		`"/run/routerd/dhcpv6-client/wan-pd.sock"`,
+		`RuntimeDirectory = "routerd/dhcpv6-client";`,
 		`system.stateVersion = "25.11";`,
 	} {
 		if !strings.Contains(got, want) {
@@ -338,5 +345,8 @@ func TestNixOSModuleIgnoresLegacyPrefixDelegationClient(t *testing.T) {
 		if strings.Contains(got, unwanted) {
 			t.Fatalf("NixOS module should ignore legacy PD client rendering %q:\n%s", unwanted, got)
 		}
+	}
+	if !strings.Contains(got, `systemd.services."routerd-dhcpv6-client@wan-pd"`) {
+		t.Fatalf("NixOS module missing routerd DHCPv6 client service:\n%s", got)
 	}
 }

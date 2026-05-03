@@ -753,6 +753,41 @@ ConfigWatcher + Loader → routerd internal model
 
 `pkg/platform/<os>.go` で抽象化。
 
+NixOS の初期実装では `services.routerd.*` module namespace ではなく、
+`routerd-generated.nix` に concrete systemd unit を直接 emit する。router02 では
+`/run/systemd/system` の transient unit を廃止し、以下の形で
+`nixos-rebuild test` → `nixos-rebuild switch` 済み。
+
+```nix
+systemd.services."routerd-dhcpv6-client@wan-pd" = {
+  description = "routerd DHCPv6 client wan-pd";
+  after = [ "network-online.target" ];
+  wants = [ "network-online.target" ];
+  wantedBy = [ "multi-user.target" ];
+  path = with pkgs; [ iproute2 ];
+  serviceConfig = {
+    Type = "simple";
+    ExecStart = lib.concatStringsSep " " [
+      "/usr/local/sbin/routerd-dhcpv6-client"
+      "--resource" "wan-pd"
+      "--interface" "ens18"
+      "--socket" "/run/routerd/dhcpv6-client/wan-pd.sock"
+      "--lease-file" "/var/lib/routerd/dhcpv6-client/wan-pd/lease.json"
+      "--event-file" "/var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl"
+    ];
+    Restart = "always";
+    RestartSec = "5s";
+    RuntimeDirectory = "routerd/dhcpv6-client";
+    StateDirectory = "routerd/dhcpv6-client";
+    ProtectSystem = "strict";
+    ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" ];
+    RestrictAddressFamilies = [ "AF_UNIX" "AF_INET6" "AF_NETLINK" ];
+    CapabilityBoundingSet = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
+    AmbientCapabilities = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
+  };
+};
+```
+
 ### 13.2 kernel 操作の抽象
 
 | 操作 | Linux | FreeBSD | NixOS |

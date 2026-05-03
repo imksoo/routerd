@@ -54,6 +54,12 @@ type nixOSVXLAN struct {
 	Bridge         string
 }
 
+type nixOSDHCPv6Client struct {
+	Name      string
+	IFName    string
+	Interface string
+}
+
 func NixOSModule(router *api.Router) ([]byte, error) {
 	host, err := nixOSHost(router)
 	if err != nil {
@@ -68,6 +74,10 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	vxlans, err := nixOSVXLANS(router)
+	if err != nil {
+		return nil, err
+	}
+	dhcpv6Clients, err := nixOSDHCPv6Clients(router, interfaces)
 	if err != nil {
 		return nil, err
 	}
@@ -161,6 +171,9 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		}
 		buf.WriteString("  ];\n")
 	}
+	for _, client := range dhcpv6Clients {
+		writeNixOSDHCPv6ClientService(&buf, client)
+	}
 	if api.BoolDefault(host.RouterdService.Enabled, false) {
 		writeNixOSRouterdService(&buf, host.RouterdService, servicePackages)
 	}
@@ -169,6 +182,33 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	}
 	buf.WriteString("}\n")
 	return buf.Bytes(), nil
+}
+
+func nixOSDHCPv6Clients(router *api.Router, interfaces []nixOSInterface) ([]nixOSDHCPv6Client, error) {
+	aliases := map[string]string{}
+	for _, iface := range interfaces {
+		aliases[iface.Name] = iface.IfName
+	}
+	var out []nixOSDHCPv6Client
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "DHCPv6PrefixDelegation" {
+			continue
+		}
+		spec, err := res.DHCPv6PrefixDelegationSpec()
+		if err != nil {
+			return nil, err
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			ifname = spec.Interface
+		}
+		if ifname == "" {
+			return nil, fmt.Errorf("%s needs spec.interface", res.ID())
+		}
+		out = append(out, nixOSDHCPv6Client{Name: res.Metadata.Name, Interface: spec.Interface, IFName: ifname})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }
 
 func nixOSHost(router *api.Router) (api.NixOSHostSpec, error) {
@@ -631,6 +671,66 @@ func writeNixOSRouterdService(buf *bytes.Buffer, spec api.NixOSRouterdServiceSpe
 	buf.WriteString("      RestartSec = \"2s\";\n")
 	buf.WriteString("      RuntimeDirectory = \"routerd\";\n")
 	buf.WriteString("      StateDirectory = \"routerd\";\n")
+	buf.WriteString("    };\n")
+	buf.WriteString("  };\n")
+}
+
+func writeNixOSDHCPv6ClientService(buf *bytes.Buffer, client nixOSDHCPv6Client) {
+	unit := "routerd-dhcpv6-client@" + client.Name
+	socket := "/run/routerd/dhcpv6-client/" + client.Name + ".sock"
+	lease := "/var/lib/routerd/dhcpv6-client/" + client.Name + "/lease.json"
+	events := "/var/lib/routerd/dhcpv6-client/" + client.Name + "/events.jsonl"
+	args := []string{
+		"/usr/local/sbin/routerd-dhcpv6-client",
+		"--resource", client.Name,
+		"--interface", client.IFName,
+		"--socket", socket,
+		"--lease-file", lease,
+		"--event-file", events,
+	}
+	buf.WriteString("  systemd.services." + nixString(unit) + " = {\n")
+	buf.WriteString("    description = " + nixString("routerd DHCPv6 client "+client.Name) + ";\n")
+	buf.WriteString("    after = [ \"network-online.target\" ];\n")
+	buf.WriteString("    wants = [ \"network-online.target\" ];\n")
+	buf.WriteString("    wantedBy = [ \"multi-user.target\" ];\n")
+	buf.WriteString("    path = with pkgs; [\n")
+	buf.WriteString("      iproute2\n")
+	buf.WriteString("    ];\n")
+	buf.WriteString("    serviceConfig = {\n")
+	buf.WriteString("      Type = \"simple\";\n")
+	buf.WriteString("      ExecStart = lib.concatStringsSep \" \" [\n")
+	for _, arg := range args {
+		buf.WriteString("        " + nixString(arg) + "\n")
+	}
+	buf.WriteString("      ];\n")
+	buf.WriteString("      Restart = \"always\";\n")
+	buf.WriteString("      RestartSec = \"5s\";\n")
+	buf.WriteString("      User = \"root\";\n")
+	buf.WriteString("      RuntimeDirectory = \"routerd/dhcpv6-client\";\n")
+	buf.WriteString("      StateDirectory = \"routerd/dhcpv6-client\";\n")
+	buf.WriteString("      NoNewPrivileges = true;\n")
+	buf.WriteString("      PrivateTmp = true;\n")
+	buf.WriteString("      ProtectHome = true;\n")
+	buf.WriteString("      ProtectSystem = \"strict\";\n")
+	buf.WriteString("      ReadWritePaths = [\n")
+	buf.WriteString("        \"/run/routerd\"\n")
+	buf.WriteString("        \"/var/lib/routerd\"\n")
+	buf.WriteString("      ];\n")
+	buf.WriteString("      RestrictAddressFamilies = [\n")
+	buf.WriteString("        \"AF_UNIX\"\n")
+	buf.WriteString("        \"AF_INET6\"\n")
+	buf.WriteString("        \"AF_NETLINK\"\n")
+	buf.WriteString("      ];\n")
+	buf.WriteString("      CapabilityBoundingSet = [\n")
+	buf.WriteString("        \"CAP_NET_RAW\"\n")
+	buf.WriteString("        \"CAP_NET_ADMIN\"\n")
+	buf.WriteString("        \"CAP_NET_BIND_SERVICE\"\n")
+	buf.WriteString("      ];\n")
+	buf.WriteString("      AmbientCapabilities = [\n")
+	buf.WriteString("        \"CAP_NET_RAW\"\n")
+	buf.WriteString("        \"CAP_NET_ADMIN\"\n")
+	buf.WriteString("        \"CAP_NET_BIND_SERVICE\"\n")
+	buf.WriteString("      ];\n")
 	buf.WriteString("    };\n")
 	buf.WriteString("  };\n")
 }
