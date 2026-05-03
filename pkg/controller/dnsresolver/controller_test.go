@@ -74,6 +74,83 @@ func TestDNSResolverDependsOnExplicitAddressSource(t *testing.T) {
 	}
 }
 
+func TestRuntimeConfigResolvesDNSZoneRecordAddressSources(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/IPv6DelegatedAddress/lan-base": {"address": "2409:10:3d60:1200::1"},
+	}
+	controller := Controller{
+		Router: dnsResolverRouterWithZone(api.DNSZoneRecordSpec{
+			Hostname:   "router",
+			IPv4:       "192.168.160.5",
+			IPv6Source: api.DNSZoneRecordAddressSourceSpec{Field: "${IPv6DelegatedAddress/lan-base.status.address}"},
+		}),
+		Store:  store,
+		DryRun: true,
+	}
+	spec := api.DNSResolverSpec{
+		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
+		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lab.example"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
+	}
+	config, err := controller.runtimeConfig("lan-resolver", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Zones) != 1 || len(config.Zones[0].Spec.Records) != 1 {
+		t.Fatalf("zones = %#v", config.Zones)
+	}
+	record := config.Zones[0].Spec.Records[0]
+	if record.IPv6 != "2409:10:3d60:1200::1" || record.IPv6Source.Field != "" {
+		t.Fatalf("record = %#v", record)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSZone", "lan-zone")
+	if status["phase"] != "Applied" {
+		t.Fatalf("zone status = %#v", status)
+	}
+}
+
+func TestRuntimeConfigMarksDNSZoneRecordPendingWhenSourceUnresolved(t *testing.T) {
+	store := mapStore{}
+	controller := Controller{
+		Router: dnsResolverRouterWithZone(api.DNSZoneRecordSpec{
+			Hostname:   "router",
+			IPv4:       "192.168.160.5",
+			IPv6Source: api.DNSZoneRecordAddressSourceSpec{Field: "${IPv6DelegatedAddress/lan-base.status.address}"},
+		}),
+		Store:  store,
+		DryRun: true,
+	}
+	spec := api.DNSResolverSpec{
+		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
+		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lab.example"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
+	}
+	config, err := controller.runtimeConfig("lan-resolver", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := config.Zones[0].Spec.Records[0]
+	if record.IPv6 != "" || record.IPv4 != "192.168.160.5" {
+		t.Fatalf("record = %#v", record)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSZone", "lan-zone")
+	if status["phase"] != "Pending" {
+		t.Fatalf("zone status = %#v", status)
+	}
+	pending, _ := status["pendingRecords"].([]map[string]string)
+	if len(pending) != 1 || pending[0]["field"] != "ipv6" {
+		t.Fatalf("pendingRecords = %#v", status["pendingRecords"])
+	}
+}
+
+func TestDNSResolverDependsOnDNSZoneRecordSource(t *testing.T) {
+	router := dnsResolverRouterWithZone(api.DNSZoneRecordSpec{
+		Hostname:   "router",
+		IPv6Source: api.DNSZoneRecordAddressSourceSpec{Field: "${IPv6DelegatedAddress/lan-base.status.address}"},
+	})
+	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress", Name: "lan-base"}) {
+		t.Fatal("expected dependency on IPv6DelegatedAddress/lan-base")
+	}
+}
+
 func dnsResolverRouter(addresses []string, addressSources []api.DNSResolverListenAddressSourceSpec) *api.Router {
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
@@ -86,6 +163,32 @@ func dnsResolverRouter(addresses []string, addressSources []api.DNSResolverListe
 					Kind:      "upstream",
 					Match:     []string{"."},
 					Upstreams: []string{"udp://1.1.1.1:53"},
+				}},
+			},
+		},
+	}}}
+}
+
+func dnsResolverRouterWithZone(record api.DNSZoneRecordSpec) *api.Router {
+	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"},
+			Metadata: api.ObjectMeta{Name: "lan-zone"},
+			Spec: api.DNSZoneSpec{
+				Zone:    "lab.example",
+				Records: []api.DNSZoneRecordSpec{record},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan-resolver"},
+			Spec: api.DNSResolverSpec{
+				Listen: []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
+				Sources: []api.DNSResolverSourceSpec{{
+					Name:    "local",
+					Kind:    "zone",
+					Match:   []string{"lab.example"},
+					ZoneRef: []string{"DNSZone/lan-zone"},
 				}},
 			},
 		},

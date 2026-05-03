@@ -398,10 +398,17 @@ type DNSZoneDNSSECSpec struct {
 }
 
 type DNSZoneRecordSpec struct {
-	Hostname string `yaml:"hostname" json:"hostname"`
-	IPv4     string `yaml:"ipv4,omitempty" json:"ipv4,omitempty"`
-	IPv6     string `yaml:"ipv6,omitempty" json:"ipv6,omitempty"`
-	TTL      int    `yaml:"ttl,omitempty" json:"ttl,omitempty" jsonschema:"minimum=0"`
+	Hostname   string                         `yaml:"hostname" json:"hostname"`
+	IPv4       string                         `yaml:"ipv4,omitempty" json:"ipv4,omitempty"`
+	IPv4Source DNSZoneRecordAddressSourceSpec `yaml:"ipv4Source,omitempty" json:"ipv4Source,omitempty"`
+	IPv6       string                         `yaml:"ipv6,omitempty" json:"ipv6,omitempty"`
+	IPv6Source DNSZoneRecordAddressSourceSpec `yaml:"ipv6Source,omitempty" json:"ipv6Source,omitempty"`
+	TTL        int                            `yaml:"ttl,omitempty" json:"ttl,omitempty" jsonschema:"minimum=0"`
+}
+
+type DNSZoneRecordAddressSourceSpec struct {
+	Field    string `yaml:"field" json:"field"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 type DNSZoneDHCPDerivedSpec struct {

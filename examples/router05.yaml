@@ -173,9 +173,11 @@ spec:
       records:
       - hostname: router
         ipv4: 192.168.160.5
-        ipv6: 2409:10:3d60:1221::1
+        ipv6Source:
+          field: ${IPv6DelegatedAddress/lan-base.status.address}
       - hostname: router-ipv6
-        ipv6: 2409:10:3d60:1221::1
+        ipv6Source:
+          field: ${IPv6DelegatedAddress/lan-base.status.address}
       dhcpDerived:
         sources:
         - DHCPv4Server/lan-dhcpv4
