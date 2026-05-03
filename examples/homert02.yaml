@@ -1,0 +1,79 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: homert02
+spec:
+  resources:
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: Interface
+    metadata:
+      name: wan
+    spec:
+      ifname: ens18
+      managed: false
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: Interface
+    metadata:
+      name: lan
+    spec:
+      ifname: ens19
+      managed: false
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: Interface
+    metadata:
+      name: mgmt
+    spec:
+      ifname: ens20
+      managed: false
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DSLiteTunnel
+    metadata:
+      name: ds-lite
+    spec:
+      interface: wan
+      tunnelName: ds-lite
+      localAddressSource: static
+      localAddress: 2001:db8::1
+      aftrFQDN: gw.transix.jp
+  - apiVersion: firewall.routerd.net/v1alpha1
+    kind: FirewallZone
+    metadata:
+      name: wan
+    spec:
+      role: untrust
+      interfaces:
+      - Interface/wan
+      - DSLiteTunnel/ds-lite
+  - apiVersion: firewall.routerd.net/v1alpha1
+    kind: FirewallZone
+    metadata:
+      name: lan
+    spec:
+      role: trust
+      interfaces:
+      - Interface/lan
+  - apiVersion: firewall.routerd.net/v1alpha1
+    kind: FirewallZone
+    metadata:
+      name: management
+    spec:
+      role: mgmt
+      interfaces:
+      - Interface/mgmt
+  - apiVersion: firewall.routerd.net/v1alpha1
+    kind: FirewallPolicy
+    metadata:
+      name: home
+    spec:
+      logDeny: true
+      sameRoleAccept: true
+  - apiVersion: firewall.routerd.net/v1alpha1
+    kind: FirewallRule
+    metadata:
+      name: allow-lan-dns
+    spec:
+      fromZone: lan
+      toZone: self
+      protocol: udp
+      port: 53
+      action: accept

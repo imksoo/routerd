@@ -319,27 +319,30 @@ spec:
         metric: 100
 
     - apiVersion: firewall.routerd.net/v1alpha1
-      kind: Zone
+      kind: FirewallZone
       metadata:
         name: lan
       spec:
+        role: trust
         interfaces:
           - lan
 
     - apiVersion: firewall.routerd.net/v1alpha1
-      kind: Zone
+      kind: FirewallZone
       metadata:
         name: wan
       spec:
+        role: untrust
         interfaces:
           - wan
           - transix
 
     - apiVersion: firewall.routerd.net/v1alpha1
-      kind: Zone
+      kind: FirewallZone
       metadata:
         name: mgmt
       spec:
+        role: mgmt
         interfaces:
           - mgmt
 
@@ -348,23 +351,8 @@ spec:
       metadata:
         name: default-home
       spec:
-        preset: home-router
-        input:
-          default: drop
-        forward:
-          default: drop
-        routerAccess:
-          ssh:
-            fromZones:
-              - lan
-            wan:
-              enabled: false
-          dns:
-            fromZones:
-              - lan
-          dhcp:
-            fromZones:
-              - lan
+        logDeny: true
+        sameRoleAccept: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress

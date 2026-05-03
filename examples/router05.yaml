@@ -381,3 +381,34 @@ spec:
       emitWhen: all_true
       retractWhen: any_false
       hysteresis: 5s
+  - apiVersion: firewall.routerd.net/v1alpha1
+    kind: FirewallZone
+    metadata:
+      name: management
+    spec:
+      role: mgmt
+      interfaces:
+      - Interface/ens18
+  - apiVersion: firewall.routerd.net/v1alpha1
+    kind: FirewallZone
+    metadata:
+      name: lan
+    spec:
+      role: trust
+      interfaces:
+      - Interface/ens19
+  - apiVersion: firewall.routerd.net/v1alpha1
+    kind: FirewallZone
+    metadata:
+      name: wan
+    spec:
+      role: untrust
+      interfaces:
+      - DSLiteTunnel/ds-lite
+  - apiVersion: firewall.routerd.net/v1alpha1
+    kind: FirewallPolicy
+    metadata:
+      name: home
+    spec:
+      logDeny: true
+      sameRoleAccept: true
