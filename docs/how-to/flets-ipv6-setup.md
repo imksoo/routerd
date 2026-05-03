@@ -5,7 +5,7 @@ slug: /how-to/flets-ipv6-setup
 
 # NTT フレッツ IPv6 設定
 
-このページでは、NTT NGN のホームゲートウェイ配下で DHCPv6-PD と DS-Lite を使う構成を説明します。
+このページでは、NTT NGN の HGW 配下で DHCPv6-PD と DS-Lite を使う構成を説明します。
 現在の routerd では、DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
 
 ## 前提

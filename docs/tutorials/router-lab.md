@@ -24,7 +24,7 @@ routerd の実装検証は、現在 pve05、pve06、pve07 上の VM を中心に
 router05 では、条件付き DNS 転送で `gw.transix.jp` を HGW 側の RDNSS へ問い合わせ、AFTR IPv6 を解決しました。
 その後、`ip6tnl` トンネル、IPv4 既定経路、NAT44 を実適用し、IPv4 HTTP 通信を確認しています。
 
-NGN HGW の DHCPv6 情報要求では AFTR option が返らないため、この環境では `DSLiteTunnel.spec.aftrFQDN` による静的フォールバックが正しい経路です。
+NGN HGW の DHCPv6 情報要求では AFTR オプションが返らないため、この環境では `DSLiteTunnel.spec.aftrFQDN` による静的フォールバックが正しい経路です。
 
 ## Tier S 検証
 

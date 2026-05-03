@@ -53,13 +53,13 @@ Phase 2-B で、次の Kind を追加しました。
 - `DerivedEvent`
 - `HealthCheck`
 
-EventRule は stream から stream を作ります。
-DerivedEvent は状態から asserted/retracted イベントを作ります。
+EventRule はイベント列を入力にして別のイベント列を作ります。
+DerivedEvent は状態から asserted / retracted の仮想イベントを作ります。
 
 ## 6. Tier S
 
 WireGuard、IPsec、VRF、VXLAN は Tier S の土台です。
-WireGuard と VXLAN over WireGuard は cross-OS 検証済みです。
+WireGuard と VXLAN over WireGuard は複数 OS をまたいで検証済みです。
 IPsec は cloud VPN 接続向けの設定生成を先に進めます。
 
 抽象的な `VPNTunnel` は作りません。
