@@ -799,46 +799,30 @@ type IPv4NATPortMappingSpec struct {
 	End   int    `yaml:"end,omitempty" json:"end,omitempty" jsonschema:"minimum=1,maximum=65535"`
 }
 
-type ZoneSpec struct {
+type FirewallZoneSpec struct {
+	Role       string   `yaml:"role" json:"role" jsonschema:"enum=untrust,enum=trust,enum=mgmt"`
 	Interfaces []string `yaml:"interfaces" json:"interfaces"`
 }
 
 type FirewallPolicySpec struct {
-	Preset       string                  `yaml:"preset,omitempty" json:"preset,omitempty" jsonschema:"enum=home-router"`
-	Input        FirewallChainPolicySpec `yaml:"input,omitempty" json:"input,omitempty"`
-	Forward      FirewallChainPolicySpec `yaml:"forward,omitempty" json:"forward,omitempty"`
-	RouterAccess RouterAccessSpec        `yaml:"routerAccess,omitempty" json:"routerAccess,omitempty"`
+	LogDeny        bool `yaml:"logDeny,omitempty" json:"logDeny,omitempty"`
+	SameRoleAccept bool `yaml:"sameRoleAccept,omitempty" json:"sameRoleAccept,omitempty"`
 }
 
-type FirewallChainPolicySpec struct {
-	Default string `yaml:"default,omitempty" json:"default,omitempty" jsonschema:"enum=accept,enum=drop"`
+type FirewallRuleSpec struct {
+	FromZone    string                `yaml:"fromZone" json:"fromZone"`
+	ToZone      string                `yaml:"toZone" json:"toZone"`
+	SourceCIDRs []string              `yaml:"srcCIDRs,omitempty" json:"srcCIDRs,omitempty"`
+	Protocol    string                `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=,enum=tcp,enum=udp,enum=icmp,enum=icmpv6,enum=ipv6-icmp,enum=ipip"`
+	Port        int                   `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=0,maximum=65535"`
+	Action      string                `yaml:"action" json:"action" jsonschema:"enum=accept,enum=drop,enum=reject"`
+	Log         bool                  `yaml:"log,omitempty" json:"log,omitempty"`
+	RateLimit   FirewallRateLimitSpec `yaml:"rateLimit,omitempty" json:"rateLimit,omitempty"`
 }
 
-type RouterAccessSpec struct {
-	SSH  FirewallRouterServiceSpec `yaml:"ssh,omitempty" json:"ssh,omitempty"`
-	DNS  FirewallRouterServiceSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
-	DHCP FirewallRouterServiceSpec `yaml:"dhcp,omitempty" json:"dhcp,omitempty"`
-}
-
-type FirewallRouterServiceSpec struct {
-	FromZones []string                    `yaml:"fromZones,omitempty" json:"fromZones,omitempty"`
-	WAN       FirewallRouterWANAccessSpec `yaml:"wan,omitempty" json:"wan,omitempty"`
-}
-
-type FirewallRouterWANAccessSpec struct {
-	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-}
-
-type ExposeServiceSpec struct {
-	Family          string   `yaml:"family,omitempty" json:"family,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
-	FromZone        string   `yaml:"fromZone" json:"fromZone"`
-	ViaInterface    string   `yaml:"viaInterface,omitempty" json:"viaInterface,omitempty"`
-	Protocol        string   `yaml:"protocol" json:"protocol" jsonschema:"enum=tcp,enum=udp"`
-	ExternalPort    int      `yaml:"externalPort" json:"externalPort" jsonschema:"minimum=1,maximum=65535"`
-	InternalAddress string   `yaml:"internalAddress" json:"internalAddress"`
-	InternalPort    int      `yaml:"internalPort" json:"internalPort" jsonschema:"minimum=1,maximum=65535"`
-	Sources         []string `yaml:"sources,omitempty" json:"sources,omitempty"`
-	Hairpin         bool     `yaml:"hairpin,omitempty" json:"hairpin,omitempty"`
+type FirewallRateLimitSpec struct {
+	PacketsPerSecond int `yaml:"packetsPerSecond,omitempty" json:"packetsPerSecond,omitempty" jsonschema:"minimum=0"`
+	Burst            int `yaml:"burst,omitempty" json:"burst,omitempty" jsonschema:"minimum=0"`
 }
 
 type HostnameSpec struct {
@@ -1042,16 +1026,16 @@ func (r Resource) PathMTUPolicySpec() (PathMTUPolicySpec, error) {
 	return specAs[PathMTUPolicySpec](r)
 }
 
-func (r Resource) ZoneSpec() (ZoneSpec, error) {
-	return specAs[ZoneSpec](r)
+func (r Resource) FirewallZoneSpec() (FirewallZoneSpec, error) {
+	return specAs[FirewallZoneSpec](r)
 }
 
 func (r Resource) FirewallPolicySpec() (FirewallPolicySpec, error) {
 	return specAs[FirewallPolicySpec](r)
 }
 
-func (r Resource) ExposeServiceSpec() (ExposeServiceSpec, error) {
-	return specAs[ExposeServiceSpec](r)
+func (r Resource) FirewallRuleSpec() (FirewallRuleSpec, error) {
+	return specAs[FirewallRuleSpec](r)
 }
 
 func (r Resource) LogSinkSpec() (LogSinkSpec, error) {
