@@ -10,13 +10,14 @@ import (
 
 const (
 	DaemonKind         = "routerd-doh-proxy"
+	BackendNative      = "native"
 	BackendCloudflared = "cloudflared"
 	BackendDNSCrypt    = "dnscrypt"
 )
 
 func NormalizeSpec(spec api.DoHProxySpec) api.DoHProxySpec {
 	if strings.TrimSpace(spec.Backend) == "" {
-		spec.Backend = BackendCloudflared
+		spec.Backend = BackendNative
 	}
 	if strings.TrimSpace(spec.ListenAddress) == "" {
 		spec.ListenAddress = "127.0.0.1"
@@ -30,7 +31,7 @@ func NormalizeSpec(spec api.DoHProxySpec) api.DoHProxySpec {
 func Validate(spec api.DoHProxySpec) error {
 	spec = NormalizeSpec(spec)
 	switch spec.Backend {
-	case BackendCloudflared, BackendDNSCrypt:
+	case BackendNative, BackendCloudflared, BackendDNSCrypt:
 	default:
 		return fmt.Errorf("unsupported DoH backend %q", spec.Backend)
 	}
@@ -57,6 +58,8 @@ func Command(spec api.DoHProxySpec) (string, []string, error) {
 		return "", nil, err
 	}
 	switch spec.Backend {
+	case BackendNative:
+		return "", nil, nil
 	case BackendCloudflared:
 		command := firstNonEmpty(spec.Command, "cloudflared")
 		args := []string{"proxy-dns", "--address", spec.ListenAddress, "--port", fmt.Sprintf("%d", spec.ListenPort)}

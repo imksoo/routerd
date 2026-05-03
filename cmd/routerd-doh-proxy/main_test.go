@@ -12,7 +12,7 @@ func TestSelftest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"command":"cloudflared"`) || !strings.Contains(out.String(), "https://1.1.1.1/dns-query") {
+	if !strings.Contains(out.String(), `"backend":"native"`) || !strings.Contains(out.String(), "https://1.1.1.1/dns-query") {
 		t.Fatalf("unexpected selftest output: %s", out.String())
 	}
 }

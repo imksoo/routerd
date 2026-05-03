@@ -10,6 +10,7 @@ import (
 
 func TestCloudflaredCommand(t *testing.T) {
 	command, args, err := Command(api.DoHProxySpec{
+		Backend:       BackendCloudflared,
 		ListenAddress: "127.0.0.1",
 		ListenPort:    5053,
 		Upstreams:     []string{"https://1.1.1.1/dns-query", "https://dns.google/dns-query"},
@@ -23,6 +24,19 @@ func TestCloudflaredCommand(t *testing.T) {
 	want := []string{"proxy-dns", "--address", "127.0.0.1", "--port", "5053", "--upstream", "https://1.1.1.1/dns-query", "--upstream", "https://dns.google/dns-query"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v", args)
+	}
+}
+
+func TestNativeCommandUsesInternalServer(t *testing.T) {
+	command, args, err := Command(api.DoHProxySpec{
+		Backend:   BackendNative,
+		Upstreams: []string{"https://1.1.1.1/dns-query"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command != "" || args != nil {
+		t.Fatalf("native command = %q %#v", command, args)
 	}
 }
 

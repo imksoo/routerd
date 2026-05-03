@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -83,7 +85,7 @@ func parseOptions(name string, args []string) (options, error) {
 	opts := options{}
 	var upstreams string
 	fs.StringVar(&opts.resource, "resource", "doh", "resource name")
-	fs.StringVar(&opts.backend, "backend", dohproxy.BackendCloudflared, "backend: cloudflared or dnscrypt")
+	fs.StringVar(&opts.backend, "backend", dohproxy.BackendNative, "backend: native, cloudflared, or dnscrypt")
 	fs.StringVar(&opts.listenAddress, "listen-address", "127.0.0.1", "stub resolver listen address")
 	fs.IntVar(&opts.listenPort, "listen-port", 5053, "stub resolver listen port")
 	fs.StringVar(&upstreams, "upstream", "", "comma-separated DoH upstream URLs")
@@ -122,7 +124,7 @@ func selftest(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	out := map[string]any{"backend": spec.Backend, "listenAddress": spec.ListenAddress, "listenPort": spec.ListenPort, "command": command, "args": commandArgs}
+	out := map[string]any{"backend": spec.Backend, "listenAddress": spec.ListenAddress, "listenPort": spec.ListenPort, "upstreams": spec.Upstreams, "command": command, "args": commandArgs}
 	return json.NewEncoder(stdout).Encode(out)
 }
 
@@ -196,6 +198,9 @@ func (d *daemon) startBackend(ctx context.Context) error {
 	if d.opts.dryRun {
 		return nil
 	}
+	if d.spec.Backend == dohproxy.BackendNative {
+		return d.startNativeBackend(ctx)
+	}
 	command, args, err := dohproxy.Command(d.spec)
 	if err != nil {
 		return err
@@ -216,6 +221,100 @@ func (d *daemon) startBackend(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+func (d *daemon) startNativeBackend(ctx context.Context) error {
+	address := net.JoinHostPort(d.spec.ListenAddress, fmt.Sprintf("%d", d.spec.ListenPort))
+	udpConn, err := net.ListenPacket("udp", address)
+	if err != nil {
+		return err
+	}
+	tcpListener, err := net.Listen("tcp", address)
+	if err != nil {
+		_ = udpConn.Close()
+		return err
+	}
+	go func() {
+		<-ctx.Done()
+		_ = udpConn.Close()
+		_ = tcpListener.Close()
+	}()
+	go d.serveUDP(ctx, udpConn)
+	go d.serveTCP(ctx, tcpListener)
+	return nil
+}
+
+func (d *daemon) serveUDP(ctx context.Context, conn net.PacketConn) {
+	buf := make([]byte, 4096)
+	for {
+		n, addr, err := conn.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		query := append([]byte(nil), buf[:n]...)
+		go func() {
+			resp, err := d.exchangeDoH(ctx, query)
+			if err != nil {
+				d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityWarning, "QueryFailed", err.Error(), nil)
+				return
+			}
+			_, _ = conn.WriteTo(resp, addr)
+		}()
+	}
+}
+
+func (d *daemon) serveTCP(ctx context.Context, listener net.Listener) {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		go d.handleTCP(ctx, conn)
+	}
+}
+
+func (d *daemon) handleTCP(ctx context.Context, conn net.Conn) {
+	defer conn.Close()
+	var length uint16
+	if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
+		return
+	}
+	query := make([]byte, int(length))
+	if _, err := io.ReadFull(conn, query); err != nil {
+		return
+	}
+	resp, err := d.exchangeDoH(ctx, query)
+	if err != nil {
+		d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityWarning, "QueryFailed", err.Error(), nil)
+		return
+	}
+	if len(resp) > 65535 {
+		return
+	}
+	_ = binary.Write(conn, binary.BigEndian, uint16(len(resp)))
+	_, _ = conn.Write(resp)
+}
+
+func (d *daemon) exchangeDoH(ctx context.Context, query []byte) ([]byte, error) {
+	if len(d.spec.Upstreams) == 0 {
+		return nil, fmt.Errorf("no DoH upstream configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.spec.Upstreams[0], bytes.NewReader(query))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/dns-message")
+	req.Header.Set("Accept", "application/dns-message")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("DoH upstream returned %s", resp.Status)
+	}
+	return io.ReadAll(resp.Body)
 }
 
 func (d *daemon) stopBackend() {

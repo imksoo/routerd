@@ -531,7 +531,7 @@ type DNSResolverServerSpec struct {
 	URL           string `yaml:"url,omitempty" json:"url,omitempty"`
 	SNI           string `yaml:"sni,omitempty" json:"sni,omitempty"`
 	ProxyRef      string `yaml:"proxyRef,omitempty" json:"proxyRef,omitempty"`
-	Backend       string `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=cloudflared,enum=dnscrypt"`
+	Backend       string `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=native,enum=cloudflared,enum=dnscrypt"`
 	ListenAddress string `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
 	ListenPort    int    `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
 }
@@ -543,7 +543,7 @@ func (DNSResolverServerSpec) JSONSchema() *jsonschema.Schema {
 	props.Set("url", &jsonschema.Schema{Type: "string"})
 	props.Set("sni", &jsonschema.Schema{Type: "string"})
 	props.Set("proxyRef", &jsonschema.Schema{Type: "string"})
-	props.Set("backend", &jsonschema.Schema{Type: "string", Enum: []any{"", "cloudflared", "dnscrypt"}})
+	props.Set("backend", &jsonschema.Schema{Type: "string", Enum: []any{"", "native", "cloudflared", "dnscrypt"}})
 	props.Set("listenAddress", &jsonschema.Schema{Type: "string"})
 	props.Set("listenPort", &jsonschema.Schema{Type: "integer", Minimum: json.Number("1"), Maximum: json.Number("65535")})
 	return &jsonschema.Schema{
@@ -605,7 +605,7 @@ func (s DNSResolverServerSpec) StubAddress() string {
 }
 
 type DoHProxySpec struct {
-	Backend       string   `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=cloudflared,enum=dnscrypt"`
+	Backend       string   `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=native,enum=cloudflared,enum=dnscrypt"`
 	ListenAddress string   `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
 	ListenPort    int      `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	Upstreams     []string `yaml:"upstreams" json:"upstreams"`

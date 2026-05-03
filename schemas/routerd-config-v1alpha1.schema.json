@@ -2974,6 +2974,7 @@
                                     "backend": {
                                       "enum": [
                                         "",
+                                        "native",
                                         "cloudflared",
                                         "dnscrypt"
                                       ],
@@ -3072,6 +3073,7 @@
                                       "backend": {
                                         "enum": [
                                           "",
+                                          "native",
                                           "cloudflared",
                                           "dnscrypt"
                                         ],
@@ -3165,6 +3167,7 @@
                     "properties": {
                       "backend": {
                         "enum": [
+                          "native",
                           "cloudflared",
                           "dnscrypt"
                         ],

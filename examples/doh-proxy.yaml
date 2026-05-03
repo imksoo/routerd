@@ -9,7 +9,7 @@ spec:
     metadata:
       name: cloudflare
     spec:
-      backend: cloudflared
+      backend: native
       listenAddress: 127.0.0.1
       listenPort: 5053
       upstreams:

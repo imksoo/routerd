@@ -572,8 +572,8 @@ func validateDNSResolverServer(resourceID, field string, server api.DNSResolverS
 		if server.ListenPort < 0 || server.ListenPort > 65535 {
 			return fmt.Errorf("%s %s.listenPort must be between 1 and 65535", resourceID, field)
 		}
-		if server.Backend != "" && server.Backend != "cloudflared" && server.Backend != "dnscrypt" {
-			return fmt.Errorf("%s %s.backend must be cloudflared or dnscrypt", resourceID, field)
+		if server.Backend != "" && server.Backend != "native" && server.Backend != "cloudflared" && server.Backend != "dnscrypt" {
+			return fmt.Errorf("%s %s.backend must be native, cloudflared, or dnscrypt", resourceID, field)
 		}
 	default:
 		return fmt.Errorf("%s %s.type must be static or doh", resourceID, field)
@@ -582,9 +582,9 @@ func validateDNSResolverServer(resourceID, field string, server api.DNSResolverS
 }
 
 func validateDoHProxySpec(resourceID string, spec api.DoHProxySpec) error {
-	backend := defaultString(spec.Backend, "cloudflared")
-	if backend != "cloudflared" && backend != "dnscrypt" {
-		return fmt.Errorf("%s spec.backend must be cloudflared or dnscrypt", resourceID)
+	backend := defaultString(spec.Backend, "native")
+	if backend != "native" && backend != "cloudflared" && backend != "dnscrypt" {
+		return fmt.Errorf("%s spec.backend must be native, cloudflared, or dnscrypt", resourceID)
 	}
 	if spec.ListenPort < 0 || spec.ListenPort > 65535 {
 		return fmt.Errorf("%s spec.listenPort must be between 1 and 65535", resourceID)
