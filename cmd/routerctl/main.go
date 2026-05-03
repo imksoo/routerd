@@ -427,6 +427,8 @@ func firewallTestCommand(args []string, stdout io.Writer) error {
 	configPath := fs.String("config", defaultConfigPath(), "config path")
 	from := fs.String("from", "", "source zone")
 	to := fs.String("to", "self", "destination zone")
+	src := fs.String("src", "", "source zone alias")
+	dst := fs.String("dst", "", "destination zone alias")
 	proto := fs.String("proto", "", "protocol")
 	dport := fs.Int("dport", 0, "destination port")
 	var normalized []string
@@ -440,6 +442,12 @@ func firewallTestCommand(args []string, stdout io.Writer) error {
 	}
 	if err := fs.Parse(normalized); err != nil {
 		return err
+	}
+	if *from == "" && *src != "" {
+		*from = *src
+	}
+	if *to == "self" && *dst != "" {
+		*to = *dst
 	}
 	router, err := config.Load(*configPath)
 	if err != nil {

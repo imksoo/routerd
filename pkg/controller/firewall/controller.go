@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -48,9 +49,12 @@ func (c Controller) Start(ctx context.Context) {
 		_ = c.reconcileLogged(ctx)
 		for {
 			select {
-			case _, ok := <-ch:
+			case event, ok := <-ch:
 				if !ok {
 					return
+				}
+				if strings.HasPrefix(event.Type, "routerd.firewall.") {
+					continue
 				}
 				_ = c.reconcileLogged(ctx)
 			case <-ticker.C:
@@ -85,10 +89,14 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return err
+	previous, readErr := os.ReadFile(path)
+	changed := readErr != nil || !bytes.Equal(previous, data)
+	if changed {
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			return err
+		}
 	}
-	if !c.DryRun {
+	if changed && !c.DryRun {
 		nft := firstNonEmpty(c.NftCommand, "nft")
 		_ = exec.CommandContext(ctx, nft, "delete", "table", "inet", "routerd_filter").Run()
 		out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput()
@@ -99,6 +107,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	status := map[string]any{
 		"phase":         "Applied",
 		"dryRun":        c.DryRun,
+		"changed":       changed,
 		"rules":         firewallRuleCount(c.Router),
 		"internalHoles": len(holes),
 		"nftablesPath":  path,
@@ -112,7 +121,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
-	if c.Bus != nil {
+	if changed && c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.firewall.rules.applied", daemonapi.SeverityInfo)
 		event.Attributes = map[string]string{"nftablesPath": path, "dryRun": fmt.Sprintf("%t", c.DryRun), "internalHoles": fmt.Sprintf("%d", len(holes))}
 		_ = c.Bus.Publish(ctx, event)

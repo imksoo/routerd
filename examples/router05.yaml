@@ -21,6 +21,13 @@ spec:
   - apiVersion: net.routerd.net/v1alpha1
     kind: Interface
     metadata:
+      name: ens20
+    spec:
+      ifname: ens20
+      managed: false
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: Interface
+    metadata:
       name: lo
     spec:
       ifname: lo
@@ -384,11 +391,12 @@ spec:
   - apiVersion: firewall.routerd.net/v1alpha1
     kind: FirewallZone
     metadata:
-      name: management
+      name: wan
     spec:
-      role: mgmt
+      role: untrust
       interfaces:
       - Interface/ens18
+      - DSLiteTunnel/ds-lite
   - apiVersion: firewall.routerd.net/v1alpha1
     kind: FirewallZone
     metadata:
@@ -400,11 +408,11 @@ spec:
   - apiVersion: firewall.routerd.net/v1alpha1
     kind: FirewallZone
     metadata:
-      name: wan
+      name: management
     spec:
-      role: untrust
+      role: mgmt
       interfaces:
-      - DSLiteTunnel/ds-lite
+      - Interface/ens20
   - apiVersion: firewall.routerd.net/v1alpha1
     kind: FirewallPolicy
     metadata:
