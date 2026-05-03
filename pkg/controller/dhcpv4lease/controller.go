@@ -1,4 +1,4 @@
-package dhcp4lease
+package dhcpv4lease
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	EventApplied = "routerd.dhcp4.lease.applied"
+	EventApplied = "routerd.dhcpv4.lease.applied"
 )
 
 type Store interface {
@@ -38,14 +38,14 @@ func (c Controller) Start(ctx context.Context) {
 	if c.Router == nil || c.Bus == nil || c.Store == nil {
 		return
 	}
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcp4.client.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv4.client.*"}}, 32)
 	go func() {
 		for event := range ch {
 			if event.Resource == nil || event.Resource.Kind != "DHCPv4Lease" {
 				continue
 			}
 			if err := c.reconcile(ctx, event.Resource.Name); err != nil && c.Logger != nil {
-				c.Logger.Warn("dhcp4 lease reconcile failed", "resource", event.Resource.Name, "error", err)
+				c.Logger.Warn("DHCPv4 lease reconcile failed", "resource", event.Resource.Name, "error", err)
 			}
 		}
 	}()
@@ -106,7 +106,7 @@ func (c Controller) socketFor(resource string) string {
 	if socket := c.DaemonSockets[resource]; socket != "" {
 		return socket
 	}
-	return filepath.Join("/run/routerd/dhcp4-client", resource+".sock")
+	return filepath.Join("/run/routerd/dhcpv4-client", resource+".sock")
 }
 
 func daemonStatus(ctx context.Context, socketPath string) (daemonapi.DaemonStatus, error) {

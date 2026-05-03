@@ -13,7 +13,7 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
   NixOS で動的ローダの差に引っかかることを避けます。
 - `contrib/systemd/routerd.service` の systemd ユニット。
 - 実行時の依存には、制御に使う `iproute2`、`jq`、`dnsmasq`、
-  `nftables`、`conntrack`、`IPv6PrefixDelegation` で `client: dhcp6c`
+  `nftables`、`conntrack`、`DHCPv6PrefixDelegation` で `client: dhcp6c`
   を使う場合の `wide-dhcpv6-client`、Linux ブリッジで RSTP を使う場合の
   `mstpd`、PPPoE 利用時の `ppp` に加えて、標準的な
   調査道具として `dnsutils` の `dig`、`iputils-ping` の `ping`、
@@ -77,7 +77,7 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
   `sysrc`、`service netif`、`service dhcp6c`、routerd が管理する
   dnsmasq の rc.d サービスで適用できます。
 - FreeBSD ホストでは、基本のネットワークコマンドに加えて、`jq`、
-  `dnsmasq`、`dhcp6`、`bind-tools`、`mpd5` パッケージが必要です。
+  `dnsmasq`、`dhcpv6`、`bind-tools`、`mpd5` パッケージが必要です。
   `dhcp6` パッケージには DHCPv6-PD に使う `dhcp6c` コマンドと rc.d
   サービスが含まれます。`bind-tools` は `dig` のために使います。
   `ping`、`ping6`、`tcpdump`、`traceroute`、`netstat` は FreeBSD
@@ -92,7 +92,7 @@ routerd は現時点で 1 つのプラットフォームを完全対応として
   `/usr/local/etc/rc.d/routerd_dnsmasq` で反映します。生成設定は、
   リースファイルと pid ファイルに `/var/run/routerd` 配下を使います。
 - IPv6 転送が有効なルーターでも上流 RA の既定経路を受けられるよう、
-  FreeBSD の反映処理は `IPv6DHCPAddress` のある上流に対して
+  FreeBSD の反映処理は `DHCPv6Address` のある上流に対して
   `net.inet6.ip6.rfc6204w3=1` を有効にし、IPv6 既定経路がない場合は
   `rtsol` を実行します。
 - FreeBSD の反映処理では、生成した設定ファイルまたは該当する rc.conf

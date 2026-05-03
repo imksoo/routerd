@@ -66,7 +66,7 @@ func TestDeleteHandler(t *testing.T) {
 			}
 			return &DeleteResult{
 				TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DeleteResult"},
-				Deleted:  []string{"net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd"},
+				Deleted:  []string{"net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd"},
 				DryRun:   true,
 			}, nil
 		},
@@ -108,20 +108,20 @@ func TestNAPTHandler(t *testing.T) {
 	}
 }
 
-func TestDHCP6EventHandler(t *testing.T) {
+func TestDHCPv6EventHandler(t *testing.T) {
 	handler := Handler{
-		DHCP6Event: func(r *http.Request, req DHCP6EventRequest) (*DHCP6EventResult, error) {
+		DHCPv6Event: func(r *http.Request, req DHCPv6EventRequest) (*DHCPv6EventResult, error) {
 			if req.Resource != "wan-pd" {
 				t.Fatalf("resource = %q, want wan-pd", req.Resource)
 			}
 			if req.Env["reason"] != "BOUND6" {
 				t.Fatalf("env reason = %q, want BOUND6", req.Env["reason"])
 			}
-			result := NewDHCP6EventResult(req.Resource)
+			result := NewDHCPv6EventResult(req.Resource)
 			return &result, nil
 		},
 	}
-	req := httptest.NewRequest(http.MethodPost, Prefix+"/dhcp6-event", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"DHCP6Event","resource":"wan-pd","env":{"reason":"BOUND6"}}`))
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/dhcpv6-event", strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"DHCPv6Event","resource":"wan-pd","env":{"reason":"BOUND6"}}`))
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -129,7 +129,7 @@ func TestDHCP6EventHandler(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"kind": "DHCP6EventResult"`) {
+	if !strings.Contains(rec.Body.String(), `"kind": "DHCPv6EventResult"`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

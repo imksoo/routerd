@@ -48,7 +48,7 @@ func TestDaemonSourcePollsUnixSocketEvents(t *testing.T) {
 
 	publisher := &capturePublisher{}
 	source := DaemonSource{
-		Daemon:    daemonapi.DaemonRef{Name: "wan-pd", Kind: "routerd-dhcp6-client"},
+		Daemon:    daemonapi.DaemonRef{Name: "wan-pd", Kind: "routerd-dhcpv6-client"},
 		Socket:    socket,
 		Publisher: publisher,
 	}

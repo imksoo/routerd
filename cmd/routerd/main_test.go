@@ -72,7 +72,7 @@ func TestHasNewNetdevFiles(t *testing.T) {
 func TestApplyNetworkConfigSkipsUnchangedFiles(t *testing.T) {
 	dir := t.TempDir()
 	netplanPath := filepath.Join(dir, "netplan", "90-routerd.yaml")
-	dropinPath := filepath.Join(dir, "systemd", "10-netplan-ens18.network.d", "90-routerd-dhcp6-pd.conf")
+	dropinPath := filepath.Join(dir, "systemd", "10-netplan-ens18.network.d", "90-routerd-dhcpv6-pd.conf")
 	netplanData := []byte("network:\n  version: 2\n")
 	dropinData := []byte("[Network]\nDHCP=yes\n")
 
@@ -113,7 +113,7 @@ func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
 	ledger.Remember([]resource.Artifact{{
 		Kind:  "file",
 		Name:  "/tmp/routerd-test",
-		Owner: "net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd",
+		Owner: "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd",
 	}})
 	if err := ledger.Save(ledgerPath); err != nil {
 		t.Fatalf("save ledger: %v", err)
@@ -123,7 +123,7 @@ func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
 	if err := deleteCommand([]string{"--state-file", statePath, "--ledger-file", ledgerPath, "pd/wan-pd"}, &out); err != nil {
 		t.Fatalf("delete command: %v", err)
 	}
-	if !strings.Contains(out.String(), "delete net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd") {
+	if !strings.Contains(out.String(), "delete net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd") {
 		t.Fatalf("delete output = %s", out.String())
 	}
 	loadedState, err := routerstate.Load(statePath)
@@ -198,7 +198,7 @@ func TestWriteFileIfChanged(t *testing.T) {
 }
 
 func TestRouterWithIPv6PDClientOptionsResolvesFlavorDefaults(t *testing.T) {
-	router := testRouterWithPrefixDelegation(api.IPv6PrefixDelegationSpec{
+	router := testRouterWithPrefixDelegation(api.DHCPv6PrefixDelegationSpec{
 		Interface: "wan",
 		Profile:   api.IPv6PDProfileNTTHGWLANPD,
 	})
@@ -210,7 +210,7 @@ func TestRouterWithIPv6PDClientOptionsResolvesFlavorDefaults(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Fatalf("warnings = %v, want none", warnings)
 	}
-	spec, err := got.Spec.Resources[1].IPv6PrefixDelegationSpec()
+	spec, err := got.Spec.Resources[1].DHCPv6PrefixDelegationSpec()
 	if err != nil {
 		t.Fatalf("read spec: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestRouterWithIPv6PDClientOptionsResolvesFlavorDefaults(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Fatalf("nixos warnings = %v, want none", warnings)
 	}
-	spec, err = got.Spec.Resources[1].IPv6PrefixDelegationSpec()
+	spec, err = got.Spec.Resources[1].DHCPv6PrefixDelegationSpec()
 	if err != nil {
 		t.Fatalf("read nixos spec: %v", err)
 	}
@@ -238,9 +238,9 @@ func TestRouterWithIPv6PDClientOptionsResolvesFlavorDefaults(t *testing.T) {
 }
 
 func TestRouterWithIPv6PDClientOptionsOverridesAndWarns(t *testing.T) {
-	router := testRouterWithPrefixDelegation(api.IPv6PrefixDelegationSpec{
+	router := testRouterWithPrefixDelegation(api.DHCPv6PrefixDelegationSpec{
 		Interface: "wan",
-		Client:    api.IPv6PDClientDHCP6C,
+		Client:    api.IPv6PDClientDHCPv6C,
 		Profile:   api.IPv6PDProfileNTTHGWLANPD,
 	})
 
@@ -256,7 +256,7 @@ func TestRouterWithIPv6PDClientOptionsOverridesAndWarns(t *testing.T) {
 	if !strings.Contains(warnings[0], "Known") && !strings.Contains(warnings[0], "known problematic") {
 		t.Fatalf("warning does not describe known problem: %q", warnings[0])
 	}
-	spec, err := got.Spec.Resources[1].IPv6PrefixDelegationSpec()
+	spec, err := got.Spec.Resources[1].DHCPv6PrefixDelegationSpec()
 	if err != nil {
 		t.Fatalf("read spec: %v", err)
 	}
@@ -264,17 +264,17 @@ func TestRouterWithIPv6PDClientOptionsOverridesAndWarns(t *testing.T) {
 		t.Fatalf("client = %q, want override dhcpcd", spec.Client)
 	}
 
-	original, err := router.Spec.Resources[1].IPv6PrefixDelegationSpec()
+	original, err := router.Spec.Resources[1].DHCPv6PrefixDelegationSpec()
 	if err != nil {
 		t.Fatalf("read original spec: %v", err)
 	}
-	if original.Client != api.IPv6PDClientDHCP6C {
+	if original.Client != api.IPv6PDClientDHCPv6C {
 		t.Fatalf("original router mutated: client = %q", original.Client)
 	}
 }
 
 func TestRouterWithIPv6PDClientOptionsRejectsInvalidOverride(t *testing.T) {
-	router := testRouterWithPrefixDelegation(api.IPv6PrefixDelegationSpec{Interface: "wan"})
+	router := testRouterWithPrefixDelegation(api.DHCPv6PrefixDelegationSpec{Interface: "wan"})
 	if _, _, err := routerWithIPv6PDClientOptions(router, applyOptions{OverrideClient: "bad"}, "linux", false); err == nil {
 		t.Fatal("expected invalid override client to be rejected")
 	}
@@ -283,7 +283,7 @@ func TestRouterWithIPv6PDClientOptionsRejectsInvalidOverride(t *testing.T) {
 	}
 }
 
-func testRouterWithPrefixDelegation(spec api.IPv6PrefixDelegationSpec) *api.Router {
+func testRouterWithPrefixDelegation(spec api.DHCPv6PrefixDelegationSpec) *api.Router {
 	return &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -294,7 +294,7 @@ func testRouterWithPrefixDelegation(spec api.IPv6PrefixDelegationSpec) *api.Rout
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 				Metadata: api.ObjectMeta{Name: "wan-pd"},
 				Spec:     spec,
 			},
@@ -761,9 +761,9 @@ func TestHealthCheckPingSourceUsesDSLiteLocalAddress(t *testing.T) {
 
 func TestChangedNetworkdInterfaces(t *testing.T) {
 	got := changedNetworkdInterfaces([]string{
-		"/etc/systemd/network/10-netplan-ens19.network.d/90-routerd-dhcp6-pd.conf",
+		"/etc/systemd/network/10-netplan-ens19.network.d/90-routerd-dhcpv6-pd.conf",
 		"/etc/systemd/network/10-netplan-ens19.network.d/90-routerd-extra.conf",
-		"/etc/systemd/network/10-netplan-ens18.network.d/90-routerd-dhcp6-pd.conf",
+		"/etc/systemd/network/10-netplan-ens18.network.d/90-routerd-dhcpv6-pd.conf",
 	})
 	want := []string{"ens19", "ens18"}
 	if len(got) != len(want) {
@@ -966,7 +966,7 @@ func TestConflictingManagedIPv6Addresses(t *testing.T) {
 func TestManagedDelegatedIPv6TargetsIncludeDelegatedAddressAndDSLiteSources(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", SubnetID: "0", AddressSuffix: "::3"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "lan-ipv6", LocalAddressSuffix: "::100"}},
 	}}}
@@ -993,7 +993,7 @@ func TestManagedDelegatedIPv6TargetsIncludeDelegatedAddressAndDSLiteSources(t *t
 func TestManagedDelegatedIPv6TargetsTrackSuffixWithoutCurrentPrefix(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.IPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"}},
 	}}}
 	store := routerstate.New()
@@ -1065,24 +1065,24 @@ func TestLinuxPDClientUnitNameSanitizesResourceName(t *testing.T) {
 	}
 }
 
-func TestObserveFreeBSDDHCP6CIdentityPayload(t *testing.T) {
-	payload := freeBSDDHCP6CDUIDPayload([]byte{
+func TestObserveFreeBSDDHCPv6CIdentityPayload(t *testing.T) {
+	payload := freeBSDDHCPv6CDUIDPayload([]byte{
 		0x0e, 0x00,
 		0x00, 0x01, 0x00, 0x01, 0x31, 0x82, 0x0f, 0x6f, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01,
 	})
 	if got := colonHex(payload); got != "00:01:00:01:31:82:0f:6f:02:00:00:00:01:01" {
 		t.Fatalf("DUID payload = %s", got)
 	}
-	if got := configuredOrDefaultDHCP6CIAID("00000001"); got != "1" {
+	if got := configuredOrDefaultDHCPv6CIAID("00000001"); got != "1" {
 		t.Fatalf("IAID = %s, want decimal conversion", got)
 	}
 }
 
 func TestAppendPrefixDelegationStateWarnings(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 		Metadata: api.ObjectMeta{Name: "wan-pd"},
-		Spec:     api.IPv6PrefixDelegationSpec{Interface: "wan"},
+		Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
 	}}}}
 	store := routerstate.New()
 	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
@@ -1097,9 +1097,9 @@ func TestAppendPrefixDelegationStateWarnings(t *testing.T) {
 
 func TestAppendPrefixDelegationStateWarningsWithoutLastPrefix(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 		Metadata: api.ObjectMeta{Name: "wan-pd"},
-		Spec:     api.IPv6PrefixDelegationSpec{Interface: "wan"},
+		Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
 	}}}}
 	store := routerstate.New()
 	store.Unset("ipv6PrefixDelegation.wan-pd.currentPrefix", "test")
@@ -1134,9 +1134,9 @@ func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T
 			Spec:     api.InterfaceSpec{IfName: "ens18"},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 			Metadata: api.ObjectMeta{Name: "wan-pd"},
-			Spec: api.IPv6PrefixDelegationSpec{
+			Spec: api.DHCPv6PrefixDelegationSpec{
 				Interface: "wan",
 				Client:    "dhcpcd",
 				Profile:   "ntt-hgw-lan-pd",
@@ -1159,7 +1159,7 @@ func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T
 	if got := store.Get("ipv6PrefixDelegation.wan-pd.client").Value; got != "dhcpcd" {
 		t.Fatalf("client = %q, want dhcpcd", got)
 	}
-	events := store.Events(api.NetAPIVersion, "IPv6PrefixDelegation", "wan-pd", 10)
+	events := store.Events(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", 10)
 	found := false
 	for _, event := range events {
 		if event.Reason == "PDClientChanged" {

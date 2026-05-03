@@ -54,7 +54,7 @@ type DeleteResult struct {
 	DryRun    bool     `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
 }
 
-type DHCP6EventRequest struct {
+type DHCPv6EventRequest struct {
 	TypeMeta  `json:",inline" yaml:",inline"`
 	Resource  string            `json:"resource" yaml:"resource"`
 	Reason    string            `json:"reason,omitempty" yaml:"reason,omitempty"`
@@ -71,7 +71,7 @@ type DHCP6EventRequest struct {
 	Env       map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 }
 
-type DHCP6EventResult struct {
+type DHCPv6EventResult struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Accepted bool   `json:"accepted" yaml:"accepted"`
 	Resource string `json:"resource" yaml:"resource"`
@@ -129,9 +129,9 @@ func NewApplyResult(result *apply.Result) ApplyResult {
 	}
 }
 
-func NewDHCP6EventResult(resource string) DHCP6EventResult {
-	return DHCP6EventResult{
-		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DHCP6EventResult"},
+func NewDHCPv6EventResult(resource string) DHCPv6EventResult {
+	return DHCPv6EventResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DHCPv6EventResult"},
 		Accepted: true,
 		Resource: resource,
 	}

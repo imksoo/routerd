@@ -30,13 +30,13 @@ type DHCPv6InformationController struct {
 }
 
 func (c DHCPv6InformationController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcp6.client.prefix.*", "routerd.dhcp6.client.info.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.client.prefix.*", "routerd.dhcpv6.client.info.*"}}, 32)
 	go func() {
 		for event := range ch {
 			if event.Resource == nil {
 				continue
 			}
-			request := !strings.HasPrefix(event.Type, "routerd.dhcp6.client.info.")
+			request := !strings.HasPrefix(event.Type, "routerd.dhcpv6.client.info.")
 			if err := c.reconcile(ctx, event.Resource.Name, request); err != nil && c.Logger != nil {
 				c.Logger.Warn("dhcpv6 information reconcile failed", "pd", event.Resource.Name, "error", err)
 			}
@@ -45,7 +45,7 @@ func (c DHCPv6InformationController) Start(ctx context.Context) {
 }
 
 func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName string, request bool) error {
-	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6PrefixDelegation", pdName)
+	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
 	if pdStatus["phase"] != daemonapi.ResourcePhaseBound {
 		return nil
 	}
@@ -68,7 +68,7 @@ func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName strin
 		if err != nil {
 			return err
 		}
-		observed := daemonObserved(status, "IPv6PrefixDelegation", pdName)
+		observed := daemonObserved(status, "DHCPv6PrefixDelegation", pdName)
 		next := map[string]any{
 			"phase":        "Ready",
 			"aftrName":     observed["aftrName"],
@@ -80,7 +80,7 @@ func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName strin
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Information", resource.Metadata.Name, next); err != nil {
 			return err
 		}
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.dhcp6.info.updated", daemonapi.SeverityInfo)
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.dhcpv6.info.updated", daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Information", Name: resource.Metadata.Name}
 		event.Attributes = map[string]string{"aftrName": observed["aftrName"], "source": pdName}
 		if err := c.Bus.Publish(ctx, event); err != nil {
@@ -92,15 +92,15 @@ func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName strin
 
 func (c DHCPv6InformationController) matchesPD(resource api.Resource, spec api.DHCPv6InformationSpec, pdName string) bool {
 	for _, owner := range resource.Metadata.OwnerRefs {
-		if owner.Kind == "IPv6PrefixDelegation" && owner.Name == pdName {
+		if owner.Kind == "DHCPv6PrefixDelegation" && owner.Name == pdName {
 			return true
 		}
 	}
 	for _, candidate := range c.Router.Spec.Resources {
-		if candidate.Kind != "IPv6PrefixDelegation" || candidate.Metadata.Name != pdName {
+		if candidate.Kind != "DHCPv6PrefixDelegation" || candidate.Metadata.Name != pdName {
 			continue
 		}
-		pdSpec, err := candidate.IPv6PrefixDelegationSpec()
+		pdSpec, err := candidate.DHCPv6PrefixDelegationSpec()
 		return err == nil && pdSpec.Interface == spec.Interface
 	}
 	return false
@@ -110,7 +110,7 @@ func (c DHCPv6InformationController) socketFor(resource string) string {
 	if socket := c.DaemonSockets[resource]; socket != "" {
 		return socket
 	}
-	return filepath.Join("/run/routerd/dhcp6-client", resource+".sock")
+	return filepath.Join("/run/routerd/dhcpv6-client", resource+".sock")
 }
 
 type DSLiteTunnelController struct {
@@ -123,7 +123,7 @@ type DSLiteTunnelController struct {
 }
 
 func (c DSLiteTunnelController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcp6.info.*", "routerd.dhcp6.client.prefix.*", "routerd.dns.resolver.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.info.*", "routerd.dhcpv6.client.prefix.*", "routerd.dns.resolver.*"}}, 32)
 	go func() {
 		for range ch {
 			if err := c.reconcile(ctx); err != nil && c.Logger != nil {
@@ -279,7 +279,7 @@ type IPv6RouterAdvertisementController struct {
 }
 
 func (c IPv6RouterAdvertisementController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.address.*", "routerd.dhcp6.info.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.address.*", "routerd.dhcpv6.info.*"}}, 32)
 	go func() {
 		for range ch {
 			if err := c.reconcile(ctx); err != nil && c.Logger != nil {
@@ -327,7 +327,7 @@ func (c IPv6RouterAdvertisementController) reconcile(ctx context.Context) error 
 	return nil
 }
 
-type IPv6DHCPv6ServerController struct {
+type DHCPv6ServerController struct {
 	Router     *api.Router
 	Bus        *bus.Bus
 	Store      Store
@@ -339,8 +339,8 @@ type IPv6DHCPv6ServerController struct {
 	Logger     *slog.Logger
 }
 
-func (c IPv6DHCPv6ServerController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.address.*", "routerd.dhcp6.info.*"}}, 32)
+func (c DHCPv6ServerController) Start(ctx context.Context) {
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.address.*", "routerd.dhcpv6.info.*"}}, 32)
 	go func() {
 		for range ch {
 			if err := c.reconcile(ctx); err != nil && c.Logger != nil {
@@ -350,12 +350,12 @@ func (c IPv6DHCPv6ServerController) Start(ctx context.Context) {
 	}()
 }
 
-func (c IPv6DHCPv6ServerController) reconcile(ctx context.Context) error {
+func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "IPv6DHCPv6Server" {
+		if resource.Kind != "DHCPv6Server" {
 			continue
 		}
-		spec, err := resource.IPv6DHCPv6ServerSpec()
+		spec, err := resource.DHCPv6ServerSpec()
 		if err != nil {
 			return err
 		}
@@ -374,11 +374,11 @@ func (c IPv6DHCPv6ServerController) reconcile(ctx context.Context) error {
 			return err
 		}
 		status := map[string]any{"phase": "Applied", "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "dnsServers": dnsServers, "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DHCPv6Server", resource.Metadata.Name, status); err != nil {
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, status); err != nil {
 			return err
 		}
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.service.dhcpv6.applied", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPv6Server", Name: resource.Metadata.Name}
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server", Name: resource.Metadata.Name}
 		event.Attributes = map[string]string{"interface": spec.Interface, "dryRun": fmt.Sprintf("%t", c.DryRun)}
 		if err := c.Bus.Publish(ctx, event); err != nil {
 			return err

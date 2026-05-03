@@ -109,9 +109,9 @@ spec:
         owner: external
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DHCPAddress
+      kind: DHCPv4Address
       metadata:
-        name: wan-dhcp4
+        name: wan-dhcpv4
       spec:
         interface: wan
         client: dhcpcd
@@ -128,9 +128,9 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DHCPAddress
+      kind: DHCPv4Address
       metadata:
-        name: mgmt-dhcp4
+        name: mgmt-dhcpv4
       spec:
         interface: mgmt
         client: networkd
@@ -141,7 +141,7 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: HealthCheck
       metadata:
-        name: wan-dhcp4-v4
+        name: wan-dhcpv4-v4
       spec:
         type: ping
         role: next-hop
@@ -159,14 +159,14 @@ spec:
         destinationCIDRs:
           - 0.0.0.0/0
         candidates:
-          - name: wan-dhcp4
+          - name: wan-dhcpv4
             interface: wan
-            gatewaySource: dhcp4
+            gatewaySource: dhcpv4
             priority: 10
             table: 100
             mark: 256
             routeMetric: 50
-            healthCheck: wan-dhcp4-v4
+            healthCheck: wan-dhcpv4-v4
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4SourceNAT
@@ -240,7 +240,7 @@ spec:
           source: minInterface
         ipv6RA:
           enabled: true
-          scope: lan-dhcp6
+          scope: lan-dhcpv6
         tcpMSSClamp:
           enabled: true
           families:
@@ -256,7 +256,7 @@ spec:
         required: true
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6PrefixDelegation
+      kind: DHCPv6PrefixDelegation
       metadata:
         name: wan-pd
       spec:
@@ -365,9 +365,9 @@ spec:
         announce: true
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6DHCPServer
+      kind: DHCPv6Server
       metadata:
-        name: dhcp6
+        name: dhcpv6
       spec:
         server: dnsmasq
         managed: true
@@ -375,11 +375,11 @@ spec:
           - lan
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6DHCPScope
+      kind: DHCPv6Scope
       metadata:
-        name: lan-dhcp6
+        name: lan-dhcpv6
       spec:
-        server: dhcp6
+        server: dhcpv6
         delegatedAddress: lan-ipv6-pd-address
         mode: stateless
         leaseTime: 12h
@@ -405,9 +405,9 @@ spec:
             ordinal: 1
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DHCPServer
+      kind: DHCPv4Server
       metadata:
-        name: dhcp4
+        name: dhcpv4
       spec:
         server: dnsmasq
         managed: true
@@ -415,16 +415,16 @@ spec:
           - lan
         dns:
           enabled: true
-          upstreamSource: dhcp4
+          upstreamSource: dhcpv4
           upstreamInterface: wan
           cacheSize: 1000
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DHCPScope
+      kind: DHCPv4Scope
       metadata:
-        name: lan-dhcp4
+        name: lan-dhcpv4
       spec:
-        server: dhcp4
+        server: dhcpv4
         interface: lan
         rangeStart: 192.168.10.100
         rangeEnd: 192.168.10.199
@@ -434,11 +434,11 @@ spec:
         authoritative: true
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4HostReservation
+      kind: DHCPv4Reservation
       metadata:
         name: printer
       spec:
-        scope: lan-dhcp4
+        scope: lan-dhcpv4
         macAddress: "02:00:00:00:01:50"
         ipAddress: 192.168.10.150
         hostname: printer

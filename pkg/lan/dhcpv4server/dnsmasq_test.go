@@ -1,4 +1,4 @@
-package dhcp4server
+package dhcpv4server
 
 import (
 	"reflect"
@@ -16,8 +16,8 @@ func TestRenderDnsmasqLines(t *testing.T) {
 		DNSServers:  []string{"192.168.10.1"},
 		NTPServers:  []string{"192.168.10.1"},
 		Domain:      "lan",
-		Options:     []api.DHCPOptionSpec{{Name: "domain-search", Value: "lan"}},
-		Reservations: []api.IPv4DHCPReservationSpec{{
+		Options:     []api.DHCPv4OptionSpec{{Name: "domain-search", Value: "lan"}},
+		Reservations: []api.DHCPv4ReservationSpec{{
 			MACAddress: "02:00:00:00:01:50",
 			Hostname:   "printer",
 			IPAddress:  "192.168.10.150",

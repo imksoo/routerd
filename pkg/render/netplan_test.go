@@ -29,9 +29,9 @@ func TestNetplanRendersOnlyRouterdManagedInterfaces(t *testing.T) {
 				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPAddress"},
-				Metadata: api.ObjectMeta{Name: "wan-dhcp4"},
-				Spec:     api.IPv4DHCPAddressSpec{Interface: "wan"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Address"},
+				Metadata: api.ObjectMeta{Name: "wan-dhcpv4"},
+				Spec:     api.DHCPv4AddressSpec{Interface: "wan"},
 			},
 		}},
 	}
@@ -112,9 +112,9 @@ func TestNetplanRendersDHCPv4Overrides(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens20", Managed: true, Owner: "routerd", AdminUp: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPAddress"},
-				Metadata: api.ObjectMeta{Name: "mgmt-dhcp4"},
-				Spec:     api.IPv4DHCPAddressSpec{Interface: "mgmt", Client: "networkd", UseRoutes: &disabled, UseDNS: &disabled, RouteMetric: 900},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Address"},
+				Metadata: api.ObjectMeta{Name: "mgmt-dhcpv4"},
+				Spec:     api.DHCPv4AddressSpec{Interface: "mgmt", Client: "networkd", UseRoutes: &disabled, UseDNS: &disabled, RouteMetric: 900},
 			},
 		}},
 	}

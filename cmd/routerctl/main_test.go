@@ -31,19 +31,19 @@ func TestShowIPv6PDTableIncludesSpecStateLedger(t *testing.T) {
 	ledger.Remember([]resource.Artifact{{
 		Kind:  "dhcp.ipv6.prefixDelegation",
 		Name:  "ens18",
-		Owner: "net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd",
+		Owner: "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd",
 	}})
 	if err := ledger.Save(ledgerPath); err != nil {
 		t.Fatalf("save ledger: %v", err)
 	}
 
 	var out bytes.Buffer
-	err := run([]string{"show", "ipv6pd", "--config", configPath, "--state-file", statePath, "--ledger-file", ledgerPath}, &out, &bytes.Buffer{})
+	err := run([]string{"show", "dhcpv6pd", "--config", configPath, "--state-file", statePath, "--ledger-file", ledgerPath}, &out, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("show ipv6pd: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"KIND", "IPv6PrefixDelegation", "wan-pd", "1 artifacts", "current=2001:db8:1200:1220::/60"} {
+	for _, want := range []string{"KIND", "DHCPv6PrefixDelegation", "wan-pd", "1 artifacts", "current=2001:db8:1200:1220::/60"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("show output missing %q:\n%s", want, got)
 		}
@@ -153,7 +153,7 @@ func TestShowPDLegacySubcommandRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("show pd alias: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "IPv6PrefixDelegation") {
+	if got := out.String(); !strings.Contains(got, "DHCPv6PrefixDelegation") {
 		t.Fatalf("show pd output = %s", got)
 	}
 }
@@ -164,7 +164,7 @@ func TestGetKindAndListKinds(t *testing.T) {
 	if err := run([]string{"get", "pd", "--config", configPath}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatalf("get pd: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "IPv6PrefixDelegation") || !strings.Contains(got, "wan-pd") || strings.Contains(got, "STATE") {
+	if got := out.String(); !strings.Contains(got, "DHCPv6PrefixDelegation") || !strings.Contains(got, "wan-pd") || strings.Contains(got, "STATE") {
 		t.Fatalf("get output = %s", got)
 	}
 
@@ -203,7 +203,7 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 		DUIDText:       "00:03:00:01:02:00:00:00:00:02",
 		IAID:           "1",
 	}), "test")
-	if err := store.RecordEvent("net.routerd.net/v1alpha1", "IPv6PrefixDelegation", "wan-pd", "Normal", "PrefixObserved", "observed delegated prefix"); err != nil {
+	if err := store.RecordEvent("net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", "wan-pd", "Normal", "PrefixObserved", "observed delegated prefix"); err != nil {
 		t.Fatalf("record event: %v", err)
 	}
 	if err := store.FinishGeneration(generation, "Healthy", nil); err != nil {
@@ -213,7 +213,7 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite ledger: %v", err)
 	}
-	ledger.Remember([]resource.Artifact{{Kind: "dhcp.ipv6.prefixDelegation", Name: "ens18", Owner: "net.routerd.net/v1alpha1/IPv6PrefixDelegation/wan-pd"}})
+	ledger.Remember([]resource.Artifact{{Kind: "dhcp.ipv6.prefixDelegation", Name: "ens18", Owner: "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd"}})
 
 	var out bytes.Buffer
 	err = run([]string{"describe", "pd/wan-pd", "--config", configPath, "--state-file", dbPath, "--ledger-file", dbPath}, &out, &bytes.Buffer{})
@@ -314,7 +314,7 @@ spec:
         managed: true
         owner: routerd
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6PrefixDelegation
+      kind: DHCPv6PrefixDelegation
       metadata:
         name: wan-pd
       spec:

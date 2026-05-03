@@ -5,7 +5,7 @@ import (
 	"strconv"
 )
 
-type DHCP6ClientSystemdOptions struct {
+type DHCPv6ClientSystemdOptions struct {
 	BinaryPath string
 	Resource   string
 	Interface  string
@@ -15,10 +15,10 @@ type DHCP6ClientSystemdOptions struct {
 	IAID       uint32
 }
 
-func DHCP6ClientSystemdUnit(options DHCP6ClientSystemdOptions) []byte {
+func DHCPv6ClientSystemdUnit(options DHCPv6ClientSystemdOptions) []byte {
 	binaryPath := options.BinaryPath
 	if binaryPath == "" {
-		binaryPath = "/usr/local/sbin/routerd-dhcp6-client"
+		binaryPath = "/usr/local/sbin/routerd-dhcpv6-client"
 	}
 	resource := options.Resource
 	if resource == "" {
@@ -51,8 +51,8 @@ Type=simple
 ExecStart=%s %s
 Restart=always
 RestartSec=5s
-RuntimeDirectory=routerd/dhcp6-client
-StateDirectory=routerd/dhcp6-client
+RuntimeDirectory=routerd/dhcpv6-client
+StateDirectory=routerd/dhcpv6-client
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes

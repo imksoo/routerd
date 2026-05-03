@@ -11,7 +11,7 @@ func TestEffectiveIPv6PDClient(t *testing.T) {
 		configured string
 		want       string
 	}{
-		{name: "freebsd default", osName: "freebsd", want: IPv6PDClientDHCP6C},
+		{name: "freebsd default", osName: "freebsd", want: IPv6PDClientDHCPv6C},
 		{name: "linux default profile", osName: "linux", profile: IPv6PDProfileDefault, want: IPv6PDClientNetworkd},
 		{name: "linux ntt profile", osName: "linux", profile: IPv6PDProfileNTTHGWLANPD, want: IPv6PDClientDHCPCD},
 		{name: "nixos ntt profile", osName: "linux", nixOS: true, profile: IPv6PDProfileNTTHGWLANPD, want: IPv6PDClientDHCPCD},
@@ -45,7 +45,7 @@ func TestMatchKnownIPv6PDNGCombinations(t *testing.T) {
 		},
 		{
 			name: "linux dhcp6c ntt",
-			ctx:  IPv6PDClientContext{OS: "linux", Client: IPv6PDClientDHCP6C, Profile: IPv6PDProfileNTTHGWLANPD},
+			ctx:  IPv6PDClientContext{OS: "linux", Client: IPv6PDClientDHCPv6C, Profile: IPv6PDProfileNTTHGWLANPD},
 		},
 		{
 			name: "freebsd dhcpcd default",

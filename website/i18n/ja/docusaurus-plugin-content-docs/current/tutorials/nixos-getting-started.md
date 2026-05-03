@@ -171,7 +171,7 @@ sudo routerctl status
 動くラボ例は次の 2 ファイルです。
 
 - `examples/nixos-edge.yaml` — `NixOSHost`、`Interface`、
-  `IPv4DHCPAddress`、`IPv6DHCPAddress` を含む `router.yaml`。
+  `DHCPv4Address`、`DHCPv6Address` を含む `router.yaml`。
 - `examples/nixos-edge-configuration.nix` — 上記に対応する手書きの
   最小 `configuration.nix`。
 

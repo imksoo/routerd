@@ -88,36 +88,34 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeVXLANTunnel(res, aliases, includePlan, &rr)
 		case "IPv4StaticAddress":
 			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
-		case "IPv4DHCPAddress":
+		case "DHCPv4Address":
 			e.observeDHCP(res, aliases, policies, "ipv4", includePlan, &rr)
 		case "DHCPv4Lease":
 			e.observeDHCPv4Lease(res, aliases, policies, includePlan, &rr)
-		case "IPv4DHCPServer":
-			e.observeIPv4DHCPServer(res, includePlan, &rr)
-		case "IPv4DHCPReservation":
-			e.observeIPv4DHCPReservation(res, includePlan, &rr)
-		case "IPv4DHCPScope":
-			e.observeIPv4DHCPScope(res, aliases, policies, includePlan, &rr)
-		case "IPv6DHCPAddress":
+		case "DHCPv4Server":
+			e.observeDHCPv4Server(res, includePlan, &rr)
+		case "DHCPv4Reservation":
+			e.observeDHCPv4Reservation(res, includePlan, &rr)
+		case "DHCPv4Scope":
+			e.observeDHCPv4Scope(res, aliases, policies, includePlan, &rr)
+		case "DHCPv6Address":
 			e.observeDHCP(res, aliases, policies, "ipv6", includePlan, &rr)
 		case "IPv6RAAddress":
 			e.observeIPv6RAAddress(res, aliases, policies, includePlan, &rr)
-		case "IPv6PrefixDelegation":
-			e.observeIPv6PrefixDelegation(res, aliases, includePlan, &rr)
+		case "DHCPv6PrefixDelegation":
+			e.observeDHCPv6PrefixDelegation(res, aliases, includePlan, &rr)
 		case "IPv6DelegatedAddress":
 			e.observeIPv6DelegatedAddress(res, aliases, includePlan, &rr)
-		case "IPv6DHCPServer":
-			e.observeIPv6DHCPServer(res, includePlan, &rr)
-		case "IPv6DHCPv6Server":
-			e.observeIPv6DHCPv6Server(res, includePlan, &rr)
-		case "IPv6DHCPScope":
-			e.observeIPv6DHCPScope(res, includePlan, &rr)
+		case "DHCPv6Server":
+			e.observeDHCPv6Server(res, includePlan, &rr)
+		case "DHCPv6Scope":
+			e.observeDHCPv6Scope(res, includePlan, &rr)
 		case "SelfAddressPolicy":
 			e.observeSelfAddressPolicy(res, includePlan, &rr)
 		case "DNSConditionalForwarder":
 			e.observeDNSConditionalForwarder(res, aliases, includePlan, &rr)
-		case "DHCPRelay":
-			e.observeDHCPRelay(res, aliases, includePlan, &rr)
+		case "DHCPv4Relay":
+			e.observeDHCPv4Relay(res, aliases, includePlan, &rr)
 		case "DSLiteTunnel":
 			e.observeDSLiteTunnel(res, aliases, includePlan, &rr)
 		case "HealthCheck":
@@ -242,8 +240,8 @@ func (e *Engine) observeLogSink(res api.Resource, includePlan bool, rr *Resource
 	}
 }
 
-func (e *Engine) observeIPv6PrefixDelegation(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv6PrefixDelegationSpec()
+func (e *Engine) observeDHCPv6PrefixDelegation(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPv6PrefixDelegationSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
@@ -294,17 +292,33 @@ func (e *Engine) observeIPv6DelegatedAddress(res api.Resource, aliases map[strin
 	}
 }
 
-func (e *Engine) observeIPv6DHCPServer(res api.Resource, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv6DHCPServerSpec()
+func (e *Engine) observeDHCPv6Server(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPv6ServerSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
 		return
 	}
 	server := defaultString(spec.Server, "dnsmasq")
+	mode := defaultString(spec.Mode, "stateless")
 	rr.Observed["server"] = server
 	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
 	rr.Observed["listenInterfaces"] = strings.Join(spec.ListenInterfaces, ",")
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["mode"] = mode
+	if len(spec.DNSServers) > 0 {
+		rr.Observed["dnsServers"] = strings.Join(spec.DNSServers, ",")
+	}
+	if len(spec.SNTPServers) > 0 {
+		rr.Observed["sntpServers"] = strings.Join(spec.SNTPServers, ",")
+	}
+	if len(spec.DomainSearch) > 0 {
+		rr.Observed["domainSearch"] = strings.Join(spec.DomainSearch, ",")
+	}
+	if spec.AddressPool.Start != "" {
+		rr.Observed["rangeStart"] = spec.AddressPool.Start
+		rr.Observed["rangeEnd"] = spec.AddressPool.End
+	}
 	if _, err := exec.LookPath(server); err == nil {
 		rr.Observed["serverAvailable"] = "true"
 	} else {
@@ -324,38 +338,13 @@ func (e *Engine) observeIPv6DHCPServer(res api.Resource, includePlan bool, rr *R
 	if len(spec.ListenInterfaces) > 0 {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("serve dnsmasq RA/DHCPv6 only on %s", strings.Join(spec.ListenInterfaces, ",")))
 	}
-}
-
-func (e *Engine) observeIPv6DHCPv6Server(res api.Resource, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv6DHCPv6ServerSpec()
-	if err != nil {
-		rr.Phase = "Blocked"
-		rr.Warnings = append(rr.Warnings, err.Error())
-		return
-	}
-	mode := defaultString(spec.Mode, "stateless")
-	rr.Observed["interface"] = spec.Interface
-	rr.Observed["mode"] = mode
-	if len(spec.DNSServers) > 0 {
-		rr.Observed["dnsServers"] = strings.Join(spec.DNSServers, ",")
-	}
-	if len(spec.SNTPServers) > 0 {
-		rr.Observed["sntpServers"] = strings.Join(spec.SNTPServers, ",")
-	}
-	if len(spec.DomainSearch) > 0 {
-		rr.Observed["domainSearch"] = strings.Join(spec.DomainSearch, ",")
-	}
-	if spec.AddressPool.Start != "" {
-		rr.Observed["rangeStart"] = spec.AddressPool.Start
-		rr.Observed["rangeEnd"] = spec.AddressPool.End
-	}
-	if includePlan {
+	if spec.Interface != "" {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure dnsmasq DHCPv6 %s service on %s", mode, spec.Interface))
 	}
 }
 
-func (e *Engine) observeIPv6DHCPScope(res api.Resource, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv6DHCPScopeSpec()
+func (e *Engine) observeDHCPv6Scope(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPv6ScopeSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
@@ -431,8 +420,8 @@ func (e *Engine) observeDNSConditionalForwarder(res api.Resource, aliases map[st
 	}
 }
 
-func (e *Engine) observeDHCPRelay(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
-	spec, err := res.DHCPRelaySpec()
+func (e *Engine) observeDHCPv4Relay(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPv4RelaySpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
@@ -935,8 +924,8 @@ func (e *Engine) observeExposeService(res api.Resource, aliases map[string]strin
 	}
 }
 
-func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv4DHCPServerSpec()
+func (e *Engine) observeDHCPv4Server(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPv4ServerSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
@@ -992,7 +981,7 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 	if spec.DNS.Enabled {
 		upstreamSource := defaultString(spec.DNS.UpstreamSource, "system")
 		switch upstreamSource {
-		case "dhcp4":
+		case "dhcpv4":
 			rr.Plan = append(rr.Plan, fmt.Sprintf("run dnsmasq DNS forwarder/cache using DHCPv4 DNS from %s", spec.DNS.UpstreamInterface))
 		case "static":
 			rr.Plan = append(rr.Plan, fmt.Sprintf("run dnsmasq DNS forwarder/cache using static upstreams %s", strings.Join(spec.DNS.UpstreamServers, ",")))
@@ -1004,8 +993,8 @@ func (e *Engine) observeIPv4DHCPServer(res api.Resource, includePlan bool, rr *R
 	}
 }
 
-func (e *Engine) observeIPv4DHCPReservation(res api.Resource, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv4DHCPReservationSpec()
+func (e *Engine) observeDHCPv4Reservation(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPv4ReservationSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
@@ -1022,8 +1011,8 @@ func (e *Engine) observeIPv4DHCPReservation(res api.Resource, includePlan bool, 
 	}
 }
 
-func (e *Engine) observeIPv4DHCPScope(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv4DHCPScopeSpec()
+func (e *Engine) observeDHCPv4Scope(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPv4ScopeSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
@@ -1076,7 +1065,7 @@ func (e *Engine) observeIPv4DHCPScope(res api.Resource, aliases map[string]strin
 		rr.Plan = append(rr.Plan, "do not advertise router option")
 	}
 	switch dnsSource {
-	case "dhcp4":
+	case "dhcpv4":
 		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise DNS servers learned from DHCPv4 on %s", aliases[spec.DNSInterface]))
 	case "static":
 		rr.Plan = append(rr.Plan, fmt.Sprintf("advertise DNS servers %s", strings.Join(spec.DNSServers, ",")))
@@ -1407,7 +1396,7 @@ func (e *Engine) observeDHCPv4Lease(res api.Resource, aliases map[string]string,
 
 	rr.Observed["interface"] = spec.Interface
 	rr.Observed["ifname"] = ifname
-	rr.Observed["client"] = "routerd-dhcp4-client"
+	rr.Observed["client"] = "routerd-dhcpv4-client"
 	if spec.Hostname != "" {
 		rr.Observed["hostname"] = spec.Hostname
 	}
@@ -1431,7 +1420,7 @@ func (e *Engine) observeDHCPv4Lease(res api.Resource, aliases map[string]string,
 			rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd applies DHCPv4 lease")
 			return
 		}
-		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-dhcp4-client for %s and apply DHCPv4 address/default route from daemon status", ifname))
+		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-dhcpv4-client for %s and apply DHCPv4 address/default route from daemon status", ifname))
 	}
 }
 
@@ -1882,7 +1871,7 @@ func stringSpec(res api.Resource, key string) string {
 		case "allowOverlapReason":
 			return spec.AllowOverlapReason
 		}
-	case api.IPv4DHCPAddressSpec:
+	case api.DHCPv4AddressSpec:
 		switch key {
 		case "interface":
 			return spec.Interface
@@ -1902,12 +1891,12 @@ func stringSpec(res api.Resource, key string) string {
 		case "clientID":
 			return spec.ClientID
 		}
-	case api.IPv4DHCPServerSpec:
+	case api.DHCPv4ServerSpec:
 		switch key {
 		case "server":
 			return spec.Server
 		}
-	case api.IPv4DHCPScopeSpec:
+	case api.DHCPv4ScopeSpec:
 		switch key {
 		case "interface":
 			return spec.Interface
@@ -1922,7 +1911,7 @@ func stringSpec(res api.Resource, key string) string {
 		case "router":
 			return spec.Router
 		}
-	case api.IPv6DHCPAddressSpec:
+	case api.DHCPv6AddressSpec:
 		switch key {
 		case "interface":
 			return spec.Interface
@@ -1979,11 +1968,11 @@ func boolSpec(res api.Resource, key string) bool {
 		case "allowOverlap":
 			return spec.AllowOverlap
 		}
-	case api.IPv4DHCPAddressSpec:
+	case api.DHCPv4AddressSpec:
 		if key == "required" {
 			return spec.Required
 		}
-	case api.IPv6DHCPAddressSpec:
+	case api.DHCPv6AddressSpec:
 		if key == "required" {
 			return spec.Required
 		}

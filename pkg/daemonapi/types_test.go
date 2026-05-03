@@ -7,12 +7,12 @@ import (
 )
 
 func TestDaemonStatusJSONContract(t *testing.T) {
-	status := NewStatus(DaemonRef{Name: "routerd-dhcp6-client-wan-pd", Kind: "routerd-dhcp6-client"})
+	status := NewStatus(DaemonRef{Name: "routerd-dhcpv6-client-wan-pd", Kind: "routerd-dhcpv6-client"})
 	status.Phase = PhaseRunning
 	status.Health = HealthOK
 	status.Since = time.Date(2026, 5, 2, 6, 0, 0, 0, time.UTC)
 	status.Resources = []ResourceStatus{{
-		Resource: ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "IPv6PrefixDelegation", Name: "wan-pd"},
+		Resource: ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: "wan-pd"},
 		Phase:    ResourcePhaseBound,
 		Health:   HealthOK,
 		Conditions: []Condition{{
@@ -44,9 +44,9 @@ func TestDaemonStatusJSONContract(t *testing.T) {
 }
 
 func TestDaemonEventJSONContract(t *testing.T) {
-	event := NewEvent(DaemonRef{Name: "routerd-dhcp6-client-wan-pd", Kind: "routerd-dhcp6-client"}, EventDHCP6PrefixBound, SeverityInfo)
+	event := NewEvent(DaemonRef{Name: "routerd-dhcpv6-client-wan-pd", Kind: "routerd-dhcpv6-client"}, EventDHCPv6PrefixBound, SeverityInfo)
 	event.Time = time.Date(2026, 5, 2, 6, 0, 1, 0, time.UTC)
-	event.Resource = &ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "IPv6PrefixDelegation", Name: "wan-pd"}
+	event.Resource = &ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: "wan-pd"}
 	event.Attributes = map[string]string{"prefix": "2001:db8:1200:1240::/60"}
 
 	data, err := json.Marshal(event)
@@ -57,7 +57,7 @@ func TestDaemonEventJSONContract(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Type != EventDHCP6PrefixBound {
+	if decoded.Type != EventDHCPv6PrefixBound {
 		t.Fatalf("event type = %q", decoded.Type)
 	}
 	if decoded.Resource == nil || decoded.Resource.Name != "wan-pd" {

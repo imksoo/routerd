@@ -20,7 +20,7 @@ import (
 	"routerd/pkg/bus"
 	"routerd/pkg/conntrack"
 	"routerd/pkg/controller/conntrackobserver"
-	"routerd/pkg/controller/dhcp4lease"
+	"routerd/pkg/controller/dhcpv4lease"
 	"routerd/pkg/controller/nat44"
 	"routerd/pkg/controller/pppoesession"
 	"routerd/pkg/daemonapi"
@@ -43,7 +43,7 @@ type Options struct {
 	DryRunRoute        bool
 	DryRunRA           bool
 	DryRunDHCPv6       bool
-	DryRunDHCP4Lease   bool
+	DryRunDHCPv4Lease  bool
 	DryRunPPPoESession bool
 	DryRunNAT          bool
 	DnsmasqCommand     string
@@ -72,16 +72,16 @@ func (r *Runner) Start(ctx context.Context) error {
 		logger = slog.Default()
 	}
 	for _, resource := range r.Router.Spec.Resources {
-		if resource.Kind != "IPv6PrefixDelegation" {
+		if resource.Kind != "DHCPv6PrefixDelegation" {
 			continue
 		}
 		name := resource.Metadata.Name
 		socket := r.Opts.DaemonSockets[name]
 		if socket == "" {
-			socket = filepath.Join("/run/routerd/dhcp6-client", name+".sock")
+			socket = filepath.Join("/run/routerd/dhcpv6-client", name+".sock")
 		}
 		source := daemonsource.DaemonSource{
-			Daemon:    daemonapi.DaemonRef{Name: "routerd-dhcp6-client-" + name, Kind: "routerd-dhcp6-client", Instance: name},
+			Daemon:    daemonapi.DaemonRef{Name: "routerd-dhcpv6-client-" + name, Kind: "routerd-dhcpv6-client", Instance: name},
 			Socket:    socket,
 			Publisher: r.Bus,
 		}
@@ -98,16 +98,16 @@ func (r *Runner) Start(ctx context.Context) error {
 		name := resource.Metadata.Name
 		socket := r.Opts.DaemonSockets[name]
 		if socket == "" {
-			socket = filepath.Join("/run/routerd/dhcp4-client", name+".sock")
+			socket = filepath.Join("/run/routerd/dhcpv4-client", name+".sock")
 		}
 		source := daemonsource.DaemonSource{
-			Daemon:    daemonapi.DaemonRef{Name: "routerd-dhcp4-client-" + name, Kind: "routerd-dhcp4-client", Instance: name},
+			Daemon:    daemonapi.DaemonRef{Name: "routerd-dhcpv4-client-" + name, Kind: "routerd-dhcpv4-client", Instance: name},
 			Socket:    socket,
 			Publisher: r.Bus,
 		}
 		go func() {
 			if err := source.Run(ctx); err != nil && ctx.Err() == nil {
-				logger.Warn("dhcp4 daemon source stopped", "resource", name, "error", err)
+				logger.Warn("dhcpv4 daemon source stopped", "resource", name, "error", err)
 			}
 		}()
 	}
@@ -170,8 +170,8 @@ func (r *Runner) Start(ctx context.Context) error {
 	dslite := DSLiteTunnelController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
 	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	ra := IPv6RouterAdvertisementController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRA, Logger: logger}
-	dhcp6 := IPv6DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
-	dhcp4Lease := dhcp4lease.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCP4Lease, Logger: logger}
+	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
+	dhcp4Lease := dhcpv4lease.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Lease, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
 	dns := DNSAnswerController{Router: r.Router, Bus: r.Bus, Store: r.Store, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, Logger: logger}
 	wan := wanegress.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
@@ -190,7 +190,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	dslite.Start(ctx)
 	route.Start(ctx)
 	ra.Start(ctx)
-	dhcp6.Start(ctx)
+	dhcpv6.Start(ctx)
 	dhcp4Lease.Start(ctx)
 	pppoeSession.Start(ctx)
 	dns.Start(ctx)
@@ -203,7 +203,7 @@ func (r *Runner) Start(ctx context.Context) error {
 				continue
 			}
 			if err := dhcp4Lease.Reconcile(ctx, resource.Metadata.Name); err != nil && logger != nil && ctx.Err() == nil {
-				logger.Warn("initial dhcp4 lease reconcile failed", "resource", resource.Metadata.Name, "error", err)
+				logger.Warn("initial dhcpv4 lease reconcile failed", "resource", resource.Metadata.Name, "error", err)
 			}
 		}
 	}()
@@ -239,10 +239,10 @@ type PrefixDelegationController struct {
 }
 
 func (c PrefixDelegationController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcp6.client.prefix.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.client.prefix.*"}}, 32)
 	go func() {
 		for event := range ch {
-			if event.Resource == nil || event.Resource.Kind != "IPv6PrefixDelegation" {
+			if event.Resource == nil || event.Resource.Kind != "DHCPv6PrefixDelegation" {
 				continue
 			}
 			if err := c.reconcile(ctx, event); err != nil && c.Logger != nil {
@@ -258,7 +258,7 @@ func (c PrefixDelegationController) reconcile(ctx context.Context, event daemona
 		return err
 	}
 	for _, resource := range status.Resources {
-		if resource.Resource.Kind != "IPv6PrefixDelegation" || resource.Resource.Name != event.Resource.Name {
+		if resource.Resource.Kind != "DHCPv6PrefixDelegation" || resource.Resource.Name != event.Resource.Name {
 			continue
 		}
 		next := map[string]any{
@@ -273,14 +273,14 @@ func (c PrefixDelegationController) reconcile(ctx context.Context, event daemona
 		}
 		return c.Store.SaveObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name, next)
 	}
-	return fmt.Errorf("daemon status did not include IPv6PrefixDelegation/%s", event.Resource.Name)
+	return fmt.Errorf("daemon status did not include DHCPv6PrefixDelegation/%s", event.Resource.Name)
 }
 
 func (c PrefixDelegationController) socketFor(resource string) string {
 	if socket := c.DaemonSockets[resource]; socket != "" {
 		return socket
 	}
-	return filepath.Join("/run/routerd/dhcp6-client", resource+".sock")
+	return filepath.Join("/run/routerd/dhcpv6-client", resource+".sock")
 }
 
 type LANAddressController struct {
@@ -292,7 +292,7 @@ type LANAddressController struct {
 }
 
 func (c LANAddressController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcp6.client.prefix.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.client.prefix.*"}}, 32)
 	go func() {
 		for event := range ch {
 			if event.Resource == nil {
@@ -306,7 +306,7 @@ func (c LANAddressController) Start(ctx context.Context) {
 }
 
 func (c LANAddressController) reconcile(ctx context.Context, pdName string) error {
-	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6PrefixDelegation", pdName)
+	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
 	if pdStatus["phase"] != daemonapi.ResourcePhaseBound {
 		return nil
 	}
@@ -323,7 +323,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			return err
 		}
 		source := spec.PrefixDelegation
-		if source == "" && strings.Contains(spec.PrefixSource, "IPv6PrefixDelegation/"+pdName+".status.currentPrefix") {
+		if source == "" && strings.Contains(spec.PrefixSource, "DHCPv6PrefixDelegation/"+pdName+".status.currentPrefix") {
 			source = pdName
 		}
 		if source != pdName {
@@ -397,7 +397,7 @@ type DNSResolverUpstreamController struct {
 }
 
 func (c DNSResolverUpstreamController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcp6.info.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.info.*"}}, 32)
 	go func() {
 		for range ch {
 			if err := c.reconcile(ctx); err != nil && c.Logger != nil {
@@ -538,7 +538,7 @@ func routerNeedsDnsmasq(router *api.Router) bool {
 	}
 	for _, resource := range router.Spec.Resources {
 		switch resource.Kind {
-		case "DNSResolverUpstream", "DNSAnswerScope", "IPv4DHCPServer", "IPv6DHCPv6Server", "IPv6RouterAdvertisement", "DHCPRelay":
+		case "DNSResolverUpstream", "DNSAnswerScope", "DHCPv4Server", "DHCPv6Server", "IPv6RouterAdvertisement", "DHCPv4Relay":
 			return true
 		}
 	}
@@ -596,10 +596,10 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
 	aliases := chainInterfaceAliases(router)
 	var lines []string
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "IPv4DHCPServer" {
+		if resource.Kind != "DHCPv4Server" {
 			continue
 		}
-		spec, err := resource.IPv4DHCPServerSpec()
+		spec, err := resource.DHCPv4ServerSpec()
 		if err != nil || spec.Interface == "" {
 			continue
 		}
@@ -624,32 +624,32 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s", tag, spec.Domain))
 		}
 		for _, option := range spec.Options {
-			lines = append(lines, "dhcp-option=tag:"+tag+","+dnsmasqDHCPOption(option))
+			lines = append(lines, "dhcp-option=tag:"+tag+","+dnsmasqDHCPv4Option(option))
 		}
 		for _, reservation := range router.Spec.Resources {
-			if reservation.Kind != "IPv4DHCPReservation" {
+			if reservation.Kind != "DHCPv4Reservation" {
 				continue
 			}
-			reservationSpec, err := reservation.IPv4DHCPReservationSpec()
+			reservationSpec, err := reservation.DHCPv4ReservationSpec()
 			if err != nil {
 				continue
 			}
-			if reservationSpec.Server != "" && reservationSpec.Server != resource.Metadata.Name {
+			if reservationSpec.Scope != "" || (reservationSpec.Server != "" && reservationSpec.Server != resource.Metadata.Name) {
 				continue
 			}
 			reservationTag := sanitizeChainTag(reservation.Metadata.Name)
 			lines = append(lines, "dhcp-host="+dnsmasqIPv4Reservation(reservationSpec, reservationTag))
 			for _, option := range reservationSpec.Options {
-				lines = append(lines, "dhcp-option=tag:"+reservationTag+","+dnsmasqDHCPOption(option))
+				lines = append(lines, "dhcp-option=tag:"+reservationTag+","+dnsmasqDHCPv4Option(option))
 			}
 		}
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "IPv6DHCPv6Server" {
+		if resource.Kind != "DHCPv6Server" {
 			continue
 		}
-		spec, err := resource.IPv6DHCPv6ServerSpec()
-		if err != nil {
+		spec, err := resource.DHCPv6ServerSpec()
+		if err != nil || spec.Interface == "" {
 			continue
 		}
 		ifname := aliases[spec.Interface]
@@ -717,10 +717,10 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
 		}
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "DHCPRelay" {
+		if resource.Kind != "DHCPv4Relay" {
 			continue
 		}
-		spec, err := resource.DHCPRelaySpec()
+		spec, err := resource.DHCPv4RelaySpec()
 		if err != nil {
 			continue
 		}
@@ -847,7 +847,7 @@ func chainInterfaceAliases(router *api.Router) map[string]string {
 	return aliases
 }
 
-func dnsmasqDHCPOption(option api.DHCPOptionSpec) string {
+func dnsmasqDHCPv4Option(option api.DHCPv4OptionSpec) string {
 	key := option.Name
 	if key == "" {
 		key = fmt.Sprintf("%d", option.Code)
@@ -857,7 +857,7 @@ func dnsmasqDHCPOption(option api.DHCPOptionSpec) string {
 	return key + "," + option.Value
 }
 
-func dnsmasqIPv4Reservation(spec api.IPv4DHCPReservationSpec, tag string) string {
+func dnsmasqIPv4Reservation(spec api.DHCPv4ReservationSpec, tag string) string {
 	parts := []string{strings.ToLower(spec.MACAddress)}
 	if tag != "" {
 		parts = append(parts, "set:"+tag)

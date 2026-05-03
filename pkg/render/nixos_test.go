@@ -45,9 +45,9 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external", AdminUp: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPAddress"},
-				Metadata: api.ObjectMeta{Name: "wan-dhcp4"},
-				Spec:     api.IPv4DHCPAddressSpec{Interface: "wan"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Address"},
+				Metadata: api.ObjectMeta{Name: "wan-dhcpv4"},
+				Spec:     api.DHCPv4AddressSpec{Interface: "wan"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"},
@@ -60,14 +60,14 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Spec:     api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:1::/64", Via: "fe80::1", Metric: 200},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPAddress"},
-				Metadata: api.ObjectMeta{Name: "wan-dhcp6"},
-				Spec:     api.IPv6DHCPAddressSpec{Interface: "wan"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address"},
+				Metadata: api.ObjectMeta{Name: "wan-dhcpv6"},
+				Spec:     api.DHCPv6AddressSpec{Interface: "wan"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 				Metadata: api.ObjectMeta{Name: "wan-pd"},
-				Spec:     api.IPv6PrefixDelegationSpec{Interface: "wan", Profile: "ntt-hgw-lan-pd"},
+				Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan", Profile: "ntt-hgw-lan-pd"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
@@ -99,9 +99,9 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens20", Managed: true, Owner: "routerd"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPAddress"},
-				Metadata: api.ObjectMeta{Name: "mgmt-dhcp4"},
-				Spec:     api.IPv4DHCPAddressSpec{Interface: "mgmt", UseRoutes: &disabled, UseDNS: &disabled, RouteMetric: 900},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Address"},
+				Metadata: api.ObjectMeta{Name: "mgmt-dhcpv4"},
+				Spec:     api.DHCPv4AddressSpec{Interface: "mgmt", UseRoutes: &disabled, UseDNS: &disabled, RouteMetric: 900},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
@@ -219,9 +219,9 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 				},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
-				Metadata: api.ObjectMeta{Name: "dhcp4"},
-				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Managed: true},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+				Metadata: api.ObjectMeta{Name: "dhcpv4"},
+				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
@@ -319,9 +319,9 @@ func TestNixOSModuleIgnoresLegacyPrefixDelegationClient(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 				Metadata: api.ObjectMeta{Name: "wan-pd"},
-				Spec: api.IPv6PrefixDelegationSpec{
+				Spec: api.DHCPv6PrefixDelegationSpec{
 					Interface: "wan",
 					Client:    "dhcp6c",
 					Profile:   "ntt-hgw-lan-pd",

@@ -246,16 +246,16 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.IPv4DHCPServerSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
 				Interface:   "lan",
 				AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
 				Gateway:     "192.168.10.1",
 				DNSServers:  []string{"192.168.10.1"},
 				NTPServers:  []string{"192.168.10.1"},
-				Options:     []api.DHCPOptionSpec{{Name: "domain-search", Value: "lan"}},
+				Options:     []api.DHCPv4OptionSpec{{Name: "domain-search", Value: "lan"}},
 			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPReservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.IPv4DHCPReservationSpec{Server: "lan-v4", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.168.10.150"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DHCPv6ServerSpec{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{Server: "lan-v4", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.168.10.150"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.DHCPv6ServerSpec{
 				Interface:    "lan",
 				Mode:         "both",
 				AddressPool:  api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "6h"},
@@ -265,7 +265,7 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PrefixSource: "${IPv6DelegatedAddress/lan.status.prefix}", RDNSS: []string{"2001:db8::53"}, DNSSL: []string{"lan"}, MTU: 1500, PRFPreference: "high"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSAnswerScope"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DNSAnswerScopeSpec{Interface: "lan", LocalDomain: "lan", HostRecords: []api.DNSHostRecord{{Hostname: "router.lan", IPv4: "192.168.10.1", IPv6: "2001:db8::1"}}}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPRelay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPRelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
 		}},
 	}
 
@@ -377,7 +377,7 @@ func TestValidateIPv4DefaultRoutePolicyRouteSetCandidateRejectsDirectFields(t *t
 	}
 }
 
-func TestValidateIPv4DHCPScopeRange(t *testing.T) {
+func TestValidateDHCPv4ScopeRange(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -388,15 +388,15 @@ func TestValidateIPv4DHCPScopeRange(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
-				Metadata: api.ObjectMeta{Name: "dhcp4"},
-				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+				Metadata: api.ObjectMeta{Name: "dhcpv4"},
+				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPScope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcp4"},
-				Spec: api.IPv4DHCPScopeSpec{
-					Server:     "dhcp4",
+				Spec: api.DHCPv4ScopeSpec{
+					Server:     "dhcpv4",
 					Interface:  "lan",
 					RangeStart: "192.168.10.199",
 					RangeEnd:   "192.168.10.100",
@@ -410,7 +410,7 @@ func TestValidateIPv4DHCPScopeRange(t *testing.T) {
 	}
 }
 
-func TestValidateDHCPv4HostReservationRange(t *testing.T) {
+func TestValidateDHCPv4ReservationRange(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -421,24 +421,24 @@ func TestValidateDHCPv4HostReservationRange(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
-				Metadata: api.ObjectMeta{Name: "dhcp4"},
-				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+				Metadata: api.ObjectMeta{Name: "dhcpv4"},
+				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPScope"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
 				Metadata: api.ObjectMeta{Name: "lan-dhcp4"},
-				Spec: api.IPv4DHCPScopeSpec{
-					Server:     "dhcp4",
+				Spec: api.DHCPv4ScopeSpec{
+					Server:     "dhcpv4",
 					Interface:  "lan",
 					RangeStart: "192.0.2.100",
 					RangeEnd:   "192.0.2.150",
 				},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4HostReservation"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"},
 				Metadata: api.ObjectMeta{Name: "printer"},
-				Spec: api.DHCPv4HostReservationSpec{
+				Spec: api.DHCPv4ReservationSpec{
 					Scope:      "lan-dhcp4",
 					MACAddress: "02:00:00:00:01:50",
 					IPAddress:  "192.0.2.200",
@@ -491,9 +491,9 @@ func TestValidateSelfAddressPolicy(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 				Metadata: api.ObjectMeta{Name: "wan-pd"},
-				Spec:     api.IPv6PrefixDelegationSpec{Interface: "lan"},
+				Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "lan"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
@@ -523,7 +523,7 @@ func TestValidateSelfAddressPolicy(t *testing.T) {
 	}
 }
 
-func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
+func TestValidateDHCPv6PrefixDelegationIdentity(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -534,9 +534,9 @@ func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 				Metadata: api.ObjectMeta{Name: "wan-pd"},
-				Spec: api.IPv6PrefixDelegationSpec{
+				Spec: api.DHCPv6PrefixDelegationSpec{
 					Interface: "wan",
 					IAID:      "00000001",
 					DUIDType:  "link-layer",
@@ -548,12 +548,12 @@ func TestValidateIPv6PrefixDelegationIdentity(t *testing.T) {
 		t.Fatalf("validate prefix delegation identity: %v", err)
 	}
 
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", IAID: "not-an-iaid"}
+	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "not-an-iaid"}
 	if err := Validate(router); err == nil {
 		t.Fatal("expected invalid IAID to be rejected")
 	}
 
-	router.Spec.Resources[1].Spec = api.IPv6PrefixDelegationSpec{Interface: "wan", DUIDType: "unknown"}
+	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", DUIDType: "unknown"}
 	if err := Validate(router); err == nil {
 		t.Fatal("expected invalid duidType to be rejected")
 	}
@@ -572,14 +572,14 @@ func TestValidateRejectsExternalPDClientAndNetworkdDHCPv6OnSameInterface(t *test
 						Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
 					},
 					{
-						TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPAddress"},
-						Metadata: api.ObjectMeta{Name: "wan-dhcp6"},
-						Spec:     api.IPv6DHCPAddressSpec{Interface: "wan", Client: "networkd"},
+						TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address"},
+						Metadata: api.ObjectMeta{Name: "wan-dhcpv6"},
+						Spec:     api.DHCPv6AddressSpec{Interface: "wan", Client: "networkd"},
 					},
 					{
-						TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+						TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 						Metadata: api.ObjectMeta{Name: "wan-pd"},
-						Spec:     api.IPv6PrefixDelegationSpec{Interface: "wan", Client: client},
+						Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan", Client: client},
 					},
 				}},
 			}
@@ -750,9 +750,9 @@ func TestValidatePathMTUPolicy(t *testing.T) {
 				Spec:     api.DSLiteTunnelSpec{Interface: "lan", TunnelName: "ds-transix", RemoteAddress: "2001:db8::1", MTU: 1460},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPServer"},
-				Metadata: api.ObjectMeta{Name: "dhcp6"},
-				Spec:     api.IPv6DHCPServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"},
+				Metadata: api.ObjectMeta{Name: "dhcpv6"},
+				Spec:     api.DHCPv6ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
@@ -760,14 +760,14 @@ func TestValidatePathMTUPolicy(t *testing.T) {
 				Spec:     api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6PrefixDelegation"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 				Metadata: api.ObjectMeta{Name: "wan-pd"},
-				Spec:     api.IPv6PrefixDelegationSpec{Interface: "lan"},
+				Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "lan"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPScope"},
-				Metadata: api.ObjectMeta{Name: "lan-dhcp6"},
-				Spec:     api.IPv6DHCPScopeSpec{Server: "dhcp6", DelegatedAddress: "lan-ipv6"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Scope"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcpv6"},
+				Spec:     api.DHCPv6ScopeSpec{Server: "dhcpv6", DelegatedAddress: "lan-ipv6"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"},
@@ -776,7 +776,7 @@ func TestValidatePathMTUPolicy(t *testing.T) {
 					FromInterface: "lan",
 					ToInterfaces:  []string{"transix"},
 					MTU:           api.PathMTUPolicyMTUSpec{Source: "minInterface"},
-					IPv6RA:        api.PathMTUPolicyIPv6RASpec{Enabled: true, Scope: "lan-dhcp6"},
+					IPv6RA:        api.PathMTUPolicyIPv6RASpec{Enabled: true, Scope: "lan-dhcpv6"},
 					TCPMSSClamp:   api.PathMTUPolicyTCPMSSSpec{Enabled: true, Families: []string{"ipv4", "ipv6"}},
 				},
 			},
@@ -974,14 +974,14 @@ func TestValidateDHCPServerTransitRole(t *testing.T) {
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DHCPServer"},
-				Metadata: api.ObjectMeta{Name: "dhcp4"},
-				Spec:     api.IPv4DHCPServerSpec{Server: "dnsmasq", Role: "transit"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+				Metadata: api.ObjectMeta{Name: "dhcpv4"},
+				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Role: "transit"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DHCPServer"},
-				Metadata: api.ObjectMeta{Name: "dhcp6"},
-				Spec:     api.IPv6DHCPServerSpec{Server: "dnsmasq", Role: "transit"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"},
+				Metadata: api.ObjectMeta{Name: "dhcpv6"},
+				Spec:     api.DHCPv6ServerSpec{Server: "dnsmasq", Role: "transit"},
 			},
 		}},
 	}

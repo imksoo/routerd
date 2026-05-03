@@ -36,7 +36,8 @@ endif
 BUILDDIR ?= bin/$(ROUTERD_OS)$(if $(GOARCH),-$(GOARCH))
 ROUTERD_BIN := $(BUILDDIR)/routerd
 ROUTERCTL_BIN := $(BUILDDIR)/routerctl
-ROUTERD_DHCP6_CLIENT_BIN := $(BUILDDIR)/routerd-dhcp6-client
+ROUTERD_DHCPv4_CLIENT_BIN := $(BUILDDIR)/routerd-dhcpv4-client
+ROUTERD_DHCPv6_CLIENT_BIN := $(BUILDDIR)/routerd-dhcpv6-client
 ROUTERD_HEALTHCHECK_BIN := $(BUILDDIR)/routerd-healthcheck
 GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
@@ -52,7 +53,8 @@ build:
 	install -d $(BUILDDIR)
 	$(GO_BUILD_ENV) go build -o $(ROUTERD_BIN) ./cmd/routerd
 	$(GO_BUILD_ENV) go build -o $(ROUTERCTL_BIN) ./cmd/routerctl
-	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCP6_CLIENT_BIN) ./cmd/routerd-dhcp6-client
+	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCPv4_CLIENT_BIN) ./cmd/routerd-dhcpv4-client
+	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCPv6_CLIENT_BIN) ./cmd/routerd-dhcpv6-client
 	$(GO_BUILD_ENV) go build -o $(ROUTERD_HEALTHCHECK_BIN) ./cmd/routerd-healthcheck
 
 generate-schema:
@@ -87,9 +89,9 @@ check-remote-deps:
 		grep -q "client:[[:space:]]*dhcp6c" "$(CONFIG)" && need_dhcp6c=1 || need_dhcp6c=0; \
 		grep -q "kind:[[:space:]]*Bridge" "$(CONFIG)" && need_bridge=1 || need_bridge=0; \
 	fi; \
-	ssh $(REMOTE_HOST) "NEED_PPP=$$need_ppp NEED_DHCP6C=$$need_dhcp6c NEED_BRIDGE=$$need_bridge REMOTE_CONFIG=$(REMOTE_CONFIG) sh -c 'missing=0; \
+	ssh $(REMOTE_HOST) "NEED_PPP=$$need_ppp NEED_DHCPv6C=$$need_dhcp6c NEED_BRIDGE=$$need_bridge REMOTE_CONFIG=$(REMOTE_CONFIG) sh -c 'missing=0; \
 		remote_os=\$$(uname -s); \
-		need_ppp=\$${NEED_PPP:-unknown}; need_dhcp6c=\$${NEED_DHCP6C:-unknown}; need_bridge=\$${NEED_BRIDGE:-unknown}; \
+		need_ppp=\$${NEED_PPP:-unknown}; need_dhcp6c=\$${NEED_DHCPv6C:-unknown}; need_bridge=\$${NEED_BRIDGE:-unknown}; \
 		if [ \"\$$need_ppp\" = unknown ] && [ -r \"\$$REMOTE_CONFIG\" ]; then grep -q \"kind:[[:space:]]*PPPoEInterface\" \"\$$REMOTE_CONFIG\" && need_ppp=1 || need_ppp=0; fi; \
 		if [ \"\$$need_dhcp6c\" = unknown ] && [ -r \"\$$REMOTE_CONFIG\" ]; then grep -q \"client:[[:space:]]*dhcp6c\" \"\$$REMOTE_CONFIG\" && need_dhcp6c=1 || need_dhcp6c=0; fi; \
 		if [ \"\$$need_bridge\" = unknown ] && [ -r \"\$$REMOTE_CONFIG\" ]; then grep -q \"kind:[[:space:]]*Bridge\" \"\$$REMOTE_CONFIG\" && need_bridge=1 || need_bridge=0; fi; \
@@ -106,7 +108,8 @@ install: check-build-deps build
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 0755 $(ROUTERD_BIN) $(DESTDIR)$(BINDIR)/routerd
 	install -m 0755 $(ROUTERCTL_BIN) $(DESTDIR)$(BINDIR)/routerctl
-	install -m 0755 $(ROUTERD_DHCP6_CLIENT_BIN) $(DESTDIR)$(BINDIR)/routerd-dhcp6-client
+	install -m 0755 $(ROUTERD_DHCPv4_CLIENT_BIN) $(DESTDIR)$(BINDIR)/routerd-dhcpv4-client
+	install -m 0755 $(ROUTERD_DHCPv6_CLIENT_BIN) $(DESTDIR)$(BINDIR)/routerd-dhcpv6-client
 	install -m 0755 $(ROUTERD_HEALTHCHECK_BIN) $(DESTDIR)$(BINDIR)/routerd-healthcheck
 	install -d $(DESTDIR)$(SYSCONFDIR)
 	install -m 0644 examples/basic-static.yaml $(DESTDIR)$(SYSCONFDIR)/router.yaml.example

@@ -65,7 +65,7 @@ routerd は複数のクライアント経路を残します。OS とプロファ
 ## routerd での扱い
 
 - 一般 Linux の既定経路は `systemd-networkd`。ただし NTT 系プロファイル（`ntt-ngn-direct-hikari-denwa`、
-  `ntt-hgw-lan-pd`）では `IPv6PrefixDelegation.spec.client: dhcpcd` を既定にする。
+  `ntt-hgw-lan-pd`）では `DHCPv6PrefixDelegation.spec.client: dhcpcd` を既定にする。
 - Linux の `client: dhcp6c` は、移行や比較検証のために明示した場合だけ使う代替経路として残す。既知の問題としては扱わないが、NTT プロファイルの新しい例では `dhcpcd` を使う。
 - FreeBSD は `dhcp6c`（ports `net/dhcp6`）が既定。base の `dhclient` は IPv4 のみで PD 不可。
 - routerd の `apply` は OS DHCPv6 クライアントの内部 lease 状態を温存することを最優先にする。

@@ -35,7 +35,7 @@ func TestNetworkdDropinsDoNotRenderLegacyDHCPv6PD(t *testing.T) {
 		t.Fatal("missing LAN static route drop-in")
 	}
 	for _, file := range files {
-		if strings.Contains(file.Path, "89-routerd-ipv6-ra.conf") || strings.Contains(file.Path, "90-routerd-dhcp6-pd.conf") {
+		if strings.Contains(file.Path, "89-routerd-ipv6-ra.conf") || strings.Contains(file.Path, "90-routerd-dhcpv6-pd.conf") {
 			t.Fatalf("legacy DHCPv6/RA networkd drop-in should not be rendered: %s\n%s", file.Path, file.Data)
 		}
 	}

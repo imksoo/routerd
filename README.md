@@ -162,7 +162,7 @@ RSTP is enabled.
 
 On Ubuntu, the current source install expects host tools such as `systemd`,
 `iproute2`, `dnsmasq`, `nftables`, `conntrack`, and `jq`.
-Install `wide-dhcpv6-client` only when `IPv6PrefixDelegation` explicitly uses
+Install `wide-dhcpv6-client` only when `DHCPv6PrefixDelegation` explicitly uses
 the Linux fallback `client: dhcp6c`; install `pppd` only when using
 `PPPoEInterface`; install `mstpd` when using Linux bridge resources with RSTP.
 `sqlite3` is optional for manual state inspection. On FreeBSD, the limited groundwork
@@ -252,7 +252,7 @@ cloud-init or existing netplan owns the management interface. routerd reports
 such cases as adoption candidates rather than silently taking them over.
 
 For DHCPv6-PD lab work, `routerd apply --once --override-client <client>` and
-`--override-profile <profile>` can override every `IPv6PrefixDelegation` for
+`--override-profile <profile>` can override every `DHCPv6PrefixDelegation` for
 that run without changing the YAML file. Known problematic OS/client/profile
 combinations are reported as warnings rather than hard validation failures.
 

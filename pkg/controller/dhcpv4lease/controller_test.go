@@ -1,4 +1,4 @@
-package dhcp4lease
+package dhcpv4lease
 
 import (
 	"context"
@@ -33,7 +33,7 @@ func TestControllerReconcilesDaemonStatus(t *testing.T) {
 	}
 	defer listener.Close()
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		status := daemonapi.NewStatus(daemonapi.DaemonRef{Name: "routerd-dhcp4-client-wan", Kind: "routerd-dhcp4-client", Instance: "wan"})
+		status := daemonapi.NewStatus(daemonapi.DaemonRef{Name: "routerd-dhcpv4-client-wan", Kind: "routerd-dhcpv4-client", Instance: "wan"})
 		status.Phase = daemonapi.PhaseRunning
 		status.Health = daemonapi.HealthOK
 		status.Resources = []daemonapi.ResourceStatus{{

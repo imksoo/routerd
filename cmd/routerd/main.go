@@ -390,8 +390,8 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
-	overrideClient := fs.String("override-client", "", "override IPv6PrefixDelegation client for this apply: networkd, dhcp6c, or dhcpcd")
-	overrideProfile := fs.String("override-profile", "", "override IPv6PrefixDelegation profile for this apply")
+	overrideClient := fs.String("override-client", "", "override DHCPv6PrefixDelegation client for this apply: networkd, dhcp6c, or dhcpcd")
+	overrideProfile := fs.String("override-profile", "", "override DHCPv6PrefixDelegation profile for this apply")
 	once := fs.Bool("once", false, "run one apply loop")
 	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
 	if err := fs.Parse(args); err != nil {
@@ -579,63 +579,64 @@ func artifactsForOwner(ledger resource.Ledger, owner string) []resource.Artifact
 func canonicalResourceKind(kind string) string {
 	key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(kind, "-", ""), "_", ""))
 	aliases := map[string]string{
-		"if":                    "Interface",
-		"iface":                 "Interface",
-		"interface":             "Interface",
-		"interfaces":            "Interface",
-		"br":                    "Bridge",
-		"bridge":                "Bridge",
-		"bridges":               "Bridge",
-		"vxlan":                 "VXLANSegment",
-		"vxlans":                "VXLANSegment",
-		"vxlansegment":          "VXLANSegment",
-		"wireguard":             "WireGuardInterface",
-		"wg":                    "WireGuardInterface",
-		"wireguardinterface":    "WireGuardInterface",
-		"wireguardpeer":         "WireGuardPeer",
-		"wgpeer":                "WireGuardPeer",
-		"ipsec":                 "IPsecConnection",
-		"ipsecconnection":       "IPsecConnection",
-		"vrf":                   "VRF",
-		"vxlantunnel":           "VXLANTunnel",
-		"pd":                    "IPv6PrefixDelegation",
-		"ipv6pd":                "IPv6PrefixDelegation",
-		"prefixdelegation":      "IPv6PrefixDelegation",
-		"ipv6prefixdelegation":  "IPv6PrefixDelegation",
-		"ipv4static":            "IPv4StaticAddress",
-		"ipv4staticaddress":     "IPv4StaticAddress",
-		"ipv4dhcp":              "IPv4DHCPAddress",
-		"ipv4dhcpaddress":       "IPv4DHCPAddress",
-		"dhcp4lease":            "DHCPv4Lease",
-		"dhcpv4lease":           "DHCPv4Lease",
-		"ipv4dhcplease":         "DHCPv4Lease",
-		"dhcpv4host":            "DHCPv4HostReservation",
-		"dhcpv4hostreservation": "DHCPv4HostReservation",
-		"ipv4dhcpreservation":   "IPv4DHCPReservation",
-		"dhcp4reservation":      "IPv4DHCPReservation",
-		"dhcprelay":             "DHCPRelay",
-		"ipv4staticroute":       "IPv4StaticRoute",
-		"ipv6route":             "IPv6StaticRoute",
-		"ipv6staticroute":       "IPv6StaticRoute",
-		"nat":                   "IPv4SourceNAT",
-		"snat":                  "IPv4SourceNAT",
-		"ipv4sourcenat":         "IPv4SourceNAT",
-		"nat44":                 "NAT44Rule",
-		"nat44rule":             "NAT44Rule",
-		"dslite":                "DSLiteTunnel",
-		"dslitetunnel":          "DSLiteTunnel",
-		"pppoe":                 "PPPoEInterface",
-		"pppoeinterface":        "PPPoEInterface",
-		"pppoesession":          "PPPoESession",
-		"pppoeclient":           "PPPoESession",
-		"fw":                    "FirewallPolicy",
-		"firewall":              "FirewallPolicy",
-		"firewallpolicy":        "FirewallPolicy",
-		"zone":                  "Zone",
-		"hostname":              "Hostname",
-		"host":                  "Hostname",
-		"route":                 "IPv4PolicyRouteSet",
-		"ipv4policyrouteset":    "IPv4PolicyRouteSet",
+		"if":                     "Interface",
+		"iface":                  "Interface",
+		"interface":              "Interface",
+		"interfaces":             "Interface",
+		"br":                     "Bridge",
+		"bridge":                 "Bridge",
+		"bridges":                "Bridge",
+		"vxlan":                  "VXLANSegment",
+		"vxlans":                 "VXLANSegment",
+		"vxlansegment":           "VXLANSegment",
+		"wireguard":              "WireGuardInterface",
+		"wg":                     "WireGuardInterface",
+		"wireguardinterface":     "WireGuardInterface",
+		"wireguardpeer":          "WireGuardPeer",
+		"wgpeer":                 "WireGuardPeer",
+		"ipsec":                  "IPsecConnection",
+		"ipsecconnection":        "IPsecConnection",
+		"vrf":                    "VRF",
+		"vxlantunnel":            "VXLANTunnel",
+		"pd":                     "DHCPv6PrefixDelegation",
+		"dhcpv6pd":               "DHCPv6PrefixDelegation",
+		"prefixdelegation":       "DHCPv6PrefixDelegation",
+		"dhcpv6prefixdelegation": "DHCPv6PrefixDelegation",
+		"ipv4static":             "IPv4StaticAddress",
+		"ipv4staticaddress":      "IPv4StaticAddress",
+		"dhcpv4address":          "DHCPv4Address",
+		"dhcpv4lease":            "DHCPv4Lease",
+		"dhcpv4server":           "DHCPv4Server",
+		"dhcpv4scope":            "DHCPv4Scope",
+		"dhcpv4reservation":      "DHCPv4Reservation",
+		"dhcpv4relay":            "DHCPv4Relay",
+		"dhcprelay":              "DHCPv4Relay",
+		"dhcpv6address":          "DHCPv6Address",
+		"dhcpv6server":           "DHCPv6Server",
+		"dhcpv6scope":            "DHCPv6Scope",
+		"dhcpv6information":      "DHCPv6Information",
+		"ipv4staticroute":        "IPv4StaticRoute",
+		"ipv6route":              "IPv6StaticRoute",
+		"ipv6staticroute":        "IPv6StaticRoute",
+		"nat":                    "IPv4SourceNAT",
+		"snat":                   "IPv4SourceNAT",
+		"ipv4sourcenat":          "IPv4SourceNAT",
+		"nat44":                  "NAT44Rule",
+		"nat44rule":              "NAT44Rule",
+		"dslite":                 "DSLiteTunnel",
+		"dslitetunnel":           "DSLiteTunnel",
+		"pppoe":                  "PPPoEInterface",
+		"pppoeinterface":         "PPPoEInterface",
+		"pppoesession":           "PPPoESession",
+		"pppoeclient":            "PPPoESession",
+		"fw":                     "FirewallPolicy",
+		"firewall":               "FirewallPolicy",
+		"firewallpolicy":         "FirewallPolicy",
+		"zone":                   "Zone",
+		"hostname":               "Hostname",
+		"host":                   "Hostname",
+		"route":                  "IPv4PolicyRouteSet",
+		"ipv4policyrouteset":     "IPv4PolicyRouteSet",
 	}
 	if canonical, ok := aliases[key]; ok {
 		return canonical
@@ -651,7 +652,7 @@ func apiVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "IPv4DHCPAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4DHCPServer", "IPv4DHCPScope", "DHCPv4HostReservation", "IPv4DHCPReservation", "IPv6DHCPAddress", "IPv6RAAddress", "IPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "IPv6DHCPServer", "IPv6DHCPv6Server", "IPv6DHCPScope", "DHCPRelay", "DNSAnswerScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DNSResolverUpstream", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSAnswerScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DNSResolverUpstream", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -688,10 +689,10 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 		return nil, nil, errors.New("router is nil")
 	}
 	if !api.ValidIPv6PDClient(opts.OverrideClient) {
-		return nil, nil, fmt.Errorf("invalid IPv6PrefixDelegation client override %q", opts.OverrideClient)
+		return nil, nil, fmt.Errorf("invalid DHCPv6PrefixDelegation client override %q", opts.OverrideClient)
 	}
 	if !api.ValidIPv6PDProfile(opts.OverrideProfile) {
-		return nil, nil, fmt.Errorf("invalid IPv6PrefixDelegation profile override %q", opts.OverrideProfile)
+		return nil, nil, fmt.Errorf("invalid DHCPv6PrefixDelegation profile override %q", opts.OverrideProfile)
 	}
 
 	out := *router
@@ -699,10 +700,10 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 	var warnings []string
 	for i := range out.Spec.Resources {
 		res := out.Spec.Resources[i]
-		if res.Kind != "IPv6PrefixDelegation" {
+		if res.Kind != "DHCPv6PrefixDelegation" {
 			continue
 		}
-		spec, err := res.IPv6PrefixDelegationSpec()
+		spec, err := res.DHCPv6PrefixDelegationSpec()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -724,7 +725,7 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 		out.Spec.Resources[i].Spec = spec
 		ctx := api.IPv6PDClientContext{OS: strings.ToLower(osName), NixOS: nixOS, Client: spec.Client, Profile: profile}
 		for _, item := range api.MatchKnownIPv6PDNGCombinations(ctx) {
-			warnings = append(warnings, fmt.Sprintf("%s uses known problematic IPv6PrefixDelegation combination os=%s nixos=%t client=%s profile=%s: %s See %s. Continuing because known problematic combinations are warnings, not validation errors.", res.ID(), strings.ToLower(osName), nixOS, spec.Client, profile, item.Reason, item.DocLink))
+			warnings = append(warnings, fmt.Sprintf("%s uses known problematic DHCPv6PrefixDelegation combination os=%s nixos=%t client=%s profile=%s: %s See %s. Continuing because known problematic combinations are warnings, not validation errors.", res.ID(), strings.ToLower(osName), nixOS, spec.Client, profile, item.Reason, item.DocLink))
 		}
 	}
 	if err := config.Validate(&out); err != nil {
@@ -1400,10 +1401,10 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 
 	var changes []stateChange
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" {
+		if res.Kind != "DHCPv6PrefixDelegation" {
 			continue
 		}
-		spec, err := res.IPv6PrefixDelegationSpec()
+		spec, err := res.DHCPv6PrefixDelegationSpec()
 		if err != nil {
 			return nil, err
 		}
@@ -1530,7 +1531,7 @@ func observedPrefixDelegationIdentity(ifname, client, configuredIAID string) dhc
 	case "networkd":
 		return observeNetworkdDHCPIdentity(ifname)
 	case "dhcp6c":
-		return observeFreeBSDDHCP6CIdentity(configuredIAID)
+		return observeFreeBSDDHCPv6CIdentity(configuredIAID)
 	default:
 		return dhcpIdentity{}
 	}
@@ -1554,7 +1555,7 @@ func observeNetworkdDHCPIdentity(ifname string) dhcpIdentity {
 		identity.Source = "systemd-networkd-lease"
 	}
 	linkValues := parseKeyValueFile(filepath.Join("/run/systemd/netif/links", ifindex))
-	if value := strings.Trim(linkValues["DHCP6_CLIENT_DUID"], `"`); value != "" {
+	if value := strings.Trim(linkValues["DHCPv6_CLIENT_DUID"], `"`); value != "" {
 		identity.DUIDText = value
 		if identity.Source == "" {
 			identity.Source = "systemd-networkd-link"
@@ -1563,8 +1564,8 @@ func observeNetworkdDHCPIdentity(ifname string) dhcpIdentity {
 	return identity
 }
 
-func observeFreeBSDDHCP6CIdentity(configuredIAID string) dhcpIdentity {
-	identity := dhcpIdentity{IAID: configuredOrDefaultDHCP6CIAID(configuredIAID)}
+func observeFreeBSDDHCPv6CIdentity(configuredIAID string) dhcpIdentity {
+	identity := dhcpIdentity{IAID: configuredOrDefaultDHCPv6CIAID(configuredIAID)}
 	data, err := os.ReadFile("/var/db/dhcp6c_duid")
 	if err != nil || len(data) == 0 {
 		if identity.IAID != "" {
@@ -1572,7 +1573,7 @@ func observeFreeBSDDHCP6CIdentity(configuredIAID string) dhcpIdentity {
 		}
 		return identity
 	}
-	duid := freeBSDDHCP6CDUIDPayload(data)
+	duid := freeBSDDHCPv6CDUIDPayload(data)
 	if len(duid) == 0 {
 		return identity
 	}
@@ -1582,7 +1583,7 @@ func observeFreeBSDDHCP6CIdentity(configuredIAID string) dhcpIdentity {
 	return identity
 }
 
-func configuredOrDefaultDHCP6CIAID(value string) string {
+func configuredOrDefaultDHCPv6CIAID(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "0"
@@ -1613,7 +1614,7 @@ func parseUint32Flexible(value string) (uint32, bool) {
 	return uint32(parsed), true
 }
 
-func freeBSDDHCP6CDUIDPayload(data []byte) []byte {
+func freeBSDDHCPv6CDUIDPayload(data []byte) []byte {
 	if len(data) < 3 {
 		return data
 	}
@@ -1817,8 +1818,8 @@ func delegatedPrefixFromObserved(prefixes, addresses []string, prefixLength int)
 }
 
 func evaluateStateConditions(router *api.Router, aliases map[string]string, store routerstate.Store, policy api.StatePolicySpec, value api.StateValueSpec) (bool, error) {
-	if value.When.IPv6PrefixDelegation.Resource != "" || value.When.IPv6PrefixDelegation.Available != nil {
-		ok, known, err := stateIPv6PrefixDelegationAvailable(router, aliases, value.When.IPv6PrefixDelegation)
+	if value.When.DHCPv6PrefixDelegation.Resource != "" || value.When.DHCPv6PrefixDelegation.Available != nil {
+		ok, known, err := stateDHCPv6PrefixDelegationAvailable(router, aliases, value.When.DHCPv6PrefixDelegation)
 		predicateName := policy.Variable + "." + value.Value + ".ipv6PrefixDelegation"
 		if err != nil || !known {
 			store.Forget(predicateName, "ipv6 prefix delegation unknown")
@@ -1829,11 +1830,11 @@ func evaluateStateConditions(router *api.Router, aliases map[string]string, stor
 		} else {
 			store.Unset(predicateName, "ipv6 prefix delegation unavailable")
 		}
-		if value.When.IPv6PrefixDelegation.Available != nil && ok != *value.When.IPv6PrefixDelegation.Available {
+		if value.When.DHCPv6PrefixDelegation.Available != nil && ok != *value.When.DHCPv6PrefixDelegation.Available {
 			return false, nil
 		}
-		if value.When.IPv6PrefixDelegation.UnavailableFor != "" {
-			duration, err := time.ParseDuration(value.When.IPv6PrefixDelegation.UnavailableFor)
+		if value.When.DHCPv6PrefixDelegation.UnavailableFor != "" {
+			duration, err := time.ParseDuration(value.When.DHCPv6PrefixDelegation.UnavailableFor)
 			if err != nil {
 				return false, err
 			}
@@ -1858,7 +1859,7 @@ func evaluateStateConditions(router *api.Router, aliases map[string]string, stor
 	return true, nil
 }
 
-func stateIPv6PrefixDelegationAvailable(router *api.Router, aliases map[string]string, cond api.StateIPv6PrefixDelegationCondition) (bool, bool, error) {
+func stateDHCPv6PrefixDelegationAvailable(router *api.Router, aliases map[string]string, cond api.StateDHCPv6PrefixDelegationCondition) (bool, bool, error) {
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "IPv6DelegatedAddress" {
 			continue
@@ -1935,14 +1936,14 @@ func filterDefaultRoutePolicyCandidatesByWhen(res api.Resource, store routerstat
 
 func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 	switch res.Kind {
-	case "IPv4DHCPScope":
-		spec, _ := res.IPv4DHCPScopeSpec()
+	case "DHCPv4Scope":
+		spec, _ := res.DHCPv4ScopeSpec()
 		return spec.When
 	case "IPv6DelegatedAddress":
 		spec, _ := res.IPv6DelegatedAddressSpec()
 		return spec.When
-	case "IPv6DHCPScope":
-		spec, _ := res.IPv6DHCPScopeSpec()
+	case "DHCPv6Scope":
+		spec, _ := res.DHCPv6ScopeSpec()
 		return spec.When
 	case "DSLiteTunnel":
 		spec, _ := res.DSLiteTunnelSpec()
@@ -2040,7 +2041,7 @@ func appendStatePolicyResults(result *apply.Result, router *api.Router, store ro
 
 func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Router, store routerstate.Store) {
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" {
+		if res.Kind != "DHCPv6PrefixDelegation" {
 			continue
 		}
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
@@ -2266,7 +2267,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDryRunRoute := fs.Bool("controller-chain-dry-run-route", true, "do not mutate IPv4 routes in the experimental controller chain")
 	controllerDryRunRA := fs.Bool("controller-chain-dry-run-ra", true, "do not start radvd in the experimental controller chain")
 	controllerDryRunDHCPv6 := fs.Bool("controller-chain-dry-run-dhcpv6", true, "do not start DHCPv6 service in the experimental controller chain")
-	controllerDryRunDHCP4Lease := fs.Bool("controller-chain-dry-run-dhcp4lease", true, "do not apply DHCPv4 lease address/default route in the experimental controller chain")
+	controllerDryRunDHCPv4Lease := fs.Bool("controller-chain-dry-run-dhcpv4lease", true, "do not apply DHCPv4 lease address/default route in the experimental controller chain")
 	controllerDryRunPPPoESession := fs.Bool("controller-chain-dry-run-pppoesession", true, "do not apply PPPoE session route/DNS in the experimental controller chain")
 	controllerDryRunNAT := fs.Bool("controller-chain-dry-run-nat", true, "do not apply nftables NAT rules in the experimental controller chain")
 	controllerDaemonSockets := fs.String("controller-chain-daemon-sockets", "", "comma-separated resource=unix-socket overrides for the experimental controller chain")
@@ -2331,7 +2332,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 				DryRunRoute:        *controllerDryRunRoute,
 				DryRunRA:           *controllerDryRunRA,
 				DryRunDHCPv6:       *controllerDryRunDHCPv6,
-				DryRunDHCP4Lease:   *controllerDryRunDHCP4Lease,
+				DryRunDHCPv4Lease:  *controllerDryRunDHCPv4Lease,
 				DryRunPPPoESession: *controllerDryRunPPPoESession,
 				DryRunNAT:          *controllerDryRunNAT,
 				DnsmasqCommand:     *controllerDnsmasqCommand,
@@ -2471,7 +2472,7 @@ func ipv6PrefixDelegationNames(router *api.Router) []string {
 	}
 	var out []string
 	for _, res := range router.Spec.Resources {
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6PrefixDelegation" {
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv6PrefixDelegation" {
 			out = append(out, res.Metadata.Name)
 		}
 	}
@@ -3237,7 +3238,7 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
-		case "IPv6PrefixDelegation":
+		case "DHCPv6PrefixDelegation":
 			pdResources[res.Metadata.Name] = true
 			if store == nil {
 				continue
@@ -3358,7 +3359,7 @@ func managedDelegatedIPv6Targets(router *api.Router, store routerstate.Store) (d
 				return targets, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
-		case "IPv6PrefixDelegation":
+		case "DHCPv6PrefixDelegation":
 			base := "ipv6PrefixDelegation." + res.Metadata.Name
 			lease, _ := routerstate.PDLeaseFromStore(store, base)
 			if lease.CurrentPrefix != "" {
@@ -3891,7 +3892,7 @@ func applyIPv4DefaultRouteCandidate(resourceID string, aliases map[string]string
 		args = append(args, "dev", ifname)
 	case "static":
 		args = append(args, "via", candidate.Gateway, "dev", ifname)
-	case "dhcp4":
+	case "dhcpv4":
 		gateway, err := currentIPv4DefaultGatewayForInterface(ifname)
 		if err != nil {
 			return "", fmt.Errorf("%s DHCPv4 gateway on %s: %w", resourceID, ifname, err)
@@ -4344,7 +4345,7 @@ func applyDSLiteTunnelsWithState(router *api.Router, store routerstate.Store) ([
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
-		case "IPv6PrefixDelegation":
+		case "DHCPv6PrefixDelegation":
 			if store == nil {
 				continue
 			}
@@ -4824,13 +4825,13 @@ func applyFreeBSDIPv6DefaultRoutes(router *api.Router) ([]string, error) {
 	}
 	var applied []string
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6DHCPAddress" && res.Kind != "IPv6RAAddress" {
+		if res.Kind != "DHCPv6Address" && res.Kind != "IPv6RAAddress" {
 			continue
 		}
 		var iface string
 		switch res.Kind {
-		case "IPv6DHCPAddress":
-			spec, err := res.IPv6DHCPAddressSpec()
+		case "DHCPv6Address":
+			spec, err := res.DHCPv6AddressSpec()
 			if err != nil {
 				return nil, err
 			}
@@ -5007,7 +5008,7 @@ func prefixDelegationLeases(router *api.Router, store routerstate.Store) map[str
 	}
 	leases := map[string]routerstate.PDLease{}
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6PrefixDelegation" {
+		if res.Kind != "DHCPv6PrefixDelegation" {
 			continue
 		}
 		lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+res.Metadata.Name)

@@ -50,9 +50,9 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DHCPAddress
+      kind: DHCPv4Address
       metadata:
-        name: wan-dhcp4
+        name: wan-dhcpv4
       spec:
         interface: wan
         client: dhclient
@@ -69,9 +69,9 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DHCPAddress
+      kind: DHCPv4Address
       metadata:
-        name: mgmt-dhcp4
+        name: mgmt-dhcpv4
       spec:
         interface: mgmt
         client: dhclient
@@ -80,9 +80,9 @@ spec:
         useDNS: false
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6DHCPAddress
+      kind: DHCPv6Address
       metadata:
-        name: wan-dhcp6
+        name: wan-dhcpv6
       spec:
         interface: wan
         client: dhcp6c
@@ -97,7 +97,7 @@ spec:
         required: true
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6PrefixDelegation
+      kind: DHCPv6PrefixDelegation
       metadata:
         name: wan-pd
       spec:
@@ -147,9 +147,9 @@ spec:
         metric: 100
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DHCPServer
+      kind: DHCPv4Server
       metadata:
-        name: lan-dhcp4-server
+        name: lan-dhcpv4-server
       spec:
         server: dnsmasq
         managed: true
@@ -157,11 +157,11 @@ spec:
           - lan
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DHCPScope
+      kind: DHCPv4Scope
       metadata:
-        name: lan-dhcp4
+        name: lan-dhcpv4
       spec:
-        server: lan-dhcp4-server
+        server: lan-dhcpv4-server
         interface: lan
         rangeStart: 192.0.2.110
         rangeEnd: 192.0.2.119
@@ -171,11 +171,11 @@ spec:
         authoritative: true
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4HostReservation
+      kind: DHCPv4Reservation
       metadata:
         name: printer
       spec:
-        scope: lan-dhcp4
+        scope: lan-dhcpv4
         macAddress: "02:00:00:00:01:50"
         ipAddress: 192.0.2.115
         hostname: printer
@@ -194,9 +194,9 @@ spec:
         announce: true
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6DHCPServer
+      kind: DHCPv6Server
       metadata:
-        name: lan-dhcp6-server
+        name: lan-dhcpv6-server
       spec:
         server: dnsmasq
         managed: true
@@ -204,11 +204,11 @@ spec:
           - lan
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6DHCPScope
+      kind: DHCPv6Scope
       metadata:
-        name: lan-dhcp6
+        name: lan-dhcpv6
       spec:
-        server: lan-dhcp6-server
+        server: lan-dhcpv6-server
         delegatedAddress: lan-ipv6-pd-address
         mode: stateless
         defaultRoute: true

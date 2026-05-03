@@ -69,7 +69,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	rc.WriteString("gateway_enable=\"YES\"\n")
 	rc.WriteString("ipv6_gateway_enable=\"YES\"\n")
 
-	dhclientOptions := map[string]api.IPv4DHCPAddressSpec{}
+	dhclientOptions := map[string]api.DHCPv4AddressSpec{}
 	var staticV4Routes []freeBSDStaticRoute
 	var staticV6Routes []freeBSDStaticRoute
 	staticBridgeV4 := map[string][]string{}
@@ -90,8 +90,8 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4DHCPAddress":
-			spec, err := res.IPv4DHCPAddressSpec()
+		case "DHCPv4Address":
+			spec, err := res.DHCPv4AddressSpec()
 			if err != nil {
 				return FreeBSDConfig{}, err
 			}
@@ -406,7 +406,7 @@ func freeBSDMPD5(pppoes []freeBSDPPPoE) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func freeBSDDHClient(options map[string]api.IPv4DHCPAddressSpec) []byte {
+func freeBSDDHClient(options map[string]api.DHCPv4AddressSpec) []byte {
 	if len(options) == 0 {
 		return nil
 	}
@@ -447,7 +447,7 @@ func sortedFreeBSDMapKeys(values map[string]bool) []string {
 	return keys
 }
 
-func sortedFreeBSDMapKeysSpec(values map[string]api.IPv4DHCPAddressSpec) []string {
+func sortedFreeBSDMapKeysSpec(values map[string]api.DHCPv4AddressSpec) []string {
 	var keys []string
 	for key := range values {
 		keys = append(keys, key)

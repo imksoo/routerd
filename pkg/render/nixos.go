@@ -11,17 +11,17 @@ import (
 )
 
 type nixOSInterface struct {
-	Name             string
-	IfName           string
-	AdminUp          bool
-	Bridge           string
-	DHCP4            bool
-	DHCP4UseRoutes   *bool
-	DHCP4UseDNS      *bool
-	DHCP4RouteMetric int
-	AcceptRA         bool
-	Addresses        []string
-	Routes           []nixOSRoute
+	Name              string
+	IfName            string
+	AdminUp           bool
+	Bridge            string
+	DHCPv4            bool
+	DHCPv4UseRoutes   *bool
+	DHCPv4UseDNS      *bool
+	DHCPv4RouteMetric int
+	AcceptRA          bool
+	Addresses         []string
+	Routes            []nixOSRoute
 }
 
 type nixOSRoute struct {
@@ -324,16 +324,16 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 			if iface := interfaces[spec.Interface]; iface != nil {
 				iface.Addresses = append(iface.Addresses, spec.Address)
 			}
-		case "IPv4DHCPAddress":
-			spec, err := res.IPv4DHCPAddressSpec()
+		case "DHCPv4Address":
+			spec, err := res.DHCPv4AddressSpec()
 			if err != nil {
 				return nil, err
 			}
 			if iface := interfaces[spec.Interface]; iface != nil {
-				iface.DHCP4 = true
-				iface.DHCP4UseRoutes = spec.UseRoutes
-				iface.DHCP4UseDNS = spec.UseDNS
-				iface.DHCP4RouteMetric = spec.RouteMetric
+				iface.DHCPv4 = true
+				iface.DHCPv4UseRoutes = spec.UseRoutes
+				iface.DHCPv4UseDNS = spec.UseDNS
+				iface.DHCPv4RouteMetric = spec.RouteMetric
 			}
 		case "IPv4StaticRoute":
 			spec, err := res.IPv4StaticRouteSpec()
@@ -511,15 +511,15 @@ func writeNixOSVXLANFDBService(buf *bytes.Buffer, vxlan nixOSVXLAN) {
 func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 	buf.WriteString("  systemd.network.networks." + nixString("10-netplan-"+iface.IfName) + " = {\n")
 	buf.WriteString("    matchConfig.Name = " + nixString(iface.IfName) + ";\n")
-	if iface.DHCP4 || iface.AcceptRA || iface.Bridge != "" || len(iface.Addresses) == 0 {
+	if iface.DHCPv4 || iface.AcceptRA || iface.Bridge != "" || len(iface.Addresses) == 0 {
 		buf.WriteString("    networkConfig = {\n")
-		if iface.DHCP4 {
+		if iface.DHCPv4 {
 			buf.WriteString("      DHCP = \"ipv4\";\n")
 		}
 		if iface.AcceptRA {
 			buf.WriteString("      IPv6AcceptRA = true;\n")
 		}
-		if len(iface.Addresses) == 0 && !iface.DHCP4 && !iface.AcceptRA {
+		if len(iface.Addresses) == 0 && !iface.DHCPv4 && !iface.AcceptRA {
 			buf.WriteString("      LinkLocalAddressing = \"no\";\n")
 		}
 		if iface.Bridge != "" {
@@ -534,16 +534,16 @@ func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 		}
 		buf.WriteString("    ];\n")
 	}
-	if iface.DHCP4UseRoutes != nil || iface.DHCP4UseDNS != nil || iface.DHCP4RouteMetric != 0 {
+	if iface.DHCPv4UseRoutes != nil || iface.DHCPv4UseDNS != nil || iface.DHCPv4RouteMetric != 0 {
 		buf.WriteString("    dhcpV4Config = {\n")
-		if iface.DHCP4UseRoutes != nil {
-			buf.WriteString("      UseRoutes = " + nixBool(*iface.DHCP4UseRoutes) + ";\n")
+		if iface.DHCPv4UseRoutes != nil {
+			buf.WriteString("      UseRoutes = " + nixBool(*iface.DHCPv4UseRoutes) + ";\n")
 		}
-		if iface.DHCP4UseDNS != nil {
-			buf.WriteString("      UseDNS = " + nixBool(*iface.DHCP4UseDNS) + ";\n")
+		if iface.DHCPv4UseDNS != nil {
+			buf.WriteString("      UseDNS = " + nixBool(*iface.DHCPv4UseDNS) + ";\n")
 		}
-		if iface.DHCP4RouteMetric != 0 {
-			buf.WriteString("      RouteMetric = " + strconv.Itoa(iface.DHCP4RouteMetric) + ";\n")
+		if iface.DHCPv4RouteMetric != 0 {
+			buf.WriteString("      RouteMetric = " + strconv.Itoa(iface.DHCPv4RouteMetric) + ";\n")
 		}
 		buf.WriteString("    };\n")
 	}
@@ -568,7 +568,7 @@ func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 	}
 	if iface.AdminUp || len(iface.Addresses) == 0 {
 		required := "no"
-		if iface.DHCP4 || len(iface.Addresses) > 0 {
+		if iface.DHCPv4 || len(iface.Addresses) > 0 {
 			required = "routable"
 		}
 		buf.WriteString("    linkConfig.RequiredForOnline = " + nixString(required) + ";\n")
@@ -663,7 +663,7 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 		case "VXLANSegment":
 			service["nftables"] = true
 			debug["nftables"] = true
-		case "IPv4DHCPServer", "IPv4DHCPScope", "IPv6DHCPServer", "IPv6DHCPScope", "DNSConditionalForwarder":
+		case "DHCPv4Server", "DHCPv4Scope", "DHCPv6Server", "DHCPv6Scope", "DNSConditionalForwarder":
 			service["dnsmasq"] = true
 			debug["dnsmasq"] = true
 		case "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "FirewallPolicy", "ExposeService", "PathMTUPolicy":
