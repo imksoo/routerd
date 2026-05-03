@@ -1,0 +1,41 @@
+[Unit]
+Description=routerd controller chain for router05
+Documentation=https://routerd.net/
+Wants=network-online.target routerd-dhcpv6-client@wan-pd.service
+After=network-online.target routerd-dhcpv6-client@wan-pd.service
+
+[Service]
+Type=simple
+User=root
+Group=dip
+ExecStart=/usr/local/sbin/routerd serve \
+  --config /usr/local/etc/routerd/router.yaml \
+  --socket /run/routerd/routerd.sock \
+  --status-file /run/routerd/status.json \
+  --observe-interval 0 \
+  --controller-chain \
+  --controller-chain-daemon-sockets wan-pd=/run/routerd/dhcpv6-client/wan-pd.sock \
+  --controller-chain-dry-run-address=false \
+  --controller-chain-dry-run-dslite=false \
+  --controller-chain-dry-run-route=false \
+  --controller-chain-dry-run-ra=true \
+  --controller-chain-dry-run-dhcpv6=false \
+  --controller-chain-dry-run-nat=false \
+  --controller-chain-dnsmasq-command /usr/sbin/dnsmasq \
+  --controller-chain-dnsmasq-config /run/routerd/dnsmasq.conf \
+  --controller-chain-dnsmasq-pid /run/routerd/dnsmasq.pid \
+  --controller-chain-dnsmasq-port 53 \
+  --controller-chain-dnsmasq-listen-addresses 127.0.0.1,192.168.160.5 \
+  --controller-chain-nftables-file /run/routerd/nat44.nft \
+  --controller-chain-conntrack-interval 30s
+Restart=always
+RestartSec=5s
+RuntimeDirectory=routerd
+RuntimeDirectoryMode=0775
+StateDirectory=routerd
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

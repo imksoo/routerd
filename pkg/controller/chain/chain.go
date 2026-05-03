@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,6 +31,8 @@ import (
 	daemonsource "routerd/pkg/source/daemon"
 	"routerd/pkg/wanegress"
 )
+
+var dnsmasqMu sync.Mutex
 
 type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
@@ -954,6 +957,9 @@ func expandServers(store Store, values []string) []string {
 }
 
 func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, changed bool) error {
+	dnsmasqMu.Lock()
+	defer dnsmasqMu.Unlock()
+
 	proc, alive := dnsmasqProcess(pidFile)
 	if alive && changed {
 		return proc.Signal(syscall.SIGHUP)
@@ -974,6 +980,9 @@ func dnsmasqProcess(pidFile string) (*os.Process, bool) {
 		return nil, false
 	}
 	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		if err == syscall.EPERM {
+			return proc, true
+		}
 		return nil, false
 	}
 	return proc, true
@@ -981,7 +990,7 @@ func dnsmasqProcess(pidFile string) (*os.Process, bool) {
 
 func startDnsmasq(ctx context.Context, command, configPath, pidFile string) error {
 	_ = os.Remove(pidFile)
-	cmd := exec.CommandContext(ctx, firstNonEmpty(command, "dnsmasq"), "--conf-file="+configPath)
+	cmd := exec.CommandContext(ctx, firstNonEmpty(command, "dnsmasq"), "--keep-in-foreground", "--conf-file="+configPath, "--pid-file="+pidFile)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {
@@ -989,37 +998,20 @@ func startDnsmasq(ctx context.Context, command, configPath, pidFile string) erro
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	if !waitForFile(pidFile, time.Second) {
-		select {
-		case <-done:
-		default:
-			_ = cmd.Process.Kill()
-			<-done
+	select {
+	case err := <-done:
+		_ = os.Remove(pidFile)
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("dnsmasq did not create pid file %s", pidFile)
+		return fmt.Errorf("dnsmasq exited during startup")
+	case <-time.After(300 * time.Millisecond):
 	}
-	_, alive := dnsmasqProcess(pidFile)
-	if !alive {
-		select {
-		case <-done:
-		default:
-		}
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil && err != syscall.EPERM {
 		return fmt.Errorf("dnsmasq is not alive")
 	}
+	_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", cmd.Process.Pid)), 0o644)
 	return nil
-}
-
-func waitForFile(path string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for {
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-		if time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
 }
 
 func firstNonEmpty(values ...string) string {
