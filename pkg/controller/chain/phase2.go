@@ -2,6 +2,7 @@ package chain
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -151,10 +152,13 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "AFTRResolveFailed", "aftrName": aftrName, "error": err.Error()})
 			continue
 		}
-		local := firstNonEmpty(valueFromStatusRef(c.Store, spec.LocalIPv6Source), valueFromStatusRef(c.Store, spec.LocalAddress), spec.LocalAddress)
-		local = localIPv6Address(local)
-		if local == "" {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "LocalIPv6Missing", "aftrName": aftrName, "aftrIPv6": remote})
+		local, localIfName, err := c.localAddress(spec)
+		if err != nil || local == "" {
+			reason := "LocalIPv6Missing"
+			if err != nil {
+				reason = err.Error()
+			}
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": reason, "aftrName": aftrName, "aftrIPv6": remote})
 			continue
 		}
 		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
@@ -163,14 +167,19 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			mtu = 1460
 		}
 		if !c.DryRun {
-			if err := exec.CommandContext(ctx, "ip", "-6", "tunnel", "replace", ifname, "mode", "ip4ip6", "remote", remote, "local", local, "ttl", "64").Run(); err != nil {
+			if localIfName != "" {
+				if err := ensureIPv6LocalEndpoint(ctx, localIfName, local); err != nil {
+					return err
+				}
+			}
+			if err := ensureDSLiteTunnel(ctx, c.Router, spec, ifname, remote, local); err != nil {
 				return err
 			}
 			if err := exec.CommandContext(ctx, "ip", "link", "set", ifname, "mtu", fmt.Sprintf("%d", mtu), "up").Run(); err != nil {
 				return err
 			}
 		}
-		status := map[string]any{"phase": "Up", "interface": ifname, "localIPv6": local, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
+		status := map[string]any{"phase": "Up", "interface": ifname, "localIPv6": local, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, status); err != nil {
 			return err
 		}
@@ -478,6 +487,59 @@ func valueFromStatusRef(store Store, ref string) string {
 	}
 }
 
+func (c DSLiteTunnelController) localAddress(spec api.DSLiteTunnelSpec) (string, string, error) {
+	switch spec.LocalAddressSource {
+	case "delegatedAddress":
+		return c.localDelegatedAddress(spec)
+	case "static":
+		local := localIPv6Address(firstNonEmpty(valueFromStatusRef(c.Store, spec.LocalAddress), spec.LocalAddress))
+		if local == "" {
+			return "", "", fmt.Errorf("invalid static local IPv6 address")
+		}
+		return local, "", nil
+	case "", "interface":
+		raw := firstNonEmpty(valueFromStatusRef(c.Store, spec.LocalIPv6Source), valueFromStatusRef(c.Store, spec.LocalAddress), spec.LocalAddress)
+		if spec.LocalAddressSuffix != "" {
+			local, err := deriveIPv6AddressFromPrefix(raw, "", spec.LocalAddressSuffix)
+			if err != nil {
+				return "", "", err
+			}
+			return local, "", nil
+		}
+		return localIPv6Address(raw), "", nil
+	default:
+		return "", "", fmt.Errorf("unsupported localAddressSource %q", spec.LocalAddressSource)
+	}
+}
+
+func (c DSLiteTunnelController) localDelegatedAddress(spec api.DSLiteTunnelSpec) (string, string, error) {
+	if spec.LocalDelegatedAddress == "" {
+		return "", "", fmt.Errorf("localDelegatedAddress is required")
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "IPv6DelegatedAddress" || resource.Metadata.Name != spec.LocalDelegatedAddress {
+			continue
+		}
+		delegated, err := resource.IPv6DelegatedAddressSpec()
+		if err != nil {
+			return "", "", err
+		}
+		prefix := prefixFromStatusOrAddress(c.Store, delegated.PrefixSource)
+		if prefix == "" {
+			prefix = prefixFromStatusOrAddress(c.Store, "${IPv6DelegatedAddress/"+spec.LocalDelegatedAddress+".status.address}")
+		}
+		if prefix == "" {
+			return "", "", fmt.Errorf("delegated prefix is not ready")
+		}
+		local, err := deriveIPv6AddressFromPrefix(prefix, delegated.SubnetID, firstNonEmpty(spec.LocalAddressSuffix, delegated.AddressSuffix, "::1"))
+		if err != nil {
+			return "", "", err
+		}
+		return local, interfaceName(c.Router, delegated.Interface), nil
+	}
+	return "", "", fmt.Errorf("missing IPv6DelegatedAddress %q", spec.LocalDelegatedAddress)
+}
+
 func resolveAFTRIPv6(ctx context.Context, value string, resolverPort int) (string, error) {
 	if addr, err := netip.ParseAddr(value); err == nil {
 		if addr.Is6() {
@@ -536,6 +598,92 @@ func prefixFromStatusOrAddress(store Store, ref string) string {
 		return netip.PrefixFrom(addr, 64).Masked().String()
 	}
 	return ""
+}
+
+func deriveIPv6AddressFromPrefix(value, subnetID, suffix string) (string, error) {
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil || !prefix.Addr().Is6() {
+		return "", fmt.Errorf("invalid delegated IPv6 prefix %q", value)
+	}
+	if prefix.Bits() > 64 {
+		return "", fmt.Errorf("delegated IPv6 prefix %q is longer than /64", value)
+	}
+	subnet, err := parseIPv6SubnetID(subnetID)
+	if err != nil {
+		return "", err
+	}
+	subnetBits := 64 - prefix.Bits()
+	if subnetBits < 64 && subnet >= (uint64(1)<<subnetBits) {
+		return "", fmt.Errorf("subnetID %q does not fit in delegated prefix %s", subnetID, value)
+	}
+	suffixAddr, err := netip.ParseAddr(firstNonEmpty(suffix, "::1"))
+	if err != nil || !suffixAddr.Is6() {
+		return "", fmt.Errorf("invalid IPv6 suffix %q", suffix)
+	}
+	addrBytes := prefix.Masked().Addr().As16()
+	first64 := binary.BigEndian.Uint64(addrBytes[:8])
+	first64 |= subnet
+	binary.BigEndian.PutUint64(addrBytes[:8], first64)
+	suffixBytes := suffixAddr.As16()
+	for i := range addrBytes {
+		addrBytes[i] |= suffixBytes[i]
+	}
+	return netip.AddrFrom16(addrBytes).String(), nil
+}
+
+func parseIPv6SubnetID(value string) (uint64, error) {
+	if value == "" {
+		return 0, nil
+	}
+	if parsed, err := strconv.ParseUint(value, 0, 64); err == nil {
+		return parsed, nil
+	}
+	parsed, err := strconv.ParseUint(value, 16, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid IPv6 subnetID %q", value)
+	}
+	return parsed, nil
+}
+
+func interfaceName(router *api.Router, name string) string {
+	if router == nil || name == "" {
+		return ""
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "Interface" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.InterfaceSpec()
+		if err == nil && spec.IfName != "" {
+			return spec.IfName
+		}
+	}
+	return name
+}
+
+func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string) error {
+	if ifname == "" || address == "" {
+		return nil
+	}
+	return exec.CommandContext(ctx, "ip", "-6", "addr", "replace", address+"/128", "dev", ifname).Run()
+}
+
+func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLiteTunnelSpec, ifname, remote, local string) error {
+	show, showErr := exec.CommandContext(ctx, "ip", "-6", "tunnel", "show", ifname).CombinedOutput()
+	if showErr == nil && strings.Contains(string(show), "remote "+remote) && strings.Contains(string(show), "local "+local) {
+		return nil
+	}
+	_ = exec.CommandContext(ctx, "ip", "-6", "tunnel", "del", ifname).Run()
+	args := []string{"-6", "tunnel", "add", ifname, "mode", "ipip6", "remote", remote, "local", local}
+	if underlay := interfaceName(router, spec.Interface); underlay != "" && underlay != ifname {
+		args = append(args, "dev", underlay)
+	}
+	args = append(args, "encaplimit", firstNonEmpty(spec.EncapsulationLimit, "none"))
+	out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func writeRadvdConfig(path, ifname, prefix string, rdnss []string, preferred, valid string) error {
