@@ -28,6 +28,7 @@ func Validate(router *api.Router) error {
 	seen := map[string]bool{}
 	baseInterfaces := map[string]bool{}
 	interfaces := map[string]bool{}
+	wireGuardInterfaces := map[string]bool{}
 	dhcp4Servers := map[string]bool{}
 	dhcp4ServerSpecs := map[string]api.IPv4DHCPServerSpec{}
 	dhcp4Scopes := map[string]api.IPv4DHCPScopeSpec{}
@@ -67,6 +68,16 @@ func Validate(router *api.Router) error {
 			interfaces[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "VXLANSegment" {
+			interfaces[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "WireGuardInterface" {
+			wireGuardInterfaces[res.Metadata.Name] = true
+			interfaces[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "VRF" {
+			interfaces[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "VXLANTunnel" {
 			interfaces[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "PPPoEInterface" {
@@ -209,6 +220,41 @@ func Validate(router *api.Router) error {
 		}
 		if res.Kind == "VXLANSegment" {
 			spec, err := res.VXLANSegmentSpec()
+			if err != nil {
+				return err
+			}
+			if !interfaces[spec.UnderlayInterface] {
+				return fmt.Errorf("%s spec.underlayInterface references missing Interface %q", res.ID(), spec.UnderlayInterface)
+			}
+			if spec.Bridge != "" && !interfaces[spec.Bridge] {
+				return fmt.Errorf("%s spec.bridge references missing Bridge %q", res.ID(), spec.Bridge)
+			}
+		}
+		if res.Kind == "WireGuardPeer" {
+			spec, err := res.WireGuardPeerSpec()
+			if err != nil {
+				return err
+			}
+			if !wireGuardInterfaces[spec.Interface] {
+				return fmt.Errorf("%s spec.interface references missing WireGuardInterface %q", res.ID(), spec.Interface)
+			}
+		}
+		if res.Kind == "VRF" {
+			spec, err := res.VRFSpec()
+			if err != nil {
+				return err
+			}
+			for i, member := range spec.Members {
+				if !interfaces[member] {
+					return fmt.Errorf("%s spec.members[%d] references missing Interface %q", res.ID(), i, member)
+				}
+				if member == res.Metadata.Name {
+					return fmt.Errorf("%s spec.members[%d] must not reference the VRF itself", res.ID(), i)
+				}
+			}
+		}
+		if res.Kind == "VXLANTunnel" {
+			spec, err := res.VXLANTunnelSpec()
 			if err != nil {
 				return err
 			}
@@ -794,6 +840,136 @@ func validateResource(res api.Resource) error {
 		case "", "default", "none":
 		default:
 			return fmt.Errorf("%s spec.l2Filter must be default or none", res.ID())
+		}
+	case "WireGuardInterface":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.WireGuardInterfaceSpec()
+		if err != nil {
+			return err
+		}
+		ifname := res.Metadata.Name
+		if strings.ContainsAny(ifname, " \t\n/") {
+			return fmt.Errorf("%s metadata.name must be usable as a WireGuard interface name", res.ID())
+		}
+		if len(ifname) > 15 {
+			return fmt.Errorf("%s metadata.name must be 15 characters or fewer", res.ID())
+		}
+		if spec.ListenPort != 0 && (spec.ListenPort < 1 || spec.ListenPort > 65535) {
+			return fmt.Errorf("%s spec.listenPort must be within 1-65535", res.ID())
+		}
+		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
+			return fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
+		}
+	case "WireGuardPeer":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.WireGuardPeerSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Interface == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		if spec.PublicKey == "" {
+			return fmt.Errorf("%s spec.publicKey is required", res.ID())
+		}
+		if len(spec.AllowedIPs) == 0 {
+			return fmt.Errorf("%s spec.allowedIPs is required", res.ID())
+		}
+		for i, allowed := range spec.AllowedIPs {
+			if _, err := netip.ParsePrefix(allowed); err != nil {
+				return fmt.Errorf("%s spec.allowedIPs[%d] must be an IP prefix", res.ID(), i)
+			}
+		}
+		if spec.PersistentKeepalive < 0 || spec.PersistentKeepalive > 65535 {
+			return fmt.Errorf("%s spec.persistentKeepalive must be within 0-65535", res.ID())
+		}
+	case "IPsecConnection":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.IPsecConnectionSpec()
+		if err != nil {
+			return err
+		}
+		if _, err := netip.ParseAddr(spec.LocalAddress); err != nil {
+			return fmt.Errorf("%s spec.localAddress must be an IP address", res.ID())
+		}
+		if _, err := netip.ParseAddr(spec.RemoteAddress); err != nil {
+			return fmt.Errorf("%s spec.remoteAddress must be an IP address", res.ID())
+		}
+		if spec.PreSharedKey == "" && spec.CertificateRef == "" {
+			return fmt.Errorf("%s spec.preSharedKey or spec.certificateRef is required", res.ID())
+		}
+		if spec.PreSharedKey != "" && spec.CertificateRef != "" {
+			return fmt.Errorf("%s spec.preSharedKey and spec.certificateRef are mutually exclusive", res.ID())
+		}
+		if _, err := netip.ParsePrefix(spec.LeftSubnet); err != nil {
+			return fmt.Errorf("%s spec.leftSubnet must be an IP prefix", res.ID())
+		}
+		if _, err := netip.ParsePrefix(spec.RightSubnet); err != nil {
+			return fmt.Errorf("%s spec.rightSubnet must be an IP prefix", res.ID())
+		}
+		switch spec.CloudProviderHint {
+		case "", "aws", "azure", "gcp":
+		default:
+			return fmt.Errorf("%s spec.cloudProviderHint must be aws, azure, or gcp", res.ID())
+		}
+	case "VRF":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.VRFSpec()
+		if err != nil {
+			return err
+		}
+		ifname := defaultString(spec.IfName, res.Metadata.Name)
+		if strings.ContainsAny(ifname, " \t\n/") {
+			return fmt.Errorf("%s spec.ifname contains invalid whitespace or slash", res.ID())
+		}
+		if len(ifname) > 15 {
+			return fmt.Errorf("%s spec.ifname must be 15 characters or fewer", res.ID())
+		}
+		if spec.RouteTable < 1 {
+			return fmt.Errorf("%s spec.routeTable is required", res.ID())
+		}
+	case "VXLANTunnel":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.VXLANTunnelSpec()
+		if err != nil {
+			return err
+		}
+		ifname := defaultString(spec.IfName, res.Metadata.Name)
+		if strings.ContainsAny(ifname, " \t\n/") {
+			return fmt.Errorf("%s spec.ifname contains invalid whitespace or slash", res.ID())
+		}
+		if len(ifname) > 15 {
+			return fmt.Errorf("%s spec.ifname must be 15 characters or fewer", res.ID())
+		}
+		if spec.VNI < 1 || spec.VNI > 16777215 {
+			return fmt.Errorf("%s spec.vni must be within 1-16777215", res.ID())
+		}
+		if _, err := netip.ParseAddr(spec.LocalAddress); err != nil {
+			return fmt.Errorf("%s spec.localAddress must be an IP address", res.ID())
+		}
+		if spec.UnderlayInterface == "" {
+			return fmt.Errorf("%s spec.underlayInterface is required", res.ID())
+		}
+		for i, peer := range spec.Peers {
+			if _, err := netip.ParseAddr(peer); err != nil {
+				return fmt.Errorf("%s spec.peers[%d] must be an IP address", res.ID(), i)
+			}
+		}
+		if spec.UDPPort != 0 && (spec.UDPPort < 1 || spec.UDPPort > 65535) {
+			return fmt.Errorf("%s spec.udpPort must be within 1-65535", res.ID())
+		}
+		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
+			return fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
 		}
 	case "PPPoEInterface":
 		if res.APIVersion != api.NetAPIVersion {

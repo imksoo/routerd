@@ -74,6 +74,16 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], includePlan, &rr)
 		case "PPPoEInterface":
 			e.observePPPoEInterface(res, aliases, includePlan, &rr)
+		case "WireGuardInterface":
+			e.observeWireGuardInterface(res, includePlan, &rr)
+		case "WireGuardPeer":
+			e.observeWireGuardPeer(res, aliases, includePlan, &rr)
+		case "IPsecConnection":
+			e.observeIPsecConnection(res, includePlan, &rr)
+		case "VRF":
+			e.observeVRF(res, aliases, includePlan, &rr)
+		case "VXLANTunnel":
+			e.observeVXLANTunnel(res, aliases, includePlan, &rr)
 		case "IPv4StaticAddress":
 			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
 		case "IPv4DHCPAddress":
@@ -463,6 +473,118 @@ func (e *Engine) observePPPoEInterface(res api.Resource, aliases map[string]stri
 		if spec.Managed {
 			rr.Plan = append(rr.Plan, fmt.Sprintf("manage systemd unit routerd-pppoe-%s.service", res.Metadata.Name))
 		}
+	}
+}
+
+func (e *Engine) observeWireGuardInterface(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.WireGuardInterfaceSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["ifname"] = res.Metadata.Name
+	if spec.ListenPort != 0 {
+		rr.Observed["listenPort"] = fmt.Sprintf("%d", spec.ListenPort)
+	}
+	if spec.MTU != 0 {
+		rr.Observed["mtu"] = fmt.Sprintf("%d", spec.MTU)
+	}
+	if spec.FwMark != 0 {
+		rr.Observed["fwmark"] = fmt.Sprintf("%d", spec.FwMark)
+	}
+	if spec.Table != 0 {
+		rr.Observed["table"] = fmt.Sprintf("%d", spec.Table)
+	}
+	if out, err := e.Command("wg", "show", res.Metadata.Name, "dump"); err == nil && len(bytes.TrimSpace(out)) > 0 {
+		rr.Observed["wgAvailable"] = "true"
+	} else if includePlan {
+		rr.Warnings = append(rr.Warnings, "wg is required to observe WireGuard runtime status")
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure WireGuard interface %s", res.Metadata.Name))
+	}
+}
+
+func (e *Engine) observeWireGuardPeer(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.WireGuardPeerSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["ifname"] = aliases[spec.Interface]
+	rr.Observed["publicKey"] = spec.PublicKey
+	rr.Observed["allowedIPs"] = strings.Join(spec.AllowedIPs, ",")
+	if spec.Endpoint != "" {
+		rr.Observed["endpoint"] = spec.Endpoint
+	}
+	if spec.PersistentKeepalive != 0 {
+		rr.Observed["persistentKeepalive"] = fmt.Sprintf("%d", spec.PersistentKeepalive)
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure WireGuard peer %s on %s", res.Metadata.Name, aliases[spec.Interface]))
+	}
+}
+
+func (e *Engine) observeIPsecConnection(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.IPsecConnectionSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["localAddress"] = spec.LocalAddress
+	rr.Observed["remoteAddress"] = spec.RemoteAddress
+	rr.Observed["leftSubnet"] = spec.LeftSubnet
+	rr.Observed["rightSubnet"] = spec.RightSubnet
+	if spec.CloudProviderHint != "" {
+		rr.Observed["cloudProviderHint"] = spec.CloudProviderHint
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("render swanctl connection %s for cloud VPN peer %s", res.Metadata.Name, spec.RemoteAddress))
+	}
+}
+
+func (e *Engine) observeVRF(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.VRFSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := defaultString(spec.IfName, res.Metadata.Name)
+	rr.Observed["ifname"] = ifname
+	rr.Observed["routeTable"] = fmt.Sprintf("%d", spec.RouteTable)
+	rr.Observed["members"] = strings.Join(spec.Members, ",")
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure Linux VRF %s with route table %d", ifname, spec.RouteTable))
+		for _, member := range spec.Members {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("enslave %s to VRF %s", aliases[member], ifname))
+		}
+	}
+}
+
+func (e *Engine) observeVXLANTunnel(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.VXLANTunnelSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := defaultString(spec.IfName, res.Metadata.Name)
+	rr.Observed["ifname"] = ifname
+	rr.Observed["vni"] = fmt.Sprintf("%d", spec.VNI)
+	rr.Observed["localAddress"] = spec.LocalAddress
+	rr.Observed["underlayInterface"] = spec.UnderlayInterface
+	rr.Observed["underlayIfname"] = aliases[spec.UnderlayInterface]
+	rr.Observed["peers"] = strings.Join(spec.Peers, ",")
+	if spec.Bridge != "" {
+		rr.Observed["bridge"] = spec.Bridge
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
 	}
 }
 
@@ -1319,6 +1441,12 @@ func interfaceAliases(router *api.Router) map[string]string {
 			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
 		case "VXLANSegment":
 			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
+		case "WireGuardInterface":
+			aliases[res.Metadata.Name] = res.Metadata.Name
+		case "VRF":
+			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
+		case "VXLANTunnel":
+			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
 		case "PPPoEInterface":
 			aliases[res.Metadata.Name] = defaultString(stringSpec(res, "ifname"), "ppp-"+res.Metadata.Name)
 		case "DSLiteTunnel":
@@ -1537,6 +1665,14 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.IfName
 		}
 	case api.VXLANSegmentSpec:
+		if key == "ifname" {
+			return spec.IfName
+		}
+	case api.VRFSpec:
+		if key == "ifname" {
+			return spec.IfName
+		}
+	case api.VXLANTunnelSpec:
 		if key == "ifname" {
 			return spec.IfName
 		}

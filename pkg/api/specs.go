@@ -127,6 +127,52 @@ type VXLANSegmentSpec struct {
 	L2Filter          string   `yaml:"l2Filter,omitempty" json:"l2Filter,omitempty" jsonschema:"enum=,enum=default,enum=none"`
 }
 
+type WireGuardInterfaceSpec struct {
+	PrivateKey string `yaml:"privateKey,omitempty" json:"privateKey,omitempty"`
+	ListenPort int    `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	MTU        int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
+	FwMark     int    `yaml:"fwmark,omitempty" json:"fwmark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	Table      int    `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+}
+
+type WireGuardPeerSpec struct {
+	Interface           string   `yaml:"interface" json:"interface"`
+	PublicKey           string   `yaml:"publicKey" json:"publicKey"`
+	AllowedIPs          []string `yaml:"allowedIPs" json:"allowedIPs"`
+	Endpoint            string   `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	PersistentKeepalive int      `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
+	PresharedKey        string   `yaml:"presharedKey,omitempty" json:"presharedKey,omitempty"`
+}
+
+type IPsecConnectionSpec struct {
+	LocalAddress      string   `yaml:"localAddress" json:"localAddress"`
+	RemoteAddress     string   `yaml:"remoteAddress" json:"remoteAddress"`
+	PreSharedKey      string   `yaml:"preSharedKey,omitempty" json:"preSharedKey,omitempty"`
+	CertificateRef    string   `yaml:"certificateRef,omitempty" json:"certificateRef,omitempty"`
+	Phase1Proposals   []string `yaml:"psPhase1Proposals,omitempty" json:"psPhase1Proposals,omitempty"`
+	Phase2Proposals   []string `yaml:"psPhase2Proposals,omitempty" json:"psPhase2Proposals,omitempty"`
+	LeftSubnet        string   `yaml:"leftSubnet" json:"leftSubnet"`
+	RightSubnet       string   `yaml:"rightSubnet" json:"rightSubnet"`
+	CloudProviderHint string   `yaml:"cloudProviderHint,omitempty" json:"cloudProviderHint,omitempty" jsonschema:"enum=,enum=aws,enum=azure,enum=gcp"`
+}
+
+type VRFSpec struct {
+	IfName     string   `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	RouteTable int      `yaml:"routeTable" json:"routeTable" jsonschema:"minimum=1,maximum=4294967295"`
+	Members    []string `yaml:"members,omitempty" json:"members,omitempty"`
+}
+
+type VXLANTunnelSpec struct {
+	IfName            string   `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	VNI               int      `yaml:"vni" json:"vni" jsonschema:"minimum=1,maximum=16777215"`
+	LocalAddress      string   `yaml:"localAddress" json:"localAddress"`
+	Peers             []string `yaml:"peers,omitempty" json:"peers,omitempty"`
+	UnderlayInterface string   `yaml:"underlayInterface" json:"underlayInterface"`
+	UDPPort           int      `yaml:"udpPort,omitempty" json:"udpPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	MTU               int      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=0"`
+	Bridge            string   `yaml:"bridge,omitempty" json:"bridge,omitempty"`
+}
+
 type PPPoEInterfaceSpec struct {
 	Interface      string `yaml:"interface" json:"interface"`
 	IfName         string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
@@ -720,6 +766,26 @@ func (r Resource) BridgeSpec() (BridgeSpec, error) {
 
 func (r Resource) VXLANSegmentSpec() (VXLANSegmentSpec, error) {
 	return specAs[VXLANSegmentSpec](r)
+}
+
+func (r Resource) WireGuardInterfaceSpec() (WireGuardInterfaceSpec, error) {
+	return specAs[WireGuardInterfaceSpec](r)
+}
+
+func (r Resource) WireGuardPeerSpec() (WireGuardPeerSpec, error) {
+	return specAs[WireGuardPeerSpec](r)
+}
+
+func (r Resource) IPsecConnectionSpec() (IPsecConnectionSpec, error) {
+	return specAs[IPsecConnectionSpec](r)
+}
+
+func (r Resource) VRFSpec() (VRFSpec, error) {
+	return specAs[VRFSpec](r)
+}
+
+func (r Resource) VXLANTunnelSpec() (VXLANTunnelSpec, error) {
+	return specAs[VXLANTunnelSpec](r)
 }
 
 func (r Resource) PPPoEInterfaceSpec() (PPPoEInterfaceSpec, error) {

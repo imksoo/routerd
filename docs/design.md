@@ -609,9 +609,17 @@ H 必須: `IPv6PrefixDelegation`, `IPv6DelegatedAddress`, `IPv6RouterAdvertiseme
 
 H+ オプション: `DSLiteTunnel`, `WireGuardInterface`, `WireGuardPeer`, `MAPETunnel` (将来)
 
-S+: `VRF`, `IPsecConnection`, `BGPSession` (or peer-group), `Workflow`
+S+: `VRF`, `IPsecConnection`, `VXLANTunnel`, `BGPSession` (or peer-group), `Workflow`
 
-C+: `EVPNInstance`, `EVPNVNI`, `VXLANTunnel`, `RouteMap`, `BFDSession`, `OSPFArea`, `FRRConfigOverride`
+C+: `EVPNInstance`, `EVPNVNI`, `RouteMap`, `BFDSession`, `OSPFArea`, `FRRConfigOverride`
+
+Tier S の VPN/overlay primitive は protocol ごとに Kind を分ける。抽象 `VPNTunnel` は置かず、`WireGuardInterface`/`WireGuardPeer`, `IPsecConnection`, 将来の `TailscaleNode`, `SoftetherSession` を additive に足す。`WANEgressPolicy` は VPN 種別を知らず、ready な candidate を weight/hysteresis で選ぶ。
+
+- WireGuard: Linux は kernel WireGuard、FreeBSD は kernel `if_wg` か `wireguard-go` を wrap する。設定は `wg setconf` 互換形式を正とし、status は handshake timestamp / transfer bytes / endpoint を観測する。
+- IPsec: strongSwan `swanctl.conf` を生成し、`swanctl --load-conns` で lifecycle を反映する。対象は AWS/Azure/GCP cloud-managed VPN gateway 接続に限定し、legacy enterprise remote-access や iOS/macOS profile 互換は scope 外。
+- VRF: Linux VRF device (`ip link add <name> type vrf table <id>`) は L3 routing table separation であり network namespace ではない。process/socket の namespace isolation はしない。guest/staff/IoT の L3 分離と per-VRF WAN egress 選択に使う。
+- VXLAN: `VXLANTunnel` は kernel VXLAN device を直接表現する。underlay は WireGuard tunnel または direct IP を想定し、BGP-EVPN による control plane は Tier C+ で `EVPNInstance` と FRR wrap に逃がす。
+- OTel: controller/daemon は共通 `pkg/otel` を使い、未設定時 no-op、`OTEL_EXPORTER_OTLP_ENDPOINT` 等の設定時のみ export する。代表 metric は `routerd.wireguard.peer.handshake.timestamp`, `routerd.wireguard.transfer.bytes`, `routerd.ipsec.sa.established.count`, `routerd.ipsec.tunnel.bytes`, `routerd.vrf.member.count`, `routerd.vxlan.peers.count`。
 
 E+: `RouteReflectorCluster`, `L3VPNInstance`, `MPBGPPeer`, `HALeader`
 
@@ -1016,7 +1024,7 @@ memory 「PD broken 時に AAAA 出さない」「PD 取得は時間と共に必
 | **4. demolition** | § 18.2 を一気に削除、`pkg/api/specs.go` 縮小、`pkg/apply/engine.go` 縮小、`pkg/state/pdlease.go` 簡略化、test fixture 全更新 | go test ./... 通過、pve05-07 全 host で 24h × 2 cycle 安定 |
 | **5. multi-OS** | `pkg/render/pdclient_{systemd,rcd,nixos}.go`、FreeBSD VM テスト、NixOS module 化 | FreeBSD VM + NixOS VM で同 config が動く |
 | **6. RA / PPPoE** | `routerd-ra-receiver`、`routerd-pppoe-client` 追加 (Layer 1 daemon)、関連 controller | RA RDNSS 取得 → DNS upstream 反映、PPPoE up → DHCPv6 起動 |
-| **7. 横展開** | `routerd-dhcp4-client`, `routerd-link-monitor`, `routerd-healthcheck`、SOHO 機能 (WireGuard, IPsec) | Tier S relevant な検証 |
+| **7. 横展開** | `routerd-dhcp4-client`, `routerd-link-monitor`, `routerd-healthcheck`、SOHO 機能 (WireGuard, IPsec, VRF, VXLAN) | router02/router04/router05 で WireGuard p2p、VRF test device、VXLAN over WireGuard、IPsec は swanctl 生成 test |
 | **8. enterprise 拡張** (将来) | `routerd-frr-monitor`、`FRRConfigController`、`BGPSession`/`EVPNInstance` Kind、Tier C 検証 | PVE SDN 置換テスト、k8s ext 接続テスト |
 
 各 Phase 完了 → `git tag` で rollback 経路確保。pve05-07 全 host で 1 cycle 以上動かしてから次 Phase。

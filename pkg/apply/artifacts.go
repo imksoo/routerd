@@ -67,6 +67,32 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		return []resource.Intent{artifact("routerd.dhcp4.client", aliases[spec.Interface], resource.ActionEnsure, "routerd-dhcp4-client", nil)}
+	case "WireGuardInterface":
+		return []resource.Intent{artifact("net.wireguard.interface", res.Metadata.Name, resource.ActionEnsure, "wg", nil)}
+	case "WireGuardPeer":
+		spec, err := res.WireGuardPeerSpec()
+		if err != nil {
+			return nil
+		}
+		return []resource.Intent{artifact("net.wireguard.peer", spec.Interface+"/"+res.Metadata.Name, resource.ActionEnsure, "wg", map[string]string{"interface": spec.Interface})}
+	case "IPsecConnection":
+		return []resource.Intent{
+			artifact("ipsec.swanctl.connection", res.Metadata.Name, resource.ActionEnsure, "swanctl", nil),
+			artifact("file", "/usr/local/etc/swanctl/conf.d/routerd-"+res.Metadata.Name+".conf", resource.ActionEnsure, "file", nil),
+		}
+	case "VRF":
+		spec, err := res.VRFSpec()
+		if err != nil {
+			return nil
+		}
+		ifname := defaultString(spec.IfName, res.Metadata.Name)
+		return []resource.Intent{artifact("net.vrf", ifname, resource.ActionEnsure, "ip-link", map[string]string{"routeTable": fmt.Sprintf("%d", spec.RouteTable)})}
+	case "VXLANTunnel":
+		spec, err := res.VXLANTunnelSpec()
+		if err != nil {
+			return nil
+		}
+		return []resource.Intent{artifact("net.vxlan.tunnel", defaultString(spec.IfName, res.Metadata.Name), resource.ActionEnsure, "ip-link", map[string]string{"vni": fmt.Sprintf("%d", spec.VNI)})}
 	case "IPv4DHCPServer", "IPv6DHCPServer":
 		return []resource.Intent{
 			artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil),
