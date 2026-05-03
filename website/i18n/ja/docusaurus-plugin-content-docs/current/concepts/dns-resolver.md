@@ -50,6 +50,25 @@ listen:
 リゾルバーは古いアドレスで起動しません。
 その代わり `Pending(AddressUnresolved)` になります。
 
+## 動的なゾーンレコード
+
+`DNSZone.spec.records[].ipv4` と `ipv6` はリテラルアドレスです。
+レコードのアドレスがほかのリソース状態から決まる場合は、
+`ipv4Source` または `ipv6Source` を使います。
+
+```yaml
+records:
+  - hostname: router
+    ipv4: 172.18.0.1
+    ipv6Source:
+      field: ${IPv6DelegatedAddress/lan-base.status.address}
+```
+
+必須の参照がまだ解決できない場合、
+対象フィールドは `DNSZone.status.pendingRecords` に記録されます。
+参照先のリソースが変わると、リゾルバーは再設定されます。
+解決後にレコードが公開されます。
+
 ## 制限されたネットワークの上流
 
 `sources[].viaInterface` は、Linux で送信インターフェースを固定します。

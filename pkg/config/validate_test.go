@@ -268,6 +268,7 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 				Zone: "lan",
 				Records: []api.DNSZoneRecordSpec{
 					{Hostname: "router.lan", IPv4: "192.168.10.1", IPv6: "2001:db8::1"},
+					{Hostname: "router6.lan", IPv6Source: api.DNSZoneRecordAddressSourceSpec{Field: "${IPv6DelegatedAddress/lan.status.address}"}},
 				},
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "resolver"}, Spec: api.DNSResolverSpec{

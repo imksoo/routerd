@@ -1346,11 +1346,17 @@ func validateResource(res api.Resource) error {
 					return fmt.Errorf("%s spec.records[%d].ipv4 must be an IPv4 address", res.ID(), i)
 				}
 			}
+			if strings.TrimSpace(record.IPv4Source.Field) != "" && !isStatusExpression(record.IPv4Source.Field) {
+				return fmt.Errorf("%s spec.records[%d].ipv4Source.field must be a status reference", res.ID(), i)
+			}
 			if record.IPv6 != "" {
 				addr, err := netip.ParseAddr(record.IPv6)
 				if err != nil || !addr.Is6() {
 					return fmt.Errorf("%s spec.records[%d].ipv6 must be an IPv6 address", res.ID(), i)
 				}
+			}
+			if strings.TrimSpace(record.IPv6Source.Field) != "" && !isStatusExpression(record.IPv6Source.Field) {
+				return fmt.Errorf("%s spec.records[%d].ipv6Source.field must be a status reference", res.ID(), i)
 			}
 		}
 	case "DNSResolver":
@@ -2612,6 +2618,11 @@ func dnsSourceExists(sources []api.DNSResolverSourceSpec, name string) bool {
 		}
 	}
 	return false
+}
+
+func isStatusExpression(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") && strings.Contains(value, ".status.")
 }
 
 func stringInSlice(value string, values []string) bool {

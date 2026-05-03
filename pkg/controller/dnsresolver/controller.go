@@ -122,6 +122,13 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 		if err != nil {
 			return config, err
 		}
+		zoneSpec, pendingRecords, err := c.expandZoneSpec(zoneSpec)
+		if err != nil {
+			return config, err
+		}
+		if err := c.saveZoneStatus(resource.Metadata.Name, zoneSpec, pendingRecords); err != nil {
+			return config, err
+		}
 		config.Zones = append(config.Zones, dnsresolver.RuntimeZone{Name: resource.Metadata.Name, Spec: zoneSpec})
 	}
 	return config, nil
@@ -144,6 +151,38 @@ func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, s
 		return spec, "", err
 	}
 	return spec, "", nil
+}
+
+func (c Controller) expandZoneSpec(spec api.DNSZoneSpec) (api.DNSZoneSpec, []map[string]string, error) {
+	var pending []map[string]string
+	for i := range spec.Records {
+		record := &spec.Records[i]
+		if strings.TrimSpace(record.IPv4Source.Field) != "" {
+			value, pendingReason, err := resolveRecordAddress(c.Store, record.IPv4Source, true)
+			if err != nil {
+				return spec, pending, fmt.Errorf("DNSZone record %q ipv4Source: %w", record.Hostname, err)
+			}
+			if pendingReason != "" {
+				pending = append(pending, map[string]string{"hostname": record.Hostname, "field": "ipv4", "source": record.IPv4Source.Field, "reason": pendingReason})
+			} else if value != "" {
+				record.IPv4 = value
+			}
+			record.IPv4Source = api.DNSZoneRecordAddressSourceSpec{}
+		}
+		if strings.TrimSpace(record.IPv6Source.Field) != "" {
+			value, pendingReason, err := resolveRecordAddress(c.Store, record.IPv6Source, false)
+			if err != nil {
+				return spec, pending, fmt.Errorf("DNSZone record %q ipv6Source: %w", record.Hostname, err)
+			}
+			if pendingReason != "" {
+				pending = append(pending, map[string]string{"hostname": record.Hostname, "field": "ipv6", "source": record.IPv6Source.Field, "reason": pendingReason})
+			} else if value != "" {
+				record.IPv6 = value
+			}
+			record.IPv6Source = api.DNSZoneRecordAddressSourceSpec{}
+		}
+	}
+	return spec, pending, nil
 }
 
 func (c Controller) eventRelevant(event daemonapi.DaemonEvent) bool {
@@ -217,6 +256,21 @@ func (c Controller) saveStatus(name string, spec api.DNSResolverSpec, phase, mes
 		status["message"] = message
 	}
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DNSResolver", name, status)
+}
+
+func (c Controller) saveZoneStatus(name string, spec api.DNSZoneSpec, pendingRecords []map[string]string) error {
+	phase := "Applied"
+	if len(pendingRecords) > 0 {
+		phase = "Pending"
+	}
+	status := map[string]any{
+		"phase":          phase,
+		"zone":           spec.Zone,
+		"records":        len(spec.Records),
+		"pendingRecords": pendingRecords,
+		"updatedAt":      time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DNSZone", name, status)
 }
 
 func resolvedListenAddresses(spec api.DNSResolverSpec) []string {
@@ -346,6 +400,41 @@ func expandListenAddresses(store Store, listen api.DNSResolverListenSpec) ([]str
 	return compactStrings(out), ""
 }
 
+func resolveRecordAddress(store Store, source api.DNSZoneRecordAddressSourceSpec, wantIPv4 bool) (string, string, error) {
+	resolved := strings.TrimSpace(valueFromStatusRef(store, source.Field))
+	if resolved == "" {
+		if source.Optional {
+			return "", "", nil
+		}
+		return "", "AddressUnresolved", nil
+	}
+	values := decodeStringList(resolved)
+	if len(values) == 0 {
+		values = []string{resolved}
+	}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		ip := net.ParseIP(value)
+		if ip == nil {
+			return "", "", fmt.Errorf("resolved value %q is not an IP address", value)
+		}
+		if wantIPv4 && ip.To4() == nil {
+			return "", "", fmt.Errorf("resolved value %q is not an IPv4 address", value)
+		}
+		if !wantIPv4 && ip.To4() != nil {
+			return "", "", fmt.Errorf("resolved value %q is not an IPv6 address", value)
+		}
+		return value, "", nil
+	}
+	if source.Optional {
+		return "", "", nil
+	}
+	return "", "AddressUnresolved", nil
+}
+
 func expandUpstreams(store Store, values []string) []string {
 	var out []string
 	for _, value := range values {
@@ -390,6 +479,17 @@ func dnsResolverDependsOn(router *api.Router, ref daemonapi.ResourceRef) bool {
 	}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DNSResolver" {
+			if resource.Kind == "DNSZone" {
+				zoneSpec, err := resource.DNSZoneSpec()
+				if err != nil {
+					continue
+				}
+				for _, dep := range dnsZoneStatusRefs(zoneSpec) {
+					if dep == ref {
+						return true
+					}
+				}
+			}
 			continue
 		}
 		spec, err := resource.DNSResolverSpec()
@@ -403,6 +503,21 @@ func dnsResolverDependsOn(router *api.Router, ref daemonapi.ResourceRef) bool {
 		}
 	}
 	return false
+}
+
+func dnsZoneStatusRefs(spec api.DNSZoneSpec) []daemonapi.ResourceRef {
+	var refs []daemonapi.ResourceRef
+	add := func(expr string) {
+		kind, name, ok := statusRefResource(expr)
+		if ok {
+			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: kind, Name: name})
+		}
+	}
+	for _, record := range spec.Records {
+		add(record.IPv4Source.Field)
+		add(record.IPv6Source.Field)
+	}
+	return refs
 }
 
 func dnsResolverStatusRefs(spec api.DNSResolverSpec) []daemonapi.ResourceRef {

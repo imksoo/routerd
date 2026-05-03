@@ -47,6 +47,24 @@ listen:
 If a required address source is not available yet, the resolver stays
 `Pending(AddressUnresolved)` instead of starting with a stale address.
 
+## Dynamic zone records
+
+`DNSZone.spec.records[].ipv4` and `ipv6` are literal addresses.
+Use `ipv4Source` or `ipv6Source` when a record address comes from another
+resource status.
+
+```yaml
+records:
+  - hostname: router
+    ipv4: 172.18.0.1
+    ipv6Source:
+      field: ${IPv6DelegatedAddress/lan-base.status.address}
+```
+
+If a required record source is not available yet, the record field is marked in
+`DNSZone.status.pendingRecords`. The resolver is regenerated when the source
+resource changes, and the record is published after the field resolves.
+
 ## Network-constrained upstreams
 
 `sources[].viaInterface` binds outgoing queries to a specific interface on Linux.

@@ -2824,8 +2824,38 @@
                             "ipv4": {
                               "type": "string"
                             },
+                            "ipv4Source": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "field": {
+                                  "type": "string"
+                                },
+                                "optional": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "field"
+                              ],
+                              "type": "object"
+                            },
                             "ipv6": {
                               "type": "string"
+                            },
+                            "ipv6Source": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "field": {
+                                  "type": "string"
+                                },
+                                "optional": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "field"
+                              ],
+                              "type": "object"
                             },
                             "ttl": {
                               "minimum": 0,
