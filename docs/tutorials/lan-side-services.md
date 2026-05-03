@@ -74,16 +74,20 @@ Android は DHCPv6 の DNS だけでは名前解決できないためです。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DNSAnswerScope
+  kind: DNSZone
   metadata:
-    name: lan-dns
+    name: lan-zone
   spec:
-    localDomain: home.example
-    hostRecords:
+    zone: home.example
+    records:
       - hostname: router
         ipv4: 192.0.2.1
         ipv6: 2001:db8:1::1
-    ddns: true
+    dhcpDerived:
+      sources:
+        - DHCPv4Server/lan-dhcpv4
+      hostnameSuffix: home.example
+      ddns: true
 ```
 
 最初は予行実行で dnsmasq 設定だけを確認します。

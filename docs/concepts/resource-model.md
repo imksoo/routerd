@@ -46,7 +46,7 @@ routerd は次の API グループを使います。
 ## 依存関係
 
 リソースは他のリソースを名前で参照します。
-たとえば `IPv6DelegatedAddress` は `DHCPv6PrefixDelegation` を参照し、`DSLiteTunnel` は `DHCPv6Information` や `DNSResolverUpstream` の結果を参照します。
+たとえば `IPv6DelegatedAddress` は `DHCPv6PrefixDelegation` を参照し、`DSLiteTunnel` は `DHCPv6Information` や `DNSResolver` の結果を参照します。
 
 依存元がまだ準備できていない場合、リソースは `Pending` になります。
 準備できると `Applied`、`Bound`、`Up`、`Installed`、`Healthy` などの段階に進みます。

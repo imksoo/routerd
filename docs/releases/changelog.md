@@ -7,12 +7,14 @@ title: Changelog
 routerd は出荷前のソフトウェアです。
 この履歴は、利用者が現在の API 名と実装済み範囲を間違えないために残します。
 
-## Unreleased
+## 0.2.0
 
-- Phase 1.9-E3: `routerd-doh-proxy` の native backend を拡張しました。
-  DoH、DoT、DoQ、平文 UDP DNS を優先順に並べ、失敗時は下位の上流へ切り替えます。
-- Phase 1.9-E2: router05 で `DoHProxy` を実適用しました。
-  dnsmasq からローカルの `routerd-doh-proxy` へ転送し、NextDNS 側のログ照合まで確認しました。
+- Phase 2.0: DNS を `DNSZone` と `DNSResolver` に整理しました。
+  `routerd-dns-resolver` がローカルゾーン、条件付き転送、DoH、DoT、DoQ、平文 UDP DNS、キャッシュを扱います。
+  dnsmasq は DHCPv4、DHCPv6、中継、RA に限定しました。
+  `viaInterface`、`bootstrapResolver`、複数 listen、DNSSEC 指定を追加しました。
+- Phase 1.9: router05 の常駐運用を systemd ユニットへ移しました。
+  その後、暗号化 DNS プロキシーを実適用し、NextDNS 側のログ照合まで確認しました。
 - Phase 1.8: 文書を現在のコードに合わせて全面整理しました。
   旧 DHCPv6 クライアント経路、旧 Kind 名、古いラボ前提を利用者向け本文から取り除きました。
 - Phase 1.7: router02 の NixOS 設定を宣言的な `routerd-dhcpv6-client` ユニットへ移しました。
@@ -29,7 +31,7 @@ routerd は出荷前のソフトウェアです。
 - Phase 1.5b: `NAT44Rule` と conntrack 観測を追加しました。
   `/proc/net/nf_conntrack` がない環境では、sysctl 由来の集計へ縮退します。
 - Phase 1.5a: dnsmasq による LAN 側サービスを拡張しました。
-  DHCPv4、DHCPv6、RA、DNS 応答、条件付き転送を 1 つの管理対象 dnsmasq 設定へ統合します。
+  DHCPv4、DHCPv6、RA、中継の設定を管理対象 dnsmasq 設定へ統合しました。
 - Phase 2-B: `WANEgressPolicy`、`EventRule`、`DerivedEvent`、`HealthCheck` を追加しました。
 - Phase 2-A: DHCPv6 情報要求、DS-Lite、IPv4 経路、RA、DHCPv6 サーバーをカスケードに追加しました。
 - Phase 1: DHCPv6-PD から LAN アドレス、DNS 応答へつながる最初の controller chain を追加しました。

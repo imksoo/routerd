@@ -61,7 +61,7 @@ ip route show default
 nft list table ip routerd_nat
 ```
 
-AFTR FQDN が解決できない場合、`DNSResolverUpstream` の条件付き転送を確認します。
+AFTR FQDN が解決できない場合、`DNSResolver` の `forward` 応答元を確認します。
 公開 DNS では AFTR FQDN が解決できない環境があります。
 
 ## conntrack

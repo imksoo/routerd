@@ -1,72 +1,91 @@
 ---
-title: 暗号化 DNS 上流
+title: プライベート DNS 上流
 slug: /how-to/dns-private-upstream
 ---
 
-# 暗号化 DNS 上流
+# プライベート DNS 上流
 
-routerd は、ローカル DNS プロキシーを起動できます。
-管理対象の dnsmasq は、LAN からの通常の DNS 問い合わせをローカルプロキシーへ転送します。
-プロキシーは、設定された優先順で上流 DNS を選びます。
+`DNSResolver` は `routerd-dns-resolver` を起動します。
+このデーモンは UDP と TCP で待ち受けます。
+`spec.sources` を上から順に評価します。
+最初に一致した応答元が問い合わせに応答します。
 
-デーモン名は当面 `routerd-doh-proxy` のままです。
-組み込みバックエンド (`backend: native`) は、次の URL 形式を扱います。
+dnsmasq は DNS を配信しません。
+dnsmasq は DHCP サーバー、DHCP 中継、RA を担当します。
 
-| URL 形式 | プロトコル | 既定ポート |
+## 上流プロトコル
+
+| スキーム | プロトコル | 既定ポート |
 | --- | --- | --- |
-| `https://` | DoH | URL に従います |
-| `tls://` | DoT | 853 |
-| `quic://` | DoQ | 853 |
-| `udp://` | 平文 UDP DNS | 53 |
+| `https://` | DNS over HTTPS | URL に依存します |
+| `tls://` | DNS over TLS | 853 |
+| `quic://` | DNS over QUIC | 853 |
+| `udp://` | 平文 DNS over UDP | 53 |
 
-## 設定例
+`upstreams` の順序が優先順位です。
+routerd は正常な上流のうち、もっとも優先度が高いものを使います。
+失敗した場合は次の上流へ切り替えます。
+
+## 例
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DoHProxy
+  kind: DNSResolver
   metadata:
-    name: public-dns
+    name: lan-resolver
   spec:
-    backend: native
-    listenAddress: 127.0.0.1
-    listenPort: 5053
-    upstreams:
-    - https://1.1.1.1/dns-query
-    - tls://dns.google
-    - quic://dns.google
-    - udp://8.8.8.8:53
-    healthcheck:
-      interval: 15s
-      timeout: 3s
-      failThreshold: 3
-      passThreshold: 2
+    listen:
+    - name: lan
+      addresses:
+      - 192.168.160.5
+      - 127.0.0.1
+      port: 53
+      sources:
+      - local
+      - ngn-aftr
+      - default
 
-- apiVersion: net.routerd.net/v1alpha1
-  kind: DNSResolverUpstream
-  metadata:
-    name: default-resolver
-  spec:
-    zones:
-    - zone: .
-      servers:
-      - type: doh
-        proxyRef: public-dns
-        listenAddress: 127.0.0.1
-        listenPort: 5053
+    sources:
+    - name: local
+      kind: zone
+      match:
+      - lab.example
+      zoneRef:
+      - DNSZone/lan
+
+    - name: ngn-aftr
+      kind: forward
+      match:
+      - transix.jp
+      upstreams:
+      - ${DHCPv6Information/wan-info.status.dnsServers}
+
+    - name: default
+      kind: upstream
+      match:
+      - "."
+      upstreams:
+      - https://cloudflare-dns.com/dns-query
+      - tls://dns.google
+      - quic://dns.google
+      - udp://8.8.8.8:53
+      healthcheck:
+        interval: 15s
+        timeout: 3s
+        failThreshold: 3
+        passThreshold: 2
+      dnssecValidate: true
+      viaInterface: ${Interface/wan.status.ifname}
+      bootstrapResolver:
+      - 2606:4700:4700::1111
+
+    cache:
+      enabled: true
+      maxEntries: 10000
+      minTTL: 60s
+      maxTTL: 24h
+      negativeTTL: 30s
 ```
 
-`spec.upstreams` の並び順が優先順位です。
-routerd は、正常な上流のうち最も上にあるものを使います。
-その上流が失敗すると、次の上流へ切り替えます。
-定期確認で連続失敗すると、上流は停止扱いになります。
-確認が連続成功すると、優先順位の候補へ戻ります。
-
-## 注意
-
-cloudflared 2026.2.0 では `proxy-dns` が削除されました。
-新しい設定では組み込みバックエンド (`backend: native`) を使います。
-`cloudflared` と `dnscrypt` の外部バックエンドは、過去の実験用として API に残しています。
-router05 のラボでも組み込みバックエンドを使っています。
-
-プロバイダー固有のアカウント識別子は、共有する設定例に書かないでください。
-本番用の URL は、そのホストだけの YAML に書きます。
+共有する例には、プロバイダー固有のアカウント識別子を入れません。
+本番用 URL は、各ホストのローカル YAML にだけ書きます。

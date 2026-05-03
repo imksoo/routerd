@@ -5,12 +5,15 @@ slug: /how-to/dns-private-upstream
 
 # Private DNS upstreams
 
-routerd can run a local DNS proxy for encrypted and fallback upstreams.
-The managed dnsmasq instance forwards ordinary LAN DNS traffic to the local
-proxy address. The proxy then selects an upstream by priority.
+`DNSResolver` runs `routerd-dns-resolver`.
+The daemon listens on UDP and TCP.
+It evaluates `spec.sources` in order.
+The first matching source answers the query.
 
-The daemon name is still `routerd-doh-proxy`.
-The native backend now supports four URL schemes:
+dnsmasq no longer serves DNS.
+It remains the DHCP server, DHCP relay, and RA helper.
+
+## Upstream protocols
 
 | Scheme | Protocol | Default port |
 | --- | --- | --- |
@@ -19,54 +22,70 @@ The native backend now supports four URL schemes:
 | `quic://` | DNS over QUIC | 853 |
 | `udp://` | Plain DNS over UDP | 53 |
 
+The order in `upstreams` is the priority order.
+routerd first tries the highest healthy upstream.
+If it fails, the resolver tries the next upstream.
+
 ## Example
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DoHProxy
+  kind: DNSResolver
   metadata:
-    name: public-dns
+    name: lan-resolver
   spec:
-    backend: native
-    listenAddress: 127.0.0.1
-    listenPort: 5053
-    upstreams:
-    - https://1.1.1.1/dns-query
-    - tls://dns.google
-    - quic://dns.google
-    - udp://8.8.8.8:53
-    healthcheck:
-      interval: 15s
-      timeout: 3s
-      failThreshold: 3
-      passThreshold: 2
+    listen:
+    - name: lan
+      addresses:
+      - 192.168.160.5
+      - 127.0.0.1
+      port: 53
+      sources:
+      - local
+      - ngn-aftr
+      - default
 
-- apiVersion: net.routerd.net/v1alpha1
-  kind: DNSResolverUpstream
-  metadata:
-    name: default-resolver
-  spec:
-    zones:
-    - zone: .
-      servers:
-      - type: doh
-        proxyRef: public-dns
-        listenAddress: 127.0.0.1
-        listenPort: 5053
+    sources:
+    - name: local
+      kind: zone
+      match:
+      - lab.example
+      zoneRef:
+      - DNSZone/lan
+
+    - name: ngn-aftr
+      kind: forward
+      match:
+      - transix.jp
+      upstreams:
+      - ${DHCPv6Information/wan-info.status.dnsServers}
+
+    - name: default
+      kind: upstream
+      match:
+      - "."
+      upstreams:
+      - https://cloudflare-dns.com/dns-query
+      - tls://dns.google
+      - quic://dns.google
+      - udp://8.8.8.8:53
+      healthcheck:
+        interval: 15s
+        timeout: 3s
+        failThreshold: 3
+        passThreshold: 2
+      dnssecValidate: true
+      viaInterface: ${Interface/wan.status.ifname}
+      bootstrapResolver:
+      - 2606:4700:4700::1111
+
+    cache:
+      enabled: true
+      maxEntries: 10000
+      minTTL: 60s
+      maxTTL: 24h
+      negativeTTL: 30s
 ```
-
-The order of `spec.upstreams` is the priority order.
-routerd first tries the highest healthy upstream.
-If that upstream fails, the proxy tries the next one.
-Periodic probes mark an upstream down after repeated failures.
-When probes succeed again, the upstream returns to the priority list.
-
-## Notes
-
-Cloudflared 2026.2.0 removed the `proxy-dns` command.
-For new configurations, use `backend: native`.
-The external `cloudflared` and `dnscrypt` backends remain in the API for older
-experiments, but the native backend is the path used by the router05 lab.
 
 Do not put provider-specific account identifiers in shared examples.
 Use production provider URLs only in the host-local YAML file.

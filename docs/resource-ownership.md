@@ -25,8 +25,9 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `DHCPv4Lease` | `routerd-dhcpv4-client` の socket、lease、events |
 | `PPPoESession` | `routerd-pppoe-client` の socket、state、pppd/ppp 設定 |
 | `HealthCheck` | `routerd-healthcheck` の socket、state、events |
-| `DHCPv4Server` / `DHCPv6Server` / `IPv6RouterAdvertisement` / `DNSAnswerScope` | 管理対象 dnsmasq 設定 |
-| `DNSResolverUpstream` | dnsmasq の既定上流と条件付き転送設定 |
+| `DHCPv4Server` / `DHCPv6Server` / `IPv6RouterAdvertisement` | 管理対象 dnsmasq 設定 |
+| `DNSZone` | `routerd-dns-resolver` のローカル権威ゾーン |
+| `DNSResolver` | `routerd-dns-resolver` の socket、state、events、待ち受け設定 |
 | `DSLiteTunnel` | Linux `ip6tnl` インターフェース |
 | `IPv4Route` | カーネル経路 |
 | `NAT44Rule` | nftables `routerd_nat` テーブル |

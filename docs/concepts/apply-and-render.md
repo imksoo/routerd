@@ -53,10 +53,10 @@ sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 生成だけでホストが変わるとは限りません。
 実際に反映するかどうかは、適用処理と予行実行の指定に従います。
 
-dnsmasq の既定上流は `DNSResolverUpstream` から生成します。
-暗号化 DNS を使う場合は、dnsmasq が `DoHProxy` のローカル待ち受けへ転送します。
-`DoHProxy` は DoH、DoT、DoQ、平文 UDP DNS の上流を優先順に試します。
-このため、dnsmasq 側の設定はローカルの転送先だけで済みます。
+Phase 2.0 以降、dnsmasq は DNS 応答を担当しません。
+dnsmasq は DHCPv4、DHCPv6、中継、RA の設定だけを生成します。
+DNS の待ち受け、ローカルゾーン、条件付き転送、暗号化 DNS は `DNSResolver` が扱います。
+`DNSResolver` は `routerd-dns-resolver` の実行設定です。
 
 ## 調整する
 

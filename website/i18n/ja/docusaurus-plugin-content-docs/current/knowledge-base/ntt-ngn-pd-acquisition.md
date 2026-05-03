@@ -31,15 +31,22 @@ DNS、SNTP、domain-search は返ることがありますが、AFTR は空であ
 `gw.transix.jp` などの AFTR FQDN は、公開 DNS では解決できない場合があります。
 HGW が広告する RDNSS へ問い合わせる必要があります。
 
-routerd では `DNSResolverUpstream` の `zones` で条件付き転送を表します。
+routerd では `DNSResolver` の `forward` 応答元で条件付き転送を表します。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DNSResolverUpstream
+  kind: DNSResolver
   metadata:
     name: resolver
   spec:
-    zones:
+    listen:
+      - name: local
+        addresses: [127.0.0.1]
+        port: 53
+    sources:
+      - name: transix-aftr
+        kind: forward
+        match: [transix.jp]
       - zone: transix.jp
         servers:
           - 2404:8e00::feed:101

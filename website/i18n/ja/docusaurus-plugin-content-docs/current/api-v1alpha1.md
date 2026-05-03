@@ -81,17 +81,20 @@ DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
 | `IPv6RouterAdvertisement` | RA、PIO、RDNSS、DNSSL、M/O フラグ、MTU、優先度、寿命を生成します。 |
 | `DHCPv6Server` | dnsmasq の DHCPv6 サーバーです。`stateless`、`stateful`、`both` を扱います。 |
 | `DHCPv6Scope` | DHCPv6 の範囲を表します。 |
-| `DNSAnswerScope` | host-record、ローカルドメイン、DDNS、DNSSEC などの dnsmasq DNS 応答を表します。 |
-| `DNSResolverUpstream` | 既定の上流 DNS と、ゾーンごとの条件付き転送を表します。 |
-| `DoHProxy` | dnsmasq から参照するローカル DNS プロキシーです。DoH、DoT、DoQ、平文 UDP DNS を優先順に扱います。 |
-| `DNSConditionalForwarder` | 条件付き DNS 転送の互換的な入口です。 |
+| `DNSZone` | ローカル権威ゾーンを表します。手動レコードと DHCP リース由来のレコードを扱います。 |
+| `DNSResolver` | `routerd-dns-resolver` が管理する DNS 待ち受け、応答元、上流、キャッシュを表します。 |
 
 Android は DHCPv6 の DNS だけでは名前解決を完結できないため、IPv6 LAN では `IPv6RouterAdvertisement.spec.rdnss` を設定します。
 
-`DoHProxy.spec.upstreams` は URL の並び順を優先順位として扱います。
+dnsmasq は DHCPv4、DHCPv6、中継、RA だけを担当します。
+DNS の待ち受けと応答は `DNSResolver` が担当します。
+`DNSResolver.spec.sources` では、ローカルゾーン、条件付き転送、既定の上流を優先順に並べます。
 `https://` は DoH、`tls://` は DoT、`quic://` は DoQ、`udp://` は平文 DNS です。
-上位の上流が失敗すると、下位の上流へ自動的に切り替えます。
-`healthcheck` では確認間隔、タイムアウト、失敗回数、復帰回数を指定できます。
+`listen` は複数指定できます。
+待ち受けごとに利用する `sources` の部分集合を選べます。
+`sources[].viaInterface` は特定インターフェース経由の送信を指定します。
+`sources[].bootstrapResolver` は DoH や DoT の名前解決に使う補助 DNS サーバーです。
+DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate` で指定します。
 
 ## DS-Lite、経路、NAT
 

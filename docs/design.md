@@ -521,7 +521,8 @@ $ routerctl plan
 [validate] ok
 [diff]    ~ DHCPv6PrefixDelegation/wan-pd
             spec.profile: ntt-ngn-direct → ntt-hgw-lan-pd
-          + DNSAnswerScope/lan-aaaa
+          + DNSZone/lan
+          + DNSResolver/lan-resolver
 [plan]    - PD daemon 再起動 (現 lease release)
           - dnsmasq AAAA 応答有効化 (PD bound 後)
 ready to apply. run: routerctl apply
@@ -605,7 +606,7 @@ verb は 過去形 / 受動態 (`sent, received, bound, renewed, expired, starte
 
 ### 10.6 API リソースの Kind (新規追加)
 
-H 必須: `DHCPv6PrefixDelegation`, `IPv6DelegatedAddress`, `IPv6RouterAdvertisement` (LAN 送出), `IPv6RAObservation` (WAN 受信、旧 `IPv6RAAddress`), `DHCPv6Server`, `DHCPv4Server`, `DHCPv4Reservation`, `DHCPv4Relay`, `IPv4Address`, `IPv4Route`, `Link`, `Bridge`, `VLAN`, `NAT44Rule`, `ConntrackObserver`, `Firewall*`, `DNSAnswerScope`, `DNSResolverUpstream`, `WANEgressPolicy`, `HealthCheck`, `EventRule`, `DerivedEvent`
+H 必須: `DHCPv6PrefixDelegation`, `IPv6DelegatedAddress`, `IPv6RouterAdvertisement` (LAN 送出), `IPv6RAObservation` (WAN 受信、旧 `IPv6RAAddress`), `DHCPv6Server`, `DHCPv4Server`, `DHCPv4Reservation`, `DHCPv4Relay`, `IPv4Address`, `IPv4Route`, `Link`, `Bridge`, `VLAN`, `NAT44Rule`, `ConntrackObserver`, `Firewall*`, `DNSZone`, `DNSResolver`, `WANEgressPolicy`, `HealthCheck`, `EventRule`, `DerivedEvent`
 
 H+ オプション: `DSLiteTunnel`, `WireGuardInterface`, `WireGuardPeer`, `MAPETunnel` (将来)
 
@@ -826,17 +827,29 @@ spec:
     - field: ${DHCPv6PrefixDelegation/wan-pd.status.phase}
       equals: Bound
 ---
-# 条件付きフォワーダー
-kind: DNSResolverUpstream
-metadata: { name: ngn-resolver }
+# DNS リゾルバー
+kind: DNSResolver
+metadata: { name: lan-resolver }
 spec:
-  zones:
-    - zone: transix.jp
-      servers:
+  listen:
+    - name: lan
+      addresses: [192.168.10.1, 127.0.0.1]
+      port: 53
+      sources: [local-zone, transix-aftr, default]
+  sources:
+    - name: local-zone
+      kind: zone
+      match: [lan]
+      zoneRef: [DNSZone/lan]
+    - name: transix-aftr
+      kind: forward
+      match: [transix.jp]
+      upstreams:
         - ${DHCPv6Information/wan-info.status.dnsServers}
-  ready_when:
-    - field: ${DHCPv6Information/wan-info.status.dnsServers}
-      not_empty: true
+    - name: default
+      kind: upstream
+      match: ["."]
+      upstreams: [https://cloudflare-dns.com/dns-query]
 ---
 # LAN address (derived)
 kind: IPv6DelegatedAddress
@@ -911,7 +924,7 @@ spec:
             not_empty: true
         - - field: ${DSLiteTunnel/ds-lite.spec.aftrFQDN}
             not_empty: true
-          - field: ${DNSResolverUpstream/ngn-resolver.status.phase}
+          - field: ${DNSResolver/lan-resolver.status.phase}
             equals: Applied
         - - field: ${DSLiteTunnel/ds-lite.spec.aftrIPv6}
             not_empty: true
@@ -924,19 +937,19 @@ spec:
   destination: 0.0.0.0/0
   device: ${DSLiteTunnel/ds-lite.status.interface}
 ---
-# AAAA 応答 (memory: 「PD broken / DS-Lite down 時に出さない」)
-kind: DNSAnswerScope
+# ローカル DNS ゾーン (memory: 「PD broken / DS-Lite down 時に出さない」)
+kind: DNSZone
 metadata:
-  name: lan-aaaa
+  name: lan
   ownerRefs: [{ kind: IPv6DelegatedAddress, name: lan }]
 spec:
-  interface: lan
-  family: ipv6
-  ready_when:
-    - field: ${IPv6DelegatedAddress/lan.status.phase}
-      equals: Applied
-    - field: ${IPv4Route/default-via-dslite.status.phase}
-      equals: Installed
+  zone: lan
+  records:
+    - hostname: router
+      ipv6: 2001:db8::1
+  dhcpDerived:
+    sources: [DHCPv4Server/lan-dhcpv4]
+    hostnameSuffix: lan
 ```
 
 PD bound から AAAA 応答開始まで ~1.5s (詳細 timeline は前 doc eventbus § 17.2)。
@@ -946,7 +959,7 @@ PD bound から AAAA 応答開始まで ~1.5s (詳細 timeline は前 doc eventb
 ### 14.1 DS-Lite を実適用する際の注意
 
 router05 の実反映では `routerd-dhcpv6-client` からの RDNSS を
-`DNSResolverUpstream` に流し、routerd 管理 dnsmasq 経由で
+`DNSResolver` の `forward` 応答元に流し、`routerd-dns-resolver` 経由で
 `gw.transix.jp` の AAAA を解決してから tunnel を作る。NGN HGW 経由では
 DHCPv6 Information Reply に AFTR option が落ちないため、production path は
 `aftrFQDN` または `aftrIPv6` の static fallback である。
@@ -1091,7 +1104,7 @@ pkg/apply/engine.go の per-Kind dispatch (1678 行 → 数百行を狙う)
 
 memory 「PD broken 時に AAAA 出さない」「PD 取得は時間と共に必ず崩壊する → active Renew 必須」「IPv6 broken 時の AAAA は責任放棄」は **新 architecture の構造で守る**:
 
-- AAAA 抑制 = `DNSAnswerScope.ready_when: [PD bound, DS-Lite up]` で declarative
+- AAAA 抑制 = `DNSZone` / `DNSResolver` を ownerRefs cascade に接続して表現する
 - active Renew = daemon contract で義務化 (§ 11.4)
 - 責任放棄禁止 = ownerRefs cascade で PD 失効 → 関連 LAN service 自動 suspend
 
@@ -1103,7 +1116,8 @@ memory 「PD broken 時に AAAA 出さない」「PD 取得は時間と共に必
 |-------|------|------|
 | **0. 土台** | `pkg/daemonapi` 拡張、`pkg/bus`、`pkg/source`、`pkg/controller/framework`、`cmd/routerd-dhcpv6-client` (PD daemon、ablation flag 移植) | pve05 で daemon 単体起動 + PD 取得 |
 | **1. 1 chain** | `LANAddressController`、`DNSAnswerController`、`PrefixDelegationController` を実装。daemon → bus → controller → sink の 1 chain を動かす | PD bound から dnsmasq AAAA 開始まで < 5s 計測 |
-| **1.5 LAN/WAN service** | dnsmasq を拡張し、`DHCPv4Server`, `DHCPv4Reservation`, `DHCPv6Server` stateful/stateless/both, `IPv6RouterAdvertisement` PIO/RDNSS/DNSSL/M/O flag, `DHCPv4Relay`, `DNSAnswerScope` hostRecords/local domain/DDNS/DNSSEC を同一インスタンスに統合。続けて `routerd-dhcpv4-client`、`routerd-pppoe-client`、`NAT44Rule`、conntrack 観測を追加。router05 で DS-Lite トンネル、IPv4 既定経路、NAT44 を実適用。状態を持つ firewall/filter chain は棚上げし no-op のまま | router05 で port 1053 test instance の設定出力と構文、AFTR 条件付き DNS 解決、`ds-routerd-test` 実トンネル、IPv4 `curl`、nftables NAT table、conntrack procfs snapshot を確認 |
+| **1.5 LAN/WAN service** | dnsmasq を拡張し、`DHCPv4Server`, `DHCPv4Reservation`, `DHCPv6Server` stateful/stateless/both, `IPv6RouterAdvertisement` PIO/RDNSS/DNSSL/M/O flag, `DHCPv4Relay` を管理対象 dnsmasq 設定へ統合。続けて `routerd-dhcpv4-client`、`routerd-pppoe-client`、`NAT44Rule`、conntrack 観測を追加。router05 で DS-Lite トンネル、IPv4 既定経路、NAT44 を実適用。状態を持つ firewall/filter chain は棚上げし no-op のまま | router05 で設定出力と構文、AFTR 条件付き DNS 解決、`ds-routerd-test` 実トンネル、IPv4 `curl`、nftables NAT table、conntrack procfs snapshot を確認 |
+| **2.0 DNS resolver** | `DoHProxy`, `DNSResolverUpstream`, `DNSAnswerScope`, `DNSConditionalForwarder` を廃止し、`DNSZone` と `DNSResolver` へ統合。dnsmasq は DHCP/RA 専用に縮小。`routerd-dns-resolver` がローカル権威ゾーン、条件付き転送、DoH/DoT/DoQ/UDP、複数 listen、`viaInterface`、`bootstrapResolver`、DNSSEC 指定を扱う | router05 で NextDNS 経由の上流照合、ローカル権威応答、DHCP 由来レコード、dnsmasq DHCP 専用化を確認 |
 | **2. cascade** | `IPv6RouterAdvertisement`, `DHCPv6Information`, `DSLiteTunnel`, `IPv4Route` 関連 controller、`WANEgressPolicy`、`HealthCheck`、`EventRule`、`DerivedEvent` engine | PD → DS-Lite → AAAA cascade 全 ~1.5s で完走 |
 | **3. config 取扱** | `ConfigWatcher` (notify only)、`ConfigLoader` (明示 trigger)、`routerctl plan/apply/confirm`、commit-confirmed | リモート設定変更 → SSH 切断 → 自動 rollback テスト |
 | **4. demolition** | § 18.2 を一気に削除、`pkg/api/specs.go` 縮小、`pkg/apply/engine.go` 縮小、`pkg/state/pdlease.go` 簡略化、test fixture 全更新 | go test ./... 通過、pve05-07 全 host で 24h × 2 cycle 安定 |

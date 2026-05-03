@@ -39,7 +39,7 @@ AFTR option が DHCPv6 情報要求で返らない環境があります。
 そのため、`DSLiteTunnel` は AFTR FQDN または AFTR IPv6 の静的指定を正規経路として扱います。
 
 AFTR FQDN は公開 DNS で解決できない場合があります。
-`DNSResolverUpstream.zones` による条件付き転送を使います。
+`DNSResolver.spec.sources[].kind: forward` による条件付き転送を使います。
 
 ## 5. イベント連携
 
