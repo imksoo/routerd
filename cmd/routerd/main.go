@@ -2282,6 +2282,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDryRunDHCPv6 := fs.Bool("controller-chain-dry-run-dhcpv6", true, "do not start DHCPv6 service in the experimental controller chain")
 	controllerDryRunDHCPv4Lease := fs.Bool("controller-chain-dry-run-dhcpv4lease", true, "do not apply DHCPv4 lease address/default route in the experimental controller chain")
 	controllerDryRunPPPoESession := fs.Bool("controller-chain-dry-run-pppoesession", true, "do not apply PPPoE session route/DNS in the experimental controller chain")
+	controllerDryRunDoHProxy := fs.Bool("controller-chain-dry-run-doh-proxy", true, "do not start DoH proxy daemons in the experimental controller chain")
 	controllerDryRunNAT := fs.Bool("controller-chain-dry-run-nat", true, "do not apply nftables NAT rules in the experimental controller chain")
 	controllerDaemonSockets := fs.String("controller-chain-daemon-sockets", "", "comma-separated resource=unix-socket overrides for the experimental controller chain")
 	controllerDnsmasqCommand := fs.String("controller-chain-dnsmasq-command", "dnsmasq", "dnsmasq command for the experimental controller chain")
@@ -2348,6 +2349,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 				DryRunDHCPv6:       *controllerDryRunDHCPv6,
 				DryRunDHCPv4Lease:  *controllerDryRunDHCPv4Lease,
 				DryRunPPPoESession: *controllerDryRunPPPoESession,
+				DryRunDoHProxy:     *controllerDryRunDoHProxy,
 				DryRunNAT:          *controllerDryRunNAT,
 				DnsmasqCommand:     *controllerDnsmasqCommand,
 				DnsmasqConfig:      *controllerDnsmasqConfig,
