@@ -625,6 +625,8 @@ func canonicalResourceKind(kind string) string {
 		"nat44rule":              "NAT44Rule",
 		"dslite":                 "DSLiteTunnel",
 		"dslitetunnel":           "DSLiteTunnel",
+		"doh":                    "DoHProxy",
+		"dohproxy":               "DoHProxy",
 		"pppoe":                  "PPPoEInterface",
 		"pppoeinterface":         "PPPoEInterface",
 		"pppoesession":           "PPPoESession",
@@ -652,7 +654,7 @@ func apiVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSAnswerScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DNSResolverUpstream", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSAnswerScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DNSResolverUpstream", "DoHProxy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -3624,6 +3626,9 @@ func availableIPv4DefaultRouteCandidates(ctx effectiveRouterAvailability, candid
 		if ifname == "" || !ctx.LinkExists(ifname) {
 			continue
 		}
+		if !routeSetTargetUsable(ctx, candidate.Interface) {
+			continue
+		}
 		available = append(available, candidate)
 	}
 	return available
@@ -3656,7 +3661,7 @@ func routeSetTargetUsable(ctx effectiveRouterAvailability, name string) bool {
 		if err != nil {
 			return false
 		}
-		_, _, err = dsliteLocalAddress(spec, ifname, ctx.Aliases, delegated)
+		_, _, err = dsliteLocalAddressWithPrefixes(spec, ifname, ctx.Aliases, delegated, map[string]string{})
 		return err == nil
 	}
 	return true
@@ -4463,6 +4468,9 @@ func dsliteLocalAddressWithPrefixes(spec api.DSLiteTunnelSpec, ifname string, al
 				return "", "", err
 			}
 			return local, localIfName, nil
+		}
+		if pdPrefixes != nil {
+			return "", "", errNoIPv6PrefixAvailable
 		}
 		local, err := deriveIPv6AddressFromInterface(localIfName, suffix)
 		if err != nil {

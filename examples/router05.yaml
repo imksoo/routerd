@@ -1,0 +1,347 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: router05
+spec:
+  resources:
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: Interface
+    metadata:
+      name: ens18
+    spec:
+      ifname: ens18
+      managed: false
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: Interface
+    metadata:
+      name: ens19
+    spec:
+      ifname: ens19
+      managed: false
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: Interface
+    metadata:
+      name: lo
+    spec:
+      ifname: lo
+      managed: false
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: Interface
+    metadata:
+      name: ds-routerd-test
+    spec:
+      ifname: ds-routerd-test
+      managed: false
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: Link
+    metadata:
+      name: ens19
+    spec:
+      ifname: ens19
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: Link
+    metadata:
+      name: lo
+    spec:
+      ifname: lo
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DHCPv6PrefixDelegation
+    metadata:
+      name: wan-pd
+    spec:
+      interface: ens18
+      prefixLength: 60
+      iaid: "1"
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DHCPv6Information
+    metadata:
+      name: wan-info
+      ownerRefs:
+      - kind: DHCPv6PrefixDelegation
+        name: wan-pd
+    spec:
+      interface: ens18
+      request:
+      - aftr-name
+      - dns-servers
+      - sntp-servers
+      - domain-search
+      ready_when:
+      - field: ${DHCPv6PrefixDelegation/wan-pd.status.phase}
+        equals: Bound
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPv6DelegatedAddress
+    metadata:
+      name: lan-base
+      ownerRefs:
+      - kind: DHCPv6PrefixDelegation
+        name: wan-pd
+    spec:
+      interface: ens19
+      prefixDelegation: wan-pd
+      prefixSource: ${DHCPv6PrefixDelegation/wan-pd.status.currentPrefix}
+      subnetID: "1"
+      addressSuffix: ::1
+      ready_when:
+      - field: ${DHCPv6PrefixDelegation/wan-pd.status.phase}
+        equals: Bound
+      - field: ${Link/ens19.status.phase}
+        equals: Up
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPv6RouterAdvertisement
+    metadata:
+      name: lan-ra
+      ownerRefs:
+      - kind: IPv6DelegatedAddress
+        name: lan-base
+    spec:
+      interface: ens19
+      prefixSource: ${IPv6DelegatedAddress/lan-base.status.address}
+      rdnss:
+      - ${DHCPv6Information/wan-info.status.dnsServers}
+      dnssl:
+      - lab.example
+      mFlag: false
+      oFlag: true
+      mtu: 1500
+      prfPreference: high
+      preferredLifetime: "3600"
+      validLifetime: "7200"
+      configPath: /run/routerd/radvd.conf
+      pidFile: /run/routerd/radvd.pid
+      ready_when:
+      - field: ${IPv6DelegatedAddress/lan-base.status.phase}
+        equals: Applied
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DHCPv6Server
+    metadata:
+      name: lan-dhcpv6
+      ownerRefs:
+      - kind: IPv6DelegatedAddress
+        name: lan-base
+    spec:
+      interface: ens19
+      mode: stateless
+      dnsServers:
+      - ${DHCPv6Information/wan-info.status.dnsServers}
+      sntpServers:
+      - ${DHCPv6Information/wan-info.status.sntpServers}
+      domainSearch:
+      - lab.example
+      leaseTime: 12h
+      ready_when:
+      - field: ${IPv6DelegatedAddress/lan-base.status.phase}
+        equals: Applied
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DHCPv4Server
+    metadata:
+      name: lan-dhcpv4
+    spec:
+      interface: ens19
+      addressPool:
+        start: 192.168.160.100
+        end: 192.168.160.200
+        leaseTime: 12h
+      gateway: 192.168.160.5
+      dnsServers:
+      - 192.168.160.5
+      ntpServers:
+      - 192.168.160.5
+      domain: lab.example
+      options:
+      - name: domain-search
+        value: lab.example
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSResolverUpstream
+    metadata:
+      name: ngn-resolver
+      ownerRefs:
+      - kind: DHCPv6Information
+        name: wan-info
+    spec:
+      zones:
+      - zone: transix.jp
+        servers:
+        - ${DHCPv6Information/wan-info.status.dnsServers}
+      ready_when:
+      - field: ${DHCPv6Information/wan-info.status.dnsServers}
+        not_empty: true
+      default:
+        servers:
+        - ${DHCPv6Information/wan-info.status.dnsServers}
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSAnswerScope
+    metadata:
+      name: lan-ipv6-resolver
+      ownerRefs:
+      - kind: IPv6DelegatedAddress
+        name: lan-base
+    spec:
+      interface: ens19
+      family: ipv6
+      delegatedAddress: lan-base
+      hostname: router-ipv6.lab.example
+      port: 53
+      ready_when:
+      - field: ${IPv6DelegatedAddress/lan-base.status.phase}
+        equals: Applied
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSAnswerScope
+    metadata:
+      name: lan-dns
+    spec:
+      interface: ens19
+      localDomain: lab.example
+      ddns: true
+      dnssec: false
+      hostRecords:
+      - hostname: router.lab.example
+        ipv4: 192.168.160.5
+        ipv6: 2409:10:3d60:1221::1
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DSLiteTunnel
+    metadata:
+      name: ds-lite
+      ownerRefs:
+      - kind: DHCPv6Information
+        name: wan-info
+    spec:
+      interface: ens18
+      tunnelName: ds-routerd-test
+      localAddressSource: delegatedAddress
+      localDelegatedAddress: lan-base
+      localAddressSuffix: ::3
+      aftrSource: ${DHCPv6Information/wan-info.status.aftrName}
+      aftrFQDN: gw.transix.jp
+      mtu: 1460
+      ready_when:
+      - any_of:
+        - - field: ${DHCPv6Information/wan-info.status.aftrName}
+            not_empty: true
+        - - field: ${DSLiteTunnel/ds-lite.spec.aftrFQDN}
+            not_empty: true
+          - field: ${DNSResolverUpstream/ngn-resolver.status.phase}
+            equals: Applied
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPv4Route
+    metadata:
+      name: default-via-dslite
+      ownerRefs:
+      - kind: DSLiteTunnel
+        name: ds-lite
+    spec:
+      destination: 0.0.0.0/0
+      device: ${DSLiteTunnel/ds-lite.status.interface}
+      ready_when:
+      - field: ${DSLiteTunnel/ds-lite.status.phase}
+        equals: Up
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: WANEgressPolicy
+    metadata:
+      name: ipv4-default
+    spec:
+      family: ipv4
+      selection: highest-weight-ready
+      hysteresis: 30s
+      candidates:
+      - name: ds-lite
+        source: DSLiteTunnel/ds-lite
+        device: ${DSLiteTunnel/ds-lite.status.interface}
+        weight: 80
+        healthCheck: internet-tcp443
+        ready_when:
+        - field: ${DSLiteTunnel/ds-lite.status.phase}
+          equals: Up
+      - name: dummy-fallback
+        source: Link/dummy-fallback
+        device: dummy0
+        weight: 50
+        ready_when:
+        - field: ${Link/dummy-fallback.status.phase}
+          equals: Up
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: NAT44Rule
+    metadata:
+      name: lan-to-wan
+    spec:
+      type: masquerade
+      egressPolicyRef: ipv4-default
+      sourceRanges:
+      - 192.0.2.0/24
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: HealthCheck
+    metadata:
+      name: internet-tcp443
+    spec:
+      daemon: routerd-healthcheck
+      socketSource: /run/routerd/healthcheck/internet-tcp443.sock
+      targetSource: static
+      target: 1.1.1.1
+      protocol: tcp
+      port: 443
+      interval: 30s
+      timeout: 3s
+      healthyThreshold: 1
+      unhealthyThreshold: 3
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: HealthCheck
+    metadata:
+      name: internet-unreachable
+    spec:
+      daemon: routerd-healthcheck
+      socketSource: /run/routerd/healthcheck/internet-unreachable.sock
+      targetSource: static
+      target: 192.0.2.1
+      protocol: tcp
+      port: 443
+      interval: 30s
+      timeout: 1s
+      healthyThreshold: 1
+      unhealthyThreshold: 1
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: HealthCheck
+    metadata:
+      name: internet-icmp
+    spec:
+      daemon: routerd-healthcheck
+      socketSource: /run/routerd/healthcheck/internet-icmp.sock
+      targetSource: static
+      target: 1.1.1.1
+      protocol: icmp
+      interval: 30s
+      timeout: 3s
+      healthyThreshold: 1
+      unhealthyThreshold: 3
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: EventRule
+    metadata:
+      name: pd-active-window
+    spec:
+      pattern:
+        operator: window
+        topic: routerd.tunnel.ds-lite.up
+        duration: 5m
+        threshold: 3
+        correlate_by: resource.name
+      emit:
+        topic: routerd.virtual.pd-active
+        attributes:
+          resource: ${resource.name}
+          count: ${count}
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DerivedEvent
+    metadata:
+      name: dslite-route-active
+    spec:
+      topic: routerd.virtual.dslite-route-active
+      inputs:
+      - field: ${DSLiteTunnel/ds-lite.status.phase}
+        equals: Up
+      - field: ${IPv4Route/default-via-dslite.status.phase}
+        equals: Installed
+      emitWhen: all_true
+      retractWhen: any_false
+      hysteresis: 5s

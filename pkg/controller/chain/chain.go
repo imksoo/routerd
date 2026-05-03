@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"routerd/pkg/conntrack"
 	"routerd/pkg/controller/conntrackobserver"
 	"routerd/pkg/controller/dhcpv4lease"
+	dohproxycontroller "routerd/pkg/controller/dohproxy"
 	"routerd/pkg/controller/nat44"
 	"routerd/pkg/controller/pppoesession"
 	"routerd/pkg/daemonapi"
@@ -30,6 +32,8 @@ import (
 	daemonsource "routerd/pkg/source/daemon"
 	"routerd/pkg/wanegress"
 )
+
+var dnsmasqMu sync.Mutex
 
 type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
@@ -174,6 +178,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
 	dhcp4Lease := dhcpv4lease.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Lease, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
+	dohProxy := dohproxycontroller.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: true}
 	dns := DNSAnswerController{Router: r.Router, Bus: r.Bus, Store: r.Store, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
 	wan := wanegress.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
@@ -194,6 +199,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	dhcpv6.Start(ctx)
 	dhcp4Lease.Start(ctx)
 	pppoeSession.Start(ctx)
+	dohProxy.Start(ctx)
 	dns.Start(ctx)
 	wan.Start(ctx)
 	nat.Start(ctx)
@@ -798,15 +804,16 @@ func dnsmasqResolverLines(router *api.Router, store Store) []string {
 		if err != nil {
 			continue
 		}
-		for _, server := range expandServers(store, spec.Default.Servers) {
+		for _, server := range expandResolverServers(store, spec.Default.Servers) {
 			lines = append(lines, "server="+server)
 		}
 		for _, zone := range spec.Zones {
 			cleanZone := strings.Trim(strings.TrimSpace(zone.Zone), ".")
-			if cleanZone == "" {
-				continue
-			}
-			for _, server := range expandServers(store, zone.Servers) {
+			for _, server := range expandResolverServers(store, zone.Servers) {
+				if cleanZone == "" {
+					lines = append(lines, "server="+server)
+					continue
+				}
 				lines = append(lines, fmt.Sprintf("server=/%s/%s", cleanZone, server))
 			}
 		}
@@ -953,7 +960,29 @@ func expandServers(store Store, values []string) []string {
 	return out
 }
 
+func expandResolverServers(store Store, values []api.DNSResolverServerSpec) []string {
+	var out []string
+	for _, value := range values {
+		if value.IsDoH() {
+			out = append(out, value.StubAddress())
+			continue
+		}
+		resolved := valueFromStatusRef(store, value.String())
+		if list := decodeStringList(resolved); len(list) > 0 {
+			out = append(out, list...)
+			continue
+		}
+		if strings.TrimSpace(resolved) != "" {
+			out = append(out, strings.TrimSpace(resolved))
+		}
+	}
+	return out
+}
+
 func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, changed bool) error {
+	dnsmasqMu.Lock()
+	defer dnsmasqMu.Unlock()
+
 	proc, alive := dnsmasqProcess(pidFile)
 	if alive && changed {
 		return proc.Signal(syscall.SIGHUP)
@@ -974,6 +1003,9 @@ func dnsmasqProcess(pidFile string) (*os.Process, bool) {
 		return nil, false
 	}
 	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		if err == syscall.EPERM {
+			return proc, true
+		}
 		return nil, false
 	}
 	return proc, true
@@ -981,7 +1013,7 @@ func dnsmasqProcess(pidFile string) (*os.Process, bool) {
 
 func startDnsmasq(ctx context.Context, command, configPath, pidFile string) error {
 	_ = os.Remove(pidFile)
-	cmd := exec.CommandContext(ctx, firstNonEmpty(command, "dnsmasq"), "--conf-file="+configPath)
+	cmd := exec.CommandContext(ctx, firstNonEmpty(command, "dnsmasq"), "--keep-in-foreground", "--conf-file="+configPath, "--pid-file="+pidFile)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {
@@ -989,37 +1021,20 @@ func startDnsmasq(ctx context.Context, command, configPath, pidFile string) erro
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	if !waitForFile(pidFile, time.Second) {
-		select {
-		case <-done:
-		default:
-			_ = cmd.Process.Kill()
-			<-done
+	select {
+	case err := <-done:
+		_ = os.Remove(pidFile)
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("dnsmasq did not create pid file %s", pidFile)
+		return fmt.Errorf("dnsmasq exited during startup")
+	case <-time.After(300 * time.Millisecond):
 	}
-	_, alive := dnsmasqProcess(pidFile)
-	if !alive {
-		select {
-		case <-done:
-		default:
-		}
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil && err != syscall.EPERM {
 		return fmt.Errorf("dnsmasq is not alive")
 	}
+	_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", cmd.Process.Pid)), 0o644)
 	return nil
-}
-
-func waitForFile(path string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for {
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-		if time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
 }
 
 func firstNonEmpty(values ...string) string {

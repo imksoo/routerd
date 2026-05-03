@@ -2961,7 +2961,53 @@
                         "properties": {
                           "servers": {
                             "items": {
-                              "type": "string"
+                              "oneOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "address": {
+                                      "type": "string"
+                                    },
+                                    "backend": {
+                                      "enum": [
+                                        "",
+                                        "cloudflared",
+                                        "dnscrypt"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "listenAddress": {
+                                      "type": "string"
+                                    },
+                                    "listenPort": {
+                                      "maximum": 65535,
+                                      "minimum": 1,
+                                      "type": "integer"
+                                    },
+                                    "proxyRef": {
+                                      "type": "string"
+                                    },
+                                    "sni": {
+                                      "type": "string"
+                                    },
+                                    "type": {
+                                      "enum": [
+                                        "",
+                                        "static",
+                                        "doh"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "url": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                }
+                              ]
                             },
                             "type": "array"
                           }
@@ -3013,7 +3059,53 @@
                           "properties": {
                             "servers": {
                               "items": {
-                                "type": "string"
+                                "oneOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "address": {
+                                        "type": "string"
+                                      },
+                                      "backend": {
+                                        "enum": [
+                                          "",
+                                          "cloudflared",
+                                          "dnscrypt"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "listenAddress": {
+                                        "type": "string"
+                                      },
+                                      "listenPort": {
+                                        "maximum": 65535,
+                                        "minimum": 1,
+                                        "type": "integer"
+                                      },
+                                      "proxyRef": {
+                                        "type": "string"
+                                      },
+                                      "sni": {
+                                        "type": "string"
+                                      },
+                                      "type": {
+                                        "enum": [
+                                          "",
+                                          "static",
+                                          "doh"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "url": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "type": "object"
+                                  }
+                                ]
                               },
                               "type": "array"
                             },
@@ -3029,6 +3121,88 @@
                         "type": "array"
                       }
                     },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "DoHProxy",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "backend": {
+                        "enum": [
+                          "cloudflared",
+                          "dnscrypt"
+                        ],
+                        "type": "string"
+                      },
+                      "command": {
+                        "type": "string"
+                      },
+                      "configPath": {
+                        "type": "string"
+                      },
+                      "eventFile": {
+                        "type": "string"
+                      },
+                      "listenAddress": {
+                        "type": "string"
+                      },
+                      "listenPort": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "socketPath": {
+                        "type": "string"
+                      },
+                      "stateFile": {
+                        "type": "string"
+                      },
+                      "upstreams": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "upstreams"
+                    ],
                     "type": "object"
                   },
                   "status": {

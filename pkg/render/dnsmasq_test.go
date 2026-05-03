@@ -607,6 +607,62 @@ func TestDnsmasqConfigRendersConditionalForwarder(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigIncludesDoHResolverUpstream(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+				Metadata: api.ObjectMeta{Name: "dhcpv4"},
+				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
+				Spec: api.DHCPv4ScopeSpec{
+					Server:       "dhcpv4",
+					Interface:    "lan",
+					RangeStart:   "192.168.10.130",
+					RangeEnd:     "192.168.10.139",
+					RouterSource: "interfaceAddress",
+					DNSSource:    "self",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolverUpstream"},
+				Metadata: api.ObjectMeta{Name: "public-doh"},
+				Spec: api.DNSResolverUpstreamSpec{
+					Zones: []api.DNSResolverZoneSpec{{
+						Zone: ".",
+						Servers: []api.DNSResolverServerSpec{{
+							Type:          "doh",
+							URL:           "https://1.1.1.1/dns-query",
+							ListenAddress: "127.0.0.1",
+							ListenPort:    5053,
+						}},
+					}},
+				},
+			},
+		}},
+	}
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	if got := string(data); !strings.Contains(got, "server=127.0.0.1#5053") {
+		t.Fatalf("dnsmasq output missing DoH stub upstream:\n%s", got)
+	}
+}
+
 func TestDnsmasqConfigSkipsDHCPv4ConditionalForwarderWhenObservedEmpty(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

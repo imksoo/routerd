@@ -1,0 +1,30 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: doh-proxy-example
+spec:
+  resources:
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DoHProxy
+    metadata:
+      name: cloudflare
+    spec:
+      backend: cloudflared
+      listenAddress: 127.0.0.1
+      listenPort: 5053
+      upstreams:
+      - https://1.1.1.1/dns-query
+      - https://1.0.0.1/dns-query
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSResolverUpstream
+    metadata:
+      name: public-doh
+    spec:
+      zones:
+      - zone: .
+        servers:
+        - type: doh
+          url: https://1.1.1.1/dns-query
+          proxyRef: cloudflare
+          listenAddress: 127.0.0.1
+          listenPort: 5053

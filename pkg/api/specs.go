@@ -1,6 +1,14 @@
 package api
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/invopop/jsonschema"
+	orderedmap "github.com/pb33f/ordered-map/v2"
+	"gopkg.in/yaml.v3"
+)
 
 type LogSinkSpec struct {
 	Type     string            `yaml:"type" json:"type" jsonschema:"enum=syslog,enum=plugin"`
@@ -509,12 +517,103 @@ type DNSResolverUpstreamSpec struct {
 }
 
 type DNSResolverZoneSpec struct {
-	Zone    string   `yaml:"zone" json:"zone"`
-	Servers []string `yaml:"servers,omitempty" json:"servers,omitempty"`
+	Zone    string                  `yaml:"zone" json:"zone"`
+	Servers []DNSResolverServerSpec `yaml:"servers,omitempty" json:"servers,omitempty"`
 }
 
 type DNSResolverDefaultSpec struct {
-	Servers []string `yaml:"servers,omitempty" json:"servers,omitempty"`
+	Servers []DNSResolverServerSpec `yaml:"servers,omitempty" json:"servers,omitempty"`
+}
+
+type DNSResolverServerSpec struct {
+	Address       string `yaml:"address,omitempty" json:"address,omitempty"`
+	Type          string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=static,enum=doh"`
+	URL           string `yaml:"url,omitempty" json:"url,omitempty"`
+	SNI           string `yaml:"sni,omitempty" json:"sni,omitempty"`
+	ProxyRef      string `yaml:"proxyRef,omitempty" json:"proxyRef,omitempty"`
+	Backend       string `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=cloudflared,enum=dnscrypt"`
+	ListenAddress string `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
+	ListenPort    int    `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
+}
+
+func (DNSResolverServerSpec) JSONSchema() *jsonschema.Schema {
+	props := orderedmap.New[string, *jsonschema.Schema]()
+	props.Set("address", &jsonschema.Schema{Type: "string"})
+	props.Set("type", &jsonschema.Schema{Type: "string", Enum: []any{"", "static", "doh"}})
+	props.Set("url", &jsonschema.Schema{Type: "string"})
+	props.Set("sni", &jsonschema.Schema{Type: "string"})
+	props.Set("proxyRef", &jsonschema.Schema{Type: "string"})
+	props.Set("backend", &jsonschema.Schema{Type: "string", Enum: []any{"", "cloudflared", "dnscrypt"}})
+	props.Set("listenAddress", &jsonschema.Schema{Type: "string"})
+	props.Set("listenPort", &jsonschema.Schema{Type: "integer", Minimum: json.Number("1"), Maximum: json.Number("65535")})
+	return &jsonschema.Schema{
+		OneOf: []*jsonschema.Schema{
+			{Type: "string"},
+			{
+				Type:                 "object",
+				Properties:           props,
+				AdditionalProperties: jsonschema.FalseSchema,
+			},
+		},
+	}
+}
+
+func (s *DNSResolverServerSpec) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		s.Address = strings.TrimSpace(value.Value)
+		if s.Address != "" {
+			s.Type = "static"
+		}
+		return nil
+	}
+	type plain DNSResolverServerSpec
+	var out plain
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*s = DNSResolverServerSpec(out)
+	if s.Type == "" && s.URL != "" {
+		s.Type = "doh"
+	}
+	if s.Type == "" && s.Address != "" {
+		s.Type = "static"
+	}
+	return nil
+}
+
+func (s DNSResolverServerSpec) String() string {
+	if strings.TrimSpace(s.Address) != "" {
+		return strings.TrimSpace(s.Address)
+	}
+	return strings.TrimSpace(s.URL)
+}
+
+func (s DNSResolverServerSpec) IsDoH() bool {
+	return s.Type == "doh" || strings.HasPrefix(s.URL, "https://")
+}
+
+func (s DNSResolverServerSpec) StubAddress() string {
+	address := strings.TrimSpace(s.ListenAddress)
+	if address == "" {
+		address = "127.0.0.1"
+	}
+	port := s.ListenPort
+	if port == 0 {
+		port = 5053
+	}
+	return fmt.Sprintf("%s#%d", address, port)
+}
+
+type DoHProxySpec struct {
+	Backend       string   `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=cloudflared,enum=dnscrypt"`
+	ListenAddress string   `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
+	ListenPort    int      `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	Upstreams     []string `yaml:"upstreams" json:"upstreams"`
+	Command       string   `yaml:"command,omitempty" json:"command,omitempty"`
+	ConfigPath    string   `yaml:"configPath,omitempty" json:"configPath,omitempty"`
+	StateFile     string   `yaml:"stateFile,omitempty" json:"stateFile,omitempty"`
+	EventFile     string   `yaml:"eventFile,omitempty" json:"eventFile,omitempty"`
+	SocketPath    string   `yaml:"socketPath,omitempty" json:"socketPath,omitempty"`
 }
 
 type DSLiteTunnelSpec struct {
@@ -952,6 +1051,10 @@ func (r Resource) DNSConditionalForwarderSpec() (DNSConditionalForwarderSpec, er
 
 func (r Resource) DNSResolverUpstreamSpec() (DNSResolverUpstreamSpec, error) {
 	return specAs[DNSResolverUpstreamSpec](r)
+}
+
+func (r Resource) DoHProxySpec() (DoHProxySpec, error) {
+	return specAs[DoHProxySpec](r)
 }
 
 func (r Resource) DSLiteTunnelSpec() (DSLiteTunnelSpec, error) {
