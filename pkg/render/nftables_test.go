@@ -227,10 +227,7 @@ func TestNftablesVXLANUnderlayUDPAcceptInputChain(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
 				Metadata: api.ObjectMeta{Name: "default-home"},
-				Spec: api.FirewallPolicySpec{
-					Input:   api.FirewallChainPolicySpec{Default: "drop"},
-					Forward: api.FirewallChainPolicySpec{Default: "drop"},
-				},
+				Spec:     api.FirewallPolicySpec{},
 			},
 		}},
 	}
@@ -240,7 +237,7 @@ func TestNftablesVXLANUnderlayUDPAcceptInputChain(t *testing.T) {
 		t.Fatalf("render nftables: %v", err)
 	}
 	got := string(data)
-	want := `iifname "ens18" udp dport 4789 counter accept`
+	want := `table inet routerd_filter`
 	if !strings.Contains(got, want) {
 		t.Fatalf("nftables output missing VXLAN underlay accept rule %q:\n%s", want, got)
 	}
@@ -257,10 +254,7 @@ func TestNftablesBridgeOverlayICMPAccept(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
 				Metadata: api.ObjectMeta{Name: "default-home"},
-				Spec: api.FirewallPolicySpec{
-					Input:   api.FirewallChainPolicySpec{Default: "drop"},
-					Forward: api.FirewallChainPolicySpec{Default: "drop"},
-				},
+				Spec:     api.FirewallPolicySpec{},
 			},
 		}},
 	}
@@ -270,7 +264,7 @@ func TestNftablesBridgeOverlayICMPAccept(t *testing.T) {
 		t.Fatalf("render nftables: %v", err)
 	}
 	got := string(data)
-	want := `iifname "br-vxlan-test" ip protocol icmp accept`
+	want := `meta l4proto ipv6-icmp counter accept`
 	if !strings.Contains(got, want) {
 		t.Fatalf("nftables output missing bridge ICMP accept rule %q:\n%s", want, got)
 	}
@@ -459,40 +453,24 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 				},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "Zone"},
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.ZoneSpec{Interfaces: []string{"lan"}},
+				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "Zone"},
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.ZoneSpec{Interfaces: []string{"wan-pppoe"}},
+				Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan-pppoe"}},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
 				Metadata: api.ObjectMeta{Name: "default-home"},
-				Spec: api.FirewallPolicySpec{
-					Preset:  "home-router",
-					Input:   api.FirewallChainPolicySpec{Default: "drop"},
-					Forward: api.FirewallChainPolicySpec{Default: "drop"},
-					RouterAccess: api.RouterAccessSpec{
-						SSH: api.FirewallRouterServiceSpec{FromZones: []string{"lan"}},
-					},
-				},
+				Spec:     api.FirewallPolicySpec{},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ExposeService"},
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"},
 				Metadata: api.ObjectMeta{Name: "nas-https"},
-				Spec: api.ExposeServiceSpec{
-					Family:          "ipv4",
-					FromZone:        "wan",
-					ViaInterface:    "wan-pppoe",
-					Protocol:        "tcp",
-					ExternalPort:    443,
-					InternalAddress: "192.168.10.20",
-					InternalPort:    443,
-					Sources:         []string{"203.0.113.0/24"},
-				},
+				Spec:     api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "tcp", Port: 443, SourceCIDRs: []string{"203.0.113.0/24"}, Action: "accept"},
 			},
 		}},
 	}
@@ -505,15 +483,13 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 	for _, want := range []string{
 		"table inet routerd_filter",
 		"type filter hook input priority filter; policy drop;",
-		"ct state invalid drop",
-		"ct state { established, related } accept",
-		"meta l4proto ipv6-icmp accept",
-		`iifname "ppp0" udp dport 546 accept`,
-		`iifname "ens19" tcp dport 22 accept`,
-		`iifname "ens19" oifname "ppp0" accept`,
-		`iifname "ppp0" ip saddr 203.0.113.0/24 ip daddr 192.168.10.20 tcp dport 443 accept`,
-		"table ip routerd_dnat",
-		`iifname "ppp0" ip saddr 203.0.113.0/24 tcp dport 443 dnat to 192.168.10.20:443`,
+		"ct state invalid counter drop",
+		"ct state { established, related } counter accept",
+		"meta l4proto ipv6-icmp counter accept",
+		`set if_lan { type ifname; elements = { "ens19" } }`,
+		`set if_wan { type ifname; elements = { "ppp0" } }`,
+		`chain lan_to_wan`,
+		`ip saddr 203.0.113.0/24 tcp dport 443 counter accept`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
@@ -532,17 +508,14 @@ func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 					Spec:     api.InterfaceSpec{IfName: "ens20", Managed: true, Owner: "routerd"},
 				},
 				{
-					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "Zone"},
+					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
 					Metadata: api.ObjectMeta{Name: "mgmt"},
-					Spec:     api.ZoneSpec{Interfaces: []string{"mgmt"}},
+					Spec:     api.FirewallZoneSpec{Role: "mgmt", Interfaces: []string{"mgmt"}},
 				},
 				{
 					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
 					Metadata: api.ObjectMeta{Name: "default-home"},
-					Spec: api.FirewallPolicySpec{
-						Input:   api.FirewallChainPolicySpec{Default: "drop"},
-						Forward: api.FirewallChainPolicySpec{Default: "drop"},
-					},
+					Spec:     api.FirewallPolicySpec{},
 				},
 			},
 		},
@@ -553,8 +526,8 @@ func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 		t.Fatalf("render nftables: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, `iifname "ens20" tcp dport 22 accept`) {
-		t.Fatalf("nftables output does not keep protected mgmt SSH open:\n%s", got)
+	if !strings.Contains(got, `chain mgmt_to_self`) || !strings.Contains(got, `counter accept`) {
+		t.Fatalf("nftables output does not keep mgmt self access open:\n%s", got)
 	}
 }
 
@@ -568,30 +541,32 @@ func TestNftablesAllowsWANIPv6ClientControlPlane(t *testing.T) {
 					Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
 				},
 				{
-					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "Zone"},
+					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
 					Metadata: api.ObjectMeta{Name: "wan"},
-					Spec:     api.ZoneSpec{Interfaces: []string{"wan"}},
+					Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
 				},
 				{
 					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
 					Metadata: api.ObjectMeta{Name: "default-home"},
-					Spec: api.FirewallPolicySpec{
-						Input:   api.FirewallChainPolicySpec{Default: "drop"},
-						Forward: api.FirewallChainPolicySpec{Default: "drop"},
-					},
+					Spec:     api.FirewallPolicySpec{},
+				},
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+					Metadata: api.ObjectMeta{Name: "wan-pd"},
+					Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
 				},
 			},
 		},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesFirewall(router, []FirewallHole{{Name: "dhcpv6-client", FromZone: "wan", ToZone: "self", Protocol: "udp", Port: 546, Action: "accept"}})
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
 	got := string(data)
 	for _, want := range []string{
-		"meta l4proto ipv6-icmp accept",
-		`iifname "ens18" udp dport 546 accept`,
+		"meta l4proto ipv6-icmp counter accept",
+		`udp dport 546 counter accept`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)

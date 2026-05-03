@@ -5,9 +5,8 @@ sidebar_position: 4
 
 # 基本の NAT とファイアウォール方針
 
-現在の routerd では、IPv4 の外向き NAPT は実適用できます。
-一方で、状態を持つフィルタとしてのファイアウォールはまだ棚上げです。
-このページでは、実装済みの NAT44 と、ファイアウォール Kind の現在位置を説明します。
+routerd では、IPv4 の外向き NAPT と状態を持つファイアウォールを実適用できます。
+このページでは、NAT44 とファイアウォール Kind の基本を説明します。
 
 ## NAT44
 
@@ -35,6 +34,7 @@ routerd は conntrack の集計を観測できます。
 
 ## ファイアウォール Kind
 
-`Zone`、`FirewallPolicy`、`ExposeService` は API の土台として存在します。
-ただし、状態を持つフィルタの本番向け実適用はまだ完了していません。
-利用者向けの本番防御は、現時点ではホスト側の既存方針と併用してください。
+`FirewallZone`、`FirewallPolicy`、`FirewallRule` で状態を持つフィルタを表します。
+routerd は nftables の `inet routerd_filter` テーブルを生成します。
+`untrust`、`trust`、`mgmt` の役割から既定の許可と拒否を決めます。
+DHCP、DNS、DS-Lite などに必要な開口は routerd が内部で生成します。

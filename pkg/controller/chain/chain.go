@@ -23,6 +23,7 @@ import (
 	"routerd/pkg/controller/conntrackobserver"
 	"routerd/pkg/controller/dhcpv4lease"
 	dnsresolvercontroller "routerd/pkg/controller/dnsresolver"
+	firewallcontroller "routerd/pkg/controller/firewall"
 	"routerd/pkg/controller/nat44"
 	"routerd/pkg/controller/pppoesession"
 	"routerd/pkg/daemonapi"
@@ -51,12 +52,15 @@ type Options struct {
 	DryRunPPPoESession bool
 	DryRunDNSResolver  bool
 	DryRunNAT          bool
+	DryRunFirewall     bool
+	FirewallDisabled   bool
 	DnsmasqCommand     string
 	DnsmasqConfig      string
 	DnsmasqPID         string
 	DnsmasqPort        int
 	DnsmasqListen      []string
 	NftablesPath       string
+	FirewallPath       string
 	NftCommand         string
 	ConntrackInterval  time.Duration
 	Logger             *slog.Logger
@@ -184,6 +188,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunNAT, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
+	firewall := firewallcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunFirewall, NftablesPath: firstNonEmpty(r.Opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: r.Opts.NftCommand, Logger: logger}
 	conntrackObs := conntrackobserver.Controller{Bus: r.Bus, Store: r.Store, Paths: conntrack.DefaultPaths(), Interval: r.Opts.ConntrackInterval, Logger: logger}
 	rules.Start(ctx)
 	derivedEvents.Start(ctx)
@@ -199,6 +204,9 @@ func (r *Runner) Start(ctx context.Context) error {
 	pppoeSession.Start(ctx)
 	wan.Start(ctx)
 	nat.Start(ctx)
+	if !r.Opts.FirewallDisabled {
+		firewall.Start(ctx)
+	}
 	conntrackObs.Start(ctx)
 	go func() {
 		for _, resource := range r.Router.Spec.Resources {

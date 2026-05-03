@@ -172,7 +172,7 @@ func Validate(router *api.Router) error {
 			}
 			staticByInterfaceAddress[key] = res.ID()
 		}
-		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "Zone" {
+		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallZone" {
 			zones[res.Metadata.Name] = true
 		}
 	}
@@ -183,7 +183,7 @@ func Validate(router *api.Router) error {
 	}
 	for i, name := range router.Spec.Apply.ProtectedZones {
 		if !zones[name] {
-			return fmt.Errorf("spec.apply.protectedZones[%d] references missing Zone %q", i, name)
+			return fmt.Errorf("spec.apply.protectedZones[%d] references missing FirewallZone %q", i, name)
 		}
 	}
 	for iface, pd := range externalPDByInterface {
@@ -517,42 +517,42 @@ func Validate(router *api.Router) error {
 				}
 			}
 		}
-		if res.Kind == "Zone" {
-			spec, err := res.ZoneSpec()
+		if res.Kind == "FirewallZone" {
+			spec, err := res.FirewallZoneSpec()
 			if err != nil {
 				return err
 			}
 			for i, name := range spec.Interfaces {
-				if !interfaces[name] && !dsliteTunnels[name] {
-					return fmt.Errorf("%s spec.interfaces[%d] references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), i, name)
+				refKind, refName := splitFirewallInterfaceRef(name)
+				switch refKind {
+				case "Interface", "PPPoEInterface":
+					if !interfaces[refName] && !dsliteTunnels[refName] {
+						return fmt.Errorf("%s spec.interfaces[%d] references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), i, refName)
+					}
+				case "DSLiteTunnel":
+					if !dsliteTunnels[refName] {
+						return fmt.Errorf("%s spec.interfaces[%d] references missing DSLiteTunnel %q", res.ID(), i, refName)
+					}
+				default:
+					return fmt.Errorf("%s spec.interfaces[%d] has unsupported reference %q", res.ID(), i, name)
 				}
 			}
 		}
-		if res.Kind == "FirewallPolicy" {
-			spec, err := res.FirewallPolicySpec()
+		if res.Kind == "FirewallRule" {
+			spec, err := res.FirewallRuleSpec()
 			if err != nil {
 				return err
 			}
-			if err := validateRouterAccessZoneRefs(res.ID()+".spec.routerAccess.ssh", spec.RouterAccess.SSH, zones); err != nil {
-				return err
+			if spec.FromZone != "self" && !zones[spec.FromZone] {
+				return fmt.Errorf("%s spec.fromZone references missing FirewallZone %q", res.ID(), spec.FromZone)
 			}
-			if err := validateRouterAccessZoneRefs(res.ID()+".spec.routerAccess.dns", spec.RouterAccess.DNS, zones); err != nil {
-				return err
-			}
-			if err := validateRouterAccessZoneRefs(res.ID()+".spec.routerAccess.dhcp", spec.RouterAccess.DHCP, zones); err != nil {
-				return err
+			if spec.ToZone != "self" && !zones[spec.ToZone] {
+				return fmt.Errorf("%s spec.toZone references missing FirewallZone %q", res.ID(), spec.ToZone)
 			}
 		}
-		if res.Kind == "ExposeService" {
-			spec, err := res.ExposeServiceSpec()
-			if err != nil {
+		if res.Kind == "FirewallPolicy" {
+			if _, err := res.FirewallPolicySpec(); err != nil {
 				return err
-			}
-			if !zones[spec.FromZone] {
-				return fmt.Errorf("%s spec.fromZone references missing Zone %q", res.ID(), spec.FromZone)
-			}
-			if spec.ViaInterface != "" && !interfaces[spec.ViaInterface] && !dsliteTunnels[spec.ViaInterface] {
-				return fmt.Errorf("%s spec.viaInterface references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.ViaInterface)
 			}
 		}
 	}
@@ -566,6 +566,14 @@ func isExternalIPv6PDClient(client string) bool {
 	default:
 		return false
 	}
+}
+
+func splitFirewallInterfaceRef(ref string) (string, string) {
+	ref = strings.TrimSpace(ref)
+	if kind, name, ok := strings.Cut(ref, "/"); ok {
+		return kind, name
+	}
+	return "Interface", ref
 }
 
 func validateApplyPolicy(spec api.ApplyPolicySpec) error {
@@ -582,15 +590,6 @@ func validateApplyPolicy(spec api.ApplyPolicySpec) error {
 	for _, name := range spec.ProtectedZones {
 		if strings.TrimSpace(name) == "" {
 			return fmt.Errorf("spec.reconcile.protectedZones must not contain empty names")
-		}
-	}
-	return nil
-}
-
-func validateRouterAccessZoneRefs(field string, spec api.FirewallRouterServiceSpec, zones map[string]bool) error {
-	for i, zone := range spec.FromZones {
-		if !zones[zone] {
-			return fmt.Errorf("%s.fromZones[%d] references missing Zone %q", field, i, zone)
 		}
 	}
 	return nil
@@ -2285,13 +2284,18 @@ func validateResource(res api.Resource) error {
 				seenFamilies[family] = true
 			}
 		}
-	case "Zone":
+	case "FirewallZone":
 		if res.APIVersion != api.FirewallAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
 		}
-		spec, err := res.ZoneSpec()
+		spec, err := res.FirewallZoneSpec()
 		if err != nil {
 			return err
+		}
+		switch spec.Role {
+		case "untrust", "trust", "mgmt":
+		default:
+			return fmt.Errorf("%s spec.role must be untrust, trust, or mgmt", res.ID())
 		}
 		if len(spec.Interfaces) == 0 {
 			return fmt.Errorf("%s spec.interfaces is required", res.ID())
@@ -2310,62 +2314,42 @@ func validateResource(res api.Resource) error {
 		if res.APIVersion != api.FirewallAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
 		}
-		spec, err := res.FirewallPolicySpec()
-		if err != nil {
+		if _, err := res.FirewallPolicySpec(); err != nil {
 			return err
 		}
-		switch defaultString(spec.Preset, "home-router") {
-		case "home-router":
-		default:
-			return fmt.Errorf("%s spec.preset must be home-router", res.ID())
-		}
-		for field, value := range map[string]string{
-			"input.default":   defaultString(spec.Input.Default, "drop"),
-			"forward.default": defaultString(spec.Forward.Default, "drop"),
-		} {
-			switch value {
-			case "accept", "drop":
-			default:
-				return fmt.Errorf("%s spec.%s must be accept or drop", res.ID(), field)
-			}
-		}
-	case "ExposeService":
+	case "FirewallRule":
 		if res.APIVersion != api.FirewallAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
 		}
-		spec, err := res.ExposeServiceSpec()
+		spec, err := res.FirewallRuleSpec()
 		if err != nil {
 			return err
-		}
-		switch defaultString(spec.Family, "ipv4") {
-		case "ipv4":
-		case "ipv6":
-			return fmt.Errorf("%s spec.family=ipv6 is reserved for future pinhole support", res.ID())
-		default:
-			return fmt.Errorf("%s spec.family must be ipv4 or ipv6", res.ID())
 		}
 		if spec.FromZone == "" {
 			return fmt.Errorf("%s spec.fromZone is required", res.ID())
 		}
-		switch spec.Protocol {
-		case "tcp", "udp":
+		if spec.ToZone == "" {
+			return fmt.Errorf("%s spec.toZone is required", res.ID())
+		}
+		switch spec.Action {
+		case "accept", "drop", "reject":
 		default:
-			return fmt.Errorf("%s spec.protocol must be tcp or udp", res.ID())
+			return fmt.Errorf("%s spec.action must be accept, drop, or reject", res.ID())
 		}
-		if spec.ExternalPort < 1 || spec.ExternalPort > 65535 {
-			return fmt.Errorf("%s spec.externalPort must be within 1-65535", res.ID())
+		switch spec.Protocol {
+		case "", "tcp", "udp", "icmp", "icmpv6", "ipv6-icmp", "ipip":
+		default:
+			return fmt.Errorf("%s spec.protocol must be tcp, udp, icmp, icmpv6, ipv6-icmp, or ipip", res.ID())
 		}
-		if spec.InternalPort < 1 || spec.InternalPort > 65535 {
-			return fmt.Errorf("%s spec.internalPort must be within 1-65535", res.ID())
+		if spec.Port != 0 && spec.Protocol != "tcp" && spec.Protocol != "udp" {
+			return fmt.Errorf("%s spec.port requires protocol tcp or udp", res.ID())
 		}
-		addr, err := netip.ParseAddr(spec.InternalAddress)
-		if err != nil || !addr.Is4() {
-			return fmt.Errorf("%s spec.internalAddress must be an IPv4 address", res.ID())
+		if spec.Port < 0 || spec.Port > 65535 {
+			return fmt.Errorf("%s spec.port must be between 1 and 65535", res.ID())
 		}
-		for i, cidr := range spec.Sources {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.sources[%d] must be an IPv4 prefix", res.ID(), i)
+		for i, cidr := range spec.SourceCIDRs {
+			if _, err := netip.ParsePrefix(cidr); err != nil {
+				return fmt.Errorf("%s spec.srcCIDRs[%d] is invalid: %w", res.ID(), i, err)
 			}
 		}
 	case "Hostname":

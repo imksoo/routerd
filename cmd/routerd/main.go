@@ -636,10 +636,12 @@ func canonicalResourceKind(kind string) string {
 		"pppoeinterface":         "PPPoEInterface",
 		"pppoesession":           "PPPoESession",
 		"pppoeclient":            "PPPoESession",
-		"fw":                     "FirewallPolicy",
+		"fw":                     "FirewallRule",
 		"firewall":               "FirewallPolicy",
+		"firewallzone":           "FirewallZone",
 		"firewallpolicy":         "FirewallPolicy",
-		"zone":                   "Zone",
+		"firewallrule":           "FirewallRule",
+		"zone":                   "FirewallZone",
 		"hostname":               "Hostname",
 		"host":                   "Hostname",
 		"route":                  "IPv4PolicyRouteSet",
@@ -653,7 +655,7 @@ func canonicalResourceKind(kind string) string {
 
 func apiVersionForKind(kind string) string {
 	switch kind {
-	case "Zone", "FirewallPolicy", "ExposeService":
+	case "FirewallZone", "FirewallPolicy", "FirewallRule":
 		return api.FirewallAPIVersion
 	case "Hostname", "Sysctl", "NTPClient", "LogSink", "NixOSHost":
 		return api.SystemAPIVersion
@@ -2289,6 +2291,8 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDryRunPPPoESession := fs.Bool("controller-chain-dry-run-pppoesession", true, "do not apply PPPoE session route/DNS in the experimental controller chain")
 	controllerDryRunDNSResolver := fs.Bool("controller-chain-dry-run-dns-resolver", true, "do not start DNS resolver daemons in the experimental controller chain")
 	controllerDryRunNAT := fs.Bool("controller-chain-dry-run-nat", true, "do not apply nftables NAT rules in the experimental controller chain")
+	controllerDryRunFirewall := fs.Bool("controller-chain-dry-run-firewall", true, "do not apply nftables firewall rules in the experimental controller chain")
+	controllerFirewall := fs.String("controller-chain-firewall", "enable", "firewall controller mode: enable or disable")
 	controllerDaemonSockets := fs.String("controller-chain-daemon-sockets", "", "comma-separated resource=unix-socket overrides for the experimental controller chain")
 	controllerDnsmasqCommand := fs.String("controller-chain-dnsmasq-command", "dnsmasq", "dnsmasq command for the experimental controller chain")
 	controllerDnsmasqConfig := fs.String("controller-chain-dnsmasq-config", "/run/routerd/dnsmasq-phase1.conf", "dnsmasq config path for the experimental controller chain")
@@ -2296,6 +2300,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDnsmasqPort := fs.Int("controller-chain-dnsmasq-port", 1053, "dnsmasq listen port for the experimental controller chain")
 	controllerDnsmasqListen := fs.String("controller-chain-dnsmasq-listen-addresses", "127.0.0.1", "comma-separated dnsmasq listen addresses for the experimental controller chain")
 	controllerNftablesPath := fs.String("controller-chain-nftables-file", "/run/routerd/nat44.nft", "nftables ruleset output path for the experimental controller chain")
+	controllerFirewallPath := fs.String("controller-chain-firewall-file", "/run/routerd/firewall.nft", "nftables firewall ruleset output path for the experimental controller chain")
 	controllerNftCommand := fs.String("controller-chain-nft-command", "nft", "nft command for the experimental controller chain")
 	controllerConntrackInterval := fs.Duration("controller-chain-conntrack-interval", 30*time.Second, "conntrack observer interval for the experimental controller chain")
 	if err := fs.Parse(args); err != nil {
@@ -2357,12 +2362,15 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 				DryRunPPPoESession: *controllerDryRunPPPoESession,
 				DryRunDNSResolver:  *controllerDryRunDNSResolver,
 				DryRunNAT:          *controllerDryRunNAT,
+				DryRunFirewall:     *controllerDryRunFirewall,
+				FirewallDisabled:   *controllerFirewall == "disable",
 				DnsmasqCommand:     *controllerDnsmasqCommand,
 				DnsmasqConfig:      *controllerDnsmasqConfig,
 				DnsmasqPID:         *controllerDnsmasqPID,
 				DnsmasqPort:        *controllerDnsmasqPort,
 				DnsmasqListen:      parseCSV(*controllerDnsmasqListen),
 				NftablesPath:       *controllerNftablesPath,
+				FirewallPath:       *controllerFirewallPath,
 				NftCommand:         *controllerNftCommand,
 				ConntrackInterval:  *controllerConntrackInterval,
 			},

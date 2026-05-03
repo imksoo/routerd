@@ -4821,7 +4821,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "Zone",
+                    "const": "FirewallZone",
                     "type": "string"
                   },
                   "metadata": {
@@ -4845,9 +4845,18 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "role": {
+                        "enum": [
+                          "untrust",
+                          "trust",
+                          "mgmt"
+                        ],
+                        "type": "string"
                       }
                     },
                     "required": [
+                      "role",
                       "interfaces"
                     ],
                     "type": "object"
@@ -4892,106 +4901,11 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
-                      "forward": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "default": {
-                            "enum": [
-                              "accept",
-                              "drop"
-                            ],
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
+                      "logDeny": {
+                        "type": "boolean"
                       },
-                      "input": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "default": {
-                            "enum": [
-                              "accept",
-                              "drop"
-                            ],
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
-                      },
-                      "preset": {
-                        "enum": [
-                          "home-router"
-                        ],
-                        "type": "string"
-                      },
-                      "routerAccess": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "dhcp": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "fromZones": {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array"
-                              },
-                              "wan": {
-                                "additionalProperties": false,
-                                "properties": {
-                                  "enabled": {
-                                    "type": "boolean"
-                                  }
-                                },
-                                "type": "object"
-                              }
-                            },
-                            "type": "object"
-                          },
-                          "dns": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "fromZones": {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array"
-                              },
-                              "wan": {
-                                "additionalProperties": false,
-                                "properties": {
-                                  "enabled": {
-                                    "type": "boolean"
-                                  }
-                                },
-                                "type": "object"
-                              }
-                            },
-                            "type": "object"
-                          },
-                          "ssh": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "fromZones": {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array"
-                              },
-                              "wan": {
-                                "additionalProperties": false,
-                                "properties": {
-                                  "enabled": {
-                                    "type": "boolean"
-                                  }
-                                },
-                                "type": "object"
-                              }
-                            },
-                            "type": "object"
-                          }
-                        },
-                        "type": "object"
+                      "sameRoleAccept": {
+                        "type": "boolean"
                       }
                     },
                     "type": "object"
@@ -5017,7 +4931,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "ExposeService",
+                    "const": "FirewallRule",
                     "type": "string"
                   },
                   "metadata": {
@@ -5036,55 +4950,65 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
-                      "externalPort": {
-                        "maximum": 65535,
-                        "minimum": 1,
-                        "type": "integer"
-                      },
-                      "family": {
+                      "action": {
                         "enum": [
-                          "ipv4",
-                          "ipv6"
+                          "accept",
+                          "drop",
+                          "reject"
                         ],
                         "type": "string"
                       },
                       "fromZone": {
                         "type": "string"
                       },
-                      "hairpin": {
+                      "log": {
                         "type": "boolean"
                       },
-                      "internalAddress": {
-                        "type": "string"
-                      },
-                      "internalPort": {
+                      "port": {
                         "maximum": 65535,
-                        "minimum": 1,
+                        "minimum": 0,
                         "type": "integer"
                       },
                       "protocol": {
                         "enum": [
+                          "",
                           "tcp",
-                          "udp"
+                          "udp",
+                          "icmp",
+                          "icmpv6",
+                          "ipv6-icmp",
+                          "ipip"
                         ],
                         "type": "string"
                       },
-                      "sources": {
+                      "rateLimit": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "burst": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "packetsPerSecond": {
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "srcCIDRs": {
                         "items": {
                           "type": "string"
                         },
                         "type": "array"
                       },
-                      "viaInterface": {
+                      "toZone": {
                         "type": "string"
                       }
                     },
                     "required": [
                       "fromZone",
-                      "protocol",
-                      "externalPort",
-                      "internalAddress",
-                      "internalPort"
+                      "toZone",
+                      "action"
                     ],
                     "type": "object"
                   },

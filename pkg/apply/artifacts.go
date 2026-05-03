@@ -189,12 +189,10 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			artifact("nft.table", "routerd_mss", resource.ActionEnsure, "nft", nil),
 			artifact("dnsmasq.ra.mtu", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil),
 		}
-	case "Zone":
+	case "FirewallZone":
 		return []resource.Intent{artifact("routerd.firewall.zone", res.Metadata.Name, resource.ActionEnsure, "nft", nil)}
-	case "FirewallPolicy":
+	case "FirewallPolicy", "FirewallRule":
 		return []resource.Intent{artifact("nft.table", "routerd_filter", resource.ActionEnsure, "nft", nil)}
-	case "ExposeService":
-		return []resource.Intent{artifact("nft.table", "routerd_dnat", resource.ActionEnsure, "nft", nil)}
 	case "VXLANSegment":
 		spec, err := res.VXLANSegmentSpec()
 		if err != nil {

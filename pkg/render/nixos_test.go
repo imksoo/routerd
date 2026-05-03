@@ -233,7 +233,7 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
 				Metadata: api.ObjectMeta{Name: "default-home"},
-				Spec:     api.FirewallPolicySpec{Preset: "home-router"},
+				Spec:     api.FirewallPolicySpec{},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},

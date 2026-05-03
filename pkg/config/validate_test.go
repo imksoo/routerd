@@ -688,7 +688,7 @@ func TestValidateIPv4SourceNATRejectsInvalidPortRange(t *testing.T) {
 	}
 }
 
-func TestValidateFirewallPolicyAndExposeService(t *testing.T) {
+func TestValidateFirewallPolicyAndRule(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -704,38 +704,30 @@ func TestValidateFirewallPolicyAndExposeService(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "Zone"},
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
 				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.ZoneSpec{Interfaces: []string{"lan"}},
+				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "Zone"},
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
 				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.ZoneSpec{Interfaces: []string{"wan"}},
+				Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
 				Metadata: api.ObjectMeta{Name: "default-home"},
-				Spec: api.FirewallPolicySpec{
-					Preset: "home-router",
-					RouterAccess: api.RouterAccessSpec{
-						SSH: api.FirewallRouterServiceSpec{FromZones: []string{"lan"}},
-					},
-				},
+				Spec:     api.FirewallPolicySpec{LogDeny: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ExposeService"},
-				Metadata: api.ObjectMeta{Name: "nas-https"},
-				Spec: api.ExposeServiceSpec{
-					Family:          "ipv4",
-					FromZone:        "wan",
-					ViaInterface:    "wan",
-					Protocol:        "tcp",
-					ExternalPort:    443,
-					InternalAddress: "192.168.10.20",
-					InternalPort:    443,
-					Sources:         []string{"203.0.113.0/24"},
-					Hairpin:         true,
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"},
+				Metadata: api.ObjectMeta{Name: "allow-https"},
+				Spec: api.FirewallRuleSpec{
+					FromZone:    "wan",
+					ToZone:      "self",
+					Protocol:    "tcp",
+					Port:        443,
+					SourceCIDRs: []string{"203.0.113.0/24"},
+					Action:      "accept",
 				},
 			},
 		}},
