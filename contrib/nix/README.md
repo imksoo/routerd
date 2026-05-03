@@ -1,10 +1,13 @@
-# Nix / NixOS support (groundwork)
+# Nix / NixOS support
 
-This directory contains the experimental NixOS module for routerd. The
-flake lives at the repository root so local and GitHub usage both build
-the same source tree. NixOS is a planned Tier 2 platform; the module is
-provided so routerd can be wired into a NixOS configuration today. See
-`docs/platforms.md` for the current support matrix.
+This directory contains the NixOS integration groundwork for routerd. NixOS is a
+second-tier target: static binaries, service-manager integration, and generated
+NixOS configuration are actively used, while renderer parity with Ubuntu remains
+incremental.
+
+Phase 1.7 proved the important path on router02: `routerd-dhcpv6-client@wan-pd`
+is now generated declaratively in `/etc/nixos/routerd-generated.nix`, survives
+`nixos-rebuild switch`, and keeps the DHCPv6-PD lease Bound.
 
 ## Try the flake
 
@@ -16,8 +19,7 @@ nix develop
 
 ## Use the NixOS module
 
-Add the flake as an input and import the module in your NixOS
-configuration:
+Add the flake as an input and import the module in your NixOS configuration:
 
 ```nix
 {
@@ -27,65 +29,51 @@ configuration:
       system = "x86_64-linux";
       modules = [
         routerd.nixosModules.default
-        ({ pkgs, ... }: {
-          services.routerd = {
-            enable = true;
-            package = routerd.packages.${pkgs.system}.routerd;
-            configFile = ./router.yaml;
-          };
-        })
+        ./configuration.nix
       ];
     };
   };
 }
 ```
 
-## Planned generated configuration flow
-
-NixOS should keep persistent configuration in Nix, not in files that
-routerd rewrites at runtime. The intended workflow is:
-
-1. Keep the router intent in `router.yaml`, including a `NixOSHost`
-   resource for host-level settings such as boot loader, users, SSH,
-   sudo, and `system.stateVersion`.
-2. Run `routerd render nixos --config router.yaml --out routerd-generated.nix`.
-3. Import the generated file from a small hand-written
-   `configuration.nix`.
-4. Apply the persistent configuration with `nixos-rebuild switch`.
-5. Run `routerd serve` for non-persistent runtime decisions such as
-   health checks, active route selection, AFTR resolution, status
-   reporting, and connection tracking observations.
-
-The hand-written `configuration.nix` can stay minimal. For a lab example,
-see `examples/nixos-edge-configuration.nix`:
+The generated configuration may include a concrete unit like this:
 
 ```nix
-{ config, pkgs, ... }:
-
-{
-  imports = [
-    ./hardware-configuration.nix
-    ./routerd-generated.nix
-  ];
-}
+systemd.services."routerd-dhcpv6-client@wan-pd" = {
+  description = "routerd DHCPv6 client wan-pd";
+  after = [ "network-online.target" ];
+  wants = [ "network-online.target" ];
+  wantedBy = [ "multi-user.target" ];
+  path = with pkgs; [ iproute2 ];
+  serviceConfig = {
+    Type = "simple";
+    ExecStart = lib.concatStringsSep " " [
+      "/usr/local/sbin/routerd-dhcpv6-client"
+      "--resource" "wan-pd"
+      "--interface" "ens18"
+      "--socket" "/run/routerd/dhcpv6-client/wan-pd.sock"
+      "--lease-file" "/var/lib/routerd/dhcpv6-client/wan-pd/lease.json"
+      "--event-file" "/var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl"
+    ];
+    Restart = "always";
+    RestartSec = "5s";
+    RuntimeDirectory = "routerd/dhcpv6-client";
+    StateDirectory = "routerd/dhcpv6-client";
+    ProtectSystem = "strict";
+    ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" ];
+    RestrictAddressFamilies = [ "AF_UNIX" "AF_INET6" "AF_NETLINK" ];
+    CapabilityBoundingSet = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
+    AmbientCapabilities = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];
+  };
+};
 ```
 
-`routerd-generated.nix` is the file routerd owns and may overwrite.
-Do not hand-edit it. If extra host-level settings are needed, put them
-in `configuration.nix` or another imported file.
+Use:
 
-`routerd render nixos` intentionally writes only the generated Nix file.
-It does not run `nixos-rebuild switch` and does not edit the
-hand-written `configuration.nix`.
+```sh
+sudo nixos-rebuild test -I nixos-config=/etc/nixos/configuration.nix
+sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix
+```
 
-## Status
-
-- Build via `buildGoModule`: working from the repository-root flake.
-- Systemd unit: rendered by the module (mirrors `contrib/systemd/routerd.service`).
-- NixOS generated configuration: `routerd render nixos` emits a
-  `routerd-generated.nix` module for host settings, dependency
-  packages, and basic systemd-networkd interface configuration. The
-  module does not depend on netplan.
-- Runtime apply on NixOS should be limited to non-persistent
-  decisions until each resource has a Nix-native persistent rendering
-  story.
+Do not describe NixOS as fully equivalent to Ubuntu yet. Keep user-facing text to
+"working groundwork" unless a renderer has been tested on a NixOS router VM.
