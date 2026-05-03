@@ -1,0 +1,29 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: dns-local-zone-example
+spec:
+  resources:
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSZone
+    metadata:
+      name: lan
+    spec:
+      zone: lab.example
+      ttl: 300
+      dnssec:
+        enabled: false
+      records:
+      - hostname: router
+        ipv4: 192.168.160.5
+        ipv6: 2001:db8:160::1
+      dhcpDerived:
+        sources:
+        - DHCPv4Server/lan-dhcpv4
+        - DHCPv6Server/lan-dhcpv6
+        hostnameSuffix: lab.example
+        ddns: true
+        ttl: 60
+        leaseFile: /run/routerd/dnsmasq.leases
+      reverseZones:
+      - name: 160.168.192.in-addr.arpa

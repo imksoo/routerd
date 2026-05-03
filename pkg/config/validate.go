@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"routerd/pkg/api"
+	"routerd/pkg/dnsresolver"
 )
 
 func Validate(router *api.Router) error {
@@ -459,13 +460,15 @@ func Validate(router *api.Router) error {
 				}
 			}
 		}
-		if res.Kind == "DNSConditionalForwarder" {
-			spec, err := res.DNSConditionalForwarderSpec()
+		if res.Kind == "DNSResolver" {
+			spec, err := res.DNSResolverSpec()
 			if err != nil {
 				return err
 			}
-			if spec.UpstreamInterface != "" && !interfaces[spec.UpstreamInterface] {
-				return fmt.Errorf("%s references missing upstream Interface %q", res.ID(), spec.UpstreamInterface)
+			for i, source := range spec.Sources {
+				if source.ViaInterface != "" && !interfaces[refName(source.ViaInterface)] && !wireGuardInterfaces[refName(source.ViaInterface)] {
+					return fmt.Errorf("%s spec.sources[%d].viaInterface references missing Interface or WireGuardInterface %q", res.ID(), i, source.ViaInterface)
+				}
 			}
 		}
 		if res.Kind == "DSLiteTunnel" {
@@ -552,71 +555,6 @@ func Validate(router *api.Router) error {
 				return fmt.Errorf("%s spec.viaInterface references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.ViaInterface)
 			}
 		}
-	}
-	return nil
-}
-
-func validateDNSResolverServer(resourceID, field string, server api.DNSResolverServerSpec) error {
-	switch server.Type {
-	case "", "static":
-		if strings.TrimSpace(server.String()) == "" {
-			return fmt.Errorf("%s %s must not be empty", resourceID, field)
-		}
-	case "doh":
-		if strings.TrimSpace(server.URL) == "" {
-			return fmt.Errorf("%s %s.url is required when type is doh", resourceID, field)
-		}
-		if !strings.HasPrefix(server.URL, "https://") {
-			return fmt.Errorf("%s %s.url must use https", resourceID, field)
-		}
-		if server.ListenPort < 0 || server.ListenPort > 65535 {
-			return fmt.Errorf("%s %s.listenPort must be between 1 and 65535", resourceID, field)
-		}
-		if server.Backend != "" && server.Backend != "native" && server.Backend != "cloudflared" && server.Backend != "dnscrypt" {
-			return fmt.Errorf("%s %s.backend must be native, cloudflared, or dnscrypt", resourceID, field)
-		}
-	default:
-		return fmt.Errorf("%s %s.type must be static or doh", resourceID, field)
-	}
-	return nil
-}
-
-func validateDoHProxySpec(resourceID string, spec api.DoHProxySpec) error {
-	backend := defaultString(spec.Backend, "native")
-	if backend != "native" && backend != "cloudflared" && backend != "dnscrypt" {
-		return fmt.Errorf("%s spec.backend must be native, cloudflared, or dnscrypt", resourceID)
-	}
-	if spec.ListenPort < 0 || spec.ListenPort > 65535 {
-		return fmt.Errorf("%s spec.listenPort must be between 1 and 65535", resourceID)
-	}
-	if len(spec.Upstreams) == 0 {
-		return fmt.Errorf("%s spec.upstreams is required", resourceID)
-	}
-	for i, upstream := range spec.Upstreams {
-		if strings.TrimSpace(upstream) == "" {
-			return fmt.Errorf("%s spec.upstreams[%d] must not be empty", resourceID, i)
-		}
-		switch {
-		case strings.HasPrefix(upstream, "https://"),
-			strings.HasPrefix(upstream, "tls://"),
-			strings.HasPrefix(upstream, "quic://"),
-			strings.HasPrefix(upstream, "udp://"):
-		default:
-			return fmt.Errorf("%s spec.upstreams[%d] must use https, tls, quic, or udp", resourceID, i)
-		}
-	}
-	if strings.TrimSpace(spec.Healthcheck.Interval) != "" {
-		if _, err := time.ParseDuration(spec.Healthcheck.Interval); err != nil {
-			return fmt.Errorf("%s spec.healthcheck.interval must be a duration", resourceID)
-		}
-	}
-	if strings.TrimSpace(spec.Healthcheck.Timeout) != "" {
-		if _, err := time.ParseDuration(spec.Healthcheck.Timeout); err != nil {
-			return fmt.Errorf("%s spec.healthcheck.timeout must be a duration", resourceID)
-		}
-	}
-	if spec.Healthcheck.FailThreshold < 0 || spec.Healthcheck.PassThreshold < 0 {
-		return fmt.Errorf("%s spec.healthcheck thresholds must not be negative", resourceID)
 	}
 	return nil
 }
@@ -1382,39 +1320,52 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s DNS/SNTP server entry %q must be IPv6 or a status reference", res.ID(), server)
 			}
 		}
-	case "DNSAnswerScope":
+	case "DNSZone":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
 		}
-		spec, err := res.DNSAnswerScopeSpec()
+		spec, err := res.DNSZoneSpec()
 		if err != nil {
 			return err
 		}
-		if spec.Interface == "" {
-			return fmt.Errorf("%s spec.interface is required", res.ID())
+		if spec.Zone == "" {
+			return fmt.Errorf("%s spec.zone is required", res.ID())
 		}
-		switch spec.Family {
-		case "", "ipv4", "ipv6":
-		default:
-			return fmt.Errorf("%s spec.family must be ipv4 or ipv6", res.ID())
-		}
-		for i, record := range spec.HostRecords {
+		for i, record := range spec.Records {
 			if record.Hostname == "" {
-				return fmt.Errorf("%s spec.hostRecords[%d].hostname is required", res.ID(), i)
+				return fmt.Errorf("%s spec.records[%d].hostname is required", res.ID(), i)
 			}
 			if strings.ContainsAny(record.Hostname, " \t\n,") {
-				return fmt.Errorf("%s spec.hostRecords[%d].hostname is invalid", res.ID(), i)
+				return fmt.Errorf("%s spec.records[%d].hostname is invalid", res.ID(), i)
 			}
 			if record.IPv4 != "" {
 				addr, err := netip.ParseAddr(record.IPv4)
 				if err != nil || !addr.Is4() {
-					return fmt.Errorf("%s spec.hostRecords[%d].ipv4 must be an IPv4 address", res.ID(), i)
+					return fmt.Errorf("%s spec.records[%d].ipv4 must be an IPv4 address", res.ID(), i)
 				}
 			}
 			if record.IPv6 != "" {
 				addr, err := netip.ParseAddr(record.IPv6)
 				if err != nil || !addr.Is6() {
-					return fmt.Errorf("%s spec.hostRecords[%d].ipv6 must be an IPv6 address", res.ID(), i)
+					return fmt.Errorf("%s spec.records[%d].ipv6 must be an IPv6 address", res.ID(), i)
+				}
+			}
+		}
+	case "DNSResolver":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.DNSResolverSpec()
+		if err != nil {
+			return err
+		}
+		if err := dnsresolver.Validate(spec); err != nil {
+			return fmt.Errorf("%s: %w", res.ID(), err)
+		}
+		for i, listen := range spec.Listen {
+			for _, sourceName := range listen.Sources {
+				if !dnsSourceExists(spec.Sources, sourceName) {
+					return fmt.Errorf("%s spec.listen[%d].sources references missing source %q", res.ID(), i, sourceName)
 				}
 			}
 		}
@@ -1693,79 +1644,6 @@ func validateResource(res api.Resource) error {
 			if candidate.Ordinal < 0 {
 				return fmt.Errorf("%s spec.candidates[%d].ordinal must be greater than 0", res.ID(), i)
 			}
-		}
-	case "DNSConditionalForwarder":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.DNSConditionalForwarderSpec()
-		if err != nil {
-			return err
-		}
-		if spec.Domain == "" {
-			return fmt.Errorf("%s spec.domain is required", res.ID())
-		}
-		if strings.ContainsAny(spec.Domain, " \t\n/") {
-			return fmt.Errorf("%s spec.domain contains invalid whitespace or slash", res.ID())
-		}
-		upstreamSource := defaultString(spec.UpstreamSource, "static")
-		switch upstreamSource {
-		case "static":
-			if len(spec.UpstreamServers) == 0 {
-				return fmt.Errorf("%s spec.upstreamServers is required when upstreamSource is static", res.ID())
-			}
-		case "dhcpv4", "dhcpv6":
-			if spec.UpstreamInterface == "" {
-				return fmt.Errorf("%s spec.upstreamInterface is required when upstreamSource is %s", res.ID(), upstreamSource)
-			}
-		default:
-			return fmt.Errorf("%s spec.upstreamSource must be static, dhcpv4, or dhcpv6", res.ID())
-		}
-		for _, server := range spec.UpstreamServers {
-			addr, err := netip.ParseAddr(server)
-			if err != nil || (!addr.Is4() && !addr.Is6()) {
-				return fmt.Errorf("%s spec.upstreamServers contains invalid address %q", res.ID(), server)
-			}
-		}
-	case "DNSResolverUpstream":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.DNSResolverUpstreamSpec()
-		if err != nil {
-			return err
-		}
-		for i, zone := range spec.Zones {
-			if zone.Zone == "" {
-				return fmt.Errorf("%s spec.zones[%d].zone is required", res.ID(), i)
-			}
-			if strings.ContainsAny(zone.Zone, " \t\n/") {
-				return fmt.Errorf("%s spec.zones[%d].zone contains invalid whitespace or slash", res.ID(), i)
-			}
-			if len(zone.Servers) == 0 {
-				return fmt.Errorf("%s spec.zones[%d].servers is required", res.ID(), i)
-			}
-			for j, server := range zone.Servers {
-				if err := validateDNSResolverServer(res.ID(), fmt.Sprintf("spec.zones[%d].servers[%d]", i, j), server); err != nil {
-					return err
-				}
-			}
-		}
-		for i, server := range spec.Default.Servers {
-			if err := validateDNSResolverServer(res.ID(), fmt.Sprintf("spec.default.servers[%d]", i), server); err != nil {
-				return err
-			}
-		}
-	case "DoHProxy":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.DoHProxySpec()
-		if err != nil {
-			return err
-		}
-		if err := validateDoHProxySpec(res.ID(), spec); err != nil {
-			return err
 		}
 	case "DSLiteTunnel":
 		if res.APIVersion != api.NetAPIVersion {
@@ -2645,8 +2523,6 @@ func interfaceRef(res api.Resource) (string, error) {
 		return spec.Interface, err
 	case "DHCPv6Scope":
 		return "", nil
-	case "DNSConditionalForwarder":
-		return "", nil
 	case "DSLiteTunnel":
 		spec, err := res.DSLiteTunnelSpec()
 		return spec.Interface, err
@@ -2666,6 +2542,26 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func refName(ref string) string {
+	if i := strings.LastIndex(ref, "/"); i >= 0 {
+		return ref[i+1:]
+	}
+	return ref
+}
+
+func dnsSourceExists(sources []api.DNSResolverSourceSpec, name string) bool {
+	for i, source := range sources {
+		sourceName := source.Name
+		if sourceName == "" {
+			sourceName = fmt.Sprintf("source-%d", i)
+		}
+		if sourceName == name {
+			return true
+		}
+	}
+	return false
 }
 
 func stringInSlice(value string, values []string) bool {

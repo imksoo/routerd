@@ -69,13 +69,9 @@ func TestDnsmasqConfigUsesSelfDNSWithDHCPv4Upstream(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		"port=53",
-		"bind-interfaces",
+		"port=0",
+		"bind-dynamic",
 		"except-interface=ens18",
-		"listen-address=127.0.0.1,192.168.10.3,::1",
-		"cache-size=1000",
-		"server=192.168.1.66",
-		"server=192.168.1.67",
 		"dhcp-range=set:lan-dhcpv4,192.168.10.130,192.168.10.139,255.255.255.0,12h",
 		"dhcp-option=tag:lan-dhcpv4,option:router,192.168.10.3",
 		"dhcp-option=tag:lan-dhcpv4,option:dns-server,192.168.10.3",
@@ -180,13 +176,6 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 				ValidLifetime:     "7200",
 				PreferredLifetime: "3600",
 			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSAnswerScope"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DNSAnswerScopeSpec{
-				Interface:   "lan",
-				LocalDomain: "lan",
-				DDNS:        true,
-				DNSSEC:      true,
-				HostRecords: []api.DNSHostRecord{{Hostname: "router.lan", IPv4: "192.168.10.1", IPv6: "2001:db8::1"}},
-			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
 		}},
 	}
@@ -204,11 +193,6 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 		"dhcp-option=tag:lan-v6,option6:dns-server,[2001:db8::53]",
 		"ra-param=ens19,mtu:1500,high,0,7200",
 		"dhcp-option=option6:domain-search,lan",
-		"host-record=router.lan,192.168.10.1,2001:db8::1",
-		"domain=lan",
-		"local=/lan/",
-		"dhcp-fqdn",
-		"dnssec",
 		"dhcp-relay=0.0.0.0,192.0.2.53,ens19",
 	} {
 		if !strings.Contains(got, want) {
@@ -380,7 +364,6 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"enable-ra",
-		"listen-address=127.0.0.1,2001:db8:3d60:1220::3,::1",
 		"dhcp-range=set:lan-dhcpv6,::,constructor:ens19,ra-stateless,64,12h",
 		"ra-param=ens19,1454",
 		"dhcp-option=tag:lan-dhcpv6,option6:dns-server,[2001:db8:3d60:1220::3]",
@@ -555,7 +538,7 @@ func TestDnsmasqConfigUsesSelfAddressPolicyOrder(t *testing.T) {
 	}
 }
 
-func TestDnsmasqConfigRendersConditionalForwarder(t *testing.T) {
+func TestDnsmasqConfigExcludesDNSResolverSources(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
@@ -586,14 +569,11 @@ func TestDnsmasqConfigRendersConditionalForwarder(t *testing.T) {
 				},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSConditionalForwarder"},
-				Metadata: api.ObjectMeta{Name: "transix-aftr"},
-				Spec: api.DNSConditionalForwarderSpec{
-					Domain:         "gw.transix.jp",
-					UpstreamSource: "static",
-					UpstreamServers: []string{
-						"2404:1a8:7f01:a::3",
-					},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+				Metadata: api.ObjectMeta{Name: "lan-resolver"},
+				Spec: api.DNSResolverSpec{
+					Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53}},
+					Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"https://cloudflare-dns.com/dns-query"}}},
 				},
 			},
 		}},
@@ -602,68 +582,12 @@ func TestDnsmasqConfigRendersConditionalForwarder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render dnsmasq: %v", err)
 	}
-	if got := string(data); !strings.Contains(got, "server=/gw.transix.jp/2404:1a8:7f01:a::3") {
-		t.Fatalf("dnsmasq output missing conditional forwarder:\n%s", got)
+	if got := string(data); strings.Contains(got, "server=") || strings.Contains(got, "listen-address=") {
+		t.Fatalf("dnsmasq must not render DNS resolver sources:\n%s", got)
 	}
 }
 
-func TestDnsmasqConfigIncludesDoHResolverUpstream(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
-				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
-				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
-				Metadata: api.ObjectMeta{Name: "dhcpv4"},
-				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
-				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
-				Spec: api.DHCPv4ScopeSpec{
-					Server:       "dhcpv4",
-					Interface:    "lan",
-					RangeStart:   "192.168.10.130",
-					RangeEnd:     "192.168.10.139",
-					RouterSource: "interfaceAddress",
-					DNSSource:    "self",
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolverUpstream"},
-				Metadata: api.ObjectMeta{Name: "public-doh"},
-				Spec: api.DNSResolverUpstreamSpec{
-					Zones: []api.DNSResolverZoneSpec{{
-						Zone: ".",
-						Servers: []api.DNSResolverServerSpec{{
-							Type:          "doh",
-							URL:           "https://1.1.1.1/dns-query",
-							ListenAddress: "127.0.0.1",
-							ListenPort:    5053,
-						}},
-					}},
-				},
-			},
-		}},
-	}
-	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
-	if err != nil {
-		t.Fatalf("render dnsmasq: %v", err)
-	}
-	if got := string(data); !strings.Contains(got, "server=127.0.0.1#5053") {
-		t.Fatalf("dnsmasq output missing DoH stub upstream:\n%s", got)
-	}
-}
-
-func TestDnsmasqConfigSkipsDHCPv4ConditionalForwarderWhenObservedEmpty(t *testing.T) {
+func TestDnsmasqConfigIgnoresDNSResolverWhenObservedEmpty(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
@@ -699,12 +623,16 @@ func TestDnsmasqConfigSkipsDHCPv4ConditionalForwarderWhenObservedEmpty(t *testin
 				},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSConditionalForwarder"},
-				Metadata: api.ObjectMeta{Name: "wan-fwd"},
-				Spec: api.DNSConditionalForwarderSpec{
-					Domain:            "example.com",
-					UpstreamSource:    "dhcpv4",
-					UpstreamInterface: "wan",
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+				Metadata: api.ObjectMeta{Name: "lan-resolver"},
+				Spec: api.DNSResolverSpec{
+					Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53}},
+					Sources: []api.DNSResolverSourceSpec{{
+						Name:      "wan-fwd",
+						Kind:      "forward",
+						Match:     []string{"example.com"},
+						Upstreams: []string{"${DHCPv4Lease/wan.status.dnsServers}"},
+					}},
 				},
 			},
 		}},
@@ -715,27 +643,10 @@ func TestDnsmasqConfigSkipsDHCPv4ConditionalForwarderWhenObservedEmpty(t *testin
 	if err != nil {
 		t.Fatalf("render dnsmasq: %v", err)
 	}
-	if len(warnings) == 0 {
-		t.Fatal("expected a warning when DHCPv4 DNS servers are not yet observed")
+	if len(warnings) != 0 {
+		t.Fatalf("dnsmasq should not validate DNSResolver observed state: %v", warnings)
 	}
 	if strings.Contains(string(data), "server=/example.com/") {
-		t.Fatalf("forwarder rule must be skipped when observed empty:\n%s", data)
-	}
-}
-
-func TestDnsmasqConfigRendersDHCPv6ConditionalForwarder(t *testing.T) {
-	spec := api.DNSConditionalForwarderSpec{
-		Domain:            "example.net",
-		UpstreamSource:    "dhcpv6",
-		UpstreamInterface: "wan",
-	}
-	servers, err := conditionalForwarderServers(spec, map[string]string{"wan": "ens18"}, DnsmasqRuntime{
-		DHCPv6DNSServersByInterface: map[string][]string{"ens18": {"2001:db8:3d60:1200:1eb1:7fff:fe73:76d8", "192.0.2.53"}},
-	})
-	if err != nil {
-		t.Fatalf("conditional forwarder servers: %v", err)
-	}
-	if len(servers) != 1 || servers[0] != "2001:db8:3d60:1200:1eb1:7fff:fe73:76d8" {
-		t.Fatalf("servers = %v, want DHCPv6 DNS only", servers)
+		t.Fatalf("DNSResolver forwarder must not be rendered by dnsmasq:\n%s", data)
 	}
 }

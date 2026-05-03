@@ -10,11 +10,12 @@ import (
 const Prefix = "/api/control.routerd.net/v1alpha1"
 
 type Handler struct {
-	Status      func(*http.Request) (*Status, error)
-	NAPT        func(*http.Request, NAPTRequest) (*NAPTTable, error)
-	Apply       func(*http.Request, ApplyRequest) (*ApplyResult, error)
-	Delete      func(*http.Request, DeleteRequest) (*DeleteResult, error)
-	DHCPv6Event func(*http.Request, DHCPv6EventRequest) (*DHCPv6EventResult, error)
+	Status         func(*http.Request) (*Status, error)
+	NAPT           func(*http.Request, NAPTRequest) (*NAPTTable, error)
+	Apply          func(*http.Request, ApplyRequest) (*ApplyResult, error)
+	Delete         func(*http.Request, DeleteRequest) (*DeleteResult, error)
+	DHCPv6Event    func(*http.Request, DHCPv6EventRequest) (*DHCPv6EventResult, error)
+	DHCPLeaseEvent func(*http.Request, DHCPLeaseEventRequest) (*DHCPLeaseEventResult, error)
 }
 
 type NAPTRequest struct {
@@ -33,9 +34,42 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleDelete(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/dhcpv6-event":
 		h.handleDHCPv6Event(w, r)
+	case r.Method == http.MethodPost && (r.URL.Path == Prefix+"/dhcp-lease-event" || r.URL.Path == "/v1/events/dhcp"):
+		h.handleDHCPLeaseEvent(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
+}
+
+func (h Handler) handleDHCPLeaseEvent(w http.ResponseWriter, r *http.Request) {
+	if h.DHCPLeaseEvent == nil {
+		writeError(w, http.StatusNotImplemented, "dhcp lease event handler is not configured")
+		return
+	}
+	defer r.Body.Close()
+	var req DHCPLeaseEventRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.APIVersion != "" && req.APIVersion != APIVersion {
+		writeError(w, http.StatusBadRequest, "unsupported apiVersion")
+		return
+	}
+	if req.Kind != "" && req.Kind != "DHCPLeaseEvent" {
+		writeError(w, http.StatusBadRequest, "unsupported kind")
+		return
+	}
+	result, err := h.DHCPLeaseEvent(r, req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrBadRequest) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h Handler) handleStatus(w http.ResponseWriter, r *http.Request) {

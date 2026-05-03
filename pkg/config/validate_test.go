@@ -264,7 +264,19 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 				DomainSearch: []string{"lan"},
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PrefixSource: "${IPv6DelegatedAddress/lan.status.prefix}", RDNSS: []string{"2001:db8::53"}, DNSSL: []string{"lan"}, MTU: 1500, PRFPreference: "high"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSAnswerScope"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DNSAnswerScopeSpec{Interface: "lan", LocalDomain: "lan", HostRecords: []api.DNSHostRecord{{Hostname: "router.lan", IPv4: "192.168.10.1", IPv6: "2001:db8::1"}}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DNSZoneSpec{
+				Zone: "lan",
+				Records: []api.DNSZoneRecordSpec{
+					{Hostname: "router.lan", IPv4: "192.168.10.1", IPv6: "2001:db8::1"},
+				},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "resolver"}, Spec: api.DNSResolverSpec{
+				Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 53}},
+				Sources: []api.DNSResolverSourceSpec{
+					{Name: "local", Kind: "zone", Match: []string{"lan"}, ZoneRef: []string{"local"}},
+					{Name: "default", Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://192.0.2.53:53"}},
+				},
+			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
 		}},
 	}

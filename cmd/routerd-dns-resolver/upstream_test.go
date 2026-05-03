@@ -7,7 +7,31 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/miekg/dns"
+
+	"routerd/pkg/api"
+	resolvercfg "routerd/pkg/dnsresolver"
 )
+
+func TestZoneAnswerMatchesResourceRef(t *testing.T) {
+	table := newZoneTable([]resolvercfg.RuntimeZone{{
+		Name: "lan-zone",
+		Spec: api.DNSZoneSpec{
+			Zone: "lab.example",
+			Records: []api.DNSZoneRecordSpec{{
+				Hostname: "router",
+				IPv4:     "192.168.160.5",
+			}},
+		},
+	}})
+	req := new(dns.Msg)
+	req.SetQuestion("router.lab.example.", dns.TypeA)
+	resp, ok := table.Answer(req, []string{"DNSZone/lan-zone"})
+	if !ok || len(resp.Answer) != 1 {
+		t.Fatalf("Answer ok=%v resp=%v", ok, resp)
+	}
+}
 
 func TestParseDNSUpstreamDefaults(t *testing.T) {
 	tests := []struct {
@@ -19,6 +43,8 @@ func TestParseDNSUpstreamDefaults(t *testing.T) {
 		{"tls://dns.example", "tls", "dns.example:853"},
 		{"quic://dns.example:8853", "quic", "dns.example:8853"},
 		{"udp://[2001:db8::53]", "udp", "[2001:db8::53]:53"},
+		{"2001:db8::53", "udp", "[2001:db8::53]:53"},
+		{"192.0.2.53", "udp", "192.0.2.53:53"},
 	}
 	for i, tt := range tests {
 		upstream, err := parseDNSUpstream(i, tt.raw)

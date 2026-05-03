@@ -30,6 +30,7 @@ import (
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
 	controllerchain "routerd/pkg/controller/chain"
+	"routerd/pkg/daemonapi"
 	"routerd/pkg/eventlog"
 	"routerd/pkg/inventory"
 	"routerd/pkg/observe"
@@ -42,6 +43,7 @@ import (
 )
 
 const (
+	version               = "0.2.0"
 	routerdDnsmasqService = "routerd-dnsmasq.service"
 	freebsdSysrcStateKey  = "freebsd.applyFreeBSDConfig.lastSysrcKeys"
 )
@@ -86,6 +88,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch args[0] {
+	case "version", "--version":
+		fmt.Fprintf(stdout, "routerd %s\n", version)
+		return nil
 	case "validate":
 		return validateCommand(args[1:], stdout)
 	case "observe":
@@ -625,8 +630,8 @@ func canonicalResourceKind(kind string) string {
 		"nat44rule":              "NAT44Rule",
 		"dslite":                 "DSLiteTunnel",
 		"dslitetunnel":           "DSLiteTunnel",
-		"doh":                    "DoHProxy",
-		"dohproxy":               "DoHProxy",
+		"dns":                    "DNSResolver",
+		"resolver":               "DNSResolver",
 		"pppoe":                  "PPPoEInterface",
 		"pppoeinterface":         "PPPoEInterface",
 		"pppoesession":           "PPPoESession",
@@ -654,7 +659,7 @@ func apiVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSAnswerScope", "SelfAddressPolicy", "DNSConditionalForwarder", "DNSResolverUpstream", "DoHProxy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "WANEgressPolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -2282,7 +2287,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDryRunDHCPv6 := fs.Bool("controller-chain-dry-run-dhcpv6", true, "do not start DHCPv6 service in the experimental controller chain")
 	controllerDryRunDHCPv4Lease := fs.Bool("controller-chain-dry-run-dhcpv4lease", true, "do not apply DHCPv4 lease address/default route in the experimental controller chain")
 	controllerDryRunPPPoESession := fs.Bool("controller-chain-dry-run-pppoesession", true, "do not apply PPPoE session route/DNS in the experimental controller chain")
-	controllerDryRunDoHProxy := fs.Bool("controller-chain-dry-run-doh-proxy", true, "do not start DoH proxy daemons in the experimental controller chain")
+	controllerDryRunDNSResolver := fs.Bool("controller-chain-dry-run-dns-resolver", true, "do not start DNS resolver daemons in the experimental controller chain")
 	controllerDryRunNAT := fs.Bool("controller-chain-dry-run-nat", true, "do not apply nftables NAT rules in the experimental controller chain")
 	controllerDaemonSockets := fs.String("controller-chain-daemon-sockets", "", "comma-separated resource=unix-socket overrides for the experimental controller chain")
 	controllerDnsmasqCommand := fs.String("controller-chain-dnsmasq-command", "dnsmasq", "dnsmasq command for the experimental controller chain")
@@ -2329,13 +2334,14 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		<-stop
 		cancelControllers()
 	}()
+	var controllerBus *bus.Bus
 	if *controllerChain {
 		stateStore, err := routerstate.OpenSQLite(defaultStatePath)
 		if err != nil {
 			return err
 		}
 		defer stateStore.Close()
-		controllerBus := bus.NewWithStore(stateStore)
+		controllerBus = bus.NewWithStore(stateStore)
 		chainRunner := controllerchain.Runner{
 			Router: router,
 			Bus:    controllerBus,
@@ -2349,7 +2355,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 				DryRunDHCPv6:       *controllerDryRunDHCPv6,
 				DryRunDHCPv4Lease:  *controllerDryRunDHCPv4Lease,
 				DryRunPPPoESession: *controllerDryRunPPPoESession,
-				DryRunDoHProxy:     *controllerDryRunDoHProxy,
+				DryRunDNSResolver:  *controllerDryRunDNSResolver,
 				DryRunNAT:          *controllerDryRunNAT,
 				DnsmasqCommand:     *controllerDnsmasqCommand,
 				DnsmasqConfig:      *controllerDnsmasqConfig,
@@ -2434,6 +2440,19 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			if err != nil {
 				return nil, err
 			}
+			return &result, nil
+		},
+		DHCPLeaseEvent: func(r *http.Request, req controlapi.DHCPLeaseEventRequest) (*controlapi.DHCPLeaseEventResult, error) {
+			if req.Action == "" || req.IP == "" {
+				return nil, controlapi.ErrBadRequest
+			}
+			if controllerBus != nil {
+				topic := "routerd.dhcp.lease." + req.Action
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd-dhcp-event-relay", Kind: "routerd-dhcp-event-relay"}, topic, daemonapi.SeverityInfo)
+				event.Attributes = map[string]string{"mac": req.MAC, "ip": req.IP, "hostname": req.Hostname}
+				_ = controllerBus.Publish(r.Context(), event)
+			}
+			result := controlapi.NewDHCPLeaseEventResult()
 			return &result, nil
 		},
 	}

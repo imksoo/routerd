@@ -1,4 +1,5 @@
 PREFIX ?= /usr/local
+VERSION ?= 0.2.0
 BINDIR ?= $(PREFIX)/sbin
 SYSCONFDIR ?= $(PREFIX)/etc/routerd
 PLUGINDIR ?= $(PREFIX)/libexec/routerd/plugins
@@ -38,8 +39,9 @@ ROUTERD_BIN := $(BUILDDIR)/routerd
 ROUTERCTL_BIN := $(BUILDDIR)/routerctl
 ROUTERD_DHCPv4_CLIENT_BIN := $(BUILDDIR)/routerd-dhcpv4-client
 ROUTERD_DHCPv6_CLIENT_BIN := $(BUILDDIR)/routerd-dhcpv6-client
+ROUTERD_DHCP_EVENT_RELAY_BIN := $(BUILDDIR)/routerd-dhcp-event-relay
 ROUTERD_HEALTHCHECK_BIN := $(BUILDDIR)/routerd-healthcheck
-ROUTERD_DOH_PROXY_BIN := $(BUILDDIR)/routerd-doh-proxy
+ROUTERD_DNS_RESOLVER_BIN := $(BUILDDIR)/routerd-dns-resolver
 GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
@@ -56,8 +58,9 @@ build:
 	$(GO_BUILD_ENV) go build -o $(ROUTERCTL_BIN) ./cmd/routerctl
 	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCPv4_CLIENT_BIN) ./cmd/routerd-dhcpv4-client
 	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCPv6_CLIENT_BIN) ./cmd/routerd-dhcpv6-client
+	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCP_EVENT_RELAY_BIN) ./cmd/routerd-dhcp-event-relay
 	$(GO_BUILD_ENV) go build -o $(ROUTERD_HEALTHCHECK_BIN) ./cmd/routerd-healthcheck
-	$(GO_BUILD_ENV) go build -o $(ROUTERD_DOH_PROXY_BIN) ./cmd/routerd-doh-proxy
+	$(GO_BUILD_ENV) go build -o $(ROUTERD_DNS_RESOLVER_BIN) ./cmd/routerd-dns-resolver
 
 generate-schema:
 	install -d schemas
@@ -112,8 +115,10 @@ install: check-build-deps build
 	install -m 0755 $(ROUTERCTL_BIN) $(DESTDIR)$(BINDIR)/routerctl
 	install -m 0755 $(ROUTERD_DHCPv4_CLIENT_BIN) $(DESTDIR)$(BINDIR)/routerd-dhcpv4-client
 	install -m 0755 $(ROUTERD_DHCPv6_CLIENT_BIN) $(DESTDIR)$(BINDIR)/routerd-dhcpv6-client
+	install -d $(DESTDIR)$(PREFIX)/libexec/routerd
+	install -m 0755 $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(DESTDIR)$(PREFIX)/libexec/routerd/dhcp-event-relay
 	install -m 0755 $(ROUTERD_HEALTHCHECK_BIN) $(DESTDIR)$(BINDIR)/routerd-healthcheck
-	install -m 0755 $(ROUTERD_DOH_PROXY_BIN) $(DESTDIR)$(BINDIR)/routerd-doh-proxy
+	install -m 0755 $(ROUTERD_DNS_RESOLVER_BIN) $(DESTDIR)$(BINDIR)/routerd-dns-resolver
 	install -d $(DESTDIR)$(SYSCONFDIR)
 	install -m 0644 examples/basic-static.yaml $(DESTDIR)$(SYSCONFDIR)/router.yaml.example
 	install -d $(DESTDIR)$(SYSCONFDIR)/examples

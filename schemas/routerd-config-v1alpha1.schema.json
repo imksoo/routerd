@@ -2638,146 +2638,6 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "DNSAnswerScope",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "configPath": {
-                        "type": "string"
-                      },
-                      "ddns": {
-                        "type": "boolean"
-                      },
-                      "delegatedAddress": {
-                        "type": "string"
-                      },
-                      "dnssec": {
-                        "type": "boolean"
-                      },
-                      "family": {
-                        "enum": [
-                          "ipv4",
-                          "ipv6"
-                        ],
-                        "type": "string"
-                      },
-                      "hostRecords": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "hostname": {
-                              "type": "string"
-                            },
-                            "ipv4": {
-                              "type": "string"
-                            },
-                            "ipv6": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "hostname"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      },
-                      "hostname": {
-                        "type": "string"
-                      },
-                      "interface": {
-                        "type": "string"
-                      },
-                      "localDomain": {
-                        "type": "string"
-                      },
-                      "pidFile": {
-                        "type": "string"
-                      },
-                      "port": {
-                        "type": "integer"
-                      },
-                      "ready_when": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "any_of": {
-                              "items": {
-                                "items": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "equals": {
-                                      "type": "string"
-                                    },
-                                    "field": {
-                                      "type": "string"
-                                    },
-                                    "not_empty": {
-                                      "type": "boolean"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "type": "array"
-                              },
-                              "type": "array"
-                            },
-                            "equals": {
-                              "type": "string"
-                            },
-                            "field": {
-                              "type": "string"
-                            },
-                            "not_empty": {
-                              "type": "boolean"
-                            }
-                          },
-                          "type": "object"
-                        },
-                        "type": "array"
-                      }
-                    },
-                    "required": [
-                      "interface"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
                     "const": "SelfAddressPolicy",
                     "type": "string"
                   },
@@ -2871,7 +2731,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "DNSConditionalForwarder",
+                    "const": "DNSZone",
                     "type": "string"
                   },
                   "metadata": {
@@ -2890,29 +2750,120 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
-                      "domain": {
-                        "type": "string"
+                      "dhcpDerived": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "ddns": {
+                            "type": "boolean"
+                          },
+                          "hostnameSuffix": {
+                            "type": "string"
+                          },
+                          "leaseFile": {
+                            "type": "string"
+                          },
+                          "sources": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "ttl": {
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
                       },
-                      "upstreamInterface": {
-                        "type": "string"
+                      "dnssec": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "mode": {
+                            "enum": [
+                              "",
+                              "validate",
+                              "sign"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
                       },
-                      "upstreamServers": {
+                      "ownerRefs": {
                         "items": {
-                          "type": "string"
+                          "additionalProperties": false,
+                          "properties": {
+                            "apiVersion": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "name"
+                          ],
+                          "type": "object"
                         },
                         "type": "array"
                       },
-                      "upstreamSource": {
-                        "enum": [
-                          "static",
-                          "dhcpv4",
-                          "dhcpv6"
-                        ],
+                      "records": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "hostname": {
+                              "type": "string"
+                            },
+                            "ipv4": {
+                              "type": "string"
+                            },
+                            "ipv6": {
+                              "type": "string"
+                            },
+                            "ttl": {
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "hostname"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "reverseZones": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "name"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "ttl": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "zone": {
                         "type": "string"
                       }
                     },
                     "required": [
-                      "domain"
+                      "zone"
                     ],
                     "type": "object"
                   },
@@ -2937,7 +2888,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "DNSResolverUpstream",
+                    "const": "DNSResolver",
                     "type": "string"
                   },
                   "metadata": {
@@ -2956,275 +2907,147 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
-                      "default": {
+                      "cache": {
                         "additionalProperties": false,
                         "properties": {
-                          "servers": {
-                            "items": {
-                              "oneOf": [
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "address": {
-                                      "type": "string"
-                                    },
-                                    "backend": {
-                                      "enum": [
-                                        "",
-                                        "native",
-                                        "cloudflared",
-                                        "dnscrypt"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "listenAddress": {
-                                      "type": "string"
-                                    },
-                                    "listenPort": {
-                                      "maximum": 65535,
-                                      "minimum": 1,
-                                      "type": "integer"
-                                    },
-                                    "proxyRef": {
-                                      "type": "string"
-                                    },
-                                    "sni": {
-                                      "type": "string"
-                                    },
-                                    "type": {
-                                      "enum": [
-                                        "",
-                                        "static",
-                                        "doh"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "url": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  "type": "object"
-                                }
-                              ]
-                            },
-                            "type": "array"
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "maxEntries": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "maxTTL": {
+                            "type": "string"
+                          },
+                          "minTTL": {
+                            "type": "string"
+                          },
+                          "negativeTTL": {
+                            "type": "string"
                           }
                         },
                         "type": "object"
                       },
-                      "ready_when": {
+                      "listen": {
                         "items": {
                           "additionalProperties": false,
                           "properties": {
-                            "any_of": {
+                            "addresses": {
                               "items": {
-                                "items": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "equals": {
-                                      "type": "string"
-                                    },
-                                    "field": {
-                                      "type": "string"
-                                    },
-                                    "not_empty": {
-                                      "type": "boolean"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "type": "array"
+                                "type": "string"
                               },
                               "type": "array"
                             },
-                            "equals": {
+                            "name": {
                               "type": "string"
                             },
-                            "field": {
-                              "type": "string"
+                            "port": {
+                              "maximum": 65535,
+                              "minimum": 1,
+                              "type": "integer"
                             },
-                            "not_empty": {
-                              "type": "boolean"
+                            "sources": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
                             }
                           },
+                          "required": [
+                            "addresses"
+                          ],
                           "type": "object"
                         },
                         "type": "array"
                       },
-                      "zones": {
+                      "metrics": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "perUpstream": {
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "sources": {
                         "items": {
                           "additionalProperties": false,
                           "properties": {
-                            "servers": {
+                            "bootstrapResolver": {
                               "items": {
-                                "oneOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "address": {
-                                        "type": "string"
-                                      },
-                                      "backend": {
-                                        "enum": [
-                                          "",
-                                          "native",
-                                          "cloudflared",
-                                          "dnscrypt"
-                                        ],
-                                        "type": "string"
-                                      },
-                                      "listenAddress": {
-                                        "type": "string"
-                                      },
-                                      "listenPort": {
-                                        "maximum": 65535,
-                                        "minimum": 1,
-                                        "type": "integer"
-                                      },
-                                      "proxyRef": {
-                                        "type": "string"
-                                      },
-                                      "sni": {
-                                        "type": "string"
-                                      },
-                                      "type": {
-                                        "enum": [
-                                          "",
-                                          "static",
-                                          "doh"
-                                        ],
-                                        "type": "string"
-                                      },
-                                      "url": {
-                                        "type": "string"
-                                      }
-                                    },
-                                    "type": "object"
-                                  }
-                                ]
+                                "type": "string"
                               },
                               "type": "array"
                             },
-                            "zone": {
+                            "dnssecValidate": {
+                              "type": "boolean"
+                            },
+                            "healthcheck": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "failThreshold": {
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "interval": {
+                                  "type": "string"
+                                },
+                                "passThreshold": {
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "timeout": {
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "kind": {
+                              "enum": [
+                                "zone",
+                                "forward",
+                                "upstream"
+                              ],
                               "type": "string"
+                            },
+                            "match": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "upstreams": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "viaInterface": {
+                              "type": "string"
+                            },
+                            "zoneRef": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
                             }
                           },
                           "required": [
-                            "zone"
+                            "kind",
+                            "match"
                           ],
                           "type": "object"
                         },
                         "type": "array"
                       }
                     },
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "DoHProxy",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
                     "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "backend": {
-                        "enum": [
-                          "native",
-                          "cloudflared",
-                          "dnscrypt"
-                        ],
-                        "type": "string"
-                      },
-                      "command": {
-                        "type": "string"
-                      },
-                      "configPath": {
-                        "type": "string"
-                      },
-                      "eventFile": {
-                        "type": "string"
-                      },
-                      "healthcheck": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "failThreshold": {
-                            "minimum": 1,
-                            "type": "integer"
-                          },
-                          "interval": {
-                            "type": "string"
-                          },
-                          "passThreshold": {
-                            "minimum": 1,
-                            "type": "integer"
-                          },
-                          "timeout": {
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
-                      },
-                      "listenAddress": {
-                        "type": "string"
-                      },
-                      "listenPort": {
-                        "maximum": 65535,
-                        "minimum": 1,
-                        "type": "integer"
-                      },
-                      "socketPath": {
-                        "type": "string"
-                      },
-                      "stateFile": {
-                        "type": "string"
-                      },
-                      "upstreams": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      }
-                    },
-                    "required": [
-                      "upstreams"
+                      "listen",
+                      "sources"
                     ],
                     "type": "object"
                   },

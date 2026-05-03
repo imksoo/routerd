@@ -22,7 +22,7 @@ import (
 	"routerd/pkg/conntrack"
 	"routerd/pkg/controller/conntrackobserver"
 	"routerd/pkg/controller/dhcpv4lease"
-	dohproxycontroller "routerd/pkg/controller/dohproxy"
+	dnsresolvercontroller "routerd/pkg/controller/dnsresolver"
 	"routerd/pkg/controller/nat44"
 	"routerd/pkg/controller/pppoesession"
 	"routerd/pkg/daemonapi"
@@ -49,7 +49,7 @@ type Options struct {
 	DryRunDHCPv6       bool
 	DryRunDHCPv4Lease  bool
 	DryRunPPPoESession bool
-	DryRunDoHProxy     bool
+	DryRunDNSResolver  bool
 	DryRunNAT          bool
 	DnsmasqCommand     string
 	DnsmasqConfig      string
@@ -172,15 +172,13 @@ func (r *Runner) Start(ctx context.Context) error {
 	pd := PrefixDelegationController{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	lan := LANAddressController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunAddress, Logger: logger}
-	resolver := DNSResolverUpstreamController{Router: r.Router, Bus: r.Bus, Store: r.Store, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
 	dslite := DSLiteTunnelController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
 	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	ra := IPv6RouterAdvertisementController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRA, Logger: logger}
 	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
 	dhcp4Lease := dhcpv4lease.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Lease, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
-	dohProxy := dohproxycontroller.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDoHProxy}
-	dns := DNSAnswerController{Router: r.Router, Bus: r.Bus, Store: r.Store, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
+	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDNSResolver}
 	wan := wanegress.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
 	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
@@ -193,15 +191,12 @@ func (r *Runner) Start(ctx context.Context) error {
 	pd.Start(ctx)
 	info.Start(ctx)
 	lan.Start(ctx)
-	resolver.Start(ctx)
 	dslite.Start(ctx)
 	route.Start(ctx)
 	ra.Start(ctx)
 	dhcpv6.Start(ctx)
 	dhcp4Lease.Start(ctx)
 	pppoeSession.Start(ctx)
-	dohProxy.Start(ctx)
-	dns.Start(ctx)
 	wan.Start(ctx)
 	nat.Start(ctx)
 	conntrackObs.Start(ctx)
@@ -230,10 +225,10 @@ func (r *Runner) Start(ctx context.Context) error {
 			if err := renderAndEnsureDnsmasq(ctx, r.Router, r.Store, r.Opts.DnsmasqCommand, r.Opts.DnsmasqConfig, r.Opts.DnsmasqPID, r.Opts.DnsmasqPort, r.Opts.DnsmasqListen); err != nil && logger != nil && ctx.Err() == nil {
 				logger.Warn("initial dnsmasq reconcile failed", "error", err)
 			}
-			if err := dns.reconcile(ctx, ""); err != nil && logger != nil && ctx.Err() == nil {
-				logger.Warn("initial dns answer reconcile failed", "error", err)
-			}
+			dnsResolver.Start(ctx)
 		}()
+	} else {
+		dnsResolver.Start(ctx)
 	}
 	go func() {
 		for _, resource := range r.Router.Spec.Resources {
@@ -254,9 +249,6 @@ func (r *Runner) Start(ctx context.Context) error {
 			if err := info.reconcile(ctx, resource.Metadata.Name, true); err != nil && logger != nil && ctx.Err() == nil {
 				logger.Warn("initial dhcpv6 information reconcile failed", "pd", resource.Metadata.Name, "error", err)
 			}
-		}
-		if err := resolver.reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
-			logger.Warn("initial dns resolver upstream reconcile failed", "error", err)
 		}
 		if err := dslite.reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
 			logger.Warn("initial dslite tunnel reconcile failed", "error", err)
@@ -418,153 +410,6 @@ func (c LANAddressController) linkReady(name string) bool {
 	return false
 }
 
-type DNSAnswerController struct {
-	Router          *api.Router
-	Bus             *bus.Bus
-	Store           Store
-	Command         string
-	ConfigPath      string
-	PIDFile         string
-	Port            int
-	ListenAddresses []string
-	Logger          *slog.Logger
-}
-
-type DNSResolverUpstreamController struct {
-	Router          *api.Router
-	Bus             *bus.Bus
-	Store           Store
-	Command         string
-	ConfigPath      string
-	PIDFile         string
-	Port            int
-	ListenAddresses []string
-	Logger          *slog.Logger
-}
-
-func (c DNSResolverUpstreamController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.info.*"}}, 32)
-	go func() {
-		for range ch {
-			if err := c.reconcile(ctx); err != nil && c.Logger != nil {
-				c.Logger.Warn("dns resolver upstream reconcile failed", "error", err)
-			}
-		}
-	}()
-}
-
-func (c DNSResolverUpstreamController) reconcile(ctx context.Context) error {
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "DNSResolverUpstream" {
-			continue
-		}
-		if _, err := resource.DNSResolverUpstreamSpec(); err != nil {
-			return err
-		}
-		configPath := firstNonEmpty(c.ConfigPath, "/run/routerd/dnsmasq-phase1.conf")
-		pidFile := firstNonEmpty(c.PIDFile, "/run/routerd/dnsmasq-phase1.pid")
-		port := c.Port
-		if port == 0 {
-			port = 1053
-		}
-		changed, err := writeDnsmasqConfig(c.Router, c.Store, configPath, pidFile, port, c.ListenAddresses)
-		if err != nil {
-			return err
-		}
-		if err := ensureDnsmasq(ctx, c.Command, configPath, pidFile, changed); err != nil {
-			return err
-		}
-		status := map[string]any{"phase": "Applied", "configPath": configPath, "pidFile": pidFile, "port": port, "listenAddresses": dnsmasqListenAddresses(c.ListenAddresses)}
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DNSResolverUpstream", resource.Metadata.Name, status); err != nil {
-			return err
-		}
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.dns.resolver.applied", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DNSResolverUpstream", Name: resource.Metadata.Name}
-		event.Attributes = map[string]string{"configPath": configPath, "port": fmt.Sprintf("%d", port)}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c DNSAnswerController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.address.*"}}, 32)
-	go func() {
-		for event := range ch {
-			if event.Resource == nil {
-				continue
-			}
-			if err := c.reconcile(ctx, event.Resource.Name); err != nil && c.Logger != nil {
-				c.Logger.Warn("dns answer reconcile failed", "address", event.Resource.Name, "error", err)
-			}
-		}
-	}()
-}
-
-func (c DNSAnswerController) reconcile(ctx context.Context, delegatedAddress string) error {
-	var address string
-	if delegatedAddress != "" {
-		addressStatus := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", delegatedAddress)
-		if addressStatus["phase"] != "Applied" {
-			return nil
-		}
-		address, _ = addressStatus["address"].(string)
-		if address == "" {
-			return nil
-		}
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "DNSAnswerScope" {
-			continue
-		}
-		spec, err := resource.DNSAnswerScopeSpec()
-		if err != nil {
-			return err
-		}
-		if spec.DelegatedAddress != "" && spec.DelegatedAddress != delegatedAddress {
-			continue
-		}
-		if spec.DelegatedAddress == "" && delegatedAddress != "" {
-			continue
-		}
-		if spec.Family != "" && spec.Family != "ipv6" {
-			continue
-		}
-		hostname := spec.Hostname
-		if hostname == "" {
-			hostname = resource.Metadata.Name + ".routerd.test"
-		}
-		configPath := firstNonEmpty(spec.ConfigPath, c.ConfigPath, "/run/routerd/dnsmasq-phase1.conf")
-		pidFile := firstNonEmpty(spec.PIDFile, c.PIDFile, "/run/routerd/dnsmasq-phase1.pid")
-		port := spec.Port
-		if port == 0 {
-			port = c.Port
-		}
-		if port == 0 {
-			port = 1053
-		}
-		changed, err := writeDnsmasqConfig(c.Router, c.Store, configPath, pidFile, port, c.ListenAddresses)
-		if err != nil {
-			return err
-		}
-		if err := ensureDnsmasq(ctx, c.Command, configPath, pidFile, changed); err != nil {
-			return err
-		}
-		status := map[string]any{"phase": "Applied", "hostname": hostname, "address": address, "port": port, "configPath": configPath, "pidFile": pidFile, "listenAddresses": dnsmasqListenAddresses(c.ListenAddresses)}
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DNSAnswerScope", resource.Metadata.Name, status); err != nil {
-			return err
-		}
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.dns.answer.applied", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DNSAnswerScope", Name: resource.Metadata.Name}
-		event.Attributes = map[string]string{"hostname": hostname, "address": address, "port": fmt.Sprintf("%d", port)}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func renderAndEnsureDnsmasq(ctx context.Context, router *api.Router, store Store, command, configPath, pidFile string, port int, listenAddresses []string) error {
 	configPath = firstNonEmpty(configPath, "/run/routerd/dnsmasq-phase1.conf")
 	pidFile = firstNonEmpty(pidFile, "/run/routerd/dnsmasq-phase1.pid")
@@ -584,7 +429,7 @@ func routerNeedsDnsmasq(router *api.Router) bool {
 	}
 	for _, resource := range router.Spec.Resources {
 		switch resource.Kind {
-		case "DNSResolverUpstream", "DNSAnswerScope", "DHCPv4Server", "DHCPv6Server", "IPv6RouterAdvertisement", "DHCPv4Relay":
+		case "DHCPv4Server", "DHCPv6Server", "IPv6RouterAdvertisement", "DHCPv4Relay":
 			return true
 		}
 	}
@@ -614,16 +459,8 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 		return false, err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "port=%d\nno-resolv\nno-hosts\nlisten-address=%s\nbind-interfaces\npid-file=%s\n", port, strings.Join(dnsmasqListenAddresses(listenAddresses), ","), pidFile)
-	for _, line := range dnsmasqResolverLines(router, store) {
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
+	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-interfaces\npid-file=%s\n", pidFile)
 	for _, line := range dnsmasqLANServiceLines(router, store) {
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
-	for _, line := range dnsmasqHostRecordLines(router, store) {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
@@ -669,6 +506,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
 		}
 		tag := sanitizeChainTag(resource.Metadata.Name)
 		lines = append(lines, "interface="+ifname)
+		lines = append(lines, "dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay")
 		leaseTime := firstNonEmpty(spec.AddressPool.LeaseTime, "12h")
 		lines = append(lines, fmt.Sprintf("dhcp-range=set:%s,%s,%s,%s", tag, spec.AddressPool.Start, spec.AddressPool.End, leaseTime))
 		if spec.Gateway != "" {
@@ -795,103 +633,6 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
 	return lines
 }
 
-func dnsmasqResolverLines(router *api.Router, store Store) []string {
-	var lines []string
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "DNSResolverUpstream" {
-			continue
-		}
-		spec, err := resource.DNSResolverUpstreamSpec()
-		if err != nil {
-			continue
-		}
-		for _, server := range expandResolverServers(store, spec.Default.Servers) {
-			lines = append(lines, "server="+server)
-		}
-		for _, zone := range spec.Zones {
-			cleanZone := strings.Trim(strings.TrimSpace(zone.Zone), ".")
-			for _, server := range expandResolverServers(store, zone.Servers) {
-				if cleanZone == "" {
-					lines = append(lines, "server="+server)
-					continue
-				}
-				lines = append(lines, fmt.Sprintf("server=/%s/%s", cleanZone, server))
-			}
-		}
-	}
-	return lines
-}
-
-func dnsmasqHostRecordLines(router *api.Router, store Store) []string {
-	var lines []string
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "DNSAnswerScope" {
-			continue
-		}
-		spec, err := resource.DNSAnswerScopeSpec()
-		if err != nil || (spec.Family != "" && spec.Family != "ipv6") {
-			continue
-		}
-		if spec.DelegatedAddress == "" {
-			for _, record := range spec.HostRecords {
-				addresses := compactStrings(record.IPv4, record.IPv6)
-				if record.Hostname != "" && len(addresses) > 0 {
-					lines = append(lines, fmt.Sprintf("host-record=%s,%s", record.Hostname, strings.Join(addresses, ",")))
-				}
-			}
-			if spec.LocalDomain != "" {
-				domain := strings.Trim(spec.LocalDomain, ".")
-				lines = append(lines, "domain="+domain, "local=/"+domain+"/")
-				if spec.DDNS {
-					lines = append(lines, "dhcp-fqdn")
-				}
-			}
-			if spec.DNSSEC {
-				lines = append(lines, "dnssec")
-				lines = append(lines, dnsmasqRootTrustAnchor)
-			}
-			continue
-		}
-		addressStatus := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", spec.DelegatedAddress)
-		if addressStatus["phase"] != "Applied" {
-			continue
-		}
-		address, _ := addressStatus["address"].(string)
-		if address == "" {
-			continue
-		}
-		hostAddress := strings.TrimSuffix(address, "/64")
-		if strings.Contains(hostAddress, "/") {
-			hostAddress = strings.Split(hostAddress, "/")[0]
-		}
-		hostname := spec.Hostname
-		if hostname == "" {
-			hostname = resource.Metadata.Name + ".routerd.test"
-		}
-		lines = append(lines, fmt.Sprintf("host-record=%s,%s", hostname, hostAddress))
-		for _, record := range spec.HostRecords {
-			addresses := compactStrings(record.IPv4, record.IPv6)
-			if record.Hostname != "" && len(addresses) > 0 {
-				lines = append(lines, fmt.Sprintf("host-record=%s,%s", record.Hostname, strings.Join(addresses, ",")))
-			}
-		}
-		if spec.LocalDomain != "" {
-			domain := strings.Trim(spec.LocalDomain, ".")
-			lines = append(lines, "domain="+domain, "local=/"+domain+"/")
-			if spec.DDNS {
-				lines = append(lines, "dhcp-fqdn")
-			}
-		}
-		if spec.DNSSEC {
-			lines = append(lines, "dnssec")
-			lines = append(lines, dnsmasqRootTrustAnchor)
-		}
-	}
-	return lines
-}
-
-const dnsmasqRootTrustAnchor = "trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D"
-
 func chainInterfaceAliases(router *api.Router) map[string]string {
 	aliases := map[string]string{}
 	for _, resource := range router.Spec.Resources {
@@ -936,39 +677,10 @@ func sanitizeChainTag(value string) string {
 	return value
 }
 
-func compactStrings(values ...string) []string {
-	var out []string
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			out = append(out, strings.TrimSpace(value))
-		}
-	}
-	return out
-}
-
 func expandServers(store Store, values []string) []string {
 	var out []string
 	for _, value := range values {
 		resolved := valueFromStatusRef(store, value)
-		if list := decodeStringList(resolved); len(list) > 0 {
-			out = append(out, list...)
-			continue
-		}
-		if strings.TrimSpace(resolved) != "" {
-			out = append(out, strings.TrimSpace(resolved))
-		}
-	}
-	return out
-}
-
-func expandResolverServers(store Store, values []api.DNSResolverServerSpec) []string {
-	var out []string
-	for _, value := range values {
-		if value.IsDoH() {
-			out = append(out, value.StubAddress())
-			continue
-		}
-		resolved := valueFromStatusRef(store, value.String())
 		if list := decodeStringList(resolved); len(list) > 0 {
 			out = append(out, list...)
 			continue

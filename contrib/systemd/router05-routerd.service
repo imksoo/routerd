@@ -20,7 +20,7 @@ ExecStart=/usr/local/sbin/routerd serve \
   --controller-chain-dry-run-route=false \
   --controller-chain-dry-run-ra=true \
   --controller-chain-dry-run-dhcpv6=false \
-  --controller-chain-dry-run-doh-proxy=false \
+  --controller-chain-dry-run-dns-resolver=false \
   --controller-chain-dry-run-nat=false \
   --controller-chain-dnsmasq-command /usr/sbin/dnsmasq \
   --controller-chain-dnsmasq-config /run/routerd/dnsmasq.conf \

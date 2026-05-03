@@ -112,8 +112,10 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeDHCPv6Scope(res, includePlan, &rr)
 		case "SelfAddressPolicy":
 			e.observeSelfAddressPolicy(res, includePlan, &rr)
-		case "DNSConditionalForwarder":
-			e.observeDNSConditionalForwarder(res, aliases, includePlan, &rr)
+		case "DNSZone":
+			e.observeDNSZone(res, includePlan, &rr)
+		case "DNSResolver":
+			e.observeDNSResolver(res, includePlan, &rr)
 		case "DHCPv4Relay":
 			e.observeDHCPv4Relay(res, aliases, includePlan, &rr)
 		case "DSLiteTunnel":
@@ -398,25 +400,32 @@ func (e *Engine) observeSelfAddressPolicy(res api.Resource, includePlan bool, rr
 	rr.Plan = append(rr.Plan, fmt.Sprintf("select %s self address from %d ordered candidates", spec.AddressFamily, len(spec.Candidates)))
 }
 
-func (e *Engine) observeDNSConditionalForwarder(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
-	spec, err := res.DNSConditionalForwarderSpec()
+func (e *Engine) observeDNSZone(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DNSZoneSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
 		return
 	}
-	source := defaultString(spec.UpstreamSource, "static")
-	rr.Observed["domain"] = spec.Domain
-	rr.Observed["upstreamSource"] = source
-	if spec.UpstreamInterface != "" {
-		rr.Observed["upstreamInterface"] = spec.UpstreamInterface
-		rr.Observed["upstreamIfname"] = aliases[spec.UpstreamInterface]
-	}
-	if len(spec.UpstreamServers) > 0 {
-		rr.Observed["upstreamServers"] = strings.Join(spec.UpstreamServers, ",")
-	}
+	rr.Observed["zone"] = spec.Zone
+	rr.Observed["records"] = fmt.Sprintf("%d", len(spec.Records))
+	rr.Observed["dhcpSources"] = strings.Join(spec.DHCPDerived.Sources, ",")
 	if includePlan {
-		rr.Plan = append(rr.Plan, fmt.Sprintf("forward DNS queries for %s using %s upstreams", spec.Domain, source))
+		rr.Plan = append(rr.Plan, fmt.Sprintf("maintain DNS zone %s with %d manual records", spec.Zone, len(spec.Records)))
+	}
+}
+
+func (e *Engine) observeDNSResolver(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DNSResolverSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["listeners"] = fmt.Sprintf("%d", len(spec.Listen))
+	rr.Observed["sources"] = fmt.Sprintf("%d", len(spec.Sources))
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-dns-resolver for %d listen profiles and %d sources", len(spec.Listen), len(spec.Sources)))
 	}
 }
 

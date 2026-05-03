@@ -11,14 +11,17 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/quic-go/quic-go"
 
 	"routerd/pkg/daemonapi"
+	resolvercfg "routerd/pkg/dnsresolver"
 )
 
 const (
@@ -29,10 +32,12 @@ const (
 )
 
 type upstreamPoolConfig struct {
-	ProbeInterval time.Duration
-	ProbeTimeout  time.Duration
-	FailThreshold int
-	PassThreshold int
+	ProbeInterval     time.Duration
+	ProbeTimeout      time.Duration
+	FailThreshold     int
+	PassThreshold     int
+	ViaInterface      string
+	BootstrapResolver []string
 }
 
 type upstreamPool struct {
@@ -83,12 +88,12 @@ func newUpstreamPool(raw []string, cfg upstreamPoolConfig) (*upstreamPool, error
 	return &upstreamPool{
 		upstreams: upstreams,
 		config:    cfg,
-		client:    &http.Client{Timeout: cfg.ProbeTimeout},
+		client:    &http.Client{Timeout: cfg.ProbeTimeout, Transport: &http.Transport{DialContext: (&net.Dialer{Resolver: resolverForBootstrap(cfg.BootstrapResolver), Control: interfaceControl(cfg.ViaInterface)}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}},
 	}, nil
 }
 
 func parseDNSUpstream(index int, raw string) (*dnsUpstream, error) {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := resolvercfg.NormalizeUpstream(raw)
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
 		return nil, fmt.Errorf("parse DNS upstream %q: %w", raw, err)
@@ -222,7 +227,7 @@ func (p *upstreamPool) exchangeDoH(ctx context.Context, upstream *dnsUpstream, q
 }
 
 func (p *upstreamPool) exchangeDoT(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
-	dialer := tls.Dialer{Config: &tls.Config{ServerName: upstream.ServerName, MinVersion: tls.VersionTLS12}}
+	dialer := tls.Dialer{NetDialer: &net.Dialer{Resolver: resolverForBootstrap(p.config.BootstrapResolver), Control: interfaceControl(p.config.ViaInterface)}, Config: &tls.Config{ServerName: upstream.ServerName, MinVersion: tls.VersionTLS12}}
 	conn, err := dialer.DialContext(ctx, "tcp", upstream.Address)
 	if err != nil {
 		return nil, err
@@ -232,7 +237,29 @@ func (p *upstreamPool) exchangeDoT(ctx context.Context, upstream *dnsUpstream, q
 }
 
 func (p *upstreamPool) exchangeDoQ(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
-	conn, err := quic.DialAddr(ctx, upstream.Address, &tls.Config{ServerName: upstream.ServerName, NextProtos: []string{"doq"}, MinVersion: tls.VersionTLS13}, &quic.Config{})
+	resolver := resolverForBootstrap(p.config.BootstrapResolver)
+	host, port, err := net.SplitHostPort(upstream.Address)
+	if err != nil {
+		return nil, err
+	}
+	addrs, err := resolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("resolve %s: no addresses", host)
+	}
+	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(addrs[0].IP.String(), port))
+	if err != nil {
+		return nil, err
+	}
+	listenConfig := net.ListenConfig{Control: interfaceControl(p.config.ViaInterface)}
+	packetConn, err := listenConfig.ListenPacket(ctx, udpNetworkForIP(addrs[0].IP), "")
+	if err != nil {
+		return nil, err
+	}
+	defer packetConn.Close()
+	conn, err := quic.Dial(ctx, packetConn, udpAddr, &tls.Config{ServerName: upstream.ServerName, NextProtos: []string{"doq"}, MinVersion: tls.VersionTLS13}, &quic.Config{})
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +273,7 @@ func (p *upstreamPool) exchangeDoQ(ctx context.Context, upstream *dnsUpstream, q
 }
 
 func (p *upstreamPool) exchangeUDP(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
-	var dialer net.Dialer
+	dialer := net.Dialer{Resolver: resolverForBootstrap(p.config.BootstrapResolver), Control: interfaceControl(p.config.ViaInterface)}
 	conn, err := dialer.DialContext(ctx, "udp", upstream.Address)
 	if err != nil {
 		return nil, err
@@ -264,6 +291,48 @@ func (p *upstreamPool) exchangeUDP(ctx context.Context, upstream *dnsUpstream, q
 		return nil, err
 	}
 	return append([]byte(nil), buf[:n]...), nil
+}
+
+func resolverForBootstrap(servers []string) *net.Resolver {
+	cleaned := make([]string, 0, len(servers))
+	for _, server := range servers {
+		server = strings.TrimSpace(server)
+		if server == "" {
+			continue
+		}
+		if _, _, err := net.SplitHostPort(server); err != nil {
+			server = net.JoinHostPort(server, "53")
+		}
+		cleaned = append(cleaned, server)
+	}
+	if len(cleaned) == 0 {
+		return net.DefaultResolver
+	}
+	var next int
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			server := cleaned[next%len(cleaned)]
+			next++
+			dialer := net.Dialer{Control: interfaceControl("")}
+			return dialer.DialContext(ctx, "udp", server)
+		},
+	}
+}
+
+func udpNetworkForIP(ip net.IP) string {
+	if ip.To4() != nil {
+		return "udp4"
+	}
+	return "udp6"
+}
+
+func interfaceControl(name string) func(network, address string, c syscall.RawConn) error {
+	name = strings.TrimSpace(name)
+	if name == "" || runtime.GOOS != "linux" {
+		return nil
+	}
+	return bindToDeviceControl(name)
 }
 
 type deadlineConn interface {

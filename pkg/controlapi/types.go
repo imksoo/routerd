@@ -77,6 +77,20 @@ type DHCPv6EventResult struct {
 	Resource string `json:"resource" yaml:"resource"`
 }
 
+type DHCPLeaseEventRequest struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Action   string            `json:"action" yaml:"action"`
+	MAC      string            `json:"mac,omitempty" yaml:"mac,omitempty"`
+	IP       string            `json:"ip" yaml:"ip"`
+	Hostname string            `json:"hostname,omitempty" yaml:"hostname,omitempty"`
+	Env      map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+}
+
+type DHCPLeaseEventResult struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Accepted bool `json:"accepted" yaml:"accepted"`
+}
+
 type NAPTTable struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Metadata ObjectMeta        `json:"metadata" yaml:"metadata"`
@@ -134,6 +148,13 @@ func NewDHCPv6EventResult(resource string) DHCPv6EventResult {
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DHCPv6EventResult"},
 		Accepted: true,
 		Resource: resource,
+	}
+}
+
+func NewDHCPLeaseEventResult() DHCPLeaseEventResult {
+	return DHCPLeaseEventResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DHCPLeaseEventResult"},
+		Accepted: true,
 	}
 }
 

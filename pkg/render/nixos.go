@@ -764,7 +764,7 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 		case "VXLANSegment":
 			service["nftables"] = true
 			debug["nftables"] = true
-		case "DHCPv4Server", "DHCPv4Scope", "DHCPv6Server", "DHCPv6Scope", "DNSConditionalForwarder":
+		case "DHCPv4Server", "DHCPv4Scope", "DHCPv6Server", "DHCPv6Scope":
 			service["dnsmasq"] = true
 			debug["dnsmasq"] = true
 		case "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "FirewallPolicy", "ExposeService", "PathMTUPolicy":

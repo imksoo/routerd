@@ -1,0 +1,47 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: dns-private-upstream-example
+spec:
+  resources:
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSResolver
+    metadata:
+      name: lan-resolver
+    spec:
+      listen:
+      - name: lan
+        addresses:
+        - 127.0.0.1
+        port: 53
+        sources:
+        - local
+        - default
+      sources:
+      - name: local
+        kind: zone
+        match:
+        - lab.example
+        zoneRef:
+        - DNSZone/lan
+      - name: default
+        kind: upstream
+        match:
+        - "."
+        upstreams:
+        - https://cloudflare-dns.com/dns-query
+        - tls://dns.google
+        - quic://dns.google
+        - udp://8.8.8.8:53
+        healthcheck:
+          interval: 15s
+          timeout: 3s
+          failThreshold: 3
+          passThreshold: 2
+        dnssecValidate: true
+      cache:
+        enabled: true
+        maxEntries: 10000
+        minTTL: 60s
+        maxTTL: 24h
+        negativeTTL: 30s

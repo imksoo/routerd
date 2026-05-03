@@ -30,6 +30,8 @@ import (
 
 var platformDefaults, _ = platform.Current()
 
+const version = "0.2.0"
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -43,6 +45,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return errors.New("missing command")
 	}
 	switch args[0] {
+	case "version", "--version":
+		fmt.Fprintf(stdout, "routerctl %s\n", version)
+		return nil
 	case "status":
 		return statusCommand(args[1:], stdout)
 	case "get":
@@ -596,8 +601,9 @@ func canonicalShowKind(kind string) string {
 		"nat44rule":              "NAT44Rule",
 		"dslite":                 "DSLiteTunnel",
 		"dslitetunnel":           "DSLiteTunnel",
-		"doh":                    "DoHProxy",
-		"dohproxy":               "DoHProxy",
+		"dnszone":                "DNSZone",
+		"dnsresolver":            "DNSResolver",
+		"dns":                    "DNSResolver",
 		"pppoe":                  "PPPoEInterface",
 		"pppoeinterface":         "PPPoEInterface",
 		"pppoesession":           "PPPoESession",

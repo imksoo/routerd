@@ -152,52 +152,88 @@ spec:
       - name: domain-search
         value: lab.example
   - apiVersion: net.routerd.net/v1alpha1
-    kind: DNSResolverUpstream
+    kind: DNSZone
     metadata:
-      name: ngn-resolver
-      ownerRefs:
-      - kind: DHCPv6Information
-        name: wan-info
-    spec:
-      zones:
-      - zone: transix.jp
-        servers:
-        - ${DHCPv6Information/wan-info.status.dnsServers}
-      ready_when:
-      - field: ${DHCPv6Information/wan-info.status.dnsServers}
-        not_empty: true
-      default:
-        servers:
-        - ${DHCPv6Information/wan-info.status.dnsServers}
-  - apiVersion: net.routerd.net/v1alpha1
-    kind: DNSAnswerScope
-    metadata:
-      name: lan-ipv6-resolver
+      name: lan-zone
       ownerRefs:
       - kind: IPv6DelegatedAddress
         name: lan-base
     spec:
-      interface: ens19
-      family: ipv6
-      delegatedAddress: lan-base
-      hostname: router-ipv6.lab.example
-      port: 53
-      ready_when:
-      - field: ${IPv6DelegatedAddress/lan-base.status.phase}
-        equals: Applied
-  - apiVersion: net.routerd.net/v1alpha1
-    kind: DNSAnswerScope
-    metadata:
-      name: lan-dns
-    spec:
-      interface: ens19
-      localDomain: lab.example
-      ddns: true
-      dnssec: false
-      hostRecords:
-      - hostname: router.lab.example
+      zone: lab.example
+      ttl: 300
+      dnssec:
+        enabled: false
+      records:
+      - hostname: router
         ipv4: 192.168.160.5
         ipv6: 2409:10:3d60:1221::1
+      - hostname: router-ipv6
+        ipv6: 2409:10:3d60:1221::1
+      dhcpDerived:
+        sources:
+        - DHCPv4Server/lan-dhcpv4
+        - DHCPv6Server/lan-dhcpv6
+        hostnameSuffix: lab.example
+        ddns: true
+        ttl: 60
+        leaseFile: /run/routerd/dnsmasq.leases
+      reverseZones:
+      - name: 160.168.192.in-addr.arpa
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSResolver
+    metadata:
+      name: lan-resolver
+      ownerRefs:
+      - kind: DNSZone
+        name: lan-zone
+      - kind: DHCPv6Information
+        name: wan-info
+    spec:
+      listen:
+      - name: lan
+        addresses:
+        - 192.168.160.5
+        - 2409:10:3d60:1221::1
+        - 127.0.0.1
+        port: 53
+        sources:
+        - local-zone
+        - transix-aftr
+        - default-upstream
+      sources:
+      - name: local-zone
+        kind: zone
+        match:
+        - lab.example
+        - 160.168.192.in-addr.arpa
+        zoneRef:
+        - DNSZone/lan-zone
+      - name: transix-aftr
+        kind: forward
+        match:
+        - transix.jp
+        upstreams:
+        - ${DHCPv6Information/wan-info.status.dnsServers}
+      - name: default-upstream
+        kind: upstream
+        match:
+        - "."
+        upstreams:
+        - https://cloudflare-dns.com/dns-query
+        - tls://dns.google
+        - quic://dns.google
+        - udp://8.8.8.8:53
+        healthcheck:
+          interval: 15s
+          timeout: 3s
+          failThreshold: 3
+          passThreshold: 2
+      cache:
+        enabled: true
+        maxEntries: 10000
+        minTTL: 60s
+        maxTTL: 24h
+        negativeTTL: 30s
   - apiVersion: net.routerd.net/v1alpha1
     kind: DSLiteTunnel
     metadata:
@@ -220,7 +256,7 @@ spec:
             not_empty: true
         - - field: ${DSLiteTunnel/ds-lite.spec.aftrFQDN}
             not_empty: true
-          - field: ${DNSResolverUpstream/ngn-resolver.status.phase}
+          - field: ${DNSResolver/lan-resolver.status.phase}
             equals: Applied
   - apiVersion: net.routerd.net/v1alpha1
     kind: IPv4Route

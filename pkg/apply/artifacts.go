@@ -152,8 +152,10 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		return []resource.Intent{artifact("dnsmasq.dhcp.relay", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil)}
 	case "SelfAddressPolicy":
 		return []resource.Intent{artifact("routerd.selfAddressPolicy", res.Metadata.Name, resource.ActionEnsure, "routerd", nil)}
-	case "DNSConditionalForwarder":
-		return []resource.Intent{artifact("dnsmasq.conditionalForwarder", res.Metadata.Name, resource.ActionEnsure, "dnsmasq", nil)}
+	case "DNSZone":
+		return []resource.Intent{artifact("routerd.dns.zone", res.Metadata.Name, resource.ActionEnsure, "routerd-dns-resolver", nil)}
+	case "DNSResolver":
+		return []resource.Intent{artifact("systemd.service", "routerd-dns-resolver@"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", nil)}
 	case "DSLiteTunnel":
 		spec, err := res.DSLiteTunnelSpec()
 		if err != nil {

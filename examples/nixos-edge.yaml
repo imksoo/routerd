@@ -192,15 +192,23 @@ spec:
         required: false
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DNSConditionalForwarder
+      kind: DNSResolver
       metadata:
-        name: transix-aftr
+        name: lan-resolver
       spec:
-        domain: gw.transix.jp
-        upstreamSource: static
-        upstreamServers:
-          - 2404:1a8:7f01:a::3
-          - 2404:1a8:7f01:b::3
+        listen:
+          - name: lan
+            addresses:
+              - 127.0.0.1
+            port: 53
+        sources:
+          - name: transix-aftr
+            kind: forward
+            match:
+              - gw.transix.jp
+            upstreams:
+              - udp://[2404:1a8:7f01:a::3]:53
+              - udp://[2404:1a8:7f01:b::3]:53
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface

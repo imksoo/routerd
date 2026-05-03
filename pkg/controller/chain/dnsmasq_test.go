@@ -3,7 +3,6 @@ package chain
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -22,59 +21,6 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 		return status
 	}
 	return map[string]any{}
-}
-
-func TestDNSResolverUpstreamLinesExpandStatusReferences(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolverUpstream"},
-			Metadata: api.ObjectMeta{Name: "ngn"},
-			Spec: api.DNSResolverUpstreamSpec{
-				Zones: []api.DNSResolverZoneSpec{
-					{Zone: "transix.jp.", Servers: []api.DNSResolverServerSpec{{Address: "${DHCPv6Information/wan-info.status.dnsServers}"}}},
-				},
-				Default: api.DNSResolverDefaultSpec{Servers: []api.DNSResolverServerSpec{{Address: "2001:4860:4860::8888"}}},
-			},
-		},
-	}}}
-	store := mapStore{
-		api.NetAPIVersion + "/DHCPv6Information/wan-info": {
-			"dnsServers": []any{"2409:10:3d60:1200:1eb1:7fff:fe73:76d8"},
-		},
-	}
-
-	got := dnsmasqResolverLines(router, store)
-	want := []string{
-		"server=2001:4860:4860::8888",
-		"server=/transix.jp/2409:10:3d60:1200:1eb1:7fff:fe73:76d8",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("resolver lines = %#v, want %#v", got, want)
-	}
-}
-
-func TestDNSResolverUpstreamLinesRenderDoHStub(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolverUpstream"},
-			Metadata: api.ObjectMeta{Name: "doh"},
-			Spec: api.DNSResolverUpstreamSpec{
-				Zones: []api.DNSResolverZoneSpec{{
-					Zone: ".",
-					Servers: []api.DNSResolverServerSpec{{
-						Type:          "doh",
-						URL:           "https://1.1.1.1/dns-query",
-						ListenAddress: "127.0.0.1",
-						ListenPort:    5053,
-					}},
-				}},
-			},
-		},
-	}}}
-	got := dnsmasqResolverLines(router, mapStore{})
-	if !reflect.DeepEqual(got, []string{"server=127.0.0.1#5053"}) {
-		t.Fatalf("resolver lines = %#v", got)
-	}
 }
 
 func TestDnsmasqLANServiceLines(t *testing.T) {
@@ -114,13 +60,6 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 			PRFPreference: "high",
 			ValidLifetime: "7200",
 		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSAnswerScope"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DNSAnswerScopeSpec{
-			Interface:   "lan",
-			LocalDomain: "lan",
-			DDNS:        true,
-			DNSSEC:      true,
-			HostRecords: []api.DNSHostRecord{{Hostname: "router.lan", IPv4: "192.168.10.1", IPv6: "2001:db8::1"}},
-		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
 	}}}
 	store := mapStore{
@@ -151,15 +90,9 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 			t.Fatalf("dnsmasq LAN service lines missing %q:\n%#v", want, got)
 		}
 	}
-	records := dnsmasqHostRecordLines(router, store)
-	for _, want := range []string{"host-record=router.lan,192.168.10.1,2001:db8::1", "domain=lan", "local=/lan/", "dhcp-fqdn", "dnssec"} {
-		if !containsLine(records, want) {
-			t.Fatalf("dnsmasq host lines missing %q:\n%#v", want, records)
-		}
-	}
 }
 
-func TestWriteDnsmasqConfigUsesListenAddresses(t *testing.T) {
+func TestWriteDnsmasqConfigDisablesDNSPort(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dnsmasq.conf")
 	changed, err := writeDnsmasqConfig(&api.Router{}, mapStore{}, path, "/run/routerd/test.pid", 53, []string{"127.0.0.1", "192.168.160.5"})
 	if err != nil {
@@ -172,22 +105,11 @@ func TestWriteDnsmasqConfigUsesListenAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "listen-address=127.0.0.1,192.168.160.5\n") {
-		t.Fatalf("dnsmasq config did not contain custom listen-address:\n%s", data)
+	if !strings.Contains(string(data), "port=0\n") {
+		t.Fatalf("dnsmasq config did not disable DNS serving:\n%s", data)
 	}
-}
-
-func TestWriteDnsmasqConfigDefaultsToLocalhost(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "dnsmasq.conf")
-	if _, err := writeDnsmasqConfig(&api.Router{}, mapStore{}, path, "/run/routerd/test.pid", 1053, nil); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "listen-address=127.0.0.1\n") {
-		t.Fatalf("dnsmasq config did not default to localhost:\n%s", data)
+	if strings.Contains(string(data), "listen-address=") {
+		t.Fatalf("dnsmasq config should not own DNS listen addresses:\n%s", data)
 	}
 }
 

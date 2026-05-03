@@ -266,8 +266,8 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "DNSAnswerScope":
-		var spec DNSAnswerScopeSpec
+	case "DNSZone":
+		var spec DNSZoneSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -278,20 +278,8 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "DNSConditionalForwarder":
-		var spec DNSConditionalForwarderSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DNSResolverUpstream":
-		var spec DNSResolverUpstreamSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DoHProxy":
-		var spec DoHProxySpec
+	case "DNSResolver":
+		var spec DNSResolverSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
