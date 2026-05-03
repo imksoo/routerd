@@ -22,21 +22,25 @@ tradeoff is understood.
 
 Current implemented scope includes:
 - Interface alias resources and ownership/adoption planning
-- IPv4 static and DHCP address resources
-- DHCPv4 server scopes through managed dnsmasq
-- DHCPv6/RA scopes through managed dnsmasq
-- IPv6 DHCP client and prefix delegation through systemd-networkd drop-ins
+- IPv4 static address resources
+- DHCPv4 leases through `routerd-dhcpv4-client`
+- DHCPv4 server scopes and reservations through managed dnsmasq
+- DHCPv6 prefix delegation and information request through `routerd-dhcpv6-client`
+- DHCPv6 server scopes and RA through managed dnsmasq
 - delegated IPv6 LAN address derivation
 - self-address selection policies
 - DNS conditional forwarding
-- PPPoE interface rendering and systemd unit management
+- PPPoE sessions through `routerd-pppoe-client`
 - DS-Lite tunnels and AFTR address selection
-- IPv4 source NAT
+- IPv4 source NAT and NAT44 through nftables
 - IPv4 policy routing and route sets
 - IPv4 default route policy with health checks
 - IPv4 reverse path filter resources
 - Path MTU propagation and TCP MSS clamping
-- minimal default-deny home-router firewall resources
+- firewall resource groundwork; stateful filter rendering is still postponed
+- WireGuard, IPsec, VRF, and VXLAN resource groundwork
+- WANEgressPolicy, EventRule, DerivedEvent, and HealthCheck controllers
+- OpenTelemetry SDK integration hooks
 - sysctl, hostname, NTP client, and log sink resources
 - plugin protocol
 - dry-run, plan, status JSON, and daemon apply
@@ -141,15 +145,7 @@ exists. The full matrix lives in `docs/platforms.md`.
 Keep these documents updated:
 - `README.md`
 - `README.ja.md`
-- `docs/api-v1alpha1.md`
-- `docs/api-v1alpha1.ja.md`
-- `docs/resource-ownership.md`
-- `docs/resource-ownership.ja.md`
-- `docs/plugin-protocol.md`
-- `docs/plugin-protocol.ja.md`
-- `docs/control-api-v1alpha1.md`
-- `docs/control-api-v1alpha1.ja.md`
-- `docs/releases/changelog.md`
+- `docs/design.md`
 - website docs under `website/i18n/ja/docusaurus-plugin-content-docs/current/`
 
 Whenever the plugin protocol changes, update plugin protocol docs.
