@@ -24,6 +24,7 @@ import (
 	"routerd/pkg/controlapi"
 	"routerd/pkg/observe"
 	"routerd/pkg/platform"
+	"routerd/pkg/render"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
 )
@@ -54,6 +55,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return getCommand(args[1:], stdout, stderr)
 	case "describe":
 		return describeCommand(args[1:], stdout, stderr)
+	case "firewall":
+		return firewallCommand(args[1:], stdout, stderr)
 	case "show":
 		return showCommand(args[1:], stdout, stderr)
 	case "apply":
@@ -278,6 +281,9 @@ func describeCommand(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if kind == "FirewallPolicy" && (name == "" || name == "firewall") {
+		return describeFirewall(stdout, router)
+	}
 	if kind == "Orphan" {
 		return writeOrphans(stdout, router, ledger)
 	}
@@ -374,6 +380,159 @@ func parseDescribeOptions(args []string) (describeOptions, error) {
 		return opts, errors.New("describe requires <kind>/<name>")
 	}
 	return opts, nil
+}
+
+func firewallCommand(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		usage(stderr)
+		return errors.New("firewall requires subcommand")
+	}
+	switch args[0] {
+	case "test":
+		return firewallTestCommand(args[1:], stdout)
+	default:
+		return fmt.Errorf("unknown firewall subcommand %q", args[0])
+	}
+}
+
+func describeFirewall(stdout io.Writer, router *api.Router) error {
+	holes := internalFirewallHolesForCLI(router)
+	fmt.Fprintln(stdout, "SOURCE\tFROM\tTO\tMATCH\tACTION")
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.FirewallAPIVersion || res.Kind != "FirewallRule" {
+			continue
+		}
+		spec, err := res.FirewallRuleSpec()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "user/%s\t%s\t%s\t%s/%d\t%s\n", res.Metadata.Name, spec.FromZone, spec.ToZone, defaultString(spec.Protocol, "any"), spec.Port, spec.Action)
+	}
+	for _, hole := range holes {
+		fmt.Fprintf(w, "internal/%s\t%s\t%s\t%s/%d\taccept\n", hole.Name, hole.FromZone, hole.ToZone, defaultString(hole.Protocol, "any"), hole.Port)
+	}
+	for _, from := range firewallZonesForCLI(router) {
+		fmt.Fprintf(w, "implicit/matrix\t%s\tself\trole=%s\t%s\n", from.Name, from.Role, firewallImplicitActionForCLI(from.Role, "self"))
+		for _, to := range firewallZonesForCLI(router) {
+			fmt.Fprintf(w, "implicit/matrix\t%s\t%s\t%s->%s\t%s\n", from.Name, to.Name, from.Role, to.Role, firewallImplicitActionForCLI(from.Role, to.Role))
+		}
+	}
+	return w.Flush()
+}
+
+func firewallTestCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("firewall test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", defaultConfigPath(), "config path")
+	from := fs.String("from", "", "source zone")
+	to := fs.String("to", "self", "destination zone")
+	proto := fs.String("proto", "", "protocol")
+	dport := fs.Int("dport", 0, "destination port")
+	var normalized []string
+	for _, arg := range args {
+		if strings.Contains(arg, "=") && !strings.HasPrefix(arg, "-") {
+			parts := strings.SplitN(arg, "=", 2)
+			normalized = append(normalized, "--"+parts[0], parts[1])
+			continue
+		}
+		normalized = append(normalized, arg)
+	}
+	if err := fs.Parse(normalized); err != nil {
+		return err
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	action, source := firewallDecisionForCLI(router, *from, *to, *proto, *dport)
+	fmt.Fprintf(stdout, "action=%s source=%s from=%s to=%s proto=%s dport=%d\n", action, source, *from, *to, *proto, *dport)
+	return nil
+}
+
+type firewallZoneCLI struct {
+	Name string
+	Role string
+}
+
+func firewallZonesForCLI(router *api.Router) []firewallZoneCLI {
+	var out []firewallZoneCLI
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallZone" {
+			spec, err := res.FirewallZoneSpec()
+			if err == nil {
+				out = append(out, firewallZoneCLI{Name: res.Metadata.Name, Role: spec.Role})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func firewallDecisionForCLI(router *api.Router, from, to, proto string, dport int) (string, string) {
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.FirewallAPIVersion || res.Kind != "FirewallRule" {
+			continue
+		}
+		spec, err := res.FirewallRuleSpec()
+		if err != nil || spec.FromZone != from || spec.ToZone != to {
+			continue
+		}
+		if spec.Protocol != "" && proto != "" && spec.Protocol != proto {
+			continue
+		}
+		if spec.Port != 0 && dport != 0 && spec.Port != dport {
+			continue
+		}
+		return spec.Action, "user/" + res.Metadata.Name
+	}
+	for _, hole := range internalFirewallHolesForCLI(router) {
+		if hole.FromZone == from && hole.ToZone == to && (hole.Protocol == "" || proto == "" || hole.Protocol == proto) && (hole.Port == 0 || dport == 0 || hole.Port == dport) {
+			return "accept", "internal/" + hole.Name
+		}
+	}
+	roles := map[string]string{}
+	for _, zone := range firewallZonesForCLI(router) {
+		roles[zone.Name] = zone.Role
+	}
+	return firewallImplicitActionForCLI(roles[from], roles[to]), "implicit/matrix"
+}
+
+func firewallImplicitActionForCLI(fromRole, toRole string) string {
+	if toRole == "" || toRole == "self" {
+		if fromRole == "mgmt" || fromRole == "trust" {
+			return "accept"
+		}
+		return "drop"
+	}
+	if fromRole == toRole {
+		return "accept"
+	}
+	if fromRole == "mgmt" {
+		return "accept"
+	}
+	if fromRole == "trust" && toRole != "mgmt" {
+		return "accept"
+	}
+	return "drop"
+}
+
+func internalFirewallHolesForCLI(router *api.Router) []render.FirewallHole {
+	var out []render.FirewallHole
+	zones := firewallZonesForCLI(router)
+	for _, zone := range zones {
+		if zone.Role == "trust" {
+			out = append(out, render.FirewallHole{Name: "dns-" + zone.Name, FromZone: zone.Name, ToZone: "self", Protocol: "udp", Port: 53})
+			out = append(out, render.FirewallHole{Name: "dns-tcp-" + zone.Name, FromZone: zone.Name, ToZone: "self", Protocol: "tcp", Port: 53})
+			out = append(out, render.FirewallHole{Name: "dhcp4-" + zone.Name, FromZone: zone.Name, ToZone: "self", Protocol: "udp", Port: 67})
+			out = append(out, render.FirewallHole{Name: "dhcp6-" + zone.Name, FromZone: zone.Name, ToZone: "self", Protocol: "udp", Port: 547})
+		}
+		if zone.Role == "untrust" {
+			out = append(out, render.FirewallHole{Name: "dhcpv6-client-" + zone.Name, FromZone: zone.Name, ToZone: "self", Protocol: "udp", Port: 546})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 func showCommand(args []string, stdout, stderr io.Writer) error {
@@ -608,11 +767,13 @@ func canonicalShowKind(kind string) string {
 		"pppoeinterface":         "PPPoEInterface",
 		"pppoesession":           "PPPoESession",
 		"pppoeclient":            "PPPoESession",
-		"fw":                     "FirewallPolicy",
+		"fw":                     "FirewallRule",
 		"firewall":               "FirewallPolicy",
+		"firewallzone":           "FirewallZone",
 		"firewallpolicy":         "FirewallPolicy",
-		"zone":                   "Zone",
-		"zones":                  "Zone",
+		"firewallrule":           "FirewallRule",
+		"zone":                   "FirewallZone",
+		"zones":                  "FirewallZone",
 		"hostname":               "Hostname",
 		"host":                   "Hostname",
 		"inventory":              "Inventory",
@@ -973,7 +1134,8 @@ func statePrefixForKind(kind, name string) string {
 		"PPPoEInterface":    "pppoeInterface.",
 		"PPPoESession":      "pppoeSession.",
 		"FirewallPolicy":    "firewallPolicy.",
-		"Zone":              "zone.",
+		"FirewallZone":      "firewallZone.",
+		"FirewallRule":      "firewallRule.",
 	}
 	if prefix := prefixes[kind]; prefix != "" {
 		return prefix + name + "."
@@ -1323,6 +1485,13 @@ func yesNo(value bool) string {
 	return "no"
 }
 
+func defaultString(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
+}
+
 func writeDescribeMap(w io.Writer, value any, indent string) {
 	values := flattenAny(value)
 	if len(values) == 0 {
@@ -1453,6 +1622,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  status [--socket <path>]")
 	fmt.Fprintln(w, "  get <kind>[/<name>] [--list-kinds] [--config <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  describe <kind>/<name> [--config <path>] [--state-file <path>] [--ledger-file <path>] [--events-limit <n>]")
+	fmt.Fprintln(w, "  describe firewall [--config <path>]")
+	fmt.Fprintln(w, "  firewall test from=<zone> to=<zone|self> proto=<tcp|udp> dport=<port> [--config <path>]")
 	fmt.Fprintln(w, "  show <kind> [--config <path>] [--state-file <path>] [--ledger-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events|--spec|--status] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plan [--socket <path>]")
