@@ -725,6 +725,73 @@ func validateResource(res api.Resource) error {
 				}
 			}
 		}
+	case "NetworkAdoption":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.NetworkAdoptionSpec()
+		if err != nil {
+			return err
+		}
+		switch defaultString(spec.State, "present") {
+		case "present", "absent":
+		default:
+			return fmt.Errorf("%s spec.state must be present or absent", res.ID())
+		}
+		if spec.Interface == "" && spec.IfName == "" && !spec.SystemdResolved.DisableDNSStubListener {
+			return fmt.Errorf("%s must set spec.interface, spec.ifname, or spec.systemdResolved.disableDNSStubListener", res.ID())
+		}
+		for field, value := range map[string]string{"interface": spec.Interface, "ifname": spec.IfName, "systemdNetworkd.dropinName": spec.SystemdNetworkd.DropinName, "systemdResolved.dropinName": spec.SystemdResolved.DropinName} {
+			if strings.ContainsAny(value, "\x00\n\r") {
+				return fmt.Errorf("%s spec.%s contains invalid characters", res.ID(), field)
+			}
+		}
+	case "SystemdUnit":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.SystemdUnitSpec()
+		if err != nil {
+			return err
+		}
+		switch defaultString(spec.State, "present") {
+		case "present", "absent":
+		default:
+			return fmt.Errorf("%s spec.state must be present or absent", res.ID())
+		}
+		unitName := defaultString(spec.UnitName, res.Metadata.Name)
+		if !strings.HasSuffix(unitName, ".service") {
+			return fmt.Errorf("%s spec.unitName must end with .service", res.ID())
+		}
+		if strings.ContainsAny(unitName, "/\x00\n\r") {
+			return fmt.Errorf("%s spec.unitName contains invalid characters", res.ID())
+		}
+		if defaultString(spec.State, "present") == "present" && len(spec.ExecStart) == 0 {
+			return fmt.Errorf("%s spec.execStart is required when state is present", res.ID())
+		}
+		for i, arg := range spec.ExecStart {
+			if strings.TrimSpace(arg) == "" {
+				return fmt.Errorf("%s spec.execStart[%d] must not be empty", res.ID(), i)
+			}
+			if strings.ContainsAny(arg, "\x00\n\r") {
+				return fmt.Errorf("%s spec.execStart[%d] contains invalid characters", res.ID(), i)
+			}
+		}
+		switch spec.Restart {
+		case "", "no", "on-failure", "always":
+		default:
+			return fmt.Errorf("%s spec.restart must be no, on-failure, or always", res.ID())
+		}
+		switch spec.ProtectSystem {
+		case "", "true", "full", "strict":
+		default:
+			return fmt.Errorf("%s spec.protectSystem must be true, full, or strict", res.ID())
+		}
+		switch spec.ProtectHome {
+		case "", "true", "read-only", "tmpfs":
+		default:
+			return fmt.Errorf("%s spec.protectHome must be true, read-only, or tmpfs", res.ID())
+		}
 	case "NTPClient":
 		if res.APIVersion != api.SystemAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)

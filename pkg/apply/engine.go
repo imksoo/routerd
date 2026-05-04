@@ -69,6 +69,10 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeLogSink(res, includePlan, &rr)
 		case "Package":
 			e.observePackage(res, includePlan, &rr)
+		case "NetworkAdoption":
+			e.observeNetworkAdoption(res, aliases, includePlan, &rr)
+		case "SystemdUnit":
+			e.observeSystemdUnit(res, includePlan, &rr)
 		case "Sysctl":
 			e.observeSysctl(res, includePlan, &rr)
 		case "SysctlProfile":
@@ -1318,6 +1322,56 @@ func (e *Engine) observeSysctlProfile(res api.Resource, includePlan bool, rr *Re
 			note = " (optional)"
 		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s=%s%s", entry.Key, entry.Value, note))
+	}
+}
+
+func (e *Engine) observeNetworkAdoption(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.NetworkAdoptionSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := spec.IfName
+	if ifname == "" {
+		ifname = aliases[spec.Interface]
+	}
+	rr.Observed["ifname"] = ifname
+	rr.Observed["state"] = defaultString(spec.State, "present")
+	if spec.SystemdNetworkd.DisableDHCPv4 || spec.SystemdNetworkd.DisableDHCPv6 || spec.SystemdNetworkd.DisableIPv6RA {
+		rr.Observed["systemdNetworkd"] = "managed"
+	}
+	if spec.SystemdResolved.DisableDNSStubListener {
+		rr.Observed["systemdResolved"] = "managed"
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, "ensure systemd-networkd/resolved adoption drop-ins")
+	}
+}
+
+func (e *Engine) observeSystemdUnit(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.SystemdUnitSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	unitName := defaultString(spec.UnitName, res.Metadata.Name)
+	rr.Observed["unitName"] = unitName
+	rr.Observed["state"] = defaultString(spec.State, "present")
+	if out, err := e.Command("systemctl", "is-enabled", unitName); err == nil {
+		rr.Observed["enabled"] = strings.TrimSpace(string(out))
+	} else {
+		rr.Phase = "Drifted"
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, "render systemd unit "+unitName)
+		if api.BoolDefault(spec.Enabled, true) {
+			rr.Plan = append(rr.Plan, "enable systemd unit "+unitName)
+		}
+		if api.BoolDefault(spec.Started, true) {
+			rr.Plan = append(rr.Plan, "restart systemd unit "+unitName)
+		}
 	}
 }
 

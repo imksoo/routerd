@@ -77,6 +77,74 @@ spec:
       value: "2"
       runtime: true
       persistent: true
+  - apiVersion: system.routerd.net/v1alpha1
+    kind: NetworkAdoption
+    metadata:
+      name: wan-networkd-owned-by-routerd
+    spec:
+      interface: wan
+      systemdNetworkd:
+        disableDHCPv4: true
+        disableDHCPv6: true
+      systemdResolved:
+        disableDNSStubListener: true
+  - apiVersion: system.routerd.net/v1alpha1
+    kind: NetworkAdoption
+    metadata:
+      name: lan-networkd-owned-by-routerd
+    spec:
+      interface: lan
+      systemdNetworkd:
+        disableDHCPv4: true
+        disableDHCPv6: true
+        disableIPv6RA: true
+  - apiVersion: system.routerd.net/v1alpha1
+    kind: SystemdUnit
+    metadata:
+      name: routerd.service
+    spec:
+      description: routerd controller chain for homert02
+      execStart:
+      - /usr/local/sbin/routerd
+      - serve
+      - --config
+      - /usr/local/etc/routerd/router.yaml
+      - --socket
+      - /run/routerd/routerd.sock
+      - --status-file
+      - /run/routerd/status.json
+      - --observe-interval
+      - "0"
+      - --controller-chain
+      - --controller-chain-supervise-client-daemons=true
+      - --controller-chain-dry-run-network-adoption=false
+      - --controller-chain-dry-run-systemd-unit=false
+      runtimeDirectory:
+      - routerd
+      - routerd/dhcpv6-client
+      - routerd/dhcpv4-client
+      - routerd/pppoe-client
+      - routerd/healthcheck
+      - routerd/dns-resolver
+      stateDirectory:
+      - routerd
+      logsDirectory:
+      - routerd
+      ambientCapabilities:
+      - CAP_NET_ADMIN
+      - CAP_NET_RAW
+      - CAP_NET_BIND_SERVICE
+      capabilityBoundingSet:
+      - CAP_NET_ADMIN
+      - CAP_NET_RAW
+      - CAP_NET_BIND_SERVICE
+      restrictAddressFamilies:
+      - AF_UNIX
+      - AF_INET
+      - AF_INET6
+      - AF_NETLINK
+      enabled: true
+      started: false
   - apiVersion: net.routerd.net/v1alpha1
     kind: Interface
     metadata:

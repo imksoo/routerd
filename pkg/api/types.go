@@ -92,6 +92,18 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "NetworkAdoption":
+		var spec NetworkAdoptionSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "SystemdUnit":
+		var spec SystemdUnitSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "NTPClient":
 		var spec NTPClientSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

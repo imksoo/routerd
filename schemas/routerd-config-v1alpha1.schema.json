@@ -414,6 +414,270 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "NetworkAdoption",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "ifname": {
+                        "type": "string"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "reload": {
+                        "type": "boolean"
+                      },
+                      "state": {
+                        "enum": [
+                          "",
+                          "present",
+                          "absent"
+                        ],
+                        "type": "string"
+                      },
+                      "systemdNetworkd": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "disableDHCPv4": {
+                            "type": "boolean"
+                          },
+                          "disableDHCPv6": {
+                            "type": "boolean"
+                          },
+                          "disableIPv6RA": {
+                            "type": "boolean"
+                          },
+                          "dropinName": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "systemdResolved": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "disableDNSStubListener": {
+                            "type": "boolean"
+                          },
+                          "dropinName": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "system.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "SystemdUnit",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "after": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "ambientCapabilities": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "capabilityBoundingSet": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "environment": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "execStart": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "group": {
+                        "type": "string"
+                      },
+                      "logsDirectory": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "noNewPrivileges": {
+                        "type": "boolean"
+                      },
+                      "privateTmp": {
+                        "type": "boolean"
+                      },
+                      "protectHome": {
+                        "enum": [
+                          "",
+                          "true",
+                          "read-only",
+                          "tmpfs"
+                        ],
+                        "type": "string"
+                      },
+                      "protectSystem": {
+                        "enum": [
+                          "",
+                          "true",
+                          "full",
+                          "strict"
+                        ],
+                        "type": "string"
+                      },
+                      "restart": {
+                        "enum": [
+                          "",
+                          "no",
+                          "on-failure",
+                          "always"
+                        ],
+                        "type": "string"
+                      },
+                      "restartSec": {
+                        "type": "string"
+                      },
+                      "restrictAddressFamilies": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "runtimeDirectory": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "started": {
+                        "type": "boolean"
+                      },
+                      "state": {
+                        "enum": [
+                          "",
+                          "present",
+                          "absent"
+                        ],
+                        "type": "string"
+                      },
+                      "stateDirectory": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "unitName": {
+                        "type": "string"
+                      },
+                      "user": {
+                        "type": "string"
+                      },
+                      "wantedBy": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "wants": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "workingDirectory": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "system.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "NTPClient",
                     "type": "string"
                   },

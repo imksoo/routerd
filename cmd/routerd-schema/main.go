@@ -217,6 +217,8 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.SystemAPIVersion, "Sysctl", api.SysctlSpec{}),
 			resourceSchema(api.SystemAPIVersion, "SysctlProfile", api.SysctlProfileSpec{}),
 			resourceSchema(api.SystemAPIVersion, "Package", api.PackageSpec{}),
+			resourceSchema(api.SystemAPIVersion, "NetworkAdoption", api.NetworkAdoptionSpec{}),
+			resourceSchema(api.SystemAPIVersion, "SystemdUnit", api.SystemdUnitSpec{}),
 			resourceSchema(api.SystemAPIVersion, "NTPClient", api.NTPClientSpec{}),
 			resourceSchema(api.SystemAPIVersion, "NixOSHost", api.NixOSHostSpec{}),
 			resourceSchema(api.NetAPIVersion, "Interface", api.InterfaceSpec{}),

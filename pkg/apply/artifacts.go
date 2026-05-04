@@ -40,6 +40,29 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			}
 		}
 		return intents
+	case "NetworkAdoption":
+		spec, err := res.NetworkAdoptionSpec()
+		if err != nil {
+			return nil
+		}
+		var intents []resource.Intent
+		if spec.SystemdNetworkd.DisableDHCPv4 || spec.SystemdNetworkd.DisableDHCPv6 || spec.SystemdNetworkd.DisableIPv6RA {
+			ifname := spec.IfName
+			if ifname == "" {
+				ifname = aliases[spec.Interface]
+			}
+			intents = append(intents, artifact("systemd.network.dropin", ifname+"/90-routerd-adoption.conf", resource.ActionEnsure, "systemd-networkd", nil))
+		}
+		if spec.SystemdResolved.DisableDNSStubListener {
+			intents = append(intents, artifact("systemd.resolved.dropin", "90-routerd-adoption.conf", resource.ActionEnsure, "systemd-resolved", nil))
+		}
+		return intents
+	case "SystemdUnit":
+		spec, err := res.SystemdUnitSpec()
+		if err != nil {
+			return nil
+		}
+		return []resource.Intent{artifact("systemd.service", defaultString(spec.UnitName, res.Metadata.Name), resource.ActionEnsure, "systemctl", nil)}
 	case "Sysctl":
 		spec, err := res.SysctlSpec()
 		if err != nil {

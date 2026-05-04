@@ -48,6 +48,55 @@ type PackageSpec struct {
 	Packages []OSPackageSetSpec `yaml:"packages" json:"packages"`
 }
 
+type NetworkAdoptionSpec struct {
+	State           string                      `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present,enum=absent"`
+	Interface       string                      `yaml:"interface,omitempty" json:"interface,omitempty"`
+	IfName          string                      `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	SystemdNetworkd NetworkAdoptionNetworkdSpec `yaml:"systemdNetworkd,omitempty" json:"systemdNetworkd,omitempty"`
+	SystemdResolved NetworkAdoptionResolvedSpec `yaml:"systemdResolved,omitempty" json:"systemdResolved,omitempty"`
+	Reload          *bool                       `yaml:"reload,omitempty" json:"reload,omitempty"`
+}
+
+type NetworkAdoptionNetworkdSpec struct {
+	DisableDHCPv4 bool   `yaml:"disableDHCPv4,omitempty" json:"disableDHCPv4,omitempty"`
+	DisableDHCPv6 bool   `yaml:"disableDHCPv6,omitempty" json:"disableDHCPv6,omitempty"`
+	DisableIPv6RA bool   `yaml:"disableIPv6RA,omitempty" json:"disableIPv6RA,omitempty"`
+	DropinName    string `yaml:"dropinName,omitempty" json:"dropinName,omitempty"`
+}
+
+type NetworkAdoptionResolvedSpec struct {
+	DisableDNSStubListener bool   `yaml:"disableDNSStubListener,omitempty" json:"disableDNSStubListener,omitempty"`
+	DropinName             string `yaml:"dropinName,omitempty" json:"dropinName,omitempty"`
+}
+
+type SystemdUnitSpec struct {
+	State                   string   `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present,enum=absent"`
+	UnitName                string   `yaml:"unitName,omitempty" json:"unitName,omitempty"`
+	Description             string   `yaml:"description,omitempty" json:"description,omitempty"`
+	ExecStart               []string `yaml:"execStart,omitempty" json:"execStart,omitempty"`
+	Environment             []string `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Wants                   []string `yaml:"wants,omitempty" json:"wants,omitempty"`
+	After                   []string `yaml:"after,omitempty" json:"after,omitempty"`
+	WantedBy                []string `yaml:"wantedBy,omitempty" json:"wantedBy,omitempty"`
+	Restart                 string   `yaml:"restart,omitempty" json:"restart,omitempty" jsonschema:"enum=,enum=no,enum=on-failure,enum=always"`
+	RestartSec              string   `yaml:"restartSec,omitempty" json:"restartSec,omitempty"`
+	User                    string   `yaml:"user,omitempty" json:"user,omitempty"`
+	Group                   string   `yaml:"group,omitempty" json:"group,omitempty"`
+	WorkingDirectory        string   `yaml:"workingDirectory,omitempty" json:"workingDirectory,omitempty"`
+	RuntimeDirectory        []string `yaml:"runtimeDirectory,omitempty" json:"runtimeDirectory,omitempty"`
+	StateDirectory          []string `yaml:"stateDirectory,omitempty" json:"stateDirectory,omitempty"`
+	LogsDirectory           []string `yaml:"logsDirectory,omitempty" json:"logsDirectory,omitempty"`
+	AmbientCapabilities     []string `yaml:"ambientCapabilities,omitempty" json:"ambientCapabilities,omitempty"`
+	CapabilityBoundingSet   []string `yaml:"capabilityBoundingSet,omitempty" json:"capabilityBoundingSet,omitempty"`
+	RestrictAddressFamilies []string `yaml:"restrictAddressFamilies,omitempty" json:"restrictAddressFamilies,omitempty"`
+	ProtectSystem           string   `yaml:"protectSystem,omitempty" json:"protectSystem,omitempty" jsonschema:"enum=,enum=true,enum=full,enum=strict"`
+	ProtectHome             string   `yaml:"protectHome,omitempty" json:"protectHome,omitempty" jsonschema:"enum=,enum=true,enum=read-only,enum=tmpfs"`
+	NoNewPrivileges         *bool    `yaml:"noNewPrivileges,omitempty" json:"noNewPrivileges,omitempty"`
+	PrivateTmp              *bool    `yaml:"privateTmp,omitempty" json:"privateTmp,omitempty"`
+	Enabled                 *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Started                 *bool    `yaml:"started,omitempty" json:"started,omitempty"`
+}
+
 type OSPackageSetSpec struct {
 	OS       string   `yaml:"os" json:"os" jsonschema:"enum=ubuntu,enum=debian,enum=fedora,enum=rhel,enum=rocky,enum=almalinux,enum=nixos,enum=freebsd"`
 	Manager  string   `yaml:"manager,omitempty" json:"manager,omitempty" jsonschema:"enum=,enum=apt,enum=dnf,enum=nix,enum=pkg"`
@@ -915,6 +964,14 @@ func (r Resource) SysctlProfileSpec() (SysctlProfileSpec, error) {
 
 func (r Resource) PackageSpec() (PackageSpec, error) {
 	return specAs[PackageSpec](r)
+}
+
+func (r Resource) NetworkAdoptionSpec() (NetworkAdoptionSpec, error) {
+	return specAs[NetworkAdoptionSpec](r)
+}
+
+func (r Resource) SystemdUnitSpec() (SystemdUnitSpec, error) {
+	return specAs[SystemdUnitSpec](r)
 }
 
 func (r Resource) NTPClientSpec() (NTPClientSpec, error) {
