@@ -57,6 +57,12 @@
     {
       "additionalProperties": false,
       "properties": {
+        "byFamily": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
         "byMark": {
           "additionalProperties": {
             "type": "integer"

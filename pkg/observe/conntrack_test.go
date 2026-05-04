@@ -110,3 +110,54 @@ func TestSortConnectionEntriesStableKey(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectConnectionEntriesKeepsIPv6WhenIPv4Dominates(t *testing.T) {
+	var entries []ConnectionEntry
+	for i := 0; i < 300; i++ {
+		entries = append(entries, ConnectionEntry{
+			Family:   "ipv4",
+			Protocol: "tcp",
+			Original: ConntrackTuple{
+				Source:          "172.18.0.101",
+				Destination:     "198.51.100.10",
+				SourcePort:      "40000",
+				DestinationPort: "443",
+			},
+		})
+	}
+	for i := 0; i < 2; i++ {
+		entries = append(entries, ConnectionEntry{
+			Family:   "ipv6",
+			Protocol: "tcp",
+			Original: ConntrackTuple{
+				Source:          "2001:db8::1",
+				Destination:     "2001:db8::2",
+				SourcePort:      "50000",
+				DestinationPort: "443",
+			},
+		})
+	}
+	sortConnectionEntries(entries)
+	selected := selectConnectionEntries(entries, 30)
+	if len(selected) != 30 {
+		t.Fatalf("selected = %d, want 30", len(selected))
+	}
+	counts := conntrackEntriesByFamily(selected)
+	if counts["ipv6"] != 2 {
+		t.Fatalf("selected by family = %+v, want all ipv6 entries retained", counts)
+	}
+	if counts["ipv4"] != 28 {
+		t.Fatalf("selected by family = %+v, want remaining slots filled by ipv4", counts)
+	}
+}
+
+func TestConntrackEntriesByFamilyNormalizesEmptyFamily(t *testing.T) {
+	counts := conntrackEntriesByFamily([]ConnectionEntry{
+		{Family: "ipv4"},
+		{Family: "IPv6"},
+		{Family: ""},
+	})
+	if counts["ipv4"] != 1 || counts["ipv6"] != 1 || counts["other"] != 1 {
+		t.Fatalf("counts = %+v", counts)
+	}
+}

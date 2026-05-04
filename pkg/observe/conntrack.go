@@ -12,11 +12,12 @@ import (
 )
 
 type ConnectionTable struct {
-	Count   int                 `json:"count" yaml:"count"`
-	Max     int                 `json:"max,omitempty" yaml:"max,omitempty"`
-	ByMark  map[string]int      `json:"byMark,omitempty" yaml:"byMark,omitempty"`
-	Entries []ConnectionEntry   `json:"entries,omitempty" yaml:"entries,omitempty"`
-	Stats   []ConntrackCPUStats `json:"stats,omitempty" yaml:"stats,omitempty"`
+	Count    int                 `json:"count" yaml:"count"`
+	Max      int                 `json:"max,omitempty" yaml:"max,omitempty"`
+	ByMark   map[string]int      `json:"byMark,omitempty" yaml:"byMark,omitempty"`
+	ByFamily map[string]int      `json:"byFamily,omitempty" yaml:"byFamily,omitempty"`
+	Entries  []ConnectionEntry   `json:"entries,omitempty" yaml:"entries,omitempty"`
+	Stats    []ConntrackCPUStats `json:"stats,omitempty" yaml:"stats,omitempty"`
 }
 
 type ConnectionEntry struct {
@@ -54,17 +55,12 @@ func Connections(limit int) (*ConnectionTable, error) {
 	}
 	allEntries := parseConntrackEntries(string(out), 0)
 	sortConnectionEntries(allEntries)
-	entries := allEntries
-	if limit == 0 {
-		entries = nil
-	} else if limit > 0 && len(entries) > limit {
-		entries = entries[:limit]
-	}
 	table := &ConnectionTable{
-		Count:   readProcInt("/proc/sys/net/netfilter/nf_conntrack_count", len(allEntries)),
-		Max:     readProcInt("/proc/sys/net/netfilter/nf_conntrack_max", 0),
-		ByMark:  conntrackEntriesByMark(allEntries),
-		Entries: entries,
+		Count:    readProcInt("/proc/sys/net/netfilter/nf_conntrack_count", len(allEntries)),
+		Max:      readProcInt("/proc/sys/net/netfilter/nf_conntrack_max", 0),
+		ByMark:   conntrackEntriesByMark(allEntries),
+		ByFamily: conntrackEntriesByFamily(allEntries),
+		Entries:  selectConnectionEntries(allEntries, limit),
 	}
 	if stats, err := conntrackStats(); err == nil {
 		table.Stats = stats
@@ -80,9 +76,10 @@ func PFStates(limit int) (*ConnectionTable, error) {
 	entries := parsePFStateEntries(string(out), limit)
 	sortConnectionEntries(entries)
 	return &ConnectionTable{
-		Count:   len(entries),
-		ByMark:  map[string]int{"0": len(entries)},
-		Entries: entries,
+		Count:    len(entries),
+		ByMark:   map[string]int{"0": len(entries)},
+		ByFamily: conntrackEntriesByFamily(entries),
+		Entries:  entries,
 	}, nil
 }
 
@@ -107,6 +104,98 @@ func connectionSortKey(entry ConnectionEntry) string {
 		entry.Reply.DestinationPort,
 		entry.Mark,
 	}, "\x00")
+}
+
+func selectConnectionEntries(entries []ConnectionEntry, limit int) []ConnectionEntry {
+	if limit == 0 {
+		return nil
+	}
+	if limit < 0 || len(entries) <= limit {
+		return entries
+	}
+	groups := map[string][]ConnectionEntry{}
+	for _, entry := range entries {
+		family := normalizedConnectionFamily(entry.Family)
+		groups[family] = append(groups[family], entry)
+	}
+	families := sortedConnectionFamilies(groups)
+	quota := map[string]int{}
+	base := limit / len(families)
+	remainder := limit % len(families)
+	allocated := 0
+	for _, family := range families {
+		n := base
+		if remainder > 0 {
+			n++
+			remainder--
+		}
+		if n < 1 {
+			n = 1
+		}
+		if n > len(groups[family]) {
+			n = len(groups[family])
+		}
+		quota[family] = n
+		allocated += n
+	}
+	for allocated < limit {
+		progress := false
+		for _, family := range families {
+			if allocated >= limit {
+				break
+			}
+			if quota[family] >= len(groups[family]) {
+				continue
+			}
+			quota[family]++
+			allocated++
+			progress = true
+		}
+		if !progress {
+			break
+		}
+	}
+	selected := make([]ConnectionEntry, 0, allocated)
+	for row := 0; len(selected) < allocated; row++ {
+		progress := false
+		for _, family := range families {
+			if row >= quota[family] {
+				continue
+			}
+			selected = append(selected, groups[family][row])
+			progress = true
+		}
+		if !progress {
+			break
+		}
+	}
+	return selected
+}
+
+func sortedConnectionFamilies(groups map[string][]ConnectionEntry) []string {
+	var families []string
+	for _, preferred := range []string{"ipv4", "ipv6"} {
+		if len(groups[preferred]) > 0 {
+			families = append(families, preferred)
+		}
+	}
+	var other []string
+	for family, entries := range groups {
+		if family == "ipv4" || family == "ipv6" || len(entries) == 0 {
+			continue
+		}
+		other = append(other, family)
+	}
+	sort.Strings(other)
+	return append(families, other...)
+}
+
+func normalizedConnectionFamily(family string) string {
+	family = strings.ToLower(strings.TrimSpace(family))
+	if family == "" {
+		return "other"
+	}
+	return family
 }
 
 func parseConntrackEntries(output string, limit int) []ConnectionEntry {
@@ -333,6 +422,14 @@ func conntrackEntriesByMark(entries []ConnectionEntry) map[string]int {
 			mark = "0"
 		}
 		out[mark]++
+	}
+	return out
+}
+
+func conntrackEntriesByFamily(entries []ConnectionEntry) map[string]int {
+	out := map[string]int{}
+	for _, entry := range entries {
+		out[normalizedConnectionFamily(entry.Family)]++
 	}
 	return out
 }

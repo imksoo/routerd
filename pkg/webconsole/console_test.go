@@ -225,10 +225,11 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`api/summary?events=15&connections=30`,
+		`api/summary?events=15&connections=200`,
 		`function dnsLabelMap`,
 		`function clientTrafficRows`,
 		`function denyRows`,
+		`function connectionFamilyCounts`,
 		`Client Traffic`,
 		`Recent Deny`,
 		`dst-label`,

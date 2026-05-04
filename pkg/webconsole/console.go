@@ -57,7 +57,7 @@ func New(opts Options) Handler {
 		opts.BasePath = "/"
 	}
 	if opts.ConnectionsLimit == 0 {
-		opts.ConnectionsLimit = 40
+		opts.ConnectionsLimit = 200
 	}
 	if opts.Connections == nil {
 		opts.Connections = observe.Connections
@@ -536,6 +536,28 @@ function denyRows(logs){
   }
   return Array.from(totals.values()).sort((a,b)=>b.count-a.count || a.src.localeCompare(b.src)).slice(0,10);
 }
+function connectionFamilyCounts(connections){
+  const counts = {ipv4:0, ipv6:0, other:0};
+  const byFamily = connections?.byFamily || {};
+  if (Object.keys(byFamily).length) {
+    for (const [familyKey, value] of Object.entries(byFamily)) {
+      const family = String(familyKey || "").toLowerCase();
+      if (family === "ipv4") counts.ipv4 += Number(value || 0);
+      else if (family === "ipv6") counts.ipv6 += Number(value || 0);
+      else counts.other += Number(value || 0);
+    }
+  } else {
+    for (const entry of connections?.entries || []) {
+      const family = String(entry.family || "").toLowerCase();
+      if (family === "ipv4") counts.ipv4++;
+      else if (family === "ipv6") counts.ipv6++;
+      else counts.other++;
+    }
+  }
+  const parts = ["v4 "+counts.ipv4, "v6 "+counts.ipv6];
+  if (counts.other) parts.push("other "+counts.other);
+  return parts.join(" / ");
+}
 function remember(bucket, key, value){
   const previous = bucket.get(key);
   bucket.set(key, value);
@@ -576,7 +598,7 @@ function flowCell(e){
 }
 async function refresh(){
   const seq = ++refreshSeq;
-  const res = await fetch(base + "api/summary?events=15&connections=30", {cache:"no-store"});
+  const res = await fetch(base + "api/summary?events=15&connections=200", {cache:"no-store"});
   const s = await res.json();
   if (seq !== refreshSeq) return;
   const status = s.status?.status || {};
@@ -587,8 +609,9 @@ async function refresh(){
     kvNode("generation", status.generation || "-"),
     kvNode("resources", status.resourceCount || (s.resources||[]).length),
     kvNode("conntrack", connections.max ? String(connections.count)+"/"+String(connections.max) : (connections.count ?? "-")),
+    kvNode("families", connectionFamilyCounts(connections)),
   ]));
-  renderInto("traffic", tableNode(["family","proto","state","flow","dst label","timeout"], (connections.entries||[]).slice(0,30).map(e => {
+  renderInto("traffic", tableNode(["family","proto","state","flow","dst label","timeout"], (connections.entries||[]).map(e => {
     const state = e.state || (e.assured ? "ASSURED" : "stateless");
     const changed = remember(seen.traffic, flowKey(e), flowSig(e));
     const label = dstLabel(e.original, dnsLabels);
