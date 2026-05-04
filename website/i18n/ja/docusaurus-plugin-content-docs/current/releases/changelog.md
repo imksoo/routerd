@@ -12,6 +12,8 @@ routerd は出荷前のソフトウェアです。
 - Phase 3.0a: NixOS 向けの宣言的な生成を拡張しました。
   `Package` の NixOS パッケージ、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit` を `routerd render nixos` の出力へ反映します。
   NixOS 上の `Package` は実行時に導入せず、生成された NixOS 設定で管理する扱いにしました。
+- Phase 3.0b: FreeBSD 向け `Package` の実行経路を追加しました。
+  `pkg info -e` で導入済みパッケージを確認し、不足があれば `pkg install -y` で導入します。
 
 ## 0.3.0
 

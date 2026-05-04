@@ -60,7 +60,7 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 			})
 			continue
 		}
-		if manager != "apt" && manager != "dnf" {
+		if manager != "apt" && manager != "dnf" && manager != "pkg" {
 			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
 				"reason":    "UnsupportedManagerRuntime",
@@ -206,6 +206,8 @@ func packageCheckCommand(manager, name string) (string, []string) {
 		return "dpkg-query", []string{"-W", "-f=${Status}", name}
 	case "dnf":
 		return "rpm", []string{"-q", name}
+	case "pkg":
+		return "pkg", []string{"info", "-e", name}
 	default:
 		return manager, []string{name}
 	}
@@ -225,6 +227,12 @@ func packageInstallCommand(manager string, missing []string) (string, []string) 
 			return "dnf", args
 		}
 		return "sudo", append([]string{"dnf"}, args...)
+	case "pkg":
+		args := append([]string{"install", "-y"}, missing...)
+		if os.Geteuid() == 0 {
+			return "pkg", args
+		}
+		return "sudo", append([]string{"pkg"}, args...)
 	default:
 		return manager, missing
 	}

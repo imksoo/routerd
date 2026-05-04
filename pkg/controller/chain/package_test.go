@@ -155,6 +155,44 @@ func TestPackageControllerReportsNixOSPackagesAsDeclarative(t *testing.T) {
 	}
 }
 
+func TestPackageControllerInstallsMissingFreeBSDPackages(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"}, Metadata: api.ObjectMeta{Name: "service-deps"}, Spec: api.PackageSpec{
+			Packages: []api.OSPackageSetSpec{{
+				OS:      "freebsd",
+				Manager: "pkg",
+				Names:   []string{"dnsmasq", "bind-tools"},
+			}},
+		}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	controller := PackageController{
+		Router: router,
+		Store:  store,
+		OSName: "freebsd",
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "pkg" && len(args) == 3 && args[0] == "info" && args[2] == "dnsmasq" {
+				return nil, errTestCommand
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(commands, "\n")
+	if !strings.Contains(got, "pkg install -y dnsmasq") {
+		t.Fatalf("commands = %q", got)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "Package", "service-deps")
+	if status["phase"] != "Applied" || status["changed"] != true {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestParseOSReleaseID(t *testing.T) {
 	if got := parseOSReleaseID("NAME=\"NixOS\"\nID=nixos\n"); got != "nixos" {
 		t.Fatalf("ID = %q", got)
