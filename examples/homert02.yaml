@@ -744,8 +744,8 @@ spec:
       spec:
         interface: lan
         addressPool:
-          start: 172.18.0.100
-          end: 172.18.0.200
+          start: 172.18.1.64
+          end: 172.18.1.191
           leaseTime: 12h
         gateway: 172.18.0.1
         dnsServers:
@@ -758,17 +758,17 @@ spec:
             value: home.internal
 
     # MAC アドレスごとの固定 IPv4 払い出しは DHCPv4Reservation で表します。
-    # 実際の端末に合わせて、次のようなリソースを追加します。
-    #
-    # - apiVersion: net.routerd.net/v1alpha1
-    #   kind: DHCPv4Reservation
-    #   metadata:
-    #     name: static-client-example
-    #   spec:
-    #     server: lan-dhcpv4
-    #     macAddress: "02:00:00:00:10:10"
-    #     hostname: static-client
-    #     ipAddress: 172.18.0.120
+    # 既知端末は 172.18.0.128-191 に固定し、未知端末は上の動的プール
+    # 172.18.1.64-191 へ逃がします。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Reservation
+      metadata:
+        name: panasonic-aiseg2
+      spec:
+        server: lan-dhcpv4
+        macAddress: "18:ec:e7:33:12:6c"
+        hostname: aiseg2
+        ipAddress: 172.18.0.150
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6RouterAdvertisement
