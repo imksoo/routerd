@@ -430,6 +430,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .connection-group summary:before{content:"+";display:inline-grid;place-items:center;width:16px;height:16px;border:1px solid #4a4a4a;border-radius:50%;font-size:12px;color:#c9c9c9;flex:0 0 auto}
     .connection-group[open] summary:before{content:"-"}
     .connection-group .table-wrap{border-top:1px solid #2b2b2b}
+    .group-title{font-weight:650;white-space:nowrap}
     .group-count{margin-left:auto;color:#9a9a9a;font-size:12px;white-space:nowrap}
     .flow-cell{display:grid;gap:5px;min-width:0}
     .flow-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;list-style:none;min-width:0}
@@ -478,6 +479,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 <script>
 const base = {{.BasePath}};
 const seen = {traffic:new Map(), resources:new Map(), events:new Map()};
+const connectionGroupOpen = new Map();
 let firstPaint = true;
 let refreshSeq = 0;
 function cls(phase){return /Healthy|Applied|Active|Bound|Installed|Up/.test(phase) ? "ok" : /Pending|Drifted|Unknown/.test(phase) ? "warn" : "bad"}
@@ -630,8 +632,9 @@ function returnDetails(e){
 function flowCell(e){
   return returnDetails(e) || el("div",{class:"flow-cell"},[endpoint(e.original)]);
 }
-function connectionGroupNode(group, dnsLabels, index){
+function connectionGroupNode(group, dnsLabels){
   const label = connectionGroupLabel(group.key);
+  const title = label.family + "/" + String(label.proto || "other").toUpperCase() + " " + String(group.rows.length);
   const rows = group.rows.map(e => {
     const state = e.state || (e.assured ? "ASSURED" : "stateless");
     const changed = remember(seen.traffic, flowKey(e), flowSig(e));
@@ -643,10 +646,13 @@ function connectionGroupNode(group, dnsLabels, index){
       el("td",{text:String(e.timeout || 0)+"s"}),
     ]);
   });
-  return el("details",{class:"connection-group",open:index < 2},[
-    el("summary",{},[pill(label.family, "family"),pill(label.proto, "proto"),el("span",{class:"group-count",text:String(group.rows.length)+" shown"})]),
+  const open = connectionGroupOpen.has(group.key) ? connectionGroupOpen.get(group.key) : true;
+  const node = el("details",{class:"connection-group",open:open},[
+    el("summary",{},[el("span",{class:"group-title",text:title}),pill(label.family, "family"),pill(label.proto, "proto")]),
     tableNode(["state","flow","dst label","timeout"], rows),
   ]);
+  node.addEventListener("toggle", () => connectionGroupOpen.set(group.key, node.open));
+  return node;
 }
 async function refresh(){
   const seq = ++refreshSeq;
@@ -664,7 +670,7 @@ async function refresh(){
     kvNode("families", connectionFamilyCounts(connections)),
   ]));
   const groups = connectionGroups(connections.entries || []);
-  renderInto("traffic", groups.length ? el("div",{class:"connection-groups"},groups.map((group,index)=>connectionGroupNode(group,dnsLabels,index))) : el("div",{class:"muted",text:"No active connections"}));
+  renderInto("traffic", groups.length ? el("div",{class:"connection-groups"},groups.map(group=>connectionGroupNode(group,dnsLabels))) : el("div",{class:"muted",text:"No active connections"}));
   renderInto("client-traffic", tableNode(["client","bytes out","bytes in","recent peers"], clientTrafficRows(s.trafficFlows || []).map(row =>
     el("tr",{},[el("td",{},[el("code",{text:row.client})]),el("td",{text:bytes(row.bytesOut)}),el("td",{text:bytes(row.bytesIn)}),el("td",{},[el("code",{text:Array.from(row.peers).sort().slice(0,4).join(", ")})])]))));
   renderInto("recent-deny", tableNode(["count","source","destination","proto","rule"], denyRows(s.firewallLogs || []).map(row =>
