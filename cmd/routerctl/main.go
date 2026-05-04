@@ -56,6 +56,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return eventsCommand(args[1:], stdout)
 	case "dns-queries":
 		return dnsQueriesCommand(args[1:], stdout)
+	case "connections":
+		return connectionsCommand(args[1:], stdout)
 	case "traffic-flows":
 		return trafficFlowsCommand(args[1:], stdout)
 	case "firewall-logs":
@@ -284,6 +286,96 @@ func writeDNSQueriesTable(stdout io.Writer, rows []logstore.DNSQuery) error {
 	return w.Flush()
 }
 
+func connectionsCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("connections", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
+	limit := fs.Int("limit", 100, "maximum number of entries")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(*socketPath).Connections(ctx, *limit)
+	if err != nil {
+		return err
+	}
+	switch output {
+	case "", "table":
+		return writeConnectionsTable(stdout, result.Status)
+	case "json":
+		return writeJSON(stdout, result)
+	case "yaml":
+		return writeYAML(stdout, result)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeConnectionsTable(stdout io.Writer, table observe.ConnectionTable) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "COUNT\t%d", table.Count)
+	if table.Max > 0 {
+		fmt.Fprintf(w, "/%d", table.Max)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "FAMILY\tPROTO\tSTATE\tFLOW\tRETURN\tNAT\tTIMEOUT")
+	for _, row := range table.Entries {
+		state := firstNonEmpty(row.State, assuredState(row.Assured))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
+			displayCell(row.Family),
+			displayCell(row.Protocol),
+			displayCell(state),
+			tupleCell(row.Original),
+			tupleCell(row.Reply),
+			displayCell(connectionNATDelta(row)),
+			row.Timeout,
+		)
+	}
+	return w.Flush()
+}
+
+func assuredState(assured bool) string {
+	if assured {
+		return "ASSURED"
+	}
+	return "stateless"
+}
+
+func tupleCell(tuple observe.ConntrackTuple) string {
+	src := endpointCell(tuple.Source, tuple.SourcePort)
+	dst := endpointCell(tuple.Destination, tuple.DestinationPort)
+	if src == "-" && dst == "-" {
+		return "-"
+	}
+	return src + " -> " + dst
+}
+
+func endpointCell(address, port string) string {
+	if strings.TrimSpace(address) == "" {
+		return "-"
+	}
+	if strings.TrimSpace(port) == "" {
+		return address
+	}
+	return address + ":" + port
+}
+
+func connectionNATDelta(entry observe.ConnectionEntry) string {
+	var out []string
+	if entry.Reply.Destination != "" && entry.Reply.Destination != entry.Original.Source {
+		out = append(out, "reply-dst="+endpointCell(entry.Reply.Destination, entry.Reply.DestinationPort))
+	}
+	if entry.Reply.Source != "" && entry.Reply.Source != entry.Original.Destination {
+		out = append(out, "reply-src="+endpointCell(entry.Reply.Source, entry.Reply.SourcePort))
+	}
+	return strings.Join(out, ",")
+}
+
 func trafficFlowsCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("traffic-flows", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -462,18 +554,18 @@ func parseHumanDuration(value string) (time.Duration, error) {
 }
 
 type showOptions struct {
-	Target     string
-	Output     string
-	ConfigPath string
-	StatePath  string
-	LedgerPath string
-	Diff       bool
-	LedgerOnly bool
-	AdoptOnly  bool
-	Events     bool
-	SpecOnly   bool
-	StatusOnly bool
-	NAPTLimit  int
+	Target           string
+	Output           string
+	ConfigPath       string
+	StatePath        string
+	LedgerPath       string
+	Diff             bool
+	LedgerOnly       bool
+	AdoptOnly        bool
+	Events           bool
+	SpecOnly         bool
+	StatusOnly       bool
+	ConnectionsLimit int
 }
 
 type showResource struct {
@@ -632,7 +724,7 @@ func describeCommand(args []string, stdout, stderr io.Writer) error {
 	if len(resources) == 0 {
 		return resourceSelectionError(router.Spec.Resources, kind, name)
 	}
-	rows, err := buildShowResources(router, resources, store, ledger, showOptions{Events: true, NAPTLimit: 20})
+	rows, err := buildShowResources(router, resources, store, ledger, showOptions{Events: true, ConnectionsLimit: 20})
 	if err != nil {
 		return err
 	}
@@ -940,10 +1032,10 @@ func showCommand(args []string, stdout, stderr io.Writer) error {
 
 func parseShowOptions(args []string) (showOptions, error) {
 	opts := showOptions{
-		ConfigPath: defaultConfigPath(),
-		StatePath:  defaultStatePath(),
-		LedgerPath: defaultLedgerPath(),
-		NAPTLimit:  20,
+		ConfigPath:       defaultConfigPath(),
+		StatePath:        defaultStatePath(),
+		LedgerPath:       defaultLedgerPath(),
+		ConnectionsLimit: 20,
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -972,16 +1064,16 @@ func parseShowOptions(args []string) (showOptions, error) {
 				return opts, errors.New("--ledger-file requires a value")
 			}
 			opts.LedgerPath = args[i]
-		case "--napt-limit":
+		case "--connections-limit":
 			i++
 			if i >= len(args) {
-				return opts, errors.New("--napt-limit requires a value")
+				return opts, errors.New("--connections-limit requires a value")
 			}
 			var parsed int
 			if _, err := fmt.Sscanf(args[i], "%d", &parsed); err != nil {
-				return opts, fmt.Errorf("--napt-limit must be an integer")
+				return opts, fmt.Errorf("--connections-limit must be an integer")
 			}
-			opts.NAPTLimit = parsed
+			opts.ConnectionsLimit = parsed
 		case "--diff":
 			opts.Diff = true
 		case "--ledger":
@@ -1372,11 +1464,11 @@ func observeResource(res api.Resource, aliases map[string]string, opts showOptio
 		spec, _ := res.DHCPv6PrefixDelegationSpec()
 		return map[string]any{"interface": aliases[spec.Interface]}
 	case "IPv4SourceNAT":
-		table, err := observe.NAPT(opts.NAPTLimit)
+		table, err := observe.Connections(opts.ConnectionsLimit)
 		if err != nil {
-			return map[string]any{"naptError": err.Error()}
+			return map[string]any{"connectionsError": err.Error()}
 		}
-		return map[string]any{"napt": table}
+		return map[string]any{"connections": table}
 	case "DSLiteTunnel":
 		spec, _ := res.DSLiteTunnelSpec()
 		return observeInterface(firstNonEmpty(spec.TunnelName, res.Metadata.Name))
@@ -1880,12 +1972,12 @@ func observedSummary(observed map[string]any) string {
 	if addrs, ok := observed["addresses"]; ok {
 		return "addresses=" + fmt.Sprint(addrs)
 	}
-	if napt, ok := observed["napt"]; ok {
-		if table, ok := napt.(*observe.NAPTTable); ok {
+	if connections, ok := observed["connections"]; ok {
+		if table, ok := connections.(*observe.ConnectionTable); ok {
 			return fmt.Sprintf("conntrack=%d", table.Count)
 		}
 	}
-	if err, ok := observed["naptError"]; ok {
+	if err, ok := observed["connectionsError"]; ok {
 		return "error=" + fmt.Sprint(err)
 	}
 	return "observed"
@@ -1973,6 +2065,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  status [--socket <path>]")
 	fmt.Fprintln(w, "  events [--state-file <path>] [--topic <topic>] [--resource <kind>/<name>] [--limit <n>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  dns-queries [--socket <path>] [--db <path>] [--since 1h] [--client <ip>] [--qname <pattern>] [--limit 100] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  connections [--socket <path>] [--limit 100] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  traffic-flows [--socket <path>] [--db <path>] [--since 1h] [--client <ip>] [--peer <ip>] [--limit 100] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  firewall-logs [--socket <path>] [--db <path>] [--since 1h] [--action drop] [--src <ip>] [--limit 100] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  get <kind>[/<name>] [--list-kinds] [--config <path>] [-o table|json|yaml]")

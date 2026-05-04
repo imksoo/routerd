@@ -85,18 +85,18 @@ func TestDeleteHandler(t *testing.T) {
 	}
 }
 
-func TestNAPTHandler(t *testing.T) {
+func TestConnectionsHandler(t *testing.T) {
 	handler := Handler{
-		NAPT: func(r *http.Request, req NAPTRequest) (*NAPTTable, error) {
+		Connections: func(r *http.Request, req ConnectionsRequest) (*ConnectionTable, error) {
 			if req.Limit != 10 {
 				t.Fatalf("limit = %d, want 10", req.Limit)
 			}
-			table := NewNAPTTable(nil)
+			table := NewConnectionTable(nil)
 			table.Status.Count = 3
 			return &table, nil
 		},
 	}
-	req := httptest.NewRequest(http.MethodGet, Prefix+"/napt?limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, Prefix+"/connections?limit=10", nil)
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -104,7 +104,7 @@ func TestNAPTHandler(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"kind": "NAPTTable"`) {
+	if !strings.Contains(rec.Body.String(), `"kind": "ConnectionTable"`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

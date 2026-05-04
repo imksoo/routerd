@@ -2463,12 +2463,12 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			status := controlapi.NewStatus(cache.Load())
 			return &status, nil
 		},
-		NAPT: func(r *http.Request, req controlapi.NAPTRequest) (*controlapi.NAPTTable, error) {
-			table, err := observe.NAPT(req.Limit)
+		Connections: func(r *http.Request, req controlapi.ConnectionsRequest) (*controlapi.ConnectionTable, error) {
+			table, err := observe.Connections(req.Limit)
 			if err != nil {
 				return nil, err
 			}
-			apiTable := controlapi.NewNAPTTable(table)
+			apiTable := controlapi.NewConnectionTable(table)
 			return &apiTable, nil
 		},
 		DNSQueries: func(r *http.Request, req controlapi.DNSQueriesRequest) (*controlapi.DNSQueries, error) {
@@ -2699,7 +2699,7 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		Router:             router,
 		Store:              store,
 		Result:             cache.Load,
-		NAPT:               observe.NAPT,
+		Connections:        observe.Connections,
 		Title:              spec.Title,
 		BasePath:           spec.BasePath,
 		DNSQueryLogPath:    platformDefaults.StateDir + "/dns-queries.db",

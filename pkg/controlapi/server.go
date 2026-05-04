@@ -11,7 +11,7 @@ const Prefix = "/api/control.routerd.net/v1alpha1"
 
 type Handler struct {
 	Status         func(*http.Request) (*Status, error)
-	NAPT           func(*http.Request, NAPTRequest) (*NAPTTable, error)
+	Connections    func(*http.Request, ConnectionsRequest) (*ConnectionTable, error)
 	DNSQueries     func(*http.Request, DNSQueriesRequest) (*DNSQueries, error)
 	TrafficFlows   func(*http.Request, TrafficFlowsRequest) (*TrafficFlows, error)
 	FirewallLogs   func(*http.Request, FirewallLogsRequest) (*FirewallLogs, error)
@@ -21,7 +21,7 @@ type Handler struct {
 	DHCPLeaseEvent func(*http.Request, DHCPLeaseEventRequest) (*DHCPLeaseEventResult, error)
 }
 
-type NAPTRequest struct {
+type ConnectionsRequest struct {
 	Limit int
 }
 
@@ -29,8 +29,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/status":
 		h.handleStatus(w, r)
-	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/napt":
-		h.handleNAPT(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/connections":
+		h.handleConnections(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/dns-queries":
 		h.handleDNSQueries(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/traffic-flows":
@@ -94,9 +94,9 @@ func (h Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, status)
 }
 
-func (h Handler) handleNAPT(w http.ResponseWriter, r *http.Request) {
-	if h.NAPT == nil {
-		writeError(w, http.StatusNotImplemented, "napt handler is not configured")
+func (h Handler) handleConnections(w http.ResponseWriter, r *http.Request) {
+	if h.Connections == nil {
+		writeError(w, http.StatusNotImplemented, "connections handler is not configured")
 		return
 	}
 	limit := 100
@@ -108,7 +108,7 @@ func (h Handler) handleNAPT(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
-	table, err := h.NAPT(r, NAPTRequest{Limit: limit})
+	table, err := h.Connections(r, ConnectionsRequest{Limit: limit})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

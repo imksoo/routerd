@@ -9,6 +9,10 @@ routerd は出荷前のソフトウェアです。
 
 ## 0.4.0
 
+- Phase 3.1a: 実時間の conntrack / pf state 表示を `connections` に改名しました。
+  Control API は `/api/connections`、CLI は `routerctl connections` を使います。
+  IPv4 NAPT だけでなく、IPv6 の経路通過コネクションも同じ表で扱います。
+  Web Console は文字列連結ではなく DOM ノード生成で表を描画し、列ずれを防ぎます。
 - Phase 3.0a: NixOS 向けの宣言的な生成を拡張しました。
   `Package` の NixOS パッケージ、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit` を `routerd render nixos` の出力へ反映します。
   NixOS 上の `Package` は実行時に導入せず、生成された NixOS 設定で管理する扱いにしました。
@@ -18,7 +22,7 @@ routerd は出荷前のソフトウェアです。
   `FirewallZone`、`FirewallPolicy`、`FirewallRule`、`IPv4SourceNAT`、`NAT44Rule` から `pf.conf` を生成します。
   実機適用はまだ接続せず、`routerd render freebsd --out-dir ...` の生成物として確認する段階です。
 - Phase 3.0d: FreeBSD 向け pf state 観測の土台を追加しました。
-  FreeBSD では `pfctl -ss -v` の出力を traffic flow 用の共通 NAPT 表現へ変換します。
+  FreeBSD では `pfctl -ss -v` の出力を traffic flow 用の共通コネクション表現へ変換します。
 - Phase 3.0e: `routerd-firewall-logger` に FreeBSD `pflog` 入力を追加しました。
   `--pflog-interface pflog0` を指定すると `tcpdump` 経由で pf のログを読み、既存の `firewall-logs.db` へ保存します。
 - Phase 3.0f: `SystemdUnit` から FreeBSD rc.d スクリプトを生成する経路を追加しました。

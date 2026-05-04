@@ -92,10 +92,10 @@ type DHCPLeaseEventResult struct {
 	Accepted bool `json:"accepted" yaml:"accepted"`
 }
 
-type NAPTTable struct {
+type ConnectionTable struct {
 	TypeMeta `json:",inline" yaml:",inline"`
-	Metadata ObjectMeta        `json:"metadata" yaml:"metadata"`
-	Status   observe.NAPTTable `json:"status" yaml:"status"`
+	Metadata ObjectMeta              `json:"metadata" yaml:"metadata"`
+	Status   observe.ConnectionTable `json:"status" yaml:"status"`
 }
 
 type DNSQueriesRequest struct {
@@ -146,13 +146,13 @@ type ErrorStatus struct {
 	Message string `json:"message" yaml:"message"`
 }
 
-func NewNAPTTable(table *observe.NAPTTable) NAPTTable {
+func NewConnectionTable(table *observe.ConnectionTable) ConnectionTable {
 	if table == nil {
-		table = &observe.NAPTTable{}
+		table = &observe.ConnectionTable{}
 	}
-	return NAPTTable{
-		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "NAPTTable"},
-		Metadata: ObjectMeta{Name: "conntrack"},
+	return ConnectionTable{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "ConnectionTable"},
+		Metadata: ObjectMeta{Name: "connections"},
 		Status:   *table,
 	}
 }

@@ -79,8 +79,8 @@ func (c *Client) Delete(ctx context.Context, request DeleteRequest) (*DeleteResu
 	return &result, nil
 }
 
-func (c *Client) NAPT(ctx context.Context, limit int) (*NAPTTable, error) {
-	path := c.baseURL + Prefix + "/napt"
+func (c *Client) Connections(ctx context.Context, limit int) (*ConnectionTable, error) {
+	path := c.baseURL + Prefix + "/connections"
 	if limit >= 0 {
 		values := url.Values{}
 		values.Set("limit", strconv.Itoa(limit))
@@ -90,7 +90,7 @@ func (c *Client) NAPT(ctx context.Context, limit int) (*NAPTTable, error) {
 	if err != nil {
 		return nil, err
 	}
-	var table NAPTTable
+	var table ConnectionTable
 	if err := c.do(req, &table); err != nil {
 		return nil, err
 	}

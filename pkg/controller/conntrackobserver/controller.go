@@ -29,7 +29,7 @@ type Controller struct {
 	Interval       time.Duration
 	ThresholdRatio float64
 	Logger         *slog.Logger
-	NAPT           func(limit int) (*observe.NAPTTable, error)
+	Connections    func(limit int) (*observe.ConnectionTable, error)
 	lastCount      int
 	aboveThreshold bool
 	seen           bool
@@ -121,11 +121,11 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 	if path == "" {
 		path = "/var/lib/routerd/traffic-flows.db"
 	}
-	napt := c.NAPT
-	if napt == nil {
-		napt = observe.NAPT
+	connections := c.Connections
+	if connections == nil {
+		connections = observe.Connections
 	}
-	table, err := napt(10000)
+	table, err := connections(10000)
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 	now := time.Now().UTC()
 	var active []string
 	for _, entry := range table.Entries {
-		flow := trafficFlowFromNAPT(entry, now)
+		flow := trafficFlowFromConnection(entry, now)
 		if flow.FlowKey == "" {
 			continue
 		}
@@ -183,7 +183,7 @@ func trafficFlowLogSpec(router *api.Router) (api.Resource, api.TrafficFlowLogSpe
 	return api.Resource{}, api.TrafficFlowLogSpec{}, false
 }
 
-func trafficFlowFromNAPT(entry observe.NAPTTableEntry, now time.Time) logstore.TrafficFlow {
+func trafficFlowFromConnection(entry observe.ConnectionEntry, now time.Time) logstore.TrafficFlow {
 	client := entry.Original.Source
 	peer := entry.Original.Destination
 	natAddress := ""

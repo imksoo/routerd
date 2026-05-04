@@ -76,7 +76,7 @@ func controlSchema() map[string]any {
 		"title":   "routerd control API v1alpha1",
 		"oneOf": []any{
 			reflectedSchema(controlapi.Status{}),
-			reflectedSchema(controlapi.NAPTTable{}),
+			reflectedSchema(controlapi.ConnectionTable{}),
 			reflectedSchema(controlapi.DNSQueries{}),
 			reflectedSchema(controlapi.TrafficFlows{}),
 			reflectedSchema(controlapi.FirewallLogs{}),
@@ -142,9 +142,9 @@ func controlOpenAPISchema() map[string]any {
 					},
 				},
 			},
-			controlapi.Prefix + "/napt": map[string]any{
+			controlapi.Prefix + "/connections": map[string]any{
 				"get": map[string]any{
-					"operationId": "getNAPTTable",
+					"operationId": "getConnectionTable",
 					"parameters": []any{
 						map[string]any{
 							"name":        "limit",
@@ -159,7 +159,7 @@ func controlOpenAPISchema() map[string]any {
 						},
 					},
 					"responses": map[string]any{
-						"200":     responseRef("NAPTTable"),
+						"200":     responseRef("ConnectionTable"),
 						"default": responseRef("Error"),
 					},
 				},
@@ -203,7 +203,7 @@ func controlOpenAPISchema() map[string]any {
 		"components": map[string]any{
 			"schemas": map[string]any{
 				"Status":             reflectedSchema(controlapi.Status{}),
-				"NAPTTable":          reflectedSchema(controlapi.NAPTTable{}),
+				"ConnectionTable":    reflectedSchema(controlapi.ConnectionTable{}),
 				"DNSQueries":         reflectedSchema(controlapi.DNSQueries{}),
 				"TrafficFlows":       reflectedSchema(controlapi.TrafficFlows{}),
 				"FirewallLogs":       reflectedSchema(controlapi.FirewallLogs{}),

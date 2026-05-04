@@ -69,8 +69,8 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		Result: func() *apply.Result {
 			return &apply.Result{Phase: "Healthy", Generation: 7, Resources: []apply.ResourceResult{{ID: "x", Phase: "Healthy"}}}
 		},
-		NAPT: func(limit int) (*observe.NAPTTable, error) {
-			return &observe.NAPTTable{Count: 3, Max: 262144}, nil
+		Connections: func(limit int) (*observe.ConnectionTable, error) {
+			return &observe.ConnectionTable{Count: 3, Max: 262144}, nil
 		},
 		DNSQueryLogPath:    queryLog,
 		TrafficFlowLogPath: trafficLog,
@@ -82,7 +82,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"napt"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, "example.com", `"resolvedHostname": "example.com"`} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, "example.com", `"resolvedHostname": "example.com"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}
@@ -225,7 +225,7 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`api/summary?events=15&napt=30`,
+		`api/summary?events=15&connections=30`,
 		`function dnsLabelMap`,
 		`function clientTrafficRows`,
 		`function denyRows`,
@@ -234,18 +234,18 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 		`dst-label`,
 		`proto-tcp`,
 		`state-established`,
-		`["proto","state","flow","dst label","timeout"]`,
+		`["family","proto","state","flow","dst label","timeout"]`,
 		`function flowCell`,
 		`function dstLabel`,
 		`function sameReverse`,
 		`function returnDetails`,
 		`function natDelta`,
 		`function remember`,
-		`class="flash"`,
+		`class:"flash"`,
 		`@keyframes flash`,
-		`class="flow-summary"`,
-		`class="return-button">return</span>`,
-		`<span>nat</span>`,
+		`class:"flow-summary"`,
+		`class:"return-button",text:"return"`,
+		`text:"nat"`,
 		`.slice(0,15)`,
 	} {
 		if !strings.Contains(body, want) {

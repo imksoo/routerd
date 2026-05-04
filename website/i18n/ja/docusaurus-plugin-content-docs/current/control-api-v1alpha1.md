@@ -18,6 +18,16 @@ routerd と専用デーモンは、ローカルの Unix ドメインソケット
 
 主な用途は、現在状態の確認、イベント確認、リソース状態の確認です。
 
+主な読み取りエンドポイントは次の通りです。
+
+| メソッドとパス | 意味 |
+| --- | --- |
+| `GET /api/control.routerd.net/v1alpha1/status` | routerd 本体の状態を返します。 |
+| `GET /api/control.routerd.net/v1alpha1/connections` | conntrack または pf state から得たコネクションを返します。 |
+| `GET /api/control.routerd.net/v1alpha1/dns-queries` | DNS クエリー履歴を返します。 |
+| `GET /api/control.routerd.net/v1alpha1/traffic-flows` | 保存済みの通信フロー履歴を返します。 |
+| `GET /api/control.routerd.net/v1alpha1/firewall-logs` | ファイアウォールログを返します。 |
+
 ## 専用デーモン
 
 状態を持つ処理は、次のようなソケットを持ちます。

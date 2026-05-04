@@ -11,15 +11,15 @@ import (
 	"routerd/pkg/platform"
 )
 
-type NAPTTable struct {
+type ConnectionTable struct {
 	Count   int                 `json:"count" yaml:"count"`
 	Max     int                 `json:"max,omitempty" yaml:"max,omitempty"`
 	ByMark  map[string]int      `json:"byMark,omitempty" yaml:"byMark,omitempty"`
-	Entries []NAPTTableEntry    `json:"entries,omitempty" yaml:"entries,omitempty"`
+	Entries []ConnectionEntry   `json:"entries,omitempty" yaml:"entries,omitempty"`
 	Stats   []ConntrackCPUStats `json:"stats,omitempty" yaml:"stats,omitempty"`
 }
 
-type NAPTTableEntry struct {
+type ConnectionEntry struct {
 	Family        string            `json:"family" yaml:"family"`
 	Protocol      string            `json:"protocol" yaml:"protocol"`
 	State         string            `json:"state,omitempty" yaml:"state,omitempty"`
@@ -43,7 +43,7 @@ type ConntrackCPUStats struct {
 	Fields map[string]int `json:"fields" yaml:"fields"`
 }
 
-func NAPT(limit int) (*NAPTTable, error) {
+func Connections(limit int) (*ConnectionTable, error) {
 	_, features := platform.Current()
 	if features.HasPF && !features.HasIproute2 {
 		return PFStates(limit)
@@ -53,14 +53,14 @@ func NAPT(limit int) (*NAPTTable, error) {
 		return nil, fmt.Errorf("conntrack -L -o extended: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	allEntries := parseConntrackEntries(string(out), 0)
-	sortNAPTEntries(allEntries)
+	sortConnectionEntries(allEntries)
 	entries := allEntries
 	if limit == 0 {
 		entries = nil
 	} else if limit > 0 && len(entries) > limit {
 		entries = entries[:limit]
 	}
-	table := &NAPTTable{
+	table := &ConnectionTable{
 		Count:   readProcInt("/proc/sys/net/netfilter/nf_conntrack_count", len(allEntries)),
 		Max:     readProcInt("/proc/sys/net/netfilter/nf_conntrack_max", 0),
 		ByMark:  conntrackEntriesByMark(allEntries),
@@ -72,27 +72,27 @@ func NAPT(limit int) (*NAPTTable, error) {
 	return table, nil
 }
 
-func PFStates(limit int) (*NAPTTable, error) {
+func PFStates(limit int) (*ConnectionTable, error) {
 	out, err := exec.Command("pfctl", "-ss", "-v").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("pfctl -ss -v: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	entries := parsePFStateEntries(string(out), limit)
-	sortNAPTEntries(entries)
-	return &NAPTTable{
+	sortConnectionEntries(entries)
+	return &ConnectionTable{
 		Count:   len(entries),
 		ByMark:  map[string]int{"0": len(entries)},
 		Entries: entries,
 	}, nil
 }
 
-func sortNAPTEntries(entries []NAPTTableEntry) {
+func sortConnectionEntries(entries []ConnectionEntry) {
 	sort.SliceStable(entries, func(i, j int) bool {
-		return naptSortKey(entries[i]) < naptSortKey(entries[j])
+		return connectionSortKey(entries[i]) < connectionSortKey(entries[j])
 	})
 }
 
-func naptSortKey(entry NAPTTableEntry) string {
+func connectionSortKey(entry ConnectionEntry) string {
 	return strings.Join([]string{
 		entry.Family,
 		entry.Protocol,
@@ -109,8 +109,8 @@ func naptSortKey(entry NAPTTableEntry) string {
 	}, "\x00")
 }
 
-func parseConntrackEntries(output string, limit int) []NAPTTableEntry {
-	var entries []NAPTTableEntry
+func parseConntrackEntries(output string, limit int) []ConnectionEntry {
+	var entries []ConnectionEntry
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "conntrack v") {
@@ -128,8 +128,8 @@ func parseConntrackEntries(output string, limit int) []NAPTTableEntry {
 	return entries
 }
 
-func parsePFStateEntries(output string, limit int) []NAPTTableEntry {
-	var entries []NAPTTableEntry
+func parsePFStateEntries(output string, limit int) []ConnectionEntry {
+	var entries []ConnectionEntry
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "[") {
@@ -147,10 +147,10 @@ func parsePFStateEntries(output string, limit int) []NAPTTableEntry {
 	return entries
 }
 
-func parsePFStateEntry(line string) (NAPTTableEntry, bool) {
+func parsePFStateEntry(line string) (ConnectionEntry, bool) {
 	fields := strings.Fields(line)
 	if len(fields) < 5 || fields[0] != "all" {
-		return NAPTTableEntry{}, false
+		return ConnectionEntry{}, false
 	}
 	protocol := strings.ToLower(fields[1])
 	arrow := -1
@@ -161,7 +161,7 @@ func parsePFStateEntry(line string) (NAPTTableEntry, bool) {
 		}
 	}
 	if arrow < 2 || arrow+1 >= len(fields) {
-		return NAPTTableEntry{}, false
+		return ConnectionEntry{}, false
 	}
 	leftFields := fields[2:arrow]
 	rightField := fields[arrow+1]
@@ -174,7 +174,7 @@ func parsePFStateEntry(line string) (NAPTTableEntry, bool) {
 	innerHost, innerPort := parsePFEndpoint(innerLeft)
 	rightHost, rightPort := parsePFEndpoint(rightField)
 	if leftHost == "" || rightHost == "" {
-		return NAPTTableEntry{}, false
+		return ConnectionEntry{}, false
 	}
 	originalSource := leftHost
 	originalSourcePort := leftPort
@@ -186,7 +186,7 @@ func parsePFStateEntry(line string) (NAPTTableEntry, bool) {
 		replyDestination = leftHost
 		replyDestinationPort = leftPort
 	}
-	entry := NAPTTableEntry{
+	entry := ConnectionEntry{
 		Family:   pfEndpointFamily(originalSource, rightHost),
 		Protocol: protocol,
 		State:    state,
@@ -207,12 +207,12 @@ func parsePFStateEntry(line string) (NAPTTableEntry, bool) {
 	return entry, true
 }
 
-func parseConntrackEntry(line string) (NAPTTableEntry, bool) {
+func parseConntrackEntry(line string) (ConnectionEntry, bool) {
 	fields := strings.Fields(line)
 	if len(fields) < 5 {
-		return NAPTTableEntry{}, false
+		return ConnectionEntry{}, false
 	}
-	entry := NAPTTableEntry{
+	entry := ConnectionEntry{
 		Family:        fields[0],
 		Protocol:      fields[2],
 		RawAttributes: map[string]string{},
@@ -251,7 +251,7 @@ func parseConntrackEntry(line string) (NAPTTableEntry, bool) {
 		entry.RawAttributes[key] = value
 	}
 	if entry.Original.Source == "" && entry.Reply.Source == "" {
-		return NAPTTableEntry{}, false
+		return ConnectionEntry{}, false
 	}
 	if len(entry.RawAttributes) == 0 {
 		entry.RawAttributes = nil
@@ -325,7 +325,7 @@ func pfEndpointFamily(values ...string) string {
 	return "ipv4"
 }
 
-func conntrackEntriesByMark(entries []NAPTTableEntry) map[string]int {
+func conntrackEntriesByMark(entries []ConnectionEntry) map[string]int {
 	out := map[string]int{}
 	for _, entry := range entries {
 		mark := entry.Mark

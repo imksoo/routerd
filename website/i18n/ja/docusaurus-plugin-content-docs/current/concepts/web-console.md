@@ -10,7 +10,7 @@ Web Console は次の情報だけを読みます。
 - routerd デーモンの状態
 - SQLite 状態データベース内のリソース状態
 - SQLite イベントテーブル内の bus イベント
-- conntrack と NAPT の観測値
+- conntrack または pf state から得たコネクション観測値
 - `dns-queries.db` に保存した DNS クエリー履歴
 - `traffic-flows.db` に保存した通信フロー履歴
 - `firewall-logs.db` に保存した拒否ログ
@@ -35,8 +35,8 @@ spec:
 - routerd 全体の phase と generation
 - PD、DS-Lite、DNS、NAT、経路、HealthCheck、VPN、firewall リソースの phase
 - 直近の routerd イベント
-- conntrack 件数と NAPT エントリーの一部
-- conntrack 行の `dst label` 列。直近の DNS 応答から導出します
+- conntrack 件数と IPv4/IPv6 コネクションの一部
+- コネクション行の `dst label` 列。直近の DNS 応答から導出します
 - クライアント別の通信量
 - 送信元と宛先で集計した直近の拒否ログ
 
@@ -44,10 +44,10 @@ JSON エンドポイントも読み取り専用です。
 
 | Path | 内容 |
 | --- | --- |
-| `/api/summary` | 状態、リソース phase、直近イベント、NAPT 概要 |
+| `/api/summary` | 状態、リソース phase、直近イベント、コネクション概要 |
 | `/api/resources` | 状態データベース内のリソース状態 |
 | `/api/events` | 直近の bus イベント |
-| `/api/napt` | conntrack と NAPT の観測値 |
+| `/api/connections` | conntrack または pf state から得たコネクション観測値 |
 | `/api/dns-queries?since=1h&client=&qname=&limit=100` | DNS クエリー履歴 |
 | `/api/traffic-flows?since=1h&client=&peer=&limit=100` | DNS 履歴で通信先名を補った通信フロー履歴 |
 | `/api/firewall-logs?since=24h&action=drop&src=&limit=100` | ファイアウォールログ |

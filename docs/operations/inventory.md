@@ -31,7 +31,7 @@ FreeBSD では daemon(8) や rc.d の経路を使います。
 | `ip`, `bridge` | アドレス、経路、DS-Lite、VRF、VXLAN |
 | `nft` | NAT、ファイアウォール、経路印 |
 | `dnsmasq` | DHCPv4、DHCPv6、RA |
-| `conntrack` | NAPT の観測 |
+| `conntrack` | IPv4/IPv6 コネクションの観測 |
 | `pppd`, `ppp` | PPPoE |
 | `wg` | WireGuard |
 | `swanctl` | IPsec |

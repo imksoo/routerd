@@ -42,8 +42,8 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 		Bus:   bus.New(),
 		Store: store,
 		Paths: conntrack.Paths{Entries: entriesPath, Count: countPath, Max: maxPath},
-		NAPT: func(limit int) (*observe.NAPTTable, error) {
-			return &observe.NAPTTable{Entries: []observe.NAPTTableEntry{{
+		Connections: func(limit int) (*observe.ConnectionTable, error) {
+			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Protocol: "tcp",
 				Original: observe.ConntrackTuple{Source: "172.18.0.10", SourcePort: "12345", Destination: "1.1.1.1", DestinationPort: "443"},
 				Reply:    observe.ConntrackTuple{Source: "1.1.1.1", SourcePort: "443", Destination: "172.18.0.10", DestinationPort: "12345"},

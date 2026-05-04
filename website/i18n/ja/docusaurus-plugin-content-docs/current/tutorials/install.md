@@ -25,7 +25,7 @@ sudo apt-get install -y dnsmasq-base nftables conntrack iproute2 iputils-ping ip
 | --- | --- |
 | `dnsmasq-base` | DHCPv4、DHCPv6、RA の配布 |
 | `nftables` | NAT、経路印、ファイアウォール |
-| `conntrack` | NAPT の観測と切り分け |
+| `conntrack` | IPv4/IPv6 コネクションの観測と切り分け |
 | `iproute2` | アドレス、経路、DS-Lite、VRF、VXLAN、WireGuard デバイス |
 | `ppp` | PPPoE。`pppd` と `rp-pppoe.so` を使います。 |
 | `wireguard-tools` | `wg setconf` と状態観測 |

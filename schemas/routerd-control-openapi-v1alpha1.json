@@ -250,6 +250,124 @@
         ],
         "type": "object"
       },
+      "ConnectionTable": {
+        "additionalProperties": false,
+        "properties": {
+          "byMark": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "entries": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "assured": {
+                  "type": "boolean"
+                },
+                "family": {
+                  "type": "string"
+                },
+                "mark": {
+                  "type": "string"
+                },
+                "original": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "destination": {
+                      "type": "string"
+                    },
+                    "destinationPort": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "sourcePort": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "protocol": {
+                  "type": "string"
+                },
+                "rawAttributes": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "reply": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "destination": {
+                      "type": "string"
+                    },
+                    "destinationPort": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "sourcePort": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "timeout": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "family",
+                "protocol",
+                "original",
+                "reply"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max": {
+            "type": "integer"
+          },
+          "stats": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "cpu": {
+                  "type": "string"
+                },
+                "fields": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "type": "object"
+                }
+              },
+              "required": [
+                "cpu",
+                "fields"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "type": "object"
+      },
       "DHCPv6EventRequest": {
         "additionalProperties": false,
         "properties": {
@@ -592,124 +710,6 @@
         ],
         "type": "object"
       },
-      "NAPTTable": {
-        "additionalProperties": false,
-        "properties": {
-          "byMark": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object"
-          },
-          "count": {
-            "type": "integer"
-          },
-          "entries": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "assured": {
-                  "type": "boolean"
-                },
-                "family": {
-                  "type": "string"
-                },
-                "mark": {
-                  "type": "string"
-                },
-                "original": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "destination": {
-                      "type": "string"
-                    },
-                    "destinationPort": {
-                      "type": "string"
-                    },
-                    "source": {
-                      "type": "string"
-                    },
-                    "sourcePort": {
-                      "type": "string"
-                    }
-                  },
-                  "type": "object"
-                },
-                "protocol": {
-                  "type": "string"
-                },
-                "rawAttributes": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
-                },
-                "reply": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "destination": {
-                      "type": "string"
-                    },
-                    "destinationPort": {
-                      "type": "string"
-                    },
-                    "source": {
-                      "type": "string"
-                    },
-                    "sourcePort": {
-                      "type": "string"
-                    }
-                  },
-                  "type": "object"
-                },
-                "state": {
-                  "type": "string"
-                },
-                "timeout": {
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "family",
-                "protocol",
-                "original",
-                "reply"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "max": {
-            "type": "integer"
-          },
-          "stats": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "cpu": {
-                  "type": "string"
-                },
-                "fields": {
-                  "additionalProperties": {
-                    "type": "integer"
-                  },
-                  "type": "object"
-                }
-              },
-              "required": [
-                "cpu",
-                "fields"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "count"
-        ],
-        "type": "object"
-      },
       "Status": {
         "additionalProperties": false,
         "properties": {
@@ -893,6 +893,46 @@
               }
             },
             "description": "ApplyResult"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/control.routerd.net/v1alpha1/connections": {
+      "get": {
+        "operationId": "getConnectionTable",
+        "parameters": [
+          {
+            "description": "Maximum number of entries to return. 0 returns only summary.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionTable"
+                }
+              }
+            },
+            "description": "ConnectionTable"
           },
           "default": {
             "content": {
@@ -1103,46 +1143,6 @@
               }
             },
             "description": "FirewallLogs"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        }
-      }
-    },
-    "/api/control.routerd.net/v1alpha1/napt": {
-      "get": {
-        "operationId": "getNAPTTable",
-        "parameters": [
-          {
-            "description": "Maximum number of entries to return. 0 returns only summary.",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 100,
-              "minimum": 0,
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NAPTTable"
-                }
-              }
-            },
-            "description": "NAPTTable"
           },
           "default": {
             "content": {

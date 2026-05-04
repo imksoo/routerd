@@ -23,10 +23,10 @@ type Options struct {
 	Router             *api.Router
 	Store              routerstate.Store
 	Result             func() *apply.Result
-	NAPT               func(limit int) (*observe.NAPTTable, error)
+	Connections        func(limit int) (*observe.ConnectionTable, error)
 	Title              string
 	BasePath           string
-	NAPTLimit          int
+	ConnectionsLimit   int
 	DNSQueryLogPath    string
 	TrafficFlowLogPath string
 	FirewallLogPath    string
@@ -42,7 +42,7 @@ type Snapshot struct {
 	Phases       map[string]int              `json:"phases"`
 	Resources    []routerstate.ObjectStatus  `json:"resources"`
 	Events       []routerstate.StoredEvent   `json:"events"`
-	NAPT         *observe.NAPTTable          `json:"napt,omitempty"`
+	Connections  *observe.ConnectionTable    `json:"connections,omitempty"`
 	DNSQueries   []logstore.DNSQuery         `json:"dnsQueries,omitempty"`
 	TrafficFlows []logstore.TrafficFlow      `json:"trafficFlows,omitempty"`
 	FirewallLogs []logstore.FirewallLogEntry `json:"firewallLogs,omitempty"`
@@ -56,11 +56,11 @@ func New(opts Options) Handler {
 	if opts.BasePath == "" {
 		opts.BasePath = "/"
 	}
-	if opts.NAPTLimit == 0 {
-		opts.NAPTLimit = 40
+	if opts.ConnectionsLimit == 0 {
+		opts.ConnectionsLimit = 40
 	}
-	if opts.NAPT == nil {
-		opts.NAPT = observe.NAPT
+	if opts.Connections == nil {
+		opts.Connections = observe.Connections
 	}
 	return Handler{opts: opts}
 }
@@ -82,8 +82,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.resources(w, r)
 	case "api/events":
 		h.events(w, r)
-	case "api/napt":
-		h.napt(w, r)
+	case "api/connections":
+		h.connections(w, r)
 	case "api/dns-queries":
 		h.dnsQueries(w, r)
 	case "api/traffic-flows":
@@ -95,7 +95,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h Handler) Snapshot(limit int, naptLimit int) Snapshot {
+func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	var errors []string
 	resources, err := h.resourceStatuses()
 	if err != nil {
@@ -105,9 +105,9 @@ func (h Handler) Snapshot(limit int, naptLimit int) Snapshot {
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
-	var napt *observe.NAPTTable
-	if h.opts.NAPT != nil && naptLimit >= 0 {
-		napt, err = h.opts.NAPT(naptLimit)
+	var connections *observe.ConnectionTable
+	if h.opts.Connections != nil && connectionsLimit >= 0 {
+		connections, err = h.opts.Connections(connectionsLimit)
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
@@ -136,7 +136,7 @@ func (h Handler) Snapshot(limit int, naptLimit int) Snapshot {
 		Phases:       phaseCounts(resources),
 		Resources:    resources,
 		Events:       events,
-		NAPT:         napt,
+		Connections:  connections,
 		DNSQueries:   dnsQueries,
 		TrafficFlows: trafficFlows,
 		FirewallLogs: firewallLogs,
@@ -154,8 +154,8 @@ func (h Handler) index(w http.ResponseWriter, r *http.Request) {
 
 func (h Handler) summary(w http.ResponseWriter, r *http.Request) {
 	limit := intQuery(r, "events", 25)
-	naptLimit := intQuery(r, "napt", h.opts.NAPTLimit)
-	writeJSON(w, h.Snapshot(limit, naptLimit))
+	connectionsLimit := intQuery(r, "connections", h.opts.ConnectionsLimit)
+	writeJSON(w, h.Snapshot(limit, connectionsLimit))
 }
 
 func (h Handler) resources(w http.ResponseWriter, r *http.Request) {
@@ -176,12 +176,12 @@ func (h Handler) events(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, events)
 }
 
-func (h Handler) napt(w http.ResponseWriter, r *http.Request) {
-	if h.opts.NAPT == nil {
-		writeError(w, http.StatusNotImplemented, "napt observer is unavailable")
+func (h Handler) connections(w http.ResponseWriter, r *http.Request) {
+	if h.opts.Connections == nil {
+		writeError(w, http.StatusNotImplemented, "connections observer is unavailable")
 		return
 	}
-	table, err := h.opts.NAPT(intQuery(r, "limit", h.opts.NAPTLimit))
+	table, err := h.opts.Connections(intQuery(r, "limit", h.opts.ConnectionsLimit))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -436,7 +436,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .addr{white-space:nowrap;word-break:normal}
     .dst-label{display:block;color:#9a9a9a;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:650;border:1px solid #3a3a3a;background:#282828;color:#ddd;white-space:nowrap}
-    .proto-tcp{border-color:#3977d4;background:#152846;color:#8ab4ff}.proto-udp{border-color:#3b8b65;background:#102d22;color:#7ee787}.proto-icmp{border-color:#9b6fd3;background:#2c2142;color:#d2a8ff}
+    .family-ipv4{border-color:#3977d4;background:#152846;color:#8ab4ff}.family-ipv6{border-color:#9b6fd3;background:#2c2142;color:#d2a8ff}
+    .proto-tcp{border-color:#3977d4;background:#152846;color:#8ab4ff}.proto-udp{border-color:#3b8b65;background:#102d22;color:#7ee787}.proto-icmp,.proto-icmpv6,.proto-ipv6_icmp{border-color:#9b6fd3;background:#2c2142;color:#d2a8ff}
     .state-established,.state-assured{border-color:#3b8b65;background:#102d22;color:#7ee787}.state-syn_sent,.state-unreplied{border-color:#997b2f;background:#342a12;color:#f2cc60}.state-time_wait,.state-close{border-color:#7b7b7b;background:#242424;color:#c9c9c9}
     tr.flash, .metric.flash{animation:flash 1.6s ease-out}
     @keyframes flash{0%{background:#3a320f;box-shadow:inset 3px 0 #f2cc60}100%{background:transparent;box-shadow:inset 0 0 transparent}}
@@ -459,8 +460,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 <body>
 <header><h1>{{.Title}}</h1><span class="muted">read-only</span></header>
 <main>
-  <section><h2>Overview</h2><div class="grid" id="overview"></div></section>
-  <section><h2>Traffic</h2><div id="traffic"></div></section>
+  <section><h2>Overview</h2><div id="overview"></div></section>
+  <section><h2>Connections</h2><div id="traffic"></div></section>
   <section><h2>Client Traffic</h2><div id="client-traffic"></div></section>
   <section><h2>Recent Deny</h2><div id="recent-deny"></div></section>
   <section><h2>Resources</h2><div id="resources"></div></section>
@@ -470,17 +471,39 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 const base = {{.BasePath}};
 const seen = {traffic:new Map(), resources:new Map(), events:new Map()};
 let firstPaint = true;
+let refreshSeq = 0;
 function cls(phase){return /Healthy|Applied|Active|Bound|Installed|Up/.test(phase) ? "ok" : /Pending|Drifted|Unknown/.test(phase) ? "warn" : "bad"}
-function esc(v){return String(v ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function kv(label,value){return '<div class="metric"><span class="muted">'+esc(label)+'</span><b>'+esc(value)+'</b></div>'}
-function table(headers, rows){return '<div class="table-wrap"><table><thead><tr>'+headers.map(h=>'<th>'+esc(h)+'</th>').join("")+'</tr></thead><tbody>'+rows.join("")+'</tbody></table></div>'}
+function text(v){return String(v ?? "")}
+function clear(el){while(el.firstChild) el.removeChild(el.firstChild)}
+function el(tag, attrs, children){
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (key === "class") node.className = value;
+    else if (key === "text") node.textContent = text(value);
+    else node.setAttribute(key, value);
+  }
+  for (const child of children || []) node.append(child instanceof Node ? child : document.createTextNode(text(child)));
+  return node;
+}
+function renderInto(id, node){const target=document.getElementById(id); clear(target); target.append(node)}
+function kvNode(label,value){return el("div",{class:"metric"},[el("span",{class:"muted",text:label}),el("b",{text:value})])}
+function tableNode(headers, rows){
+  const thead = el("thead",{},[el("tr",{},headers.map(h=>el("th",{text:h})))]);
+  const tbody = el("tbody",{},rows);
+  return el("div",{class:"table-wrap"},[el("table",{},[thead,tbody])]);
+}
 function token(v){return String(v || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "unknown"}
-function pill(value, prefix){return '<span class="pill '+prefix+'-'+token(value)+'">'+esc(value || "-")+'</span>'}
+function pill(value, prefix){return el("span",{class:"pill "+prefix+"-"+token(value),text:value || "-"})}
 function dstLabel(tuple, labels){
   return labels?.[tuple?.destination] || "";
 }
+function hostPort(tuple, side){
+  const host = tuple?.[side] || "";
+  const port = side === "source" ? tuple?.sourcePort : tuple?.destinationPort;
+  return host ? host + (port ? ":" + port : "") : "";
+}
 function endpoint(tuple){
-  return '<code class="addr">'+esc(tuple?.source)+':'+esc(tuple?.sourcePort)+' → '+esc(tuple?.destination)+':'+esc(tuple?.destinationPort)+'</code>';
+  return el("code",{class:"addr",text:hostPort(tuple,"source")+" -> "+hostPort(tuple,"destination")});
 }
 function dnsLabelMap(rows){
   const labels = {};
@@ -527,11 +550,6 @@ function sameReverse(original, reply){
     String(reply?.destinationPort || "") === String(original?.sourcePort || "");
 }
 function hasTuple(tuple){return !!(tuple?.source || tuple?.destination || tuple?.sourcePort || tuple?.destinationPort)}
-function hostPort(tuple, side){
-  const host = tuple?.[side] || "";
-  const port = side === "source" ? tuple?.sourcePort : tuple?.destinationPort;
-  return host ? host + (port ? ":" + port : "") : "";
-}
 function natDelta(e){
   if (!hasTuple(e.reply) || sameReverse(e.original, e.reply)) return "";
   const out = [];
@@ -544,49 +562,65 @@ function natDelta(e){
   return out.join(" / ");
 }
 function returnDetails(e){
-  if (!hasTuple(e.reply)) return "";
+  if (!hasTuple(e.reply)) return null;
   const delta = natDelta(e);
-  const rows = [
-    '<div><span>reply</span>'+endpoint(e.reply)+'</div>',
-    delta ? '<div><span>nat</span><code class="addr">'+esc(delta)+'</code></div>' : ''
-  ].join("");
-  return '<details class="flow-cell return-toggle"><summary class="flow-summary">'+endpoint(e.original)+'<span class="return-button">return</span></summary><div class="return-detail">'+rows+'</div></details>';
+  const detailRows = [el("div",{},[el("span",{text:"reply"}),endpoint(e.reply)])];
+  if (delta) detailRows.push(el("div",{},[el("span",{text:"nat"}),el("code",{class:"addr",text:delta})]));
+  return el("details",{class:"flow-cell return-toggle"},[
+    el("summary",{class:"flow-summary"},[endpoint(e.original),el("span",{class:"return-button",text:"return"})]),
+    el("div",{class:"return-detail"},detailRows),
+  ]);
 }
 function flowCell(e){
-  return returnDetails(e) || '<div class="flow-cell">'+endpoint(e.original)+'</div>';
+  return returnDetails(e) || el("div",{class:"flow-cell"},[endpoint(e.original)]);
 }
 async function refresh(){
-  const res = await fetch(base + "api/summary?events=15&napt=30", {cache:"no-store"});
+  const seq = ++refreshSeq;
+  const res = await fetch(base + "api/summary?events=15&connections=30", {cache:"no-store"});
   const s = await res.json();
+  if (seq !== refreshSeq) return;
   const status = s.status?.status || {};
-  const napt = s.napt || {};
+  const connections = s.connections || {};
   const dnsLabels = dnsLabelMap(s.dnsQueries || []);
-  document.getElementById("overview").innerHTML = [
-    kv("phase", status.phase || "Unknown"),
-    kv("generation", status.generation || "-"),
-    kv("resources", status.resourceCount || (s.resources||[]).length),
-    kv("conntrack", napt.max ? String(napt.count)+"/"+String(napt.max) : (napt.count ?? "-"))
-  ].join("");
-  document.getElementById("traffic").innerHTML = table(["proto","state","flow","dst label","timeout"], (napt.entries||[]).slice(0,30).map(e => {
+  renderInto("overview", el("div",{class:"grid"},[
+    kvNode("phase", status.phase || "Unknown"),
+    kvNode("generation", status.generation || "-"),
+    kvNode("resources", status.resourceCount || (s.resources||[]).length),
+    kvNode("conntrack", connections.max ? String(connections.count)+"/"+String(connections.max) : (connections.count ?? "-")),
+  ]));
+  renderInto("traffic", tableNode(["family","proto","state","flow","dst label","timeout"], (connections.entries||[]).slice(0,30).map(e => {
     const state = e.state || (e.assured ? "ASSURED" : "stateless");
     const changed = remember(seen.traffic, flowKey(e), flowSig(e));
     const label = dstLabel(e.original, dnsLabels);
-    return '<tr'+rowClass(changed)+'><td>'+pill(e.protocol, "proto")+'</td><td>'+pill(state, "state")+'</td><td>'+flowCell(e)+'</td><td><span class="dst-label">'+esc(label || "-")+'</span></td><td>'+esc(e.timeout)+'s</td></tr>';
-  }));
-  document.getElementById("client-traffic").innerHTML = table(["client","bytes out","bytes in","recent peers"], clientTrafficRows(s.trafficFlows || []).map(row =>
-    '<tr><td><code>'+esc(row.client)+'</code></td><td>'+bytes(row.bytesOut)+'</td><td>'+bytes(row.bytesIn)+'</td><td><code>'+esc(Array.from(row.peers).sort().slice(0,4).join(", "))+'</code></td></tr>'));
-  document.getElementById("recent-deny").innerHTML = table(["count","source","destination","proto","rule"], denyRows(s.firewallLogs || []).map(row =>
-    '<tr><td>'+esc(row.count)+'</td><td><code>'+esc(row.src)+'</code></td><td><code>'+esc(row.dst)+'</code></td><td>'+pill(row.proto, "proto")+'</td><td>'+esc(row.rule)+'</td></tr>'));
+    return el("tr", changed ? {class:"flash"} : {}, [
+      el("td",{},[pill(e.family || "-", "family")]),
+      el("td",{},[pill(e.protocol, "proto")]),
+      el("td",{},[pill(state, "state")]),
+      el("td",{},[flowCell(e)]),
+      el("td",{},[el("span",{class:"dst-label",text:label || "-"})]),
+      el("td",{text:String(e.timeout || 0)+"s"}),
+    ]);
+  })));
+  renderInto("client-traffic", tableNode(["client","bytes out","bytes in","recent peers"], clientTrafficRows(s.trafficFlows || []).map(row =>
+    el("tr",{},[el("td",{},[el("code",{text:row.client})]),el("td",{text:bytes(row.bytesOut)}),el("td",{text:bytes(row.bytesIn)}),el("td",{},[el("code",{text:Array.from(row.peers).sort().slice(0,4).join(", ")})])]))));
+  renderInto("recent-deny", tableNode(["count","source","destination","proto","rule"], denyRows(s.firewallLogs || []).map(row =>
+    el("tr",{},[el("td",{text:row.count}),el("td",{},[el("code",{text:row.src})]),el("td",{},[el("code",{text:row.dst})]),el("td",{},[pill(row.proto, "proto")]),el("td",{text:row.rule})]))));
   const important = (s.resources||[]).filter(r => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(r.kind));
-  document.getElementById("resources").innerHTML = table(["kind","name","phase","detail"], important.slice(0,80).map(r => {
+  renderInto("resources", tableNode(["kind","name","phase","detail"], important.slice(0,80).map(r => {
     const st = r.status || {};
     const detail = ["selectedCandidate","selectedDevice","activeEgressInterface","target","address","currentPrefix"].map(k => st[k] ? k+"="+st[k] : "").filter(Boolean).join(" ");
     const key = r.apiVersion + "/" + r.kind + "/" + r.name;
     const changed = remember(seen.resources, key, JSON.stringify(st));
-    return '<tr'+rowClass(changed)+'><td>'+esc(r.kind)+'</td><td>'+esc(r.name)+'</td><td class="'+cls(st.phase||"Unknown")+'">'+esc(st.phase||"Unknown")+'</td><td><code>'+esc(detail)+'</code></td></tr>';
-  }));
-  document.getElementById("events").innerHTML = table(["time","severity","topic","resource","message"], (s.events||[]).slice(0,15).map(e =>
-    '<tr'+rowClass(remember(seen.events, String(e.id || e.createdAt || e.topic), JSON.stringify(e)))+'><td>'+esc(e.createdAt)+'</td><td>'+esc(e.severity||"")+'</td><td><code>'+esc(e.topic||e.type)+'</code></td><td>'+esc((e.resourceKind||e.kind||"") + "/" + (e.resourceName||e.name||""))+'</td><td>'+esc(e.reason||e.message||"")+'</td></tr>'));
+    return el("tr", changed ? {class:"flash"} : {}, [el("td",{text:r.kind}),el("td",{text:r.name}),el("td",{class:cls(st.phase||"Unknown"),text:st.phase||"Unknown"}),el("td",{},[el("code",{text:detail})])]);
+  })));
+  renderInto("events", tableNode(["time","severity","topic","resource","message"], (s.events||[]).slice(0,15).map(e =>
+    el("tr", remember(seen.events, String(e.id || e.createdAt || e.topic), JSON.stringify(e)) ? {class:"flash"} : {}, [
+      el("td",{text:e.createdAt}),
+      el("td",{text:e.severity||""}),
+      el("td",{},[el("code",{text:e.topic||e.type})]),
+      el("td",{text:(e.resourceKind||e.kind||"") + "/" + (e.resourceName||e.name||"")}),
+      el("td",{text:e.reason||e.message||""}),
+    ]))));
   firstPaint = false;
 }
 refresh(); setInterval(refresh, 5000);
