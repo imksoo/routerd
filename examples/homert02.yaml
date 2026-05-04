@@ -420,6 +420,52 @@ spec:
           - resource: Link/lan
             phase: Up
 
+    # --- DS-Lite source addresses ---
+    # AFTR ごとに PD 由来の source IPv6 を固定します。
+    # b/c が通らない場合でも、HealthCheck が落として hash group から外します。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: ds-lite-a-source
+      spec:
+        interface: lan
+        prefixDelegation: wan-pd
+        subnetID: "1"
+        addressSuffix: ::11
+        dependsOn:
+          - resource: DHCPv6PrefixDelegation/wan-pd
+            phase: Bound
+          - resource: Link/lan
+            phase: Up
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: ds-lite-b-source
+      spec:
+        interface: lan
+        prefixDelegation: wan-pd
+        subnetID: "1"
+        addressSuffix: ::12
+        dependsOn:
+          - resource: DHCPv6PrefixDelegation/wan-pd
+            phase: Bound
+          - resource: Link/lan
+            phase: Up
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: ds-lite-c-source
+      spec:
+        interface: lan
+        prefixDelegation: wan-pd
+        subnetID: "1"
+        addressSuffix: ::13
+        dependsOn:
+          - resource: DHCPv6PrefixDelegation/wan-pd
+            phase: Bound
+          - resource: Link/lan
+            phase: Up
+
     # --- DS-Lite tunnels ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel
@@ -453,13 +499,15 @@ spec:
       spec:
         interface: wan
         tunnelName: ds-lite-a
-        # Explicit AFTR A, using WAN-side RA/SLAAC as local endpoint.
-        localAddressSource: interface
+        # Explicit AFTR A, using delegated PD address as local endpoint.
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: ds-lite-a-source
+        localAddressSuffix: ::11
         aftrIPv6: 2404:8e00::feed:100
         mtu: 1460
         dependsOn:
-          - resource: Link/wan
-            phase: Up
+          - resource: IPv6DelegatedAddress/ds-lite-a-source
+            phase: Applied
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel
       metadata:
@@ -470,13 +518,15 @@ spec:
       spec:
         interface: wan
         tunnelName: ds-lite-b
-        # Explicit AFTR B, using WAN-side RA/SLAAC as local endpoint.
-        localAddressSource: interface
+        # Explicit AFTR B, using delegated PD address as local endpoint.
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: ds-lite-b-source
+        localAddressSuffix: ::12
         aftrIPv6: 2404:8e00::feed:101
         mtu: 1460
         dependsOn:
-          - resource: Link/wan
-            phase: Up
+          - resource: IPv6DelegatedAddress/ds-lite-b-source
+            phase: Applied
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel
       metadata:
@@ -487,13 +537,15 @@ spec:
       spec:
         interface: wan
         tunnelName: ds-lite-c
-        # Explicit AFTR C, using WAN-side RA/SLAAC as local endpoint.
-        localAddressSource: interface
+        # Explicit AFTR C, using delegated PD address as local endpoint.
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: ds-lite-c-source
+        localAddressSuffix: ::13
         aftrIPv6: 2404:8e00::feed:102
         mtu: 1460
         dependsOn:
-          - resource: Link/wan
-            phase: Up
+          - resource: IPv6DelegatedAddress/ds-lite-c-source
+            phase: Applied
 
     # --- IPv4 default route と egress 選択 ---
     # router 自身の既定経路は、起動が速い RA/SLAAC 由来の旧 ds-lite を優先します。
