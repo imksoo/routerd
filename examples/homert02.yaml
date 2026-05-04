@@ -90,6 +90,42 @@ spec:
     - apiVersion: system.routerd.net/v1alpha1
       kind: Sysctl
       metadata:
+        name: rp-filter-ds-lite-a
+      spec:
+        key: net.ipv4.conf.ds-lite-a.rp_filter
+        value: "0"
+        runtime: true
+        optional: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: rp-filter-ds-lite-b
+      spec:
+        key: net.ipv4.conf.ds-lite-b.rp_filter
+        value: "0"
+        runtime: true
+        optional: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: rp-filter-ds-lite-c
+      spec:
+        key: net.ipv4.conf.ds-lite-c.rp_filter
+        value: "0"
+        runtime: true
+        optional: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: rp-filter-ds-routerd
+      spec:
+        key: net.ipv4.conf.ds-routerd.rp_filter
+        value: "0"
+        runtime: true
+        optional: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
         name: wan-accept-ra
       spec:
         key: net.ipv6.conf.ens18.accept_ra
@@ -485,7 +521,7 @@ spec:
           field: aftrName
           optional: true
         aftrFQDN: gw.transix.jp
-        mtu: 1460
+        mtu: 1454
         dependsOn:
           - resource: DNSResolver/lan-resolver
             phase: Applied
@@ -504,7 +540,7 @@ spec:
         localDelegatedAddress: ds-lite-a-source
         localAddressSuffix: ::11
         aftrIPv6: 2404:8e00::feed:100
-        mtu: 1460
+        mtu: 1454
         dependsOn:
           - resource: IPv6DelegatedAddress/ds-lite-a-source
             phase: Applied
@@ -523,7 +559,7 @@ spec:
         localDelegatedAddress: ds-lite-b-source
         localAddressSuffix: ::12
         aftrIPv6: 2404:8e00::feed:101
-        mtu: 1460
+        mtu: 1454
         dependsOn:
           - resource: IPv6DelegatedAddress/ds-lite-b-source
             phase: Applied
@@ -542,7 +578,7 @@ spec:
         localDelegatedAddress: ds-lite-c-source
         localAddressSuffix: ::13
         aftrIPv6: 2404:8e00::feed:102
-        mtu: 1460
+        mtu: 1454
         dependsOn:
           - resource: IPv6DelegatedAddress/ds-lite-c-source
             phase: Applied
@@ -777,6 +813,28 @@ spec:
         egressInterface: wan
         sourceRanges:
           - 172.18.0.0/16
+
+    # --- Path MTU / TCP MSS ---
+    # DS-Lite は IPv6 外側ヘッダーを持つため、LAN から tunnel へ出る
+    # TCP SYN の MSS を 1414 に落とします。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: PathMTUPolicy
+      metadata:
+        name: lan-to-dslite-mtu
+      spec:
+        fromInterface: lan
+        toInterfaces:
+          - ds-lite
+          - ds-lite-a
+          - ds-lite-b
+          - ds-lite-c
+        mtu:
+          source: static
+          value: 1454
+        tcpMSSClamp:
+          enabled: true
+          families:
+            - ipv4
 
     # --- HealthCheck ---
     - apiVersion: net.routerd.net/v1alpha1

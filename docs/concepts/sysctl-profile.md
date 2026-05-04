@@ -59,6 +59,9 @@ spec:
 | --- | --- | --- |
 | `net.ipv4.ip_forward` | `1` | IPv4 転送を有効にします。 |
 | `net.ipv4.conf.all.forwarding` | `1` | インターフェース単位の IPv4 転送を有効にします。 |
+| `net.ipv4.conf.all.rp_filter` | `0` | ポリシールーティングや DS-Lite トンネルの戻り通信を reverse path filter が破棄しないようにします。 |
+| `net.ipv4.conf.default.rp_filter` | `0` | 後から作られるトンネルインターフェースでも reverse path filter を無効にします。 |
+| `net.ipv4.conf.all.src_valid_mark` | `1` | fwmark を使う経路選択で reverse path 判定が mark を考慮できるようにします。 |
 | `net.ipv6.conf.all.forwarding` | `1` | IPv6 転送を有効にします。 |
 | `net.ipv6.conf.default.forwarding` | `1` | 後から作られるインターフェースでも IPv6 転送を有効にします。 |
 | `net.netfilter.nf_conntrack_max` | `262144` | 多数の端末とアプリの同時接続で conntrack が詰まることを避けます。conntrack が未ロードの環境では任意扱いです。 |
