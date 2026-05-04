@@ -423,6 +423,14 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .metric{border:1px solid #2d2d2d;border-radius:6px;padding:10px;background:#202020}
     .metric b{display:block;font-size:20px;margin-top:4px}
     .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .connection-groups{display:grid;gap:10px}
+    .connection-group{border:1px solid #2b2b2b;border-radius:6px;background:#151515;overflow:hidden}
+    .connection-group summary{display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer;list-style:none}
+    .connection-group summary::-webkit-details-marker{display:none}
+    .connection-group summary:before{content:"+";display:inline-grid;place-items:center;width:16px;height:16px;border:1px solid #4a4a4a;border-radius:50%;font-size:12px;color:#c9c9c9;flex:0 0 auto}
+    .connection-group[open] summary:before{content:"-"}
+    .connection-group .table-wrap{border-top:1px solid #2b2b2b}
+    .group-count{margin-left:auto;color:#9a9a9a;font-size:12px;white-space:nowrap}
     .flow-cell{display:grid;gap:5px;min-width:0}
     .flow-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;list-style:none;min-width:0}
     .flow-summary::-webkit-details-marker{display:none}
@@ -478,8 +486,10 @@ function clear(el){while(el.firstChild) el.removeChild(el.firstChild)}
 function el(tag, attrs, children){
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
+    if (value === null || value === undefined || value === false) continue;
     if (key === "class") node.className = value;
     else if (key === "text") node.textContent = text(value);
+    else if (value === true) node.setAttribute(key, "");
     else node.setAttribute(key, value);
   }
   for (const child of children || []) node.append(child instanceof Node ? child : document.createTextNode(text(child)));
@@ -558,6 +568,30 @@ function connectionFamilyCounts(connections){
   if (counts.other) parts.push("other "+counts.other);
   return parts.join(" / ");
 }
+function connectionGroupKey(e){
+  const family = String(e.family || "other").toLowerCase();
+  const proto = String(e.protocol || "other").toLowerCase().replace(/[^a-z0-9]+/g, "_") || "other";
+  return family + "/" + proto;
+}
+function connectionGroupLabel(key){
+  const [family, proto] = key.split("/");
+  const fam = family === "ipv4" ? "IPv4" : family === "ipv6" ? "IPv6" : "Other";
+  return {family:fam, proto:proto || "other"};
+}
+function connectionGroups(entries){
+  const groups = new Map();
+  for (const entry of entries || []) {
+    const key = connectionGroupKey(entry);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+  const order = {ipv4:0, ipv6:1, other:2, tcp:0, udp:1, icmp:2, icmpv6:3, ipv6_icmp:3, gre:4, esp:5, other:9};
+  return Array.from(groups.entries()).sort((a,b)=>{
+    const [af,ap] = a[0].split("/");
+    const [bf,bp] = b[0].split("/");
+    return (order[af] ?? 9) - (order[bf] ?? 9) || (order[ap] ?? 9) - (order[bp] ?? 9) || a[0].localeCompare(b[0]);
+  }).map(([key, rows])=>({key, rows}));
+}
 function remember(bucket, key, value){
   const previous = bucket.get(key);
   bucket.set(key, value);
@@ -596,6 +630,24 @@ function returnDetails(e){
 function flowCell(e){
   return returnDetails(e) || el("div",{class:"flow-cell"},[endpoint(e.original)]);
 }
+function connectionGroupNode(group, dnsLabels, index){
+  const label = connectionGroupLabel(group.key);
+  const rows = group.rows.map(e => {
+    const state = e.state || (e.assured ? "ASSURED" : "stateless");
+    const changed = remember(seen.traffic, flowKey(e), flowSig(e));
+    const dst = dstLabel(e.original, dnsLabels);
+    return el("tr", changed ? {class:"flash"} : {}, [
+      el("td",{},[pill(state, "state")]),
+      el("td",{},[flowCell(e)]),
+      el("td",{},[el("span",{class:"dst-label",text:dst || "-"})]),
+      el("td",{text:String(e.timeout || 0)+"s"}),
+    ]);
+  });
+  return el("details",{class:"connection-group",open:index < 2},[
+    el("summary",{},[pill(label.family, "family"),pill(label.proto, "proto"),el("span",{class:"group-count",text:String(group.rows.length)+" shown"})]),
+    tableNode(["state","flow","dst label","timeout"], rows),
+  ]);
+}
 async function refresh(){
   const seq = ++refreshSeq;
   const res = await fetch(base + "api/summary?events=15&connections=200", {cache:"no-store"});
@@ -611,19 +663,8 @@ async function refresh(){
     kvNode("conntrack", connections.max ? String(connections.count)+"/"+String(connections.max) : (connections.count ?? "-")),
     kvNode("families", connectionFamilyCounts(connections)),
   ]));
-  renderInto("traffic", tableNode(["family","proto","state","flow","dst label","timeout"], (connections.entries||[]).map(e => {
-    const state = e.state || (e.assured ? "ASSURED" : "stateless");
-    const changed = remember(seen.traffic, flowKey(e), flowSig(e));
-    const label = dstLabel(e.original, dnsLabels);
-    return el("tr", changed ? {class:"flash"} : {}, [
-      el("td",{},[pill(e.family || "-", "family")]),
-      el("td",{},[pill(e.protocol, "proto")]),
-      el("td",{},[pill(state, "state")]),
-      el("td",{},[flowCell(e)]),
-      el("td",{},[el("span",{class:"dst-label",text:label || "-"})]),
-      el("td",{text:String(e.timeout || 0)+"s"}),
-    ]);
-  })));
+  const groups = connectionGroups(connections.entries || []);
+  renderInto("traffic", groups.length ? el("div",{class:"connection-groups"},groups.map((group,index)=>connectionGroupNode(group,dnsLabels,index))) : el("div",{class:"muted",text:"No active connections"}));
   renderInto("client-traffic", tableNode(["client","bytes out","bytes in","recent peers"], clientTrafficRows(s.trafficFlows || []).map(row =>
     el("tr",{},[el("td",{},[el("code",{text:row.client})]),el("td",{text:bytes(row.bytesOut)}),el("td",{text:bytes(row.bytesIn)}),el("td",{},[el("code",{text:Array.from(row.peers).sort().slice(0,4).join(", ")})])]))));
   renderInto("recent-deny", tableNode(["count","source","destination","proto","rule"], denyRows(s.firewallLogs || []).map(row =>

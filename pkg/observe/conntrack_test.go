@@ -1,6 +1,7 @@
 package observe
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -95,15 +96,15 @@ ipv4 2 tcp 6 30 SYN_SENT src=192.0.2.2 dst=198.51.100.2 sport=23456 dport=443 sr
 	}
 }
 
-func TestSortConnectionEntriesStableKey(t *testing.T) {
+func TestSelectConnectionEntriesPreservesObservedOrder(t *testing.T) {
 	entries := []ConnectionEntry{
-		{Family: "ipv4", Protocol: "udp", Original: ConntrackTuple{Source: "172.18.0.20", Destination: "1.1.1.1", SourcePort: "50000", DestinationPort: "53"}},
-		{Family: "ipv4", Protocol: "tcp", State: "ESTABLISHED", Original: ConntrackTuple{Source: "172.18.0.10", Destination: "93.184.216.34", SourcePort: "40000", DestinationPort: "443"}},
-		{Family: "ipv4", Protocol: "tcp", State: "SYN_SENT", Original: ConntrackTuple{Source: "172.18.0.10", Destination: "93.184.216.34", SourcePort: "40001", DestinationPort: "443"}},
+		{Family: "ipv4", Protocol: "udp", Original: ConntrackTuple{SourcePort: "50000"}},
+		{Family: "ipv4", Protocol: "udp", Original: ConntrackTuple{SourcePort: "50001"}},
+		{Family: "ipv4", Protocol: "udp", Original: ConntrackTuple{SourcePort: "50002"}},
 	}
-	sortConnectionEntries(entries)
-	got := []string{entries[0].Protocol + "/" + entries[0].State, entries[1].Protocol + "/" + entries[1].State, entries[2].Protocol + "/" + entries[2].State}
-	want := []string{"tcp/ESTABLISHED", "tcp/SYN_SENT", "udp/"}
+	selected := selectConnectionEntries(entries, 2)
+	got := []string{selected[0].Original.SourcePort, selected[1].Original.SourcePort}
+	want := []string{"50000", "50001"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("order = %v, want %v", got, want)
@@ -111,43 +112,87 @@ func TestSortConnectionEntriesStableKey(t *testing.T) {
 	}
 }
 
-func TestSelectConnectionEntriesKeepsIPv6WhenIPv4Dominates(t *testing.T) {
+func TestSelectConnectionEntriesLimit(t *testing.T) {
+	entries := []ConnectionEntry{{Family: "ipv4", Protocol: "tcp"}, {Family: "ipv6", Protocol: "tcp"}, {Family: "ipv4", Protocol: "tcp"}}
+	selected := selectConnectionEntries(entries, 2)
+	if len(selected) != 2 {
+		t.Fatalf("selected = %d, want 2", len(selected))
+	}
+	if selected[0].Family != "ipv4" || selected[1].Family != "ipv6" {
+		t.Fatalf("selected = %+v, want observed prefix", selected)
+	}
+	if selected := selectConnectionEntries(entries, 0); selected != nil {
+		t.Fatalf("zero limit selected = %+v, want nil", selected)
+	}
+}
+
+func TestSelectConnectionEntriesGroupsByFamilyAndProtocol(t *testing.T) {
+	entries := []ConnectionEntry{
+		{Family: "ipv4", Protocol: "udp"},
+		{Family: "ipv6", Protocol: "tcp"},
+		{Family: "ipv4", Protocol: "tcp"},
+		{Family: "ipv6", Protocol: "udp"},
+	}
+	selected := selectConnectionEntries(entries, 4)
+	got := []string{
+		connectionSelectionGroupKey(selected[0]),
+		connectionSelectionGroupKey(selected[1]),
+		connectionSelectionGroupKey(selected[2]),
+		connectionSelectionGroupKey(selected[3]),
+	}
+	want := []string{"ipv4/udp", "ipv6/tcp", "ipv4/tcp", "ipv6/udp"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order without limiting = %v, want observed order %v", got, want)
+		}
+	}
+	selected = selectConnectionEntries(entries, 3)
+	got = []string{
+		connectionSelectionGroupKey(selected[0]),
+		connectionSelectionGroupKey(selected[1]),
+		connectionSelectionGroupKey(selected[2]),
+	}
+	want = []string{"ipv4/tcp", "ipv4/udp", "ipv6/tcp"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("limited grouped order = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestSelectConnectionEntriesKeepsIPv6VisibleWithoutInterleaving(t *testing.T) {
 	var entries []ConnectionEntry
-	for i := 0; i < 300; i++ {
+	for i := 0; i < 40; i++ {
 		entries = append(entries, ConnectionEntry{
 			Family:   "ipv4",
 			Protocol: "tcp",
-			Original: ConntrackTuple{
-				Source:          "172.18.0.101",
-				Destination:     "198.51.100.10",
-				SourcePort:      "40000",
-				DestinationPort: "443",
-			},
+			Original: ConntrackTuple{SourcePort: strconv.Itoa(40000 + i)},
 		})
 	}
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		entries = append(entries, ConnectionEntry{
 			Family:   "ipv6",
 			Protocol: "tcp",
-			Original: ConntrackTuple{
-				Source:          "2001:db8::1",
-				Destination:     "2001:db8::2",
-				SourcePort:      "50000",
-				DestinationPort: "443",
-			},
+			Original: ConntrackTuple{SourcePort: strconv.Itoa(50000 + i)},
 		})
 	}
-	sortConnectionEntries(entries)
 	selected := selectConnectionEntries(entries, 30)
 	if len(selected) != 30 {
 		t.Fatalf("selected = %d, want 30", len(selected))
 	}
 	counts := conntrackEntriesByFamily(selected)
-	if counts["ipv6"] != 2 {
-		t.Fatalf("selected by family = %+v, want all ipv6 entries retained", counts)
+	if counts["ipv6"] != 3 {
+		t.Fatalf("selected by family = %+v, want overflow ipv6 retained", counts)
 	}
-	if counts["ipv4"] != 28 {
-		t.Fatalf("selected by family = %+v, want remaining slots filled by ipv4", counts)
+	for i := 0; i < 27; i++ {
+		if selected[i].Family != "ipv4" {
+			t.Fatalf("selected[%d] = %+v, want conntrack order kept until reserve tail", i, selected[i])
+		}
+	}
+	for i := 27; i < 30; i++ {
+		if selected[i].Family != "ipv6" {
+			t.Fatalf("selected[%d] = %+v, want ipv6 visible at tail", i, selected[i])
+		}
 	}
 }
 
