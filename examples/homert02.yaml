@@ -17,6 +17,20 @@ metadata:
 spec:
   resources:
 
+    # --- ログ転送 ---
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: LogSink
+      metadata:
+        name: syslog-lain
+      spec:
+        type: syslog
+        minLevel: info
+        syslog:
+          network: udp
+          address: syslog.lain.local:514
+          facility: local6
+          tag: routerd-homert02
+
     # --- OS パッケージ ---
     - apiVersion: system.routerd.net/v1alpha1
       kind: Package
