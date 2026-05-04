@@ -71,10 +71,13 @@ type NetworkAdoptionSpec struct {
 }
 
 type NetworkAdoptionNetworkdSpec struct {
-	DisableDHCPv4 bool   `yaml:"disableDHCPv4,omitempty" json:"disableDHCPv4,omitempty"`
-	DisableDHCPv6 bool   `yaml:"disableDHCPv6,omitempty" json:"disableDHCPv6,omitempty"`
-	DisableIPv6RA bool   `yaml:"disableIPv6RA,omitempty" json:"disableIPv6RA,omitempty"`
-	DropinName    string `yaml:"dropinName,omitempty" json:"dropinName,omitempty"`
+	DisableDHCPv4     bool   `yaml:"disableDHCPv4,omitempty" json:"disableDHCPv4,omitempty"`
+	DisableDHCPv6     bool   `yaml:"disableDHCPv6,omitempty" json:"disableDHCPv6,omitempty"`
+	DisableIPv6RA     bool   `yaml:"disableIPv6RA,omitempty" json:"disableIPv6RA,omitempty"`
+	DHCPv4UseRoutes   *bool  `yaml:"dhcpv4UseRoutes,omitempty" json:"dhcpv4UseRoutes,omitempty"`
+	DHCPv4UseDNS      *bool  `yaml:"dhcpv4UseDNS,omitempty" json:"dhcpv4UseDNS,omitempty"`
+	DHCPv4RouteMetric int    `yaml:"dhcpv4RouteMetric,omitempty" json:"dhcpv4RouteMetric,omitempty" jsonschema:"minimum=0"`
+	DropinName        string `yaml:"dropinName,omitempty" json:"dropinName,omitempty"`
 }
 
 type NetworkAdoptionResolvedSpec struct {

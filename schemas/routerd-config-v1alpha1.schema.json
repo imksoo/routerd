@@ -539,6 +539,16 @@
                       "systemdNetworkd": {
                         "additionalProperties": false,
                         "properties": {
+                          "dhcpv4RouteMetric": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "dhcpv4UseDNS": {
+                            "type": "boolean"
+                          },
+                          "dhcpv4UseRoutes": {
+                            "type": "boolean"
+                          },
                           "disableDHCPv4": {
                             "type": "boolean"
                           },

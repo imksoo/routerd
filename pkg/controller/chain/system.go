@@ -109,7 +109,7 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 	var changed bool
 	networkdChanged := false
 	resolvedChanged := false
-	if spec.SystemdNetworkd.DisableDHCPv4 || spec.SystemdNetworkd.DisableDHCPv6 || spec.SystemdNetworkd.DisableIPv6RA {
+	if networkdAdoptionConfigured(spec.SystemdNetworkd) {
 		if ifname == "" {
 			return paths, changed, fmt.Errorf("ifname is required for systemdNetworkd adoption")
 		}
@@ -314,7 +314,35 @@ func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec) []byte {
 	if spec.DisableIPv6RA {
 		b.WriteString("IPv6AcceptRA=no\n")
 	}
+	if spec.DHCPv4UseRoutes != nil || spec.DHCPv4UseDNS != nil || spec.DHCPv4RouteMetric != 0 {
+		b.WriteString("\n[DHCPv4]\n")
+		if spec.DHCPv4UseRoutes != nil {
+			b.WriteString("UseRoutes=" + systemdBool(*spec.DHCPv4UseRoutes) + "\n")
+		}
+		if spec.DHCPv4UseDNS != nil {
+			b.WriteString("UseDNS=" + systemdBool(*spec.DHCPv4UseDNS) + "\n")
+		}
+		if spec.DHCPv4RouteMetric != 0 {
+			b.WriteString(fmt.Sprintf("RouteMetric=%d\n", spec.DHCPv4RouteMetric))
+		}
+	}
 	return []byte(b.String())
+}
+
+func networkdAdoptionConfigured(spec api.NetworkAdoptionNetworkdSpec) bool {
+	return spec.DisableDHCPv4 ||
+		spec.DisableDHCPv6 ||
+		spec.DisableIPv6RA ||
+		spec.DHCPv4UseRoutes != nil ||
+		spec.DHCPv4UseDNS != nil ||
+		spec.DHCPv4RouteMetric != 0
+}
+
+func systemdBool(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }
 
 func writeFileIfChanged(path string, data []byte, mode os.FileMode, dryRun bool) (bool, error) {

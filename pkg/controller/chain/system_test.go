@@ -67,6 +67,45 @@ func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T)
 	}
 }
 
+func TestNetworkAdoptionControllerCanKeepDHCPv4AddressWithoutRoutes(t *testing.T) {
+	disabled := false
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NetworkAdoption"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.NetworkAdoptionSpec{
+			Interface: "wan",
+			SystemdNetworkd: api.NetworkAdoptionNetworkdSpec{
+				DisableDHCPv6:     true,
+				DHCPv4UseRoutes:   &disabled,
+				DHCPv4UseDNS:      &disabled,
+				DHCPv4RouteMetric: 900,
+			},
+		}},
+	}}}
+	controller := NetworkAdoptionController{
+		Router:             router,
+		Store:              mapStore{},
+		NetworkdDropinBase: filepath.Join(dir, "network"),
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "network", "10-netplan-ens18.network.d", "90-routerd-adoption.conf"))
+	if err != nil {
+		t.Fatalf("read networkd drop-in: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{"DHCP=ipv4", "[DHCPv4]", "UseRoutes=no", "UseDNS=no", "RouteMetric=900"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("drop-in missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

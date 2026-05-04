@@ -47,7 +47,7 @@ spec:
 | `Package` | OS ごとのパッケージ名を宣言し、不足していれば導入します。 |
 | `Sysctl` | 実行時の sysctl 値を設定します。`compare: exact` と `compare: atLeast` で読み戻し判定を選べます。 |
 | `SysctlProfile` | ルーター向け sysctl 推奨値をまとめて設定します。 |
-| `NetworkAdoption` | OS 標準の DHCP クライアントや systemd-resolved の待ち受けを止めます。 |
+| `NetworkAdoption` | OS 標準の DHCP クライアントや systemd-resolved の待ち受けを調整します。DHCPv4 の経路と DNS だけを無効にする設定も扱います。 |
 | `SystemdUnit` | routerd が使う systemd ユニットを生成し、有効化します。 |
 | `Hostname` | ホスト名を設定します。 |
 | `NTPClient` | OS の NTP クライアントを有効にします。 |

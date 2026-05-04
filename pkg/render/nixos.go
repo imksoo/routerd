@@ -474,6 +474,15 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 			if spec.SystemdNetworkd.DisableIPv6RA {
 				iface.DisableIPv6RA = true
 			}
+			if spec.SystemdNetworkd.DHCPv4UseRoutes != nil {
+				iface.DHCPv4UseRoutes = spec.SystemdNetworkd.DHCPv4UseRoutes
+			}
+			if spec.SystemdNetworkd.DHCPv4UseDNS != nil {
+				iface.DHCPv4UseDNS = spec.SystemdNetworkd.DHCPv4UseDNS
+			}
+			if spec.SystemdNetworkd.DHCPv4RouteMetric != 0 {
+				iface.DHCPv4RouteMetric = spec.SystemdNetworkd.DHCPv4RouteMetric
+			}
 		}
 	}
 	sort.Strings(names)

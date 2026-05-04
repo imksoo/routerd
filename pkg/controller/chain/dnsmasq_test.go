@@ -170,6 +170,9 @@ func TestIPv4StaticAddressControllerAppliesAddressOnAliasedInterface(t *testing.
 	controller := IPv4StaticAddressController{
 		Router: router,
 		Store:  store,
+		AddressPresent: func(context.Context, string, string) bool {
+			return false
+		},
 		Command: func(ctx context.Context, name string, args ...string) error {
 			got = append([]string{name}, args...)
 			return nil
@@ -185,6 +188,35 @@ func TestIPv4StaticAddressControllerAppliesAddressOnAliasedInterface(t *testing.
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "lan-base")
 	if status["phase"] != "Applied" || status["ifname"] != "ens19" {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestIPv4StaticAddressControllerRestoresMissingAddressWithUnchangedStatus(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "172.18.0.1/16"}},
+	}}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "lan-base", map[string]any{
+		"phase": "Applied", "interface": "lan", "ifname": "ens19", "address": "172.18.0.1/16", "dryRun": false,
+	})
+	var applied bool
+	controller := IPv4StaticAddressController{
+		Router: router,
+		Store:  store,
+		AddressPresent: func(context.Context, string, string) bool {
+			return false
+		},
+		Command: func(ctx context.Context, name string, args ...string) error {
+			applied = true
+			return nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !applied {
+		t.Fatal("expected missing address to be restored")
 	}
 }
 

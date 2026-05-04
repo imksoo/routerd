@@ -124,7 +124,10 @@ spec:
             retention: 90d
 
     # --- OS ネットワーク採用 ---
-    # ens18/ens19 の systemd-networkd DHCP クライアントを止めます。
+    # ens18 は WAN 側の IPv4 アドレスだけ DHCPv4 で受けます。
+    # DHCPv4 の既定経路と DNS は使わず、172.18.0.0/16 から
+    # 192.168.1.0/24 へ出る NAPT の外側アドレスとして使います。
+    # ens19 の systemd-networkd DHCP クライアントは止めます。
     # ens20 は管理経路なので触りません。
     - apiVersion: system.routerd.net/v1alpha1
       kind: NetworkAdoption
@@ -133,8 +136,10 @@ spec:
       spec:
         interface: wan
         systemdNetworkd:
-          disableDHCPv4: true
           disableDHCPv6: true
+          dhcpv4UseRoutes: false
+          dhcpv4UseDNS: false
+          dhcpv4RouteMetric: 900
         systemdResolved:
           disableDNSStubListener: true
     - apiVersion: system.routerd.net/v1alpha1
@@ -530,6 +535,23 @@ spec:
           - resource: DSLiteTunnel/ds-lite
             phase: Up
 
+    # HGW LAN へ出る IPv4 は WAN 側の物理 NIC へ直接出します。
+    # default route は EgressRoutePolicy が管理します。
+    # この経路は 172.18.0.0/16 から 192.168.1.0/24 へ出る NAPT と対です。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: hgw-lan-via-wan
+      spec:
+        destination: 192.168.1.0/24
+        deviceFrom:
+          resource: Interface/wan
+          field: ifname
+        metric: 20
+        dependsOn:
+          - resource: NetworkAdoption/wan-networkd-owned-by-routerd
+            phase: Applied
+
     # --- NAT44 (egress = 選択された出口) ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: NAT44Rule
@@ -541,6 +563,15 @@ spec:
       spec:
         type: masquerade
         egressPolicyRef: ipv4-default
+        sourceRanges:
+          - 172.18.0.0/16
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-wan-hgw
+      spec:
+        type: masquerade
+        egressInterface: wan
         sourceRanges:
           - 172.18.0.0/16
 

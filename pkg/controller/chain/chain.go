@@ -708,12 +708,13 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 }
 
 type IPv4StaticAddressController struct {
-	Router  *api.Router
-	Bus     *bus.Bus
-	Store   Store
-	DryRun  bool
-	Logger  *slog.Logger
-	Command commandFunc
+	Router         *api.Router
+	Bus            *bus.Bus
+	Store          Store
+	DryRun         bool
+	Logger         *slog.Logger
+	Command        commandFunc
+	AddressPresent func(context.Context, string, string) bool
 }
 
 type DaemonStatusController struct {
@@ -855,7 +856,15 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			"dryRun":    c.DryRun,
 		}
 		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name), status)
-		if !c.DryRun && changed {
+		addressPresent := true
+		if !c.DryRun {
+			addressPresentFn := c.AddressPresent
+			if addressPresentFn == nil {
+				addressPresentFn = ipv4AddressPresent
+			}
+			addressPresent = addressPresentFn(ctx, ifname, spec.Address)
+		}
+		if !c.DryRun && (changed || !addressPresent) {
 			command := c.Command
 			if command == nil {
 				command = runCommandContext
@@ -878,7 +887,7 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, status); err != nil {
 			return err
 		}
-		if changed && c.Bus != nil {
+		if (changed || !addressPresent) && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.ipv4_address.applied", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: resource.Metadata.Name}
 			event.Attributes = map[string]string{"address": spec.Address, "interface": spec.Interface, "ifname": ifname, "dryRun": fmt.Sprintf("%t", c.DryRun)}
@@ -888,6 +897,20 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func ipv4AddressPresent(ctx context.Context, ifname, address string) bool {
+	out, err := exec.CommandContext(ctx, "ip", "-4", "-o", "addr", "show", "dev", ifname).Output()
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(out))
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "inet" && fields[i+1] == address {
+			return true
+		}
+	}
+	return false
 }
 
 func runCommandContext(ctx context.Context, name string, args ...string) error {
