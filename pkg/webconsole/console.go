@@ -632,6 +632,14 @@ function returnDetails(e){
 function flowCell(e){
   return returnDetails(e) || el("div",{class:"flow-cell"},[endpoint(e.original)]);
 }
+function formatTime(value){
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const day = new Intl.DateTimeFormat(undefined,{month:"2-digit",day:"2-digit"}).format(date);
+  const time = new Intl.DateTimeFormat(undefined,{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(date);
+  return day + " " + time;
+}
 function connectionGroupNode(group, dnsLabels){
   const label = connectionGroupLabel(group.key);
   const title = label.family + "/" + String(label.proto || "other").toUpperCase() + " " + String(group.rows.length);
@@ -685,7 +693,7 @@ async function refresh(){
   })));
   renderInto("events", tableNode(["time","severity","topic","resource","message"], (s.events||[]).slice(0,15).map(e =>
     el("tr", remember(seen.events, String(e.id || e.createdAt || e.topic), JSON.stringify(e)) ? {class:"flash"} : {}, [
-      el("td",{text:e.createdAt}),
+      el("td",{text:formatTime(e.createdAt),title:e.createdAt || ""}),
       el("td",{text:e.severity||""}),
       el("td",{},[el("code",{text:e.topic||e.type})]),
       el("td",{text:(e.resourceKind||e.kind||"") + "/" + (e.resourceName||e.name||"")}),
