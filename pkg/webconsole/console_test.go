@@ -98,7 +98,6 @@ func TestHandlerRendersMobileSafeLayout(t *testing.T) {
 		`text-overflow:ellipsis`,
 		`@media (max-width:640px)`,
 		`overflow-x:auto`,
-		`flow-list`,
 		`white-space:nowrap`,
 	} {
 		if !strings.Contains(body, want) {
@@ -118,9 +117,9 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`api/summary?events=15&napt=30`,
-		`function flowCard`,
 		`proto-tcp`,
 		`state-established`,
+		`["proto","state","original","reply","timeout"]`,
 		`.slice(0,15)`,
 	} {
 		if !strings.Contains(body, want) {

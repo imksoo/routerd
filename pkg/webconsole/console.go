@@ -253,17 +253,12 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
     .metric{border:1px solid #2d2d2d;border-radius:6px;padding:10px;background:#202020}
     .metric b{display:block;font-size:20px;margin-top:4px}
-    .flow-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px}
-    .flow-card{border:1px solid #2d2d2d;border-radius:8px;background:#202020;padding:10px;min-width:0}
-    .flow-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
-    .flow-route{display:grid;gap:6px}
-    .endpoint{min-width:0}
-    .endpoint .label{display:block;font-size:11px;color:#9a9a9a;margin-bottom:2px;text-transform:uppercase}
-    .endpoint code{display:block;white-space:nowrap;overflow-x:auto;max-width:100%;padding-bottom:2px;word-break:normal}
+    .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .addr{white-space:nowrap;word-break:normal}
     .pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:650;border:1px solid #3a3a3a;background:#282828;color:#ddd;white-space:nowrap}
     .proto-tcp{border-color:#3977d4;background:#152846;color:#8ab4ff}.proto-udp{border-color:#3b8b65;background:#102d22;color:#7ee787}.proto-icmp{border-color:#9b6fd3;background:#2c2142;color:#d2a8ff}
     .state-established,.state-assured{border-color:#3b8b65;background:#102d22;color:#7ee787}.state-syn_sent,.state-unreplied{border-color:#997b2f;background:#342a12;color:#f2cc60}.state-time_wait,.state-close{border-color:#7b7b7b;background:#242424;color:#c9c9c9}
-    table{width:100%;border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}
+    table{width:100%;border-collapse:collapse;min-width:720px}
     th,td{text-align:left;border-bottom:1px solid #2b2b2b;padding:7px 6px;vertical-align:top}
     th{font-size:12px;color:#aaa;font-weight:600}
     code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-word}
@@ -274,7 +269,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       main{padding:10px;gap:10px}
       section{padding:10px}
       .grid{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
-      .flow-list{grid-template-columns:1fr}
       .metric b{font-size:18px}
       th,td{padding:6px 5px}
     }
@@ -293,14 +287,10 @@ const base = {{.BasePath}};
 function cls(phase){return /Healthy|Applied|Active|Bound|Installed|Up/.test(phase) ? "ok" : /Pending|Drifted|Unknown/.test(phase) ? "warn" : "bad"}
 function esc(v){return String(v ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function kv(label,value){return '<div class="metric"><span class="muted">'+esc(label)+'</span><b>'+esc(value)+'</b></div>'}
-function table(headers, rows){return '<table><thead><tr>'+headers.map(h=>'<th>'+esc(h)+'</th>').join("")+'</tr></thead><tbody>'+rows.join("")+'</tbody></table>'}
+function table(headers, rows){return '<div class="table-wrap"><table><thead><tr>'+headers.map(h=>'<th>'+esc(h)+'</th>').join("")+'</tr></thead><tbody>'+rows.join("")+'</tbody></table></div>'}
 function token(v){return String(v || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "unknown"}
 function pill(value, prefix){return '<span class="pill '+prefix+'-'+token(value)+'">'+esc(value || "-")+'</span>'}
-function endpoint(tuple){return esc(tuple?.source)+':'+esc(tuple?.sourcePort)+' → '+esc(tuple?.destination)+':'+esc(tuple?.destinationPort)}
-function flowCard(e){
-  const state = e.state || (e.assured ? "ASSURED" : "");
-  return '<article class="flow-card"><div class="flow-top"><div>'+pill(e.protocol, "proto")+' '+pill(state || "stateless", "state")+'</div><span class="muted">'+esc(e.timeout)+'s</span></div><div class="flow-route"><div class="endpoint"><span class="label">original</span><code>'+endpoint(e.original)+'</code></div><div class="endpoint"><span class="label">reply</span><code>'+endpoint(e.reply)+'</code></div></div></article>';
-}
+function endpoint(tuple){return '<code class="addr">'+esc(tuple?.source)+':'+esc(tuple?.sourcePort)+' → '+esc(tuple?.destination)+':'+esc(tuple?.destinationPort)+'</code>'}
 async function refresh(){
   const res = await fetch(base + "api/summary?events=15&napt=30", {cache:"no-store"});
   const s = await res.json();
@@ -312,7 +302,10 @@ async function refresh(){
     kv("resources", status.resourceCount || (s.resources||[]).length),
     kv("conntrack", napt.max ? String(napt.count)+"/"+String(napt.max) : (napt.count ?? "-"))
   ].join("");
-  document.getElementById("traffic").innerHTML = '<div class="flow-list">'+(napt.entries||[]).slice(0,30).map(flowCard).join("")+'</div>';
+  document.getElementById("traffic").innerHTML = table(["proto","state","original","reply","timeout"], (napt.entries||[]).slice(0,30).map(e => {
+    const state = e.state || (e.assured ? "ASSURED" : "stateless");
+    return '<tr><td>'+pill(e.protocol, "proto")+'</td><td>'+pill(state, "state")+'</td><td>'+endpoint(e.original)+'</td><td>'+endpoint(e.reply)+'</td><td>'+esc(e.timeout)+'s</td></tr>';
+  }));
   const important = (s.resources||[]).filter(r => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(r.kind));
   document.getElementById("resources").innerHTML = table(["kind","name","phase","detail"], important.slice(0,80).map(r => {
     const st = r.status || {};
