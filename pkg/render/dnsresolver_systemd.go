@@ -34,8 +34,15 @@ Restart=always
 RestartSec=5s
 RuntimeDirectory=routerd/dns-resolver
 StateDirectory=routerd/dns-resolver
+LogsDirectory=routerd
+NoNewPrivileges=yes
+ProtectHome=yes
 ProtectSystem=strict
 PrivateTmp=yes
+ReadWritePaths=/run/routerd /var/lib/routerd /var/log/routerd
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

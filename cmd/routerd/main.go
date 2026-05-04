@@ -652,6 +652,10 @@ func canonicalResourceKind(kind string) string {
 		"sysctlprofiles":         "SysctlProfile",
 		"package":                "Package",
 		"packages":               "Package",
+		"networkadoption":        "NetworkAdoption",
+		"adoption":               "NetworkAdoption",
+		"systemdunit":            "SystemdUnit",
+		"unit":                   "SystemdUnit",
 		"route":                  "IPv4PolicyRouteSet",
 		"ipv4policyrouteset":     "IPv4PolicyRouteSet",
 	}
@@ -665,7 +669,7 @@ func apiVersionForKind(kind string) string {
 	switch kind {
 	case "FirewallZone", "FirewallPolicy", "FirewallRule":
 		return api.FirewallAPIVersion
-	case "Hostname", "Sysctl", "SysctlProfile", "Package", "NTPClient", "LogSink", "NixOSHost":
+	case "Hostname", "Sysctl", "SysctlProfile", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "LogSink", "NixOSHost":
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
@@ -2301,6 +2305,9 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDryRunNAT := fs.Bool("controller-chain-dry-run-nat", true, "do not apply nftables NAT rules in the experimental controller chain")
 	controllerDryRunFirewall := fs.Bool("controller-chain-dry-run-firewall", true, "do not apply nftables firewall rules in the experimental controller chain")
 	controllerDryRunPackage := fs.Bool("controller-chain-dry-run-package", true, "do not install OS packages in the experimental controller chain")
+	controllerDryRunNetworkAdoption := fs.Bool("controller-chain-dry-run-network-adoption", true, "do not write systemd-networkd/resolved adoption drop-ins in the experimental controller chain")
+	controllerDryRunSystemdUnit := fs.Bool("controller-chain-dry-run-systemd-unit", true, "do not install or restart systemd units in the experimental controller chain")
+	controllerSuperviseClientDaemons := fs.Bool("controller-chain-supervise-client-daemons", false, "start routerd DHCP/PPPoE client daemons as routerd child processes")
 	controllerFirewall := fs.String("controller-chain-firewall", "enable", "firewall controller mode: enable or disable")
 	controllerDaemonSockets := fs.String("controller-chain-daemon-sockets", "", "comma-separated resource=unix-socket overrides for the experimental controller chain")
 	controllerDnsmasqCommand := fs.String("controller-chain-dnsmasq-command", "dnsmasq", "dnsmasq command for the experimental controller chain")
@@ -2362,28 +2369,31 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			Bus:    controllerBus,
 			Store:  stateStore,
 			Opts: controllerchain.Options{
-				DaemonSockets:      parseSocketOverrides(*controllerDaemonSockets),
-				DryRunAddress:      *controllerDryRunAddress,
-				DryRunDSLite:       *controllerDryRunDSLite,
-				DryRunRoute:        *controllerDryRunRoute,
-				DryRunRA:           *controllerDryRunRA,
-				DryRunDHCPv6:       *controllerDryRunDHCPv6,
-				DryRunDHCPv4Lease:  *controllerDryRunDHCPv4Lease,
-				DryRunPPPoESession: *controllerDryRunPPPoESession,
-				DryRunDNSResolver:  *controllerDryRunDNSResolver,
-				DryRunNAT:          *controllerDryRunNAT,
-				DryRunFirewall:     *controllerDryRunFirewall,
-				DryRunPackage:      *controllerDryRunPackage,
-				FirewallDisabled:   *controllerFirewall == "disable",
-				DnsmasqCommand:     *controllerDnsmasqCommand,
-				DnsmasqConfig:      *controllerDnsmasqConfig,
-				DnsmasqPID:         *controllerDnsmasqPID,
-				DnsmasqPort:        *controllerDnsmasqPort,
-				DnsmasqListen:      parseCSV(*controllerDnsmasqListen),
-				NftablesPath:       *controllerNftablesPath,
-				FirewallPath:       *controllerFirewallPath,
-				NftCommand:         *controllerNftCommand,
-				ConntrackInterval:  *controllerConntrackInterval,
+				DaemonSockets:          parseSocketOverrides(*controllerDaemonSockets),
+				DryRunAddress:          *controllerDryRunAddress,
+				DryRunDSLite:           *controllerDryRunDSLite,
+				DryRunRoute:            *controllerDryRunRoute,
+				DryRunRA:               *controllerDryRunRA,
+				DryRunDHCPv6:           *controllerDryRunDHCPv6,
+				DryRunDHCPv4Lease:      *controllerDryRunDHCPv4Lease,
+				DryRunPPPoESession:     *controllerDryRunPPPoESession,
+				DryRunDNSResolver:      *controllerDryRunDNSResolver,
+				DryRunNAT:              *controllerDryRunNAT,
+				DryRunFirewall:         *controllerDryRunFirewall,
+				DryRunPackage:          *controllerDryRunPackage,
+				DryRunNetworkAdoption:  *controllerDryRunNetworkAdoption,
+				DryRunSystemdUnit:      *controllerDryRunSystemdUnit,
+				SuperviseClientDaemons: *controllerSuperviseClientDaemons,
+				FirewallDisabled:       *controllerFirewall == "disable",
+				DnsmasqCommand:         *controllerDnsmasqCommand,
+				DnsmasqConfig:          *controllerDnsmasqConfig,
+				DnsmasqPID:             *controllerDnsmasqPID,
+				DnsmasqPort:            *controllerDnsmasqPort,
+				DnsmasqListen:          parseCSV(*controllerDnsmasqListen),
+				NftablesPath:           *controllerNftablesPath,
+				FirewallPath:           *controllerFirewallPath,
+				NftCommand:             *controllerNftCommand,
+				ConntrackInterval:      *controllerConntrackInterval,
 			},
 		}
 		if err := chainRunner.Start(ctx); err != nil {

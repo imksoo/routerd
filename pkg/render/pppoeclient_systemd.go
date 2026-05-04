@@ -18,10 +18,15 @@ Restart=always
 RestartSec=5s
 RuntimeDirectory=routerd/pppoe-client
 StateDirectory=routerd/pppoe-client
+LogsDirectory=routerd
 ProtectSystem=strict
-ReadWritePaths=/run/routerd /var/lib/routerd /var/run/routerd /var/db/routerd
+ProtectHome=yes
+ReadWritePaths=/run/routerd /var/lib/routerd /var/log/routerd /var/run/routerd /var/db/routerd /etc/ppp
 PrivateTmp=yes
 NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SETUID CAP_SETGID CAP_CHOWN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SETUID CAP_SETGID CAP_CHOWN
 
 [Install]
 WantedBy=multi-user.target

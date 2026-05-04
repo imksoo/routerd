@@ -168,29 +168,32 @@ func becamePhase(event daemonapi.DaemonEvent, phase string) bool {
 type commandFunc func(ctx context.Context, name string, args ...string) error
 
 type Options struct {
-	DaemonSockets      map[string]string
-	DryRunAddress      bool
-	DryRunDSLite       bool
-	DryRunRoute        bool
-	DryRunRA           bool
-	DryRunDHCPv6       bool
-	DryRunDHCPv4Lease  bool
-	DryRunPPPoESession bool
-	DryRunDNSResolver  bool
-	DryRunNAT          bool
-	DryRunFirewall     bool
-	DryRunPackage      bool
-	FirewallDisabled   bool
-	DnsmasqCommand     string
-	DnsmasqConfig      string
-	DnsmasqPID         string
-	DnsmasqPort        int
-	DnsmasqListen      []string
-	NftablesPath       string
-	FirewallPath       string
-	NftCommand         string
-	ConntrackInterval  time.Duration
-	Logger             *slog.Logger
+	DaemonSockets          map[string]string
+	DryRunAddress          bool
+	DryRunDSLite           bool
+	DryRunRoute            bool
+	DryRunRA               bool
+	DryRunDHCPv6           bool
+	DryRunDHCPv4Lease      bool
+	DryRunPPPoESession     bool
+	DryRunDNSResolver      bool
+	DryRunNAT              bool
+	DryRunFirewall         bool
+	DryRunPackage          bool
+	DryRunNetworkAdoption  bool
+	DryRunSystemdUnit      bool
+	SuperviseClientDaemons bool
+	FirewallDisabled       bool
+	DnsmasqCommand         string
+	DnsmasqConfig          string
+	DnsmasqPID             string
+	DnsmasqPort            int
+	DnsmasqListen          []string
+	NftablesPath           string
+	FirewallPath           string
+	NftCommand             string
+	ConntrackInterval      time.Duration
+	Logger                 *slog.Logger
 }
 
 type Runner struct {
@@ -207,6 +210,9 @@ func (r *Runner) Start(ctx context.Context) error {
 	logger := r.Opts.Logger
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if r.Opts.SuperviseClientDaemons {
+		r.superviseClientDaemons(ctx, logger)
 	}
 	for _, resource := range r.Router.Spec.Resources {
 		if resource.Kind != "DHCPv6PrefixDelegation" {
@@ -303,6 +309,8 @@ func (r *Runner) Start(ctx context.Context) error {
 	store := eventedStore{Store: r.Store, Bus: r.Bus}
 	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
+	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNetworkAdoption}
+	systemdUnits := SystemdUnitController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunSystemdUnit}
 	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	link := LinkController{Router: r.Router, Store: store, Logger: logger}
 	ipv4Static := IPv4StaticAddressController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
@@ -330,6 +338,8 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
 		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: packages.Reconcile},
 		framework.FuncController{ControllerName: "sysctl", Every: 30 * time.Second, PeriodicFunc: sysctl.Reconcile},
+		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, PeriodicFunc: adoption.Reconcile},
+		framework.FuncController{ControllerName: "systemd-unit", Every: 5 * time.Minute, PeriodicFunc: systemdUnits.Reconcile},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-static-address", PeriodicFunc: ipv4Static.Reconcile},
 		framework.FuncController{ControllerName: "dhcpv6-information", Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
@@ -391,6 +401,159 @@ func (r *Runner) Start(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger) {
+	for _, resource := range r.Router.Spec.Resources {
+		switch resource.Kind {
+		case "DHCPv6PrefixDelegation":
+			spec, err := resource.DHCPv6PrefixDelegationSpec()
+			if err != nil {
+				continue
+			}
+			ifname := interfaceIfName(r.Router, spec.Interface)
+			if ifname == "" {
+				ifname = spec.Interface
+			}
+			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname}
+			if spec.IAID != "" {
+				args = append(args, "--iaid", spec.IAID)
+			}
+			r.startSupervisedDaemon(ctx, logger, resource.Metadata.Name, "routerd-dhcpv6-client", args)
+		case "DHCPv4Lease":
+			spec, err := resource.DHCPv4LeaseSpec()
+			if err != nil {
+				continue
+			}
+			ifname := interfaceIfName(r.Router, spec.Interface)
+			if ifname == "" {
+				ifname = spec.Interface
+			}
+			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname}
+			if spec.Hostname != "" {
+				args = append(args, "--hostname", spec.Hostname)
+			}
+			if spec.RequestedAddress != "" {
+				args = append(args, "--requested-address", spec.RequestedAddress)
+			}
+			if spec.ClassID != "" {
+				args = append(args, "--class-id", spec.ClassID)
+			}
+			if spec.ClientID != "" {
+				args = append(args, "--client-id", spec.ClientID)
+			}
+			r.startSupervisedDaemon(ctx, logger, resource.Metadata.Name, "routerd-dhcpv4-client", args)
+		case "PPPoESession":
+			spec, err := resource.PPPoESessionSpec()
+			if err != nil {
+				continue
+			}
+			ifname := interfaceIfName(r.Router, spec.Interface)
+			if ifname == "" {
+				ifname = spec.Interface
+			}
+			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname, "--username", spec.Username}
+			if spec.PasswordFile != "" {
+				args = append(args, "--password-file", spec.PasswordFile)
+			} else if spec.Password != "" {
+				args = append(args, "--password", spec.Password)
+			}
+			if spec.AuthMethod != "" {
+				args = append(args, "--auth-method", spec.AuthMethod)
+			}
+			if spec.MTU != 0 {
+				args = append(args, "--mtu", fmt.Sprintf("%d", spec.MTU))
+			}
+			if spec.MRU != 0 {
+				args = append(args, "--mru", fmt.Sprintf("%d", spec.MRU))
+			}
+			if spec.ServiceName != "" {
+				args = append(args, "--service-name", spec.ServiceName)
+			}
+			if spec.ACName != "" {
+				args = append(args, "--ac-name", spec.ACName)
+			}
+			if spec.LCPEchoInterval != 0 {
+				args = append(args, "--lcp-echo-interval", fmt.Sprintf("%d", spec.LCPEchoInterval))
+			}
+			if spec.LCPEchoFailure != 0 {
+				args = append(args, "--lcp-echo-failure", fmt.Sprintf("%d", spec.LCPEchoFailure))
+			}
+			r.startSupervisedDaemon(ctx, logger, resource.Metadata.Name, "routerd-pppoe-client", args)
+		}
+	}
+}
+
+func (r *Runner) startSupervisedDaemon(ctx context.Context, logger *slog.Logger, resourceName, binary string, args []string) {
+	go func() {
+		for ctx.Err() == nil {
+			if clientSocketReady(defaultClientSocket(binary, resourceName)) {
+				select {
+				case <-time.After(10 * time.Second):
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
+			path := routerdClientBinary(binary)
+			cmd := exec.CommandContext(ctx, path, args...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if logger != nil {
+				logger.Info("starting supervised routerd client daemon", "binary", path, "resource", resourceName)
+			}
+			err := cmd.Run()
+			if ctx.Err() != nil {
+				return
+			}
+			if logger != nil {
+				logger.Warn("supervised routerd client daemon exited", "binary", path, "resource", resourceName, "error", err)
+			}
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func routerdClientBinary(name string) string {
+	if path, err := exec.LookPath(name); err == nil {
+		return path
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), name)
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			return candidate
+		}
+	}
+	return filepath.Join("/usr/local/sbin", name)
+}
+
+func defaultClientSocket(binary, resource string) string {
+	switch binary {
+	case "routerd-dhcpv6-client":
+		return filepath.Join("/run/routerd/dhcpv6-client", resource+".sock")
+	case "routerd-dhcpv4-client":
+		return filepath.Join("/run/routerd/dhcpv4-client", resource+".sock")
+	case "routerd-pppoe-client":
+		return filepath.Join("/run/routerd/pppoe-client", resource+".sock")
+	default:
+		return ""
+	}
+}
+
+func clientSocketReady(socket string) bool {
+	if socket == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("unix", socket, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 type PrefixDelegationController struct {
