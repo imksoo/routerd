@@ -279,6 +279,110 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 	}
 }
 
+func TestNixOSModuleRendersDeclarativeSystemResources(t *testing.T) {
+	enabled := true
+	privateTmp := true
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NixOSHost"},
+				Metadata: api.ObjectMeta{Name: "nixos-edge"},
+				Spec:     api.NixOSHostSpec{Hostname: "nixos-edge", StateVersion: "25.11"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"},
+				Metadata: api.ObjectMeta{Name: "service-deps"},
+				Spec: api.PackageSpec{Packages: []api.OSPackageSetSpec{
+					{OS: "ubuntu", Manager: "apt", Names: []string{"dnsmasq-base"}},
+					{OS: "nixos", Manager: "nix", Names: []string{"dnsmasq", "conntrack-tools"}},
+				}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SysctlProfile"},
+				Metadata: api.ObjectMeta{Name: "router-runtime"},
+				Spec: api.SysctlProfileSpec{
+					Profile:    "router-linux",
+					Persistent: true,
+					Overrides:  map[string]string{"net.ipv4.ip_forward": "1"},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NetworkAdoption"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec: api.NetworkAdoptionSpec{
+					Interface: "wan",
+					SystemdNetworkd: api.NetworkAdoptionNetworkdSpec{
+						DisableDHCPv4: true,
+						DisableDHCPv6: true,
+						DisableIPv6RA: true,
+					},
+					SystemdResolved: api.NetworkAdoptionResolvedSpec{DisableDNSStubListener: true},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+				Metadata: api.ObjectMeta{Name: "routerd-dns-resolver.service"},
+				Spec: api.SystemdUnitSpec{
+					Description:              "routerd DNS resolver",
+					ExecStart:                []string{"/usr/local/sbin/routerd-dns-resolver", "--config", "/usr/local/etc/routerd/dns-resolver.yaml"},
+					After:                    []string{"network-online.target"},
+					WantedBy:                 []string{"multi-user.target"},
+					Restart:                  "always",
+					RuntimeDirectory:         []string{"routerd/dns-resolver"},
+					RuntimeDirectoryPreserve: "yes",
+					StateDirectory:           []string{"routerd/dns-resolver"},
+					RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6"},
+					ProtectSystem:            "strict",
+					PrivateTmp:               &privateTmp,
+					Enabled:                  &enabled,
+				},
+			},
+		}},
+	}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatalf("render NixOS module: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`environment.systemPackages = with pkgs; [`,
+		`conntrack-tools`,
+		`dnsmasq`,
+		`boot.kernel.sysctl = {`,
+		`"net.ipv4.ip_forward" = 1;`,
+		`"net.ipv6.conf.all.forwarding" = 1;`,
+		`systemd.network.networks."10-netplan-ens18"`,
+		`DHCP = "no";`,
+		`IPv6AcceptRA = false;`,
+		`services.resolved.enable = true;`,
+		`DNSStubListener=no`,
+		`systemd.services."routerd-dns-resolver" = {`,
+		`description = "routerd DNS resolver";`,
+		`"/usr/local/sbin/routerd-dns-resolver"`,
+		`RuntimeDirectory = [ "routerd/dns-resolver" ];`,
+		`RuntimeDirectoryPreserve = "yes";`,
+		`StateDirectory = [ "routerd/dns-resolver" ];`,
+		`RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];`,
+		`ProtectSystem = "strict";`,
+		`PrivateTmp = true;`,
+		`system.stateVersion = "25.11";`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("NixOS module missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "dnsmasq-base") {
+		t.Fatalf("NixOS module must not render Ubuntu package names:\n%s", got)
+	}
+}
+
 func TestNixOSModuleOnlyTrustsBridgesAttachedToVXLAN(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	"routerd/pkg/sysctlprofile"
 )
 
 type nixOSInterface struct {
@@ -20,6 +21,9 @@ type nixOSInterface struct {
 	DHCPv4UseDNS      *bool
 	DHCPv4RouteMetric int
 	AcceptRA          bool
+	DisableDHCPv4     bool
+	DisableDHCPv6     bool
+	DisableIPv6RA     bool
 	Addresses         []string
 	Routes            []nixOSRoute
 }
@@ -60,6 +64,11 @@ type nixOSDHCPv6Client struct {
 	Interface string
 }
 
+type nixOSSystemdUnit struct {
+	Name string
+	Spec api.SystemdUnitSpec
+}
+
 func NixOSModule(router *api.Router) ([]byte, error) {
 	host, err := nixOSHost(router)
 	if err != nil {
@@ -90,6 +99,11 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	packages, servicePackages, err := nixOSPackages(router, host)
+	if err != nil {
+		return nil, err
+	}
+	resolvedStubDisabled := nixOSResolvedStubDisabled(router)
+	systemdUnits, err := nixOSSystemdUnits(router)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +171,12 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		buf.WriteString("  services.timesyncd.enable = true;\n")
 		buf.WriteString("  services.timesyncd.servers = " + nixStringList(ntpServers) + ";\n")
 	}
+	if resolvedStubDisabled {
+		buf.WriteString("  services.resolved.enable = true;\n")
+		buf.WriteString("  services.resolved.extraConfig = ''\n")
+		buf.WriteString("    DNSStubListener=no\n")
+		buf.WriteString("  '';\n")
+	}
 	if len(sysctls) > 0 {
 		buf.WriteString("  boot.kernel.sysctl = {\n")
 		for _, key := range sortedMapKeysString(sysctls) {
@@ -173,6 +193,9 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	}
 	for _, client := range dhcpv6Clients {
 		writeNixOSDHCPv6ClientService(&buf, client)
+	}
+	for _, unit := range systemdUnits {
+		writeNixOSSystemdUnit(&buf, unit)
 	}
 	if api.BoolDefault(host.RouterdService.Enabled, false) {
 		writeNixOSRouterdService(&buf, host.RouterdService, servicePackages)
@@ -274,17 +297,34 @@ func nixOSNTPServers(router *api.Router) ([]string, error) {
 func nixOSSysctls(router *api.Router) (map[string]string, error) {
 	values := map[string]string{}
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "Sysctl" {
-			continue
+		switch res.Kind {
+		case "Sysctl":
+			spec, err := res.SysctlSpec()
+			if err != nil {
+				return nil, err
+			}
+			if spec.Persistent {
+				values[spec.Key] = spec.Value
+			}
+		case "SysctlProfile":
+			spec, err := res.SysctlProfileSpec()
+			if err != nil {
+				return nil, err
+			}
+			if !spec.Persistent {
+				continue
+			}
+			entries, err := sysctlprofile.Entries(spec.Profile, spec.Overrides)
+			if err != nil {
+				return nil, err
+			}
+			for _, entry := range entries {
+				if entry.Optional {
+					continue
+				}
+				values[entry.Key] = entry.Value
+			}
 		}
-		spec, err := res.SysctlSpec()
-		if err != nil {
-			return nil, err
-		}
-		if !spec.Persistent {
-			continue
-		}
-		values[spec.Key] = spec.Value
 	}
 	return values, nil
 }
@@ -398,6 +438,41 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 			}
 			if iface := interfaces[spec.Interface]; iface != nil && api.BoolDefault(spec.Managed, true) {
 				iface.AcceptRA = true
+			}
+		case "NetworkAdoption":
+			spec, err := res.NetworkAdoptionSpec()
+			if err != nil {
+				return nil, err
+			}
+			if defaultString(spec.State, "present") == "absent" {
+				continue
+			}
+			ifname := strings.TrimSpace(spec.IfName)
+			name := spec.Interface
+			if ifname == "" && name != "" {
+				if iface := interfaces[name]; iface != nil {
+					ifname = iface.IfName
+				}
+			}
+			if ifname == "" {
+				continue
+			}
+			if name == "" {
+				name = "adopt-" + ifname
+			}
+			if interfaces[name] == nil {
+				interfaces[name] = &nixOSInterface{Name: name, IfName: ifname, AdminUp: true}
+				names = append(names, name)
+			}
+			iface := interfaces[name]
+			if spec.SystemdNetworkd.DisableDHCPv4 {
+				iface.DisableDHCPv4 = true
+			}
+			if spec.SystemdNetworkd.DisableDHCPv6 {
+				iface.DisableDHCPv6 = true
+			}
+			if spec.SystemdNetworkd.DisableIPv6RA {
+				iface.DisableIPv6RA = true
 			}
 		}
 	}
@@ -551,12 +626,20 @@ func writeNixOSVXLANFDBService(buf *bytes.Buffer, vxlan nixOSVXLAN) {
 func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 	buf.WriteString("  systemd.network.networks." + nixString("10-netplan-"+iface.IfName) + " = {\n")
 	buf.WriteString("    matchConfig.Name = " + nixString(iface.IfName) + ";\n")
-	if iface.DHCPv4 || iface.AcceptRA || iface.Bridge != "" || len(iface.Addresses) == 0 {
+	if iface.DHCPv4 || iface.AcceptRA || iface.Bridge != "" || len(iface.Addresses) == 0 || iface.DisableDHCPv4 || iface.DisableDHCPv6 || iface.DisableIPv6RA {
 		buf.WriteString("    networkConfig = {\n")
-		if iface.DHCPv4 {
+		if iface.DisableDHCPv4 && iface.DisableDHCPv6 {
+			buf.WriteString("      DHCP = \"no\";\n")
+		} else if iface.DisableDHCPv4 {
+			buf.WriteString("      DHCP = \"ipv6\";\n")
+		} else if iface.DisableDHCPv6 {
+			buf.WriteString("      DHCP = \"ipv4\";\n")
+		} else if iface.DHCPv4 {
 			buf.WriteString("      DHCP = \"ipv4\";\n")
 		}
-		if iface.AcceptRA {
+		if iface.DisableIPv6RA {
+			buf.WriteString("      IPv6AcceptRA = false;\n")
+		} else if iface.AcceptRA {
 			buf.WriteString("      IPv6AcceptRA = true;\n")
 		}
 		if len(iface.Addresses) == 0 && !iface.DHCPv4 && !iface.AcceptRA {
@@ -736,6 +819,110 @@ func writeNixOSDHCPv6ClientService(buf *bytes.Buffer, client nixOSDHCPv6Client) 
 	buf.WriteString("  };\n")
 }
 
+func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
+	var out []nixOSSystemdUnit
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "SystemdUnit" {
+			continue
+		}
+		spec, err := res.SystemdUnitSpec()
+		if err != nil {
+			return nil, err
+		}
+		if defaultString(spec.State, "present") == "absent" {
+			continue
+		}
+		name := defaultString(spec.UnitName, res.Metadata.Name)
+		out = append(out, nixOSSystemdUnit{Name: name, Spec: spec})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func writeNixOSSystemdUnit(buf *bytes.Buffer, unit nixOSSystemdUnit) {
+	spec := unit.Spec
+	name := nixOSSystemdServiceName(unit.Name)
+	buf.WriteString("  systemd.services." + nixString(name) + " = {\n")
+	if spec.Description != "" {
+		buf.WriteString("    description = " + nixString(spec.Description) + ";\n")
+	}
+	if len(spec.WantedBy) > 0 {
+		buf.WriteString("    wantedBy = " + nixStringList(spec.WantedBy) + ";\n")
+	}
+	if len(spec.After) > 0 {
+		buf.WriteString("    after = " + nixStringList(spec.After) + ";\n")
+	}
+	if len(spec.Wants) > 0 {
+		buf.WriteString("    wants = " + nixStringList(spec.Wants) + ";\n")
+	}
+	buf.WriteString("    serviceConfig = {\n")
+	if len(spec.ExecStart) > 0 {
+		buf.WriteString("      ExecStart = lib.concatStringsSep \" \" [\n")
+		for _, arg := range spec.ExecStart {
+			buf.WriteString("        " + nixString(arg) + "\n")
+		}
+		buf.WriteString("      ];\n")
+	}
+	writeNixOSSystemdString(buf, "Restart", spec.Restart)
+	writeNixOSSystemdString(buf, "RestartSec", spec.RestartSec)
+	writeNixOSSystemdString(buf, "User", spec.User)
+	writeNixOSSystemdString(buf, "Group", spec.Group)
+	writeNixOSSystemdString(buf, "WorkingDirectory", spec.WorkingDirectory)
+	writeNixOSSystemdStringList(buf, "Environment", spec.Environment)
+	writeNixOSSystemdStringList(buf, "RuntimeDirectory", spec.RuntimeDirectory)
+	writeNixOSSystemdString(buf, "RuntimeDirectoryPreserve", spec.RuntimeDirectoryPreserve)
+	writeNixOSSystemdStringList(buf, "StateDirectory", spec.StateDirectory)
+	writeNixOSSystemdStringList(buf, "LogsDirectory", spec.LogsDirectory)
+	writeNixOSSystemdStringList(buf, "ReadWritePaths", spec.ReadWritePaths)
+	writeNixOSSystemdStringList(buf, "AmbientCapabilities", spec.AmbientCapabilities)
+	writeNixOSSystemdStringList(buf, "CapabilityBoundingSet", spec.CapabilityBoundingSet)
+	writeNixOSSystemdStringList(buf, "RestrictAddressFamilies", spec.RestrictAddressFamilies)
+	writeNixOSSystemdString(buf, "ProtectSystem", spec.ProtectSystem)
+	writeNixOSSystemdString(buf, "ProtectHome", spec.ProtectHome)
+	if spec.NoNewPrivileges != nil {
+		buf.WriteString("      NoNewPrivileges = " + nixBool(*spec.NoNewPrivileges) + ";\n")
+	}
+	if spec.PrivateTmp != nil {
+		buf.WriteString("      PrivateTmp = " + nixBool(*spec.PrivateTmp) + ";\n")
+	}
+	buf.WriteString("    };\n")
+	buf.WriteString("  };\n")
+}
+
+func writeNixOSSystemdString(buf *bytes.Buffer, key, value string) {
+	if value == "" {
+		return
+	}
+	buf.WriteString("      " + key + " = " + nixString(value) + ";\n")
+}
+
+func writeNixOSSystemdStringList(buf *bytes.Buffer, key string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	buf.WriteString("      " + key + " = " + nixStringList(values) + ";\n")
+}
+
+func nixOSSystemdServiceName(unitName string) string {
+	return strings.TrimSuffix(unitName, ".service")
+}
+
+func nixOSResolvedStubDisabled(router *api.Router) bool {
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "NetworkAdoption" {
+			continue
+		}
+		spec, err := res.NetworkAdoptionSpec()
+		if err != nil {
+			continue
+		}
+		if defaultString(spec.State, "present") != "absent" && spec.SystemdResolved.DisableDNSStubListener {
+			return true
+		}
+	}
+	return false
+}
+
 func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []string, error) {
 	service := map[string]bool{
 		"conntrack-tools": true,
@@ -758,8 +945,27 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 	debug := map[string]bool{
 		"jq": true,
 	}
+	hasDeclarativePackages := false
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
+		case "Package":
+			spec, err := res.PackageSpec()
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, set := range spec.Packages {
+				if set.OS != "nixos" {
+					continue
+				}
+				for _, pkg := range set.Names {
+					if err := validateNixPackageIdent(pkg); err != nil {
+						return nil, nil, err
+					}
+					service[pkg] = true
+					debug[pkg] = true
+					hasDeclarativePackages = true
+				}
+			}
 		case "Bridge":
 			spec, err := res.BridgeSpec()
 			if err != nil {
@@ -805,7 +1011,7 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 	}
 	serviceList := sortedMapKeys(service)
 	var debugList []string
-	if host.DebugSystemPackages || len(host.AdditionalPackages) > 0 {
+	if host.DebugSystemPackages || len(host.AdditionalPackages) > 0 || hasDeclarativePackages {
 		debugList = sortedMapKeys(debug)
 	}
 	return debugList, serviceList, nil

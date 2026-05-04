@@ -126,6 +126,35 @@ func TestPackageControllerDoesNotInstallWhenPackagesPresent(t *testing.T) {
 	}
 }
 
+func TestPackageControllerReportsNixOSPackagesAsDeclarative(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"}, Metadata: api.ObjectMeta{Name: "service-deps"}, Spec: api.PackageSpec{
+			Packages: []api.OSPackageSetSpec{{
+				OS:      "nixos",
+				Manager: "nix",
+				Names:   []string{"dnsmasq", "conntrack-tools"},
+			}},
+		}},
+	}}}
+	store := mapStore{}
+	controller := PackageController{
+		Router: router,
+		Store:  store,
+		OSName: "nixos",
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			t.Fatalf("NixOS package resources must be rendered declaratively, got command %s %v", name, args)
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "Package", "service-deps")
+	if status["phase"] != "Rendered" || status["reason"] != "NixOSDeclarativeOnly" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestParseOSReleaseID(t *testing.T) {
 	if got := parseOSReleaseID("NAME=\"NixOS\"\nID=nixos\n"); got != "nixos" {
 		t.Fatalf("ID = %q", got)

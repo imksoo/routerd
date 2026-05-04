@@ -20,6 +20,7 @@ type PackageController struct {
 	Store   Store
 	Command outputCommandFunc
 	DryRun  bool
+	OSName  string
 }
 
 func (c PackageController) Reconcile(ctx context.Context) error {
@@ -31,17 +32,34 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		set, ok := packageSetForCurrentOS(spec)
+		osName := c.OSName
+		if osName == "" {
+			osName = packageOSName(runtime.GOOS)
+		}
+		set, ok := packageSetForOS(spec, osName)
 		if !ok {
 			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
 				"reason":    "NoMatchingOSPackageSet",
-				"os":        runtime.GOOS,
+				"os":        osName,
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 			})
 			continue
 		}
 		manager := firstNonEmpty(set.Manager, packageManagerForOS(set.OS))
+		if manager == "nix" {
+			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
+				"phase":     "Rendered",
+				"reason":    "NixOSDeclarativeOnly",
+				"os":        set.OS,
+				"manager":   manager,
+				"names":     set.Names,
+				"changed":   false,
+				"dryRun":    c.DryRun,
+				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			})
+			continue
+		}
 		if manager != "apt" && manager != "dnf" {
 			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
@@ -124,7 +142,10 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 }
 
 func packageSetForCurrentOS(spec api.PackageSpec) (api.OSPackageSetSpec, bool) {
-	current := packageOSName(runtime.GOOS)
+	return packageSetForOS(spec, packageOSName(runtime.GOOS))
+}
+
+func packageSetForOS(spec api.PackageSpec, current string) (api.OSPackageSetSpec, bool) {
 	for _, set := range spec.Packages {
 		if set.OS == current {
 			return set, true

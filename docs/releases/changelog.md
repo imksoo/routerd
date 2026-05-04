@@ -7,6 +7,12 @@ title: Changelog
 routerd は出荷前のソフトウェアです。
 この履歴は、利用者が現在の API 名と実装済み範囲を間違えないために残します。
 
+## 0.4.0
+
+- Phase 3.0a: NixOS 向けの宣言的な生成を拡張しました。
+  `Package` の NixOS パッケージ、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit` を `routerd render nixos` の出力へ反映します。
+  NixOS 上の `Package` は実行時に導入せず、生成された NixOS 設定で管理する扱いにしました。
+
 ## 0.3.0
 
 - Phase 2.7d-e: 宣言的な OS bootstrap リソースとして `Package` と `SysctlProfile` を追加しました。
