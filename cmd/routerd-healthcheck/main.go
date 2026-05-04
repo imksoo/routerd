@@ -460,6 +460,8 @@ func (d *daemon) statusLocked() daemonapi.DaemonStatus {
 			"protocol":          d.spec.Protocol,
 			"port":              strconv.Itoa(d.spec.Port),
 			"lastResult":        d.state.LastResult,
+			"lastCheckedAt":     d.state.LastCheckedAt.UTC().Format(time.RFC3339Nano),
+			"lastTransitionAt":  d.state.LastTransitionAt.UTC().Format(time.RFC3339Nano),
 			"consecutivePassed": strconv.Itoa(d.state.ConsecutivePassed),
 			"consecutiveFailed": strconv.Itoa(d.state.ConsecutiveFailed),
 			"via":               d.spec.Via,

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,6 +25,7 @@ import (
 	"routerd/pkg/controller/dhcpv4lease"
 	dnsresolvercontroller "routerd/pkg/controller/dnsresolver"
 	firewallcontroller "routerd/pkg/controller/firewall"
+	"routerd/pkg/controller/framework"
 	"routerd/pkg/controller/nat44"
 	"routerd/pkg/controller/pppoesession"
 	"routerd/pkg/daemonapi"
@@ -31,6 +33,7 @@ import (
 	"routerd/pkg/egressroute"
 	"routerd/pkg/eventrule"
 	"routerd/pkg/healthcheck"
+	"routerd/pkg/resourcequery"
 	daemonsource "routerd/pkg/source/daemon"
 )
 
@@ -40,6 +43,129 @@ type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
+
+type eventedStore struct {
+	Store Store
+	Bus   *bus.Bus
+}
+
+func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
+	if s.Store == nil {
+		return nil
+	}
+	current := s.Store.ObjectStatus(apiVersion, kind, name)
+	if newerStatus(current, status) {
+		return nil
+	}
+	changed := statusChanged(current, status)
+	if err := s.Store.SaveObjectStatus(apiVersion, kind, name, status); err != nil {
+		return err
+	}
+	if changed && s.Bus != nil {
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+		event.Resource = &daemonapi.ResourceRef{APIVersion: apiVersion, Kind: kind, Name: name}
+		event.Attributes = map[string]string{
+			"phase":         fmt.Sprint(status["phase"]),
+			"previousPhase": fmt.Sprint(current["phase"]),
+		}
+		return s.Bus.Publish(context.Background(), event)
+	}
+	return nil
+}
+
+func (s eventedStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	if s.Store == nil {
+		return nil
+	}
+	return s.Store.ObjectStatus(apiVersion, kind, name)
+}
+
+func newerStatus(current, next map[string]any) bool {
+	currentTime, currentOK := comparableStatusTime(current)
+	nextTime, nextOK := comparableStatusTime(next)
+	return currentOK && nextOK && currentTime.After(nextTime)
+}
+
+func comparableStatusTime(status map[string]any) (time.Time, bool) {
+	for _, key := range []string{"lastCheckedAt", "updatedAt", "observedAt"} {
+		if parsed, ok := parseStatusTimestamp(status[key]); ok {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func parseStatusTimestamp(value any) (time.Time, bool) {
+	text, ok := value.(string)
+	if !ok || strings.TrimSpace(text) == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+func statusChanged(current, next map[string]any) bool {
+	if len(current) == 0 && len(next) == 0 {
+		return false
+	}
+	currentData, currentErr := json.Marshal(stableStatus(current))
+	nextData, nextErr := json.Marshal(stableStatus(next))
+	if currentErr == nil && nextErr == nil {
+		return !bytes.Equal(currentData, nextData)
+	}
+	return !reflect.DeepEqual(stableStatus(current), stableStatus(next))
+}
+
+func stableStatus(status map[string]any) map[string]any {
+	if status == nil {
+		return nil
+	}
+	out := map[string]any{}
+	for key, value := range status {
+		switch key {
+		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions":
+			continue
+		default:
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func statusSubscriptions(kinds ...string) []bus.Subscription {
+	allowed := map[string]bool{}
+	for _, kind := range kinds {
+		allowed[kind] = true
+	}
+	return []bus.Subscription{{
+		Topics: []string{"routerd.resource.status.changed", "routerd.controller.bootstrap"},
+		Filter: func(event daemonapi.DaemonEvent) bool {
+			if event.Type == "routerd.controller.bootstrap" {
+				return true
+			}
+			if event.Resource == nil {
+				return false
+			}
+			return allowed[event.Resource.Kind]
+		},
+	}}
+}
+
+func becamePhase(event daemonapi.DaemonEvent, phase string) bool {
+	if event.Resource == nil {
+		return false
+	}
+	if event.Attributes["phase"] != phase {
+		return false
+	}
+	previous := event.Attributes["previousPhase"]
+	return previous == "" || previous != phase
+}
+
+type commandFunc func(ctx context.Context, name string, args ...string) error
 
 type Options struct {
 	DaemonSockets      map[string]string
@@ -53,6 +179,7 @@ type Options struct {
 	DryRunDNSResolver  bool
 	DryRunNAT          bool
 	DryRunFirewall     bool
+	DryRunPackage      bool
 	FirewallDisabled   bool
 	DnsmasqCommand     string
 	DnsmasqConfig      string
@@ -173,102 +300,94 @@ func (r *Runner) Start(ctx context.Context) error {
 		}()
 	}
 
-	pd := PrefixDelegationController{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
-	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
-	lan := LANAddressController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunAddress, Logger: logger}
-	dslite := DSLiteTunnelController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
-	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRoute, Logger: logger}
-	ra := IPv6RouterAdvertisementController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunRA, Logger: logger}
-	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
-	dhcp4Lease := dhcpv4lease.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Lease, Logger: logger}
-	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
-	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunDNSResolver}
-	wan := egressroute.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
-	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
-	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
-	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, Logger: logger}
-	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunNAT, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
-	firewall := firewallcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: r.Store, DryRun: r.Opts.DryRunFirewall, NftablesPath: firstNonEmpty(r.Opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: r.Opts.NftCommand, Logger: logger}
-	conntrackObs := conntrackobserver.Controller{Bus: r.Bus, Store: r.Store, Paths: conntrack.DefaultPaths(), Interval: r.Opts.ConntrackInterval, Logger: logger}
+	store := eventedStore{Store: r.Store, Bus: r.Bus}
+	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
+	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
+	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
+	link := LinkController{Router: r.Router, Store: store, Logger: logger}
+	ipv4Static := IPv4StaticAddressController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
+	lan := LANAddressController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
+	dslite := DSLiteTunnelController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
+	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
+	ra := IPv6RouterAdvertisementController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRA, Logger: logger}
+	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
+	dhcp4Lease := dhcpv4lease.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Lease, Logger: logger}
+	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
+	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver}
+	daemonStatusSync := DaemonStatusController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
+	wan := egressroute.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
+	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
+	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
+	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
+	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
+	firewall := firewallcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunFirewall, NftablesPath: firstNonEmpty(r.Opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: r.Opts.NftCommand, Logger: logger}
+	conntrackObs := conntrackobserver.Controller{Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: r.Opts.ConntrackInterval, Logger: logger}
 	rules.Start(ctx)
 	derivedEvents.Start(ctx)
 	health.Start(ctx)
-	pd.Start(ctx)
-	info.Start(ctx)
-	lan.Start(ctx)
-	dslite.Start(ctx)
-	route.Start(ctx)
-	ra.Start(ctx)
-	dhcpv6.Start(ctx)
-	dhcp4Lease.Start(ctx)
-	pppoeSession.Start(ctx)
-	wan.Start(ctx)
-	nat.Start(ctx)
-	if !r.Opts.FirewallDisabled {
-		firewall.Start(ctx)
-	}
 	conntrackObs.Start(ctx)
-	go func() {
-		for _, resource := range r.Router.Spec.Resources {
-			if resource.Kind != "DHCPv4Lease" {
-				continue
+	controllers := []framework.Controller{
+		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
+		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: packages.Reconcile},
+		framework.FuncController{ControllerName: "sysctl", Every: 30 * time.Second, PeriodicFunc: sysctl.Reconcile},
+		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
+		framework.FuncController{ControllerName: "ipv4-static-address", PeriodicFunc: ipv4Static.Reconcile},
+		framework.FuncController{ControllerName: "dhcpv6-information", Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+			request := event.Type == "routerd.controller.bootstrap" || becamePhase(event, daemonapi.ResourcePhaseBound)
+			for _, resource := range r.Router.Spec.Resources {
+				if resource.Kind == "DHCPv6PrefixDelegation" {
+					if err := info.reconcile(ctx, resource.Metadata.Name, request); err != nil {
+						return err
+					}
+				}
 			}
-			if err := dhcp4Lease.Reconcile(ctx, resource.Metadata.Name); err != nil && logger != nil && ctx.Err() == nil {
-				logger.Warn("initial dhcpv4 lease reconcile failed", "resource", resource.Metadata.Name, "error", err)
+			return nil
+		}},
+		framework.FuncController{ControllerName: "lan-address", Subs: statusSubscriptions("DHCPv6PrefixDelegation", "Link", "Interface"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
+			for _, resource := range r.Router.Spec.Resources {
+				if resource.Kind == "DHCPv6PrefixDelegation" {
+					if err := lan.reconcile(ctx, resource.Metadata.Name); err != nil {
+						return err
+					}
+				}
 			}
-		}
-	}()
-	go func() {
-		for _, resource := range r.Router.Spec.Resources {
-			if resource.Kind != "PPPoESession" {
-				continue
+			return nil
+		}},
+		framework.FuncController{ControllerName: "dslite", Subs: statusSubscriptions("DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: dslite.reconcile},
+		framework.FuncController{ControllerName: "ipv4-route", Subs: statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy"), PeriodicFunc: route.reconcile},
+		framework.FuncController{ControllerName: "ipv6-ra", Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information"), PeriodicFunc: ra.reconcile},
+		framework.FuncController{ControllerName: "dhcpv6-server", Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information"), PeriodicFunc: dhcpv6.reconcile},
+		framework.FuncController{ControllerName: "dhcpv4-lease", Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
+			for _, resource := range r.Router.Spec.Resources {
+				if resource.Kind == "DHCPv4Lease" {
+					if err := dhcp4Lease.Reconcile(ctx, resource.Metadata.Name); err != nil {
+						return err
+					}
+				}
 			}
-			if err := pppoeSession.Reconcile(ctx, resource.Metadata.Name); err != nil && logger != nil && ctx.Err() == nil {
-				logger.Warn("initial pppoe session reconcile failed", "resource", resource.Metadata.Name, "error", err)
+			return nil
+		}},
+		framework.FuncController{ControllerName: "pppoe-session", Subs: []bus.Subscription{{Topics: []string{"routerd.pppoe.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
+			for _, resource := range r.Router.Spec.Resources {
+				if resource.Kind == "PPPoESession" {
+					if err := pppoeSession.Reconcile(ctx, resource.Metadata.Name); err != nil {
+						return err
+					}
+				}
 			}
-		}
-	}()
-	if routerNeedsDnsmasq(r.Router) {
-		go func() {
-			if err := renderAndEnsureDnsmasq(ctx, r.Router, r.Store, r.Opts.DnsmasqCommand, r.Opts.DnsmasqConfig, r.Opts.DnsmasqPID, r.Opts.DnsmasqPort, r.Opts.DnsmasqListen); err != nil && logger != nil && ctx.Err() == nil {
-				logger.Warn("initial dnsmasq reconcile failed", "error", err)
-			}
-			dnsResolver.Start(ctx)
-		}()
-	} else {
-		dnsResolver.Start(ctx)
+			return nil
+		}},
+		framework.FuncController{ControllerName: "dns-resolver", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, ReconcileFunc: dnsResolver.HandleEvent, PeriodicFunc: dnsResolver.Reconcile},
+		framework.FuncController{ControllerName: "egress-route-policy", Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Lease", "PPPoESession"), PeriodicFunc: wan.Reconcile},
+		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy"), PeriodicFunc: nat.Reconcile},
+	}
+	if !r.Opts.FirewallDisabled {
+		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.firewall.**"}}}, PeriodicFunc: firewall.Reconcile})
 	}
 	go func() {
-		for _, resource := range r.Router.Spec.Resources {
-			if resource.Kind != "DHCPv6PrefixDelegation" {
-				continue
-			}
-			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
-			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation", Name: resource.Metadata.Name}
-			if err := pd.reconcile(ctx, event); err != nil {
-				if logger != nil && ctx.Err() == nil {
-					logger.Warn("initial prefix delegation reconcile failed", "resource", resource.Metadata.Name, "error", err)
-				}
-				continue
-			}
-			if err := lan.reconcile(ctx, resource.Metadata.Name); err != nil && logger != nil && ctx.Err() == nil {
-				logger.Warn("initial lan address reconcile failed", "pd", resource.Metadata.Name, "error", err)
-			}
-			if err := info.reconcile(ctx, resource.Metadata.Name, true); err != nil && logger != nil && ctx.Err() == nil {
-				logger.Warn("initial dhcpv6 information reconcile failed", "pd", resource.Metadata.Name, "error", err)
-			}
-		}
-		if err := dslite.reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
-			logger.Warn("initial dslite tunnel reconcile failed", "error", err)
-		}
-		if err := route.reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
-			logger.Warn("initial ipv4 route reconcile failed", "error", err)
-		}
-		if err := wan.Reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
-			logger.Warn("initial egress route reconcile failed", "error", err)
-		}
-		if err := nat.Reconcile(ctx); err != nil && logger != nil && ctx.Err() == nil {
-			logger.Warn("initial nat44 reconcile failed", "error", err)
+		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second}
+		if err := loop.Run(ctx, controllers...); err != nil && ctx.Err() == nil {
+			logger.Warn("controller event loop stopped", "error", err)
 		}
 	}()
 	return nil
@@ -328,11 +447,268 @@ func (c PrefixDelegationController) socketFor(resource string) string {
 }
 
 type LANAddressController struct {
+	Router  *api.Router
+	Bus     *bus.Bus
+	Store   Store
+	DryRun  bool
+	Logger  *slog.Logger
+	Command commandFunc
+}
+
+type LinkController struct {
 	Router *api.Router
-	Bus    *bus.Bus
 	Store  Store
-	DryRun bool
 	Logger *slog.Logger
+}
+
+func (c LinkController) Reconcile(ctx context.Context) error {
+	_ = ctx
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "Interface" {
+			continue
+		}
+		spec, err := resource.InterfaceSpec()
+		if err != nil {
+			return err
+		}
+		ifname := spec.IfName
+		status := map[string]any{
+			"phase":   "Down",
+			"ifname":  ifname,
+			"managed": spec.Managed,
+		}
+		if ifname == "" {
+			status["reason"] = "IfNameMissing"
+		} else if ifi, err := net.InterfaceByName(ifname); err == nil {
+			status["index"] = ifi.Index
+			status["flags"] = ifi.Flags.String()
+			if ifi.Flags&net.FlagUp != 0 {
+				status["phase"] = "Up"
+			}
+		} else {
+			status["reason"] = "InterfaceNotFound"
+			status["error"] = err.Error()
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "Interface", resource.Metadata.Name, status); err != nil {
+			return err
+		}
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "Link" {
+			continue
+		}
+		spec, err := resource.LinkSpec()
+		if err != nil {
+			return err
+		}
+		ifname := spec.IfName
+		if ifname == "" {
+			ifname = interfaceIfName(c.Router, resource.Metadata.Name)
+		}
+		status := map[string]any{"phase": "Down", "ifname": ifname}
+		if ifname == "" {
+			status["reason"] = "InterfaceMissing"
+		} else if ifi, err := net.InterfaceByName(ifname); err == nil {
+			status["index"] = ifi.Index
+			status["flags"] = ifi.Flags.String()
+			if ifi.Flags&net.FlagUp != 0 {
+				status["phase"] = "Up"
+			}
+		} else {
+			status["reason"] = "InterfaceNotFound"
+			status["error"] = err.Error()
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "Link", resource.Metadata.Name, status); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type IPv4StaticAddressController struct {
+	Router  *api.Router
+	Bus     *bus.Bus
+	Store   Store
+	DryRun  bool
+	Logger  *slog.Logger
+	Command commandFunc
+}
+
+type DaemonStatusController struct {
+	Router        *api.Router
+	Bus           *bus.Bus
+	Store         Store
+	DaemonSockets map[string]string
+	Logger        *slog.Logger
+}
+
+func (c DaemonStatusController) Start(ctx context.Context) {
+	if c.Router == nil || c.Store == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			if err := c.Reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
+				c.Logger.Warn("daemon status reconcile failed", "error", err)
+			}
+			select {
+			case <-ticker.C:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func (c DaemonStatusController) Reconcile(ctx context.Context) error {
+	for _, socket := range c.daemonSockets() {
+		statusCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		status, err := daemonStatus(statusCtx, socket)
+		cancel()
+		if err != nil {
+			if c.Logger != nil && ctx.Err() == nil {
+				c.Logger.Debug("daemon status snapshot skipped", "socket", socket, "error", err)
+			}
+			continue
+		}
+		for _, observed := range status.Resources {
+			next := map[string]any{
+				"phase":      observed.Phase,
+				"health":     observed.Health,
+				"conditions": observed.Conditions,
+				"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
+			}
+			for key, value := range observed.Observed {
+				next[key] = value
+			}
+			if err := c.Store.SaveObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name, next); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c DaemonStatusController) daemonSockets() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(socket string) {
+		if socket == "" || seen[socket] {
+			return
+		}
+		seen[socket] = true
+		out = append(out, socket)
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		switch resource.Kind {
+		case "DHCPv6PrefixDelegation":
+			socket := c.DaemonSockets[resource.Metadata.Name]
+			if socket == "" {
+				socket = filepath.Join("/run/routerd/dhcpv6-client", resource.Metadata.Name+".sock")
+			}
+			add(socket)
+		case "DHCPv4Lease":
+			socket := c.DaemonSockets[resource.Metadata.Name]
+			if socket == "" {
+				socket = filepath.Join("/run/routerd/dhcpv4-client", resource.Metadata.Name+".sock")
+			}
+			add(socket)
+		case "HealthCheck":
+			spec, err := resource.HealthCheckSpec()
+			if err != nil || spec.SocketSource == "embedded" || (spec.Daemon == "" && spec.SocketSource == "") {
+				continue
+			}
+			socket := spec.SocketSource
+			if socket == "" {
+				socket = filepath.Join("/run/routerd/healthcheck", resource.Metadata.Name+".sock")
+			}
+			add(socket)
+		case "PPPoESession":
+			spec, err := resource.PPPoESessionSpec()
+			if err != nil {
+				continue
+			}
+			socket := spec.SocketSource
+			if socket == "" {
+				socket = c.DaemonSockets[resource.Metadata.Name]
+			}
+			if socket == "" {
+				socket = filepath.Join("/run/routerd/pppoe-client", resource.Metadata.Name+".sock")
+			}
+			add(socket)
+		}
+	}
+	return out
+}
+
+func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		spec, err := resource.IPv4StaticAddressSpec()
+		if err != nil {
+			return err
+		}
+		ifname := interfaceIfName(c.Router, spec.Interface)
+		if ifname == "" {
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
+				"phase":     "Pending",
+				"reason":    "InterfaceMissing",
+				"interface": spec.Interface,
+				"address":   spec.Address,
+				"dryRun":    c.DryRun,
+			}); err != nil {
+				return err
+			}
+			continue
+		}
+		if !c.DryRun {
+			command := c.Command
+			if command == nil {
+				command = runCommandContext
+			}
+			if err := command(ctx, "ip", "-4", "addr", "replace", spec.Address, "dev", ifname); err != nil {
+				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
+					"phase":     "Error",
+					"reason":    "ApplyFailed",
+					"interface": spec.Interface,
+					"ifname":    ifname,
+					"address":   spec.Address,
+					"error":     err.Error(),
+					"dryRun":    c.DryRun,
+				}); saveErr != nil {
+					return saveErr
+				}
+				return err
+			}
+		}
+		status := map[string]any{
+			"phase":     "Applied",
+			"interface": spec.Interface,
+			"ifname":    ifname,
+			"address":   spec.Address,
+			"dryRun":    c.DryRun,
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, status); err != nil {
+			return err
+		}
+		if c.Bus != nil {
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.ipv4_address.applied", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: resource.Metadata.Name}
+			event.Attributes = map[string]string{"address": spec.Address, "interface": spec.Interface, "ifname": ifname, "dryRun": fmt.Sprintf("%t", c.DryRun)}
+			if err := c.Bus.Publish(ctx, event); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func runCommandContext(ctx context.Context, name string, args ...string) error {
+	return exec.CommandContext(ctx, name, args...).Run()
 }
 
 func (c LANAddressController) Start(ctx context.Context) {
@@ -366,11 +742,11 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if err != nil {
 			return err
 		}
-		source := spec.PrefixDelegation
-		if source == "" && strings.Contains(spec.PrefixSource, "DHCPv6PrefixDelegation/"+pdName+".status.currentPrefix") {
-			source = pdName
+		if spec.PrefixDelegation != pdName {
+			continue
 		}
-		if source != pdName {
+		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
 			continue
 		}
 		if !c.linkReady(spec.Interface) {
@@ -382,7 +758,15 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			return err
 		}
 		if !c.DryRun {
-			if err := exec.CommandContext(ctx, "ip", "-6", "addr", "replace", addr, "dev", spec.Interface).Run(); err != nil {
+			ifname := interfaceIfName(c.Router, spec.Interface)
+			if ifname == "" {
+				ifname = spec.Interface
+			}
+			command := c.Command
+			if command == nil {
+				command = runCommandContext
+			}
+			if err := command(ctx, "ip", "-6", "addr", "replace", addr, "dev", ifname); err != nil {
 				return err
 			}
 		}
@@ -410,12 +794,32 @@ func (c LANAddressController) linkReady(name string) bool {
 	if status := c.Store.ObjectStatus(api.NetAPIVersion, "Link", name); status != nil {
 		return status["phase"] == "Up"
 	}
-	ifi, err := net.InterfaceByName(name)
+	ifname := interfaceIfName(c.Router, name)
+	if ifname == "" {
+		ifname = name
+	}
+	ifi, err := net.InterfaceByName(ifname)
 	if err == nil && ifi.Flags&net.FlagUp != 0 {
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "Link", name, map[string]any{"phase": "Up", "ifname": name})
+		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "Link", name, map[string]any{"phase": "Up", "ifname": ifname})
 		return true
 	}
 	return false
+}
+
+func interfaceIfName(router *api.Router, name string) string {
+	if router == nil {
+		return name
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "Interface" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.InterfaceSpec()
+		if err == nil && spec.IfName != "" {
+			return spec.IfName
+		}
+	}
+	return name
 }
 
 func renderAndEnsureDnsmasq(ctx context.Context, router *api.Router, store Store, command, configPath, pidFile string, port int, listenAddresses []string) error {
@@ -573,14 +977,14 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
 		default:
 			lines = append(lines, fmt.Sprintf("dhcp-range=set:%s,::,constructor:%s,ra-stateless,64,%s", tag, ifname, leaseTime))
 		}
-		for _, server := range expandServers(store, spec.DNSServers) {
-			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server,[%s]", tag, strings.Trim(server, "[]")))
+		for _, server := range append(expandServers(store, spec.DNSServers), expandServerSources(store, spec.DNSServerFrom)...) {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server,[%s]", tag, dnsmasqIPv6Address(server)))
 		}
 		if len(spec.DomainSearch) > 0 {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:domain-search,%s", tag, strings.Join(spec.DomainSearch, ",")))
 		}
-		for _, server := range expandServers(store, spec.SNTPServers) {
-			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:sntp-server,[%s]", tag, strings.Trim(server, "[]")))
+		for _, server := range append(expandServers(store, spec.SNTPServers), expandServerSources(store, spec.SNTPServerFrom)...) {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:sntp-server,[%s]", tag, dnsmasqIPv6Address(server)))
 		}
 		if spec.RapidCommit {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:rapid-commit", tag))
@@ -615,8 +1019,8 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
 		if len(params) > 0 {
 			lines = append(lines, fmt.Sprintf("ra-param=%s,%s", ifname, strings.Join(params, ",")))
 		}
-		for _, server := range expandServers(store, spec.RDNSS) {
-			lines = append(lines, fmt.Sprintf("dhcp-option=option6:dns-server,[%s]", strings.Trim(server, "[]")))
+		for _, server := range append(expandServers(store, spec.RDNSS), expandServerSources(store, spec.RDNSSFrom)...) {
+			lines = append(lines, fmt.Sprintf("dhcp-option=option6:dns-server,[%s]", dnsmasqIPv6Address(server)))
 		}
 		if len(spec.DNSSL) > 0 {
 			lines = append(lines, "dhcp-option=option6:domain-search,"+strings.Join(spec.DNSSL, ","))
@@ -679,6 +1083,14 @@ func dnsmasqIPv4Reservation(spec api.DHCPv4ReservationSpec, tag string) string {
 	return strings.Join(parts, ",")
 }
 
+func dnsmasqIPv6Address(value string) string {
+	value = strings.Trim(strings.TrimSpace(value), "[]")
+	if addr, _, ok := strings.Cut(value, "/"); ok {
+		return addr
+	}
+	return value
+}
+
 func sanitizeChainTag(value string) string {
 	value = strings.ReplaceAll(value, "_", "-")
 	value = strings.ReplaceAll(value, ".", "-")
@@ -700,10 +1112,22 @@ func expandServers(store Store, values []string) []string {
 	return out
 }
 
+func expandServerSources(store Store, sources []api.StatusValueSourceSpec) []string {
+	var out []string
+	for _, source := range sources {
+		out = append(out, resourcequery.Values(store, source)...)
+	}
+	return out
+}
+
 func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, changed bool) error {
 	dnsmasqMu.Lock()
 	defer dnsmasqMu.Unlock()
 
+	command = firstNonEmpty(command, "dnsmasq")
+	if err := testDnsmasqConfig(ctx, command, configPath); err != nil {
+		return err
+	}
 	proc, alive := dnsmasqProcess(pidFile)
 	if alive && changed {
 		return proc.Signal(syscall.SIGHUP)
@@ -712,6 +1136,14 @@ func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, cha
 		return nil
 	}
 	return startDnsmasq(ctx, command, configPath, pidFile)
+}
+
+func testDnsmasqConfig(ctx context.Context, command, configPath string) error {
+	out, err := exec.CommandContext(ctx, command, "--test", "--conf-file="+configPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s --test --conf-file=%s: %w: %s", command, configPath, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func dnsmasqProcess(pidFile string) (*os.Process, bool) {

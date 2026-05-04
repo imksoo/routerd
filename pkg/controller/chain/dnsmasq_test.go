@@ -1,6 +1,7 @@
 package chain
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,18 +44,18 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 			Options:    []api.DHCPv4OptionSpec{{Code: 42, Value: "192.168.10.1"}},
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.DHCPv6ServerSpec{
-			Interface:    "lan",
-			Mode:         "both",
-			AddressPool:  api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "6h"},
-			DNSServers:   []string{"${DHCPv6Information/wan-info.status.dnsServers}"},
-			SNTPServers:  []string{"2001:db8::123"},
-			DomainSearch: []string{"lan"},
-			RapidCommit:  true,
+			Interface:     "lan",
+			Mode:          "both",
+			AddressPool:   api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "6h"},
+			DNSServerFrom: []api.StatusValueSourceSpec{{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}},
+			SNTPServers:   []string{"2001:db8::123"},
+			DomainSearch:  []string{"lan"},
+			RapidCommit:   true,
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{
 			Interface:     "lan",
-			PrefixSource:  "${IPv6DelegatedAddress/lan.status.address}",
-			RDNSS:         []string{"${DHCPv6Information/wan-info.status.dnsServers}"},
+			PrefixFrom:    api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan", Field: "address"},
+			RDNSSFrom:     []api.StatusValueSourceSpec{{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}},
 			DNSSL:         []string{"lan"},
 			MTU:           1500,
 			PRFPreference: "high",
@@ -92,6 +93,43 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 	}
 }
 
+func TestDnsmasqLANServiceLinesStripIPv6PrefixLengthFromOptions(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.DHCPv6ServerSpec{
+			Interface:     "lan",
+			Mode:          "stateless",
+			DNSServerFrom: []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan", Field: "address"}},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{
+			Interface: "lan",
+			PrefixFrom: api.StatusValueSourceSpec{
+				Resource: "IPv6DelegatedAddress/lan",
+				Field:    "address",
+			},
+			RDNSSFrom: []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan", Field: "address"}},
+		}},
+	}}}
+	store := mapStore{
+		api.NetAPIVersion + "/IPv6DelegatedAddress/lan": {
+			"address": "2409:10:3d60:1271::1/64",
+		},
+	}
+
+	got := dnsmasqLANServiceLines(router, store)
+	if !containsLine(got, "dhcp-option=tag:lan-v6,option6:dns-server,[2409:10:3d60:1271::1]") {
+		t.Fatalf("DHCPv6 DNS option did not strip prefix length:\n%#v", got)
+	}
+	if !containsLine(got, "dhcp-option=option6:dns-server,[2409:10:3d60:1271::1]") {
+		t.Fatalf("RA RDNSS option did not strip prefix length:\n%#v", got)
+	}
+	for _, line := range got {
+		if strings.Contains(line, "option6:dns-server,[2409:10:3d60:1271::1/64]") {
+			t.Fatalf("line still contains prefix length: %q", line)
+		}
+	}
+}
+
 func TestWriteDnsmasqConfigDisablesDNSPort(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dnsmasq.conf")
 	changed, err := writeDnsmasqConfig(&api.Router{}, mapStore{}, path, "/run/routerd/test.pid", 53, []string{"127.0.0.1", "192.168.160.5"})
@@ -122,6 +160,75 @@ func containsLine(lines []string, want string) bool {
 	return false
 }
 
+func TestIPv4StaticAddressControllerAppliesAddressOnAliasedInterface(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: false}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "172.18.0.1/16"}},
+	}}}
+	store := mapStore{}
+	var got []string
+	controller := IPv4StaticAddressController{
+		Router: router,
+		Store:  store,
+		Command: func(ctx context.Context, name string, args ...string) error {
+			got = append([]string{name}, args...)
+			return nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ip", "-4", "addr", "replace", "172.18.0.1/16", "dev", "ens19"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("command = %v, want %v", got, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "lan-base")
+	if status["phase"] != "Applied" || status["ifname"] != "ens19" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestLinkControllerPublishesInterfaceIfName(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lo"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Link"}, Metadata: api.ObjectMeta{Name: "lo"}, Spec: api.LinkSpec{IfName: "lo"}},
+	}}}
+	store := mapStore{}
+	controller := LinkController{Router: router, Store: store}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	iface := store.ObjectStatus(api.NetAPIVersion, "Interface", "lo")
+	if iface["ifname"] != "lo" {
+		t.Fatalf("interface status = %#v", iface)
+	}
+	link := store.ObjectStatus(api.NetAPIVersion, "Link", "lo")
+	if link["ifname"] != "lo" {
+		t.Fatalf("link status = %#v", link)
+	}
+}
+
+func TestDaemonStatusControllerDiscoversDaemonSockets(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.HealthCheckSpec{Daemon: "routerd-healthcheck"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "embedded"}, Spec: api.HealthCheckSpec{SocketSource: "embedded"}},
+	}}}
+	controller := DaemonStatusController{Router: router}
+	got := strings.Join(controller.daemonSockets(), "\n")
+	for _, want := range []string{
+		"/run/routerd/dhcpv6-client/wan-pd.sock",
+		"/run/routerd/healthcheck/internet.sock",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sockets = %q, missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "embedded") {
+		t.Fatalf("embedded healthcheck should not have a daemon socket: %q", got)
+	}
+}
+
 func TestDSLiteTunnelResolveRemoteDirectIPv6SkipsDNS(t *testing.T) {
 	controller := DSLiteTunnelController{ResolverPort: 9}
 	name, remote, err := controller.resolveRemote(t.Context(), api.DSLiteTunnelSpec{AFTRIPv6: "2404:8e00::feed:100"})
@@ -138,13 +245,12 @@ func TestDSLiteTunnelLocalDelegatedAddress(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lo"}, Spec: api.InterfaceSpec{IfName: "lo"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.IPv6DelegatedAddressSpec{
 			Interface:     "lo",
-			PrefixSource:  "${DHCPv6PrefixDelegation/wan-pd.status.currentPrefix}",
-			SubnetID:      "1",
+			SubnetID:      "",
 			AddressSuffix: "::1",
 		}},
 	}}}
 	store := mapStore{
-		api.NetAPIVersion + "/DHCPv6PrefixDelegation/wan-pd": {"currentPrefix": "2409:10:3d60:1220::/60"},
+		api.NetAPIVersion + "/IPv6DelegatedAddress/lan": {"address": "2409:10:3d60:1221::1/64"},
 	}
 	controller := DSLiteTunnelController{Router: router, Store: store}
 	local, ifname, err := controller.localAddress(api.DSLiteTunnelSpec{

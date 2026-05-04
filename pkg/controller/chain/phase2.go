@@ -20,6 +20,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/resourcequery"
 )
 
 type DHCPv6InformationController struct {
@@ -143,6 +144,10 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
+			continue
+		}
 		aftrName, remote, err := c.resolveRemote(ctx, spec)
 		if err != nil && aftrName == "" {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "AFTRMissing"})
@@ -196,7 +201,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLiteTunnelSpec) (string, string, error) {
 	var firstName string
 	candidates := []string{
-		valueFromStatusRef(c.Store, spec.AFTRSource),
+		resourcequery.Value(c.Store, spec.AFTRFrom),
 		spec.AFTRFQDN,
 		spec.AFTRIPv6,
 		spec.RemoteAddress,
@@ -233,30 +238,50 @@ type IPv4RouteController struct {
 func (c IPv4RouteController) Start(ctx context.Context) {
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.tunnel.ds-lite.*", "routerd.lan.route.changed"}}, 32)
 	go func() {
-		for range ch {
-			if err := c.reconcile(ctx); err != nil && c.Logger != nil {
-				c.Logger.Warn("ipv4 route reconcile failed", "error", err)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+				if err := c.reconcile(ctx); err != nil && c.Logger != nil {
+					c.Logger.Warn("ipv4 route reconcile failed", "error", err)
+				}
+			case <-ticker.C:
+				if err := c.reconcile(ctx); err != nil && c.Logger != nil {
+					c.Logger.Warn("ipv4 route periodic reconcile failed", "error", err)
+				}
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
 }
 
 func (c IPv4RouteController) reconcile(ctx context.Context) error {
+	var failures []string
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "IPv4Route" {
 			continue
 		}
 		spec, err := resource.IPv4RouteSpec()
 		if err != nil {
-			return err
+			failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
+			continue
 		}
-		device := firstNonEmpty(valueFromStatusRef(c.Store, spec.Device), spec.Device)
+		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
+			continue
+		}
+		device := firstNonEmpty(resourcequery.Value(c.Store, spec.DeviceFrom), strings.TrimSpace(spec.Device))
 		if device == "" {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceMissing"})
 			continue
 		}
 		destination := firstNonEmpty(spec.Destination, "0.0.0.0/0")
-		gateway := firstNonEmpty(valueFromStatusRef(c.Store, spec.Gateway), spec.Gateway)
+		gateway := firstNonEmpty(resourcequery.Value(c.Store, spec.GatewayFrom), strings.TrimSpace(spec.Gateway))
 		if !c.DryRun {
 			args := []string{"route", "replace", destination, "dev", device}
 			if gateway != "" {
@@ -265,8 +290,17 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			if spec.Metric > 0 {
 				args = append(args, "metric", fmt.Sprintf("%d", spec.Metric))
 			}
-			if err := exec.CommandContext(ctx, "ip", args...).Run(); err != nil {
-				return err
+			cmd := exec.CommandContext(ctx, "ip", args...)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				message := strings.TrimSpace(string(out))
+				status := map[string]any{"phase": "Error", "reason": "ApplyFailed", "destination": destination, "device": device, "gateway": gateway, "metric": spec.Metric, "dryRun": c.DryRun, "error": err.Error(), "command": "ip " + strings.Join(args, " ")}
+				if message != "" {
+					status["message"] = message
+				}
+				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status)
+				failures = append(failures, fmt.Sprintf("%s: %s: %v", resource.Metadata.Name, status["command"], err))
+				continue
 			}
 		}
 		status := map[string]any{"phase": "Installed", "destination": destination, "device": device, "gateway": gateway, "metric": spec.Metric, "dryRun": c.DryRun, "installedAt": time.Now().UTC().Format(time.RFC3339Nano)}
@@ -279,6 +313,9 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		if err := c.Bus.Publish(ctx, event); err != nil {
 			return err
 		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
 }
@@ -311,12 +348,16 @@ func (c IPv6RouterAdvertisementController) reconcile(ctx context.Context) error 
 		if err != nil {
 			return err
 		}
-		prefix := prefixFromStatusOrAddress(c.Store, spec.PrefixSource)
+		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
+			continue
+		}
+		prefix := firstNonEmpty(prefixFromStatusOrAddress(c.Store, resourcequery.Value(c.Store, spec.PrefixFrom)), prefixFromStatusOrAddress(c.Store, spec.Prefix), prefixFromStatusOrAddress(c.Store, spec.PrefixSource))
 		if prefix == "" {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "PrefixMissing"})
 			continue
 		}
-		rdnss := expandServers(c.Store, spec.RDNSS)
+		rdnss := append(expandServers(c.Store, spec.RDNSS), expandServerSources(c.Store, spec.RDNSSFrom)...)
 		configPath := firstNonEmpty(spec.ConfigPath, "/run/routerd/radvd-phase2.conf")
 		if err := writeRadvdConfig(configPath, spec.Interface, prefix, rdnss, spec.PreferredLifetime, spec.ValidLifetime); err != nil {
 			return err
@@ -373,7 +414,11 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		dnsServers := expandServers(c.Store, spec.DNSServers)
+		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
+			continue
+		}
+		dnsServers := append(expandServers(c.Store, spec.DNSServers), expandServerSources(c.Store, spec.DNSServerFrom)...)
 		configPath := firstNonEmpty(c.ConfigPath, "/run/routerd/dnsmasq-phase1.conf")
 		pidFile := firstNonEmpty(c.PIDFile, "/run/routerd/dnsmasq-phase1.pid")
 		port := c.Port
@@ -384,10 +429,21 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := ensureDnsmasq(ctx, c.Command, configPath, pidFile, changed); err != nil {
-			return err
+		if c.DryRun {
+			command := firstNonEmpty(c.Command, "dnsmasq")
+			if err := testDnsmasqConfig(ctx, command, configPath); err != nil {
+				return err
+			}
+		} else {
+			if err := ensureDnsmasq(ctx, c.Command, configPath, pidFile, changed); err != nil {
+				return err
+			}
 		}
-		status := map[string]any{"phase": "Applied", "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "dnsServers": dnsServers, "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}
+		phase := "Applied"
+		if c.DryRun {
+			phase = "Rendered"
+		}
+		status := map[string]any{"phase": phase, "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "dnsServers": dnsServers, "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, status); err != nil {
 			return err
 		}
@@ -492,6 +548,14 @@ func valueFromStatusRef(store Store, ref string) string {
 	}
 }
 
+func valueFromStatusRefOrLiteral(store Store, value string) string {
+	trimmed := strings.TrimSpace(value)
+	if strings.HasPrefix(trimmed, "${") && strings.Contains(trimmed, ".status.") {
+		return valueFromStatusRef(store, trimmed)
+	}
+	return trimmed
+}
+
 func (c DSLiteTunnelController) localAddress(spec api.DSLiteTunnelSpec) (string, string, error) {
 	switch spec.LocalAddressSource {
 	case "delegatedAddress":
@@ -529,14 +593,15 @@ func (c DSLiteTunnelController) localDelegatedAddress(spec api.DSLiteTunnelSpec)
 		if err != nil {
 			return "", "", err
 		}
-		prefix := prefixFromStatusOrAddress(c.Store, delegated.PrefixSource)
-		if prefix == "" {
-			prefix = prefixFromStatusOrAddress(c.Store, "${IPv6DelegatedAddress/"+spec.LocalDelegatedAddress+".status.address}")
-		}
+		prefix := prefixFromStatusOrAddress(c.Store, "${IPv6DelegatedAddress/"+spec.LocalDelegatedAddress+".status.address}")
 		if prefix == "" {
 			return "", "", fmt.Errorf("delegated prefix is not ready")
 		}
-		local, err := deriveIPv6AddressFromPrefix(prefix, delegated.SubnetID, firstNonEmpty(spec.LocalAddressSuffix, delegated.AddressSuffix, "::1"))
+		subnetID := delegated.SubnetID
+		if parsed, err := netip.ParsePrefix(prefix); err == nil && parsed.Bits() == 64 {
+			subnetID = ""
+		}
+		local, err := deriveIPv6AddressFromPrefix(prefix, subnetID, firstNonEmpty(spec.LocalAddressSuffix, delegated.AddressSuffix, "::1"))
 		if err != nil {
 			return "", "", err
 		}
@@ -603,6 +668,48 @@ func prefixFromStatusOrAddress(store Store, ref string) string {
 		return netip.PrefixFrom(addr, 64).Masked().String()
 	}
 	return ""
+}
+
+func readyWhenAll(store Store, predicates []api.ReadyWhenSpec) bool {
+	for _, predicate := range predicates {
+		if !readyWhen(store, predicate) {
+			return false
+		}
+	}
+	return true
+}
+
+func readyWhen(store Store, predicate api.ReadyWhenSpec) bool {
+	if len(predicate.AnyOf) > 0 {
+		for _, group := range predicate.AnyOf {
+			ok := len(group) > 0
+			for _, item := range group {
+				if !readyWhenPredicate(store, item) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				return true
+			}
+		}
+		return false
+	}
+	return readyWhenPredicate(store, api.ReadyWhenPredicateSpec{Field: predicate.Field, Equals: predicate.Equals, NotEmpty: predicate.NotEmpty})
+}
+
+func readyWhenPredicate(store Store, predicate api.ReadyWhenPredicateSpec) bool {
+	value := strings.TrimSpace(valueFromStatusRef(store, predicate.Field))
+	if predicate.NotEmpty && value == "" {
+		return false
+	}
+	if predicate.Equals != "" && value != predicate.Equals {
+		return false
+	}
+	if predicate.Field != "" && !predicate.NotEmpty && predicate.Equals == "" {
+		return value != ""
+	}
+	return true
 }
 
 func deriveIPv6AddressFromPrefix(value, subnetID, suffix string) (string, error) {

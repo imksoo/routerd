@@ -52,7 +52,7 @@ func TestDaemonSourcePollsUnixSocketEvents(t *testing.T) {
 		Socket:    socket,
 		Publisher: publisher,
 	}
-	if _, err := source.poll(context.Background(), httpClientForUnixSocket(socket), "", 0); err != nil {
+	if _, err := source.poll(context.Background(), httpClientForUnixSocket(socket), "", 0, true); err != nil {
 		t.Fatal(err)
 	}
 	if len(publisher.events) != 1 {

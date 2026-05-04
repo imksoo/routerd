@@ -118,8 +118,11 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return err
 	}
+	nft := firstNonEmpty(c.NftCommand, "nft")
+	if err := checkNftablesRuleset(ctx, nft, path); err != nil {
+		return err
+	}
 	if !c.DryRun {
-		nft := firstNonEmpty(c.NftCommand, "nft")
 		_ = exec.CommandContext(ctx, nft, "delete", "table", "ip", "routerd_nat").Run()
 		cmd := exec.CommandContext(ctx, nft, "-f", path)
 		out, err := cmd.CombinedOutput()
@@ -145,6 +148,14 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		if err := c.Bus.Publish(ctx, event); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func checkNftablesRuleset(ctx context.Context, nft, path string) error {
+	out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

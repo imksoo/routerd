@@ -47,7 +47,7 @@ func TestControllerRendersDryRunNAT44FromEgressRoutePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "nat44.nft")
-	controller := Controller{Router: router, Bus: bus.New(), Store: store, DryRun: true, NftablesPath: path}
+	controller := Controller{Router: router, Bus: bus.New(), Store: store, DryRun: true, NftablesPath: path, NftCommand: "true"}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}

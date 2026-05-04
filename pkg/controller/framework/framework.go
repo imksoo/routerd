@@ -31,6 +31,45 @@ type Runner struct {
 	Interval time.Duration
 }
 
+type FuncController struct {
+	ControllerName string
+	Subs           []bus.Subscription
+	Every          time.Duration
+	ReconcileFunc  func(context.Context, daemonapi.DaemonEvent) error
+	PeriodicFunc   func(context.Context) error
+}
+
+func (c FuncController) Name() string {
+	if c.ControllerName == "" {
+		return "controller"
+	}
+	return c.ControllerName
+}
+
+func (c FuncController) Subscriptions() []bus.Subscription {
+	return c.Subs
+}
+
+func (c FuncController) Reconcile(ctx context.Context, event daemonapi.DaemonEvent) error {
+	if c.ReconcileFunc != nil {
+		return c.ReconcileFunc(ctx, event)
+	}
+	if c.PeriodicFunc != nil {
+		return c.PeriodicFunc(ctx)
+	}
+	return nil
+}
+
+func (c FuncController) PeriodicReconcile(ctx context.Context) error {
+	if c.PeriodicFunc != nil {
+		return c.PeriodicFunc(ctx)
+	}
+	if c.ReconcileFunc != nil {
+		return c.ReconcileFunc(ctx, daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.periodic", daemonapi.SeverityDebug))
+	}
+	return nil
+}
+
 func (r Runner) Run(ctx context.Context, controllers ...Controller) error {
 	if r.Bus == nil {
 		return fmt.Errorf("bus is required")
@@ -51,13 +90,17 @@ func (r Runner) Run(ctx context.Context, controllers ...Controller) error {
 	var wg sync.WaitGroup
 	for _, controller := range controllers {
 		controller := controller
-		for _, sub := range controller.Subscriptions() {
+		subs := controller.Subscriptions()
+		if len(subs) == 0 {
+			subs = []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.controller.bootstrap"}}}
+		}
+		for _, sub := range subs {
 			events, cancel := r.Bus.Subscribe(ctx, sub, 64)
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				defer cancel()
-				runController(ctx, logger, locker, interval, controller, events)
+				runController(ctx, logger, locker, controllerInterval(controller, interval), controller, events)
 			}()
 		}
 	}
@@ -69,6 +112,10 @@ func (r Runner) Run(ctx context.Context, controllers ...Controller) error {
 func runController(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, interval time.Duration, controller Controller, events <-chan daemonapi.DaemonEvent) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	bootstrap := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
+	runLocked(ctx, logger, locker, controller.Name()+":bootstrap", controller.Name(), func(runCtx context.Context) error {
+		return controller.Reconcile(runCtx, bootstrap)
+	})
 	for {
 		select {
 		case event, ok := <-events:
@@ -85,6 +132,18 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 			return
 		}
 	}
+}
+
+func controllerInterval(controller Controller, fallback time.Duration) time.Duration {
+	if typed, ok := controller.(interface{ Interval() time.Duration }); ok {
+		if interval := typed.Interval(); interval > 0 {
+			return interval
+		}
+	}
+	if typed, ok := controller.(FuncController); ok && typed.Every > 0 {
+		return typed.Every
+	}
+	return fallback
 }
 
 func runLocked(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, key, name string, fn func(context.Context) error) {

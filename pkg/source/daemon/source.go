@@ -22,6 +22,7 @@ type DaemonSource struct {
 	Publisher Publisher
 	Wait      time.Duration
 	Backoff   time.Duration
+	Replay    bool
 }
 
 type EventsResponse struct {
@@ -47,11 +48,17 @@ func (s DaemonSource) Run(ctx context.Context) error {
 	}
 	client := httpClientForUnixSocket(s.Socket)
 	var cursor string
+	if !s.Replay {
+		next, err := s.poll(ctx, client, cursor, 0, false)
+		if err == nil {
+			cursor = next
+		}
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		next, err := s.poll(ctx, client, cursor, wait)
+		next, err := s.poll(ctx, client, cursor, wait, true)
 		if err != nil {
 			timer := time.NewTimer(backoff)
 			select {
@@ -68,7 +75,7 @@ func (s DaemonSource) Run(ctx context.Context) error {
 	}
 }
 
-func (s DaemonSource) poll(ctx context.Context, client *http.Client, cursor string, wait time.Duration) (string, error) {
+func (s DaemonSource) poll(ctx context.Context, client *http.Client, cursor string, wait time.Duration, publish bool) (string, error) {
 	values := url.Values{}
 	values.Set("wait", wait.String())
 	if cursor != "" {
@@ -95,8 +102,10 @@ func (s DaemonSource) poll(ctx context.Context, client *http.Client, cursor stri
 		if event.Daemon.Name == "" {
 			event.Daemon = s.Daemon
 		}
-		if err := s.Publisher.Publish(ctx, event); err != nil {
-			return next, err
+		if publish {
+			if err := s.Publisher.Publish(ctx, event); err != nil {
+				return next, err
+			}
 		}
 		if event.Cursor != "" {
 			next = event.Cursor

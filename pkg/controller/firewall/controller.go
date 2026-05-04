@@ -96,8 +96,13 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
+	nft := firstNonEmpty(c.NftCommand, "nft")
+	if changed {
+		if err := checkNftablesRuleset(ctx, nft, path); err != nil {
+			return err
+		}
+	}
 	if changed && !c.DryRun {
-		nft := firstNonEmpty(c.NftCommand, "nft")
 		_ = exec.CommandContext(ctx, nft, "delete", "table", "inet", "routerd_filter").Run()
 		out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput()
 		if err != nil {
@@ -125,6 +130,14 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.firewall.rules.applied", daemonapi.SeverityInfo)
 		event.Attributes = map[string]string{"nftablesPath": path, "dryRun": fmt.Sprintf("%t", c.DryRun), "internalHoles": fmt.Sprintf("%d", len(holes))}
 		_ = c.Bus.Publish(ctx, event)
+	}
+	return nil
+}
+
+func checkNftablesRuleset(ctx context.Context, nft, path string) error {
+	out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
