@@ -293,6 +293,24 @@ func TestPlanSysctlDrift(t *testing.T) {
 	}
 }
 
+func TestNormalizeSysctlValue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "single", in: "1\n", want: "1"},
+		{name: "tabSeparated", in: "1024\t65535\n", want: "1024 65535"},
+		{name: "multiSpace", in: "4096  87380\t16777216\n", want: "4096 87380 16777216"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeSysctlValue(tc.in); got != tc.want {
+				t.Fatalf("normalizeSysctlValue(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPlanBlocksOverlappingObservedWANAndLANStatic(t *testing.T) {
 	router := overlapRouter(false)
 	engine := &Engine{

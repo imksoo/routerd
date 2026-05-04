@@ -1261,9 +1261,9 @@ func (e *Engine) observeSysctl(res api.Resource, includePlan bool, rr *ResourceR
 	rr.Observed["persistent"] = fmt.Sprintf("%t", persistent)
 
 	if out, err := e.Command("sysctl", "-n", key); err == nil {
-		current := strings.TrimSpace(string(out))
+		current := normalizeSysctlValue(string(out))
 		rr.Observed["current"] = current
-		if current != desired {
+		if current != normalizeSysctlValue(desired) {
 			rr.Phase = "Drifted"
 		}
 	} else {
@@ -1302,9 +1302,9 @@ func (e *Engine) observeSysctlProfile(res api.Resource, includePlan bool, rr *Re
 	rr.Observed["persistent"] = fmt.Sprintf("%t", spec.Persistent)
 	for _, entry := range entries {
 		if out, err := e.Command("sysctl", "-n", entry.Key); err == nil {
-			current := strings.TrimSpace(string(out))
+			current := normalizeSysctlValue(string(out))
 			rr.Observed[entry.Key] = current
-			if current != entry.Value && !entry.Optional {
+			if current != normalizeSysctlValue(entry.Value) && !entry.Optional {
 				rr.Phase = "Drifted"
 			}
 		} else if !entry.Optional {
@@ -1323,6 +1323,14 @@ func (e *Engine) observeSysctlProfile(res api.Resource, includePlan bool, rr *Re
 		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s=%s%s", entry.Key, entry.Value, note))
 	}
+}
+
+func normalizeSysctlValue(value string) string {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Join(fields, " ")
 }
 
 func (e *Engine) observeNetworkAdoption(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
