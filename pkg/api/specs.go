@@ -114,6 +114,14 @@ type NTPClientSpec struct {
 	Servers   []string `yaml:"servers,omitempty" json:"servers,omitempty"`
 }
 
+type WebConsoleSpec struct {
+	Enabled       *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ListenAddress string `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
+	Port          int    `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	BasePath      string `yaml:"basePath,omitempty" json:"basePath,omitempty"`
+	Title         string `yaml:"title,omitempty" json:"title,omitempty"`
+}
+
 type NixOSHostSpec struct {
 	Hostname              string                  `yaml:"hostname,omitempty" json:"hostname,omitempty"`
 	Domain                string                  `yaml:"domain,omitempty" json:"domain,omitempty"`
@@ -978,6 +986,10 @@ func (r Resource) SystemdUnitSpec() (SystemdUnitSpec, error) {
 
 func (r Resource) NTPClientSpec() (NTPClientSpec, error) {
 	return specAs[NTPClientSpec](r)
+}
+
+func (r Resource) WebConsoleSpec() (WebConsoleSpec, error) {
+	return specAs[WebConsoleSpec](r)
 }
 
 func (r Resource) NixOSHostSpec() (NixOSHostSpec, error) {

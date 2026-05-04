@@ -837,6 +837,27 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.servers[%d] must be a single hostname or IP address", res.ID(), i)
 			}
 		}
+	case "WebConsole":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.WebConsoleSpec()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(spec.ListenAddress) != "" {
+			if _, err := netip.ParseAddr(spec.ListenAddress); err != nil {
+				return fmt.Errorf("%s spec.listenAddress must be an IP address", res.ID())
+			}
+		}
+		if spec.Port < 0 || spec.Port > 65535 {
+			return fmt.Errorf("%s spec.port must be omitted or between 1 and 65535", res.ID())
+		}
+		if spec.BasePath != "" {
+			if !strings.HasPrefix(spec.BasePath, "/") || strings.ContainsAny(spec.BasePath, "\x00\r\n") {
+				return fmt.Errorf("%s spec.basePath must be an absolute HTTP path", res.ID())
+			}
+		}
 	case "NixOSHost":
 		if res.APIVersion != api.SystemAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)

@@ -35,6 +35,8 @@ Implemented resource areas include:
   `DerivedEvent`
 - IPv4 default routes, NAT44 through nftables, and aggregate conntrack
   observation
+- a read-only Web Console for status, events, traffic, and performance-oriented
+  observations
 - Local HTTP+JSON control APIs over Unix sockets for routerd and the managed
   daemons
 - NixOS module rendering, including a declarative

@@ -511,6 +511,30 @@ func (s *SQLiteStore) ObjectStatus(apiVersion, kind, name string) map[string]any
 	return out
 }
 
+func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
+	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}') FROM objects ORDER BY api_version,kind,name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ObjectStatus
+	for rows.Next() {
+		var item ObjectStatus
+		var raw string
+		if err := rows.Scan(&item.APIVersion, &item.Kind, &item.Name, &raw); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(raw), &item.Status); err != nil {
+			item.Status = map[string]any{"error": err.Error()}
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *SQLiteStore) DeleteObject(apiVersion, kind, name string) error {
 	_, err := s.db.Exec(`DELETE FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name)
 	return err

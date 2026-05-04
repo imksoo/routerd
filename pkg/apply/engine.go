@@ -79,6 +79,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeSysctlProfile(res, includePlan, &rr)
 		case "NTPClient":
 			e.observeNTPClient(res, aliases, includePlan, &rr)
+		case "WebConsole":
+			e.observeWebConsole(res, includePlan, &rr)
 		case "Interface":
 			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], includePlan, &rr)
 		case "PPPoEInterface":
@@ -207,6 +209,39 @@ func (e *Engine) observeNTPClient(res api.Resource, aliases map[string]string, i
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s uses static NTP servers on %s", provider, aliases[spec.Interface]))
 	} else {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s uses static global NTP servers", provider))
+	}
+}
+
+func (e *Engine) observeWebConsole(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.WebConsoleSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	enabled := spec.Enabled == nil || *spec.Enabled
+	address := spec.ListenAddress
+	if address == "" {
+		address = "127.0.0.1"
+	}
+	port := spec.Port
+	if port == 0 {
+		port = 8080
+	}
+	basePath := spec.BasePath
+	if basePath == "" {
+		basePath = "/"
+	}
+	rr.Observed["enabled"] = fmt.Sprintf("%t", enabled)
+	rr.Observed["listen"] = fmt.Sprintf("%s:%d", address, port)
+	rr.Observed["basePath"] = basePath
+	if !includePlan {
+		return
+	}
+	if enabled {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("serve read-only web console on %s:%d%s", address, port, basePath))
+	} else {
+		rr.Plan = append(rr.Plan, "web console disabled")
 	}
 }
 

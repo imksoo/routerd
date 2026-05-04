@@ -87,6 +87,17 @@ type ObjectStatusStore interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
+type ObjectStatus struct {
+	APIVersion string         `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string         `json:"kind" yaml:"kind"`
+	Name       string         `json:"name" yaml:"name"`
+	Status     map[string]any `json:"status" yaml:"status"`
+}
+
+type ObjectStatusLister interface {
+	ListObjectStatuses() ([]ObjectStatus, error)
+}
+
 type ObjectDeleteStore interface {
 	DeleteObject(apiVersion, kind, name string) error
 }

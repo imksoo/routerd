@@ -42,6 +42,7 @@ import (
 	routerstate "routerd/pkg/state"
 	statuswriter "routerd/pkg/status"
 	"routerd/pkg/sysctlprofile"
+	"routerd/pkg/webconsole"
 )
 
 const (
@@ -2356,8 +2357,9 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		cancelControllers()
 	}()
 	var controllerBus *bus.Bus
+	var stateStore *routerstate.SQLiteStore
 	if *controllerChain {
-		stateStore, err := routerstate.OpenSQLite(defaultStatePath)
+		stateStore, err = routerstate.OpenSQLite(defaultStatePath)
 		if err != nil {
 			return err
 		}
@@ -2416,6 +2418,22 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	applyMu := &sync.Mutex{}
 	if *applyInterval > 0 {
 		go runApplySchedule(stop, *applyInterval, router, applyOpts, cache, logger, applyMu)
+	}
+	if console, ok := webConsoleFromRouter(router); ok {
+		var webStore routerstate.Store
+		if stateStore != nil {
+			webStore = stateStore
+		} else {
+			opened, openErr := routerstate.OpenSQLite(defaultStatePath)
+			if openErr != nil {
+				return openErr
+			}
+			defer opened.Close()
+			webStore = opened
+		}
+		if err := startWebConsole(ctx, console, router, webStore, cache, logger); err != nil {
+			return err
+		}
 	}
 
 	if err := os.MkdirAll(filepathDir(*socketPath), 0755); err != nil {
@@ -2488,6 +2506,70 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	server := &http.Server{Handler: handler}
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
 	return server.Serve(listener)
+}
+
+func webConsoleFromRouter(router *api.Router) (api.WebConsoleSpec, bool) {
+	if router == nil {
+		return api.WebConsoleSpec{}, false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "WebConsole" {
+			continue
+		}
+		spec, err := resource.WebConsoleSpec()
+		if err != nil {
+			continue
+		}
+		if spec.Enabled != nil && !*spec.Enabled {
+			return api.WebConsoleSpec{}, false
+		}
+		if spec.ListenAddress == "" {
+			spec.ListenAddress = "127.0.0.1"
+		}
+		if spec.Port == 0 {
+			spec.Port = 8080
+		}
+		if spec.BasePath == "" {
+			spec.BasePath = "/"
+		}
+		if spec.Title == "" {
+			spec.Title = "routerd"
+		}
+		return spec, true
+	}
+	return api.WebConsoleSpec{}, false
+}
+
+func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, cache *resultCache, logger *eventlog.Logger) error {
+	addr := net.JoinHostPort(spec.ListenAddress, fmt.Sprintf("%d", spec.Port))
+	handler := webconsole.New(webconsole.Options{
+		Router:   router,
+		Store:    store,
+		Result:   cache.Load,
+		NAPT:     observe.NAPT,
+		Title:    spec.Title,
+		BasePath: spec.BasePath,
+	})
+	server := &http.Server{Addr: addr, Handler: handler}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+	go func() {
+		if logger != nil {
+			logger.Emit(eventlog.LevelInfo, "serve", "routerd web console starting", map[string]string{"listen": addr, "basePath": spec.BasePath})
+		}
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed && logger != nil {
+			logger.Emit(eventlog.LevelWarning, "serve", "routerd web console stopped", map[string]string{"error": err.Error()})
+		}
+	}()
+	return nil
 }
 
 type resultCache struct {

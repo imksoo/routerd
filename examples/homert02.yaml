@@ -234,6 +234,15 @@ spec:
         name: routerd-dhcpv6-client@wan-pd.service
       spec:
         state: absent
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: WebConsole
+      metadata:
+        name: mgmt
+      spec:
+        enabled: true
+        listenAddress: 192.168.123.129
+        port: 8080
+        title: homert02
 
     # --- インターフェース ---
     - apiVersion: net.routerd.net/v1alpha1

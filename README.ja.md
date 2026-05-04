@@ -30,6 +30,7 @@ IPv4 経路、NAT44、WAN 出口選択も同じ流れで扱います。
 - `EgressRoutePolicy`、`HealthCheck`、`EventRule`、`DerivedEvent` による
   WAN 出口選択
 - IPv4 既定経路、nftables による NAT44、conntrack 集計観測
+- 状態、イベント、通信、性能に関する観測値を表示する読み取り専用 Web Console
 - Unix ソケット HTTP+JSON の routerd / デーモン制御 API
 - NixOS 生成設定。router02 では `routerd-dhcpv6-client@wan-pd` を
   `routerd-generated.nix` の宣言的ユニットとして運用済み
