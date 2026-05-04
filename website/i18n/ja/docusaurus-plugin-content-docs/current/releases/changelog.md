@@ -14,6 +14,9 @@ routerd は出荷前のソフトウェアです。
   NixOS 上の `Package` は実行時に導入せず、生成された NixOS 設定で管理する扱いにしました。
 - Phase 3.0b: FreeBSD 向け `Package` の実行経路を追加しました。
   `pkg info -e` で導入済みパッケージを確認し、不足があれば `pkg install -y` で導入します。
+- Phase 3.0c: FreeBSD 向け pf 生成器の最初の実装を追加しました。
+  `FirewallZone`、`FirewallPolicy`、`FirewallRule`、`IPv4SourceNAT`、`NAT44Rule` から `pf.conf` を生成します。
+  実機適用はまだ接続せず、`routerd render freebsd --out-dir ...` の生成物として確認する段階です。
 
 ## 0.3.0
 

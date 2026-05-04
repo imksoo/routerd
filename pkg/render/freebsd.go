@@ -15,6 +15,7 @@ type FreeBSDConfig struct {
 	RCConf     []byte
 	DHCPClient []byte
 	MPD5       []byte
+	PF         []byte
 	Warnings   []string
 }
 
@@ -160,6 +161,15 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 		rc.WriteString("mpd_enable=\"YES\"\n")
 		rc.WriteString("mpd_flags=\"-b\"\n")
 	}
+	pf, err := PF(router, nil)
+	if err != nil {
+		return FreeBSDConfig{}, err
+	}
+	if len(pf) > 0 {
+		rc.WriteString("pf_enable=\"YES\"\n")
+		rc.WriteString("pflog_enable=\"YES\"\n")
+		warnings = append(warnings, "FreeBSD pf.conf was generated, but live pf apply is not wired yet. Install the generated pf.conf and validate with pfctl -nf before enabling.")
+	}
 	writeFreeBSDClonedInterfaces(&rc, bridges, vxlans)
 	writeFreeBSDVXLANS(&rc, vxlans)
 	writeFreeBSDBridges(&rc, bridges)
@@ -172,7 +182,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	if err != nil {
 		return FreeBSDConfig{}, err
 	}
-	return FreeBSDConfig{RCConf: rc.Bytes(), DHCPClient: dhclient, MPD5: mpd5, Warnings: warnings}, nil
+	return FreeBSDConfig{RCConf: rc.Bytes(), DHCPClient: dhclient, MPD5: mpd5, PF: pf, Warnings: warnings}, nil
 }
 
 type freeBSDPPPoE struct {

@@ -25,6 +25,9 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"}, Metadata: api.ObjectMeta{Name: "lab-v4"}, Spec: api.IPv4StaticRouteSpec{Interface: "lan", Destination: "192.0.2.0/24", Via: "192.168.10.254"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"}, Metadata: api.ObjectMeta{Name: "lab-v6"}, Spec: api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:1::/64", Via: "fe80::1"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", SubnetID: "0", AddressSuffix: "::1", Announce: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"}, Metadata: api.ObjectMeta{Name: "lan-nat"}, Spec: api.IPv4SourceNATSpec{OutboundInterface: "wan", SourceCIDRs: []string{"192.168.10.0/24"}, Translation: api.IPv4NATTranslationSpec{Type: "interfaceAddress"}}},
 	}}}
 
 	got, err := FreeBSD(router)
@@ -46,9 +49,22 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		`route_lab_v4="-net 192.0.2.0/24 192.168.10.254"`,
 		`ipv6_static_routes="lab_v6"`,
 		`ipv6_route_lab_v6="2001:db8:1::/64 fe80::1%vtnet0"`,
+		`pf_enable="YES"`,
+		`pflog_enable="YES"`,
 	} {
 		if !strings.Contains(rc, want) {
 			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
+		}
+	}
+	pf := string(got.PF)
+	for _, want := range []string{
+		`wan_if = vtnet0`,
+		`lan_if = vtnet1`,
+		`nat on vtnet0 from 192.168.10.0/24 to any -> (vtnet0)`,
+		`block drop all`,
+	} {
+		if !strings.Contains(pf, want) {
+			t.Fatalf("pf output missing %q:\n%s", want, pf)
 		}
 	}
 	dhclient := string(got.DHCPClient)

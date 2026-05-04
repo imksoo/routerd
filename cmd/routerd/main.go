@@ -175,6 +175,9 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	if len(data.MPD5) > 0 {
 		files["mpd5.conf"] = data.MPD5
 	}
+	if len(data.PF) > 0 {
+		files["pf.conf"] = data.PF
+	}
 	for name, content := range files {
 		path := strings.TrimRight(*outDir, "/") + "/" + name
 		perm := os.FileMode(0644)
