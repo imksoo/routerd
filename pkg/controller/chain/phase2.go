@@ -139,6 +139,7 @@ func (c DSLiteTunnelController) Start(ctx context.Context) {
 }
 
 func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
+	var failures []string
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DSLiteTunnel" {
 			continue
@@ -170,6 +171,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			continue
 		}
 		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
+		actualIfName := ifname
 		mtu := spec.MTU
 		if mtu == 0 {
 			mtu = 1460
@@ -179,14 +181,28 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if !c.DryRun && changed {
 			if localIfName != "" {
 				if err := ensureIPv6LocalEndpoint(ctx, localIfName, local); err != nil {
-					return err
+					failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
+					_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "LocalEndpointApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun})
+					continue
 				}
 			}
-			if err := ensureDSLiteTunnel(ctx, c.Router, spec, ifname, remote, local); err != nil {
-				return err
+			resolvedIfName, err := ensureDSLiteTunnel(ctx, c.Router, spec, ifname, remote, local)
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
+				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "TunnelApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun})
+				continue
 			}
-			if err := exec.CommandContext(ctx, "ip", "link", "set", ifname, "mtu", fmt.Sprintf("%d", mtu), "up").Run(); err != nil {
-				return err
+			actualIfName = firstNonEmpty(resolvedIfName, ifname)
+			if actualIfName != ifname {
+				status["interface"] = actualIfName
+				status["device"] = actualIfName
+				status["aliasOf"] = actualIfName
+				status["desiredTunnelName"] = ifname
+			}
+			if err := exec.CommandContext(ctx, "ip", "link", "set", actualIfName, "mtu", fmt.Sprintf("%d", mtu), "up").Run(); err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
+				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "LinkApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun})
+				continue
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, status); err != nil {
@@ -200,6 +216,9 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 				return err
 			}
 		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
 }
@@ -860,10 +879,10 @@ func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string) error 
 	return exec.CommandContext(ctx, "ip", "-6", "addr", "replace", address+"/128", "dev", ifname).Run()
 }
 
-func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLiteTunnelSpec, ifname, remote, local string) error {
+func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLiteTunnelSpec, ifname, remote, local string) (string, error) {
 	show, showErr := exec.CommandContext(ctx, "ip", "-6", "tunnel", "show", ifname).CombinedOutput()
 	if showErr == nil && strings.Contains(string(show), "remote "+remote) && strings.Contains(string(show), "local "+local) {
-		return nil
+		return ifname, nil
 	}
 	_ = exec.CommandContext(ctx, "ip", "-6", "tunnel", "del", ifname).Run()
 	args := []string{"-6", "tunnel", "add", ifname, "mode", "ipip6", "remote", remote, "local", local}
@@ -873,9 +892,30 @@ func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLite
 	args = append(args, "encaplimit", firstNonEmpty(spec.EncapsulationLimit, "none"))
 	out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		if existing := existingDSLiteTunnel(ctx, remote, local); existing != "" {
+			return existing, nil
+		}
+		return "", fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
-	return nil
+	return ifname, nil
+}
+
+func existingDSLiteTunnel(ctx context.Context, remote, local string) string {
+	out, err := exec.CommandContext(ctx, "ip", "-6", "tunnel", "show").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.Contains(line, "remote "+remote) || !strings.Contains(line, "local "+local) {
+			continue
+		}
+		name, _, ok := strings.Cut(line, ":")
+		if ok && strings.TrimSpace(name) != "" && strings.TrimSpace(name) != "ip6tnl0" {
+			return strings.TrimSpace(name)
+		}
+	}
+	return ""
 }
 
 func writeRadvdConfig(path, ifname, prefix string, rdnss []string, preferred, valid string) (bool, error) {

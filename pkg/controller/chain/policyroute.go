@@ -108,6 +108,9 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		c.applyRouteTarget(ctx, aliases, owner, target.Name, target.OutboundInterface, target.Table, target.Priority, target.Mark, target.RouteMetric, "none", "", skipMissing, &failures)
 	}
 	applyCandidate := func(owner string, candidate api.IPv4DefaultRoutePolicyCandidate) {
+		if !c.targetHealthy(candidate.HealthCheck) {
+			return
+		}
 		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.Interface), candidate.Interface, candidate.Table, candidate.Priority, candidate.Mark, candidate.RouteMetric, firstNonEmpty(candidate.GatewaySource, "none"), candidate.Gateway, false, &failures)
 	}
 	for _, res := range c.Router.Spec.Resources {
