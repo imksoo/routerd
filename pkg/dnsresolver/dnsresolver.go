@@ -29,7 +29,7 @@ func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
 		spec.Listen = []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 5053}}
 	}
 	for i := range spec.Listen {
-		if len(spec.Listen[i].Addresses) == 0 && len(spec.Listen[i].AddressSources) == 0 {
+		if len(spec.Listen[i].Addresses) == 0 && len(spec.Listen[i].AddressFrom) == 0 {
 			spec.Listen[i].Addresses = []string{"127.0.0.1"}
 		}
 		if spec.Listen[i].Port == 0 {
@@ -68,17 +68,20 @@ func Validate(spec api.DNSResolverSpec) error {
 		if listen.Port < 1 || listen.Port > 65535 {
 			return fmt.Errorf("listen port must be between 1 and 65535")
 		}
-		if len(listen.Addresses) == 0 && len(listen.AddressSources) == 0 {
-			return fmt.Errorf("listen %q requires addresses or addressSources", listen.Name)
+		if len(listen.Addresses) == 0 && len(listen.AddressFrom) == 0 {
+			return fmt.Errorf("listen %q requires addresses or addressFrom", listen.Name)
 		}
 		for _, address := range listen.Addresses {
+			if isStatusExpression(address) {
+				return fmt.Errorf("listen address %q must use addressFrom", address)
+			}
 			if net.ParseIP(strings.TrimSpace(address)) == nil {
 				return fmt.Errorf("listen address %q must be an IP address", address)
 			}
 		}
-		for _, source := range listen.AddressSources {
-			if !isStatusExpression(source.Field) {
-				return fmt.Errorf("listen address source %q must be a status reference", source.Field)
+		for _, source := range listen.AddressFrom {
+			if strings.TrimSpace(source.Resource) == "" {
+				return fmt.Errorf("listen addressFrom requires resource")
 			}
 		}
 	}
@@ -92,15 +95,20 @@ func Validate(spec api.DNSResolverSpec) error {
 				return fmt.Errorf("zone source %q requires zoneRef", source.Name)
 			}
 		case "forward", "upstream":
-			if len(source.Upstreams) == 0 {
-				return fmt.Errorf("%s source %q requires upstreams", source.Kind, source.Name)
+			if len(source.Upstreams) == 0 && len(source.UpstreamFrom) == 0 {
+				return fmt.Errorf("%s source %q requires upstreams or upstreamFrom", source.Kind, source.Name)
 			}
 			for _, upstream := range source.Upstreams {
 				if isStatusExpression(upstream) {
-					continue
+					return fmt.Errorf("source %q upstream %q must use upstreamFrom", source.Name, upstream)
 				}
 				if err := ValidateUpstreamURL(upstream); err != nil {
 					return fmt.Errorf("source %q: %w", source.Name, err)
+				}
+			}
+			for _, upstream := range source.UpstreamFrom {
+				if strings.TrimSpace(upstream.Resource) == "" {
+					return fmt.Errorf("source %q upstreamFrom requires resource", source.Name)
 				}
 			}
 		default:
@@ -141,7 +149,7 @@ func ValidateUpstreamURL(raw string) error {
 
 func NormalizeUpstream(raw string) string {
 	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" || isStatusExpression(trimmed) || strings.Contains(trimmed, "://") {
+	if trimmed == "" || strings.Contains(trimmed, "://") {
 		return trimmed
 	}
 	if addr, err := netip.ParseAddr(strings.Trim(trimmed, "[]")); err == nil {

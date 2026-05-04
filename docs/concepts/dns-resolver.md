@@ -30,7 +30,7 @@ It tries upstreams by priority and falls back when a higher source fails.
 Each entry can select a subset of source names.
 This allows LAN and VPN listeners to behave differently while sharing one resolver resource.
 
-Use `listen[].addressSources` when a listen address comes from another
+Use `listen[].addressFrom` when a listen address comes from another
 resource status. This keeps the dependency explicit and lets the controller
 reconfigure the daemon when the source resource changes.
 
@@ -39,8 +39,9 @@ listen:
   - name: lan
     addresses:
       - 172.18.0.1
-    addressSources:
-      - field: ${IPv6DelegatedAddress/lan-base.status.address}
+    addressFrom:
+      - resource: IPv6DelegatedAddress/lan-base
+        field: address
     port: 53
 ```
 
@@ -50,15 +51,16 @@ If a required address source is not available yet, the resolver stays
 ## Dynamic zone records
 
 `DNSZone.spec.records[].ipv4` and `ipv6` are literal addresses.
-Use `ipv4Source` or `ipv6Source` when a record address comes from another
+Use `ipv4From` or `ipv6From` when a record address comes from another
 resource status.
 
 ```yaml
 records:
   - hostname: router
     ipv4: 172.18.0.1
-    ipv6Source:
-      field: ${IPv6DelegatedAddress/lan-base.status.address}
+    ipv6From:
+      resource: IPv6DelegatedAddress/lan-base
+      field: address
 ```
 
 If a required record source is not available yet, the record field is marked in

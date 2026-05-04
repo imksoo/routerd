@@ -2,7 +2,6 @@ package egressroute
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -13,6 +12,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/resourcequery"
 )
 
 const (
@@ -203,8 +203,8 @@ func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateS
 		out = append(out, CandidateState{
 			Name:          name,
 			Source:        candidate.Source,
-			Device:        valueFromRef(c.Store, candidate.Device),
-			Gateway:       valueFromRef(c.Store, candidate.Gateway),
+			Device:        firstNonEmpty(resourcequery.Value(c.Store, candidate.DeviceFrom), strings.TrimSpace(candidate.Device)),
+			Gateway:       firstNonEmpty(resourcequery.Value(c.Store, candidate.GatewayFrom), strings.TrimSpace(candidate.Gateway)),
 			GatewaySource: defaultString(candidate.GatewaySource, "none"),
 			RouteTable:    candidate.RouteTable,
 			Metric:        candidate.Metric,
@@ -223,22 +223,13 @@ func (c Controller) ready(candidate api.EgressRoutePolicyCandidate) bool {
 			return false
 		}
 	}
-	if len(candidate.ReadyWhen) == 0 {
+	if len(candidate.DependsOn) == 0 {
 		if candidate.Source == "" {
 			return true
 		}
-		kind, name, ok := splitResourceRef(candidate.Source)
-		if !ok {
-			return false
-		}
-		return readyPhase(c.Store.ObjectStatus(api.NetAPIVersion, kind, name)["phase"])
+		return resourcequery.SourceReady(c.Store, candidate.Source)
 	}
-	for _, predicate := range candidate.ReadyWhen {
-		if !evalReadyWhen(c.Store, predicate) {
-			return false
-		}
-	}
-	return true
+	return resourcequery.DependenciesReady(c.Store, candidate.DependsOn)
 }
 
 func selectHighestWeightReady(candidates []CandidateState) (CandidateState, bool) {
@@ -261,94 +252,6 @@ func selectHighestWeightReady(candidates []CandidateState) (CandidateState, bool
 		return ready[i].Index < ready[j].Index
 	})
 	return ready[0], true
-}
-
-func evalReadyWhen(store Store, predicate api.ReadyWhenSpec) bool {
-	if len(predicate.AnyOf) > 0 {
-		for _, group := range predicate.AnyOf {
-			if evalReadyWhenGroup(store, group) {
-				return true
-			}
-		}
-		return false
-	}
-	return evalPredicate(store, api.ReadyWhenPredicateSpec{Field: predicate.Field, Equals: predicate.Equals, NotEmpty: predicate.NotEmpty})
-}
-
-func evalReadyWhenGroup(store Store, group []api.ReadyWhenPredicateSpec) bool {
-	for _, predicate := range group {
-		if !evalPredicate(store, predicate) {
-			return false
-		}
-	}
-	return len(group) > 0
-}
-
-func evalPredicate(store Store, predicate api.ReadyWhenPredicateSpec) bool {
-	value := valueFromRef(store, predicate.Field)
-	if predicate.NotEmpty && strings.TrimSpace(value) == "" {
-		return false
-	}
-	if predicate.Equals != "" && value != predicate.Equals {
-		return false
-	}
-	if predicate.Field != "" && !predicate.NotEmpty && predicate.Equals == "" {
-		return strings.TrimSpace(value) != ""
-	}
-	return true
-}
-
-func valueFromRef(store Store, ref string) string {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return ""
-	}
-	inner := strings.TrimSuffix(strings.TrimPrefix(ref, "${"), "}")
-	if !strings.Contains(inner, ".status.") {
-		return ref
-	}
-	parts := strings.SplitN(inner, ".status.", 2)
-	kind, name, ok := splitResourceRef(parts[0])
-	if !ok {
-		return ""
-	}
-	value := store.ObjectStatus(api.NetAPIVersion, kind, name)[parts[1]]
-	switch typed := value.(type) {
-	case string:
-		return typed
-	case []string:
-		data, _ := json.Marshal(typed)
-		return string(data)
-	case []any:
-		out := make([]string, 0, len(typed))
-		for _, item := range typed {
-			out = append(out, fmt.Sprint(item))
-		}
-		data, _ := json.Marshal(out)
-		return string(data)
-	default:
-		if value == nil {
-			return ""
-		}
-		return fmt.Sprint(value)
-	}
-}
-
-func splitResourceRef(ref string) (string, string, bool) {
-	parts := strings.Split(strings.TrimSpace(ref), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", false
-	}
-	return parts[0], parts[1], true
-}
-
-func readyPhase(value any) bool {
-	switch fmt.Sprint(value) {
-	case "Applied", "Bound", "Healthy", "Installed", "Ready", "Running", "Up":
-		return true
-	default:
-		return false
-	}
 }
 
 func candidateByName(candidates []CandidateState, name string) (CandidateState, bool) {
@@ -419,4 +322,13 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

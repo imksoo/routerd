@@ -176,6 +176,12 @@ func (c *Controller) applyResult(ctx context.Context, resource api.Resource, spe
 }
 
 func (c *Controller) saveEventStatus(event daemonapi.DaemonEvent) {
+	if c.Store != nil {
+		current := c.Store.ObjectStatus(event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name)
+		if existing, ok := parseStatusTime(current["lastCheckedAt"]); ok && existing.After(event.Time) {
+			return
+		}
+	}
 	status := map[string]any{}
 	for key, value := range event.Attributes {
 		status[key] = value
@@ -194,6 +200,18 @@ func (c *Controller) saveEventStatus(event daemonapi.DaemonEvent) {
 		status["message"] = event.Message
 	}
 	_ = c.Store.SaveObjectStatus(event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name, status)
+}
+
+func parseStatusTime(value any) (time.Time, bool) {
+	text, ok := value.(string)
+	if !ok || strings.TrimSpace(text) == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
 }
 
 // ResolveSpec converts routerd resource names to the OS interface names used

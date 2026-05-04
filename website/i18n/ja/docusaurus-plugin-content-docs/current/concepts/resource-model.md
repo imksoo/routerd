@@ -51,11 +51,27 @@ routerd は次の API グループを使います。
 依存元がまだ準備できていない場合、リソースは `Pending` になります。
 準備できると `Applied`、`Bound`、`Up`、`Installed`、`Healthy` などの段階に進みます。
 
-## ready_when
+## dependsOn
 
-一部のリソースは `ready_when` で適用条件を指定できます。
-Phase 2-A では `any_of` による OR 条件も使えるようになりました。
-たとえば DS-Lite は、DHCPv6 情報要求から AFTR が得られる場合と、静的に指定した AFTR FQDN を解決できる場合のどちらでも準備完了にできます。
+一部のリソースは `dependsOn` で適用条件を指定できます。
+`dependsOn` は、参照するリソースと状態フィールドを明示します。
+
+```yaml
+dependsOn:
+  - resource: DHCPv6PrefixDelegation/wan-pd
+    phase: Bound
+  - resource: Link/lan
+    phase: Up
+```
+
+状態値を利用する場合は、通常フィールドに式を書きません。
+`deviceFrom`、`gatewayFrom`、`addressFrom`、`ipv6From` などの専用フィールドを使います。
+
+```yaml
+deviceFrom:
+  resource: DSLiteTunnel/ds-lite
+  field: interface
+```
 
 ## 所有参照
 

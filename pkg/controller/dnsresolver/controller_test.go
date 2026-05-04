@@ -25,10 +25,10 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 
 func TestReconcileResolvesListenAddressStatusRef(t *testing.T) {
 	store := mapStore{
-		api.NetAPIVersion + "/IPv6DelegatedAddress/lan-base": {"address": "2409:10:3d60:1200::1"},
+		api.NetAPIVersion + "/IPv6DelegatedAddress/lan-base": {"address": "2409:10:3d60:1200::1/64"},
 	}
 	controller := Controller{
-		Router: dnsResolverRouter(nil, []api.DNSResolverListenAddressSourceSpec{{Field: "${IPv6DelegatedAddress/lan-base.status.address}"}}),
+		Router: dnsResolverRouter(nil, []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"}}),
 		Store:  store,
 		DryRun: true,
 	}
@@ -48,7 +48,7 @@ func TestReconcileResolvesListenAddressStatusRef(t *testing.T) {
 func TestReconcilePendingWhenListenAddressUnresolved(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
-		Router: dnsResolverRouter(nil, []api.DNSResolverListenAddressSourceSpec{{Field: "${IPv6DelegatedAddress/lan-base.status.address}"}}),
+		Router: dnsResolverRouter(nil, []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"}}),
 		Store:  store,
 		DryRun: true,
 	}
@@ -65,7 +65,7 @@ func TestReconcilePendingWhenListenAddressUnresolved(t *testing.T) {
 }
 
 func TestDNSResolverDependsOnExplicitAddressSource(t *testing.T) {
-	router := dnsResolverRouter([]string{"172.18.0.1"}, []api.DNSResolverListenAddressSourceSpec{{Field: "${IPv6DelegatedAddress/lan-base.status.address}"}})
+	router := dnsResolverRouter([]string{"172.18.0.1"}, []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"}})
 	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress", Name: "lan-base"}) {
 		t.Fatal("expected dependency on IPv6DelegatedAddress/lan-base")
 	}
@@ -76,13 +76,13 @@ func TestDNSResolverDependsOnExplicitAddressSource(t *testing.T) {
 
 func TestRuntimeConfigResolvesDNSZoneRecordAddressSources(t *testing.T) {
 	store := mapStore{
-		api.NetAPIVersion + "/IPv6DelegatedAddress/lan-base": {"address": "2409:10:3d60:1200::1"},
+		api.NetAPIVersion + "/IPv6DelegatedAddress/lan-base": {"address": "2409:10:3d60:1200::1/64"},
 	}
 	controller := Controller{
 		Router: dnsResolverRouterWithZone(api.DNSZoneRecordSpec{
-			Hostname:   "router",
-			IPv4:       "192.168.160.5",
-			IPv6Source: api.DNSZoneRecordAddressSourceSpec{Field: "${IPv6DelegatedAddress/lan-base.status.address}"},
+			Hostname: "router",
+			IPv4:     "192.168.160.5",
+			IPv6From: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"},
 		}),
 		Store:  store,
 		DryRun: true,
@@ -99,7 +99,7 @@ func TestRuntimeConfigResolvesDNSZoneRecordAddressSources(t *testing.T) {
 		t.Fatalf("zones = %#v", config.Zones)
 	}
 	record := config.Zones[0].Spec.Records[0]
-	if record.IPv6 != "2409:10:3d60:1200::1" || record.IPv6Source.Field != "" {
+	if record.IPv6 != "2409:10:3d60:1200::1" || record.IPv6From.Resource != "" {
 		t.Fatalf("record = %#v", record)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSZone", "lan-zone")
@@ -112,9 +112,9 @@ func TestRuntimeConfigMarksDNSZoneRecordPendingWhenSourceUnresolved(t *testing.T
 	store := mapStore{}
 	controller := Controller{
 		Router: dnsResolverRouterWithZone(api.DNSZoneRecordSpec{
-			Hostname:   "router",
-			IPv4:       "192.168.160.5",
-			IPv6Source: api.DNSZoneRecordAddressSourceSpec{Field: "${IPv6DelegatedAddress/lan-base.status.address}"},
+			Hostname: "router",
+			IPv4:     "192.168.160.5",
+			IPv6From: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"},
 		}),
 		Store:  store,
 		DryRun: true,
@@ -143,21 +143,21 @@ func TestRuntimeConfigMarksDNSZoneRecordPendingWhenSourceUnresolved(t *testing.T
 
 func TestDNSResolverDependsOnDNSZoneRecordSource(t *testing.T) {
 	router := dnsResolverRouterWithZone(api.DNSZoneRecordSpec{
-		Hostname:   "router",
-		IPv6Source: api.DNSZoneRecordAddressSourceSpec{Field: "${IPv6DelegatedAddress/lan-base.status.address}"},
+		Hostname: "router",
+		IPv6From: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"},
 	})
 	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress", Name: "lan-base"}) {
 		t.Fatal("expected dependency on IPv6DelegatedAddress/lan-base")
 	}
 }
 
-func dnsResolverRouter(addresses []string, addressSources []api.DNSResolverListenAddressSourceSpec) *api.Router {
+func dnsResolverRouter(addresses []string, addressSources []api.StatusValueSourceSpec) *api.Router {
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
 			Metadata: api.ObjectMeta{Name: "lan-resolver"},
 			Spec: api.DNSResolverSpec{
-				Listen: []api.DNSResolverListenSpec{{Name: "lan", Addresses: addresses, AddressSources: addressSources, Port: 53}},
+				Listen: []api.DNSResolverListenSpec{{Name: "lan", Addresses: addresses, AddressFrom: addressSources, Port: 53}},
 				Sources: []api.DNSResolverSourceSpec{{
 					Name:      "default",
 					Kind:      "upstream",

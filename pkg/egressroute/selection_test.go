@@ -35,8 +35,8 @@ func TestControllerSelectsHighestWeightReady(t *testing.T) {
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
 			Selection: SelectionHighestWeightReady,
 			Candidates: []api.EgressRoutePolicyCandidate{
-				{Name: "fallback", Source: "Link/fallback", Device: "${Link/fallback.status.ifname}", Weight: 50},
-				{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", Device: "${DSLiteTunnel/ds-lite.status.interface}", Weight: 80},
+				{Name: "fallback", Source: "Link/fallback", DeviceFrom: api.StatusValueSourceSpec{Resource: "Link/fallback", Field: "ifname"}, Weight: 50},
+				{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", DeviceFrom: api.StatusValueSourceSpec{Resource: "DSLiteTunnel/ds-lite", Field: "interface"}, Weight: 80},
 			},
 		}),
 		Bus:   bus.New(),
@@ -72,7 +72,7 @@ func TestControllerReportsSelectedGateway(t *testing.T) {
 			DestinationCIDRs: []string{"203.0.113.0/24"},
 			Selection:        SelectionHighestWeightReady,
 			Candidates: []api.EgressRoutePolicyCandidate{
-				{Name: "ix2215", Source: "Link/ix2215", Device: "${Link/ix2215.status.ifname}", GatewaySource: "static", Gateway: "172.17.0.1", Weight: 60},
+				{Name: "ix2215", Source: "Link/ix2215", DeviceFrom: api.StatusValueSourceSpec{Resource: "Link/ix2215", Field: "ifname"}, GatewaySource: "static", Gateway: "172.17.0.1", Weight: 60},
 			},
 		}),
 		Bus:   bus.New(),
@@ -101,8 +101,8 @@ func TestControllerKeepsReadyCurrentDuringHysteresis(t *testing.T) {
 			Selection:  SelectionHighestWeightReady,
 			Hysteresis: "30s",
 			Candidates: []api.EgressRoutePolicyCandidate{
-				{Name: "wan-pppoe", Source: "PPPoESession/wan-pppoe", Device: "${PPPoESession/wan-pppoe.status.interface}", Weight: 100},
-				{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", Device: "${DSLiteTunnel/ds-lite.status.interface}", Weight: 80},
+				{Name: "wan-pppoe", Source: "PPPoESession/wan-pppoe", DeviceFrom: api.StatusValueSourceSpec{Resource: "PPPoESession/wan-pppoe", Field: "interface"}, Weight: 100},
+				{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", DeviceFrom: api.StatusValueSourceSpec{Resource: "DSLiteTunnel/ds-lite", Field: "interface"}, Weight: 80},
 			},
 		}),
 		Bus:   bus.New(),
@@ -149,7 +149,7 @@ func TestControllerRequiresHealthyHealthCheck(t *testing.T) {
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
 			Selection: SelectionHighestWeightReady,
 			Candidates: []api.EgressRoutePolicyCandidate{
-				{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", Device: "${DSLiteTunnel/ds-lite.status.interface}", Weight: 80, HealthCheck: "internet-tcp443"},
+				{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", DeviceFrom: api.StatusValueSourceSpec{Resource: "DSLiteTunnel/ds-lite", Field: "interface"}, Weight: 80, HealthCheck: "internet-tcp443"},
 			},
 		}),
 		Bus:   bus.New(),

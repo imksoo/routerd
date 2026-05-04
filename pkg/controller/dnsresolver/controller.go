@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/dnsresolver"
+	"routerd/pkg/resourcequery"
 )
 
 type Store interface {
@@ -54,13 +56,16 @@ func (c Controller) Start(ctx context.Context) {
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}, Filter: c.eventRelevant}, 64)
 	go func() {
 		for event := range ch {
-			if strings.HasPrefix(event.Type, "routerd.dhcp.lease.") {
-				_ = c.forwardLeaseEvent(ctx, event)
-				continue
-			}
-			_ = c.Reconcile(ctx)
+			_ = c.HandleEvent(ctx, event)
 		}
 	}()
+}
+
+func (c Controller) HandleEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
+	if strings.HasPrefix(event.Type, "routerd.dhcp.lease.") {
+		return c.forwardLeaseEvent(ctx, event)
+	}
+	return c.Reconcile(ctx)
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
@@ -141,10 +146,12 @@ func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, s
 			return spec, pending, nil
 		}
 		spec.Listen[i].Addresses = addresses
+		spec.Listen[i].AddressFrom = nil
 		spec.Listen[i].AddressSources = nil
 	}
 	for i := range spec.Sources {
-		spec.Sources[i].Upstreams = expandUpstreams(c.Store, spec.Sources[i].Upstreams)
+		spec.Sources[i].Upstreams = expandUpstreams(c.Store, spec.Sources[i].Upstreams, spec.Sources[i].UpstreamFrom)
+		spec.Sources[i].UpstreamFrom = nil
 		spec.Sources[i].BootstrapResolver = expandStrings(c.Store, spec.Sources[i].BootstrapResolver)
 	}
 	if err := dnsresolver.Validate(spec); err != nil {
@@ -157,29 +164,29 @@ func (c Controller) expandZoneSpec(spec api.DNSZoneSpec) (api.DNSZoneSpec, []map
 	var pending []map[string]string
 	for i := range spec.Records {
 		record := &spec.Records[i]
-		if strings.TrimSpace(record.IPv4Source.Field) != "" {
-			value, pendingReason, err := resolveRecordAddress(c.Store, record.IPv4Source, true)
+		if strings.TrimSpace(record.IPv4From.Resource) != "" {
+			value, pendingReason, err := resolveRecordAddress(c.Store, record.IPv4From, true)
 			if err != nil {
-				return spec, pending, fmt.Errorf("DNSZone record %q ipv4Source: %w", record.Hostname, err)
+				return spec, pending, fmt.Errorf("DNSZone record %q ipv4From: %w", record.Hostname, err)
 			}
 			if pendingReason != "" {
-				pending = append(pending, map[string]string{"hostname": record.Hostname, "field": "ipv4", "source": record.IPv4Source.Field, "reason": pendingReason})
+				pending = append(pending, map[string]string{"hostname": record.Hostname, "field": "ipv4", "source": record.IPv4From.Resource, "reason": pendingReason})
 			} else if value != "" {
 				record.IPv4 = value
 			}
-			record.IPv4Source = api.DNSZoneRecordAddressSourceSpec{}
+			record.IPv4From = api.StatusValueSourceSpec{}
 		}
-		if strings.TrimSpace(record.IPv6Source.Field) != "" {
-			value, pendingReason, err := resolveRecordAddress(c.Store, record.IPv6Source, false)
+		if strings.TrimSpace(record.IPv6From.Resource) != "" {
+			value, pendingReason, err := resolveRecordAddress(c.Store, record.IPv6From, false)
 			if err != nil {
-				return spec, pending, fmt.Errorf("DNSZone record %q ipv6Source: %w", record.Hostname, err)
+				return spec, pending, fmt.Errorf("DNSZone record %q ipv6From: %w", record.Hostname, err)
 			}
 			if pendingReason != "" {
-				pending = append(pending, map[string]string{"hostname": record.Hostname, "field": "ipv6", "source": record.IPv6Source.Field, "reason": pendingReason})
+				pending = append(pending, map[string]string{"hostname": record.Hostname, "field": "ipv6", "source": record.IPv6From.Resource, "reason": pendingReason})
 			} else if value != "" {
 				record.IPv6 = value
 			}
-			record.IPv6Source = api.DNSZoneRecordAddressSourceSpec{}
+			record.IPv6From = api.StatusValueSourceSpec{}
 		}
 	}
 	return spec, pending, nil
@@ -363,45 +370,47 @@ func expandListenAddresses(store Store, listen api.DNSResolverListenSpec) ([]str
 	var out []string
 	for _, value := range listen.Addresses {
 		trimmed := strings.TrimSpace(value)
-		resolved := valueFromStatusRef(store, value)
-		if isStatusRef(trimmed) && strings.TrimSpace(resolved) == "" {
-			return nil, "AddressUnresolved: " + trimmed
+		if isStatusRef(trimmed) {
+			return nil, "AddressUsesOldStatusExpression: " + trimmed
 		}
+		resolved := value
 		if list := decodeStringList(resolved); len(list) > 0 {
 			for _, item := range list {
-				if strings.TrimSpace(item) != "" {
-					out = append(out, strings.TrimSpace(item))
+				if address := statusAddressValue(item); address != "" {
+					out = append(out, address)
 				}
 			}
 			continue
 		}
-		if strings.TrimSpace(resolved) != "" {
-			out = append(out, strings.TrimSpace(resolved))
+		if address := statusAddressValue(resolved); address != "" {
+			out = append(out, address)
 		}
 	}
-	for _, source := range listen.AddressSources {
-		resolved := valueFromStatusRef(store, source.Field)
+	for _, source := range listen.AddressFrom {
+		resolved := strings.Join(resourcequery.Values(store, source), ",")
 		if strings.TrimSpace(resolved) == "" {
 			if source.Optional {
 				continue
 			}
-			return nil, "AddressUnresolved: " + source.Field
+			return nil, "AddressUnresolved: " + source.Resource
 		}
 		if list := decodeStringList(resolved); len(list) > 0 {
 			for _, item := range list {
-				if strings.TrimSpace(item) != "" {
-					out = append(out, strings.TrimSpace(item))
+				if address := statusAddressValue(item); address != "" {
+					out = append(out, address)
 				}
 			}
 			continue
 		}
-		out = append(out, strings.TrimSpace(resolved))
+		if address := statusAddressValue(resolved); address != "" {
+			out = append(out, address)
+		}
 	}
 	return compactStrings(out), ""
 }
 
-func resolveRecordAddress(store Store, source api.DNSZoneRecordAddressSourceSpec, wantIPv4 bool) (string, string, error) {
-	resolved := strings.TrimSpace(valueFromStatusRef(store, source.Field))
+func resolveRecordAddress(store Store, source api.StatusValueSourceSpec, wantIPv4 bool) (string, string, error) {
+	resolved := strings.TrimSpace(resourcequery.Value(store, source))
 	if resolved == "" {
 		if source.Optional {
 			return "", "", nil
@@ -416,6 +425,9 @@ func resolveRecordAddress(store Store, source api.DNSZoneRecordAddressSourceSpec
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
+		}
+		if prefix, err := netip.ParsePrefix(value); err == nil {
+			value = prefix.Addr().String()
 		}
 		ip := net.ParseIP(value)
 		if ip == nil {
@@ -435,20 +447,29 @@ func resolveRecordAddress(store Store, source api.DNSZoneRecordAddressSourceSpec
 	return "", "AddressUnresolved", nil
 }
 
-func expandUpstreams(store Store, values []string) []string {
+func statusAddressValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix.Addr().String()
+	}
+	return value
+}
+
+func expandUpstreams(store Store, values []string, sources []api.StatusValueSourceSpec) []string {
 	var out []string
 	for _, value := range values {
-		resolved := valueFromStatusRef(store, value)
-		if list := decodeStringList(resolved); len(list) > 0 {
-			for _, item := range list {
-				if strings.TrimSpace(item) != "" {
-					out = append(out, dnsresolver.NormalizeUpstream(item))
-				}
-			}
-			continue
+		if strings.TrimSpace(value) != "" {
+			out = append(out, dnsresolver.NormalizeUpstream(value))
 		}
-		if strings.TrimSpace(resolved) != "" {
-			out = append(out, dnsresolver.NormalizeUpstream(resolved))
+	}
+	for _, source := range sources {
+		for _, value := range resourcequery.Values(store, source) {
+			if strings.TrimSpace(value) != "" {
+				out = append(out, dnsresolver.NormalizeUpstream(value))
+			}
 		}
 	}
 	return out
@@ -507,15 +528,13 @@ func dnsResolverDependsOn(router *api.Router, ref daemonapi.ResourceRef) bool {
 
 func dnsZoneStatusRefs(spec api.DNSZoneSpec) []daemonapi.ResourceRef {
 	var refs []daemonapi.ResourceRef
-	add := func(expr string) {
-		kind, name, ok := statusRefResource(expr)
-		if ok {
-			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: kind, Name: name})
-		}
-	}
 	for _, record := range spec.Records {
-		add(record.IPv4Source.Field)
-		add(record.IPv6Source.Field)
+		if ref, ok := resourcequery.SourceRef(record.IPv4From); ok {
+			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
+		}
+		if ref, ok := resourcequery.SourceRef(record.IPv6From); ok {
+			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
+		}
 	}
 	return refs
 }
@@ -529,8 +548,10 @@ func dnsResolverStatusRefs(spec api.DNSResolverSpec) []daemonapi.ResourceRef {
 		}
 	}
 	for _, listen := range spec.Listen {
-		for _, source := range listen.AddressSources {
-			add(source.Field)
+		for _, source := range listen.AddressFrom {
+			if ref, ok := resourcequery.SourceRef(source); ok {
+				refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
+			}
 		}
 		for _, address := range listen.Addresses {
 			add(address)
@@ -539,6 +560,11 @@ func dnsResolverStatusRefs(spec api.DNSResolverSpec) []daemonapi.ResourceRef {
 	for _, source := range spec.Sources {
 		for _, upstream := range source.Upstreams {
 			add(upstream)
+		}
+		for _, upstream := range source.UpstreamFrom {
+			if ref, ok := resourcequery.SourceRef(upstream); ok {
+				refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
+			}
 		}
 		for _, resolver := range source.BootstrapResolver {
 			add(resolver)

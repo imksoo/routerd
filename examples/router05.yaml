@@ -73,9 +73,9 @@ spec:
       - dns-servers
       - sntp-servers
       - domain-search
-      ready_when:
-      - field: ${DHCPv6PrefixDelegation/wan-pd.status.phase}
-        equals: Bound
+      dependsOn:
+      - resource: DHCPv6PrefixDelegation/wan-pd
+        phase: Bound
   - apiVersion: net.routerd.net/v1alpha1
     kind: IPv6DelegatedAddress
     metadata:
@@ -86,14 +86,13 @@ spec:
     spec:
       interface: ens19
       prefixDelegation: wan-pd
-      prefixSource: ${DHCPv6PrefixDelegation/wan-pd.status.currentPrefix}
       subnetID: "1"
       addressSuffix: ::1
-      ready_when:
-      - field: ${DHCPv6PrefixDelegation/wan-pd.status.phase}
-        equals: Bound
-      - field: ${Link/ens19.status.phase}
-        equals: Up
+      dependsOn:
+      - resource: DHCPv6PrefixDelegation/wan-pd
+        phase: Bound
+      - resource: Link/ens19
+        phase: Up
   - apiVersion: net.routerd.net/v1alpha1
     kind: IPv6RouterAdvertisement
     metadata:
@@ -103,9 +102,12 @@ spec:
         name: lan-base
     spec:
       interface: ens19
-      prefixSource: ${IPv6DelegatedAddress/lan-base.status.address}
-      rdnss:
-      - ${DHCPv6Information/wan-info.status.dnsServers}
+      prefixFrom:
+        resource: IPv6DelegatedAddress/lan-base
+        field: address
+      rdnssFrom:
+      - resource: DHCPv6Information/wan-info
+        field: dnsServers
       dnssl:
       - lab.example
       mFlag: false
@@ -116,9 +118,9 @@ spec:
       validLifetime: "7200"
       configPath: /run/routerd/radvd.conf
       pidFile: /run/routerd/radvd.pid
-      ready_when:
-      - field: ${IPv6DelegatedAddress/lan-base.status.phase}
-        equals: Applied
+      dependsOn:
+      - resource: IPv6DelegatedAddress/lan-base
+        phase: Applied
   - apiVersion: net.routerd.net/v1alpha1
     kind: DHCPv6Server
     metadata:
@@ -129,16 +131,18 @@ spec:
     spec:
       interface: ens19
       mode: stateless
-      dnsServers:
-      - ${DHCPv6Information/wan-info.status.dnsServers}
-      sntpServers:
-      - ${DHCPv6Information/wan-info.status.sntpServers}
+      dnsServerFrom:
+      - resource: DHCPv6Information/wan-info
+        field: dnsServers
+      sntpServerFrom:
+      - resource: DHCPv6Information/wan-info
+        field: sntpServers
       domainSearch:
       - lab.example
       leaseTime: 12h
-      ready_when:
-      - field: ${IPv6DelegatedAddress/lan-base.status.phase}
-        equals: Applied
+      dependsOn:
+      - resource: IPv6DelegatedAddress/lan-base
+        phase: Applied
   - apiVersion: net.routerd.net/v1alpha1
     kind: DHCPv4Server
     metadata:
@@ -173,11 +177,13 @@ spec:
       records:
       - hostname: router
         ipv4: 192.168.160.5
-        ipv6Source:
-          field: ${IPv6DelegatedAddress/lan-base.status.address}
+        ipv6From:
+          resource: IPv6DelegatedAddress/lan-base
+          field: address
       - hostname: router-ipv6
-        ipv6Source:
-          field: ${IPv6DelegatedAddress/lan-base.status.address}
+        ipv6From:
+          resource: IPv6DelegatedAddress/lan-base
+          field: address
       dhcpDerived:
         sources:
         - DHCPv4Server/lan-dhcpv4
@@ -203,8 +209,9 @@ spec:
         addresses:
         - 192.168.160.5
         - 127.0.0.1
-        addressSources:
-        - field: ${IPv6DelegatedAddress/lan-base.status.address}
+        addressFrom:
+        - resource: IPv6DelegatedAddress/lan-base
+          field: address
         port: 53
         sources:
         - local-zone
@@ -222,8 +229,9 @@ spec:
         kind: forward
         match:
         - transix.jp
-        upstreams:
-        - ${DHCPv6Information/wan-info.status.dnsServers}
+        upstreamFrom:
+        - resource: DHCPv6Information/wan-info
+          field: dnsServers
       - name: default-upstream
         kind: upstream
         match:
@@ -257,17 +265,15 @@ spec:
       localAddressSource: delegatedAddress
       localDelegatedAddress: lan-base
       localAddressSuffix: ::3
-      aftrSource: ${DHCPv6Information/wan-info.status.aftrName}
+      aftrFrom:
+        resource: DHCPv6Information/wan-info
+        field: aftrName
+        optional: true
       aftrFQDN: gw.transix.jp
       mtu: 1460
-      ready_when:
-      - any_of:
-        - - field: ${DHCPv6Information/wan-info.status.aftrName}
-            not_empty: true
-        - - field: ${DSLiteTunnel/ds-lite.spec.aftrFQDN}
-            not_empty: true
-          - field: ${DNSResolver/lan-resolver.status.phase}
-            equals: Applied
+      dependsOn:
+      - resource: DNSResolver/lan-resolver
+        phase: Applied
   - apiVersion: net.routerd.net/v1alpha1
     kind: IPv4Route
     metadata:
@@ -277,11 +283,16 @@ spec:
         name: ds-lite
     spec:
       destination: 0.0.0.0/0
-      device: ${DSLiteTunnel/ds-lite.status.interface}
-      gateway: ${EgressRoutePolicy/ipv4-default.status.selectedGateway}
-      ready_when:
-      - field: ${DSLiteTunnel/ds-lite.status.phase}
-        equals: Up
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite
+        field: interface
+      gatewayFrom:
+        resource: EgressRoutePolicy/ipv4-default
+        field: selectedGateway
+        optional: true
+      dependsOn:
+      - resource: DSLiteTunnel/ds-lite
+        phase: Up
   - apiVersion: net.routerd.net/v1alpha1
     kind: EgressRoutePolicy
     metadata:
@@ -295,21 +306,23 @@ spec:
       candidates:
       - name: ds-lite
         source: DSLiteTunnel/ds-lite
-        device: ${DSLiteTunnel/ds-lite.status.interface}
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite
+          field: interface
         gatewaySource: none
         weight: 80
         healthCheck: internet-tcp443
-        ready_when:
-        - field: ${DSLiteTunnel/ds-lite.status.phase}
-          equals: Up
+        dependsOn:
+        - resource: DSLiteTunnel/ds-lite
+          phase: Up
       - name: dummy-fallback
         source: Link/dummy-fallback
         device: dummy0
         gatewaySource: none
         weight: 50
-        ready_when:
-        - field: ${Link/dummy-fallback.status.phase}
-          equals: Up
+        dependsOn:
+        - resource: Link/dummy-fallback
+          phase: Up
   - apiVersion: net.routerd.net/v1alpha1
     kind: NAT44Rule
     metadata:
