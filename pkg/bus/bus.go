@@ -2,9 +2,11 @@ package bus
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"routerd/pkg/daemonapi"
 )
@@ -25,6 +27,7 @@ type Bus struct {
 	recent      map[string][]Event
 	recentLimit int
 	store       EventStore
+	logger      *slog.Logger
 }
 
 type EventStore interface {
@@ -50,6 +53,12 @@ func NewWithStore(store EventStore) *Bus {
 	return b
 }
 
+func (b *Bus) SetLogger(logger *slog.Logger) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.logger = logger
+}
+
 func (b *Bus) Publish(ctx context.Context, event Event) error {
 	if b.store != nil {
 		cursor, err := b.store.RecordBusEvent(ctx, event)
@@ -63,6 +72,7 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 		b.nextCursor++
 		event.Cursor = strconv.FormatUint(b.nextCursor, 10)
 	}
+	logger := b.logger
 	b.appendRecentLocked(event)
 	var targets []chan Event
 	for _, sub := range b.subscribers {
@@ -71,15 +81,79 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 		}
 	}
 	b.mu.Unlock()
+	logEvent(ctx, logger, event)
 
 	for _, target := range targets {
 		select {
 		case target <- event:
-		case <-ctx.Done():
-			return ctx.Err()
+		default:
+			select {
+			case target <- event:
+			case <-time.After(100 * time.Millisecond):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 	}
 	return nil
+}
+
+func logEvent(ctx context.Context, logger *slog.Logger, event Event) {
+	if logger == nil || event.Type == "" {
+		return
+	}
+	level := slog.LevelInfo
+	switch event.Severity {
+	case daemonapi.SeverityDebug:
+		level = slog.LevelDebug
+	case daemonapi.SeverityWarning:
+		level = slog.LevelWarn
+	case daemonapi.SeverityError:
+		level = slog.LevelError
+	}
+	if routineEvent(event.Type) {
+		level = slog.LevelDebug
+	}
+	attrs := []slog.Attr{
+		slog.String("topic", event.Type),
+		slog.String("severity", event.Severity),
+		slog.String("cursor", event.Cursor),
+		slog.String("daemon.kind", event.Daemon.Kind),
+		slog.String("daemon.name", event.Daemon.Name),
+		slog.String("daemon.instance", event.Daemon.Instance),
+	}
+	if event.Resource != nil {
+		attrs = append(attrs,
+			slog.String("resource.apiVersion", event.Resource.APIVersion),
+			slog.String("resource.kind", event.Resource.Kind),
+			slog.String("resource.name", event.Resource.Name),
+		)
+	}
+	if event.Reason != "" {
+		attrs = append(attrs, slog.String("reason", event.Reason))
+	}
+	if len(event.Attributes) > 0 {
+		attrs = append(attrs, slog.Any("attributes", event.Attributes))
+	}
+	logger.LogAttrs(ctx, level, "routerd event", attrs...)
+}
+
+func routineEvent(topic string) bool {
+	switch topic {
+	case "routerd.resource.status.changed",
+		"routerd.daemon.resource.status",
+		"routerd.lan.ipv4_address.applied",
+		"routerd.lan.address.applied",
+		"routerd.dns.resolver.configured",
+		"routerd.ipv4.route.installed",
+		"routerd.nat44.rule.applied",
+		"routerd.tunnel.ds-lite.up",
+		"routerd.dhcpv6.info.updated",
+		"routerd.conntrack.snapshot":
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *Bus) Subscribe(ctx context.Context, sub Subscription, buffer int) (<-chan Event, func()) {
