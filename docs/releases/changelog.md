@@ -21,6 +21,8 @@ routerd は出荷前のソフトウェアです。
   FreeBSD では `pfctl -ss -v` の出力を traffic flow 用の共通 NAPT 表現へ変換します。
 - Phase 3.0e: `routerd-firewall-logger` に FreeBSD `pflog` 入力を追加しました。
   `--pflog-interface pflog0` を指定すると `tcpdump` 経由で pf のログを読み、既存の `firewall-logs.db` へ保存します。
+- Phase 3.0f: `SystemdUnit` から FreeBSD rc.d スクリプトを生成する経路を追加しました。
+  `routerd render freebsd --out-dir ...` は `rc.d-*` ファイルも出力します。
 
 ## 0.3.0
 

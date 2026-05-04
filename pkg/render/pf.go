@@ -109,6 +109,10 @@ func writePFNAT(buf *bytes.Buffer, aliases map[string]string, nats []api.Resourc
 			return err
 		}
 		if spec.EgressInterface == "" {
+			if spec.EgressPolicyRef != "" {
+				buf.WriteString("# " + res.ID() + " skipped: egressInterface is resolved by " + spec.EgressPolicyRef + " at runtime\n")
+				continue
+			}
 			return fmt.Errorf("%s needs resolved egressInterface for static pf render", res.ID())
 		}
 		ifname := aliases[spec.EgressInterface]

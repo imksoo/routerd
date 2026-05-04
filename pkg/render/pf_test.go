@@ -104,3 +104,25 @@ func TestPFRenderNAT44SNAT(t *testing.T) {
 		t.Fatalf("pf output missing SNAT rule:\n%s", got)
 	}
 }
+
+func TestPFSkipsRuntimeResolvedNAT44Policy(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
+			Metadata: api.ObjectMeta{Name: "dynamic"},
+			Spec: api.NAT44RuleSpec{
+				Type:            "masquerade",
+				EgressPolicyRef: "EgressRoutePolicy/default",
+				SourceRanges:    []string{"10.0.0.0/24"},
+			},
+		},
+	}}}
+	data, err := PF(router, nil)
+	if err != nil {
+		t.Fatalf("render pf: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "skipped: egressInterface is resolved by EgressRoutePolicy/default at runtime") {
+		t.Fatalf("pf output missing runtime skip comment:\n%s", got)
+	}
+}

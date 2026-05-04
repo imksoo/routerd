@@ -178,11 +178,16 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	if len(data.PF) > 0 {
 		files["pf.conf"] = data.PF
 	}
+	for name, content := range data.RCDScripts {
+		files["rc.d-"+name] = content
+	}
 	for name, content := range files {
 		path := strings.TrimRight(*outDir, "/") + "/" + name
 		perm := os.FileMode(0644)
 		if name == "mpd5.conf" {
 			perm = 0600
+		} else if strings.HasPrefix(name, "rc.d-") {
+			perm = 0755
 		}
 		if err := os.WriteFile(path, content, perm); err != nil {
 			return err
