@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"routerd/pkg/daemonapi"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
 )
@@ -46,6 +48,36 @@ func TestShowIPv6PDTableIncludesSpecStateLedger(t *testing.T) {
 	for _, want := range []string{"KIND", "DHCPv6PrefixDelegation", "wan-pd", "1 artifacts", "current=2001:db8:1200:1220::/60"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("show output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestEventsCommandListsStateDatabaseEvents(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "test"}, "routerd.test.event", daemonapi.SeverityInfo)
+	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "Interface", Name: "wan"}
+	event.Reason = "TestEvent"
+	event.Message = "event from test"
+	if _, err := store.RecordBusEvent(context.Background(), event); err != nil {
+		t.Fatalf("record event: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{"events", "--state-file", statePath, "--topic", "routerd.test.event"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("events: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"routerd.test.event", "Interface/wan", "TestEvent", "event from test"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("events output missing %q:\n%s", want, got)
 		}
 	}
 }

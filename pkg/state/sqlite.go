@@ -593,6 +593,75 @@ func (s *SQLiteStore) Events(apiVersion, kind, name string, limit int) []Event {
 	return events
 }
 
+func (s *SQLiteStore) ListEvents(query EventQuery) ([]StoredEvent, error) {
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	var clauses []string
+	var args []any
+	if query.SinceID > 0 {
+		clauses = append(clauses, "id > ?")
+		args = append(args, query.SinceID)
+	}
+	if query.Topic != "" {
+		clauses = append(clauses, "coalesce(topic,type) = ?")
+		args = append(args, query.Topic)
+	}
+	if query.Kind != "" {
+		clauses = append(clauses, "kind = ?")
+		args = append(args, query.Kind)
+	}
+	if query.Name != "" {
+		clauses = append(clauses, "name = ?")
+		args = append(args, query.Name)
+	}
+	if query.Resource != "" {
+		kind, name, ok := strings.Cut(query.Resource, "/")
+		if !ok || kind == "" || name == "" {
+			return nil, fmt.Errorf("resource must be <kind>/<name>")
+		}
+		clauses = append(clauses, "resource_kind = ? AND resource_name = ?")
+		args = append(args, kind, name)
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	args = append(args, limit)
+	rows, err := s.db.Query(`SELECT id,api_version,kind,name,type,reason,message,coalesce(generation,0),created_at,
+coalesce(topic,''),coalesce(source_kind,''),coalesce(source_instance,''),coalesce(resource_api_version,''),coalesce(resource_kind,''),coalesce(resource_name,''),coalesce(severity,''),coalesce(attributes,'')
+FROM events`+where+` ORDER BY id DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []StoredEvent
+	for rows.Next() {
+		var event StoredEvent
+		var created string
+		var attributes string
+		if err := rows.Scan(&event.ID, &event.APIVersion, &event.Kind, &event.Name, &event.Type, &event.Reason, &event.Message, &event.Generation, &created, &event.Topic, &event.SourceKind, &event.SourceInstance, &event.ResourceAPIVersion, &event.ResourceKind, &event.ResourceName, &event.Severity, &attributes); err != nil {
+			return nil, err
+		}
+		event.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		if attributes != "" && attributes != "null" {
+			var decoded map[string]any
+			if err := json.Unmarshal([]byte(attributes), &decoded); err == nil && len(decoded) > 0 {
+				event.Attributes = decoded
+			}
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
 func JSONValue(value any) string {

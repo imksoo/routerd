@@ -45,6 +45,39 @@ type EventRecorder interface {
 	Events(apiVersion, kind, name string, limit int) []Event
 }
 
+type EventQuery struct {
+	Limit    int
+	SinceID  int64
+	Topic    string
+	Kind     string
+	Name     string
+	Resource string
+}
+
+type StoredEvent struct {
+	ID                 int64          `json:"id" yaml:"id"`
+	APIVersion         string         `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
+	Kind               string         `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Name               string         `json:"name,omitempty" yaml:"name,omitempty"`
+	Type               string         `json:"type" yaml:"type"`
+	Reason             string         `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Message            string         `json:"message,omitempty" yaml:"message,omitempty"`
+	Generation         int64          `json:"generation,omitempty" yaml:"generation,omitempty"`
+	CreatedAt          time.Time      `json:"createdAt" yaml:"createdAt"`
+	Topic              string         `json:"topic,omitempty" yaml:"topic,omitempty"`
+	SourceKind         string         `json:"sourceKind,omitempty" yaml:"sourceKind,omitempty"`
+	SourceInstance     string         `json:"sourceInstance,omitempty" yaml:"sourceInstance,omitempty"`
+	ResourceAPIVersion string         `json:"resourceApiVersion,omitempty" yaml:"resourceApiVersion,omitempty"`
+	ResourceKind       string         `json:"resourceKind,omitempty" yaml:"resourceKind,omitempty"`
+	ResourceName       string         `json:"resourceName,omitempty" yaml:"resourceName,omitempty"`
+	Severity           string         `json:"severity,omitempty" yaml:"severity,omitempty"`
+	Attributes         map[string]any `json:"attributes,omitempty" yaml:"attributes,omitempty"`
+}
+
+type EventLister interface {
+	ListEvents(query EventQuery) ([]StoredEvent, error)
+}
+
 type ObjectGenerationReader interface {
 	ObjectGeneration(apiVersion, kind, name string) int64
 }

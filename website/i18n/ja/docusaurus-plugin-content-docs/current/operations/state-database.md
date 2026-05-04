@@ -23,14 +23,14 @@ routerd 本体は SQLite に状態とイベントを保存します。
 
 bus はイベントを SQLite に保存します。
 EventRule と DerivedEvent は、このイベント列を入力にします。
+運用時は `sqlite3` を直接使わず、`routerctl events` で確認できます。
 
 例:
 
-```sql
-select ts, topic, attributes
-from events
-order by ts desc
-limit 20;
+```sh
+routerctl events --limit 20
+routerctl events --topic routerd.resource.status.changed
+routerctl events --resource DNSResolver/lan-resolver -o json
 ```
 
 ## バックアップ
