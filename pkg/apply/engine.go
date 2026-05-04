@@ -1357,8 +1357,22 @@ func (e *Engine) observeSystemdUnit(res api.Resource, includePlan bool, rr *Reso
 		return
 	}
 	unitName := defaultString(spec.UnitName, res.Metadata.Name)
+	desiredState := defaultString(spec.State, "present")
 	rr.Observed["unitName"] = unitName
-	rr.Observed["state"] = defaultString(spec.State, "present")
+	rr.Observed["state"] = desiredState
+	if desiredState == "absent" {
+		if _, err := e.Command("systemctl", "is-enabled", unitName); err == nil {
+			rr.Phase = "Drifted"
+			rr.Observed["enabled"] = "enabled"
+		} else {
+			rr.Observed["enabled"] = "absent"
+		}
+		if includePlan {
+			rr.Plan = append(rr.Plan, "remove systemd unit "+unitName)
+			rr.Plan = append(rr.Plan, "disable systemd unit "+unitName)
+		}
+		return
+	}
 	if out, err := e.Command("systemctl", "is-enabled", unitName); err == nil {
 		rr.Observed["enabled"] = strings.TrimSpace(string(out))
 	} else {

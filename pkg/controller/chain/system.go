@@ -265,7 +265,7 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 			return changed, err
 		}
 		changed = removed
-		if c.DryRun || !removed {
+		if c.DryRun {
 			return changed, nil
 		}
 		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
