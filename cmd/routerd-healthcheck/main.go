@@ -390,6 +390,11 @@ func (d *daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		d.mu.Lock()
 		events, cursor := d.eventsSinceLocked(since, topic)
+		if r.URL.Query().Get("tail") == "true" {
+			d.mu.Unlock()
+			writeHTTPJSON(w, eventsResponse{Cursor: cursor})
+			return
+		}
 		if len(events) > 0 || wait == 0 || time.Now().After(deadline) {
 			d.mu.Unlock()
 			writeHTTPJSON(w, eventsResponse{Cursor: cursor, Events: events})
@@ -482,6 +487,9 @@ func (d *daemon) statusLocked() daemonapi.DaemonStatus {
 func (d *daemon) eventsSinceLocked(since, topic string) ([]daemonapi.DaemonEvent, string) {
 	var out []daemonapi.DaemonEvent
 	cursor := since
+	if cursor == "" && len(d.events) > 0 {
+		cursor = d.events[len(d.events)-1].Cursor
+	}
 	sinceID, _ := strconv.ParseUint(since, 10, 64)
 	for _, event := range d.events {
 		id, _ := strconv.ParseUint(event.Cursor, 10, 64)

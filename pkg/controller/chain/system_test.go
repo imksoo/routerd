@@ -75,6 +75,7 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 			ExecStart:               []string{"/usr/local/sbin/routerd", "serve", "--config", "/usr/local/etc/routerd/router.yaml"},
 			RuntimeDirectory:        []string{"routerd", "routerd/healthcheck"},
 			StateDirectory:          []string{"routerd"},
+			ReadWritePaths:          []string{"/run/routerd", "/var/lib/routerd", "/etc/sysctl.d"},
 			AmbientCapabilities:     []string{"CAP_NET_ADMIN"},
 			RestrictAddressFamilies: []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
 		}},
@@ -100,7 +101,7 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		t.Fatalf("read unit: %v", err)
 	}
 	gotUnit := string(data)
-	for _, want := range []string{"RuntimeDirectory=routerd routerd/healthcheck", "StateDirectory=routerd", "AmbientCapabilities=CAP_NET_ADMIN", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK", "ProtectSystem=strict", "NoNewPrivileges=yes"} {
+	for _, want := range []string{"RuntimeDirectory=routerd routerd/healthcheck", "StateDirectory=routerd", "ReadWritePaths=/run/routerd /var/lib/routerd /etc/sysctl.d", "AmbientCapabilities=CAP_NET_ADMIN", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK", "ProtectSystem=no", "NoNewPrivileges=yes"} {
 		if !strings.Contains(gotUnit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
 		}

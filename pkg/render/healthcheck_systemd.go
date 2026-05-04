@@ -76,6 +76,7 @@ ExecStart=%s %s
 Restart=always
 RestartSec=5s
 RuntimeDirectory=routerd/healthcheck
+RuntimeDirectoryPreserve=yes
 StateDirectory=routerd/healthcheck
 LogsDirectory=routerd
 NoNewPrivileges=yes

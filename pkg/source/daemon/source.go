@@ -49,9 +49,19 @@ func (s DaemonSource) Run(ctx context.Context) error {
 	client := httpClientForUnixSocket(s.Socket)
 	var cursor string
 	if !s.Replay {
-		next, err := s.poll(ctx, client, cursor, 0, false)
-		if err == nil {
-			cursor = next
+		for {
+			next, err := s.fastForward(ctx, client)
+			if err == nil {
+				cursor = next
+				break
+			}
+			timer := time.NewTimer(backoff)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			}
 		}
 	}
 	for {
@@ -73,6 +83,38 @@ func (s DaemonSource) Run(ctx context.Context) error {
 			cursor = next
 		}
 	}
+}
+
+func (s DaemonSource) fastForward(ctx context.Context, client *http.Client) (string, error) {
+	values := url.Values{}
+	values.Set("wait", "0s")
+	values.Set("tail", "true")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/v1/events?"+values.Encode(), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return "", fmt.Errorf("daemon events returned HTTP %d", resp.StatusCode)
+	}
+	var decoded EventsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return "", err
+	}
+	if decoded.Cursor != "" {
+		return decoded.Cursor, nil
+	}
+	next := ""
+	for _, event := range decoded.Events {
+		if event.Cursor != "" {
+			next = event.Cursor
+		}
+	}
+	return next, nil
 }
 
 func (s DaemonSource) poll(ctx context.Context, client *http.Client, cursor string, wait time.Duration, publish bool) (string, error) {

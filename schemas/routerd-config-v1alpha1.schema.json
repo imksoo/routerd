@@ -586,11 +586,19 @@
                       "protectSystem": {
                         "enum": [
                           "",
+                          "no",
+                          "false",
                           "true",
                           "full",
                           "strict"
                         ],
                         "type": "string"
+                      },
+                      "readWritePaths": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
                       },
                       "restart": {
                         "enum": [
@@ -615,6 +623,15 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "runtimeDirectoryPreserve": {
+                        "enum": [
+                          "",
+                          "no",
+                          "yes",
+                          "restart"
+                        ],
+                        "type": "string"
                       },
                       "started": {
                         "type": "boolean"

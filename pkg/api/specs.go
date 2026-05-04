@@ -70,31 +70,33 @@ type NetworkAdoptionResolvedSpec struct {
 }
 
 type SystemdUnitSpec struct {
-	State                   string   `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present,enum=absent"`
-	UnitName                string   `yaml:"unitName,omitempty" json:"unitName,omitempty"`
-	Description             string   `yaml:"description,omitempty" json:"description,omitempty"`
-	ExecStart               []string `yaml:"execStart,omitempty" json:"execStart,omitempty"`
-	Environment             []string `yaml:"environment,omitempty" json:"environment,omitempty"`
-	Wants                   []string `yaml:"wants,omitempty" json:"wants,omitempty"`
-	After                   []string `yaml:"after,omitempty" json:"after,omitempty"`
-	WantedBy                []string `yaml:"wantedBy,omitempty" json:"wantedBy,omitempty"`
-	Restart                 string   `yaml:"restart,omitempty" json:"restart,omitempty" jsonschema:"enum=,enum=no,enum=on-failure,enum=always"`
-	RestartSec              string   `yaml:"restartSec,omitempty" json:"restartSec,omitempty"`
-	User                    string   `yaml:"user,omitempty" json:"user,omitempty"`
-	Group                   string   `yaml:"group,omitempty" json:"group,omitempty"`
-	WorkingDirectory        string   `yaml:"workingDirectory,omitempty" json:"workingDirectory,omitempty"`
-	RuntimeDirectory        []string `yaml:"runtimeDirectory,omitempty" json:"runtimeDirectory,omitempty"`
-	StateDirectory          []string `yaml:"stateDirectory,omitempty" json:"stateDirectory,omitempty"`
-	LogsDirectory           []string `yaml:"logsDirectory,omitempty" json:"logsDirectory,omitempty"`
-	AmbientCapabilities     []string `yaml:"ambientCapabilities,omitempty" json:"ambientCapabilities,omitempty"`
-	CapabilityBoundingSet   []string `yaml:"capabilityBoundingSet,omitempty" json:"capabilityBoundingSet,omitempty"`
-	RestrictAddressFamilies []string `yaml:"restrictAddressFamilies,omitempty" json:"restrictAddressFamilies,omitempty"`
-	ProtectSystem           string   `yaml:"protectSystem,omitempty" json:"protectSystem,omitempty" jsonschema:"enum=,enum=true,enum=full,enum=strict"`
-	ProtectHome             string   `yaml:"protectHome,omitempty" json:"protectHome,omitempty" jsonschema:"enum=,enum=true,enum=read-only,enum=tmpfs"`
-	NoNewPrivileges         *bool    `yaml:"noNewPrivileges,omitempty" json:"noNewPrivileges,omitempty"`
-	PrivateTmp              *bool    `yaml:"privateTmp,omitempty" json:"privateTmp,omitempty"`
-	Enabled                 *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Started                 *bool    `yaml:"started,omitempty" json:"started,omitempty"`
+	State                    string   `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present,enum=absent"`
+	UnitName                 string   `yaml:"unitName,omitempty" json:"unitName,omitempty"`
+	Description              string   `yaml:"description,omitempty" json:"description,omitempty"`
+	ExecStart                []string `yaml:"execStart,omitempty" json:"execStart,omitempty"`
+	Environment              []string `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Wants                    []string `yaml:"wants,omitempty" json:"wants,omitempty"`
+	After                    []string `yaml:"after,omitempty" json:"after,omitempty"`
+	WantedBy                 []string `yaml:"wantedBy,omitempty" json:"wantedBy,omitempty"`
+	Restart                  string   `yaml:"restart,omitempty" json:"restart,omitempty" jsonschema:"enum=,enum=no,enum=on-failure,enum=always"`
+	RestartSec               string   `yaml:"restartSec,omitempty" json:"restartSec,omitempty"`
+	User                     string   `yaml:"user,omitempty" json:"user,omitempty"`
+	Group                    string   `yaml:"group,omitempty" json:"group,omitempty"`
+	WorkingDirectory         string   `yaml:"workingDirectory,omitempty" json:"workingDirectory,omitempty"`
+	RuntimeDirectory         []string `yaml:"runtimeDirectory,omitempty" json:"runtimeDirectory,omitempty"`
+	RuntimeDirectoryPreserve string   `yaml:"runtimeDirectoryPreserve,omitempty" json:"runtimeDirectoryPreserve,omitempty" jsonschema:"enum=,enum=no,enum=yes,enum=restart"`
+	StateDirectory           []string `yaml:"stateDirectory,omitempty" json:"stateDirectory,omitempty"`
+	LogsDirectory            []string `yaml:"logsDirectory,omitempty" json:"logsDirectory,omitempty"`
+	ReadWritePaths           []string `yaml:"readWritePaths,omitempty" json:"readWritePaths,omitempty"`
+	AmbientCapabilities      []string `yaml:"ambientCapabilities,omitempty" json:"ambientCapabilities,omitempty"`
+	CapabilityBoundingSet    []string `yaml:"capabilityBoundingSet,omitempty" json:"capabilityBoundingSet,omitempty"`
+	RestrictAddressFamilies  []string `yaml:"restrictAddressFamilies,omitempty" json:"restrictAddressFamilies,omitempty"`
+	ProtectSystem            string   `yaml:"protectSystem,omitempty" json:"protectSystem,omitempty" jsonschema:"enum=,enum=no,enum=false,enum=true,enum=full,enum=strict"`
+	ProtectHome              string   `yaml:"protectHome,omitempty" json:"protectHome,omitempty" jsonschema:"enum=,enum=true,enum=read-only,enum=tmpfs"`
+	NoNewPrivileges          *bool    `yaml:"noNewPrivileges,omitempty" json:"noNewPrivileges,omitempty"`
+	PrivateTmp               *bool    `yaml:"privateTmp,omitempty" json:"privateTmp,omitempty"`
+	Enabled                  *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Started                  *bool    `yaml:"started,omitempty" json:"started,omitempty"`
 }
 
 type OSPackageSetSpec struct {

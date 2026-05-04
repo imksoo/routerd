@@ -25,6 +25,7 @@ func TestHealthCheckSystemdUnit(t *testing.T) {
 		"--source-interface \"ds-routerd-test\"",
 		"--source-address \"192.0.2.10\"",
 		"--socket \"/run/routerd/healthcheck/internet-icmp.sock\"",
+		"RuntimeDirectoryPreserve=yes",
 		"ProtectSystem=strict",
 		"CapabilityBoundingSet=CAP_NET_RAW",
 		"AmbientCapabilities=CAP_NET_RAW",

@@ -783,14 +783,30 @@ func validateResource(res api.Resource) error {
 			return fmt.Errorf("%s spec.restart must be no, on-failure, or always", res.ID())
 		}
 		switch spec.ProtectSystem {
-		case "", "true", "full", "strict":
+		case "", "no", "false", "true", "full", "strict":
 		default:
-			return fmt.Errorf("%s spec.protectSystem must be true, full, or strict", res.ID())
+			return fmt.Errorf("%s spec.protectSystem must be no, false, true, full, or strict", res.ID())
 		}
 		switch spec.ProtectHome {
 		case "", "true", "read-only", "tmpfs":
 		default:
 			return fmt.Errorf("%s spec.protectHome must be true, read-only, or tmpfs", res.ID())
+		}
+		switch spec.RuntimeDirectoryPreserve {
+		case "", "no", "yes", "restart":
+		default:
+			return fmt.Errorf("%s spec.runtimeDirectoryPreserve must be no, yes, or restart", res.ID())
+		}
+		for i, path := range spec.ReadWritePaths {
+			if strings.TrimSpace(path) == "" {
+				return fmt.Errorf("%s spec.readWritePaths[%d] must not be empty", res.ID(), i)
+			}
+			if !strings.HasPrefix(path, "/") {
+				return fmt.Errorf("%s spec.readWritePaths[%d] must be an absolute path", res.ID(), i)
+			}
+			if strings.ContainsAny(path, "\x00\n\r") {
+				return fmt.Errorf("%s spec.readWritePaths[%d] contains invalid characters", res.ID(), i)
+			}
 		}
 	case "NTPClient":
 		if res.APIVersion != api.SystemAPIVersion {

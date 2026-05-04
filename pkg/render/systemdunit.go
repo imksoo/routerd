@@ -39,7 +39,7 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	}
 	protectSystem := spec.ProtectSystem
 	if protectSystem == "" {
-		protectSystem = "strict"
+		protectSystem = "no"
 	}
 	protectHome := spec.ProtectHome
 	if protectHome == "" {
@@ -78,8 +78,12 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	b.WriteString("Restart=" + restart + "\n")
 	b.WriteString("RestartSec=" + restartSec + "\n")
 	writeSpaceList(&b, "RuntimeDirectory", spec.RuntimeDirectory)
+	if spec.RuntimeDirectoryPreserve != "" {
+		b.WriteString("RuntimeDirectoryPreserve=" + spec.RuntimeDirectoryPreserve + "\n")
+	}
 	writeSpaceList(&b, "StateDirectory", spec.StateDirectory)
 	writeSpaceList(&b, "LogsDirectory", spec.LogsDirectory)
+	writeSpaceList(&b, "ReadWritePaths", spec.ReadWritePaths)
 	b.WriteString("NoNewPrivileges=" + yesNo(noNewPrivileges) + "\n")
 	b.WriteString("PrivateTmp=" + yesNo(privateTmp) + "\n")
 	b.WriteString("ProtectHome=" + protectHome + "\n")
