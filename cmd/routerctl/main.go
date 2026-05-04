@@ -31,7 +31,7 @@ import (
 
 var platformDefaults, _ = platform.Current()
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {

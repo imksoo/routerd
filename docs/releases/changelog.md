@@ -7,6 +7,38 @@ title: Changelog
 routerd は出荷前のソフトウェアです。
 この履歴は、利用者が現在の API 名と実装済み範囲を間違えないために残します。
 
+## 0.3.0
+
+- Phase 2.7d-e: 宣言的な OS bootstrap リソースとして `Package` と `SysctlProfile` を追加しました。
+  apt、dnf、nix、pkg のパッケージ宣言と、ルーター向け sysctl 推奨値を 1 リソースで適用します。
+  `nf_conntrack_max`、socket buffer、TCP/UDP timeout、ip_forward など、家庭ルーター実トラフィック向けのチューニングを `router-linux` プロファイルにまとめています。
+- Phase 2.7f: 設定の `${...status.field}` 文字列参照を typed な `*From` フィールドへ整理しました。
+  `addressFrom`、`ipv4From`、`ipv6From`、`upstreamFrom`、`prefixFrom`、`rdnssFrom`、`dependsOn` を導入し、依存関係を型レベルで明示します。
+  互換別名はありません。
+- Phase 2.7g: controller chain を pure event-loop 型へ作り直しました。
+  共通 `framework.FuncController` (Subscriptions + Bootstrap + PeriodicFunc) と `eventedStore` で、状態保存時に必ず `routerd.resource.status.changed` を発行し、下流が再評価する形にしました。
+  per-resource error isolation、daemon 直読みショートカットの排除、daemon snapshot の per-socket timeout を入れています。
+- Phase 2.7h: bus event を `slog` 経由で systemd journal へ出力します。
+  `journalctl -u routerd.service -f | grep "routerd event"` で controller の意思決定を追えます。
+  `routerd.resource.status.changed` などの高頻度イベントは debug レベルです。
+- Phase 2.7i: 静的バイナリビルドと、Ubuntu / NixOS / FreeBSD 別の依存パッケージ一覧を整理しました。
+  `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"` で全 binary を作ります。
+  `dnsmasq-base`、`nftables`、`conntrack`、`iproute2`、`ppp`、`wireguard-tools`、`strongswan-swanctl`、`radvd`、`tcpdump` などを OS 別に明示します。
+- Phase 2.7c: `HealthCheck.sourceInterface` を YAML ではリソース名で書き、実行時に OS の ifname へ解決する形にしました。
+- Phase 2.7j: SystemdUnit に `runtimeDirectoryPreserve` を追加しました。
+  routerd.service と routerd-healthcheck@... の RuntimeDirectory 競合で再起動時に socket が消える問題を declarative に解消します。
+- Phase 2.7k: SystemdUnit `state: absent` を正しく Drifted 判定し、unit 削除を plan へ含めます。
+- Phase 2.7l: DNSResolver に NextDNS 専用の bootstrap forwarder (NGN DNS 優先 + public DNS 予備) を追加しました。
+- Phase 2.7m: SysctlProfile の observe で型ゆらぎによる spurious drift を抑えました。
+- 新 Kind 群の追加: `Package`、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit` を `system.routerd.net/v1alpha1` に整列しました。
+  `NetworkAdoption` は systemd-networkd の DHCP/RA を yaml で無効化、`SystemdUnit` は routerd 自身が unit を render + install + enable します。
+- routerctl 強化: `routerctl events --limit N --topic X --resource K/N -o json` で sqlite3 不要に bus event を確認できます。
+  `routerd plan --diff` で apply 前差分を表示します。
+- routerd serve に client daemon supervisor を組み込み、`--controller-chain-supervise-client-daemons=true` で `routerd-dhcpv4-client`、`routerd-dhcpv6-client`、`routerd-pppoe-client` を子プロセスとして起動・監視します。
+  ユーザーが個別に `systemctl enable` する手間が消えました。
+- homert02 (本番自宅ルーター、IX2215 置換) に Stage 1 として実適用し、DS-Lite primary、IX2215 fallback、DNS、firewall、NAT、HealthCheck を `routerctl status` Healthy で確認しました。
+  `examples/homert02.yaml` を canonical reference として整備しました。
+
 ## 0.2.0
 
 - Phase 2.6: `WANEgressPolicy` を `EgressRoutePolicy` に改名しました。
