@@ -66,3 +66,41 @@ func TestHandlerRejectsWriteMethods(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 }
+
+func TestHandlerRendersUsableBasePath(t *testing.T) {
+	handler := New(Options{BasePath: "/"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `const base = "/"`) {
+		t.Fatalf("base path was not a JavaScript string literal:\n%s", body)
+	}
+	if strings.Contains(body, `const base = "\"/\""`) {
+		t.Fatalf("base path was double quoted:\n%s", body)
+	}
+}
+
+func TestHandlerRendersMobileSafeLayout(t *testing.T) {
+	handler := New(Options{Title: "homert02"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`overflow-x:hidden`,
+		`text-overflow:ellipsis`,
+		`@media (max-width:640px)`,
+		`overflow-x:auto`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("mobile layout CSS missing %q:\n%s", want, body)
+		}
+	}
+}

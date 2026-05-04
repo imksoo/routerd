@@ -243,20 +243,30 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
   <title>{{.Title}}</title>
   <style>
     :root{color-scheme:dark;background:#111;color:#e8e8e8;font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    body{margin:0;background:#111;color:#e8e8e8}
-    header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #303030;background:#181818;position:sticky;top:0}
-    h1{font-size:18px;margin:0;font-weight:650}
+    *{box-sizing:border-box}
+    body{margin:0;background:#111;color:#e8e8e8;overflow-x:hidden}
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid #303030;background:#181818;position:sticky;top:0;z-index:1;max-width:100vw}
+    h1{font-size:18px;margin:0;font-weight:650;min-width:0;max-width:calc(100vw - 120px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     main{padding:16px;display:grid;gap:16px}
-    section{border:1px solid #303030;border-radius:8px;background:#181818;padding:14px}
+    section{border:1px solid #303030;border-radius:8px;background:#181818;padding:14px;min-width:0;overflow:hidden}
     h2{font-size:15px;margin:0 0 10px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
     .metric{border:1px solid #2d2d2d;border-radius:6px;padding:10px;background:#202020}
     .metric b{display:block;font-size:20px;margin-top:4px}
-    table{width:100%;border-collapse:collapse}
+    table{width:100%;border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}
     th,td{text-align:left;border-bottom:1px solid #2b2b2b;padding:7px 6px;vertical-align:top}
     th{font-size:12px;color:#aaa;font-weight:600}
-    code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
-    .ok{color:#7ee787}.warn{color:#f2cc60}.bad{color:#ff7b72}.muted{color:#9a9a9a}
+    code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-word}
+    .ok{color:#7ee787}.warn{color:#f2cc60}.bad{color:#ff7b72}.muted{color:#9a9a9a;flex:0 0 auto}
+    @media (max-width:640px){
+      header{padding:10px 12px}
+      h1{font-size:16px;max-width:calc(100vw - 96px)}
+      main{padding:10px;gap:10px}
+      section{padding:10px}
+      .grid{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+      .metric b{font-size:18px}
+      th,td{padding:6px 5px}
+    }
   </style>
 </head>
 <body>
@@ -268,7 +278,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
   <section><h2>Events</h2><div id="events"></div></section>
 </main>
 <script>
-const base = {{printf "%q" .BasePath}};
+const base = {{.BasePath}};
 function cls(phase){return /Healthy|Applied|Active|Bound|Installed|Up/.test(phase) ? "ok" : /Pending|Drifted|Unknown/.test(phase) ? "warn" : "bad"}
 function esc(v){return String(v ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function kv(label,value){return '<div class="metric"><span class="muted">'+esc(label)+'</span><b>'+esc(value)+'</b></div>'}
