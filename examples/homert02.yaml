@@ -648,7 +648,7 @@ spec:
               - 127.0.0.1
               - 192.168.123.129
             port: 53
-            sources: [local-zone, nextdns-bootstrap-ngn, nextdns-bootstrap-public, ngn-aftr, default]
+            sources: [local-zone, home-wirednet-jp, lab-wirednet-jp, fab-wirednet-jp, lain-local, ngn-aftr, nextdns-bootstrap-ngn, nextdns-bootstrap-public, default]
           - name: lan
             addresses:
               - 172.18.0.1
@@ -656,7 +656,7 @@ spec:
               - resource: IPv6DelegatedAddress/lan-base
                 field: address
             port: 53
-            sources: [local-zone, nextdns-bootstrap-ngn, nextdns-bootstrap-public, ngn-aftr, default]
+            sources: [local-zone, home-wirednet-jp, lab-wirednet-jp, fab-wirednet-jp, lain-local, ngn-aftr, nextdns-bootstrap-ngn, nextdns-bootstrap-public, default]
         sources:
           - name: local-zone
             kind: zone
@@ -665,6 +665,31 @@ spec:
               - 18.172.in-addr.arpa
             zoneRef:
               - DNSZone/home
+          - name: home-wirednet-jp
+            kind: forward
+            match:
+              - home.wirednet.jp
+            upstreams:
+              - udp://192.168.1.252:53
+          - name: lab-wirednet-jp
+            kind: forward
+            match:
+              - lab.wirednet.jp
+            upstreams:
+              - udp://172.17.0.253:53
+          - name: fab-wirednet-jp
+            kind: forward
+            match:
+              - fab.wirednet.jp
+            upstreams:
+              - udp://192.168.1.26:53
+          - name: lain-local
+            kind: forward
+            match:
+              - lain.local
+            upstreams:
+              - udp://192.168.1.66:53
+              - udp://192.168.1.67:53
           - name: ngn-aftr
             kind: forward
             match:
