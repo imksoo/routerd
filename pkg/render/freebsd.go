@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/netip"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -76,6 +77,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	var staticV6Routes []freeBSDStaticRoute
 	staticBridgeV4 := map[string][]string{}
 	var pppoes []freeBSDPPPoE
+	var dslites []freeBSDDSLite
 	bridges, err := bridgeConfigs(router, aliases)
 	if err != nil {
 		return FreeBSDConfig{}, err
@@ -155,6 +157,22 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 				return FreeBSDConfig{}, err
 			}
 			pppoes = append(pppoes, freeBSDPPPoE{Name: res.Metadata.Name, IfName: defaultString(spec.IfName, "ppp-"+res.Metadata.Name), LowerIfName: lowerIfName, Password: password, Spec: spec})
+		case "DSLiteTunnel":
+			spec, err := res.DSLiteTunnelSpec()
+			if err != nil {
+				return FreeBSDConfig{}, err
+			}
+			local := strings.TrimSpace(spec.LocalAddress)
+			remote := defaultString(spec.RemoteAddress, spec.AFTRIPv6)
+			if local == "" || remote == "" {
+				warnings = append(warnings, fmt.Sprintf("%s: FreeBSD gif render needs static localAddress and remoteAddress or aftrIPv6; dynamic DS-Lite remains runtime-only.", res.ID()))
+				continue
+			}
+			ifname := freeBSDGifIfName(spec.TunnelName, len(dslites))
+			dslites = append(dslites, freeBSDDSLite{Name: res.Metadata.Name, IfName: ifname, LocalAddress: local, RemoteAddress: remote, MTU: spec.MTU, DefaultRoute: spec.DefaultRoute})
+			if spec.DefaultRoute {
+				staticV4Routes = append(staticV4Routes, freeBSDStaticRoute{Name: res.Metadata.Name + "-default", IfName: ifname, Destination: "default", Via: "-interface " + ifname})
+			}
 		}
 	}
 
@@ -178,7 +196,8 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	for _, name := range sortedByteMapKeys(rcdScripts) {
 		rc.WriteString(name + "_enable=\"YES\"\n")
 	}
-	writeFreeBSDClonedInterfaces(&rc, bridges, vxlans)
+	writeFreeBSDClonedInterfaces(&rc, bridges, vxlans, dslites)
+	writeFreeBSDDSLites(&rc, dslites)
 	writeFreeBSDVXLANS(&rc, vxlans)
 	writeFreeBSDBridges(&rc, bridges)
 	writeFreeBSDBridgeAliases(&rc, staticBridgeV4)
@@ -206,6 +225,26 @@ type freeBSDStaticRoute struct {
 	IfName      string
 	Destination string
 	Via         string
+}
+
+type freeBSDDSLite struct {
+	Name          string
+	IfName        string
+	LocalAddress  string
+	RemoteAddress string
+	MTU           int
+	DefaultRoute  bool
+}
+
+func writeFreeBSDDSLites(buf *bytes.Buffer, dslites []freeBSDDSLite) {
+	for _, tunnel := range dslites {
+		args := []string{"tunnel " + tunnel.LocalAddress + " " + tunnel.RemoteAddress}
+		if tunnel.MTU != 0 {
+			args = append(args, "mtu "+strconv.Itoa(tunnel.MTU))
+		}
+		args = append(args, "up")
+		buf.WriteString(fmt.Sprintf("ifconfig_%s=\"%s\"\n", tunnel.IfName, strings.Join(args, " ")))
+	}
 }
 
 func writeFreeBSDBridges(buf *bytes.Buffer, bridges []bridgeConfig) {
@@ -279,10 +318,13 @@ func resourceKind(router *api.Router, name string) string {
 	return ""
 }
 
-func writeFreeBSDClonedInterfaces(buf *bytes.Buffer, bridges []bridgeConfig, vxlans []vxlanConfig) {
+func writeFreeBSDClonedInterfaces(buf *bytes.Buffer, bridges []bridgeConfig, vxlans []vxlanConfig, dslites []freeBSDDSLite) {
 	var names []string
 	for _, vxlan := range vxlans {
 		names = append(names, vxlan.IfName)
+	}
+	for _, tunnel := range dslites {
+		names = append(names, tunnel.IfName)
 	}
 	for _, bridge := range bridges {
 		names = append(names, bridge.IfName)
@@ -314,10 +356,21 @@ func writeFreeBSDStaticRoutes(buf *bytes.Buffer, routes []freeBSDStaticRoute, ip
 		}
 		if ipv6 {
 			buf.WriteString(fmt.Sprintf("ipv6_route_%s=\"%s %s\"\n", label, route.Destination, via))
+		} else if route.Destination == "default" {
+			buf.WriteString(fmt.Sprintf("route_%s=\"default %s\"\n", label, via))
 		} else {
 			buf.WriteString(fmt.Sprintf("route_%s=\"-net %s %s\"\n", label, route.Destination, via))
 		}
 	}
+}
+
+var freeBSDGIFNamePattern = regexp.MustCompile(`^gif[0-9]+$`)
+
+func freeBSDGifIfName(value string, index int) string {
+	if freeBSDGIFNamePattern.MatchString(value) {
+		return value
+	}
+	return "gif" + strconv.Itoa(index)
 }
 
 func freeBSDRouteLabel(name string) string {

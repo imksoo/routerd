@@ -143,3 +143,53 @@ func TestFreeBSDVXLANMultipleRemotesEmitsWarningAndUsesSeed(t *testing.T) {
 		t.Fatalf("FreeBSD rc.conf must not emit additional remotes:\n%s", got.RCConf)
 	}
 }
+
+func TestFreeBSDRendersStaticDSLiteGIF(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{
+			Interface:     "wan",
+			TunnelName:    "gif7",
+			LocalAddress:  "2001:db8::100",
+			RemoteAddress: "2001:db8::200",
+			MTU:           1454,
+			DefaultRoute:  true,
+		}},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	rc := string(got.RCConf)
+	for _, want := range []string{
+		`cloned_interfaces="gif7"`,
+		`ifconfig_gif7="tunnel 2001:db8::100 2001:db8::200 mtu 1454 up"`,
+		`static_routes="ds_lite_default"`,
+		`route_ds_lite_default="default -interface gif7"`,
+	} {
+		if !strings.Contains(rc, want) {
+			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
+		}
+	}
+}
+
+func TestFreeBSDSkipsDynamicDSLiteGIFWithWarning(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{
+			Interface:  "wan",
+			TunnelName: "ds-routerd",
+			AFTRFQDN:   "gw.example.net",
+		}},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	if strings.Contains(string(got.RCConf), "ifconfig_gif") {
+		t.Fatalf("dynamic DS-Lite must not render a static gif:\n%s", got.RCConf)
+	}
+	if len(got.Warnings) == 0 || !strings.Contains(strings.Join(got.Warnings, "\n"), "needs static localAddress") {
+		t.Fatalf("warnings = %#v", got.Warnings)
+	}
+}

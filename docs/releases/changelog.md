@@ -23,6 +23,9 @@ routerd は出荷前のソフトウェアです。
   `--pflog-interface pflog0` を指定すると `tcpdump` 経由で pf のログを読み、既存の `firewall-logs.db` へ保存します。
 - Phase 3.0f: `SystemdUnit` から FreeBSD rc.d スクリプトを生成する経路を追加しました。
   `routerd render freebsd --out-dir ...` は `rc.d-*` ファイルも出力します。
+- Phase 3.0g: FreeBSD 向け DS-Lite の静的 gif 生成を追加しました。
+  `localAddress` と `remoteAddress` または `aftrIPv6` が固定で分かる場合に、`ifconfig_gif*` と IPv4 既定経路を生成します。
+  AFTR FQDN や delegated address 由来の動的 DS-Lite は、実行時コントローラー側の未実装として warning にします。
 
 ## 0.3.0
 
