@@ -739,13 +739,21 @@ func writeNixOSDHCPv6ClientService(buf *bytes.Buffer, client nixOSDHCPv6Client) 
 func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []string, error) {
 	service := map[string]bool{
 		"conntrack-tools": true,
+		"dnsmasq":         true,
 		"dnsutils":        true,
 		"iproute2":        true,
 		"iputils":         true,
+		"kmod":            true,
+		"nettools":        true,
+		"nftables":        true,
+		"ppp":             true,
 		"procps":          true,
+		"radvd":           true,
+		"strongswan":      true,
 		"systemd":         true,
 		"tcpdump":         true,
 		"traceroute":      true,
+		"wireguard-tools": true,
 	}
 	debug := map[string]bool{
 		"jq": true,

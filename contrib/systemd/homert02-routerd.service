@@ -1,5 +1,5 @@
 [Unit]
-Description=routerd controller chain for router05
+Description=routerd controller chain for homert02
 Documentation=https://routerd.net/
 Wants=network-online.target routerd-dhcpv6-client@wan-pd.service
 After=network-online.target routerd-dhcpv6-client@wan-pd.service
@@ -7,7 +7,6 @@ After=network-online.target routerd-dhcpv6-client@wan-pd.service
 [Service]
 Type=simple
 User=root
-Group=dip
 ExecStart=/usr/local/sbin/routerd serve \
   --config /usr/local/etc/routerd/router.yaml \
   --socket /run/routerd/routerd.sock \
@@ -28,8 +27,9 @@ ExecStart=/usr/local/sbin/routerd serve \
   --controller-chain-dnsmasq-config /run/routerd/dnsmasq.conf \
   --controller-chain-dnsmasq-pid /run/routerd/dnsmasq.pid \
   --controller-chain-dnsmasq-port 53 \
-  --controller-chain-dnsmasq-listen-addresses 127.0.0.1,192.168.160.5 \
+  --controller-chain-dnsmasq-listen-addresses 127.0.0.1 \
   --controller-chain-nftables-file /run/routerd/nat44.nft \
+  --controller-chain-firewall-file /run/routerd/firewall.nft \
   --controller-chain-conntrack-interval 30s
 Restart=always
 RestartSec=5s

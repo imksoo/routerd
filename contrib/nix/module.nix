@@ -74,11 +74,17 @@ in {
         nftables
         dnsmasq
         conntrack-tools
+        wireguard-tools
+        strongswan
+        radvd
         ppp
         dnsutils
         iputils
         tcpdump
         traceroute
+        procps
+        nettools
+        kmod
         systemd
       ];
 

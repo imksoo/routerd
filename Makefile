@@ -14,7 +14,10 @@ REMOTE_HOST ?=
 REMOTE_TAR ?= /tmp/routerd-install.tar
 CONFIG ?=
 REMOTE_CONFIG ?= $(SYSCONFDIR)/router.yaml
+REMOTE_UNIT ?= contrib/systemd/routerd.service
+REMOTE_UNIT_NAME ?= routerd.service
 UNAME_S := $(shell uname -s)
+UBUNTU_SERVICE_PACKAGES ?= dnsmasq-base nftables conntrack iproute2 iputils-ping iputils-tracepath dnsutils tcpdump traceroute procps ppp wireguard-tools strongswan-swanctl radvd systemd net-tools kmod
 
 ifeq ($(UNAME_S),FreeBSD)
 ROUTERD_OS ?= freebsd
@@ -46,21 +49,22 @@ GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
 endif
+GO_BUILD_FLAGS ?= -trimpath -ldflags="-s -w"
 
-.PHONY: test build generate-schema check-schema website-build check-build-deps check-remote-deps install install-service install-systemd install-rc-freebsd dist remote-install remote-install-config validate-example dry-run-example plan-config clean
+.PHONY: test build generate-schema check-schema website-build check-build-deps install-ubuntu-deps remote-install-service-deps check-remote-deps install install-service install-systemd install-rc-freebsd dist remote-install remote-install-config remote-install-systemd-unit validate-example dry-run-example plan-config clean
 
 test:
 	go test ./...
 
 build:
 	install -d $(BUILDDIR)
-	$(GO_BUILD_ENV) go build -o $(ROUTERD_BIN) ./cmd/routerd
-	$(GO_BUILD_ENV) go build -o $(ROUTERCTL_BIN) ./cmd/routerctl
-	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCPv4_CLIENT_BIN) ./cmd/routerd-dhcpv4-client
-	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCPv6_CLIENT_BIN) ./cmd/routerd-dhcpv6-client
-	$(GO_BUILD_ENV) go build -o $(ROUTERD_DHCP_EVENT_RELAY_BIN) ./cmd/routerd-dhcp-event-relay
-	$(GO_BUILD_ENV) go build -o $(ROUTERD_HEALTHCHECK_BIN) ./cmd/routerd-healthcheck
-	$(GO_BUILD_ENV) go build -o $(ROUTERD_DNS_RESOLVER_BIN) ./cmd/routerd-dns-resolver
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_BIN) ./cmd/routerd
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERCTL_BIN) ./cmd/routerctl
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DHCPv4_CLIENT_BIN) ./cmd/routerd-dhcpv4-client
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DHCPv6_CLIENT_BIN) ./cmd/routerd-dhcpv6-client
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DHCP_EVENT_RELAY_BIN) ./cmd/routerd-dhcp-event-relay
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_HEALTHCHECK_BIN) ./cmd/routerd-healthcheck
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DNS_RESOLVER_BIN) ./cmd/routerd-dns-resolver
 
 generate-schema:
 	install -d schemas
@@ -85,6 +89,26 @@ check-build-deps:
 		if ! command -v $$cmd >/dev/null 2>&1; then echo "missing build dependency: $$cmd" >&2; missing=1; fi; \
 	done; \
 	exit $$missing
+
+install-ubuntu-deps:
+	sudo apt-get update
+	sudo apt-get install -y $(UBUNTU_SERVICE_PACKAGES)
+
+remote-install-service-deps:
+	test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make remote-install-service-deps REMOTE_HOST=user@router.example" >&2; exit 2)
+	ssh $(REMOTE_HOST) 'set -eu; \
+		remote_os=$$(uname -s); \
+		if [ "$$remote_os" = Linux ]; then \
+			if command -v apt-get >/dev/null 2>&1; then \
+				sudo apt-get update; \
+				sudo apt-get install -y $(UBUNTU_SERVICE_PACKAGES); \
+			else \
+				echo "unsupported Linux package manager; install: $(UBUNTU_SERVICE_PACKAGES)" >&2; \
+				exit 2; \
+			fi; \
+		else \
+			echo "remote service dependency installation is not implemented for $$remote_os; use check-remote-deps" >&2; \
+		fi'
 
 check-remote-deps:
 	@test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make check-remote-deps REMOTE_HOST=user@router.example" >&2; exit 2)
@@ -148,7 +172,7 @@ dist:
 	install -d $(DISTDIR)
 	tar -C $(DISTROOT) -cf $(DISTTAR) .
 
-remote-install: check-build-deps check-remote-deps dist
+remote-install: check-build-deps remote-install-service-deps check-remote-deps dist
 	test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make remote-install REMOTE_HOST=user@router.example" >&2; exit 2)
 	scp $(DISTTAR) $(REMOTE_HOST):$(REMOTE_TAR)
 	ssh $(REMOTE_HOST) 'sudo tar --no-same-owner -C / -xf $(REMOTE_TAR) && rm -f $(REMOTE_TAR) && \
@@ -161,6 +185,12 @@ remote-install-config:
 	test -n "$(CONFIG)" || (echo "CONFIG is required, for example: make remote-install-config REMOTE_HOST=user@router.example CONFIG=path/to/router.yaml" >&2; exit 2)
 	scp $(CONFIG) $(REMOTE_HOST):/tmp/routerd-router.yaml
 	ssh $(REMOTE_HOST) 'sudo install -d $(dir $(REMOTE_CONFIG)) && sudo install -m 0644 /tmp/routerd-router.yaml $(REMOTE_CONFIG) && rm -f /tmp/routerd-router.yaml'
+
+remote-install-systemd-unit:
+	test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make remote-install-systemd-unit REMOTE_HOST=user@router.example REMOTE_UNIT=contrib/systemd/routerd.service" >&2; exit 2)
+	test -f "$(REMOTE_UNIT)" || (echo "REMOTE_UNIT does not exist: $(REMOTE_UNIT)" >&2; exit 2)
+	scp $(REMOTE_UNIT) $(REMOTE_HOST):/tmp/routerd-systemd-unit.service
+	ssh $(REMOTE_HOST) 'sudo install -m 0644 /tmp/routerd-systemd-unit.service /etc/systemd/system/$(REMOTE_UNIT_NAME) && rm -f /tmp/routerd-systemd-unit.service && sudo systemctl daemon-reload'
 
 validate-example:
 	go run ./cmd/routerd validate --config examples/basic-static.yaml

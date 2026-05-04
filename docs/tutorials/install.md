@@ -8,6 +8,32 @@ sidebar_position: 1
 このページでは、Ubuntu Server に routerd をソースから入れる最小手順を説明します。
 NixOS と FreeBSD は土台がありますが、最初に試す場合は Ubuntu のラボ VM を推奨します。
 
+## Ubuntu の依存パッケージ
+
+Ubuntu では、次のパッケージを先に入れます。
+routerd の `Package` リソースでも同じ内容を宣言できます。
+実運用では YAML に書き、起動時に不足を検出させます。
+
+```bash
+sudo apt-get update
+sudo apt-get install -y dnsmasq-base nftables conntrack iproute2 iputils-ping iputils-tracepath dnsutils tcpdump traceroute procps ppp wireguard-tools strongswan-swanctl radvd systemd net-tools kmod
+```
+
+主な用途は次の通りです。
+
+| パッケージ | 用途 |
+| --- | --- |
+| `dnsmasq-base` | DHCPv4、DHCPv6、RA の配布 |
+| `nftables` | NAT、経路印、ファイアウォール |
+| `conntrack` | NAPT の観測と切り分け |
+| `iproute2` | アドレス、経路、DS-Lite、VRF、VXLAN、WireGuard デバイス |
+| `ppp` | PPPoE。`pppd` と `rp-pppoe.so` を使います。 |
+| `wireguard-tools` | `wg setconf` と状態観測 |
+| `strongswan-swanctl` | cloud VPN 向け IPsec 接続 |
+| `radvd` | radvd 経路の RA 送信。通常は dnsmasq 経路を優先します。 |
+| `dnsutils` / `iputils-ping` / `iputils-tracepath` / `tcpdump` / `traceroute` | 検証と障害調査 |
+| `procps` / `systemd` / `net-tools` / `kmod` | sysctl、サービス管理、互換診断、カーネルモジュール確認 |
+
 ## ビルド
 
 ```bash
