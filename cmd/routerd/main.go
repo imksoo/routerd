@@ -2543,13 +2543,14 @@ func webConsoleFromRouter(router *api.Router) (api.WebConsoleSpec, bool) {
 func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, cache *resultCache, logger *eventlog.Logger) error {
 	addr := net.JoinHostPort(spec.ListenAddress, fmt.Sprintf("%d", spec.Port))
 	handler := webconsole.New(webconsole.Options{
-		Router:          router,
-		Store:           store,
-		Result:          cache.Load,
-		NAPT:            observe.NAPT,
-		Title:           spec.Title,
-		BasePath:        spec.BasePath,
-		DNSQueryLogPath: platformDefaults.StateDir + "/dns-queries.db",
+		Router:             router,
+		Store:              store,
+		Result:             cache.Load,
+		NAPT:               observe.NAPT,
+		Title:              spec.Title,
+		BasePath:           spec.BasePath,
+		DNSQueryLogPath:    platformDefaults.StateDir + "/dns-queries.db",
+		TrafficFlowLogPath: platformDefaults.StateDir + "/traffic-flows.db",
 	})
 	server := &http.Server{Addr: addr, Handler: handler}
 	listener, err := net.Listen("tcp", addr)

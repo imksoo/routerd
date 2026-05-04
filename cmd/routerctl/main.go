@@ -56,6 +56,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return eventsCommand(args[1:], stdout)
 	case "dns-queries":
 		return dnsQueriesCommand(args[1:], stdout)
+	case "traffic-flows":
+		return trafficFlowsCommand(args[1:], stdout)
 	case "get":
 		return getCommand(args[1:], stdout, stderr)
 	case "describe":
@@ -262,6 +264,70 @@ func writeDNSQueriesTable(stdout io.Writer, rows []logstore.DNSQuery) error {
 			displayCell(row.Upstream),
 			row.CacheHit,
 			row.Duration,
+		)
+	}
+	return w.Flush()
+}
+
+func trafficFlowsCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("traffic-flows", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	dbPath := fs.String("db", defaultTrafficFlowsPath(), "traffic flow log database file")
+	since := fs.String("since", "1h", "show flows newer than duration, for example 1h or 30m")
+	client := fs.String("client", "", "client IP address")
+	peer := fs.String("peer", "", "peer IP address")
+	limit := fs.Int("limit", 50, "maximum number of rows")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	sinceTime, err := cutoffTime(*since)
+	if err != nil {
+		return err
+	}
+	store, err := logstore.OpenTrafficFlowLog(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	rows, err := store.List(context.Background(), logstore.TrafficFlowFilter{Since: sinceTime, Client: *client, Peer: *peer, Limit: *limit})
+	if err != nil {
+		return err
+	}
+	switch output {
+	case "", "table":
+		return writeTrafficFlowsTable(stdout, rows)
+	case "json":
+		return writeJSON(stdout, rows)
+	case "yaml":
+		return writeYAML(stdout, rows)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeTrafficFlowsTable(stdout io.Writer, rows []logstore.TrafficFlow) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "STARTED\tENDED\tPROTO\tCLIENT\tPEER\tNAT\tBYTES_OUT\tBYTES_IN\tHOST")
+	for _, row := range rows {
+		ended := "-"
+		if !row.EndedAt.IsZero() {
+			ended = row.EndedAt.Format(time.RFC3339)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s:%d\t%s:%d\t%s\t%d\t%d\t%s\n",
+			row.StartedAt.Format(time.RFC3339),
+			ended,
+			row.Protocol,
+			row.ClientAddress,
+			row.ClientPort,
+			row.PeerAddress,
+			row.PeerPort,
+			displayCell(row.NATTranslatedAddress),
+			row.BytesOut,
+			row.BytesIn,
+			displayCell(firstNonEmpty(row.TLSSNI, row.ResolvedHostname)),
 		)
 	}
 	return w.Flush()
@@ -1783,6 +1849,10 @@ func defaultDNSQueriesPath() string {
 	return platformDefaults.StateDir + "/dns-queries.db"
 }
 
+func defaultTrafficFlowsPath() string {
+	return platformDefaults.StateDir + "/traffic-flows.db"
+}
+
 func defaultSocketPath() string {
 	return platformDefaults.SocketFile()
 }
@@ -1794,6 +1864,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  status [--socket <path>]")
 	fmt.Fprintln(w, "  events [--state-file <path>] [--topic <topic>] [--resource <kind>/<name>] [--limit <n>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  dns-queries [--db <path>] [--since 1h] [--client <ip>] [--qname <pattern>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  traffic-flows [--db <path>] [--since 1h] [--client <ip>] [--peer <ip>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  get <kind>[/<name>] [--list-kinds] [--config <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  describe <kind>/<name> [--config <path>] [--state-file <path>] [--ledger-file <path>] [--events-limit <n>]")
 	fmt.Fprintln(w, "  describe firewall [--config <path>]")

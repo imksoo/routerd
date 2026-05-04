@@ -1576,6 +1576,22 @@ func validateResource(res api.Resource) error {
 				}
 			}
 		}
+	case "TrafficFlowLog":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.TrafficFlowLogSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Enabled && strings.TrimSpace(spec.Path) == "" {
+			return fmt.Errorf("%s spec.path is required when enabled is true", res.ID())
+		}
+		switch spec.Source {
+		case "", "conntrack":
+		default:
+			return fmt.Errorf("%s spec.source must be conntrack", res.ID())
+		}
 	case "DHCPv4Server":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

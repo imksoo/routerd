@@ -35,6 +35,7 @@ func (s fakeStore) ListEvents(routerstate.EventQuery) ([]routerstate.StoredEvent
 
 func TestHandlerServesReadOnlySummary(t *testing.T) {
 	queryLog := t.TempDir() + "/dns-queries.db"
+	trafficLog := t.TempDir() + "/traffic-flows.db"
 	dnsLog, err := logstore.OpenDNSQueryLog(queryLog)
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +44,14 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = dnsLog.Close()
+	flows, err := logstore.OpenTrafficFlowLog(trafficLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := flows.UpsertActive(context.Background(), logstore.TrafficFlow{StartedAt: time.Now(), ClientAddress: "172.18.0.2", PeerAddress: "93.184.216.34", Protocol: "tcp"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = flows.Close()
 	handler := New(Options{
 		Store: fakeStore{
 			resources: []routerstate.ObjectStatus{{APIVersion: "net.routerd.net/v1alpha1", Kind: "HealthCheck", Name: "internet", Status: map[string]any{"phase": "Healthy"}}},
@@ -54,7 +63,8 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		NAPT: func(limit int) (*observe.NAPTTable, error) {
 			return &observe.NAPTTable{Count: 3, Max: 262144}, nil
 		},
-		DNSQueryLogPath: queryLog,
+		DNSQueryLogPath:    queryLog,
+		TrafficFlowLogPath: trafficLog,
 	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/summary", nil)
@@ -62,7 +72,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"napt"`, `"dnsQueries"`, "example.com"} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"napt"`, `"dnsQueries"`, `"trafficFlows"`, "example.com"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}
@@ -100,6 +110,28 @@ func TestHandlerServesDNSQueries(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "www.example.com") {
 		t.Fatalf("dns queries missing row:\n%s", rec.Body.String())
+	}
+}
+
+func TestHandlerServesTrafficFlows(t *testing.T) {
+	path := t.TempDir() + "/traffic-flows.db"
+	flowLog, err := logstore.OpenTrafficFlowLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := flowLog.UpsertActive(context.Background(), logstore.TrafficFlow{StartedAt: time.Now(), ClientAddress: "172.18.0.2", PeerAddress: "1.1.1.1", PeerPort: 443, Protocol: "tcp"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = flowLog.Close()
+	handler := New(Options{TrafficFlowLogPath: path})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/traffic-flows?since=1h&limit=10", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "1.1.1.1") {
+		t.Fatalf("traffic flows missing row:\n%s", rec.Body.String())
 	}
 }
 
@@ -154,6 +186,8 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 	for _, want := range []string{
 		`api/summary?events=15&napt=30`,
 		`function dnsLabelMap`,
+		`function clientTrafficRows`,
+		`Client Traffic`,
 		`dst-label`,
 		`proto-tcp`,
 		`state-established`,

@@ -314,6 +314,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "TrafficFlowLog":
+		var spec TrafficFlowLogSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "DSLiteTunnel":
 		var spec DSLiteTunnelSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

@@ -333,7 +333,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
 	firewall := firewallcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunFirewall, NftablesPath: firstNonEmpty(r.Opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: r.Opts.NftCommand, Logger: logger}
-	conntrackObs := conntrackobserver.Controller{Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: r.Opts.ConntrackInterval, Logger: logger}
+	conntrackObs := conntrackobserver.Controller{Router: r.Router, Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: r.Opts.ConntrackInterval, Logger: logger}
 	rules.Start(ctx)
 	derivedEvents.Start(ctx)
 	health.Start(ctx)

@@ -117,6 +117,38 @@ func TestDNSQueriesCommandReadsLogDatabase(t *testing.T) {
 	}
 }
 
+func TestTrafficFlowsCommandReadsLogDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "traffic-flows.db")
+	store, err := logstore.OpenTrafficFlowLog(path)
+	if err != nil {
+		t.Fatalf("open traffic log: %v", err)
+	}
+	if err := store.UpsertActive(context.Background(), logstore.TrafficFlow{
+		StartedAt:     time.Now().UTC(),
+		ClientAddress: "172.18.0.10",
+		ClientPort:    12345,
+		PeerAddress:   "1.1.1.1",
+		PeerPort:      443,
+		Protocol:      "tcp",
+	}); err != nil {
+		t.Fatalf("record flow: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close traffic log: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{"traffic-flows", "--db", path, "--since", "1h"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("traffic-flows: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"172.18.0.10", "1.1.1.1", "tcp"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("traffic flow output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestShowKindNameYAML(t *testing.T) {
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)

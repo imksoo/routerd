@@ -576,6 +576,15 @@ type DNSResolverQueryLogSpec struct {
 	Retention string `yaml:"retention,omitempty" json:"retention,omitempty"`
 }
 
+type TrafficFlowLogSpec struct {
+	Enabled       bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Path          string `yaml:"path,omitempty" json:"path,omitempty"`
+	Retention     string `yaml:"retention,omitempty" json:"retention,omitempty"`
+	Source        string `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"enum=,enum=conntrack"`
+	IncludeNDPI   bool   `yaml:"includeNDPI,omitempty" json:"includeNDPI,omitempty"`
+	IncludeTLSSNI bool   `yaml:"includeTLSSNI,omitempty" json:"includeTLSSNI,omitempty"`
+}
+
 type ReadyWhenSpec struct {
 	Field    string                     `yaml:"field,omitempty" json:"field,omitempty"`
 	Equals   string                     `yaml:"equals,omitempty" json:"equals,omitempty"`
@@ -1131,6 +1140,10 @@ func (r Resource) SelfAddressPolicySpec() (SelfAddressPolicySpec, error) {
 
 func (r Resource) DNSResolverSpec() (DNSResolverSpec, error) {
 	return specAs[DNSResolverSpec](r)
+}
+
+func (r Resource) TrafficFlowLogSpec() (TrafficFlowLogSpec, error) {
+	return specAs[TrafficFlowLogSpec](r)
 }
 
 func (r Resource) DSLiteTunnelSpec() (DSLiteTunnelSpec, error) {

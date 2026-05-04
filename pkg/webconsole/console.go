@@ -20,14 +20,15 @@ import (
 )
 
 type Options struct {
-	Router          *api.Router
-	Store           routerstate.Store
-	Result          func() *apply.Result
-	NAPT            func(limit int) (*observe.NAPTTable, error)
-	Title           string
-	BasePath        string
-	NAPTLimit       int
-	DNSQueryLogPath string
+	Router             *api.Router
+	Store              routerstate.Store
+	Result             func() *apply.Result
+	NAPT               func(limit int) (*observe.NAPTTable, error)
+	Title              string
+	BasePath           string
+	NAPTLimit          int
+	DNSQueryLogPath    string
+	TrafficFlowLogPath string
 }
 
 type Handler struct {
@@ -35,14 +36,15 @@ type Handler struct {
 }
 
 type Snapshot struct {
-	GeneratedAt time.Time                  `json:"generatedAt"`
-	Status      controlapi.Status          `json:"status"`
-	Phases      map[string]int             `json:"phases"`
-	Resources   []routerstate.ObjectStatus `json:"resources"`
-	Events      []routerstate.StoredEvent  `json:"events"`
-	NAPT        *observe.NAPTTable         `json:"napt,omitempty"`
-	DNSQueries  []logstore.DNSQuery        `json:"dnsQueries,omitempty"`
-	Errors      []string                   `json:"errors,omitempty"`
+	GeneratedAt  time.Time                  `json:"generatedAt"`
+	Status       controlapi.Status          `json:"status"`
+	Phases       map[string]int             `json:"phases"`
+	Resources    []routerstate.ObjectStatus `json:"resources"`
+	Events       []routerstate.StoredEvent  `json:"events"`
+	NAPT         *observe.NAPTTable         `json:"napt,omitempty"`
+	DNSQueries   []logstore.DNSQuery        `json:"dnsQueries,omitempty"`
+	TrafficFlows []logstore.TrafficFlow     `json:"trafficFlows,omitempty"`
+	Errors       []string                   `json:"errors,omitempty"`
 }
 
 func New(opts Options) Handler {
@@ -82,6 +84,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.napt(w, r)
 	case "api/dns-queries":
 		h.dnsQueries(w, r)
+	case "api/traffic-flows":
+		h.trafficFlows(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -108,20 +112,25 @@ func (h Handler) Snapshot(limit int, naptLimit int) Snapshot {
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
+	trafficFlows, err := h.trafficFlowList(logstore.TrafficFlowFilter{Since: time.Now().Add(-time.Hour), Limit: 200})
+	if err != nil {
+		errors = append(errors, err.Error())
+	}
 	result := (*apply.Result)(nil)
 	if h.opts.Result != nil {
 		result = h.opts.Result()
 	}
 	status := controlapi.NewStatus(result)
 	return Snapshot{
-		GeneratedAt: time.Now().UTC(),
-		Status:      status,
-		Phases:      phaseCounts(resources),
-		Resources:   resources,
-		Events:      events,
-		NAPT:        napt,
-		DNSQueries:  dnsQueries,
-		Errors:      errors,
+		GeneratedAt:  time.Now().UTC(),
+		Status:       status,
+		Phases:       phaseCounts(resources),
+		Resources:    resources,
+		Events:       events,
+		NAPT:         napt,
+		DNSQueries:   dnsQueries,
+		TrafficFlows: trafficFlows,
+		Errors:       errors,
 	}
 }
 
@@ -190,6 +199,26 @@ func (h Handler) dnsQueries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, rows)
 }
 
+func (h Handler) trafficFlows(w http.ResponseWriter, r *http.Request) {
+	since := time.Now().Add(-time.Hour)
+	if raw := strings.TrimSpace(r.URL.Query().Get("since")); raw != "" {
+		if duration, err := parseConsoleDuration(raw); err == nil {
+			since = time.Now().Add(-duration)
+		}
+	}
+	rows, err := h.trafficFlowList(logstore.TrafficFlowFilter{
+		Since:  since,
+		Client: r.URL.Query().Get("client"),
+		Peer:   r.URL.Query().Get("peer"),
+		Limit:  intQuery(r, "limit", 100),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, rows)
+}
+
 func (h Handler) resourceStatuses() ([]routerstate.ObjectStatus, error) {
 	if lister, ok := h.opts.Store.(routerstate.ObjectStatusLister); ok {
 		return lister.ListObjectStatuses()
@@ -209,6 +238,18 @@ func (h Handler) queryLogList(filter logstore.DNSQueryFilter) ([]logstore.DNSQue
 		return nil, nil
 	}
 	store, err := logstore.OpenDNSQueryLog(h.opts.DNSQueryLogPath)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	return store.List(context.Background(), filter)
+}
+
+func (h Handler) trafficFlowList(filter logstore.TrafficFlowFilter) ([]logstore.TrafficFlow, error) {
+	if strings.TrimSpace(h.opts.TrafficFlowLogPath) == "" {
+		return nil, nil
+	}
+	store, err := logstore.OpenTrafficFlowLog(h.opts.TrafficFlowLogPath)
 	if err != nil {
 		return nil, err
 	}
@@ -346,6 +387,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 <main>
   <section><h2>Overview</h2><div class="grid" id="overview"></div></section>
   <section><h2>Traffic</h2><div id="traffic"></div></section>
+  <section><h2>Client Traffic</h2><div id="client-traffic"></div></section>
   <section><h2>Resources</h2><div id="resources"></div></section>
   <section><h2>Events</h2><div id="events"></div></section>
 </main>
@@ -370,6 +412,20 @@ function dnsLabelMap(rows){
   }
   return labels;
 }
+function clientTrafficRows(flows){
+  const totals = new Map();
+  for (const flow of flows || []) {
+    const key = flow.clientAddress || "-";
+    const current = totals.get(key) || {client:key, bytesOut:0, bytesIn:0, peers:new Set()};
+    current.bytesOut += Number(flow.bytesOut || 0);
+    current.bytesIn += Number(flow.bytesIn || 0);
+    const peer = flow.resolvedHostname || flow.tlsSNI || flow.peerAddress;
+    if (peer) current.peers.add(peer);
+    totals.set(key, current);
+  }
+  return Array.from(totals.values()).sort((a,b)=>a.client.localeCompare(b.client)).slice(0,10);
+}
+function bytes(v){return v ? String(v) : "-"}
 function remember(bucket, key, value){
   const previous = bucket.get(key);
   bucket.set(key, value);
@@ -429,6 +485,8 @@ async function refresh(){
     const changed = remember(seen.traffic, flowKey(e), flowSig(e));
     return '<tr'+rowClass(changed)+'><td>'+pill(e.protocol, "proto")+'</td><td>'+pill(state, "state")+'</td><td>'+flowCell(e, dnsLabels)+'</td><td>'+esc(e.timeout)+'s</td></tr>';
   }));
+  document.getElementById("client-traffic").innerHTML = table(["client","bytes out","bytes in","recent peers"], clientTrafficRows(s.trafficFlows || []).map(row =>
+    '<tr><td><code>'+esc(row.client)+'</code></td><td>'+bytes(row.bytesOut)+'</td><td>'+bytes(row.bytesIn)+'</td><td><code>'+esc(Array.from(row.peers).slice(0,4).join(", "))+'</code></td></tr>'));
   const important = (s.resources||[]).filter(r => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(r.kind));
   document.getElementById("resources").innerHTML = table(["kind","name","phase","detail"], important.slice(0,80).map(r => {
     const st = r.status || {};
