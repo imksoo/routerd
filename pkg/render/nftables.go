@@ -106,6 +106,78 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func NftablesIPv4PolicyRoutes(router *api.Router) ([]byte, error) {
+	var policies []api.Resource
+	var policySets []api.Resource
+	for _, res := range router.Spec.Resources {
+		if res.Kind == "IPv4PolicyRoute" {
+			policies = append(policies, res)
+		}
+		if res.Kind == "IPv4PolicyRouteSet" {
+			policySets = append(policySets, res)
+		}
+	}
+	if len(policies) == 0 && len(policySets) == 0 {
+		return nil, nil
+	}
+	sort.Slice(policies, func(i, j int) bool { return policies[i].Metadata.Name < policies[j].Metadata.Name })
+	sort.Slice(policySets, func(i, j int) bool { return policySets[i].Metadata.Name < policySets[j].Metadata.Name })
+	var buf bytes.Buffer
+	if err := writeIPv4PolicyRouteTable(&buf, policies, policySets); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func NftablesIPv4DefaultRoutePolicy(resourceID string, spec api.IPv4DefaultRoutePolicySpec, active api.IPv4DefaultRoutePolicyCandidate, healthy []api.IPv4DefaultRoutePolicyCandidate, routeSets map[string]api.IPv4PolicyRouteSetSpec) ([]byte, error) {
+	matches, err := nftIPv4CIDRMatches(resourceID, spec.SourceCIDRs, spec.DestinationCIDRs)
+	if err != nil {
+		return nil, err
+	}
+	healthyMarks := make([]string, 0, len(healthy))
+	for _, candidate := range healthy {
+		if candidate.RouteSet != "" {
+			routeSet, ok := routeSets[candidate.RouteSet]
+			if !ok {
+				return nil, fmt.Errorf("%s references missing IPv4PolicyRouteSet %q", resourceID, candidate.RouteSet)
+			}
+			for _, target := range routeSet.Targets {
+				healthyMarks = append(healthyMarks, nftMark(target.Mark))
+			}
+			continue
+		}
+		healthyMarks = append(healthyMarks, nftMark(candidate.Mark))
+	}
+	sort.Strings(healthyMarks)
+	var buf bytes.Buffer
+	buf.WriteString("table ip routerd_default_route {\n")
+	buf.WriteString("  chain prerouting {\n")
+	buf.WriteString("    type filter hook prerouting priority -151; policy accept;\n")
+	activeRouteSet := active.RouteSet != ""
+	activeMark := nftMark(active.Mark)
+	for _, match := range matches {
+		prefix := strings.TrimSpace(match)
+		if prefix != "" {
+			prefix += " "
+		}
+		if len(healthyMarks) > 0 {
+			set := "{ " + strings.Join(healthyMarks, ", ") + " }"
+			buf.WriteString("    " + prefix + "ct mark " + set + " meta mark set ct mark\n")
+			if activeRouteSet {
+				buf.WriteString("    " + prefix + "ct mark != 0x0 ct mark != " + set + " meta mark set 0x0 ct mark set meta mark\n")
+			} else {
+				buf.WriteString("    " + prefix + "ct mark != 0x0 ct mark != " + set + " meta mark set " + activeMark + " ct mark set meta mark\n")
+			}
+		}
+		if !activeRouteSet {
+			buf.WriteString("    " + prefix + "ct mark 0x0 meta mark set " + activeMark + " ct mark set meta mark\n")
+		}
+	}
+	buf.WriteString("  }\n")
+	buf.WriteString("}\n")
+	return buf.Bytes(), nil
+}
+
 type NAT44RenderRule struct {
 	Name            string
 	Type            string

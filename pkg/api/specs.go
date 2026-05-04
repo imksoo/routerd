@@ -921,6 +921,7 @@ type IPv4PolicyRouteTarget struct {
 	Priority          int    `yaml:"priority" json:"priority" jsonschema:"minimum=1,maximum=32765"`
 	Mark              int    `yaml:"mark" json:"mark" jsonschema:"minimum=1,maximum=4294967295"`
 	RouteMetric       int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	HealthCheck       string `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
 }
 
 type IPv4ReversePathFilterSpec struct {

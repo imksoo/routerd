@@ -420,7 +420,52 @@ spec:
           - resource: Link/lan
             phase: Up
 
-    # --- DSLite tunnel ---
+    # --- DS-Lite source addresses ---
+    # AFTR ごとに PD 由来の source IPv6 を固定します。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: ds-lite-a-source
+      spec:
+        interface: lan
+        prefixDelegation: wan-pd
+        subnetID: "1"
+        addressSuffix: ::11
+        dependsOn:
+          - resource: DHCPv6PrefixDelegation/wan-pd
+            phase: Bound
+          - resource: Link/lan
+            phase: Up
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: ds-lite-b-source
+      spec:
+        interface: lan
+        prefixDelegation: wan-pd
+        subnetID: "1"
+        addressSuffix: ::12
+        dependsOn:
+          - resource: DHCPv6PrefixDelegation/wan-pd
+            phase: Bound
+          - resource: Link/lan
+            phase: Up
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: ds-lite-c-source
+      spec:
+        interface: lan
+        prefixDelegation: wan-pd
+        subnetID: "1"
+        addressSuffix: ::13
+        dependsOn:
+          - resource: DHCPv6PrefixDelegation/wan-pd
+            phase: Bound
+          - resource: Link/lan
+            phase: Up
+
+    # --- DS-Lite tunnels ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel
       metadata:
@@ -443,8 +488,65 @@ spec:
         dependsOn:
           - resource: DNSResolver/lan-resolver
             phase: Applied
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-a
+        ownerRefs:
+          - kind: DHCPv6Information
+            name: wan-info
+      spec:
+        interface: wan
+        tunnelName: ds-lite-a
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: ds-lite-a-source
+        localAddressSuffix: ::11
+        aftrIPv6: 2404:8e00::feed:100
+        mtu: 1460
+        dependsOn:
+          - resource: IPv6DelegatedAddress/ds-lite-a-source
+            phase: Applied
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-b
+        ownerRefs:
+          - kind: DHCPv6Information
+            name: wan-info
+      spec:
+        interface: wan
+        tunnelName: ds-lite-b
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: ds-lite-b-source
+        localAddressSuffix: ::12
+        aftrIPv6: 2404:8e00::feed:101
+        mtu: 1460
+        dependsOn:
+          - resource: IPv6DelegatedAddress/ds-lite-b-source
+            phase: Applied
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-c
+        ownerRefs:
+          - kind: DHCPv6Information
+            name: wan-info
+      spec:
+        interface: wan
+        tunnelName: ds-lite-c
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: ds-lite-c-source
+        localAddressSuffix: ::13
+        aftrIPv6: 2404:8e00::feed:102
+        mtu: 1460
+        dependsOn:
+          - resource: IPv6DelegatedAddress/ds-lite-c-source
+            phase: Applied
 
-    # --- IPv4 default route と egress 選択 (DSLite primary + IX2215 fallback) ---
+    # --- IPv4 default route と egress 選択 ---
+    # router 自身の既定経路は、起動が速い RA/SLAAC 由来の旧 ds-lite を優先します。
+    # LAN クライアントの転送は下の IPv4PolicyRouteSet / IPv4DefaultRoutePolicy で
+    # PD 由来 ds-lite-a/b/c に端末 IPv4 アドレス単位で振り分けます。
     - apiVersion: net.routerd.net/v1alpha1
       kind: EgressRoutePolicy
       metadata:
@@ -462,7 +564,7 @@ spec:
               resource: DSLiteTunnel/ds-lite
               field: device
             gatewaySource: none
-            weight: 100
+            weight: 110
             healthCheck: internet-via-dslite
             dependsOn:
               - resource: DSLiteTunnel/ds-lite
@@ -481,6 +583,76 @@ spec:
                 phase: Up
               - resource: IPv4StaticAddress/lan-legacy-bridge
                 phase: Applied
+
+    # LAN クライアントの IPv4 転送は端末 IPv4 アドレスで安定して振り分けます。
+    # routeSet が選ばれている間、新規 flow は ds-lite-a/b/c のいずれかへ進みます。
+    # ct mark を保持するため、既存 flow は途中で経路が変わりません。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4PolicyRouteSet
+      metadata:
+        name: dslite-pd-balanced
+      spec:
+        mode: hash
+        hashFields:
+          - sourceAddress
+        sourceCIDRs:
+          - 172.18.0.0/16
+        destinationCIDRs:
+          - 0.0.0.0/0
+        targets:
+          - name: ds-lite-a
+            outboundInterface: ds-lite-a
+            table: 110
+            priority: 10110
+            mark: 0x110
+            healthCheck: internet-via-dslite-a
+          - name: ds-lite-b
+            outboundInterface: ds-lite-b
+            table: 111
+            priority: 10111
+            mark: 0x111
+            healthCheck: internet-via-dslite-b
+          - name: ds-lite-c
+            outboundInterface: ds-lite-c
+            table: 112
+            priority: 10112
+            mark: 0x112
+            healthCheck: internet-via-dslite-c
+
+    # LAN クライアント向けの段階退避です。
+    # 1. PD 由来 ds-lite-a/b/c のハッシュ振り分け
+    # 2. RA/SLAAC 由来の旧 ds-lite
+    # 3. IX2215 fallback
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4DefaultRoutePolicy
+      metadata:
+        name: lan-forward-egress
+      spec:
+        mode: priority
+        sourceCIDRs:
+          - 172.18.0.0/16
+        destinationCIDRs:
+          - 0.0.0.0/0
+        candidates:
+          - name: dslite-pd-balanced
+            routeSet: dslite-pd-balanced
+            priority: 10
+            healthCheck: internet-via-dslite-a
+          - name: ds-lite
+            interface: ds-lite
+            gatewaySource: none
+            priority: 20
+            table: 113
+            mark: 0x113
+            healthCheck: internet-via-dslite
+          - name: ix2215-fallback
+            interface: lan
+            gatewaySource: static
+            gateway: 172.17.0.1
+            priority: 30
+            table: 114
+            mark: 0x114
+            healthCheck: internet-via-ix2215
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
@@ -520,19 +692,19 @@ spec:
 
     # DSLite 経路用 healthcheck の専用 /32 route。
     # default route が IX2215 fallback に残っている間も 1.1.1.1 への probe は
-    # 必ず DS-Lite tunnel 経由にして、primary 経路の生死を独立に観測する。
+    # 必ず DS-Lite A tunnel 経由にして、primary 経路の生死を独立に観測する。
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
-        name: dslite-healthcheck
+        name: dslite-a-healthcheck
       spec:
         destination: 1.1.1.1/32
         deviceFrom:
-          resource: DSLiteTunnel/ds-lite
+          resource: DSLiteTunnel/ds-lite-a
           field: interface
         metric: 10
         dependsOn:
-          - resource: DSLiteTunnel/ds-lite
+          - resource: DSLiteTunnel/ds-lite-a
             phase: Up
 
     # HGW LAN へ出る IPv4 は WAN 側の物理 NIC へ直接出します。
@@ -568,6 +740,33 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: NAT44Rule
       metadata:
+        name: lan-to-dslite-a
+      spec:
+        type: masquerade
+        egressInterface: ds-lite-a
+        sourceRanges:
+          - 172.18.0.0/16
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-dslite-b
+      spec:
+        type: masquerade
+        egressInterface: ds-lite-b
+        sourceRanges:
+          - 172.18.0.0/16
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-dslite-c
+      spec:
+        type: masquerade
+        egressInterface: ds-lite-c
+        sourceRanges:
+          - 172.18.0.0/16
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
         name: lan-to-wan-hgw
       spec:
         type: masquerade
@@ -588,6 +787,48 @@ spec:
         protocol: tcp
         port: 443
         sourceInterface: ds-lite
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-a
+      spec:
+        targetSource: static
+        target: 1.1.1.1
+        protocol: tcp
+        port: 443
+        sourceInterface: ds-lite-a
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-b
+      spec:
+        targetSource: static
+        target: 1.1.1.1
+        protocol: tcp
+        port: 443
+        sourceInterface: ds-lite-b
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-c
+      spec:
+        targetSource: static
+        target: 1.1.1.1
+        protocol: tcp
+        port: 443
+        sourceInterface: ds-lite-c
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -855,6 +1096,9 @@ spec:
         interfaces:
           - Interface/wan
           - DSLiteTunnel/ds-lite
+          - DSLiteTunnel/ds-lite-a
+          - DSLiteTunnel/ds-lite-b
+          - DSLiteTunnel/ds-lite-c
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone

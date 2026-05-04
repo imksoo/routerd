@@ -391,6 +391,9 @@ func Validate(router *api.Router) error {
 				if !interfaces[target.OutboundInterface] && !dsliteTunnels[target.OutboundInterface] {
 					return fmt.Errorf("%s target %q references missing outbound Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), target.Name, target.OutboundInterface)
 				}
+				if target.HealthCheck != "" && !healthChecks[target.HealthCheck] {
+					return fmt.Errorf("%s target %q references missing HealthCheck %q", res.ID(), target.Name, target.HealthCheck)
+				}
 			}
 		}
 		if res.Kind == "IPv4ReversePathFilter" {

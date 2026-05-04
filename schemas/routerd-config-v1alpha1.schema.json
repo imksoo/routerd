@@ -5365,6 +5365,9 @@
                         "items": {
                           "additionalProperties": false,
                           "properties": {
+                            "healthCheck": {
+                              "type": "string"
+                            },
                             "mark": {
                               "maximum": 4294967295,
                               "minimum": 1,
