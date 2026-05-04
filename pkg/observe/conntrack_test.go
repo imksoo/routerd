@@ -1,6 +1,9 @@
 package observe
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseConntrackEntry(t *testing.T) {
 	line := "ipv4     2 tcp      6 299 ESTABLISHED src=192.168.1.33 dst=192.168.1.32 sport=44882 dport=22 src=192.168.1.32 dst=192.168.1.33 sport=22 dport=44882 [ASSURED] mark=256 use=1"
@@ -33,6 +36,52 @@ ipv4 2 tcp 6 30 SYN_SENT src=192.0.2.2 dst=198.51.100.2 sport=23456 dport=443 sr
 	byMark := conntrackEntriesByMark(parseConntrackEntries(output, 0))
 	if byMark["0"] != 1 || byMark["257"] != 1 {
 		t.Fatalf("byMark = %+v", byMark)
+	}
+}
+
+func TestParsePFStateEntry(t *testing.T) {
+	line := "all tcp 172.18.0.101:53168 -> 93.184.216.34:443       ESTABLISHED:ESTABLISHED"
+	entry, ok := parsePFStateEntry(line)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	if entry.Family != "ipv4" || entry.Protocol != "tcp" || entry.State != "ESTABLISHED:ESTABLISHED" {
+		t.Fatalf("entry = %+v", entry)
+	}
+	if entry.Original.Source != "172.18.0.101" || entry.Original.SourcePort != "53168" {
+		t.Fatalf("original = %+v", entry.Original)
+	}
+	if entry.Original.Destination != "93.184.216.34" || entry.Original.DestinationPort != "443" {
+		t.Fatalf("original destination = %+v", entry.Original)
+	}
+	if entry.Reply.Source != "93.184.216.34" || entry.Reply.Destination != "172.18.0.101" {
+		t.Fatalf("reply = %+v", entry.Reply)
+	}
+}
+
+func TestParsePFStateEntryWithNAT(t *testing.T) {
+	line := "all udp 198.51.100.10:62000 (10.0.0.2:53168) -> 1.1.1.1:53       MULTIPLE:SINGLE"
+	entry, ok := parsePFStateEntry(line)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	if entry.Original.Source != "10.0.0.2" || entry.Original.SourcePort != "53168" {
+		t.Fatalf("original = %+v", entry.Original)
+	}
+	if entry.Reply.Destination != "198.51.100.10" || entry.Reply.DestinationPort != "62000" {
+		t.Fatalf("reply = %+v", entry.Reply)
+	}
+}
+
+func TestParsePFStateEntriesLimit(t *testing.T) {
+	output := strings.Join([]string{
+		"all tcp 172.18.0.101:53168 -> 93.184.216.34:443       ESTABLISHED:ESTABLISHED",
+		"   [123 + 64] wscale 7",
+		"all udp 10.0.0.2:53168 -> 1.1.1.1:53       MULTIPLE:SINGLE",
+	}, "\n")
+	entries := parsePFStateEntries(output, 1)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
 	}
 }
 

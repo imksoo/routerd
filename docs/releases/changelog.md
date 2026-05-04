@@ -17,6 +17,8 @@ routerd は出荷前のソフトウェアです。
 - Phase 3.0c: FreeBSD 向け pf 生成器の最初の実装を追加しました。
   `FirewallZone`、`FirewallPolicy`、`FirewallRule`、`IPv4SourceNAT`、`NAT44Rule` から `pf.conf` を生成します。
   実機適用はまだ接続せず、`routerd render freebsd --out-dir ...` の生成物として確認する段階です。
+- Phase 3.0d: FreeBSD 向け pf state 観測の土台を追加しました。
+  FreeBSD では `pfctl -ss -v` の出力を traffic flow 用の共通 NAPT 表現へ変換します。
 
 ## 0.3.0
 
