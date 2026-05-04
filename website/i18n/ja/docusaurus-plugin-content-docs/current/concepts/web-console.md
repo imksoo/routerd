@@ -11,6 +11,9 @@ Web Console は次の情報だけを読みます。
 - SQLite 状態データベース内のリソース状態
 - SQLite イベントテーブル内の bus イベント
 - conntrack と NAPT の観測値
+- `dns-queries.db` に保存した DNS クエリー履歴
+- `traffic-flows.db` に保存した通信フロー履歴
+- `firewall-logs.db` に保存した拒否ログ
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -33,6 +36,9 @@ spec:
 - PD、DS-Lite、DNS、NAT、経路、HealthCheck、VPN、firewall リソースの phase
 - 直近の routerd イベント
 - conntrack 件数と NAPT エントリーの一部
+- DNS 履歴から付けた通信先ラベル
+- クライアント別の通信量
+- 送信元と宛先で集計した直近の拒否ログ
 
 JSON endpoint も読み取り専用です。
 
@@ -42,4 +48,6 @@ JSON endpoint も読み取り専用です。
 | `/api/resources` | 状態データベース内のリソース状態 |
 | `/api/events` | 直近の bus イベント |
 | `/api/napt` | conntrack と NAPT の観測値 |
-
+| `/api/dns-queries` | DNS クエリー履歴 |
+| `/api/traffic-flows` | 通信フロー履歴 |
+| `/api/firewall-logs` | ファイアウォールログ |

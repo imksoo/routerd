@@ -10,6 +10,17 @@ type LogSinkSpec struct {
 	Plugin   LogSinkPluginSpec `yaml:"plugin,omitempty" json:"plugin,omitempty"`
 }
 
+type LogRetentionSpec struct {
+	Schedule          string                   `yaml:"schedule,omitempty" json:"schedule,omitempty" jsonschema:"enum=,enum=daily"`
+	IncrementalVacuum bool                     `yaml:"incrementalVacuum,omitempty" json:"incrementalVacuum,omitempty"`
+	Targets           []LogRetentionTargetSpec `yaml:"targets" json:"targets"`
+}
+
+type LogRetentionTargetSpec struct {
+	File      string `yaml:"file" json:"file"`
+	Retention string `yaml:"retention" json:"retention"`
+}
+
 type ApplyPolicySpec struct {
 	Mode                string   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=strict,enum=progressive"`
 	ProtectedInterfaces []string `yaml:"protectedInterfaces,omitempty" json:"protectedInterfaces,omitempty"`
@@ -1154,6 +1165,10 @@ func (r Resource) SelfAddressPolicySpec() (SelfAddressPolicySpec, error) {
 
 func (r Resource) DNSResolverSpec() (DNSResolverSpec, error) {
 	return specAs[DNSResolverSpec](r)
+}
+
+func (r Resource) LogRetentionSpec() (LogRetentionSpec, error) {
+	return specAs[LogRetentionSpec](r)
 }
 
 func (r Resource) TrafficFlowLogSpec() (TrafficFlowLogSpec, error) {

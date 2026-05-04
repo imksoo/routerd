@@ -816,6 +816,33 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.readWritePaths[%d] contains invalid characters", res.ID(), i)
 			}
 		}
+	case "LogRetention":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.LogRetentionSpec()
+		if err != nil {
+			return err
+		}
+		switch spec.Schedule {
+		case "", "daily":
+		default:
+			return fmt.Errorf("%s spec.schedule must be daily", res.ID())
+		}
+		if len(spec.Targets) == 0 {
+			return fmt.Errorf("%s spec.targets is required", res.ID())
+		}
+		for i, target := range spec.Targets {
+			if !strings.HasPrefix(target.File, "/") {
+				return fmt.Errorf("%s spec.targets[%d].file must be an absolute path", res.ID(), i)
+			}
+			if strings.TrimSpace(target.Retention) == "" {
+				return fmt.Errorf("%s spec.targets[%d].retention is required", res.ID(), i)
+			}
+			if _, err := parseRetentionDuration(target.Retention); err != nil {
+				return fmt.Errorf("%s spec.targets[%d].retention must be a duration", res.ID(), i)
+			}
+		}
 	case "NTPClient":
 		if res.APIVersion != api.SystemAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
@@ -2889,6 +2916,18 @@ func dnsSourceExists(sources []api.DNSResolverSourceSpec, name string) bool {
 func isStatusExpression(value string) bool {
 	value = strings.TrimSpace(value)
 	return strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") && strings.Contains(value, ".status.")
+}
+
+func parseRetentionDuration(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if strings.HasSuffix(value, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(value)
 }
 
 func stringInSlice(value string, values []string) bool {

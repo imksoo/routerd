@@ -214,6 +214,7 @@ func resourceUnionSchema() map[string]any {
 	return map[string]any{
 		"oneOf": []any{
 			resourceSchema(api.SystemAPIVersion, "LogSink", api.LogSinkSpec{}),
+			resourceSchema(api.SystemAPIVersion, "LogRetention", api.LogRetentionSpec{}),
 			resourceSchema(api.SystemAPIVersion, "Sysctl", api.SysctlSpec{}),
 			resourceSchema(api.SystemAPIVersion, "SysctlProfile", api.SysctlProfileSpec{}),
 			resourceSchema(api.SystemAPIVersion, "Package", api.PackageSpec{}),
@@ -263,9 +264,11 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "IPv4PolicyRouteSet", api.IPv4PolicyRouteSetSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4ReversePathFilter", api.IPv4ReversePathFilterSpec{}),
 			resourceSchema(api.NetAPIVersion, "PathMTUPolicy", api.PathMTUPolicySpec{}),
+			resourceSchema(api.NetAPIVersion, "TrafficFlowLog", api.TrafficFlowLogSpec{}),
 			resourceSchema(api.FirewallAPIVersion, "FirewallZone", api.FirewallZoneSpec{}),
 			resourceSchema(api.FirewallAPIVersion, "FirewallPolicy", api.FirewallPolicySpec{}),
 			resourceSchema(api.FirewallAPIVersion, "FirewallRule", api.FirewallRuleSpec{}),
+			resourceSchema(api.FirewallAPIVersion, "FirewallLog", api.FirewallLogSpec{}),
 			resourceSchema(api.NetAPIVersion, "Hostname", api.HostnameSpec{}),
 		},
 	}

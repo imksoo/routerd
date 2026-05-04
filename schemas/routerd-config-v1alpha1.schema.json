@@ -188,6 +188,81 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "LogRetention",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "incrementalVacuum": {
+                        "type": "boolean"
+                      },
+                      "schedule": {
+                        "enum": [
+                          "",
+                          "daily"
+                        ],
+                        "type": "string"
+                      },
+                      "targets": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "file": {
+                              "type": "string"
+                            },
+                            "retention": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "file",
+                            "retention"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "targets"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "system.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "Sysctl",
                     "type": "string"
                   },
@@ -5551,6 +5626,71 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "TrafficFlowLog",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "includeNDPI": {
+                        "type": "boolean"
+                      },
+                      "includeTLSSNI": {
+                        "type": "boolean"
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "retention": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "enum": [
+                          "",
+                          "conntrack"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "firewall.routerd.net/v1alpha1",
                     "type": "string"
                   },
@@ -5744,6 +5884,80 @@
                       "toZone",
                       "action"
                     ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "firewall.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "FirewallLog",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "log": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "acceptSampleRate": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "dropSampleRate": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "reject": {
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "nflogGroup": {
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "retention": {
+                        "type": "string"
+                      }
+                    },
                     "type": "object"
                   },
                   "status": {

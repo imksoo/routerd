@@ -35,9 +35,9 @@ spec:
 | API グループ | 主な Kind |
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
-| `net.routerd.net/v1alpha1` | インターフェース、DHCP、DNS、経路、トンネル、イベント |
-| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule` |
-| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `WebConsole`, `NixOSHost` |
+| `net.routerd.net/v1alpha1` | インターフェース、DHCP、DNS、経路、トンネル、イベント、通信フローログ |
+| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog` |
+| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
 
 ## システム準備
@@ -52,6 +52,7 @@ spec:
 | `Hostname` | ホスト名を設定します。 |
 | `NTPClient` | OS の NTP クライアントを有効にします。 |
 | `LogSink` | routerd のイベントを syslog や外部プログラムへ送ります。 |
+| `LogRetention` | イベント、DNS、通信フロー、ファイアウォールログの保管期間を管理します。 |
 | `WebConsole` | 読み取り専用の Web 画面を管理ネットワークで待ち受けます。 |
 
 ## インターフェースとリンク

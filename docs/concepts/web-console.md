@@ -11,6 +11,9 @@ The web console only reads:
 - resource status in the SQLite state database
 - bus events in the SQLite event table
 - conntrack / NAPT observations
+- DNS query history from `dns-queries.db`
+- traffic flow history from `traffic-flows.db`
+- firewall deny history from `firewall-logs.db`
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -33,6 +36,9 @@ The first screen shows:
 - resource phases for PD, DS-Lite, DNS, NAT, routes, health checks, VPN, and firewall resources
 - recent routerd events
 - conntrack count and sampled NAPT entries
+- DNS-derived destination labels for traffic rows
+- client traffic totals from recent flow history
+- recent firewall denies grouped by source and destination
 
 The JSON endpoints are also read-only:
 
@@ -42,4 +48,6 @@ The JSON endpoints are also read-only:
 | `/api/resources` | resource statuses from the state database |
 | `/api/events` | recent bus events |
 | `/api/napt` | conntrack / NAPT observation |
-
+| `/api/dns-queries` | DNS query log rows |
+| `/api/traffic-flows` | traffic flow log rows |
+| `/api/firewall-logs` | firewall log rows |

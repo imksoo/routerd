@@ -45,6 +45,7 @@ spec:
               - systemd
               - net-tools
               - kmod
+              - libnetfilter-log1
           - os: nixos
             manager: nix
             names:
@@ -64,6 +65,7 @@ spec:
               - systemd
               - nettools
               - kmod
+              - libnetfilter_log
             optional: true
           - os: freebsd
             manager: pkg
@@ -103,6 +105,23 @@ spec:
         value: "2"
         runtime: true
         persistent: true
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: LogRetention
+      metadata:
+        name: default
+      spec:
+        schedule: daily
+        incrementalVacuum: true
+        targets:
+          - file: /var/lib/routerd/routerd.db
+            retention: 30d
+          - file: /var/lib/routerd/dns-queries.db
+            retention: 30d
+          - file: /var/lib/routerd/traffic-flows.db
+            retention: 30d
+          - file: /var/lib/routerd/firewall-logs.db
+            retention: 90d
 
     # --- OS ネットワーク採用 ---
     # ens18/ens19 の systemd-networkd DHCP クライアントを止めます。
@@ -234,6 +253,44 @@ spec:
         name: routerd-dhcpv6-client@wan-pd.service
       spec:
         state: absent
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
+        name: routerd-firewall-logger.service
+      spec:
+        description: routerd firewall NFLOG writer
+        execStart:
+          - /usr/local/sbin/routerd-firewall-logger
+          - daemon
+          - --path
+          - /var/lib/routerd/firewall-logs.db
+          - --nflog-group
+          - "1"
+        after:
+          - network-online.target
+        wantedBy:
+          - multi-user.target
+        restart: on-failure
+        runtimeDirectory:
+          - routerd
+        stateDirectory:
+          - routerd
+        readWritePaths:
+          - /var/lib/routerd
+        ambientCapabilities:
+          - CAP_NET_ADMIN
+          - CAP_NET_RAW
+        capabilityBoundingSet:
+          - CAP_NET_ADMIN
+          - CAP_NET_RAW
+        restrictAddressFamilies:
+          - AF_UNIX
+          - AF_NETLINK
+          - AF_INET
+          - AF_INET6
+        noNewPrivileges: true
+        enabled: true
+        started: false
     - apiVersion: system.routerd.net/v1alpha1
       kind: WebConsole
       metadata:
@@ -616,6 +673,10 @@ spec:
           minTTL: 60s
           maxTTL: 24h
           negativeTTL: 30s
+        queryLog:
+          enabled: true
+          path: /var/lib/routerd/dns-queries.db
+          retention: 30d
 
     # --- ローカル権威ゾーン ---
     - apiVersion: net.routerd.net/v1alpha1
@@ -751,3 +812,29 @@ spec:
       spec:
         logDeny: true
         sameRoleAccept: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: TrafficFlowLog
+      metadata:
+        name: default
+      spec:
+        enabled: true
+        path: /var/lib/routerd/traffic-flows.db
+        retention: 30d
+        source: conntrack
+        includeNDPI: true
+        includeTLSSNI: true
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallLog
+      metadata:
+        name: default
+      spec:
+        enabled: true
+        path: /var/lib/routerd/firewall-logs.db
+        retention: 90d
+        nflogGroup: 1
+        log:
+          acceptSampleRate: 0
+          dropSampleRate: 1
+          reject: true
