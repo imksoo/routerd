@@ -123,7 +123,7 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 | `IPv4PolicyRouteSet` | 複数のポリシールートをまとめます。 |
 | `IPv4DefaultRoutePolicy` | 既定経路の方針を表します。 |
 | `IPv4ReversePathFilter` | reverse path filter を表します。 |
-| `PathMTUPolicy` | MTU と TCP MSS 調整の方針を表します。 |
+| `PathMTUPolicy` | MTU と TCP MSS 調整の方針を表します。`mtu.source: probe` では DF 付きの疎通確認で経路 MTU を測ります。 |
 
 Phase 1.5e では router05 で DS-Lite、IPv4 既定経路、NAT44 の実適用を確認しています。
 

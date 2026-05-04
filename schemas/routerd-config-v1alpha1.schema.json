@@ -5560,6 +5560,15 @@
                       "fromInterface": {
                         "type": "string"
                       },
+                      "interfaceMTU": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "ipv6RA": {
                         "additionalProperties": false,
                         "properties": {
@@ -5575,10 +5584,51 @@
                       "mtu": {
                         "additionalProperties": false,
                         "properties": {
+                          "probe": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "fallback": {
+                                "maximum": 65535,
+                                "minimum": 1280,
+                                "type": "integer"
+                              },
+                              "family": {
+                                "enum": [
+                                  "ipv4",
+                                  "ipv6"
+                                ],
+                                "type": "string"
+                              },
+                              "interval": {
+                                "type": "string"
+                              },
+                              "max": {
+                                "maximum": 65535,
+                                "minimum": 1280,
+                                "type": "integer"
+                              },
+                              "min": {
+                                "maximum": 65535,
+                                "minimum": 1280,
+                                "type": "integer"
+                              },
+                              "targets": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "timeout": {
+                                "type": "string"
+                              }
+                            },
+                            "type": "object"
+                          },
                           "source": {
                             "enum": [
                               "minInterface",
-                              "static"
+                              "static",
+                              "probe"
                             ],
                             "type": "string"
                           },

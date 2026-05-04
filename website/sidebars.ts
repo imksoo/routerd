@@ -12,6 +12,7 @@ const sidebars: SidebarsConfig = {
         'concepts/resource-model',
         'concepts/apply-and-render',
         'concepts/state-and-ownership',
+        'concepts/path-mtu',
         'concepts/web-console',
       ],
     },

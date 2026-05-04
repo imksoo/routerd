@@ -931,16 +931,32 @@ type IPv4ReversePathFilterSpec struct {
 }
 
 type PathMTUPolicySpec struct {
-	FromInterface string                  `yaml:"fromInterface" json:"fromInterface"`
-	ToInterfaces  []string                `yaml:"toInterfaces" json:"toInterfaces"`
-	MTU           PathMTUPolicyMTUSpec    `yaml:"mtu,omitempty" json:"mtu,omitempty"`
-	IPv6RA        PathMTUPolicyIPv6RASpec `yaml:"ipv6RA,omitempty" json:"ipv6RA,omitempty"`
-	TCPMSSClamp   PathMTUPolicyTCPMSSSpec `yaml:"tcpMSSClamp,omitempty" json:"tcpMSSClamp,omitempty"`
+	FromInterface string                   `yaml:"fromInterface" json:"fromInterface"`
+	ToInterfaces  []string                 `yaml:"toInterfaces" json:"toInterfaces"`
+	MTU           PathMTUPolicyMTUSpec     `yaml:"mtu,omitempty" json:"mtu,omitempty"`
+	InterfaceMTU  PathMTUPolicyLinkMTUSpec `yaml:"interfaceMTU,omitempty" json:"interfaceMTU,omitempty"`
+	IPv6RA        PathMTUPolicyIPv6RASpec  `yaml:"ipv6RA,omitempty" json:"ipv6RA,omitempty"`
+	TCPMSSClamp   PathMTUPolicyTCPMSSSpec  `yaml:"tcpMSSClamp,omitempty" json:"tcpMSSClamp,omitempty"`
 }
 
 type PathMTUPolicyMTUSpec struct {
-	Source string `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"enum=minInterface,enum=static"`
-	Value  int    `yaml:"value,omitempty" json:"value,omitempty" jsonschema:"minimum=1280,maximum=65535"`
+	Source string                    `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"enum=minInterface,enum=static,enum=probe"`
+	Value  int                       `yaml:"value,omitempty" json:"value,omitempty" jsonschema:"minimum=1280,maximum=65535"`
+	Probe  PathMTUPolicyMTUProbeSpec `yaml:"probe,omitempty" json:"probe,omitempty"`
+}
+
+type PathMTUPolicyMTUProbeSpec struct {
+	Targets  []string `yaml:"targets,omitempty" json:"targets,omitempty"`
+	Family   string   `yaml:"family,omitempty" json:"family,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
+	Min      int      `yaml:"min,omitempty" json:"min,omitempty" jsonschema:"minimum=1280,maximum=65535"`
+	Max      int      `yaml:"max,omitempty" json:"max,omitempty" jsonschema:"minimum=1280,maximum=65535"`
+	Fallback int      `yaml:"fallback,omitempty" json:"fallback,omitempty" jsonschema:"minimum=1280,maximum=65535"`
+	Interval string   `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Timeout  string   `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+}
+
+type PathMTUPolicyLinkMTUSpec struct {
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 }
 
 type PathMTUPolicyIPv6RASpec struct {

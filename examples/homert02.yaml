@@ -816,7 +816,7 @@ spec:
 
     # --- Path MTU / TCP MSS ---
     # DS-Lite は IPv6 外側ヘッダーを持つため、LAN から tunnel へ出る
-    # TCP SYN の MSS を 1414 に落とします。
+    # 経路 MTU を実測し、TCP SYN の MSS を自動で落とします。
     - apiVersion: net.routerd.net/v1alpha1
       kind: PathMTUPolicy
       metadata:
@@ -829,8 +829,20 @@ spec:
           - ds-lite-b
           - ds-lite-c
         mtu:
-          source: static
+          source: probe
           value: 1454
+          probe:
+            family: ipv4
+            targets:
+              - 1.1.1.1
+              - 8.8.8.8
+            min: 1280
+            max: 1500
+            fallback: 1454
+            interval: 10m
+            timeout: 1s
+        interfaceMTU:
+          enabled: true
         tcpMSSClamp:
           enabled: true
           families:

@@ -47,8 +47,10 @@ func pathMTUPolicies(router *api.Router) ([]pathMTUPolicy, error) {
 			if mtu == 0 {
 				return nil, fmt.Errorf("%s spec.mtu.value is required when mtu.source is static", res.ID())
 			}
+		case "probe":
+			mtu = firstNonZero(spec.MTU.Value, spec.MTU.Probe.Fallback, spec.MTU.Probe.Max, 1500)
 		default:
-			return nil, fmt.Errorf("%s spec.mtu.source must be minInterface or static", res.ID())
+			return nil, fmt.Errorf("%s spec.mtu.source must be minInterface, static, or probe", res.ID())
 		}
 		if mtu < 1280 {
 			return nil, fmt.Errorf("%s computed MTU %d is below the IPv6 minimum MTU 1280", res.ID(), mtu)
@@ -136,4 +138,13 @@ func defaultInt(value, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }

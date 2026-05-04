@@ -2582,14 +2582,59 @@ func validateResource(res api.Resource) error {
 		switch defaultString(spec.MTU.Source, "minInterface") {
 		case "minInterface":
 			if spec.MTU.Value != 0 {
-				return fmt.Errorf("%s spec.mtu.value is only valid when mtu.source is static", res.ID())
+				return fmt.Errorf("%s spec.mtu.value is only valid when mtu.source is static or probe", res.ID())
 			}
 		case "static":
 			if spec.MTU.Value < 1280 || spec.MTU.Value > 65535 {
 				return fmt.Errorf("%s spec.mtu.value must be within 1280-65535", res.ID())
 			}
+		case "probe":
+			probe := spec.MTU.Probe
+			switch defaultString(probe.Family, "ipv4") {
+			case "ipv4", "ipv6":
+			default:
+				return fmt.Errorf("%s spec.mtu.probe.family must be ipv4 or ipv6", res.ID())
+			}
+			if probe.Min != 0 && (probe.Min < 1280 || probe.Min > 65535) {
+				return fmt.Errorf("%s spec.mtu.probe.min must be within 1280-65535", res.ID())
+			}
+			if probe.Max != 0 && (probe.Max < 1280 || probe.Max > 65535) {
+				return fmt.Errorf("%s spec.mtu.probe.max must be within 1280-65535", res.ID())
+			}
+			if probe.Fallback != 0 && (probe.Fallback < 1280 || probe.Fallback > 65535) {
+				return fmt.Errorf("%s spec.mtu.probe.fallback must be within 1280-65535", res.ID())
+			}
+			minMTU := probe.Min
+			if minMTU == 0 {
+				minMTU = 1280
+			}
+			maxMTU := probe.Max
+			if maxMTU == 0 {
+				maxMTU = spec.MTU.Value
+			}
+			if maxMTU == 0 {
+				maxMTU = 1500
+			}
+			if maxMTU < minMTU {
+				return fmt.Errorf("%s spec.mtu.probe.max must be greater than or equal to spec.mtu.probe.min", res.ID())
+			}
+			if probe.Interval != "" {
+				if _, err := time.ParseDuration(probe.Interval); err != nil {
+					return fmt.Errorf("%s spec.mtu.probe.interval is invalid: %w", res.ID(), err)
+				}
+			}
+			if probe.Timeout != "" {
+				if _, err := time.ParseDuration(probe.Timeout); err != nil {
+					return fmt.Errorf("%s spec.mtu.probe.timeout is invalid: %w", res.ID(), err)
+				}
+			}
+			for i, target := range probe.Targets {
+				if strings.TrimSpace(target) == "" || strings.ContainsAny(target, " \t\n\r") {
+					return fmt.Errorf("%s spec.mtu.probe.targets[%d] must be a single address or hostname", res.ID(), i)
+				}
+			}
 		default:
-			return fmt.Errorf("%s spec.mtu.source must be minInterface or static", res.ID())
+			return fmt.Errorf("%s spec.mtu.source must be minInterface, static, or probe", res.ID())
 		}
 		if spec.IPv6RA.Enabled && spec.IPv6RA.Scope == "" {
 			return fmt.Errorf("%s spec.ipv6RA.scope is required when ipv6RA.enabled is true", res.ID())
