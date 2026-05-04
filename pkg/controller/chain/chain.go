@@ -128,6 +128,10 @@ func stableStatus(status map[string]any) map[string]any {
 		switch key {
 		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions":
 			continue
+		case "count", "max", "usageRatio":
+			if fmt.Sprint(status["phase"]) == "Observed" {
+				continue
+			}
 		default:
 			out[key] = value
 		}
@@ -841,7 +845,15 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		if !c.DryRun {
+		status := map[string]any{
+			"phase":     "Applied",
+			"interface": spec.Interface,
+			"ifname":    ifname,
+			"address":   spec.Address,
+			"dryRun":    c.DryRun,
+		}
+		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name), status)
+		if !c.DryRun && changed {
 			command := c.Command
 			if command == nil {
 				command = runCommandContext
@@ -861,17 +873,10 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 				return err
 			}
 		}
-		status := map[string]any{
-			"phase":     "Applied",
-			"interface": spec.Interface,
-			"ifname":    ifname,
-			"address":   spec.Address,
-			"dryRun":    c.DryRun,
-		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, status); err != nil {
 			return err
 		}
-		if c.Bus != nil {
+		if changed && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.ipv4_address.applied", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: resource.Metadata.Name}
 			event.Attributes = map[string]string{"address": spec.Address, "interface": spec.Interface, "ifname": ifname, "dryRun": fmt.Sprintf("%t", c.DryRun)}
@@ -933,7 +938,15 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if err != nil {
 			return err
 		}
-		if !c.DryRun {
+		status := map[string]any{
+			"phase":        "Applied",
+			"address":      addr,
+			"interface":    spec.Interface,
+			"prefixSource": pdName,
+			"dryRun":       c.DryRun,
+		}
+		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name), status)
+		if !c.DryRun && changed {
 			ifname := interfaceIfName(c.Router, spec.Interface)
 			if ifname == "" {
 				ifname = spec.Interface
@@ -946,21 +959,16 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				return err
 			}
 		}
-		status := map[string]any{
-			"phase":        "Applied",
-			"address":      addr,
-			"interface":    spec.Interface,
-			"prefixSource": pdName,
-			"dryRun":       c.DryRun,
-		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status); err != nil {
 			return err
 		}
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.address.applied", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress", Name: resource.Metadata.Name}
-		event.Attributes = map[string]string{"address": addr, "interface": spec.Interface, "dryRun": fmt.Sprintf("%t", c.DryRun)}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
+		if changed && c.Bus != nil {
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.address.applied", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress", Name: resource.Metadata.Name}
+			event.Attributes = map[string]string{"address": addr, "interface": spec.Interface, "dryRun": fmt.Sprintf("%t", c.DryRun)}
+			if err := c.Bus.Publish(ctx, event); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

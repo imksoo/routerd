@@ -96,8 +96,10 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 		phase := "Applied"
+		changed := c.DryRun
 		if !c.DryRun {
-			if err := c.ensureRunning(ctx, resource.Metadata.Name, spec, config); err != nil {
+			changed, err = c.ensureRunning(ctx, resource.Metadata.Name, spec, config)
+			if err != nil {
 				phase = "Pending"
 				if err := c.saveStatus(resource.Metadata.Name, spec, phase, err.Error()); err != nil {
 					return err
@@ -108,7 +110,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		if err := c.saveStatus(resource.Metadata.Name, spec, phase, ""); err != nil {
 			return err
 		}
-		if c.Bus != nil {
+		if changed && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd"}, "routerd.dns.resolver.configured", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DNSResolver", Name: resource.Metadata.Name}
 			_ = c.Bus.Publish(ctx, event)
@@ -202,22 +204,25 @@ func (c Controller) eventRelevant(event daemonapi.DaemonEvent) bool {
 	return dnsResolverDependsOn(c.Router, *event.Resource)
 }
 
-func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNSResolverSpec, config dnsresolver.RuntimeConfig) error {
+func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNSResolverSpec, config dnsresolver.RuntimeConfig) (bool, error) {
 	runningMu.Lock()
 	defer runningMu.Unlock()
 	configPath := filepath.Join("/var/lib/routerd/dns-resolver", name, "config.json")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-		return err
+		return false, err
 	}
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(configPath, append(data, '\n'), 0644); err != nil {
-		return err
+		return false, err
 	}
 	if current, ok := runningResolvers[name]; ok && processAlive(current.process.Process) && sameSpec(current.spec, spec) && current.config == string(data) {
-		return nil
+		return false, nil
+	}
+	currentConfig, readErr := os.ReadFile(configPath)
+	if readErr != nil || string(bytes.TrimSpace(currentConfig)) != string(data) {
+		if err := os.WriteFile(configPath, append(data, '\n'), 0644); err != nil {
+			return false, err
+		}
 	}
 	if current, ok := runningResolvers[name]; ok && current.process.Process != nil {
 		_ = current.process.Process.Signal(syscall.SIGTERM)
@@ -237,7 +242,7 @@ func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNS
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	if err := cmd.Start(); err != nil {
-		return err
+		return false, err
 	}
 	runningResolvers[name] = runningResolver{process: cmd, spec: spec, config: string(data)}
 	go func() {
@@ -248,7 +253,7 @@ func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNS
 		}
 		runningMu.Unlock()
 	}()
-	return nil
+	return true, nil
 }
 
 func (c Controller) saveStatus(name string, spec api.DNSResolverSpec, phase, message string) error {

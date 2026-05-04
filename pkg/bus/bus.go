@@ -148,8 +148,7 @@ func routineEvent(topic string) bool {
 		"routerd.ipv4.route.installed",
 		"routerd.nat44.rule.applied",
 		"routerd.tunnel.ds-lite.up",
-		"routerd.dhcpv6.info.updated",
-		"routerd.conntrack.snapshot":
+		"routerd.dhcpv6.info.updated":
 		return true
 	default:
 		return false

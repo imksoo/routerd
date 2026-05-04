@@ -79,14 +79,17 @@ func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName strin
 			"domainSearch": decodeStringList(observed["domainSearch"]),
 			"source":       pdName,
 		}
+		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6Information", resource.Metadata.Name), next)
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Information", resource.Metadata.Name, next); err != nil {
 			return err
 		}
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.dhcpv6.info.updated", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Information", Name: resource.Metadata.Name}
-		event.Attributes = map[string]string{"aftrName": observed["aftrName"], "source": pdName}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
+		if changed && c.Bus != nil {
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.dhcpv6.info.updated", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Information", Name: resource.Metadata.Name}
+			event.Attributes = map[string]string{"aftrName": observed["aftrName"], "source": pdName}
+			if err := c.Bus.Publish(ctx, event); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -171,7 +174,9 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if mtu == 0 {
 			mtu = 1460
 		}
-		if !c.DryRun {
+		status := map[string]any{"phase": "Up", "interface": ifname, "tunnelName": ifname, "device": ifname, "localIPv6": local, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
+		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name), status)
+		if !c.DryRun && changed {
 			if localIfName != "" {
 				if err := ensureIPv6LocalEndpoint(ctx, localIfName, local); err != nil {
 					return err
@@ -184,15 +189,16 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 				return err
 			}
 		}
-		status := map[string]any{"phase": "Up", "interface": ifname, "tunnelName": ifname, "device": ifname, "localIPv6": local, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, status); err != nil {
 			return err
 		}
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.tunnel.ds-lite.up", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel", Name: resource.Metadata.Name}
-		event.Attributes = map[string]string{"interface": ifname, "aftrIPv6": remote, "dryRun": fmt.Sprintf("%t", c.DryRun)}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
+		if changed && c.Bus != nil {
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.tunnel.ds-lite.up", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel", Name: resource.Metadata.Name}
+			event.Attributes = map[string]string{"interface": ifname, "aftrIPv6": remote, "dryRun": fmt.Sprintf("%t", c.DryRun)}
+			if err := c.Bus.Publish(ctx, event); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -282,6 +288,8 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		}
 		destination := firstNonEmpty(spec.Destination, "0.0.0.0/0")
 		gateway := firstNonEmpty(resourcequery.Value(c.Store, spec.GatewayFrom), strings.TrimSpace(spec.Gateway))
+		status := map[string]any{"phase": "Installed", "destination": destination, "device": device, "gateway": gateway, "metric": spec.Metric, "dryRun": c.DryRun, "installedAt": time.Now().UTC().Format(time.RFC3339Nano)}
+		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name), status)
 		if !c.DryRun {
 			args := []string{"route", "replace", destination, "dev", device}
 			if gateway != "" {
@@ -303,15 +311,16 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 				continue
 			}
 		}
-		status := map[string]any{"phase": "Installed", "destination": destination, "device": device, "gateway": gateway, "metric": spec.Metric, "dryRun": c.DryRun, "installedAt": time.Now().UTC().Format(time.RFC3339Nano)}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
 			return err
 		}
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.installed", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: resource.Metadata.Name}
-		event.Attributes = map[string]string{"destination": destination, "device": device, "gateway": gateway, "dryRun": fmt.Sprintf("%t", c.DryRun)}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
+		if changed && c.Bus != nil {
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.installed", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: resource.Metadata.Name}
+			event.Attributes = map[string]string{"destination": destination, "device": device, "gateway": gateway, "dryRun": fmt.Sprintf("%t", c.DryRun)}
+			if err := c.Bus.Publish(ctx, event); err != nil {
+				return err
+			}
 		}
 	}
 	if len(failures) > 0 {
@@ -359,10 +368,11 @@ func (c IPv6RouterAdvertisementController) reconcile(ctx context.Context) error 
 		}
 		rdnss := append(expandServers(c.Store, spec.RDNSS), expandServerSources(c.Store, spec.RDNSSFrom)...)
 		configPath := firstNonEmpty(spec.ConfigPath, "/run/routerd/radvd-phase2.conf")
-		if err := writeRadvdConfig(configPath, spec.Interface, prefix, rdnss, spec.PreferredLifetime, spec.ValidLifetime); err != nil {
+		configChanged, err := writeRadvdConfig(configPath, spec.Interface, prefix, rdnss, spec.PreferredLifetime, spec.ValidLifetime)
+		if err != nil {
 			return err
 		}
-		if !c.DryRun {
+		if !c.DryRun && configChanged {
 			if err := exec.CommandContext(ctx, "radvd", "-C", configPath, "-p", firstNonEmpty(spec.PIDFile, "/run/routerd/radvd-phase2.pid")).Start(); err != nil {
 				return err
 			}
@@ -371,11 +381,13 @@ func (c IPv6RouterAdvertisementController) reconcile(ctx context.Context) error 
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status); err != nil {
 			return err
 		}
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ra.applied", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement", Name: resource.Metadata.Name}
-		event.Attributes = map[string]string{"interface": spec.Interface, "prefix": prefix, "dryRun": fmt.Sprintf("%t", c.DryRun)}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
+		if configChanged && c.Bus != nil {
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ra.applied", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement", Name: resource.Metadata.Name}
+			event.Attributes = map[string]string{"interface": spec.Interface, "prefix": prefix, "dryRun": fmt.Sprintf("%t", c.DryRun)}
+			if err := c.Bus.Publish(ctx, event); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -447,11 +459,13 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, status); err != nil {
 			return err
 		}
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.service.dhcpv6.applied", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server", Name: resource.Metadata.Name}
-		event.Attributes = map[string]string{"interface": spec.Interface, "dryRun": fmt.Sprintf("%t", c.DryRun)}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
+		if changed && c.Bus != nil {
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.service.dhcpv6.applied", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server", Name: resource.Metadata.Name}
+			event.Attributes = map[string]string{"interface": spec.Interface, "dryRun": fmt.Sprintf("%t", c.DryRun)}
+			if err := c.Bus.Publish(ctx, event); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -798,9 +812,9 @@ func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLite
 	return nil
 }
 
-func writeRadvdConfig(path, ifname, prefix string, rdnss []string, preferred, valid string) error {
+func writeRadvdConfig(path, ifname, prefix string, rdnss []string, preferred, valid string) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
+		return false, err
 	}
 	preferred = firstNonEmpty(preferred, "3600")
 	valid = firstNonEmpty(valid, "7200")
@@ -815,7 +829,7 @@ func writeRadvdConfig(path, ifname, prefix string, rdnss []string, preferred, va
 		fmt.Fprintf(&b, "  RDNSS %s {};\n", strings.Join(rdnss, " "))
 	}
 	b.WriteString("};\n")
-	return os.WriteFile(path, []byte(b.String()), 0644)
+	return writeFileIfChanged(path, []byte(b.String()), 0644, false)
 }
 
 func writeDnsmasqDHCPv6Config(path, pidFile, ifname string, dnsServers []string, port int) error {

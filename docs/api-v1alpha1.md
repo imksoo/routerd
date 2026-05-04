@@ -45,7 +45,7 @@ spec:
 | Kind | 役割 |
 | --- | --- |
 | `Package` | OS ごとのパッケージ名を宣言し、不足していれば導入します。 |
-| `Sysctl` | 実行時の sysctl 値を設定します。永続化も指定できます。 |
+| `Sysctl` | 実行時の sysctl 値を設定します。`compare: exact` と `compare: atLeast` で読み戻し判定を選べます。 |
 | `SysctlProfile` | ルーター向け sysctl 推奨値をまとめて設定します。 |
 | `NetworkAdoption` | OS 標準の DHCP クライアントや systemd-resolved の待ち受けを止めます。 |
 | `SystemdUnit` | routerd が使う systemd ユニットを生成し、有効化します。 |

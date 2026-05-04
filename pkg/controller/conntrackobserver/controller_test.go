@@ -33,7 +33,7 @@ func (s *testStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
-func TestControllerRecordsSnapshot(t *testing.T) {
+func TestControllerRecordsStatusWithoutSnapshotEvent(t *testing.T) {
 	dir := t.TempDir()
 	countPath := filepath.Join(dir, "count")
 	maxPath := filepath.Join(dir, "max")
@@ -48,8 +48,9 @@ func TestControllerRecordsSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &testStore{}
+	eventBus := bus.New()
 	controller := &Controller{
-		Bus:            bus.New(),
+		Bus:            eventBus,
 		Store:          store,
 		Paths:          conntrack.Paths{Entries: entriesPath, Count: countPath, Max: maxPath},
 		ThresholdRatio: 0.9,
@@ -60,5 +61,8 @@ func TestControllerRecordsSnapshot(t *testing.T) {
 	status := store.ObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default")
 	if status["phase"] != "Observed" || status["count"] != 8 || status["max"] != 10 {
 		t.Fatalf("status = %#v", status)
+	}
+	if events := eventBus.Recent("routerd.conntrack.snapshot"); len(events) != 0 {
+		t.Fatalf("snapshot events = %#v", events)
 	}
 }

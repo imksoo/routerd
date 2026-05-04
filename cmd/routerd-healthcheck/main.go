@@ -245,7 +245,8 @@ func (d *daemon) probeOnce(ctx context.Context) error {
 	span.End()
 	now := time.Now().UTC()
 	d.mu.Lock()
-	evaluation := healthcheck.ApplyResult(d.resource, d.spec, d.state, result, now)
+	previous := d.state
+	evaluation := healthcheck.ApplyResult(d.resource, d.spec, previous, result, now)
 	d.state = evaluation.State
 	if err := d.saveStateLocked(); err != nil {
 		d.mu.Unlock()
@@ -253,7 +254,9 @@ func (d *daemon) probeOnce(ctx context.Context) error {
 	}
 	d.mu.Unlock()
 	d.recordMetrics(spanCtx, evaluation)
-	d.publishEvent(evaluation.Event)
+	if previous.Phase != evaluation.State.Phase || previous.LastResult != evaluation.State.LastResult {
+		d.publishEvent(evaluation.Event)
+	}
 	return nil
 }
 

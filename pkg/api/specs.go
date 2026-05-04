@@ -29,11 +29,13 @@ type LogSinkPluginSpec struct {
 }
 
 type SysctlSpec struct {
-	Key        string `yaml:"key" json:"key" jsonschema:"title=Key"`
-	Value      string `yaml:"value" json:"value" jsonschema:"title=Value"`
-	Runtime    *bool  `yaml:"runtime,omitempty" json:"runtime,omitempty"`
-	Persistent bool   `yaml:"persistent,omitempty" json:"persistent,omitempty"`
-	Optional   bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+	Key           string `yaml:"key" json:"key" jsonschema:"title=Key"`
+	Value         string `yaml:"value" json:"value" jsonschema:"title=Value"`
+	ExpectedValue string `yaml:"expectedValue,omitempty" json:"expectedValue,omitempty"`
+	Compare       string `yaml:"compare,omitempty" json:"compare,omitempty" jsonschema:"enum=,enum=exact,enum=atLeast"`
+	Runtime       *bool  `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Persistent    bool   `yaml:"persistent,omitempty" json:"persistent,omitempty"`
+	Optional      bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 type SysctlProfileSpec struct {

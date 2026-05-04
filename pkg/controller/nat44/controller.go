@@ -115,15 +115,35 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	changed := true
+	if current, err := os.ReadFile(path); err == nil && string(current) == string(data) {
+		changed = false
+	} else if err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	if changed {
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			return err
+		}
 	}
 	nft := firstNonEmpty(c.NftCommand, "nft")
-	if err := checkNftablesRuleset(ctx, nft, path); err != nil {
-		return err
+	if changed {
+		if err := checkNftablesRuleset(ctx, nft, path); err != nil {
+			return err
+		}
 	}
-	if !c.DryRun {
+	if changed && !c.DryRun {
 		_ = exec.CommandContext(ctx, nft, "delete", "table", "ip", "routerd_nat").Run()
+		cmd := exec.CommandContext(ctx, nft, "-f", path)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
+		}
+	}
+	if !changed && !c.DryRun && !nat44TableExists(ctx, nft) {
+		if err := checkNftablesRuleset(ctx, nft, path); err != nil {
+			return err
+		}
 		cmd := exec.CommandContext(ctx, nft, "-f", path)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -142,14 +162,20 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "NAT44Rule", rule.Name, status); err != nil {
 			return err
 		}
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.nat44.rule.applied", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule", Name: rule.Name}
-		event.Attributes = map[string]string{"egressInterface": rule.EgressInterface, "nftablesPath": path, "dryRun": fmt.Sprintf("%t", c.DryRun)}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
+		if changed && c.Bus != nil {
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.nat44.rule.applied", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule", Name: rule.Name}
+			event.Attributes = map[string]string{"egressInterface": rule.EgressInterface, "nftablesPath": path, "dryRun": fmt.Sprintf("%t", c.DryRun)}
+			if err := c.Bus.Publish(ctx, event); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+func nat44TableExists(ctx context.Context, nft string) bool {
+	return exec.CommandContext(ctx, nft, "list", "table", "ip", "routerd_nat").Run() == nil
 }
 
 func checkNftablesRuleset(ctx context.Context, nft, path string) error {

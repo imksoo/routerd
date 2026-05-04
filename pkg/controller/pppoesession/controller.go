@@ -82,8 +82,13 @@ func (c Controller) Reconcile(ctx context.Context, name string) error {
 		if bytesOut, err := strconv.ParseUint(observed["bytesOut"], 10, 64); err == nil {
 			next["bytesOut"] = bytesOut
 		}
+		current := c.Store.ObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name)
+		changed := sessionEventChanged(current, next)
 		if err := c.Store.SaveObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name, next); err != nil {
 			return err
+		}
+		if !changed || c.Bus == nil {
+			return nil
 		}
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, EventApplied, daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "PPPoESession", Name: name}
@@ -96,6 +101,18 @@ func (c Controller) Reconcile(ctx context.Context, name string) error {
 		return c.Bus.Publish(ctx, event)
 	}
 	return fmt.Errorf("daemon status did not include PPPoESession/%s", name)
+}
+
+func sessionEventChanged(current, next map[string]any) bool {
+	for _, key := range []string{"phase", "device", "currentAddress", "peerAddress", "gateway", "connectedAt"} {
+		if fmt.Sprint(current[key]) != fmt.Sprint(next[key]) {
+			return true
+		}
+	}
+	if fmt.Sprint(current["dnsServers"]) != fmt.Sprint(next["dnsServers"]) {
+		return true
+	}
+	return false
 }
 
 func (c Controller) socketFor(resource string) string {

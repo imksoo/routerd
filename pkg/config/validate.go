@@ -665,6 +665,14 @@ func validateResource(res api.Resource) error {
 		if spec.Value == "" {
 			return fmt.Errorf("%s spec.value is required", res.ID())
 		}
+		if strings.TrimSpace(spec.ExpectedValue) == "" && spec.ExpectedValue != "" {
+			return fmt.Errorf("%s spec.expectedValue must not be blank", res.ID())
+		}
+		switch defaultString(spec.Compare, "exact") {
+		case "exact", "atLeast":
+		default:
+			return fmt.Errorf("%s spec.compare must be exact or atLeast", res.ID())
+		}
 	case "SysctlProfile":
 		if res.APIVersion != api.SystemAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)

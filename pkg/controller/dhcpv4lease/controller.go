@@ -87,8 +87,13 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 		if servers := parseJSONStringList(observed["dnsServers"]); len(servers) > 0 {
 			next["dnsServers"] = servers
 		}
+		current := c.Store.ObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name)
+		changed := leaseEventChanged(current, next)
 		if err := c.Store.SaveObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name, next); err != nil {
 			return err
+		}
+		if !changed || c.Bus == nil {
+			return nil
 		}
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, EventApplied, daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease", Name: name}
@@ -100,6 +105,18 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 		return c.Bus.Publish(ctx, event)
 	}
 	return fmt.Errorf("daemon status did not include DHCPv4Lease/%s", name)
+}
+
+func leaseEventChanged(current, next map[string]any) bool {
+	for _, key := range []string{"phase", "currentAddress", "defaultGateway", "domain", "leaseTime"} {
+		if fmt.Sprint(current[key]) != fmt.Sprint(next[key]) {
+			return true
+		}
+	}
+	if fmt.Sprint(current["dnsServers"]) != fmt.Sprint(next["dnsServers"]) {
+		return true
+	}
+	return false
 }
 
 func (c Controller) socketFor(resource string) string {

@@ -119,7 +119,17 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 		`api/summary?events=15&napt=30`,
 		`proto-tcp`,
 		`state-established`,
-		`["proto","state","original","reply","timeout"]`,
+		`["proto","state","flow","timeout"]`,
+		`function flowCell`,
+		`function sameReverse`,
+		`function returnDetails`,
+		`function natDelta`,
+		`function remember`,
+		`class="flash"`,
+		`@keyframes flash`,
+		`class="flow-summary"`,
+		`class="return-button">return</span>`,
+		`<span>nat</span>`,
 		`.slice(0,15)`,
 	} {
 		if !strings.Contains(body, want) {

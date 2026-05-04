@@ -3,10 +3,10 @@ package chain
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,7 +34,7 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			result, err := c.applyOne(ctx, resource.Metadata.Name, "Sysctl", sysctlSetting{Key: spec.Key, Value: spec.Value, Runtime: spec.Runtime, Persistent: spec.Persistent, Optional: spec.Optional})
+			result, err := c.applyOne(ctx, resource.Metadata.Name, "Sysctl", sysctlSetting{Key: spec.Key, Value: spec.Value, ExpectedValue: spec.ExpectedValue, Compare: spec.Compare, Runtime: spec.Runtime, Persistent: spec.Persistent, Optional: spec.Optional})
 			if err != nil {
 				return err
 			}
@@ -94,11 +94,13 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 }
 
 type sysctlSetting struct {
-	Key        string
-	Value      string
-	Runtime    *bool
-	Persistent bool
-	Optional   bool
+	Key           string
+	Value         string
+	ExpectedValue string
+	Compare       string
+	Runtime       *bool
+	Persistent    bool
+	Optional      bool
 }
 
 type sysctlApplyResult struct {
@@ -125,7 +127,8 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		command = runOutputCommandContext
 	}
 	currentOut, currentErr := command(ctx, "sysctl", "-n", spec.Key)
-	current := strings.TrimSpace(string(currentOut))
+	current := normalizeSysctlRuntimeValue(string(currentOut))
+	expected := normalizeSysctlRuntimeValue(firstNonEmpty(spec.ExpectedValue, spec.Value))
 	if currentErr != nil && spec.Optional {
 		_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
 			"phase":     "Skipped",
@@ -137,8 +140,9 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		})
 		return sysctlApplyResult{skipped: true}, nil
 	}
-	changed := currentErr != nil || current != spec.Value
-	if changed {
+	matches, compareErr := sysctlValueMatches(current, expected, spec.Compare)
+	runtimeChanged := currentErr != nil || compareErr != nil || !matches
+	if runtimeChanged {
 		if out, err := command(ctx, "sysctl", "-w", spec.Key+"="+spec.Value); err != nil {
 			status := map[string]any{
 				"phase":        "Error",
@@ -160,13 +164,16 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 			}
 			return sysctlApplyResult{}, fmt.Errorf("apply sysctl %s: %w", spec.Key, err)
 		}
-		current = spec.Value
+		current = expected
 	}
 	persistentPath := ""
+	persistentChanged := false
 	if spec.Persistent {
 		persistentPath = filepath.Join("/etc/sysctl.d", "90-routerd-"+safeSysctlName(name)+".conf")
 		data := []byte(fmt.Sprintf("# Managed by routerd. Do not edit by hand.\n%s = %s\n", spec.Key, spec.Value))
-		if err := os.WriteFile(persistentPath, data, 0644); err != nil {
+		var err error
+		persistentChanged, err = writeFileIfChanged(persistentPath, data, 0644, false)
+		if err != nil {
 			status := map[string]any{
 				"phase":        "Error",
 				"reason":       "PersistFailed",
@@ -190,17 +197,20 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 			return sysctlApplyResult{}, fmt.Errorf("persist sysctl %s: %w", spec.Key, err)
 		}
 	}
+	changed := runtimeChanged || persistentChanged
 	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
-		"phase":        "Applied",
-		"key":          spec.Key,
-		"value":        spec.Value,
-		"currentValue": current,
-		"changed":      changed,
-		"runtime":      true,
-		"persistent":   spec.Persistent,
-		"optional":     spec.Optional,
-		"path":         persistentPath,
-		"updatedAt":    time.Now().UTC().Format(time.RFC3339Nano),
+		"phase":         "Applied",
+		"key":           spec.Key,
+		"value":         spec.Value,
+		"expectedValue": expected,
+		"compare":       firstNonEmpty(spec.Compare, "exact"),
+		"currentValue":  current,
+		"changed":       changed,
+		"runtime":       true,
+		"persistent":    spec.Persistent,
+		"optional":      spec.Optional,
+		"path":          persistentPath,
+		"updatedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 	}); err != nil {
 		return sysctlApplyResult{}, err
 	}
@@ -221,7 +231,7 @@ func sysctlProfileSettings(spec api.SysctlProfileSpec) ([]sysctlSetting, error) 
 	}
 	settings := make([]sysctlSetting, 0, len(entries))
 	for _, entry := range entries {
-		settings = append(settings, sysctlSetting{Key: entry.Key, Value: entry.Value, Runtime: spec.Runtime, Persistent: spec.Persistent, Optional: entry.Optional})
+		settings = append(settings, sysctlSetting{Key: entry.Key, Value: entry.Value, Compare: entry.Compare, Runtime: spec.Runtime, Persistent: spec.Persistent, Optional: entry.Optional})
 	}
 	return settings, nil
 }
@@ -238,4 +248,37 @@ func safeSysctlName(name string) string {
 		return "sysctl"
 	}
 	return name
+}
+
+func normalizeSysctlRuntimeValue(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func sysctlValueMatches(current, expected, compare string) (bool, error) {
+	switch firstNonEmpty(compare, "exact") {
+	case "exact":
+		return current == expected, nil
+	case "atLeast":
+		currentFields := strings.Fields(current)
+		expectedFields := strings.Fields(expected)
+		if len(currentFields) != len(expectedFields) {
+			return false, fmt.Errorf("field count mismatch")
+		}
+		for i := range expectedFields {
+			c, err := strconv.ParseInt(currentFields[i], 10, 64)
+			if err != nil {
+				return false, err
+			}
+			e, err := strconv.ParseInt(expectedFields[i], 10, 64)
+			if err != nil {
+				return false, err
+			}
+			if c < e {
+				return false, nil
+			}
+		}
+		return true, nil
+	default:
+		return false, fmt.Errorf("unsupported compare %q", compare)
+	}
 }

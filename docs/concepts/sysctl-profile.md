@@ -30,6 +30,29 @@ spec:
     net.netfilter.nf_conntrack_max: "524288"
 ```
 
+routerd は読み戻した値を確認してから設定します。
+現在値が期待を満たす場合は書き込みません。
+その場合は適用イベントも発行しません。
+
+一部の sysctl は、カーネルが値を上方へ丸めます。
+そのような値は `compare: atLeast` を使います。
+`value` は書き込む値です。
+`expectedValue` は読み戻しで期待する値です。
+`expectedValue` を省略すると `value` を使います。
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: Sysctl
+metadata:
+  name: socket-buffer
+spec:
+  key: net.core.rmem_max
+  value: "16777216"
+  expectedValue: "16777216"
+  compare: atLeast
+  runtime: true
+```
+
 ## router-linux の値
 
 | キー | 値 | 理由 |

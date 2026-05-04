@@ -207,6 +207,17 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "compare": {
+                        "enum": [
+                          "",
+                          "exact",
+                          "atLeast"
+                        ],
+                        "type": "string"
+                      },
+                      "expectedValue": {
+                        "type": "string"
+                      },
                       "key": {
                         "title": "Key",
                         "type": "string"

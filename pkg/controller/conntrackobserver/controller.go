@@ -25,6 +25,7 @@ type Controller struct {
 	ThresholdRatio float64
 	Logger         *slog.Logger
 	lastCount      int
+	aboveThreshold bool
 	seen           bool
 }
 
@@ -84,21 +85,20 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default", status); err != nil {
 		return err
 	}
-	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.conntrack.snapshot", daemonapi.SeverityDebug)
-	event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "ConntrackObserver", Name: "default"}
-	event.Attributes = map[string]string{"count": fmt.Sprintf("%d", snapshot.Count), "max": fmt.Sprintf("%d", snapshot.Max)}
-	if err := c.Bus.Publish(ctx, event); err != nil {
-		return err
-	}
 	threshold := c.ThresholdRatio
 	if threshold == 0 {
 		threshold = 0.8
 	}
-	if snapshot.Max > 0 && ratio >= threshold {
+	overThreshold := snapshot.Max > 0 && ratio >= threshold
+	if overThreshold && !c.aboveThreshold {
+		c.aboveThreshold = true
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.conntrack.threshold.exceeded", daemonapi.SeverityWarning)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "ConntrackObserver", Name: "default"}
 		event.Attributes = map[string]string{"count": fmt.Sprintf("%d", snapshot.Count), "max": fmt.Sprintf("%d", snapshot.Max), "threshold": fmt.Sprintf("%.2f", threshold)}
 		return c.Bus.Publish(ctx, event)
+	}
+	if !overThreshold {
+		c.aboveThreshold = false
 	}
 	return nil
 }

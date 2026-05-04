@@ -167,17 +167,22 @@ func (c *Controller) applyResult(ctx context.Context, resource api.Resource, spe
 	now := c.now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	evaluation := ApplyResult(resource, spec, *state, result, now)
+	previous := *state
+	evaluation := ApplyResult(resource, spec, previous, result, now)
 	*state = evaluation.State
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", resource.Metadata.Name, evaluation.Status); err != nil {
 		return err
+	}
+	if previous.Phase == evaluation.State.Phase && previous.LastResult == evaluation.State.LastResult {
+		return nil
 	}
 	return c.Bus.Publish(ctx, evaluation.Event)
 }
 
 func (c *Controller) saveEventStatus(event daemonapi.DaemonEvent) {
+	var current map[string]any
 	if c.Store != nil {
-		current := c.Store.ObjectStatus(event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name)
+		current = c.Store.ObjectStatus(event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name)
 		if existing, ok := parseStatusTime(current["lastCheckedAt"]); ok && existing.After(event.Time) {
 			return
 		}
@@ -193,7 +198,9 @@ func (c *Controller) saveEventStatus(event daemonapi.DaemonEvent) {
 		status["lastResult"] = result
 	}
 	status["lastCheckedAt"] = event.Time.UTC().Format(time.RFC3339Nano)
-	if status["lastTransitionAt"] == nil {
+	if current != nil && fmt.Sprint(current["phase"]) == fmt.Sprint(status["phase"]) && fmt.Sprint(current["lastTransitionAt"]) != "" {
+		status["lastTransitionAt"] = current["lastTransitionAt"]
+	} else if status["lastTransitionAt"] == nil {
 		status["lastTransitionAt"] = event.Time.UTC().Format(time.RFC3339Nano)
 	}
 	if event.Message != "" {

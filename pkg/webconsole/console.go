@@ -254,11 +254,23 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .metric{border:1px solid #2d2d2d;border-radius:6px;padding:10px;background:#202020}
     .metric b{display:block;font-size:20px;margin-top:4px}
     .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .flow-cell{display:grid;gap:5px;min-width:0}
+    .flow-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;list-style:none;min-width:0}
+    .flow-summary::-webkit-details-marker{display:none}
+    .return-detail{display:grid;gap:3px;margin-top:4px}
+    .return-detail div{display:grid;grid-template-columns:74px minmax(0,1fr);gap:6px;align-items:baseline}
+    .return-detail span{font-size:11px;color:#9a9a9a;text-transform:uppercase}
+    .return-toggle summary{cursor:pointer}
+    .return-button{color:#9a9a9a;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+    .return-button:before{content:"+";display:inline-grid;place-items:center;width:14px;height:14px;border:1px solid #4a4a4a;border-radius:50%;font-size:11px;color:#c9c9c9}
+    .return-toggle[open] .return-button:before{content:"-"}
     .addr{white-space:nowrap;word-break:normal}
     .pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:650;border:1px solid #3a3a3a;background:#282828;color:#ddd;white-space:nowrap}
     .proto-tcp{border-color:#3977d4;background:#152846;color:#8ab4ff}.proto-udp{border-color:#3b8b65;background:#102d22;color:#7ee787}.proto-icmp{border-color:#9b6fd3;background:#2c2142;color:#d2a8ff}
     .state-established,.state-assured{border-color:#3b8b65;background:#102d22;color:#7ee787}.state-syn_sent,.state-unreplied{border-color:#997b2f;background:#342a12;color:#f2cc60}.state-time_wait,.state-close{border-color:#7b7b7b;background:#242424;color:#c9c9c9}
-    table{width:100%;border-collapse:collapse;min-width:720px}
+    tr.flash, .metric.flash{animation:flash 1.6s ease-out}
+    @keyframes flash{0%{background:#3a320f;box-shadow:inset 3px 0 #f2cc60}100%{background:transparent;box-shadow:inset 0 0 transparent}}
+    table{width:100%;border-collapse:collapse;min-width:440px}
     th,td{text-align:left;border-bottom:1px solid #2b2b2b;padding:7px 6px;vertical-align:top}
     th{font-size:12px;color:#aaa;font-weight:600}
     code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-word}
@@ -284,6 +296,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
 </main>
 <script>
 const base = {{.BasePath}};
+const seen = {traffic:new Map(), resources:new Map(), events:new Map()};
+let firstPaint = true;
 function cls(phase){return /Healthy|Applied|Active|Bound|Installed|Up/.test(phase) ? "ok" : /Pending|Drifted|Unknown/.test(phase) ? "warn" : "bad"}
 function esc(v){return String(v ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function kv(label,value){return '<div class="metric"><span class="muted">'+esc(label)+'</span><b>'+esc(value)+'</b></div>'}
@@ -291,6 +305,48 @@ function table(headers, rows){return '<div class="table-wrap"><table><thead><tr>
 function token(v){return String(v || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "unknown"}
 function pill(value, prefix){return '<span class="pill '+prefix+'-'+token(value)+'">'+esc(value || "-")+'</span>'}
 function endpoint(tuple){return '<code class="addr">'+esc(tuple?.source)+':'+esc(tuple?.sourcePort)+' → '+esc(tuple?.destination)+':'+esc(tuple?.destinationPort)+'</code>'}
+function remember(bucket, key, value){
+  const previous = bucket.get(key);
+  bucket.set(key, value);
+  return !firstPaint && previous !== value;
+}
+function rowClass(changed){return changed ? ' class="flash"' : ''}
+function flowKey(e){return [e.family,e.protocol,e.state,e.original?.source,e.original?.sourcePort,e.original?.destination,e.original?.destinationPort,e.reply?.source,e.reply?.sourcePort,e.reply?.destination,e.reply?.destinationPort,e.mark].join("|")}
+function flowSig(e){return JSON.stringify([e.state,e.assured,e.original,e.reply,e.mark])}
+function sameReverse(original, reply){
+  return reply?.source === original?.destination && reply?.destination === original?.source &&
+    String(reply?.sourcePort || "") === String(original?.destinationPort || "") &&
+    String(reply?.destinationPort || "") === String(original?.sourcePort || "");
+}
+function hasTuple(tuple){return !!(tuple?.source || tuple?.destination || tuple?.sourcePort || tuple?.destinationPort)}
+function hostPort(tuple, side){
+  const host = tuple?.[side] || "";
+  const port = side === "source" ? tuple?.sourcePort : tuple?.destinationPort;
+  return host ? host + (port ? ":" + port : "") : "";
+}
+function natDelta(e){
+  if (!hasTuple(e.reply) || sameReverse(e.original, e.reply)) return "";
+  const out = [];
+  const replyDst = hostPort(e.reply, "destination");
+  const originalSrc = hostPort(e.original, "source");
+  if (replyDst && replyDst !== originalSrc) out.push("reply dst " + replyDst);
+  const replySrc = hostPort(e.reply, "source");
+  const originalDst = hostPort(e.original, "destination");
+  if (replySrc && replySrc !== originalDst) out.push("reply src " + replySrc);
+  return out.join(" / ");
+}
+function returnDetails(e){
+  if (!hasTuple(e.reply)) return "";
+  const delta = natDelta(e);
+  const rows = [
+    '<div><span>reply</span>'+endpoint(e.reply)+'</div>',
+    delta ? '<div><span>nat</span><code class="addr">'+esc(delta)+'</code></div>' : ''
+  ].join("");
+  return '<details class="flow-cell return-toggle"><summary class="flow-summary">'+endpoint(e.original)+'<span class="return-button">return</span></summary><div class="return-detail">'+rows+'</div></details>';
+}
+function flowCell(e){
+  return returnDetails(e) || '<div class="flow-cell">'+endpoint(e.original)+'</div>';
+}
 async function refresh(){
   const res = await fetch(base + "api/summary?events=15&napt=30", {cache:"no-store"});
   const s = await res.json();
@@ -302,18 +358,22 @@ async function refresh(){
     kv("resources", status.resourceCount || (s.resources||[]).length),
     kv("conntrack", napt.max ? String(napt.count)+"/"+String(napt.max) : (napt.count ?? "-"))
   ].join("");
-  document.getElementById("traffic").innerHTML = table(["proto","state","original","reply","timeout"], (napt.entries||[]).slice(0,30).map(e => {
+  document.getElementById("traffic").innerHTML = table(["proto","state","flow","timeout"], (napt.entries||[]).slice(0,30).map(e => {
     const state = e.state || (e.assured ? "ASSURED" : "stateless");
-    return '<tr><td>'+pill(e.protocol, "proto")+'</td><td>'+pill(state, "state")+'</td><td>'+endpoint(e.original)+'</td><td>'+endpoint(e.reply)+'</td><td>'+esc(e.timeout)+'s</td></tr>';
+    const changed = remember(seen.traffic, flowKey(e), flowSig(e));
+    return '<tr'+rowClass(changed)+'><td>'+pill(e.protocol, "proto")+'</td><td>'+pill(state, "state")+'</td><td>'+flowCell(e)+'</td><td>'+esc(e.timeout)+'s</td></tr>';
   }));
   const important = (s.resources||[]).filter(r => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(r.kind));
   document.getElementById("resources").innerHTML = table(["kind","name","phase","detail"], important.slice(0,80).map(r => {
     const st = r.status || {};
     const detail = ["selectedCandidate","selectedDevice","activeEgressInterface","target","address","currentPrefix"].map(k => st[k] ? k+"="+st[k] : "").filter(Boolean).join(" ");
-    return '<tr><td>'+esc(r.kind)+'</td><td>'+esc(r.name)+'</td><td class="'+cls(st.phase||"Unknown")+'">'+esc(st.phase||"Unknown")+'</td><td><code>'+esc(detail)+'</code></td></tr>';
+    const key = r.apiVersion + "/" + r.kind + "/" + r.name;
+    const changed = remember(seen.resources, key, JSON.stringify(st));
+    return '<tr'+rowClass(changed)+'><td>'+esc(r.kind)+'</td><td>'+esc(r.name)+'</td><td class="'+cls(st.phase||"Unknown")+'">'+esc(st.phase||"Unknown")+'</td><td><code>'+esc(detail)+'</code></td></tr>';
   }));
   document.getElementById("events").innerHTML = table(["time","severity","topic","resource","message"], (s.events||[]).slice(0,15).map(e =>
-    '<tr><td>'+esc(e.createdAt)+'</td><td>'+esc(e.severity||"")+'</td><td><code>'+esc(e.topic||e.type)+'</code></td><td>'+esc((e.resourceKind||e.kind||"") + "/" + (e.resourceName||e.name||""))+'</td><td>'+esc(e.reason||e.message||"")+'</td></tr>'));
+    '<tr'+rowClass(remember(seen.events, String(e.id || e.createdAt || e.topic), JSON.stringify(e)))+'><td>'+esc(e.createdAt)+'</td><td>'+esc(e.severity||"")+'</td><td><code>'+esc(e.topic||e.type)+'</code></td><td>'+esc((e.resourceKind||e.kind||"") + "/" + (e.resourceName||e.name||""))+'</td><td>'+esc(e.reason||e.message||"")+'</td></tr>'));
+  firstPaint = false;
 }
 refresh(); setInterval(refresh, 5000);
 </script>
