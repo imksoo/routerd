@@ -265,3 +265,14 @@ func TestDSLiteTunnelLocalDelegatedAddress(t *testing.T) {
 		t.Fatalf("local=%q ifname=%q", local, ifname)
 	}
 }
+
+func TestFirstUsableGlobalIPv6PrefersDynamicStableAddress(t *testing.T) {
+	data := []byte(`[{"ifname":"ens18","addr_info":[
+		{"family":"inet6","local":"2409:10:3d60:1200::temp","scope":"global","dynamic":true,"temporary":true,"preferred_life_time":1000},
+		{"family":"inet6","local":"fe80::1","scope":"link","preferred_life_time":1000},
+		{"family":"inet6","local":"2409:10:3d60:1200::stable","scope":"global","dynamic":true,"preferred_life_time":1000}
+	]}]`)
+	if got := firstUsableGlobalIPv6(data); got != "2409:10:3d60:1200::stable" {
+		t.Fatalf("firstUsableGlobalIPv6 = %q", got)
+	}
+}

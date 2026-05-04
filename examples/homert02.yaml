@@ -2,7 +2,7 @@
 #
 # 動的 IPv6 (DHCPv6-PD 由来) は ipv6From/addressFrom で明示参照します。
 #
-# - WAN: DHCPv6-PD + DHCPv6 Info、DSLite tunnel
+# - WAN: DHCPv6-PD + DHCPv6 Info、DSLite tunnel (local endpoint は WAN RA/SLAAC アドレス)
 # - LAN: 静的 IPv4 (172.18.0.1/16)、IPv6 (PD::1/64)、IX2215 transit alias (172.17.0.2/16)
 # - 経路: EgressRoutePolicy = DSLite primary + IX2215 fallback、IPv4Route、NAT44
 # - DNS: DNSResolver は 127.0.0.1 / mgmt / 172.18.0.1 / LAN IPv6 で待ち受けます。
@@ -426,9 +426,9 @@ spec:
       spec:
         interface: wan
         tunnelName: ds-routerd
-        localAddressSource: delegatedAddress
-        localDelegatedAddress: lan-base
-        localAddressSuffix: ::3
+        # DS-Lite の local endpoint は WAN 側 RA/SLAAC アドレスを使います。
+        # PD 由来 LAN アドレスより先に構成されるため、起動直後の収束が早くなります。
+        localAddressSource: interface
         aftrFrom:
           resource: DHCPv6Information/wan-info
           field: aftrName
@@ -725,6 +725,19 @@ spec:
         options:
           - name: domain-search
             value: home.internal
+
+    # MAC アドレスごとの固定 IPv4 払い出しは DHCPv4Reservation で表します。
+    # 実際の端末に合わせて、次のようなリソースを追加します。
+    #
+    # - apiVersion: net.routerd.net/v1alpha1
+    #   kind: DHCPv4Reservation
+    #   metadata:
+    #     name: static-client-example
+    #   spec:
+    #     server: lan-dhcpv4
+    #     macAddress: "02:00:00:00:10:10"
+    #     hostname: static-client
+    #     ipAddress: 172.18.0.120
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6RouterAdvertisement

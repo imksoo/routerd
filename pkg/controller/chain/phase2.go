@@ -583,16 +583,82 @@ func (c DSLiteTunnelController) localAddress(spec api.DSLiteTunnelSpec) (string,
 	case "", "interface":
 		raw := firstNonEmpty(valueFromStatusRef(c.Store, spec.LocalIPv6Source), valueFromStatusRef(c.Store, spec.LocalAddress), spec.LocalAddress)
 		if spec.LocalAddressSuffix != "" {
+			if raw == "" {
+				ifname := interfaceName(c.Router, spec.Interface)
+				if ifname == "" {
+					return "", "", fmt.Errorf("missing Interface %q", spec.Interface)
+				}
+				discovered, _, err := interfaceGlobalIPv6(ifname)
+				if err != nil {
+					return "", "", err
+				}
+				raw = discovered
+			}
 			local, err := deriveIPv6AddressFromPrefix(raw, "", spec.LocalAddressSuffix)
 			if err != nil {
 				return "", "", err
 			}
 			return local, "", nil
 		}
-		return localIPv6Address(raw), "", nil
+		if raw != "" {
+			return localIPv6Address(raw), "", nil
+		}
+		ifname := interfaceName(c.Router, spec.Interface)
+		if ifname == "" {
+			return "", "", fmt.Errorf("missing Interface %q", spec.Interface)
+		}
+		return interfaceGlobalIPv6(ifname)
 	default:
 		return "", "", fmt.Errorf("unsupported localAddressSource %q", spec.LocalAddressSource)
 	}
+}
+
+type ipJSONAddress struct {
+	Family            string `json:"family"`
+	Local             string `json:"local"`
+	Scope             string `json:"scope"`
+	Dynamic           bool   `json:"dynamic"`
+	Temporary         bool   `json:"temporary"`
+	Deprecated        bool   `json:"deprecated"`
+	PreferredLifeTime int    `json:"preferred_life_time"`
+}
+
+type ipJSONLink struct {
+	AddrInfo []ipJSONAddress `json:"addr_info"`
+}
+
+func interfaceGlobalIPv6(ifname string) (string, string, error) {
+	out, err := exec.Command("ip", "-j", "-6", "addr", "show", "dev", ifname, "scope", "global").CombinedOutput()
+	if err != nil {
+		return "", "", fmt.Errorf("ip -j -6 addr show dev %s scope global: %w: %s", ifname, err, strings.TrimSpace(string(out)))
+	}
+	addr := firstUsableGlobalIPv6(out)
+	if addr == "" {
+		return "", "", fmt.Errorf("no usable global IPv6 address on %s", ifname)
+	}
+	return addr, "", nil
+}
+
+func firstUsableGlobalIPv6(data []byte) string {
+	var links []ipJSONLink
+	if err := json.Unmarshal(data, &links); err != nil {
+		return ""
+	}
+	var fallback string
+	for _, link := range links {
+		for _, info := range link.AddrInfo {
+			if info.Family != "inet6" || info.Local == "" || info.Scope != "global" || info.Deprecated || info.Temporary || info.PreferredLifeTime == 0 {
+				continue
+			}
+			if fallback == "" {
+				fallback = info.Local
+			}
+			if info.Dynamic {
+				return info.Local
+			}
+		}
+	}
+	return fallback
 }
 
 func (c DSLiteTunnelController) localDelegatedAddress(spec api.DSLiteTunnelSpec) (string, string, error) {
