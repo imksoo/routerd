@@ -416,6 +416,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "FirewallLog":
+		var spec FirewallLogSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "FirewallRule":
 		var spec FirewallRuleSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

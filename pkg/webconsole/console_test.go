@@ -36,6 +36,7 @@ func (s fakeStore) ListEvents(routerstate.EventQuery) ([]routerstate.StoredEvent
 func TestHandlerServesReadOnlySummary(t *testing.T) {
 	queryLog := t.TempDir() + "/dns-queries.db"
 	trafficLog := t.TempDir() + "/traffic-flows.db"
+	firewallLogPath := t.TempDir() + "/firewall-logs.db"
 	dnsLog, err := logstore.OpenDNSQueryLog(queryLog)
 	if err != nil {
 		t.Fatal(err)
@@ -52,6 +53,14 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = flows.Close()
+	firewallLog, err := logstore.OpenFirewallLog(firewallLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firewallLog.Record(context.Background(), logstore.FirewallLogEntry{Timestamp: time.Now(), Action: "drop", SrcAddress: "172.18.0.2", DstAddress: "198.51.100.1", Protocol: "tcp", L3Proto: "ipv4"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = firewallLog.Close()
 	handler := New(Options{
 		Store: fakeStore{
 			resources: []routerstate.ObjectStatus{{APIVersion: "net.routerd.net/v1alpha1", Kind: "HealthCheck", Name: "internet", Status: map[string]any{"phase": "Healthy"}}},
@@ -65,6 +74,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		},
 		DNSQueryLogPath:    queryLog,
 		TrafficFlowLogPath: trafficLog,
+		FirewallLogPath:    firewallLogPath,
 	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/summary", nil)
@@ -72,7 +82,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"napt"`, `"dnsQueries"`, `"trafficFlows"`, "example.com"} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"napt"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, "example.com"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}
@@ -135,6 +145,28 @@ func TestHandlerServesTrafficFlows(t *testing.T) {
 	}
 }
 
+func TestHandlerServesFirewallLogs(t *testing.T) {
+	path := t.TempDir() + "/firewall-logs.db"
+	firewallLog, err := logstore.OpenFirewallLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firewallLog.Record(context.Background(), logstore.FirewallLogEntry{Timestamp: time.Now(), Action: "drop", SrcAddress: "172.18.0.2", DstAddress: "198.51.100.1", Protocol: "tcp", L3Proto: "ipv4"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = firewallLog.Close()
+	handler := New(Options{FirewallLogPath: path})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/firewall-logs?since=1h&action=drop", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "198.51.100.1") {
+		t.Fatalf("firewall logs missing row:\n%s", rec.Body.String())
+	}
+}
+
 func TestHandlerRendersUsableBasePath(t *testing.T) {
 	handler := New(Options{BasePath: "/"})
 	rec := httptest.NewRecorder()
@@ -187,7 +219,9 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 		`api/summary?events=15&napt=30`,
 		`function dnsLabelMap`,
 		`function clientTrafficRows`,
+		`function denyRows`,
 		`Client Traffic`,
+		`Recent Deny`,
 		`dst-label`,
 		`proto-tcp`,
 		`state-established`,

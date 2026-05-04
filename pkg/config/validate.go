@@ -2611,6 +2611,20 @@ func validateResource(res api.Resource) error {
 		if _, err := res.FirewallPolicySpec(); err != nil {
 			return err
 		}
+	case "FirewallLog":
+		if res.APIVersion != api.FirewallAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
+		}
+		spec, err := res.FirewallLogSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Enabled && strings.TrimSpace(spec.Path) == "" {
+			return fmt.Errorf("%s spec.path is required when enabled is true", res.ID())
+		}
+		if spec.NFLogGroup < 0 || spec.NFLogGroup > 65535 {
+			return fmt.Errorf("%s spec.nflogGroup must be between 0 and 65535", res.ID())
+		}
 	case "FirewallRule":
 		if res.APIVersion != api.FirewallAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)

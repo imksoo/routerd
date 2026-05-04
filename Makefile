@@ -17,7 +17,7 @@ REMOTE_CONFIG ?= $(SYSCONFDIR)/router.yaml
 REMOTE_UNIT ?= contrib/systemd/routerd.service
 REMOTE_UNIT_NAME ?= routerd.service
 UNAME_S := $(shell uname -s)
-UBUNTU_SERVICE_PACKAGES ?= dnsmasq-base nftables conntrack iproute2 iputils-ping iputils-tracepath dnsutils tcpdump traceroute procps ppp wireguard-tools strongswan-swanctl radvd systemd net-tools kmod
+UBUNTU_SERVICE_PACKAGES ?= dnsmasq-base nftables conntrack iproute2 iputils-ping iputils-tracepath dnsutils tcpdump traceroute procps ppp wireguard-tools strongswan-swanctl radvd systemd net-tools kmod libnetfilter-log1
 
 ifeq ($(UNAME_S),FreeBSD)
 ROUTERD_OS ?= freebsd
@@ -45,6 +45,7 @@ ROUTERD_DHCPv6_CLIENT_BIN := $(BUILDDIR)/routerd-dhcpv6-client
 ROUTERD_DHCP_EVENT_RELAY_BIN := $(BUILDDIR)/routerd-dhcp-event-relay
 ROUTERD_HEALTHCHECK_BIN := $(BUILDDIR)/routerd-healthcheck
 ROUTERD_DNS_RESOLVER_BIN := $(BUILDDIR)/routerd-dns-resolver
+ROUTERD_FIREWALL_LOGGER_BIN := $(BUILDDIR)/routerd-firewall-logger
 GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
@@ -65,6 +66,7 @@ build:
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DHCP_EVENT_RELAY_BIN) ./cmd/routerd-dhcp-event-relay
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_HEALTHCHECK_BIN) ./cmd/routerd-healthcheck
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DNS_RESOLVER_BIN) ./cmd/routerd-dns-resolver
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_FIREWALL_LOGGER_BIN) ./cmd/routerd-firewall-logger
 
 generate-schema:
 	install -d schemas
@@ -143,6 +145,7 @@ install: check-build-deps build
 	install -m 0755 $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(DESTDIR)$(PREFIX)/libexec/routerd/dhcp-event-relay
 	install -m 0755 $(ROUTERD_HEALTHCHECK_BIN) $(DESTDIR)$(BINDIR)/routerd-healthcheck
 	install -m 0755 $(ROUTERD_DNS_RESOLVER_BIN) $(DESTDIR)$(BINDIR)/routerd-dns-resolver
+	install -m 0755 $(ROUTERD_FIREWALL_LOGGER_BIN) $(DESTDIR)$(BINDIR)/routerd-firewall-logger
 	install -d $(DESTDIR)$(SYSCONFDIR)
 	install -m 0644 examples/basic-static.yaml $(DESTDIR)$(SYSCONFDIR)/router.yaml.example
 	install -d $(DESTDIR)$(SYSCONFDIR)/examples

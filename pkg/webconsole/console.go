@@ -29,6 +29,7 @@ type Options struct {
 	NAPTLimit          int
 	DNSQueryLogPath    string
 	TrafficFlowLogPath string
+	FirewallLogPath    string
 }
 
 type Handler struct {
@@ -36,15 +37,16 @@ type Handler struct {
 }
 
 type Snapshot struct {
-	GeneratedAt  time.Time                  `json:"generatedAt"`
-	Status       controlapi.Status          `json:"status"`
-	Phases       map[string]int             `json:"phases"`
-	Resources    []routerstate.ObjectStatus `json:"resources"`
-	Events       []routerstate.StoredEvent  `json:"events"`
-	NAPT         *observe.NAPTTable         `json:"napt,omitempty"`
-	DNSQueries   []logstore.DNSQuery        `json:"dnsQueries,omitempty"`
-	TrafficFlows []logstore.TrafficFlow     `json:"trafficFlows,omitempty"`
-	Errors       []string                   `json:"errors,omitempty"`
+	GeneratedAt  time.Time                   `json:"generatedAt"`
+	Status       controlapi.Status           `json:"status"`
+	Phases       map[string]int              `json:"phases"`
+	Resources    []routerstate.ObjectStatus  `json:"resources"`
+	Events       []routerstate.StoredEvent   `json:"events"`
+	NAPT         *observe.NAPTTable          `json:"napt,omitempty"`
+	DNSQueries   []logstore.DNSQuery         `json:"dnsQueries,omitempty"`
+	TrafficFlows []logstore.TrafficFlow      `json:"trafficFlows,omitempty"`
+	FirewallLogs []logstore.FirewallLogEntry `json:"firewallLogs,omitempty"`
+	Errors       []string                    `json:"errors,omitempty"`
 }
 
 func New(opts Options) Handler {
@@ -86,6 +88,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.dnsQueries(w, r)
 	case "api/traffic-flows":
 		h.trafficFlows(w, r)
+	case "api/firewall-logs":
+		h.firewallLogs(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -116,6 +120,10 @@ func (h Handler) Snapshot(limit int, naptLimit int) Snapshot {
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
+	firewallLogs, err := h.firewallLogList(logstore.FirewallLogFilter{Since: time.Now().Add(-24 * time.Hour), Action: "drop", Limit: 200})
+	if err != nil {
+		errors = append(errors, err.Error())
+	}
 	result := (*apply.Result)(nil)
 	if h.opts.Result != nil {
 		result = h.opts.Result()
@@ -130,6 +138,7 @@ func (h Handler) Snapshot(limit int, naptLimit int) Snapshot {
 		NAPT:         napt,
 		DNSQueries:   dnsQueries,
 		TrafficFlows: trafficFlows,
+		FirewallLogs: firewallLogs,
 		Errors:       errors,
 	}
 }
@@ -219,6 +228,26 @@ func (h Handler) trafficFlows(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, rows)
 }
 
+func (h Handler) firewallLogs(w http.ResponseWriter, r *http.Request) {
+	since := time.Now().Add(-24 * time.Hour)
+	if raw := strings.TrimSpace(r.URL.Query().Get("since")); raw != "" {
+		if duration, err := parseConsoleDuration(raw); err == nil {
+			since = time.Now().Add(-duration)
+		}
+	}
+	rows, err := h.firewallLogList(logstore.FirewallLogFilter{
+		Since:  since,
+		Action: r.URL.Query().Get("action"),
+		Src:    r.URL.Query().Get("src"),
+		Limit:  intQuery(r, "limit", 100),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, rows)
+}
+
 func (h Handler) resourceStatuses() ([]routerstate.ObjectStatus, error) {
 	if lister, ok := h.opts.Store.(routerstate.ObjectStatusLister); ok {
 		return lister.ListObjectStatuses()
@@ -250,6 +279,18 @@ func (h Handler) trafficFlowList(filter logstore.TrafficFlowFilter) ([]logstore.
 		return nil, nil
 	}
 	store, err := logstore.OpenTrafficFlowLog(h.opts.TrafficFlowLogPath)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	return store.List(context.Background(), filter)
+}
+
+func (h Handler) firewallLogList(filter logstore.FirewallLogFilter) ([]logstore.FirewallLogEntry, error) {
+	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+		return nil, nil
+	}
+	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
 	if err != nil {
 		return nil, err
 	}
@@ -388,6 +429,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
   <section><h2>Overview</h2><div class="grid" id="overview"></div></section>
   <section><h2>Traffic</h2><div id="traffic"></div></section>
   <section><h2>Client Traffic</h2><div id="client-traffic"></div></section>
+  <section><h2>Recent Deny</h2><div id="recent-deny"></div></section>
   <section><h2>Resources</h2><div id="resources"></div></section>
   <section><h2>Events</h2><div id="events"></div></section>
 </main>
@@ -426,6 +468,16 @@ function clientTrafficRows(flows){
   return Array.from(totals.values()).sort((a,b)=>a.client.localeCompare(b.client)).slice(0,10);
 }
 function bytes(v){return v ? String(v) : "-"}
+function denyRows(logs){
+  const totals = new Map();
+  for (const row of logs || []) {
+    const key = (row.srcAddress || "-") + ">" + (row.dstAddress || "-");
+    const current = totals.get(key) || {src:row.srcAddress || "-", dst:row.dstAddress || "-", count:0, proto:row.protocol || "-", rule:row.ruleName || "-"};
+    current.count++;
+    totals.set(key, current);
+  }
+  return Array.from(totals.values()).sort((a,b)=>b.count-a.count || a.src.localeCompare(b.src)).slice(0,10);
+}
 function remember(bucket, key, value){
   const previous = bucket.get(key);
   bucket.set(key, value);
@@ -487,6 +539,8 @@ async function refresh(){
   }));
   document.getElementById("client-traffic").innerHTML = table(["client","bytes out","bytes in","recent peers"], clientTrafficRows(s.trafficFlows || []).map(row =>
     '<tr><td><code>'+esc(row.client)+'</code></td><td>'+bytes(row.bytesOut)+'</td><td>'+bytes(row.bytesIn)+'</td><td><code>'+esc(Array.from(row.peers).slice(0,4).join(", "))+'</code></td></tr>'));
+  document.getElementById("recent-deny").innerHTML = table(["count","source","destination","proto","rule"], denyRows(s.firewallLogs || []).map(row =>
+    '<tr><td>'+esc(row.count)+'</td><td><code>'+esc(row.src)+'</code></td><td><code>'+esc(row.dst)+'</code></td><td>'+pill(row.proto, "proto")+'</td><td>'+esc(row.rule)+'</td></tr>'));
   const important = (s.resources||[]).filter(r => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(r.kind));
   document.getElementById("resources").innerHTML = table(["kind","name","phase","detail"], important.slice(0,80).map(r => {
     const st = r.status || {};

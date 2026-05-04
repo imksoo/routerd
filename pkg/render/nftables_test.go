@@ -468,9 +468,14 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 				Spec:     api.FirewallPolicySpec{},
 			},
 			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+				Metadata: api.ObjectMeta{Name: "default"},
+				Spec:     api.FirewallLogSpec{Enabled: true, NFLogGroup: 7, Path: "/var/lib/routerd/firewall-logs.db"},
+			},
+			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"},
 				Metadata: api.ObjectMeta{Name: "nas-https"},
-				Spec:     api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "tcp", Port: 443, SourceCIDRs: []string{"203.0.113.0/24"}, Action: "accept"},
+				Spec:     api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "tcp", Port: 443, SourceCIDRs: []string{"203.0.113.0/24"}, Action: "accept", Log: true},
 			},
 		}},
 	}
@@ -489,7 +494,7 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 		`set if_lan { type ifname; elements = { "ens19" } }`,
 		`set if_wan { type ifname; elements = { "ppp0" } }`,
 		`chain lan_to_wan`,
-		`ip saddr 203.0.113.0/24 tcp dport 443 counter accept`,
+		`ip saddr 203.0.113.0/24 tcp dport 443 log prefix "routerd firewall nas-https " group 7 counter accept`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)

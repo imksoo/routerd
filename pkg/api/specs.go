@@ -961,6 +961,20 @@ type FirewallPolicySpec struct {
 	SameRoleAccept bool `yaml:"sameRoleAccept,omitempty" json:"sameRoleAccept,omitempty"`
 }
 
+type FirewallLogSpec struct {
+	Enabled    bool                  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Path       string                `yaml:"path,omitempty" json:"path,omitempty"`
+	Retention  string                `yaml:"retention,omitempty" json:"retention,omitempty"`
+	NFLogGroup int                   `yaml:"nflogGroup,omitempty" json:"nflogGroup,omitempty" jsonschema:"minimum=0,maximum=65535"`
+	Log        FirewallLogPolicySpec `yaml:"log,omitempty" json:"log,omitempty"`
+}
+
+type FirewallLogPolicySpec struct {
+	AcceptSampleRate int  `yaml:"acceptSampleRate,omitempty" json:"acceptSampleRate,omitempty" jsonschema:"minimum=0"`
+	DropSampleRate   int  `yaml:"dropSampleRate,omitempty" json:"dropSampleRate,omitempty" jsonschema:"minimum=0"`
+	Reject           bool `yaml:"reject,omitempty" json:"reject,omitempty"`
+}
+
 type FirewallRuleSpec struct {
 	FromZone    string                `yaml:"fromZone" json:"fromZone"`
 	ToZone      string                `yaml:"toZone" json:"toZone"`
@@ -1212,6 +1226,10 @@ func (r Resource) FirewallPolicySpec() (FirewallPolicySpec, error) {
 
 func (r Resource) FirewallRuleSpec() (FirewallRuleSpec, error) {
 	return specAs[FirewallRuleSpec](r)
+}
+
+func (r Resource) FirewallLogSpec() (FirewallLogSpec, error) {
+	return specAs[FirewallLogSpec](r)
 }
 
 func (r Resource) LogSinkSpec() (LogSinkSpec, error) {

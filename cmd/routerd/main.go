@@ -2551,6 +2551,7 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		BasePath:           spec.BasePath,
 		DNSQueryLogPath:    platformDefaults.StateDir + "/dns-queries.db",
 		TrafficFlowLogPath: platformDefaults.StateDir + "/traffic-flows.db",
+		FirewallLogPath:    platformDefaults.StateDir + "/firewall-logs.db",
 	})
 	server := &http.Server{Addr: addr, Handler: handler}
 	listener, err := net.Listen("tcp", addr)

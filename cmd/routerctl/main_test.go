@@ -149,6 +149,38 @@ func TestTrafficFlowsCommandReadsLogDatabase(t *testing.T) {
 	}
 }
 
+func TestFirewallLogsCommandReadsLogDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall-logs.db")
+	store, err := logstore.OpenFirewallLog(path)
+	if err != nil {
+		t.Fatalf("open firewall log: %v", err)
+	}
+	if err := store.Record(context.Background(), logstore.FirewallLogEntry{
+		Timestamp:  time.Now().UTC(),
+		Action:     "drop",
+		SrcAddress: "172.18.0.10",
+		DstAddress: "198.51.100.10",
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+		RuleName:   "deny-test",
+	}); err != nil {
+		t.Fatalf("record firewall log: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close firewall log: %v", err)
+	}
+	var out bytes.Buffer
+	if err := run([]string{"firewall-logs", "--db", path, "--since", "1h", "--action", "drop"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("firewall-logs: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"172.18.0.10", "198.51.100.10", "deny-test"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("firewall log output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestShowKindNameYAML(t *testing.T) {
 	dir := t.TempDir()
 	configPath := writeShowConfig(t, dir)

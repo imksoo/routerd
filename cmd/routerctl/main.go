@@ -58,6 +58,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return dnsQueriesCommand(args[1:], stdout)
 	case "traffic-flows":
 		return trafficFlowsCommand(args[1:], stdout)
+	case "firewall-logs":
+		return firewallLogsCommand(args[1:], stdout)
 	case "get":
 		return getCommand(args[1:], stdout, stderr)
 	case "describe":
@@ -328,6 +330,70 @@ func writeTrafficFlowsTable(stdout io.Writer, rows []logstore.TrafficFlow) error
 			row.BytesOut,
 			row.BytesIn,
 			displayCell(firstNonEmpty(row.TLSSNI, row.ResolvedHostname)),
+		)
+	}
+	return w.Flush()
+}
+
+func firewallLogsCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("firewall-logs", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	dbPath := fs.String("db", defaultFirewallLogsPath(), "firewall log database file")
+	since := fs.String("since", "1h", "show logs newer than duration, for example 1h or 30m")
+	action := fs.String("action", "", "filter by action: accept, drop, reject")
+	src := fs.String("src", "", "source IP address")
+	limit := fs.Int("limit", 50, "maximum number of rows")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	sinceTime, err := cutoffTime(*since)
+	if err != nil {
+		return err
+	}
+	store, err := logstore.OpenFirewallLog(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	rows, err := store.List(context.Background(), logstore.FirewallLogFilter{Since: sinceTime, Action: *action, Src: *src, Limit: *limit})
+	if err != nil {
+		return err
+	}
+	switch output {
+	case "", "table":
+		return writeFirewallLogsTable(stdout, rows)
+	case "json":
+		return writeJSON(stdout, rows)
+	case "yaml":
+		return writeYAML(stdout, rows)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeFirewallLogsTable(stdout io.Writer, rows []logstore.FirewallLogEntry) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "TIME\tACTION\tPROTO\tSRC\tDST\tZONE\tRULE\tIFACE")
+	for _, row := range rows {
+		zone := displayCell(row.ZoneFrom + ">" + row.ZoneTo)
+		if row.ZoneFrom == "" && row.ZoneTo == "" {
+			zone = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s:%d\t%s:%d\t%s\t%s\t%s>%s\n",
+			row.Timestamp.Format(time.RFC3339),
+			row.Action,
+			row.Protocol,
+			row.SrcAddress,
+			row.SrcPort,
+			row.DstAddress,
+			row.DstPort,
+			zone,
+			displayCell(row.RuleName),
+			displayCell(row.InIface),
+			displayCell(row.OutIface),
 		)
 	}
 	return w.Flush()
@@ -1853,6 +1919,10 @@ func defaultTrafficFlowsPath() string {
 	return platformDefaults.StateDir + "/traffic-flows.db"
 }
 
+func defaultFirewallLogsPath() string {
+	return platformDefaults.StateDir + "/firewall-logs.db"
+}
+
 func defaultSocketPath() string {
 	return platformDefaults.SocketFile()
 }
@@ -1865,6 +1935,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  events [--state-file <path>] [--topic <topic>] [--resource <kind>/<name>] [--limit <n>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  dns-queries [--db <path>] [--since 1h] [--client <ip>] [--qname <pattern>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  traffic-flows [--db <path>] [--since 1h] [--client <ip>] [--peer <ip>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  firewall-logs [--db <path>] [--since 1h] [--action drop] [--src <ip>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  get <kind>[/<name>] [--list-kinds] [--config <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  describe <kind>/<name> [--config <path>] [--state-file <path>] [--ledger-file <path>] [--events-limit <n>]")
 	fmt.Fprintln(w, "  describe firewall [--config <path>]")
