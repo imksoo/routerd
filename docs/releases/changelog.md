@@ -26,6 +26,7 @@ routerd は出荷前のソフトウェアです。
 - Phase 3.0g: FreeBSD 向け DS-Lite の静的 gif 生成を追加しました。
   `localAddress` と `remoteAddress` または `aftrIPv6` が固定で分かる場合に、`ifconfig_gif*` と IPv4 既定経路を生成します。
   AFTR FQDN や delegated address 由来の動的 DS-Lite は、実行時コントローラー側の未実装として warning にします。
+- Phase 3.0h: `examples/freebsd-edge.yaml` と platform 文書を、NixOS / FreeBSD の現在の到達点へ同期しました。
 
 ## 0.3.0
 

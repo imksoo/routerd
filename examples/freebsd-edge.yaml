@@ -11,6 +11,21 @@ spec:
       - mgmt
 
   resources:
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Package
+      metadata:
+        name: service-deps
+      spec:
+        packages:
+          - os: freebsd
+            manager: pkg
+            names:
+              - dnsmasq
+              - bind-tools
+              - wireguard-tools
+              - strongswan
+              - mpd5
+
     - apiVersion: net.routerd.net/v1alpha1
       kind: Hostname
       metadata:
@@ -145,6 +160,92 @@ spec:
         destination: 2001:db8:100::/64
         via: fe80::1
         metric: 100
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: static-dslite-example
+      spec:
+        interface: wan
+        tunnelName: gif0
+        localAddress: 2001:db8:1::100
+        remoteAddress: 2001:db8:2::200
+        mtu: 1454
+        defaultRoute: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4SourceNAT
+      metadata:
+        name: lan-nat
+      spec:
+        outboundInterface: static-dslite-example
+        sourceCIDRs:
+          - 192.0.2.0/24
+        translation:
+          type: interfaceAddress
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: wan
+      spec:
+        role: untrust
+        interfaces:
+          - wan
+          - static-dslite-example
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces:
+          - lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: mgmt
+      spec:
+        role: mgmt
+        interfaces:
+          - mgmt
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: default-home
+      spec:
+        logDeny: true
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallLog
+      metadata:
+        name: default
+      spec:
+        enabled: true
+        path: /var/db/routerd/firewall-logs.db
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
+        name: routerd-firewall-logger.service
+      spec:
+        description: routerd firewall logger
+        execStart:
+          - /usr/local/sbin/routerd-firewall-logger
+          - daemon
+          - --path
+          - /var/db/routerd/firewall-logs.db
+          - --pflog-interface
+          - pflog0
+        runtimeDirectory:
+          - routerd
+        stateDirectory:
+          - routerd
+        enabled: true
+        started: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Server
