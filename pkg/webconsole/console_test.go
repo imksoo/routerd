@@ -98,9 +98,33 @@ func TestHandlerRendersMobileSafeLayout(t *testing.T) {
 		`text-overflow:ellipsis`,
 		`@media (max-width:640px)`,
 		`overflow-x:auto`,
+		`flow-list`,
+		`white-space:nowrap`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("mobile layout CSS missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
+	handler := New(Options{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`api/summary?events=15&napt=30`,
+		`function flowCard`,
+		`proto-tcp`,
+		`state-established`,
+		`.slice(0,15)`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("console markup missing %q:\n%s", want, body)
 		}
 	}
 }

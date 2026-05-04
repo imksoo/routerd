@@ -247,12 +247,22 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     body{margin:0;background:#111;color:#e8e8e8;overflow-x:hidden}
     header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid #303030;background:#181818;position:sticky;top:0;z-index:1;max-width:100vw}
     h1{font-size:18px;margin:0;font-weight:650;min-width:0;max-width:calc(100vw - 120px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    main{padding:16px;display:grid;gap:16px}
+    main{padding:16px;display:grid;gap:16px;max-width:1280px;margin:0 auto}
     section{border:1px solid #303030;border-radius:8px;background:#181818;padding:14px;min-width:0;overflow:hidden}
     h2{font-size:15px;margin:0 0 10px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
     .metric{border:1px solid #2d2d2d;border-radius:6px;padding:10px;background:#202020}
     .metric b{display:block;font-size:20px;margin-top:4px}
+    .flow-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px}
+    .flow-card{border:1px solid #2d2d2d;border-radius:8px;background:#202020;padding:10px;min-width:0}
+    .flow-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+    .flow-route{display:grid;gap:6px}
+    .endpoint{min-width:0}
+    .endpoint .label{display:block;font-size:11px;color:#9a9a9a;margin-bottom:2px;text-transform:uppercase}
+    .endpoint code{display:block;white-space:nowrap;overflow-x:auto;max-width:100%;padding-bottom:2px;word-break:normal}
+    .pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:650;border:1px solid #3a3a3a;background:#282828;color:#ddd;white-space:nowrap}
+    .proto-tcp{border-color:#3977d4;background:#152846;color:#8ab4ff}.proto-udp{border-color:#3b8b65;background:#102d22;color:#7ee787}.proto-icmp{border-color:#9b6fd3;background:#2c2142;color:#d2a8ff}
+    .state-established,.state-assured{border-color:#3b8b65;background:#102d22;color:#7ee787}.state-syn_sent,.state-unreplied{border-color:#997b2f;background:#342a12;color:#f2cc60}.state-time_wait,.state-close{border-color:#7b7b7b;background:#242424;color:#c9c9c9}
     table{width:100%;border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}
     th,td{text-align:left;border-bottom:1px solid #2b2b2b;padding:7px 6px;vertical-align:top}
     th{font-size:12px;color:#aaa;font-weight:600}
@@ -264,6 +274,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
       main{padding:10px;gap:10px}
       section{padding:10px}
       .grid{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+      .flow-list{grid-template-columns:1fr}
       .metric b{font-size:18px}
       th,td{padding:6px 5px}
     }
@@ -283,8 +294,15 @@ function cls(phase){return /Healthy|Applied|Active|Bound|Installed|Up/.test(phas
 function esc(v){return String(v ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function kv(label,value){return '<div class="metric"><span class="muted">'+esc(label)+'</span><b>'+esc(value)+'</b></div>'}
 function table(headers, rows){return '<table><thead><tr>'+headers.map(h=>'<th>'+esc(h)+'</th>').join("")+'</tr></thead><tbody>'+rows.join("")+'</tbody></table>'}
+function token(v){return String(v || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "unknown"}
+function pill(value, prefix){return '<span class="pill '+prefix+'-'+token(value)+'">'+esc(value || "-")+'</span>'}
+function endpoint(tuple){return esc(tuple?.source)+':'+esc(tuple?.sourcePort)+' → '+esc(tuple?.destination)+':'+esc(tuple?.destinationPort)}
+function flowCard(e){
+  const state = e.state || (e.assured ? "ASSURED" : "");
+  return '<article class="flow-card"><div class="flow-top"><div>'+pill(e.protocol, "proto")+' '+pill(state || "stateless", "state")+'</div><span class="muted">'+esc(e.timeout)+'s</span></div><div class="flow-route"><div class="endpoint"><span class="label">original</span><code>'+endpoint(e.original)+'</code></div><div class="endpoint"><span class="label">reply</span><code>'+endpoint(e.reply)+'</code></div></div></article>';
+}
 async function refresh(){
-  const res = await fetch(base + "api/summary?events=80&napt=30", {cache:"no-store"});
+  const res = await fetch(base + "api/summary?events=15&napt=30", {cache:"no-store"});
   const s = await res.json();
   const status = s.status?.status || {};
   const napt = s.napt || {};
@@ -294,15 +312,14 @@ async function refresh(){
     kv("resources", status.resourceCount || (s.resources||[]).length),
     kv("conntrack", napt.max ? String(napt.count)+"/"+String(napt.max) : (napt.count ?? "-"))
   ].join("");
-  document.getElementById("traffic").innerHTML = table(["proto","state","src","dst","timeout"], (napt.entries||[]).slice(0,30).map(e =>
-    '<tr><td>'+esc(e.protocol)+'</td><td>'+esc(e.state)+'</td><td><code>'+esc(e.original?.source)+':'+esc(e.original?.sourcePort)+'</code></td><td><code>'+esc(e.original?.destination)+':'+esc(e.original?.destinationPort)+'</code></td><td>'+esc(e.timeout)+'</td></tr>'));
+  document.getElementById("traffic").innerHTML = '<div class="flow-list">'+(napt.entries||[]).slice(0,30).map(flowCard).join("")+'</div>';
   const important = (s.resources||[]).filter(r => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(r.kind));
   document.getElementById("resources").innerHTML = table(["kind","name","phase","detail"], important.slice(0,80).map(r => {
     const st = r.status || {};
     const detail = ["selectedCandidate","selectedDevice","activeEgressInterface","target","address","currentPrefix"].map(k => st[k] ? k+"="+st[k] : "").filter(Boolean).join(" ");
     return '<tr><td>'+esc(r.kind)+'</td><td>'+esc(r.name)+'</td><td class="'+cls(st.phase||"Unknown")+'">'+esc(st.phase||"Unknown")+'</td><td><code>'+esc(detail)+'</code></td></tr>';
   }));
-  document.getElementById("events").innerHTML = table(["time","severity","topic","resource","message"], (s.events||[]).slice(0,80).map(e =>
+  document.getElementById("events").innerHTML = table(["time","severity","topic","resource","message"], (s.events||[]).slice(0,15).map(e =>
     '<tr><td>'+esc(e.createdAt)+'</td><td>'+esc(e.severity||"")+'</td><td><code>'+esc(e.topic||e.type)+'</code></td><td>'+esc((e.resourceKind||e.kind||"") + "/" + (e.resourceName||e.name||""))+'</td><td>'+esc(e.reason||e.message||"")+'</td></tr>'));
 }
 refresh(); setInterval(refresh, 5000);

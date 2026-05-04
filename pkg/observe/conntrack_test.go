@@ -45,3 +45,19 @@ ipv4 2 tcp 6 30 SYN_SENT src=192.0.2.2 dst=198.51.100.2 sport=23456 dport=443 sr
 		t.Fatalf("entries = %d, want 2", len(entries))
 	}
 }
+
+func TestSortNAPTEntriesStableKey(t *testing.T) {
+	entries := []NAPTTableEntry{
+		{Family: "ipv4", Protocol: "udp", Original: ConntrackTuple{Source: "172.18.0.20", Destination: "1.1.1.1", SourcePort: "50000", DestinationPort: "53"}},
+		{Family: "ipv4", Protocol: "tcp", State: "ESTABLISHED", Original: ConntrackTuple{Source: "172.18.0.10", Destination: "93.184.216.34", SourcePort: "40000", DestinationPort: "443"}},
+		{Family: "ipv4", Protocol: "tcp", State: "SYN_SENT", Original: ConntrackTuple{Source: "172.18.0.10", Destination: "93.184.216.34", SourcePort: "40001", DestinationPort: "443"}},
+	}
+	sortNAPTEntries(entries)
+	got := []string{entries[0].Protocol + "/" + entries[0].State, entries[1].Protocol + "/" + entries[1].State, entries[2].Protocol + "/" + entries[2].State}
+	want := []string{"tcp/ESTABLISHED", "tcp/SYN_SENT", "udp/"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+}

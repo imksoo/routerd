@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -46,6 +47,7 @@ func NAPT(limit int) (*NAPTTable, error) {
 		return nil, fmt.Errorf("conntrack -L -o extended: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	allEntries := parseConntrackEntries(string(out), 0)
+	sortNAPTEntries(allEntries)
 	entries := allEntries
 	if limit == 0 {
 		entries = nil
@@ -62,6 +64,29 @@ func NAPT(limit int) (*NAPTTable, error) {
 		table.Stats = stats
 	}
 	return table, nil
+}
+
+func sortNAPTEntries(entries []NAPTTableEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		return naptSortKey(entries[i]) < naptSortKey(entries[j])
+	})
+}
+
+func naptSortKey(entry NAPTTableEntry) string {
+	return strings.Join([]string{
+		entry.Family,
+		entry.Protocol,
+		entry.State,
+		entry.Original.Source,
+		entry.Original.Destination,
+		entry.Original.SourcePort,
+		entry.Original.DestinationPort,
+		entry.Reply.Source,
+		entry.Reply.Destination,
+		entry.Reply.SourcePort,
+		entry.Reply.DestinationPort,
+		entry.Mark,
+	}, "\x00")
 }
 
 func parseConntrackEntries(output string, limit int) []NAPTTableEntry {
