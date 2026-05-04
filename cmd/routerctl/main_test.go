@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/logstore"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
 )
@@ -79,6 +81,38 @@ func TestEventsCommandListsStateDatabaseEvents(t *testing.T) {
 	for _, want := range []string{"routerd.test.event", "Interface/wan", "TestEvent", "event from test"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("events output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestDNSQueriesCommandReadsLogDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dns-queries.db")
+	store, err := logstore.OpenDNSQueryLog(path)
+	if err != nil {
+		t.Fatalf("open query log: %v", err)
+	}
+	if err := store.Record(context.Background(), logstore.DNSQuery{
+		Timestamp:     time.Now().UTC(),
+		ClientAddress: "172.18.0.10",
+		QuestionName:  "www.example.com",
+		QuestionType:  "A",
+		ResponseCode:  "NOERROR",
+		Upstream:      "default",
+	}); err != nil {
+		t.Fatalf("record query: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close query log: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{"dns-queries", "--db", path, "--since", "1h"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("dns-queries: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"www.example.com", "172.18.0.10", "NOERROR"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dns query output missing %q:\n%s", want, got)
 		}
 	}
 }

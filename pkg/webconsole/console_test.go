@@ -1,6 +1,7 @@
 package webconsole
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"routerd/pkg/apply"
+	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
 	routerstate "routerd/pkg/state"
 )
@@ -32,6 +34,15 @@ func (s fakeStore) ListEvents(routerstate.EventQuery) ([]routerstate.StoredEvent
 }
 
 func TestHandlerServesReadOnlySummary(t *testing.T) {
+	queryLog := t.TempDir() + "/dns-queries.db"
+	dnsLog, err := logstore.OpenDNSQueryLog(queryLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dnsLog.Record(reqContext(), logstore.DNSQuery{Timestamp: time.Now(), ClientAddress: "172.18.0.2", QuestionName: "example.com", QuestionType: "A", Answers: []string{"93.184.216.34"}, ResponseCode: "NOERROR"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = dnsLog.Close()
 	handler := New(Options{
 		Store: fakeStore{
 			resources: []routerstate.ObjectStatus{{APIVersion: "net.routerd.net/v1alpha1", Kind: "HealthCheck", Name: "internet", Status: map[string]any{"phase": "Healthy"}}},
@@ -43,6 +54,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		NAPT: func(limit int) (*observe.NAPTTable, error) {
 			return &observe.NAPTTable{Count: 3, Max: 262144}, nil
 		},
+		DNSQueryLogPath: queryLog,
 	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/summary", nil)
@@ -50,12 +62,14 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"napt"`} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"napt"`, `"dnsQueries"`, "example.com"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}
 	}
 }
+
+func reqContext() context.Context { return context.Background() }
 
 func TestHandlerRejectsWriteMethods(t *testing.T) {
 	handler := New(Options{})
@@ -64,6 +78,28 @@ func TestHandlerRejectsWriteMethods(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestHandlerServesDNSQueries(t *testing.T) {
+	queryLog := t.TempDir() + "/dns-queries.db"
+	dnsLog, err := logstore.OpenDNSQueryLog(queryLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dnsLog.Record(context.Background(), logstore.DNSQuery{Timestamp: time.Now(), ClientAddress: "172.18.0.2", QuestionName: "www.example.com", QuestionType: "AAAA", ResponseCode: "NOERROR"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = dnsLog.Close()
+	handler := New(Options{DNSQueryLogPath: queryLog})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/dns-queries?since=1h&limit=10", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "www.example.com") {
+		t.Fatalf("dns queries missing row:\n%s", rec.Body.String())
 	}
 }
 
@@ -117,6 +153,8 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`api/summary?events=15&napt=30`,
+		`function dnsLabelMap`,
+		`dst-label`,
 		`proto-tcp`,
 		`state-established`,
 		`["proto","state","flow","timeout"]`,

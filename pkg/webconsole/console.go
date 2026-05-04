@@ -1,6 +1,7 @@
 package webconsole
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -13,18 +14,20 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
 	"routerd/pkg/controlapi"
+	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
 	routerstate "routerd/pkg/state"
 )
 
 type Options struct {
-	Router    *api.Router
-	Store     routerstate.Store
-	Result    func() *apply.Result
-	NAPT      func(limit int) (*observe.NAPTTable, error)
-	Title     string
-	BasePath  string
-	NAPTLimit int
+	Router          *api.Router
+	Store           routerstate.Store
+	Result          func() *apply.Result
+	NAPT            func(limit int) (*observe.NAPTTable, error)
+	Title           string
+	BasePath        string
+	NAPTLimit       int
+	DNSQueryLogPath string
 }
 
 type Handler struct {
@@ -38,6 +41,7 @@ type Snapshot struct {
 	Resources   []routerstate.ObjectStatus `json:"resources"`
 	Events      []routerstate.StoredEvent  `json:"events"`
 	NAPT        *observe.NAPTTable         `json:"napt,omitempty"`
+	DNSQueries  []logstore.DNSQuery        `json:"dnsQueries,omitempty"`
 	Errors      []string                   `json:"errors,omitempty"`
 }
 
@@ -76,6 +80,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.events(w, r)
 	case "api/napt":
 		h.napt(w, r)
+	case "api/dns-queries":
+		h.dnsQueries(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -98,6 +104,10 @@ func (h Handler) Snapshot(limit int, naptLimit int) Snapshot {
 			errors = append(errors, err.Error())
 		}
 	}
+	dnsQueries, err := h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-time.Hour), Limit: 200})
+	if err != nil {
+		errors = append(errors, err.Error())
+	}
 	result := (*apply.Result)(nil)
 	if h.opts.Result != nil {
 		result = h.opts.Result()
@@ -110,6 +120,7 @@ func (h Handler) Snapshot(limit int, naptLimit int) Snapshot {
 		Resources:   resources,
 		Events:      events,
 		NAPT:        napt,
+		DNSQueries:  dnsQueries,
 		Errors:      errors,
 	}
 }
@@ -159,6 +170,26 @@ func (h Handler) napt(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, table)
 }
 
+func (h Handler) dnsQueries(w http.ResponseWriter, r *http.Request) {
+	since := time.Now().Add(-time.Hour)
+	if raw := strings.TrimSpace(r.URL.Query().Get("since")); raw != "" {
+		if duration, err := parseConsoleDuration(raw); err == nil {
+			since = time.Now().Add(-duration)
+		}
+	}
+	rows, err := h.queryLogList(logstore.DNSQueryFilter{
+		Since:  since,
+		Client: r.URL.Query().Get("client"),
+		QName:  r.URL.Query().Get("qname"),
+		Limit:  intQuery(r, "limit", 100),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, rows)
+}
+
 func (h Handler) resourceStatuses() ([]routerstate.ObjectStatus, error) {
 	if lister, ok := h.opts.Store.(routerstate.ObjectStatusLister); ok {
 		return lister.ListObjectStatuses()
@@ -171,6 +202,18 @@ func (h Handler) eventList(limit int) ([]routerstate.StoredEvent, error) {
 		return lister.ListEvents(routerstate.EventQuery{Limit: limit})
 	}
 	return nil, nil
+}
+
+func (h Handler) queryLogList(filter logstore.DNSQueryFilter) ([]logstore.DNSQuery, error) {
+	if strings.TrimSpace(h.opts.DNSQueryLogPath) == "" {
+		return nil, nil
+	}
+	store, err := logstore.OpenDNSQueryLog(h.opts.DNSQueryLogPath)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	return store.List(context.Background(), filter)
 }
 
 func (h Handler) basePath() string {
@@ -212,6 +255,17 @@ func intQuery(r *http.Request, key string, fallback int) int {
 		return 1000
 	}
 	return value
+}
+
+func parseConsoleDuration(value string) (time.Duration, error) {
+	if strings.HasSuffix(value, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(value)
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
@@ -265,6 +319,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .return-button:before{content:"+";display:inline-grid;place-items:center;width:14px;height:14px;border:1px solid #4a4a4a;border-radius:50%;font-size:11px;color:#c9c9c9}
     .return-toggle[open] .return-button:before{content:"-"}
     .addr{white-space:nowrap;word-break:normal}
+    .dst-label{display:block;color:#9a9a9a;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:650;border:1px solid #3a3a3a;background:#282828;color:#ddd;white-space:nowrap}
     .proto-tcp{border-color:#3977d4;background:#152846;color:#8ab4ff}.proto-udp{border-color:#3b8b65;background:#102d22;color:#7ee787}.proto-icmp{border-color:#9b6fd3;background:#2c2142;color:#d2a8ff}
     .state-established,.state-assured{border-color:#3b8b65;background:#102d22;color:#7ee787}.state-syn_sent,.state-unreplied{border-color:#997b2f;background:#342a12;color:#f2cc60}.state-time_wait,.state-close{border-color:#7b7b7b;background:#242424;color:#c9c9c9}
@@ -304,7 +359,17 @@ function kv(label,value){return '<div class="metric"><span class="muted">'+esc(l
 function table(headers, rows){return '<div class="table-wrap"><table><thead><tr>'+headers.map(h=>'<th>'+esc(h)+'</th>').join("")+'</tr></thead><tbody>'+rows.join("")+'</tbody></table></div>'}
 function token(v){return String(v || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "unknown"}
 function pill(value, prefix){return '<span class="pill '+prefix+'-'+token(value)+'">'+esc(value || "-")+'</span>'}
-function endpoint(tuple){return '<code class="addr">'+esc(tuple?.source)+':'+esc(tuple?.sourcePort)+' → '+esc(tuple?.destination)+':'+esc(tuple?.destinationPort)+'</code>'}
+function endpoint(tuple, labels){
+  const label = labels?.[tuple?.destination] ? '<span class="dst-label">'+esc(labels[tuple.destination])+'</span>' : "";
+  return '<code class="addr">'+esc(tuple?.source)+':'+esc(tuple?.sourcePort)+' → '+esc(tuple?.destination)+':'+esc(tuple?.destinationPort)+'</code>'+label;
+}
+function dnsLabelMap(rows){
+  const labels = {};
+  for (const row of rows || []) {
+    for (const answer of row.answers || []) if (!labels[answer]) labels[answer] = row.questionName;
+  }
+  return labels;
+}
 function remember(bucket, key, value){
   const previous = bucket.get(key);
   bucket.set(key, value);
@@ -335,23 +400,24 @@ function natDelta(e){
   if (replySrc && replySrc !== originalDst) out.push("reply src " + replySrc);
   return out.join(" / ");
 }
-function returnDetails(e){
+function returnDetails(e, labels){
   if (!hasTuple(e.reply)) return "";
   const delta = natDelta(e);
   const rows = [
-    '<div><span>reply</span>'+endpoint(e.reply)+'</div>',
+    '<div><span>reply</span>'+endpoint(e.reply, labels)+'</div>',
     delta ? '<div><span>nat</span><code class="addr">'+esc(delta)+'</code></div>' : ''
   ].join("");
-  return '<details class="flow-cell return-toggle"><summary class="flow-summary">'+endpoint(e.original)+'<span class="return-button">return</span></summary><div class="return-detail">'+rows+'</div></details>';
+  return '<details class="flow-cell return-toggle"><summary class="flow-summary">'+endpoint(e.original, labels)+'<span class="return-button">return</span></summary><div class="return-detail">'+rows+'</div></details>';
 }
-function flowCell(e){
-  return returnDetails(e) || '<div class="flow-cell">'+endpoint(e.original)+'</div>';
+function flowCell(e, labels){
+  return returnDetails(e, labels) || '<div class="flow-cell">'+endpoint(e.original, labels)+'</div>';
 }
 async function refresh(){
   const res = await fetch(base + "api/summary?events=15&napt=30", {cache:"no-store"});
   const s = await res.json();
   const status = s.status?.status || {};
   const napt = s.napt || {};
+  const dnsLabels = dnsLabelMap(s.dnsQueries || []);
   document.getElementById("overview").innerHTML = [
     kv("phase", status.phase || "Unknown"),
     kv("generation", status.generation || "-"),
@@ -361,7 +427,7 @@ async function refresh(){
   document.getElementById("traffic").innerHTML = table(["proto","state","flow","timeout"], (napt.entries||[]).slice(0,30).map(e => {
     const state = e.state || (e.assured ? "ASSURED" : "stateless");
     const changed = remember(seen.traffic, flowKey(e), flowSig(e));
-    return '<tr'+rowClass(changed)+'><td>'+pill(e.protocol, "proto")+'</td><td>'+pill(state, "state")+'</td><td>'+flowCell(e)+'</td><td>'+esc(e.timeout)+'s</td></tr>';
+    return '<tr'+rowClass(changed)+'><td>'+pill(e.protocol, "proto")+'</td><td>'+pill(state, "state")+'</td><td>'+flowCell(e, dnsLabels)+'</td><td>'+esc(e.timeout)+'s</td></tr>';
   }));
   const important = (s.resources||[]).filter(r => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(r.kind));
   document.getElementById("resources").innerHTML = table(["kind","name","phase","detail"], important.slice(0,80).map(r => {

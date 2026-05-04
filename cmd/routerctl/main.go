@@ -22,6 +22,7 @@ import (
 	"routerd/pkg/apply"
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
+	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
@@ -53,6 +54,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return statusCommand(args[1:], stdout)
 	case "events":
 		return eventsCommand(args[1:], stdout)
+	case "dns-queries":
+		return dnsQueriesCommand(args[1:], stdout)
 	case "get":
 		return getCommand(args[1:], stdout, stderr)
 	case "describe":
@@ -205,6 +208,86 @@ func writeEventsTable(stdout io.Writer, events []routerstate.StoredEvent) error 
 		)
 	}
 	return w.Flush()
+}
+
+func dnsQueriesCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("dns-queries", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	dbPath := fs.String("db", defaultDNSQueriesPath(), "DNS query log database file")
+	since := fs.String("since", "1h", "show queries newer than duration, for example 1h or 30m")
+	client := fs.String("client", "", "client IP address")
+	qname := fs.String("qname", "", "question name LIKE pattern")
+	limit := fs.Int("limit", 50, "maximum number of rows")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	sinceTime, err := cutoffTime(*since)
+	if err != nil {
+		return err
+	}
+	store, err := logstore.OpenDNSQueryLog(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	rows, err := store.List(context.Background(), logstore.DNSQueryFilter{Since: sinceTime, Client: *client, QName: *qname, Limit: *limit})
+	if err != nil {
+		return err
+	}
+	switch output {
+	case "", "table":
+		return writeDNSQueriesTable(stdout, rows)
+	case "json":
+		return writeJSON(stdout, rows)
+	case "yaml":
+		return writeYAML(stdout, rows)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeDNSQueriesTable(stdout io.Writer, rows []logstore.DNSQuery) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "TIME\tCLIENT\tQTYPE\tQNAME\tRCODE\tUPSTREAM\tCACHE\tDURATION")
+	for _, row := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%t\t%s\n",
+			row.Timestamp.Format(time.RFC3339),
+			row.ClientAddress,
+			row.QuestionType,
+			row.QuestionName,
+			row.ResponseCode,
+			displayCell(row.Upstream),
+			row.CacheHit,
+			row.Duration,
+		)
+	}
+	return w.Flush()
+}
+
+func cutoffTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	duration, err := parseHumanDuration(value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Now().Add(-duration).UTC(), nil
+}
+
+func parseHumanDuration(value string) (time.Duration, error) {
+	if strings.HasSuffix(value, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(value)
 }
 
 type showOptions struct {
@@ -1696,6 +1779,10 @@ func defaultStatePath() string {
 	return platformDefaults.DBFile()
 }
 
+func defaultDNSQueriesPath() string {
+	return platformDefaults.StateDir + "/dns-queries.db"
+}
+
 func defaultSocketPath() string {
 	return platformDefaults.SocketFile()
 }
@@ -1706,6 +1793,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  status [--socket <path>]")
 	fmt.Fprintln(w, "  events [--state-file <path>] [--topic <topic>] [--resource <kind>/<name>] [--limit <n>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  dns-queries [--db <path>] [--since 1h] [--client <ip>] [--qname <pattern>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  get <kind>[/<name>] [--list-kinds] [--config <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  describe <kind>/<name> [--config <path>] [--state-file <path>] [--ledger-file <path>] [--events-limit <n>]")
 	fmt.Fprintln(w, "  describe firewall [--config <path>]")
