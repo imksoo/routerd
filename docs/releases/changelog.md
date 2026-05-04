@@ -19,6 +19,8 @@ routerd は出荷前のソフトウェアです。
   実機適用はまだ接続せず、`routerd render freebsd --out-dir ...` の生成物として確認する段階です。
 - Phase 3.0d: FreeBSD 向け pf state 観測の土台を追加しました。
   FreeBSD では `pfctl -ss -v` の出力を traffic flow 用の共通 NAPT 表現へ変換します。
+- Phase 3.0e: `routerd-firewall-logger` に FreeBSD `pflog` 入力を追加しました。
+  `--pflog-interface pflog0` を指定すると `tcpdump` 経由で pf のログを読み、既存の `firewall-logs.db` へ保存します。
 
 ## 0.3.0
 
