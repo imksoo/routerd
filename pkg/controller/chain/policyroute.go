@@ -38,11 +38,12 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	defaultRoutePath := firstNonEmpty(c.DefaultRoutePath, "/run/routerd/default-route.nft")
 	aliases := c.aliases()
 	routeSets := c.routeSets()
+	activeRouteSets := c.activeRouteSets(routeSets)
 
 	if err := c.applyRouteTables(ctx, aliases); err != nil {
 		return err
 	}
-	if err := c.applyPolicyNft(ctx, nft, policyPath); err != nil {
+	if err := c.applyPolicyNft(ctx, nft, policyPath, activeRouteSets); err != nil {
 		return err
 	}
 	if err := c.applyDefaultRoutePolicies(ctx, nft, defaultRoutePath, routeSets); err != nil {
@@ -97,6 +98,25 @@ func (c IPv4PolicyRouteController) routeSets() map[string]api.IPv4PolicyRouteSet
 		}
 	}
 	return out
+}
+
+func (c IPv4PolicyRouteController) activeRouteSets(routeSets map[string]api.IPv4PolicyRouteSetSpec) map[string]bool {
+	active := map[string]bool{}
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind != "IPv4DefaultRoutePolicy" {
+			continue
+		}
+		spec, err := res.IPv4DefaultRoutePolicySpec()
+		if err != nil {
+			continue
+		}
+		healthy := c.availableDefaultRouteCandidates(spec, routeSets)
+		candidate, ok := selectDefaultRouteCandidate(healthy)
+		if ok && candidate.RouteSet != "" {
+			active[candidate.RouteSet] = true
+		}
+	}
+	return active
 }
 
 func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases map[string]string) error {
@@ -206,8 +226,8 @@ func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases
 	})
 }
 
-func (c IPv4PolicyRouteController) applyPolicyNft(ctx context.Context, nft, path string) error {
-	data, err := render.NftablesIPv4PolicyRoutes(c.effectivePolicyRouteRouter())
+func (c IPv4PolicyRouteController) applyPolicyNft(ctx context.Context, nft, path string, activeRouteSets map[string]bool) error {
+	data, err := render.NftablesIPv4PolicyRoutes(c.effectivePolicyRouteRouter(activeRouteSets))
 	if err != nil {
 		return err
 	}
@@ -280,15 +300,19 @@ func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(spec api.IPv4
 	return out
 }
 
-func (c IPv4PolicyRouteController) effectivePolicyRouteRouter() *api.Router {
+func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeRouteSets map[string]bool) *api.Router {
 	if c.Router == nil {
 		return nil
 	}
+	referencedRouteSets := c.defaultPolicyRouteSetReferences()
 	out := *c.Router
 	out.Spec.Resources = make([]api.Resource, 0, len(c.Router.Spec.Resources))
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "IPv4PolicyRouteSet" {
 			out.Spec.Resources = append(out.Spec.Resources, res)
+			continue
+		}
+		if referencedRouteSets[res.Metadata.Name] && !activeRouteSets[res.Metadata.Name] {
 			continue
 		}
 		spec, err := res.IPv4PolicyRouteSetSpec()
@@ -312,12 +336,74 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter() *api.Router {
 	return &out
 }
 
+func (c IPv4PolicyRouteController) defaultPolicyRouteSetReferences() map[string]bool {
+	out := map[string]bool{}
+	if c.Router == nil {
+		return out
+	}
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind != "IPv4DefaultRoutePolicy" {
+			continue
+		}
+		spec, err := res.IPv4DefaultRoutePolicySpec()
+		if err != nil {
+			continue
+		}
+		for _, candidate := range spec.Candidates {
+			if candidate.RouteSet != "" {
+				out[candidate.RouteSet] = true
+			}
+		}
+	}
+	return out
+}
+
 func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
 	if name == "" {
 		return true
 	}
 	status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)
-	return fmt.Sprint(status["phase"]) == "Healthy"
+	if fmt.Sprint(status["phase"]) != "Healthy" {
+		return false
+	}
+	checkedAt, ok := parseStatusTimestamp(status["lastCheckedAt"])
+	if !ok {
+		return false
+	}
+	maxAge := c.healthCheckFreshness(name)
+	return time.Since(checkedAt) <= maxAge
+}
+
+func (c IPv4PolicyRouteController) healthCheckFreshness(name string) time.Duration {
+	freshness := 2 * time.Minute
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind != "HealthCheck" || res.Metadata.Name != name {
+			continue
+		}
+		spec, err := res.HealthCheckSpec()
+		if err != nil {
+			return freshness
+		}
+		interval := parseDurationDefault(spec.Interval, 30*time.Second)
+		timeout := parseDurationDefault(spec.Timeout, 3*time.Second)
+		candidate := interval*3 + timeout
+		if candidate > freshness {
+			return candidate
+		}
+		return freshness
+	}
+	return freshness
+}
+
+func parseDurationDefault(value string, fallback time.Duration) time.Duration {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func selectDefaultRouteCandidate(candidates []api.IPv4DefaultRoutePolicyCandidate) (api.IPv4DefaultRoutePolicyCandidate, bool) {

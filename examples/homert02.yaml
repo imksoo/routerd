@@ -787,9 +787,9 @@ spec:
         daemon: routerd-healthcheck
         socketSource: /run/routerd/healthcheck/internet-via-dslite.sock
         targetSource: static
-        target: 1.1.1.1
-        protocol: tcp
-        port: 443
+        target: 142.251.157.119
+        protocol: http
+        port: 80
         sourceInterface: ds-lite
         interval: 30s
         timeout: 3s
@@ -801,9 +801,9 @@ spec:
         name: internet-via-dslite-a
       spec:
         targetSource: static
-        target: 1.1.1.1
-        protocol: tcp
-        port: 443
+        target: 142.251.157.119
+        protocol: http
+        port: 80
         sourceInterface: ds-lite-a
         interval: 30s
         timeout: 3s
@@ -815,9 +815,9 @@ spec:
         name: internet-via-dslite-b
       spec:
         targetSource: static
-        target: 1.1.1.1
-        protocol: tcp
-        port: 443
+        target: 142.251.157.119
+        protocol: http
+        port: 80
         sourceInterface: ds-lite-b
         interval: 30s
         timeout: 3s
@@ -829,9 +829,9 @@ spec:
         name: internet-via-dslite-c
       spec:
         targetSource: static
-        target: 1.1.1.1
-        protocol: tcp
-        port: 443
+        target: 142.251.157.119
+        protocol: http
+        port: 80
         sourceInterface: ds-lite-c
         interval: 30s
         timeout: 3s
