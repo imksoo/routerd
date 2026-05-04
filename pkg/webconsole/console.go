@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +31,7 @@ type Options struct {
 	DNSQueryLogPath    string
 	TrafficFlowLogPath string
 	FirewallLogPath    string
+	ConfigPath         string
 }
 
 type Handler struct {
@@ -47,6 +49,11 @@ type Snapshot struct {
 	TrafficFlows []logstore.TrafficFlow      `json:"trafficFlows,omitempty"`
 	FirewallLogs []logstore.FirewallLogEntry `json:"firewallLogs,omitempty"`
 	Errors       []string                    `json:"errors,omitempty"`
+}
+
+type ConfigSnapshot struct {
+	Path string `json:"path"`
+	Text string `json:"text"`
 }
 
 func New(opts Options) Handler {
@@ -90,6 +97,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.trafficFlows(w, r)
 	case "api/firewall-logs":
 		h.firewallLogs(w, r)
+	case "api/config":
+		h.config(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -251,6 +260,20 @@ func (h Handler) firewallLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, rows)
+}
+
+func (h Handler) config(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSpace(h.opts.ConfigPath)
+	if path == "" {
+		writeError(w, http.StatusNotFound, "config path is unavailable")
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, ConfigSnapshot{Path: path, Text: string(data)})
 }
 
 func (h Handler) resourceStatuses() ([]routerstate.ObjectStatus, error) {
@@ -448,6 +471,17 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .family-ipv4{border-color:#3977d4;background:#152846;color:#8ab4ff}.family-ipv6{border-color:#9b6fd3;background:#2c2142;color:#d2a8ff}
     .proto-tcp{border-color:#3977d4;background:#152846;color:#8ab4ff}.proto-udp{border-color:#3b8b65;background:#102d22;color:#7ee787}.proto-icmp,.proto-icmpv6,.proto-ipv6_icmp{border-color:#9b6fd3;background:#2c2142;color:#d2a8ff}
     .state-established,.state-assured{border-color:#3b8b65;background:#102d22;color:#7ee787}.state-syn_sent,.state-unreplied{border-color:#997b2f;background:#342a12;color:#f2cc60}.state-time_wait,.state-close{border-color:#7b7b7b;background:#242424;color:#c9c9c9}
+    .config-viewer{display:grid;gap:8px;max-height:70vh;overflow:auto;border:1px solid #2b2b2b;border-radius:6px;background:#121212;padding:8px}
+    .config-path{position:sticky;top:0;background:#121212;padding:4px 0;border-bottom:1px solid #242424;z-index:1}
+    .config-block{border:1px solid #292929;border-radius:6px;background:#171717;overflow:hidden}
+    .config-block summary{display:flex;align-items:center;gap:8px;cursor:pointer;padding:7px 8px;list-style:none}
+    .config-block summary::-webkit-details-marker{display:none}
+    .config-block summary:before{content:"+";display:inline-grid;place-items:center;width:16px;height:16px;border:1px solid #4a4a4a;border-radius:50%;font-size:12px;color:#c9c9c9;flex:0 0 auto}
+    .config-block[open] summary:before{content:"-"}
+    .config-block pre{margin:0;border-top:1px solid #292929;padding:6px 0;overflow:auto}
+    .config-line{display:grid;grid-template-columns:44px minmax(0,1fr);gap:8px;align-items:baseline;min-width:max-content}
+    .line-no{color:#666;text-align:right;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;user-select:none}
+    .yaml-key{color:#8ab4ff}.yaml-value{color:#d7d7d7}.yaml-comment{color:#7ee787}
     tr.flash, .metric.flash{animation:flash 1.6s ease-out}
     @keyframes flash{0%{background:#3a320f;box-shadow:inset 3px 0 #f2cc60}100%{background:transparent;box-shadow:inset 0 0 transparent}}
     table{width:100%;border-collapse:collapse;min-width:440px}
@@ -475,6 +509,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
   <section><h2>Recent Deny</h2><div id="recent-deny"></div></section>
   <section><h2>Resources</h2><div id="resources"></div></section>
   <section><h2>Events</h2><div id="events"></div></section>
+  <section><h2>Config</h2><div id="config"></div></section>
 </main>
 <script>
 const base = {{.BasePath}};
@@ -640,6 +675,63 @@ function formatTime(value){
   const time = new Intl.DateTimeFormat(undefined,{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(date);
   return day + " " + time;
 }
+function yamlHighlights(line){
+  const out = [];
+  let text = line;
+  const commentAt = text.indexOf("#");
+  let comment = "";
+  if (commentAt >= 0) {
+    comment = text.slice(commentAt);
+    text = text.slice(0, commentAt);
+  }
+  const match = text.match(/^(\s*-?\s*)([A-Za-z0-9_]+)(\s*:)(.*)$/);
+  if (match) {
+    out.push(document.createTextNode(match[1]));
+    out.push(el("span",{class:"yaml-key",text:match[2]}));
+    out.push(document.createTextNode(match[3]));
+    out.push(el("span",{class:"yaml-value",text:match[4]}));
+  } else {
+    out.push(document.createTextNode(text));
+  }
+  if (comment) out.push(el("span",{class:"yaml-comment",text:comment}));
+  return out;
+}
+function configLineIndent(line){
+  const match = line.match(/^(\s*)/);
+  return Math.floor((match ? match[1].length : 0) / 2);
+}
+function configViewer(snapshot){
+  if (!snapshot || !snapshot.text) return el("div",{class:"muted",text:"Config is unavailable"});
+  const lines = snapshot.text.split(/\r?\n/);
+  const root = el("div",{class:"config-viewer"},[
+    el("div",{class:"config-path"},[el("code",{text:snapshot.path || ""})]),
+  ]);
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const next = lines[i+1] || "";
+    const foldable = /^\s*-\s+apiVersion\s*:/.test(line) || /^\s{4,}[A-Za-z0-9_]+\s*:\s*$/.test(line);
+    if (foldable) {
+      const indent = configLineIndent(line);
+      const block = [line];
+      i++;
+      while (i < lines.length && (lines[i].trim() === "" || configLineIndent(lines[i]) > indent)) {
+        block.push(lines[i]);
+        i++;
+      }
+      const summaryText = block.find(l=>/^\s*kind\s*:/.test(l))?.trim() || line.trim() || "block";
+      const details = el("details",{class:"config-block"},[
+        el("summary",{},[el("code",{text:summaryText}),el("span",{class:"group-count",text:String(block.length)+" lines"})]),
+        el("pre",{},block.map((l,idx)=>el("div",{class:"config-line"},[el("span",{class:"line-no",text:String(idx+1)}),el("code",{},yamlHighlights(l))]))),
+      ]);
+      root.append(details);
+      continue;
+    }
+    root.append(el("div",{class:"config-line"},[el("span",{class:"line-no",text:String(i+1)}),el("code",{},yamlHighlights(line))]));
+    i++;
+  }
+  return root;
+}
 function connectionGroupNode(group, dnsLabels){
   const label = connectionGroupLabel(group.key);
   const title = label.family + "/" + String(label.proto || "other").toUpperCase() + " " + String(group.rows.length);
@@ -699,6 +791,19 @@ async function refresh(){
       el("td",{text:(e.resourceKind||e.kind||"") + "/" + (e.resourceName||e.name||"")}),
       el("td",{text:e.reason||e.message||""}),
     ]))));
+  if (!document.getElementById("config").dataset.loaded) {
+    try {
+      const configRes = await fetch(base + "api/config", {cache:"no-store"});
+      if (configRes.ok) {
+        renderInto("config", configViewer(await configRes.json()));
+      } else {
+        renderInto("config", el("div",{class:"muted",text:"Config is unavailable"}));
+      }
+    } catch (err) {
+      renderInto("config", el("div",{class:"muted",text:String(err)}));
+    }
+    document.getElementById("config").dataset.loaded = "true";
+  }
   firstPaint = false;
 }
 refresh(); setInterval(refresh, 5000);

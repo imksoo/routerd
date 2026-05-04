@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -176,6 +178,25 @@ func TestHandlerServesFirewallLogs(t *testing.T) {
 	}
 }
 
+func TestHandlerServesConfigReadOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "router.yaml")
+	if err := os.WriteFile(path, []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(Options{ConfigPath: path})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{path, "apiVersion: routerd.net/v1alpha1", "kind: Router"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("config response missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+}
+
 func TestHandlerRendersUsableBasePath(t *testing.T) {
 	handler := New(Options{BasePath: "/"})
 	rec := httptest.NewRecorder()
@@ -259,6 +280,12 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 		`class:"return-button",text:"return"`,
 		`text:"nat"`,
 		`.slice(0,15)`,
+		`<section><h2>Config</h2>`,
+		`api/config`,
+		`function yamlHighlights`,
+		`function configViewer`,
+		`class:"config-block"`,
+		`yaml-key`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("console markup missing %q:\n%s", want, body)

@@ -2440,7 +2440,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			defer opened.Close()
 			webStore = opened
 		}
-		if err := startWebConsole(ctx, console, router, webStore, cache, logger); err != nil {
+		if err := startWebConsole(ctx, console, router, webStore, cache, logger, *configPath); err != nil {
 			return err
 		}
 	}
@@ -2693,7 +2693,7 @@ func webConsoleFromRouter(router *api.Router) (api.WebConsoleSpec, bool) {
 	return api.WebConsoleSpec{}, false
 }
 
-func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, cache *resultCache, logger *eventlog.Logger) error {
+func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, cache *resultCache, logger *eventlog.Logger, configPath string) error {
 	addr := net.JoinHostPort(spec.ListenAddress, fmt.Sprintf("%d", spec.Port))
 	handler := webconsole.New(webconsole.Options{
 		Router:             router,
@@ -2705,6 +2705,7 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		DNSQueryLogPath:    platformDefaults.StateDir + "/dns-queries.db",
 		TrafficFlowLogPath: platformDefaults.StateDir + "/traffic-flows.db",
 		FirewallLogPath:    platformDefaults.StateDir + "/firewall-logs.db",
+		ConfigPath:         configPath,
 	})
 	server := &http.Server{Addr: addr, Handler: handler}
 	listener, err := net.Listen("tcp", addr)
