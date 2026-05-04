@@ -263,12 +263,12 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 				SNTPServers:  []string{"2001:db8::123"},
 				DomainSearch: []string{"lan"},
 			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PrefixSource: "${IPv6DelegatedAddress/lan.status.prefix}", RDNSS: []string{"2001:db8::53"}, DNSSL: []string{"lan"}, MTU: 1500, PRFPreference: "high"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PrefixFrom: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan", Field: "prefix"}, RDNSS: []string{"2001:db8::53"}, DNSSL: []string{"lan"}, MTU: 1500, PRFPreference: "high"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DNSZoneSpec{
 				Zone: "lan",
 				Records: []api.DNSZoneRecordSpec{
 					{Hostname: "router.lan", IPv4: "192.168.10.1", IPv6: "2001:db8::1"},
-					{Hostname: "router6.lan", IPv6Source: api.DNSZoneRecordAddressSourceSpec{Field: "${IPv6DelegatedAddress/lan.status.address}"}},
+					{Hostname: "router6.lan", IPv6From: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan", Field: "address"}},
 				},
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "resolver"}, Spec: api.DNSResolverSpec{

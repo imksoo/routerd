@@ -4,6 +4,79 @@ metadata:
   name: homert02
 spec:
   resources:
+  - apiVersion: system.routerd.net/v1alpha1
+    kind: Package
+    metadata:
+      name: router-service-dependencies
+    spec:
+      state: present
+      packages:
+      - os: ubuntu
+        manager: apt
+        names:
+        - dnsmasq-base
+        - nftables
+        - conntrack
+        - iproute2
+        - iputils-ping
+        - iputils-tracepath
+        - dnsutils
+        - tcpdump
+        - traceroute
+        - procps
+        - ppp
+        - wireguard-tools
+        - strongswan-swanctl
+        - radvd
+        - systemd
+        - net-tools
+        - kmod
+      - os: nixos
+        manager: nix
+        names:
+        - dnsmasq
+        - nftables
+        - conntrack-tools
+        - iproute2
+        - iputils
+        - bind
+        - tcpdump
+        - traceroute
+        - procps
+        - ppp
+        - wireguard-tools
+        - strongswan
+        - radvd
+        - systemd
+        - nettools
+        - kmod
+        optional: true
+      - os: freebsd
+        manager: pkg
+        names:
+        - dnsmasq
+        - wireguard-tools
+        - strongswan
+        - mpd5
+        - bind-tools
+        optional: true
+  - apiVersion: system.routerd.net/v1alpha1
+    kind: SysctlProfile
+    metadata:
+      name: router-runtime
+    spec:
+      profile: router-linux
+      runtime: true
+      persistent: true
+  - apiVersion: system.routerd.net/v1alpha1
+    kind: Sysctl
+    metadata:
+      name: wan-accept-ra
+    spec:
+      key: net.ipv6.conf.ens18.accept_ra
+      value: "2"
+      runtime: true
+      persistent: true
   - apiVersion: net.routerd.net/v1alpha1
     kind: Interface
     metadata:

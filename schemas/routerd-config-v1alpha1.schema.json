@@ -211,6 +211,9 @@
                         "title": "Key",
                         "type": "string"
                       },
+                      "optional": {
+                        "type": "boolean"
+                      },
                       "persistent": {
                         "type": "boolean"
                       },
@@ -225,6 +228,168 @@
                     "required": [
                       "key",
                       "value"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "system.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "SysctlProfile",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "overrides": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      },
+                      "persistent": {
+                        "type": "boolean"
+                      },
+                      "profile": {
+                        "enum": [
+                          "router-linux"
+                        ],
+                        "type": "string"
+                      },
+                      "runtime": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "profile"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "system.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "Package",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "packages": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "manager": {
+                              "enum": [
+                                "",
+                                "apt",
+                                "dnf",
+                                "nix",
+                                "pkg"
+                              ],
+                              "type": "string"
+                            },
+                            "names": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "os": {
+                              "enum": [
+                                "ubuntu",
+                                "debian",
+                                "fedora",
+                                "rhel",
+                                "rocky",
+                                "almalinux",
+                                "nixos",
+                                "freebsd"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "os",
+                            "names"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "state": {
+                        "enum": [
+                          "",
+                          "present"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "packages"
                     ],
                     "type": "object"
                   },
@@ -1945,53 +2110,41 @@
                       "announce": {
                         "type": "boolean"
                       },
-                      "interface": {
-                        "type": "string"
-                      },
-                      "prefixDelegation": {
-                        "type": "string"
-                      },
-                      "prefixSource": {
-                        "type": "string"
-                      },
-                      "ready_when": {
+                      "dependsOn": {
                         "items": {
                           "additionalProperties": false,
                           "properties": {
-                            "any_of": {
-                              "items": {
-                                "items": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "equals": {
-                                      "type": "string"
-                                    },
-                                    "field": {
-                                      "type": "string"
-                                    },
-                                    "not_empty": {
-                                      "type": "boolean"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "type": "array"
-                              },
-                              "type": "array"
-                            },
                             "equals": {
                               "type": "string"
                             },
                             "field": {
                               "type": "string"
                             },
-                            "not_empty": {
+                            "notEmpty": {
                               "type": "boolean"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "phase": {
+                              "type": "string"
+                            },
+                            "resource": {
+                              "type": "string"
                             }
                           },
+                          "required": [
+                            "resource"
+                          ],
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "interface": {
+                        "type": "string"
+                      },
+                      "prefixDelegation": {
+                        "type": "string"
                       },
                       "sendRA": {
                         "type": "boolean"
@@ -2088,47 +2241,38 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
-                      "interface": {
-                        "type": "string"
-                      },
-                      "ready_when": {
+                      "dependsOn": {
                         "items": {
                           "additionalProperties": false,
                           "properties": {
-                            "any_of": {
-                              "items": {
-                                "items": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "equals": {
-                                      "type": "string"
-                                    },
-                                    "field": {
-                                      "type": "string"
-                                    },
-                                    "not_empty": {
-                                      "type": "boolean"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "type": "array"
-                              },
-                              "type": "array"
-                            },
                             "equals": {
                               "type": "string"
                             },
                             "field": {
                               "type": "string"
                             },
-                            "not_empty": {
+                            "notEmpty": {
                               "type": "boolean"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "phase": {
+                              "type": "string"
+                            },
+                            "resource": {
+                              "type": "string"
                             }
                           },
+                          "required": [
+                            "resource"
+                          ],
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "interface": {
+                        "type": "string"
                       },
                       "request": {
                         "items": {
@@ -2185,6 +2329,36 @@
                       "configPath": {
                         "type": "string"
                       },
+                      "dependsOn": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "notEmpty": {
+                              "type": "boolean"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "phase": {
+                              "type": "string"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "dnssl": {
                         "items": {
                           "type": "string"
@@ -2211,8 +2385,26 @@
                       "preferredLifetime": {
                         "type": "string"
                       },
-                      "prefixSource": {
+                      "prefix": {
                         "type": "string"
+                      },
+                      "prefixFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
                       },
                       "prfPreference": {
                         "enum": [
@@ -2229,41 +2421,23 @@
                         },
                         "type": "array"
                       },
-                      "ready_when": {
+                      "rdnssFrom": {
                         "items": {
                           "additionalProperties": false,
                           "properties": {
-                            "any_of": {
-                              "items": {
-                                "items": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "equals": {
-                                      "type": "string"
-                                    },
-                                    "field": {
-                                      "type": "string"
-                                    },
-                                    "not_empty": {
-                                      "type": "boolean"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "type": "array"
-                              },
-                              "type": "array"
-                            },
-                            "equals": {
-                              "type": "string"
-                            },
                             "field": {
                               "type": "string"
                             },
-                            "not_empty": {
+                            "optional": {
                               "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
                             }
                           },
+                          "required": [
+                            "resource"
+                          ],
                           "type": "object"
                         },
                         "type": "array"
@@ -2335,6 +2509,57 @@
                       "configPath": {
                         "type": "string"
                       },
+                      "dependsOn": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "notEmpty": {
+                              "type": "boolean"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "phase": {
+                              "type": "string"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "dnsServerFrom": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "field": {
+                              "type": "string"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "dnsServers": {
                         "items": {
                           "type": "string"
@@ -2376,45 +2601,6 @@
                       "rapidCommit": {
                         "type": "boolean"
                       },
-                      "ready_when": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "any_of": {
-                              "items": {
-                                "items": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "equals": {
-                                      "type": "string"
-                                    },
-                                    "field": {
-                                      "type": "string"
-                                    },
-                                    "not_empty": {
-                                      "type": "boolean"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "type": "array"
-                              },
-                              "type": "array"
-                            },
-                            "equals": {
-                              "type": "string"
-                            },
-                            "field": {
-                              "type": "string"
-                            },
-                            "not_empty": {
-                              "type": "boolean"
-                            }
-                          },
-                          "type": "object"
-                        },
-                        "type": "array"
-                      },
                       "role": {
                         "enum": [
                           "server",
@@ -2427,6 +2613,27 @@
                           "dnsmasq"
                         ],
                         "type": "string"
+                      },
+                      "sntpServerFrom": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "field": {
+                              "type": "string"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "sntpServers": {
                         "items": {
@@ -2824,7 +3031,7 @@
                             "ipv4": {
                               "type": "string"
                             },
-                            "ipv4Source": {
+                            "ipv4From": {
                               "additionalProperties": false,
                               "properties": {
                                 "field": {
@@ -2832,17 +3039,20 @@
                                 },
                                 "optional": {
                                   "type": "boolean"
+                                },
+                                "resource": {
+                                  "type": "string"
                                 }
                               },
                               "required": [
-                                "field"
+                                "resource"
                               ],
                               "type": "object"
                             },
                             "ipv6": {
                               "type": "string"
                             },
-                            "ipv6Source": {
+                            "ipv6From": {
                               "additionalProperties": false,
                               "properties": {
                                 "field": {
@@ -2850,10 +3060,13 @@
                                 },
                                 "optional": {
                                   "type": "boolean"
+                                },
+                                "resource": {
+                                  "type": "string"
                                 }
                               },
                               "required": [
-                                "field"
+                                "resource"
                               ],
                               "type": "object"
                             },
@@ -2963,7 +3176,7 @@
                         "items": {
                           "additionalProperties": false,
                           "properties": {
-                            "addressSources": {
+                            "addressFrom": {
                               "items": {
                                 "additionalProperties": false,
                                 "properties": {
@@ -2972,10 +3185,13 @@
                                   },
                                   "optional": {
                                     "type": "boolean"
+                                  },
+                                  "resource": {
+                                    "type": "string"
                                   }
                                 },
                                 "required": [
-                                  "field"
+                                  "resource"
                                 ],
                                 "type": "object"
                               },
@@ -3064,6 +3280,27 @@
                             },
                             "name": {
                               "type": "string"
+                            },
+                            "upstreamFrom": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "field": {
+                                    "type": "string"
+                                  },
+                                  "optional": {
+                                    "type": "boolean"
+                                  },
+                                  "resource": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "resource"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
                             },
                             "upstreams": {
                               "items": {
@@ -3156,14 +3393,59 @@
                       "aftrFQDN": {
                         "type": "string"
                       },
-                      "aftrIPv6": {
-                        "type": "string"
+                      "aftrFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
                       },
-                      "aftrSource": {
+                      "aftrIPv6": {
                         "type": "string"
                       },
                       "defaultRoute": {
                         "type": "boolean"
+                      },
+                      "dependsOn": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "equals": {
+                              "type": "string"
+                            },
+                            "field": {
+                              "type": "string"
+                            },
+                            "notEmpty": {
+                              "type": "boolean"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "phase": {
+                              "type": "string"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "encapsulationLimit": {
                         "type": "string"
@@ -3188,52 +3470,10 @@
                       "localDelegatedAddress": {
                         "type": "string"
                       },
-                      "localIPv6Source": {
-                        "type": "string"
-                      },
                       "mtu": {
                         "maximum": 65535,
                         "minimum": 1280,
                         "type": "integer"
-                      },
-                      "ready_when": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "any_of": {
-                              "items": {
-                                "items": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "equals": {
-                                      "type": "string"
-                                    },
-                                    "field": {
-                                      "type": "string"
-                                    },
-                                    "not_empty": {
-                                      "type": "boolean"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "type": "array"
-                              },
-                              "type": "array"
-                            },
-                            "equals": {
-                              "type": "string"
-                            },
-                            "field": {
-                              "type": "string"
-                            },
-                            "not_empty": {
-                              "type": "boolean"
-                            }
-                          },
-                          "type": "object"
-                        },
-                        "type": "array"
                       },
                       "remoteAddress": {
                         "type": "string"
@@ -3332,57 +3572,84 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
-                      "destination": {
-                        "type": "string"
-                      },
-                      "device": {
-                        "type": "string"
-                      },
-                      "gateway": {
-                        "type": "string"
-                      },
-                      "metric": {
-                        "minimum": 0,
-                        "type": "integer"
-                      },
-                      "ready_when": {
+                      "dependsOn": {
                         "items": {
                           "additionalProperties": false,
                           "properties": {
-                            "any_of": {
-                              "items": {
-                                "items": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "equals": {
-                                      "type": "string"
-                                    },
-                                    "field": {
-                                      "type": "string"
-                                    },
-                                    "not_empty": {
-                                      "type": "boolean"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "type": "array"
-                              },
-                              "type": "array"
-                            },
                             "equals": {
                               "type": "string"
                             },
                             "field": {
                               "type": "string"
                             },
-                            "not_empty": {
+                            "notEmpty": {
                               "type": "boolean"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "phase": {
+                              "type": "string"
+                            },
+                            "resource": {
+                              "type": "string"
                             }
                           },
+                          "required": [
+                            "resource"
+                          ],
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "destination": {
+                        "type": "string"
+                      },
+                      "device": {
+                        "type": "string"
+                      },
+                      "deviceFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
+                      "gateway": {
+                        "type": "string"
+                      },
+                      "gatewayFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
+                      "metric": {
+                        "minimum": 0,
+                        "type": "integer"
                       }
                     },
                     "required": [
@@ -3739,11 +4006,77 @@
                         "items": {
                           "additionalProperties": false,
                           "properties": {
+                            "dependsOn": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "equals": {
+                                    "type": "string"
+                                  },
+                                  "field": {
+                                    "type": "string"
+                                  },
+                                  "notEmpty": {
+                                    "type": "boolean"
+                                  },
+                                  "optional": {
+                                    "type": "boolean"
+                                  },
+                                  "phase": {
+                                    "type": "string"
+                                  },
+                                  "resource": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "resource"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
                             "device": {
                               "type": "string"
                             },
+                            "deviceFrom": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "field": {
+                                  "type": "string"
+                                },
+                                "optional": {
+                                  "type": "boolean"
+                                },
+                                "resource": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "resource"
+                              ],
+                              "type": "object"
+                            },
                             "gateway": {
                               "type": "string"
+                            },
+                            "gatewayFrom": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "field": {
+                                  "type": "string"
+                                },
+                                "optional": {
+                                  "type": "boolean"
+                                },
+                                "resource": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "resource"
+                              ],
+                              "type": "object"
                             },
                             "gatewaySource": {
                               "enum": [
@@ -3764,45 +4097,6 @@
                             },
                             "name": {
                               "type": "string"
-                            },
-                            "ready_when": {
-                              "items": {
-                                "additionalProperties": false,
-                                "properties": {
-                                  "any_of": {
-                                    "items": {
-                                      "items": {
-                                        "additionalProperties": false,
-                                        "properties": {
-                                          "equals": {
-                                            "type": "string"
-                                          },
-                                          "field": {
-                                            "type": "string"
-                                          },
-                                          "not_empty": {
-                                            "type": "boolean"
-                                          }
-                                        },
-                                        "type": "object"
-                                      },
-                                      "type": "array"
-                                    },
-                                    "type": "array"
-                                  },
-                                  "equals": {
-                                    "type": "string"
-                                  },
-                                  "field": {
-                                    "type": "string"
-                                  },
-                                  "not_empty": {
-                                    "type": "boolean"
-                                  }
-                                },
-                                "type": "object"
-                              },
-                              "type": "array"
                             },
                             "routeTable": {
                               "maximum": 4294967295,

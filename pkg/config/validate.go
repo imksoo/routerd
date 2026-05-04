@@ -665,6 +665,66 @@ func validateResource(res api.Resource) error {
 		if spec.Value == "" {
 			return fmt.Errorf("%s spec.value is required", res.ID())
 		}
+	case "SysctlProfile":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.SysctlProfileSpec()
+		if err != nil {
+			return err
+		}
+		switch spec.Profile {
+		case "router-linux":
+		default:
+			return fmt.Errorf("%s spec.profile must be router-linux", res.ID())
+		}
+		for key, value := range spec.Overrides {
+			if strings.TrimSpace(key) == "" || strings.ContainsAny(key, " \t\n/") {
+				return fmt.Errorf("%s spec.overrides contains invalid sysctl key %q", res.ID(), key)
+			}
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("%s spec.overrides[%s] must not be empty", res.ID(), key)
+			}
+		}
+	case "Package":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.PackageSpec()
+		if err != nil {
+			return err
+		}
+		switch defaultString(spec.State, "present") {
+		case "present":
+		default:
+			return fmt.Errorf("%s spec.state must be present", res.ID())
+		}
+		if len(spec.Packages) == 0 {
+			return fmt.Errorf("%s spec.packages is required", res.ID())
+		}
+		for i, set := range spec.Packages {
+			switch set.OS {
+			case "ubuntu", "debian", "fedora", "rhel", "rocky", "almalinux", "nixos", "freebsd":
+			default:
+				return fmt.Errorf("%s spec.packages[%d].os must be ubuntu, debian, fedora, rhel, rocky, almalinux, nixos, or freebsd", res.ID(), i)
+			}
+			switch defaultString(set.Manager, defaultPackageManager(set.OS)) {
+			case "apt", "dnf", "nix", "pkg":
+			default:
+				return fmt.Errorf("%s spec.packages[%d].manager must be apt, dnf, nix, or pkg", res.ID(), i)
+			}
+			if len(set.Names) == 0 {
+				return fmt.Errorf("%s spec.packages[%d].names is required", res.ID(), i)
+			}
+			for j, name := range set.Names {
+				if strings.TrimSpace(name) == "" {
+					return fmt.Errorf("%s spec.packages[%d].names[%d] must not be empty", res.ID(), i, j)
+				}
+				if strings.ContainsAny(name, " \t\n\r/") {
+					return fmt.Errorf("%s spec.packages[%d].names[%d] must be a package name", res.ID(), i, j)
+				}
+			}
+		}
 	case "NTPClient":
 		if res.APIVersion != api.SystemAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
@@ -1213,6 +1273,12 @@ func validateResource(res api.Resource) error {
 		if spec.PrefixDelegation == "" {
 			return fmt.Errorf("%s spec.prefixDelegation is required", res.ID())
 		}
+		if spec.PrefixSource != "" {
+			return fmt.Errorf("%s spec.prefixSource was removed; use spec.prefixDelegation and spec.dependsOn", res.ID())
+		}
+		if len(spec.ReadyWhen) > 0 {
+			return fmt.Errorf("%s spec.ready_when was removed; use spec.dependsOn", res.ID())
+		}
 		if spec.Interface == "" {
 			return fmt.Errorf("%s spec.interface is required", res.ID())
 		}
@@ -1239,6 +1305,9 @@ func validateResource(res api.Resource) error {
 		if spec.Interface == "" {
 			return fmt.Errorf("%s spec.interface is required", res.ID())
 		}
+		if len(spec.ReadyWhen) > 0 {
+			return fmt.Errorf("%s spec.ready_when was removed; use spec.dependsOn", res.ID())
+		}
 	case "IPv6RouterAdvertisement":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -1250,8 +1319,14 @@ func validateResource(res api.Resource) error {
 		if spec.Interface == "" {
 			return fmt.Errorf("%s spec.interface is required", res.ID())
 		}
-		if spec.PrefixSource == "" {
-			return fmt.Errorf("%s spec.prefixSource is required", res.ID())
+		if spec.PrefixSource != "" {
+			return fmt.Errorf("%s spec.prefixSource was removed; use spec.prefix or spec.prefixFrom", res.ID())
+		}
+		if len(spec.ReadyWhen) > 0 {
+			return fmt.Errorf("%s spec.ready_when was removed; use spec.dependsOn", res.ID())
+		}
+		if spec.Prefix == "" && spec.PrefixFrom.Resource == "" {
+			return fmt.Errorf("%s spec.prefix or spec.prefixFrom is required", res.ID())
 		}
 		if spec.MTU != 0 && (spec.MTU < 1280 || spec.MTU > 65535) {
 			return fmt.Errorf("%s spec.mtu must be within 1280-65535", res.ID())
@@ -1263,7 +1338,7 @@ func validateResource(res api.Resource) error {
 		}
 		for _, server := range spec.RDNSS {
 			if strings.HasPrefix(strings.TrimSpace(server), "${") {
-				continue
+				return fmt.Errorf("%s spec.rdnss status expressions were removed; use spec.rdnssFrom", res.ID())
 			}
 			addr, err := netip.ParseAddr(server)
 			if err != nil || !addr.Is6() {
@@ -1277,6 +1352,9 @@ func validateResource(res api.Resource) error {
 		spec, err := res.DHCPv6ServerSpec()
 		if err != nil {
 			return err
+		}
+		if len(spec.ReadyWhen) > 0 {
+			return fmt.Errorf("%s spec.ready_when was removed; use spec.dependsOn", res.ID())
 		}
 		switch defaultString(spec.Role, "server") {
 		case "server", "transit":
@@ -1315,7 +1393,7 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s DNS/SNTP server entry %d contains newline", res.ID(), i)
 			}
 			if strings.HasPrefix(strings.TrimSpace(server), "${") {
-				continue
+				return fmt.Errorf("%s DNS/SNTP server status expressions were removed; use dnsServerFrom or sntpServerFrom", res.ID())
 			}
 			addr, err := netip.ParseAddr(server)
 			if err != nil || !addr.Is6() {
@@ -1346,8 +1424,11 @@ func validateResource(res api.Resource) error {
 					return fmt.Errorf("%s spec.records[%d].ipv4 must be an IPv4 address", res.ID(), i)
 				}
 			}
-			if strings.TrimSpace(record.IPv4Source.Field) != "" && !isStatusExpression(record.IPv4Source.Field) {
-				return fmt.Errorf("%s spec.records[%d].ipv4Source.field must be a status reference", res.ID(), i)
+			if strings.TrimSpace(record.IPv4Source.Field) != "" {
+				return fmt.Errorf("%s spec.records[%d].ipv4Source was removed; use ipv4From", res.ID(), i)
+			}
+			if record.IPv4From.Resource != "" && record.IPv4From.Field == "" {
+				return fmt.Errorf("%s spec.records[%d].ipv4From.field is required", res.ID(), i)
 			}
 			if record.IPv6 != "" {
 				addr, err := netip.ParseAddr(record.IPv6)
@@ -1355,8 +1436,11 @@ func validateResource(res api.Resource) error {
 					return fmt.Errorf("%s spec.records[%d].ipv6 must be an IPv6 address", res.ID(), i)
 				}
 			}
-			if strings.TrimSpace(record.IPv6Source.Field) != "" && !isStatusExpression(record.IPv6Source.Field) {
-				return fmt.Errorf("%s spec.records[%d].ipv6Source.field must be a status reference", res.ID(), i)
+			if strings.TrimSpace(record.IPv6Source.Field) != "" {
+				return fmt.Errorf("%s spec.records[%d].ipv6Source was removed; use ipv6From", res.ID(), i)
+			}
+			if record.IPv6From.Resource != "" && record.IPv6From.Field == "" {
+				return fmt.Errorf("%s spec.records[%d].ipv6From.field is required", res.ID(), i)
 			}
 		}
 	case "DNSResolver":
@@ -1371,6 +1455,9 @@ func validateResource(res api.Resource) error {
 			return fmt.Errorf("%s: %w", res.ID(), err)
 		}
 		for i, listen := range spec.Listen {
+			if len(listen.AddressSources) > 0 {
+				return fmt.Errorf("%s spec.listen[%d].addressSources was removed; use addressFrom", res.ID(), i)
+			}
 			for _, sourceName := range listen.Sources {
 				if !dnsSourceExists(spec.Sources, sourceName) {
 					return fmt.Errorf("%s spec.listen[%d].sources references missing source %q", res.ID(), i, sourceName)
@@ -1664,8 +1751,14 @@ func validateResource(res api.Resource) error {
 		if spec.Interface == "" {
 			return fmt.Errorf("%s spec.interface is required", res.ID())
 		}
-		if spec.AFTRSource == "" && spec.AFTRFQDN == "" && spec.AFTRIPv6 == "" && spec.RemoteAddress == "" {
-			return fmt.Errorf("%s spec.aftrSource, spec.aftrFQDN, spec.aftrIPv6, or spec.remoteAddress is required", res.ID())
+		if spec.AFTRSource != "" {
+			return fmt.Errorf("%s spec.aftrSource was removed; use spec.aftrFrom", res.ID())
+		}
+		if len(spec.ReadyWhen) > 0 {
+			return fmt.Errorf("%s spec.ready_when was removed; use spec.dependsOn", res.ID())
+		}
+		if spec.AFTRFrom.Resource == "" && spec.AFTRFQDN == "" && spec.AFTRIPv6 == "" && spec.RemoteAddress == "" {
+			return fmt.Errorf("%s spec.aftrFrom, spec.aftrFQDN, spec.aftrIPv6, or spec.remoteAddress is required", res.ID())
 		}
 		if spec.AFTRFQDN != "" && strings.ContainsAny(spec.AFTRFQDN, " \t\n/") {
 			return fmt.Errorf("%s spec.aftrFQDN contains invalid whitespace or slash", res.ID())
@@ -1902,6 +1995,15 @@ func validateResource(res api.Resource) error {
 			if candidate.Name == "" && candidate.Source == "" {
 				return fmt.Errorf("%s spec.candidates[%d] requires name or source", res.ID(), i)
 			}
+			if strings.Contains(candidate.Device, "${") {
+				return fmt.Errorf("%s spec.candidates[%d].device status expressions were removed; use deviceFrom", res.ID(), i)
+			}
+			if strings.Contains(candidate.Gateway, "${") {
+				return fmt.Errorf("%s spec.candidates[%d].gateway status expressions were removed; use gatewayFrom", res.ID(), i)
+			}
+			if len(candidate.ReadyWhen) > 0 {
+				return fmt.Errorf("%s spec.candidates[%d].ready_when was removed; use dependsOn", res.ID(), i)
+			}
 			if candidate.Weight < 0 {
 				return fmt.Errorf("%s spec.candidates[%d].weight must be non-negative", res.ID(), i)
 			}
@@ -1915,17 +2017,15 @@ func validateResource(res api.Resource) error {
 				if candidate.Gateway == "" {
 					return fmt.Errorf("%s spec.candidates[%d].gateway is required when gatewaySource is static", res.ID(), i)
 				}
-				if !strings.Contains(candidate.Gateway, "${") {
-					addr, err := netip.ParseAddr(candidate.Gateway)
-					if err != nil {
-						return fmt.Errorf("%s spec.candidates[%d].gateway must be an IP address or status path expression", res.ID(), i)
-					}
-					if defaultString(spec.Family, "ipv4") == "ipv4" && !addr.Is4() {
-						return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv4 address when family is ipv4", res.ID(), i)
-					}
-					if defaultString(spec.Family, "ipv4") == "ipv6" && !addr.Is6() {
-						return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv6 address when family is ipv6", res.ID(), i)
-					}
+				addr, err := netip.ParseAddr(candidate.Gateway)
+				if err != nil {
+					return fmt.Errorf("%s spec.candidates[%d].gateway must be an IP address", res.ID(), i)
+				}
+				if defaultString(spec.Family, "ipv4") == "ipv4" && !addr.Is4() {
+					return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv4 address when family is ipv4", res.ID(), i)
+				}
+				if defaultString(spec.Family, "ipv4") == "ipv6" && !addr.Is6() {
+					return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv6 address when family is ipv6", res.ID(), i)
 				}
 			case "dhcpv4", "dhcpv6":
 			default:
@@ -2447,10 +2547,19 @@ func validateResource(res api.Resource) error {
 		if _, err := netip.ParsePrefix(spec.Destination); err != nil {
 			return fmt.Errorf("%s spec.destination is invalid: %w", res.ID(), err)
 		}
-		if spec.Gateway != "" && !strings.Contains(spec.Gateway, "${") {
+		if strings.Contains(spec.Device, "${") {
+			return fmt.Errorf("%s spec.device status expressions were removed; use deviceFrom", res.ID())
+		}
+		if strings.Contains(spec.Gateway, "${") {
+			return fmt.Errorf("%s spec.gateway status expressions were removed; use gatewayFrom", res.ID())
+		}
+		if len(spec.ReadyWhen) > 0 {
+			return fmt.Errorf("%s spec.ready_when was removed; use spec.dependsOn", res.ID())
+		}
+		if spec.Gateway != "" {
 			addr, err := netip.ParseAddr(spec.Gateway)
 			if err != nil || !addr.Is4() {
-				return fmt.Errorf("%s spec.gateway must be an IPv4 address or status path expression", res.ID())
+				return fmt.Errorf("%s spec.gateway must be an IPv4 address", res.ID())
 			}
 		}
 	default:
@@ -2598,6 +2707,21 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func defaultPackageManager(osName string) string {
+	switch osName {
+	case "ubuntu", "debian":
+		return "apt"
+	case "fedora", "rhel", "rocky", "almalinux":
+		return "dnf"
+	case "nixos":
+		return "nix"
+	case "freebsd":
+		return "pkg"
+	default:
+		return ""
+	}
 }
 
 func refName(ref string) string {

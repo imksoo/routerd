@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -40,6 +41,7 @@ import (
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
 	statuswriter "routerd/pkg/status"
+	"routerd/pkg/sysctlprofile"
 )
 
 const (
@@ -245,6 +247,8 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", defaultConfigPath, "config path")
 	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
+	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
+	_ = fs.Bool("diff", false, "include planned artifact differences")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -259,7 +263,7 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 	defer closeLogger(logger, name, &err)
 	logger.Emit(eventlog.LevelInfo, name, "routerd command started", map[string]string{"config": *configPath})
 	engine := apply.New()
-	stateStore, err := routerstate.Load(defaultStatePath)
+	stateStore, err := routerstate.Load(*statePath)
 	if err != nil {
 		return err
 	}
@@ -644,6 +648,10 @@ func canonicalResourceKind(kind string) string {
 		"zone":                   "FirewallZone",
 		"hostname":               "Hostname",
 		"host":                   "Hostname",
+		"sysctlprofile":          "SysctlProfile",
+		"sysctlprofiles":         "SysctlProfile",
+		"package":                "Package",
+		"packages":               "Package",
 		"route":                  "IPv4PolicyRouteSet",
 		"ipv4policyrouteset":     "IPv4PolicyRouteSet",
 	}
@@ -657,7 +665,7 @@ func apiVersionForKind(kind string) string {
 	switch kind {
 	case "FirewallZone", "FirewallPolicy", "FirewallRule":
 		return api.FirewallAPIVersion
-	case "Hostname", "Sysctl", "NTPClient", "LogSink", "NixOSHost":
+	case "Hostname", "Sysctl", "SysctlProfile", "Package", "NTPClient", "LogSink", "NixOSHost":
 		return api.SystemAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
@@ -2292,6 +2300,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDryRunDNSResolver := fs.Bool("controller-chain-dry-run-dns-resolver", true, "do not start DNS resolver daemons in the experimental controller chain")
 	controllerDryRunNAT := fs.Bool("controller-chain-dry-run-nat", true, "do not apply nftables NAT rules in the experimental controller chain")
 	controllerDryRunFirewall := fs.Bool("controller-chain-dry-run-firewall", true, "do not apply nftables firewall rules in the experimental controller chain")
+	controllerDryRunPackage := fs.Bool("controller-chain-dry-run-package", true, "do not install OS packages in the experimental controller chain")
 	controllerFirewall := fs.String("controller-chain-firewall", "enable", "firewall controller mode: enable or disable")
 	controllerDaemonSockets := fs.String("controller-chain-daemon-sockets", "", "comma-separated resource=unix-socket overrides for the experimental controller chain")
 	controllerDnsmasqCommand := fs.String("controller-chain-dnsmasq-command", "dnsmasq", "dnsmasq command for the experimental controller chain")
@@ -2347,6 +2356,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		}
 		defer stateStore.Close()
 		controllerBus = bus.NewWithStore(stateStore)
+		controllerBus.SetLogger(slog.Default())
 		chainRunner := controllerchain.Runner{
 			Router: router,
 			Bus:    controllerBus,
@@ -2363,6 +2373,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 				DryRunDNSResolver:  *controllerDryRunDNSResolver,
 				DryRunNAT:          *controllerDryRunNAT,
 				DryRunFirewall:     *controllerDryRunFirewall,
+				DryRunPackage:      *controllerDryRunPackage,
 				FirewallDisabled:   *controllerFirewall == "disable",
 				DnsmasqCommand:     *controllerDnsmasqCommand,
 				DnsmasqConfig:      *controllerDnsmasqConfig,
@@ -2746,26 +2757,62 @@ func resolvectlDNS(ifname string) []string {
 func applyRuntimeSysctls(router *api.Router) ([]string, error) {
 	var applied []string
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "Sysctl" {
+		switch res.Kind {
+		case "Sysctl":
+			spec, err := res.SysctlSpec()
+			if err != nil {
+				return nil, err
+			}
+			changed, err := applyRuntimeSysctl(spec.Key, spec.Value, api.BoolDefault(spec.Runtime, true), spec.Optional)
+			if err != nil {
+				return nil, err
+			}
+			if changed {
+				applied = append(applied, spec.Key)
+			}
+		case "SysctlProfile":
+			spec, err := res.SysctlProfileSpec()
+			if err != nil {
+				return nil, err
+			}
+			if !api.BoolDefault(spec.Runtime, true) {
+				continue
+			}
+			entries, err := sysctlprofile.Entries(spec.Profile, spec.Overrides)
+			if err != nil {
+				return nil, err
+			}
+			for _, entry := range entries {
+				changed, err := applyRuntimeSysctl(entry.Key, entry.Value, true, entry.Optional)
+				if err != nil {
+					return nil, err
+				}
+				if changed {
+					applied = append(applied, entry.Key)
+				}
+			}
+		default:
 			continue
 		}
-		spec, err := res.SysctlSpec()
-		if err != nil {
-			return nil, err
-		}
-		if !api.BoolDefault(spec.Runtime, true) {
-			continue
-		}
-		currentOut, err := exec.Command("sysctl", "-n", spec.Key).CombinedOutput()
-		if err == nil && strings.TrimSpace(string(currentOut)) == spec.Value {
-			continue
-		}
-		if err := runLogged("sysctl", "-w", spec.Key+"="+spec.Value); err != nil {
-			return nil, err
-		}
-		applied = append(applied, spec.Key)
 	}
 	return applied, nil
+}
+
+func applyRuntimeSysctl(key, value string, runtime bool, optional bool) (bool, error) {
+	if !runtime {
+		return false, nil
+	}
+	currentOut, err := exec.Command("sysctl", "-n", key).CombinedOutput()
+	if err == nil && strings.TrimSpace(string(currentOut)) == value {
+		return false, nil
+	}
+	if err := runLogged("sysctl", "-w", key+"="+value); err != nil {
+		if optional {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func applyIPv4ReversePathFilters(router *api.Router) ([]string, error) {

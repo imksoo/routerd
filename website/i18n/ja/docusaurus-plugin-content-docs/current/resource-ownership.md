@@ -34,7 +34,9 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `WireGuardInterface` / `WireGuardPeer` | WireGuard 設定 |
 | `VRF` | Linux VRF デバイスと経路表 |
 | `VXLANTunnel` | VXLAN デバイス |
+| `Package` | apt、dnf、pkg、Nix のパッケージ導入状態 |
 | `Sysctl` | sysctl 値 |
+| `SysctlProfile` | 複数の sysctl 値 |
 | `NTPClient` | NTP クライアント設定 |
 
 ## 削除時の考え方

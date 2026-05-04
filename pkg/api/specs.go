@@ -33,6 +33,26 @@ type SysctlSpec struct {
 	Value      string `yaml:"value" json:"value" jsonschema:"title=Value"`
 	Runtime    *bool  `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 	Persistent bool   `yaml:"persistent,omitempty" json:"persistent,omitempty"`
+	Optional   bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+}
+
+type SysctlProfileSpec struct {
+	Profile    string            `yaml:"profile" json:"profile" jsonschema:"enum=router-linux"`
+	Runtime    *bool             `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Persistent bool              `yaml:"persistent,omitempty" json:"persistent,omitempty"`
+	Overrides  map[string]string `yaml:"overrides,omitempty" json:"overrides,omitempty"`
+}
+
+type PackageSpec struct {
+	State    string             `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present"`
+	Packages []OSPackageSetSpec `yaml:"packages" json:"packages"`
+}
+
+type OSPackageSetSpec struct {
+	OS       string   `yaml:"os" json:"os" jsonschema:"enum=ubuntu,enum=debian,enum=fedora,enum=rhel,enum=rocky,enum=almalinux,enum=nixos,enum=freebsd"`
+	Manager  string   `yaml:"manager,omitempty" json:"manager,omitempty" jsonschema:"enum=,enum=apt,enum=dnf,enum=nix,enum=pkg"`
+	Names    []string `yaml:"names" json:"names"`
+	Optional bool     `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 type NTPClientSpec struct {
@@ -329,6 +349,21 @@ type DHCPv6PrefixDelegationSpec struct {
 	Required     bool   `yaml:"required,omitempty" json:"required,omitempty"`
 }
 
+type StatusValueSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+	Field    string `yaml:"field,omitempty" json:"field,omitempty"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+}
+
+type ResourceDependencySpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+	Field    string `yaml:"field,omitempty" json:"field,omitempty"`
+	Phase    string `yaml:"phase,omitempty" json:"phase,omitempty"`
+	Equals   string `yaml:"equals,omitempty" json:"equals,omitempty"`
+	NotEmpty bool   `yaml:"notEmpty,omitempty" json:"notEmpty,omitempty"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+}
+
 const (
 	IPv6PDProfileDefault                 = "default"
 	IPv6PDProfileNTTNGNDirectHikariDenwa = "ntt-ngn-direct-hikari-denwa"
@@ -365,21 +400,23 @@ func EffectiveIPv6PDDUIDType(profile, configured string) string {
 }
 
 type IPv6DelegatedAddressSpec struct {
-	PrefixDelegation string           `yaml:"prefixDelegation" json:"prefixDelegation"`
-	PrefixSource     string           `yaml:"prefixSource,omitempty" json:"prefixSource,omitempty"`
-	Interface        string           `yaml:"interface" json:"interface"`
-	SubnetID         string           `yaml:"subnetID,omitempty" json:"subnetID,omitempty"`
-	AddressSuffix    string           `yaml:"addressSuffix" json:"addressSuffix"`
-	SendRA           bool             `yaml:"sendRA,omitempty" json:"sendRA,omitempty"`
-	Announce         bool             `yaml:"announce,omitempty" json:"announce,omitempty"`
-	When             ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
-	ReadyWhen        []ReadyWhenSpec  `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
+	PrefixDelegation string                   `yaml:"prefixDelegation" json:"prefixDelegation"`
+	PrefixSource     string                   `yaml:"prefixSource,omitempty" json:"-"`
+	Interface        string                   `yaml:"interface" json:"interface"`
+	SubnetID         string                   `yaml:"subnetID,omitempty" json:"subnetID,omitempty"`
+	AddressSuffix    string                   `yaml:"addressSuffix" json:"addressSuffix"`
+	SendRA           bool                     `yaml:"sendRA,omitempty" json:"sendRA,omitempty"`
+	Announce         bool                     `yaml:"announce,omitempty" json:"announce,omitempty"`
+	When             ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
+	DependsOn        []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen        []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type DHCPv6InformationSpec struct {
-	Interface string          `yaml:"interface" json:"interface"`
-	Request   []string        `yaml:"request,omitempty" json:"request,omitempty"`
-	ReadyWhen []ReadyWhenSpec `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
+	Interface string                   `yaml:"interface" json:"interface"`
+	Request   []string                 `yaml:"request,omitempty" json:"request,omitempty"`
+	DependsOn []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type DNSZoneSpec struct {
@@ -400,9 +437,11 @@ type DNSZoneDNSSECSpec struct {
 type DNSZoneRecordSpec struct {
 	Hostname   string                         `yaml:"hostname" json:"hostname"`
 	IPv4       string                         `yaml:"ipv4,omitempty" json:"ipv4,omitempty"`
-	IPv4Source DNSZoneRecordAddressSourceSpec `yaml:"ipv4Source,omitempty" json:"ipv4Source,omitempty"`
+	IPv4From   StatusValueSourceSpec          `yaml:"ipv4From,omitempty" json:"ipv4From,omitempty"`
+	IPv4Source DNSZoneRecordAddressSourceSpec `yaml:"ipv4Source,omitempty" json:"-"`
 	IPv6       string                         `yaml:"ipv6,omitempty" json:"ipv6,omitempty"`
-	IPv6Source DNSZoneRecordAddressSourceSpec `yaml:"ipv6Source,omitempty" json:"ipv6Source,omitempty"`
+	IPv6From   StatusValueSourceSpec          `yaml:"ipv6From,omitempty" json:"ipv6From,omitempty"`
+	IPv6Source DNSZoneRecordAddressSourceSpec `yaml:"ipv6Source,omitempty" json:"-"`
 	TTL        int                            `yaml:"ttl,omitempty" json:"ttl,omitempty" jsonschema:"minimum=0"`
 }
 
@@ -433,7 +472,8 @@ type DNSResolverSpec struct {
 type DNSResolverListenSpec struct {
 	Name           string                               `yaml:"name,omitempty" json:"name,omitempty"`
 	Addresses      []string                             `yaml:"addresses,omitempty" json:"addresses,omitempty"`
-	AddressSources []DNSResolverListenAddressSourceSpec `yaml:"addressSources,omitempty" json:"addressSources,omitempty"`
+	AddressFrom    []StatusValueSourceSpec              `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
+	AddressSources []DNSResolverListenAddressSourceSpec `yaml:"addressSources,omitempty" json:"-"`
 	Port           int                                  `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	Sources        []string                             `yaml:"sources,omitempty" json:"sources,omitempty"`
 }
@@ -449,6 +489,7 @@ type DNSResolverSourceSpec struct {
 	Match             []string                   `yaml:"match" json:"match"`
 	ZoneRef           []string                   `yaml:"zoneRef,omitempty" json:"zoneRef,omitempty"`
 	Upstreams         []string                   `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	UpstreamFrom      []StatusValueSourceSpec    `yaml:"upstreamFrom,omitempty" json:"upstreamFrom,omitempty"`
 	ViaInterface      string                     `yaml:"viaInterface,omitempty" json:"viaInterface,omitempty"`
 	BootstrapResolver []string                   `yaml:"bootstrapResolver,omitempty" json:"bootstrapResolver,omitempty"`
 	DNSSECValidate    bool                       `yaml:"dnssecValidate,omitempty" json:"dnssecValidate,omitempty"`
@@ -481,37 +522,44 @@ type ReadyWhenPredicateSpec struct {
 }
 
 type IPv6RouterAdvertisementSpec struct {
-	Interface         string          `yaml:"interface" json:"interface"`
-	PrefixSource      string          `yaml:"prefixSource,omitempty" json:"prefixSource,omitempty"`
-	RDNSS             []string        `yaml:"rdnss,omitempty" json:"rdnss,omitempty"`
-	DNSSL             []string        `yaml:"dnssl,omitempty" json:"dnssl,omitempty"`
-	MFlag             bool            `yaml:"mFlag,omitempty" json:"mFlag,omitempty"`
-	OFlag             bool            `yaml:"oFlag,omitempty" json:"oFlag,omitempty"`
-	MTU               int             `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=1280,maximum=65535"`
-	PRFPreference     string          `yaml:"prfPreference,omitempty" json:"prfPreference,omitempty" jsonschema:"enum=,enum=low,enum=medium,enum=high"`
-	PreferredLifetime string          `yaml:"preferredLifetime,omitempty" json:"preferredLifetime,omitempty"`
-	ValidLifetime     string          `yaml:"validLifetime,omitempty" json:"validLifetime,omitempty"`
-	ConfigPath        string          `yaml:"configPath,omitempty" json:"configPath,omitempty"`
-	PIDFile           string          `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
-	ReadyWhen         []ReadyWhenSpec `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
+	Interface         string                   `yaml:"interface" json:"interface"`
+	Prefix            string                   `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+	PrefixFrom        StatusValueSourceSpec    `yaml:"prefixFrom,omitempty" json:"prefixFrom,omitempty"`
+	PrefixSource      string                   `yaml:"prefixSource,omitempty" json:"-"`
+	RDNSS             []string                 `yaml:"rdnss,omitempty" json:"rdnss,omitempty"`
+	RDNSSFrom         []StatusValueSourceSpec  `yaml:"rdnssFrom,omitempty" json:"rdnssFrom,omitempty"`
+	DNSSL             []string                 `yaml:"dnssl,omitempty" json:"dnssl,omitempty"`
+	MFlag             bool                     `yaml:"mFlag,omitempty" json:"mFlag,omitempty"`
+	OFlag             bool                     `yaml:"oFlag,omitempty" json:"oFlag,omitempty"`
+	MTU               int                      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=1280,maximum=65535"`
+	PRFPreference     string                   `yaml:"prfPreference,omitempty" json:"prfPreference,omitempty" jsonschema:"enum=,enum=low,enum=medium,enum=high"`
+	PreferredLifetime string                   `yaml:"preferredLifetime,omitempty" json:"preferredLifetime,omitempty"`
+	ValidLifetime     string                   `yaml:"validLifetime,omitempty" json:"validLifetime,omitempty"`
+	ConfigPath        string                   `yaml:"configPath,omitempty" json:"configPath,omitempty"`
+	PIDFile           string                   `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
+	DependsOn         []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen         []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type DHCPv6ServerSpec struct {
-	Server           string              `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq"`
-	Managed          bool                `yaml:"managed,omitempty" json:"managed,omitempty"`
-	Role             string              `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
-	ListenInterfaces []string            `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
-	Interface        string              `yaml:"interface,omitempty" json:"interface,omitempty"`
-	Mode             string              `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=stateful,enum=both"`
-	AddressPool      DHCPAddressPoolSpec `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
-	DNSServers       []string            `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
-	SNTPServers      []string            `yaml:"sntpServers,omitempty" json:"sntpServers,omitempty"`
-	DomainSearch     []string            `yaml:"domainSearch,omitempty" json:"domainSearch,omitempty"`
-	LeaseTime        string              `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
-	RapidCommit      bool                `yaml:"rapidCommit,omitempty" json:"rapidCommit,omitempty"`
-	ConfigPath       string              `yaml:"configPath,omitempty" json:"configPath,omitempty"`
-	PIDFile          string              `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
-	ReadyWhen        []ReadyWhenSpec     `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
+	Server           string                   `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq"`
+	Managed          bool                     `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Role             string                   `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
+	ListenInterfaces []string                 `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
+	Interface        string                   `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Mode             string                   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=stateful,enum=both"`
+	AddressPool      DHCPAddressPoolSpec      `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
+	DNSServers       []string                 `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
+	DNSServerFrom    []StatusValueSourceSpec  `yaml:"dnsServerFrom,omitempty" json:"dnsServerFrom,omitempty"`
+	SNTPServers      []string                 `yaml:"sntpServers,omitempty" json:"sntpServers,omitempty"`
+	SNTPServerFrom   []StatusValueSourceSpec  `yaml:"sntpServerFrom,omitempty" json:"sntpServerFrom,omitempty"`
+	DomainSearch     []string                 `yaml:"domainSearch,omitempty" json:"domainSearch,omitempty"`
+	LeaseTime        string                   `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
+	RapidCommit      bool                     `yaml:"rapidCommit,omitempty" json:"rapidCommit,omitempty"`
+	ConfigPath       string                   `yaml:"configPath,omitempty" json:"configPath,omitempty"`
+	PIDFile          string                   `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
+	DependsOn        []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen        []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type DHCPv4RelaySpec struct {
@@ -567,34 +615,39 @@ type DNSResolverHealthcheckSpec struct {
 }
 
 type DSLiteTunnelSpec struct {
-	Interface             string           `yaml:"interface" json:"interface"`
-	TunnelName            string           `yaml:"tunnelName,omitempty" json:"tunnelName,omitempty"`
-	AFTRFQDN              string           `yaml:"aftrFQDN,omitempty" json:"aftrFQDN,omitempty"`
-	AFTRIPv6              string           `yaml:"aftrIPv6,omitempty" json:"aftrIPv6,omitempty"`
-	AFTRDNSServers        []string         `yaml:"aftrDNSServers,omitempty" json:"aftrDNSServers,omitempty"`
-	AFTRAddressOrdinal    int              `yaml:"aftrAddressOrdinal,omitempty" json:"aftrAddressOrdinal,omitempty" jsonschema:"minimum=1"`
-	AFTRAddressSelection  string           `yaml:"aftrAddressSelection,omitempty" json:"aftrAddressSelection,omitempty" jsonschema:"enum=ordinal,enum=ordinalModulo"`
-	RemoteAddress         string           `yaml:"remoteAddress,omitempty" json:"remoteAddress,omitempty"`
-	LocalAddress          string           `yaml:"localAddress,omitempty" json:"localAddress,omitempty"`
-	LocalIPv6Source       string           `yaml:"localIPv6Source,omitempty" json:"localIPv6Source,omitempty"`
-	AFTRSource            string           `yaml:"aftrSource,omitempty" json:"aftrSource,omitempty"`
-	LocalAddressSource    string           `yaml:"localAddressSource,omitempty" json:"localAddressSource,omitempty" jsonschema:"enum=interface,enum=static,enum=delegatedAddress"`
-	LocalDelegatedAddress string           `yaml:"localDelegatedAddress,omitempty" json:"localDelegatedAddress,omitempty"`
-	LocalAddressSuffix    string           `yaml:"localAddressSuffix,omitempty" json:"localAddressSuffix,omitempty"`
-	DefaultRoute          bool             `yaml:"defaultRoute,omitempty" json:"defaultRoute,omitempty"`
-	RouteMetric           int              `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-	MTU                   int              `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=1280,maximum=65535"`
-	EncapsulationLimit    string           `yaml:"encapsulationLimit,omitempty" json:"encapsulationLimit,omitempty"`
-	When                  ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
-	ReadyWhen             []ReadyWhenSpec  `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
+	Interface             string                   `yaml:"interface" json:"interface"`
+	TunnelName            string                   `yaml:"tunnelName,omitempty" json:"tunnelName,omitempty"`
+	AFTRFQDN              string                   `yaml:"aftrFQDN,omitempty" json:"aftrFQDN,omitempty"`
+	AFTRIPv6              string                   `yaml:"aftrIPv6,omitempty" json:"aftrIPv6,omitempty"`
+	AFTRDNSServers        []string                 `yaml:"aftrDNSServers,omitempty" json:"aftrDNSServers,omitempty"`
+	AFTRAddressOrdinal    int                      `yaml:"aftrAddressOrdinal,omitempty" json:"aftrAddressOrdinal,omitempty" jsonschema:"minimum=1"`
+	AFTRAddressSelection  string                   `yaml:"aftrAddressSelection,omitempty" json:"aftrAddressSelection,omitempty" jsonschema:"enum=ordinal,enum=ordinalModulo"`
+	RemoteAddress         string                   `yaml:"remoteAddress,omitempty" json:"remoteAddress,omitempty"`
+	LocalAddress          string                   `yaml:"localAddress,omitempty" json:"localAddress,omitempty"`
+	LocalIPv6Source       string                   `yaml:"localIPv6Source,omitempty" json:"-"`
+	AFTRFrom              StatusValueSourceSpec    `yaml:"aftrFrom,omitempty" json:"aftrFrom,omitempty"`
+	AFTRSource            string                   `yaml:"aftrSource,omitempty" json:"-"`
+	LocalAddressSource    string                   `yaml:"localAddressSource,omitempty" json:"localAddressSource,omitempty" jsonschema:"enum=interface,enum=static,enum=delegatedAddress"`
+	LocalDelegatedAddress string                   `yaml:"localDelegatedAddress,omitempty" json:"localDelegatedAddress,omitempty"`
+	LocalAddressSuffix    string                   `yaml:"localAddressSuffix,omitempty" json:"localAddressSuffix,omitempty"`
+	DefaultRoute          bool                     `yaml:"defaultRoute,omitempty" json:"defaultRoute,omitempty"`
+	RouteMetric           int                      `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	MTU                   int                      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=1280,maximum=65535"`
+	EncapsulationLimit    string                   `yaml:"encapsulationLimit,omitempty" json:"encapsulationLimit,omitempty"`
+	When                  ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
+	DependsOn             []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen             []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type IPv4RouteSpec struct {
-	Destination string          `yaml:"destination" json:"destination"`
-	Device      string          `yaml:"device,omitempty" json:"device,omitempty"`
-	Gateway     string          `yaml:"gateway,omitempty" json:"gateway,omitempty"`
-	Metric      int             `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
-	ReadyWhen   []ReadyWhenSpec `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
+	Destination string                   `yaml:"destination" json:"destination"`
+	Device      string                   `yaml:"device,omitempty" json:"device,omitempty"`
+	DeviceFrom  StatusValueSourceSpec    `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`
+	Gateway     string                   `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	GatewayFrom StatusValueSourceSpec    `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
+	Metric      int                      `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+	DependsOn   []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen   []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type StatePolicySpec struct {
@@ -663,16 +716,19 @@ type EgressRoutePolicySpec struct {
 }
 
 type EgressRoutePolicyCandidate struct {
-	Name          string          `yaml:"name,omitempty" json:"name,omitempty"`
-	Source        string          `yaml:"source,omitempty" json:"source,omitempty"`
-	Device        string          `yaml:"device,omitempty" json:"device,omitempty"`
-	Gateway       string          `yaml:"gateway,omitempty" json:"gateway,omitempty"`
-	GatewaySource string          `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=,enum=static,enum=dhcpv4,enum=dhcpv6,enum=none"`
-	RouteTable    int             `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	Metric        int             `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
-	Weight        int             `yaml:"weight,omitempty" json:"weight,omitempty" jsonschema:"minimum=0"`
-	HealthCheck   string          `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
-	ReadyWhen     []ReadyWhenSpec `yaml:"ready_when,omitempty" json:"ready_when,omitempty"`
+	Name          string                   `yaml:"name,omitempty" json:"name,omitempty"`
+	Source        string                   `yaml:"source,omitempty" json:"source,omitempty"`
+	Device        string                   `yaml:"device,omitempty" json:"device,omitempty"`
+	DeviceFrom    StatusValueSourceSpec    `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`
+	Gateway       string                   `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	GatewayFrom   StatusValueSourceSpec    `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
+	GatewaySource string                   `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=,enum=static,enum=dhcpv4,enum=dhcpv6,enum=none"`
+	RouteTable    int                      `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	Metric        int                      `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+	Weight        int                      `yaml:"weight,omitempty" json:"weight,omitempty" jsonschema:"minimum=0"`
+	HealthCheck   string                   `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
+	DependsOn     []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen     []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type EventRuleSpec struct {
@@ -851,6 +907,14 @@ type HostnameSpec struct {
 
 func (r Resource) SysctlSpec() (SysctlSpec, error) {
 	return specAs[SysctlSpec](r)
+}
+
+func (r Resource) SysctlProfileSpec() (SysctlProfileSpec, error) {
+	return specAs[SysctlProfileSpec](r)
+}
+
+func (r Resource) PackageSpec() (PackageSpec, error) {
+	return specAs[PackageSpec](r)
 }
 
 func (r Resource) NTPClientSpec() (NTPClientSpec, error) {

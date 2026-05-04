@@ -6,6 +6,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/resource"
+	"routerd/pkg/sysctlprofile"
 )
 
 func resourceArtifactIntents(res api.Resource, aliases map[string]string) []resource.Intent {
@@ -23,12 +24,42 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 	switch res.Kind {
 	case "LogSink":
 		return []resource.Intent{artifact("routerd.logSink", res.Metadata.Name, resource.ActionEnsure, "eventlog", nil)}
+	case "Package":
+		spec, err := res.PackageSpec()
+		if err != nil {
+			return nil
+		}
+		var intents []resource.Intent
+		for _, set := range spec.Packages {
+			manager := set.Manager
+			if manager == "" {
+				manager = "package-manager"
+			}
+			for _, name := range set.Names {
+				intents = append(intents, artifact("host.package", set.OS+"/"+name, resource.ActionEnsure, manager, map[string]string{"os": set.OS, "manager": manager}))
+			}
+		}
+		return intents
 	case "Sysctl":
 		spec, err := res.SysctlSpec()
 		if err != nil {
 			return nil
 		}
 		return []resource.Intent{artifact("host.sysctl", spec.Key, resource.ActionEnsure, "sysctl", map[string]string{"value": spec.Value})}
+	case "SysctlProfile":
+		spec, err := res.SysctlProfileSpec()
+		if err != nil {
+			return nil
+		}
+		entries, err := sysctlprofile.Entries(spec.Profile, spec.Overrides)
+		if err != nil {
+			return nil
+		}
+		intents := make([]resource.Intent, 0, len(entries))
+		for _, entry := range entries {
+			intents = append(intents, artifact("host.sysctl", entry.Key, resource.ActionEnsure, "sysctl", map[string]string{"value": entry.Value, "profile": spec.Profile}))
+		}
+		return intents
 	case "NTPClient":
 		return []resource.Intent{artifact("systemd.timesyncd.config", "routerd.conf", resource.ActionEnsure, "timesyncd", nil)}
 	case "Interface":

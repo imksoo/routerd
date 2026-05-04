@@ -12,6 +12,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/config"
+	"routerd/pkg/sysctlprofile"
 )
 
 type Engine struct {
@@ -66,8 +67,12 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		switch res.Kind {
 		case "LogSink":
 			e.observeLogSink(res, includePlan, &rr)
+		case "Package":
+			e.observePackage(res, includePlan, &rr)
 		case "Sysctl":
 			e.observeSysctl(res, includePlan, &rr)
+		case "SysctlProfile":
+			e.observeSysctlProfile(res, includePlan, &rr)
 		case "NTPClient":
 			e.observeNTPClient(res, aliases, includePlan, &rr)
 		case "Interface":
@@ -239,6 +244,38 @@ func (e *Engine) observeLogSink(res api.Resource, includePlan bool, rr *Resource
 		rr.Plan = append(rr.Plan, fmt.Sprintf("send routerd events to syslog facility %s", defaultString(spec.Syslog.Facility, "local6")))
 	case "plugin":
 		rr.Plan = append(rr.Plan, fmt.Sprintf("send routerd events to local log plugin %s", spec.Plugin.Path))
+	}
+}
+
+func (e *Engine) observePackage(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.PackageSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["state"] = defaultString(spec.State, "present")
+	var sets []string
+	var total int
+	for _, set := range spec.Packages {
+		manager := set.Manager
+		if manager == "" {
+			manager = "default"
+		}
+		sets = append(sets, fmt.Sprintf("%s:%s:%s", set.OS, manager, strings.Join(set.Names, ",")))
+		total += len(set.Names)
+	}
+	rr.Observed["sets"] = strings.Join(sets, ";")
+	rr.Observed["packages"] = fmt.Sprintf("%d", total)
+	if includePlan {
+		rr.Plan = append(rr.Plan, "ensure OS packages declared for the current host OS are installed")
+		for _, set := range spec.Packages {
+			manager := set.Manager
+			if manager == "" {
+				manager = "OS default"
+			}
+			rr.Plan = append(rr.Plan, fmt.Sprintf("%s via %s: %s", set.OS, manager, strings.Join(set.Names, ", ")))
+		}
 	}
 }
 
@@ -1239,6 +1276,48 @@ func (e *Engine) observeSysctl(res api.Resource, includePlan bool, rr *ResourceR
 	if persistent {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("persistent sysctl %s=%s is not implemented yet", key, desired))
 		rr.Warnings = append(rr.Warnings, "persistent sysctl rendering is pending OS-specific implementation")
+	}
+}
+
+func (e *Engine) observeSysctlProfile(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.SysctlProfileSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	entries, err := sysctlprofile.Entries(spec.Profile, spec.Overrides)
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["profile"] = spec.Profile
+	rr.Observed["entries"] = fmt.Sprintf("%d", len(entries))
+	rr.Observed["runtime"] = fmt.Sprintf("%t", api.BoolDefault(spec.Runtime, true))
+	rr.Observed["persistent"] = fmt.Sprintf("%t", spec.Persistent)
+	for _, entry := range entries {
+		if out, err := e.Command("sysctl", "-n", entry.Key); err == nil {
+			current := strings.TrimSpace(string(out))
+			rr.Observed[entry.Key] = current
+			if current != entry.Value && !entry.Optional {
+				rr.Phase = "Drifted"
+			}
+		} else if !entry.Optional {
+			rr.Phase = "Drifted"
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("could not observe sysctl %s: %v", entry.Key, err))
+		}
+	}
+	if !includePlan {
+		return
+	}
+	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure sysctl profile %s with %d entries", spec.Profile, len(entries)))
+	for _, entry := range entries {
+		note := ""
+		if entry.Optional {
+			note = " (optional)"
+		}
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s=%s%s", entry.Key, entry.Value, note))
 	}
 }
 

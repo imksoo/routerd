@@ -37,8 +37,19 @@ spec:
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | インターフェース、DHCP、DNS、経路、トンネル、イベント |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule` |
-| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `NTPClient`, `LogSink`, `NixOSHost` |
+| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `Package`, `NTPClient`, `LogSink`, `NixOSHost` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
+
+## システム準備
+
+| Kind | 役割 |
+| --- | --- |
+| `Package` | OS ごとのパッケージ名を宣言し、不足していれば導入します。 |
+| `Sysctl` | 実行時の sysctl 値を設定します。永続化も指定できます。 |
+| `SysctlProfile` | ルーター向け sysctl 推奨値をまとめて設定します。 |
+| `Hostname` | ホスト名を設定します。 |
+| `NTPClient` | OS の NTP クライアントを有効にします。 |
+| `LogSink` | routerd のイベントを syslog や外部プログラムへ送ります。 |
 
 ## インターフェースとリンク
 
