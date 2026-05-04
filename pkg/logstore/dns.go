@@ -57,6 +57,14 @@ func OpenDNSQueryLog(path string) (*DNSQueryLog, error) {
 	return log, nil
 }
 
+func OpenDNSQueryLogReadOnly(path string) (*DNSQueryLog, error) {
+	db, err := openReadOnlySQLite(path)
+	if err != nil {
+		return nil, err
+	}
+	return &DNSQueryLog{db: db}, nil
+}
+
 func (l *DNSQueryLog) Init(ctx context.Context) error {
 	_, err := l.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS dns_queries (

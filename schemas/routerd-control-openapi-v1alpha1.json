@@ -333,6 +333,86 @@
         ],
         "type": "object"
       },
+      "DNSQueries": {
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "answers": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "cacheHit": {
+                  "type": "boolean"
+                },
+                "clientAddress": {
+                  "type": "string"
+                },
+                "duration": {
+                  "type": "integer"
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "questionName": {
+                  "type": "string"
+                },
+                "questionType": {
+                  "type": "string"
+                },
+                "responseCode": {
+                  "type": "string"
+                },
+                "ts": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "upstream": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ts",
+                "clientAddress",
+                "questionName",
+                "questionType",
+                "cacheHit"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind",
+          "metadata",
+          "items"
+        ],
+        "type": "object"
+      },
       "DeleteRequest": {
         "additionalProperties": false,
         "properties": {
@@ -413,6 +493,102 @@
           "apiVersion",
           "kind",
           "error"
+        ],
+        "type": "object"
+      },
+      "FirewallLogs": {
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "type": "string"
+                },
+                "dstAddress": {
+                  "type": "string"
+                },
+                "dstPort": {
+                  "type": "integer"
+                },
+                "hint": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "inIface": {
+                  "type": "string"
+                },
+                "l3Proto": {
+                  "type": "string"
+                },
+                "outIface": {
+                  "type": "string"
+                },
+                "packetBytes": {
+                  "type": "integer"
+                },
+                "protocol": {
+                  "type": "string"
+                },
+                "ruleName": {
+                  "type": "string"
+                },
+                "srcAddress": {
+                  "type": "string"
+                },
+                "srcPort": {
+                  "type": "integer"
+                },
+                "ts": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "zoneFrom": {
+                  "type": "string"
+                },
+                "zoneTo": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ts",
+                "action",
+                "srcAddress",
+                "dstAddress",
+                "protocol",
+                "l3Proto"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind",
+          "metadata",
+          "items"
         ],
         "type": "object"
       },
@@ -585,6 +761,106 @@
           "status"
         ],
         "type": "object"
+      },
+      "TrafficFlows": {
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "appCategory": {
+                  "type": "string"
+                },
+                "appConfidence": {
+                  "type": "integer"
+                },
+                "appName": {
+                  "type": "string"
+                },
+                "bytesIn": {
+                  "type": "integer"
+                },
+                "bytesOut": {
+                  "type": "integer"
+                },
+                "clientAddress": {
+                  "type": "string"
+                },
+                "clientPort": {
+                  "type": "integer"
+                },
+                "flowKey": {
+                  "type": "string"
+                },
+                "natTranslatedAddress": {
+                  "type": "string"
+                },
+                "packetsIn": {
+                  "type": "integer"
+                },
+                "packetsOut": {
+                  "type": "integer"
+                },
+                "peerAddress": {
+                  "type": "string"
+                },
+                "peerPort": {
+                  "type": "integer"
+                },
+                "protocol": {
+                  "type": "string"
+                },
+                "resolvedHostname": {
+                  "type": "string"
+                },
+                "tlsSNI": {
+                  "type": "string"
+                },
+                "tsEnded": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "tsStarted": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "flowKey",
+                "tsStarted",
+                "protocol"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "kind",
+          "metadata",
+          "items"
+        ],
+        "type": "object"
       }
     }
   },
@@ -705,6 +981,142 @@
         }
       }
     },
+    "/api/control.routerd.net/v1alpha1/dns-queries": {
+      "get": {
+        "operationId": "getDNSQueries",
+        "parameters": [
+          {
+            "description": "Duration to look back from now.",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": "1h",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Client IP address filter.",
+            "in": "query",
+            "name": "client",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Question name LIKE pattern.",
+            "in": "query",
+            "name": "qname",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum number of rows.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DNSQueries"
+                }
+              }
+            },
+            "description": "DNSQueries"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/control.routerd.net/v1alpha1/firewall-logs": {
+      "get": {
+        "operationId": "getFirewallLogs",
+        "parameters": [
+          {
+            "description": "Duration to look back from now.",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": "1h",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Firewall action filter.",
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Source IP address filter.",
+            "in": "query",
+            "name": "src",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum number of rows.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FirewallLogs"
+                }
+              }
+            },
+            "description": "FirewallLogs"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
     "/api/control.routerd.net/v1alpha1/napt": {
       "get": {
         "operationId": "getNAPTTable",
@@ -758,6 +1170,74 @@
               }
             },
             "description": "Status"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/control.routerd.net/v1alpha1/traffic-flows": {
+      "get": {
+        "operationId": "getTrafficFlows",
+        "parameters": [
+          {
+            "description": "Duration to look back from now.",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": "1h",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Client IP address filter.",
+            "in": "query",
+            "name": "client",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Peer IP address filter.",
+            "in": "query",
+            "name": "peer",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum number of rows.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrafficFlows"
+                }
+              }
+            },
+            "description": "TrafficFlows"
           },
           "default": {
             "content": {

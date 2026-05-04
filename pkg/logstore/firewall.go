@@ -62,6 +62,14 @@ func OpenFirewallLog(path string) (*FirewallLog, error) {
 	return log, nil
 }
 
+func OpenFirewallLogReadOnly(path string) (*FirewallLog, error) {
+	db, err := openReadOnlySQLite(path)
+	if err != nil {
+		return nil, err
+	}
+	return &FirewallLog{db: db}, nil
+}
+
 func (l *FirewallLog) Init(ctx context.Context) error {
 	_, err := l.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS firewall_logs (

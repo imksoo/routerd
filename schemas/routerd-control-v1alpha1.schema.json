@@ -178,6 +178,282 @@
         "apiVersion": {
           "type": "string"
         },
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "answers": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "cacheHit": {
+                "type": "boolean"
+              },
+              "clientAddress": {
+                "type": "string"
+              },
+              "duration": {
+                "type": "integer"
+              },
+              "id": {
+                "type": "integer"
+              },
+              "questionName": {
+                "type": "string"
+              },
+              "questionType": {
+                "type": "string"
+              },
+              "responseCode": {
+                "type": "string"
+              },
+              "ts": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "upstream": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ts",
+              "clientAddress",
+              "questionName",
+              "questionType",
+              "cacheHit"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "items"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "appCategory": {
+                "type": "string"
+              },
+              "appConfidence": {
+                "type": "integer"
+              },
+              "appName": {
+                "type": "string"
+              },
+              "bytesIn": {
+                "type": "integer"
+              },
+              "bytesOut": {
+                "type": "integer"
+              },
+              "clientAddress": {
+                "type": "string"
+              },
+              "clientPort": {
+                "type": "integer"
+              },
+              "flowKey": {
+                "type": "string"
+              },
+              "natTranslatedAddress": {
+                "type": "string"
+              },
+              "packetsIn": {
+                "type": "integer"
+              },
+              "packetsOut": {
+                "type": "integer"
+              },
+              "peerAddress": {
+                "type": "string"
+              },
+              "peerPort": {
+                "type": "integer"
+              },
+              "protocol": {
+                "type": "string"
+              },
+              "resolvedHostname": {
+                "type": "string"
+              },
+              "tlsSNI": {
+                "type": "string"
+              },
+              "tsEnded": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "tsStarted": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "flowKey",
+              "tsStarted",
+              "protocol"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "items"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "type": "string"
+              },
+              "dstAddress": {
+                "type": "string"
+              },
+              "dstPort": {
+                "type": "integer"
+              },
+              "hint": {
+                "type": "string"
+              },
+              "id": {
+                "type": "integer"
+              },
+              "inIface": {
+                "type": "string"
+              },
+              "l3Proto": {
+                "type": "string"
+              },
+              "outIface": {
+                "type": "string"
+              },
+              "packetBytes": {
+                "type": "integer"
+              },
+              "protocol": {
+                "type": "string"
+              },
+              "ruleName": {
+                "type": "string"
+              },
+              "srcAddress": {
+                "type": "string"
+              },
+              "srcPort": {
+                "type": "integer"
+              },
+              "ts": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "zoneFrom": {
+                "type": "string"
+              },
+              "zoneTo": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ts",
+              "action",
+              "srcAddress",
+              "dstAddress",
+              "protocol",
+              "l3Proto"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "items"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
         "dryRun": {
           "type": "boolean"
         },

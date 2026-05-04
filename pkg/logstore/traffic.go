@@ -67,6 +67,14 @@ func OpenTrafficFlowLog(path string) (*TrafficFlowLog, error) {
 	return log, nil
 }
 
+func OpenTrafficFlowLogReadOnly(path string) (*TrafficFlowLog, error) {
+	db, err := openReadOnlySQLite(path)
+	if err != nil {
+		return nil, err
+	}
+	return &TrafficFlowLog{db: db}, nil
+}
+
 func (l *TrafficFlowLog) Init(ctx context.Context) error {
 	_, err := l.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS flows (

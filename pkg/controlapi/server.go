@@ -12,6 +12,9 @@ const Prefix = "/api/control.routerd.net/v1alpha1"
 type Handler struct {
 	Status         func(*http.Request) (*Status, error)
 	NAPT           func(*http.Request, NAPTRequest) (*NAPTTable, error)
+	DNSQueries     func(*http.Request, DNSQueriesRequest) (*DNSQueries, error)
+	TrafficFlows   func(*http.Request, TrafficFlowsRequest) (*TrafficFlows, error)
+	FirewallLogs   func(*http.Request, FirewallLogsRequest) (*FirewallLogs, error)
 	Apply          func(*http.Request, ApplyRequest) (*ApplyResult, error)
 	Delete         func(*http.Request, DeleteRequest) (*DeleteResult, error)
 	DHCPv6Event    func(*http.Request, DHCPv6EventRequest) (*DHCPv6EventResult, error)
@@ -28,6 +31,12 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleStatus(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/napt":
 		h.handleNAPT(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/dns-queries":
+		h.handleDNSQueries(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/traffic-flows":
+		h.handleTrafficFlows(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/firewall-logs":
+		h.handleFirewallLogs(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/apply":
 		h.handleApply(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/delete":
@@ -105,6 +114,82 @@ func (h Handler) handleNAPT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, table)
+}
+
+func (h Handler) handleDNSQueries(w http.ResponseWriter, r *http.Request) {
+	if h.DNSQueries == nil {
+		writeError(w, http.StatusNotImplemented, "dns query log handler is not configured")
+		return
+	}
+	req, ok := logQueryRequest(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.DNSQueries(r, DNSQueriesRequest{Since: req.since, Client: r.URL.Query().Get("client"), QName: r.URL.Query().Get("qname"), Limit: req.limit})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+func (h Handler) handleTrafficFlows(w http.ResponseWriter, r *http.Request) {
+	if h.TrafficFlows == nil {
+		writeError(w, http.StatusNotImplemented, "traffic flow log handler is not configured")
+		return
+	}
+	req, ok := logQueryRequest(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.TrafficFlows(r, TrafficFlowsRequest{Since: req.since, Client: r.URL.Query().Get("client"), Peer: r.URL.Query().Get("peer"), Limit: req.limit})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+func (h Handler) handleFirewallLogs(w http.ResponseWriter, r *http.Request) {
+	if h.FirewallLogs == nil {
+		writeError(w, http.StatusNotImplemented, "firewall log handler is not configured")
+		return
+	}
+	req, ok := logQueryRequest(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.FirewallLogs(r, FirewallLogsRequest{Since: req.since, Action: r.URL.Query().Get("action"), Src: r.URL.Query().Get("src"), Limit: req.limit})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+type parsedLogQuery struct {
+	since string
+	limit int
+}
+
+func logQueryRequest(w http.ResponseWriter, r *http.Request) (parsedLogQuery, bool) {
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "limit must be a non-negative integer")
+			return parsedLogQuery{}, false
+		}
+		if parsed > 1000 {
+			parsed = 1000
+		}
+		limit = parsed
+	}
+	since := r.URL.Query().Get("since")
+	if since == "" {
+		since = "1h"
+	}
+	return parsedLogQuery{since: since, limit: limit}, true
 }
 
 func (h Handler) handleApply(w http.ResponseWriter, r *http.Request) {

@@ -97,6 +97,70 @@ func (c *Client) NAPT(ctx context.Context, limit int) (*NAPTTable, error) {
 	return &table, nil
 }
 
+func (c *Client) DNSQueries(ctx context.Context, query DNSQueriesRequest) (*DNSQueries, error) {
+	path := c.baseURL + Prefix + "/dns-queries?" + logQueryValues(query.Since, query.Limit, map[string]string{
+		"client": query.Client,
+		"qname":  query.QName,
+	}).Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var rows DNSQueries
+	if err := c.do(req, &rows); err != nil {
+		return nil, err
+	}
+	return &rows, nil
+}
+
+func (c *Client) TrafficFlows(ctx context.Context, query TrafficFlowsRequest) (*TrafficFlows, error) {
+	path := c.baseURL + Prefix + "/traffic-flows?" + logQueryValues(query.Since, query.Limit, map[string]string{
+		"client": query.Client,
+		"peer":   query.Peer,
+	}).Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var rows TrafficFlows
+	if err := c.do(req, &rows); err != nil {
+		return nil, err
+	}
+	return &rows, nil
+}
+
+func (c *Client) FirewallLogs(ctx context.Context, query FirewallLogsRequest) (*FirewallLogs, error) {
+	path := c.baseURL + Prefix + "/firewall-logs?" + logQueryValues(query.Since, query.Limit, map[string]string{
+		"action": query.Action,
+		"src":    query.Src,
+	}).Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var rows FirewallLogs
+	if err := c.do(req, &rows); err != nil {
+		return nil, err
+	}
+	return &rows, nil
+}
+
+func logQueryValues(since string, limit int, filters map[string]string) url.Values {
+	values := url.Values{}
+	if since != "" {
+		values.Set("since", since)
+	}
+	if limit > 0 {
+		values.Set("limit", strconv.Itoa(limit))
+	}
+	for key, value := range filters {
+		if value != "" {
+			values.Set(key, value)
+		}
+	}
+	return values
+}
+
 func (c *Client) do(req *http.Request, value any) error {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

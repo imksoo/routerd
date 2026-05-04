@@ -77,6 +77,9 @@ func controlSchema() map[string]any {
 		"oneOf": []any{
 			reflectedSchema(controlapi.Status{}),
 			reflectedSchema(controlapi.NAPTTable{}),
+			reflectedSchema(controlapi.DNSQueries{}),
+			reflectedSchema(controlapi.TrafficFlows{}),
+			reflectedSchema(controlapi.FirewallLogs{}),
 			reflectedSchema(controlapi.ApplyRequest{}),
 			reflectedSchema(controlapi.ApplyResult{}),
 			reflectedSchema(controlapi.DeleteRequest{}),
@@ -161,6 +164,24 @@ func controlOpenAPISchema() map[string]any {
 					},
 				},
 			},
+			controlapi.Prefix + "/dns-queries": logRowsPath("getDNSQueries", "DNSQueries", []any{
+				queryParam("since", "Duration to look back from now.", "string", "1h"),
+				queryParam("client", "Client IP address filter.", "string", ""),
+				queryParam("qname", "Question name LIKE pattern.", "string", ""),
+				queryParam("limit", "Maximum number of rows.", "integer", 100),
+			}),
+			controlapi.Prefix + "/traffic-flows": logRowsPath("getTrafficFlows", "TrafficFlows", []any{
+				queryParam("since", "Duration to look back from now.", "string", "1h"),
+				queryParam("client", "Client IP address filter.", "string", ""),
+				queryParam("peer", "Peer IP address filter.", "string", ""),
+				queryParam("limit", "Maximum number of rows.", "integer", 100),
+			}),
+			controlapi.Prefix + "/firewall-logs": logRowsPath("getFirewallLogs", "FirewallLogs", []any{
+				queryParam("since", "Duration to look back from now.", "string", "1h"),
+				queryParam("action", "Firewall action filter.", "string", ""),
+				queryParam("src", "Source IP address filter.", "string", ""),
+				queryParam("limit", "Maximum number of rows.", "integer", 100),
+			}),
 			controlapi.Prefix + "/dhcpv6-event": map[string]any{
 				"post": map[string]any{
 					"operationId": "recordDHCPv6Event",
@@ -183,6 +204,9 @@ func controlOpenAPISchema() map[string]any {
 			"schemas": map[string]any{
 				"Status":             reflectedSchema(controlapi.Status{}),
 				"NAPTTable":          reflectedSchema(controlapi.NAPTTable{}),
+				"DNSQueries":         reflectedSchema(controlapi.DNSQueries{}),
+				"TrafficFlows":       reflectedSchema(controlapi.TrafficFlows{}),
+				"FirewallLogs":       reflectedSchema(controlapi.FirewallLogs{}),
 				"ApplyRequest":       reflectedSchema(controlapi.ApplyRequest{}),
 				"ApplyResult":        reflectedSchema(controlapi.ApplyResult{}),
 				"DeleteRequest":      reflectedSchema(controlapi.DeleteRequest{}),
@@ -203,6 +227,36 @@ func responseRef(name string) map[string]any {
 				"schema": schemaRef(name),
 			},
 		},
+	}
+}
+
+func logRowsPath(operationID, responseName string, parameters []any) map[string]any {
+	return map[string]any{
+		"get": map[string]any{
+			"operationId": operationID,
+			"parameters":  parameters,
+			"responses": map[string]any{
+				"200":     responseRef(responseName),
+				"default": responseRef("Error"),
+			},
+		},
+	}
+}
+
+func queryParam(name, description, typ string, fallback any) map[string]any {
+	schema := map[string]any{"type": typ}
+	if fallback != "" {
+		schema["default"] = fallback
+	}
+	if typ == "integer" {
+		schema["minimum"] = 0
+	}
+	return map[string]any{
+		"name":        name,
+		"in":          "query",
+		"required":    false,
+		"description": description,
+		"schema":      schema,
 	}
 }
 

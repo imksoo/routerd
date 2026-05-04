@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"routerd/pkg/api"
+	"routerd/pkg/controlapi"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/logstore"
 	"routerd/pkg/resource"
@@ -113,6 +116,51 @@ func TestDNSQueriesCommandReadsLogDatabase(t *testing.T) {
 	for _, want := range []string{"www.example.com", "172.18.0.10", "NOERROR"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dns query output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestLogCommandsUseControlSocketByDefault(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "routerd.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	defer listener.Close()
+	server := &http.Server{Handler: controlapi.Handler{
+		DNSQueries: func(r *http.Request, req controlapi.DNSQueriesRequest) (*controlapi.DNSQueries, error) {
+			if req.Limit != 3 {
+				t.Fatalf("dns limit = %d", req.Limit)
+			}
+			result := controlapi.NewDNSQueries([]logstore.DNSQuery{{Timestamp: time.Now(), ClientAddress: "172.18.0.10", QuestionName: "socket.example", QuestionType: "A", ResponseCode: "NOERROR"}})
+			return &result, nil
+		},
+		TrafficFlows: func(r *http.Request, req controlapi.TrafficFlowsRequest) (*controlapi.TrafficFlows, error) {
+			result := controlapi.NewTrafficFlows([]logstore.TrafficFlow{{StartedAt: time.Now(), ClientAddress: "172.18.0.10", PeerAddress: "1.1.1.1", PeerPort: 443, Protocol: "tcp"}})
+			return &result, nil
+		},
+		FirewallLogs: func(r *http.Request, req controlapi.FirewallLogsRequest) (*controlapi.FirewallLogs, error) {
+			result := controlapi.NewFirewallLogs([]logstore.FirewallLogEntry{{Timestamp: time.Now(), Action: "drop", SrcAddress: "172.18.0.10", DstAddress: "198.51.100.10", Protocol: "tcp", L3Proto: "ipv4", RuleName: "deny-test"}})
+			return &result, nil
+		},
+	}}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"dns-queries", "--socket", socketPath, "--limit", "3"}, "socket.example"},
+		{[]string{"traffic-flows", "--socket", socketPath}, "1.1.1.1"},
+		{[]string{"firewall-logs", "--socket", socketPath}, "deny-test"},
+	} {
+		var out bytes.Buffer
+		if err := run(tt.args, &out, &bytes.Buffer{}); err != nil {
+			t.Fatalf("%v: %v", tt.args, err)
+		}
+		if !strings.Contains(out.String(), tt.want) {
+			t.Fatalf("%v output missing %q:\n%s", tt.args, tt.want, out.String())
 		}
 	}
 }

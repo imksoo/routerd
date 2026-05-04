@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"routerd/pkg/apply"
+	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
 )
 
@@ -97,6 +98,45 @@ type NAPTTable struct {
 	Status   observe.NAPTTable `json:"status" yaml:"status"`
 }
 
+type DNSQueriesRequest struct {
+	Since  string `json:"since,omitempty" yaml:"since,omitempty"`
+	Client string `json:"client,omitempty" yaml:"client,omitempty"`
+	QName  string `json:"qname,omitempty" yaml:"qname,omitempty"`
+	Limit  int    `json:"limit,omitempty" yaml:"limit,omitempty"`
+}
+
+type DNSQueries struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Metadata ObjectMeta          `json:"metadata" yaml:"metadata"`
+	Items    []logstore.DNSQuery `json:"items" yaml:"items"`
+}
+
+type TrafficFlowsRequest struct {
+	Since  string `json:"since,omitempty" yaml:"since,omitempty"`
+	Client string `json:"client,omitempty" yaml:"client,omitempty"`
+	Peer   string `json:"peer,omitempty" yaml:"peer,omitempty"`
+	Limit  int    `json:"limit,omitempty" yaml:"limit,omitempty"`
+}
+
+type TrafficFlows struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Metadata ObjectMeta             `json:"metadata" yaml:"metadata"`
+	Items    []logstore.TrafficFlow `json:"items" yaml:"items"`
+}
+
+type FirewallLogsRequest struct {
+	Since  string `json:"since,omitempty" yaml:"since,omitempty"`
+	Action string `json:"action,omitempty" yaml:"action,omitempty"`
+	Src    string `json:"src,omitempty" yaml:"src,omitempty"`
+	Limit  int    `json:"limit,omitempty" yaml:"limit,omitempty"`
+}
+
+type FirewallLogs struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Metadata ObjectMeta                  `json:"metadata" yaml:"metadata"`
+	Items    []logstore.FirewallLogEntry `json:"items" yaml:"items"`
+}
+
 type Error struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Error    ErrorStatus `json:"error" yaml:"error"`
@@ -114,6 +154,39 @@ func NewNAPTTable(table *observe.NAPTTable) NAPTTable {
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "NAPTTable"},
 		Metadata: ObjectMeta{Name: "conntrack"},
 		Status:   *table,
+	}
+}
+
+func NewDNSQueries(rows []logstore.DNSQuery) DNSQueries {
+	if rows == nil {
+		rows = []logstore.DNSQuery{}
+	}
+	return DNSQueries{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "DNSQueries"},
+		Metadata: ObjectMeta{Name: "dns-queries"},
+		Items:    rows,
+	}
+}
+
+func NewTrafficFlows(rows []logstore.TrafficFlow) TrafficFlows {
+	if rows == nil {
+		rows = []logstore.TrafficFlow{}
+	}
+	return TrafficFlows{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "TrafficFlows"},
+		Metadata: ObjectMeta{Name: "traffic-flows"},
+		Items:    rows,
+	}
+}
+
+func NewFirewallLogs(rows []logstore.FirewallLogEntry) FirewallLogs {
+	if rows == nil {
+		rows = []logstore.FirewallLogEntry{}
+	}
+	return FirewallLogs{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "FirewallLogs"},
+		Metadata: ObjectMeta{Name: "firewall-logs"},
+		Items:    rows,
 	}
 }
 

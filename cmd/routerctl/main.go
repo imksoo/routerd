@@ -217,29 +217,42 @@ func writeEventsTable(stdout io.Writer, events []routerstate.StoredEvent) error 
 func dnsQueriesCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("dns-queries", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	dbPath := fs.String("db", defaultDNSQueriesPath(), "DNS query log database file")
+	dbPath := fs.String("db", "", "read a DNS query log database file directly instead of using routerd")
+	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
 	since := fs.String("since", "1h", "show queries newer than duration, for example 1h or 30m")
 	client := fs.String("client", "", "client IP address")
 	qname := fs.String("qname", "", "question name LIKE pattern")
-	limit := fs.Int("limit", 50, "maximum number of rows")
+	limit := fs.Int("limit", 100, "maximum number of rows")
 	output := "table"
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
 	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	sinceTime, err := cutoffTime(*since)
-	if err != nil {
-		return err
-	}
-	store, err := logstore.OpenDNSQueryLog(*dbPath)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	rows, err := store.List(context.Background(), logstore.DNSQueryFilter{Since: sinceTime, Client: *client, QName: *qname, Limit: *limit})
-	if err != nil {
-		return err
+	var rows []logstore.DNSQuery
+	if strings.TrimSpace(*dbPath) != "" {
+		sinceTime, err := cutoffTime(*since)
+		if err != nil {
+			return err
+		}
+		store, err := logstore.OpenDNSQueryLogReadOnly(*dbPath)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		rows, err = store.List(context.Background(), logstore.DNSQueryFilter{Since: sinceTime, Client: *client, QName: *qname, Limit: *limit})
+		if err != nil {
+			return err
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		result, err := controlapi.NewUnixClient(*socketPath).DNSQueries(ctx, controlapi.DNSQueriesRequest{Since: *since, Client: *client, QName: *qname, Limit: *limit})
+		if err != nil {
+			return err
+		}
+		rows = result.Items
 	}
 	switch output {
 	case "", "table":
@@ -274,29 +287,42 @@ func writeDNSQueriesTable(stdout io.Writer, rows []logstore.DNSQuery) error {
 func trafficFlowsCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("traffic-flows", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	dbPath := fs.String("db", defaultTrafficFlowsPath(), "traffic flow log database file")
+	dbPath := fs.String("db", "", "read a traffic flow log database file directly instead of using routerd")
+	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
 	since := fs.String("since", "1h", "show flows newer than duration, for example 1h or 30m")
 	client := fs.String("client", "", "client IP address")
 	peer := fs.String("peer", "", "peer IP address")
-	limit := fs.Int("limit", 50, "maximum number of rows")
+	limit := fs.Int("limit", 100, "maximum number of rows")
 	output := "table"
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
 	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	sinceTime, err := cutoffTime(*since)
-	if err != nil {
-		return err
-	}
-	store, err := logstore.OpenTrafficFlowLog(*dbPath)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	rows, err := store.List(context.Background(), logstore.TrafficFlowFilter{Since: sinceTime, Client: *client, Peer: *peer, Limit: *limit})
-	if err != nil {
-		return err
+	var rows []logstore.TrafficFlow
+	if strings.TrimSpace(*dbPath) != "" {
+		sinceTime, err := cutoffTime(*since)
+		if err != nil {
+			return err
+		}
+		store, err := logstore.OpenTrafficFlowLogReadOnly(*dbPath)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		rows, err = store.List(context.Background(), logstore.TrafficFlowFilter{Since: sinceTime, Client: *client, Peer: *peer, Limit: *limit})
+		if err != nil {
+			return err
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		result, err := controlapi.NewUnixClient(*socketPath).TrafficFlows(ctx, controlapi.TrafficFlowsRequest{Since: *since, Client: *client, Peer: *peer, Limit: *limit})
+		if err != nil {
+			return err
+		}
+		rows = result.Items
 	}
 	switch output {
 	case "", "table":
@@ -338,29 +364,42 @@ func writeTrafficFlowsTable(stdout io.Writer, rows []logstore.TrafficFlow) error
 func firewallLogsCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("firewall-logs", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	dbPath := fs.String("db", defaultFirewallLogsPath(), "firewall log database file")
+	dbPath := fs.String("db", "", "read a firewall log database file directly instead of using routerd")
+	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
 	since := fs.String("since", "1h", "show logs newer than duration, for example 1h or 30m")
 	action := fs.String("action", "", "filter by action: accept, drop, reject")
 	src := fs.String("src", "", "source IP address")
-	limit := fs.Int("limit", 50, "maximum number of rows")
+	limit := fs.Int("limit", 100, "maximum number of rows")
 	output := "table"
 	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
 	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	sinceTime, err := cutoffTime(*since)
-	if err != nil {
-		return err
-	}
-	store, err := logstore.OpenFirewallLog(*dbPath)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	rows, err := store.List(context.Background(), logstore.FirewallLogFilter{Since: sinceTime, Action: *action, Src: *src, Limit: *limit})
-	if err != nil {
-		return err
+	var rows []logstore.FirewallLogEntry
+	if strings.TrimSpace(*dbPath) != "" {
+		sinceTime, err := cutoffTime(*since)
+		if err != nil {
+			return err
+		}
+		store, err := logstore.OpenFirewallLogReadOnly(*dbPath)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		rows, err = store.List(context.Background(), logstore.FirewallLogFilter{Since: sinceTime, Action: *action, Src: *src, Limit: *limit})
+		if err != nil {
+			return err
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		result, err := controlapi.NewUnixClient(*socketPath).FirewallLogs(ctx, controlapi.FirewallLogsRequest{Since: *since, Action: *action, Src: *src, Limit: *limit})
+		if err != nil {
+			return err
+		}
+		rows = result.Items
 	}
 	switch output {
 	case "", "table":
@@ -1933,9 +1972,9 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  status [--socket <path>]")
 	fmt.Fprintln(w, "  events [--state-file <path>] [--topic <topic>] [--resource <kind>/<name>] [--limit <n>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  dns-queries [--db <path>] [--since 1h] [--client <ip>] [--qname <pattern>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  traffic-flows [--db <path>] [--since 1h] [--client <ip>] [--peer <ip>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  firewall-logs [--db <path>] [--since 1h] [--action drop] [--src <ip>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  dns-queries [--socket <path>] [--db <path>] [--since 1h] [--client <ip>] [--qname <pattern>] [--limit 100] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  traffic-flows [--socket <path>] [--db <path>] [--since 1h] [--client <ip>] [--peer <ip>] [--limit 100] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  firewall-logs [--socket <path>] [--db <path>] [--since 1h] [--action drop] [--src <ip>] [--limit 100] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  get <kind>[/<name>] [--list-kinds] [--config <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  describe <kind>/<name> [--config <path>] [--state-file <path>] [--ledger-file <path>] [--events-limit <n>]")
 	fmt.Fprintln(w, "  describe firewall [--config <path>]")

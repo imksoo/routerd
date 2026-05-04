@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"routerd/pkg/apply"
+	"routerd/pkg/logstore"
 )
 
 func TestStatusHandler(t *testing.T) {
@@ -105,6 +106,50 @@ func TestNAPTHandler(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"kind": "NAPTTable"`) {
 		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestLogHandlers(t *testing.T) {
+	handler := Handler{
+		DNSQueries: func(r *http.Request, req DNSQueriesRequest) (*DNSQueries, error) {
+			if req.Since != "2h" || req.Client != "172.18.0.10" || req.QName != "example%" || req.Limit != 7 {
+				t.Fatalf("dns query request = %+v", req)
+			}
+			result := NewDNSQueries([]logstore.DNSQuery{{ClientAddress: req.Client, QuestionName: "example.com", QuestionType: "A"}})
+			return &result, nil
+		},
+		TrafficFlows: func(r *http.Request, req TrafficFlowsRequest) (*TrafficFlows, error) {
+			if req.Peer != "1.1.1.1" || req.Limit != 100 {
+				t.Fatalf("traffic flow request = %+v", req)
+			}
+			result := NewTrafficFlows([]logstore.TrafficFlow{{ClientAddress: "172.18.0.10", PeerAddress: req.Peer, Protocol: "tcp"}})
+			return &result, nil
+		},
+		FirewallLogs: func(r *http.Request, req FirewallLogsRequest) (*FirewallLogs, error) {
+			if req.Action != "drop" || req.Src != "172.18.0.10" {
+				t.Fatalf("firewall log request = %+v", req)
+			}
+			result := NewFirewallLogs([]logstore.FirewallLogEntry{{Action: "drop", SrcAddress: req.Src, DstAddress: "198.51.100.1", Protocol: "tcp"}})
+			return &result, nil
+		},
+	}
+	for _, tt := range []struct {
+		path string
+		want string
+	}{
+		{Prefix + "/dns-queries?since=2h&client=172.18.0.10&qname=example%25&limit=7", "DNSQueries"},
+		{Prefix + "/traffic-flows?peer=1.1.1.1", "TrafficFlows"},
+		{Prefix + "/firewall-logs?action=drop&src=172.18.0.10", "FirewallLogs"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status code = %d, body = %s", tt.path, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `"kind": "`+tt.want+`"`) {
+			t.Fatalf("%s body = %s", tt.path, rec.Body.String())
+		}
 	}
 }
 

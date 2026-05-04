@@ -34,6 +34,7 @@ import (
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/eventlog"
 	"routerd/pkg/inventory"
+	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
 	routerotel "routerd/pkg/otel"
 	"routerd/pkg/platform"
@@ -2462,6 +2463,42 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			apiTable := controlapi.NewNAPTTable(table)
 			return &apiTable, nil
 		},
+		DNSQueries: func(r *http.Request, req controlapi.DNSQueriesRequest) (*controlapi.DNSQueries, error) {
+			since, err := logQuerySince(req.Since)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := listDNSQueriesReadOnly(r.Context(), configuredDNSQueryLogPath(router), logstore.DNSQueryFilter{Since: since, Client: req.Client, QName: req.QName, Limit: req.Limit})
+			if err != nil {
+				return nil, err
+			}
+			result := controlapi.NewDNSQueries(rows)
+			return &result, nil
+		},
+		TrafficFlows: func(r *http.Request, req controlapi.TrafficFlowsRequest) (*controlapi.TrafficFlows, error) {
+			since, err := logQuerySince(req.Since)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := listTrafficFlowsReadOnly(r.Context(), configuredTrafficFlowLogPath(router), logstore.TrafficFlowFilter{Since: since, Client: req.Client, Peer: req.Peer, Limit: req.Limit})
+			if err != nil {
+				return nil, err
+			}
+			result := controlapi.NewTrafficFlows(rows)
+			return &result, nil
+		},
+		FirewallLogs: func(r *http.Request, req controlapi.FirewallLogsRequest) (*controlapi.FirewallLogs, error) {
+			since, err := logQuerySince(req.Since)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := listFirewallLogsReadOnly(r.Context(), configuredFirewallLogPath(router), logstore.FirewallLogFilter{Since: since, Action: req.Action, Src: req.Src, Limit: req.Limit})
+			if err != nil {
+				return nil, err
+			}
+			result := controlapi.NewFirewallLogs(rows)
+			return &result, nil
+		},
 		Apply: func(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
 			opts := applyOpts
 			opts.DryRun = req.DryRun
@@ -2506,6 +2543,114 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	server := &http.Server{Handler: handler}
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
 	return server.Serve(listener)
+}
+
+func logQuerySince(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "1h"
+	}
+	duration, err := logstore.ParseRetention(value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Now().Add(-duration).UTC(), nil
+}
+
+func listDNSQueriesReadOnly(ctx context.Context, path string, filter logstore.DNSQueryFilter) ([]logstore.DNSQuery, error) {
+	store, err := logstore.OpenDNSQueryLogReadOnly(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer store.Close()
+	return store.List(ctx, filter)
+}
+
+func listTrafficFlowsReadOnly(ctx context.Context, path string, filter logstore.TrafficFlowFilter) ([]logstore.TrafficFlow, error) {
+	store, err := logstore.OpenTrafficFlowLogReadOnly(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer store.Close()
+	return store.List(ctx, filter)
+}
+
+func listFirewallLogsReadOnly(ctx context.Context, path string, filter logstore.FirewallLogFilter) ([]logstore.FirewallLogEntry, error) {
+	store, err := logstore.OpenFirewallLogReadOnly(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer store.Close()
+	return store.List(ctx, filter)
+}
+
+func configuredDNSQueryLogPath(router *api.Router) string {
+	fallback := platformDefaults.StateDir + "/dns-queries.db"
+	if router == nil {
+		return fallback
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "DNSResolver" {
+			continue
+		}
+		spec, err := resource.DNSResolverSpec()
+		if err != nil || !spec.QueryLog.Enabled {
+			continue
+		}
+		if strings.TrimSpace(spec.QueryLog.Path) != "" {
+			return spec.QueryLog.Path
+		}
+	}
+	return fallback
+}
+
+func configuredTrafficFlowLogPath(router *api.Router) string {
+	fallback := platformDefaults.StateDir + "/traffic-flows.db"
+	if router == nil {
+		return fallback
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "TrafficFlowLog" {
+			continue
+		}
+		spec, err := resource.TrafficFlowLogSpec()
+		if err != nil || !spec.Enabled {
+			continue
+		}
+		if strings.TrimSpace(spec.Path) != "" {
+			return spec.Path
+		}
+	}
+	return fallback
+}
+
+func configuredFirewallLogPath(router *api.Router) string {
+	fallback := platformDefaults.StateDir + "/firewall-logs.db"
+	if router == nil {
+		return fallback
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "FirewallLog" {
+			continue
+		}
+		spec, err := resource.FirewallLogSpec()
+		if err != nil || !spec.Enabled {
+			continue
+		}
+		if strings.TrimSpace(spec.Path) != "" {
+			return spec.Path
+		}
+	}
+	return fallback
 }
 
 func webConsoleFromRouter(router *api.Router) (api.WebConsoleSpec, bool) {
