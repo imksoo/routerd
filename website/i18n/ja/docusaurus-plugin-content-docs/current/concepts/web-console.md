@@ -36,11 +36,11 @@ spec:
 - PD、DS-Lite、DNS、NAT、経路、HealthCheck、VPN、firewall リソースの phase
 - 直近の routerd イベント
 - conntrack 件数と NAPT エントリーの一部
-- DNS 履歴から付けた通信先ラベル
+- conntrack 行の `dst label` 列。直近の DNS 応答から導出します
 - クライアント別の通信量
 - 送信元と宛先で集計した直近の拒否ログ
 
-JSON endpoint も読み取り専用です。
+JSON エンドポイントも読み取り専用です。
 
 | Path | 内容 |
 | --- | --- |
@@ -48,6 +48,6 @@ JSON endpoint も読み取り専用です。
 | `/api/resources` | 状態データベース内のリソース状態 |
 | `/api/events` | 直近の bus イベント |
 | `/api/napt` | conntrack と NAPT の観測値 |
-| `/api/dns-queries` | DNS クエリー履歴 |
-| `/api/traffic-flows` | 通信フロー履歴 |
-| `/api/firewall-logs` | ファイアウォールログ |
+| `/api/dns-queries?since=1h&client=&qname=&limit=100` | DNS クエリー履歴 |
+| `/api/traffic-flows?since=1h&client=&peer=&limit=100` | DNS 履歴で通信先名を補った通信フロー履歴 |
+| `/api/firewall-logs?since=24h&action=drop&src=&limit=100` | ファイアウォールログ |

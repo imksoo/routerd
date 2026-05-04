@@ -36,7 +36,7 @@ The first screen shows:
 - resource phases for PD, DS-Lite, DNS, NAT, routes, health checks, VPN, and firewall resources
 - recent routerd events
 - conntrack count and sampled NAPT entries
-- DNS-derived destination labels for traffic rows
+- a `dst label` column for conntrack rows, derived from recent DNS answers
 - client traffic totals from recent flow history
 - recent firewall denies grouped by source and destination
 
@@ -48,6 +48,6 @@ The JSON endpoints are also read-only:
 | `/api/resources` | resource statuses from the state database |
 | `/api/events` | recent bus events |
 | `/api/napt` | conntrack / NAPT observation |
-| `/api/dns-queries` | DNS query log rows |
-| `/api/traffic-flows` | traffic flow log rows |
-| `/api/firewall-logs` | firewall log rows |
+| `/api/dns-queries?since=1h&client=&qname=&limit=100` | DNS query log rows |
+| `/api/traffic-flows?since=1h&client=&peer=&limit=100` | traffic flow log rows with DNS-derived hostnames |
+| `/api/firewall-logs?since=24h&action=drop&src=&limit=100` | firewall log rows |

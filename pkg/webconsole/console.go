@@ -120,6 +120,7 @@ func (h Handler) Snapshot(limit int, naptLimit int) Snapshot {
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
+	trafficFlows = enrichTrafficFlowsWithDNS(trafficFlows, dnsQueries)
 	firewallLogs, err := h.firewallLogList(logstore.FirewallLogFilter{Since: time.Now().Add(-24 * time.Hour), Action: "drop", Limit: 200})
 	if err != nil {
 		errors = append(errors, err.Error())
@@ -224,6 +225,10 @@ func (h Handler) trafficFlows(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: since, Limit: 1000})
+	if err == nil {
+		rows = enrichTrafficFlowsWithDNS(rows, queries)
 	}
 	writeJSON(w, rows)
 }
@@ -350,6 +355,34 @@ func parseConsoleDuration(value string) (time.Duration, error) {
 	return time.ParseDuration(value)
 }
 
+func enrichTrafficFlowsWithDNS(flows []logstore.TrafficFlow, queries []logstore.DNSQuery) []logstore.TrafficFlow {
+	if len(flows) == 0 || len(queries) == 0 {
+		return flows
+	}
+	labels := map[string]string{}
+	for _, query := range queries {
+		name := strings.TrimSuffix(query.QuestionName, ".")
+		if name == "" {
+			continue
+		}
+		for _, answer := range query.Answers {
+			answer = strings.TrimSpace(answer)
+			if answer == "" {
+				continue
+			}
+			if _, exists := labels[answer]; !exists {
+				labels[answer] = name
+			}
+		}
+	}
+	for i := range flows {
+		if strings.TrimSpace(flows[i].ResolvedHostname) == "" {
+			flows[i].ResolvedHostname = labels[flows[i].PeerAddress]
+		}
+	}
+	return flows
+}
+
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	encoder := json.NewEncoder(w)
@@ -443,9 +476,11 @@ function kv(label,value){return '<div class="metric"><span class="muted">'+esc(l
 function table(headers, rows){return '<div class="table-wrap"><table><thead><tr>'+headers.map(h=>'<th>'+esc(h)+'</th>').join("")+'</tr></thead><tbody>'+rows.join("")+'</tbody></table></div>'}
 function token(v){return String(v || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "unknown"}
 function pill(value, prefix){return '<span class="pill '+prefix+'-'+token(value)+'">'+esc(value || "-")+'</span>'}
-function endpoint(tuple, labels){
-  const label = labels?.[tuple?.destination] ? '<span class="dst-label">'+esc(labels[tuple.destination])+'</span>' : "";
-  return '<code class="addr">'+esc(tuple?.source)+':'+esc(tuple?.sourcePort)+' → '+esc(tuple?.destination)+':'+esc(tuple?.destinationPort)+'</code>'+label;
+function dstLabel(tuple, labels){
+  return labels?.[tuple?.destination] || "";
+}
+function endpoint(tuple){
+  return '<code class="addr">'+esc(tuple?.source)+':'+esc(tuple?.sourcePort)+' → '+esc(tuple?.destination)+':'+esc(tuple?.destinationPort)+'</code>';
 }
 function dnsLabelMap(rows){
   const labels = {};
@@ -508,17 +543,17 @@ function natDelta(e){
   if (replySrc && replySrc !== originalDst) out.push("reply src " + replySrc);
   return out.join(" / ");
 }
-function returnDetails(e, labels){
+function returnDetails(e){
   if (!hasTuple(e.reply)) return "";
   const delta = natDelta(e);
   const rows = [
-    '<div><span>reply</span>'+endpoint(e.reply, labels)+'</div>',
+    '<div><span>reply</span>'+endpoint(e.reply)+'</div>',
     delta ? '<div><span>nat</span><code class="addr">'+esc(delta)+'</code></div>' : ''
   ].join("");
-  return '<details class="flow-cell return-toggle"><summary class="flow-summary">'+endpoint(e.original, labels)+'<span class="return-button">return</span></summary><div class="return-detail">'+rows+'</div></details>';
+  return '<details class="flow-cell return-toggle"><summary class="flow-summary">'+endpoint(e.original)+'<span class="return-button">return</span></summary><div class="return-detail">'+rows+'</div></details>';
 }
-function flowCell(e, labels){
-  return returnDetails(e, labels) || '<div class="flow-cell">'+endpoint(e.original, labels)+'</div>';
+function flowCell(e){
+  return returnDetails(e) || '<div class="flow-cell">'+endpoint(e.original)+'</div>';
 }
 async function refresh(){
   const res = await fetch(base + "api/summary?events=15&napt=30", {cache:"no-store"});
@@ -532,13 +567,14 @@ async function refresh(){
     kv("resources", status.resourceCount || (s.resources||[]).length),
     kv("conntrack", napt.max ? String(napt.count)+"/"+String(napt.max) : (napt.count ?? "-"))
   ].join("");
-  document.getElementById("traffic").innerHTML = table(["proto","state","flow","timeout"], (napt.entries||[]).slice(0,30).map(e => {
+  document.getElementById("traffic").innerHTML = table(["proto","state","flow","dst label","timeout"], (napt.entries||[]).slice(0,30).map(e => {
     const state = e.state || (e.assured ? "ASSURED" : "stateless");
     const changed = remember(seen.traffic, flowKey(e), flowSig(e));
-    return '<tr'+rowClass(changed)+'><td>'+pill(e.protocol, "proto")+'</td><td>'+pill(state, "state")+'</td><td>'+flowCell(e, dnsLabels)+'</td><td>'+esc(e.timeout)+'s</td></tr>';
+    const label = dstLabel(e.original, dnsLabels);
+    return '<tr'+rowClass(changed)+'><td>'+pill(e.protocol, "proto")+'</td><td>'+pill(state, "state")+'</td><td>'+flowCell(e)+'</td><td><span class="dst-label">'+esc(label || "-")+'</span></td><td>'+esc(e.timeout)+'s</td></tr>';
   }));
   document.getElementById("client-traffic").innerHTML = table(["client","bytes out","bytes in","recent peers"], clientTrafficRows(s.trafficFlows || []).map(row =>
-    '<tr><td><code>'+esc(row.client)+'</code></td><td>'+bytes(row.bytesOut)+'</td><td>'+bytes(row.bytesIn)+'</td><td><code>'+esc(Array.from(row.peers).slice(0,4).join(", "))+'</code></td></tr>'));
+    '<tr><td><code>'+esc(row.client)+'</code></td><td>'+bytes(row.bytesOut)+'</td><td>'+bytes(row.bytesIn)+'</td><td><code>'+esc(Array.from(row.peers).sort().slice(0,4).join(", "))+'</code></td></tr>'));
   document.getElementById("recent-deny").innerHTML = table(["count","source","destination","proto","rule"], denyRows(s.firewallLogs || []).map(row =>
     '<tr><td>'+esc(row.count)+'</td><td><code>'+esc(row.src)+'</code></td><td><code>'+esc(row.dst)+'</code></td><td>'+pill(row.proto, "proto")+'</td><td>'+esc(row.rule)+'</td></tr>'));
   const important = (s.resources||[]).filter(r => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(r.kind));

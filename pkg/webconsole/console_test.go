@@ -82,7 +82,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"napt"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, "example.com"} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"napt"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, "example.com", `"resolvedHostname": "example.com"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}
@@ -125,6 +125,15 @@ func TestHandlerServesDNSQueries(t *testing.T) {
 
 func TestHandlerServesTrafficFlows(t *testing.T) {
 	path := t.TempDir() + "/traffic-flows.db"
+	queryLog := t.TempDir() + "/dns-queries.db"
+	dnsLog, err := logstore.OpenDNSQueryLog(queryLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dnsLog.Record(context.Background(), logstore.DNSQuery{Timestamp: time.Now(), ClientAddress: "172.18.0.2", QuestionName: "one.one.one.one", QuestionType: "A", ResponseCode: "NOERROR", Answers: []string{"1.1.1.1"}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = dnsLog.Close()
 	flowLog, err := logstore.OpenTrafficFlowLog(path)
 	if err != nil {
 		t.Fatal(err)
@@ -133,14 +142,14 @@ func TestHandlerServesTrafficFlows(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = flowLog.Close()
-	handler := New(Options{TrafficFlowLogPath: path})
+	handler := New(Options{TrafficFlowLogPath: path, DNSQueryLogPath: queryLog})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic-flows?since=1h&limit=10", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "1.1.1.1") {
+	if !strings.Contains(rec.Body.String(), "one.one.one.one") {
 		t.Fatalf("traffic flows missing row:\n%s", rec.Body.String())
 	}
 }
@@ -225,8 +234,9 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 		`dst-label`,
 		`proto-tcp`,
 		`state-established`,
-		`["proto","state","flow","timeout"]`,
+		`["proto","state","flow","dst label","timeout"]`,
 		`function flowCell`,
+		`function dstLabel`,
 		`function sameReverse`,
 		`function returnDetails`,
 		`function natDelta`,
