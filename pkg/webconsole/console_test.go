@@ -234,6 +234,7 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 		`function connectionGroupNode`,
 		`const connectionGroupOpen = new Map()`,
 		`connectionGroupOpen.has(group.key)`,
+		`connectionGroupOpen.get(group.key) : false`,
 		`connectionGroupOpen.set(group.key, node.open)`,
 		`class:"group-title"`,
 		`String(group.rows.length)`,

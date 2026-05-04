@@ -646,7 +646,7 @@ function connectionGroupNode(group, dnsLabels){
       el("td",{text:String(e.timeout || 0)+"s"}),
     ]);
   });
-  const open = connectionGroupOpen.has(group.key) ? connectionGroupOpen.get(group.key) : true;
+  const open = connectionGroupOpen.has(group.key) ? connectionGroupOpen.get(group.key) : false;
   const node = el("details",{class:"connection-group",open:open},[
     el("summary",{},[el("span",{class:"group-title",text:title}),pill(label.family, "family"),pill(label.proto, "proto")]),
     tableNode(["state","flow","dst label","timeout"], rows),
