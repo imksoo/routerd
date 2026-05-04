@@ -2,6 +2,7 @@ package egressroute
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -144,10 +145,7 @@ func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, 
 		}
 	}
 
-	changed := previousName != "" && previousName != selected.Name
-	if previousName == "" {
-		changed = true
-	}
+	changed := selectionStatusChanged(previous, selected)
 	transitionAt := now
 	if !changed {
 		transitionAt = lastTransitionAt
@@ -188,6 +186,53 @@ func (c Controller) reconcilePolicy(ctx context.Context, resource api.Resource, 
 		return c.Bus.Publish(ctx, event)
 	}
 	return nil
+}
+
+func selectionStatusChanged(previous map[string]any, selected CandidateState) bool {
+	if len(previous) == 0 {
+		return true
+	}
+	if fmt.Sprint(previous["phase"]) != PhaseApplied {
+		return true
+	}
+	if fmt.Sprint(previous["selectedCandidate"]) != selected.Name {
+		return true
+	}
+	if fmt.Sprint(previous["selectedDevice"]) != selected.Device {
+		return true
+	}
+	if fmt.Sprint(previous["selectedGateway"]) != selected.Gateway {
+		return true
+	}
+	if fmt.Sprint(previous["selectedGatewaySource"]) != selected.GatewaySource {
+		return true
+	}
+	if statusInt(previous["selectedRouteTable"]) != selected.RouteTable {
+		return true
+	}
+	if statusInt(previous["selectedMetric"]) != selected.Metric {
+		return true
+	}
+	return false
+}
+
+func statusInt(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		i, _ := strconv.Atoi(v.String())
+		return i
+	case string:
+		i, _ := strconv.Atoi(v)
+		return i
+	default:
+		return 0
+	}
 }
 
 func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateState {

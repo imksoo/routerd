@@ -394,6 +394,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	if !r.Opts.FirewallDisabled {
 		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.firewall.**"}}}, PeriodicFunc: firewall.Reconcile})
 	}
+	r.warmDaemonStatuses(ctx, daemonStatusSync, logger)
 	go func() {
 		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second}
 		if err := loop.Run(ctx, controllers...); err != nil && ctx.Err() == nil {
@@ -401,6 +402,18 @@ func (r *Runner) Start(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+func (r *Runner) warmDaemonStatuses(ctx context.Context, controller DaemonStatusController, logger *slog.Logger) {
+	warmCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := controller.Reconcile(warmCtx); err != nil && ctx.Err() == nil && logger != nil {
+		logger.Warn("initial daemon status reconcile failed", "error", err)
+	}
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
+	if err := r.Bus.Publish(ctx, event); err != nil && ctx.Err() == nil && logger != nil {
+		logger.Warn("initial controller bootstrap event failed", "error", err)
+	}
 }
 
 func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger) {

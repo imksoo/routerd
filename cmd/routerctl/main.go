@@ -59,6 +59,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return describeCommand(args[1:], stdout, stderr)
 	case "firewall":
 		return firewallCommand(args[1:], stdout, stderr)
+	case "diagnose":
+		return diagnoseCommand(args[1:], stdout, stderr)
 	case "show":
 		return showCommand(args[1:], stdout, stderr)
 	case "apply":
@@ -1708,6 +1710,9 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  describe <kind>/<name> [--config <path>] [--state-file <path>] [--ledger-file <path>] [--events-limit <n>]")
 	fmt.Fprintln(w, "  describe firewall [--config <path>]")
 	fmt.Fprintln(w, "  firewall test from=<zone> to=<zone|self> proto=<tcp|udp> dport=<port> [--config <path>]")
+	fmt.Fprintln(w, "  diagnose egress [policy] [--config <path>] [--state-file <path>] [--no-host] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  diagnose dns [resolver] [--server <addr>] [--name <fqdn>] [--no-host] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  diagnose lan-client <ip> [--no-host] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show <kind> [--config <path>] [--state-file <path>] [--ledger-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events|--spec|--status] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plan [--socket <path>]")

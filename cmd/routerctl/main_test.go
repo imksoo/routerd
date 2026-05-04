@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
@@ -318,6 +319,73 @@ func TestDescribeInventoryHost(t *testing.T) {
 	for _, want := range []string{"Kind:", "Inventory", "Currently observable:", "OS:", "linux", "Virtualization:", "kvm", "Service Manager:", "systemd", "InventoryObserved"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("describe inventory output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestDiagnoseEgressShowsPolicyHealthAndNAT(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: EgressRoutePolicy
+      metadata:
+        name: ipv4-default
+      spec:
+        family: ipv4
+        selection: highest-weight-ready
+        candidates:
+          - name: ds-lite
+            source: DSLiteTunnel/ds-lite
+            device: ds-routerd
+            gatewaySource: none
+            weight: 80
+            healthCheck: internet
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-wan
+      spec:
+        type: masquerade
+        egressPolicyRef: ipv4-default
+        sourceRanges:
+          - 172.18.0.0/16
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	dbPath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default", map[string]any{"phase": "Applied", "selectedCandidate": "ds-lite", "selectedDevice": "ds-routerd"}); err != nil {
+		t.Fatalf("save egress status: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", "internet", map[string]any{"phase": "Healthy"}); err != nil {
+		t.Fatalf("save health status: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44Rule", "lan-to-wan", map[string]any{"phase": "Active", "activeEgressInterface": "ds-routerd"}); err != nil {
+		t.Fatalf("save nat status: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite state: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = run([]string{"diagnose", "egress", "ipv4-default", "--config", configPath, "--state-file", dbPath, "--no-host"}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("diagnose egress: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"DIAGNOSE", "egress", "selectedCandidate", "ds-lite", "HealthCheck", "internet", "NAT44Rule", "lan-to-wan"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("diagnose output missing %q:\n%s", want, got)
 		}
 	}
 }

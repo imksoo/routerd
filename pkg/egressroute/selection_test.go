@@ -174,6 +174,49 @@ func TestControllerRequiresHealthyHealthCheck(t *testing.T) {
 	}
 }
 
+func TestControllerRepublishesWhenSelectedOutputChanges(t *testing.T) {
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+	store := mapStore{
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Up", "interface": "ds-routerd-new"},
+		api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default": {
+			"phase":             PhaseApplied,
+			"selectedCandidate": "ds-lite",
+			"selectedDevice":    "ds-routerd-old",
+			"lastTransitionAt":  now.Add(-time.Minute).Format(time.RFC3339Nano),
+		},
+	}
+	b := bus.New()
+	ch, cancel := b.Subscribe(context.Background(), bus.Subscription{Topics: []string{EventRouteChanged}}, 1)
+	defer cancel()
+	controller := Controller{
+		Router: routerWithPolicy(api.EgressRoutePolicySpec{
+			Selection: SelectionHighestWeightReady,
+			Candidates: []api.EgressRoutePolicyCandidate{
+				{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", DeviceFrom: api.StatusValueSourceSpec{Resource: "DSLiteTunnel/ds-lite", Field: "interface"}, Weight: 80},
+			},
+		}),
+		Bus:   b,
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["selectedDevice"] != "ds-routerd-new" {
+		t.Fatalf("selectedDevice = %v", status["selectedDevice"])
+	}
+	select {
+	case event := <-ch:
+		if event.Attributes["selectedDevice"] != "ds-routerd-new" {
+			t.Fatalf("event attributes = %#v", event.Attributes)
+		}
+	default:
+		t.Fatal("expected route changed event")
+	}
+}
+
 func routerWithPolicy(spec api.EgressRoutePolicySpec) *api.Router {
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
