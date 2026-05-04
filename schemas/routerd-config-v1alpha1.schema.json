@@ -3583,6 +3583,21 @@
                         },
                         "type": "object"
                       },
+                      "queryLog": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "retention": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "sources": {
                         "items": {
                           "additionalProperties": false,

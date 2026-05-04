@@ -19,6 +19,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/dnsresolver"
+	"routerd/pkg/logstore"
 )
 
 type options struct {
@@ -43,10 +44,11 @@ type daemon struct {
 	nextCursor uint64
 	cancel     context.CancelFunc
 
-	zones   *zoneTable
-	sources []runtimeSource
-	servers []*dns.Server
-	cache   map[string]cacheEntry
+	zones    *zoneTable
+	sources  []runtimeSource
+	servers  []*dns.Server
+	cache    map[string]cacheEntry
+	queryLog *logstore.DNSQueryLog
 }
 
 type runtimeSource struct {
@@ -57,6 +59,13 @@ type runtimeSource struct {
 type cacheEntry struct {
 	Message []byte
 	Expires time.Time
+}
+
+type resolveResult struct {
+	Response     *dns.Msg
+	Upstream     string
+	CacheHit     bool
+	ResponseCode string
 }
 
 type eventsResponse struct {
@@ -221,6 +230,16 @@ func (d *daemon) Run(ctx context.Context) error {
 
 	d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "Started", "DNS resolver daemon started", nil)
 	if !d.opts.dryRun {
+		if d.config.Spec.QueryLog.Enabled {
+			queryLog, err := logstore.OpenDNSQueryLog(d.config.Spec.QueryLog.Path)
+			if err != nil {
+				d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
+				d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "QueryLogOpenFailed", err.Error(), nil)
+				return err
+			}
+			d.queryLog = queryLog
+			defer queryLog.Close()
+		}
 		for i := range d.sources {
 			if d.sources[i].Pool != nil {
 				d.sources[i].Pool.Start(ctx, d.publish)
@@ -263,20 +282,25 @@ func (d *daemon) startDNS(ctx context.Context) error {
 }
 
 func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
-	resp, err := d.resolve(w.LocalAddr().String(), req)
+	started := time.Now()
+	result, err := d.resolve(w.LocalAddr().String(), req)
+	resp := result.Response
 	if err != nil {
 		resp = new(dns.Msg)
 		resp.SetRcode(req, dns.RcodeServerFailure)
+		result.Response = resp
+		result.ResponseCode = dns.RcodeToString[resp.Rcode]
 		d.publish("routerd.dns.resolver.query.failed", daemonapi.SeverityWarning, "QueryFailed", err.Error(), nil)
 	}
 	_ = w.WriteMsg(resp)
+	d.recordQuery(w.RemoteAddr().String(), req, result, time.Since(started))
 }
 
-func (d *daemon) resolve(localAddr string, req *dns.Msg) (*dns.Msg, error) {
+func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) {
 	if len(req.Question) == 0 {
 		resp := new(dns.Msg)
 		resp.SetRcode(req, dns.RcodeFormatError)
-		return resp, nil
+		return resolveResult{Response: resp, ResponseCode: dns.RcodeToString[resp.Rcode]}, nil
 	}
 	cacheKey := dnsCacheKey(localAddr, req)
 	if d.config.Spec.Cache.Enabled {
@@ -284,7 +308,7 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (*dns.Msg, error) {
 			var msg dns.Msg
 			if err := msg.Unpack(cached); err == nil {
 				msg.Id = req.Id
-				return &msg, nil
+				return resolveResult{Response: &msg, CacheHit: true, Upstream: "cache", ResponseCode: dns.RcodeToString[msg.Rcode]}, nil
 			}
 		}
 	}
@@ -297,7 +321,7 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (*dns.Msg, error) {
 		case "zone":
 			if resp, ok := d.zones.Answer(req, source.Spec.ZoneRef); ok {
 				d.publish("routerd.dns.zone.answered", daemonapi.SeverityInfo, "Answered", question.Name, map[string]string{"qname": question.Name})
-				return resp, nil
+				return resolveResult{Response: resp, Upstream: sourceName(source.Spec), ResponseCode: dns.RcodeToString[resp.Rcode]}, nil
 			}
 		case "forward", "upstream":
 			if source.Pool == nil {
@@ -309,7 +333,7 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (*dns.Msg, error) {
 			}
 			wire, err := upstreamReq.Pack()
 			if err != nil {
-				return nil, err
+				return resolveResult{}, err
 			}
 			out, err := source.Pool.Exchange(context.Background(), wire, d.publish)
 			if err != nil {
@@ -317,7 +341,7 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (*dns.Msg, error) {
 			}
 			var resp dns.Msg
 			if err := resp.Unpack(out); err != nil {
-				return nil, err
+				return resolveResult{}, err
 			}
 			if source.Spec.DNSSECValidate && !resp.AuthenticatedData {
 				d.publish("routerd.dns.resolver.dnssec.failed", daemonapi.SeverityWarning, "DNSSECValidationFailed", question.Name, map[string]string{"source": source.Spec.Name, "qname": question.Name})
@@ -326,12 +350,61 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (*dns.Msg, error) {
 			if d.config.Spec.Cache.Enabled {
 				d.cacheSet(cacheKey, out, dnsMessageTTL(&resp, d.config.Spec.Cache))
 			}
-			return &resp, nil
+			return resolveResult{Response: &resp, Upstream: sourceName(source.Spec), ResponseCode: dns.RcodeToString[resp.Rcode]}, nil
 		}
 	}
 	resp := new(dns.Msg)
 	resp.SetRcode(req, dns.RcodeNameError)
-	return resp, nil
+	return resolveResult{Response: resp, ResponseCode: dns.RcodeToString[resp.Rcode]}, nil
+}
+
+func (d *daemon) recordQuery(remoteAddr string, req *dns.Msg, result resolveResult, duration time.Duration) {
+	if d.queryLog == nil || len(req.Question) == 0 {
+		return
+	}
+	client := remoteAddr
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		client = host
+	}
+	question := req.Question[0]
+	entry := logstore.DNSQuery{
+		Timestamp:     time.Now().UTC(),
+		ClientAddress: client,
+		QuestionName:  question.Name,
+		QuestionType:  dns.TypeToString[question.Qtype],
+		ResponseCode:  result.ResponseCode,
+		Answers:       dnsAnswerStrings(result.Response),
+		Upstream:      result.Upstream,
+		CacheHit:      result.CacheHit,
+		Duration:      duration,
+	}
+	if entry.ResponseCode == "" && result.Response != nil {
+		entry.ResponseCode = dns.RcodeToString[result.Response.Rcode]
+	}
+	_ = d.queryLog.Record(context.Background(), entry)
+}
+
+func sourceName(source api.DNSResolverSourceSpec) string {
+	if strings.TrimSpace(source.Name) != "" {
+		return source.Name
+	}
+	return source.Kind
+}
+
+func dnsAnswerStrings(msg *dns.Msg) []string {
+	if msg == nil {
+		return nil
+	}
+	var out []string
+	for _, rr := range msg.Answer {
+		switch record := rr.(type) {
+		case *dns.A:
+			out = append(out, record.A.String())
+		case *dns.AAAA:
+			out = append(out, record.AAAA.String())
+		}
+	}
+	return out
 }
 
 func (d *daemon) sourcesForListen(localAddr string) []runtimeSource {

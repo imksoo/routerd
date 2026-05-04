@@ -34,6 +34,20 @@ func TestValidateAcceptsListenAddressSources(t *testing.T) {
 	}
 }
 
+func TestNormalizeDNSResolverQueryLogDefaults(t *testing.T) {
+	spec := NormalizeSpec(api.DNSResolverSpec{
+		Listen:   []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 5053}},
+		Sources:  []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
+		QueryLog: api.DNSResolverQueryLogSpec{Enabled: true},
+	})
+	if spec.QueryLog.Path != "/var/lib/routerd/dns-queries.db" || spec.QueryLog.Retention != "30d" {
+		t.Fatalf("query log defaults = %#v", spec.QueryLog)
+	}
+	if err := Validate(spec); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+}
+
 func TestValidateRejectsListenAddressStatusReference(t *testing.T) {
 	err := Validate(api.DNSResolverSpec{
 		Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"${IPv6DelegatedAddress/lan-base.status.address}"}, Port: 53}},

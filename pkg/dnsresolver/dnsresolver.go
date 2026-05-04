@@ -59,6 +59,14 @@ func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
 	if spec.Cache.MaxEntries == 0 {
 		spec.Cache.MaxEntries = 10000
 	}
+	if spec.QueryLog.Enabled {
+		if strings.TrimSpace(spec.QueryLog.Path) == "" {
+			spec.QueryLog.Path = "/var/lib/routerd/dns-queries.db"
+		}
+		if strings.TrimSpace(spec.QueryLog.Retention) == "" {
+			spec.QueryLog.Retention = "30d"
+		}
+	}
 	return spec
 }
 
@@ -125,7 +133,29 @@ func Validate(spec api.DNSResolverSpec) error {
 			}
 		}
 	}
+	if spec.QueryLog.Enabled {
+		if strings.TrimSpace(spec.QueryLog.Path) == "" {
+			return fmt.Errorf("queryLog.path is required when queryLog.enabled is true")
+		}
+		if strings.TrimSpace(spec.QueryLog.Retention) != "" {
+			if _, err := parseRetentionDuration(spec.QueryLog.Retention); err != nil {
+				return fmt.Errorf("queryLog.retention must be a duration: %w", err)
+			}
+		}
+	}
 	return nil
+}
+
+func parseRetentionDuration(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if strings.HasSuffix(value, "d") {
+		days, err := time.ParseDuration(strings.TrimSuffix(value, "d") + "h")
+		if err != nil {
+			return 0, err
+		}
+		return days * 24, nil
+	}
+	return time.ParseDuration(value)
 }
 
 func isStatusExpression(value string) bool {

@@ -524,10 +524,11 @@ type DNSZoneReverseSpec struct {
 }
 
 type DNSResolverSpec struct {
-	Listen  []DNSResolverListenSpec `yaml:"listen" json:"listen"`
-	Sources []DNSResolverSourceSpec `yaml:"sources" json:"sources"`
-	Cache   DNSResolverCacheSpec    `yaml:"cache,omitempty" json:"cache,omitempty"`
-	Metrics DNSResolverMetricsSpec  `yaml:"metrics,omitempty" json:"metrics,omitempty"`
+	Listen   []DNSResolverListenSpec `yaml:"listen" json:"listen"`
+	Sources  []DNSResolverSourceSpec `yaml:"sources" json:"sources"`
+	Cache    DNSResolverCacheSpec    `yaml:"cache,omitempty" json:"cache,omitempty"`
+	Metrics  DNSResolverMetricsSpec  `yaml:"metrics,omitempty" json:"metrics,omitempty"`
+	QueryLog DNSResolverQueryLogSpec `yaml:"queryLog,omitempty" json:"queryLog,omitempty"`
 }
 
 type DNSResolverListenSpec struct {
@@ -567,6 +568,12 @@ type DNSResolverCacheSpec struct {
 
 type DNSResolverMetricsSpec struct {
 	PerUpstream bool `yaml:"perUpstream,omitempty" json:"perUpstream,omitempty"`
+}
+
+type DNSResolverQueryLogSpec struct {
+	Enabled   bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Path      string `yaml:"path,omitempty" json:"path,omitempty"`
+	Retention string `yaml:"retention,omitempty" json:"retention,omitempty"`
 }
 
 type ReadyWhenSpec struct {
