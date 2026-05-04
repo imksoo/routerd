@@ -517,7 +517,7 @@ const seen = {traffic:new Map(), resources:new Map(), events:new Map()};
 const connectionGroupOpen = new Map();
 let firstPaint = true;
 let refreshSeq = 0;
-function cls(phase){return /Healthy|Applied|Active|Bound|Installed|Up/.test(phase) ? "ok" : /Pending|Drifted|Unknown/.test(phase) ? "warn" : "bad"}
+function cls(phase){return /Healthy|Applied|Active|Bound|Installed|Ready|Running|Up/.test(phase) ? "ok" : /Pending|Drifted|Unknown/.test(phase) ? "warn" : "bad"}
 function text(v){return String(v ?? "")}
 function clear(el){while(el.firstChild) el.removeChild(el.firstChild)}
 function el(tag, attrs, children){

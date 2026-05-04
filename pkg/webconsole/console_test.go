@@ -91,6 +91,19 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	}
 }
 
+func TestConsoleTreatsReadyPhaseAsOK(t *testing.T) {
+	handler := New(Options{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `Healthy|Applied|Active|Bound|Installed|Ready|Running|Up`) {
+		t.Fatalf("console phase classifier does not include Ready")
+	}
+}
+
 func reqContext() context.Context { return context.Background() }
 
 func TestHandlerRejectsWriteMethods(t *testing.T) {

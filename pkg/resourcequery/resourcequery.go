@@ -34,7 +34,7 @@ func Values(store Store, source api.StatusValueSourceSpec) []string {
 		return nil
 	}
 	field := defaultString(source.Field, "phase")
-	value := store.ObjectStatus(api.NetAPIVersion, kind, name)[field]
+	value := store.ObjectStatus(APIVersionForKind(kind), kind, name)[field]
 	return normalizeValues(value)
 }
 
@@ -50,7 +50,7 @@ func DependencyReady(store Store, dependency api.ResourceDependencySpec) bool {
 	if dependency.Phase != "" {
 		field = "phase"
 	}
-	values := normalizeValues(store.ObjectStatus(api.NetAPIVersion, kind, name)[field])
+	values := normalizeValues(store.ObjectStatus(APIVersionForKind(kind), kind, name)[field])
 	if len(values) == 0 {
 		return dependency.Optional
 	}
@@ -83,11 +83,24 @@ func SourceReady(store Store, source string) bool {
 	if !ok {
 		return false
 	}
-	switch fmt.Sprint(store.ObjectStatus(api.NetAPIVersion, kind, name)["phase"]) {
+	switch fmt.Sprint(store.ObjectStatus(APIVersionForKind(kind), kind, name)["phase"]) {
 	case "Applied", "Bound", "Healthy", "Installed", "Ready", "Running", "Up":
 		return true
 	default:
 		return false
+	}
+}
+
+func APIVersionForKind(kind string) string {
+	switch kind {
+	case "Inventory":
+		return api.RouterAPIVersion
+	case "LogSink", "LogRetention", "Sysctl", "SysctlProfile", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "WebConsole", "NixOSHost":
+		return api.SystemAPIVersion
+	case "FirewallZone", "FirewallPolicy", "FirewallLog", "FirewallRule":
+		return api.FirewallAPIVersion
+	default:
+		return api.NetAPIVersion
 	}
 }
 
