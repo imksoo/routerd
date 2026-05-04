@@ -18,13 +18,17 @@ spec:
   candidates:
     - name: ds-lite
       source: DSLiteTunnel/ds-lite
-      device: ${DSLiteTunnel/ds-lite.status.interface}
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite
+        field: interface
       gatewaySource: none
       weight: 80
       healthCheck: internet-tcp443
     - name: fallback
       source: Interface/fallback
-      device: ${Interface/fallback.status.ifname}
+      deviceFrom:
+        resource: Interface/fallback
+        field: ifname
       gatewaySource: static
       gateway: 172.17.0.1
       weight: 50
@@ -48,6 +52,15 @@ spec:
 ```
 
 経路や NAT のリソースは、選ばれたデバイスを参照できます。
+
+この動作は収束を優先します。
+起動直後は、準備完了の fallback 経路で通信を開始できます。
+その後、優先経路の HealthCheck が成功すると、
+routerd は選択デバイスを切り替えます。
+経路と NAT のリソースは再び適用されます。
+conntrack は消しません。
+既存の通信は、カーネルが持つ状態に従います。
+新しい通信は、新しく選ばれた経路を使います。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1

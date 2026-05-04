@@ -17,13 +17,17 @@ spec:
   candidates:
     - name: ds-lite
       source: DSLiteTunnel/ds-lite
-      device: ${DSLiteTunnel/ds-lite.status.interface}
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite
+        field: interface
       gatewaySource: none
       weight: 80
       healthCheck: internet-tcp443
     - name: fallback
       source: Interface/fallback
-      device: ${Interface/fallback.status.ifname}
+      deviceFrom:
+        resource: Interface/fallback
+        field: ifname
       gatewaySource: static
       gateway: 172.17.0.1
       weight: 50
@@ -47,6 +51,13 @@ spec:
 ```
 
 The route and NAT resources can then follow the selected device.
+
+This behavior is intentionally convergent. During startup, a lower-weight
+fallback can serve traffic as soon as it is ready. When the preferred path later
+passes its health check, routerd changes the selected device and re-applies
+route and NAT resources. The controller does not flush conntrack; existing
+flows keep their current kernel state, and new flows follow the newly selected
+path.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1

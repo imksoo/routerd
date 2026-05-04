@@ -21,13 +21,17 @@ spec:
   candidates:
     - name: ds-lite
       source: DSLiteTunnel/ds-lite
-      device: ${DSLiteTunnel/ds-lite.status.interface}
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite
+        field: interface
       gatewaySource: none
       weight: 80
       healthCheck: internet-tcp443
     - name: ix2215
       source: Interface/ix2215
-      device: ${Interface/ix2215.status.ifname}
+      deviceFrom:
+        resource: Interface/ix2215
+        field: ifname
       gatewaySource: static
       gateway: 172.17.0.1
       weight: 50
@@ -50,6 +54,15 @@ IPv6 では `::/0` を使います。
 - `status.selectedGateway`
 - `status.destinationCIDRs`
 
+起動直後は、まず準備完了の候補を選びます。
+重みが最も高い経路を無期限に待ちません。
+あとから重みが高い候補が準備完了になると、
+routerd は `routerd.lan.route.changed` を発行します。
+それを受けて `IPv4Route` と `NAT44Rule` が更新されます。
+conntrack は消しません。
+既存の通信はカーネルが持つ状態に従います。
+新しい通信は、新しい経路と NAT の向きを使います。
+
 `IPv4Route` は、これらの status を参照できます。
 
 ```yaml
@@ -59,8 +72,12 @@ metadata:
   name: default-route
 spec:
   destination: 0.0.0.0/0
-  device: ${EgressRoutePolicy/ipv4-default.status.selectedDevice}
-  gateway: ${EgressRoutePolicy/ipv4-default.status.selectedGateway}
+  deviceFrom:
+    resource: EgressRoutePolicy/ipv4-default
+    field: selectedDevice
+  gatewayFrom:
+    resource: EgressRoutePolicy/ipv4-default
+    field: selectedGateway
 ```
 
 ## HealthCheck

@@ -20,13 +20,17 @@ spec:
   candidates:
     - name: ds-lite
       source: DSLiteTunnel/ds-lite
-      device: ${DSLiteTunnel/ds-lite.status.interface}
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite
+        field: interface
       gatewaySource: none
       weight: 80
       healthCheck: internet-tcp443
     - name: ix2215
       source: Interface/ix2215
-      device: ${Interface/ix2215.status.ifname}
+      deviceFrom:
+        resource: Interface/ix2215
+        field: ifname
       gatewaySource: static
       gateway: 172.17.0.1
       weight: 50
@@ -49,6 +53,13 @@ The selected values are exposed as:
 - `status.selectedGateway`
 - `status.destinationCIDRs`
 
+At startup, the policy chooses the first ready candidate instead of waiting for
+the highest-weight path forever. If a higher-weight candidate becomes ready
+later, routerd updates `IPv4Route` and `NAT44Rule` through
+`routerd.lan.route.changed`. It does not flush conntrack. Existing flows keep
+the kernel state they already have, while new flows use the new route and NAT
+direction.
+
 `IPv4Route` can use those status fields:
 
 ```yaml
@@ -58,8 +69,12 @@ metadata:
   name: default-route
 spec:
   destination: 0.0.0.0/0
-  device: ${EgressRoutePolicy/ipv4-default.status.selectedDevice}
-  gateway: ${EgressRoutePolicy/ipv4-default.status.selectedGateway}
+  deviceFrom:
+    resource: EgressRoutePolicy/ipv4-default
+    field: selectedDevice
+  gatewayFrom:
+    resource: EgressRoutePolicy/ipv4-default
+    field: selectedGateway
 ```
 
 ## Health Checks

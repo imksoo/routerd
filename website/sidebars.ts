@@ -33,6 +33,8 @@ const sidebars: SidebarsConfig = {
       label: 'How-to',
       items: [
         'how-to/flets-ipv6-setup',
+        'how-to/multi-wan',
+        'how-to/pve-overlay',
         'how-to/troubleshooting',
       ],
     },
