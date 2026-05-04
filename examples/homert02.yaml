@@ -653,6 +653,11 @@ spec:
           - 172.18.0.0/16
         destinationCIDRs:
           - 0.0.0.0/0
+        excludeDestinationCIDRs:
+          - 172.17.0.0/16
+          - 172.18.0.0/16
+          - 192.168.1.0/24
+          - 192.168.123.0/24
         targets:
           - name: ds-lite-a
             outboundInterface: ds-lite-a
@@ -687,6 +692,11 @@ spec:
           - 172.18.0.0/16
         destinationCIDRs:
           - 0.0.0.0/0
+        excludeDestinationCIDRs:
+          - 172.17.0.0/16
+          - 172.18.0.0/16
+          - 192.168.1.0/24
+          - 192.168.123.0/24
         candidates:
           - name: dslite-pd-balanced
             routeSet: dslite-pd-balanced

@@ -2289,6 +2289,12 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv4 prefixes", res.ID())
 			}
 		}
+		for _, cidr := range spec.ExcludeDestinationCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return fmt.Errorf("%s spec.excludeDestinationCIDRs entries must be IPv4 prefixes", res.ID())
+			}
+		}
 		seenPriorities := map[int]bool{}
 		seenMarks := map[int]bool{}
 		seenTables := map[int]bool{}
@@ -2470,6 +2476,12 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv4 prefixes", res.ID())
 			}
 		}
+		for _, cidr := range spec.ExcludeDestinationCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return fmt.Errorf("%s spec.excludeDestinationCIDRs entries must be IPv4 prefixes", res.ID())
+			}
+		}
 	case "IPv4PolicyRouteSet":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -2506,6 +2518,12 @@ func validateResource(res api.Resource) error {
 			prefix, err := netip.ParsePrefix(cidr)
 			if err != nil || !prefix.Addr().Is4() {
 				return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv4 prefixes", res.ID())
+			}
+		}
+		for _, cidr := range spec.ExcludeDestinationCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return fmt.Errorf("%s spec.excludeDestinationCIDRs entries must be IPv4 prefixes", res.ID())
 			}
 		}
 		if len(spec.Targets) < 2 {

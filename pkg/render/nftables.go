@@ -130,7 +130,7 @@ func NftablesIPv4PolicyRoutes(router *api.Router) ([]byte, error) {
 }
 
 func NftablesIPv4DefaultRoutePolicy(resourceID string, spec api.IPv4DefaultRoutePolicySpec, active api.IPv4DefaultRoutePolicyCandidate, healthy []api.IPv4DefaultRoutePolicyCandidate, routeSets map[string]api.IPv4PolicyRouteSetSpec) ([]byte, error) {
-	matches, err := nftIPv4CIDRMatches(resourceID, spec.SourceCIDRs, spec.DestinationCIDRs)
+	matches, err := nftIPv4CIDRMatches(resourceID, spec.SourceCIDRs, spec.DestinationCIDRs, spec.ExcludeDestinationCIDRs)
 	if err != nil {
 		return nil, err
 	}
@@ -835,44 +835,14 @@ func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, polic
 }
 
 func nftIPv4PolicyRouteMatches(resourceID string, spec api.IPv4PolicyRouteSpec) ([]string, error) {
-	var sources []string
-	if len(spec.SourceCIDRs) == 0 {
-		sources = []string{""}
-	} else {
-		for _, cidr := range spec.SourceCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return nil, fmt.Errorf("%s has invalid IPv4 source CIDR %q", resourceID, cidr)
-			}
-			sources = append(sources, "ip saddr "+prefix.Masked().String())
-		}
-	}
-	var destinations []string
-	if len(spec.DestinationCIDRs) == 0 {
-		destinations = []string{""}
-	} else {
-		for _, cidr := range spec.DestinationCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return nil, fmt.Errorf("%s has invalid IPv4 destination CIDR %q", resourceID, cidr)
-			}
-			destinations = append(destinations, "ip daddr "+prefix.Masked().String())
-		}
-	}
-	var matches []string
-	for _, source := range sources {
-		for _, destination := range destinations {
-			matches = append(matches, strings.TrimSpace(strings.Join([]string{source, destination}, " ")))
-		}
-	}
-	return matches, nil
+	return nftIPv4CIDRMatches(resourceID, spec.SourceCIDRs, spec.DestinationCIDRs, spec.ExcludeDestinationCIDRs)
 }
 
 func nftIPv4PolicyRouteSetMatches(resourceID string, spec api.IPv4PolicyRouteSetSpec) ([]string, error) {
-	return nftIPv4CIDRMatches(resourceID, spec.SourceCIDRs, spec.DestinationCIDRs)
+	return nftIPv4CIDRMatches(resourceID, spec.SourceCIDRs, spec.DestinationCIDRs, spec.ExcludeDestinationCIDRs)
 }
 
-func nftIPv4CIDRMatches(resourceID string, sourceCIDRs, destinationCIDRs []string) ([]string, error) {
+func nftIPv4CIDRMatches(resourceID string, sourceCIDRs, destinationCIDRs, excludeDestinationCIDRs []string) ([]string, error) {
 	var sources []string
 	if len(sourceCIDRs) == 0 {
 		sources = []string{""}
@@ -897,13 +867,29 @@ func nftIPv4CIDRMatches(resourceID string, sourceCIDRs, destinationCIDRs []strin
 			destinations = append(destinations, "ip daddr "+prefix.Masked().String())
 		}
 	}
+	excludes, err := nftIPv4ExcludedDestinationMatch(resourceID, excludeDestinationCIDRs)
+	if err != nil {
+		return nil, err
+	}
 	var matches []string
 	for _, source := range sources {
 		for _, destination := range destinations {
-			matches = append(matches, strings.TrimSpace(strings.Join([]string{source, destination}, " ")))
+			matches = append(matches, strings.TrimSpace(strings.Join([]string{source, destination, excludes}, " ")))
 		}
 	}
 	return matches, nil
+}
+
+func nftIPv4ExcludedDestinationMatch(resourceID string, cidrs []string) (string, error) {
+	var out []string
+	for _, cidr := range cidrs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil || !prefix.Addr().Is4() {
+			return "", fmt.Errorf("%s has invalid IPv4 excluded destination CIDR %q", resourceID, cidr)
+		}
+		out = append(out, "ip daddr !="+prefix.Masked().String())
+	}
+	return strings.Join(out, " "), nil
 }
 
 func nftIPv4PolicyRouteSetHash(resourceID string, spec api.IPv4PolicyRouteSetSpec) (string, error) {

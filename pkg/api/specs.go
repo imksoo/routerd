@@ -859,10 +859,11 @@ type DerivedEventSpec struct {
 }
 
 type IPv4DefaultRoutePolicySpec struct {
-	Mode             string                            `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=priority"`
-	SourceCIDRs      []string                          `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
-	DestinationCIDRs []string                          `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	Candidates       []IPv4DefaultRoutePolicyCandidate `yaml:"candidates" json:"candidates"`
+	Mode                    string                            `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=priority"`
+	SourceCIDRs             []string                          `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	DestinationCIDRs        []string                          `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	ExcludeDestinationCIDRs []string                          `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
+	Candidates              []IPv4DefaultRoutePolicyCandidate `yaml:"candidates" json:"candidates"`
 }
 
 type IPv4DefaultRoutePolicyCandidate struct {
@@ -895,23 +896,25 @@ type NAT44RuleSpec struct {
 }
 
 type IPv4PolicyRouteSpec struct {
-	OutboundInterface   string   `yaml:"outboundInterface" json:"outboundInterface"`
-	Table               int      `yaml:"table" json:"table" jsonschema:"minimum=1,maximum=4294967295"`
-	Priority            int      `yaml:"priority" json:"priority" jsonschema:"minimum=1,maximum=32765"`
-	Mark                int      `yaml:"mark" json:"mark" jsonschema:"minimum=1,maximum=4294967295"`
-	SourceCIDRs         []string `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
-	DestinationCIDRs    []string `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	RouteMetric         int      `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-	AllowLocalSourceNAT bool     `yaml:"allowLocalSourceNAT,omitempty" json:"allowLocalSourceNAT,omitempty"`
+	OutboundInterface       string   `yaml:"outboundInterface" json:"outboundInterface"`
+	Table                   int      `yaml:"table" json:"table" jsonschema:"minimum=1,maximum=4294967295"`
+	Priority                int      `yaml:"priority" json:"priority" jsonschema:"minimum=1,maximum=32765"`
+	Mark                    int      `yaml:"mark" json:"mark" jsonschema:"minimum=1,maximum=4294967295"`
+	SourceCIDRs             []string `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	DestinationCIDRs        []string `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	ExcludeDestinationCIDRs []string `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
+	RouteMetric             int      `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	AllowLocalSourceNAT     bool     `yaml:"allowLocalSourceNAT,omitempty" json:"allowLocalSourceNAT,omitempty"`
 }
 
 type IPv4PolicyRouteSetSpec struct {
-	Mode             string                  `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=hash"`
-	HashFields       []string                `yaml:"hashFields,omitempty" json:"hashFields,omitempty"`
-	SourceCIDRs      []string                `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
-	DestinationCIDRs []string                `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	Targets          []IPv4PolicyRouteTarget `yaml:"targets" json:"targets"`
-	When             ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
+	Mode                    string                  `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=hash"`
+	HashFields              []string                `yaml:"hashFields,omitempty" json:"hashFields,omitempty"`
+	SourceCIDRs             []string                `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	DestinationCIDRs        []string                `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	ExcludeDestinationCIDRs []string                `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
+	Targets                 []IPv4PolicyRouteTarget `yaml:"targets" json:"targets"`
+	When                    ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type IPv4PolicyRouteTarget struct {

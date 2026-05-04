@@ -125,6 +125,8 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 | `IPv4ReversePathFilter` | reverse path filter を表します。 |
 | `PathMTUPolicy` | MTU と TCP MSS 調整の方針を表します。`mtu.source: probe` では DF 付きの疎通確認で経路 MTU を測ります。 |
 
+`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4DefaultRoutePolicy` は `excludeDestinationCIDRs` を持ちます。これにより、LAN 内部、管理網、HGW LAN などを policy routing の対象から外せます。
+
 Phase 1.5e では router05 で DS-Lite、IPv4 既定経路、NAT44 の実適用を確認しています。
 
 ## 状態連携

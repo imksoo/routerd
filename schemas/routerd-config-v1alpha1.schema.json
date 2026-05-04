@@ -4976,6 +4976,12 @@
                         },
                         "type": "array"
                       },
+                      "excludeDestinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "mode": {
                         "enum": [
                           "priority"
@@ -5260,6 +5266,12 @@
                         },
                         "type": "array"
                       },
+                      "excludeDestinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "mark": {
                         "maximum": 4294967295,
                         "minimum": 1,
@@ -5338,6 +5350,12 @@
                     "additionalProperties": false,
                     "properties": {
                       "destinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "excludeDestinationCIDRs": {
                         "items": {
                           "type": "string"
                         },

@@ -377,6 +377,38 @@ func TestNftablesIPv4PolicyRouteSet(t *testing.T) {
 	}
 }
 
+func TestNftablesIPv4PolicyRouteSetExcludesDestinations(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"},
+				Metadata: api.ObjectMeta{Name: "lan-balance"},
+				Spec: api.IPv4PolicyRouteSetSpec{
+					Mode:                    "hash",
+					HashFields:              []string{"sourceAddress"},
+					SourceCIDRs:             []string{"172.18.0.0/16"},
+					DestinationCIDRs:        []string{"0.0.0.0/0"},
+					ExcludeDestinationCIDRs: []string{"192.168.1.0/24", "192.168.123.0/24"},
+					Targets: []api.IPv4PolicyRouteTarget{
+						{OutboundInterface: "ds-lite-a", Table: 110, Priority: 10110, Mark: 0x110},
+						{OutboundInterface: "ds-lite-b", Table: 111, Priority: 10111, Mark: 0x111},
+					},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	want := "ip saddr 172.18.0.0/16 ip daddr 0.0.0.0/0 ip daddr !=192.168.1.0/24 ip daddr !=192.168.123.0/24 ct mark 0x0 meta mark set jhash ip saddr mod 2 map { 0 : 0x110, 1 : 0x111 }"
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables output missing excluded destination match %q:\n%s", want, got)
+	}
+}
+
 func TestNftablesTCPMSSClamp(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
