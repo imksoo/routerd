@@ -1,220 +1,744 @@
+# homert02 (本番自宅ルーター、IX2215 置換) — 1 本化 yaml
+#
+# 動的 IPv6 (DHCPv6-PD 由来) は ipv6From/addressFrom で明示参照します。
+#
+# - WAN: DHCPv6-PD + DHCPv6 Info、DSLite tunnel
+# - LAN: 静的 IPv4 (172.18.0.1/16)、IPv6 (PD::1/64)、IX2215 transit alias (172.17.0.2/16)
+# - 経路: EgressRoutePolicy = DSLite primary + IX2215 fallback、IPv4Route、NAT44
+# - DNS: DNSResolver は 127.0.0.1 / mgmt / 172.18.0.1 / LAN IPv6 で待ち受けます。
+# - 権威ゾーン: DNSZone/home (router.home.internal の A/AAAA)
+# - Firewall: 3 ゾーン (untrust/trust/mgmt) + FirewallPolicy
+# - HealthCheck: internet-via-dslite / internet-via-ix2215 / internet-icmp
+
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
   name: homert02
 spec:
   resources:
-  - apiVersion: system.routerd.net/v1alpha1
-    kind: Package
-    metadata:
-      name: router-service-dependencies
-    spec:
-      state: present
-      packages:
-      - os: ubuntu
-        manager: apt
-        names:
-        - dnsmasq-base
-        - nftables
-        - conntrack
-        - iproute2
-        - iputils-ping
-        - iputils-tracepath
-        - dnsutils
-        - tcpdump
-        - traceroute
-        - procps
-        - ppp
-        - wireguard-tools
-        - strongswan-swanctl
-        - radvd
-        - systemd
-        - net-tools
-        - kmod
-      - os: nixos
-        manager: nix
-        names:
-        - dnsmasq
-        - nftables
-        - conntrack-tools
-        - iproute2
-        - iputils
-        - bind
-        - tcpdump
-        - traceroute
-        - procps
-        - ppp
-        - wireguard-tools
-        - strongswan
-        - radvd
-        - systemd
-        - nettools
-        - kmod
-        optional: true
-      - os: freebsd
-        manager: pkg
-        names:
-        - dnsmasq
-        - wireguard-tools
-        - strongswan
-        - mpd5
-        - bind-tools
-        optional: true
-  - apiVersion: system.routerd.net/v1alpha1
-    kind: SysctlProfile
-    metadata:
-      name: router-runtime
-    spec:
-      profile: router-linux
-      runtime: true
-      persistent: true
-  - apiVersion: system.routerd.net/v1alpha1
-    kind: Sysctl
-    metadata:
-      name: wan-accept-ra
-    spec:
-      key: net.ipv6.conf.ens18.accept_ra
-      value: "2"
-      runtime: true
-      persistent: true
-  - apiVersion: system.routerd.net/v1alpha1
-    kind: NetworkAdoption
-    metadata:
-      name: wan-networkd-owned-by-routerd
-    spec:
-      interface: wan
-      systemdNetworkd:
-        disableDHCPv4: true
-        disableDHCPv6: true
-      systemdResolved:
-        disableDNSStubListener: true
-  - apiVersion: system.routerd.net/v1alpha1
-    kind: NetworkAdoption
-    metadata:
-      name: lan-networkd-owned-by-routerd
-    spec:
-      interface: lan
-      systemdNetworkd:
-        disableDHCPv4: true
-        disableDHCPv6: true
-        disableIPv6RA: true
-  - apiVersion: system.routerd.net/v1alpha1
-    kind: SystemdUnit
-    metadata:
-      name: routerd.service
-    spec:
-      description: routerd controller chain for homert02
-      execStart:
-      - /usr/local/sbin/routerd
-      - serve
-      - --config
-      - /usr/local/etc/routerd/router.yaml
-      - --socket
-      - /run/routerd/routerd.sock
-      - --status-file
-      - /run/routerd/status.json
-      - --observe-interval
-      - "0"
-      - --controller-chain
-      - --controller-chain-supervise-client-daemons=true
-      - --controller-chain-dry-run-network-adoption=false
-      - --controller-chain-dry-run-systemd-unit=false
-      runtimeDirectory:
-      - routerd
-      - routerd/dhcpv6-client
-      - routerd/dhcpv4-client
-      - routerd/pppoe-client
-      - routerd/healthcheck
-      - routerd/dns-resolver
-      stateDirectory:
-      - routerd
-      logsDirectory:
-      - routerd
-      ambientCapabilities:
-      - CAP_NET_ADMIN
-      - CAP_NET_RAW
-      - CAP_NET_BIND_SERVICE
-      capabilityBoundingSet:
-      - CAP_NET_ADMIN
-      - CAP_NET_RAW
-      - CAP_NET_BIND_SERVICE
-      restrictAddressFamilies:
-      - AF_UNIX
-      - AF_INET
-      - AF_INET6
-      - AF_NETLINK
-      enabled: true
-      started: false
-  - apiVersion: net.routerd.net/v1alpha1
-    kind: Interface
-    metadata:
-      name: wan
-    spec:
-      ifname: ens18
-      managed: false
-  - apiVersion: net.routerd.net/v1alpha1
-    kind: Interface
-    metadata:
-      name: lan
-    spec:
-      ifname: ens19
-      managed: false
-  - apiVersion: net.routerd.net/v1alpha1
-    kind: Interface
-    metadata:
-      name: mgmt
-    spec:
-      ifname: ens20
-      managed: false
-  - apiVersion: net.routerd.net/v1alpha1
-    kind: DSLiteTunnel
-    metadata:
-      name: ds-lite
-    spec:
-      interface: wan
-      tunnelName: ds-lite
-      localAddressSource: static
-      localAddress: 2001:db8::1
-      aftrFQDN: gw.transix.jp
-  - apiVersion: firewall.routerd.net/v1alpha1
-    kind: FirewallZone
-    metadata:
-      name: wan
-    spec:
-      role: untrust
-      interfaces:
-      - Interface/wan
-      - DSLiteTunnel/ds-lite
-  - apiVersion: firewall.routerd.net/v1alpha1
-    kind: FirewallZone
-    metadata:
-      name: lan
-    spec:
-      role: trust
-      interfaces:
-      - Interface/lan
-  - apiVersion: firewall.routerd.net/v1alpha1
-    kind: FirewallZone
-    metadata:
-      name: management
-    spec:
-      role: mgmt
-      interfaces:
-      - Interface/mgmt
-  - apiVersion: firewall.routerd.net/v1alpha1
-    kind: FirewallPolicy
-    metadata:
-      name: home
-    spec:
-      logDeny: true
-      sameRoleAccept: true
-  - apiVersion: firewall.routerd.net/v1alpha1
-    kind: FirewallRule
-    metadata:
-      name: allow-lan-dns
-    spec:
-      fromZone: lan
-      toZone: self
-      protocol: udp
-      port: 53
-      action: accept
+
+    # --- OS パッケージ ---
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Package
+      metadata:
+        name: router-service-dependencies
+      spec:
+        state: present
+        packages:
+          - os: ubuntu
+            manager: apt
+            names:
+              - dnsmasq-base
+              - nftables
+              - conntrack
+              - iproute2
+              - iputils-ping
+              - iputils-tracepath
+              - dnsutils
+              - tcpdump
+              - traceroute
+              - procps
+              - ppp
+              - wireguard-tools
+              - strongswan-swanctl
+              - radvd
+              - systemd
+              - net-tools
+              - kmod
+          - os: nixos
+            manager: nix
+            names:
+              - dnsmasq
+              - nftables
+              - conntrack-tools
+              - iproute2
+              - iputils
+              - bind
+              - tcpdump
+              - traceroute
+              - procps
+              - ppp
+              - wireguard-tools
+              - strongswan
+              - radvd
+              - systemd
+              - nettools
+              - kmod
+            optional: true
+          - os: freebsd
+            manager: pkg
+            names:
+              - dnsmasq
+              - wireguard-tools
+              - strongswan
+              - mpd5
+              - bind-tools
+            optional: true
+
+    # --- カーネル router profile ---
+    # forwarding と実トラフィック向け conntrack / socket / TCP 値をまとめて適用します。
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SysctlProfile
+      metadata:
+        name: router-runtime
+      spec:
+        profile: router-linux
+        runtime: true
+        persistent: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: wan-accept-ra
+      spec:
+        key: net.ipv6.conf.ens18.accept_ra
+        value: "2"
+        runtime: true
+        persistent: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: lan-accept-ra-transitional
+      spec:
+        key: net.ipv6.conf.ens19.accept_ra
+        value: "2"
+        runtime: true
+        persistent: true
+
+    # --- OS ネットワーク採用 ---
+    # ens18/ens19 の systemd-networkd DHCP クライアントを止めます。
+    # ens20 は管理経路なので触りません。
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: NetworkAdoption
+      metadata:
+        name: wan-networkd-owned-by-routerd
+      spec:
+        interface: wan
+        systemdNetworkd:
+          disableDHCPv4: true
+          disableDHCPv6: true
+        systemdResolved:
+          disableDNSStubListener: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: NetworkAdoption
+      metadata:
+        name: lan-networkd-owned-by-routerd
+      spec:
+        interface: lan
+        systemdNetworkd:
+          disableDHCPv4: true
+          disableDHCPv6: true
+          disableIPv6RA: true
+
+    # --- routerd 自身の systemd ユニット ---
+    # このリソースはユニットを生成して有効化します。
+    # routerd 自身を再起動し続けないよう、開始操作は外側の手順に任せます。
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
+        name: routerd.service
+      spec:
+        description: routerd controller chain for homert02
+        execStart:
+          - /usr/local/sbin/routerd
+          - serve
+          - --config
+          - /usr/local/etc/routerd/router.yaml
+          - --socket
+          - /run/routerd/routerd.sock
+          - --status-file
+          - /run/routerd/status.json
+          - --observe-interval
+          - "0"
+          - --controller-chain
+          - --controller-chain-daemon-sockets
+          - wan-pd=/run/routerd/dhcpv6-client/wan-pd.sock
+          - --controller-chain-dry-run-address=false
+          - --controller-chain-dry-run-dslite=false
+          - --controller-chain-dry-run-route=false
+          - --controller-chain-dry-run-ra=true
+          - --controller-chain-dry-run-dhcpv6=false
+          - --controller-chain-dry-run-dns-resolver=false
+          - --controller-chain-dry-run-nat=false
+          - --controller-chain-dry-run-firewall=false
+          - --controller-chain-dry-run-package=false
+          - --controller-chain-dry-run-network-adoption=false
+          - --controller-chain-dry-run-systemd-unit=false
+          - --controller-chain-supervise-client-daemons=true
+          - --controller-chain-dnsmasq-command
+          - /usr/sbin/dnsmasq
+          - --controller-chain-dnsmasq-config
+          - /run/routerd/dnsmasq.conf
+          - --controller-chain-dnsmasq-pid
+          - /run/routerd/dnsmasq.pid
+          - --controller-chain-dnsmasq-port
+          - "53"
+          - --controller-chain-dnsmasq-listen-addresses
+          - 127.0.0.1
+          - --controller-chain-nftables-file
+          - /run/routerd/nat44.nft
+          - --controller-chain-firewall-file
+          - /run/routerd/firewall.nft
+          - --controller-chain-conntrack-interval
+          - 30s
+        runtimeDirectory:
+          - routerd
+          - routerd/dhcpv6-client
+          - routerd/dhcpv4-client
+          - routerd/pppoe-client
+          - routerd/dns-resolver
+        runtimeDirectoryPreserve: "yes"
+        stateDirectory:
+          - routerd
+        logsDirectory:
+          - routerd
+        readWritePaths:
+          - /run/routerd
+          - /var/lib/routerd
+          - /var/log/routerd
+          - /var/lib/misc
+          - /etc/sysctl.d
+          - /etc/systemd/network
+          - /etc/systemd/resolved.conf.d
+          - /etc/systemd/system
+          - /usr/local/etc/routerd
+          - /var/cache/apt
+          - /var/lib/apt
+          - /var/lib/dpkg
+          - /var/log/apt
+        ambientCapabilities:
+          - CAP_NET_ADMIN
+          - CAP_NET_RAW
+          - CAP_NET_BIND_SERVICE
+          - CAP_SETUID
+          - CAP_SETGID
+          - CAP_CHOWN
+        capabilityBoundingSet:
+          - CAP_NET_ADMIN
+          - CAP_NET_RAW
+          - CAP_NET_BIND_SERVICE
+          - CAP_SETUID
+          - CAP_SETGID
+          - CAP_CHOWN
+        restrictAddressFamilies:
+          - AF_UNIX
+          - AF_INET
+          - AF_INET6
+          - AF_NETLINK
+        protectSystem: "no"
+        noNewPrivileges: false
+        enabled: true
+        started: false
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
+        name: routerd-dhcpv6-client@wan-pd.service
+      spec:
+        state: absent
+
+    # --- インターフェース ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        managed: false
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        managed: false
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: mgmt
+      spec:
+        ifname: ens20
+        managed: false
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lo
+      spec:
+        ifname: lo
+        managed: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Link
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Link
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Link
+      metadata:
+        name: mgmt
+      spec:
+        ifname: ens20
+
+    # --- WAN 側: PD + Info ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6PrefixDelegation
+      metadata:
+        name: wan-pd
+      spec:
+        interface: wan
+        prefixLength: 60
+        iaid: "1"
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6Information
+      metadata:
+        name: wan-info
+        ownerRefs:
+          - kind: DHCPv6PrefixDelegation
+            name: wan-pd
+      spec:
+        interface: wan
+        request:
+          - aftr-name
+          - dns-servers
+          - sntp-servers
+          - domain-search
+        dependsOn:
+          - resource: DHCPv6PrefixDelegation/wan-pd
+            phase: Bound
+
+    # --- LAN 側 IPv4: 主アドレス + IX2215 transit alias ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-base
+      spec:
+        interface: lan
+        address: 172.18.0.1/16
+
+    # IX2215 (172.17.0.1) 経由 fallback と IX2215 admin への到達性のために常時付ける。
+    # IX2215 退役後 (Phase 3) に削除予定。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-legacy-bridge
+      spec:
+        interface: lan
+        address: 172.17.0.2/16
+
+    # --- LAN 側 IPv6: PD 由来 ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: lan-base
+        ownerRefs:
+          - kind: DHCPv6PrefixDelegation
+            name: wan-pd
+      spec:
+        interface: lan
+        prefixDelegation: wan-pd
+        subnetID: "1"
+        addressSuffix: ::1
+        dependsOn:
+          - resource: DHCPv6PrefixDelegation/wan-pd
+            phase: Bound
+          - resource: Link/lan
+            phase: Up
+
+    # --- DSLite tunnel ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite
+        ownerRefs:
+          - kind: DHCPv6Information
+            name: wan-info
+      spec:
+        interface: wan
+        tunnelName: ds-routerd
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: lan-base
+        localAddressSuffix: ::3
+        aftrFrom:
+          resource: DHCPv6Information/wan-info
+          field: aftrName
+          optional: true
+        aftrFQDN: gw.transix.jp
+        mtu: 1460
+        dependsOn:
+          - resource: DNSResolver/lan-resolver
+            phase: Applied
+
+    # --- IPv4 default route と egress 選択 (DSLite primary + IX2215 fallback) ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: EgressRoutePolicy
+      metadata:
+        name: ipv4-default
+      spec:
+        family: ipv4
+        selection: highest-weight-ready
+        hysteresis: 60s
+        destinationCIDRs:
+          - 0.0.0.0/0
+        candidates:
+          - name: ds-lite
+            source: DSLiteTunnel/ds-lite
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite
+              field: device
+            gatewaySource: none
+            weight: 100
+            healthCheck: internet-via-dslite
+            dependsOn:
+              - resource: DSLiteTunnel/ds-lite
+                phase: Up
+          - name: ix2215-fallback
+            source: Interface/lan
+            deviceFrom:
+              resource: Interface/lan
+              field: ifname
+            gateway: 172.17.0.1
+            gatewaySource: static
+            weight: 50
+            healthCheck: internet-via-ix2215
+            dependsOn:
+              - resource: Link/lan
+                phase: Up
+              - resource: IPv4StaticAddress/lan-legacy-bridge
+                phase: Applied
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: default
+        ownerRefs:
+          - kind: EgressRoutePolicy
+            name: ipv4-default
+      spec:
+        destination: 0.0.0.0/0
+        deviceFrom:
+          resource: EgressRoutePolicy/ipv4-default
+          field: selectedDevice
+        gatewayFrom:
+          resource: EgressRoutePolicy/ipv4-default
+          field: selectedGateway
+          optional: true
+        dependsOn:
+          - resource: EgressRoutePolicy/ipv4-default
+            phase: Applied
+
+    # IX2215 経路用 healthcheck の専用 /32 route。
+    # default route が DSLite に握られている間も 1.0.0.1 への probe は
+    # 必ず IX2215 経由にして、fallback 経路の生死を独立に観測する。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: ix2215-healthcheck
+      spec:
+        destination: 1.0.0.1/32
+        device: ens19
+        gateway: 172.17.0.1
+        metric: 10
+        dependsOn:
+          - resource: IPv4StaticAddress/lan-legacy-bridge
+            phase: Applied
+
+    # DSLite 経路用 healthcheck の専用 /32 route。
+    # default route が IX2215 fallback に残っている間も 1.1.1.1 への probe は
+    # 必ず DS-Lite tunnel 経由にして、primary 経路の生死を独立に観測する。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: dslite-healthcheck
+      spec:
+        destination: 1.1.1.1/32
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite
+          field: interface
+        metric: 10
+        dependsOn:
+          - resource: DSLiteTunnel/ds-lite
+            phase: Up
+
+    # --- NAT44 (egress = 選択された出口) ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-egress
+        ownerRefs:
+          - kind: EgressRoutePolicy
+            name: ipv4-default
+      spec:
+        type: masquerade
+        egressPolicyRef: ipv4-default
+        sourceRanges:
+          - 172.18.0.0/16
+
+    # --- HealthCheck ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite
+      spec:
+        daemon: routerd-healthcheck
+        socketSource: /run/routerd/healthcheck/internet-via-dslite.sock
+        targetSource: static
+        target: 1.1.1.1
+        protocol: tcp
+        port: 443
+        sourceInterface: ds-lite
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-ix2215
+        ownerRefs:
+          - kind: IPv4Route
+            name: ix2215-healthcheck
+      spec:
+        daemon: routerd-healthcheck
+        socketSource: /run/routerd/healthcheck/internet-via-ix2215.sock
+        targetSource: static
+        target: 1.0.0.1
+        protocol: tcp
+        port: 443
+        sourceInterface: lan
+        sourceAddress: 172.17.0.2
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-icmp
+      spec:
+        daemon: routerd-healthcheck
+        socketSource: /run/routerd/healthcheck/internet-icmp.sock
+        targetSource: static
+        target: 1.1.1.1
+        protocol: icmp
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    # --- DNS Resolver (LAN/mgmt/local で listen、LAN IPv6 は PD 取得後に動的 listen) ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSResolver
+      metadata:
+        name: lan-resolver
+        ownerRefs:
+          - kind: DNSZone
+            name: home
+          - kind: DHCPv6Information
+            name: wan-info
+          - kind: IPv6DelegatedAddress
+            name: lan-base
+      spec:
+        listen:
+          - name: local
+            addresses:
+              - 127.0.0.1
+              - 192.168.123.129
+            port: 53
+            sources: [local-zone, nextdns-bootstrap-ngn, nextdns-bootstrap-public, ngn-aftr, default]
+          - name: lan
+            addresses:
+              - 172.18.0.1
+            addressFrom:
+              - resource: IPv6DelegatedAddress/lan-base
+                field: address
+            port: 53
+            sources: [local-zone, nextdns-bootstrap-ngn, nextdns-bootstrap-public, ngn-aftr, default]
+        sources:
+          - name: local-zone
+            kind: zone
+            match:
+              - home.internal
+              - 18.172.in-addr.arpa
+            zoneRef:
+              - DNSZone/home
+          - name: ngn-aftr
+            kind: forward
+            match:
+              - transix.jp
+            upstreamFrom:
+              - resource: DHCPv6Information/wan-info
+                field: dnsServers
+          - name: nextdns-bootstrap-ngn
+            kind: forward
+            match:
+              - nextdns.io
+            upstreamFrom:
+              - resource: DHCPv6Information/wan-info
+                field: dnsServers
+          - name: nextdns-bootstrap-public
+            kind: forward
+            match:
+              - nextdns.io
+            upstreams:
+              - udp://1.1.1.1:53
+              - udp://8.8.8.8:53
+          - name: default
+            kind: upstream
+            match:
+              - "."
+            upstreams:
+              - udp://1.1.1.1:53
+              - udp://8.8.8.8:53
+            healthcheck:
+              interval: 15s
+              timeout: 3s
+              failThreshold: 3
+              passThreshold: 2
+        cache:
+          enabled: true
+          maxEntries: 10000
+          minTTL: 60s
+          maxTTL: 24h
+          negativeTTL: 30s
+
+    # --- ローカル権威ゾーン ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSZone
+      metadata:
+        name: home
+        ownerRefs:
+          - kind: IPv6DelegatedAddress
+            name: lan-base
+      spec:
+        zone: home.internal
+        ttl: 300
+        records:
+          - hostname: router
+            ipv4: 172.18.0.1
+            ipv6From:
+              resource: IPv6DelegatedAddress/lan-base
+              field: address
+        dhcpDerived:
+          sources:
+            - DHCPv4Server/lan-dhcpv4
+            - DHCPv6Server/lan-dhcpv6
+          hostnameSuffix: home.internal
+          ddns: true
+          ttl: 60
+        reverseZones:
+          - name: 18.172.in-addr.arpa
+
+    # --- LAN DHCPv4 / DHCPv6 / RA ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-dhcpv4
+      spec:
+        interface: lan
+        addressPool:
+          start: 172.18.0.100
+          end: 172.18.0.200
+          leaseTime: 12h
+        gateway: 172.18.0.1
+        dnsServers:
+          - 172.18.0.1
+        ntpServers:
+          - 172.18.0.1
+        domain: home.internal
+        options:
+          - name: domain-search
+            value: home.internal
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6RouterAdvertisement
+      metadata:
+        name: lan-ra
+        ownerRefs:
+          - kind: IPv6DelegatedAddress
+            name: lan-base
+      spec:
+        interface: lan
+        prefixFrom:
+          resource: IPv6DelegatedAddress/lan-base
+          field: address
+        rdnssFrom:
+          - resource: IPv6DelegatedAddress/lan-base
+            field: address
+        dnssl:
+          - home.internal
+        mFlag: false
+        oFlag: true
+        mtu: 1500
+        prfPreference: high
+        preferredLifetime: "3600"
+        validLifetime: "7200"
+        dependsOn:
+          - resource: IPv6DelegatedAddress/lan-base
+            phase: Applied
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6Server
+      metadata:
+        name: lan-dhcpv6
+        ownerRefs:
+          - kind: IPv6DelegatedAddress
+            name: lan-base
+      spec:
+        interface: lan
+        mode: stateless
+        dnsServerFrom:
+          - resource: IPv6DelegatedAddress/lan-base
+            field: address
+        sntpServerFrom:
+          - resource: DHCPv6Information/wan-info
+            field: sntpServers
+        domainSearch:
+          - home.internal
+        leaseTime: 12h
+        dependsOn:
+          - resource: IPv6DelegatedAddress/lan-base
+            phase: Applied
+
+    # --- Firewall (3 ゾーン: untrust / trust / mgmt) ---
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: wan
+      spec:
+        role: untrust
+        interfaces:
+          - Interface/wan
+          - DSLiteTunnel/ds-lite
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces:
+          - Interface/lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: management
+      spec:
+        role: mgmt
+        interfaces:
+          - Interface/mgmt
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: home
+      spec:
+        logDeny: true
+        sameRoleAccept: true

@@ -184,7 +184,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 				return err
 			}
 		}
-		status := map[string]any{"phase": "Up", "interface": ifname, "localIPv6": local, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
+		status := map[string]any{"phase": "Up", "interface": ifname, "tunnelName": ifname, "device": ifname, "localIPv6": local, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, status); err != nil {
 			return err
 		}
