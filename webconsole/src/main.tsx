@@ -253,16 +253,8 @@ const useStyles = makeStyles({
   },
   clientsGrid: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1.15fr) minmax(320px, 0.85fr)",
     gap: "16px",
-    alignItems: "start",
-    "@media (max-width: 980px)": {
-      gridTemplateColumns: "1fr",
-    },
-  },
-  clientsStack: {
-    display: "grid",
-    gap: "16px",
+    gridTemplateColumns: "1fr",
   },
   interfaceGrid: {
     display: "grid",
@@ -624,16 +616,14 @@ function App() {
               />
               <ClientInventory leases={summary?.dhcpLeases ?? []} flows={summary?.trafficFlows ?? []} />
             </Card>
-            <div className={styles.clientsStack}>
-              <Card>
-                <CardHeader header={<Text weight="semibold">Client traffic</Text>} />
-                <ClientTraffic flows={summary?.trafficFlows ?? []} />
-              </Card>
-              <Card>
-                <CardHeader header={<Text weight="semibold">DHCP leases</Text>} />
-                <DHCPLeaseTable leases={summary?.dhcpLeases ?? []} />
-              </Card>
-            </div>
+            <Card>
+              <CardHeader header={<Text weight="semibold">Client traffic</Text>} />
+              <ClientTraffic flows={summary?.trafficFlows ?? []} />
+            </Card>
+            <Card>
+              <CardHeader header={<Text weight="semibold">DHCP leases</Text>} />
+              <DHCPLeaseTable leases={summary?.dhcpLeases ?? []} />
+            </Card>
           </div>
         ) : null}
         {selected === "connections" ? (
