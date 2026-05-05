@@ -1,14 +1,3 @@
-# homert02 (本番自宅ルーター、IX2215 置換) — 1 本化 yaml
-#
-# 動的 IPv6 (DHCPv6-PD 由来) は ipv6From/addressFrom で明示参照します。
-#
-# - WAN: DHCPv6-PD + DHCPv6 Info、DSLite tunnel (local endpoint は WAN RA/SLAAC アドレス)
-# - LAN: 静的 IPv4 (172.18.0.1/16)、IPv6 (PD::1/64)、IX2215 transit alias (172.17.0.2/16)
-# - 経路: EgressRoutePolicy = DSLite primary + IX2215 fallback、IPv4Route、NAT44
-# - DNS: DNSResolver は 127.0.0.1 / mgmt / 172.18.0.1 / LAN IPv6 で待ち受けます。
-# - 権威ゾーン: DNSZone/home (router.home.internal の A/AAAA)
-# - Firewall: 3 ゾーン (untrust/trust/mgmt) + FirewallPolicy
-# - HealthCheck: internet-via-dslite / internet-via-ix2215 / internet-icmp
 
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -17,7 +6,6 @@ metadata:
 spec:
   resources:
 
-    # --- ログ転送 ---
     - apiVersion: system.routerd.net/v1alpha1
       kind: LogSink
       metadata:
@@ -31,7 +19,6 @@ spec:
           facility: local6
           tag: routerd-homert02
 
-    # --- OS パッケージ ---
     - apiVersion: system.routerd.net/v1alpha1
       kind: Package
       metadata:
@@ -91,8 +78,6 @@ spec:
               - bind-tools
             optional: true
 
-    # --- カーネル router profile ---
-    # forwarding と実トラフィック向け conntrack / socket / TCP 値をまとめて適用します。
     - apiVersion: system.routerd.net/v1alpha1
       kind: SysctlProfile
       metadata:
@@ -173,12 +158,6 @@ spec:
           - file: /var/lib/routerd/firewall-logs.db
             retention: 90d
 
-    # --- OS ネットワーク採用 ---
-    # ens18 は WAN 側を 192.168.1.249/24 で静的に持ちます。
-    # HGW に 172.18.0.0/16 via 192.168.1.249 を設定し、
-    # 192.168.0.0/16 宛ては NAPT せずルーティングします。
-    # ens19 の systemd-networkd DHCP クライアントは止めます。
-    # ens20 は管理経路なので触りません。
     - apiVersion: system.routerd.net/v1alpha1
       kind: NetworkAdoption
       metadata:
@@ -201,9 +180,6 @@ spec:
           disableDHCPv6: true
           disableIPv6RA: true
 
-    # --- routerd 自身の systemd ユニット ---
-    # このリソースはユニットを生成して有効化します。
-    # routerd 自身を再起動し続けないよう、開始操作は外側の手順に任せます。
     - apiVersion: system.routerd.net/v1alpha1
       kind: SystemdUnit
       metadata:
@@ -354,7 +330,6 @@ spec:
         port: 8080
         title: homert02
 
-    # --- インターフェース ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
@@ -403,7 +378,6 @@ spec:
       spec:
         ifname: ens20
 
-    # --- WAN 側: PD + Info ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv6PrefixDelegation
       metadata:
@@ -430,7 +404,6 @@ spec:
           - resource: DHCPv6PrefixDelegation/wan-pd
             phase: Bound
 
-    # --- WAN 側 IPv4: HGW LAN static address ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
@@ -439,7 +412,6 @@ spec:
         interface: wan
         address: 192.168.1.249/24
 
-    # --- LAN 側 IPv4: 主アドレス + IX2215 transit alias ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
@@ -448,8 +420,6 @@ spec:
         interface: lan
         address: 172.18.0.1/16
 
-    # IX2215 (172.17.0.1) 経由 fallback と IX2215 admin への到達性のために常時付ける。
-    # IX2215 退役後 (Phase 3) に削除予定。
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
@@ -458,7 +428,6 @@ spec:
         interface: lan
         address: 172.17.0.2/16
 
-    # --- LAN 側 IPv6: PD 由来 ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
       metadata:
@@ -477,9 +446,6 @@ spec:
           - resource: Link/lan
             phase: Up
 
-    # --- DS-Lite source addresses ---
-    # AFTR ごとに PD 由来の source IPv6 を固定します。
-    # b/c が通らない場合でも、HealthCheck が落として hash group から外します。
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
       metadata:
@@ -523,7 +489,6 @@ spec:
           - resource: Link/lan
             phase: Up
 
-    # --- DS-Lite tunnels ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel
       metadata:
@@ -534,8 +499,6 @@ spec:
       spec:
         interface: wan
         tunnelName: ds-routerd
-        # DS-Lite の local endpoint は WAN 側 RA/SLAAC アドレスを使います。
-        # PD 由来 LAN アドレスより先に構成されるため、起動直後の収束が早くなります。
         localAddressSource: interface
         aftrFrom:
           resource: DHCPv6Information/wan-info
@@ -556,7 +519,6 @@ spec:
       spec:
         interface: wan
         tunnelName: ds-lite-a
-        # Explicit AFTR A, using delegated PD address as local endpoint.
         localAddressSource: delegatedAddress
         localDelegatedAddress: ds-lite-a-source
         localAddressSuffix: ::11
@@ -575,7 +537,6 @@ spec:
       spec:
         interface: wan
         tunnelName: ds-lite-b
-        # Explicit AFTR B, using delegated PD address as local endpoint.
         localAddressSource: delegatedAddress
         localDelegatedAddress: ds-lite-b-source
         localAddressSuffix: ::12
@@ -594,7 +555,6 @@ spec:
       spec:
         interface: wan
         tunnelName: ds-lite-c
-        # Explicit AFTR C, using delegated PD address as local endpoint.
         localAddressSource: delegatedAddress
         localDelegatedAddress: ds-lite-c-source
         localAddressSuffix: ::13
@@ -604,10 +564,6 @@ spec:
           - resource: IPv6DelegatedAddress/ds-lite-c-source
             phase: Applied
 
-    # --- IPv4 default route と egress 選択 ---
-    # router 自身の既定経路は、起動が速い RA/SLAAC 由来の旧 ds-lite を優先します。
-    # LAN クライアントの転送は下の IPv4PolicyRouteSet / IPv4DefaultRoutePolicy で
-    # PD 由来 ds-lite-a/b/c に端末 IPv4 アドレス単位で振り分けます。
     - apiVersion: net.routerd.net/v1alpha1
       kind: EgressRoutePolicy
       metadata:
@@ -645,9 +601,6 @@ spec:
               - resource: IPv4StaticAddress/lan-legacy-bridge
                 phase: Applied
 
-    # LAN クライアントの IPv4 転送は端末 IPv4 アドレスで安定して振り分けます。
-    # routeSet が選ばれている間、新規 flow は ds-lite-a/b/c のいずれかへ進みます。
-    # ct mark を保持するため、既存 flow は途中で経路が変わりません。
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4PolicyRouteSet
       metadata:
@@ -684,10 +637,6 @@ spec:
             mark: 0x112
             healthCheck: internet-via-dslite-c
 
-    # LAN クライアント向けの段階退避です。
-    # 1. PD 由来 ds-lite-a/b/c のハッシュ振り分け
-    # 2. RA/SLAAC 由来の旧 ds-lite
-    # 3. IX2215 fallback
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4DefaultRoutePolicy
       metadata:
@@ -743,9 +692,6 @@ spec:
           - resource: EgressRoutePolicy/ipv4-default
             phase: Applied
 
-    # IX2215 経路用 healthcheck の専用 /32 route。
-    # default route が DSLite に握られている間も 1.0.0.1 への probe は
-    # 必ず IX2215 経由にして、fallback 経路の生死を独立に観測する。
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
@@ -759,9 +705,6 @@ spec:
           - resource: IPv4StaticAddress/lan-legacy-bridge
             phase: Applied
 
-    # DSLite 経路用 healthcheck の専用 /32 route。
-    # default route が IX2215 fallback に残っている間も 1.1.1.1 への probe は
-    # 必ず DS-Lite A tunnel 経由にして、primary 経路の生死を独立に観測する。
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
@@ -776,10 +719,6 @@ spec:
           - resource: DSLiteTunnel/ds-lite-a
             phase: Up
 
-    # NTT HGW 側の IPv4 は WAN 側の物理 NIC へ直接出します。
-    # default route は EgressRoutePolicy が管理します。
-    # 192.168.123.0/24 は当面 PVE SDN の接続経路として使います。
-    # 将来 routerd VPN に移すときは、より具体的な経路で上書きします。
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
@@ -794,8 +733,6 @@ spec:
           - resource: NetworkAdoption/wan-networkd-owned-by-routerd
             phase: Applied
 
-    # 172.16.0.0/12 は IX2215 が持つ内部網へ戻します。
-    # 172.17.0.0/16 と 172.18.0.0/16 は接続経路がより優先されます。
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
@@ -811,8 +748,6 @@ spec:
           - resource: IPv4StaticAddress/lan-legacy-bridge
             phase: Applied
 
-    # 未使用の 10.0.0.0/8 は明示的に破棄します。
-    # DS-Lite や IX2215 fallback へ漏らしません。
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
@@ -822,7 +757,6 @@ spec:
         destination: 10.0.0.0/8
         metric: 20
 
-    # --- NAT44 (egress = 選択された出口) ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: NAT44Rule
       metadata:
@@ -876,9 +810,6 @@ spec:
           - 172.16.0.0/12
           - 10.0.0.0/8
 
-    # --- Path MTU / TCP MSS ---
-    # DS-Lite は IPv6 外側ヘッダーを持つため、LAN から tunnel へ出る
-    # 経路 MTU を実測し、TCP SYN の MSS を自動で落とします。
     - apiVersion: net.routerd.net/v1alpha1
       kind: PathMTUPolicy
       metadata:
@@ -910,7 +841,6 @@ spec:
           families:
             - ipv4
 
-    # --- HealthCheck ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: HealthCheck
       metadata:
@@ -1006,7 +936,6 @@ spec:
         healthyThreshold: 1
         unhealthyThreshold: 3
 
-    # --- DNS Resolver (LAN/mgmt/local で listen、LAN IPv6 は PD 取得後に動的 listen) ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSResolver
       metadata:
@@ -1111,7 +1040,6 @@ spec:
           path: /var/lib/routerd/dns-queries.db
           retention: 30d
 
-    # --- ローカル権威ゾーン ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSZone
       metadata:
@@ -1138,7 +1066,6 @@ spec:
         reverseZones:
           - name: 18.172.in-addr.arpa
 
-    # --- LAN DHCPv4 / DHCPv6 / RA ---
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Server
       metadata:
@@ -1159,9 +1086,6 @@ spec:
           - name: domain-search
             value: home.internal
 
-    # MAC アドレスごとの固定 IPv4 払い出しは DHCPv4Reservation で表します。
-    # 既知端末は 172.18.0.128-191 に固定し、未知端末は上の動的プール
-    # 172.18.1.64-191 へ逃がします。
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Reservation
       metadata:
@@ -1222,7 +1146,6 @@ spec:
           - resource: IPv6DelegatedAddress/lan-base
             phase: Applied
 
-    # --- Firewall (3 ゾーン: untrust / trust / mgmt) ---
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
       metadata:
