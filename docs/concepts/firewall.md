@@ -25,3 +25,15 @@ dnsmasq DHCP service, and `routerd-dns-resolver`.
 
 The firewall table is separate from NAT. NAT44 continues to use `ip
 routerd_nat`.
+
+## Logging
+
+When `FirewallPolicy.spec.logDeny` is true and a `FirewallLog` resource is
+enabled, generated nftables rules log denied packets to the configured NFLOG
+group. `routerd-firewall-logger` reads that group through `tcpdump` and stores
+rows in `firewall-logs.db`.
+
+The Web Console Firewall tab and `routerctl firewall-logs` read from that
+database. The logger must be enabled as a managed `SystemdUnit`, for example
+with `routerd-firewall-logger daemon --path /var/lib/routerd/firewall-logs.db
+--nflog-group 1`.

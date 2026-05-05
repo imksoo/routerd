@@ -65,9 +65,6 @@ func daemon(args []string, stdin io.Reader) error {
 		return err
 	}
 	defer log.Close()
-	// Phase 2.9 keeps the daemon buildable without CGO. Production NFLOG
-	// ingestion will plug into this writer; stdin/input-file mode lets tests
-	// and dry-run deployments exercise the database path now.
 	reader := stdin
 	var cmd *exec.Cmd
 	if opts.inputFile != "" {
@@ -79,6 +76,21 @@ func daemon(args []string, stdin io.Reader) error {
 		reader = file
 	} else if opts.pflogInterface != "" {
 		cmd = exec.Command(opts.tcpdumpPath, "-n", "-e", "-tttt", "-l", "-i", opts.pflogInterface)
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return err
+		}
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		defer func() {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		}()
+		reader = stdout
+	} else if opts.group > 0 {
+		cmd = exec.Command(opts.tcpdumpPath, "-n", "-tttt", "-l", "-i", "nflog:"+strconv.Itoa(opts.group))
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			return err
@@ -126,9 +138,9 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.SetOutput(io.Discard)
 	opts := options{}
 	fs.StringVar(&opts.path, "path", "/var/lib/routerd/firewall-logs.db", "firewall log database path")
-	fs.IntVar(&opts.group, "nflog-group", 1, "NFLOG group number reserved for production ingestion")
+	fs.IntVar(&opts.group, "nflog-group", 0, "read Linux NFLOG through tcpdump on this group; 0 disables NFLOG input")
 	fs.StringVar(&opts.inputFile, "input-file", "", "read firewall log lines from file")
-	fs.StringVar(&opts.inputFormat, "input-format", "auto", "input format: auto, json, kv, pflog-tcpdump")
+	fs.StringVar(&opts.inputFormat, "input-format", "auto", "input format: auto, json, kv, nflog-tcpdump, pflog-tcpdump")
 	fs.StringVar(&opts.pflogInterface, "pflog-interface", "", "read FreeBSD pflog through tcpdump on this interface")
 	fs.StringVar(&opts.tcpdumpPath, "tcpdump", "tcpdump", "tcpdump command path for pflog input")
 	if err := fs.Parse(args); err != nil {
@@ -150,6 +162,8 @@ func parseFirewallLogLine(line, format string) (logstore.FirewallLogEntry, bool)
 		return parseKeyValueFirewallLogLine(line)
 	case "pflog-tcpdump":
 		return parsePflogTCPDumpLine(line)
+	case "nflog-tcpdump":
+		return parseNFLogTCPDumpLine(line)
 	default:
 		return logstore.FirewallLogEntry{}, false
 	}
@@ -158,6 +172,11 @@ func parseFirewallLogLine(line, format string) (logstore.FirewallLogEntry, bool)
 	}
 	if strings.Contains(line, "rule ") && strings.Contains(line, " on ") && strings.Contains(line, " > ") {
 		if entry, ok := parsePflogTCPDumpLine(line); ok {
+			return entry, true
+		}
+	}
+	if strings.Contains(line, " > ") {
+		if entry, ok := parseNFLogTCPDumpLine(line); ok {
 			return entry, true
 		}
 	}
@@ -241,7 +260,7 @@ func parsePflogTCPDumpLine(line string) (logstore.FirewallLogEntry, bool) {
 		after := strings.SplitN(beforePacket, marker, 2)[1]
 		iface = strings.TrimSpace(strings.TrimSuffix(after, ":"))
 	}
-	endpoints, rest, ok := strings.Cut(packet, ":")
+	endpoints, rest, ok := splitTCPDumpPacket(packet)
 	if !ok {
 		return logstore.FirewallLogEntry{}, false
 	}
@@ -277,6 +296,90 @@ func parsePflogTCPDumpLine(line string) (logstore.FirewallLogEntry, bool) {
 	return entry, entry.SrcAddress != "" && entry.DstAddress != "" && entry.Protocol != ""
 }
 
+func parseNFLogTCPDumpLine(line string) (logstore.FirewallLogEntry, bool) {
+	packet, l3, ok := nflogPacketPayload(line)
+	if !ok {
+		return logstore.FirewallLogEntry{}, false
+	}
+	endpoints, rest, ok := splitTCPDumpPacket(packet)
+	if !ok {
+		return logstore.FirewallLogEntry{}, false
+	}
+	src, dst, ok := strings.Cut(endpoints, " > ")
+	if !ok {
+		return logstore.FirewallLogEntry{}, false
+	}
+	srcAddress, srcPort := splitEndpoint(src)
+	dstAddress, dstPort := splitEndpoint(dst)
+	protocol := protocolFromPflogPayload(rest)
+	prefix := firewallPrefixFromNFLog(line)
+	action := actionFromFirewallPrefix(prefix)
+	if action == "" {
+		action = "drop"
+	}
+	entry := logstore.FirewallLogEntry{
+		Timestamp:   time.Now().UTC(),
+		RuleName:    prefix,
+		Action:      action,
+		SrcAddress:  srcAddress,
+		SrcPort:     atoi(srcPort),
+		DstAddress:  dstAddress,
+		DstPort:     atoi(dstPort),
+		Protocol:    protocol,
+		L3Proto:     l3,
+		PacketBytes: packetBytesFromPflogPayload(rest),
+		Hint:        "nflog-tcpdump",
+	}
+	return entry, entry.SrcAddress != "" && entry.DstAddress != "" && entry.Protocol != ""
+}
+
+func nflogPacketPayload(line string) (string, string, bool) {
+	for _, marker := range []struct {
+		Text string
+		L3   string
+	}{
+		{Text: " IP6 ", L3: "ipv6"},
+		{Text: " IP ", L3: "ipv4"},
+		{Text: "IP6 ", L3: "ipv6"},
+		{Text: "IP ", L3: "ipv4"},
+	} {
+		if idx := strings.Index(line, marker.Text); idx >= 0 {
+			payload := strings.TrimSpace(line[idx+len(marker.Text):])
+			return payload, marker.L3, payload != ""
+		}
+	}
+	return "", "", false
+}
+
+func firewallPrefixFromNFLog(line string) string {
+	start := strings.Index(line, "routerd firewall ")
+	if start < 0 {
+		return ""
+	}
+	prefix := strings.TrimSpace(line[start:])
+	for _, marker := range []string{" IP6 ", " IP ", "IP6 ", "IP "} {
+		if idx := strings.Index(prefix, marker); idx > 0 {
+			prefix = strings.TrimSpace(prefix[:idx])
+			break
+		}
+	}
+	return strings.Trim(prefix, `"'`)
+}
+
+func actionFromFirewallPrefix(prefix string) string {
+	text := strings.ToLower(prefix)
+	switch {
+	case strings.Contains(text, "deny"), strings.Contains(text, "drop"):
+		return "drop"
+	case strings.Contains(text, "reject"):
+		return "reject"
+	case strings.Contains(text, "accept"), strings.Contains(text, "pass"):
+		return "accept"
+	default:
+		return ""
+	}
+}
+
 func splitEndpoint(value string) (string, string) {
 	value = strings.TrimSpace(strings.TrimSuffix(value, ","))
 	if value == "" {
@@ -292,6 +395,13 @@ func splitEndpoint(value string) (string, string) {
 		return value[:open], value[open+1:]
 	}
 	return value, ""
+}
+
+func splitTCPDumpPacket(packet string) (string, string, bool) {
+	if idx := strings.LastIndex(packet, ": "); idx >= 0 {
+		return packet[:idx], packet[idx+2:], true
+	}
+	return strings.Cut(packet, ":")
 }
 
 func protocolFromPflogPayload(value string) string {
@@ -354,5 +464,5 @@ func firstNonEmpty(values ...string) string {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: routerd-firewall-logger daemon --path /var/lib/routerd/firewall-logs.db [--pflog-interface pflog0]")
+	fmt.Fprintln(w, "usage: routerd-firewall-logger daemon --path /var/lib/routerd/firewall-logs.db [--nflog-group 1 | --pflog-interface pflog0]")
 }

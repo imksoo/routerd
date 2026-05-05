@@ -23,3 +23,14 @@ routerd は nftables の `inet routerd_filter` テーブルを管理します。
 などに必要な開口も、routerd が内部で生成します。
 
 NAT44 は別の `ip routerd_nat` テーブルを使います。
+
+## ログ
+
+`FirewallPolicy.spec.logDeny` が true で、`FirewallLog` リソースが有効な場合、
+生成した nftables ルールは拒否したパケットを設定済みの NFLOG group へ送ります。
+`routerd-firewall-logger` は `tcpdump` 経由でその group を読み取り、
+`firewall-logs.db` に保存します。
+
+Web Console の Firewall タブと `routerctl firewall-logs` は、このデータベースを読みます。
+logger は管理対象の `SystemdUnit` として有効にしてください。
+たとえば `routerd-firewall-logger daemon --path /var/lib/routerd/firewall-logs.db --nflog-group 1` を使います。

@@ -319,7 +319,7 @@ spec:
           - AF_INET6
         noNewPrivileges: true
         enabled: true
-        started: false
+        started: true
     - apiVersion: system.routerd.net/v1alpha1
       kind: WebConsole
       metadata:

@@ -36,6 +36,15 @@ func TestDaemonReadsPflogTCPDumpLines(t *testing.T) {
 	}
 }
 
+func TestDaemonReadsNFLogTCPDumpLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall-logs.db")
+	input := strings.NewReader(`2026-05-05 12:00:00.000000 routerd firewall forward deny IP 172.18.0.101.53168 > 198.51.100.10.443: Flags [S], length 0
+`)
+	if err := run([]string{"daemon", "--path", path, "--input-format", "nflog-tcpdump"}, &bytes.Buffer{}, input); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestParsePflogTCPDumpLine(t *testing.T) {
 	line := `2026-05-04 12:00:00.000000 rule 12/0(match): block in on em0: 172.18.0.101.53168 > 198.51.100.10.443: Flags [S], length 0`
 	entry, ok := parseFirewallLogLine(line, "pflog-tcpdump")
@@ -49,6 +58,37 @@ func TestParsePflogTCPDumpLine(t *testing.T) {
 		t.Fatalf("entry = %+v", entry)
 	}
 	if entry.DstAddress != "198.51.100.10" || entry.DstPort != 443 || entry.RuleName != "rule 12/0(match)" {
+		t.Fatalf("entry = %+v", entry)
+	}
+}
+
+func TestParseNFLogTCPDumpLine(t *testing.T) {
+	line := `2026-05-05 12:00:00.000000 routerd firewall forward deny IP 172.18.0.101.53168 > 198.51.100.10.443: Flags [S], seq 1, length 0`
+	entry, ok := parseFirewallLogLine(line, "nflog-tcpdump")
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	if entry.Action != "drop" || entry.Protocol != "tcp" || entry.L3Proto != "ipv4" {
+		t.Fatalf("entry = %+v", entry)
+	}
+	if entry.SrcAddress != "172.18.0.101" || entry.SrcPort != 53168 {
+		t.Fatalf("entry = %+v", entry)
+	}
+	if entry.DstAddress != "198.51.100.10" || entry.DstPort != 443 || entry.RuleName != "routerd firewall forward deny" {
+		t.Fatalf("entry = %+v", entry)
+	}
+}
+
+func TestParseNFLogTCPDumpIPv6UDPLine(t *testing.T) {
+	line := `routerd firewall input deny IP6 2409:10:3d60:1271::100.5353 > ff02::fb.5353: UDP, length 32`
+	entry, ok := parseFirewallLogLine(line, "auto")
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	if entry.Action != "drop" || entry.Protocol != "udp" || entry.L3Proto != "ipv6" {
+		t.Fatalf("entry = %+v", entry)
+	}
+	if entry.SrcAddress != "2409:10:3d60:1271::100" || entry.DstAddress != "ff02::fb" || entry.PacketBytes != 32 {
 		t.Fatalf("entry = %+v", entry)
 	}
 }
