@@ -383,7 +383,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 			return nil
 		}},
-		framework.FuncController{ControllerName: "lan-address", Subs: statusSubscriptions("DHCPv6PrefixDelegation", "Link", "Interface"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "lan-address", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation", "Link", "Interface"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			for _, resource := range r.Router.Spec.Resources {
 				if resource.Kind == "DHCPv6PrefixDelegation" {
 					if err := lan.reconcile(ctx, resource.Metadata.Name); err != nil {
@@ -655,12 +655,13 @@ func (c PrefixDelegationController) socketFor(resource string) string {
 }
 
 type LANAddressController struct {
-	Router  *api.Router
-	Bus     *bus.Bus
-	Store   Store
-	DryRun  bool
-	Logger  *slog.Logger
-	Command commandFunc
+	Router         *api.Router
+	Bus            *bus.Bus
+	Store          Store
+	DryRun         bool
+	Logger         *slog.Logger
+	Command        commandFunc
+	AddressPresent func(context.Context, string, string) bool
 }
 
 type LinkController struct {
@@ -939,6 +940,20 @@ func ipv4AddressPresent(ctx context.Context, ifname, address string) bool {
 	return false
 }
 
+func ipv6AddressPresent(ctx context.Context, ifname, address string) bool {
+	out, err := exec.CommandContext(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname).Output()
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(out))
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "inet6" && fields[i+1] == address {
+			return true
+		}
+	}
+	return false
+}
+
 func runCommandContext(ctx context.Context, name string, args ...string) error {
 	return exec.CommandContext(ctx, name, args...).Run()
 }
@@ -977,11 +992,12 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if spec.PrefixDelegation != pdName {
 			continue
 		}
+		linkUp := c.linkReady(spec.Interface)
 		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
 			continue
 		}
-		if !c.linkReady(spec.Interface) {
+		if !linkUp {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending"})
 			continue
 		}
@@ -997,11 +1013,19 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			"dryRun":       c.DryRun,
 		}
 		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name), status)
-		if !c.DryRun && changed {
-			ifname := interfaceIfName(c.Router, spec.Interface)
-			if ifname == "" {
-				ifname = spec.Interface
+		ifname := interfaceIfName(c.Router, spec.Interface)
+		if ifname == "" {
+			ifname = spec.Interface
+		}
+		addressPresent := true
+		if !c.DryRun {
+			addressPresentFn := c.AddressPresent
+			if addressPresentFn == nil {
+				addressPresentFn = ipv6AddressPresent
 			}
+			addressPresent = addressPresentFn(ctx, ifname, addr)
+		}
+		if !c.DryRun && (changed || !addressPresent) {
 			command := c.Command
 			if command == nil {
 				command = runCommandContext
@@ -1013,7 +1037,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status); err != nil {
 			return err
 		}
-		if changed && c.Bus != nil {
+		if (changed || !addressPresent) && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.address.applied", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress", Name: resource.Metadata.Name}
 			event.Attributes = map[string]string{"address": addr, "interface": spec.Interface, "dryRun": fmt.Sprintf("%t", c.DryRun)}
@@ -1027,7 +1051,9 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 
 func (c LANAddressController) linkReady(name string) bool {
 	if status := c.Store.ObjectStatus(api.NetAPIVersion, "Link", name); status != nil {
-		return status["phase"] == "Up"
+		if phase := fmt.Sprint(status["phase"]); phase != "" && phase != "<nil>" {
+			return phase == "Up"
+		}
 	}
 	ifname := interfaceIfName(c.Router, name)
 	if ifname == "" {

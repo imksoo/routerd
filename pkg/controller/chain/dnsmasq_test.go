@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"routerd/pkg/api"
+	"routerd/pkg/daemonapi"
 )
 
 type mapStore map[string]map[string]any
@@ -217,6 +218,93 @@ func TestIPv4StaticAddressControllerRestoresMissingAddressWithUnchangedStatus(t 
 	}
 	if !applied {
 		t.Fatal("expected missing address to be restored")
+	}
+}
+
+func TestLANAddressControllerPopulatesLinkBeforeDependencyCheck(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Link"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.LinkSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{
+			PrefixDelegation: "wan-pd",
+			Interface:        "lan",
+			SubnetID:         "1",
+			AddressSuffix:    "::1",
+			DependsOn: []api.ResourceDependencySpec{
+				{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: daemonapi.ResourcePhaseBound},
+				{Resource: "Link/lan", Phase: "Up"},
+			},
+		}},
+	}}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
+		"phase":         daemonapi.ResourcePhaseBound,
+		"currentPrefix": "2409:10:3d60:1270::/60",
+	})
+	var got []string
+	controller := LANAddressController{
+		Router: router,
+		Store:  store,
+		AddressPresent: func(context.Context, string, string) bool {
+			return false
+		},
+		Command: func(ctx context.Context, name string, args ...string) error {
+			got = append([]string{name}, args...)
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ip", "-6", "addr", "replace", "2409:10:3d60:1271::1/64", "dev", "lo"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("command = %v, want %v", got, want)
+	}
+	link := store.ObjectStatus(api.NetAPIVersion, "Link", "lan")
+	if link["phase"] != "Up" || link["ifname"] != "lo" {
+		t.Fatalf("link status = %#v", link)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")
+	if status["phase"] != "Applied" || status["address"] != "2409:10:3d60:1271::1/64" {
+		t.Fatalf("delegated address status = %#v", status)
+	}
+}
+
+func TestLANAddressControllerRestoresMissingAddressWithUnchangedStatus(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{
+			PrefixDelegation: "wan-pd",
+			Interface:        "lan",
+			SubnetID:         "1",
+			AddressSuffix:    "::1",
+		}},
+	}}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": daemonapi.ResourcePhaseBound, "currentPrefix": "2409:10:3d60:1270::/60"})
+	store.SaveObjectStatus(api.NetAPIVersion, "Link", "lan", map[string]any{"phase": "Up", "ifname": "lo"})
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base", map[string]any{
+		"phase": "Applied", "address": "2409:10:3d60:1271::1/64", "interface": "lan", "prefixSource": "wan-pd", "dryRun": false,
+	})
+	var applied bool
+	controller := LANAddressController{
+		Router: router,
+		Store:  store,
+		AddressPresent: func(context.Context, string, string) bool {
+			return false
+		},
+		Command: func(ctx context.Context, name string, args ...string) error {
+			applied = true
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	if !applied {
+		t.Fatal("expected missing delegated address to be restored")
 	}
 }
 
