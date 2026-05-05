@@ -75,7 +75,7 @@ func daemon(args []string, stdin io.Reader) error {
 		defer file.Close()
 		reader = file
 	} else if opts.pflogInterface != "" {
-		cmd = exec.Command(opts.tcpdumpPath, "-n", "-e", "-tttt", "-l", "-i", opts.pflogInterface)
+		cmd = exec.Command(opts.tcpdumpPath, "-n", "-e", "-tttt", "-l", "-Z", "root", "-i", opts.pflogInterface)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			return err
@@ -90,7 +90,7 @@ func daemon(args []string, stdin io.Reader) error {
 		}()
 		reader = stdout
 	} else if opts.group > 0 {
-		cmd = exec.Command(opts.tcpdumpPath, "-n", "-tttt", "-l", "-i", "nflog:"+strconv.Itoa(opts.group))
+		cmd = exec.Command(opts.tcpdumpPath, "-n", "-tttt", "-l", "-Z", "root", "-i", "nflog:"+strconv.Itoa(opts.group))
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			return err
