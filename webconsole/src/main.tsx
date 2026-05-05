@@ -181,12 +181,27 @@ const useStyles = makeStyles({
       gridTemplateColumns: "1fr",
     },
   },
+  eventsGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.25fr) minmax(320px, 0.75fr)",
+    gap: "16px",
+    alignItems: "start",
+    "@media (max-width: 900px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
   tableWrap: {
     overflowX: "auto",
   },
   code: {
     fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
     whiteSpace: "nowrap",
+  },
+  wrapCode: {
+    fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
   },
   muted: {
     color: tokens.colorNeutralForeground3,
@@ -196,6 +211,12 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     gap: "4px",
   },
+  badges: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "4px",
+    alignItems: "center",
+  },
   toolbar: {
     display: "flex",
     alignItems: "center",
@@ -204,6 +225,38 @@ const useStyles = makeStyles({
   connectionGroup: {
     display: "grid",
     gap: "8px",
+  },
+  connectionFlow: {
+    display: "grid",
+    gap: "2px",
+    minWidth: "220px",
+  },
+  detailPanel: {
+    position: "sticky",
+    top: "78px",
+    display: "grid",
+    gap: "12px",
+    "@media (max-width: 900px)": {
+      position: "static",
+    },
+  },
+  detailList: {
+    display: "grid",
+    gridTemplateColumns: "max-content minmax(0, 1fr)",
+    columnGap: "10px",
+    rowGap: "8px",
+    alignItems: "start",
+    "@media (max-width: 640px)": {
+      gridTemplateColumns: "1fr",
+      rowGap: "4px",
+    },
+  },
+  detailKey: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: "12px",
+  },
+  eventRowSelected: {
+    backgroundColor: tokens.colorNeutralBackground2Selected,
   },
   config: {
     maxHeight: "66vh",
@@ -229,6 +282,7 @@ function App() {
   const [error, setError] = useState<string>("");
   const [selected, setSelected] = useState("overview");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [selectedEventKey, setSelectedEventKey] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   async function refresh() {
@@ -256,6 +310,17 @@ function App() {
   const connections = summary?.connections?.entries ?? [];
   const dnsLabels = useMemo(() => dnsLabelMap(summary?.dnsQueries ?? []), [summary?.dnsQueries]);
   const resources = useMemo(() => importantResources(summary?.resources ?? []), [summary?.resources]);
+  const events = summary?.events ?? [];
+  const selectedEvent = useMemo(() => {
+    if (events.length === 0) return undefined;
+    return events.find(event => eventKey(event) === selectedEventKey) ?? events[0];
+  }, [events, selectedEventKey]);
+
+  useEffect(() => {
+    if (events.length > 0 && !events.some(event => eventKey(event) === selectedEventKey)) {
+      setSelectedEventKey(eventKey(events[0]));
+    }
+  }, [events, selectedEventKey]);
 
   return (
     <FluentProvider theme={webDarkTheme} className={styles.shell}>
@@ -273,6 +338,7 @@ function App() {
           <Tab value="overview">Overview</Tab>
           <Tab value="connections">Connections</Tab>
           <Tab value="events">Events</Tab>
+          <Tab value="firewall">Firewall</Tab>
           <Tab value="config">Config</Tab>
         </TabList>
         {selected === "overview" ? (
@@ -305,19 +371,24 @@ function App() {
                   key={group.key}
                   group={group}
                   dnsLabels={dnsLabels}
-                  collapsed={collapsed[group.key] ?? true}
-                  toggle={() => setCollapsed(current => ({ ...current, [group.key]: !(current[group.key] ?? true) }))}
+                  collapsed={collapsed[group.key] ?? false}
+                  toggle={() => setCollapsed(current => ({ ...current, [group.key]: !(current[group.key] ?? false) }))}
                 />
               ))}
             </div>
           </Card>
         ) : null}
         {selected === "events" ? (
-          <div className={styles.sectionGrid}>
+          <div className={styles.eventsGrid}>
             <Card>
               <CardHeader header={<Text weight="semibold">Events</Text>} />
-              <EventTable events={summary?.events ?? []} />
+              <EventTable events={events} selectedKey={eventKey(selectedEvent)} onSelect={event => setSelectedEventKey(eventKey(event))} />
             </Card>
+            <EventDetail event={selectedEvent} />
+          </div>
+        ) : null}
+        {selected === "firewall" ? (
+          <div className={styles.sectionGrid}>
             <Card>
               <CardHeader header={<Text weight="semibold">Recent deny</Text>} />
               <RecentDeny logs={summary?.firewallLogs ?? []} />
@@ -378,7 +449,7 @@ function ResourceTable({ resources }: { resources: ResourceStatus[] }) {
   );
 }
 
-function EventTable({ events }: { events: RouterEvent[] }) {
+function EventTable({ events, selectedKey, onSelect }: { events: RouterEvent[]; selectedKey: string; onSelect: (event: RouterEvent) => void }) {
   const styles = useStyles();
   return (
     <div className={styles.tableWrap}>
@@ -389,47 +460,69 @@ function EventTable({ events }: { events: RouterEvent[] }) {
             <TableHeaderCell>Severity</TableHeaderCell>
             <TableHeaderCell>Topic</TableHeaderCell>
             <TableHeaderCell>Resource</TableHeaderCell>
-            <TableHeaderCell>Details</TableHeaderCell>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {events.slice(0, 15).map(event => (
-            <TableRow key={event.id ?? `${event.createdAt}-${event.topic}`}>
-              <TableCell>{formatTime(event.createdAt)}</TableCell>
-              <TableCell>{event.severity ?? ""}</TableCell>
-              <TableCell><code className={styles.code}>{event.topic ?? event.type}</code></TableCell>
-              <TableCell>{resourceName(event)}</TableCell>
-              <TableCell><EventAttributes event={event} /></TableCell>
-            </TableRow>
-          ))}
+          {events.slice(0, 15).map(event => {
+            const key = eventKey(event);
+            return (
+              <TableRow key={key} className={key === selectedKey ? styles.eventRowSelected : undefined} onClick={() => onSelect(event)}>
+                <TableCell>{formatTime(event.createdAt)}</TableCell>
+                <TableCell>{event.severity ?? ""}</TableCell>
+                <TableCell><code className={styles.wrapCode}>{event.topic ?? event.type}</code></TableCell>
+                <TableCell>{resourceName(event)}</TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>
   );
 }
 
-function EventAttributes({ event }: { event: RouterEvent }) {
+function EventDetail({ event }: { event?: RouterEvent }) {
   const styles = useStyles();
-  const attrs = eventAttributeEntries(event);
-  if (attrs.length === 0) return <Text className={styles.muted}>{event.reason || event.message || "-"}</Text>;
+  if (!event) {
+    return (
+      <Card className={styles.detailPanel}>
+        <CardHeader header={<Text weight="semibold">Detail</Text>} />
+        <Text className={styles.muted}>No event selected</Text>
+      </Card>
+    );
+  }
+  const baseRows: [string, unknown][] = [
+    ["time", formatTime(event.createdAt)],
+    ["severity", event.severity ?? ""],
+    ["topic", event.topic ?? event.type ?? ""],
+    ["resource", resourceName(event)],
+    ["reason", event.reason ?? ""],
+    ["message", event.message ?? ""],
+  ];
+  const rows = [...baseRows, ...eventAttributeEntries(event)].filter(([, value]) => value !== undefined && value !== "");
   return (
-    <div className={styles.chips}>
-      {attrs.slice(0, 10).map(([key, value]) => (
-        <Badge key={key} appearance="tint">
-          {key}: {String(value)}
-        </Badge>
-      ))}
-    </div>
+    <Card className={styles.detailPanel}>
+      <CardHeader header={<Text weight="semibold">Detail</Text>} description={<Text className={styles.muted}>Event {event.id ?? "-"}</Text>} />
+      <div className={styles.detailList}>
+        {rows.map(([key, value]) => (
+          <React.Fragment key={key}>
+            <Text className={styles.detailKey}>{key}</Text>
+            <code className={styles.wrapCode}>{formatDetailValue(value)}</code>
+          </React.Fragment>
+        ))}
+      </div>
+    </Card>
   );
 }
 
 function ConnectionGroup({ group, dnsLabels, collapsed, toggle }: { group: { key: string; rows: ConnectionEntry[] }; dnsLabels: Record<string, string>; collapsed: boolean; toggle: () => void }) {
   const styles = useStyles();
   const label = connectionGroupLabel(group.key);
+  const visibleRows = group.rows.slice(0, 10);
   return (
     <Card>
       <CardHeader
         header={<Text weight="semibold">{label.family}/{label.protocol.toUpperCase()} {group.rows.length}</Text>}
+        description={!collapsed && group.rows.length > visibleRows.length ? <Text className={styles.muted}>Showing first {visibleRows.length}</Text> : undefined}
         action={<Button appearance="subtle" icon={collapsed ? <ChevronRightRegular /> : <ChevronDownRegular />} onClick={toggle}>{collapsed ? "Open" : "Close"}</Button>}
       />
       {!collapsed ? (
@@ -444,11 +537,21 @@ function ConnectionGroup({ group, dnsLabels, collapsed, toggle }: { group: { key
               </TableRow>
             </TableHeader>
             <TableBody>
-              {group.rows.map(entry => (
+              {visibleRows.map(entry => (
                 <TableRow key={flowKey(entry)}>
-                  <TableCell><Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || (entry.assured ? "ASSURED" : "stateless")}</Badge></TableCell>
-                  <TableCell><code className={styles.code}>{endpoint(entry.original)}</code></TableCell>
-                  <TableCell>{dnsLabels[entry.original?.destination ?? ""] ?? "-"}</TableCell>
+                  <TableCell>
+                    <div className={styles.badges}>
+                      <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
+                      {entry.assured ? <Badge appearance="outline" color="success">assured</Badge> : null}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className={styles.connectionFlow}>
+                      <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
+                      {sameReverse(entry.original, entry.reply) ? null : <code className={styles.wrapCode}>return {endpoint(entry.reply)}</code>}
+                    </div>
+                  </TableCell>
+                  <TableCell><code className={styles.wrapCode}>{dnsLabels[entry.original?.destination ?? ""] ?? "-"}</code></TableCell>
                   <TableCell>{entry.timeout ?? 0}s</TableCell>
                 </TableRow>
               ))}
@@ -622,6 +725,11 @@ function flowKey(entry: ConnectionEntry) {
   return [entry.family, entry.protocol, entry.state, endpoint(entry.original), endpoint(entry.reply), entry.mark].join("|");
 }
 
+function eventKey(event?: RouterEvent) {
+  if (!event) return "";
+  return String(event.id ?? `${event.createdAt}-${event.topic ?? event.type ?? ""}-${resourceName(event)}`);
+}
+
 function resourceDetail(status: Record<string, unknown>) {
   return ["selectedCandidate", "selectedDevice", "activeEgressInterface", "target", "address", "currentPrefix", "changedFields"]
     .map(key => status[key] ? `${key}=${status[key]}` : "")
@@ -642,6 +750,23 @@ function eventAttributeEntries(event: RouterEvent): [string, unknown][] {
   for (const key of preferred) if (attrs[key] !== undefined && attrs[key] !== "") keys.push(key);
   for (const key of Object.keys(attrs).sort()) if (!keys.includes(key) && attrs[key] !== undefined && attrs[key] !== "") keys.push(key);
   return keys.map(key => [key, attrs[key]]);
+}
+
+function formatDetailValue(value: unknown) {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function sameReverse(original?: ConnTuple, reply?: ConnTuple) {
+  if (!original || !reply) return true;
+  return original.source === reply.destination &&
+    original.sourcePort === reply.destinationPort &&
+    original.destination === reply.source &&
+    original.destinationPort === reply.sourcePort;
 }
 
 function clientTrafficRows(flows: TrafficFlow[]) {
