@@ -77,6 +77,21 @@ spec:
     field: selectedGateway
 ```
 
+Private destinations that must not leave through DS-Lite can be modeled as
+ordinary routes. Use a WAN-side route for NTT HGW networks, an IX2215 route for
+internal 172.16.0.0/12 networks, and `type: blackhole` for ranges that should be
+discarded:
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: private-10-blackhole
+spec:
+  type: blackhole
+  destination: 10.0.0.0/8
+```
+
 ## Health Checks
 
 `HealthCheck` can pin probes to a path.

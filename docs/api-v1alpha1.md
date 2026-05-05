@@ -116,7 +116,7 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 | Kind | 役割 |
 | --- | --- |
 | `DSLiteTunnel` | AFTR へ `ip6tnl` トンネルを張ります。AFTR は直接 IPv6、FQDN、または DHCPv6 情報から得ます。 |
-| `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路にも使います。 |
+| `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路や、明示的な破棄経路にも使います。 |
 | `NAT44Rule` | nftables の `routerd_nat` テーブルで IPv4 NAPT を行います。 |
 | `IPv4SourceNAT` | 旧来の IPv4 送信元 NAT の土台です。 |
 | `IPv4PolicyRoute` | IPv4 ポリシールーティングを表します。 |
@@ -125,7 +125,7 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 | `IPv4ReversePathFilter` | reverse path filter を表します。 |
 | `PathMTUPolicy` | MTU と TCP MSS 調整の方針を表します。`mtu.source: probe` では DF 付きの疎通確認で経路 MTU を測ります。 |
 
-`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4DefaultRoutePolicy` は `excludeDestinationCIDRs` を持ちます。これにより、LAN 内部、管理網、HGW LAN などを policy routing の対象から外せます。
+`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4DefaultRoutePolicy` は `excludeDestinationCIDRs` を持ちます。これにより、LAN 内部、管理網、HGW LAN、RFC 1918 の内部網などを policy routing の対象から外せます。
 
 Phase 1.5e では router05 で DS-Lite、IPv4 既定経路、NAT44 の実適用を確認しています。
 

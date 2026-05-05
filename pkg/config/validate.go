@@ -2782,6 +2782,12 @@ func validateResource(res api.Resource) error {
 		if _, err := netip.ParsePrefix(spec.Destination); err != nil {
 			return fmt.Errorf("%s spec.destination is invalid: %w", res.ID(), err)
 		}
+		routeType := defaultString(spec.Type, "unicast")
+		switch routeType {
+		case "unicast", "blackhole":
+		default:
+			return fmt.Errorf("%s spec.type must be unicast or blackhole", res.ID())
+		}
 		if strings.Contains(spec.Device, "${") {
 			return fmt.Errorf("%s spec.device status expressions were removed; use deviceFrom", res.ID())
 		}
@@ -2790,6 +2796,11 @@ func validateResource(res api.Resource) error {
 		}
 		if len(spec.ReadyWhen) > 0 {
 			return fmt.Errorf("%s spec.ready_when was removed; use spec.dependsOn", res.ID())
+		}
+		if routeType == "blackhole" {
+			if spec.Device != "" || spec.DeviceFrom.Resource != "" || spec.Gateway != "" || spec.GatewayFrom.Resource != "" {
+				return fmt.Errorf("%s spec.device, spec.deviceFrom, spec.gateway, and spec.gatewayFrom are not valid when spec.type is blackhole", res.ID())
+			}
 		}
 		if spec.Gateway != "" {
 			addr, err := netip.ParseAddr(spec.Gateway)

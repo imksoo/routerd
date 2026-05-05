@@ -654,10 +654,9 @@ spec:
         destinationCIDRs:
           - 0.0.0.0/0
         excludeDestinationCIDRs:
-          - 172.17.0.0/16
-          - 172.18.0.0/16
-          - 192.168.1.0/24
-          - 192.168.123.0/24
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
         targets:
           - name: ds-lite-a
             outboundInterface: ds-lite-a
@@ -693,10 +692,9 @@ spec:
         destinationCIDRs:
           - 0.0.0.0/0
         excludeDestinationCIDRs:
-          - 172.17.0.0/16
-          - 172.18.0.0/16
-          - 192.168.1.0/24
-          - 192.168.123.0/24
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
         candidates:
           - name: dslite-pd-balanced
             routeSet: dslite-pd-balanced
@@ -771,15 +769,16 @@ spec:
           - resource: DSLiteTunnel/ds-lite-a
             phase: Up
 
-    # HGW LAN へ出る IPv4 は WAN 側の物理 NIC へ直接出します。
+    # NTT HGW 側の IPv4 は WAN 側の物理 NIC へ直接出します。
     # default route は EgressRoutePolicy が管理します。
-    # この経路は 172.18.0.0/16 から 192.168.1.0/24 へ出る NAPT と対です。
+    # 192.168.123.0/24 は当面 PVE SDN の接続経路として使います。
+    # 将来 routerd VPN に移すときは、より具体的な経路で上書きします。
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
         name: hgw-lan-via-wan
       spec:
-        destination: 192.168.1.0/24
+        destination: 192.168.0.0/16
         deviceFrom:
           resource: Interface/wan
           field: ifname
@@ -787,6 +786,34 @@ spec:
         dependsOn:
           - resource: NetworkAdoption/wan-networkd-owned-by-routerd
             phase: Applied
+
+    # 172.16.0.0/12 は IX2215 が持つ内部網へ戻します。
+    # 172.17.0.0/16 と 172.18.0.0/16 は接続経路がより優先されます。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: private-172-via-ix2215
+      spec:
+        destination: 172.16.0.0/12
+        deviceFrom:
+          resource: Interface/lan
+          field: ifname
+        gateway: 172.17.0.1
+        metric: 20
+        dependsOn:
+          - resource: IPv4StaticAddress/lan-legacy-bridge
+            phase: Applied
+
+    # 未使用の 10.0.0.0/8 は明示的に破棄します。
+    # DS-Lite や IX2215 fallback へ漏らしません。
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: private-10-blackhole
+      spec:
+        type: blackhole
+        destination: 10.0.0.0/8
+        metric: 20
 
     # --- NAT44 (egress = 選択された出口) ---
     - apiVersion: net.routerd.net/v1alpha1

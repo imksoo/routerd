@@ -300,18 +300,30 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
 			continue
 		}
-		device := firstNonEmpty(resourcequery.Value(c.Store, spec.DeviceFrom), strings.TrimSpace(spec.Device))
-		if device == "" {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceMissing"})
-			continue
-		}
+		routeType := firstNonEmpty(strings.TrimSpace(spec.Type), "unicast")
 		destination := firstNonEmpty(spec.Destination, "0.0.0.0/0")
+		device := ""
 		gateway := firstNonEmpty(resourcequery.Value(c.Store, spec.GatewayFrom), strings.TrimSpace(spec.Gateway))
-		status := map[string]any{"phase": "Installed", "destination": destination, "device": device, "gateway": gateway, "metric": spec.Metric, "dryRun": c.DryRun, "installedAt": time.Now().UTC().Format(time.RFC3339Nano)}
-		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name), status)
+		if routeType != "blackhole" {
+			device = firstNonEmpty(resourcequery.Value(c.Store, spec.DeviceFrom), strings.TrimSpace(spec.Device))
+			if device == "" {
+				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceMissing"})
+				continue
+			}
+		}
+		status := map[string]any{"phase": "Installed", "type": routeType, "destination": destination, "device": device, "gateway": gateway, "metric": spec.Metric, "dryRun": c.DryRun}
+		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name)
+		changed := routeInstallStatusChanged(previous, status)
+		if changed {
+			status["installedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+		} else if installedAt, ok := previous["installedAt"]; ok {
+			status["installedAt"] = installedAt
+		}
 		if !c.DryRun {
 			args := []string{"route", "replace", destination, "dev", device}
-			if gateway != "" {
+			if routeType == "blackhole" {
+				args = []string{"route", "replace", "blackhole", destination}
+			} else if gateway != "" {
 				args = []string{"route", "replace", destination, "via", gateway, "dev", device}
 			}
 			if spec.Metric > 0 {
@@ -336,7 +348,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		if changed && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.installed", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: resource.Metadata.Name}
-			event.Attributes = map[string]string{"destination": destination, "device": device, "gateway": gateway, "dryRun": fmt.Sprintf("%t", c.DryRun)}
+			event.Attributes = map[string]string{"type": routeType, "destination": destination, "device": device, "gateway": gateway, "dryRun": fmt.Sprintf("%t", c.DryRun)}
 			if err := c.Bus.Publish(ctx, event); err != nil {
 				return err
 			}
@@ -346,6 +358,18 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func routeInstallStatusChanged(previous, next map[string]any) bool {
+	if previous["phase"] != next["phase"] {
+		return true
+	}
+	for _, key := range []string{"type", "destination", "device", "gateway", "metric", "dryRun"} {
+		if fmt.Sprint(previous[key]) != fmt.Sprint(next[key]) {
+			return true
+		}
+	}
+	return false
 }
 
 type IPv6RouterAdvertisementController struct {

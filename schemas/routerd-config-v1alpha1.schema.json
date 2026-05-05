@@ -4102,6 +4102,13 @@
                       "metric": {
                         "minimum": 0,
                         "type": "integer"
+                      },
+                      "type": {
+                        "enum": [
+                          "unicast",
+                          "blackhole"
+                        ],
+                        "type": "string"
                       }
                     },
                     "required": [

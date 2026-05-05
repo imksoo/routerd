@@ -732,6 +732,7 @@ type DSLiteTunnelSpec struct {
 
 type IPv4RouteSpec struct {
 	Destination string                   `yaml:"destination" json:"destination"`
+	Type        string                   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=unicast,enum=blackhole"`
 	Device      string                   `yaml:"device,omitempty" json:"device,omitempty"`
 	DeviceFrom  StatusValueSourceSpec    `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`
 	Gateway     string                   `yaml:"gateway,omitempty" json:"gateway,omitempty"`

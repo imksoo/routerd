@@ -80,6 +80,21 @@ spec:
     field: selectedGateway
 ```
 
+DS-Lite へ出してはいけない内部向け宛先は、通常の経路として表現します。
+NTT HGW 側の網は WAN 側へ戻します。
+172.16.0.0/12 は IX2215 へ戻します。
+破棄したい範囲は `type: blackhole` を使います。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: private-10-blackhole
+spec:
+  type: blackhole
+  destination: 10.0.0.0/8
+```
+
 ## HealthCheck
 
 `HealthCheck` は、probe の送信経路を固定できます。
