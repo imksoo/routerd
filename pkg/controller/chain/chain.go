@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1182,14 +1183,17 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
 		lines = append(lines, "dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay")
 		leaseTime := firstNonEmpty(spec.AddressPool.LeaseTime, "12h")
 		lines = append(lines, fmt.Sprintf("dhcp-range=set:%s,%s,%s,%s", tag, spec.AddressPool.Start, spec.AddressPool.End, leaseTime))
-		if spec.Gateway != "" {
-			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:router,%s", tag, spec.Gateway))
+		gateway := firstNonEmpty(statusAddressValue(resourcequery.Value(store, spec.GatewayFrom)), spec.Gateway)
+		dnsServers := append(expandIPv4DHCPServers(spec.DNSServers), expandIPv4DHCPServerSources(store, spec.DNSServerFrom)...)
+		ntpServers := append(expandIPv4DHCPServers(spec.NTPServers), expandIPv4DHCPServerSources(store, spec.NTPServerFrom)...)
+		if gateway != "" {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:router,%s", tag, gateway))
 		}
-		if len(spec.DNSServers) > 0 {
-			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:dns-server,%s", tag, strings.Join(spec.DNSServers, ",")))
+		if len(dnsServers) > 0 {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:dns-server,%s", tag, strings.Join(dnsServers, ",")))
 		}
-		if len(spec.NTPServers) > 0 {
-			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:ntp-server,%s", tag, strings.Join(spec.NTPServers, ",")))
+		if len(ntpServers) > 0 {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:ntp-server,%s", tag, strings.Join(ntpServers, ",")))
 		}
 		if spec.Domain != "" {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s", tag, spec.Domain))
@@ -1342,6 +1346,39 @@ func dnsmasqIPv4Reservation(spec api.DHCPv4ReservationSpec, tag string) string {
 	}
 	parts = append(parts, spec.IPAddress)
 	return strings.Join(parts, ",")
+}
+
+func expandIPv4DHCPServers(values []string) []string {
+	var out []string
+	for _, value := range values {
+		if address := statusAddressValue(value); address != "" {
+			out = append(out, address)
+		}
+	}
+	return out
+}
+
+func expandIPv4DHCPServerSources(store Store, sources []api.StatusValueSourceSpec) []string {
+	var out []string
+	for _, source := range sources {
+		for _, value := range resourcequery.Values(store, source) {
+			if address := statusAddressValue(value); address != "" {
+				out = append(out, address)
+			}
+		}
+	}
+	return out
+}
+
+func statusAddressValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix.Addr().String()
+	}
+	return value
 }
 
 func dnsmasqIPv6Address(value string) string {

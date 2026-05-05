@@ -13,6 +13,13 @@ import (
 
 func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T) {
 	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, "network", "10-netplan-ens18.network.d", "50-routerd-no-dhcpv6.conf")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("[IPv6AcceptRA]\nDHCPv6Client=no\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NetworkAdoption"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.NetworkAdoptionSpec{
@@ -55,6 +62,9 @@ func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T)
 	}
 	if !strings.Contains(string(resolved), "DNSStubListener=no") {
 		t.Fatalf("resolved drop-in = %s", resolved)
+	}
+	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy networkd drop-in still exists: %v", err)
 	}
 	got := strings.Join(commands, "\n")
 	for _, want := range []string{"networkctl reload", "networkctl reconfigure ens18", "systemctl restart systemd-resolved.service"} {
@@ -168,6 +178,7 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 			Target:             "1.1.1.1",
 			TargetSource:       "static",
 			SourceInterface:    "ds-lite-a",
+			SourceAddressFrom:  api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/lan-base", Field: "address"},
 			Protocol:           "tcp",
 			Port:               443,
 			Interval:           "30s",
@@ -176,7 +187,7 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 			UnhealthyThreshold: 3,
 		}},
 	}}}
-	store := mapStore{}
+	store := mapStore{api.NetAPIVersion + "/IPv4StaticAddress/lan-base": {"address": "172.18.0.1/16"}}
 	var commands []string
 	controller := SystemdUnitController{
 		Router:           router,
@@ -202,7 +213,7 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 	}
 	unit := string(data)
 	for _, want := range []string{
-		`ExecStart=/usr/local/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --source-interface "ds-lite-a" --port 443`,
+		`ExecStart=/usr/local/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --source-interface "ds-lite-a" --source-address "172.18.0.1" --port 443`,
 		`--socket "/run/routerd/healthcheck/internet-via-dslite-a.sock"`,
 		"RuntimeDirectory=routerd/healthcheck",
 		"RuntimeDirectoryPreserve=yes",

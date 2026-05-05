@@ -129,6 +129,14 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 				return paths, changed, err
 			}
 			networkdChanged = fileChanged
+			for _, legacyPath := range legacyNetworkdAdoptionDropins(c.NetworkdDropinBase, ifname, path) {
+				paths = append(paths, legacyPath)
+				removed, err := removeFileIfExists(legacyPath, c.DryRun)
+				if err != nil {
+					return paths, changed, err
+				}
+				networkdChanged = networkdChanged || removed
+			}
 		}
 		changed = changed || networkdChanged
 	}
@@ -173,6 +181,21 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 	}
 	_ = name
 	return paths, changed, nil
+}
+
+func legacyNetworkdAdoptionDropins(base, ifname, desiredPath string) []string {
+	dir := networkdDropinDir(base, ifname)
+	candidates := []string{
+		filepath.Join(dir, "50-routerd-no-dhcpv6.conf"),
+	}
+	var out []string
+	for _, candidate := range candidates {
+		if filepath.Clean(candidate) == filepath.Clean(desiredPath) {
+			continue
+		}
+		out = append(out, candidate)
+	}
+	return out
 }
 
 type SystemdUnitController struct {
@@ -341,7 +364,7 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	if socket == "" {
 		socket = filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
 	}
-	resolved := healthcheck.ResolveSpec(c.Router, spec)
+	resolved := healthcheck.ResolveSpecWithStore(c.Router, c.Store, spec)
 	data := render.HealthCheckSystemdUnit(render.HealthCheckSystemdOptions{
 		Resource:        resourceName,
 		Target:          resolved.Target,

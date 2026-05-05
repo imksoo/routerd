@@ -2020,6 +2020,27 @@
                         },
                         "type": "object"
                       },
+                      "dnsServerFrom": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "field": {
+                              "type": "string"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "dnsServers": {
                         "items": {
                           "type": "string"
@@ -2032,6 +2053,24 @@
                       "gateway": {
                         "type": "string"
                       },
+                      "gatewayFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
                       "interface": {
                         "type": "string"
                       },
@@ -2043,6 +2082,27 @@
                       },
                       "managed": {
                         "type": "boolean"
+                      },
+                      "ntpServerFrom": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "field": {
+                              "type": "string"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "ntpServers": {
                         "items": {
@@ -4345,6 +4405,24 @@
                       },
                       "sourceAddress": {
                         "type": "string"
+                      },
+                      "sourceAddressFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
                       },
                       "sourceInterface": {
                         "type": "string"

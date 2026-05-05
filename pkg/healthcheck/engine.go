@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/resourcequery"
 )
 
 const (
@@ -144,7 +146,7 @@ func (c *Controller) runResource(ctx context.Context, resource api.Resource) {
 }
 
 func (c *Controller) ProbeOnce(ctx context.Context, resource api.Resource, spec api.HealthCheckSpec) error {
-	spec = ResolveSpec(c.Router, spec)
+	spec = ResolveSpecWithStore(c.Router, c.Store, spec)
 	timeout := durationOr(spec.Timeout, 3*time.Second)
 	if timeout <= 0 {
 		timeout = 3 * time.Second
@@ -228,6 +230,25 @@ func ResolveSpec(router *api.Router, spec api.HealthCheckSpec) api.HealthCheckSp
 		spec.SourceInterface = resolveInterfaceName(router, spec.SourceInterface)
 	}
 	return spec
+}
+
+func ResolveSpecWithStore(router *api.Router, store Store, spec api.HealthCheckSpec) api.HealthCheckSpec {
+	spec = ResolveSpec(router, spec)
+	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" && store != nil {
+		spec.SourceAddress = statusAddressValue(resourcequery.Value(store, spec.SourceAddressFrom))
+	}
+	return spec
+}
+
+func statusAddressValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix.Addr().String()
+	}
+	return value
 }
 
 func Probe(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {

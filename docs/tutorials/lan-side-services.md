@@ -26,11 +26,15 @@ typed routerd resources.
       start: 172.18.1.64
       end: 172.18.1.191
       leaseTime: 12h
-    gateway: 172.18.0.1
-    dnsServers:
-      - 172.18.0.1
-    ntpServers:
-      - 172.18.0.1
+    gatewayFrom:
+      resource: IPv4StaticAddress/lan-base
+      field: address
+    dnsServerFrom:
+      - resource: IPv4StaticAddress/lan-base
+        field: address
+    ntpServerFrom:
+      - resource: IPv4StaticAddress/lan-base
+        field: address
     domain: home.internal
 ```
 

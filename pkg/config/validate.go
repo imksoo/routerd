@@ -1678,10 +1678,23 @@ func validateResource(res api.Resource) error {
 					return fmt.Errorf("%s spec.gateway must be an IPv4 address", res.ID())
 				}
 			}
+			if spec.GatewayFrom.Resource != "" && spec.GatewayFrom.Field == "" {
+				return fmt.Errorf("%s spec.gatewayFrom.field is required", res.ID())
+			}
 			for _, server := range append(append([]string{}, spec.DNSServers...), spec.NTPServers...) {
 				addr, err := netip.ParseAddr(server)
 				if err != nil || !addr.Is4() {
 					return fmt.Errorf("%s dnsServers/ntpServers entries must be IPv4 addresses", res.ID())
+				}
+			}
+			for i, source := range spec.DNSServerFrom {
+				if source.Resource == "" || source.Field == "" {
+					return fmt.Errorf("%s spec.dnsServerFrom[%d].resource and field are required", res.ID(), i)
+				}
+			}
+			for i, source := range spec.NTPServerFrom {
+				if source.Resource == "" || source.Field == "" {
+					return fmt.Errorf("%s spec.ntpServerFrom[%d].resource and field are required", res.ID(), i)
 				}
 			}
 			for i, option := range spec.Options {
@@ -2091,6 +2104,9 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.HealthyThreshold < 0 || spec.UnhealthyThreshold < 0 {
 			return fmt.Errorf("%s spec.healthyThreshold and spec.unhealthyThreshold must be non-negative", res.ID())
+		}
+		if spec.SourceAddressFrom.Resource != "" && spec.SourceAddressFrom.Field == "" {
+			return fmt.Errorf("%s spec.sourceAddressFrom.field is required", res.ID())
 		}
 		for field, value := range map[string]string{"via": spec.Via, "sourceAddress": spec.SourceAddress} {
 			if value == "" || strings.Contains(value, "${") {

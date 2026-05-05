@@ -151,7 +151,8 @@ stay un-NATed.
 
 `HealthCheck.spec.sourceInterface` accepts a network resource name and resolves
 it to the OS interface name at runtime. `via` and `sourceAddress` can also be
-specified.
+specified. `sourceAddressFrom` derives the probe source address from another
+resource status.
 
 ## Firewall
 

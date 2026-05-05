@@ -57,7 +57,9 @@ resource status.
 ```yaml
 records:
   - hostname: router
-    ipv4: 172.18.0.1
+    ipv4From:
+      resource: IPv4StaticAddress/lan-base
+      field: address
     ipv6From:
       resource: IPv6DelegatedAddress/lan-base
       field: address

@@ -114,6 +114,7 @@ On Linux, `routerd-healthcheck` uses `SO_BINDTODEVICE` for
 `DSLiteTunnel`, or similar network resource. routerd resolves that resource to
 the OS interface name before running the probe. Standalone
 `routerd-healthcheck` flags still take the OS interface name directly. It also
-binds to `sourceAddress` when that field is set. `via` records the intended
-gateway for the probe path. Route installation still belongs to route policy
-resources.
+binds to `sourceAddress` when that field is set. Use `sourceAddressFrom` when
+the probe source should follow a managed address resource such as
+`IPv4StaticAddress/lan-base.status.address`. `via` records the intended gateway
+for the probe path. Route installation still belongs to route policy resources.

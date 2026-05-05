@@ -853,6 +853,9 @@ spec:
         protocol: tcp
         port: 443
         sourceInterface: ds-lite
+        sourceAddressFrom:
+          resource: IPv4StaticAddress/lan-base
+          field: address
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -869,6 +872,9 @@ spec:
         protocol: tcp
         port: 443
         sourceInterface: ds-lite-a
+        sourceAddressFrom:
+          resource: IPv4StaticAddress/lan-base
+          field: address
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -885,6 +891,9 @@ spec:
         protocol: tcp
         port: 443
         sourceInterface: ds-lite-b
+        sourceAddressFrom:
+          resource: IPv4StaticAddress/lan-base
+          field: address
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -901,6 +910,9 @@ spec:
         protocol: tcp
         port: 443
         sourceInterface: ds-lite-c
+        sourceAddressFrom:
+          resource: IPv4StaticAddress/lan-base
+          field: address
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -962,9 +974,9 @@ spec:
             port: 53
             sources: [local-zone, home-wirednet-jp, lab-wirednet-jp, fab-wirednet-jp, lain-local, ngn-aftr, nextdns-bootstrap-ngn, nextdns-bootstrap-public, default]
           - name: lan
-            addresses:
-              - 172.18.0.1
             addressFrom:
+              - resource: IPv4StaticAddress/lan-base
+                field: address
               - resource: IPv6DelegatedAddress/lan-base
                 field: address
             port: 53
@@ -1058,7 +1070,9 @@ spec:
         ttl: 300
         records:
           - hostname: router
-            ipv4: 172.18.0.1
+            ipv4From:
+              resource: IPv4StaticAddress/lan-base
+              field: address
             ipv6From:
               resource: IPv6DelegatedAddress/lan-base
               field: address
@@ -1082,11 +1096,15 @@ spec:
           start: 172.18.1.64
           end: 172.18.1.191
           leaseTime: 12h
-        gateway: 172.18.0.1
-        dnsServers:
-          - 172.18.0.1
-        ntpServers:
-          - 172.18.0.1
+        gatewayFrom:
+          resource: IPv4StaticAddress/lan-base
+          field: address
+        dnsServerFrom:
+          - resource: IPv4StaticAddress/lan-base
+            field: address
+        ntpServerFrom:
+          - resource: IPv4StaticAddress/lan-base
+            field: address
         domain: home.internal
         options:
           - name: domain-search

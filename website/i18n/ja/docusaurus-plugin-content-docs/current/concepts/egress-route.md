@@ -119,5 +119,7 @@ routerd の設定では、`sourceInterface` に `Interface` や
 routerd は probe を実行する前に、リソース名を OS のインターフェース名へ解決します。
 単体の `routerd-healthcheck` の引数では、OS のインターフェース名を直接指定します。
 `sourceAddress` がある場合は、送信元アドレスを bind します。
+管理対象アドレスに追従させる場合は `sourceAddressFrom` を使います。
+たとえば `IPv4StaticAddress/lan-base.status.address` を参照できます。
 `via` は probe 経路の gateway を記録します。
 経路の作成は route policy リソースが担当します。

@@ -266,11 +266,22 @@ func (d *daemon) startDNS(ctx context.Context) error {
 	for _, listen := range d.config.Spec.Listen {
 		for _, address := range listen.Addresses {
 			addr := net.JoinHostPort(address, fmt.Sprintf("%d", listen.Port))
-			udp := &dns.Server{Addr: addr, Net: "udp", Handler: handler}
-			tcp := &dns.Server{Addr: addr, Net: "tcp", Handler: handler}
+			packetConn, err := net.ListenPacket("udp", addr)
+			if err != nil {
+				d.shutdownDNSServers()
+				return fmt.Errorf("listen udp %s: %w", addr, err)
+			}
+			listener, err := net.Listen("tcp", addr)
+			if err != nil {
+				_ = packetConn.Close()
+				d.shutdownDNSServers()
+				return fmt.Errorf("listen tcp %s: %w", addr, err)
+			}
+			udp := &dns.Server{PacketConn: packetConn, Net: "udp", Handler: handler}
+			tcp := &dns.Server{Listener: listener, Net: "tcp", Handler: handler}
 			d.servers = append(d.servers, udp, tcp)
-			go func() { _ = udp.ListenAndServe() }()
-			go func() { _ = tcp.ListenAndServe() }()
+			go d.serveDNS(udp, addr, "udp")
+			go d.serveDNS(tcp, addr, "tcp")
 		}
 	}
 	select {
@@ -279,6 +290,19 @@ func (d *daemon) startDNS(ctx context.Context) error {
 	case <-time.After(200 * time.Millisecond):
 		return nil
 	}
+}
+
+func (d *daemon) serveDNS(server *dns.Server, addr, network string) {
+	if err := server.ActivateAndServe(); err != nil && err != http.ErrServerClosed {
+		d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "ServeFailed", err.Error(), map[string]string{"listen": addr, "network": network})
+	}
+}
+
+func (d *daemon) shutdownDNSServers() {
+	for _, server := range d.servers {
+		_ = server.Shutdown()
+	}
+	d.servers = nil
 }
 
 func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
