@@ -300,8 +300,6 @@ spec:
         wantedBy:
           - multi-user.target
         restart: on-failure
-        runtimeDirectory:
-          - routerd
         stateDirectory:
           - routerd
         readWritePaths:
