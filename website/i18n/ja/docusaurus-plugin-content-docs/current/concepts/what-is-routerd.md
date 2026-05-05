@@ -6,57 +6,82 @@ sidebar_position: 1
 
 # routerd とは
 
-routerd は、Linux や FreeBSD のホストをルーターとして動かすための宣言的な制御ソフトウェアです。
-ルーターの意図を YAML に書き、routerd がその意図に合わせてインターフェース、アドレス、DHCP、DNS、NAT、経路、トンネル、ヘルスチェックを調整します。
+routerd は、Linux ホストをルーターとして動かすための宣言的な制御プレーンです。
+NixOS と FreeBSD の土台も整備中です。
+ルーターの意図を YAML リソースとして書きます。
+routerd はその意図を、インターフェース、アドレス、DHCP、DNS、NAT、経路、
+トンネル、ヘルスチェック、パッケージ、sysctl、サービスユニット、ログ、
+状態へ反映します。
 
 routerd はディストリビューションでも、集中管理サービスでもありません。
-各ルーターホストの上でローカルに動き、ホストのカーネル機能、dnsmasq、nftables、pppd、WireGuard などを必要な範囲で使います。
+各ルーターホストの上でローカルに動きます。
+systemd-networkd、dnsmasq、nftables、pppd、WireGuard、systemd など、
+ホスト側の部品を必要な範囲で使います。
 
 ## 解決する問題
 
-手作業でルーターを作ると、設定は多くの場所に散らばります。
+手作業でルーターを作ると、状態は多くの場所に散らばります。
 
-- インターフェース名とアドレスは netplan、systemd-networkd、rc.d、NixOS 設定に分かれます。
-- DHCP、DNS、RA は dnsmasq や別の設定ファイルに分かれます。
-- NAT と経路は nftables、iproute2、sysctl に分かれます。
-- DHCPv4、DHCPv6-PD、PPPoE、ヘルスチェックは別々のデーモンになります。
+- インターフェースのアドレスは netplan、systemd-networkd、rc.d、NixOS 設定に分かれます。
+- DHCP、DHCPv6、DHCP 中継、RA は dnsmasq 設定に分かれます。
+- DNS 転送とローカルレコードはリゾルバーごとの設定に分かれます。
+- NAT、経路ポリシー、conntrack、ファイアウォールは nftables と iproute2 に分かれます。
+- DHCPv4、DHCPv6-PD、PPPoE、ヘルスチェック、ログは別々のデーモンになります。
+- パッケージ、sysctl、サービスユニットはホスト準備スクリプトに残りがちです。
 
-routerd はこれらを「リソースの集合」として扱います。
-YAML を見ればルーターの意図が分かり、git の差分で変更を確認できます。
+routerd はこれらをリソースとして扱います。
+YAML を見ればルーターの意図が分かります。
+git の diff で変更を確認できます。
+`routerctl` と Web Console で実際に観測した状態を確認できます。
 
-## 現在の主な構成
+## 現在の構成
 
-routerd 本体は、リソースを読み、依存関係を解き、各リソースを調整します。
-長く動く処理やプロトコル状態を持つ処理は、専用デーモンに分けています。
+`routerd serve` はリソースを読み、依存関係を解きます。
+子デーモンを起動し、イベントを購読し、ホストを望ましい状態へ調整します。
 
-- `routerd-dhcpv6-client`: DHCPv6-PD と DHCPv6 情報要求を担当します。
-- `routerd-dhcpv4-client`: DHCPv4 リースを担当します。
+長く動くプロトコル状態は、小さな管理対象デーモンへ分けています。
+
+- `routerd-dhcpv6-client`: DHCPv6 プレフィックス委譲と情報要求を担当します。
+- `routerd-dhcpv4-client`: DHCPv4 WAN リースを担当します。
 - `routerd-pppoe-client`: PPPoE セッションを担当します。
-- `routerd-healthcheck`: TCP、DNS、HTTP、ICMP のヘルスチェックを担当します。
-- `routerd serve`: リソース調整、イベントバス、制御 API を担当します。
+- `routerd-healthcheck`: TCP、DNS、HTTP、ICMP の疎通確認を担当します。
+- `routerd-dns-resolver`: DNS ゾーン応答と DoH、DoT、DoQ、UDP 上流を担当します。
+- `routerd-dhcp-event-relay`: dnsmasq のリース変化を routerd イベントへ変換します。
+- `routerd-firewall-logger`: ファイアウォールログを routerd のログ保存先へ取り込みます。
 
-各デーモンは Unix ドメインソケットで HTTP+JSON API を公開し、状態ファイルとイベントログを持ちます。
-routerd 本体はそれらの状態を読み、LAN 側サービス、経路、DNS 応答、WAN 出口選択へ反映します。
+各デーモンは Unix ソケットでローカル HTTP+JSON 状態を公開します。
+必要な状態はファイルへ保存します。
+routerd はそれらのイベントを読み、LAN サービス、DNS レコード、DS-Lite、
+NAT、経路ポリシー、ヘルスチェック由来の選択、観測用保存先へ反映します。
 
-## できること
+## 管理できるもの
 
-現在の実装では、次のような構成を扱えます。
+現在の実装では、次を扱えます。
 
-- DHCPv6-PD で受け取ったプレフィックスを LAN へ展開します。
-- DHCPv6 情報要求、条件付き DNS 転送、DS-Lite、NAT44 を組み合わせます。
-- DHCPv4 サーバー、DHCPv6 サーバー、RA は管理対象 dnsmasq が、DNS の応答と転送は `routerd-dns-resolver` がそれぞれ提供します。
-- DHCPv4 クライアントは `routerd-dhcpv4-client` が担当します。
-- PPPoE、WireGuard、VXLAN、VRF、IPsec 設定生成の土台を扱います。
-- EgressRoutePolicy、HealthCheck、EventRule、DerivedEvent で状態に応じた選択を行います。
-- OpenTelemetry の設定がある場合は、メトリクス、ログ、トレースを送信できます。
+- DHCPv6-PD と、委譲プレフィックスからの IPv6 LAN アドレス
+- DHCPv6 情報要求、AFTR DNS 解決、DS-Lite
+- DHCPv4 WAN リース、DHCPv4 LAN スコープ、固定割り当て
+- DHCPv6 サーバーモード、IPv6 RA オプション
+- DNS ゾーン、DHCP 由来レコード、条件付き転送、DoH、DoT、DoQ、
+  UDP フォールバック、複数待ち受け、キャッシュ
+- NAT44、プライベート宛先の NAT 対象外指定、IPv4 経路ポリシー、
+  reverse path filter、Path MTU 方針、TCP MSS 調整
+- PPPoE、WireGuard、VXLAN、VRF、cloud VPN 向け IPsec 設定の土台
+- パッケージ、sysctl プロファイル、ネットワーク引き継ぎ、systemd ユニット、
+  NTP クライアント、ログ転送、ログ保管、Web Console
+- `EgressRoutePolicy`、`HealthCheck`、`EventRule`、`DerivedEvent` による状態連携
+- 状態、イベント、DNS クエリー、コネクション、通信フロー、ファイアウォールログの確認
 
 ## まだ割り切っていること
 
-routerd は開発中の v1alpha1 です。
-現在の名前やフィールドは、将来の移行コストを下げるために互換性なしで整理することがあります。
+routerd は v1alpha1 のプレリリースです。
+ルーターを安全にし、設定を分かりやすくするためであれば、
+名前やフィールドは互換別名なしで変えることがあります。
 
-特に、状態を持つファイアウォール、DoH 代理、BGP/OSPF、高可用化、遠隔プラグイン配布はまだ本線ではありません。
-NixOS と FreeBSD は実機検証済みの範囲がありますが、Ubuntu と同じ機能差なしの対象ではありません。
+状態を持つファイアウォールフィルターは土台段階です。
+routerd はまだ汎用ファイアウォール規則言語ではありません。
+NixOS と FreeBSD は対応を進めていますが、Ubuntu と同等ではありません。
+プラットフォームごとの差は対応表に記載します。
 
 ## 次に読むもの
 

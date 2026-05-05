@@ -5,13 +5,12 @@ slug: /how-to/dns-private-upstream
 
 # Private DNS upstreams
 
-`DNSResolver` runs `routerd-dns-resolver`.
+`DNSResolver` starts `routerd-dns-resolver`.
 The daemon listens on UDP and TCP.
-It evaluates `spec.sources` in order.
-The first matching source answers the query.
+It evaluates `spec.sources` in order for each listen profile.
 
-dnsmasq no longer serves DNS.
-It remains the DHCP server, DHCP relay, and RA helper.
+dnsmasq no longer serves DNS. It remains the DHCPv4, DHCPv6, DHCP relay, and RA
+helper.
 
 ## Upstream protocols
 
@@ -22,11 +21,14 @@ It remains the DHCP server, DHCP relay, and RA helper.
 | `quic://` | DNS over QUIC | 853 |
 | `udp://` | Plain DNS over UDP | 53 |
 
-The order in `upstreams` is the priority order.
-routerd first tries the highest healthy upstream.
-If it fails, the resolver tries the next upstream.
+The order in `upstreams` is the priority order. routerd tries the highest
+healthy upstream first. If it fails, the resolver tries the next upstream.
 
-## Example
+Use `upstreamFrom` when an upstream list comes from another resource status.
+This is important for access-network DNS servers learned through DHCPv6
+information request.
+
+## Conditional forwarding example
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -35,49 +37,59 @@ If it fails, the resolver tries the next upstream.
     name: lan-resolver
   spec:
     listen:
-    - name: lan
-      addresses:
-      - 192.168.160.5
-      - 127.0.0.1
-      port: 53
-      sources:
-      - local
-      - ngn-aftr
-      - default
+      - name: lan
+        addresses:
+          - 172.18.0.1
+        port: 53
+        sources:
+          - local-zone
+          - ngn-aftr
+          - private-provider-bootstrap
+          - default
 
     sources:
-    - name: local
-      kind: zone
-      match:
-      - lab.example
-      zoneRef:
-      - DNSZone/lan
+      - name: local-zone
+        kind: zone
+        match:
+          - home.internal
+        zoneRef:
+          - DNSZone/home
 
-    - name: ngn-aftr
-      kind: forward
-      match:
-      - transix.jp
-      upstreams:
-      - ${DHCPv6Information/wan-info.status.dnsServers}
+      - name: ngn-aftr
+        kind: forward
+        match:
+          - transix.jp
+        upstreamFrom:
+          - resource: DHCPv6Information/wan-info
+            field: dnsServers
 
-    - name: default
-      kind: upstream
-      match:
-      - "."
-      upstreams:
-      - https://cloudflare-dns.com/dns-query
-      - tls://dns.google
-      - quic://dns.google
-      - udp://8.8.8.8:53
-      healthcheck:
-        interval: 15s
-        timeout: 3s
-        failThreshold: 3
-        passThreshold: 2
-      dnssecValidate: true
-      viaInterface: ${Interface/wan.status.ifname}
-      bootstrapResolver:
-      - 2606:4700:4700::1111
+      - name: private-provider-bootstrap
+        kind: forward
+        match:
+          - example-dns-provider.test
+        upstreams:
+          - udp://1.1.1.1:53
+          - udp://8.8.8.8:53
+
+      - name: default
+        kind: upstream
+        match:
+          - "."
+        upstreams:
+          - https://dns.example.net/dns-query
+          - tls://dns.example.net
+          - quic://dns.example.net
+          - udp://1.1.1.1:53
+        healthcheck:
+          interval: 15s
+          timeout: 3s
+          failThreshold: 3
+          passThreshold: 2
+        dnssecValidate: true
+        viaInterface: ens18
+        bootstrapResolver:
+          - 1.1.1.1
+          - 2606:4700:4700::1111
 
     cache:
       enabled: true
@@ -87,5 +99,23 @@ If it fails, the resolver tries the next upstream.
       negativeTTL: 30s
 ```
 
-Do not put provider-specific account identifiers in shared examples.
-Use production provider URLs only in the host-local YAML file.
+## Provider bootstrap
+
+Some private DNS providers serve the resolver endpoint from the same domain
+that the resolver is going to use. If a browser or host tries to resolve that
+provider name through the provider itself, the query can fail or loop through
+an unwanted path.
+
+Add a conditional source for the provider domain and send it to an access
+network DNS server or a public resolver. Keep provider account IDs only in the
+host-local YAML file. Do not commit them to shared examples.
+
+## Interface binding
+
+`sources[].viaInterface` binds outgoing queries to a Linux interface name.
+Use a literal OS interface name such as `ens18`. If the interface itself is
+created by another resource, declare that relationship with `ownerRefs` or
+resource ordering and keep the resolver pending until the interface exists.
+
+FreeBSD does not currently provide the same `SO_BINDTODEVICE` behavior, so
+platform-specific docs should not promise identical enforcement there.

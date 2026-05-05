@@ -1,8 +1,17 @@
 # 複数 WAN の経路選択
 
-1 台のルーターに複数の外向き経路がある場合は、
-`EgressRoutePolicy` を使います。
-このポリシーは、準備完了の候補から重みが最も高いものを選びます。
+1 台のルーターに複数の外向き経路がある場合は、`EgressRoutePolicy` を使います。
+この方針は、準備ができていて健康な候補のうち、重みが最も高いものを選びます。
+
+この動作は収束型です。
+起動直後は、低い重みの fallback 経路でも準備ができれば通信を始めます。
+優先経路が後からヘルスチェックに通ると、routerd は選択デバイスを変えます。
+その後、経路と NAT リソースを再適用します。
+controller は conntrack を消しません。
+既存通信はカーネル状態を維持します。
+新しい通信は新しく選ばれた経路へ流れます。
+
+## 経路ポリシー
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -16,63 +25,105 @@ spec:
   selection: highest-weight-ready
   hysteresis: 30s
   candidates:
-    - name: ds-lite
+    - name: ds-lite-a
+      source: DSLiteTunnel/ds-lite-a
+      deviceFrom:
+        resource: DSLiteTunnel/ds-lite-a
+        field: interface
+      gatewaySource: none
+      weight: 90
+      healthCheck: internet-tcp443-dslite-a
+
+    - name: ds-lite-slaac
       source: DSLiteTunnel/ds-lite
       deviceFrom:
         resource: DSLiteTunnel/ds-lite
         field: interface
       gatewaySource: none
-      weight: 80
-      healthCheck: internet-tcp443
-    - name: fallback
-      source: Interface/fallback
+      weight: 70
+      healthCheck: internet-tcp443-dslite
+
+    - name: hgw-fallback
+      source: Interface/wan
       deviceFrom:
-        resource: Interface/fallback
+        resource: Interface/wan
         field: ifname
       gatewaySource: static
-      gateway: 172.17.0.1
+      gateway: 192.168.1.254
       weight: 50
 ```
 
-外部到達性を確認したい経路には、HealthCheck を追加します。
+インターネット到達性を確認したい経路ごとに、ヘルスチェックを追加します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
 kind: HealthCheck
 metadata:
-  name: internet-tcp443
+  name: internet-tcp443-dslite-a
 spec:
   daemon: routerd-healthcheck
   target: 1.1.1.1
   protocol: tcp
   port: 443
-  sourceInterface: ds-routerd-test
+  sourceInterface: ds-lite-a
   interval: 30s
   timeout: 3s
 ```
 
-経路や NAT のリソースは、選ばれたデバイスを参照できます。
+## NAT を選択経路に追従させる
 
-この動作は収束を優先します。
-起動直後は、準備完了の fallback 経路で通信を開始できます。
-その後、優先経路の HealthCheck が成功すると、
-routerd は選択デバイスを切り替えます。
-経路と NAT のリソースは再び適用されます。
-conntrack は消しません。
-既存の通信は、カーネルが持つ状態に従います。
-新しい通信は、新しく選ばれた経路を使います。
+経路と NAT は、選択された出口ポリシーに追従できます。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
 kind: NAT44Rule
 metadata:
-  name: lan-to-wan
+  name: lan-to-egress
 spec:
   type: masquerade
   egressPolicyRef: ipv4-default
   sourceRanges:
-    - 192.168.0.0/16
+    - 172.18.0.0/16
 ```
 
-管理通信は管理インターフェースで扱います。
-firewall 変更の適用時に、WAN 側の SSH 経路を前提にしないでください。
+上流の HGW に LAN サブネットへの静的経路を設定できる場合は、
+プライベート宛先を NAT 対象から外せます。
+インターネット向け通信だけ NAT します。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: NAT44Rule
+metadata:
+  name: lan-to-wan-hgw
+spec:
+  type: masquerade
+  egressInterface: wan
+  sourceRanges:
+    - 172.18.0.0/16
+  excludeDestinationCIDRs:
+    - 192.168.0.0/16
+    - 172.16.0.0/12
+    - 10.0.0.0/8
+```
+
+HGW LAN への静的経路リソースも合わせて書きます。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: IPv4Route
+metadata:
+  name: hgw-lan-via-wan
+spec:
+  destination: 192.168.0.0/16
+  device: wan
+```
+
+この形では、RFC 1918 宛ての通信はローカルネットワーク設計の内側に残します。
+公開インターネット向けの通信は、選択された出口ポリシーに従います。
+
+## 運用メモ
+
+- SSH は管理インターフェースで維持します。
+- ファイアウォールや経路変更中に、untrust WAN 経由でルーターへ SSH しないでください。
+- ヘルスチェックは候補インターフェースへ束縛することを推奨します。
+- 明確な障害対応でない限り、経路選択の変更時に conntrack を消さないでください。

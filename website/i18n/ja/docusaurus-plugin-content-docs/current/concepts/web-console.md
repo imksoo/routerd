@@ -1,19 +1,11 @@
 # Web Console
 
 `WebConsole` は、routerd の状態を読むための HTTP 画面です。
-管理ネットワークでの運用確認を目的にします。
-設定変更、サービス再起動、リソース適用、状態データベースの編集は行いません。
+管理ネットワークでのローカル運用を想定しています。
+設定変更、サービス再起動、リソース適用、状態データベース編集は行いません。
 
-設定変更は YAML ファイルと `routerctl` コマンドだけで行います。
-Web Console は次の情報だけを読みます。
-
-- routerd デーモンの状態
-- SQLite 状態データベース内のリソース状態
-- SQLite イベントテーブル内の bus イベント
-- conntrack または pf state から得たコネクション観測値
-- `dns-queries.db` に保存した DNS クエリー履歴
-- `traffic-flows.db` に保存した通信フロー履歴
-- `firewall-logs.db` に保存した拒否ログ
+設定変更は YAML ファイルと `routerctl` コマンドに限定します。
+ブラウザーは観測専用です。
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -28,28 +20,49 @@ spec:
 ```
 
 待ち受けは管理アドレスに限定してください。
-信頼しない WAN インターフェースでは公開しないでください。
+untrust WAN インターフェースでは公開しないでください。
 
-最初の画面では、次の情報を表示します。
+## 読み取る情報
 
-- routerd 全体の phase と generation
-- PD、DS-Lite、DNS、NAT、経路、HealthCheck、VPN、firewall リソースの phase
-- 直近の routerd イベント
-- `routerd.dhcp.lease.renewed` の MAC アドレス、IPv4 アドレス、ホスト名などのイベント属性
-- conntrack 件数と IPv4/IPv6 コネクションの一部
-- コネクション行の `dst label` 列。直近の DNS 応答から導出します
-- クライアント別の通信量
-- 送信元と宛先で集計した直近の拒否ログ
+Web Console は次の情報を読み取ります。
 
-JSON エンドポイントも読み取り専用です。
-Web Console API は `/api/v1` にだけ公開します。
+- routerd デーモン状態
+- SQLite 状態データベース内のリソース状態
+- SQLite イベントテーブル内のバスイベント
+- conntrack または pf state から得たコネクション観測
+- `dns-queries.db` の DNS クエリー履歴
+- `traffic-flows.db` の通信フロー履歴
+- `firewall-logs.db` のファイアウォール拒否履歴
+- 現在の YAML 設定。読み取り専用で表示します。
 
-| Path | 内容 |
+## 現在の画面
+
+現在の Fluent UI 版 Web アプリケーションでは、次を表示します。
+
+- PD、DS-Lite、DNS、NAT、経路、ヘルスチェック、VPN、パッケージ、sysctl、
+  systemd ユニット、ログリソースの状態概要
+- フェーズや観測値が変わったリソースの強調表示
+- 選択したイベントの詳細ペイン。大きな属性でイベント表を崩しません。
+- DHCP リースイベントの詳細。MAC アドレス、IP アドレス、ホスト名、リソース名を表示します。
+- アドレスファミリーとプロトコルで分けた Connections 画面。ページネーションと行数選択があります。
+- 分離されたログデータベースに基づく DNS クエリー、通信フロー、ファイアウォールログ画面
+- シンタックスハイライトと折りたたみを持つ読み取り専用 Config 画面
+
+コネクション行は、基本的に往路を表示します。
+conntrack は同じ通信を往復方向で報告するため、復路を主要行として重ねて表示しません。
+
+## API 境界
+
+Web Console API は読み取り専用です。
+エンドポイントは `/api/v1` 配下だけです。
+
+| パス | 内容 |
 | --- | --- |
-| `/api/v1/summary` | 状態、リソース phase、直近イベント、コネクション概要 |
+| `/api/v1/summary` | 状態、リソースフェーズ、直近イベント、コネクション概要 |
 | `/api/v1/resources` | 状態データベース内のリソース状態 |
-| `/api/v1/events` | 直近の bus イベント |
-| `/api/v1/connections` | conntrack または pf state から得たコネクション観測値 |
-| `/api/v1/dns-queries?since=1h&client=&qname=&limit=100` | DNS クエリー履歴 |
-| `/api/v1/traffic-flows?since=1h&client=&peer=&limit=100` | DNS 履歴で通信先名を補った通信フロー履歴 |
-| `/api/v1/firewall-logs?since=24h&action=drop&src=&limit=100` | ファイアウォールログ |
+| `/api/v1/events` | 直近のバスイベント |
+| `/api/v1/connections` | conntrack または pf state から得たコネクション観測 |
+| `/api/v1/dns-queries?since=1h&client=&qname=&limit=100` | DNS クエリーログ行 |
+| `/api/v1/traffic-flows?since=1h&client=&peer=&limit=100` | DNS 由来ホスト名を含む通信フローログ行 |
+| `/api/v1/firewall-logs?since=24h&action=drop&src=&limit=100` | ファイアウォールログ行 |
+| `/api/v1/config` | 現在の YAML 設定 |

@@ -403,9 +403,9 @@ spec:
     spec:
       topic: routerd.virtual.dslite-route-active
       inputs:
-      - field: ${DSLiteTunnel/ds-lite.status.phase}
+      - field: DSLiteTunnel/ds-lite.status.phase
         equals: Up
-      - field: ${IPv4Route/default-via-dslite.status.phase}
+      - field: IPv4Route/default-via-dslite.status.phase
         equals: Installed
       emitWhen: all_true
       retractWhen: any_false

@@ -423,9 +423,9 @@ metadata: { name: internet-reachable-ipv4 }
 spec:
   topic: routerd.virtual.internet-reachable.ipv4
   inputs:
-    - field: ${EgressRoutePolicy/ipv4-default.status.selectedCandidate}
+    - field: EgressRoutePolicy/ipv4-default.status.selectedCandidate
       not_empty: true
-    - field: ${HealthCheck/internet-icmp4.status.phase}
+    - field: HealthCheck/internet-icmp4.status.phase
       equals: Healthy
   emitWhen:    all_true
   retractWhen: any_false

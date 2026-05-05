@@ -1,38 +1,39 @@
 ---
-title: DNS resolver
+title: DNS リゾルバー
 slug: /concepts/dns-resolver
 ---
 
-# DNS resolver
+# DNS リゾルバー
 
-Phase 2.0 splits routerd DNS into two resource kinds.
+Phase 2.0 以降、routerd の DNS は 2 種類のリソースに分かれています。
 
-`DNSZone` owns local authoritative data.
-It stores manual records and records derived from DHCP leases.
+`DNSZone` はローカル権威データを持ちます。
+手動レコードと、DHCP リースから派生したレコードを保存します。
 
-`DNSResolver` owns the daemon instance.
-It defines listen addresses, source ordering, upstream selection, and cache policy.
-One `DNSResolver` resource starts one `routerd-dns-resolver` process.
+`DNSResolver` はデーモンインスタンスを管理します。
+待ち受けアドレス、応答元の順序、上流選択、キャッシュ方針を定義します。
+1 つの `DNSResolver` リソースが、1 つの `routerd-dns-resolver` プロセスを起動します。
 
-## Source ordering
+## 応答元の順序
 
-`DNSResolver.spec.sources` is evaluated in order.
-A `zone` source answers from `DNSZone`.
-A `forward` source sends matching zones to a selected upstream.
-An `upstream` source handles the default recursive path.
+`DNSResolver.spec.sources` は上から順に評価されます。
+`zone` は `DNSZone` から応答します。
+`forward` は一致したゾーンを選択された上流へ送ります。
+`upstream` は既定の再帰問い合わせ経路です。
 
-The resolver supports DoH, DoT, DoQ, and plain UDP DNS.
-It tries upstreams by priority and falls back when a higher source fails.
+リゾルバーは DoH、DoT、DoQ、平文 UDP DNS を扱います。
+上流は優先順に試します。
+優先度の高い上流が失敗した場合は、次の上流へ切り替えます。
 
-## Multiple listen profiles
+## 複数の待ち受けプロファイル
 
-`spec.listen` is a list.
-Each entry can select a subset of source names.
-This allows LAN and VPN listeners to behave differently while sharing one resolver resource.
+`spec.listen` は配列です。
+各待ち受けは、利用する応答元名の部分集合を選べます。
+これにより、LAN と VPN の待ち受けで違う挙動を持たせられます。
+それでも 1 つのリゾルバーリソースを共有できます。
 
-Use `listen[].addressFrom` when a listen address comes from another
-resource status. This keeps the dependency explicit and lets the controller
-reconfigure the daemon when the source resource changes.
+待ち受けアドレスがほかのリソース状態から来る場合は、`listen[].addressFrom` を使います。
+依存関係が明示されるため、元リソースが変化したときにデーモンを再構成できます。
 
 ```yaml
 listen:
@@ -45,14 +46,14 @@ listen:
     port: 53
 ```
 
-If a required address source is not available yet, the resolver stays
-`Pending(AddressUnresolved)` instead of starting with a stale address.
+必要なアドレスがまだ解決できない場合、リゾルバーは古いアドレスで起動しません。
+`Pending(AddressUnresolved)` のまま待ちます。
 
-## Dynamic zone records
+## 動的なゾーンレコード
 
-`DNSZone.spec.records[].ipv4` and `ipv6` are literal addresses.
-Use `ipv4From` or `ipv6From` when a record address comes from another
-resource status.
+`DNSZone.spec.records[].ipv4` と `ipv6` は固定値です。
+レコードのアドレスをほかのリソース状態から得る場合は、`ipv4From` または
+`ipv6From` を使います。
 
 ```yaml
 records:
@@ -63,20 +64,35 @@ records:
       field: address
 ```
 
-If a required record source is not available yet, the record field is marked in
-`DNSZone.status.pendingRecords`. The resolver is regenerated when the source
-resource changes, and the record is published after the field resolves.
+必要な参照先がまだ解決できない場合、そのレコードは `DNSZone.status.pendingRecords`
+に記録されます。
+参照先リソースが変化するとリゾルバーを再生成し、解決後にレコードを公開します。
 
-## Network-constrained upstreams
+## ネットワークが制限された上流
 
-`sources[].viaInterface` binds outgoing queries to a specific interface on Linux.
-The value can reference `Interface`, `WireGuardInterface`, `IPsecConnection`, or `VRF` status.
+`sources[].viaInterface` は、Linux で送信先インターフェースを束縛します。
+`ens18` や `wg0` のような OS インターフェース名を固定値で指定します。
+トンネルや VRF リソースがそのインターフェースを作る場合は、リソース所有や順序で依存関係を明示します。
+インターフェースが存在するまで、リゾルバーを待機させます。
 
-`sources[].bootstrapResolver` supplies DNS server addresses for resolving DoH and DoT endpoint names.
-This is useful when the endpoint name is only resolvable inside an access network.
+`sources[].bootstrapResolver` は、DoH や DoT の接続先名を解決する補助 DNS サーバーです。
+接続先名がアクセス網の内側でしか解決できない場合に使います。
 
-## dnsmasq boundary
+上流サーバー一覧がほかのリソース状態から来る場合は、`upstreamFrom` を使います。
 
-dnsmasq is now limited to DHCPv4, DHCPv6, DHCP relay, and RA.
-It does not generate `server=`, `local=`, or `host-record=` lines.
-All DNS answering and forwarding goes through `routerd-dns-resolver`.
+```yaml
+sources:
+  - name: ngn-aftr
+    kind: forward
+    match:
+      - transix.jp
+    upstreamFrom:
+      - resource: DHCPv6Information/wan-info
+        field: dnsServers
+```
+
+## dnsmasq との境界
+
+dnsmasq は DHCPv4、DHCPv6、DHCP 中継、RA に限定します。
+`server=`、`local=`、`host-record=` は生成しません。
+DNS 応答と転送はすべて `routerd-dns-resolver` が担当します。

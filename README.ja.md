@@ -2,60 +2,108 @@
 
 [プロジェクトサイトとドキュメント: routerd.net](https://routerd.net/)
 
-routerd は、ルーターの意図を YAML の型付きリソースとして書くための
-宣言的な制御ソフトウェアです。routerd はその意図を、ローカルデーモン、
-生成設定、カーネルネットワーク状態、観測状態へ反映します。
-現在はプレリリースです。pve05 から pve07 上の Ubuntu、NixOS、FreeBSD VM を中心に、
-IX2215 置き換えに必要な機能を小さな部品から作り直しています。
+routerd は、汎用ホストを見通しのよいルーターとして動かすための、
+プレリリースの宣言的ルーター制御プレーンです。
 
-現在の本線は OS の DHCPv6 生成器ではなく、管理対象デーモンです。
+netplan、systemd-networkd、dnsmasq、nftables、sysctl、個別スクリプト、
+systemd ユニットに意図を分散させず、型付き YAML リソースとしてまとめます。
+routerd は設定を検証し、計画を表示し、必要なホスト成果物を作成します。
+管理対象デーモンを起動し、`routerctl`、ローカル API、ログ、読み取り専用
+Web Console で状態を見えるようにします。
 
-- `routerd-dhcpv6-client`: DHCPv6-PD と Information-request
-- `routerd-dhcpv4-client`: WAN DHCPv4 リース
-- `routerd-pppoe-client`: PPPoE セッション
-- `routerd-healthcheck`: 別プロセスの疎通確認
+routerd の基本思想は単純です。
+ルーターはシステムとして設定し、サービスとして観測できるべきです。
 
-routerd 本体はデーモンイベントを bus と SQLite イベント保存先へ流します。
-コントローラーチェーンは、LAN アドレス、DNS、RA、DS-Lite へ反映します。
-IPv4 経路、NAT44、WAN 出口選択も同じ流れで扱います。
+## routerd が目指すもの
+
+- **1 つの意図ファイル**: インターフェース、WAN 取得、LAN サービス、DNS、
+  NAT、経路ポリシー、sysctl、パッケージ、サービスユニットを同じリソース
+  モデルで扱います。
+- **小さな管理対象デーモン**: DHCPv4、DHCPv6-PD、PPPoE、ヘルスチェック、
+  DNS、イベント中継は Unix ソケット上の HTTP+JSON で状態を公開します。
+  shell hook に状態を隠しません。
+- **収束する経路選択**: `HealthCheck` と `EgressRoutePolicy` により、起動直後は
+  使える経路でサービスを始めます。優先度の高い経路が健康になったら、
+  新しい通信からそちらへ流します。conntrack は消しません。
+- **明示的な DNS 設計**: dnsmasq は DHCP と RA に限定します。DNS 応答、
+  条件付き転送、DoH、DoT、DoQ、UDP フォールバック、キャッシュ、ローカル
+  ゾーン、DHCP 由来の名前は `routerd-dns-resolver` が扱います。
+- **運用時の可視性**: バスイベント、リソース状態、DNS クエリー、コネクション
+  観測、通信フローログ、ファイアウォールログをローカルで確認できます。
+  ブラウザーから設定は変更しません。
+- **実ホストの準備も宣言**: パッケージ導入、sysctl 既定値、
+  systemd-networkd の引き継ぎ、systemd ユニット、ログ転送、Web Console も
+  リソースとして宣言します。
 
 ## 現在できること
 
-- Interface / Link / Bridge / VXLAN / VRF / WireGuard / cloud VPN 向け IPsec の土台
-- WAN 取得: DHCPv6-PD、DHCPv6 Information、DHCPv4 リース、PPPoE、DS-Lite
-- LAN サービス: dnsmasq 統合による DHCPv4、DHCPv6、RA、DNS host record、
-  ローカルドメイン、DDNS、DNSSEC フラグ、条件付き転送、DoH/DoT/DoQ と
-  平文 UDP DNS へのローカル DNS 代理
-- 委譲プレフィックスからの LAN IPv6 アドレス派生
-- `EgressRoutePolicy`、`HealthCheck`、`EventRule`、`DerivedEvent` による
-  WAN 出口選択
-- IPv4 既定経路、nftables による NAT44、conntrack 集計観測
-- 状態、イベント、通信、性能に関する観測値を表示する読み取り専用 Web Console
-- Unix ソケット HTTP+JSON の routerd / デーモン制御 API
-- NixOS 生成設定。router02 では `routerd-dhcpv6-client@wan-pd` を
-  `routerd-generated.nix` の宣言的ユニットとして運用済み
+- インターフェース別名、リンク、ブリッジ、VRF、VXLAN、WireGuard、
+  cloud VPN 向け IPsec の土台
+- DHCPv6 プレフィックス委譲、DHCPv6 情報要求、DHCPv4 リース、PPPoE、
+  DS-Lite による WAN 取得
+- 管理対象 dnsmasq による DHCPv4 スコープ、固定割り当て、DHCPv6、
+  DHCP 中継、RA、PIO、RDNSS、DNSSL、MTU オプション
+- `DNSZone` と `DNSResolver` によるローカル権威ゾーン、DHCP 由来レコード、
+  条件付き転送、DoH、DoT、DoQ、UDP フォールバック、DNSSEC フラグ、
+  複数待ち受け、キャッシュ
+- IPv4/IPv6 アドレス派生、静的経路、既定経路ポリシー、経路対象外指定、
+  Path MTU 方針、TCP MSS 調整、NAT44、DS-Lite
+- `HealthCheck`、`EgressRoutePolicy`、`EventRule`、`DerivedEvent` による
+  状態連携
+- `Package`、`Sysctl`、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit`、
+  `NTPClient`、`LogSink`、`LogRetention`、`WebConsole`
+- `routerctl` による NAPT と conntrack の確認
+- 状態、イベント、コネクション、DNS クエリー、通信フロー、ファイアウォール
+  ログ、現在の設定を表示する読み取り専用 Web Console
+- OpenTelemetry exporter を設定した場合のログ、メトリクス、トレース送信
 
-状態を持つファイアウォールは棚上げ中です。
-現在の nftables 実装は NAT44 と、ラボで必要な狭い範囲が中心です。
-汎用ファイアウォール規則言語ではありません。
+状態を持つファイアウォールフィルターは発展中です。
+NAT44 と、限定されたファイアウォールおよびログの土台はあります。
+ただし、まだ汎用ファイアウォール規則言語ではありません。
 
-## 命名
+## 設定例の位置付け
 
-Phase 1.6 で RFC 表記に合わせた整理を行いました。
-旧名の互換別名はありません。
+本番に近い設定例で全体像を確認できます。
 
-使う名前:
+- `examples/homert02.yaml`: Ubuntu の家庭用ルーター構成です。OS 準備、
+  DHCPv6-PD、DS-Lite、HGW LAN への静的経路、DNS リゾルバー、DHCP サーバー、
+  RA、NAT44、ログ保存、Web Console を含みます。
+- `examples/router-lab.yaml`: 小さめの Linux ラボ構成です。
+- `examples/nixos-edge.yaml`: NixOS 向け生成経路の例です。
+- `examples/freebsd-edge.yaml`: FreeBSD のサービス管理とパッケージの土台です。
 
-- `DHCPv4Address`, `DHCPv4Lease`, `DHCPv4Server`, `DHCPv4Scope`,
-  `DHCPv4Reservation`, `DHCPv4Relay`
-- `DHCPv6Address`, `DHCPv6PrefixDelegation`, `DHCPv6Information`,
-  `DHCPv6Server`, `DHCPv6Scope`
-- `routerd-dhcpv4-client`, `routerd-dhcpv6-client`
-- `/run/routerd/dhcpv4-client/...`, `/run/routerd/dhcpv6-client/...`
-- `/var/lib/routerd/dhcpv4-client/...`, `/var/lib/routerd/dhcpv6-client/...`
+DHCPv4 の固定割り当ては、リソースとして宣言します。
 
-Netplan の `dhcp4` / `dhcp6` や Debian/FreeBSD package 名など、外部仕様で
-決まっている名前はそのまま扱います。
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: DHCPv4Reservation
+metadata:
+  name: printer
+spec:
+  server: lan-dhcpv4
+  macAddress: 02:00:00:00:10:10
+  hostname: printer
+  ipAddress: 172.18.0.150
+```
+
+内部ネットワークを NAT の対象から外しつつ、インターネット向け通信だけを
+選択された出口へ送れます。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: NAT44Rule
+metadata:
+  name: lan-to-wan
+spec:
+  type: masquerade
+  egressInterface: wan
+  sourceRanges:
+    - 172.18.0.0/16
+  excludeDestinationCIDRs:
+    - 192.168.0.0/16
+    - 172.16.0.0/12
+    - 10.0.0.0/8
+```
 
 ## ビルド
 
@@ -65,29 +113,36 @@ Go 1.24 以降を前提にします。
 make test
 make build
 make check-schema
+make validate-example
+make website-build
 ```
 
 主な生成物:
 
-- `bin/linux/routerd`
-- `bin/linux/routerctl`
-- `bin/linux/routerd-dhcpv4-client`
-- `bin/linux/routerd-dhcpv6-client`
-- `bin/linux/routerd-healthcheck`
+- `routerd`
+- `routerctl`
+- `routerd-dhcpv4-client`
+- `routerd-dhcpv6-client`
+- `routerd-pppoe-client`
+- `routerd-healthcheck`
+- `routerd-dns-resolver`
+- `routerd-dhcp-event-relay`
+- `routerd-firewall-logger`
 
 よく使う確認:
 
 ```sh
-go test ./...
-routerd validate --config examples/router-lab.yaml
-routerd plan --config examples/router-lab.yaml
-routerd apply --config examples/router-lab.yaml --once --dry-run --status-file /tmp/routerd-status.json
+routerd validate --config examples/homert02.yaml
+routerd plan --config examples/homert02.yaml
+routerd apply --config examples/homert02.yaml --once --dry-run
 routerctl status
+routerctl events --limit 20
+routerctl connections --limit 50
 ```
 
 ## 配置
 
-ソースインストールの既定:
+ソースインストール時の既定:
 
 - 設定: `/usr/local/etc/routerd/router.yaml`
 - バイナリ: `/usr/local/sbin/routerd`, `/usr/local/sbin/routerctl`,
@@ -97,47 +152,32 @@ routerctl status
 - Linux 状態: `/var/lib/routerd`
 - FreeBSD 実行時と状態: `/var/run/routerd`, `/var/db/routerd`
 
-デーモンの例:
-
-```sh
-/usr/local/sbin/routerd-dhcpv6-client \
-  --resource wan-pd \
-  --interface ens18 \
-  --socket /run/routerd/dhcpv6-client/wan-pd.sock \
-  --lease-file /var/lib/routerd/dhcpv6-client/wan-pd/lease.json \
-  --event-file /var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl
-```
-
-デーモン契約:
+管理対象デーモンは同じローカル契約を公開します。
 
 - `GET /v1/status`
 - `GET /v1/healthz`
 - `GET /v1/events?since=<cursor>&wait=<duration>`
 - `POST /v1/commands/<command>`
 
-## ラボの現在値
-
-2026-05-03、Phase 1.7 後:
-
-| ホスト | OS | デーモン | PD プレフィックス | 状態 |
-|---|---|---|---|---|
-| router01 | FreeBSD | `routerd-dhcpv6-client` | `2409:10:3d60:1250::/60` | Bound |
-| router02 | NixOS | 宣言的 `routerd-dhcpv6-client@wan-pd` | `2409:10:3d60:1230::/60` | Bound |
-| router03 | Ubuntu | `routerd-dhcpv6-client` | `2409:10:3d60:1240::/60` | Bound |
-| router04 | FreeBSD | `routerd-dhcpv6-client` | `2409:10:3d60:1260::/60` | Bound |
-| router05 | Ubuntu | `routerd-dhcpv6-client` + コントローラーチェーン | `2409:10:3d60:1220::/60` | Bound |
-
-router05 では routerd が `ds-routerd-test@ens18` を実作成しました。
-HGW 経由の条件付き DNS で `gw.transix.jp` を解決しました。
-IPv4 既定経路と NAT44 を反映し、`curl -4` の外部疎通を確認済みです。
-
-## 注意
+## プラットフォーム
 
 主対象は Ubuntu Server です。
-NixOS と FreeBSD は動作確認済みの範囲が広がっています。
+NixOS と FreeBSD は、動作するバイナリとサービス管理の土台があります。
 ただし、すべての生成器が同等という意味ではありません。
-健全なラボは pve05 から pve07 です。
-pve01 から pve04 の vmbr0 VLAN 1901 経路は壊れた検証経路として扱います。
-設計判断の根拠にしません。
+現在の対応表は `docs/platforms.md` を参照してください。
 
-詳細は `docs/design.md` が正です。
+routerd はプレリリースです。
+ルーターをより安全に、運用しやすくするための整理であれば、
+v1alpha1 の名前やフィールドは互換性なしで変わることがあります。
+
+## 現在の非目標
+
+- 遠隔プラグインレジストリー
+- 遠隔プラグイン導入
+- OS 変更の完全なロールバック
+- Web Console からの対話的な設定変更
+- 組み込み LLM アシスタント
+- Proxmox ラボ自動化
+- 汎用ファイアウォール規則言語
+
+正確な設計状態は `docs/design.md` を参照してください。

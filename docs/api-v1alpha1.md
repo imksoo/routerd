@@ -1,16 +1,17 @@
 ---
-title: リソース API v1alpha1
+title: Resource API v1alpha1
 slug: /reference/api-v1alpha1
 ---
 
-# リソース API v1alpha1
+# Resource API v1alpha1
 
-routerd の設定は、最上位の `Router` と、型付きリソースの一覧で構成します。
-このページは現在の実装に合わせたリソース一覧です。
-Phase 1.6 以降は RFC 表記に合わせ、DHCP 関連 Kind は `DHCPv4*` と `DHCPv6*` を使います。
-旧名の互換別名はありません。
+routerd configuration is a top-level `Router` resource with a list of typed
+resources. This page summarizes the current implemented API surface.
 
-## 共通形
+Since Phase 1.6, DHCP names follow RFC spelling: `DHCPv4*` and `DHCPv6*`.
+There are no compatibility aliases for the earlier names.
+
+## Common Shape
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -22,152 +23,154 @@ spec:
   adminUp: true
 ```
 
-| フィールド | 意味 |
+| Field | Meaning |
 | --- | --- |
-| `apiVersion` | API グループと版です。 |
-| `kind` | リソース種別です。 |
-| `metadata.name` | 同じ種別内の名前です。 |
-| `spec` | 利用者が宣言する意図です。 |
-| `status` | routerd または専用デーモンが観測した状態です。 |
+| `apiVersion` | API group and version. |
+| `kind` | Resource kind. |
+| `metadata.name` | Name inside the kind. |
+| `spec` | Desired intent declared by the user. |
+| `status` | Observed state written by routerd or a managed daemon. |
 
-## API グループ
+## API Groups
 
-| API グループ | 主な Kind |
+| API group | Main kinds |
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
-| `net.routerd.net/v1alpha1` | インターフェース、DHCP、DNS、経路、トンネル、イベント、通信フローログ |
+| `net.routerd.net/v1alpha1` | interfaces, DHCP, DNS, routes, tunnels, events, traffic flow logs |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
-| `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
+| `plugin.routerd.net/v1alpha1` | plugin manifests |
 
-## システム準備
+## System Bootstrap
 
-| Kind | 役割 |
+| Kind | Role |
 | --- | --- |
-| `Package` | OS ごとのパッケージ名を宣言し、不足していれば導入します。 |
-| `Sysctl` | 実行時の sysctl 値を設定します。`compare: exact` と `compare: atLeast` で読み戻し判定を選べます。 |
-| `SysctlProfile` | ルーター向け sysctl 推奨値をまとめて設定します。 |
-| `NetworkAdoption` | OS 標準の DHCP クライアントや systemd-resolved の待ち受けを調整します。DHCPv4 の経路と DNS だけを無効にする設定も扱います。 |
-| `SystemdUnit` | routerd が使う systemd ユニットを生成し、有効化します。 |
-| `Hostname` | ホスト名を設定します。 |
-| `NTPClient` | OS の NTP クライアントを有効にします。 |
-| `LogSink` | routerd のイベントを syslog や外部プログラムへ送ります。 |
-| `LogRetention` | イベント、DNS、通信フロー、ファイアウォールログの保管期間を管理します。 |
-| `WebConsole` | 読み取り専用の Web 画面を管理ネットワークで待ち受けます。 |
+| `Package` | Declares OS-specific packages and installs missing packages where the platform supports it. |
+| `Sysctl` | Sets one sysctl value. Readback comparison can be `exact` or `atLeast`. |
+| `SysctlProfile` | Applies router-oriented sysctl defaults. |
+| `NetworkAdoption` | Adjusts OS DHCP clients and systemd-resolved listeners so routerd can own the interface role. |
+| `SystemdUnit` | Generates, installs, and enables systemd units used by routerd. |
+| `Hostname` | Sets the host name. |
+| `NTPClient` | Enables the OS NTP client. |
+| `LogSink` | Sends routerd events to syslog or another local sink. |
+| `LogRetention` | Manages retention for events, DNS queries, traffic flows, and firewall logs. |
+| `WebConsole` | Enables the read-only management Web Console. |
 
-## インターフェースとリンク
+## Interfaces and Links
 
-| Kind | 役割 |
+| Kind | Role |
 | --- | --- |
-| `Interface` | routerd が扱う安定した名前と OS のインターフェース名を結び付けます。 |
-| `Link` | 下流のリソースが参照するリンク状態を表します。 |
-| `PPPoEInterface` | PPPoE 用の下位インターフェース設定を表します。 |
-| `PPPoESession` | `routerd-pppoe-client` が管理する PPPoE セッションです。 |
-| `WireGuardInterface` | WireGuard インターフェースを表します。 |
-| `WireGuardPeer` | WireGuard の相手を表します。 |
-| `IPsecConnection` | strongSwan の cloud VPN 向け接続定義を表します。 |
-| `VRF` | Linux VRF デバイスと経路表を表します。 |
-| `VXLANTunnel` | VXLAN トンネルを表します。 |
+| `Interface` | Binds a stable routerd name to an OS interface name. |
+| `Link` | Publishes link state for downstream resources. |
+| `PPPoEInterface` | Defines PPPoE lower-interface settings. |
+| `PPPoESession` | Represents a `routerd-pppoe-client` session. |
+| `WireGuardInterface` | Represents a WireGuard interface. |
+| `WireGuardPeer` | Represents a WireGuard peer. |
+| `IPsecConnection` | Defines a cloud VPN oriented strongSwan connection. |
+| `VRF` | Represents a Linux VRF device and route table. |
+| `VXLANTunnel` | Represents a VXLAN tunnel. |
 
-## WAN アドレスと委譲
+## WAN Addressing and Delegation
 
-| Kind | 役割 |
+| Kind | Role |
 | --- | --- |
-| `IPv4StaticAddress` | 静的 IPv4 アドレスを付与します。 |
-| `DHCPv4Address` | 旧来のホスト DHCP クライアント経路です。新しい実装では `DHCPv4Lease` を優先します。 |
-| `DHCPv4Lease` | `routerd-dhcpv4-client` が管理する DHCPv4 リースです。 |
-| `DHCPv6Address` | DHCPv6 IA_NA を表す土台です。 |
-| `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` が管理する DHCPv6-PD リースです。 |
-| `DHCPv6Information` | DHCPv6 情報要求の結果です。DNS、SNTP、ドメイン検索、AFTR 情報を観測します。 |
-| `IPv6DelegatedAddress` | 委譲プレフィックスから LAN 側アドレスを導出します。 |
-| `IPv6RAAddress` | RA で得る IPv6 アドレスの土台です。 |
+| `IPv4StaticAddress` | Assigns a static IPv4 address. |
+| `DHCPv4Address` | Legacy host DHCP client path. Prefer `DHCPv4Lease` for new configs. |
+| `DHCPv4Lease` | DHCPv4 lease managed by `routerd-dhcpv4-client`. |
+| `DHCPv6Address` | Groundwork for DHCPv6 IA_NA. |
+| `DHCPv6PrefixDelegation` | DHCPv6-PD lease managed by `routerd-dhcpv6-client`. |
+| `DHCPv6Information` | DHCPv6 information request result, including DNS, SNTP, domain search, and AFTR observations. |
+| `IPv6DelegatedAddress` | Derives a LAN-side address from a delegated prefix. |
+| `IPv6RAAddress` | Groundwork for IPv6 addresses learned from RA/SLAAC. |
 
-`DHCPv6PrefixDelegation` は旧 OS クライアント選択フィールドを持ちません。
-DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
+`DHCPv6PrefixDelegation` no longer selects an OS DHCPv6 client. DHCPv6-PD is
+owned by `routerd-dhcpv6-client`.
 
-## LAN 側サービス
+## LAN Services
 
-| Kind | 役割 |
+| Kind | Role |
 | --- | --- |
-| `DHCPv4Server` | dnsmasq で DHCPv4 アドレスプールを提供します。 |
-| `DHCPv4Scope` | DHCPv4 のプール範囲を表します。 |
-| `DHCPv4Reservation` | MAC アドレスごとの固定割り当てを表します。 |
-| `DHCPv4Relay` | dnsmasq の DHCPv4 中継を表します。 |
-| `IPv6RouterAdvertisement` | RA、PIO、RDNSS、DNSSL、M/O フラグ、MTU、優先度、寿命を生成します。 |
-| `DHCPv6Server` | dnsmasq の DHCPv6 サーバーです。`stateless`、`stateful`、`both` を扱います。 |
-| `DHCPv6Scope` | DHCPv6 の範囲を表します。 |
-| `DNSZone` | ローカル権威ゾーンを表します。手動レコードと DHCP リース由来のレコードを扱います。 |
-| `DNSResolver` | `routerd-dns-resolver` が管理する DNS 待ち受け、応答元、上流、キャッシュを表します。 |
+| `DHCPv4Server` | Provides a dnsmasq DHCPv4 pool. |
+| `DHCPv4Scope` | Represents a DHCPv4 address range. |
+| `DHCPv4Reservation` | Reserves an IPv4 address for a MAC address. |
+| `DHCPv4Relay` | Represents dnsmasq DHCPv4 relay. |
+| `IPv6RouterAdvertisement` | Generates RA, PIO, RDNSS, DNSSL, M/O flags, MTU, preference, and lifetimes. |
+| `DHCPv6Server` | Provides dnsmasq DHCPv6 service in `stateless`, `stateful`, or `both` mode. |
+| `DHCPv6Scope` | Represents a DHCPv6 address range. |
+| `DNSZone` | Owns a local authoritative zone with manual and DHCP-derived records. |
+| `DNSResolver` | Owns `routerd-dns-resolver` listen profiles, sources, upstreams, and cache. |
 
-Android は DHCPv6 の DNS だけでは名前解決を完結できないため、IPv6 LAN では `IPv6RouterAdvertisement.spec.rdnss` を設定します。
+Android does not use DHCPv6 DNS configuration, so IPv6 LANs should publish
+RDNSS through `IPv6RouterAdvertisement.spec.rdnss`.
 
-dnsmasq は DHCPv4、DHCPv6、中継、RA だけを担当します。
-DNS の待ち受けと応答は `DNSResolver` が担当します。
-`DNSResolver.spec.sources` では、ローカルゾーン、条件付き転送、既定の上流を優先順に並べます。
-`https://` は DoH、`tls://` は DoT、`quic://` は DoQ、`udp://` は平文 DNS です。
-`listen` は複数指定できます。
-待ち受けごとに利用する `sources` の部分集合を選べます。
-`sources[].viaInterface` は特定インターフェース経由の送信を指定します。
-`sources[].bootstrapResolver` は DoH や DoT の名前解決に使う補助 DNS サーバーです。
-DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate` で指定します。
+dnsmasq is limited to DHCPv4, DHCPv6, relay, and RA. DNS answering and
+forwarding belongs to `DNSResolver`.
 
-## DS-Lite、経路、NAT
+`DNSResolver.spec.sources` lists local zones, conditional forwarding sources,
+and default upstreams in priority order. `https://` is DoH, `tls://` is DoT,
+`quic://` is DoQ, and `udp://` is plain DNS. `listen` can contain multiple
+profiles, and each listener can choose a subset of sources.
 
-| Kind | 役割 |
+`sources[].viaInterface` binds outgoing DNS queries to a Linux interface name.
+`sources[].bootstrapResolver` supplies resolver addresses for DoH and DoT
+endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
+`DNSResolver.spec.sources[].dnssecValidate`.
+
+## DS-Lite, Routes, and NAT
+
+| Kind | Role |
 | --- | --- |
-| `DSLiteTunnel` | AFTR へ `ip6tnl` トンネルを張ります。AFTR は直接 IPv6、FQDN、または DHCPv6 情報から得ます。 |
-| `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路や、明示的な破棄経路にも使います。 |
-| `NAT44Rule` | nftables の `routerd_nat` テーブルで IPv4 NAPT を行います。 |
-| `IPv4SourceNAT` | 旧来の IPv4 送信元 NAT の土台です。 |
-| `IPv4PolicyRoute` | IPv4 ポリシールーティングを表します。 |
-| `IPv4PolicyRouteSet` | 複数のポリシールートをまとめます。 |
-| `IPv4DefaultRoutePolicy` | 既定経路の方針を表します。 |
-| `IPv4ReversePathFilter` | reverse path filter を表します。 |
-| `PathMTUPolicy` | MTU と TCP MSS 調整の方針を表します。`mtu.source: probe` では DF 付きの疎通確認で経路 MTU を測ります。 |
+| `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
+| `IPv4Route` | Adds IPv4 routes, including DS-Lite defaults and explicit drop routes. |
+| `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
+| `IPv4SourceNAT` | Legacy IPv4 source NAT groundwork. |
+| `IPv4PolicyRoute` | Represents IPv4 policy routing. |
+| `IPv4PolicyRouteSet` | Groups multiple policy routes. |
+| `IPv4DefaultRoutePolicy` | Represents default-route policy. |
+| `IPv4ReversePathFilter` | Manages reverse path filter settings. |
+| `PathMTUPolicy` | Controls MTU and TCP MSS adjustment. `mtu.source: probe` can measure path MTU with DF probes. |
 
-`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4DefaultRoutePolicy` は `excludeDestinationCIDRs` を持ちます。これにより、LAN 内部、管理網、HGW LAN、RFC 1918 の内部網などを policy routing の対象から外せます。
+`IPv4PolicyRoute`, `IPv4PolicyRouteSet`, and `IPv4DefaultRoutePolicy` support
+`excludeDestinationCIDRs`. Use it to keep LAN, management, HGW LAN, and RFC
+1918 destinations out of policy routing.
 
-Phase 1.5e では router05 で DS-Lite、IPv4 既定経路、NAT44 の実適用を確認しています。
+`NAT44Rule` supports `destinationCIDRs` and `excludeDestinationCIDRs`. This
+allows internet traffic to be masqueraded while private routed destinations
+stay un-NATed.
 
-## 状態連携
+## Coordination
 
-| Kind | 役割 |
+| Kind | Role |
 | --- | --- |
-| `HealthCheck` | `routerd-healthcheck` または開発用の組み込み実行器で到達性を測ります。`sourceInterface` はネットワークリソース名を受け取り、実行時に OS のインターフェース名へ解決します。`via` と `sourceAddress` も指定できます。 |
-| `EgressRoutePolicy` | 準備完了の候補から重みの高い外向き経路を選びます。`destinationCIDRs` と candidate の `gatewaySource`、`gateway` を持ちます。 |
-| `EventRule` | イベント列に対して all_of、any_of、sequence、window、absence、throttle、debounce、count を評価します。 |
-| `DerivedEvent` | 複数リソースの状態から仮想イベントを発行します。 |
-| `SelfAddressPolicy` | 自ホストアドレスの選択方針を表します。 |
-| `StatePolicy` | 状態管理の方針を表します。 |
+| `HealthCheck` | Measures reachability through `routerd-healthcheck` or the development embedded runner. |
+| `EgressRoutePolicy` | Selects the highest-weight ready egress candidate. Candidates can include gateway fields and health checks. |
+| `EventRule` | Evaluates event streams with all_of, any_of, sequence, window, absence, throttle, debounce, and count. |
+| `DerivedEvent` | Emits virtual events derived from multiple resource states. |
+| `SelfAddressPolicy` | Selects a self address for protocols that need one. |
+| `StatePolicy` | Represents state-management policy. |
 
-## システム
+`HealthCheck.spec.sourceInterface` accepts a network resource name and resolves
+it to the OS interface name at runtime. `via` and `sourceAddress` can also be
+specified.
 
-| Kind | 役割 |
+## Firewall
+
+| Kind | Role |
 | --- | --- |
-| `Hostname` | ホスト名を管理します。 |
-| `Sysctl` | sysctl 値を管理します。 |
-| `NTPClient` | NTP クライアント設定を管理します。 |
-| `LogSink` | ログ送信先を表します。 |
-| `WebConsole` | 状態、イベント、IPv4/IPv6 コネクション観測を表示する読み取り専用画面です。 |
-| `NixOSHost` | NixOS 宣言設定の生成に使います。 |
+| `FirewallZone` | Assigns interfaces to zones with `untrust`, `trust`, and `mgmt` roles. |
+| `FirewallPolicy` | Represents global firewall behavior such as deny logging. |
+| `FirewallRule` | Represents exceptions that cannot be expressed by the role matrix. |
 
-## ファイアウォール
+Stateful filtering renders into the nftables `inet routerd_filter` table.
+Established traffic, loopback, and required ICMPv6 are always accepted.
+routerd derives internal openings needed by DHCP, DNS, DS-Lite, and related
+managed resources.
 
-| Kind | 役割 |
-| --- | --- |
-| `FirewallZone` | インターフェースをゾーンへ割り当て、`untrust`、`trust`、`mgmt` の役割を設定します。 |
-| `FirewallPolicy` | 拒否ログなど、全体の設定を表します。 |
-| `FirewallRule` | 役割の組み合わせでは表せない例外を表します。 |
+## Renamed Kinds
 
-状態を持つフィルタは nftables の `inet routerd_filter` テーブルに生成します。
-確立済み通信、loopback、必要な ICMPv6 は常に許可します。
-DHCP、DNS、DS-Lite などに必要な開口は routerd が内部で生成します。
+Phase 1.6 renamed DHCP resources.
 
-## 名前変更の要点
-
-Phase 1.6 で次の名前に整理しました。
-
-| 旧名 | 現在の名前 |
+| Old | Current |
 | --- | --- |
 | `IPv4DHCPAddress` | `DHCPv4Address` |
 | `IPv4DHCPServer` | `DHCPv4Server` |
@@ -179,4 +182,4 @@ Phase 1.6 で次の名前に整理しました。
 | `IPv6DHCPScope` | `DHCPv6Scope` |
 | `DHCPRelay` | `DHCPv4Relay` |
 
-バイナリ名も `routerd-dhcpv4-client`、`routerd-dhcpv6-client` です。
+The daemon binaries are `routerd-dhcpv4-client` and `routerd-dhcpv6-client`.

@@ -127,6 +127,9 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 
 `IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4DefaultRoutePolicy` は `excludeDestinationCIDRs` を持ちます。これにより、LAN 内部、管理網、HGW LAN、RFC 1918 の内部網などを policy routing の対象から外せます。
 
+`NAT44Rule` は `destinationCIDRs` と `excludeDestinationCIDRs` を持ちます。
+これにより、インターネット向け通信だけをマスカレードし、静的経路を持つプライベート宛先は NAT しない構成にできます。
+
 Phase 1.5e では router05 で DS-Lite、IPv4 既定経路、NAT44 の実適用を確認しています。
 
 ## 状態連携

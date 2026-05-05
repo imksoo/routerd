@@ -2,67 +2,113 @@
 
 [Project site and documentation: routerd.net](https://routerd.net/)
 
-routerd is a pre-release declarative router control plane. A router is described
-as typed YAML resources, and routerd turns that intent into local daemon
-processes, generated configuration files, kernel network state, and observable
-status.
+routerd is a pre-release declarative router control plane for people who want a
+general-purpose host to behave like an understandable router.
 
-The current implementation is being rebuilt around small managed daemons:
+Instead of spreading intent across netplan, systemd-networkd, dnsmasq,
+nftables, sysctl files, custom scripts, and one-off daemon units, routerd keeps
+the router shape in typed YAML resources. It then validates the configuration,
+shows a plan, applies the required host artifacts, starts managed daemons, and
+keeps status visible through `routerctl`, a local API, logs, and a read-only Web
+Console.
 
-- `routerd-dhcpv6-client` for DHCPv6 prefix delegation and information request
-- `routerd-dhcpv4-client` for WAN DHCPv4 leases
-- `routerd-pppoe-client` for PPPoE sessions
-- `routerd-healthcheck` for out-of-process health probes
+The project is built around a simple idea: a router should be configured like a
+system, but observed like a service.
 
-routerd then connects daemon events to controllers through an in-process bus and
-SQLite event store. The actively tested lab target is pve05-pve07 with Ubuntu,
-NixOS, and FreeBSD router VMs.
+## Why routerd?
+
+- **One intent file**: interfaces, WAN acquisition, LAN services, DNS, NAT,
+  route policy, sysctl, packages, and service units live in the same resource
+  model.
+- **Small managed daemons**: DHCPv4, DHCPv6-PD, PPPoE, health checks, DNS, and
+  event relays expose HTTP+JSON status over Unix sockets instead of hiding state
+  in shell hooks.
+- **Convergent routing**: health checks and `EgressRoutePolicy` let a router
+  start with an available path, then move new traffic to a better path when it
+  becomes healthy. routerd does not flush conntrack during that change.
+- **Explicit DNS design**: dnsmasq is kept for DHCP and RA. DNS answering,
+  conditional forwarding, DoH, DoT, DoQ, UDP fallback, cache, local zones, and
+  DHCP-derived names live in `routerd-dns-resolver`.
+- **Operational visibility**: bus events, resource status, DNS queries,
+  connection observations, traffic flow logs, and firewall logs can be inspected
+  locally without editing configuration from the browser.
+- **Real host bootstrap**: package installation, sysctl defaults,
+  systemd-networkd adoption, systemd units, log forwarding, and Web Console
+  setup are declared as resources.
 
 ## Current Scope
 
 Implemented resource areas include:
 
-- Interface aliases, links, bridges, VXLAN, VRF, WireGuard, and cloud-oriented
-  IPsec configuration skeletons
-- WAN acquisition through DHCPv6-PD, DHCPv6 information request, DHCPv4 leases,
-  PPPoE sessions, and DS-Lite tunnels
-- LAN service through a managed dnsmasq instance: DHCPv4 server/reservations,
-  DHCPv6 stateless/stateful/both modes, RA options, host records, local
-  domains, DNSSEC flagging, DDNS, conditional forwarding, and local DNS proxy
-  upstreams for DoH, DoT, DoQ, and plain UDP fallback
-- IPv6 delegated LAN address derivation from a DHCPv6-PD prefix
-- egress route selection with `EgressRoutePolicy`, `HealthCheck`, `EventRule`, and
-  `DerivedEvent`
-- IPv4 default routes, NAT44 through nftables, and aggregate conntrack
-  observation
-- a read-only Web Console for status, events, traffic, and performance-oriented
-  observations
-- Local HTTP+JSON control APIs over Unix sockets for routerd and the managed
-  daemons
-- NixOS module rendering, including a declarative
-  `routerd-dhcpv6-client@wan-pd` unit
+- interface aliases, links, bridges, VRF, VXLAN, WireGuard, and cloud-oriented
+  IPsec groundwork
+- WAN acquisition through DHCPv6 prefix delegation, DHCPv6 information request,
+  DHCPv4 leases, PPPoE sessions, and DS-Lite tunnels
+- LAN service through managed dnsmasq: DHCPv4 scopes and reservations,
+  DHCPv6 stateless/stateful/both modes, DHCP relay, RA, PIO, RDNSS, DNSSL, and
+  MTU options
+- DNS service through `DNSZone` and `DNSResolver`: local authoritative zones,
+  DHCP-derived records, conditional forwarding, DoH, DoT, DoQ, UDP fallback,
+  DNSSEC flags, multiple listen profiles, and cache
+- IPv4 and IPv6 address derivation, static routes, default route policy,
+  route-set exclusions, path MTU policy, TCP MSS clamping, NAT44, and DS-Lite
+- `HealthCheck`, `EgressRoutePolicy`, `EventRule`, and `DerivedEvent`
+  coordination
+- `Package`, `Sysctl`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`,
+  `NTPClient`, `LogSink`, `LogRetention`, and `WebConsole`
+- local NAPT/conntrack inspection through `routerctl`
+- read-only Web Console for status, events, connections, DNS queries, traffic,
+  firewall logs, and the active configuration
+- OpenTelemetry SDK hooks for logs, metrics, and traces when exporters are
+  configured
 
-Stateful firewall policy rendering is intentionally postponed. Current nftables
-work is focused on NAT44 and narrowly scoped lab rules; do not treat routerd as a
-general-purpose firewall rule language yet.
+Stateful firewall filtering is still evolving. NAT44 and narrowly scoped
+firewall/logging groundwork exist, but routerd is not yet a general-purpose
+firewall rule language.
 
-## Naming
+## Example Shape
 
-Phase 1.6 made a clean RFC-style naming break. There are no compatibility
-aliases for the old names.
+The production-style examples show how the pieces fit together:
 
-Use:
+- `examples/homert02.yaml`: Ubuntu home-router style configuration with OS
+  bootstrap, DHCPv6-PD, DS-Lite, routed HGW LAN, DNS resolver, DHCP server,
+  RA, NAT44, log storage, and Web Console.
+- `examples/router-lab.yaml`: smaller Linux lab configuration.
+- `examples/nixos-edge.yaml`: NixOS-oriented rendering path.
+- `examples/freebsd-edge.yaml`: FreeBSD service-manager and package groundwork.
 
-- `DHCPv4Address`, `DHCPv4Lease`, `DHCPv4Server`, `DHCPv4Scope`,
-  `DHCPv4Reservation`, `DHCPv4Relay`
-- `DHCPv6Address`, `DHCPv6PrefixDelegation`, `DHCPv6Information`,
-  `DHCPv6Server`, `DHCPv6Scope`
-- `routerd-dhcpv4-client` and `routerd-dhcpv6-client`
-- `/run/routerd/dhcpv4-client/...`, `/run/routerd/dhcpv6-client/...`
-- `/var/lib/routerd/dhcpv4-client/...`, `/var/lib/routerd/dhcpv6-client/...`
+Static DHCPv4 reservations are declared as resources:
 
-External terms keep their native spelling where required, such as Netplan
-`dhcp4` / `dhcp6` fields or package names that contain `dhcp6`.
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: DHCPv4Reservation
+metadata:
+  name: printer
+spec:
+  server: lan-dhcpv4
+  macAddress: 02:00:00:00:10:10
+  hostname: printer
+  ipAddress: 172.18.0.150
+```
+
+Private destinations can be excluded from NAT while internet traffic still
+uses the selected egress path:
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: NAT44Rule
+metadata:
+  name: lan-to-wan
+spec:
+  type: masquerade
+  egressInterface: wan
+  sourceRanges:
+    - 172.18.0.0/16
+  excludeDestinationCIDRs:
+    - 192.168.0.0/16
+    - 172.16.0.0/12
+    - 10.0.0.0/8
+```
 
 ## Build
 
@@ -72,26 +118,31 @@ Go 1.24 or newer is expected.
 make test
 make build
 make check-schema
+make validate-example
+make website-build
 ```
 
-Important binaries built by `make build`:
+Important binaries built by `make build` include:
 
-- `bin/linux/routerd`
-- `bin/linux/routerctl`
-- `bin/linux/routerd-dhcpv4-client`
-- `bin/linux/routerd-dhcpv6-client`
-- `bin/linux/routerd-healthcheck`
+- `routerd`
+- `routerctl`
+- `routerd-dhcpv4-client`
+- `routerd-dhcpv6-client`
+- `routerd-pppoe-client`
+- `routerd-healthcheck`
+- `routerd-dns-resolver`
+- `routerd-dhcp-event-relay`
+- `routerd-firewall-logger`
 
 Useful direct commands:
 
 ```sh
-go test ./...
-go build ./cmd/routerd
-go build ./cmd/routerctl
-routerd validate --config examples/router-lab.yaml
-routerd plan --config examples/router-lab.yaml
-routerd apply --config examples/router-lab.yaml --once --dry-run --status-file /tmp/routerd-status.json
+routerd validate --config examples/homert02.yaml
+routerd plan --config examples/homert02.yaml
+routerd apply --config examples/homert02.yaml --once --dry-run
 routerctl status
+routerctl events --limit 20
+routerctl connections --limit 50
 ```
 
 ## Runtime Layout
@@ -106,58 +157,28 @@ Default source-install paths:
 - Linux state: `/var/lib/routerd`
 - FreeBSD runtime/state equivalents: `/var/run/routerd`, `/var/db/routerd`
 
-Daemon examples:
-
-```sh
-/usr/local/sbin/routerd-dhcpv6-client \
-  --resource wan-pd \
-  --interface ens18 \
-  --socket /run/routerd/dhcpv6-client/wan-pd.sock \
-  --lease-file /var/lib/routerd/dhcpv6-client/wan-pd/lease.json \
-  --event-file /var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl
-```
-
-The daemon contract exposes:
+Managed daemons expose the same local contract:
 
 - `GET /v1/status`
 - `GET /v1/healthz`
 - `GET /v1/events?since=<cursor>&wait=<duration>`
 - `POST /v1/commands/<command>`
 
-## Tested Lab State
-
-As of Phase 1.7 on 2026-05-03:
-
-| Host | OS | DHCPv6-PD daemon | Prefix | Status |
-|---|---|---|---|---|
-| router01 | FreeBSD | `routerd-dhcpv6-client` | `2409:10:3d60:1250::/60` | Bound |
-| router02 | NixOS | declarative `routerd-dhcpv6-client@wan-pd` | `2409:10:3d60:1230::/60` | Bound |
-| router03 | Ubuntu | `routerd-dhcpv6-client` | `2409:10:3d60:1240::/60` | Bound |
-| router04 | FreeBSD | `routerd-dhcpv6-client` | `2409:10:3d60:1260::/60` | Bound |
-| router05 | Ubuntu | `routerd-dhcpv6-client` + controller chain | `2409:10:3d60:1220::/60` | Bound |
-
-router05 also has a real DS-Lite tunnel installed by routerd:
-`ds-routerd-test@ens18`, AFTR resolved from `gw.transix.jp` through the HGW
-conditional DNS path, IPv4 default route through the tunnel, NAT44 via
-`routerd_nat`, and confirmed `curl -4` connectivity.
-
 ## Platform Notes
 
-Ubuntu Server is still the primary implementation target. NixOS and FreeBSD are
-active second-tier targets with working binaries and service-manager paths, but
-do not imply full renderer parity. Platform-dependent code should go through
-`pkg/platform` or explicit feature checks rather than reading `runtime.GOOS`
-directly.
+Ubuntu Server is the primary implementation target. NixOS and FreeBSD are
+active second-tier targets with working binaries and service-manager
+groundwork. Do not assume full renderer parity yet; see `docs/platforms.md` for
+the current matrix.
 
-The healthy implementation lab is pve05-pve07. Earlier pve01-pve04 vmbr0 VLAN
-1901 behavior is treated as a broken lab path and should not drive design
-decisions.
+The implementation is pre-release. v1alpha1 names and fields may still change
+when a breaking cleanup makes the router safer or easier to operate.
 
 ## Non-goals for Now
 
 - Remote plugin registry or remote plugin installation
 - Full rollback of every OS-level mutation
-- Interactive router console
+- Interactive configuration editing in the Web Console
 - Built-in LLM assistant
 - Proxmox lab automation
 - General-purpose firewall rule language

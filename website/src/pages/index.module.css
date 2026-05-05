@@ -2,3 +2,44 @@
   border-top: 1px solid var(--ifm-color-emphasis-200);
   background: var(--ifm-color-emphasis-100);
 }
+
+.heroHeadline {
+  max-width: 760px;
+  margin: 1rem 0 0;
+  color: #f8fafc;
+  font-size: clamp(1.65rem, 4vw, 2.65rem);
+  font-weight: 750;
+  line-height: 1.12;
+}
+
+.outcomes {
+  padding: 4rem 0;
+  background: var(--ifm-background-surface-color);
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+}
+
+.outcomeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .75rem;
+  margin-top: 1.25rem;
+}
+
+.outcomeItem {
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 8px;
+  padding: .95rem 1rem;
+  background: var(--ifm-background-color);
+  line-height: 1.45;
+}
+
+.note {
+  max-width: 760px;
+  color: var(--ifm-color-emphasis-700);
+}
+
+@media (max-width: 996px) {
+  .outcomeGrid {
+    grid-template-columns: 1fr;
+  }
+}

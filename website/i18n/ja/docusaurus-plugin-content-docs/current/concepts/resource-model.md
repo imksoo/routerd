@@ -36,9 +36,9 @@ routerd は次の API グループを使います。
 | グループ | 用途 |
 | --- | --- |
 | `routerd.net/v1alpha1` | 最上位の `Router` |
-| `net.routerd.net/v1alpha1` | インターフェース、DHCP、DNS、経路、トンネル、WAN 選択 |
-| `firewall.routerd.net/v1alpha1` | ファイアウォール方針の土台 |
-| `system.routerd.net/v1alpha1` | ホスト名、sysctl、NTP、NixOS 連携 |
+| `net.routerd.net/v1alpha1` | インターフェース、DHCP、DNS、経路、トンネル、WAN 選択、通信フローログ |
+| `firewall.routerd.net/v1alpha1` | ファイアウォールゾーン、ポリシー、規則、ログ |
+| `system.routerd.net/v1alpha1` | ホスト名、パッケージ、sysctl、ネットワーク引き継ぎ、systemd ユニット、NTP、ログ転送、Web Console |
 | `plugin.routerd.net/v1alpha1` | 信頼済みローカルプラグイン |
 
 `routerd.io` のような仮のグループは使いません。
@@ -65,7 +65,8 @@ dependsOn:
 ```
 
 状態値を利用する場合は、通常フィールドに式を書きません。
-`deviceFrom`、`gatewayFrom`、`addressFrom`、`ipv6From` などの専用フィールドを使います。
+`deviceFrom`、`gatewayFrom`、`addressFrom`、`ipv4From`、`ipv6From`、
+`prefixFrom`、`rdnssFrom`、`upstreamFrom` などの専用フィールドを使います。
 
 ```yaml
 deviceFrom:
@@ -78,3 +79,5 @@ deviceFrom:
 `ownerRefs` は、あるリソースが別のリソースに従属することを表します。
 親が準備できない場合、子は古くなった構成を出し続けません。
 DHCPv6-PD が失われたときに、古い LAN IPv6 設定を残さないための重要な仕組みです。
+委譲プレフィックスに依存する LAN IPv6 アドレス、RA、DNS レコード、DS-Lite は、
+親が準備できない場合に古い状態を出し続けないようにします。

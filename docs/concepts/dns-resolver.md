@@ -70,10 +70,27 @@ resource changes, and the record is published after the field resolves.
 ## Network-constrained upstreams
 
 `sources[].viaInterface` binds outgoing queries to a specific interface on Linux.
-The value can reference `Interface`, `WireGuardInterface`, `IPsecConnection`, or `VRF` status.
+Use a literal OS interface name, for example `ens18` or `wg0`.
+When a tunnel or VRF resource creates that interface, make the dependency
+explicit with resource ownership or ordering and keep the resolver pending
+until the interface exists.
 
 `sources[].bootstrapResolver` supplies DNS server addresses for resolving DoH and DoT endpoint names.
 This is useful when the endpoint name is only resolvable inside an access network.
+
+Use `upstreamFrom` when the upstream server list comes from another resource
+status.
+
+```yaml
+sources:
+  - name: ngn-aftr
+    kind: forward
+    match:
+      - transix.jp
+    upstreamFrom:
+      - resource: DHCPv6Information/wan-info
+        field: dnsServers
+```
 
 ## dnsmasq boundary
 
