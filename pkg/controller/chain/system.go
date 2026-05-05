@@ -445,8 +445,17 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 		}
 	}
 	if api.BoolDefault(spec.Started, true) {
-		if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
-			return changed, err
+		active := true
+		if !fileChanged {
+			if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
+				active = false
+			}
+		}
+		if fileChanged || !active {
+			if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
+				return changed, err
+			}
+			return true, nil
 		}
 	}
 	return changed, nil

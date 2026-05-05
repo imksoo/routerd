@@ -168,6 +168,48 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd-firewall-logger.service"}, Spec: api.SystemdUnitSpec{
+			Description: "routerd firewall logger",
+			ExecStart:   []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", "/var/lib/routerd/firewall-logs.db", "--nflog-group", "1"},
+			Enabled:     systemBoolPtr(true),
+			Started:     systemBoolPtr(true),
+		}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            store,
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	commands = nil
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	if strings.Contains(gotCommands, "restart routerd-firewall-logger.service") {
+		t.Fatalf("unchanged active unit was restarted:\n%s", gotCommands)
+	}
+	if !strings.Contains(gotCommands, "systemctl is-active --quiet routerd-firewall-logger.service") {
+		t.Fatalf("active check missing:\n%s", gotCommands)
+	}
+}
+
+func systemBoolPtr(v bool) *bool {
+	return &v
+}
+
 func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
