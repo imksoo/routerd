@@ -50,6 +50,7 @@ type Summary = {
   dnsQueries?: DNSQuery[];
   trafficFlows?: TrafficFlow[];
   firewallLogs?: FirewallLog[];
+  dhcpLeases?: DHCPLease[];
   errors?: string[];
 };
 
@@ -128,6 +129,16 @@ type FirewallLog = {
   inIface?: string;
   outIface?: string;
   packetBytes?: number;
+};
+
+type DHCPLease = {
+  expiresAt?: string;
+  mac?: string;
+  ip?: string;
+  hostname?: string;
+  clientId?: string;
+  vendor?: string;
+  source?: string;
 };
 
 type ConfigSnapshot = {
@@ -379,6 +390,8 @@ function App() {
 
   const connections = summary?.connections?.entries ?? [];
   const dnsLabels = useMemo(() => dnsLabelMap(summary?.dnsQueries ?? []), [summary?.dnsQueries]);
+  const leaseMap = useMemo(() => dhcpLeaseMap(summary?.dhcpLeases ?? []), [summary?.dhcpLeases]);
+  const relatedClients = useMemo(() => firewallRelatedClientMap(connections), [connections]);
   const filteredConnections = useMemo(
     () => filterAndSortConnections(connections, dnsLabels, connectionFilters),
     [connections, dnsLabels, connectionFilters],
@@ -535,11 +548,11 @@ function App() {
           <div className={styles.firewallStack}>
             <Card>
               <CardHeader header={<Text weight="semibold">Deny ranking</Text>} description={<Text className={styles.muted}>Grouped by source, destination, and protocol</Text>} />
-              <RecentDeny logs={summary?.firewallLogs ?? []} />
+              <RecentDeny logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} relatedClients={relatedClients} />
             </Card>
             <Card>
               <CardHeader header={<Text weight="semibold">Deny timeline</Text>} description={<Text className={styles.muted}>Newest firewall log rows</Text>} />
-              <FirewallTimeline logs={summary?.firewallLogs ?? []} />
+              <FirewallTimeline logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} relatedClients={relatedClients} />
             </Card>
           </div>
         ) : null}
@@ -772,7 +785,17 @@ function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
   );
 }
 
-function RecentDeny({ logs }: { logs: FirewallLog[] }) {
+function RecentDeny({
+  logs,
+  dnsLabels,
+  leases,
+  relatedClients,
+}: {
+  logs: FirewallLog[];
+  dnsLabels: Record<string, string>;
+  leases: Record<string, DHCPLease>;
+  relatedClients: Record<string, ConnTuple | undefined>;
+}) {
   const styles = useStyles();
   return (
     <div className={styles.tableWrap}>
@@ -782,6 +805,7 @@ function RecentDeny({ logs }: { logs: FirewallLog[] }) {
             <TableHeaderCell>Count</TableHeaderCell>
             <TableHeaderCell>Source</TableHeaderCell>
             <TableHeaderCell>Destination</TableHeaderCell>
+            <TableHeaderCell>Related client</TableHeaderCell>
             <TableHeaderCell>Proto</TableHeaderCell>
           </TableRow>
         </TableHeader>
@@ -789,8 +813,9 @@ function RecentDeny({ logs }: { logs: FirewallLog[] }) {
           {denyRows(logs).map(row => (
             <TableRow key={`${row.src}-${row.dst}-${row.proto}`}>
               <TableCell>{row.count}</TableCell>
-              <TableCell><code className={styles.code}>{row.src}</code></TableCell>
-              <TableCell><code className={styles.code}>{row.dst}</code></TableCell>
+              <TableCell><EndpointDetail address={row.src} dnsLabels={dnsLabels} leases={leases} /></TableCell>
+              <TableCell><EndpointDetail address={row.dst} dnsLabels={dnsLabels} leases={leases} /></TableCell>
+              <TableCell><RelatedClient tuple={relatedClients[row.key]} leases={leases} /></TableCell>
               <TableCell>{row.proto}</TableCell>
             </TableRow>
           ))}
@@ -800,7 +825,17 @@ function RecentDeny({ logs }: { logs: FirewallLog[] }) {
   );
 }
 
-function FirewallTimeline({ logs }: { logs: FirewallLog[] }) {
+function FirewallTimeline({
+  logs,
+  dnsLabels,
+  leases,
+  relatedClients,
+}: {
+  logs: FirewallLog[];
+  dnsLabels: Record<string, string>;
+  leases: Record<string, DHCPLease>;
+  relatedClients: Record<string, ConnTuple | undefined>;
+}) {
   const styles = useStyles();
   return (
     <div className={styles.tableWrap}>
@@ -811,6 +846,7 @@ function FirewallTimeline({ logs }: { logs: FirewallLog[] }) {
             <TableHeaderCell>Action</TableHeaderCell>
             <TableHeaderCell>Source</TableHeaderCell>
             <TableHeaderCell>Destination</TableHeaderCell>
+            <TableHeaderCell>Related client</TableHeaderCell>
             <TableHeaderCell>Proto</TableHeaderCell>
             <TableHeaderCell>Rule</TableHeaderCell>
           </TableRow>
@@ -820,14 +856,58 @@ function FirewallTimeline({ logs }: { logs: FirewallLog[] }) {
             <TableRow key={log.id ?? `${log.ts}-${log.srcAddress}-${log.dstAddress}-${index}`}>
               <TableCell>{formatTime(log.ts)}</TableCell>
               <TableCell><Badge appearance="tint" color={firewallActionColor(log.action)}>{log.action || "-"}</Badge></TableCell>
-              <TableCell><code className={styles.wrapCode}>{firewallEndpoint(log.srcAddress, log.srcPort)}</code></TableCell>
-              <TableCell><code className={styles.wrapCode}>{firewallEndpoint(log.dstAddress, log.dstPort)}</code></TableCell>
+              <TableCell><EndpointDetail address={log.srcAddress} port={log.srcPort} dnsLabels={dnsLabels} leases={leases} /></TableCell>
+              <TableCell><EndpointDetail address={log.dstAddress} port={log.dstPort} dnsLabels={dnsLabels} leases={leases} /></TableCell>
+              <TableCell><RelatedClient tuple={relatedClients[firewallLogKey(log)]} leases={leases} /></TableCell>
               <TableCell>{[log.l3Proto, log.protocol].filter(Boolean).join("/") || "-"}</TableCell>
               <TableCell><code className={styles.wrapCode}>{log.ruleName || "-"}</code></TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+function EndpointDetail({
+  address,
+  port,
+  dnsLabels,
+  leases,
+}: {
+  address?: string;
+  port?: number;
+  dnsLabels: Record<string, string>;
+  leases: Record<string, DHCPLease>;
+}) {
+  const styles = useStyles();
+  const lease = address ? leases[address] : undefined;
+  const label = lease?.hostname || (address ? dnsLabels[address] : "");
+  const vendor = lease?.vendor || "";
+  return (
+    <div className={styles.connectionFlow}>
+      <code className={styles.wrapCode}>{firewallEndpoint(address, port)}</code>
+      {label || lease?.mac || vendor ? (
+        <Text size={200} className={styles.muted}>
+          {[label, lease?.mac, vendor].filter(Boolean).join(" / ")}
+        </Text>
+      ) : null}
+    </div>
+  );
+}
+
+function RelatedClient({ tuple, leases }: { tuple?: ConnTuple; leases: Record<string, DHCPLease> }) {
+  const styles = useStyles();
+  if (!tuple?.source) return <Text className={styles.muted}>-</Text>;
+  const lease = leases[tuple.source];
+  return (
+    <div className={styles.connectionFlow}>
+      <code className={styles.wrapCode}>{firewallEndpoint(tuple.source, Number(tuple.sourcePort) || undefined)}</code>
+      {lease?.hostname || lease?.mac || lease?.vendor ? (
+        <Text size={200} className={styles.muted}>
+          {[lease.hostname, lease.mac, lease.vendor].filter(Boolean).join(" / ")}
+        </Text>
+      ) : null}
     </div>
   );
 }
@@ -907,6 +987,24 @@ function dnsLabelMap(rows: DNSQuery[]) {
     for (const answer of row.answers ?? []) if (!labels[answer]) labels[answer] = row.questionName ?? "";
   }
   return labels;
+}
+
+function dhcpLeaseMap(rows: DHCPLease[]) {
+  const leases: Record<string, DHCPLease> = {};
+  for (const row of rows) {
+    if (row.ip) leases[row.ip] = row;
+  }
+  return leases;
+}
+
+function firewallRelatedClientMap(entries: ConnectionEntry[]) {
+  const related: Record<string, ConnTuple | undefined> = {};
+  for (const entry of entries) {
+    const reply = entry.reply;
+    if (!reply?.source || !reply?.destination) continue;
+    related[firewallTupleKey(reply.source, reply.sourcePort, reply.destination, reply.destinationPort, entry.protocol)] = entry.original;
+  }
+  return related;
 }
 
 function connectionFilterFacets(entries: ConnectionEntry[]) {
@@ -1091,14 +1189,22 @@ function clientTrafficRows(flows: TrafficFlow[]) {
 }
 
 function denyRows(logs: FirewallLog[]) {
-  const totals = new Map<string, { src: string; dst: string; proto: string; count: number }>();
+  const totals = new Map<string, { key: string; src: string; dst: string; proto: string; count: number }>();
   for (const log of logs) {
-    const key = `${log.srcAddress || "-"}>${log.dstAddress || "-"}>${log.protocol || "-"}`;
-    const row = totals.get(key) ?? { src: log.srcAddress || "-", dst: log.dstAddress || "-", proto: log.protocol || "-", count: 0 };
+    const key = firewallLogKey(log);
+    const row = totals.get(key) ?? { key, src: log.srcAddress || "-", dst: log.dstAddress || "-", proto: log.protocol || "-", count: 0 };
     row.count++;
     totals.set(key, row);
   }
   return Array.from(totals.values()).sort((a, b) => b.count - a.count || a.src.localeCompare(b.src)).slice(0, 10);
+}
+
+function firewallLogKey(log: FirewallLog) {
+  return firewallTupleKey(log.srcAddress, log.srcPort, log.dstAddress, log.dstPort, log.protocol);
+}
+
+function firewallTupleKey(source?: string, sourcePort?: string | number, destination?: string, destinationPort?: string | number, protocol?: string) {
+  return `${source || "-"}:${sourcePort || ""}>${destination || "-"}:${destinationPort || ""}>${protocol || "-"}`;
 }
 
 function formatTime(value?: string) {

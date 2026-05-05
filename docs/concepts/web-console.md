@@ -33,6 +33,8 @@ The Web Console reads:
 - DNS query history from `dns-queries.db`
 - traffic flow history from `traffic-flows.db`
 - firewall deny history from `firewall-logs.db`
+- current dnsmasq DHCP lease files for client names, MAC addresses, and local
+  vendor hints
 - the active YAML configuration, shown read-only
 
 ## Current screens
@@ -50,6 +52,10 @@ The current Fluent UI web app provides:
   pagination, and page size controls
 - DNS query, traffic flow, and firewall log views backed by separate log
   databases
+- Firewall rows combine firewall logs, DNS answers, DHCP leases, MAC vendor
+  hints, and current conntrack reply tuples. This helps explain whether a
+  denied packet is unsolicited traffic or an off-path reply for an existing
+  NAT mapping.
 - a Config view with syntax-highlighted, foldable, read-only YAML
 
 Connection rows show the forward direction by default. Return-path data is not

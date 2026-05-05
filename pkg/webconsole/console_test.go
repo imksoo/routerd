@@ -194,6 +194,43 @@ func TestHandlerServesFirewallLogs(t *testing.T) {
 	}
 }
 
+func TestHandlerIncludesDHCPLeases(t *testing.T) {
+	leasePath := filepath.Join(t.TempDir(), "dnsmasq.leases")
+	if err := os.WriteFile(leasePath, []byte("1778014867 7c:dd:e9:01:40:15 172.18.1.78 ATOM 01:7c:dd:e9:01:40:15\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(Options{DHCPLeasePaths: []string{leasePath}})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{"172.18.1.78", "7c:dd:e9:01:40:15", "ATOM", "ATOM tech Inc."} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+}
+
+func TestReadDnsmasqLeases(t *testing.T) {
+	leasePath := filepath.Join(t.TempDir(), "dnsmasq.leases")
+	if err := os.WriteFile(leasePath, []byte("1778014867 18:ec:e7:33:12:6c 172.18.0.150 aiseg2 01:18:ec:e7:33:12:6c\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	leases, err := readDnsmasqLeases(leasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("leases = %d", len(leases))
+	}
+	lease := leases[0]
+	if lease.IP != "172.18.0.150" || lease.Hostname != "aiseg2" || lease.Vendor != "Panasonic" {
+		t.Fatalf("lease = %+v", lease)
+	}
+}
+
 func TestHandlerServesConfigReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "router.yaml")
 	if err := os.WriteFile(path, []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\n"), 0644); err != nil {

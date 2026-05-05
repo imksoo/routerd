@@ -34,6 +34,7 @@ type Options struct {
 	DNSQueryLogPath    string
 	TrafficFlowLogPath string
 	FirewallLogPath    string
+	DHCPLeasePaths     []string
 	ConfigPath         string
 }
 
@@ -51,12 +52,23 @@ type Snapshot struct {
 	DNSQueries   []logstore.DNSQuery         `json:"dnsQueries,omitempty"`
 	TrafficFlows []logstore.TrafficFlow      `json:"trafficFlows,omitempty"`
 	FirewallLogs []logstore.FirewallLogEntry `json:"firewallLogs,omitempty"`
+	DHCPLeases   []DHCPLease                 `json:"dhcpLeases,omitempty"`
 	Errors       []string                    `json:"errors,omitempty"`
 }
 
 type ConfigSnapshot struct {
 	Path string `json:"path"`
 	Text string `json:"text"`
+}
+
+type DHCPLease struct {
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
+	MAC       string    `json:"mac"`
+	IP        string    `json:"ip"`
+	Hostname  string    `json:"hostname,omitempty"`
+	ClientID  string    `json:"clientId,omitempty"`
+	Vendor    string    `json:"vendor,omitempty"`
+	Source    string    `json:"source,omitempty"`
 }
 
 //go:embed static
@@ -74,6 +86,9 @@ func New(opts Options) Handler {
 	}
 	if opts.Connections == nil {
 		opts.Connections = observe.Connections
+	}
+	if len(opts.DHCPLeasePaths) == 0 {
+		opts.DHCPLeasePaths = []string{"/run/routerd/dnsmasq.leases", "/var/lib/misc/dnsmasq.leases"}
 	}
 	return Handler{opts: opts}
 }
@@ -145,6 +160,10 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
+	dhcpLeases, err := h.dhcpLeaseList()
+	if err != nil {
+		errors = append(errors, err.Error())
+	}
 	result := (*apply.Result)(nil)
 	if h.opts.Result != nil {
 		result = h.opts.Result()
@@ -159,6 +178,7 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		DNSQueries:   dnsQueries,
 		TrafficFlows: trafficFlows,
 		FirewallLogs: firewallLogs,
+		DHCPLeases:   dhcpLeases,
 		Errors:       errors,
 	}
 }
@@ -352,6 +372,100 @@ func (h Handler) firewallLogList(filter logstore.FirewallLogFilter) ([]logstore.
 	}
 	defer store.Close()
 	return store.List(context.Background(), filter)
+}
+
+func (h Handler) dhcpLeaseList() ([]DHCPLease, error) {
+	seen := map[string]DHCPLease{}
+	for _, path := range h.opts.DHCPLeasePaths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		leases, err := readDnsmasqLeases(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		for _, lease := range leases {
+			key := lease.IP
+			if key == "" {
+				key = lease.MAC
+			}
+			if key == "" {
+				continue
+			}
+			seen[key] = lease
+		}
+	}
+	out := make([]DHCPLease, 0, len(seen))
+	for _, lease := range seen {
+		out = append(out, lease)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].IP < out[j].IP
+	})
+	return out, nil
+}
+
+func readDnsmasqLeases(path string) ([]DHCPLease, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []DHCPLease
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		expiresUnix, _ := strconv.ParseInt(fields[0], 10, 64)
+		hostname := fields[3]
+		if hostname == "*" {
+			hostname = ""
+		}
+		lease := DHCPLease{
+			MAC:      strings.ToLower(fields[1]),
+			IP:       fields[2],
+			Hostname: hostname,
+			Source:   path,
+		}
+		if expiresUnix > 0 {
+			lease.ExpiresAt = time.Unix(expiresUnix, 0).UTC()
+		}
+		if len(fields) >= 5 && fields[4] != "*" {
+			lease.ClientID = fields[4]
+		}
+		lease.Vendor = macVendor(lease.MAC)
+		out = append(out, lease)
+	}
+	return out, nil
+}
+
+func macVendor(mac string) string {
+	oui := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(mac), "-", ":"))
+	parts := strings.Split(oui, ":")
+	if len(parts) < 3 {
+		return ""
+	}
+	oui = strings.Join(parts[:3], ":")
+	vendors := map[string]string{
+		"00:F6:20": "Google",
+		"18:EC:E7": "Panasonic",
+		"3C:A9:AB": "Apple",
+		"48:D6:D5": "Google",
+		"4E:20:15": "Apple private address",
+		"64:E8:33": "EcoFlow",
+		"7C:DD:E9": "ATOM tech Inc.",
+		"B8:68:70": "Apple",
+		"D8:10:68": "Amazon",
+		"EC:FA:BC": "Espressif",
+	}
+	if vendor, ok := vendors[oui]; ok {
+		return vendor
+	}
+	return "OUI " + oui
 }
 
 func (h Handler) basePath() string {
