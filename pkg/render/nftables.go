@@ -485,7 +485,12 @@ func writeFirewallPairChain(buf *bytes.Buffer, from firewallZone, to firewallZon
 		}
 		buf.WriteString("    " + expr + "\n")
 	}
-	buf.WriteString("    counter " + implicitFirewallAction(from.Role, to.Role, policy) + "\n")
+	action := implicitFirewallAction(from.Role, to.Role, policy)
+	if policy.LogDeny && (action == "drop" || action == "reject") {
+		buf.WriteString("    counter " + nftLogExpr("routerd firewall "+from.Name+"-to-"+to.Name+" deny ", logging) + " " + action + "\n")
+	} else {
+		buf.WriteString("    counter " + action + "\n")
+	}
 	buf.WriteString("  }\n")
 	return nil
 }

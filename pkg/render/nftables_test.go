@@ -245,7 +245,7 @@ func TestNftablesVXLANUnderlayUDPAcceptInputChain(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
 				Metadata: api.ObjectMeta{Name: "default-home"},
-				Spec:     api.FirewallPolicySpec{},
+				Spec:     api.FirewallPolicySpec{LogDeny: true},
 			},
 		}},
 	}
@@ -272,7 +272,7 @@ func TestNftablesBridgeOverlayICMPAccept(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
 				Metadata: api.ObjectMeta{Name: "default-home"},
-				Spec:     api.FirewallPolicySpec{},
+				Spec:     api.FirewallPolicySpec{LogDeny: true},
 			},
 		}},
 	}
@@ -515,7 +515,7 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
 				Metadata: api.ObjectMeta{Name: "default-home"},
-				Spec:     api.FirewallPolicySpec{},
+				Spec:     api.FirewallPolicySpec{LogDeny: true},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
@@ -545,6 +545,7 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 		`set if_wan { type ifname; elements = { "ppp0" } }`,
 		`chain lan_to_wan`,
 		`ip saddr 203.0.113.0/24 tcp dport 443 log prefix "routerd firewall nas-https " group 7 counter accept`,
+		`counter log prefix "routerd firewall wan-to-lan deny " group 7 drop`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
