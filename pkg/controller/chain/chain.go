@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -67,6 +68,7 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 		event.Attributes = map[string]string{
 			"phase":         fmt.Sprint(status["phase"]),
 			"previousPhase": fmt.Sprint(current["phase"]),
+			"changedFields": strings.Join(statusChangedFields(current, status), ","),
 		}
 		return s.Bus.Publish(context.Background(), event)
 	}
@@ -119,6 +121,26 @@ func statusChanged(current, next map[string]any) bool {
 	return !reflect.DeepEqual(stableStatus(current), stableStatus(next))
 }
 
+func statusChangedFields(current, next map[string]any) []string {
+	currentStable := stableStatus(current)
+	nextStable := stableStatus(next)
+	keys := map[string]bool{}
+	for key := range currentStable {
+		keys[key] = true
+	}
+	for key := range nextStable {
+		keys[key] = true
+	}
+	var out []string
+	for key := range keys {
+		if !reflect.DeepEqual(currentStable[key], nextStable[key]) {
+			out = append(out, key)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func stableStatus(status map[string]any) map[string]any {
 	if status == nil {
 		return nil
@@ -128,7 +150,7 @@ func stableStatus(status map[string]any) map[string]any {
 		switch key {
 		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions":
 			continue
-		case "count", "max", "usageRatio":
+		case "activeFlows", "count", "max", "usageRatio":
 			if fmt.Sprint(status["phase"]) == "Observed" {
 				continue
 			}
