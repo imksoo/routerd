@@ -6,6 +6,7 @@ import {
   Card,
   CardHeader,
   FluentProvider,
+  Select,
   Spinner,
   Tab,
   TabList,
@@ -226,10 +227,28 @@ const useStyles = makeStyles({
     display: "grid",
     gap: "8px",
   },
+  connectionHeader: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: "8px",
+  },
   connectionFlow: {
     display: "grid",
     gap: "2px",
     minWidth: "220px",
+  },
+  pager: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    alignItems: "center",
+    justifyContent: "flex-end",
+  },
+  pageSize: {
+    width: "86px",
   },
   detailPanel: {
     position: "sticky",
@@ -282,6 +301,8 @@ function App() {
   const [error, setError] = useState<string>("");
   const [selected, setSelected] = useState("overview");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [connectionPages, setConnectionPages] = useState<Record<string, number>>({});
+  const [connectionPageSizes, setConnectionPageSizes] = useState<Record<string, number>>({});
   const [selectedEventKey, setSelectedEventKey] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
@@ -373,6 +394,13 @@ function App() {
                   dnsLabels={dnsLabels}
                   collapsed={collapsed[group.key] ?? false}
                   toggle={() => setCollapsed(current => ({ ...current, [group.key]: !(current[group.key] ?? false) }))}
+                  page={connectionPages[group.key] ?? 0}
+                  pageSize={connectionPageSizes[group.key] ?? 10}
+                  setPage={page => setConnectionPages(current => ({ ...current, [group.key]: page }))}
+                  setPageSize={size => {
+                    setConnectionPageSizes(current => ({ ...current, [group.key]: size }));
+                    setConnectionPages(current => ({ ...current, [group.key]: 0 }));
+                  }}
                 />
               ))}
             </div>
@@ -514,50 +542,83 @@ function EventDetail({ event }: { event?: RouterEvent }) {
   );
 }
 
-function ConnectionGroup({ group, dnsLabels, collapsed, toggle }: { group: { key: string; rows: ConnectionEntry[] }; dnsLabels: Record<string, string>; collapsed: boolean; toggle: () => void }) {
+function ConnectionGroup({
+  group,
+  dnsLabels,
+  collapsed,
+  toggle,
+  page,
+  pageSize,
+  setPage,
+  setPageSize,
+}: {
+  group: { key: string; rows: ConnectionEntry[] };
+  dnsLabels: Record<string, string>;
+  collapsed: boolean;
+  toggle: () => void;
+  page: number;
+  pageSize: number;
+  setPage: (page: number) => void;
+  setPageSize: (size: number) => void;
+}) {
   const styles = useStyles();
   const label = connectionGroupLabel(group.key);
-  const visibleRows = group.rows.slice(0, 10);
+  const totalPages = Math.max(1, Math.ceil(group.rows.length / pageSize));
+  const currentPage = Math.min(Math.max(page, 0), totalPages - 1);
+  const start = currentPage * pageSize;
+  const visibleRows = group.rows.slice(start, start + pageSize);
   return (
     <Card>
       <CardHeader
         header={<Text weight="semibold">{label.family}/{label.protocol.toUpperCase()} {group.rows.length}</Text>}
-        description={!collapsed && group.rows.length > visibleRows.length ? <Text className={styles.muted}>Showing first {visibleRows.length}</Text> : undefined}
+        description={!collapsed ? <Text className={styles.muted}>Showing {visibleRows.length ? start + 1 : 0}-{start + visibleRows.length} of {group.rows.length}</Text> : undefined}
         action={<Button appearance="subtle" icon={collapsed ? <ChevronRightRegular /> : <ChevronDownRegular />} onClick={toggle}>{collapsed ? "Open" : "Close"}</Button>}
       />
       {!collapsed ? (
-        <div className={styles.tableWrap}>
-          <Table size="small">
-            <TableHeader>
-              <TableRow>
-                <TableHeaderCell>State</TableHeaderCell>
-                <TableHeaderCell>Flow</TableHeaderCell>
-                <TableHeaderCell>Destination label</TableHeaderCell>
-                <TableHeaderCell>Timeout</TableHeaderCell>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visibleRows.map(entry => (
-                <TableRow key={flowKey(entry)}>
-                  <TableCell>
-                    <div className={styles.badges}>
-                      <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
-                      {entry.assured ? <Badge appearance="outline" color="success">assured</Badge> : null}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className={styles.connectionFlow}>
-                      <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
-                      {sameReverse(entry.original, entry.reply) ? null : <code className={styles.wrapCode}>return {endpoint(entry.reply)}</code>}
-                    </div>
-                  </TableCell>
-                  <TableCell><code className={styles.wrapCode}>{dnsLabels[entry.original?.destination ?? ""] ?? "-"}</code></TableCell>
-                  <TableCell>{entry.timeout ?? 0}s</TableCell>
+        <>
+          <div className={styles.connectionHeader}>
+            <Text className={styles.muted}>Page {currentPage + 1} of {totalPages}</Text>
+            <div className={styles.pager}>
+              <Text className={styles.muted}>Rows</Text>
+              <Select className={styles.pageSize} size="small" value={String(pageSize)} onChange={event => setPageSize(Number(event.target.value))}>
+                {[10, 25, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
+              </Select>
+              <Button size="small" appearance="subtle" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Prev</Button>
+              <Button size="small" appearance="subtle" disabled={currentPage >= totalPages - 1} onClick={() => setPage(currentPage + 1)}>Next</Button>
+            </div>
+          </div>
+          <div className={styles.tableWrap}>
+            <Table size="small">
+              <TableHeader>
+                <TableRow>
+                  <TableHeaderCell>State</TableHeaderCell>
+                  <TableHeaderCell>Flow</TableHeaderCell>
+                  <TableHeaderCell>Destination label</TableHeaderCell>
+                  <TableHeaderCell>Timeout</TableHeaderCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+              </TableHeader>
+              <TableBody>
+                {visibleRows.map(entry => (
+                  <TableRow key={flowKey(entry)}>
+                    <TableCell>
+                      <div className={styles.badges}>
+                        <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
+                        {entry.assured ? <Badge appearance="outline" color="success">assured</Badge> : null}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className={styles.connectionFlow}>
+                        <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
+                      </div>
+                    </TableCell>
+                    <TableCell><code className={styles.wrapCode}>{dnsLabels[entry.original?.destination ?? ""] ?? "-"}</code></TableCell>
+                    <TableCell>{entry.timeout ?? 0}s</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </>
       ) : null}
     </Card>
   );
@@ -759,14 +820,6 @@ function formatDetailValue(value: unknown) {
   } catch {
     return String(value);
   }
-}
-
-function sameReverse(original?: ConnTuple, reply?: ConnTuple) {
-  if (!original || !reply) return true;
-  return original.source === reply.destination &&
-    original.sourcePort === reply.destinationPort &&
-    original.destination === reply.source &&
-    original.destinationPort === reply.sourcePort;
 }
 
 function clientTrafficRows(flows: TrafficFlow[]) {
