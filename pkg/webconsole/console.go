@@ -2,9 +2,12 @@ package webconsole
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"html"
 	"html/template"
+	"io/fs"
 	"net/http"
 	"os"
 	"sort"
@@ -56,6 +59,9 @@ type ConfigSnapshot struct {
 	Text string `json:"text"`
 }
 
+//go:embed static
+var staticFiles embed.FS
+
 func New(opts Options) Handler {
 	if opts.Title == "" {
 		opts.Title = "routerd"
@@ -78,29 +84,34 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, h.basePath())
-	if path == "" || path == "/" || path == "index.html" {
-		h.index(w, r)
+	path = strings.TrimPrefix(path, "/")
+	if path == "" || path == "index.html" {
+		h.index(w)
 		return
 	}
-	switch strings.TrimPrefix(path, "/") {
-	case "api/summary":
+	switch path {
+	case "api/v1/summary":
 		h.summary(w, r)
-	case "api/resources":
-		h.resources(w, r)
-	case "api/events":
+	case "api/v1/resources":
+		h.resources(w)
+	case "api/v1/events":
 		h.events(w, r)
-	case "api/connections":
+	case "api/v1/connections":
 		h.connections(w, r)
-	case "api/dns-queries":
+	case "api/v1/dns-queries":
 		h.dnsQueries(w, r)
-	case "api/traffic-flows":
+	case "api/v1/traffic-flows":
 		h.trafficFlows(w, r)
-	case "api/firewall-logs":
+	case "api/v1/firewall-logs":
 		h.firewallLogs(w, r)
-	case "api/config":
-		h.config(w, r)
+	case "api/v1/config":
+		h.config(w)
 	default:
-		http.NotFound(w, r)
+		if strings.HasPrefix(path, "api/") {
+			http.NotFound(w, r)
+			return
+		}
+		h.asset(w, r, path)
 	}
 }
 
@@ -138,10 +149,9 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	if h.opts.Result != nil {
 		result = h.opts.Result()
 	}
-	status := controlapi.NewStatus(result)
 	return Snapshot{
 		GeneratedAt:  time.Now().UTC(),
-		Status:       status,
+		Status:       controlapi.NewStatus(result),
 		Phases:       phaseCounts(resources),
 		Resources:    resources,
 		Events:       events,
@@ -153,21 +163,39 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	}
 }
 
-func (h Handler) index(w http.ResponseWriter, r *http.Request) {
+func (h Handler) index(w http.ResponseWriter) {
+	data, err := staticFiles.ReadFile("static/index.html")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	page := string(data)
+	page = strings.ReplaceAll(page, "__ROUTERD_TITLE_TEXT__", html.EscapeString(h.opts.Title))
+	page = strings.ReplaceAll(page, "__ROUTERD_TITLE_JS__", template.JSEscapeString(h.opts.Title))
+	page = strings.ReplaceAll(page, "__ROUTERD_BASE_PATH__", template.JSEscapeString(h.basePath()))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = indexTemplate.Execute(w, map[string]string{
-		"Title":    h.opts.Title,
-		"BasePath": h.basePath(),
-	})
+	_, _ = w.Write([]byte(page))
+}
+
+func (h Handler) asset(w http.ResponseWriter, r *http.Request, path string) {
+	sub, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	request := new(http.Request)
+	*request = *r
+	urlCopy := *r.URL
+	request.URL = &urlCopy
+	request.URL.Path = "/" + strings.TrimPrefix(path, "/")
+	http.FileServer(http.FS(sub)).ServeHTTP(w, request)
 }
 
 func (h Handler) summary(w http.ResponseWriter, r *http.Request) {
-	limit := intQuery(r, "events", 25)
-	connectionsLimit := intQuery(r, "connections", h.opts.ConnectionsLimit)
-	writeJSON(w, h.Snapshot(limit, connectionsLimit))
+	writeJSON(w, h.Snapshot(intQuery(r, "events", 25), intQuery(r, "connections", h.opts.ConnectionsLimit)))
 }
 
-func (h Handler) resources(w http.ResponseWriter, r *http.Request) {
+func (h Handler) resources(w http.ResponseWriter) {
 	resources, err := h.resourceStatuses()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -262,7 +290,7 @@ func (h Handler) firewallLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, rows)
 }
 
-func (h Handler) config(w http.ResponseWriter, r *http.Request) {
+func (h Handler) config(w http.ResponseWriter) {
 	path := strings.TrimSpace(h.opts.ConfigPath)
 	if path == "" {
 		writeError(w, http.StatusNotFound, "config path is unavailable")
@@ -426,410 +454,3 @@ func SortResources(resources []routerstate.ObjectStatus) {
 		return a < b
 	})
 }
-
-var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}}</title>
-  <style>
-    :root{color-scheme:dark;background:#111;color:#e8e8e8;font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    *{box-sizing:border-box}
-    body{margin:0;background:#111;color:#e8e8e8;overflow-x:hidden}
-    header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid #303030;background:#181818;position:sticky;top:0;z-index:1;max-width:100vw}
-    h1{font-size:18px;margin:0;font-weight:650;min-width:0;max-width:calc(100vw - 120px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    main{padding:16px;display:grid;gap:16px;max-width:1280px;margin:0 auto}
-    section{border:1px solid #303030;border-radius:8px;background:#181818;padding:14px;min-width:0;overflow:hidden}
-    h2{font-size:15px;margin:0 0 10px}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
-    .metric{border:1px solid #2d2d2d;border-radius:6px;padding:10px;background:#202020}
-    .metric b{display:block;font-size:20px;margin-top:4px}
-    .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
-    .connection-groups{display:grid;gap:10px}
-    .connection-group{border:1px solid #2b2b2b;border-radius:6px;background:#151515;overflow:hidden}
-    .connection-group summary{display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer;list-style:none}
-    .connection-group summary::-webkit-details-marker{display:none}
-    .connection-group summary:before{content:"+";display:inline-grid;place-items:center;width:16px;height:16px;border:1px solid #4a4a4a;border-radius:50%;font-size:12px;color:#c9c9c9;flex:0 0 auto}
-    .connection-group[open] summary:before{content:"-"}
-    .connection-group .table-wrap{border-top:1px solid #2b2b2b}
-    .group-title{font-weight:650;white-space:nowrap}
-    .group-count{margin-left:auto;color:#9a9a9a;font-size:12px;white-space:nowrap}
-    .flow-cell{display:grid;gap:5px;min-width:0}
-    .flow-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;list-style:none;min-width:0}
-    .flow-summary::-webkit-details-marker{display:none}
-    .return-detail{display:grid;gap:3px;margin-top:4px}
-    .return-detail div{display:grid;grid-template-columns:74px minmax(0,1fr);gap:6px;align-items:baseline}
-    .return-detail span{font-size:11px;color:#9a9a9a;text-transform:uppercase}
-    .return-toggle summary{cursor:pointer}
-    .return-button{color:#9a9a9a;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
-    .return-button:before{content:"+";display:inline-grid;place-items:center;width:14px;height:14px;border:1px solid #4a4a4a;border-radius:50%;font-size:11px;color:#c9c9c9}
-    .return-toggle[open] .return-button:before{content:"-"}
-    .addr{white-space:nowrap;word-break:normal}
-    .dst-label{display:block;color:#9a9a9a;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:650;border:1px solid #3a3a3a;background:#282828;color:#ddd;white-space:nowrap}
-    .family-ipv4{border-color:#3977d4;background:#152846;color:#8ab4ff}.family-ipv6{border-color:#9b6fd3;background:#2c2142;color:#d2a8ff}
-    .proto-tcp{border-color:#3977d4;background:#152846;color:#8ab4ff}.proto-udp{border-color:#3b8b65;background:#102d22;color:#7ee787}.proto-icmp,.proto-icmpv6,.proto-ipv6_icmp{border-color:#9b6fd3;background:#2c2142;color:#d2a8ff}
-    .state-established,.state-assured{border-color:#3b8b65;background:#102d22;color:#7ee787}.state-syn_sent,.state-unreplied{border-color:#997b2f;background:#342a12;color:#f2cc60}.state-time_wait,.state-close{border-color:#7b7b7b;background:#242424;color:#c9c9c9}
-    .config-viewer{display:grid;gap:8px;max-height:70vh;overflow:auto;border:1px solid #2b2b2b;border-radius:6px;background:#121212;padding:8px}
-    .config-path{position:sticky;top:0;background:#121212;padding:4px 0;border-bottom:1px solid #242424;z-index:1}
-    .config-block{border:1px solid #292929;border-radius:6px;background:#171717;overflow:hidden}
-    .config-block summary{display:flex;align-items:center;gap:8px;cursor:pointer;padding:7px 8px;list-style:none}
-    .config-block summary::-webkit-details-marker{display:none}
-    .config-block summary:before{content:"+";display:inline-grid;place-items:center;width:16px;height:16px;border:1px solid #4a4a4a;border-radius:50%;font-size:12px;color:#c9c9c9;flex:0 0 auto}
-    .config-block[open] summary:before{content:"-"}
-    .config-block pre{margin:0;border-top:1px solid #292929;padding:6px 0;overflow:auto}
-    .config-line{display:grid;grid-template-columns:44px minmax(0,1fr);gap:8px;align-items:baseline;min-width:max-content}
-    .line-no{color:#666;text-align:right;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;user-select:none}
-    .yaml-key{color:#8ab4ff}.yaml-value{color:#d7d7d7}.yaml-comment{color:#7ee787}
-    .event-details{display:flex;flex-wrap:wrap;gap:4px;max-width:360px}
-    .event-attr{display:inline-flex;gap:4px;align-items:baseline;border:1px solid #303030;border-radius:5px;background:#202020;padding:2px 5px;max-width:100%}
-    .event-attr span{color:#9a9a9a;font-size:11px;white-space:nowrap}
-    .event-attr code{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    tr.flash, .metric.flash{animation:flash 1.6s ease-out}
-    @keyframes flash{0%{background:#3a320f;box-shadow:inset 3px 0 #f2cc60}100%{background:transparent;box-shadow:inset 0 0 transparent}}
-    table{width:100%;border-collapse:collapse;min-width:440px}
-    th,td{text-align:left;border-bottom:1px solid #2b2b2b;padding:7px 6px;vertical-align:top}
-    th{font-size:12px;color:#aaa;font-weight:600}
-    code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-word}
-    .ok{color:#7ee787}.warn{color:#f2cc60}.bad{color:#ff7b72}.muted{color:#9a9a9a;flex:0 0 auto}
-    @media (max-width:640px){
-      header{padding:10px 12px}
-      h1{font-size:16px;max-width:calc(100vw - 96px)}
-      main{padding:10px;gap:10px}
-      section{padding:10px}
-      .grid{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
-      .metric b{font-size:18px}
-      th,td{padding:6px 5px}
-    }
-  </style>
-</head>
-<body>
-<header><h1>{{.Title}}</h1><span class="muted">read-only</span></header>
-<main>
-  <section><h2>Overview</h2><div id="overview"></div></section>
-  <section><h2>Connections</h2><div id="traffic"></div></section>
-  <section><h2>Client Traffic</h2><div id="client-traffic"></div></section>
-  <section><h2>Recent Deny</h2><div id="recent-deny"></div></section>
-  <section><h2>Resources</h2><div id="resources"></div></section>
-  <section><h2>Events</h2><div id="events"></div></section>
-  <section><h2>Config</h2><div id="config"></div></section>
-</main>
-<script>
-const base = {{.BasePath}};
-const seen = {traffic:new Map(), resources:new Map(), events:new Map()};
-const connectionGroupOpen = new Map();
-let firstPaint = true;
-let refreshSeq = 0;
-function cls(phase){return /Healthy|Applied|Active|Bound|Installed|Ready|Running|Up/.test(phase) ? "ok" : /Pending|Drifted|Unknown/.test(phase) ? "warn" : "bad"}
-function text(v){return String(v ?? "")}
-function clear(el){while(el.firstChild) el.removeChild(el.firstChild)}
-function el(tag, attrs, children){
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs || {})) {
-    if (value === null || value === undefined || value === false) continue;
-    if (key === "class") node.className = value;
-    else if (key === "text") node.textContent = text(value);
-    else if (value === true) node.setAttribute(key, "");
-    else node.setAttribute(key, value);
-  }
-  for (const child of children || []) node.append(child instanceof Node ? child : document.createTextNode(text(child)));
-  return node;
-}
-function renderInto(id, node){const target=document.getElementById(id); clear(target); target.append(node)}
-function kvNode(label,value){return el("div",{class:"metric"},[el("span",{class:"muted",text:label}),el("b",{text:value})])}
-function tableNode(headers, rows){
-  const thead = el("thead",{},[el("tr",{},headers.map(h=>el("th",{text:h})))]);
-  const tbody = el("tbody",{},rows);
-  return el("div",{class:"table-wrap"},[el("table",{},[thead,tbody])]);
-}
-function token(v){return String(v || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "unknown"}
-function pill(value, prefix){return el("span",{class:"pill "+prefix+"-"+token(value),text:value || "-"})}
-function dstLabel(tuple, labels){
-  return labels?.[tuple?.destination] || "";
-}
-function hostPort(tuple, side){
-  const host = tuple?.[side] || "";
-  const port = side === "source" ? tuple?.sourcePort : tuple?.destinationPort;
-  return host ? host + (port ? ":" + port : "") : "";
-}
-function endpoint(tuple){
-  return el("code",{class:"addr",text:hostPort(tuple,"source")+" -> "+hostPort(tuple,"destination")});
-}
-function dnsLabelMap(rows){
-  const labels = {};
-  for (const row of rows || []) {
-    for (const answer of row.answers || []) if (!labels[answer]) labels[answer] = row.questionName;
-  }
-  return labels;
-}
-function clientTrafficRows(flows){
-  const totals = new Map();
-  for (const flow of flows || []) {
-    const key = flow.clientAddress || "-";
-    const current = totals.get(key) || {client:key, bytesOut:0, bytesIn:0, peers:new Set()};
-    current.bytesOut += Number(flow.bytesOut || 0);
-    current.bytesIn += Number(flow.bytesIn || 0);
-    const peer = flow.resolvedHostname || flow.tlsSNI || flow.peerAddress;
-    if (peer) current.peers.add(peer);
-    totals.set(key, current);
-  }
-  return Array.from(totals.values()).sort((a,b)=>a.client.localeCompare(b.client)).slice(0,10);
-}
-function bytes(v){return v ? String(v) : "-"}
-function denyRows(logs){
-  const totals = new Map();
-  for (const row of logs || []) {
-    const key = (row.srcAddress || "-") + ">" + (row.dstAddress || "-");
-    const current = totals.get(key) || {src:row.srcAddress || "-", dst:row.dstAddress || "-", count:0, proto:row.protocol || "-", rule:row.ruleName || "-"};
-    current.count++;
-    totals.set(key, current);
-  }
-  return Array.from(totals.values()).sort((a,b)=>b.count-a.count || a.src.localeCompare(b.src)).slice(0,10);
-}
-function connectionFamilyCounts(connections){
-  const counts = {ipv4:0, ipv6:0, other:0};
-  const byFamily = connections?.byFamily || {};
-  if (Object.keys(byFamily).length) {
-    for (const [familyKey, value] of Object.entries(byFamily)) {
-      const family = String(familyKey || "").toLowerCase();
-      if (family === "ipv4") counts.ipv4 += Number(value || 0);
-      else if (family === "ipv6") counts.ipv6 += Number(value || 0);
-      else counts.other += Number(value || 0);
-    }
-  } else {
-    for (const entry of connections?.entries || []) {
-      const family = String(entry.family || "").toLowerCase();
-      if (family === "ipv4") counts.ipv4++;
-      else if (family === "ipv6") counts.ipv6++;
-      else counts.other++;
-    }
-  }
-  const parts = ["v4 "+counts.ipv4, "v6 "+counts.ipv6];
-  if (counts.other) parts.push("other "+counts.other);
-  return parts.join(" / ");
-}
-function connectionGroupKey(e){
-  const family = String(e.family || "other").toLowerCase();
-  const proto = String(e.protocol || "other").toLowerCase().replace(/[^a-z0-9]+/g, "_") || "other";
-  return family + "/" + proto;
-}
-function connectionGroupLabel(key){
-  const [family, proto] = key.split("/");
-  const fam = family === "ipv4" ? "IPv4" : family === "ipv6" ? "IPv6" : "Other";
-  return {family:fam, proto:proto || "other"};
-}
-function connectionGroups(entries){
-  const groups = new Map();
-  for (const entry of entries || []) {
-    const key = connectionGroupKey(entry);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(entry);
-  }
-  const order = {ipv4:0, ipv6:1, other:2, tcp:0, udp:1, icmp:2, icmpv6:3, ipv6_icmp:3, gre:4, esp:5, other:9};
-  return Array.from(groups.entries()).sort((a,b)=>{
-    const [af,ap] = a[0].split("/");
-    const [bf,bp] = b[0].split("/");
-    return (order[af] ?? 9) - (order[bf] ?? 9) || (order[ap] ?? 9) - (order[bp] ?? 9) || a[0].localeCompare(b[0]);
-  }).map(([key, rows])=>({key, rows}));
-}
-function remember(bucket, key, value){
-  const previous = bucket.get(key);
-  bucket.set(key, value);
-  return !firstPaint && previous !== value;
-}
-function rowClass(changed){return changed ? ' class="flash"' : ''}
-function flowKey(e){return [e.family,e.protocol,e.state,e.original?.source,e.original?.sourcePort,e.original?.destination,e.original?.destinationPort,e.reply?.source,e.reply?.sourcePort,e.reply?.destination,e.reply?.destinationPort,e.mark].join("|")}
-function flowSig(e){return JSON.stringify([e.state,e.assured,e.original,e.reply,e.mark])}
-function sameReverse(original, reply){
-  return reply?.source === original?.destination && reply?.destination === original?.source &&
-    String(reply?.sourcePort || "") === String(original?.destinationPort || "") &&
-    String(reply?.destinationPort || "") === String(original?.sourcePort || "");
-}
-function hasTuple(tuple){return !!(tuple?.source || tuple?.destination || tuple?.sourcePort || tuple?.destinationPort)}
-function natDelta(e){
-  if (!hasTuple(e.reply) || sameReverse(e.original, e.reply)) return "";
-  const out = [];
-  const replyDst = hostPort(e.reply, "destination");
-  const originalSrc = hostPort(e.original, "source");
-  if (replyDst && replyDst !== originalSrc) out.push("reply dst " + replyDst);
-  const replySrc = hostPort(e.reply, "source");
-  const originalDst = hostPort(e.original, "destination");
-  if (replySrc && replySrc !== originalDst) out.push("reply src " + replySrc);
-  return out.join(" / ");
-}
-function returnDetails(e){
-  if (!hasTuple(e.reply)) return null;
-  const delta = natDelta(e);
-  const detailRows = [el("div",{},[el("span",{text:"reply"}),endpoint(e.reply)])];
-  if (delta) detailRows.push(el("div",{},[el("span",{text:"nat"}),el("code",{class:"addr",text:delta})]));
-  return el("details",{class:"flow-cell return-toggle"},[
-    el("summary",{class:"flow-summary"},[endpoint(e.original),el("span",{class:"return-button",text:"return"})]),
-    el("div",{class:"return-detail"},detailRows),
-  ]);
-}
-function flowCell(e){
-  return returnDetails(e) || el("div",{class:"flow-cell"},[endpoint(e.original)]);
-}
-function formatTime(value){
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  const day = new Intl.DateTimeFormat(undefined,{month:"2-digit",day:"2-digit"}).format(date);
-  const time = new Intl.DateTimeFormat(undefined,{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(date);
-  return day + " " + time;
-}
-function eventMessage(e){
-  return e.reason || e.message || "";
-}
-function eventAttributeEntries(e){
-  const attrs = e.attributes || {};
-  const preferred = ["mac","ip","hostname","action","interface","address","prefix","target","result","phase"];
-  const keys = [];
-  for (const key of preferred) if (attrs[key] !== undefined && attrs[key] !== "") keys.push(key);
-  for (const key of Object.keys(attrs).sort()) if (!keys.includes(key) && attrs[key] !== undefined && attrs[key] !== "") keys.push(key);
-  return keys.map(key => [key, attrs[key]]);
-}
-function eventDetails(e){
-  const entries = eventAttributeEntries(e);
-  if (!entries.length) return el("span",{class:"muted",text:"-"});
-  return el("div",{class:"event-details"},entries.slice(0,8).map(([key,value]) =>
-    el("span",{class:"event-attr",title:key+"="+text(value)},[el("span",{text:key}),el("code",{text:value})])
-  ));
-}
-function yamlHighlights(line){
-  const out = [];
-  let text = line;
-  const commentAt = text.indexOf("#");
-  let comment = "";
-  if (commentAt >= 0) {
-    comment = text.slice(commentAt);
-    text = text.slice(0, commentAt);
-  }
-  const match = text.match(/^(\s*-?\s*)([A-Za-z0-9_]+)(\s*:)(.*)$/);
-  if (match) {
-    out.push(document.createTextNode(match[1]));
-    out.push(el("span",{class:"yaml-key",text:match[2]}));
-    out.push(document.createTextNode(match[3]));
-    out.push(el("span",{class:"yaml-value",text:match[4]}));
-  } else {
-    out.push(document.createTextNode(text));
-  }
-  if (comment) out.push(el("span",{class:"yaml-comment",text:comment}));
-  return out;
-}
-function configLineIndent(line){
-  const match = line.match(/^(\s*)/);
-  return Math.floor((match ? match[1].length : 0) / 2);
-}
-function configViewer(snapshot){
-  if (!snapshot || !snapshot.text) return el("div",{class:"muted",text:"Config is unavailable"});
-  const lines = snapshot.text.split(/\r?\n/);
-  const root = el("div",{class:"config-viewer"},[
-    el("div",{class:"config-path"},[el("code",{text:snapshot.path || ""})]),
-  ]);
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    const next = lines[i+1] || "";
-    const foldable = /^\s*-\s+apiVersion\s*:/.test(line) || /^\s{4,}[A-Za-z0-9_]+\s*:\s*$/.test(line);
-    if (foldable) {
-      const indent = configLineIndent(line);
-      const block = [line];
-      i++;
-      while (i < lines.length && (lines[i].trim() === "" || configLineIndent(lines[i]) > indent)) {
-        block.push(lines[i]);
-        i++;
-      }
-      const summaryText = block.find(l=>/^\s*kind\s*:/.test(l))?.trim() || line.trim() || "block";
-      const details = el("details",{class:"config-block"},[
-        el("summary",{},[el("code",{text:summaryText}),el("span",{class:"group-count",text:String(block.length)+" lines"})]),
-        el("pre",{},block.map((l,idx)=>el("div",{class:"config-line"},[el("span",{class:"line-no",text:String(idx+1)}),el("code",{},yamlHighlights(l))]))),
-      ]);
-      root.append(details);
-      continue;
-    }
-    root.append(el("div",{class:"config-line"},[el("span",{class:"line-no",text:String(i+1)}),el("code",{},yamlHighlights(line))]));
-    i++;
-  }
-  return root;
-}
-function connectionGroupNode(group, dnsLabels){
-  const label = connectionGroupLabel(group.key);
-  const title = label.family + "/" + String(label.proto || "other").toUpperCase() + " " + String(group.rows.length);
-  const rows = group.rows.map(e => {
-    const state = e.state || (e.assured ? "ASSURED" : "stateless");
-    const changed = remember(seen.traffic, flowKey(e), flowSig(e));
-    const dst = dstLabel(e.original, dnsLabels);
-    return el("tr", changed ? {class:"flash"} : {}, [
-      el("td",{},[pill(state, "state")]),
-      el("td",{},[flowCell(e)]),
-      el("td",{},[el("span",{class:"dst-label",text:dst || "-"})]),
-      el("td",{text:String(e.timeout || 0)+"s"}),
-    ]);
-  });
-  const open = connectionGroupOpen.has(group.key) ? connectionGroupOpen.get(group.key) : false;
-  const node = el("details",{class:"connection-group",open:open},[
-    el("summary",{},[el("span",{class:"group-title",text:title}),pill(label.family, "family"),pill(label.proto, "proto")]),
-    tableNode(["state","flow","dst label","timeout"], rows),
-  ]);
-  node.addEventListener("toggle", () => connectionGroupOpen.set(group.key, node.open));
-  return node;
-}
-async function refresh(){
-  const seq = ++refreshSeq;
-  const res = await fetch(base + "api/summary?events=15&connections=200", {cache:"no-store"});
-  const s = await res.json();
-  if (seq !== refreshSeq) return;
-  const status = s.status?.status || {};
-  const connections = s.connections || {};
-  const dnsLabels = dnsLabelMap(s.dnsQueries || []);
-  renderInto("overview", el("div",{class:"grid"},[
-    kvNode("phase", status.phase || "Unknown"),
-    kvNode("generation", status.generation || "-"),
-    kvNode("resources", status.resourceCount || (s.resources||[]).length),
-    kvNode("conntrack", connections.max ? String(connections.count)+"/"+String(connections.max) : (connections.count ?? "-")),
-    kvNode("families", connectionFamilyCounts(connections)),
-  ]));
-  const groups = connectionGroups(connections.entries || []);
-  renderInto("traffic", groups.length ? el("div",{class:"connection-groups"},groups.map(group=>connectionGroupNode(group,dnsLabels))) : el("div",{class:"muted",text:"No active connections"}));
-  renderInto("client-traffic", tableNode(["client","bytes out","bytes in","recent peers"], clientTrafficRows(s.trafficFlows || []).map(row =>
-    el("tr",{},[el("td",{},[el("code",{text:row.client})]),el("td",{text:bytes(row.bytesOut)}),el("td",{text:bytes(row.bytesIn)}),el("td",{},[el("code",{text:Array.from(row.peers).sort().slice(0,4).join(", ")})])]))));
-  renderInto("recent-deny", tableNode(["count","source","destination","proto","rule"], denyRows(s.firewallLogs || []).map(row =>
-    el("tr",{},[el("td",{text:row.count}),el("td",{},[el("code",{text:row.src})]),el("td",{},[el("code",{text:row.dst})]),el("td",{},[pill(row.proto, "proto")]),el("td",{text:row.rule})]))));
-  const important = (s.resources||[]).filter(r => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(r.kind));
-  renderInto("resources", tableNode(["kind","name","phase","detail"], important.slice(0,80).map(r => {
-    const st = r.status || {};
-    const detail = ["selectedCandidate","selectedDevice","activeEgressInterface","target","address","currentPrefix"].map(k => st[k] ? k+"="+st[k] : "").filter(Boolean).join(" ");
-    const key = r.apiVersion + "/" + r.kind + "/" + r.name;
-    const changed = remember(seen.resources, key, JSON.stringify(st));
-    return el("tr", changed ? {class:"flash"} : {}, [el("td",{text:r.kind}),el("td",{text:r.name}),el("td",{class:cls(st.phase||"Unknown"),text:st.phase||"Unknown"}),el("td",{},[el("code",{text:detail})])]);
-  })));
-  renderInto("events", tableNode(["time","severity","topic","resource","message","details"], (s.events||[]).slice(0,15).map(e =>
-    el("tr", remember(seen.events, String(e.id || e.createdAt || e.topic), JSON.stringify(e)) ? {class:"flash"} : {}, [
-      el("td",{text:formatTime(e.createdAt),title:e.createdAt || ""}),
-      el("td",{text:e.severity||""}),
-      el("td",{},[el("code",{text:e.topic||e.type})]),
-      el("td",{text:(e.resourceKind||e.kind||"") + "/" + (e.resourceName||e.name||"")}),
-      el("td",{text:eventMessage(e)}),
-      el("td",{},[eventDetails(e)]),
-    ]))));
-  if (!document.getElementById("config").dataset.loaded) {
-    try {
-      const configRes = await fetch(base + "api/config", {cache:"no-store"});
-      if (configRes.ok) {
-        renderInto("config", configViewer(await configRes.json()));
-      } else {
-        renderInto("config", el("div",{class:"muted",text:"Config is unavailable"}));
-      }
-    } catch (err) {
-      renderInto("config", el("div",{class:"muted",text:String(err)}));
-    }
-    document.getElementById("config").dataset.loaded = "true";
-  }
-  firstPaint = false;
-}
-refresh(); setInterval(refresh, 5000);
-</script>
-</body>
-</html>`))

@@ -2,6 +2,7 @@ package webconsole
 
 import (
 	"context"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -79,7 +80,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		FirewallLogPath:    firewallLogPath,
 	})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/summary", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
@@ -91,16 +92,18 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	}
 }
 
-func TestConsoleTreatsReadyPhaseAsOK(t *testing.T) {
-	handler := New(Options{})
+func TestHandlerServesEmbeddedAppShell(t *testing.T) {
+	handler := New(Options{Title: "homert02"})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `Healthy|Applied|Active|Bound|Installed|Ready|Running|Up`) {
-		t.Fatalf("console phase classifier does not include Ready")
+	for _, want := range []string{`window.__ROUTERD_WEB_CONSOLE__`, `basePath: "/"`, `title: "homert02"`, `type="module"`, `id="root"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("index missing %q:\n%s", want, rec.Body.String())
+		}
 	}
 }
 
@@ -109,7 +112,7 @@ func reqContext() context.Context { return context.Background() }
 func TestHandlerRejectsWriteMethods(t *testing.T) {
 	handler := New(Options{})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/summary", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/summary", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d", rec.Code)
@@ -128,7 +131,7 @@ func TestHandlerServesDNSQueries(t *testing.T) {
 	_ = dnsLog.Close()
 	handler := New(Options{DNSQueryLogPath: queryLog})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/dns-queries?since=1h&limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/dns-queries?since=1h&limit=10", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
@@ -159,7 +162,7 @@ func TestHandlerServesTrafficFlows(t *testing.T) {
 	_ = flowLog.Close()
 	handler := New(Options{TrafficFlowLogPath: path, DNSQueryLogPath: queryLog})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/traffic-flows?since=1h&limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/traffic-flows?since=1h&limit=10", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
@@ -181,7 +184,7 @@ func TestHandlerServesFirewallLogs(t *testing.T) {
 	_ = firewallLog.Close()
 	handler := New(Options{FirewallLogPath: path})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/firewall-logs?since=1h&action=drop", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/firewall-logs?since=1h&action=drop", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
@@ -198,7 +201,7 @@ func TestHandlerServesConfigReadOnly(t *testing.T) {
 	}
 	handler := New(Options{ConfigPath: path})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
@@ -211,7 +214,7 @@ func TestHandlerServesConfigReadOnly(t *testing.T) {
 }
 
 func TestHandlerRendersUsableBasePath(t *testing.T) {
-	handler := New(Options{BasePath: "/"})
+	handler := New(Options{BasePath: "/", Title: "homert02"})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	handler.ServeHTTP(rec, req)
@@ -219,94 +222,36 @@ func TestHandlerRendersUsableBasePath(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `const base = "/"`) {
-		t.Fatalf("base path was not a JavaScript string literal:\n%s", body)
-	}
-	if strings.Contains(body, `const base = "\"/\""`) {
-		t.Fatalf("base path was double quoted:\n%s", body)
-	}
-}
-
-func TestHandlerRendersMobileSafeLayout(t *testing.T) {
-	handler := New(Options{Title: "homert02"})
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
-	}
-	body := rec.Body.String()
-	for _, want := range []string{
-		`overflow-x:hidden`,
-		`text-overflow:ellipsis`,
-		`@media (max-width:640px)`,
-		`overflow-x:auto`,
-		`white-space:nowrap`,
-	} {
+	for _, want := range []string{`window.__ROUTERD_WEB_CONSOLE__`, `basePath: "/"`, `title: "homert02"`} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("mobile layout CSS missing %q:\n%s", want, body)
+			t.Fatalf("index missing %q:\n%s", want, body)
 		}
 	}
 }
 
-func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
+func TestHandlerRejectsLegacyAPIPaths(t *testing.T) {
 	handler := New(Options{})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/summary", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestHandlerServesEmbeddedAssets(t *testing.T) {
+	assets, err := fs.Glob(staticFiles, "static/assets/*.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assets) == 0 {
+		t.Fatal("embedded web console css asset not found")
+	}
+	handler := New(Options{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/"+strings.TrimPrefix(assets[0], "static/"), nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
-	}
-	body := rec.Body.String()
-	for _, want := range []string{
-		`api/summary?events=15&connections=200`,
-		`function dnsLabelMap`,
-		`function clientTrafficRows`,
-		`function denyRows`,
-		`function connectionFamilyCounts`,
-		`function connectionGroups`,
-		`function connectionGroupNode`,
-		`const connectionGroupOpen = new Map()`,
-		`connectionGroupOpen.has(group.key)`,
-		`connectionGroupOpen.get(group.key) : false`,
-		`connectionGroupOpen.set(group.key, node.open)`,
-		`class:"group-title"`,
-		`String(group.rows.length)`,
-		`Client Traffic`,
-		`Recent Deny`,
-		`dst-label`,
-		`proto-tcp`,
-		`state-established`,
-		`["state","flow","dst label","timeout"]`,
-		`function flowCell`,
-		`function formatTime`,
-		`function eventDetails`,
-		`function eventAttributeEntries`,
-		`"mac","ip","hostname"`,
-		`class:"event-attr"`,
-		`["time","severity","topic","resource","message","details"]`,
-		`new Intl.DateTimeFormat`,
-		`title:e.createdAt || ""`,
-		`function dstLabel`,
-		`function sameReverse`,
-		`function returnDetails`,
-		`function natDelta`,
-		`function remember`,
-		`class:"flash"`,
-		`@keyframes flash`,
-		`class:"flow-summary"`,
-		`class:"return-button",text:"return"`,
-		`text:"nat"`,
-		`.slice(0,15)`,
-		`<section><h2>Config</h2>`,
-		`api/config`,
-		`function yamlHighlights`,
-		`function configViewer`,
-		`class:"config-block"`,
-		`yaml-key`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("console markup missing %q:\n%s", want, body)
-		}
 	}
 }

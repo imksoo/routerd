@@ -42,13 +42,14 @@ spec:
 - 送信元と宛先で集計した直近の拒否ログ
 
 JSON エンドポイントも読み取り専用です。
+Web Console API は `/api/v1` にだけ公開します。
 
 | Path | 内容 |
 | --- | --- |
-| `/api/summary` | 状態、リソース phase、直近イベント、コネクション概要 |
-| `/api/resources` | 状態データベース内のリソース状態 |
-| `/api/events` | 直近の bus イベント |
-| `/api/connections` | conntrack または pf state から得たコネクション観測値 |
-| `/api/dns-queries?since=1h&client=&qname=&limit=100` | DNS クエリー履歴 |
-| `/api/traffic-flows?since=1h&client=&peer=&limit=100` | DNS 履歴で通信先名を補った通信フロー履歴 |
-| `/api/firewall-logs?since=24h&action=drop&src=&limit=100` | ファイアウォールログ |
+| `/api/v1/summary` | 状態、リソース phase、直近イベント、コネクション概要 |
+| `/api/v1/resources` | 状態データベース内のリソース状態 |
+| `/api/v1/events` | 直近の bus イベント |
+| `/api/v1/connections` | conntrack または pf state から得たコネクション観測値 |
+| `/api/v1/dns-queries?since=1h&client=&qname=&limit=100` | DNS クエリー履歴 |
+| `/api/v1/traffic-flows?since=1h&client=&peer=&limit=100` | DNS 履歴で通信先名を補った通信フロー履歴 |
+| `/api/v1/firewall-logs?since=24h&action=drop&src=&limit=100` | ファイアウォールログ |

@@ -1,0 +1,17 @@
+{
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fluentui/react-components": "^9.73.8",
+    "@fluentui/react-icons": "^2.0.325",
+    "@vitejs/plugin-react": "^6.0.1",
+    "vite": "^8.0.10",
+    "typescript": "^5.9.3",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
+  },
+  "devDependencies": {}
+}

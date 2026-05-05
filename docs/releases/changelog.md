@@ -10,7 +10,7 @@ routerd は出荷前のソフトウェアです。
 ## 0.4.0
 
 - Phase 3.1a: 実時間の conntrack / pf state 表示を `connections` に改名しました。
-  Control API は `/api/connections`、CLI は `routerctl connections` を使います。
+  Web Console API は `/api/v1/connections`、CLI は `routerctl connections` を使います。
   IPv4 NAPT だけでなく、IPv6 の経路通過コネクションも同じ表で扱います。
   Web Console は文字列連結ではなく DOM ノード生成で表を描画し、列ずれを防ぎます。
 - Phase 3.0a: NixOS 向けの宣言的な生成を拡張しました。

@@ -42,14 +42,15 @@ The first screen shows:
 - client traffic totals from recent flow history
 - recent firewall denies grouped by source and destination
 
-The JSON endpoints are also read-only:
+The JSON endpoints are also read-only. Web Console APIs are exposed only under
+`/api/v1`.
 
 | Path | Content |
 | --- | --- |
-| `/api/summary` | status, resource phases, recent events, and connection summary |
-| `/api/resources` | resource statuses from the state database |
-| `/api/events` | recent bus events |
-| `/api/connections` | live connection observation from conntrack or pf state |
-| `/api/dns-queries?since=1h&client=&qname=&limit=100` | DNS query log rows |
-| `/api/traffic-flows?since=1h&client=&peer=&limit=100` | traffic flow log rows with DNS-derived hostnames |
-| `/api/firewall-logs?since=24h&action=drop&src=&limit=100` | firewall log rows |
+| `/api/v1/summary` | status, resource phases, recent events, and connection summary |
+| `/api/v1/resources` | resource statuses from the state database |
+| `/api/v1/events` | recent bus events |
+| `/api/v1/connections` | live connection observation from conntrack or pf state |
+| `/api/v1/dns-queries?since=1h&client=&qname=&limit=100` | DNS query log rows |
+| `/api/v1/traffic-flows?since=1h&client=&peer=&limit=100` | traffic flow log rows with DNS-derived hostnames |
+| `/api/v1/firewall-logs?since=24h&action=drop&src=&limit=100` | firewall log rows |
