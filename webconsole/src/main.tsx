@@ -227,6 +227,7 @@ const useStyles = makeStyles({
   },
   tableWrap: {
     overflowX: "auto",
+    maxWidth: "100%",
   },
   code: {
     fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
@@ -290,7 +291,88 @@ const useStyles = makeStyles({
   connectionFlow: {
     display: "grid",
     gap: "2px",
-    minWidth: "220px",
+    minWidth: 0,
+  },
+  firewallTable: {
+    display: "grid",
+    gap: "6px",
+  },
+  firewallRankHeader: {
+    display: "grid",
+    gridTemplateColumns: "64px minmax(190px, 1.1fr) minmax(190px, 1.1fr) minmax(190px, 1fr) 80px",
+    gap: "10px",
+    padding: "0 10px 6px",
+    color: tokens.colorNeutralForeground3,
+    fontSize: "12px",
+    fontWeight: 600,
+    "@media (max-width: 760px)": {
+      display: "none",
+    },
+  },
+  firewallTimelineHeader: {
+    display: "grid",
+    gridTemplateColumns: "110px 78px minmax(180px, 1.05fr) minmax(180px, 1.05fr) minmax(180px, 1fr) 86px minmax(120px, 0.7fr)",
+    gap: "10px",
+    padding: "0 10px 6px",
+    color: tokens.colorNeutralForeground3,
+    fontSize: "12px",
+    fontWeight: 600,
+    "@media (max-width: 760px)": {
+      display: "none",
+    },
+  },
+  firewallRankRow: {
+    display: "grid",
+    gridTemplateColumns: "64px minmax(190px, 1.1fr) minmax(190px, 1.1fr) minmax(190px, 1fr) 80px",
+    gap: "10px",
+    alignItems: "start",
+    padding: "8px 10px",
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    "@media (max-width: 760px)": {
+      gridTemplateColumns: "1fr",
+      gap: "8px",
+      padding: "10px",
+      border: `1px solid ${tokens.colorNeutralStroke2}`,
+      borderRadius: tokens.borderRadiusMedium,
+      backgroundColor: tokens.colorNeutralBackground2,
+    },
+  },
+  firewallTimelineRow: {
+    display: "grid",
+    gridTemplateColumns: "110px 78px minmax(180px, 1.05fr) minmax(180px, 1.05fr) minmax(180px, 1fr) 86px minmax(120px, 0.7fr)",
+    gap: "10px",
+    alignItems: "start",
+    padding: "8px 10px",
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    "@media (max-width: 760px)": {
+      gridTemplateColumns: "1fr",
+      gap: "8px",
+      padding: "10px",
+      border: `1px solid ${tokens.colorNeutralStroke2}`,
+      borderRadius: tokens.borderRadiusMedium,
+      backgroundColor: tokens.colorNeutralBackground2,
+    },
+  },
+  firewallCell: {
+    minWidth: 0,
+    overflow: "hidden",
+    "@media (max-width: 760px)": {
+      display: "grid",
+      gridTemplateColumns: "92px minmax(0, 1fr)",
+      gap: "8px",
+      alignItems: "start",
+    },
+  },
+  firewallCellLabel: {
+    display: "none",
+    color: tokens.colorNeutralForeground3,
+    fontSize: "12px",
+    "@media (max-width: 760px)": {
+      display: "block",
+    },
+  },
+  firewallCellValue: {
+    minWidth: 0,
   },
   pager: {
     display: "flex",
@@ -798,29 +880,23 @@ function RecentDeny({
 }) {
   const styles = useStyles();
   return (
-    <div className={styles.tableWrap}>
-      <Table size="small">
-        <TableHeader>
-          <TableRow>
-            <TableHeaderCell>Count</TableHeaderCell>
-            <TableHeaderCell>Source</TableHeaderCell>
-            <TableHeaderCell>Destination</TableHeaderCell>
-            <TableHeaderCell>Related client</TableHeaderCell>
-            <TableHeaderCell>Proto</TableHeaderCell>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {denyRows(logs).map(row => (
-            <TableRow key={`${row.src}-${row.dst}-${row.proto}`}>
-              <TableCell>{row.count}</TableCell>
-              <TableCell><EndpointDetail address={row.src} dnsLabels={dnsLabels} leases={leases} /></TableCell>
-              <TableCell><EndpointDetail address={row.dst} dnsLabels={dnsLabels} leases={leases} /></TableCell>
-              <TableCell><RelatedClient tuple={relatedClients[row.key]} leases={leases} /></TableCell>
-              <TableCell>{row.proto}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className={styles.firewallTable} role="table" aria-label="Deny ranking">
+      <div className={styles.firewallRankHeader} role="row">
+        <span>Count</span>
+        <span>Source</span>
+        <span>Destination</span>
+        <span>Related client</span>
+        <span>Proto</span>
+      </div>
+      {denyRows(logs).map(row => (
+        <div className={styles.firewallRankRow} role="row" key={`${row.src}-${row.dst}-${row.proto}`}>
+          <FirewallCell label="Count">{row.count}</FirewallCell>
+          <FirewallCell label="Source"><EndpointDetail address={row.src} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
+          <FirewallCell label="Destination"><EndpointDetail address={row.dst} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
+          <FirewallCell label="Related"><RelatedClient tuple={relatedClients[row.key]} leases={leases} /></FirewallCell>
+          <FirewallCell label="Proto">{row.proto}</FirewallCell>
+        </div>
+      ))}
     </div>
   );
 }
@@ -838,33 +914,37 @@ function FirewallTimeline({
 }) {
   const styles = useStyles();
   return (
-    <div className={styles.tableWrap}>
-      <Table size="small">
-        <TableHeader>
-          <TableRow>
-            <TableHeaderCell>Time</TableHeaderCell>
-            <TableHeaderCell>Action</TableHeaderCell>
-            <TableHeaderCell>Source</TableHeaderCell>
-            <TableHeaderCell>Destination</TableHeaderCell>
-            <TableHeaderCell>Related client</TableHeaderCell>
-            <TableHeaderCell>Proto</TableHeaderCell>
-            <TableHeaderCell>Rule</TableHeaderCell>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {logs.slice(0, 50).map((log, index) => (
-            <TableRow key={log.id ?? `${log.ts}-${log.srcAddress}-${log.dstAddress}-${index}`}>
-              <TableCell>{formatTime(log.ts)}</TableCell>
-              <TableCell><Badge appearance="tint" color={firewallActionColor(log.action)}>{log.action || "-"}</Badge></TableCell>
-              <TableCell><EndpointDetail address={log.srcAddress} port={log.srcPort} dnsLabels={dnsLabels} leases={leases} /></TableCell>
-              <TableCell><EndpointDetail address={log.dstAddress} port={log.dstPort} dnsLabels={dnsLabels} leases={leases} /></TableCell>
-              <TableCell><RelatedClient tuple={relatedClients[firewallLogKey(log)]} leases={leases} /></TableCell>
-              <TableCell>{[log.l3Proto, log.protocol].filter(Boolean).join("/") || "-"}</TableCell>
-              <TableCell><code className={styles.wrapCode}>{log.ruleName || "-"}</code></TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className={styles.firewallTable} role="table" aria-label="Deny timeline">
+      <div className={styles.firewallTimelineHeader} role="row">
+        <span>Time</span>
+        <span>Action</span>
+        <span>Source</span>
+        <span>Destination</span>
+        <span>Related client</span>
+        <span>Proto</span>
+        <span>Rule</span>
+      </div>
+      {logs.slice(0, 50).map((log, index) => (
+        <div className={styles.firewallTimelineRow} role="row" key={log.id ?? `${log.ts}-${log.srcAddress}-${log.dstAddress}-${index}`}>
+          <FirewallCell label="Time">{formatTime(log.ts)}</FirewallCell>
+          <FirewallCell label="Action"><Badge appearance="tint" color={firewallActionColor(log.action)}>{log.action || "-"}</Badge></FirewallCell>
+          <FirewallCell label="Source"><EndpointDetail address={log.srcAddress} port={log.srcPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
+          <FirewallCell label="Destination"><EndpointDetail address={log.dstAddress} port={log.dstPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
+          <FirewallCell label="Related"><RelatedClient tuple={relatedClients[firewallLogKey(log)]} leases={leases} /></FirewallCell>
+          <FirewallCell label="Proto">{[log.l3Proto, log.protocol].filter(Boolean).join("/") || "-"}</FirewallCell>
+          <FirewallCell label="Rule"><code className={styles.wrapCode}>{log.ruleName || "-"}</code></FirewallCell>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FirewallCell({ label, children }: { label: string; children: React.ReactNode }) {
+  const styles = useStyles();
+  return (
+    <div className={styles.firewallCell} role="cell">
+      <Text className={styles.firewallCellLabel}>{label}</Text>
+      <div className={styles.firewallCellValue}>{children}</div>
     </div>
   );
 }
