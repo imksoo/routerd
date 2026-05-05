@@ -46,8 +46,8 @@ The current Fluent UI web app provides:
   crowd the event table
 - DHCP lease event details, including MAC address, IP address, hostname, and
   resource names when present
-- a Connections view grouped by family and protocol, with pagination and page
-  size controls
+- a Connections view grouped by family and protocol, with filtering, sorting,
+  pagination, and page size controls
 - DNS query, traffic flow, and firewall log views backed by separate log
   databases
 - a Config view with syntax-highlighted, foldable, read-only YAML

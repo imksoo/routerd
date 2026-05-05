@@ -6,6 +6,7 @@ import {
   Card,
   CardHeader,
   FluentProvider,
+  Input,
   Select,
   Spinner,
   Tab,
@@ -125,6 +126,15 @@ type ConfigSnapshot = {
   text?: string;
 };
 
+type ConnectionFilters = {
+  query: string;
+  family: string;
+  protocol: string;
+  state: string;
+  sort: string;
+  direction: string;
+};
+
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
 const basePath = normalizeBasePath(cfg.basePath);
 
@@ -223,6 +233,24 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: "8px",
   },
+  connectionFilters: {
+    display: "grid",
+    gridTemplateColumns: "minmax(220px, 1.4fr) repeat(5, minmax(120px, 1fr))",
+    gap: "8px",
+    alignItems: "end",
+    marginBottom: "12px",
+    "@media (max-width: 900px)": {
+      gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+    },
+  },
+  filterControl: {
+    display: "grid",
+    gap: "4px",
+    minWidth: 0,
+  },
+  filterInput: {
+    minWidth: 0,
+  },
   connectionGroup: {
     display: "grid",
     gap: "8px",
@@ -303,6 +331,14 @@ function App() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [connectionPages, setConnectionPages] = useState<Record<string, number>>({});
   const [connectionPageSizes, setConnectionPageSizes] = useState<Record<string, number>>({});
+  const [connectionFilters, setConnectionFilters] = useState<ConnectionFilters>({
+    query: "",
+    family: "all",
+    protocol: "all",
+    state: "all",
+    sort: "observed",
+    direction: "asc",
+  });
   const [selectedEventKey, setSelectedEventKey] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
@@ -330,6 +366,11 @@ function App() {
 
   const connections = summary?.connections?.entries ?? [];
   const dnsLabels = useMemo(() => dnsLabelMap(summary?.dnsQueries ?? []), [summary?.dnsQueries]);
+  const filteredConnections = useMemo(
+    () => filterAndSortConnections(connections, dnsLabels, connectionFilters),
+    [connections, dnsLabels, connectionFilters],
+  );
+  const connectionFacets = useMemo(() => connectionFilterFacets(connections), [connections]);
   const resources = useMemo(() => importantResources(summary?.resources ?? []), [summary?.resources]);
   const events = summary?.events ?? [];
   const selectedEvent = useMemo(() => {
@@ -342,6 +383,14 @@ function App() {
       setSelectedEventKey(eventKey(events[0]));
     }
   }, [events, selectedEventKey]);
+
+  useEffect(() => {
+    setConnectionPages({});
+  }, [connectionFilters]);
+
+  function updateConnectionFilter<K extends keyof ConnectionFilters>(key: K, value: ConnectionFilters[K]) {
+    setConnectionFilters(current => ({ ...current, [key]: value }));
+  }
 
   return (
     <FluentProvider theme={webDarkTheme} className={styles.shell}>
@@ -385,9 +434,63 @@ function App() {
         ) : null}
         {selected === "connections" ? (
           <Card>
-            <CardHeader header={<Text weight="semibold">Connections</Text>} description={<Text className={styles.muted}>{connectionFamilyCounts(summary?.connections)}</Text>} />
+            <CardHeader
+              header={<Text weight="semibold">Connections</Text>}
+              description={<Text className={styles.muted}>{connectionFamilyCounts(summary?.connections)} / Showing {filteredConnections.length}</Text>}
+            />
+            <div className={styles.connectionFilters}>
+              <div className={styles.filterControl}>
+                <Text size={200} className={styles.muted}>Filter</Text>
+                <Input
+                  className={styles.filterInput}
+                  size="small"
+                  value={connectionFilters.query}
+                  placeholder="address, port, state, label"
+                  onChange={(_, data) => updateConnectionFilter("query", data.value)}
+                />
+              </div>
+              <div className={styles.filterControl}>
+                <Text size={200} className={styles.muted}>Family</Text>
+                <Select size="small" value={connectionFilters.family} onChange={event => updateConnectionFilter("family", event.target.value)}>
+                  <option value="all">All</option>
+                  {connectionFacets.families.map(value => <option key={value} value={value}>{formatFacet(value)}</option>)}
+                </Select>
+              </div>
+              <div className={styles.filterControl}>
+                <Text size={200} className={styles.muted}>Protocol</Text>
+                <Select size="small" value={connectionFilters.protocol} onChange={event => updateConnectionFilter("protocol", event.target.value)}>
+                  <option value="all">All</option>
+                  {connectionFacets.protocols.map(value => <option key={value} value={value}>{formatFacet(value)}</option>)}
+                </Select>
+              </div>
+              <div className={styles.filterControl}>
+                <Text size={200} className={styles.muted}>State</Text>
+                <Select size="small" value={connectionFilters.state} onChange={event => updateConnectionFilter("state", event.target.value)}>
+                  <option value="all">All</option>
+                  {connectionFacets.states.map(value => <option key={value} value={value}>{formatFacet(value)}</option>)}
+                </Select>
+              </div>
+              <div className={styles.filterControl}>
+                <Text size={200} className={styles.muted}>Sort</Text>
+                <Select size="small" value={connectionFilters.sort} onChange={event => updateConnectionFilter("sort", event.target.value)}>
+                  <option value="observed">Observed</option>
+                  <option value="state">State</option>
+                  <option value="source">Source</option>
+                  <option value="destination">Destination</option>
+                  <option value="label">Label</option>
+                  <option value="timeout">Timeout</option>
+                </Select>
+              </div>
+              <div className={styles.filterControl}>
+                <Text size={200} className={styles.muted}>Order</Text>
+                <Select size="small" value={connectionFilters.direction} onChange={event => updateConnectionFilter("direction", event.target.value)}>
+                  <option value="asc">Ascending</option>
+                  <option value="desc">Descending</option>
+                </Select>
+              </div>
+            </div>
             <div className={styles.connectionGroup}>
-              {connectionGroups(connections).map(group => (
+              {connectionGroups(filteredConnections).map(group => (
                 <ConnectionGroup
                   key={group.key}
                   group={group}
@@ -747,6 +850,96 @@ function dnsLabelMap(rows: DNSQuery[]) {
     for (const answer of row.answers ?? []) if (!labels[answer]) labels[answer] = row.questionName ?? "";
   }
   return labels;
+}
+
+function connectionFilterFacets(entries: ConnectionEntry[]) {
+  const families = new Set<string>();
+  const protocols = new Set<string>();
+  const states = new Set<string>();
+  for (const entry of entries) {
+    families.add(normalizeFacet(entry.family, "other"));
+    protocols.add(normalizeFacet(entry.protocol, "other"));
+    states.add(normalizeFacet(entry.state, "stateless"));
+  }
+  return {
+    families: Array.from(families).sort(facetSort),
+    protocols: Array.from(protocols).sort(facetSort),
+    states: Array.from(states).sort(facetSort),
+  };
+}
+
+function filterAndSortConnections(entries: ConnectionEntry[], dnsLabels: Record<string, string>, filters: ConnectionFilters) {
+  const query = filters.query.trim().toLowerCase();
+  const indexed = entries.map((entry, index) => ({ entry, index }));
+  const filtered = indexed.filter(({ entry }) => {
+    if (filters.family !== "all" && normalizeFacet(entry.family, "other") !== filters.family) return false;
+    if (filters.protocol !== "all" && normalizeFacet(entry.protocol, "other") !== filters.protocol) return false;
+    if (filters.state !== "all" && normalizeFacet(entry.state, "stateless") !== filters.state) return false;
+    if (!query) return true;
+    return connectionSearchText(entry, dnsLabels).includes(query);
+  });
+  const multiplier = filters.direction === "desc" ? -1 : 1;
+  return filtered
+    .sort((a, b) => {
+      if (filters.sort === "observed") return (a.index - b.index) * multiplier;
+      const primary = compareConnectionSortValue(a.entry, b.entry, filters.sort, dnsLabels) * multiplier;
+      return primary || a.index - b.index;
+    })
+    .map(row => row.entry);
+}
+
+function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, string>) {
+  const addresses = [
+    entry.original?.source,
+    entry.original?.destination,
+    entry.reply?.source,
+    entry.reply?.destination,
+  ].filter(Boolean) as string[];
+  const labels = addresses.map(address => dnsLabels[address] ?? "").filter(Boolean);
+  return [
+    entry.family,
+    entry.protocol,
+    entry.state || "stateless",
+    entry.assured ? "assured" : "",
+    entry.timeout,
+    entry.mark,
+    endpoint(entry.original),
+    endpoint(entry.reply),
+    ...labels,
+  ].join(" ").toLowerCase();
+}
+
+function compareConnectionSortValue(a: ConnectionEntry, b: ConnectionEntry, sort: string, dnsLabels: Record<string, string>) {
+  if (sort === "timeout") return Number(a.timeout ?? 0) - Number(b.timeout ?? 0);
+  return stringSort(connectionSortValue(a, sort, dnsLabels), connectionSortValue(b, sort, dnsLabels));
+}
+
+function connectionSortValue(entry: ConnectionEntry, sort: string, dnsLabels: Record<string, string>) {
+  if (sort === "state") return `${normalizeFacet(entry.state, "stateless")} ${entry.assured ? "assured" : ""}`;
+  if (sort === "source") return hostPort(entry.original?.source, entry.original?.sourcePort);
+  if (sort === "destination") return hostPort(entry.original?.destination, entry.original?.destinationPort);
+  if (sort === "label") return dnsLabels[entry.original?.destination ?? ""] ?? entry.original?.destination ?? "";
+  return "";
+}
+
+function normalizeFacet(value: unknown, fallback: string) {
+  const text = String(value ?? "").trim().toLowerCase();
+  return text || fallback;
+}
+
+function formatFacet(value: string) {
+  if (value === "ipv4") return "IPv4";
+  if (value === "ipv6") return "IPv6";
+  return value.toUpperCase();
+}
+
+function facetSort(a: string, b: string) {
+  const order: Record<string, number> = { ipv4: 0, ipv6: 1, tcp: 0, udp: 1, icmp: 2, icmpv6: 3, ipv6_icmp: 3, established: 0 };
+  return (order[a] ?? 9) - (order[b] ?? 9) || a.localeCompare(b);
+}
+
+function stringSort(a: string, b: string) {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
 function connectionGroups(entries: ConnectionEntry[]) {
