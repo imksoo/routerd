@@ -66,7 +66,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	handler := New(Options{
 		Store: fakeStore{
 			resources: []routerstate.ObjectStatus{{APIVersion: "net.routerd.net/v1alpha1", Kind: "HealthCheck", Name: "internet", Status: map[string]any{"phase": "Healthy"}}},
-			events:    []routerstate.StoredEvent{{ID: 1, Topic: "routerd.test", CreatedAt: time.Date(2026, 5, 4, 1, 2, 3, 0, time.UTC)}},
+			events:    []routerstate.StoredEvent{{ID: 1, Topic: "routerd.dhcp.lease.renewed", CreatedAt: time.Date(2026, 5, 4, 1, 2, 3, 0, time.UTC), Attributes: map[string]any{"mac": "18:ec:e7:33:12:6c", "ip": "172.18.0.150", "hostname": "aiseg2"}}},
 		},
 		Result: func() *apply.Result {
 			return &apply.Result{Phase: "Healthy", Generation: 7, Resources: []apply.ResourceResult{{ID: "x", Phase: "Healthy"}}}
@@ -84,7 +84,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, "example.com", `"resolvedHostname": "example.com"`} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}
@@ -280,6 +280,11 @@ func TestHandlerRendersCompactTrafficAndEvents(t *testing.T) {
 		`["state","flow","dst label","timeout"]`,
 		`function flowCell`,
 		`function formatTime`,
+		`function eventDetails`,
+		`function eventAttributeEntries`,
+		`"mac","ip","hostname"`,
+		`class:"event-attr"`,
+		`["time","severity","topic","resource","message","details"]`,
 		`new Intl.DateTimeFormat`,
 		`title:e.createdAt || ""`,
 		`function dstLabel`,

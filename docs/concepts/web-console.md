@@ -35,6 +35,8 @@ The first screen shows:
 - overall routerd phase and generation
 - resource phases for PD, DS-Lite, DNS, NAT, routes, health checks, VPN, and firewall resources
 - recent routerd events
+- event attributes such as MAC address, IP address, and hostname for
+  `routerd.dhcp.lease.renewed`
 - conntrack count and sampled IPv4/IPv6 connection entries
 - a `dst label` column for connection rows, derived from recent DNS answers
 - client traffic totals from recent flow history

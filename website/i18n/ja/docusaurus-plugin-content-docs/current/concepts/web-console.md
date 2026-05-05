@@ -35,6 +35,7 @@ spec:
 - routerd 全体の phase と generation
 - PD、DS-Lite、DNS、NAT、経路、HealthCheck、VPN、firewall リソースの phase
 - 直近の routerd イベント
+- `routerd.dhcp.lease.renewed` の MAC アドレス、IPv4 アドレス、ホスト名などのイベント属性
 - conntrack 件数と IPv4/IPv6 コネクションの一部
 - コネクション行の `dst label` 列。直近の DNS 応答から導出します
 - クライアント別の通信量

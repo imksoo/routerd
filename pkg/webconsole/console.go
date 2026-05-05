@@ -482,6 +482,10 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .config-line{display:grid;grid-template-columns:44px minmax(0,1fr);gap:8px;align-items:baseline;min-width:max-content}
     .line-no{color:#666;text-align:right;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;user-select:none}
     .yaml-key{color:#8ab4ff}.yaml-value{color:#d7d7d7}.yaml-comment{color:#7ee787}
+    .event-details{display:flex;flex-wrap:wrap;gap:4px;max-width:360px}
+    .event-attr{display:inline-flex;gap:4px;align-items:baseline;border:1px solid #303030;border-radius:5px;background:#202020;padding:2px 5px;max-width:100%}
+    .event-attr span{color:#9a9a9a;font-size:11px;white-space:nowrap}
+    .event-attr code{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     tr.flash, .metric.flash{animation:flash 1.6s ease-out}
     @keyframes flash{0%{background:#3a320f;box-shadow:inset 3px 0 #f2cc60}100%{background:transparent;box-shadow:inset 0 0 transparent}}
     table{width:100%;border-collapse:collapse;min-width:440px}
@@ -675,6 +679,24 @@ function formatTime(value){
   const time = new Intl.DateTimeFormat(undefined,{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(date);
   return day + " " + time;
 }
+function eventMessage(e){
+  return e.reason || e.message || "";
+}
+function eventAttributeEntries(e){
+  const attrs = e.attributes || {};
+  const preferred = ["mac","ip","hostname","action","interface","address","prefix","target","result","phase"];
+  const keys = [];
+  for (const key of preferred) if (attrs[key] !== undefined && attrs[key] !== "") keys.push(key);
+  for (const key of Object.keys(attrs).sort()) if (!keys.includes(key) && attrs[key] !== undefined && attrs[key] !== "") keys.push(key);
+  return keys.map(key => [key, attrs[key]]);
+}
+function eventDetails(e){
+  const entries = eventAttributeEntries(e);
+  if (!entries.length) return el("span",{class:"muted",text:"-"});
+  return el("div",{class:"event-details"},entries.slice(0,8).map(([key,value]) =>
+    el("span",{class:"event-attr",title:key+"="+text(value)},[el("span",{text:key}),el("code",{text:value})])
+  ));
+}
 function yamlHighlights(line){
   const out = [];
   let text = line;
@@ -783,13 +805,14 @@ async function refresh(){
     const changed = remember(seen.resources, key, JSON.stringify(st));
     return el("tr", changed ? {class:"flash"} : {}, [el("td",{text:r.kind}),el("td",{text:r.name}),el("td",{class:cls(st.phase||"Unknown"),text:st.phase||"Unknown"}),el("td",{},[el("code",{text:detail})])]);
   })));
-  renderInto("events", tableNode(["time","severity","topic","resource","message"], (s.events||[]).slice(0,15).map(e =>
+  renderInto("events", tableNode(["time","severity","topic","resource","message","details"], (s.events||[]).slice(0,15).map(e =>
     el("tr", remember(seen.events, String(e.id || e.createdAt || e.topic), JSON.stringify(e)) ? {class:"flash"} : {}, [
       el("td",{text:formatTime(e.createdAt),title:e.createdAt || ""}),
       el("td",{text:e.severity||""}),
       el("td",{},[el("code",{text:e.topic||e.type})]),
       el("td",{text:(e.resourceKind||e.kind||"") + "/" + (e.resourceName||e.name||"")}),
-      el("td",{text:e.reason||e.message||""}),
+      el("td",{text:eventMessage(e)}),
+      el("td",{},[eventDetails(e)]),
     ]))));
   if (!document.getElementById("config").dataset.loaded) {
     try {

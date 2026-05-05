@@ -494,7 +494,7 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.zones.ApplyLease(lease)
-	d.publish("routerd.dhcp.lease."+lease.Action, daemonapi.SeverityInfo, "LeaseUpdated", lease.Hostname, map[string]string{"hostname": lease.Hostname, "ip": lease.IP})
+	d.publish("routerd.dhcp.lease."+lease.Action, daemonapi.SeverityInfo, "LeaseUpdated", lease.Hostname, map[string]string{"mac": lease.MAC, "ip": lease.IP, "hostname": lease.Hostname})
 	_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
 }
 
