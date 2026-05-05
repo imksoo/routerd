@@ -8,6 +8,7 @@ import (
 	"html"
 	"html/template"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -47,6 +48,7 @@ type Snapshot struct {
 	Status       controlapi.Status           `json:"status"`
 	Phases       map[string]int              `json:"phases"`
 	Resources    []routerstate.ObjectStatus  `json:"resources"`
+	Interfaces   []InterfaceSummary          `json:"interfaces,omitempty"`
 	Events       []routerstate.StoredEvent   `json:"events"`
 	Connections  *observe.ConnectionTable    `json:"connections,omitempty"`
 	DNSQueries   []logstore.DNSQuery         `json:"dnsQueries,omitempty"`
@@ -69,6 +71,20 @@ type DHCPLease struct {
 	ClientID  string    `json:"clientId,omitempty"`
 	Vendor    string    `json:"vendor,omitempty"`
 	Source    string    `json:"source,omitempty"`
+}
+
+type InterfaceSummary struct {
+	Name            string   `json:"name"`
+	IfName          string   `json:"ifname"`
+	Phase           string   `json:"phase,omitempty"`
+	Role            string   `json:"role,omitempty"`
+	Zone            string   `json:"zone,omitempty"`
+	Managed         bool     `json:"managed,omitempty"`
+	Owner           string   `json:"owner,omitempty"`
+	MTU             int      `json:"mtu,omitempty"`
+	HardwareAddress string   `json:"hardwareAddress,omitempty"`
+	Flags           string   `json:"flags,omitempty"`
+	Addresses       []string `json:"addresses,omitempty"`
 }
 
 //go:embed static
@@ -173,6 +189,7 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		Status:       controlapi.NewStatus(result),
 		Phases:       phaseCounts(resources),
 		Resources:    resources,
+		Interfaces:   h.interfaceSummaries(resources),
 		Events:       events,
 		Connections:  connections,
 		DNSQueries:   dnsQueries,
@@ -466,6 +483,185 @@ func macVendor(mac string) string {
 		return vendor
 	}
 	return "OUI " + oui
+}
+
+func (h Handler) interfaceSummaries(resources []routerstate.ObjectStatus) []InterfaceSummary {
+	if h.opts.Router == nil {
+		return nil
+	}
+	statuses := map[string]map[string]any{}
+	for _, resource := range resources {
+		statuses[resource.APIVersion+"/"+resource.Kind+"/"+resource.Name] = resource.Status
+	}
+	type zoneInfo struct {
+		role string
+		zone string
+	}
+	zones := map[string]zoneInfo{}
+	for _, resource := range h.opts.Router.Spec.Resources {
+		if resource.APIVersion != api.FirewallAPIVersion || resource.Kind != "FirewallZone" {
+			continue
+		}
+		spec, err := resource.FirewallZoneSpec()
+		if err != nil {
+			continue
+		}
+		for _, ref := range spec.Interfaces {
+			kind, name := splitResourceRef(ref)
+			if kind == "" || name == "" {
+				continue
+			}
+			zones[kind+"/"+name] = zoneInfo{role: spec.Role, zone: resource.Metadata.Name}
+		}
+	}
+	addresses := interfaceConfiguredAddresses(h.opts.Router, statuses)
+	var out []InterfaceSummary
+	for _, resource := range h.opts.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "Interface" {
+			continue
+		}
+		spec, err := resource.InterfaceSpec()
+		if err != nil {
+			continue
+		}
+		status := statuses[api.NetAPIVersion+"/Interface/"+resource.Metadata.Name]
+		item := InterfaceSummary{
+			Name:    resource.Metadata.Name,
+			IfName:  spec.IfName,
+			Phase:   stringFromMap(status, "phase"),
+			Managed: spec.Managed,
+			Owner:   spec.Owner,
+		}
+		if zone, ok := zones["Interface/"+resource.Metadata.Name]; ok {
+			item.Role = zone.role
+			item.Zone = zone.zone
+		}
+		if ifi, err := net.InterfaceByName(spec.IfName); err == nil {
+			item.MTU = ifi.MTU
+			item.Flags = ifi.Flags.String()
+			item.HardwareAddress = ifi.HardwareAddr.String()
+			if item.Phase == "" {
+				if ifi.Flags&net.FlagUp != 0 {
+					item.Phase = "Up"
+				} else {
+					item.Phase = "Down"
+				}
+			}
+			if addrs, err := ifi.Addrs(); err == nil {
+				for _, addr := range addrs {
+					item.Addresses = appendUnique(item.Addresses, addr.String())
+				}
+			}
+		}
+		for _, addr := range addresses[resource.Metadata.Name] {
+			item.Addresses = appendUnique(item.Addresses, addr)
+		}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		roleOrder := map[string]int{"untrust": 0, "trust": 1, "mgmt": 2}
+		if roleOrder[out[i].Role] != roleOrder[out[j].Role] {
+			return roleOrder[out[i].Role] < roleOrder[out[j].Role]
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func interfaceConfiguredAddresses(router *api.Router, statuses map[string]map[string]any) map[string][]string {
+	out := map[string][]string{}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "IPv4StaticAddress":
+			spec, err := resource.IPv4StaticAddressSpec()
+			if err != nil {
+				continue
+			}
+			addr := firstNonEmpty(stringFromMap(statuses[api.NetAPIVersion+"/IPv4StaticAddress/"+resource.Metadata.Name], "address"), spec.Address)
+			if addr != "" {
+				out[spec.Interface] = appendUnique(out[spec.Interface], addr)
+			}
+		case "IPv6DelegatedAddress":
+			spec, err := resource.IPv6DelegatedAddressSpec()
+			if err != nil {
+				continue
+			}
+			addr := stringFromMap(statuses[api.NetAPIVersion+"/IPv6DelegatedAddress/"+resource.Metadata.Name], "address")
+			if addr != "" {
+				out[spec.Interface] = appendUnique(out[spec.Interface], addr)
+			}
+		case "DHCPv4Address", "DHCPv4Lease":
+			iface, addr := addressStatusForInterface(resource, statuses)
+			if iface != "" && addr != "" {
+				out[iface] = appendUnique(out[iface], addr)
+			}
+		}
+	}
+	return out
+}
+
+func addressStatusForInterface(resource api.Resource, statuses map[string]map[string]any) (string, string) {
+	status := statuses[resource.APIVersion+"/"+resource.Kind+"/"+resource.Metadata.Name]
+	iface := stringFromMap(status, "interface")
+	addr := firstNonEmpty(stringFromMap(status, "address"), stringFromMap(status, "ip"))
+	if iface != "" {
+		return iface, addr
+	}
+	switch resource.Kind {
+	case "DHCPv4Address":
+		spec, err := resource.DHCPv4AddressSpec()
+		if err == nil {
+			return spec.Interface, addr
+		}
+	case "DHCPv4Lease":
+		spec, err := resource.DHCPv4LeaseSpec()
+		if err == nil {
+			return spec.Interface, addr
+		}
+	}
+	return "", addr
+}
+
+func splitResourceRef(ref string) (string, string) {
+	ref = strings.TrimSpace(ref)
+	parts := strings.Split(ref, "/")
+	if len(parts) != 2 {
+		return "", ""
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+}
+
+func stringFromMap(values map[string]any, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func appendUnique(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func (h Handler) basePath() string {

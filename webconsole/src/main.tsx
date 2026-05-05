@@ -45,6 +45,7 @@ type Summary = {
   status?: { status?: Record<string, unknown> };
   phases?: Record<string, number>;
   resources?: ResourceStatus[];
+  interfaces?: InterfaceSummary[];
   events?: RouterEvent[];
   connections?: ConnectionTable;
   dnsQueries?: DNSQuery[];
@@ -141,6 +142,20 @@ type DHCPLease = {
   source?: string;
 };
 
+type InterfaceSummary = {
+  name?: string;
+  ifname?: string;
+  phase?: string;
+  role?: string;
+  zone?: string;
+  managed?: boolean;
+  owner?: string;
+  mtu?: number;
+  hardwareAddress?: string;
+  flags?: string;
+  addresses?: string[];
+};
+
 type ConfigSnapshot = {
   path?: string;
   text?: string;
@@ -153,6 +168,17 @@ type ConnectionFilters = {
   state: string;
   sort: string;
   direction: string;
+};
+
+type ClientRow = {
+  ip: string;
+  hostname: string;
+  mac: string;
+  vendor: string;
+  expiresAt: string;
+  bytesOut: number;
+  bytesIn: number;
+  peers: Set<string>;
 };
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
@@ -224,6 +250,56 @@ const useStyles = makeStyles({
   firewallStack: {
     display: "grid",
     gap: "16px",
+  },
+  clientsGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.15fr) minmax(320px, 0.85fr)",
+    gap: "16px",
+    alignItems: "start",
+    "@media (max-width: 980px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
+  clientsStack: {
+    display: "grid",
+    gap: "16px",
+  },
+  interfaceGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+    gap: "10px",
+  },
+  interfaceCard: {
+    display: "grid",
+    gap: "8px",
+    padding: "10px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    minWidth: 0,
+  },
+  interfaceHeader: {
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
+    justifyContent: "space-between",
+    minWidth: 0,
+  },
+  interfaceName: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  interfaceLine: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    alignItems: "center",
+  },
+  addressList: {
+    display: "grid",
+    gap: "3px",
   },
   tableWrap: {
     overflowX: "auto",
@@ -514,6 +590,7 @@ function App() {
         {error ? <Card><Text role="alert">Web console error: {error}</Text></Card> : null}
         <TabList selectedValue={selected} onTabSelect={(_, data) => setSelected(String(data.value))}>
           <Tab value="overview">Overview</Tab>
+          <Tab value="clients">Clients</Tab>
           <Tab value="connections">Connections</Tab>
           <Tab value="events">Events</Tab>
           <Tab value="firewall">Firewall</Tab>
@@ -528,17 +605,36 @@ function App() {
               <Metric label="conntrack" value={conntrackLabel(summary?.connections)} />
               <Metric label="families" value={connectionFamilyCounts(summary?.connections)} />
             </div>
-            <div className={styles.sectionGrid}>
-              <Card>
-                <CardHeader header={<Text weight="semibold">Resources</Text>} />
-                <ResourceTable resources={resources} />
-              </Card>
+            <Card>
+              <CardHeader header={<Text weight="semibold">Interfaces</Text>} description={<Text className={styles.muted}>Role, link state, MTU, and assigned addresses</Text>} />
+              <InterfaceOverview interfaces={summary?.interfaces ?? []} />
+            </Card>
+            <Card>
+              <CardHeader header={<Text weight="semibold">Resources</Text>} />
+              <ResourceTable resources={resources} />
+            </Card>
+          </>
+        ) : null}
+        {selected === "clients" ? (
+          <div className={styles.clientsGrid}>
+            <Card>
+              <CardHeader
+                header={<Text weight="semibold">Client inventory</Text>}
+                description={<Text className={styles.muted}>DHCP leases combined with observed traffic</Text>}
+              />
+              <ClientInventory leases={summary?.dhcpLeases ?? []} flows={summary?.trafficFlows ?? []} />
+            </Card>
+            <div className={styles.clientsStack}>
               <Card>
                 <CardHeader header={<Text weight="semibold">Client traffic</Text>} />
                 <ClientTraffic flows={summary?.trafficFlows ?? []} />
               </Card>
+              <Card>
+                <CardHeader header={<Text weight="semibold">DHCP leases</Text>} />
+                <DHCPLeaseTable leases={summary?.dhcpLeases ?? []} />
+              </Card>
             </div>
-          </>
+          </div>
         ) : null}
         {selected === "connections" ? (
           <Card>
@@ -839,6 +935,84 @@ function ConnectionGroup({
   );
 }
 
+function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
+  const styles = useStyles();
+  if (interfaces.length === 0) {
+    return <Text className={styles.muted}>No interface status is available</Text>;
+  }
+  return (
+    <div className={styles.interfaceGrid}>
+      {interfaces.map(item => (
+        <div className={styles.interfaceCard} key={`${item.name}-${item.ifname}`}>
+          <div className={styles.interfaceHeader}>
+            <div className={styles.interfaceName}>
+              <Text weight="semibold">{item.name || item.ifname || "-"}</Text>
+              <Text size={200} className={styles.muted}> {item.ifname || ""}</Text>
+            </div>
+            <Badge appearance="tint" color={roleColor(item.role)}>{item.role || "unknown"}</Badge>
+          </div>
+          <div className={styles.interfaceLine}>
+            <Badge appearance="tint" color={phaseColor(item.phase)}>{item.phase || "Unknown"}</Badge>
+            {item.zone ? <Badge appearance="outline">{item.zone}</Badge> : null}
+            {item.mtu ? <Text size={200} className={styles.muted}>MTU {item.mtu}</Text> : null}
+          </div>
+          <div className={styles.addressList}>
+            {(item.addresses ?? []).slice(0, 5).map(address => (
+              <code className={styles.wrapCode} key={address}>{address}</code>
+            ))}
+            {(item.addresses ?? []).length === 0 ? <Text size={200} className={styles.muted}>No address observed</Text> : null}
+          </div>
+          <div className={styles.interfaceLine}>
+            {item.hardwareAddress ? <Text size={200} className={styles.muted}>{item.hardwareAddress}</Text> : null}
+            {item.owner ? <Text size={200} className={styles.muted}>owner {item.owner}</Text> : null}
+            {item.managed ? <Badge appearance="outline" color="success">managed</Badge> : <Badge appearance="outline">adopted</Badge>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ClientInventory({ leases, flows }: { leases: DHCPLease[]; flows: TrafficFlow[] }) {
+  const styles = useStyles();
+  return (
+    <div className={styles.tableWrap}>
+      <Table size="small">
+        <TableHeader>
+          <TableRow>
+            <TableHeaderCell>Client</TableHeaderCell>
+            <TableHeaderCell>Address</TableHeaderCell>
+            <TableHeaderCell>MAC</TableHeaderCell>
+            <TableHeaderCell>Traffic</TableHeaderCell>
+            <TableHeaderCell>Peers</TableHeaderCell>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {clientInventoryRows(leases, flows).map(row => (
+            <TableRow key={row.ip}>
+              <TableCell>
+                <div className={styles.connectionFlow}>
+                  <Text>{row.hostname || "-"}</Text>
+                  <Text size={200} className={styles.muted}>{row.vendor || "-"}</Text>
+                </div>
+              </TableCell>
+              <TableCell><code className={styles.wrapCode}>{row.ip}</code></TableCell>
+              <TableCell><code className={styles.wrapCode}>{row.mac || "-"}</code></TableCell>
+              <TableCell>
+                <div className={styles.connectionFlow}>
+                  <Text size={200}>out {formatBytes(row.bytesOut)}</Text>
+                  <Text size={200}>in {formatBytes(row.bytesIn)}</Text>
+                </div>
+              </TableCell>
+              <TableCell><code className={styles.wrapCode}>{Array.from(row.peers).slice(0, 4).join(", ") || "-"}</code></TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
   const styles = useStyles();
   return (
@@ -856,9 +1030,40 @@ function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
           {clientTrafficRows(flows).map(row => (
             <TableRow key={row.client}>
               <TableCell><code className={styles.code}>{row.client}</code></TableCell>
-              <TableCell>{row.bytesOut}</TableCell>
-              <TableCell>{row.bytesIn}</TableCell>
+              <TableCell>{formatBytes(row.bytesOut)}</TableCell>
+              <TableCell>{formatBytes(row.bytesIn)}</TableCell>
               <TableCell><code className={styles.code}>{Array.from(row.peers).slice(0, 3).join(", ") || "-"}</code></TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
+  const styles = useStyles();
+  const rows = [...leases].sort((a, b) => stringSort(a.ip ?? "", b.ip ?? ""));
+  return (
+    <div className={styles.tableWrap}>
+      <Table size="small">
+        <TableHeader>
+          <TableRow>
+            <TableHeaderCell>IP</TableHeaderCell>
+            <TableHeaderCell>Hostname</TableHeaderCell>
+            <TableHeaderCell>MAC</TableHeaderCell>
+            <TableHeaderCell>Vendor</TableHeaderCell>
+            <TableHeaderCell>Expires</TableHeaderCell>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map(lease => (
+            <TableRow key={`${lease.ip}-${lease.mac}`}>
+              <TableCell><code className={styles.wrapCode}>{lease.ip || "-"}</code></TableCell>
+              <TableCell>{lease.hostname || "-"}</TableCell>
+              <TableCell><code className={styles.wrapCode}>{lease.mac || "-"}</code></TableCell>
+              <TableCell>{lease.vendor || "-"}</TableCell>
+              <TableCell>{formatTime(lease.expiresAt)}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -1026,6 +1231,14 @@ function firewallActionColor(action: unknown): "success" | "warning" | "danger" 
   if (text === "accept") return "success";
   if (text === "reject") return "warning";
   if (text === "drop" || text === "deny") return "danger";
+  return "informative";
+}
+
+function roleColor(role: unknown): "success" | "warning" | "danger" | "informative" | "brand" {
+  const text = String(role ?? "").toLowerCase();
+  if (text === "trust") return "success";
+  if (text === "untrust") return "danger";
+  if (text === "mgmt") return "brand";
   return "informative";
 }
 
@@ -1266,6 +1479,49 @@ function clientTrafficRows(flows: TrafficFlow[]) {
     totals.set(key, row);
   }
   return Array.from(totals.values()).sort((a, b) => a.client.localeCompare(b.client)).slice(0, 10);
+}
+
+function clientInventoryRows(leases: DHCPLease[], flows: TrafficFlow[]) {
+  const rows = new Map<string, ClientRow>();
+  for (const lease of leases) {
+    if (!lease.ip) continue;
+    rows.set(lease.ip, {
+      ip: lease.ip,
+      hostname: lease.hostname ?? "",
+      mac: lease.mac ?? "",
+      vendor: lease.vendor ?? "",
+      expiresAt: lease.expiresAt ?? "",
+      bytesOut: 0,
+      bytesIn: 0,
+      peers: new Set<string>(),
+    });
+  }
+  for (const flow of flows) {
+    const ip = flow.clientAddress || "-";
+    const row = rows.get(ip) ?? { ip, hostname: "", mac: "", vendor: "", expiresAt: "", bytesOut: 0, bytesIn: 0, peers: new Set<string>() };
+    row.bytesOut += Number(flow.bytesOut || 0);
+    row.bytesIn += Number(flow.bytesIn || 0);
+    const peer = flow.resolvedHostname || flow.tlsSNI || flow.peerAddress;
+    if (peer) row.peers.add(peer);
+    rows.set(ip, row);
+  }
+  return Array.from(rows.values()).sort((a, b) => {
+    const traffic = b.bytesOut + b.bytesIn - (a.bytesOut + a.bytesIn);
+    return traffic || stringSort(a.ip, b.ip);
+  });
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let current = value;
+  let unit = 0;
+  while (current >= 1024 && unit < units.length - 1) {
+    current /= 1024;
+    unit++;
+  }
+  const digits = current >= 100 || unit === 0 ? 0 : current >= 10 ? 1 : 2;
+  return `${current.toFixed(digits)} ${units[unit]}`;
 }
 
 function denyRows(logs: FirewallLog[]) {
