@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"routerd/pkg/logstore"
+	"routerd/pkg/nflog"
 )
 
 func main() {
@@ -65,8 +66,11 @@ func daemon(args []string, stdin io.Reader) error {
 		return err
 	}
 	defer log.Close()
-	reader := stdin
 	var cmd *exec.Cmd
+	if opts.group > 0 && opts.inputFile == "" && opts.pflogInterface == "" {
+		return runNFLogDaemon(context.Background(), opts, log)
+	}
+	reader := stdin
 	if opts.inputFile != "" {
 		file, err := os.Open(opts.inputFile)
 		if err != nil {
@@ -76,21 +80,6 @@ func daemon(args []string, stdin io.Reader) error {
 		reader = file
 	} else if opts.pflogInterface != "" {
 		cmd = exec.Command(opts.tcpdumpPath, "-n", "-e", "-tttt", "-l", "-Z", "root", "-i", opts.pflogInterface)
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			return err
-		}
-		cmd.Stderr = os.Stderr
-		if err := cmd.Start(); err != nil {
-			return err
-		}
-		defer func() {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}()
-		reader = stdout
-	} else if opts.group > 0 {
-		cmd = exec.Command(opts.tcpdumpPath, "-n", "-tttt", "-l", "-Z", "root", "-i", "nflog:"+strconv.Itoa(opts.group))
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			return err
@@ -124,6 +113,27 @@ func daemon(args []string, stdin io.Reader) error {
 	return nil
 }
 
+func runNFLogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog) error {
+	reader, err := nflog.Open(opts.group)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	for {
+		packet, err := reader.Read(ctx)
+		if err != nil {
+			return err
+		}
+		entry := firewallLogEntryFromNFLogPacket(packet)
+		if entry.SrcAddress == "" || entry.DstAddress == "" || entry.Protocol == "" {
+			continue
+		}
+		if err := log.Record(ctx, entry); err != nil {
+			return err
+		}
+	}
+}
+
 type options struct {
 	path           string
 	group          int
@@ -138,7 +148,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.SetOutput(io.Discard)
 	opts := options{}
 	fs.StringVar(&opts.path, "path", "/var/lib/routerd/firewall-logs.db", "firewall log database path")
-	fs.IntVar(&opts.group, "nflog-group", 0, "read Linux NFLOG through tcpdump on this group; 0 disables NFLOG input")
+	fs.IntVar(&opts.group, "nflog-group", 0, "read Linux NFLOG directly from this group; 0 disables NFLOG input")
 	fs.StringVar(&opts.inputFile, "input-file", "", "read firewall log lines from file")
 	fs.StringVar(&opts.inputFormat, "input-format", "auto", "input format: auto, json, kv, nflog-tcpdump, pflog-tcpdump")
 	fs.StringVar(&opts.pflogInterface, "pflog-interface", "", "read FreeBSD pflog through tcpdump on this interface")
@@ -192,6 +202,33 @@ func parseJSONFirewallLogLine(line string) (logstore.FirewallLogEntry, bool) {
 		entry.Timestamp = time.Now().UTC()
 	}
 	return entry, entry.Action != "" && entry.SrcAddress != "" && entry.DstAddress != "" && entry.Protocol != ""
+}
+
+func firewallLogEntryFromNFLogPacket(packet nflog.Packet) logstore.FirewallLogEntry {
+	prefix := strings.TrimSpace(packet.Prefix)
+	action := actionFromFirewallPrefix(prefix)
+	if action == "" {
+		action = "drop"
+	}
+	packetBytes := packet.PacketBytes
+	if packetBytes == 0 {
+		packetBytes = len(packet.Payload)
+	}
+	return logstore.FirewallLogEntry{
+		Timestamp:   packet.Timestamp,
+		RuleName:    prefix,
+		Action:      action,
+		SrcAddress:  packet.SrcAddress,
+		SrcPort:     packet.SrcPort,
+		DstAddress:  packet.DstAddress,
+		DstPort:     packet.DstPort,
+		Protocol:    packet.Protocol,
+		L3Proto:     packet.L3Proto,
+		InIface:     packet.InIface,
+		OutIface:    packet.OutIface,
+		PacketBytes: packetBytes,
+		Hint:        "nflog-netlink",
+	}
 }
 
 func parseKeyValueFirewallLogLine(line string) (logstore.FirewallLogEntry, bool) {

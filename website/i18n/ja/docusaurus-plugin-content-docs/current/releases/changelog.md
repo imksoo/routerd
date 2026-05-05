@@ -9,6 +9,9 @@ routerd は出荷前のソフトウェアです。
 
 ## 0.4.0
 
+- Phase 3.1d: Linux の NFLOG 入力を `tcpdump` 経由から nfnetlink の直接読み取りへ変更しました。
+  `routerd-firewall-logger --nflog-group` は NFLOG prefix、インターフェース、パケットファミリー、プロトコル、アドレス、ポートをそのまま保存します。
+  Web Console の Firewall タブには、拒否回数のランキングに加えて時系列テーブルを追加しました。
 - Phase 3.1a: 実時間の conntrack / pf state 表示を `connections` に改名しました。
   Web Console API は `/api/v1/connections`、CLI は `routerctl connections` を使います。
   IPv4 NAPT だけでなく、IPv6 の経路通過コネクションも同じ表で扱います。

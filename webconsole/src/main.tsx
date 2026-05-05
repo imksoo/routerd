@@ -115,10 +115,19 @@ type TrafficFlow = {
 };
 
 type FirewallLog = {
+  id?: number;
+  ts?: string;
+  action?: string;
   srcAddress?: string;
+  srcPort?: number;
   dstAddress?: string;
+  dstPort?: number;
   protocol?: string;
+  l3Proto?: string;
   ruleName?: string;
+  inIface?: string;
+  outIface?: string;
+  packetBytes?: number;
 };
 
 type ConfigSnapshot = {
@@ -200,6 +209,10 @@ const useStyles = makeStyles({
     "@media (max-width: 900px)": {
       gridTemplateColumns: "1fr",
     },
+  },
+  firewallStack: {
+    display: "grid",
+    gap: "16px",
   },
   tableWrap: {
     overflowX: "auto",
@@ -519,10 +532,14 @@ function App() {
           </div>
         ) : null}
         {selected === "firewall" ? (
-          <div className={styles.sectionGrid}>
+          <div className={styles.firewallStack}>
             <Card>
-              <CardHeader header={<Text weight="semibold">Recent deny</Text>} />
+              <CardHeader header={<Text weight="semibold">Deny ranking</Text>} description={<Text className={styles.muted}>Grouped by source, destination, and protocol</Text>} />
               <RecentDeny logs={summary?.firewallLogs ?? []} />
+            </Card>
+            <Card>
+              <CardHeader header={<Text weight="semibold">Deny timeline</Text>} description={<Text className={styles.muted}>Newest firewall log rows</Text>} />
+              <FirewallTimeline logs={summary?.firewallLogs ?? []} />
             </Card>
           </div>
         ) : null}
@@ -783,6 +800,38 @@ function RecentDeny({ logs }: { logs: FirewallLog[] }) {
   );
 }
 
+function FirewallTimeline({ logs }: { logs: FirewallLog[] }) {
+  const styles = useStyles();
+  return (
+    <div className={styles.tableWrap}>
+      <Table size="small">
+        <TableHeader>
+          <TableRow>
+            <TableHeaderCell>Time</TableHeaderCell>
+            <TableHeaderCell>Action</TableHeaderCell>
+            <TableHeaderCell>Source</TableHeaderCell>
+            <TableHeaderCell>Destination</TableHeaderCell>
+            <TableHeaderCell>Proto</TableHeaderCell>
+            <TableHeaderCell>Rule</TableHeaderCell>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {logs.slice(0, 50).map((log, index) => (
+            <TableRow key={log.id ?? `${log.ts}-${log.srcAddress}-${log.dstAddress}-${index}`}>
+              <TableCell>{formatTime(log.ts)}</TableCell>
+              <TableCell><Badge appearance="tint" color={firewallActionColor(log.action)}>{log.action || "-"}</Badge></TableCell>
+              <TableCell><code className={styles.wrapCode}>{firewallEndpoint(log.srcAddress, log.srcPort)}</code></TableCell>
+              <TableCell><code className={styles.wrapCode}>{firewallEndpoint(log.dstAddress, log.dstPort)}</code></TableCell>
+              <TableCell>{[log.l3Proto, log.protocol].filter(Boolean).join("/") || "-"}</TableCell>
+              <TableCell><code className={styles.wrapCode}>{log.ruleName || "-"}</code></TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 async function fetchJSON<T>(path: string): Promise<T> {
   const response = await fetch(basePath + path, { cache: "no-store" });
   if (!response.ok) throw new Error(`${path}: ${response.status}`);
@@ -809,6 +858,14 @@ function stateColor(state: unknown): "success" | "warning" | "informative" | "su
   if (/established|assured/.test(text)) return "success";
   if (/syn|unreplied/.test(text)) return "warning";
   if (/time_wait|close/.test(text)) return "subtle";
+  return "informative";
+}
+
+function firewallActionColor(action: unknown): "success" | "warning" | "danger" | "informative" | "subtle" {
+  const text = String(action ?? "").toLowerCase();
+  if (text === "accept") return "success";
+  if (text === "reject") return "warning";
+  if (text === "drop" || text === "deny") return "danger";
   return "informative";
 }
 
@@ -973,6 +1030,10 @@ function endpoint(tuple?: ConnTuple) {
 
 function hostPort(host?: string, port?: string) {
   return host ? `${host}${port ? `:${port}` : ""}` : "";
+}
+
+function firewallEndpoint(host?: string, port?: number) {
+  return host ? `${host}${port ? `:${port}` : ""}` : "-";
 }
 
 function flowKey(entry: ConnectionEntry) {

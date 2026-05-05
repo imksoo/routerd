@@ -28,8 +28,10 @@ NAT44 は別の `ip routerd_nat` テーブルを使います。
 
 `FirewallPolicy.spec.logDeny` が true で、`FirewallLog` リソースが有効な場合、
 生成した nftables ルールは拒否したパケットを設定済みの NFLOG group へ送ります。
-`routerd-firewall-logger` は `tcpdump` 経由でその group を読み取り、
-`firewall-logs.db` に保存します。
+Linux では、`routerd-firewall-logger` が nfnetlink から直接その group を読み取り、
+`firewall-logs.db` に保存します。別のパケット取得プロセスは起動しません。
+NFLOG の prefix、インターフェース、パケットファミリー、プロトコル、
+アドレス、ポートをそのまま保存できます。
 
 Web Console の Firewall タブと `routerctl firewall-logs` は、このデータベースを読みます。
 logger は管理対象の `SystemdUnit` として有効にしてください。

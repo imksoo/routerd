@@ -30,8 +30,10 @@ routerd_nat`.
 
 When `FirewallPolicy.spec.logDeny` is true and a `FirewallLog` resource is
 enabled, generated nftables rules log denied packets to the configured NFLOG
-group. `routerd-firewall-logger` reads that group through `tcpdump` and stores
-rows in `firewall-logs.db`.
+group. On Linux, `routerd-firewall-logger` reads that group directly through
+nfnetlink and stores rows in `firewall-logs.db`. This keeps NFLOG prefixes,
+interfaces, packet family, protocol, addresses, and ports without running a
+separate packet capture process.
 
 The Web Console Firewall tab and `routerctl firewall-logs` read from that
 database. The logger must be enabled as a managed `SystemdUnit`, for example
