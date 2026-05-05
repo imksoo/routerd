@@ -5195,11 +5195,23 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "destinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "egressInterface": {
                         "type": "string"
                       },
                       "egressPolicyRef": {
                         "type": "string"
+                      },
+                      "excludeDestinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
                       },
                       "snatAddress": {
                         "type": "string"

@@ -134,6 +134,24 @@ func TestNftablesNAT44ResolvedSNATRule(t *testing.T) {
 	}
 }
 
+func TestNftablesNAT44RuleCanExcludeDestinations(t *testing.T) {
+	data, err := NftablesNAT44Rules([]NAT44RenderRule{{
+		Name:                    "lan-to-hgw",
+		Type:                    "masquerade",
+		EgressInterface:         "ens18",
+		SourceRanges:            []string{"172.18.0.0/16"},
+		ExcludeDestinationCIDRs: []string{"192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8"},
+	}})
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	want := `oifname "ens18" ip saddr 172.18.0.0/16 ip daddr !=192.168.0.0/16 ip daddr !=172.16.0.0/12 ip daddr !=10.0.0.0/8 masquerade`
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables output missing excluded destination match %q:\n%s", want, got)
+	}
+}
+
 func TestNftablesVXLANL2Filter(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

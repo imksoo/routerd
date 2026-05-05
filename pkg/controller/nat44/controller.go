@@ -97,11 +97,13 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			continue
 		}
 		rules = append(rules, render.NAT44RenderRule{
-			Name:            resource.Metadata.Name,
-			Type:            spec.Type,
-			EgressInterface: ifname,
-			SourceRanges:    spec.SourceRanges,
-			SNATAddress:     spec.SNATAddress,
+			Name:                    resource.Metadata.Name,
+			Type:                    spec.Type,
+			EgressInterface:         ifname,
+			SourceRanges:            spec.SourceRanges,
+			DestinationCIDRs:        spec.DestinationCIDRs,
+			ExcludeDestinationCIDRs: spec.ExcludeDestinationCIDRs,
+			SNATAddress:             spec.SNATAddress,
 		})
 	}
 	if len(rules) == 0 {
@@ -152,12 +154,14 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	}
 	for _, rule := range rules {
 		status := map[string]any{
-			"phase":                 "Active",
-			"activeEgressInterface": rule.EgressInterface,
-			"sourceRanges":          rule.SourceRanges,
-			"nftablesPath":          path,
-			"dryRun":                c.DryRun,
-			"conditions":            []map[string]any{{"type": "Applied", "status": "True", "reason": "Rendered"}},
+			"phase":                   "Active",
+			"activeEgressInterface":   rule.EgressInterface,
+			"sourceRanges":            rule.SourceRanges,
+			"destinationCIDRs":        rule.DestinationCIDRs,
+			"excludeDestinationCIDRs": rule.ExcludeDestinationCIDRs,
+			"nftablesPath":            path,
+			"dryRun":                  c.DryRun,
+			"conditions":              []map[string]any{{"type": "Applied", "status": "True", "reason": "Rendered"}},
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "NAT44Rule", rule.Name, status); err != nil {
 			return err

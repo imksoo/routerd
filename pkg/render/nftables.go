@@ -179,11 +179,13 @@ func NftablesIPv4DefaultRoutePolicy(resourceID string, spec api.IPv4DefaultRoute
 }
 
 type NAT44RenderRule struct {
-	Name            string
-	Type            string
-	EgressInterface string
-	SourceRanges    []string
-	SNATAddress     string
+	Name                    string
+	Type                    string
+	EgressInterface         string
+	SourceRanges            []string
+	DestinationCIDRs        []string
+	ExcludeDestinationCIDRs []string
+	SNATAddress             string
 }
 
 func NftablesNAT44Rules(rules []NAT44RenderRule) ([]byte, error) {
@@ -730,11 +732,11 @@ func writeNAT44RenderRule(buf *bytes.Buffer, rule NAT44RenderRule) error {
 	if rule.EgressInterface == "" {
 		return fmt.Errorf("nat44 rule %q has empty egress interface", rule.Name)
 	}
-	for _, cidr := range rule.SourceRanges {
-		prefix, err := netip.ParsePrefix(cidr)
-		if err != nil || !prefix.Addr().Is4() {
-			return fmt.Errorf("nat44 rule %q has invalid IPv4 source range %q", rule.Name, cidr)
-		}
+	matches, err := nftIPv4CIDRMatches("nat44 rule "+rule.Name, rule.SourceRanges, rule.DestinationCIDRs, rule.ExcludeDestinationCIDRs)
+	if err != nil {
+		return err
+	}
+	for _, match := range matches {
 		expr := "masquerade"
 		switch rule.Type {
 		case "masquerade":
@@ -746,7 +748,7 @@ func writeNAT44RenderRule(buf *bytes.Buffer, rule NAT44RenderRule) error {
 		default:
 			return fmt.Errorf("nat44 rule %q has unsupported type %q", rule.Name, rule.Type)
 		}
-		buf.WriteString("    oifname " + nftQuote(rule.EgressInterface) + " ip saddr " + prefix.Masked().String() + " " + expr + "\n")
+		buf.WriteString("    oifname " + nftQuote(rule.EgressInterface) + " " + match + " " + expr + "\n")
 	}
 	return nil
 }
@@ -874,7 +876,7 @@ func nftIPv4CIDRMatches(resourceID string, sourceCIDRs, destinationCIDRs, exclud
 	var matches []string
 	for _, source := range sources {
 		for _, destination := range destinations {
-			matches = append(matches, strings.TrimSpace(strings.Join([]string{source, destination, excludes}, " ")))
+			matches = append(matches, strings.Join(strings.Fields(strings.Join([]string{source, destination, excludes}, " ")), " "))
 		}
 	}
 	return matches, nil

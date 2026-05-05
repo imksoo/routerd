@@ -174,9 +174,9 @@ spec:
             retention: 90d
 
     # --- OS ネットワーク採用 ---
-    # ens18 は WAN 側の IPv4 アドレスだけ DHCPv4 で受けます。
-    # DHCPv4 の既定経路と DNS は使わず、172.18.0.0/16 から
-    # 192.168.1.0/24 へ出る NAPT の外側アドレスとして使います。
+    # ens18 は WAN 側を 192.168.1.249/24 で静的に持ちます。
+    # HGW に 172.18.0.0/16 via 192.168.1.249 を設定し、
+    # 192.168.0.0/16 宛ては NAPT せずルーティングします。
     # ens19 の systemd-networkd DHCP クライアントは止めます。
     # ens20 は管理経路なので触りません。
     - apiVersion: system.routerd.net/v1alpha1
@@ -186,10 +186,8 @@ spec:
       spec:
         interface: wan
         systemdNetworkd:
+          disableDHCPv4: true
           disableDHCPv6: true
-          dhcpv4UseRoutes: false
-          dhcpv4UseDNS: false
-          dhcpv4RouteMetric: 900
         systemdResolved:
           disableDNSStubListener: true
     - apiVersion: system.routerd.net/v1alpha1
@@ -431,6 +429,15 @@ spec:
         dependsOn:
           - resource: DHCPv6PrefixDelegation/wan-pd
             phase: Bound
+
+    # --- WAN 側 IPv4: HGW LAN static address ---
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: wan-hgw
+      spec:
+        interface: wan
+        address: 192.168.1.249/24
 
     # --- LAN 側 IPv4: 主アドレス + IX2215 transit alias ---
     - apiVersion: net.routerd.net/v1alpha1
@@ -864,6 +871,10 @@ spec:
         egressInterface: wan
         sourceRanges:
           - 172.18.0.0/16
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
 
     # --- Path MTU / TCP MSS ---
     # DS-Lite は IPv6 外側ヘッダーを持つため、LAN から tunnel へ出る
