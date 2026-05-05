@@ -12,6 +12,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/healthcheck"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
 )
@@ -194,6 +195,63 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	if command == nil {
 		command = runOutputCommandContext
 	}
+	if features.HasSystemd {
+		explicitUnits := systemdUnitNames(c.Router)
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.Kind != "HealthCheck" {
+				continue
+			}
+			spec, err := resource.HealthCheckSpec()
+			if err != nil {
+				return err
+			}
+			if spec.Daemon != healthcheck.DaemonKind {
+				continue
+			}
+			unitName := healthCheckUnitName(resource.Metadata.Name)
+			if explicitUnits[unitName] {
+				continue
+			}
+			path := filepath.Join(c.SystemdSystemDir, unitName)
+			changed, err := c.applyHealthCheckSystemdUnit(ctx, path, unitName, resource.Metadata.Name, spec, command)
+			if err != nil {
+				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, map[string]any{
+					"phase":     "Error",
+					"reason":    "ApplyFailed",
+					"unitName":  unitName,
+					"path":      path,
+					"error":     err.Error(),
+					"dryRun":    c.DryRun,
+					"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				}); saveErr != nil {
+					return saveErr
+				}
+				return err
+			}
+			phase := "Applied"
+			if c.DryRun && changed {
+				phase = "Rendered"
+			}
+			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, map[string]any{
+				"phase":     phase,
+				"unitName":  unitName,
+				"path":      path,
+				"changed":   changed,
+				"dryRun":    c.DryRun,
+				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			}); err != nil {
+				return err
+			}
+			if changed && !c.DryRun && c.Bus != nil {
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.systemd_unit.applied", daemonapi.SeverityInfo)
+				event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit", Name: unitName}
+				event.Attributes = map[string]string{"unitName": unitName, "path": path, "source": "HealthCheck/" + resource.Metadata.Name}
+				if err := c.Bus.Publish(ctx, event); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "SystemdUnit" {
 			continue
@@ -254,6 +312,76 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func systemdUnitNames(router *api.Router) map[string]bool {
+	out := map[string]bool{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "SystemdUnit" {
+			continue
+		}
+		spec, err := resource.SystemdUnitSpec()
+		if err != nil {
+			continue
+		}
+		out[firstNonEmpty(spec.UnitName, resource.Metadata.Name)] = true
+	}
+	return out
+}
+
+func healthCheckUnitName(name string) string {
+	return "routerd-healthcheck@" + name + ".service"
+}
+
+func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, command outputCommandFunc) (bool, error) {
+	socket := spec.SocketSource
+	if socket == "" {
+		socket = filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
+	}
+	resolved := healthcheck.ResolveSpec(c.Router, spec)
+	data := render.HealthCheckSystemdUnit(render.HealthCheckSystemdOptions{
+		Resource:        resourceName,
+		Target:          resolved.Target,
+		Protocol:        resolved.Protocol,
+		Via:             resolved.Via,
+		SourceInterface: resolved.SourceInterface,
+		SourceAddress:   resolved.SourceAddress,
+		Port:            resolved.Port,
+		Interval:        resolved.Interval,
+		Timeout:         resolved.Timeout,
+		SocketPath:      socket,
+		StateFile:       filepath.Join("/var/lib/routerd/healthcheck", resourceName, "state.json"),
+		EventFile:       filepath.Join("/var/lib/routerd/healthcheck", resourceName, "events.jsonl"),
+	})
+	changed, err := writeFileIfChanged(path, data, 0644, c.DryRun)
+	if err != nil {
+		return changed, err
+	}
+	if c.DryRun {
+		return changed, nil
+	}
+	if changed {
+		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+			return changed, err
+		}
+		if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {
+			return changed, err
+		}
+	}
+	active := true
+	if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
+		active = false
+	}
+	if changed || !active {
+		if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
+			return changed, err
+		}
+		return true, nil
+	}
+	return changed, nil
 }
 
 func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) (bool, error) {

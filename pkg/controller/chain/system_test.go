@@ -2,6 +2,7 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,6 +153,76 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		}
 	}
 	status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", "routerd.service")
+	if status["phase"] != "Applied" || status["changed"] != true {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-lite-a"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-dslite-a"}, Spec: api.HealthCheckSpec{
+			Daemon:             "routerd-healthcheck",
+			SocketSource:       "/run/routerd/healthcheck/internet-via-dslite-a.sock",
+			Target:             "1.1.1.1",
+			TargetSource:       "static",
+			SourceInterface:    "ds-lite-a",
+			Protocol:           "tcp",
+			Port:               443,
+			Interval:           "30s",
+			Timeout:            "3s",
+			HealthyThreshold:   1,
+			UnhealthyThreshold: 3,
+		}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            store,
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			line := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, line)
+			if line == "systemctl is-active --quiet routerd-healthcheck@internet-via-dslite-a.service" {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	unitName := "routerd-healthcheck@internet-via-dslite-a.service"
+	data, err := os.ReadFile(filepath.Join(dir, unitName))
+	if err != nil {
+		t.Fatalf("read unit: %v", err)
+	}
+	unit := string(data)
+	for _, want := range []string{
+		`ExecStart=/usr/local/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --source-interface "ds-lite-a" --port 443`,
+		`--socket "/run/routerd/healthcheck/internet-via-dslite-a.sock"`,
+		"RuntimeDirectory=routerd/healthcheck",
+		"RuntimeDirectoryPreserve=yes",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Fatalf("unit missing %q:\n%s", want, unit)
+		}
+	}
+	gotCommands := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"systemctl daemon-reload",
+		"systemctl enable routerd-healthcheck@internet-via-dslite-a.service",
+		"systemctl is-active --quiet routerd-healthcheck@internet-via-dslite-a.service",
+		"systemctl restart routerd-healthcheck@internet-via-dslite-a.service",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName)
 	if status["phase"] != "Applied" || status["changed"] != true {
 		t.Fatalf("status = %#v", status)
 	}
