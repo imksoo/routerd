@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -50,45 +51,60 @@ func Setup(ctx context.Context, serviceName string, attrs ...attribute.KeyValue)
 		semconv.ServiceName(serviceName),
 	}, attrs...)...)
 
-	logExporter, err := otlploggrpc.New(ctx)
-	if err != nil {
-		return nil, err
+	if signalEnabled("logs") {
+		logExporter, err := otlploggrpc.New(ctx)
+		if err != nil {
+			return nil, err
+		}
+		logProvider := sdklog.NewLoggerProvider(
+			sdklog.WithResource(res),
+			sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
+		)
+		global.SetLoggerProvider(logProvider)
+		runtime.shutdown = append(runtime.shutdown, logProvider.Shutdown)
+		runtime.Logger = otelslog.NewLogger(serviceName, otelslog.WithLoggerProvider(logProvider))
 	}
-	logProvider := sdklog.NewLoggerProvider(
-		sdklog.WithResource(res),
-		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
-	)
-	global.SetLoggerProvider(logProvider)
-	runtime.shutdown = append(runtime.shutdown, logProvider.Shutdown)
-	runtime.Logger = otelslog.NewLogger(serviceName, otelslog.WithLoggerProvider(logProvider))
 
-	metricExporter, err := otlpmetricgrpc.New(ctx)
-	if err != nil {
-		_ = runtime.Shutdown(context.Background())
-		return nil, err
+	if signalEnabled("metrics") {
+		metricExporter, err := otlpmetricgrpc.New(ctx)
+		if err != nil {
+			_ = runtime.Shutdown(context.Background())
+			return nil, err
+		}
+		meterProvider := sdkmetric.NewMeterProvider(
+			sdkmetric.WithResource(res),
+			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter, sdkmetric.WithInterval(30*time.Second))),
+		)
+		otel.SetMeterProvider(meterProvider)
+		runtime.shutdown = append(runtime.shutdown, meterProvider.Shutdown)
+		runtime.Meter = meterProvider.Meter(serviceName)
 	}
-	meterProvider := sdkmetric.NewMeterProvider(
-		sdkmetric.WithResource(res),
-		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter, sdkmetric.WithInterval(30*time.Second))),
-	)
-	otel.SetMeterProvider(meterProvider)
-	runtime.shutdown = append(runtime.shutdown, meterProvider.Shutdown)
-	runtime.Meter = meterProvider.Meter(serviceName)
 
-	traceExporter, err := otlptracegrpc.New(ctx)
-	if err != nil {
-		_ = runtime.Shutdown(context.Background())
-		return nil, err
+	if signalEnabled("traces") {
+		traceExporter, err := otlptracegrpc.New(ctx)
+		if err != nil {
+			_ = runtime.Shutdown(context.Background())
+			return nil, err
+		}
+		traceProvider := sdktrace.NewTracerProvider(
+			sdktrace.WithResource(res),
+			sdktrace.WithBatcher(traceExporter),
+		)
+		otel.SetTracerProvider(traceProvider)
+		runtime.shutdown = append(runtime.shutdown, traceProvider.Shutdown)
+		runtime.Tracer = traceProvider.Tracer(serviceName)
 	}
-	traceProvider := sdktrace.NewTracerProvider(
-		sdktrace.WithResource(res),
-		sdktrace.WithBatcher(traceExporter),
-	)
-	otel.SetTracerProvider(traceProvider)
-	runtime.shutdown = append(runtime.shutdown, traceProvider.Shutdown)
-	runtime.Tracer = traceProvider.Tracer(serviceName)
 	runtime.Enabled = true
 	return runtime, nil
+}
+
+func signalEnabled(signal string) bool {
+	env := map[string]string{
+		"logs":    "OTEL_LOGS_EXPORTER",
+		"metrics": "OTEL_METRICS_EXPORTER",
+		"traces":  "OTEL_TRACES_EXPORTER",
+	}[signal]
+	return strings.ToLower(strings.TrimSpace(os.Getenv(env))) != "none"
 }
 
 func (r *Runtime) Shutdown(ctx context.Context) error {

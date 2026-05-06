@@ -137,6 +137,22 @@ If you only see records from `routerd` itself but the per-daemon services are si
 - A bundled OTLP collector. Run one alongside routerd or use a managed backend.
 - A built-in storage backend. routerd has its own SQLite log databases (`events.db`, `dns-queries.db`, `traffic-flows.db`, `firewall-logs.db`) for local visibility through the Web Console; OTLP export is for sending the same data outside the host.
 
-## Coming next
+## Declarative Telemetry resource
 
-A declarative `Telemetry` resource (apiVersion `observability.routerd.net/v1alpha1`) is planned so you can express the endpoint, signals, and attributes in YAML instead of editing systemd drop-ins. Until then, the environment variables above are the supported configuration surface.
+Use `Telemetry` to describe the OTLP endpoint in router YAML. routerd injects the matching OpenTelemetry environment variables into generated systemd, NixOS, and FreeBSD rc.d units. The collector is still external; routerd only prepares the exporter configuration.
+
+```yaml
+apiVersion: observability.routerd.net/v1alpha1
+kind: Telemetry
+metadata:
+  name: otlp
+spec:
+  otlp:
+    endpoint: http://collector.example.internal:4317
+    insecure: true
+  serviceNamespace: routerd
+  attributes:
+    deployment.environment: home
+    site: edge
+  signals: [logs, metrics, traces]
+```

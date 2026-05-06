@@ -668,6 +668,7 @@ func canonicalResourceKind(kind string) string {
 		"sysctlprofiles":         "SysctlProfile",
 		"package":                "Package",
 		"packages":               "Package",
+		"telemetry":              "Telemetry",
 		"networkadoption":        "NetworkAdoption",
 		"adoption":               "NetworkAdoption",
 		"systemdunit":            "SystemdUnit",
@@ -687,6 +688,8 @@ func apiVersionForKind(kind string) string {
 		return api.FirewallAPIVersion
 	case "Hostname", "Sysctl", "SysctlProfile", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "LogSink", "NixOSHost":
 		return api.SystemAPIVersion
+	case "Telemetry":
+		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
 	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":

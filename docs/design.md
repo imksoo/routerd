@@ -219,6 +219,12 @@ routerd exposes its operating state through several surfaces.
 Logs are persisted across four databases by purpose: `events.db` (controller-driven), `dns-queries.db` (DNS resolver), `traffic-flows.db` (conntrack/pf), and `firewall-logs.db` (NFLOG/pflog).
 For details, see [log storage](./concepts/log-storage.md).
 
+OpenTelemetry export is configured by the `Telemetry` resource in
+`observability.routerd.net/v1alpha1`. routerd does not bundle an OTLP
+collector. When an endpoint is declared, generated systemd, NixOS, and FreeBSD
+rc.d units receive the matching `OTEL_*` environment variables and the existing
+SDK path sends logs, metrics, and traces to that endpoint.
+
 ---
 
 ## 8. Related documents

@@ -137,6 +137,22 @@ routerd を再起動すると数秒以内に次が見えるはずです:
 - 同梱の OTLP コレクター。routerd の隣で別途立てるか、マネージドバックエンドを使ってください。
 - 組み込みのストレージバックエンド。routerd はローカル可視化用に SQLite ログ DB (`events.db`, `dns-queries.db`, `traffic-flows.db`, `firewall-logs.db`) を持っており、Web Console から確認できます。OTLP エクスポートは「同じデータをホストの外へ送る」用途です。
 
-## 今後
+## 宣言的な Telemetry リソース
 
-宣言的な `Telemetry` リソース (apiVersion `observability.routerd.net/v1alpha1`) を予定しています。これが入ると、systemd drop-in を編集せず YAML で endpoint・signal・属性を表現できる予定です。それまでは上記の環境変数がサポートされる設定面です。
+`Telemetry` を使うと、OTLP エンドポイントを router YAML に書けます。routerd は対応する OpenTelemetry 環境変数を生成済みの systemd、NixOS、FreeBSD rc.d unit に入れます。コレクターは外部で用意します。routerd はエクスポーター設定だけを準備します。
+
+```yaml
+apiVersion: observability.routerd.net/v1alpha1
+kind: Telemetry
+metadata:
+  name: otlp
+spec:
+  otlp:
+    endpoint: http://collector.example.internal:4317
+    insecure: true
+  serviceNamespace: routerd
+  attributes:
+    deployment.environment: home
+    site: edge
+  signals: [logs, metrics, traces]
+```

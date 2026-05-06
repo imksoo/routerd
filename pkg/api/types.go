@@ -45,10 +45,11 @@ func (r Resource) ID() string {
 }
 
 const (
-	RouterAPIVersion   = "routerd.net/v1alpha1"
-	NetAPIVersion      = "net.routerd.net/v1alpha1"
-	SystemAPIVersion   = "system.routerd.net/v1alpha1"
-	FirewallAPIVersion = "firewall.routerd.net/v1alpha1"
+	RouterAPIVersion        = "routerd.net/v1alpha1"
+	NetAPIVersion           = "net.routerd.net/v1alpha1"
+	SystemAPIVersion        = "system.routerd.net/v1alpha1"
+	FirewallAPIVersion      = "firewall.routerd.net/v1alpha1"
+	ObservabilityAPIVersion = "observability.routerd.net/v1alpha1"
 )
 
 func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
@@ -70,6 +71,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 	switch raw.Kind {
 	case "LogSink":
 		var spec LogSinkSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "Telemetry":
+		var spec TelemetrySpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}

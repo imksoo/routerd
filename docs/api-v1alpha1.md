@@ -39,6 +39,7 @@ spec:
 | `net.routerd.net/v1alpha1` | interfaces, DHCP, DNS, routes, tunnels, events, traffic flow logs |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
+| `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
 
 ## System Bootstrap
@@ -55,6 +56,12 @@ spec:
 | `LogSink` | Sends routerd events to syslog or another local sink. |
 | `LogRetention` | Manages retention for events, DNS queries, traffic flows, and firewall logs. |
 | `WebConsole` | Enables the read-only management Web Console. |
+
+## Observability
+
+| Kind | Role |
+| --- | --- |
+| `Telemetry` | Declares an external OTLP endpoint and injects OpenTelemetry environment variables into generated service units. |
 
 ## Interfaces and Links
 

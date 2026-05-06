@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: telemetry-example
+
+spec:
+  resources:
+    - apiVersion: observability.routerd.net/v1alpha1
+      kind: Telemetry
+      metadata:
+        name: otlp
+      spec:
+        otlp:
+          endpoint: http://collector.example.internal:4317
+          insecure: true
+        serviceNamespace: routerd
+        attributes:
+          deployment.environment: lab
+          site: example
+        signals:
+          - logs
+          - metrics
+          - traces

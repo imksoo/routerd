@@ -10,6 +10,18 @@ type LogSinkSpec struct {
 	Plugin   LogSinkPluginSpec `yaml:"plugin,omitempty" json:"plugin,omitempty"`
 }
 
+type TelemetrySpec struct {
+	OTLP             TelemetryOTLPSpec `yaml:"otlp" json:"otlp"`
+	ServiceNamespace string            `yaml:"serviceNamespace,omitempty" json:"serviceNamespace,omitempty"`
+	Attributes       map[string]string `yaml:"attributes,omitempty" json:"attributes,omitempty"`
+	Signals          []string          `yaml:"signals,omitempty" json:"signals,omitempty" jsonschema:"enum=logs,enum=metrics,enum=traces"`
+}
+
+type TelemetryOTLPSpec struct {
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
+	Insecure bool   `yaml:"insecure,omitempty" json:"insecure,omitempty"`
+}
+
 type LogRetentionSpec struct {
 	Schedule          string                   `yaml:"schedule,omitempty" json:"schedule,omitempty" jsonschema:"enum=,enum=daily"`
 	IncrementalVacuum bool                     `yaml:"incrementalVacuum,omitempty" json:"incrementalVacuum,omitempty"`
@@ -1280,6 +1292,10 @@ func (r Resource) FirewallLogSpec() (FirewallLogSpec, error) {
 
 func (r Resource) LogSinkSpec() (LogSinkSpec, error) {
 	return specAs[LogSinkSpec](r)
+}
+
+func (r Resource) TelemetrySpec() (TelemetrySpec, error) {
+	return specAs[TelemetrySpec](r)
 }
 
 func (r Resource) HostnameSpec() (HostnameSpec, error) {

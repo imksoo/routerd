@@ -218,6 +218,10 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	if command == nil {
 		command = runOutputCommandContext
 	}
+	telemetryEnv, err := render.TelemetryEnvironment(c.Router)
+	if err != nil {
+		return err
+	}
 	if features.HasSystemd {
 		explicitUnits := systemdUnitNames(c.Router)
 		for _, resource := range c.Router.Spec.Resources {
@@ -236,7 +240,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				continue
 			}
 			path := filepath.Join(c.SystemdSystemDir, unitName)
-			changed, err := c.applyHealthCheckSystemdUnit(ctx, path, unitName, resource.Metadata.Name, spec, command)
+			changed, err := c.applyHealthCheckSystemdUnit(ctx, path, unitName, resource.Metadata.Name, spec, telemetryEnv, command)
 			if err != nil {
 				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, map[string]any{
 					"phase":     "Error",
@@ -296,6 +300,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		path := filepath.Join(c.SystemdSystemDir, unitName)
+		spec.Environment = mergeStringEnvs(spec.Environment, telemetryEnv)
 		changed, err := c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, spec, command)
 		if err != nil {
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", resource.Metadata.Name, map[string]any{
@@ -359,7 +364,24 @@ func healthCheckUnitName(name string) string {
 	return "routerd-healthcheck@" + name + ".service"
 }
 
-func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, command outputCommandFunc) (bool, error) {
+func mergeStringEnvs(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(base)+len(extra))
+	for _, value := range append(extra, base...) {
+		key, _, _ := strings.Cut(value, "=")
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, telemetryEnv []string, command outputCommandFunc) (bool, error) {
 	socket := spec.SocketSource
 	if socket == "" {
 		socket = filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
@@ -378,6 +400,7 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 		SocketPath:      socket,
 		StateFile:       filepath.Join("/var/lib/routerd/healthcheck", resourceName, "state.json"),
 		EventFile:       filepath.Join("/var/lib/routerd/healthcheck", resourceName, "events.jsonl"),
+		Environment:     telemetryEnv,
 	})
 	changed, err := writeFileIfChanged(path, data, 0644, c.DryRun)
 	if err != nil {

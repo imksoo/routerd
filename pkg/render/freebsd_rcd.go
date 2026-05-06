@@ -13,6 +13,10 @@ import (
 func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	out := map[string][]byte{}
 	explicit := map[string]bool{}
+	telemetryEnv, err := TelemetryEnvironment(router)
+	if err != nil {
+		return nil, err
+	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "SystemdUnit" {
 			continue
@@ -26,6 +30,7 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		}
 		name := freeBSDServiceName(defaultString(spec.UnitName, res.Metadata.Name))
 		explicit[name] = true
+		spec.Environment = mergeEnvironment(spec.Environment, telemetryEnv)
 		data, err := FreeBSDRCDScript(name, spec)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", res.ID(), err)
@@ -52,6 +57,7 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 			Resource:    res.Metadata.Name,
 			Spec:        spec,
 			Aliases:     aliases,
+			Environment: telemetryEnv,
 			RuntimeRoot: "/var/run",
 			StateRoot:   "/var/db",
 			LogRoot:     "/var/log",
@@ -84,6 +90,12 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 	buf.WriteString("command=\"/usr/sbin/daemon\"\n")
 	buf.WriteString("procname=" + shellSingleQuote(spec.ExecStart[0]) + "\n")
 	buf.WriteString("command_args=\"-P ${pidfile} -r -f --")
+	if len(spec.Environment) > 0 {
+		buf.WriteString(" env")
+		for _, env := range spec.Environment {
+			buf.WriteString(" " + shellSingleQuote(env))
+		}
+	}
 	for _, arg := range spec.ExecStart {
 		buf.WriteString(" " + shellSingleQuote(arg))
 	}

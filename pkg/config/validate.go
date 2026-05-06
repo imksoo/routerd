@@ -650,6 +650,24 @@ func validateResource(res api.Resource) error {
 		default:
 			return fmt.Errorf("%s spec.minLevel must be debug, info, warning, or error", res.ID())
 		}
+	case "Telemetry":
+		if res.APIVersion != api.ObservabilityAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.ObservabilityAPIVersion)
+		}
+		spec, err := res.TelemetrySpec()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(spec.OTLP.Endpoint) == "" {
+			return fmt.Errorf("%s spec.otlp.endpoint is required", res.ID())
+		}
+		for _, signal := range spec.Signals {
+			switch signal {
+			case "logs", "metrics", "traces":
+			default:
+				return fmt.Errorf("%s spec.signals must contain only logs, metrics, or traces", res.ID())
+			}
+		}
 	case "Sysctl":
 		if res.APIVersion != api.SystemAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)

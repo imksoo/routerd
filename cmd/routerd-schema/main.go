@@ -268,6 +268,7 @@ func resourceUnionSchema() map[string]any {
 	return map[string]any{
 		"oneOf": []any{
 			resourceSchema(api.SystemAPIVersion, "LogSink", api.LogSinkSpec{}),
+			resourceSchema(api.ObservabilityAPIVersion, "Telemetry", api.TelemetrySpec{}),
 			resourceSchema(api.SystemAPIVersion, "LogRetention", api.LogRetentionSpec{}),
 			resourceSchema(api.SystemAPIVersion, "Sysctl", api.SysctlSpec{}),
 			resourceSchema(api.SystemAPIVersion, "SysctlProfile", api.SysctlProfileSpec{}),

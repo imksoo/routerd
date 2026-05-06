@@ -22,12 +22,14 @@ type HealthCheckSystemdOptions struct {
 	SocketPath      string
 	StateFile       string
 	EventFile       string
+	Environment     []string
 }
 
 type HealthCheckDaemonUnitOptions struct {
 	Resource    string
 	Spec        api.HealthCheckSpec
 	Aliases     map[string]string
+	Environment []string
 	RuntimeRoot string
 	StateRoot   string
 	LogRoot     string
@@ -80,6 +82,7 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 	return api.SystemdUnitSpec{
 		Description:              "routerd healthcheck " + resource,
 		ExecStart:                execStart,
+		Environment:              options.Environment,
 		Enabled:                  boolValuePtr(true),
 		WantedBy:                 []string{"multi-user.target"},
 		After:                    []string{"network-online.target"},
@@ -156,6 +159,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+%s
 ExecStart=%s %s
 Restart=always
 RestartSec=5s
@@ -174,5 +178,18 @@ AmbientCapabilities=CAP_NET_RAW
 
 [Install]
 WantedBy=multi-user.target
-`, resource, binaryPath, args))
+`, resource, systemdEnvironmentLines(options.Environment), binaryPath, args))
+}
+
+func systemdEnvironmentLines(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, value := range values {
+		b.WriteString("Environment=")
+		b.WriteString(strconv.Quote(value))
+		b.WriteString("\n")
+	}
+	return b.String()
 }
