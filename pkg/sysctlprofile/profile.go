@@ -50,6 +50,7 @@ func routerLinux() []Entry {
 		{Key: "net.ipv4.ip_forward", Value: "1"},
 		{Key: "net.ipv4.ip_local_port_range", Value: "1024 65535"},
 		{Key: "net.ipv4.tcp_fin_timeout", Value: "30"},
+		{Key: "net.ipv4.tcp_mtu_probing", Value: "1"},
 		{Key: "net.ipv4.tcp_rmem", Value: "4096 87380 16777216", Compare: "atLeast"},
 		{Key: "net.ipv4.tcp_tw_reuse", Value: "1"},
 		{Key: "net.ipv4.tcp_wmem", Value: "4096 65536 16777216", Compare: "atLeast"},

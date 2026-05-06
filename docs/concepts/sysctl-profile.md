@@ -78,6 +78,7 @@ spec:
 | `net.core.somaxconn` | `4096` | listen backlog の上限を明示します。 |
 | `net.ipv4.ip_local_port_range` | `1024 65535` | ルーター自身が使う一時ポート範囲を広げます。 |
 | `net.ipv4.tcp_fin_timeout` | `30` | FIN-WAIT-2 の保持時間を短くします。 |
+| `net.ipv4.tcp_mtu_probing` | `1` | 経路 MTU の通知が届かない経路でも、TCP が小さいセグメントへ自動退避できるようにします。 |
 | `net.ipv4.tcp_tw_reuse` | `1` | TIME-WAIT ソケットの再利用を許可します。 |
 | `net.ipv6.route.max_size` | `16384` | IPv6 経路キャッシュの上限を引き上げます。 |
 
