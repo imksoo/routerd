@@ -481,6 +481,9 @@ exit 0
 			t.Fatalf("pfctl calls missing %q:\n%s", want, pfctlCalls)
 		}
 	}
+	if !strings.Contains(string(pfctlCalls), "-e") {
+		t.Fatalf("pfctl calls missing enable:\n%s", pfctlCalls)
+	}
 	serviceCalls, err := os.ReadFile(serviceLog)
 	if err != nil {
 		t.Fatalf("read service log: %v", err)

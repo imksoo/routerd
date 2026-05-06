@@ -478,6 +478,9 @@ func (d *daemon) restoreState() error {
 	if err != nil {
 		return err
 	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil
+	}
 	var snapshot pppoeclient.Snapshot
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return err

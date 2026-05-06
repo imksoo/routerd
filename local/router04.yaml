@@ -446,6 +446,23 @@ spec:
             phase: Up
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-dslite
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite
+      spec:
+        type: masquerade
+        egressInterface: ds-lite
+        sourceRanges:
+          - 192.168.160.0/24
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: Bridge
       metadata:
         name: br-vxlan-test

@@ -719,11 +719,13 @@ func writeIPv4SourceNATTable(buf *bytes.Buffer, aliases map[string]string, nats 
 			return fmt.Errorf("%s references egress interface with empty ifname", res.ID())
 		}
 		if err := writeNAT44RenderRule(buf, NAT44RenderRule{
-			Name:            res.Metadata.Name,
-			Type:            spec.Type,
-			EgressInterface: ifname,
-			SourceRanges:    spec.SourceRanges,
-			SNATAddress:     spec.SNATAddress,
+			Name:                    res.Metadata.Name,
+			Type:                    spec.Type,
+			EgressInterface:         ifname,
+			SourceRanges:            spec.SourceRanges,
+			DestinationCIDRs:        spec.DestinationCIDRs,
+			ExcludeDestinationCIDRs: spec.ExcludeDestinationCIDRs,
+			SNATAddress:             spec.SNATAddress,
 		}); err != nil {
 			return err
 		}

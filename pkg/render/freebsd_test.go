@@ -223,6 +223,34 @@ func TestFreeBSDRendersStaticDSLiteGIF(t *testing.T) {
 	}
 }
 
+func TestFreeBSDRendersNAT44ExcludedDestinations(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-wan"}, Spec: api.NAT44RuleSpec{
+			Type:                    "masquerade",
+			EgressInterface:         "wan",
+			SourceRanges:            []string{"192.168.160.0/24"},
+			ExcludeDestinationCIDRs: []string{"192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8"},
+		}},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	for _, want := range []string{
+		`no nat on vtnet0 from 192.168.160.0/24 to { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }`,
+		`nat on vtnet0 from 192.168.160.0/24 to any -> (vtnet0)`,
+		`pass all keep state`,
+	} {
+		if !strings.Contains(string(got.PF), want) {
+			t.Fatalf("pf output missing %q:\n%s", want, string(got.PF))
+		}
+	}
+	if strings.Contains(string(got.PF), "block drop all") {
+		t.Fatalf("NAT-only pf output must not enable default-deny filtering:\n%s", string(got.PF))
+	}
+}
+
 func TestFreeBSDSkipsDynamicDSLiteGIFWithWarning(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},

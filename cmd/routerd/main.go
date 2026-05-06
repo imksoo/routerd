@@ -3688,6 +3688,12 @@ func applyFreeBSDPFConfig(data []byte, pfPath string) ([]string, error) {
 		}
 		changed = append(changed, pfPath)
 	}
+	if !freeBSDPFEnabled() {
+		if err := runLogged("pfctl", "-e"); err != nil {
+			return changed, err
+		}
+		changed = append(changed, "pfctl:-e")
+	}
 	if !freeBSDServiceRunning("pf") {
 		if err := runLogged("service", "pf", "onestart"); err != nil {
 			return changed, err
@@ -3701,6 +3707,14 @@ func applyFreeBSDPFConfig(data []byte, pfPath string) ([]string, error) {
 		changed = append(changed, "service:pflog")
 	}
 	return changed, nil
+}
+
+func freeBSDPFEnabled() bool {
+	out, err := exec.Command("pfctl", "-s", "info").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "Status: Enabled")
 }
 
 func ensureFreeBSDKernelModule(module string) error {

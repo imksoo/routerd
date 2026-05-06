@@ -75,8 +75,13 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	if err := writePFNAT(&buf, aliases, nats, nat44Rules); err != nil {
 		return nil, err
 	}
-	if err := writePFFilter(&buf, zoneMap, rules, holes, policy, logging); err != nil {
-		return nil, err
+	filterRequested := len(zoneMap) > 0 || len(rules) > 0 || len(holes) > 0 || len(logs) > 0
+	if filterRequested {
+		if err := writePFFilter(&buf, zoneMap, rules, holes, policy, logging); err != nil {
+			return nil, err
+		}
+	} else {
+		buf.WriteString("pass all keep state\n")
 	}
 	return buf.Bytes(), nil
 }
@@ -124,6 +129,17 @@ func writePFNAT(buf *bytes.Buffer, aliases map[string]string, nats []api.Resourc
 			if err != nil || !prefix.Addr().Is4() {
 				return fmt.Errorf("%s has invalid IPv4 source range %q", res.ID(), cidr)
 			}
+			excludedDestinations, err := pfIPv4AddressSet(res.ID(), "excluded destination", spec.ExcludeDestinationCIDRs)
+			if err != nil {
+				return err
+			}
+			if excludedDestinations != "" {
+				buf.WriteString("no nat on " + ifname + " from " + prefix.Masked().String() + " to " + excludedDestinations + "\n")
+			}
+			destinations, err := pfNATDestinationMatches(res.ID(), spec.DestinationCIDRs)
+			if err != nil {
+				return err
+			}
 			target := "(" + ifname + ")"
 			if spec.Type == "snat" {
 				if spec.SNATAddress == "" {
@@ -131,10 +147,46 @@ func writePFNAT(buf *bytes.Buffer, aliases map[string]string, nats []api.Resourc
 				}
 				target = spec.SNATAddress
 			}
-			buf.WriteString("nat on " + ifname + " from " + prefix.Masked().String() + " to any -> " + target + "\n")
+			for _, destination := range destinations {
+				buf.WriteString("nat on " + ifname + " from " + prefix.Masked().String() + " to " + destination + " -> " + target + "\n")
+			}
 		}
 	}
 	return nil
+}
+
+func pfNATDestinationMatches(resourceID string, destinationCIDRs []string) ([]string, error) {
+	if len(destinationCIDRs) > 0 {
+		var out []string
+		for _, cidr := range destinationCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return nil, fmt.Errorf("%s has invalid IPv4 destination CIDR %q", resourceID, cidr)
+			}
+			out = append(out, prefix.Masked().String())
+		}
+		return out, nil
+	}
+	return []string{"any"}, nil
+}
+
+func pfIPv4AddressSet(resourceID, label string, cidrs []string) (string, error) {
+	if len(cidrs) == 0 {
+		return "", nil
+	}
+	var values []string
+	for _, cidr := range cidrs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil || !prefix.Addr().Is4() {
+			return "", fmt.Errorf("%s has invalid IPv4 %s CIDR %q", resourceID, label, cidr)
+		}
+		values = append(values, prefix.Masked().String())
+	}
+	sort.Strings(values)
+	if len(values) == 1 {
+		return values[0], nil
+	}
+	return "{ " + strings.Join(values, ", ") + " }", nil
 }
 
 func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api.Resource, holes []FirewallHole, policy firewallPolicy, logging firewallLogging) error {

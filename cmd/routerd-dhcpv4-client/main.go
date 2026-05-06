@@ -345,6 +345,9 @@ func (d *dhcpv4Daemon) restoreLease() error {
 	if err != nil {
 		return err
 	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil
+	}
 	var snapshot dhcpv4client.Snapshot
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return err

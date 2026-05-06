@@ -392,6 +392,9 @@ func (d *dhcpv6Daemon) restoreLease(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil
+	}
 	var snapshot pdclient.Snapshot
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return err

@@ -298,6 +298,9 @@ func (d *daemon) restoreState() error {
 	if err != nil {
 		return err
 	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil
+	}
 	var state healthcheck.State
 	if err := json.Unmarshal(data, &state); err != nil {
 		return err
