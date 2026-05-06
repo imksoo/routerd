@@ -75,6 +75,7 @@ spec:
 これにより、秘密値を YAML と Git 履歴に残しません。
 どちらも未指定の場合、`tailscaled` はログイン済みとみなします。
 routerd は広告するノード設定だけを再適用します。
+詳しい設定手順は [Tailscale の exit node と subnet router](./how-to/tailscale.md) を参照してください。
 
 ## WAN アドレスと委譲
 

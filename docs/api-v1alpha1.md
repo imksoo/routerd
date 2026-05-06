@@ -82,7 +82,8 @@ spec:
 configs should prefer `authKeyEnv` and `authKeyFile` so the secret value stays
 outside the YAML and the Git history. If neither is set, routerd assumes
 `tailscaled` is already logged in and only reapplies the advertised node
-options.
+options. See [Tailscale exit node and subnet router](./how-to/tailscale.md) for
+the full setup flow.
 
 ## WAN Addressing and Delegation
 
