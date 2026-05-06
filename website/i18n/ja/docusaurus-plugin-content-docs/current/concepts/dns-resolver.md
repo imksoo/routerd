@@ -5,14 +5,11 @@ slug: /concepts/dns-resolver
 
 # DNS リゾルバー
 
-Phase 2.0 以降、routerd の DNS は 2 種類のリソースに分かれています。
+routerd の DNS は、権威データと resolver プロセスを明確に分けた 2 種類のリソースで表現します。
 
-`DNSZone` はローカル権威データを持ちます。
-手動レコードと、DHCP リースから派生したレコードを保存します。
+`DNSZone` はローカル権威データを持ちます。手動レコードと、DHCP リースから派生したレコードを保存します。
 
-`DNSResolver` はデーモンインスタンスを管理します。
-待ち受けアドレス、応答元の順序、上流選択、キャッシュ方針を定義します。
-1 つの `DNSResolver` リソースが、1 つの `routerd-dns-resolver` プロセスを起動します。
+`DNSResolver` は daemon インスタンスを管理します。待ち受けアドレス、応答元の順序、上流選択、キャッシュ方針を定義します。1 つの `DNSResolver` リソースが、1 つの `routerd-dns-resolver` プロセスを起動します。
 
 ## 応答元の順序
 

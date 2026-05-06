@@ -7,7 +7,7 @@ title: Changelog
 routerd release history. The format follows [Keep a Changelog](https://keepachangelog.com/).
 The software is at the v1alpha1 stage; minor `0.x` releases may contain breaking changes.
 
-## Unreleased
+## 0.4.0
 
 ### Added
 

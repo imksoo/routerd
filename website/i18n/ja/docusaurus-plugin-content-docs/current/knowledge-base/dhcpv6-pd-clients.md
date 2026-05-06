@@ -1,53 +1,47 @@
-# DHCPv6-PD クライアントの現在方針
+---
+title: routerd が DHCPv6-PD クライアントを自前で持つ理由
+---
 
-routerd の現在方針では、DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
+# routerd が DHCPv6-PD クライアントを自前で持つ理由
+
+routerd の現在方針では、DHCPv6-PD は専用デーモン `routerd-dhcpv6-client` が担当します。
 過去に評価した OS 付属クライアントの経路は、現在の設定例としては使いません。
 
-## なぜ専用デーモンにしたか
+## 専用デーモンにした理由
 
-DHCPv6-PD は、取得だけでなく更新、再起動復元、イベント記録が重要です。
-OS 付属クライアントへ設定を生成するだけでは、routerd の状態管理と LAN 側反映をきれいにつなげませんでした。
+DHCPv6-PD は取得だけで終わらず、Renew、再起動復元、event 記録までが重要です。
+OS 付属クライアントへ設定を生成するだけでは、routerd の状態モデルと LAN 側反映をきれいに繋げませんでした。
 
-専用デーモンにしたことで、次をそろえられます。
+専用デーモンにしたことで次が揃います：
 
-- lease を `lease.json` に保存します。
-- 起動時に lease を復元します。
-- Renew の結果を events に記録します。
-- `/v1/status` で `Bound` や `Pending` を返します。
-- routerd 本体がイベントを受け、LAN 側リソースを調整します。
+- lease を `lease.json` に保存。
+- 起動時に lease を復元。
+- Renew 結果を event に記録。
+- `/v1/status` で `Bound` / `Pending` を返す。
+- 他の controller (LAN アドレス導出、RA、DHCPv6 server、DS-Lite、DNS) が消費する event を発行。
 
-## 現在のバイナリ
+## バイナリと配置
 
 ```text
 routerd-dhcpv6-client
 ```
 
-代表的なパスは次の通りです。
+| パス | 用途 |
+| --- | --- |
+| `/run/routerd/dhcpv6-client/<name>.sock` | リソース別の制御 socket |
+| `/var/lib/routerd/dhcpv6-client/<name>/lease.json` | lease 永続化 |
+| `/var/lib/routerd/dhcpv6-client/<name>/events.jsonl` | append-only event log |
 
-```text
-/run/routerd/dhcpv6-client/<name>.sock
-/var/lib/routerd/dhcpv6-client/<name>/lease.json
-/var/lib/routerd/dhcpv6-client/<name>/events.jsonl
-```
+## 評価して採用しなかった選択肢
 
-## 旧実装の扱い
+`systemd-networkd`、WIDE/KAME 系クライアント、その他 DHCP クライアントを比較しましたが、最終的に routerd 所有の daemon を採用しました。
+これらの調査は背景として有用ですが、現在の出荷構成には含まれません。
 
-過去には、systemd-networkd、WIDE/KAME 系クライアント、別の DHCP クライアントを比較しました。
-その調査は設計判断の背景として残しますが、現在の本線ではありません。
-
-現在の Kind は `DHCPv6PrefixDelegation` です。
-OS クライアントを選ぶ `client` フィールドは使いません。
-
-## 実機確認済みの状態
-
-router01、router02、router03、router04、router05 の 5 台で、`routerd-dhcpv6-client` による DHCPv6-PD Bound を確認済みです。
-router02 は NixOS の宣言設定でユニットを管理しています。
-router01 と router04 は FreeBSD 上で動作しています。
+現在の Kind は `DHCPv6PrefixDelegation` です。OS 付属実装を選ぶ `client` フィールドは意図的に存在しません。
 
 ## 運用上の注意
 
-同じ WAN インターフェースで、複数の DHCPv6-PD クライアントを同時に動かさないでください。
-HGW 側の状態が壊れ、Reply が返らなくなることがあります。
+同じ WAN インターフェースで複数の DHCPv6-PD クライアントを並行して動かさないでください。
+2 つ同時に出すと上流が混乱して Reply が返らなくなります。
 
-routerd 管理へ移行するときは、古いクライアント、古い lease、古い systemd または rc.d の設定を止めます。
-その後で `routerd-dhcpv6-client` を起動します。
+routerd 管理へ移行するときは、まず古いクライアント (とその lease ファイル、それを起動していた systemd / rc.d 設定) を停止してから `routerd-dhcpv6-client` を起動してください。

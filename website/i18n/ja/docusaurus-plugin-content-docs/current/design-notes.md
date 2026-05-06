@@ -1,14 +1,18 @@
+---
+title: 設計メモ
+---
+
 # 設計メモ
 
-この文書は、現在のコードと実機検証から残すべき設計判断をまとめます。
-古い試行錯誤の詳細ではなく、今後の判断に使う要点だけを残します。
+このドキュメントは routerd で残すべき設計判断の記録です。
+過去の試行錯誤の時系列ログではなく、現在のコードが従っている原則と、今後の変更で守るべき指針だけを残します。
 
-## 1. デーモン契約
+## 1. Daemon contract
 
-状態を持つ処理は、専用デーモンに分けます。
-各デーモンは次を持ちます。
+状態を持つ処理は専用 daemon が担当します。
+ツール側が一様に扱えるよう、すべての daemon は同じ surface を公開します：
 
-- Unix ドメインソケットの HTTP+JSON API
+- Unix domain socket 上の HTTP+JSON API
 - `/v1/status`
 - `/v1/healthz`
 - `/v1/events`
@@ -16,60 +20,58 @@
 - `/v1/commands/renew`
 - `/v1/commands/stop`
 - state または lease ファイル
-- events.jsonl
+- `events.jsonl` (append-only)
 
-この契約は `routerd-dhcpv6-client`、`routerd-dhcpv4-client`、`routerd-pppoe-client`、`routerd-healthcheck` で使います。
+この contract は `routerd-dhcpv6-client`、`routerd-dhcpv4-client`、`routerd-pppoe-client`、`routerd-healthcheck` で共通です。
 
 ## 2. DHCPv6-PD
 
-DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
-旧 OS クライアントへ設定を生成する経路は本線ではありません。
+DHCPv6-PD は `routerd-dhcpv6-client` が所有します。OS 付属クライアント向けに設定を生成する経路は、もう存在しません。
 
-通常の NGN/HGW 環境では、取得、lease 保存、起動時復元、T1 Renew で十分です。
-過去の壊れた経路を前提にした過激な再送は採用しません。
+通常の residential gateway 環境では、標準の solicit / advertise / request / renew + lease 永続化 + T1 renew で十分です。
+壊れた環境を回避するための過剰な再送は、現在の規定では使いません。
 
-## 3. LAN への反映
+## 3. 誠実な LAN 広告
 
-DHCPv6-PD が Bound でない場合、LAN へ古い IPv6 を出しません。
-これは RA、DHCPv6、AAAA、LAN アドレスすべてに関係します。
+DHCPv6-PD が `Bound` でない場合、routerd は LAN へ古い IPv6 情報を出しません。
+RA、DHCPv6 server、AAAA レコード、prefix から導出した LAN アドレスのすべてに適用されます。
+「明らかに壊れた状態を維持する」方針です。届かない prefix を配り続けません。
 
 ## 4. DS-Lite
 
-AFTR option が DHCPv6 情報要求で返らない環境があります。
-そのため、`DSLiteTunnel` は AFTR FQDN または AFTR IPv6 の静的指定を正規経路として扱います。
+一部のアクセス網では DHCPv6 information-request で AFTR option が返りません。
+そのため `DSLiteTunnel` は、`aftrFQDN` または `aftrIPv6` の静的指定を fallback ではなく正規経路として扱います。
 
-AFTR FQDN は公開 DNS で解決できない場合があります。
-`DNSResolver.spec.sources[].kind: forward` による条件付き転送を使います。
+AFTR FQDN は公衆 DNS で解けないことが多いです。`DNSResolver.spec.sources[].kind: forward` で carrier 内 resolver に転送してください。
 
-## 5. イベント連携
+## 5. Event 連携
 
-routerd は bus を持ちます。
-controller chain はイベントを受け、必要なリソースだけを調整します。
+routerd は in-process bus を持ちます。controller は event を受けて影響範囲のリソースだけを再評価します。
 
-Phase 2-B で、次の Kind を追加しました。
+高位連携には次の Kind を使います：
 
 - `EgressRoutePolicy`
 - `EventRule`
 - `DerivedEvent`
 - `HealthCheck`
 
-EventRule はイベント列を入力にして別のイベント列を作ります。
-DerivedEvent は状態から asserted / retracted の仮想イベントを作ります。
+`EventRule` は event 列を入力にして別の event 列を生成します。
+`DerivedEvent` は観測状態から asserted / retracted の仮想 event を合成します。
 
-## 6. Tier S
+## 6. Tier S 構成要素
 
-WireGuard、IPsec、VRF、VXLAN は Tier S の土台です。
-WireGuard と VXLAN over WireGuard は複数 OS をまたいで検証済みです。
-IPsec は cloud VPN 接続向けの設定生成を先に進めます。
+WireGuard、IPsec、VRF、VXLAN は Tier S (SOHO / branch) の構成要素です。
+WireGuard と VXLAN-over-WireGuard は対応 OS 間での相互運用を確認済みです。
 
-抽象的な `VPNTunnel` は作りません。
-WireGuard、IPsec、将来の Tailscale、SoftEther は別 Kind として追加します。
+抽象的な `VPNTunnel` リソースは作りません。
+WireGuard、IPsec、将来の Tailscale や SoftEther 統合は、それぞれ別 Kind として追加します。
+意図は、各々の状態機械が大きく異なるためで、polymorphic な 1 Kind に潰すと semantics を失うからです。
 
-## 7. まだ残す課題
+## 7. 残課題
 
-- 状態を持つファイアウォールの本番実適用
-- DoH 代理
-- BGP/OSPF
-- 高可用化
-- OpenTelemetry collector を含む本番監視構成
-- IX2215 置き換えの長時間検証
+- 状態を持つ firewall の本番運用：適用は始まったが、ルール表現力 / ICMP type 一致 / 複数 port / rate limit を拡張する必要がある。
+- LAN 向け DoH 代理。
+- Tier C のための FRR 経由 BGP / OSPF 統合。
+- 高可用 (leader 選出、耐障害 control plane)。
+- 本番 observability (OpenTelemetry collector + 遠隔 log sink)。
+- 家庭用回線で routerd を唯一の WAN ルーターとして長時間運用する検証。

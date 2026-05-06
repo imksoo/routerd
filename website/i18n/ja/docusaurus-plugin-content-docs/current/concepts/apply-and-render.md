@@ -53,7 +53,7 @@ sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 生成だけでホストが変わるとは限りません。
 実際に反映するかどうかは、適用処理と予行実行の指定に従います。
 
-Phase 2.0 以降、dnsmasq は DNS 応答を担当しません。
+現在の routerd では、dnsmasq は DNS 応答を担当しません。
 dnsmasq は DHCPv4、DHCPv6、中継、RA の設定だけを生成します。
 DNS の待ち受け、ローカルゾーン、条件付き転送、暗号化 DNS は `DNSResolver` が扱います。
 `DNSResolver` は `routerd-dns-resolver` の実行設定です。

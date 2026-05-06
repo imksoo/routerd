@@ -7,7 +7,7 @@ title: Changelog
 routerd のリリース履歴です。形式は [Keep a Changelog](https://keepachangelog.com/) に準拠します。
 ソフトウェアは v1alpha1 段階のため、`0.x` の minor バージョン間でも破壊的変更を含みます。
 
-## Unreleased
+## 0.4.0
 
 ### Added
 

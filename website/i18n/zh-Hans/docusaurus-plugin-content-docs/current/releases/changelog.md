@@ -7,7 +7,7 @@ title: 变更记录
 routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog.com/)。
 本软件仍处于 v1alpha1 阶段，`0.x` 之间的小版本号变更也可能含有破坏性改动。
 
-## Unreleased
+## 0.4.0
 
 ### 新增
 

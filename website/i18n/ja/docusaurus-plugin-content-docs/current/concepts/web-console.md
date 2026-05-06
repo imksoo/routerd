@@ -18,7 +18,7 @@ spec:
     resource: Interface/mgmt
     field: ipv4Addresses
   port: 8080
-  title: homert02
+  title: edge-router
 ```
 
 待ち受けは管理アドレスに限定してください。

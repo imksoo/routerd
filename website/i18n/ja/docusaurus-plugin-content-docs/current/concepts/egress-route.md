@@ -80,10 +80,8 @@ spec:
     field: selectedGateway
 ```
 
-DS-Lite へ出してはいけない内部向け宛先は、通常の経路として表現します。
-NTT HGW 側の網は WAN 側へ戻します。
-172.16.0.0/12 は IX2215 へ戻します。
-破棄したい範囲は `type: blackhole` を使います。
+DS-Lite （あるいはどの tunnel）へ出してはいけない内部向け宛先は、通常の経路として表現します。
+上流 gateway 側の private subnet は WAN 側へ、内部の `10.0.0.0/8` や `172.16.0.0/12` は専用経路へ、破棄したい範囲は `type: blackhole` を使います。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
