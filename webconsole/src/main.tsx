@@ -27,6 +27,7 @@ import {
   ChevronDownRegular,
   ChevronRightRegular,
 } from "@fluentui/react-icons";
+import { parseDocument } from "yaml";
 import "./styles.css";
 
 type RouterdConfig = {
@@ -516,6 +517,79 @@ const useStyles = makeStyles({
     padding: "10px",
     backgroundColor: tokens.colorNeutralBackground2,
   },
+  configToolbar: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: "10px",
+  },
+  configModeButtons: {
+    display: "flex",
+    gap: "6px",
+  },
+  configError: {
+    marginBottom: "10px",
+    padding: "8px",
+    border: `1px solid ${tokens.colorPaletteRedBorder2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorPaletteRedBackground2,
+  },
+  tree: {
+    display: "grid",
+    gap: "2px",
+    fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
+    fontSize: "12px",
+    lineHeight: 1.45,
+  },
+  treeNode: {
+    minWidth: 0,
+  },
+  treeSummary: {
+    cursor: "pointer",
+    minWidth: 0,
+    padding: "2px 0",
+  },
+  treeRow: {
+    display: "inline-flex",
+    gap: "8px",
+    alignItems: "baseline",
+    minWidth: 0,
+    maxWidth: "100%",
+  },
+  treeKey: {
+    color: tokens.colorNeutralForeground1,
+    overflowWrap: "anywhere",
+  },
+  treeMeta: {
+    color: tokens.colorNeutralForeground3,
+    whiteSpace: "nowrap",
+  },
+  treeChildren: {
+    display: "grid",
+    gap: "2px",
+    marginLeft: "18px",
+    paddingLeft: "10px",
+    borderLeft: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  treeLeaf: {
+    display: "grid",
+    gridTemplateColumns: "minmax(130px, 0.42fr) minmax(0, 1fr)",
+    gap: "10px",
+    minWidth: 0,
+    padding: "2px 0",
+    "@media (max-width: 640px)": {
+      gridTemplateColumns: "1fr",
+      gap: "2px",
+    },
+  },
+  treeValue: {
+    minWidth: 0,
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+    color: tokens.colorNeutralForeground2,
+  },
   pre: {
     margin: 0,
     fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
@@ -756,13 +830,90 @@ function App() {
         {selected === "config" ? (
           <Card>
             <CardHeader header={<Text weight="semibold">Config</Text>} description={<Text className={styles.muted}>{config?.path ?? ""}</Text>} />
-            <div className={styles.config}>
-              <pre className={styles.pre}>{config?.text ?? "Config is unavailable"}</pre>
-            </div>
+            <ConfigView config={config} />
           </Card>
         ) : null}
       </main>
     </FluentProvider>
+  );
+}
+
+function ConfigView({ config }: { config: ConfigSnapshot | null }) {
+  const styles = useStyles();
+  const [mode, setMode] = useState<"tree" | "raw">("tree");
+  const parsed = useMemo(() => parseConfig(config?.text), [config?.text]);
+  return (
+    <>
+      <div className={styles.configToolbar}>
+        <Text className={styles.muted}>Read-only view of the active routerd YAML</Text>
+        <div className={styles.configModeButtons}>
+          <Button size="small" appearance={mode === "tree" ? "primary" : "secondary"} onClick={() => setMode("tree")}>Tree</Button>
+          <Button size="small" appearance={mode === "raw" ? "primary" : "secondary"} onClick={() => setMode("raw")}>Raw YAML</Button>
+        </div>
+      </div>
+      {parsed.errors.length > 0 ? (
+        <div className={styles.configError}>
+          <Text weight="semibold">YAML parse warning</Text>
+          <div className={styles.tree}>
+            {parsed.errors.map((error, index) => <code className={styles.wrapCode} key={index}>{error}</code>)}
+          </div>
+        </div>
+      ) : null}
+      <div className={styles.config}>
+        {mode === "tree" && parsed.value !== undefined ? (
+          <div className={styles.tree}>
+            <ConfigTreeNode label="config" value={parsed.value} depth={0} />
+          </div>
+        ) : (
+          <pre className={styles.pre}>{config?.text ?? "Config is unavailable"}</pre>
+        )}
+      </div>
+    </>
+  );
+}
+
+function ConfigTreeNode({ label, value, depth }: { label: string; value: unknown; depth: number }) {
+  const styles = useStyles();
+  if (Array.isArray(value)) {
+    return (
+      <details className={styles.treeNode} open={depth < 2}>
+        <summary className={styles.treeSummary}>
+          <span className={styles.treeRow}>
+            <span className={styles.treeKey}>{label}</span>
+            <span className={styles.treeMeta}>[{value.length} items]</span>
+          </span>
+        </summary>
+        <div className={styles.treeChildren}>
+          {value.map((item, index) => (
+            <ConfigTreeNode key={`${index}-${configNodeLabel(index, item)}`} label={configNodeLabel(index, item)} value={item} depth={depth + 1} />
+          ))}
+        </div>
+      </details>
+    );
+  }
+  if (isRecord(value)) {
+    const entries = Object.entries(value);
+    return (
+      <details className={styles.treeNode} open={depth < 2}>
+        <summary className={styles.treeSummary}>
+          <span className={styles.treeRow}>
+            <span className={styles.treeKey}>{label}</span>
+            <span className={styles.treeMeta}>{entries.length} keys</span>
+          </span>
+        </summary>
+        <div className={styles.treeChildren}>
+          {entries.map(([key, item]) => (
+            <ConfigTreeNode key={key} label={key} value={item} depth={depth + 1} />
+          ))}
+        </div>
+      </details>
+    );
+  }
+  return (
+    <div className={styles.treeLeaf}>
+      <span className={styles.treeKey}>{label}</span>
+      <code className={styles.treeValue}>{formatConfigScalar(value)}</code>
+    </div>
   );
 }
 
@@ -774,6 +925,43 @@ function Metric({ label, value }: { label: string; value: string }) {
       <Text size={600} weight="semibold" className={styles.metricValue}>{value}</Text>
     </Card>
   );
+}
+
+function parseConfig(text?: string): { value?: unknown; errors: string[] } {
+  if (!text) return { value: undefined, errors: [] };
+  try {
+    const document = parseDocument(text);
+    const errors = [...document.errors, ...document.warnings].map(error => error.message || String(error));
+    return { value: document.toJS(), errors };
+  } catch (error) {
+    return { value: undefined, errors: [String(error)] };
+  }
+}
+
+function configNodeLabel(index: number, value: unknown) {
+  if (!isRecord(value)) return `[${index}]`;
+  const kind = stringValue(value.kind);
+  const name = stringValue(value.name) || (isRecord(value.metadata) ? stringValue(value.metadata.name) : "");
+  if (kind && name) return `${index}: ${kind}/${name}`;
+  if (kind) return `${index}: ${kind}`;
+  return `[${index}]`;
+}
+
+function formatConfigScalar(value: unknown) {
+  if (value === null) return "null";
+  if (value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value instanceof Date) return value.toISOString();
+  return JSON.stringify(value);
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
 }
 
 function ResourceTable({ resources }: { resources: ResourceStatus[] }) {
