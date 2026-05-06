@@ -145,6 +145,7 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`networking.firewall.checkReversePath = false;`,
 		`networking.firewall.allowedUDPPorts = [ 4789 ];`,
 		`networking.firewall.trustedInterfaces = [ "br0" ];`,
+		`networking.nftables.enable = true;`,
 		`systemd.network.networks."10-netplan-ens18"`,
 		`DHCP = "ipv4";`,
 		`systemd.network.networks."10-netplan-ens19"`,
@@ -321,6 +322,10 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 		`"/run/routerd/status.json"`,
 		`RuntimeDirectory = "routerd";`,
 		`RuntimeDirectoryPreserve = "yes";`,
+		`systemd.services."routerd-dnsmasq" = {`,
+		`description = "routerd managed dnsmasq DHCP service";`,
+		`"--conf-file=/usr/local/etc/routerd/dnsmasq.conf"`,
+		`CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" "CAP_NET_RAW" "CAP_NET_ADMIN" ];`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("NixOS routerd service missing %q:\n%s", want, got)

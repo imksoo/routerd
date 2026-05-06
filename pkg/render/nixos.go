@@ -139,6 +139,9 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		if trusted := nixOSFirewallTrustedInterfaces(vxlans); len(trusted) > 0 {
 			buf.WriteString("  networking.firewall.trustedInterfaces = " + nixStringList(trusted) + ";\n")
 		}
+		if nixOSNeedsNftables(router) {
+			buf.WriteString("  networking.nftables.enable = true;\n")
+		}
 		buf.WriteString("  systemd.network.enable = true;\n")
 		for _, bridge := range bridges {
 			writeNixOSBridge(&buf, bridge)
@@ -978,8 +981,43 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 			Spec: firewallLoggerSystemdSpec(spec),
 		})
 	}
+	if nixOSNeedsDnsmasq(router) {
+		name := "routerd-dnsmasq.service"
+		if !explicit[name] {
+			out = append(out, nixOSSystemdUnit{
+				Name: name,
+				Spec: dnsmasqNixOSSystemdSpec(),
+				Path: []string{"dnsmasq"},
+			})
+		}
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func dnsmasqNixOSSystemdSpec() api.SystemdUnitSpec {
+	noNewPrivileges := true
+	privateTmp := true
+	return api.SystemdUnitSpec{
+		Description:              "routerd managed dnsmasq DHCP service",
+		ExecStart:                []string{"dnsmasq", "--keep-in-foreground", "--conf-file=/usr/local/etc/routerd/dnsmasq.conf", "--pid-file=/run/routerd/dnsmasq.pid"},
+		Wants:                    []string{"network-online.target"},
+		After:                    []string{"network-online.target", "routerd.service"},
+		WantedBy:                 []string{"multi-user.target"},
+		Restart:                  "on-failure",
+		RestartSec:               "2s",
+		RuntimeDirectory:         []string{"routerd"},
+		RuntimeDirectoryPreserve: "yes",
+		StateDirectory:           []string{"routerd"},
+		ReadWritePaths:           []string{"/run/routerd", "/var/lib/routerd", "/usr/local/etc/routerd"},
+		AmbientCapabilities:      []string{"CAP_NET_BIND_SERVICE", "CAP_NET_RAW", "CAP_NET_ADMIN"},
+		CapabilityBoundingSet:    []string{"CAP_NET_BIND_SERVICE", "CAP_NET_RAW", "CAP_NET_ADMIN"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
+		ProtectSystem:            "strict",
+		ProtectHome:              "true",
+		NoNewPrivileges:          &noNewPrivileges,
+		PrivateTmp:               &privateTmp,
+	}
 }
 
 func dhcpv4ClientSystemdSpec(name, ifname string, spec api.DHCPv4LeaseSpec, telemetryEnv []string) api.SystemdUnitSpec {
@@ -1232,6 +1270,26 @@ func nixOSResolvedStubDisabled(router *api.Router) bool {
 			continue
 		}
 		if defaultString(spec.State, "present") != "absent" && spec.SystemdResolved.DisableDNSStubListener {
+			return true
+		}
+	}
+	return false
+}
+
+func nixOSNeedsDnsmasq(router *api.Router) bool {
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Server", "DHCPv6Scope", "IPv6RouterAdvertisement", "DHCPv4Relay":
+			return true
+		}
+	}
+	return false
+}
+
+func nixOSNeedsNftables(router *api.Router) bool {
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallLog", "PathMTUPolicy":
 			return true
 		}
 	}
