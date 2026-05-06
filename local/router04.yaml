@@ -72,6 +72,8 @@ spec:
           - /var/run/routerd/status.json
           - --observe-interval
           - 30s
+          - --controller-chain
+          - --controller-chain-dry-run-dns-resolver=false
         runtimeDirectory:
           - routerd
         runtimeDirectoryPreserve: "yes"
@@ -192,10 +194,7 @@ spec:
         rangeEnd: 192.168.160.189
         leaseTime: 12h
         routerSource: interfaceAddress
-        dnsSource: static
-        dnsServers:
-          - 1.1.1.1
-          - 8.8.8.8
+        dnsSource: self
         authoritative: false
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -267,6 +266,96 @@ spec:
         dependsOn:
           - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
             phase: Healthy
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSZone
+      metadata:
+        name: router04-lan
+        ownerRefs:
+          - kind: IPv4StaticAddress
+            name: lan-ipv4
+          - kind: IPv6DelegatedAddress
+            name: lan-ipv6-pd-address
+      spec:
+        zone: router04.lab.local
+        ttl: 300
+        records:
+          - hostname: router
+            ipv4From:
+              resource: IPv4StaticAddress/lan-ipv4
+              field: address
+            ipv6From:
+              resource: IPv6DelegatedAddress/lan-ipv6-pd-address
+              field: address
+          - hostname: router04
+            ipv4From:
+              resource: IPv4StaticAddress/lan-ipv4
+              field: address
+            ipv6From:
+              resource: IPv6DelegatedAddress/lan-ipv6-pd-address
+              field: address
+        dhcpDerived:
+          sources:
+            - DHCPv4Server/lan-dhcpv4-server
+            - DHCPv6Server/lan-dhcpv6
+          hostnameSuffix: router04.lab.local
+          ddns: true
+          ttl: 60
+          leaseFile: /var/db/routerd/dnsmasq/dnsmasq.leases
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSResolver
+      metadata:
+        name: lan-resolver
+        ownerRefs:
+          - kind: DNSZone
+            name: router04-lan
+          - kind: IPv4StaticAddress
+            name: lan-ipv4
+          - kind: IPv6DelegatedAddress
+            name: lan-ipv6-pd-address
+      spec:
+        listen:
+          - name: local
+            addresses:
+              - 127.0.0.1
+            port: 53
+            sources:
+              - local-zone
+              - default-upstream
+          - name: lan
+            addressFrom:
+              - resource: IPv4StaticAddress/lan-ipv4
+                field: address
+              - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
+                field: address
+            port: 53
+            sources:
+              - local-zone
+              - default-upstream
+        sources:
+          - name: local-zone
+            kind: zone
+            match:
+              - router04.lab.local
+            zoneRef:
+              - DNSZone/router04-lan
+          - name: default-upstream
+            kind: upstream
+            match:
+              - "."
+            upstreams:
+              - udp://1.1.1.1:53
+              - udp://8.8.8.8:53
+        cache:
+          enabled: true
+          maxEntries: 1000
+          minTTL: 30s
+          maxTTL: 1h
+          negativeTTL: 30s
+        queryLog:
+          enabled: true
+          path: /var/db/routerd/dns-queries.db
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Bridge

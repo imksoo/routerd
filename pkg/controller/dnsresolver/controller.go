@@ -21,6 +21,7 @@ import (
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/dnsresolver"
+	"routerd/pkg/platform"
 	"routerd/pkg/resourcequery"
 )
 
@@ -35,6 +36,9 @@ type Controller struct {
 	Store  Store
 	DryRun bool
 	Binary string
+
+	RuntimeDir string
+	StateDir   string
 }
 
 type runningResolver struct {
@@ -207,7 +211,8 @@ func (c Controller) eventRelevant(event daemonapi.DaemonEvent) bool {
 func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNSResolverSpec, config dnsresolver.RuntimeConfig) (bool, error) {
 	runningMu.Lock()
 	defer runningMu.Unlock()
-	configPath := filepath.Join("/var/lib/routerd/dns-resolver", name, "config.json")
+	runtimeDir, stateDir := c.dirs()
+	configPath := filepath.Join(stateDir, "dns-resolver", name, "config.json")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		return false, err
 	}
@@ -236,9 +241,9 @@ func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNS
 		"daemon",
 		"--resource", name,
 		"--config-file", configPath,
-		"--socket", filepath.Join("/run/routerd/dns-resolver", name+".sock"),
-		"--state-file", filepath.Join("/var/lib/routerd/dns-resolver", name, "state.json"),
-		"--event-file", filepath.Join("/var/lib/routerd/dns-resolver", name, "events.jsonl"),
+		"--socket", filepath.Join(runtimeDir, "dns-resolver", name+".sock"),
+		"--state-file", filepath.Join(stateDir, "dns-resolver", name, "state.json"),
+		"--event-file", filepath.Join(stateDir, "dns-resolver", name, "events.jsonl"),
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	if err := cmd.Start(); err != nil {
@@ -254,6 +259,19 @@ func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNS
 		runningMu.Unlock()
 	}()
 	return true, nil
+}
+
+func (c Controller) dirs() (runtimeDir, stateDir string) {
+	defaults, _ := platform.Current()
+	runtimeDir = strings.TrimRight(c.RuntimeDir, "/")
+	if runtimeDir == "" {
+		runtimeDir = defaults.RuntimeDir
+	}
+	stateDir = strings.TrimRight(c.StateDir, "/")
+	if stateDir == "" {
+		stateDir = defaults.StateDir
+	}
+	return runtimeDir, stateDir
 }
 
 func (c Controller) saveStatus(name string, spec api.DNSResolverSpec, phase, message string) error {

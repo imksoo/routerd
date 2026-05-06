@@ -352,7 +352,8 @@ func (r *Runner) Start(ctx context.Context) error {
 	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
 	dhcp4Lease := dhcpv4lease.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Lease, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
-	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver}
+	defaults, _ := platform.Current()
+	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	daemonStatusSync := DaemonStatusController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	wan := egressroute.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
@@ -862,13 +863,15 @@ func (c DaemonStatusController) daemonSockets() []string {
 		case "DHCPv6PrefixDelegation":
 			socket := c.DaemonSockets[resource.Metadata.Name]
 			if socket == "" {
-				socket = filepath.Join("/run/routerd/dhcpv6-client", resource.Metadata.Name+".sock")
+				defaults, _ := platform.Current()
+				socket = filepath.Join(defaults.RuntimeDir, "dhcpv6-client", resource.Metadata.Name+".sock")
 			}
 			add(socket)
 		case "DHCPv4Lease":
 			socket := c.DaemonSockets[resource.Metadata.Name]
 			if socket == "" {
-				socket = filepath.Join("/run/routerd/dhcpv4-client", resource.Metadata.Name+".sock")
+				defaults, _ := platform.Current()
+				socket = filepath.Join(defaults.RuntimeDir, "dhcpv4-client", resource.Metadata.Name+".sock")
 			}
 			add(socket)
 		case "HealthCheck":
@@ -878,7 +881,8 @@ func (c DaemonStatusController) daemonSockets() []string {
 			}
 			socket := spec.SocketSource
 			if socket == "" {
-				socket = filepath.Join("/run/routerd/healthcheck", resource.Metadata.Name+".sock")
+				defaults, _ := platform.Current()
+				socket = filepath.Join(defaults.RuntimeDir, "healthcheck", resource.Metadata.Name+".sock")
 			}
 			add(socket)
 		case "PPPoESession":
@@ -891,7 +895,8 @@ func (c DaemonStatusController) daemonSockets() []string {
 				socket = c.DaemonSockets[resource.Metadata.Name]
 			}
 			if socket == "" {
-				socket = filepath.Join("/run/routerd/pppoe-client", resource.Metadata.Name+".sock")
+				defaults, _ := platform.Current()
+				socket = filepath.Join(defaults.RuntimeDir, "pppoe-client", resource.Metadata.Name+".sock")
 			}
 			add(socket)
 		}
