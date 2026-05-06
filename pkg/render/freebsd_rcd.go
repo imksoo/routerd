@@ -61,7 +61,7 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 	}
 	buf.WriteString("\n")
 	if len(spec.RuntimeDirectory) > 0 || len(spec.StateDirectory) > 0 || len(spec.LogsDirectory) > 0 {
-		buf.WriteString("${name}_prestart() {\n")
+		buf.WriteString(name + "_prestart() {\n")
 		for _, dir := range freeBSDServiceDirs("/var/run", spec.RuntimeDirectory) {
 			buf.WriteString("  mkdir -p " + shellSingleQuote(dir) + "\n")
 		}

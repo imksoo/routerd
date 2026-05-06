@@ -426,6 +426,12 @@ exit 0
 echo "$@" >> %q
 exit 0
 `, pfctlLog))
+	writeExecutable(t, filepath.Join(binDir, "kldstat"), `#!/bin/sh
+exit 1
+`)
+	writeExecutable(t, filepath.Join(binDir, "kldload"), `#!/bin/sh
+exit 0
+`)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

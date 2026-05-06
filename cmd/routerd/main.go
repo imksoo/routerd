@@ -3491,6 +3491,11 @@ func applyFreeBSDPFConfig(data []byte, pfPath string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("write pf config %s: %w", pfPath, err)
 	}
+	for _, module := range []string{"pf", "pflog"} {
+		if err := ensureFreeBSDKernelModule(module); err != nil {
+			return nil, err
+		}
+	}
 	if err := runLogged("pfctl", "-nf", pfPath); err != nil {
 		return nil, err
 	}
@@ -3514,6 +3519,24 @@ func applyFreeBSDPFConfig(data []byte, pfPath string) ([]string, error) {
 		changed = append(changed, "service:pflog")
 	}
 	return changed, nil
+}
+
+func ensureFreeBSDKernelModule(module string) error {
+	if module == "" {
+		return nil
+	}
+	if err := exec.Command("kldstat", "-q", "-m", module).Run(); err == nil {
+		return nil
+	}
+	out, err := exec.Command("kldload", module).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	text := strings.ToLower(string(out))
+	if strings.Contains(text, "file exists") || strings.Contains(text, "already loaded") {
+		return nil
+	}
+	return fmt.Errorf("kldload %s: %w: %s", module, err, strings.TrimSpace(string(out)))
 }
 
 func applyFreeBSDRCDScripts(scripts map[string][]byte, rcScriptDir string) ([]string, error) {

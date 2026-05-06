@@ -58,8 +58,8 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	}
 	pf := string(got.PF)
 	for _, want := range []string{
-		`wan_if = vtnet0`,
-		`lan_if = vtnet1`,
+		`wan_if = "vtnet0"`,
+		`lan_if = "vtnet1"`,
 		`nat on vtnet0 from 192.168.10.0/24 to any -> (vtnet0)`,
 		`block drop all`,
 	} {

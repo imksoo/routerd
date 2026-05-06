@@ -61,8 +61,8 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		`set skip on lo0`,
-		`lan_if = em1`,
-		`wan_if = em0`,
+		`lan_if = "em1"`,
+		`wan_if = "em0"`,
 		`nat on em0 from 172.18.0.0/16 to any -> (em0)`,
 		`block drop all`,
 		`pass quick inet6 proto icmp6 all keep state`,

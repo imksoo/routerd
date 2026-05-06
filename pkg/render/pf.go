@@ -292,9 +292,9 @@ func pfInterfaceSet(ifnames []string) string {
 	values := append([]string(nil), ifnames...)
 	sort.Strings(values)
 	if len(values) == 1 {
-		return values[0]
+		return pfQuote(values[0])
 	}
-	return "{ " + strings.Join(values, ", ") + " }"
+	return pfQuote("{ " + strings.Join(values, ", ") + " }")
 }
 
 func pfZoneMacro(zone firewallZone) string {

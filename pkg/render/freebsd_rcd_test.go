@@ -24,6 +24,7 @@ func TestFreeBSDRCDScript(t *testing.T) {
 		`command="/usr/sbin/daemon"`,
 		`procname='/usr/local/sbin/routerd-dns-resolver'`,
 		`command_args="-P ${pidfile} -r -f -- '/usr/local/sbin/routerd-dns-resolver' '--config' '/usr/local/etc/routerd/dns-resolver.yaml'"`,
+		`routerd_dns_resolver_prestart() {`,
 		`mkdir -p '/var/run/routerd/dns-resolver'`,
 		`mkdir -p '/var/db/routerd/dns-resolver'`,
 		`mkdir -p '/var/log/routerd'`,
