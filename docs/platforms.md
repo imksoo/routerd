@@ -38,16 +38,19 @@ NixOS is a first-class secondary platform. Instead of writing transient systemd 
 Implemented:
 
 - systemd unit generation for `routerd-dhcpv6-client`
+- systemd unit generation for `routerd-dhcpv4-client`
+- systemd unit generation for `routerd-pppoe-client`
 - NixOS module generation for `Package`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`
 - automatic `nixos-rebuild test` from `routerd apply --dry-run`
 - automatic `nixos-rebuild switch` from `routerd apply`
 - DHCPv6-PD reaches `Bound`
+- dnsmasq, DNS resolver, HealthCheck, and firewall logger services can be represented in the generated NixOS module
 - WireGuard, Tailscale, and VXLAN coverage
 - Partial VRF coverage
 
 Not yet covered:
 
-- nftables, dnsmasq, DNS resolver, HealthCheck and other long-running daemons end-to-end
+- Full NixOS-native renderers for every Linux runtime feature
 - Full rollback orchestration across routerd state and NixOS generations
 
 On NixOS, populate `systemd.services.routerd.path` with the commands routerd needs. When `Package` resources have `os: nixos`, routerd does **not** install packages imperatively at runtime. It writes them to `environment.systemPackages` in `/etc/nixos/routerd-generated.nix`, then lets `nixos-rebuild` activate the system profile.
@@ -77,6 +80,9 @@ Implemented:
 - `pflog0` ingestion through direct BPF reads for firewall logs
 - DNS resolver daemon builds on FreeBSD; `viaInterface` can target `fib:<n>` for FIB-bound upstream routing
 - rc.d script generation, installation, and `service <name> onestart` activation from `SystemdUnit`
+- rc.d script generation for `routerd-healthcheck`
+- rc.d script generation for `routerd-firewall-logger` with direct `pflog0` input
+- rc.d script generation for `TailscaleNode`
 - dnsmasq rc.d ordering after `mpd5` for PPPoE coexistence
 - Static DS-Lite gif tunnel rendering
 
@@ -85,14 +91,14 @@ Not yet covered:
 - Full FreeBSD-idiomatic network configuration generation
 - Dynamic DS-Lite from AFTR FQDN or delegated address
 - Vendor-specific pf log format variants
-- HealthCheck and DHCP server long-running daemons on FreeBSD
+- DHCP server long-running daemon supervision on FreeBSD
 
 FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The `Package` examples for FreeBSD only cover what is already ported or has a working skeleton.
 
 | Category | Packages |
 | --- | --- |
-| Runtime | `dnsmasq`, `wireguard-tools`, `strongswan`, `mpd5` |
-| Diagnostics | `bind-tools` |
+| Runtime | `dnsmasq`, `wireguard-tools`, `tailscale`, `strongswan`, `mpd5` |
+| Diagnostics | `bind-tools`, `tcpdump` |
 | Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `ping`, `traceroute` |
 
 `routerd render freebsd --out-dir <dir>` produces:

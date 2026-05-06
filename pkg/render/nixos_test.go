@@ -536,6 +536,89 @@ func TestNixOSModuleSynthesizesFirewallLoggerUnit(t *testing.T) {
 	}
 }
 
+func TestNixOSModuleSynthesizesDHCPv4ClientDaemonUnit(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18", AdminUp: true},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+			Metadata: api.ObjectMeta{Name: "wan-dhcpv4"},
+			Spec: api.DHCPv4LeaseSpec{
+				Interface:        "wan",
+				Hostname:         "router02",
+				RequestedAddress: "192.0.2.10",
+			},
+		},
+	}}}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`systemd.services."routerd-dhcpv4-client@wan-dhcpv4"`,
+		`"/usr/local/sbin/routerd-dhcpv4-client"`,
+		`"--interface"`,
+		`"ens18"`,
+		`"--hostname"`,
+		`"router02"`,
+		`"--requested-address"`,
+		`"192.0.2.10"`,
+		`RuntimeDirectory = [ "routerd/dhcpv4-client" ];`,
+		`CapabilityBoundingSet = [ "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_NET_BIND_SERVICE" ];`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("NixOS module missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNixOSModuleSynthesizesPPPoESessionDaemonUnit(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18", AdminUp: true},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
+			Metadata: api.ObjectMeta{Name: "softether"},
+			Spec: api.PPPoESessionSpec{
+				Interface: "wan",
+				Username:  "open@open.ad.jp",
+				Password:  "open",
+				MTU:       1454,
+				MRU:       1454,
+			},
+		},
+	}}}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`systemd.services."routerd-pppoe-client@softether"`,
+		`"/usr/local/sbin/routerd-pppoe-client"`,
+		`"--interface"`,
+		`"ens18"`,
+		`"--username"`,
+		`"open@open.ad.jp"`,
+		`"--password"`,
+		`"open"`,
+		`RuntimeDirectory = [ "routerd/pppoe-client" ];`,
+		`ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" "/etc/ppp" ];`,
+		`CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("NixOS module missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNixOSModuleIgnoresLegacyPrefixDelegationClient(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

@@ -910,6 +910,55 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 		})
 	}
 	for _, res := range router.Spec.Resources {
+		if res.Kind != "DHCPv4Lease" {
+			continue
+		}
+		spec, err := res.DHCPv4LeaseSpec()
+		if err != nil {
+			return nil, err
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			ifname = spec.Interface
+		}
+		if ifname == "" {
+			return nil, fmt.Errorf("%s needs spec.interface", res.ID())
+		}
+		name := "routerd-dhcpv4-client@" + res.Metadata.Name + ".service"
+		if explicit[name] {
+			continue
+		}
+		out = append(out, nixOSSystemdUnit{
+			Name: name,
+			Spec: dhcpv4ClientSystemdSpec(res.Metadata.Name, ifname, spec, telemetryEnv),
+		})
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "PPPoESession" {
+			continue
+		}
+		spec, err := res.PPPoESessionSpec()
+		if err != nil {
+			return nil, err
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			ifname = spec.Interface
+		}
+		if ifname == "" {
+			return nil, fmt.Errorf("%s needs spec.interface", res.ID())
+		}
+		name := "routerd-pppoe-client@" + res.Metadata.Name + ".service"
+		if explicit[name] {
+			continue
+		}
+		unit, err := pppoeSessionSystemdSpec(res.Metadata.Name, ifname, spec, telemetryEnv)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", res.ID(), err)
+		}
+		out = append(out, nixOSSystemdUnit{Name: name, Spec: unit})
+	}
+	for _, res := range router.Spec.Resources {
 		if res.Kind != "FirewallLog" {
 			continue
 		}
@@ -931,6 +980,102 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func dhcpv4ClientSystemdSpec(name, ifname string, spec api.DHCPv4LeaseSpec, telemetryEnv []string) api.SystemdUnitSpec {
+	noNewPrivileges := true
+	privateTmp := true
+	exec := []string{"/usr/local/sbin/routerd-dhcpv4-client", "daemon", "--resource", name, "--interface", ifname}
+	if spec.Hostname != "" {
+		exec = append(exec, "--hostname", spec.Hostname)
+	}
+	if spec.RequestedAddress != "" {
+		exec = append(exec, "--requested-address", spec.RequestedAddress)
+	}
+	if spec.ClassID != "" {
+		exec = append(exec, "--class-id", spec.ClassID)
+	}
+	if spec.ClientID != "" {
+		exec = append(exec, "--client-id", spec.ClientID)
+	}
+	return api.SystemdUnitSpec{
+		Description:              "routerd DHCPv4 client " + name,
+		ExecStart:                exec,
+		Wants:                    []string{"network-online.target"},
+		After:                    []string{"network-online.target"},
+		WantedBy:                 []string{"multi-user.target"},
+		Restart:                  "always",
+		RestartSec:               "5s",
+		RuntimeDirectory:         []string{"routerd/dhcpv4-client"},
+		RuntimeDirectoryPreserve: "yes",
+		StateDirectory:           []string{"routerd/dhcpv4-client"},
+		LogsDirectory:            []string{"routerd"},
+		ReadWritePaths:           []string{"/run/routerd", "/var/lib/routerd", "/var/log/routerd"},
+		Environment:              telemetryEnv,
+		AmbientCapabilities:      []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
+		CapabilityBoundingSet:    []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
+		ProtectSystem:            "strict",
+		ProtectHome:              "true",
+		NoNewPrivileges:          &noNewPrivileges,
+		PrivateTmp:               &privateTmp,
+	}
+}
+
+func pppoeSessionSystemdSpec(name, ifname string, spec api.PPPoESessionSpec, telemetryEnv []string) (api.SystemdUnitSpec, error) {
+	noNewPrivileges := true
+	privateTmp := true
+	exec := []string{"/usr/local/sbin/routerd-pppoe-client", "daemon", "--resource", name, "--interface", ifname, "--username", spec.Username}
+	if spec.PasswordFile != "" {
+		exec = append(exec, "--password-file", spec.PasswordFile)
+	} else if spec.Password != "" {
+		exec = append(exec, "--password", spec.Password)
+	} else {
+		return api.SystemdUnitSpec{}, fmt.Errorf("password or passwordFile is required")
+	}
+	if spec.AuthMethod != "" {
+		exec = append(exec, "--auth-method", spec.AuthMethod)
+	}
+	if spec.MTU != 0 {
+		exec = append(exec, "--mtu", strconv.Itoa(spec.MTU))
+	}
+	if spec.MRU != 0 {
+		exec = append(exec, "--mru", strconv.Itoa(spec.MRU))
+	}
+	if spec.ServiceName != "" {
+		exec = append(exec, "--service-name", spec.ServiceName)
+	}
+	if spec.ACName != "" {
+		exec = append(exec, "--ac-name", spec.ACName)
+	}
+	if spec.LCPEchoInterval != 0 {
+		exec = append(exec, "--lcp-echo-interval", strconv.Itoa(spec.LCPEchoInterval))
+	}
+	if spec.LCPEchoFailure != 0 {
+		exec = append(exec, "--lcp-echo-failure", strconv.Itoa(spec.LCPEchoFailure))
+	}
+	return api.SystemdUnitSpec{
+		Description:              "routerd PPPoE client " + name,
+		ExecStart:                exec,
+		Wants:                    []string{"network-online.target"},
+		After:                    []string{"network-online.target"},
+		WantedBy:                 []string{"multi-user.target"},
+		Restart:                  "always",
+		RestartSec:               "5s",
+		RuntimeDirectory:         []string{"routerd/pppoe-client"},
+		RuntimeDirectoryPreserve: "yes",
+		StateDirectory:           []string{"routerd/pppoe-client"},
+		LogsDirectory:            []string{"routerd"},
+		ReadWritePaths:           []string{"/run/routerd", "/var/lib/routerd", "/var/log/routerd", "/etc/ppp"},
+		Environment:              telemetryEnv,
+		AmbientCapabilities:      []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN"},
+		CapabilityBoundingSet:    []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
+		ProtectSystem:            "strict",
+		ProtectHome:              "true",
+		NoNewPrivileges:          &noNewPrivileges,
+		PrivateTmp:               &privateTmp,
+	}, nil
 }
 
 func firewallLoggerSystemdSpec(spec api.FirewallLogSpec) api.SystemdUnitSpec {

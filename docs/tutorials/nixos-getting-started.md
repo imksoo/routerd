@@ -8,7 +8,7 @@ NixOS is a first-class secondary platform for routerd. The recommended path on N
 
 ## Recommended starting scope
 
-On NixOS, start by managing the DHCPv6-PD client through the declarative path. This is the most fully covered NixOS integration today and gives you observable end-to-end behaviour. Other resources can be added as the corresponding NixOS module support lands.
+On NixOS, start by managing the daemon-based WAN services through the declarative path. DHCPv6-PD, DHCPv4 client leases, PPPoE sessions, HealthCheck, dnsmasq, and firewall logging can now be represented in the generated NixOS module. Add more router resources after the base service set reaches a clean `nixos-rebuild test`.
 
 ## Generated artefacts
 
@@ -19,7 +19,7 @@ sudo nixos-rebuild test
 sudo nixos-rebuild switch
 ```
 
-The generated unit launches `routerd-dhcpv6-client` with an explicit binary path and the appropriate `RuntimeDirectory`, `StateDirectory`, `ProtectSystem=strict`, and capability list.
+The generated units launch routerd daemons with explicit binary paths and the appropriate `RuntimeDirectory`, `StateDirectory`, `ProtectSystem=strict`, and capability lists.
 
 ## Why not transient units
 
@@ -30,14 +30,16 @@ Units placed under `/run/systemd/system` on NixOS are not part of the system con
 What is implemented:
 
 - systemd unit generation for `routerd-dhcpv6-client`
+- systemd unit generation for `routerd-dhcpv4-client`
+- systemd unit generation for `routerd-pppoe-client`
 - NixOS module generation for `Package`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`
 - DHCPv6-PD reaches `Bound` after `nixos-rebuild switch`
-- WireGuard / VXLAN coverage tested across NixOS / Linux / FreeBSD
+- dnsmasq, DNS resolver, HealthCheck, and firewall logger services can be declared through the generated module
+- WireGuard / Tailscale / VXLAN coverage tested across NixOS / Linux / FreeBSD
 
 What is still rolling in:
 
-- nftables / dnsmasq / DNS resolver / HealthCheck end-to-end
-- `Package` resolution for the full Ubuntu reference list
+- NixOS-native renderers for every Linux runtime feature
 - Integration with NixOS `generation` rollback semantics
 
 For the per-platform breakdown, see [supported platforms](../platforms.md).

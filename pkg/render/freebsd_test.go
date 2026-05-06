@@ -116,6 +116,56 @@ func TestFreeBSDIgnoresPrefixDelegationClientRenderer(t *testing.T) {
 	}
 }
 
+func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"},
+			Metadata: api.ObjectMeta{Name: "home"},
+			Spec: api.TailscaleNodeSpec{
+				Hostname:          "router01",
+				AdvertiseExitNode: true,
+				AdvertiseRoutes:   []string{"192.168.0.0/16"},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.FirewallLogSpec{Enabled: true, Path: "/var/db/routerd/firewall-logs.db"},
+		},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	tailscale := string(got.RCDScripts["routerd_tailscale_home"])
+	for _, want := range []string{
+		`PROVIDE: routerd_tailscale_home`,
+		`/usr/local/bin/tailscale`,
+		`up`,
+		`--hostname=router01`,
+		`--advertise-exit-node`,
+		`--advertise-routes=192.168.0.0/16`,
+	} {
+		if !strings.Contains(tailscale, want) {
+			t.Fatalf("tailscale rc.d script missing %q:\n%s", want, tailscale)
+		}
+	}
+	firewall := string(got.RCDScripts["routerd_firewall_logger"])
+	for _, want := range []string{
+		`PROVIDE: routerd_firewall_logger`,
+		`/usr/local/sbin/routerd-firewall-logger`,
+		`daemon`,
+		`--path`,
+		`/var/db/routerd/firewall-logs.db`,
+		`--pflog-interface`,
+		`pflog0`,
+	} {
+		if !strings.Contains(firewall, want) {
+			t.Fatalf("firewall logger rc.d script missing %q:\n%s", want, firewall)
+		}
+	}
+}
+
 func TestFreeBSDVXLANMultipleRemotesEmitsWarningAndUsesSeed(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"}},
