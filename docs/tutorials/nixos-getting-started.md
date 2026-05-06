@@ -8,7 +8,7 @@ NixOS is a first-class secondary platform for routerd. The recommended path on N
 
 ## Recommended starting scope
 
-On NixOS, start by managing the daemon-based WAN services through the declarative path. DHCPv6-PD, DHCPv4 client leases, PPPoE sessions, HealthCheck, dnsmasq, and firewall logging can now be represented in the generated NixOS module. Add more router resources after the base service set reaches a clean `nixos-rebuild test`.
+On NixOS, start by managing the daemon-based WAN services through the declarative path. DHCPv6-PD, DHCPv4 client leases, PPPoE sessions, HealthCheck, dnsmasq, firewall logging, nftables activation, and the main `routerd.service` can now be represented in the generated NixOS module. Add more router resources after the base service set reaches a clean `nixos-rebuild test`.
 
 ## Generated artefacts
 
@@ -34,13 +34,10 @@ What is implemented:
 - systemd unit generation for `routerd-pppoe-client`
 - NixOS module generation for `Package`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`
 - DHCPv6-PD reaches `Bound` after `nixos-rebuild switch`
-- dnsmasq, DNS resolver, HealthCheck, and firewall logger services can be declared through the generated module
+- dnsmasq, DNS resolver, HealthCheck, firewall logger, Tailscale, DHCPv4 client, DHCPv6 client, and PPPoE client services can be declared through the generated module
+- nftables is enabled from the generated module when NAT, firewall, policy routing, or Path MTU resources require it
+- failed `nixos-rebuild switch` attempts a `nixos-rebuild switch --rollback`
 - WireGuard / Tailscale / VXLAN coverage tested across NixOS / Linux / FreeBSD
-
-What is still rolling in:
-
-- NixOS-native renderers for every Linux runtime feature
-- Integration with NixOS `generation` rollback semantics
 
 For the per-platform breakdown, see [supported platforms](../platforms.md).
 

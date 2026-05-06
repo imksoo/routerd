@@ -4,7 +4,7 @@ title: Supported platforms
 
 # Supported platforms
 
-routerd is designed to be cross-OS, but the implementation is at different maturity levels per platform. This page lists what is implemented, what is groundwork, and what is out of scope, so you can pick a platform with a clear understanding of the current limits.
+routerd is designed to be cross-OS, but each platform uses a different host integration model. This page lists the concrete OS surfaces routerd uses on each platform, so you can review generated files and runtime ownership before applying a router configuration.
 
 ## Linux (Ubuntu / Debian)
 
@@ -43,15 +43,14 @@ Implemented:
 - NixOS module generation for `Package`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`
 - automatic `nixos-rebuild test` from `routerd apply --dry-run`
 - automatic `nixos-rebuild switch` from `routerd apply`
+- rollback attempt with `nixos-rebuild switch --rollback` when a NixOS switch fails
+- generation tracking before and after `nixos-rebuild`
 - DHCPv6-PD reaches `Bound`
-- dnsmasq, DNS resolver, HealthCheck, and firewall logger services can be represented in the generated NixOS module
-- WireGuard, Tailscale, and VXLAN coverage
-- Partial VRF coverage
-
-Not yet covered:
-
-- Full NixOS-native renderers for every Linux runtime feature
-- Full rollback orchestration across routerd state and NixOS generations
+- generated `routerd-dnsmasq` service when DHCP or RA resources require dnsmasq
+- generated DNS resolver, HealthCheck, firewall logger, Tailscale, DHCPv4 client, DHCPv6 client, and PPPoE client services
+- generated `networking.nftables.enable = true` when NAT, firewall, policy routing, or Path MTU resources require nftables
+- WireGuard, Tailscale, VXLAN, and VRF coverage
+- Linux runtime resources that are not native NixOS network declarations are reconciled by `routerd.service` after NixOS activation
 
 On NixOS, populate `systemd.services.routerd.path` with the commands routerd needs. When `Package` resources have `os: nixos`, routerd does **not** install packages imperatively at runtime. It writes them to `environment.systemPackages` in `/etc/nixos/routerd-generated.nix`, then lets `nixos-rebuild` activate the system profile.
 
@@ -63,7 +62,7 @@ On NixOS, populate `systemd.services.routerd.path` with the commands routerd nee
 
 ## FreeBSD
 
-FreeBSD is the other secondary platform. The DHCPv6-PD client runs under `daemon(8)` and reliably keeps a lease bound. Most generators have a working render path, but production-grade application is still maturing.
+FreeBSD is the other secondary platform. The DHCPv6-PD client runs under `daemon(8)` and reliably keeps a lease bound. routerd maps resources to FreeBSD-native `rc.conf`, `rc.d`, `pf`, `mpd5`, `ifconfig`, and dnsmasq surfaces instead of using Linux tools.
 
 Implemented:
 
@@ -73,11 +72,13 @@ Implemented:
 - PPPoE skeleton
 - `Package` install through `pkg`
 - `render freebsd --out-dir` emits `install-packages.sh` for reviewable `pkg install` bootstrap
+- FreeBSD-idiomatic `rc.conf.d` output for `gateway_enable`, `ipv6_gateway_enable`, `cloned_interfaces`, `ifconfig_*`, `static_routes`, `ipv6_static_routes`, `pf_enable`, `pflog_enable`, and `mpd_enable`
+- `dhclient.conf`, `mpd5.conf`, `pf.conf`, dnsmasq config, and generated `rc.d` scripts from `routerd render freebsd --out-dir`
 - pf rendering from `FirewallZone`, `FirewallPolicy`, `FirewallRule`
 - pf NAT rendering from `IPv4SourceNAT` and `NAT44Rule`
 - automatic `pfctl -nf` validation and `pfctl -f` application for generated `pf.conf`
 - conntrack-equivalent traffic flows from `pfctl -ss -v`
-- `pflog0` ingestion through direct BPF reads for firewall logs
+- `pflog0` ingestion through direct BPF reads for firewall logs; packet parsing avoids dependency on vendor-specific tcpdump text formats
 - managed dnsmasq for DHCPv4, DHCPv6, and Router Advertisement
 - dnsmasq lease persistence under `/var/db/routerd/dnsmasq`
 - dnsmasq config validation with `dnsmasq --test` before service restart
@@ -89,12 +90,7 @@ Implemented:
 - rc.d script generation for `TailscaleNode`
 - dnsmasq rc.d ordering after `mpd5` for PPPoE coexistence
 - Static DS-Lite gif tunnel rendering
-
-Still limited:
-
-- Full FreeBSD-idiomatic network configuration generation
-- Dynamic DS-Lite from AFTR FQDN or delegated address
-- Vendor-specific pf log format variants
+- Dynamic DS-Lite apply from static AFTR IPv6, AFTR FQDN, or delegated-address local source
 
 FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The `Package` examples for FreeBSD only cover what is already ported or has a working skeleton.
 
@@ -110,9 +106,10 @@ FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The `Packa
 - `dhclient.conf`
 - `mpd5.conf`
 - `pf.conf`
+- `dnsmasq.conf`
 - `rc.d-*`
 
-`routerd apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, validates dnsmasq with `dnsmasq --test`, and starts generated rc.d scripts with `service <name> onestart` when they are not already running. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
+`routerd apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, validates dnsmasq with `dnsmasq --test`, starts generated rc.d scripts with `service <name> onestart`, and applies dynamic DS-Lite tunnels with `ifconfig gif` when static `rc.conf` rendering is not enough. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
 
 ## Implementation guideline for OS abstraction
 
