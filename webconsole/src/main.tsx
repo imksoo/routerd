@@ -149,6 +149,7 @@ type DHCPLease = {
   hostname?: string;
   clientId?: string;
   vendor?: string;
+  family?: string;
   source?: string;
 };
 
@@ -600,7 +601,7 @@ const useStyles = makeStyles({
     tableLayout: "fixed",
   },
   dhcpLeaseTable: {
-    minWidth: "840px",
+    minWidth: "900px",
     tableLayout: "fixed",
   },
   code: {
@@ -678,7 +679,7 @@ const useStyles = makeStyles({
   },
   firewallRankHeader: {
     display: "grid",
-    gridTemplateColumns: "56px minmax(220px, 1.25fr) minmax(220px, 1.25fr) minmax(210px, 1fr) 64px",
+    gridTemplateColumns: "56px minmax(240px, 1.35fr) minmax(240px, 1.35fr) 72px",
     gap: "10px",
     padding: "0 10px 6px",
     color: tokens.colorNeutralForeground3,
@@ -690,7 +691,7 @@ const useStyles = makeStyles({
   },
   firewallTimelineHeader: {
     display: "grid",
-    gridTemplateColumns: "96px 68px minmax(220px, 1.35fr) minmax(220px, 1.35fr) minmax(210px, 1fr) 72px minmax(96px, 0.55fr)",
+    gridTemplateColumns: "96px 68px minmax(240px, 1.4fr) minmax(240px, 1.4fr) 72px minmax(120px, 0.7fr)",
     gap: "10px",
     padding: "0 10px 6px",
     color: tokens.colorNeutralForeground3,
@@ -702,7 +703,7 @@ const useStyles = makeStyles({
   },
   firewallRankRow: {
     display: "grid",
-    gridTemplateColumns: "56px minmax(220px, 1.25fr) minmax(220px, 1.25fr) minmax(210px, 1fr) 64px",
+    gridTemplateColumns: "56px minmax(240px, 1.35fr) minmax(240px, 1.35fr) 72px",
     gap: "10px",
     alignItems: "start",
     padding: "8px 10px",
@@ -718,7 +719,7 @@ const useStyles = makeStyles({
   },
   firewallTimelineRow: {
     display: "grid",
-    gridTemplateColumns: "96px 68px minmax(220px, 1.35fr) minmax(220px, 1.35fr) minmax(210px, 1fr) 72px minmax(96px, 0.55fr)",
+    gridTemplateColumns: "96px 68px minmax(240px, 1.4fr) minmax(240px, 1.4fr) 72px minmax(120px, 0.7fr)",
     gap: "10px",
     alignItems: "start",
     padding: "8px 10px",
@@ -937,7 +938,6 @@ function App() {
   const connections = summary?.connections?.entries ?? [];
   const dnsLabels = useMemo(() => dnsLabelMap(summary?.dnsQueries ?? []), [summary?.dnsQueries]);
   const leaseMap = useMemo(() => dhcpLeaseMap(summary?.dhcpLeases ?? []), [summary?.dhcpLeases]);
-  const relatedClients = useMemo(() => firewallRelatedClientMap(connections), [connections]);
   const filteredConnections = useMemo(
     () => filterAndSortConnections(connections, dnsLabels, connectionFilters),
     [connections, dnsLabels, connectionFilters],
@@ -1247,11 +1247,11 @@ function App() {
               <div className={styles.firewallStack}>
                 <Card id="firewall-ranking" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Deny ranking</Text>} description={<Text className={styles.muted}>Grouped by source, destination, and protocol</Text>} />
-                  <RecentDeny logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} relatedClients={relatedClients} />
+                  <RecentDeny logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} />
                 </Card>
                 <Card id="firewall-timeline" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Deny timeline</Text>} description={<Text className={styles.muted}>Newest firewall log rows</Text>} />
-                  <FirewallTimeline logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} relatedClients={relatedClients} />
+                  <FirewallTimeline logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} />
                 </Card>
               </div>
             ) : null}
@@ -1724,7 +1724,8 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
     <div className={styles.tableWrap}>
       <Table size="small" className={styles.dhcpLeaseTable}>
         <colgroup>
-          <col style={{ width: "170px" }} />
+          <col style={{ width: "82px" }} />
+          <col style={{ width: "250px" }} />
           <col />
           <col style={{ width: "150px" }} />
           <col style={{ width: "170px" }} />
@@ -1732,6 +1733,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
         </colgroup>
         <TableHeader>
           <TableRow>
+            <TableHeaderCell>Family</TableHeaderCell>
             <TableHeaderCell>IP</TableHeaderCell>
             <TableHeaderCell>Hostname</TableHeaderCell>
             <TableHeaderCell>MAC</TableHeaderCell>
@@ -1742,6 +1744,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
         <TableBody>
           {rows.map(lease => (
             <TableRow key={`${lease.ip}-${lease.mac}`}>
+              <TableCell><Badge appearance="tint" color={lease.family === "ipv6" ? "brand" : "success"}>{lease.family || "-"}</Badge></TableCell>
               <TableCell><code className={styles.wrapCode}>{lease.ip || "-"}</code></TableCell>
               <TableCell>{lease.hostname || "-"}</TableCell>
               <TableCell><code className={styles.wrapCode}>{lease.mac || "-"}</code></TableCell>
@@ -1759,12 +1762,10 @@ function RecentDeny({
   logs,
   dnsLabels,
   leases,
-  relatedClients,
 }: {
   logs: FirewallLog[];
   dnsLabels: Record<string, string>;
   leases: Record<string, DHCPLease>;
-  relatedClients: Record<string, ConnTuple | undefined>;
 }) {
   const styles = useStyles();
   return (
@@ -1773,7 +1774,6 @@ function RecentDeny({
         <span>Count</span>
         <span>Source</span>
         <span>Destination</span>
-        <span>Related client</span>
         <span>Proto</span>
       </div>
       {denyRows(logs).map(row => (
@@ -1781,7 +1781,6 @@ function RecentDeny({
           <FirewallCell label="Count">{row.count}</FirewallCell>
           <FirewallCell label="Source"><EndpointDetail address={row.src} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Destination"><EndpointDetail address={row.dst} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
-          <FirewallCell label="Related"><RelatedClient tuple={relatedClients[row.key]} leases={leases} /></FirewallCell>
           <FirewallCell label="Proto">{row.proto}</FirewallCell>
         </div>
       ))}
@@ -1793,12 +1792,10 @@ function FirewallTimeline({
   logs,
   dnsLabels,
   leases,
-  relatedClients,
 }: {
   logs: FirewallLog[];
   dnsLabels: Record<string, string>;
   leases: Record<string, DHCPLease>;
-  relatedClients: Record<string, ConnTuple | undefined>;
 }) {
   const styles = useStyles();
   return (
@@ -1808,7 +1805,6 @@ function FirewallTimeline({
         <span>Action</span>
         <span>Source</span>
         <span>Destination</span>
-        <span>Related client</span>
         <span>Proto</span>
         <span>Rule</span>
       </div>
@@ -1818,7 +1814,6 @@ function FirewallTimeline({
           <FirewallCell label="Action"><Badge appearance="tint" color={firewallActionColor(log.action)}>{log.action || "-"}</Badge></FirewallCell>
           <FirewallCell label="Source"><EndpointDetail address={log.srcAddress} port={log.srcPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Destination"><EndpointDetail address={log.dstAddress} port={log.dstPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
-          <FirewallCell label="Related"><RelatedClient tuple={relatedClients[firewallLogKey(log)]} leases={leases} /></FirewallCell>
           <FirewallCell label="Proto">{[log.l3Proto, log.protocol].filter(Boolean).join("/") || "-"}</FirewallCell>
           <FirewallCell label="Rule"><code className={styles.wrapCode}>{log.ruleName || "-"}</code></FirewallCell>
         </div>
@@ -1858,22 +1853,6 @@ function EndpointDetail({
       {label || lease?.mac || vendor ? (
         <Text size={200} className={styles.muted}>
           {[label, lease?.mac, vendor].filter(Boolean).join(" / ")}
-        </Text>
-      ) : null}
-    </div>
-  );
-}
-
-function RelatedClient({ tuple, leases }: { tuple?: ConnTuple; leases: Record<string, DHCPLease> }) {
-  const styles = useStyles();
-  if (!tuple?.source) return <Text className={styles.muted}>-</Text>;
-  const lease = leases[tuple.source];
-  return (
-    <div className={styles.connectionFlow}>
-      <code className={styles.wrapCode}>{firewallEndpoint(tuple.source, Number(tuple.sourcePort) || undefined)}</code>
-      {lease?.hostname || lease?.mac || lease?.vendor ? (
-        <Text size={200} className={styles.muted}>
-          {[lease.hostname, lease.mac, lease.vendor].filter(Boolean).join(" / ")}
         </Text>
       ) : null}
     </div>
@@ -1971,16 +1950,6 @@ function dhcpLeaseMap(rows: DHCPLease[]) {
     if (row.ip) leases[row.ip] = row;
   }
   return leases;
-}
-
-function firewallRelatedClientMap(entries: ConnectionEntry[]) {
-  const related: Record<string, ConnTuple | undefined> = {};
-  for (const entry of entries) {
-    const reply = entry.reply;
-    if (!reply?.source || !reply?.destination) continue;
-    related[firewallTupleKey(reply.source, reply.sourcePort, reply.destination, reply.destinationPort, entry.protocol)] = entry.original;
-  }
-  return related;
 }
 
 function connectionFilterFacets(entries: ConnectionEntry[]) {

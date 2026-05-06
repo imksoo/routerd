@@ -74,6 +74,7 @@ type DHCPLease struct {
 	Hostname  string    `json:"hostname,omitempty"`
 	ClientID  string    `json:"clientId,omitempty"`
 	Vendor    string    `json:"vendor,omitempty"`
+	Family    string    `json:"family,omitempty"`
 	Source    string    `json:"source,omitempty"`
 }
 
@@ -500,6 +501,7 @@ func readDnsmasqLeases(path string) ([]DHCPLease, error) {
 			MAC:      strings.ToLower(fields[1]),
 			IP:       fields[2],
 			Hostname: hostname,
+			Family:   leaseAddressFamily(fields[2]),
 			Source:   path,
 		}
 		if expiresUnix > 0 {
@@ -512,6 +514,20 @@ func readDnsmasqLeases(path string) ([]DHCPLease, error) {
 		out = append(out, lease)
 	}
 	return out, nil
+}
+
+func leaseAddressFamily(address string) string {
+	parsed, err := netip.ParseAddr(address)
+	if err != nil {
+		return ""
+	}
+	if parsed.Is4() {
+		return "ipv4"
+	}
+	if parsed.Is6() {
+		return "ipv6"
+	}
+	return ""
 }
 
 func neighborList() ([]NeighborEntry, error) {

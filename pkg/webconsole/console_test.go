@@ -215,19 +215,22 @@ func TestHandlerIncludesDHCPLeases(t *testing.T) {
 
 func TestReadDnsmasqLeases(t *testing.T) {
 	leasePath := filepath.Join(t.TempDir(), "dnsmasq.leases")
-	if err := os.WriteFile(leasePath, []byte("1778014867 18:ec:e7:33:12:6c 172.18.0.150 aiseg2 01:18:ec:e7:33:12:6c\n"), 0o644); err != nil {
+	if err := os.WriteFile(leasePath, []byte("1778014867 18:ec:e7:33:12:6c 172.18.0.150 aiseg2 01:18:ec:e7:33:12:6c\n1778014867 bc:24:11:e0:8e:3a 2409:10:3d60:1271::20 host6 00:03:00:01:bc:24:11:e0:8e:3a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	leases, err := readDnsmasqLeases(leasePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(leases) != 1 {
+	if len(leases) != 2 {
 		t.Fatalf("leases = %d", len(leases))
 	}
 	lease := leases[0]
-	if lease.IP != "172.18.0.150" || lease.Hostname != "aiseg2" || lease.Vendor != "Panasonic" {
+	if lease.IP != "172.18.0.150" || lease.Hostname != "aiseg2" || lease.Vendor != "Panasonic" || lease.Family != "ipv4" {
 		t.Fatalf("lease = %+v", lease)
+	}
+	if leases[1].IP != "2409:10:3d60:1271::20" || leases[1].Family != "ipv6" {
+		t.Fatalf("ipv6 lease = %+v", leases[1])
 	}
 }
 
