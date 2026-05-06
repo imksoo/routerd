@@ -221,6 +221,56 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: guest
+      spec:
+        ifname: ens21
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VRF
+      metadata:
+        name: guest-vrf
+      spec:
+        ifname: vrf-guest
+        routeTable: 1001
+        members:
+          - guest
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-lab
+      spec:
+        listenPort: 51820
+        mtu: 1420
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: TailscaleNode
+      metadata:
+        name: home
+      spec:
+        hostname: nixos-edge
+        advertiseRoutes:
+          - 192.0.2.0/24
+        acceptDNS: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPsecConnection
+      metadata:
+        name: cloud-vpn-example
+      spec:
+        localAddress: 198.51.100.10
+        remoteAddress: 203.0.113.10
+        preSharedKey: change-me
+        leftSubnet: 192.0.2.0/24
+        rightSubnet: 10.10.0.0/16
+        cloudProviderHint: aws
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
         name: lan-ipv4

@@ -16,6 +16,7 @@ type nixOSInterface struct {
 	IfName            string
 	AdminUp           bool
 	Bridge            string
+	VRF               string
 	DHCPv4            bool
 	DHCPv4UseRoutes   *bool
 	DHCPv4UseDNS      *bool
@@ -58,6 +59,13 @@ type nixOSVXLAN struct {
 	Bridge         string
 }
 
+type nixOSVRF struct {
+	Name       string
+	IfName     string
+	RouteTable int
+	Members    []string
+}
+
 type nixOSDHCPv6Client struct {
 	Name      string
 	IFName    string
@@ -84,6 +92,10 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	vxlans, err := nixOSVXLANS(router)
+	if err != nil {
+		return nil, err
+	}
+	vrfs, err := nixOSVRFS(router, interfaces)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +161,9 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		for _, vxlan := range vxlans {
 			writeNixOSVXLAN(&buf, vxlan)
 			writeNixOSVXLANFDBService(&buf, vxlan)
+		}
+		for _, vrf := range vrfs {
+			writeNixOSVRF(&buf, vrf)
 		}
 		for _, iface := range interfaces {
 			writeNixOSNetwork(&buf, iface)
@@ -406,6 +421,21 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 		}
 	}
 	for _, res := range router.Spec.Resources {
+		if res.Kind != "VRF" {
+			continue
+		}
+		spec, err := res.VRFSpec()
+		if err != nil {
+			return nil, err
+		}
+		vrfIfName := defaultString(spec.IfName, res.Metadata.Name)
+		for _, member := range spec.Members {
+			if iface := interfaces[member]; iface != nil {
+				iface.VRF = vrfIfName
+			}
+		}
+	}
+	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "IPv4StaticAddress":
 			spec, err := res.IPv4StaticAddressSpec()
@@ -554,6 +584,37 @@ func nixOSVXLANS(router *api.Router) ([]nixOSVXLAN, error) {
 	return out, nil
 }
 
+func nixOSVRFS(router *api.Router, interfaces []nixOSInterface) ([]nixOSVRF, error) {
+	ifnames := map[string]string{}
+	for _, iface := range interfaces {
+		ifnames[iface.Name] = iface.IfName
+	}
+	var out []nixOSVRF
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "VRF" {
+			continue
+		}
+		spec, err := res.VRFSpec()
+		if err != nil {
+			return nil, err
+		}
+		var members []string
+		for _, member := range spec.Members {
+			if ifname := ifnames[member]; ifname != "" {
+				members = append(members, ifname)
+			}
+		}
+		out = append(out, nixOSVRF{
+			Name:       res.Metadata.Name,
+			IfName:     defaultString(spec.IfName, res.Metadata.Name),
+			RouteTable: spec.RouteTable,
+			Members:    members,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].IfName < out[j].IfName })
+	return out, nil
+}
+
 func writeNixOSBridge(buf *bytes.Buffer, bridge nixOSBridge) {
 	buf.WriteString("  systemd.network.netdevs." + nixString("30-routerd-"+bridge.IfName) + " = {\n")
 	buf.WriteString("    netdevConfig = {\n")
@@ -643,10 +704,22 @@ func writeNixOSVXLANFDBService(buf *bytes.Buffer, vxlan nixOSVXLAN) {
 	buf.WriteString("  };\n")
 }
 
+func writeNixOSVRF(buf *bytes.Buffer, vrf nixOSVRF) {
+	buf.WriteString("  systemd.network.netdevs." + nixString("32-routerd-"+vrf.IfName) + " = {\n")
+	buf.WriteString("    netdevConfig = {\n")
+	buf.WriteString("      Name = " + nixString(vrf.IfName) + ";\n")
+	buf.WriteString("      Kind = \"vrf\";\n")
+	buf.WriteString("    };\n")
+	buf.WriteString("    vrfConfig = {\n")
+	buf.WriteString("      Table = " + strconv.Itoa(vrf.RouteTable) + ";\n")
+	buf.WriteString("    };\n")
+	buf.WriteString("  };\n")
+}
+
 func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 	buf.WriteString("  systemd.network.networks." + nixString("10-netplan-"+iface.IfName) + " = {\n")
 	buf.WriteString("    matchConfig.Name = " + nixString(iface.IfName) + ";\n")
-	if iface.DHCPv4 || iface.AcceptRA || iface.Bridge != "" || len(iface.Addresses) == 0 || iface.DisableDHCPv4 || iface.DisableDHCPv6 || iface.DisableIPv6RA {
+	if iface.DHCPv4 || iface.AcceptRA || iface.Bridge != "" || iface.VRF != "" || len(iface.Addresses) == 0 || iface.DisableDHCPv4 || iface.DisableDHCPv6 || iface.DisableIPv6RA {
 		buf.WriteString("    networkConfig = {\n")
 		if iface.DisableDHCPv4 && iface.DisableDHCPv6 {
 			buf.WriteString("      DHCP = \"no\";\n")
@@ -667,6 +740,9 @@ func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 		}
 		if iface.Bridge != "" {
 			buf.WriteString("      Bridge = " + nixString(iface.Bridge) + ";\n")
+		}
+		if iface.VRF != "" {
+			buf.WriteString("      VRF = " + nixString(iface.VRF) + ";\n")
 		}
 		buf.WriteString("    };\n")
 	}
