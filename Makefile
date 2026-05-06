@@ -53,12 +53,15 @@ GO_BUILD_ENV += GOARCH=$(GOARCH)
 endif
 GO_BUILD_FLAGS ?= -trimpath -ldflags="-s -w"
 
-.PHONY: test build webconsole-build generate-schema check-schema website-build check-build-deps install-ubuntu-deps remote-install-service-deps check-remote-deps install install-service install-systemd install-rc-freebsd dist remote-install remote-install-config remote-install-systemd-unit validate-example dry-run-example plan-config clean
+.PHONY: test build build-daemons webconsole-build generate-schema check-schema website-build check-build-deps install-ubuntu-deps remote-install-service-deps check-remote-deps install install-service install-systemd install-rc-freebsd dist remote-install remote-install-config remote-install-systemd-unit validate-example dry-run-example plan-config clean
 
 test:
 	go test ./...
 
 build: webconsole-build
+	$(MAKE) build-daemons
+
+build-daemons:
 	install -d $(BUILDDIR)
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_BIN) ./cmd/routerd
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERCTL_BIN) ./cmd/routerctl
