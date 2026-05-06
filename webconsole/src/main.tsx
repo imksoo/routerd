@@ -9,8 +9,6 @@ import {
   Input,
   Select,
   Spinner,
-  Tab,
-  TabList,
   Table,
   TableBody,
   TableCell,
@@ -26,6 +24,13 @@ import {
   ArrowClockwiseRegular,
   ChevronDownRegular,
   ChevronRightRegular,
+  DocumentTextRegular,
+  HomeRegular,
+  NavigationRegular,
+  PeopleRegular,
+  PlugConnectedRegular,
+  ServerRegular,
+  ShieldRegular,
 } from "@fluentui/react-icons";
 import { parseDocument } from "yaml";
 import "./styles.css";
@@ -183,26 +188,55 @@ type ClientRow = {
   peers: Set<string>;
 };
 
+type ViewKey = "overview" | "clients" | "connections" | "events" | "firewall" | "config";
+
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
 const basePath = normalizeBasePath(cfg.basePath);
+const navItems: { key: ViewKey; label: string; description: string; icon: React.ReactNode }[] = [
+  { key: "overview", label: "Overview", description: "Status and interfaces", icon: <HomeRegular /> },
+  { key: "clients", label: "Clients", description: "Leases and endpoint traffic", icon: <PeopleRegular /> },
+  { key: "connections", label: "Connections", description: "conntrack and live flows", icon: <PlugConnectedRegular /> },
+  { key: "events", label: "Events", description: "Bus events and resource changes", icon: <ServerRegular /> },
+  { key: "firewall", label: "Firewall", description: "Deny ranking and timeline", icon: <ShieldRegular /> },
+  { key: "config", label: "Config", description: "Read-only YAML tree", icon: <DocumentTextRegular /> },
+];
 
 const useStyles = makeStyles({
   shell: {
     minHeight: "100vh",
-    backgroundColor: tokens.colorNeutralBackground1,
+    backgroundColor: "#0b1118",
     color: tokens.colorNeutralForeground1,
   },
   header: {
     position: "sticky",
     top: 0,
-    zIndex: 10,
+    zIndex: 20,
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: "12px",
-    padding: "14px 18px",
-    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-    backgroundColor: tokens.colorNeutralBackground2,
+    minHeight: "48px",
+    padding: "0 16px",
+    borderBottom: "1px solid #243041",
+    backgroundColor: "#111827",
+    boxShadow: "0 1px 0 rgba(255,255,255,0.04)",
+  },
+  productArea: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    minWidth: 0,
+  },
+  azureMark: {
+    width: "28px",
+    height: "28px",
+    display: "grid",
+    placeItems: "center",
+    borderRadius: "4px",
+    backgroundColor: "#0078d4",
+    color: "#fff",
+    fontWeight: 700,
+    flexShrink: 0,
   },
   title: {
     minWidth: 0,
@@ -210,10 +244,157 @@ const useStyles = makeStyles({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
+  subtitle: {
+    color: tokens.colorNeutralForeground3,
+    lineHeight: 1,
+  },
+  layout: {
+    display: "grid",
+    gridTemplateColumns: "248px minmax(0, 1fr)",
+    minHeight: "calc(100vh - 49px)",
+    "@media (max-width: 860px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
+  sidebar: {
+    position: "sticky",
+    top: "49px",
+    alignSelf: "start",
+    height: "calc(100vh - 49px)",
+    overflowY: "auto",
+    borderRight: "1px solid #243041",
+    backgroundColor: "#0f1722",
+    padding: "12px 8px",
+    "@media (max-width: 860px)": {
+      position: "static",
+      height: "auto",
+      display: "flex",
+      overflowX: "auto",
+      overflowY: "hidden",
+      borderRight: 0,
+      borderBottom: "1px solid #243041",
+      padding: "8px",
+    },
+  },
+  navSection: {
+    display: "grid",
+    gap: "2px",
+    "@media (max-width: 860px)": {
+      display: "flex",
+      gap: "6px",
+      minWidth: "max-content",
+    },
+  },
+  navButton: {
+    width: "100%",
+    justifyContent: "flex-start",
+    borderRadius: "4px",
+    padding: "9px 10px",
+    color: tokens.colorNeutralForeground2,
+    backgroundColor: "transparent",
+    border: "1px solid transparent",
+    ":hover": {
+      backgroundColor: "#172235",
+      color: tokens.colorNeutralForeground1,
+    },
+    "@media (max-width: 860px)": {
+      width: "auto",
+      minWidth: "132px",
+    },
+  },
+  navButtonActive: {
+    backgroundColor: "#1b2a40",
+    color: tokens.colorNeutralForeground1,
+    borderLeft: "3px solid #60cdff",
+    ":hover": {
+      backgroundColor: "#22324a",
+    },
+    "@media (max-width: 860px)": {
+      borderLeft: "1px solid #2f4664",
+      borderBottom: "3px solid #60cdff",
+    },
+  },
+  navButtonInner: {
+    display: "grid",
+    gridTemplateColumns: "20px minmax(0, 1fr)",
+    gap: "10px",
+    alignItems: "start",
+    width: "100%",
+  },
+  navIcon: {
+    display: "grid",
+    placeItems: "center",
+    color: "#60cdff",
+    fontSize: "18px",
+    paddingTop: "1px",
+  },
+  navText: {
+    display: "grid",
+    gap: "2px",
+    minWidth: 0,
+  },
+  navDescription: {
+    color: tokens.colorNeutralForeground3,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    "@media (max-width: 860px)": {
+      display: "none",
+    },
+  },
+  content: {
+    minWidth: 0,
+    backgroundColor: "#0b1118",
+  },
+  bladeHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "16px",
+    padding: "18px 20px 14px",
+    borderBottom: "1px solid #243041",
+    backgroundColor: "#0d1420",
+    "@media (max-width: 640px)": {
+      flexDirection: "column",
+    },
+  },
+  bladeTitleBlock: {
+    minWidth: 0,
+    display: "grid",
+    gap: "4px",
+  },
+  bladeTitleLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    minWidth: 0,
+  },
+  bladeIcon: {
+    display: "grid",
+    placeItems: "center",
+    width: "32px",
+    height: "32px",
+    borderRadius: "4px",
+    backgroundColor: "#12395b",
+    color: "#60cdff",
+    fontSize: "19px",
+    flexShrink: 0,
+  },
+  bladeSubtitle: {
+    color: tokens.colorNeutralForeground3,
+    paddingLeft: "42px",
+    "@media (max-width: 640px)": {
+      paddingLeft: 0,
+    },
+  },
+  bladeActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    flexWrap: "wrap",
+  },
   main: {
-    maxWidth: "1380px",
-    margin: "0 auto",
-    padding: "16px",
+    padding: "16px 20px 24px",
     display: "grid",
     gap: "16px",
   },
@@ -224,6 +405,9 @@ const useStyles = makeStyles({
   },
   metric: {
     minWidth: 0,
+    borderRadius: "4px",
+    border: "1px solid #243041",
+    backgroundColor: "#101a28",
   },
   metricValue: {
     display: "block",
@@ -316,7 +500,7 @@ const useStyles = makeStyles({
     tableLayout: "fixed",
   },
   clientInventoryTable: {
-    minWidth: "900px",
+    minWidth: "1040px",
     tableLayout: "fixed",
   },
   clientTrafficTable: {
@@ -330,6 +514,8 @@ const useStyles = makeStyles({
   code: {
     fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
     whiteSpace: "nowrap",
+    wordBreak: "normal",
+    overflowWrap: "normal",
   },
   wrapCode: {
     fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
@@ -604,7 +790,7 @@ function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [config, setConfig] = useState<ConfigSnapshot | null>(null);
   const [error, setError] = useState<string>("");
-  const [selected, setSelected] = useState("overview");
+  const [selected, setSelected] = useState<ViewKey>("overview");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [connectionPages, setConnectionPages] = useState<Record<string, number>>({});
   const [connectionPageSizes, setConnectionPageSizes] = useState<Record<string, number>>({});
@@ -671,28 +857,64 @@ function App() {
     setConnectionFilters(current => ({ ...current, [key]: value }));
   }
 
+  const selectedNav = navItems.find(item => item.key === selected) ?? navItems[0];
+
   return (
     <FluentProvider theme={webDarkTheme} className={styles.shell}>
       <header className={styles.header}>
-        <Text size={600} weight="semibold" className={styles.title}>{cfg.title || "routerd"}</Text>
+        <div className={styles.productArea}>
+          <div className={styles.azureMark}><NavigationRegular /></div>
+          <div className={styles.title}>
+            <Text size={500} weight="semibold">{cfg.title || "routerd"}</Text>
+            <Text size={200} className={styles.subtitle}>Local router control plane</Text>
+          </div>
+        </div>
         <div className={styles.toolbar}>
           {loading ? <Spinner size="tiny" /> : null}
           <Badge appearance="tint" color={phaseColor(summary?.status?.status?.phase)}>{String(summary?.status?.status?.phase ?? "Unknown")}</Badge>
           <Button appearance="subtle" icon={<ArrowClockwiseRegular />} onClick={refresh}>Refresh</Button>
         </div>
       </header>
-      <main className={styles.main}>
-        {error ? <Card><Text role="alert">Web console error: {error}</Text></Card> : null}
-        <TabList selectedValue={selected} onTabSelect={(_, data) => setSelected(String(data.value))}>
-          <Tab value="overview">Overview</Tab>
-          <Tab value="clients">Clients</Tab>
-          <Tab value="connections">Connections</Tab>
-          <Tab value="events">Events</Tab>
-          <Tab value="firewall">Firewall</Tab>
-          <Tab value="config">Config</Tab>
-        </TabList>
-        {selected === "overview" ? (
-          <>
+      <div className={styles.layout}>
+        <aside className={styles.sidebar} aria-label="Web console navigation">
+          <div className={styles.navSection}>
+            {navItems.map(item => (
+              <Button
+                key={item.key}
+                appearance="subtle"
+                className={`${styles.navButton} ${selected === item.key ? styles.navButtonActive : ""}`}
+                onClick={() => setSelected(item.key)}
+              >
+                <span className={styles.navButtonInner}>
+                  <span className={styles.navIcon}>{item.icon}</span>
+                  <span className={styles.navText}>
+                    <Text weight={selected === item.key ? "semibold" : "regular"}>{item.label}</Text>
+                    <Text size={200} className={styles.navDescription}>{item.description}</Text>
+                  </span>
+                </span>
+              </Button>
+            ))}
+          </div>
+        </aside>
+        <section className={styles.content}>
+          <div className={styles.bladeHeader}>
+            <div className={styles.bladeTitleBlock}>
+              <div className={styles.bladeTitleLine}>
+                <span className={styles.bladeIcon}>{selectedNav.icon}</span>
+                <Text size={700} weight="semibold" className={styles.title}>{selectedNav.label}</Text>
+              </div>
+              <Text className={styles.bladeSubtitle}>{selectedNav.description}</Text>
+            </div>
+            <div className={styles.bladeActions}>
+              <Badge appearance="tint" color={phaseColor(summary?.status?.status?.phase)}>{String(summary?.status?.status?.phase ?? "Unknown")}</Badge>
+              <Text size={200} className={styles.muted}>{summary?.generatedAt ? `Updated ${formatTime(summary.generatedAt)}` : ""}</Text>
+              <Button appearance="primary" icon={<ArrowClockwiseRegular />} onClick={refresh}>Refresh</Button>
+            </div>
+          </div>
+          <main className={styles.main}>
+            {error ? <Card><Text role="alert">Web console error: {error}</Text></Card> : null}
+            {selected === "overview" ? (
+              <>
             <div className={styles.grid}>
               <Metric label="phase" value={String(summary?.status?.status?.phase ?? "Unknown")} />
               <Metric label="generation" value={String(summary?.status?.status?.generation ?? "-")} />
@@ -708,10 +930,10 @@ function App() {
               <CardHeader header={<Text weight="semibold">Resources</Text>} />
               <ResourceTable resources={resources} />
             </Card>
-          </>
-        ) : null}
-        {selected === "clients" ? (
-          <div className={styles.clientsGrid}>
+              </>
+            ) : null}
+            {selected === "clients" ? (
+              <div className={styles.clientsGrid}>
             <Card>
               <CardHeader
                 header={<Text weight="semibold">Client inventory</Text>}
@@ -727,10 +949,10 @@ function App() {
               <CardHeader header={<Text weight="semibold">DHCP leases</Text>} />
               <DHCPLeaseTable leases={summary?.dhcpLeases ?? []} />
             </Card>
-          </div>
-        ) : null}
-        {selected === "connections" ? (
-          <Card>
+              </div>
+            ) : null}
+            {selected === "connections" ? (
+              <Card>
             <CardHeader
               header={<Text weight="semibold">Connections</Text>}
               description={<Text className={styles.muted}>{connectionFamilyCounts(summary?.connections)} / Showing {filteredConnections.length}</Text>}
@@ -804,19 +1026,19 @@ function App() {
                 />
               ))}
             </div>
-          </Card>
-        ) : null}
-        {selected === "events" ? (
-          <div className={styles.eventsGrid}>
+              </Card>
+            ) : null}
+            {selected === "events" ? (
+              <div className={styles.eventsGrid}>
             <Card>
               <CardHeader header={<Text weight="semibold">Events</Text>} />
               <EventTable events={events} selectedKey={eventKey(selectedEvent)} onSelect={event => setSelectedEventKey(eventKey(event))} />
             </Card>
             <EventDetail event={selectedEvent} />
-          </div>
-        ) : null}
-        {selected === "firewall" ? (
-          <div className={styles.firewallStack}>
+              </div>
+            ) : null}
+            {selected === "firewall" ? (
+              <div className={styles.firewallStack}>
             <Card>
               <CardHeader header={<Text weight="semibold">Deny ranking</Text>} description={<Text className={styles.muted}>Grouped by source, destination, and protocol</Text>} />
               <RecentDeny logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} relatedClients={relatedClients} />
@@ -825,15 +1047,17 @@ function App() {
               <CardHeader header={<Text weight="semibold">Deny timeline</Text>} description={<Text className={styles.muted}>Newest firewall log rows</Text>} />
               <FirewallTimeline logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} relatedClients={relatedClients} />
             </Card>
-          </div>
-        ) : null}
-        {selected === "config" ? (
-          <Card>
+              </div>
+            ) : null}
+            {selected === "config" ? (
+              <Card>
             <CardHeader header={<Text weight="semibold">Config</Text>} description={<Text className={styles.muted}>{config?.path ?? ""}</Text>} />
             <ConfigView config={config} />
-          </Card>
-        ) : null}
-      </main>
+              </Card>
+            ) : null}
+          </main>
+        </section>
+      </div>
     </FluentProvider>
   );
 }
@@ -1204,8 +1428,8 @@ function ClientInventory({ leases, flows }: { leases: DHCPLease[]; flows: Traffi
     <div className={styles.tableWrap}>
       <Table size="small" className={styles.clientInventoryTable}>
         <colgroup>
-          <col style={{ width: "20%" }} />
-          <col style={{ width: "170px" }} />
+          <col style={{ width: "190px" }} />
+          <col style={{ width: "320px" }} />
           <col style={{ width: "150px" }} />
           <col style={{ width: "96px" }} />
           <col />
@@ -1228,7 +1452,7 @@ function ClientInventory({ leases, flows }: { leases: DHCPLease[]; flows: Traffi
                   <Text size={200} className={styles.muted}>{row.vendor || "-"}</Text>
                 </div>
               </TableCell>
-              <TableCell><code className={styles.wrapCode}>{row.ip}</code></TableCell>
+              <TableCell><code className={styles.code}>{row.ip}</code></TableCell>
               <TableCell><code className={styles.wrapCode}>{row.mac || "-"}</code></TableCell>
               <TableCell>
                 <div className={styles.connectionFlow}>
