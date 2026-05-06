@@ -831,6 +831,7 @@ func writeNixOSDHCPv6ClientService(buf *bytes.Buffer, client nixOSDHCPv6Client) 
 
 func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 	var out []nixOSSystemdUnit
+	explicit := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "SystemdUnit" {
 			continue
@@ -843,7 +844,36 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 			continue
 		}
 		name := defaultString(spec.UnitName, res.Metadata.Name)
+		explicit[name] = true
 		out = append(out, nixOSSystemdUnit{Name: name, Spec: spec})
+	}
+	aliases := linkAliases(router)
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "HealthCheck" {
+			continue
+		}
+		spec, err := res.HealthCheckSpec()
+		if err != nil {
+			return nil, err
+		}
+		if spec.Daemon != "routerd-healthcheck" {
+			continue
+		}
+		name := "routerd-healthcheck@" + res.Metadata.Name + ".service"
+		if explicit[name] {
+			continue
+		}
+		out = append(out, nixOSSystemdUnit{
+			Name: name,
+			Spec: HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{
+				Resource:    res.Metadata.Name,
+				Spec:        spec,
+				Aliases:     aliases,
+				RuntimeRoot: "/run",
+				StateRoot:   "/var/lib",
+				LogRoot:     "/var/log",
+			}),
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil

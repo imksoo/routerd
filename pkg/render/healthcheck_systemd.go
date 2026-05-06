@@ -3,6 +3,9 @@ package render
 import (
 	"fmt"
 	"strconv"
+	"strings"
+
+	"routerd/pkg/api"
 )
 
 type HealthCheckSystemdOptions struct {
@@ -19,6 +22,87 @@ type HealthCheckSystemdOptions struct {
 	SocketPath      string
 	StateFile       string
 	EventFile       string
+}
+
+type HealthCheckDaemonUnitOptions struct {
+	Resource    string
+	Spec        api.HealthCheckSpec
+	Aliases     map[string]string
+	RuntimeRoot string
+	StateRoot   string
+	LogRoot     string
+}
+
+func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.SystemdUnitSpec {
+	resource := options.Resource
+	spec := options.Spec
+	runtimeRoot := defaultString(options.RuntimeRoot, "/run")
+	stateRoot := defaultString(options.StateRoot, "/var/lib")
+	logRoot := defaultString(options.LogRoot, "/var/log")
+	sourceInterface := strings.TrimSpace(spec.SourceInterface)
+	if options.Aliases != nil && options.Aliases[sourceInterface] != "" {
+		sourceInterface = options.Aliases[sourceInterface]
+	}
+	socket := strings.TrimSpace(spec.SocketSource)
+	if socket == "" {
+		socket = runtimeRoot + "/routerd/healthcheck/" + resource + ".sock"
+	}
+	execStart := []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", resource}
+	appendFlag := func(flag, value string) {
+		if strings.TrimSpace(value) != "" {
+			execStart = append(execStart, flag, value)
+		}
+	}
+	appendFlag("--target", spec.Target)
+	appendFlag("--protocol", spec.Protocol)
+	appendFlag("--address-family", spec.AddressFamily)
+	appendFlag("--via", spec.Via)
+	appendFlag("--source-interface", sourceInterface)
+	appendFlag("--source-address", spec.SourceAddress)
+	if spec.Port != 0 {
+		execStart = append(execStart, "--port", strconv.Itoa(spec.Port))
+	}
+	appendFlag("--interval", spec.Interval)
+	appendFlag("--timeout", spec.Timeout)
+	if spec.HealthyThreshold != 0 {
+		execStart = append(execStart, "--healthy-threshold", strconv.Itoa(spec.HealthyThreshold))
+	}
+	if spec.UnhealthyThreshold != 0 {
+		execStart = append(execStart, "--unhealthy-threshold", strconv.Itoa(spec.UnhealthyThreshold))
+	}
+	execStart = append(execStart,
+		"--socket", socket,
+		"--state-file", stateRoot+"/routerd/healthcheck/"+resource+"/state.json",
+		"--event-file", logRoot+"/routerd/healthcheck/"+resource+"/events.jsonl",
+	)
+	noNewPrivileges := true
+	privateTmp := true
+	return api.SystemdUnitSpec{
+		Description:              "routerd healthcheck " + resource,
+		ExecStart:                execStart,
+		Enabled:                  boolValuePtr(true),
+		WantedBy:                 []string{"multi-user.target"},
+		After:                    []string{"network-online.target"},
+		Wants:                    []string{"network-online.target"},
+		Restart:                  "always",
+		RestartSec:               "5s",
+		RuntimeDirectory:         []string{"routerd/healthcheck"},
+		RuntimeDirectoryPreserve: "yes",
+		StateDirectory:           []string{"routerd/healthcheck"},
+		LogsDirectory:            []string{"routerd"},
+		ReadWritePaths:           []string{runtimeRoot + "/routerd", stateRoot + "/routerd", logRoot + "/routerd"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6"},
+		CapabilityBoundingSet:    []string{"CAP_NET_RAW"},
+		AmbientCapabilities:      []string{"CAP_NET_RAW"},
+		ProtectSystem:            "strict",
+		ProtectHome:              "yes",
+		NoNewPrivileges:          &noNewPrivileges,
+		PrivateTmp:               &privateTmp,
+	}
+}
+
+func boolValuePtr(value bool) *bool {
+	return &value
 }
 
 func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {

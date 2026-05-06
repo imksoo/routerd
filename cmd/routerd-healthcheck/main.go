@@ -25,6 +25,7 @@ import (
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/healthcheck"
 	routerotel "routerd/pkg/otel"
+	"routerd/pkg/platform"
 )
 
 const daemonKind = healthcheck.DaemonKind
@@ -118,14 +119,15 @@ func parseOptions(name string, args []string) (options, error) {
 	if strings.TrimSpace(opts.target) == "" {
 		return options{}, errors.New("--target is required")
 	}
+	defaults, _ := platform.Current()
 	if opts.socketPath == "" {
-		opts.socketPath = filepath.Join("/run/routerd/healthcheck", opts.resource+".sock")
+		opts.socketPath = filepath.Join(defaults.RuntimeDir, "healthcheck", opts.resource+".sock")
 	}
 	if opts.stateFile == "" {
-		opts.stateFile = filepath.Join("/var/lib/routerd/healthcheck", opts.resource, "state.json")
+		opts.stateFile = filepath.Join(defaults.StateDir, "healthcheck", opts.resource, "state.json")
 	}
 	if opts.eventFile == "" {
-		opts.eventFile = filepath.Join("/var/lib/routerd/healthcheck", opts.resource, "events.jsonl")
+		opts.eventFile = filepath.Join(defaults.StateDir, "healthcheck", opts.resource, "events.jsonl")
 	}
 	return opts, nil
 }

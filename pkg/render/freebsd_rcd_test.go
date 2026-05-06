@@ -59,3 +59,38 @@ func TestFreeBSDRenderIncludesSystemdUnitAsRCD(t *testing.T) {
 		t.Fatalf("rc.d scripts = %#v", cfg.RCDScripts)
 	}
 }
+
+func TestFreeBSDRenderSynthesizesHealthCheckDaemonRCD(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet0", AdminUp: true},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+			Metadata: api.ObjectMeta{Name: "internet"},
+			Spec: api.HealthCheckSpec{
+				Daemon:          "routerd-healthcheck",
+				Target:          "1.1.1.1",
+				Protocol:        "icmp",
+				SourceInterface: "wan",
+			},
+		},
+	}}}
+	cfg, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(cfg.RCDScripts["routerd_healthcheck_internet"])
+	for _, want := range []string{
+		`--source-interface' 'vtnet0'`,
+		`--socket' '/var/run/routerd/healthcheck/internet.sock'`,
+		`--state-file' '/var/db/routerd/healthcheck/internet/state.json'`,
+		`mkdir -p '/var/run/routerd/healthcheck'`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("rc.d script missing %q:\n%s", want, script)
+		}
+	}
+}

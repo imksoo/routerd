@@ -415,6 +415,44 @@ func TestNixOSModuleOnlyTrustsBridgesAttachedToVXLAN(t *testing.T) {
 	}
 }
 
+func TestNixOSModuleSynthesizesHealthCheckDaemonUnit(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18", AdminUp: true},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+			Metadata: api.ObjectMeta{Name: "internet"},
+			Spec: api.HealthCheckSpec{
+				Daemon:          "routerd-healthcheck",
+				Target:          "1.1.1.1",
+				Protocol:        "icmp",
+				SourceInterface: "wan",
+				Interval:        "30s",
+			},
+		},
+	}}}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`systemd.services."routerd-healthcheck@internet"`,
+		`"/usr/local/sbin/routerd-healthcheck"`,
+		`"--source-interface"`,
+		`"ens18"`,
+		`RuntimeDirectory = [ "routerd/healthcheck" ];`,
+		`CapabilityBoundingSet = [ "CAP_NET_RAW" ];`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("NixOS module missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNixOSModuleIgnoresLegacyPrefixDelegationClient(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

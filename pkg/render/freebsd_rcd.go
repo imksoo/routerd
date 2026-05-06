@@ -12,6 +12,7 @@ import (
 
 func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	out := map[string][]byte{}
+	explicit := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "SystemdUnit" {
 			continue
@@ -24,7 +25,38 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 			continue
 		}
 		name := freeBSDServiceName(defaultString(spec.UnitName, res.Metadata.Name))
+		explicit[name] = true
 		data, err := FreeBSDRCDScript(name, spec)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", res.ID(), err)
+		}
+		out[name] = data
+	}
+	aliases := linkAliases(router)
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "HealthCheck" {
+			continue
+		}
+		spec, err := res.HealthCheckSpec()
+		if err != nil {
+			return nil, err
+		}
+		if spec.Daemon != "routerd-healthcheck" {
+			continue
+		}
+		name := freeBSDServiceName("routerd-healthcheck@" + res.Metadata.Name + ".service")
+		if explicit[name] {
+			continue
+		}
+		unit := HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{
+			Resource:    res.Metadata.Name,
+			Spec:        spec,
+			Aliases:     aliases,
+			RuntimeRoot: "/var/run",
+			StateRoot:   "/var/db",
+			LogRoot:     "/var/log",
+		})
+		data, err := FreeBSDRCDScript(name, unit)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", res.ID(), err)
 		}
