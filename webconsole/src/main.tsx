@@ -298,6 +298,34 @@ const useStyles = makeStyles({
     overflowX: "auto",
     maxWidth: "100%",
   },
+  dataTable: {
+    minWidth: "720px",
+    tableLayout: "fixed",
+  },
+  resourceTable: {
+    minWidth: "900px",
+    tableLayout: "fixed",
+  },
+  eventTable: {
+    minWidth: "760px",
+    tableLayout: "fixed",
+  },
+  connectionTable: {
+    minWidth: "820px",
+    tableLayout: "fixed",
+  },
+  clientInventoryTable: {
+    minWidth: "900px",
+    tableLayout: "fixed",
+  },
+  clientTrafficTable: {
+    minWidth: "760px",
+    tableLayout: "fixed",
+  },
+  dhcpLeaseTable: {
+    minWidth: "840px",
+    tableLayout: "fixed",
+  },
   code: {
     fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
     whiteSpace: "nowrap",
@@ -368,7 +396,7 @@ const useStyles = makeStyles({
   },
   firewallRankHeader: {
     display: "grid",
-    gridTemplateColumns: "64px minmax(190px, 1.1fr) minmax(190px, 1.1fr) minmax(190px, 1fr) 80px",
+    gridTemplateColumns: "56px minmax(220px, 1.25fr) minmax(220px, 1.25fr) minmax(210px, 1fr) 64px",
     gap: "10px",
     padding: "0 10px 6px",
     color: tokens.colorNeutralForeground3,
@@ -380,7 +408,7 @@ const useStyles = makeStyles({
   },
   firewallTimelineHeader: {
     display: "grid",
-    gridTemplateColumns: "110px 78px minmax(180px, 1.05fr) minmax(180px, 1.05fr) minmax(180px, 1fr) 86px minmax(120px, 0.7fr)",
+    gridTemplateColumns: "96px 68px minmax(220px, 1.35fr) minmax(220px, 1.35fr) minmax(210px, 1fr) 72px minmax(96px, 0.55fr)",
     gap: "10px",
     padding: "0 10px 6px",
     color: tokens.colorNeutralForeground3,
@@ -392,7 +420,7 @@ const useStyles = makeStyles({
   },
   firewallRankRow: {
     display: "grid",
-    gridTemplateColumns: "64px minmax(190px, 1.1fr) minmax(190px, 1.1fr) minmax(190px, 1fr) 80px",
+    gridTemplateColumns: "56px minmax(220px, 1.25fr) minmax(220px, 1.25fr) minmax(210px, 1fr) 64px",
     gap: "10px",
     alignItems: "start",
     padding: "8px 10px",
@@ -408,7 +436,7 @@ const useStyles = makeStyles({
   },
   firewallTimelineRow: {
     display: "grid",
-    gridTemplateColumns: "110px 78px minmax(180px, 1.05fr) minmax(180px, 1.05fr) minmax(180px, 1fr) 86px minmax(120px, 0.7fr)",
+    gridTemplateColumns: "96px 68px minmax(220px, 1.35fr) minmax(220px, 1.35fr) minmax(210px, 1fr) 72px minmax(96px, 0.55fr)",
     gap: "10px",
     alignItems: "start",
     padding: "8px 10px",
@@ -752,7 +780,13 @@ function ResourceTable({ resources }: { resources: ResourceStatus[] }) {
   const styles = useStyles();
   return (
     <div className={styles.tableWrap}>
-      <Table size="small">
+      <Table size="small" className={styles.resourceTable}>
+        <colgroup>
+          <col style={{ width: "170px" }} />
+          <col style={{ width: "220px" }} />
+          <col style={{ width: "120px" }} />
+          <col />
+        </colgroup>
         <TableHeader>
           <TableRow>
             <TableHeaderCell>Kind</TableHeaderCell>
@@ -769,7 +803,7 @@ function ResourceTable({ resources }: { resources: ResourceStatus[] }) {
                 <TableCell>{resource.kind}</TableCell>
                 <TableCell><code className={styles.code}>{resource.name}</code></TableCell>
                 <TableCell><Badge appearance="tint" color={phaseColor(status.phase)}>{String(status.phase ?? "Unknown")}</Badge></TableCell>
-                <TableCell><code className={styles.code}>{resourceDetail(status)}</code></TableCell>
+                <TableCell><code className={styles.wrapCode}>{resourceDetail(status)}</code></TableCell>
               </TableRow>
             );
           })}
@@ -783,7 +817,13 @@ function EventTable({ events, selectedKey, onSelect }: { events: RouterEvent[]; 
   const styles = useStyles();
   return (
     <div className={styles.tableWrap}>
-      <Table size="small">
+      <Table size="small" className={styles.eventTable}>
+        <colgroup>
+          <col style={{ width: "104px" }} />
+          <col style={{ width: "78px" }} />
+          <col />
+          <col style={{ width: "170px" }} />
+        </colgroup>
         <TableHeader>
           <TableRow>
             <TableHeaderCell>Time</TableHeaderCell>
@@ -890,7 +930,13 @@ function ConnectionGroup({
             </div>
           </div>
           <div className={styles.tableWrap}>
-            <Table size="small">
+            <Table size="small" className={styles.connectionTable}>
+              <colgroup>
+                <col style={{ width: "132px" }} />
+                <col />
+                <col style={{ width: "28%" }} />
+                <col style={{ width: "80px" }} />
+              </colgroup>
               <TableHeader>
                 <TableRow>
                   <TableHeaderCell>State</TableHeaderCell>
@@ -968,7 +1014,14 @@ function ClientInventory({ leases, flows }: { leases: DHCPLease[]; flows: Traffi
   const styles = useStyles();
   return (
     <div className={styles.tableWrap}>
-      <Table size="small">
+      <Table size="small" className={styles.clientInventoryTable}>
+        <colgroup>
+          <col style={{ width: "20%" }} />
+          <col style={{ width: "170px" }} />
+          <col style={{ width: "150px" }} />
+          <col style={{ width: "96px" }} />
+          <col />
+        </colgroup>
         <TableHeader>
           <TableRow>
             <TableHeaderCell>Client</TableHeaderCell>
@@ -1008,7 +1061,13 @@ function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
   const styles = useStyles();
   return (
     <div className={styles.tableWrap}>
-      <Table size="small">
+      <Table size="small" className={styles.clientTrafficTable}>
+        <colgroup>
+          <col style={{ width: "170px" }} />
+          <col style={{ width: "96px" }} />
+          <col style={{ width: "96px" }} />
+          <col />
+        </colgroup>
         <TableHeader>
           <TableRow>
             <TableHeaderCell>Client</TableHeaderCell>
@@ -1023,7 +1082,7 @@ function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
               <TableCell><code className={styles.code}>{row.client}</code></TableCell>
               <TableCell>{formatBytes(row.bytesOut)}</TableCell>
               <TableCell>{formatBytes(row.bytesIn)}</TableCell>
-              <TableCell><code className={styles.code}>{Array.from(row.peers).slice(0, 3).join(", ") || "-"}</code></TableCell>
+              <TableCell><code className={styles.wrapCode}>{Array.from(row.peers).slice(0, 3).join(", ") || "-"}</code></TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -1037,7 +1096,14 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
   const rows = [...leases].sort((a, b) => stringSort(a.ip ?? "", b.ip ?? ""));
   return (
     <div className={styles.tableWrap}>
-      <Table size="small">
+      <Table size="small" className={styles.dhcpLeaseTable}>
+        <colgroup>
+          <col style={{ width: "170px" }} />
+          <col />
+          <col style={{ width: "150px" }} />
+          <col style={{ width: "170px" }} />
+          <col style={{ width: "112px" }} />
+        </colgroup>
         <TableHeader>
           <TableRow>
             <TableHeaderCell>IP</TableHeaderCell>
