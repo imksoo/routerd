@@ -213,9 +213,9 @@ func TestFreeBSDRendersStaticDSLiteGIF(t *testing.T) {
 	rc := string(got.RCConf)
 	for _, want := range []string{
 		`cloned_interfaces="gif7"`,
-		`ifconfig_gif7="tunnel 2001:db8::100 2001:db8::200 mtu 1454 up"`,
+		`ifconfig_gif7="inet6 tunnel 2001:db8::100 2001:db8::200 inet 192.0.0.2 192.0.0.1 netmask 255.255.255.255 mtu 1454 up"`,
 		`static_routes="ds_lite_default"`,
-		`route_ds_lite_default="default -interface gif7"`,
+		`route_ds_lite_default="default 192.0.0.1"`,
 	} {
 		if !strings.Contains(rc, want) {
 			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)

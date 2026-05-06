@@ -74,6 +74,8 @@ spec:
           - 30s
           - --controller-chain
           - --controller-chain-dry-run-dns-resolver=false
+          - --controller-chain-dnsmasq-port
+          - "53"
         runtimeDirectory:
           - routerd
         runtimeDirectoryPreserve: "yes"
@@ -155,6 +157,24 @@ spec:
         required: false
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6Information
+      metadata:
+        name: wan-info
+        ownerRefs:
+          - kind: DHCPv6PrefixDelegation
+            name: wan-pd
+      spec:
+        interface: wan
+        request:
+          - aftr-name
+          - dns-servers
+          - sntp-servers
+          - domain-search
+        dependsOn:
+          - resource: DHCPv6PrefixDelegation/wan-pd
+            phase: Bound
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
         name: lan
@@ -221,6 +241,18 @@ spec:
         announce: true
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: dslite-source-pd-address
+      spec:
+        prefixDelegation: wan-pd
+        interface: lan
+        subnetID: "0"
+        addressSuffix: "::40"
+        sendRA: false
+        announce: false
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6RouterAdvertisement
       metadata:
         name: lan-ra
@@ -243,7 +275,7 @@ spec:
         validLifetime: "7200"
         dependsOn:
           - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
-            phase: Healthy
+            phase: Applied
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv6Server
@@ -265,7 +297,7 @@ spec:
         leaseTime: 12h
         dependsOn:
           - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
-            phase: Healthy
+            phase: Applied
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSZone
@@ -322,6 +354,7 @@ spec:
             port: 53
             sources:
               - local-zone
+              - transix-aftr
               - default-upstream
           - name: lan
             addressFrom:
@@ -332,6 +365,7 @@ spec:
             port: 53
             sources:
               - local-zone
+              - transix-aftr
               - default-upstream
         sources:
           - name: local-zone
@@ -340,6 +374,17 @@ spec:
               - router04.lab.local
             zoneRef:
               - DNSZone/router04-lan
+          - name: transix-aftr
+            kind: forward
+            match:
+              - transix.jp
+            upstreams:
+              - udp://[2404:1a8:7f01:a::3]:53
+              - udp://[2404:1a8:7f01:b::3]:53
+            upstreamFrom:
+              - resource: DHCPv6Information/wan-info
+                field: dnsServers
+                optional: true
           - name: default-upstream
             kind: upstream
             match:
@@ -356,6 +401,49 @@ spec:
         queryLog:
           enabled: true
           path: /var/db/routerd/dns-queries.db
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite
+        ownerRefs:
+          - kind: IPv6DelegatedAddress
+            name: lan-ipv6-pd-address
+          - kind: DNSResolver
+            name: lan-resolver
+      spec:
+        interface: wan
+        tunnelName: gif40
+        localAddressSource: interface
+        aftrFQDN: gw.transix.jp
+        aftrDNSServers:
+          - 2404:1a8:7f01:a::3
+          - 2404:1a8:7f01:b::3
+        aftrAddressOrdinal: 1
+        mtu: 1454
+        defaultRoute: true
+        routeMetric: 50
+        dependsOn:
+          - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
+            phase: Applied
+          - resource: DNSResolver/lan-resolver
+            phase: Applied
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: default-via-dslite
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite
+      spec:
+        destination: 0.0.0.0/0
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite
+          field: interface
+        dependsOn:
+          - resource: DSLiteTunnel/ds-lite
+            phase: Up
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Bridge

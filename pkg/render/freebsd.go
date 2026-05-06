@@ -172,7 +172,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			ifname := freeBSDGifIfName(spec.TunnelName, len(dslites))
 			dslites = append(dslites, freeBSDDSLite{Name: res.Metadata.Name, IfName: ifname, LocalAddress: local, RemoteAddress: remote, MTU: spec.MTU, DefaultRoute: spec.DefaultRoute})
 			if spec.DefaultRoute {
-				staticV4Routes = append(staticV4Routes, freeBSDStaticRoute{Name: res.Metadata.Name + "-default", IfName: ifname, Destination: "default", Via: "-interface " + ifname})
+				staticV4Routes = append(staticV4Routes, freeBSDStaticRoute{Name: res.Metadata.Name + "-default", IfName: ifname, Destination: "default", Via: freeBSDDSLiteInnerRemoteIPv4})
 			}
 		}
 	}
@@ -216,6 +216,11 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	return FreeBSDConfig{RCConf: rc.Bytes(), DHCPClient: dhclient, MPD5: mpd5, PF: pf, PackageInstall: packageInstall, RCDScripts: rcdScripts, Warnings: warnings}, nil
 }
 
+const (
+	freeBSDDSLiteInnerLocalIPv4  = "192.0.0.2"
+	freeBSDDSLiteInnerRemoteIPv4 = "192.0.0.1"
+)
+
 type freeBSDPPPoE struct {
 	Name        string
 	IfName      string
@@ -242,7 +247,10 @@ type freeBSDDSLite struct {
 
 func writeFreeBSDDSLites(buf *bytes.Buffer, dslites []freeBSDDSLite) {
 	for _, tunnel := range dslites {
-		args := []string{"tunnel " + tunnel.LocalAddress + " " + tunnel.RemoteAddress}
+		args := []string{
+			"inet6 tunnel " + tunnel.LocalAddress + " " + tunnel.RemoteAddress,
+			"inet " + freeBSDDSLiteInnerLocalIPv4 + " " + freeBSDDSLiteInnerRemoteIPv4 + " netmask 255.255.255.255",
+		}
 		if tunnel.MTU != 0 {
 			args = append(args, "mtu "+strconv.Itoa(tunnel.MTU))
 		}

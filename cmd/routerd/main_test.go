@@ -626,7 +626,7 @@ exit 0
 	writeExecutable(t, filepath.Join(binDir, "route"), fmt.Sprintf(`#!/bin/sh
 printf '%%s\n' "$*" >> %q
 if [ "$1" = "-n" ] && [ "$2" = "get" ]; then
-  printf 'interface: vtnet0\n'
+  printf 'gateway: 192.0.2.1\ninterface: vtnet0\n'
   exit 0
 fi
 exit 0
@@ -667,7 +667,8 @@ exit 0
 	for _, want := range []string{
 		"vtnet1 inet6 2001:db8:1234:5678::11 prefixlen 64 alias",
 		gif + " create",
-		gif + " tunnel 2001:db8:1234:5678::11 2001:db8::feed",
+		gif + " inet6 tunnel 2001:db8:1234:5678::11 2001:db8::feed",
+		gif + " inet 192.0.0.2 192.0.0.1 netmask 255.255.255.255",
 		gif + " mtu 1454",
 		gif + " up",
 	} {
@@ -679,7 +680,7 @@ exit 0
 	if err != nil {
 		t.Fatalf("read route log: %v", err)
 	}
-	if !strings.Contains(string(routeCalls), "-n change default -interface "+gif) {
+	if !strings.Contains(string(routeCalls), "-n change default 192.0.0.1") {
 		t.Fatalf("route change not called for %s:\n%s", gif, routeCalls)
 	}
 }

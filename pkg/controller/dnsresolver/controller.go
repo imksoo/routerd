@@ -233,6 +233,7 @@ func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNS
 		_ = current.process.Process.Signal(syscall.SIGTERM)
 		delete(runningResolvers, name)
 	}
+	_ = terminateExistingResolverProcesses(name)
 	binary := c.Binary
 	if binary == "" {
 		binary = "/usr/local/sbin/routerd-dns-resolver"
@@ -259,6 +260,31 @@ func (c Controller) ensureRunning(ctx context.Context, name string, spec api.DNS
 		runningMu.Unlock()
 	}()
 	return true, nil
+}
+
+func terminateExistingResolverProcesses(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	pattern := "routerd-dns-resolver.*--resource[ ='\"]+" + name
+	out, err := exec.Command("pgrep", "-f", pattern).Output()
+	if err != nil {
+		return nil
+	}
+	for _, field := range strings.Fields(string(out)) {
+		pid, err := strconv.Atoi(field)
+		if err != nil || pid <= 0 || pid == os.Getpid() {
+			continue
+		}
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		_ = process.Signal(syscall.SIGTERM)
+	}
+	time.Sleep(100 * time.Millisecond)
+	return nil
 }
 
 func (c Controller) dirs() (runtimeDir, stateDir string) {

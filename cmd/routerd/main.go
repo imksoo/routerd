@@ -5425,15 +5425,20 @@ func ensureFreeBSDDSLiteTunnel(name, ifname, local, remote string, spec api.DSLi
 	if spec.MTU != 0 {
 		mtuText = "mtu " + strconv.Itoa(spec.MTU)
 	}
+	innerIPv4Text := "inet " + freeBSDDSLiteInnerLocalIPv4 + " --> " + freeBSDDSLiteInnerRemoteIPv4
 	needsRecreate := showErr != nil ||
 		!strings.Contains(string(show), "tunnel inet6 "+local+" --> "+remote) ||
+		!strings.Contains(string(show), innerIPv4Text) ||
 		(mtuText != "" && !strings.Contains(string(show), mtuText))
 	if needsRecreate {
 		_ = exec.Command("ifconfig", name, "destroy").Run()
 		if err := runLogged("ifconfig", name, "create"); err != nil {
 			return false, err
 		}
-		if err := runLogged("ifconfig", name, "tunnel", local, remote); err != nil {
+		if err := runLogged("ifconfig", name, "inet6", "tunnel", local, remote); err != nil {
+			return false, err
+		}
+		if err := runLogged("ifconfig", name, "inet", freeBSDDSLiteInnerLocalIPv4, freeBSDDSLiteInnerRemoteIPv4, "netmask", "255.255.255.255"); err != nil {
 			return false, err
 		}
 		if spec.MTU != 0 {
@@ -5447,10 +5452,12 @@ func ensureFreeBSDDSLiteTunnel(name, ifname, local, remote string, spec api.DSLi
 	}
 	if spec.DefaultRoute {
 		routeOut, routeErr := exec.Command("route", "-n", "get", "default").CombinedOutput()
-		routeMissing := routeErr != nil || !strings.Contains(string(routeOut), "interface: "+name)
+		routeMissing := routeErr != nil ||
+			!strings.Contains(string(routeOut), "gateway: "+freeBSDDSLiteInnerRemoteIPv4) ||
+			!strings.Contains(string(routeOut), "interface: "+name)
 		if routeMissing {
-			if out, err := exec.Command("route", "-n", "change", "default", "-interface", name).CombinedOutput(); err != nil {
-				if addErr := runLogged("route", "-n", "add", "default", "-interface", name); addErr != nil {
+			if out, err := exec.Command("route", "-n", "change", "default", freeBSDDSLiteInnerRemoteIPv4).CombinedOutput(); err != nil {
+				if addErr := runLogged("route", "-n", "add", "default", freeBSDDSLiteInnerRemoteIPv4); addErr != nil {
 					return false, fmt.Errorf("route change default: %w: %s; route add default: %w", err, strings.TrimSpace(string(out)), addErr)
 				}
 			}
@@ -5459,6 +5466,11 @@ func ensureFreeBSDDSLiteTunnel(name, ifname, local, remote string, spec api.DSLi
 	}
 	return needsRecreate, nil
 }
+
+const (
+	freeBSDDSLiteInnerLocalIPv4  = "192.0.0.2"
+	freeBSDDSLiteInnerRemoteIPv4 = "192.0.0.1"
+)
 
 var freeBSDDSLiteRuntimeGIFNamePattern = regexp.MustCompile(`^gif[0-9]+$`)
 
