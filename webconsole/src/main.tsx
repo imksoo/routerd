@@ -894,10 +894,12 @@ const useStyles = makeStyles({
 
 function App() {
   const styles = useStyles();
+  const initialLocation = parseLocationHash();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [config, setConfig] = useState<ConfigSnapshot | null>(null);
   const [error, setError] = useState<string>("");
-  const [selected, setSelected] = useState<ViewKey>(() => parseLocationHash().view);
+  const [selected, setSelected] = useState<ViewKey>(initialLocation.view);
+  const [selectedTargetID, setSelectedTargetID] = useState<string | undefined>(initialLocation.targetID);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => readStoredRecord(collapsedStorageKey));
   const [connectionPages, setConnectionPages] = useState<Record<string, number>>(() => readStoredRecord(connectionPagesStorageKey));
@@ -978,6 +980,7 @@ function App() {
     const onHashChange = () => {
       const next = parseLocationHash();
       setSelected(next.view);
+      setSelectedTargetID(next.targetID);
       const targetID = next.targetID;
       if (targetID) {
         window.setTimeout(() => scrollToElement(targetID), 80);
@@ -986,14 +989,6 @@ function App() {
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
-
-  useEffect(() => {
-    const next = parseLocationHash();
-    const targetID = next.targetID;
-    if (next.view === selected && targetID) {
-      window.setTimeout(() => scrollToElement(targetID), 80);
-    }
-  }, [selected, connectionGroupsList.map(group => group.key).join("|"), summary?.generatedAt]);
 
   function updateConnectionFilter<K extends keyof ConnectionFilters>(key: K, value: ConnectionFilters[K]) {
     setConnectionFilters(current => ({ ...current, [key]: value }));
@@ -1014,6 +1009,7 @@ function App() {
 
   function navigateTo(view: ViewKey, targetID?: string) {
     setSelected(view);
+    setSelectedTargetID(targetID);
     const nextHash = hashForView(view, targetID);
     if (window.location.hash !== nextHash) {
       window.history.pushState(null, "", nextHash);
@@ -1028,6 +1024,7 @@ function App() {
   }
 
   const selectedNav = navItems.find(item => item.key === selected) ?? navItems[0];
+  const activeClientTargetID = clientSectionID(selectedTargetID);
 
   return (
     <FluentProvider theme={webDarkTheme} className={styles.shell}>
@@ -1128,21 +1125,27 @@ function App() {
             ) : null}
             {selected === "clients" ? (
               <div className={styles.clientsGrid}>
-                <Card id="clients-inventory" className={styles.connectionAnchor}>
-                  <CardHeader
-                    header={<Text weight="semibold">Client inventory</Text>}
-                    description={<Text className={styles.muted}>DHCP leases combined with observed traffic</Text>}
-                  />
-                  <ClientInventory clients={summary?.clients ?? []} />
-                </Card>
-                <Card id="clients-traffic" className={styles.connectionAnchor}>
-                  <CardHeader header={<Text weight="semibold">Client traffic</Text>} />
-                  <ClientTraffic flows={summary?.trafficFlows ?? []} />
-                </Card>
-                <Card id="clients-leases" className={styles.connectionAnchor}>
-                  <CardHeader header={<Text weight="semibold">DHCP leases</Text>} />
-                  <DHCPLeaseTable leases={summary?.dhcpLeases ?? []} />
-                </Card>
+                {activeClientTargetID === "clients-inventory" ? (
+                  <Card id="clients-inventory" className={styles.connectionAnchor}>
+                    <CardHeader
+                      header={<Text weight="semibold">Client inventory</Text>}
+                      description={<Text className={styles.muted}>DHCP leases, neighbors, and observed traffic grouped by client</Text>}
+                    />
+                    <ClientInventory clients={summary?.clients ?? []} />
+                  </Card>
+                ) : null}
+                {activeClientTargetID === "clients-traffic" ? (
+                  <Card id="clients-traffic" className={styles.connectionAnchor}>
+                    <CardHeader header={<Text weight="semibold">Client traffic</Text>} description={<Text className={styles.muted}>Traffic grouped by client address</Text>} />
+                    <ClientTraffic flows={summary?.trafficFlows ?? []} />
+                  </Card>
+                ) : null}
+                {activeClientTargetID === "clients-leases" ? (
+                  <Card id="clients-leases" className={styles.connectionAnchor}>
+                    <CardHeader header={<Text weight="semibold">DHCP leases</Text>} description={<Text className={styles.muted}>dnsmasq lease file entries</Text>} />
+                    <DHCPLeaseTable leases={summary?.dhcpLeases ?? []} />
+                  </Card>
+                ) : null}
               </div>
             ) : null}
             {selected === "connections" ? (
@@ -2101,6 +2104,17 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
     ];
   }
   return [];
+}
+
+function clientSectionID(targetID?: string) {
+  switch (targetID) {
+    case "clients-traffic":
+    case "clients-leases":
+    case "clients-inventory":
+      return targetID;
+    default:
+      return "clients-inventory";
+  }
 }
 
 function parseLocationHash(): { view: ViewKey; targetID?: string } {
