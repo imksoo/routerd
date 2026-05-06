@@ -22,6 +22,7 @@ import {
 } from "@fluentui/react-components";
 import {
   ArrowClockwiseRegular,
+  ArrowUpRegular,
   ChevronDownRegular,
   ChevronRightRegular,
   DocumentTextRegular,
@@ -342,6 +343,32 @@ const useStyles = makeStyles({
       display: "none",
     },
   },
+  navSubMenu: {
+    display: "grid",
+    gap: "2px",
+    margin: "4px 0 8px 30px",
+    "@media (max-width: 860px)": {
+      display: "none",
+    },
+  },
+  navSubButton: {
+    width: "100%",
+    justifyContent: "space-between",
+    borderRadius: "4px",
+    padding: "5px 8px",
+    color: tokens.colorNeutralForeground3,
+    backgroundColor: "transparent",
+    ":hover": {
+      color: tokens.colorNeutralForeground1,
+      backgroundColor: "#172235",
+    },
+  },
+  jumpBar: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    marginBottom: "12px",
+  },
   content: {
     minWidth: 0,
     backgroundColor: "#0b1118",
@@ -564,6 +591,9 @@ const useStyles = makeStyles({
     display: "grid",
     gap: "8px",
   },
+  connectionAnchor: {
+    scrollMarginTop: "96px",
+  },
   connectionHeader: {
     display: "flex",
     flexWrap: "wrap",
@@ -667,6 +697,17 @@ const useStyles = makeStyles({
   },
   pageSize: {
     width: "86px",
+  },
+  scrollTopButton: {
+    position: "fixed",
+    right: "18px",
+    bottom: "18px",
+    zIndex: 30,
+    boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+    "@media (max-width: 640px)": {
+      right: "12px",
+      bottom: "12px",
+    },
   },
   detailPanel: {
     position: "sticky",
@@ -835,6 +876,7 @@ function App() {
     () => filterAndSortConnections(connections, dnsLabels, connectionFilters),
     [connections, dnsLabels, connectionFilters],
   );
+  const connectionGroupsList = useMemo(() => connectionGroups(filteredConnections), [filteredConnections]);
   const connectionFacets = useMemo(() => connectionFilterFacets(connections), [connections]);
   const resources = useMemo(() => importantResources(summary?.resources ?? []), [summary?.resources]);
   const events = summary?.events ?? [];
@@ -857,6 +899,18 @@ function App() {
     setConnectionFilters(current => ({ ...current, [key]: value }));
   }
 
+  function scrollToTop() {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function showConnectionsGroup(key: string) {
+    setSelected("connections");
+    setCollapsed(current => ({ ...current, [key]: false }));
+    window.setTimeout(() => {
+      document.getElementById(connectionGroupID(key))?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+  }
+
   const selectedNav = navItems.find(item => item.key === selected) ?? navItems[0];
 
   return (
@@ -871,7 +925,6 @@ function App() {
         </div>
         <div className={styles.toolbar}>
           {loading ? <Spinner size="tiny" /> : null}
-          <Badge appearance="tint" color={phaseColor(summary?.status?.status?.phase)}>{String(summary?.status?.status?.phase ?? "Unknown")}</Badge>
           <Button appearance="subtle" icon={<ArrowClockwiseRegular />} onClick={refresh}>Refresh</Button>
         </div>
       </header>
@@ -879,20 +932,40 @@ function App() {
         <aside className={styles.sidebar} aria-label="Web console navigation">
           <div className={styles.navSection}>
             {navItems.map(item => (
-              <Button
-                key={item.key}
-                appearance="subtle"
-                className={`${styles.navButton} ${selected === item.key ? styles.navButtonActive : ""}`}
-                onClick={() => setSelected(item.key)}
-              >
-                <span className={styles.navButtonInner}>
-                  <span className={styles.navIcon}>{item.icon}</span>
-                  <span className={styles.navText}>
-                    <Text weight={selected === item.key ? "semibold" : "regular"}>{item.label}</Text>
-                    <Text size={200} className={styles.navDescription}>{item.description}</Text>
+              <React.Fragment key={item.key}>
+                <Button
+                  appearance="subtle"
+                  className={`${styles.navButton} ${selected === item.key ? styles.navButtonActive : ""}`}
+                  onClick={() => setSelected(item.key)}
+                >
+                  <span className={styles.navButtonInner}>
+                    <span className={styles.navIcon}>{item.icon}</span>
+                    <span className={styles.navText}>
+                      <Text weight={selected === item.key ? "semibold" : "regular"}>{item.label}</Text>
+                      <Text size={200} className={styles.navDescription}>{item.description}</Text>
+                    </span>
                   </span>
-                </span>
-              </Button>
+                </Button>
+                {item.key === "connections" && connectionGroupsList.length > 0 ? (
+                  <div className={styles.navSubMenu}>
+                    {connectionGroupsList.map(group => {
+                      const label = connectionGroupLabel(group.key);
+                      return (
+                        <Button
+                          key={group.key}
+                          size="small"
+                          appearance="subtle"
+                          className={styles.navSubButton}
+                          onClick={() => showConnectionsGroup(group.key)}
+                        >
+                          <span>{label.family}/{label.protocol.toUpperCase()}</span>
+                          <span>{group.rows.length}</span>
+                        </Button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </React.Fragment>
             ))}
           </div>
         </aside>
@@ -957,6 +1030,17 @@ function App() {
               header={<Text weight="semibold">Connections</Text>}
               description={<Text className={styles.muted}>{connectionFamilyCounts(summary?.connections)} / Showing {filteredConnections.length}</Text>}
             />
+            <div className={styles.jumpBar}>
+              <Button size="small" appearance="secondary" icon={<ArrowUpRegular />} onClick={scrollToTop}>Top</Button>
+              {connectionGroupsList.map(group => {
+                const label = connectionGroupLabel(group.key);
+                return (
+                  <Button key={group.key} size="small" appearance="secondary" onClick={() => showConnectionsGroup(group.key)}>
+                    {label.family}/{label.protocol.toUpperCase()} {group.rows.length}
+                  </Button>
+                );
+              })}
+            </div>
             <div className={styles.connectionFilters}>
               <div className={styles.filterControl}>
                 <Text size={200} className={styles.muted}>Filter</Text>
@@ -1009,7 +1093,7 @@ function App() {
               </div>
             </div>
             <div className={styles.connectionGroup}>
-              {connectionGroups(filteredConnections).map(group => (
+              {connectionGroupsList.map(group => (
                 <ConnectionGroup
                   key={group.key}
                   group={group}
@@ -1026,6 +1110,7 @@ function App() {
                 />
               ))}
             </div>
+            <Button className={styles.scrollTopButton} appearance="primary" icon={<ArrowUpRegular />} onClick={scrollToTop}>Top</Button>
               </Card>
             ) : null}
             {selected === "events" ? (
@@ -1322,7 +1407,7 @@ function ConnectionGroup({
   const start = currentPage * pageSize;
   const visibleRows = group.rows.slice(start, start + pageSize);
   return (
-    <Card>
+    <Card id={connectionGroupID(group.key)} className={styles.connectionAnchor}>
       <CardHeader
         header={<Text weight="semibold">{label.family}/{label.protocol.toUpperCase()} {group.rows.length}</Text>}
         description={!collapsed ? <Text className={styles.muted}>Showing {visibleRows.length ? start + 1 : 0}-{start + visibleRows.length} of {group.rows.length}</Text> : undefined}
@@ -1881,6 +1966,10 @@ function connectionGroupLabel(key: string) {
     family: family === "ipv4" ? "IPv4" : family === "ipv6" ? "IPv6" : "Other",
     protocol: protocol || "other",
   };
+}
+
+function connectionGroupID(key: string) {
+  return `connections-${key.replace(/[^a-zA-Z0-9_-]+/g, "-")}`;
 }
 
 function endpoint(tuple?: ConnTuple) {
