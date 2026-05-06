@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
 	"routerd/pkg/sysctlprofile"
@@ -63,7 +64,12 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("systemd.service", defaultString(spec.UnitName, res.Metadata.Name), resource.ActionEnsure, "systemctl", nil)}
+		unitName := defaultString(spec.UnitName, res.Metadata.Name)
+		_, features := platform.Current()
+		if features.HasRCD {
+			return []resource.Intent{artifact("rc.d.service", render.FreeBSDServiceName(unitName), resource.ActionEnsure, "service", nil)}
+		}
+		return []resource.Intent{artifact("systemd.service", unitName, resource.ActionEnsure, "systemctl", nil)}
 	case "Sysctl":
 		spec, err := res.SysctlSpec()
 		if err != nil {
@@ -203,6 +209,10 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		}
 		return []resource.Intent{artifact("net.ipv6.ra.client", aliases[spec.Interface], resource.ActionEnsure, "platform-network", nil)}
 	case "DHCPv6PrefixDelegation":
+		_, features := platform.Current()
+		if features.HasRCD {
+			return []resource.Intent{artifact("rc.d.service", render.FreeBSDServiceName("routerd-dhcpv6-client@"+res.Metadata.Name+".service"), resource.ActionEnsure, "service", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
+		}
 		return []resource.Intent{artifact("systemd.service", "routerd-dhcpv6-client@"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
 	case "IPv6DelegatedAddress":
 		spec, err := res.IPv6DelegatedAddressSpec()

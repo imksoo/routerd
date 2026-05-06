@@ -12,6 +12,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/config"
+	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/sysctlprofile"
 )
@@ -1443,6 +1444,11 @@ func (e *Engine) observeSystemdUnit(res api.Resource, includePlan bool, rr *Reso
 	desiredState := defaultString(spec.State, "present")
 	rr.Observed["unitName"] = unitName
 	rr.Observed["state"] = desiredState
+	_, features := platform.Current()
+	if features.HasRCD {
+		e.observeRCDService(unitName, spec, desiredState, includePlan, rr)
+		return
+	}
 	if desiredState == "absent" {
 		if _, err := e.Command("systemctl", "is-enabled", unitName); err == nil {
 			rr.Phase = "Drifted"
@@ -1468,6 +1474,49 @@ func (e *Engine) observeSystemdUnit(res api.Resource, includePlan bool, rr *Reso
 		}
 		if api.BoolDefault(spec.Started, true) {
 			rr.Plan = append(rr.Plan, "restart systemd unit "+unitName)
+		}
+	}
+}
+
+func (e *Engine) observeRCDService(unitName string, spec api.SystemdUnitSpec, desiredState string, includePlan bool, rr *ResourceResult) {
+	serviceName := render.FreeBSDServiceName(unitName)
+	rr.Observed["serviceName"] = serviceName
+	if desiredState == "absent" {
+		if _, err := e.Command("service", serviceName, "status"); err == nil {
+			rr.Phase = "Drifted"
+			rr.Observed["running"] = "true"
+		} else {
+			rr.Observed["running"] = "false"
+		}
+		if includePlan {
+			rr.Plan = append(rr.Plan, "remove rc.d service "+serviceName)
+			rr.Plan = append(rr.Plan, "disable rc.d service "+serviceName)
+		}
+		return
+	}
+	if api.BoolDefault(spec.Enabled, true) {
+		if out, err := e.Command("sysrc", "-n", serviceName+"_enable"); err == nil && strings.EqualFold(strings.TrimSpace(string(out)), "YES") {
+			rr.Observed["enabled"] = "YES"
+		} else {
+			rr.Phase = "Drifted"
+			rr.Observed["enabled"] = "not-yes"
+		}
+	}
+	if api.BoolDefault(spec.Started, true) {
+		if _, err := e.Command("service", serviceName, "status"); err == nil {
+			rr.Observed["running"] = "true"
+		} else {
+			rr.Phase = "Drifted"
+			rr.Observed["running"] = "false"
+		}
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, "render rc.d service "+serviceName)
+		if api.BoolDefault(spec.Enabled, true) {
+			rr.Plan = append(rr.Plan, "enable rc.d service "+serviceName)
+		}
+		if api.BoolDefault(spec.Started, true) {
+			rr.Plan = append(rr.Plan, "restart rc.d service "+serviceName)
 		}
 	}
 }

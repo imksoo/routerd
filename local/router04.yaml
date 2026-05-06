@@ -1,0 +1,223 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: router04
+
+spec:
+  reconcile:
+    mode: progressive
+    protectedInterfaces:
+      - mgmt
+
+  resources:
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Package
+      metadata:
+        name: service-deps
+      spec:
+        packages:
+          - os: freebsd
+            manager: pkg
+            names:
+              - dnsmasq
+              - bind-tools
+              - wireguard-tools
+              - tailscale
+              - strongswan
+              - mpd5
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Hostname
+      metadata:
+        name: system-hostname
+      spec:
+        hostname: router04.lain.local
+        managed: true
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv4-forwarding
+      spec:
+        key: net.inet.ip.forwarding
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv6-forwarding
+      spec:
+        key: net.inet6.ip6.forwarding
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
+        name: routerd.service
+      spec:
+        description: routerd control plane for router04
+        execStart:
+          - /usr/local/sbin/routerd
+          - serve
+          - --config
+          - /usr/local/etc/routerd/router.yaml
+          - --socket
+          - /var/run/routerd/routerd.sock
+          - --status-file
+          - /var/run/routerd/status.json
+          - --observe-interval
+          - 30s
+        runtimeDirectory:
+          - routerd
+        runtimeDirectoryPreserve: "yes"
+        stateDirectory:
+          - routerd
+        logsDirectory:
+          - routerd
+        enabled: true
+        started: true
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: WebConsole
+      metadata:
+        name: mgmt
+      spec:
+        enabled: true
+        listenAddressFrom:
+          resource: Interface/mgmt
+          field: ipv4Addresses
+        port: 8080
+        title: router04
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: vtnet0
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Address
+      metadata:
+        name: wan-dhcp4
+      spec:
+        interface: wan
+        client: dhclient
+        required: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: mgmt
+      spec:
+        ifname: vtnet2
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Address
+      metadata:
+        name: mgmt-dhcp4
+      spec:
+        interface: mgmt
+        client: dhclient
+        required: false
+        useRoutes: false
+        useDNS: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6RAAddress
+      metadata:
+        name: wan-ra
+      spec:
+        interface: wan
+        required: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6PrefixDelegation
+      metadata:
+        name: wan-pd
+      spec:
+        interface: wan
+        profile: ntt-hgw-lan-pd
+        prefixLength: 60
+        required: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: vtnet1
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-ipv4
+      spec:
+        interface: lan
+        address: 192.168.160.4/24
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: lan-ipv6-pd-address
+      spec:
+        prefixDelegation: wan-pd
+        interface: lan
+        subnetID: "0"
+        addressSuffix: "::4"
+        sendRA: false
+        announce: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Bridge
+      metadata:
+        name: br-vxlan-test
+      spec:
+        ifname: bridge100
+        members:
+          - vxlan100
+        stp: true
+        rstp: true
+        multicastSnooping: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VXLANSegment
+      metadata:
+        name: vxlan100
+      spec:
+        ifname: vxlan101
+        vni: 100
+        localAddress: 192.168.1.35
+        remotes:
+          - 192.168.1.36
+          - 192.168.1.34
+          - 192.168.1.32
+        underlayInterface: wan
+        udpPort: 4789
+        mtu: 1450
+        bridge: br-vxlan-test
+        l2Filter: default
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: br-vxlan-test-ipv4
+      spec:
+        interface: br-vxlan-test
+        address: 10.99.100.4/24
+        exclusive: false

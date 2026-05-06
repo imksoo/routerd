@@ -216,8 +216,8 @@ func TestRouterWithIPv6PDClientOptionsResolvesFlavorDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read spec: %v", err)
 	}
-	if spec.Client != api.IPv6PDClientDHCPCD {
-		t.Fatalf("client = %q, want dhcpcd", spec.Client)
+	if spec.Client != api.IPv6PDClientRouterd {
+		t.Fatalf("client = %q, want routerd-dhcpv6-client", spec.Client)
 	}
 	if spec.Profile != api.IPv6PDProfileNTTHGWLANPD {
 		t.Fatalf("profile = %q, want original profile", spec.Profile)
@@ -234,8 +234,8 @@ func TestRouterWithIPv6PDClientOptionsResolvesFlavorDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read nixos spec: %v", err)
 	}
-	if spec.Client != api.IPv6PDClientDHCPCD {
-		t.Fatalf("nixos client = %q, want dhcpcd", spec.Client)
+	if spec.Client != api.IPv6PDClientRouterd {
+		t.Fatalf("nixos client = %q, want routerd-dhcpv6-client", spec.Client)
 	}
 }
 
@@ -495,6 +495,26 @@ exit 0
 		if !strings.Contains(gotChanged, want) {
 			t.Fatalf("changed missing %q:\n%v", want, changed)
 		}
+	}
+}
+
+func TestRunFreeBSDServiceTreatsAlreadyRunningAsIdempotentStart(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	writeExecutable(t, filepath.Join(binDir, "service"), `#!/bin/sh
+echo "daemon: process already running, pid: 10220" >&2
+exit 1
+`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := runFreeBSDService("routerd_dhcpv6_client_wan_pd", "onestart"); err != nil {
+		t.Fatalf("onestart already running should be idempotent: %v", err)
+	}
+	if err := runFreeBSDService("routerd_dhcpv6_client_wan_pd", "onerestart"); err == nil {
+		t.Fatal("onerestart failure should not be hidden")
 	}
 }
 

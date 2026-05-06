@@ -6,6 +6,7 @@ import (
 )
 
 const (
+	IPv6PDClientRouterd  = "routerd-dhcpv6-client"
 	IPv6PDClientNetworkd = "networkd"
 	IPv6PDClientDHCPv6C  = "dhcp6c"
 	IPv6PDClientDHCPCD   = "dhcpcd"
@@ -46,7 +47,7 @@ var KnownIPv6PDNGCombinations = []IPv6PDKnownNGCombination{
 
 func ValidIPv6PDClient(client string) bool {
 	switch client {
-	case "", IPv6PDClientNetworkd, IPv6PDClientDHCPv6C, IPv6PDClientDHCPCD:
+	case "", IPv6PDClientRouterd, IPv6PDClientNetworkd, IPv6PDClientDHCPv6C, IPv6PDClientDHCPCD:
 		return true
 	default:
 		return false
@@ -66,21 +67,7 @@ func EffectiveIPv6PDClient(osName string, nixOS bool, profile, configured string
 	if configured != "" {
 		return configured
 	}
-	effectiveProfile := profile
-	if effectiveProfile == "" {
-		effectiveProfile = IPv6PDProfileDefault
-	}
-	switch strings.ToLower(osName) {
-	case "freebsd":
-		return IPv6PDClientDHCPv6C
-	case "linux":
-		if IsNTTIPv6PDProfile(effectiveProfile) {
-			return IPv6PDClientDHCPCD
-		}
-		return IPv6PDClientNetworkd
-	default:
-		return IPv6PDClientNetworkd
-	}
+	return IPv6PDClientRouterd
 }
 
 func MatchKnownIPv6PDNGCombinations(ctx IPv6PDClientContext) []IPv6PDKnownNGCombination {

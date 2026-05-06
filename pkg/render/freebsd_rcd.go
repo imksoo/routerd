@@ -39,6 +39,28 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	}
 	aliases := linkAliases(router)
 	for _, res := range router.Spec.Resources {
+		if res.Kind != "DHCPv6PrefixDelegation" {
+			continue
+		}
+		spec, err := res.DHCPv6PrefixDelegationSpec()
+		if err != nil {
+			return nil, err
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			return nil, fmt.Errorf("%s references interface %q with no ifname", res.ID(), spec.Interface)
+		}
+		name := freeBSDServiceName("routerd-dhcpv6-client@" + res.Metadata.Name + ".service")
+		if explicit[name] {
+			continue
+		}
+		data, err := FreeBSDRCDScript(name, freeBSDDHCPv6ClientSystemdSpec(res.Metadata.Name, ifname, spec, telemetryEnv))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", res.ID(), err)
+		}
+		out[name] = data
+	}
+	for _, res := range router.Spec.Resources {
 		if res.Kind != "HealthCheck" {
 			continue
 		}
@@ -114,6 +136,41 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	return out, nil
 }
 
+func freeBSDDHCPv6ClientSystemdSpec(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, telemetryEnv []string) api.SystemdUnitSpec {
+	args := []string{
+		"/usr/local/sbin/routerd-dhcpv6-client",
+		"--resource", resource,
+		"--interface", ifname,
+		"--socket", "/var/run/routerd/dhcpv6-client/" + resource + ".sock",
+		"--lease-file", "/var/db/routerd/dhcpv6-client/" + resource + "/lease.json",
+		"--event-file", "/var/db/routerd/dhcpv6-client/" + resource + "/events.jsonl",
+	}
+	if spec.IAID != "" {
+		args = append(args, "--iaid", spec.IAID)
+	}
+	noNewPrivileges := true
+	privateTmp := true
+	return api.SystemdUnitSpec{
+		Description:              "routerd DHCPv6-PD client " + resource,
+		ExecStart:                args,
+		Environment:              telemetryEnv,
+		Wants:                    []string{"NETWORKING"},
+		After:                    []string{"NETWORKING"},
+		Restart:                  "always",
+		RestartSec:               "5s",
+		RuntimeDirectory:         []string{"routerd", "routerd/dhcpv6-client"},
+		RuntimeDirectoryPreserve: "yes",
+		StateDirectory:           []string{"routerd", "routerd/dhcpv6-client", "routerd/dhcpv6-client/" + resource},
+		LogsDirectory:            []string{"routerd"},
+		ReadWritePaths:           []string{"/var/run/routerd", "/var/db/routerd", "/var/log/routerd"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET6"},
+		ProtectSystem:            "strict",
+		ProtectHome:              "true",
+		NoNewPrivileges:          &noNewPrivileges,
+		PrivateTmp:               &privateTmp,
+	}
+}
+
 func freeBSDFirewallLoggerSystemdSpec(spec api.FirewallLogSpec) api.SystemdUnitSpec {
 	path := spec.Path
 	if path == "" {
@@ -180,7 +237,7 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 	} else {
 		buf.WriteString("pidfile=\"/var/run/${name}.pid\"\n")
 		buf.WriteString("command=\"/usr/sbin/daemon\"\n")
-		buf.WriteString("procname=" + shellSingleQuote(spec.ExecStart[0]) + "\n")
+		buf.WriteString("procname=\"/usr/sbin/daemon\"\n")
 		buf.WriteString("command_args=\"-P ${pidfile} -r -f --")
 		if len(spec.Environment) > 0 {
 			buf.WriteString(" env")
@@ -245,6 +302,10 @@ func freeBSDServiceName(value string) string {
 		return "routerd_service"
 	}
 	return value
+}
+
+func FreeBSDServiceName(value string) string {
+	return freeBSDServiceName(value)
 }
 
 func sortedByteMapKeys(values map[string][]byte) []string {

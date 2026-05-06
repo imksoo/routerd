@@ -74,7 +74,7 @@ var (
 	defaultStatePath           = platformDefaults.DBFile()
 	pppoeCHAPSecretsPath       = platformDefaults.PPPoEChapSecretsFile
 	pppoePAPSecretsPath        = platformDefaults.PPPoEPapSecretsFile
-	pdClientLeaseDir           = "/var/lib/routerd/dhcpv6-client"
+	pdClientLeaseDir           = filepath.Join(platformDefaults.StateDir, "dhcpv6-client")
 )
 
 var errNoIPv6PrefixAvailable = errors.New("no IPv6 prefix available")
@@ -432,7 +432,7 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
-	overrideClient := fs.String("override-client", "", "override DHCPv6PrefixDelegation client for this apply: networkd, dhcp6c, or dhcpcd")
+	overrideClient := fs.String("override-client", "", "override DHCPv6PrefixDelegation client for this apply: routerd-dhcpv6-client, networkd, dhcp6c, or dhcpcd")
 	overrideProfile := fs.String("override-profile", "", "override DHCPv6PrefixDelegation profile for this apply")
 	once := fs.Bool("once", false, "run one apply loop")
 	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
@@ -3739,14 +3739,14 @@ func applyFreeBSDRCDScripts(scripts map[string][]byte, rcScriptDir string) ([]st
 			changed = append(changed, path)
 		}
 		if fileChanged && freeBSDServiceRunning(name) {
-			if err := runLogged("service", name, "onerestart"); err != nil {
+			if err := runFreeBSDService(name, "onerestart"); err != nil {
 				return changed, err
 			}
 			changed = append(changed, "service:"+name)
 			continue
 		}
 		if !freeBSDServiceRunning(name) {
-			if err := runLogged("service", name, "onestart"); err != nil {
+			if err := runFreeBSDService(name, "onestart"); err != nil {
 				return changed, err
 			}
 			changed = append(changed, "service:"+name)
@@ -3810,6 +3810,20 @@ func freeBSDServiceExists(name string) bool {
 
 func freeBSDServiceRunning(name string) bool {
 	return exec.Command("service", name, "status").Run() == nil
+}
+
+func runFreeBSDService(name, action string) error {
+	err := runLogged("service", name, action)
+	if err == nil {
+		return nil
+	}
+	if action == "onestart" {
+		text := strings.ToLower(err.Error())
+		if strings.Contains(text, "already running") || strings.Contains(text, "process already running") {
+			return nil
+		}
+	}
+	return err
 }
 
 func parseFreeBSDRCConf(data []byte) (map[string]string, error) {

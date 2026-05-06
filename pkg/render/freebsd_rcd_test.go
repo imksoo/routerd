@@ -22,7 +22,7 @@ func TestFreeBSDRCDScript(t *testing.T) {
 	for _, want := range []string{
 		`# PROVIDE: routerd_dns_resolver`,
 		`command="/usr/sbin/daemon"`,
-		`procname='/usr/local/sbin/routerd-dns-resolver'`,
+		`procname="/usr/sbin/daemon"`,
 		`command_args="-P ${pidfile} -r -f -- '/usr/local/sbin/routerd-dns-resolver' '--config' '/usr/local/etc/routerd/dns-resolver.yaml'"`,
 		`routerd_dns_resolver_prestart() {`,
 		`mkdir -p '/var/run/routerd/dns-resolver'`,
@@ -32,6 +32,42 @@ func TestFreeBSDRCDScript(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rc.d script missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFreeBSDRenderSynthesizesDHCPv6ClientRCD(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet0", AdminUp: true},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+			Metadata: api.ObjectMeta{Name: "wan-pd"},
+			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "1"},
+		},
+	}}}
+	cfg, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(cfg.RCDScripts["routerd_dhcpv6_client_wan_pd"])
+	for _, want := range []string{
+		`PROVIDE: routerd_dhcpv6_client_wan_pd`,
+		`procname="/usr/sbin/daemon"`,
+		`'/usr/local/sbin/routerd-dhcpv6-client'`,
+		`'--interface' 'vtnet0'`,
+		`'--socket' '/var/run/routerd/dhcpv6-client/wan-pd.sock'`,
+		`'--lease-file' '/var/db/routerd/dhcpv6-client/wan-pd/lease.json'`,
+		`'--event-file' '/var/db/routerd/dhcpv6-client/wan-pd/events.jsonl'`,
+		`'--iaid' '1'`,
+		`mkdir -p '/var/run/routerd/dhcpv6-client'`,
+		`mkdir -p '/var/db/routerd/dhcpv6-client/wan-pd'`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("rc.d script missing %q:\n%s", want, script)
 		}
 	}
 }
