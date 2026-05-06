@@ -16,7 +16,7 @@ const copy = {
       'routerd describes WAN acquisition, LAN services, DNS, NAT, route policy, system bootstrap, and observability as typed resources. It is built for small networks where the router must be explicit, repeatable, and inspectable.',
     tutorial: 'Start the tutorial',
     resources: 'Browse resources',
-    config: 'See configuration examples',
+    config: 'WAN-side services',
     quickstartTitle: 'Validate, Plan, Apply',
     quickstartBody:
       'Start with a normal YAML file. Validate it, inspect the plan, run a dry application, then let the daemon keep the host converged.',
@@ -56,7 +56,7 @@ const copy = {
       'routerd は WAN 取得、LAN サービス、DNS、NAT、経路ポリシー、OS 準備、観測性を型付きリソースとして記述します。小規模ネットワークを明示的に、再現しやすく、確認しやすく運用するためのソフトウェアです。',
     tutorial: 'チュートリアルを始める',
     resources: 'リソースを見る',
-    config: '設定例を見る',
+    config: 'WAN 側サービスを見る',
     quickstartTitle: '検証、計画、適用',
     quickstartBody:
       '普通の YAML ファイルから始めます。検証し、計画を確認し、予行実行してから、デーモンでホストを望ましい状態に保ちます。',
@@ -105,7 +105,7 @@ function HomepageHeader({siteCopy}: {siteCopy: typeof copy.en}) {
           <Link className="button button--outline button--secondary button--lg" to="/docs/reference/api-v1alpha1">
             {siteCopy.resources}
           </Link>
-          <Link className="button button--outline button--secondary button--lg" to="/docs/tutorials/router-lab">
+          <Link className="button button--outline button--secondary button--lg" to="/docs/tutorials/wan-side-services">
             {siteCopy.config}
           </Link>
         </div>

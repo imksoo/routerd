@@ -1,15 +1,55 @@
-# Multi-WAN Route Selection
+---
+title: Multi-WAN egress with health-based selection
+---
 
-Use `EgressRoutePolicy` when one router has more than one outbound path. The
-policy chooses the highest-weight candidate that is ready and healthy.
+# Multi-WAN egress with health-based selection
 
-This is intentionally convergent. During startup, a lower-weight fallback can
-serve traffic as soon as it is ready. When the preferred path later passes its
-health check, routerd changes the selected device and reapplies route and NAT
-resources. The controller does not flush conntrack. Existing flows keep their
-kernel state, and new flows follow the newly selected path.
+## Scenario
 
-## Route policy
+You have a router with more than one path to the internet and want routerd to:
+
+- Pick the best available path automatically.
+- Fall back to a slower or backup link if the preferred one becomes unhealthy.
+- Avoid hard cutovers that drop existing connections.
+
+Typical examples:
+
+- A home router with a DS-Lite tunnel as primary and the upstream residential gateway as a NAT fallback.
+- A SOHO router with two ISP uplinks (e.g. fibre + LTE) for redundancy.
+- A site router that prefers a private VPN circuit but falls back to public internet.
+
+## How routerd solves it
+
+`EgressRoutePolicy` declares the candidate paths and how to choose between them.
+At any moment routerd selects the highest-weight candidate that is **ready** (the source resource has settled) and **healthy** (its `HealthCheck` is passing).
+On a transition, routerd updates the OS route table and reapplies any NAT rule that follows the policy. It does **not** flush conntrack, so existing flows continue on their current path while new flows take the freshly selected one.
+
+Convergence is intentional: a low-weight backup can serve traffic the moment it is ready at boot, and routerd switches to the preferred path only after that path is confirmed healthy.
+
+## Minimal configuration
+
+Three building blocks: a `HealthCheck` per candidate, an `EgressRoutePolicy` that lists the candidates, and a `NAT44Rule` that follows the policy.
+
+### Health checks
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: HealthCheck
+metadata:
+  name: internet-via-primary
+spec:
+  daemon: routerd-healthcheck
+  target: 1.1.1.1
+  protocol: tcp
+  port: 443
+  sourceInterface: ds-lite-primary
+  interval: 30s
+  timeout: 3s
+```
+
+Bind each check to the candidate interface so the probe actually rides the candidate path. Use TCP/443 against a well-known stable target rather than ICMP, so transient ICMP filtering does not flap the selection.
+
+### Egress policy
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -23,23 +63,14 @@ spec:
   selection: highest-weight-ready
   hysteresis: 30s
   candidates:
-    - name: ds-lite-a
-      source: DSLiteTunnel/ds-lite-a
+    - name: ds-lite-primary
+      source: DSLiteTunnel/ds-lite-primary
       deviceFrom:
-        resource: DSLiteTunnel/ds-lite-a
+        resource: DSLiteTunnel/ds-lite-primary
         field: interface
       gatewaySource: none
       weight: 90
-      healthCheck: internet-tcp443-dslite-a
-
-    - name: ds-lite-slaac
-      source: DSLiteTunnel/ds-lite
-      deviceFrom:
-        resource: DSLiteTunnel/ds-lite
-        field: interface
-      gatewaySource: none
-      weight: 70
-      healthCheck: internet-tcp443-dslite
+      healthCheck: internet-via-primary
 
     - name: hgw-fallback
       source: Interface/wan
@@ -47,30 +78,14 @@ spec:
         resource: Interface/wan
         field: ifname
       gatewaySource: static
-      gateway: 192.168.1.254
+      gateway: 192.0.2.1
       weight: 50
+      healthCheck: internet-via-hgw
 ```
 
-Add a health check for each path that must prove internet reachability.
+`hysteresis` damps flapping: routerd waits this long after a candidate becomes unhealthy before demoting it.
 
-```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: HealthCheck
-metadata:
-  name: internet-tcp443-dslite-a
-spec:
-  daemon: routerd-healthcheck
-  target: 1.1.1.1
-  protocol: tcp
-  port: 443
-  sourceInterface: ds-lite-a
-  interval: 30s
-  timeout: 3s
-```
-
-## NAT follows the selected path
-
-The route and NAT resources can follow the selected egress policy.
+### NAT that follows the policy
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -81,11 +96,14 @@ spec:
   type: masquerade
   egressPolicyRef: ipv4-default
   sourceRanges:
-    - 172.18.0.0/16
+    - 192.0.2.0/24
 ```
 
-If an upstream HGW has a static route back to the LAN subnet, you can avoid NAT
-for private destinations while keeping NAT for internet traffic.
+The masquerade source address is taken from the interface routerd selected at this instant. When the policy switches, the next packet is masqueraded with the new path's address.
+
+## Avoiding NAT for private destinations
+
+If the upstream gateway has a static route back to the LAN, you can keep NAT for the public internet but skip it when traffic is destined for other private networks.
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -96,33 +114,34 @@ spec:
   type: masquerade
   egressInterface: wan
   sourceRanges:
-    - 172.18.0.0/16
+    - 192.0.2.0/24
   excludeDestinationCIDRs:
     - 192.168.0.0/16
     - 172.16.0.0/12
     - 10.0.0.0/8
-```
 
-Pair that with a static route resource for the HGW LAN.
+---
 
-```yaml
 apiVersion: net.routerd.net/v1alpha1
 kind: IPv4Route
 metadata:
-  name: hgw-lan-via-wan
+  name: hgw-lan
 spec:
   destination: 192.168.0.0/16
   device: wan
 ```
 
-In this model, RFC 1918 destinations stay inside the local network design.
-The public internet follows the selected egress policy.
+With this combination, RFC 1918 destinations are routed (not NATed), and the public internet still flows through the selected egress.
 
 ## Operational notes
 
-- Keep SSH on a management interface.
-- Do not test router SSH through the untrusted WAN path while applying firewall
-  or route changes.
-- Prefer health checks bound to the candidate interface.
-- Do not clear conntrack when changing the selected path unless there is a
-  deliberate incident response reason.
+- Always keep an out-of-band management path (mgmt interface, console, dedicated SSH NIC). Do not test router SSH over an untrusted WAN path while applying firewall or route changes.
+- Prefer health checks that are bound to the candidate interface (`sourceInterface: <ifname>`) so a probe failure really means that path is broken, not that the router default route was wrong.
+- Avoid clearing conntrack when the path switches. routerd does not flush conntrack on purpose; existing TCP flows that already finished their handshake should be allowed to die naturally.
+- The selected candidate is visible at any time via `routerctl describe EgressRoutePolicy/<name>` (`status.selectedCandidate`).
+
+## See also
+
+- [Path MTU and MSS clamping](../concepts/path-mtu.md)
+- [Firewall rule basics](./firewall-rule.md)
+- [DS-Lite setup](./flets-ipv6-setup.md)

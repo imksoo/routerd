@@ -1,17 +1,35 @@
 ---
-title: LAN services
-sidebar_position: 3
+title: LAN-side services
+sidebar_position: 5
 ---
 
-# LAN services
+# LAN-side services
 
-routerd splits LAN service into two clear boundaries:
+This page introduces the routerd resources that handle the LAN side of a router: addresses on the inside interface, DHCPv4 / DHCPv6 leases, IPv6 Router Advertisement, and the local DNS resolver.
 
-- dnsmasq provides DHCPv4, DHCPv6, DHCP relay, and IPv6 Router Advertisement.
-- `routerd-dns-resolver` provides DNS zones, forwarding, cache, and logs.
+The companion page on the [WAN side](./wan-side-services.md) covers how the router gets its upstream addresses; this page is what the router publishes to the inside.
 
-This keeps DHCP lease handling close to dnsmasq while keeping DNS policy in
-typed routerd resources.
+## Service split
+
+routerd splits LAN service across two daemons with clear boundaries:
+
+- **dnsmasq** handles DHCPv4, DHCPv6, DHCP relay, and IPv6 Router Advertisement.
+- **`routerd-dns-resolver`** handles DNS zones, conditional forwarding, cache, and query logging.
+
+Keeping DHCP next to dnsmasq avoids reimplementing a battle-tested DHCP server. Keeping DNS in `routerd-dns-resolver` lets us model resolver policy as typed routerd resources (`DNSResolver`, `DNSZone`).
+
+## Summary table
+
+| Concern | Resource | Daemon backing it |
+| --- | --- | --- |
+| LAN interface address | `IPv4StaticAddress`, `IPv6DelegatedAddress` | (kernel) |
+| DHCPv4 scope | `DHCPv4Server` | dnsmasq |
+| DHCPv4 reservation | `DHCPv4Reservation` | dnsmasq |
+| DHCPv6 (stateless / stateful) | `DHCPv6Server` | dnsmasq |
+| IPv6 Router Advertisement | `IPv6RouterAdvertisement` | dnsmasq (RA mode) |
+| DNS zone (local authoritative) | `DNSZone` | `routerd-dns-resolver` |
+| DNS resolver listener | `DNSResolver` | `routerd-dns-resolver` |
+| DHCP lease event relay | (built-in) | `routerd-dhcp-event-relay` |
 
 ## DHCPv4 scope
 
@@ -23,8 +41,8 @@ typed routerd resources.
   spec:
     interface: lan
     addressPool:
-      start: 172.18.1.64
-      end: 172.18.1.191
+      start: 192.0.2.64
+      end: 192.0.2.191
       leaseTime: 12h
     gatewayFrom:
       resource: IPv4StaticAddress/lan-base
@@ -35,11 +53,10 @@ typed routerd resources.
     ntpServerFrom:
       - resource: IPv4StaticAddress/lan-base
         field: address
-    domain: home.internal
+    domain: lan.example.org
 ```
 
-Use a separate pool for automatic clients and keep a smaller range for
-reserved devices if that makes operations clearer.
+Use a separate range for automatic clients and reserve a smaller block for fixed-address devices if it makes operations clearer.
 
 ## Static DHCPv4 reservation
 
@@ -47,21 +64,19 @@ reserved devices if that makes operations clearer.
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv4Reservation
   metadata:
-    name: panasonic-aiseg2
+    name: smart-meter
   spec:
     server: lan-dhcpv4
-    macAddress: "18:ec:e7:33:12:6c"
-    hostname: aiseg2
-    ipAddress: 172.18.0.150
+    macAddress: "02:00:00:00:00:01"
+    hostname: smart-meter
+    ipAddress: 192.0.2.10
 ```
 
-`DHCPv4Reservation` renders to dnsmasq host reservation state. It also gives
-the Web Console and events a stable resource name for the device.
+`DHCPv4Reservation` renders to a dnsmasq host reservation entry. It also gives the Web Console and event log a stable resource name for the device, independent of its current IP.
 
 ## IPv6 RA and DHCPv6
 
-IPv6 LANs should publish RDNSS in Router Advertisement. Android does not use
-DHCPv6 for DNS configuration.
+For an IPv6 LAN, publish RDNSS in Router Advertisement so Android clients can pick up the resolver (Android does not use DHCPv6 for DNS configuration). For Windows clients you usually also need a DHCPv6 stateless server.
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -75,13 +90,11 @@ DHCPv6 for DNS configuration.
       field: address
     mFlag: false
     oFlag: true
-    rdnss:
-      - 172.18.0.1
     rdnssFrom:
       - resource: IPv6DelegatedAddress/lan-base
         field: address
     dnssl:
-      - home.internal
+      - lan.example.org
     mtu: 1454
 
 - apiVersion: net.routerd.net/v1alpha1
@@ -91,13 +104,14 @@ DHCPv6 for DNS configuration.
   spec:
     interface: lan
     mode: stateless
-    dnsServers:
-      - 172.18.0.1
+    dnsServersFrom:
+      - resource: IPv6DelegatedAddress/lan-base
+        field: address
     domainSearch:
-      - home.internal
+      - lan.example.org
 ```
 
-Use `mode: stateful` or `mode: both` when DHCPv6 address assignment is required.
+Use `mode: stateful` or `mode: both` only when DHCPv6 address assignment (in addition to SLAAC) is required.
 
 ## Local DNS zone
 
@@ -105,13 +119,15 @@ Use `mode: stateful` or `mode: both` when DHCPv6 address assignment is required.
 - apiVersion: net.routerd.net/v1alpha1
   kind: DNSZone
   metadata:
-    name: home
+    name: lan
   spec:
-    zone: home.internal
+    zone: lan.example.org
     ttl: 300
     records:
       - hostname: router
-        ipv4: 172.18.0.1
+        ipv4From:
+          resource: IPv4StaticAddress/lan-base
+          field: address
         ipv6From:
           resource: IPv6DelegatedAddress/lan-base
           field: address
@@ -119,13 +135,12 @@ Use `mode: stateful` or `mode: both` when DHCPv6 address assignment is required.
       sources:
         - DHCPv4Server/lan-dhcpv4
         - DHCPv6Server/lan-dhcpv6
-      hostnameSuffix: home.internal
+      hostnameSuffix: lan.example.org
       ddns: true
       ttl: 60
 ```
 
-The `ipv4` and `ipv6` fields are literals. Use `ipv4From` or `ipv6From` when a
-record should follow another resource status.
+Manual records are placed under `records:`. Records derived from DHCP leases come from `dhcpDerived.sources`. The two are merged at lookup time.
 
 ## DNS resolver listener
 
@@ -137,9 +152,9 @@ record should follow another resource status.
   spec:
     listen:
       - name: lan
-        addresses:
-          - 172.18.0.1
         addressFrom:
+          - resource: IPv4StaticAddress/lan-base
+            field: address
           - resource: IPv6DelegatedAddress/lan-base
             field: address
         port: 53
@@ -148,20 +163,45 @@ record should follow another resource status.
       - name: local-zone
         kind: zone
         match:
-          - home.internal
+          - lan.example.org
         zoneRef:
-          - DNSZone/home
+          - DNSZone/lan
       - name: default
         kind: upstream
         match:
           - "."
         upstreams:
+          - https://dns.example.net/dns-query
           - udp://1.1.1.1:53
-          - udp://8.8.8.8:53
     cache:
       enabled: true
       maxEntries: 10000
 ```
 
-Start with `routerd plan` and `--dry-run`. Turn on the real LAN listener only
-after the management path and rollback route are known.
+The resolver listens on every address routerd derives from the referenced status fields. New IPv6 addresses (e.g. on PD renewal) are picked up without a restart.
+
+## Verification
+
+```sh
+# Confirm the LAN interface has both v4 and v6
+routerctl describe Interface/lan
+
+# Watch DHCP events live
+routerctl events --topic 'routerd.dhcp.lease.**' --resource DHCPv4Server/lan-dhcpv4
+
+# Resolve a name through the local resolver
+dig @<lan-ip> router.lan.example.org
+dig @<lan-ip> example.com
+```
+
+## Operational notes
+
+- Begin with `routerctl plan` and `--dry-run`. Only enable the real LAN listener after the management path and a known rollback are ready.
+- If you replace dnsmasq leases manually, restart `routerd-dhcp-event-relay` so the in-memory state catches up. Prefer changing the lease through routerd.
+- Keep upstream public resolvers as a fallback: `routerd-dns-resolver` will demote a forwarder that fails health checks but only if a working alternative exists.
+
+## See also
+
+- [WAN-side services](./wan-side-services.md)
+- [Local DNS zones](../how-to/dns-local-zone.md)
+- [Private DNS upstreams](../how-to/dns-private-upstream.md)

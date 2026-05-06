@@ -1,6 +1,22 @@
+---
+title: Add firewall exceptions
+---
+
 # Add firewall exceptions
 
-Use `FirewallRule` only for exceptions that the role matrix does not cover.
+## Scenario
+
+The role-based defaults from `FirewallZone` cover the common case, but you need an exception:
+
+- Allow SSH from a specific management subnet.
+- Open a service port on the router itself (a metrics endpoint, a custom listener).
+- Permit a specific LAN host to receive inbound connections from the WAN (port forward / DMZ-style).
+
+## How routerd solves it
+
+`FirewallRule` declares an exception that overrides the implicit role matrix. Rules are evaluated **before** the implicit matrix, and routerd-derived internal openings (DHCP, DNS, DHCPv6-PD, DS-Lite control traffic, etc.) are evaluated before user rules. That ordering keeps managed services alive even when you add restrictive rules.
+
+## Example: allow SSH from the management network
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
@@ -15,16 +31,35 @@ Use `FirewallRule` only for exceptions that the role matrix does not cover.
     action: accept
 ```
 
-`fromZone` and `toZone` refer to `FirewallZone` names. `toZone: self` means the
-router host itself.
+`fromZone` and `toZone` reference `FirewallZone` names. `toZone: self` means traffic terminated by the router itself (as opposed to forwarded traffic).
 
-Rules are evaluated before the implicit role matrix. routerd-generated internal
-openings are also evaluated before user rules. This keeps DHCP, DNS, DS-Lite,
-and other managed services alive when the firewall is enabled.
+## Example: open a service port on the router
 
-Use the local simulator before applying a new rule:
+```yaml
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-metrics
+  spec:
+    fromZone: lan
+    toZone: self
+    protocol: tcp
+    port: 9100
+    action: accept
+```
+
+## Validating before apply
+
+Use the local simulator to check what the rule would do before you apply it:
 
 ```sh
 routerctl firewall test from=wan to=self proto=tcp dport=22
 routerctl describe firewall
 ```
+
+The first command reports `accept` or `drop` for the specific 5-tuple. The second prints the full effective ruleset including role-matrix defaults and managed openings.
+
+## See also
+
+- [Define firewall zones](./firewall-zone.md)
+- [Firewall concept](../concepts/firewall.md)
