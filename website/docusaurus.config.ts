@@ -22,13 +22,19 @@ const config: Config = {
 
   i18n: {
     defaultLocale: 'en',
-    locales: ['en', 'ja'],
+    locales: ['en', 'ja', 'zh-Hant', 'zh-Hans'],
     localeConfigs: {
       en: {
         label: 'English',
       },
       ja: {
         label: '日本語',
+      },
+      'zh-Hant': {
+        label: '繁體中文',
+      },
+      'zh-Hans': {
+        label: '简体中文',
       },
     },
   },

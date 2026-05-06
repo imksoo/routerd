@@ -1,40 +1,74 @@
 ---
-title: ルーターラボ
+title: 検証用ラボの組み方
 ---
 
-# ルーターラボ
+# 検証用ラボの組み方
 
-routerd の実装検証は、現在 pve05、pve06、pve07 上の VM を中心に行っています。
-このページは、現在のラボで確認済みの範囲をまとめます。
+routerd を本番ネットワークに入れる前に、隔離されたラボ環境で評価することを推奨します。
+このページでは、仮想化ハイパーバイザーで複数のルーター VM を立ち上げ、cross-OS で routerd の挙動を確認するためのレファレンス構成を紹介します。
 
-## 5 台ラボ
+特定のハードウェアを前提にしませんが、Proxmox VE、KVM、VMware、Hyper-V のいずれでも組めます。
 
-| ホスト | OS | 状態 |
+## 想定するシナリオ
+
+新しいホームルーター・SOHO ルーターを routerd で組む前に、以下を確認したいケースを想定しています。
+
+- DHCPv6-PD、DS-Lite、PPPoE、NAT44、firewall、DNS の各機能が想定どおり動くか
+- Linux、FreeBSD、NixOS のいずれで動かすかを比較したい
+- ある変更を本番に出す前に、手元で同じ構成を組んで挙動差を見たい
+
+ラボでは「壊しても本番に影響しない」「OS や構成を入れ替えやすい」「routerd のリソース YAML をそのまま流用できる」状態を作るのが目的です。
+
+## ハードウェア要件
+
+評価対象のすべてが VM 上で動きます。物理ルーターは不要です。
+
+- 仮想化ホスト 1 台 (Proxmox VE、KVM、VMware、Hyper-V のいずれか)
+- 4 GB 以上のメモリ余裕 (1 VM あたり 512 MB 程度)
+- 上流ネットワーク (DHCPv6-PD を試すなら IPv6 PD を配布する HGW か模擬サーバーが必要)
+
+## 推奨される VM 構成
+
+最小構成は **2 VM**、推奨は **4-5 VM** です。
+
+| 役割 | OS の例 | 確認できる機能 |
 | --- | --- | --- |
-| router01 | FreeBSD | `routerd-dhcpv6-client` で DHCPv6-PD Bound |
-| router02 | NixOS | 宣言的 systemd ユニットで DHCPv6-PD Bound |
-| router03 | Ubuntu | DHCPv6-PD Bound、PPPoE 試験に使用 |
-| router04 | FreeBSD | DHCPv6-PD Bound、WireGuard/VXLAN 検証 |
-| router05 | Ubuntu | routerd コントローラーチェーン、DS-Lite 実適用、dnsmasq 検証 |
+| 計測ホスト | Ubuntu / Debian | `iperf3`、`dig`、`curl`、`mtr` など計測ツール |
+| WAN 側ルーター A | Ubuntu | `routerd-dhcpv6-client`、PPPoE、DS-Lite |
+| WAN 側ルーター B | NixOS | NixOS の declarative module 経由で routerd を運用 |
+| WAN 側ルーター C | FreeBSD | FreeBSD `pf` + DS-Lite + rc.d unit |
+| LAN 側ルーター | Ubuntu | controller chain、DNS、firewall、NAT、`HealthCheck`、Web Console |
 
-5 台間の IPv6 疎通と、DHCPv6-PD の重複なしを確認済みです。
+VM どうしを共通の virtual switch (VLAN trunk または untagged bridge) で接続し、上流とは別ネットワークで隔離します。
+各 VM の WAN NIC を「上流側 vSwitch」、LAN NIC を「ラボ内 vSwitch」へ接続するのが最小構成です。
 
-## DS-Lite 実適用
+## チェックリスト
 
-router05 では、条件付き DNS 転送で `gw.transix.jp` を HGW 側の RDNSS へ問い合わせ、AFTR IPv6 を解決しました。
-その後、`ip6tnl` トンネル、IPv4 既定経路、NAT44 を実適用し、IPv4 HTTP 通信を確認しています。
+ラボが正しく組めたかどうかは、以下を確認します。
 
-NGN HGW の DHCPv6 情報要求では AFTR オプションが返らないため、この環境では `DSLiteTunnel.spec.aftrFQDN` による静的フォールバックが正しい経路です。
+1. **DHCPv6-PD 取得**: 各ルーター VM で `routerctl status` が `DHCPv6PrefixDelegation` を `Bound` にしている。
+2. **PD 重複なし**: 5 台以上立てる場合、配布された prefix が互いに重ならない (HGW 側が IA_PD ごとに分割する設定であること)。
+3. **IPv6 疎通**: ラボ VM どうしで link-local と GUA の双方向 ping が通る。
+4. **DS-Lite 試験**: `routerctl describe DSLiteTunnel/<name>` が `Up`、`HealthCheck` が `Healthy`、`curl --interface ds-lite-X http://example.com/` が応答を返す。
+5. **NixOS 経路**: `nixos-rebuild test` で routerd の宣言設定が反映され、再起動後も同じ状態になる。
+6. **FreeBSD 経路**: `pfctl -sr` に routerd が生成した pf ルールが入っており、`service routerd onestatus` が active。
 
-## Tier S 検証
+## 実施しないでよい確認
 
-router02 と router04 で WireGuard の相互接続を確認しました。
-さらに VXLAN over WireGuard の双方向疎通を確認しています。
-router02 では VRF の基本操作も確認しました。
+以下はネットワーク機器側 (HGW、ISP) の挙動依存で、routerd 単体ではコントロールできません。
+ラボでこの再現に時間を使わないでください。
 
-IPsec は cloud VPN 接続向けの設定生成と単体試験が中心で、実クラウド接続は別検証です。
+- HGW が DHCPv6 情報要求 (info-request) で AFTR option を返さない場合 → `DSLiteTunnel.spec.aftrFQDN` の静的フォールバックを使う。
+- 一部 ISP の PD 払い出しが特定の IA_ID にしか応答しない → IA_ID をクライアント側で固定する。
+- 物理スイッチの VLAN 設定差で IPv6 RA が通らない → 物理スイッチを通さない経路 (vSwitch 内) で評価する。
 
-## 使わない経路
+これらは `docs/knowledge-base/` に既知事象としてまとめてあります。
 
-過去に pve01 から pve04 の vmbr0 VLAN 1901 経路で、DHCPv6-PD が不安定に見える検証がありました。
-現在の実装判断は、その経路を根拠にしません。
+## 次にやること
+
+ラボが動いたら、以下のチュートリアルへ進んでください。
+
+- [routerd を最初に動かす](./first-router.md)
+- [LAN 向けサービスを構成する](./lan-side-services.md)
+- [基本的な firewall を組む](./basic-firewall.md)
+- [マルチ WAN を組む](../how-to/multi-wan.md)
