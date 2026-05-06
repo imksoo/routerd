@@ -1,75 +1,67 @@
-# 設計メモ
+---
+title: Design notes
+---
 
-この文書は、現在のコードと実機検証から残すべき設計判断をまとめます。
-古い試行錯誤の詳細ではなく、今後の判断に使う要点だけを残します。
+# Design notes
 
-## 1. デーモン契約
+This document records design decisions worth keeping. It is not a chronological log of past experiments — only the principles current code follows and that future changes should respect.
 
-状態を持つ処理は、専用デーモンに分けます。
-各デーモンは次を持ちます。
+## 1. Daemon contract
 
-- Unix ドメインソケットの HTTP+JSON API
+Stateful work is carried out by dedicated daemons. Every daemon exposes the same surface so tooling can interact with them uniformly:
+
+- HTTP+JSON API over a Unix domain socket
 - `/v1/status`
 - `/v1/healthz`
 - `/v1/events`
 - `/v1/commands/reload`
 - `/v1/commands/renew`
 - `/v1/commands/stop`
-- state または lease ファイル
-- events.jsonl
+- a state or lease file
+- `events.jsonl` (append-only)
 
-この契約は `routerd-dhcpv6-client`、`routerd-dhcpv4-client`、`routerd-pppoe-client`、`routerd-healthcheck` で使います。
+This contract is shared by `routerd-dhcpv6-client`, `routerd-dhcpv4-client`, `routerd-pppoe-client`, and `routerd-healthcheck`.
 
 ## 2. DHCPv6-PD
 
-DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
-旧 OS クライアントへ設定を生成する経路は本線ではありません。
+DHCPv6-PD is owned by `routerd-dhcpv6-client`. There is no longer a code path that generates configuration for an OS-bundled client.
 
-通常の NGN/HGW 環境では、取得、lease 保存、起動時復元、T1 Renew で十分です。
-過去の壊れた経路を前提にした過激な再送は採用しません。
+For ordinary residential gateways, the standard solicit / advertise / request / renew sequence with lease persistence and T1 renewal is sufficient. Aggressive retries that were once needed to work around broken environments are no longer the default.
 
-## 3. LAN への反映
+## 3. Honest LAN advertisement
 
-DHCPv6-PD が Bound でない場合、LAN へ古い IPv6 を出しません。
-これは RA、DHCPv6、AAAA、LAN アドレスすべてに関係します。
+When DHCPv6-PD is not `Bound`, routerd does not advertise stale IPv6 information to the LAN. This applies to RA, DHCPv6 server, AAAA records, and any LAN address derived from the prefix. The router stays "broken in an obvious way" rather than handing out addresses that no longer reach upstream.
 
 ## 4. DS-Lite
 
-AFTR option が DHCPv6 情報要求で返らない環境があります。
-そのため、`DSLiteTunnel` は AFTR FQDN または AFTR IPv6 の静的指定を正規経路として扱います。
+In some access networks the AFTR option is not returned in DHCPv6 information-request. `DSLiteTunnel` therefore treats a static `aftrFQDN` or `aftrIPv6` as a normal configuration path, not a fallback.
 
-AFTR FQDN は公開 DNS で解決できない場合があります。
-`DNSResolver.spec.sources[].kind: forward` による条件付き転送を使います。
+AFTR FQDNs frequently cannot be resolved by public DNS. Use `DNSResolver.spec.sources[].kind: forward` to send the AFTR domain to the in-network resolver.
 
-## 5. イベント連携
+## 5. Event coordination
 
-routerd は bus を持ちます。
-controller chain はイベントを受け、必要なリソースだけを調整します。
+routerd has an in-process bus. Controllers consume events and reconcile only the resources affected.
 
-Phase 2-B で、次の Kind を追加しました。
+The following kinds work together for higher-level coordination:
 
 - `EgressRoutePolicy`
 - `EventRule`
 - `DerivedEvent`
 - `HealthCheck`
 
-EventRule はイベント列を入力にして別のイベント列を作ります。
-DerivedEvent は状態から asserted / retracted の仮想イベントを作ります。
+`EventRule` consumes one stream of events and produces another. `DerivedEvent` synthesises asserted / retracted virtual events from observed state.
 
-## 6. Tier S
+## 6. Tier S building blocks
 
-WireGuard、IPsec、VRF、VXLAN は Tier S の土台です。
-WireGuard と VXLAN over WireGuard は複数 OS をまたいで検証済みです。
-IPsec は cloud VPN 接続向けの設定生成を先に進めます。
+WireGuard, IPsec, VRF, and VXLAN are the building blocks for the Tier S (SOHO / branch) capability. WireGuard and VXLAN-over-WireGuard interoperability is verified across the supported operating systems.
 
-抽象的な `VPNTunnel` は作りません。
-WireGuard、IPsec、将来の Tailscale、SoftEther は別 Kind として追加します。
+There is no abstract `VPNTunnel` resource. WireGuard, IPsec, and future Tailscale or SoftEther integrations are added as their own kinds. The motivation is that each of these has materially different state machines; collapsing them into one polymorphic kind would lose semantics.
 
-## 7. まだ残す課題
+## 7. Open work
 
-- 状態を持つファイアウォールの本番実適用
-- DoH 代理
-- BGP/OSPF
-- 高可用化
-- OpenTelemetry collector を含む本番監視構成
-- IX2215 置き換えの長時間検証
+- Stateful firewall in production: applied today, but still wants richer rule expressions, ICMP type matching, multiple ports per rule, and rate limiting.
+- DoH proxying for clients on the LAN.
+- BGP / OSPF integration via FRR for the Tier C tier.
+- High availability (leader election, fault-tolerant control plane).
+- Production observability: OpenTelemetry collector and remote log sinks.
+- Long-running validation of routerd as the only WAN router on a residential link.

@@ -18,7 +18,7 @@ spec:
     resource: Interface/mgmt
     field: ipv4Addresses
   port: 8080
-  title: homert02
+  title: edge-router
 ```
 
 Keep the listener on a management address. Do not expose it on an untrusted

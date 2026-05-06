@@ -1,42 +1,46 @@
 ---
-title: ホストインベントリ
+title: Host inventory
 slug: /operations/inventory
 ---
 
-# ホストインベントリ
+# Host inventory
 
-routerd は、ホストの OS、使えるコマンド、ネットワーク機能を確認します。
-この情報は、生成器と適用処理が OS 差分を判断するために使います。
+routerd inspects the host's operating system, available commands, and network features. This inventory is used by the renderers and the apply path to make OS-specific decisions explicit instead of failing at runtime.
 
-## 確認する内容
+## What routerd checks
 
-- OS と版
-- systemd、rc.d、NixOS などのサービス管理方式
-- iproute2、nftables、conntrack、dnsmasq、radvd、pppd、WireGuard、strongSwan などのコマンド
-- IPv6、VRF、VXLAN、WireGuard などのカーネル機能
-- `/run/routerd` や `/var/lib/routerd` の利用可否
+- Operating system and release
+- Service-management scheme (systemd, rc.d, NixOS modules)
+- Available commands (iproute2, nftables, conntrack, dnsmasq, radvd, pppd, WireGuard, strongSwan, etc.)
+- Kernel features (IPv6, VRF, VXLAN, WireGuard)
+- Whether `/run/routerd` and `/var/lib/routerd` are usable
 
-## 使い道
+## How it informs behaviour
 
-Ubuntu では systemd と Linux のネットワーク機能を使います。
-NixOS では宣言的な設定生成を優先します。
-FreeBSD では daemon(8) や rc.d の経路を使います。
+- On Ubuntu, routerd targets systemd and the Linux networking stack.
+- On NixOS, declarative generation takes priority over runtime mutation.
+- On FreeBSD, routerd uses `daemon(8)` and rc.d for service control.
 
-未対応の組み合わせでは、実行時に中途半端に失敗するより、計画や検証の段階で明示します。
+If a configuration depends on a feature the host does not provide, routerd reports the gap during validation or planning rather than failing halfway through `apply`.
 
-## 確認対象の代表例
+## Common commands routerd looks for
 
-| コマンド | 主な用途 |
+| Command | Purpose |
 | --- | --- |
-| `ip`, `bridge` | アドレス、経路、DS-Lite、VRF、VXLAN |
-| `nft` | NAT、ファイアウォール、経路印 |
-| `dnsmasq` | DHCPv4、DHCPv6、RA |
-| `conntrack` | IPv4/IPv6 コネクションの観測 |
+| `ip`, `bridge` | Addresses, routes, DS-Lite, VRF, VXLAN |
+| `nft` | NAT, firewall, route marks |
+| `dnsmasq` | DHCPv4, DHCPv6, RA |
+| `conntrack` | IPv4/IPv6 connection observation |
 | `pppd`, `ppp` | PPPoE |
 | `wg` | WireGuard |
 | `swanctl` | IPsec |
-| `radvd` | radvd 経路の RA 送信 |
-| `sysctl` | カーネル設定 |
-| `systemctl`, `resolvectl`, `networkctl`, `journalctl` | systemd 環境の制御と確認 |
-| `service`, `sysrc`, `pfctl` | FreeBSD 環境の制御と確認 |
-| `dig`, `ping`, `ping6`, `tcpdump`, `tracepath`, `traceroute`, `netstat`, `sockstat` | 障害調査 |
+| `radvd` | Optional radvd RA path |
+| `sysctl` | Kernel settings |
+| `systemctl`, `resolvectl`, `networkctl`, `journalctl` | systemd environment management |
+| `service`, `sysrc`, `pfctl` | FreeBSD environment management |
+| `dig`, `ping`, `ping6`, `tcpdump`, `tracepath`, `traceroute`, `netstat`, `sockstat` | Diagnostics |
+
+## See also
+
+- [Supported platforms](../platforms.md)
+- [Reconcile and removal](./reconcile.md)

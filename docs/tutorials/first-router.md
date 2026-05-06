@@ -1,12 +1,11 @@
 ---
-title: 最初のルーター
+title: Bring up the first router
 sidebar_position: 2
 ---
 
-# 最初のルーター
+# Bring up the first router
 
-このページでは、WAN と LAN を持つ最小のルーターを作ります。
-WAN は DHCPv4、LAN は静的 IPv4 アドレスから始めます。
+This tutorial brings up the smallest possible routerd configuration: one WAN interface that gets its IPv4 address from DHCPv4, and one LAN interface with a static IPv4 address.
 
 ```yaml
 apiVersion: routerd.net/v1alpha1
@@ -49,16 +48,20 @@ spec:
         address: 192.0.2.1/24
 ```
 
-`DHCPv4Lease` は `routerd-dhcpv4-client` が管理するリースです。
-従来の OS DHCP クライアントを直接選びません。
-routerd のデーモン契約に合わせて状態を公開します。
+`DHCPv4Lease` is owned by `routerd-dhcpv4-client`, the routerd-managed DHCPv4 daemon. routerd does not delegate to an OS-bundled client; the daemon publishes its state under the same contract as every other routerd daemon (`/v1/status`, `lease.json`, `events.jsonl`).
 
-実機へ向ける前に次を実行します。
+Before applying for real, validate the configuration and preview the plan:
 
 ```bash
 routerd validate --config first-router.yaml
-routerd plan --config first-router.yaml
-routerd apply --config first-router.yaml --once --dry-run
+routerd plan     --config first-router.yaml
+routerd apply    --config first-router.yaml --once --dry-run
 ```
 
-管理用接続が消えないことを確認してから、予行実行なしで適用します。
+Confirm that your management connection (SSH on the LAN, console, or hypervisor console) will survive the change, then apply without `--dry-run`.
+
+## Next
+
+- [WAN-side services](./wan-side-services.md) — DHCPv6-PD, PPPoE, DS-Lite
+- [LAN-side services](./lan-side-services.md) — DHCP, RA, DNS, local zones
+- [Basic NAT and firewall policy](./basic-firewall.md)

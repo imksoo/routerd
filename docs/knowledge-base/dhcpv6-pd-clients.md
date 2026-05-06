@@ -1,53 +1,43 @@
-# DHCPv6-PD クライアントの現在方針
+---
+title: Why routerd ships its own DHCPv6-PD client
+---
 
-routerd の現在方針では、DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
-過去に評価した OS 付属クライアントの経路は、現在の設定例としては使いません。
+# Why routerd ships its own DHCPv6-PD client
 
-## なぜ専用デーモンにしたか
+routerd's current approach is to handle DHCPv6-PD with the dedicated `routerd-dhcpv6-client` daemon. The OS-bundled clients we evaluated earlier are not part of the supported configuration today.
 
-DHCPv6-PD は、取得だけでなく更新、再起動復元、イベント記録が重要です。
-OS 付属クライアントへ設定を生成するだけでは、routerd の状態管理と LAN 側反映をきれいにつなげませんでした。
+## Rationale
 
-専用デーモンにしたことで、次をそろえられます。
+DHCPv6 prefix delegation is more than acquiring a prefix. It involves renewal, restart recovery, and event recording. Generating configuration for an OS-bundled client did not let us cleanly tie those things back to routerd's state model and downstream LAN services.
 
-- lease を `lease.json` に保存します。
-- 起動時に lease を復元します。
-- Renew の結果を events に記録します。
-- `/v1/status` で `Bound` や `Pending` を返します。
-- routerd 本体がイベントを受け、LAN 側リソースを調整します。
+Owning the daemon lets routerd:
 
-## 現在のバイナリ
+- Persist the lease in `lease.json`.
+- Restore it at startup.
+- Record renewal results as events.
+- Expose `Bound` / `Pending` over `/v1/status`.
+- Emit events that other controllers (LAN address derivation, RA, DHCPv6 server, DS-Lite, DNS) consume to converge.
+
+## Binary and paths
 
 ```text
 routerd-dhcpv6-client
 ```
 
-代表的なパスは次の通りです。
+| Path | Purpose |
+| --- | --- |
+| `/run/routerd/dhcpv6-client/<name>.sock` | per-resource control socket |
+| `/var/lib/routerd/dhcpv6-client/<name>/lease.json` | persisted lease |
+| `/var/lib/routerd/dhcpv6-client/<name>/events.jsonl` | append-only event log |
 
-```text
-/run/routerd/dhcpv6-client/<name>.sock
-/var/lib/routerd/dhcpv6-client/<name>/lease.json
-/var/lib/routerd/dhcpv6-client/<name>/events.jsonl
-```
+## What was evaluated and dropped
 
-## 旧実装の扱い
+We compared `systemd-networkd`, WIDE/KAME-style clients, and several other DHCP clients before settling on a routerd-owned daemon. Those investigations remain interesting context but are not part of the current shipped configuration.
 
-過去には、systemd-networkd、WIDE/KAME 系クライアント、別の DHCP クライアントを比較しました。
-その調査は設計判断の背景として残しますが、現在の本線ではありません。
+The current resource is `DHCPv6PrefixDelegation`. There is intentionally no `client` field for selecting an OS-bundled implementation.
 
-現在の Kind は `DHCPv6PrefixDelegation` です。
-OS クライアントを選ぶ `client` フィールドは使いません。
+## Operational reminders
 
-## 実機確認済みの状態
+Do not run more than one DHCPv6-PD client on the same WAN interface. Two simultaneous clients can confuse the upstream and stop Reply messages.
 
-router01、router02、router03、router04、router05 の 5 台で、`routerd-dhcpv6-client` による DHCPv6-PD Bound を確認済みです。
-router02 は NixOS の宣言設定でユニットを管理しています。
-router01 と router04 は FreeBSD 上で動作しています。
-
-## 運用上の注意
-
-同じ WAN インターフェースで、複数の DHCPv6-PD クライアントを同時に動かさないでください。
-HGW 側の状態が壊れ、Reply が返らなくなることがあります。
-
-routerd 管理へ移行するときは、古いクライアント、古い lease、古い systemd または rc.d の設定を止めます。
-その後で `routerd-dhcpv6-client` を起動します。
+When migrating to routerd, first stop the old client (along with its lease files and any old systemd / rc.d configuration that brought it up). Then start `routerd-dhcpv6-client`.

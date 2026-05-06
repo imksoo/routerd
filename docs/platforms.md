@@ -1,108 +1,98 @@
-# 対応プラットフォーム
+---
+title: Supported platforms
+---
 
-routerd の第一対象は Ubuntu Server です。
-NixOS と FreeBSD は実機検証済みの範囲がありますが、すべての生成器と適用処理が Ubuntu と同じではありません。
-利用者向け文書では、実装済みの範囲と土台だけの範囲を分けて説明します。
+# Supported platforms
 
-## Ubuntu Server
+routerd is designed to be cross-OS, but the implementation is at different maturity levels per platform. This page lists what is implemented, what is groundwork, and what is out of scope, so you can pick a platform with a clear understanding of the current limits.
 
-Ubuntu は現在の主対象です。
-標準のソースインストール先は `/usr/local` 配下です。
+## Linux (Ubuntu / Debian)
 
-主に次を使います。
+Linux is the primary platform. Source installs land under `/usr/local` by default.
 
-- systemd ユニット
-- `/run/routerd` と `/var/lib/routerd`
-- dnsmasq
-- nftables
-- conntrack
-- iproute2
-- pppd と rp-pppoe
-- WireGuard
-- strongSwan
-- radvd
+routerd uses the following OS surfaces on Linux:
 
-Ubuntu でも、既定で入っていることを前提にしません。
-`Package` リソースで依存パッケージを明示します。
-主な一覧は次の通りです。
+- systemd unit files
+- `/run/routerd` and `/var/lib/routerd` for runtime and persistent state
+- dnsmasq for DHCPv4, DHCPv6, DHCP relay, and Router Advertisement
+- nftables for filtering and NAT
+- conntrack for connection observation
+- iproute2 for interfaces and routes
+- pppd / rp-pppoe for PPPoE
+- WireGuard, strongSwan, radvd
 
-| 分類 | パッケージ |
+Even on Ubuntu, routerd does not assume packages are pre-installed. Declare dependencies with the `Package` resource. The reference list:
+
+| Category | Packages |
 | --- | --- |
-| 実行系 | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `ppp`, `wireguard-tools`, `strongswan-swanctl`, `radvd` |
-| 診断系 | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
-| OS 制御 | `procps`, `systemd`, `kmod` |
+| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `ppp`, `wireguard-tools`, `strongswan-swanctl`, `radvd` |
+| Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
+| OS control | `procps`, `systemd`, `kmod` |
 
-`routerd-dhcpv6-client`、`routerd-dhcpv4-client`、`routerd-pppoe-client`、`routerd-healthcheck` は Ubuntu 上で systemd サービスとして動かします。
+`routerd-dhcpv6-client`, `routerd-dhcpv4-client`, `routerd-pppoe-client`, and `routerd-healthcheck` run as systemd services on Linux.
 
 ## NixOS
 
-NixOS は第二対象です。
-Phase 1.7 では router02 で DHCPv6-PD デーモンを宣言的な NixOS 設定へ移しました。
-一時的な systemd ユニットではなく、`/etc/nixos/routerd-generated.nix` による管理です。
+NixOS is a first-class secondary platform. Instead of writing transient systemd units, routerd targets `/etc/nixos/routerd-generated.nix` and lets `nixos-rebuild test` / `nixos-rebuild switch` manage activation.
 
-確認済みの範囲:
+Implemented:
 
-- `routerd-dhcpv6-client` の systemd ユニット生成
-- `Package`、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit` の NixOS module 生成
-- `nixos-rebuild test` と `nixos-rebuild switch`
-- DHCPv6-PD の Bound 維持
-- WireGuard と VXLAN の検証
-- VRF の一部検証
+- systemd unit generation for `routerd-dhcpv6-client`
+- NixOS module generation for `Package`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`
+- `nixos-rebuild test` / `nixos-rebuild switch` integration
+- DHCPv6-PD reaches `Bound`
+- WireGuard and VXLAN coverage
+- Partial VRF coverage
 
-未完了の範囲:
+Not yet covered:
 
-- NixOS module 生成物の実機適用範囲拡大
-- nftables、dnsmasq、DNS resolver、HealthCheck などの常駐サービス全体の実機検証
-- NixOS 固有の rollback と generation 管理との統合
+- Materialising every NixOS module to a running host (some modules are generated but not yet applied automatically)
+- nftables, dnsmasq, DNS resolver, HealthCheck and other long-running daemons end-to-end
+- Integration with NixOS `generation` rollback semantics
 
-NixOS では、使うコマンドを `systemd.services.routerd.path` に入れます。
-`Package` リソースで `os: nixos` を書く場合は、次の名前を使います。
-routerd は NixOS 上で実行時にパッケージを導入しません。
-`routerd render nixos` が `environment.systemPackages` を生成します。
+On NixOS, populate `systemd.services.routerd.path` with the commands routerd needs. When `Package` resources have `os: nixos`, routerd does **not** install packages at runtime. `routerd render nixos` produces the `environment.systemPackages` list instead.
 
-| 分類 | パッケージ |
+| Category | Packages |
 | --- | --- |
-| 実行系 | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `ppp`, `wireguard-tools`, `strongswan`, `radvd` |
-| 診断系 | `bind`, `iputils`, `tcpdump`, `traceroute`, `nettools` |
-| OS 制御 | `procps`, `systemd`, `kmod` |
+| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `ppp`, `wireguard-tools`, `strongswan`, `radvd` |
+| Diagnostics | `bind`, `iputils`, `tcpdump`, `traceroute`, `nettools` |
+| OS control | `procps`, `systemd`, `kmod` |
 
 ## FreeBSD
 
-FreeBSD も第二対象です。
-router01 と router04 では `routerd-dhcpv6-client` を daemon(8) で動かし、DHCPv6-PD の Bound 維持を確認しています。
+FreeBSD is the other secondary platform. The DHCPv6-PD client runs under `daemon(8)` and reliably keeps a lease bound. Most generators have a working render path, but production-grade application is still maturing.
 
-確認済みの範囲:
+Implemented:
 
-- DHCPv6-PD デーモンの起動とリース永続化
-- FreeBSD と NixOS 間の WireGuard 検証
-- VXLAN over WireGuard の検証
-- FreeBSD 向け PPPoE 実装の土台
-- `Package` の `pkg` 実行経路
-- `FirewallZone`、`FirewallPolicy`、`FirewallRule` からの pf 生成
-- `IPv4SourceNAT` と `NAT44Rule` からの pf NAT 生成
-- `pfctl -ss -v` 出力の traffic flow 変換
-- `pflog0` を `tcpdump` 経由で読む firewall log 入力
-- `SystemdUnit` からの rc.d スクリプト生成
-- 静的な DS-Lite gif 生成
+- DHCPv6-PD daemon with persistent lease
+- WireGuard interop with Linux / NixOS
+- VXLAN over WireGuard
+- PPPoE skeleton
+- `Package` install through `pkg`
+- pf rendering from `FirewallZone`, `FirewallPolicy`, `FirewallRule`
+- pf NAT rendering from `IPv4SourceNAT` and `NAT44Rule`
+- conntrack-equivalent traffic flows from `pfctl -ss -v`
+- `pflog0` ingestion via `tcpdump` for firewall logs
+- rc.d script generation from `SystemdUnit`
+- Static DS-Lite gif tunnel rendering
 
-未完了の範囲:
+Not yet covered:
 
-- FreeBSD らしいネットワーク設定生成の完全対応
-- 生成した pf と rc.d の実機適用
-- AFTR FQDN や delegated address 由来の動的 DS-Lite
-- pf log の実機形式差分の取り込み
-- FreeBSD 用 DNS resolver、HealthCheck、DHCP サーバーの常駐運用検証
+- Full FreeBSD-idiomatic network configuration generation
+- Automatic apply of generated pf and rc.d artefacts (manual `pfctl -nf` and `service <name> onestart` are still needed)
+- Dynamic DS-Lite from AFTR FQDN or delegated address
+- Vendor-specific pf log format variants
+- DNS resolver, HealthCheck, and DHCP server long-running daemons on FreeBSD
 
-FreeBSD では、Linux 専用の nftables、conntrack、iproute2 は使いません。
-現在の `Package` 例では、移植済みまたは土台のあるものだけを入れます。
+FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The `Package` examples for FreeBSD only cover what is already ported or has a working skeleton.
 
-| 分類 | パッケージ |
+| Category | Packages |
 | --- | --- |
-| 実行系 | `dnsmasq`, `wireguard-tools`, `strongswan`, `mpd5` |
-| 診断系 | `bind-tools` |
-| base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `tcpdump`, `ping`, `traceroute` |
+| Runtime | `dnsmasq`, `wireguard-tools`, `strongswan`, `mpd5` |
+| Diagnostics | `bind-tools` |
+| Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `tcpdump`, `ping`, `traceroute` |
 
-`routerd render freebsd --out-dir <dir>` は、次の生成物を出します。
+`routerd render freebsd --out-dir <dir>` produces:
 
 - `rc.conf.d-routerd`
 - `dhclient.conf`
@@ -110,27 +100,8 @@ FreeBSD では、Linux 専用の nftables、conntrack、iproute2 は使いませ
 - `pf.conf`
 - `rc.d-*`
 
-`pf.conf` と `rc.d-*` は、0.4.0 に向けた生成器の土台です。
-実機に入れる前に、FreeBSD 上で `pfctl -nf pf.conf` と `service <name> onestart` による確認が必要です。
+`pf.conf` and `rc.d-*` are the foundation for the upcoming production renderer. Validate them with `pfctl -nf pf.conf` and `service <name> onestart` on a FreeBSD host before pointing real traffic at them.
 
-## ラボの扱い
+## Implementation guideline for OS abstraction
 
-現在の健全な実装ラボは pve05、pve06、pve07 上の VM です。
-過去に pve01 から pve04 の vmbr0 VLAN 1901 経路で DHCPv6-PD が不安定に見えた時期がありました。
-その経路は設計判断の根拠にしません。
-
-現在の 5 台ラボは次の状態です。
-
-| ホスト | OS | 役割 |
-| --- | --- | --- |
-| router01 | FreeBSD | `routerd-dhcpv6-client` で DHCPv6-PD |
-| router02 | NixOS | 宣言的 systemd ユニットで DHCPv6-PD |
-| router03 | Ubuntu | DHCPv6-PD と PPPoE 試験 |
-| router04 | FreeBSD | DHCPv6-PD と複数 OS 横断検証 |
-| router05 | Ubuntu | routerd コントローラーチェーン、DS-Lite 実適用、dnsmasq 検証 |
-
-## OS 判定の実装方針
-
-新しい OS 差分を追加するときは、`runtime.GOOS` を直接読むのではなく `pkg/platform` を使います。
-Linux 専用機能は `platform.Features` や build tag で分けます。
-対応していない OS で実行時に突然失敗するより、検証や計画の段階で明示することを優先します。
+When you add a new OS-specific behaviour, do not branch on `runtime.GOOS` in business logic. Use the `pkg/platform` layer (`platform.Features`) or Go build tags to keep the boundaries explicit. Failing fast at validation or planning is preferred over surprising the operator at runtime on an unsupported OS.

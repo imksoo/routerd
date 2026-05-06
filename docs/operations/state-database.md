@@ -1,31 +1,26 @@
 ---
-title: 状態データベース
+title: State database
 slug: /operations/state-database
 ---
 
-# 状態データベース
+# State database
 
-routerd 本体は SQLite に状態とイベントを保存します。
-専用デーモンは、それぞれの lease または state ファイルと events.jsonl を持ちます。
+routerd persists state and events in SQLite. Each managed daemon additionally keeps its own lease or state file and an event log.
 
-## 主なパス
+## Key paths
 
-| 種類 | パス |
+| Kind | Path |
 | --- | --- |
-| routerd DB | `/var/lib/routerd/routerd.db` |
+| routerd state DB | `/var/lib/routerd/routerd.db` |
 | DHCPv6-PD lease | `/var/lib/routerd/dhcpv6-client/<name>/lease.json` |
 | DHCPv4 lease | `/var/lib/routerd/dhcpv4-client/<name>/lease.json` |
 | PPPoE state | `/var/lib/routerd/pppoe-client/<name>/state.json` |
 | HealthCheck state | `/var/lib/routerd/healthcheck/<name>/state.json` |
-| デーモンイベント | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
+| Per-daemon events | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
 
-## events テーブル
+## Events table
 
-bus はイベントを SQLite に保存します。
-EventRule と DerivedEvent は、このイベント列を入力にします。
-運用時は `sqlite3` を直接使わず、`routerctl events` で確認できます。
-
-例:
+The bus persists events into SQLite. `EventRule` and `DerivedEvent` consume this stream as input. For day-to-day operations, prefer `routerctl events` over running `sqlite3` against the database directly:
 
 ```sh
 routerctl events --limit 20
@@ -33,8 +28,13 @@ routerctl events --topic routerd.resource.status.changed
 routerctl events --resource DNSResolver/lan-resolver -o json
 ```
 
-## バックアップ
+## Backup philosophy
 
-状態データベースは観測結果です。
-YAML の代わりではありません。
-本当に保存すべき意図は、設定ファイルと git の履歴に置きます。
+The state database holds **observed** state — it is not a substitute for the configuration. The authoritative description of intent lives in the YAML configuration, version-controlled in git. If a host is rebuilt, restoring the configuration and letting routerd reconcile is preferred over restoring the SQLite database.
+
+If you want history of operational events for forensic purposes, take periodic snapshots of `events.db`, `dns-queries.db`, `traffic-flows.db`, and `firewall-logs.db` instead. Those are append-only by nature and do not need point-in-time backups of `routerd.db`.
+
+## See also
+
+- [Log storage](../concepts/log-storage.md)
+- [Reconcile and removal](./reconcile.md)

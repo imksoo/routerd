@@ -5,14 +5,11 @@ slug: /concepts/dns-resolver
 
 # DNS resolver
 
-Phase 2.0 splits routerd DNS into two resource kinds.
+routerd splits DNS into two resource kinds with a clear boundary between authoritative data and the resolver process.
 
-`DNSZone` owns local authoritative data.
-It stores manual records and records derived from DHCP leases.
+`DNSZone` owns local authoritative data. It stores manual records and records derived from DHCP leases.
 
-`DNSResolver` owns the daemon instance.
-It defines listen addresses, source ordering, upstream selection, and cache policy.
-One `DNSResolver` resource starts one `routerd-dns-resolver` process.
+`DNSResolver` owns the daemon instance. It defines listen addresses, source ordering, upstream selection, and cache policy. Each `DNSResolver` resource starts one `routerd-dns-resolver` process.
 
 ## Source ordering
 

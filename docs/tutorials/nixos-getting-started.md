@@ -1,31 +1,49 @@
 ---
-title: NixOS から始める
+title: Getting started on NixOS
 ---
 
-# NixOS から始める
+# Getting started on NixOS
 
-NixOS は routerd の第二対象です。
-Phase 1.7 では、router02 の DHCPv6-PD デーモンを宣言的な NixOS 設定へ移しました。
+NixOS is a first-class secondary platform for routerd. The recommended path on NixOS is to drive routerd-managed services from declarative NixOS configuration rather than from transient systemd units.
 
-## 現在の推奨範囲
+## Recommended starting scope
 
-NixOS では、まず DHCPv6-PD デーモンの宣言的管理から使います。
-すべての routerd リソースを NixOS ネイティブ設定へ完全変換する段階ではありません。
+On NixOS, start by managing the DHCPv6-PD client through the declarative path. This is the most fully covered NixOS integration today and gives you observable end-to-end behaviour. Other resources can be added as the corresponding NixOS module support lands.
 
-## 生成される形
+## Generated artefacts
 
-`/etc/nixos/routerd-generated.nix` に systemd ユニットを生成し、次のように反映します。
+routerd writes systemd units into `/etc/nixos/routerd-generated.nix`. Apply them with:
 
 ```bash
 sudo nixos-rebuild test
 sudo nixos-rebuild switch
 ```
 
-ユニットは `routerd-dhcpv6-client` を明示パスで起動します。
-`RuntimeDirectory`、`StateDirectory`、`ProtectSystem=strict`、必要な capability などを持ちます。
+The generated unit launches `routerd-dhcpv6-client` with an explicit binary path and the appropriate `RuntimeDirectory`, `StateDirectory`, `ProtectSystem=strict`, and capability list.
 
-## 注意
+## Why not transient units
 
-NixOS では一時的に `/run/systemd/system` へ置いたユニットは永続設定ではありません。
-再起動後も維持するには、NixOS 設定へ入れる必要があります。
-routerd の他リソースの NixOS 対応は段階的に進めます。
+Units placed under `/run/systemd/system` on NixOS are not part of the system configuration; a reboot or a `nixos-rebuild switch` will remove them. To survive across reboots and rebuilds, the unit has to be declared in the NixOS configuration. routerd does that by writing to `/etc/nixos/routerd-generated.nix`.
+
+## Coverage today
+
+What is implemented:
+
+- systemd unit generation for `routerd-dhcpv6-client`
+- NixOS module generation for `Package`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`
+- DHCPv6-PD reaches `Bound` after `nixos-rebuild switch`
+- WireGuard / VXLAN coverage tested across NixOS / Linux / FreeBSD
+
+What is still rolling in:
+
+- nftables / dnsmasq / DNS resolver / HealthCheck end-to-end
+- `Package` resolution for the full Ubuntu reference list
+- Integration with NixOS `generation` rollback semantics
+
+For the per-platform breakdown, see [supported platforms](../platforms.md).
+
+## See also
+
+- [Install](./install.md)
+- [Bring up the first router](./first-router.md)
+- [WAN-side services](./wan-side-services.md)

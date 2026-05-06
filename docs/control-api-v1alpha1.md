@@ -1,36 +1,33 @@
 ---
-title: 制御 API v1alpha1
+title: Control API v1alpha1
 slug: /reference/control-api-v1alpha1
 ---
 
-# 制御 API v1alpha1
+# Control API v1alpha1
 
-routerd と専用デーモンは、ローカルの Unix ドメインソケットで HTTP+JSON API を公開します。
-この API は遠隔管理用ではなく、同じホスト上の `routerctl`、routerd 本体、運用スクリプトが状態を読むためのものです。
+routerd and its managed daemons expose a local HTTP+JSON API over Unix domain sockets. The API is **not** for remote management — it is the channel through which `routerctl`, the routerd controllers themselves, and operations scripts on the same host read state.
 
-## routerd 本体
+## routerd main process
 
-`routerd serve` は既定で次のソケットを使います。
+`routerd serve` listens on:
 
 ```text
 /run/routerd/routerd.sock
 ```
 
-主な用途は、現在状態の確認、イベント確認、リソース状態の確認です。
+Read endpoints expose status, events, and resource state. Highlights:
 
-主な読み取りエンドポイントは次の通りです。
-
-| メソッドとパス | 意味 |
+| Method and path | Purpose |
 | --- | --- |
-| `GET /api/control.routerd.net/v1alpha1/status` | routerd 本体の状態を返します。 |
-| `GET /api/control.routerd.net/v1alpha1/connections` | conntrack または pf state から得たコネクションを返します。 |
-| `GET /api/control.routerd.net/v1alpha1/dns-queries` | DNS クエリー履歴を返します。 |
-| `GET /api/control.routerd.net/v1alpha1/traffic-flows` | 保存済みの通信フロー履歴を返します。 |
-| `GET /api/control.routerd.net/v1alpha1/firewall-logs` | ファイアウォールログを返します。 |
+| `GET /api/control.routerd.net/v1alpha1/status` | routerd's own status |
+| `GET /api/control.routerd.net/v1alpha1/connections` | live connections from conntrack or pf state |
+| `GET /api/control.routerd.net/v1alpha1/dns-queries` | DNS query history |
+| `GET /api/control.routerd.net/v1alpha1/traffic-flows` | traffic flow history |
+| `GET /api/control.routerd.net/v1alpha1/firewall-logs` | firewall log entries |
 
-## 専用デーモン
+## Managed daemons
 
-状態を持つ処理は、次のようなソケットを持ちます。
+Stateful daemons each have their own socket:
 
 ```text
 /run/routerd/dhcpv6-client/wan-pd.sock
@@ -39,45 +36,41 @@ routerd と専用デーモンは、ローカルの Unix ドメインソケット
 /run/routerd/healthcheck/internet.sock
 ```
 
-FreeBSD では `/var/run/routerd/...` を使う構成があります。
+On FreeBSD, the equivalent path is `/var/run/routerd/...`.
 
-## 共通エンドポイント
+## Common daemon endpoints
 
-| メソッドとパス | 意味 |
+| Method and path | Purpose |
 | --- | --- |
-| `GET /v1/healthz` | プロセスが応答できるかを返します。 |
-| `GET /v1/status` | デーモン状態と関連リソース状態を返します。 |
-| `GET /v1/events` | イベントログを返します。`since`、`wait`、`topic` を指定できます。 |
-| `POST /v1/commands/reload` | 設定の再読み込みを依頼します。 |
-| `POST /v1/commands/renew` | リース更新や即時測定など、デーモンごとの能動処理を依頼します。 |
-| `POST /v1/commands/stop` | 安全な停止を依頼します。 |
+| `GET /v1/healthz` | Liveness check |
+| `GET /v1/status` | Daemon status and related resource state |
+| `GET /v1/events` | Event log; supports `since`, `wait`, `topic` query parameters |
+| `POST /v1/commands/reload` | Re-read configuration |
+| `POST /v1/commands/renew` | Daemon-specific active operation (DHCPv6 Renew, DHCPv4 lease refresh, immediate health probe, etc.) |
+| `POST /v1/commands/stop` | Graceful shutdown |
 
-`renew` の意味はデーモンごとに異なります。
-DHCPv6 では Renew、DHCPv4 ではリース更新、ヘルスチェックでは即時測定です。
+The semantics of `renew` differ per daemon: DHCPv6 sends a Renew, DHCPv4 refreshes the lease, healthcheck triggers an immediate probe.
 
-## 状態の段階
+## Phase vocabulary
 
-`ResourceStatus.phase` は共通の語彙を使います。
-代表例は次の通りです。
+`ResourceStatus.phase` uses a shared vocabulary across resources:
 
-| Phase | 意味 |
+| Phase | Meaning |
 | --- | --- |
-| `Pending` | 必要な入力を待っています。 |
-| `Bound` | DHCP などのリースを保持しています。 |
-| `Applied` | ホスト側への適用が終わっています。 |
-| `Up` | トンネルやリンクが上がっています。 |
-| `Installed` | 経路や設定が入っています。 |
-| `Healthy` | ヘルスチェックが成功条件を満たしています。 |
-| `Unhealthy` | ヘルスチェックが失敗条件を満たしています。 |
-| `Error` | 処理に失敗しています。 |
+| `Pending` | Waiting for required input |
+| `Bound` | A lease (DHCP, etc.) is held |
+| `Applied` | Host-side state has been applied |
+| `Up` | A tunnel or link is up |
+| `Installed` | Routes or configuration files are installed |
+| `Healthy` | Health check meets its success threshold |
+| `Unhealthy` | Health check meets its failure threshold |
+| `Error` | An operation failed |
 
-各状態には `conditions` が付きます。
-利用者向けの判定は、文字列ログではなく `phase` と `conditions` を見ます。
+Each phase carries a `conditions` array. Decisions in client code should be based on `phase` and `conditions`, not on log strings.
 
-## イベント
+## Events
 
-イベントは topic と attributes を持ちます。
-例:
+Events have a topic and attributes:
 
 ```json
 {
@@ -89,6 +82,4 @@ DHCPv6 では Renew、DHCPv4 ではリース更新、ヘルスチェックでは
 }
 ```
 
-routerd はイベントを SQLite に永続化します。
-専用デーモンは `events.jsonl` にも記録します。
-EventRule と DerivedEvent は、このイベントを入力にして仮想イベントを発行します。
+routerd persists events into SQLite. Managed daemons additionally keep them in their own `events.jsonl` files. `EventRule` and `DerivedEvent` consume this stream to emit virtual events.

@@ -1,63 +1,58 @@
 ---
-title: リソース所有
+title: Resource ownership
 slug: /reference/resource-ownership
 ---
 
-# リソース所有と反映モデル
+# Resource ownership and the apply model
 
-routerd は、ホスト上の構成物をリソースに対応付けて管理します。
-どのリソースが何を作ったかを記録することで、差分確認、削除、障害調査をしやすくします。
+routerd associates host-side artefacts with the resource that produced them. Recording who owns what makes diffs, deletions, and incident debugging tractable.
 
-## 所有の種類
+## Ownership categories
 
-| 種類 | 意味 |
+| Category | Meaning |
 | --- | --- |
-| 作成 | routerd が構成物を新しく作ります。 |
-| 取り込み | 既存の構成物を routerd の管理対象として扱います。 |
-| 観測 | routerd は状態を見るだけで変更しません。 |
+| Created | routerd produced the artefact itself. |
+| Adopted | routerd took over an existing artefact and now manages it. |
+| Observed | routerd only reads the state; it does not change it. |
 
-## 主な構成物
+## Resource → host artefact map
 
-| リソース | ホスト側の構成物 |
+| Resource | Host artefact |
 | --- | --- |
-| `Interface` | OS インターフェース名、管理状態 |
-| `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` の socket、lease、events |
-| `DHCPv4Lease` | `routerd-dhcpv4-client` の socket、lease、events |
-| `PPPoESession` | `routerd-pppoe-client` の socket、state、pppd/ppp 設定 |
-| `HealthCheck` | `routerd-healthcheck` の socket、state、events |
-| `DHCPv4Server` / `DHCPv6Server` / `IPv6RouterAdvertisement` | 管理対象 dnsmasq 設定 |
-| `DNSZone` | `routerd-dns-resolver` のローカル権威ゾーン |
-| `DNSResolver` | `routerd-dns-resolver` の socket、state、events、待ち受け設定 |
-| `DSLiteTunnel` | Linux `ip6tnl` インターフェース |
-| `IPv4Route` | カーネル経路 |
-| `NAT44Rule` | nftables `routerd_nat` テーブル |
-| `WireGuardInterface` / `WireGuardPeer` | WireGuard 設定 |
-| `VRF` | Linux VRF デバイスと経路表 |
-| `VXLANTunnel` | VXLAN デバイス |
-| `Package` | apt、dnf、pkg、Nix のパッケージ導入状態 |
-| `Sysctl` | sysctl 値 |
-| `SysctlProfile` | 複数の sysctl 値 |
-| `NetworkAdoption` | systemd-networkd と systemd-resolved の drop-in |
-| `SystemdUnit` | systemd ユニットファイルと enable 状態 |
-| `NTPClient` | NTP クライアント設定 |
+| `Interface` | OS interface name and admin state |
+| `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` socket, lease, events |
+| `DHCPv4Lease` | `routerd-dhcpv4-client` socket, lease, events |
+| `PPPoESession` | `routerd-pppoe-client` socket, state, pppd/ppp config |
+| `HealthCheck` | `routerd-healthcheck` socket, state, events |
+| `DHCPv4Server` / `DHCPv6Server` / `IPv6RouterAdvertisement` | Managed dnsmasq configuration |
+| `DNSZone` | `routerd-dns-resolver` local authoritative zone |
+| `DNSResolver` | `routerd-dns-resolver` socket, state, events, listener configuration |
+| `DSLiteTunnel` | Linux `ip6tnl` interface |
+| `IPv4Route` | Kernel route |
+| `NAT44Rule` | nftables `routerd_nat` table |
+| `WireGuardInterface` / `WireGuardPeer` | WireGuard configuration |
+| `VRF` | Linux VRF device and routing table |
+| `VXLANTunnel` | VXLAN device |
+| `Package` | apt / dnf / pkg / Nix install state |
+| `Sysctl` | One sysctl value |
+| `SysctlProfile` | A set of sysctl values |
+| `NetworkAdoption` | systemd-networkd / systemd-resolved drop-ins |
+| `SystemdUnit` | systemd unit file and enabled state |
+| `NTPClient` | NTP client configuration |
 
-## 削除時の考え方
+## How removal works
 
-routerd は、知らない構成物を勝手に削除しません。
-YAML からリソースが消えた場合でも、削除できるのは routerd が所有していると分かる構成物だけです。
+routerd does **not** silently delete artefacts it does not own. When a resource is removed from the YAML, only artefacts that routerd previously created (or explicitly adopted) are eligible for deletion.
 
-現在は完全なロールバック機能を目標にしていません。
-特に本番ネットワークへ影響する変更では、次の順序を守ります。
+Full configuration rollback is not a current goal. For changes that affect production traffic, follow this order:
 
-1. 検証します。
-2. 計画を確認します。
-3. 予行実行します。
-4. 管理用接続が消えないことを確認します。
-5. 適用します。
-6. 状態と疎通を確認します。
+1. Validate.
+2. Inspect the plan.
+3. Run a dry-run apply.
+4. Confirm the management connection survives the change.
+5. Apply.
+6. Verify state and connectivity.
 
-## 古い構成の扱い
+## Legacy configurations
 
-Phase 4 で、旧 DHCPv6 実験用パッケージや旧レンダラは削除しました。
-現在の DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
-過去の `dhcpcd` や `dhcp6c` 経路の記述は、現在の設定例として使いません。
+Older experimental DHCPv6 packages and renderers have been removed. The current DHCPv6-PD path is `routerd-dhcpv6-client`. Examples that referenced `dhcpcd` or `dhcp6c` directly are no longer part of the supported configuration set; the legacy resources have been retired without aliases.

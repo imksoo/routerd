@@ -77,9 +77,10 @@ spec:
     field: selectedGateway
 ```
 
-Private destinations that must not leave through DS-Lite can be modeled as
-ordinary routes. Use a WAN-side route for NTT HGW networks, an IX2215 route for
-internal 172.16.0.0/12 networks, and `type: blackhole` for ranges that should be
+Private destinations that must not leave through a DS-Lite (or any) tunnel can
+be modeled as ordinary routes. Use a WAN-side route for the upstream gateway's
+private subnet, a dedicated route for any internal `10.0.0.0/8` or
+`172.16.0.0/12` ranges, and `type: blackhole` for ranges that should be
 discarded:
 
 ```yaml
