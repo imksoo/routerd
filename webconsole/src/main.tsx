@@ -274,7 +274,7 @@ const useStyles = makeStyles({
   interfaceHeader: {
     display: "flex",
     gap: "8px",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     minWidth: 0,
   },
@@ -288,7 +288,7 @@ const useStyles = makeStyles({
     display: "flex",
     flexWrap: "wrap",
     gap: "6px",
-    alignItems: "center",
+    alignItems: "flex-start",
   },
   addressList: {
     display: "grid",
@@ -948,7 +948,7 @@ function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
             {item.mtu ? <Text size={200} className={styles.muted}>MTU {item.mtu}</Text> : null}
           </div>
           <div className={styles.addressList}>
-            {(item.addresses ?? []).slice(0, 5).map(address => (
+            {(item.addresses ?? []).map(address => (
               <code className={styles.wrapCode} key={address}>{address}</code>
             ))}
             {(item.addresses ?? []).length === 0 ? <Text size={200} className={styles.muted}>No address observed</Text> : null}
