@@ -5,9 +5,22 @@ slug: /how-to/dns-local-zone
 
 # ローカル DNS ゾーン
 
-`DNSZone` はローカル権威レコードを保持します。
-手動レコードと DHCP リース由来のレコードを併用できます。
-`DNSResolver` は `zone` 応答元として `DNSZone` を参照します。
+## 想定するシーン
+
+社内ホストを名前で解決したいが、各端末の `/etc/hosts` を手作業で揃えたくない。具体的には：
+
+- 一握りの固定レコード (router、NAS、プリンタ)
+- DHCP リースを取得した端末ごとの A / AAAA / PTR を自動生成
+- 順引きと逆引きの両方が動く
+
+## routerd での解決方法
+
+`DNSZone` で 1 つの DNS ドメインのローカル権威レコードを管理します。
+**手書きレコード** (YAML 中で宣言) と **DHCP 由来レコード** (リース DB から構築) を組み合わせられます。
+`DNSResolver` がこれらをソースの 1 つとして読み込むため、内部問い合わせはローカルで応答し、外部問い合わせは設定済みの上流に送られます。
+
+DHCP 由来レコードはイベントバス経由で同期されます：dnsmasq がリース変更で `routerd-dhcp-event-relay` を呼び、relay が routerd イベントを発行し、`routerd-dns-resolver` が in-memory ゾーンを更新します。
+dnsmasq のリースファイルは起動時にも読み直すので、デーモン再起動でレコードは失われません。
 
 ## 例
 
@@ -17,29 +30,37 @@ slug: /how-to/dns-local-zone
   metadata:
     name: lan
   spec:
-    zone: lab.example
+    zone: lan.example.org
     ttl: 300
     dnssec:
       enabled: false
     records:
-    - hostname: router
-      ipv4: 192.168.160.5
-      ipv6: 2001:db8:160::1
+      - hostname: router
+        ipv4: 192.0.2.1
+        ipv6: 2001:db8:1::1
+      - hostname: nas
+        ipv4: 192.0.2.10
     dhcpDerived:
       sources:
-      - DHCPv4Server/lan-dhcpv4
-      - DHCPv6Server/lan-dhcpv6
-      hostnameSuffix: lab.example
+        - DHCPv4Server/lan-dhcpv4
+        - DHCPv6Server/lan-dhcpv6
+      hostnameSuffix: lan.example.org
       ddns: true
       ttl: 60
       leaseFile: /run/routerd/dnsmasq.leases
     reverseZones:
-    - name: 160.168.192.in-addr.arpa
+      - name: 2.0.192.in-addr.arpa
 ```
 
-dnsmasq は DHCP スクリプトから `routerd-dhcp-event-relay` を呼びます。
-routerd はリース変更をイベントバスへ発行します。
-`routerd-dns-resolver` はそのイベントを受け、メモリー上のゾーン表を更新します。
+これを apply すると、`nas.lan.example.org` や `<dhcp-client-name>.lan.example.org` がローカルアドレスに解決され、`192.0.2.x` の PTR ルックアップも同じ名前を返します。
 
-起動時にはリースファイルも読みます。
-これにより、デーモンを再起動しても A、AAAA、PTR レコードを復元できます。
+## 補足
+
+- 管理権を持つドメインか、社内向けに予約された (`example.org`、`home.arpa` 等) ものを選んでください。`.lan` のように公衆 DNS と衝突する suffix は使わないでください。
+- DNSSEC を有効 (`dnssec.enabled: true`) にしておけば、外部 DNSSEC 検証は引き続き動きます。ローカルゾーンは設計上 unsigned です。
+- 内部サブネットが複数ある場合は、`reverseZones` をサブネット数分書いてください。これで両方向の PTR が動きます。
+
+## 関連項目
+
+- [専用 DNS upstream](./dns-private-upstream.md)
+- [DNS resolver コンセプト](../concepts/dns-resolver.md)

@@ -1,17 +1,36 @@
 ---
 title: LAN 側サービス
-sidebar_position: 3
+sidebar_position: 5
 ---
 
 # LAN 側サービス
 
-routerd は LAN 側サービスを 2 つの境界に分けます。
+このページでは、ルーターの LAN 側を扱う routerd リソースを紹介します。
+内側インターフェースのアドレス、DHCPv4 / DHCPv6 配布、IPv6 Router Advertisement、ローカル DNS resolver といった役割です。
 
-- dnsmasq は DHCPv4、DHCPv6、DHCP 中継、IPv6 RA を提供します。
-- `routerd-dns-resolver` は DNS ゾーン、転送、キャッシュ、ログを提供します。
+WAN 側 (上流からのアドレス取得) は [WAN 側サービス](./wan-side-services.md) を参照してください。
 
-DHCP リース処理は dnsmasq に寄せます。
-DNS ポリシーは型付き routerd リソースで扱います。
+## サービス分担
+
+routerd は LAN 側サービスを 2 つのデーモンに明確に分割します。
+
+- **dnsmasq** が DHCPv4、DHCPv6、DHCP relay、IPv6 Router Advertisement を担当。
+- **`routerd-dns-resolver`** が DNS ゾーン、条件付き転送、キャッシュ、クエリログを担当。
+
+DHCP は実績のある dnsmasq を再利用し、DNS のポリシーを型付き routerd リソース (`DNSResolver`、`DNSZone`) で表現する分担です。
+
+## サマリ
+
+| 役割 | リソース | 担当デーモン |
+| --- | --- | --- |
+| LAN インターフェースのアドレス | `IPv4StaticAddress`、`IPv6DelegatedAddress` | (kernel) |
+| DHCPv4 スコープ | `DHCPv4Server` | dnsmasq |
+| DHCPv4 固定割り当て | `DHCPv4Reservation` | dnsmasq |
+| DHCPv6 (stateless / stateful) | `DHCPv6Server` | dnsmasq |
+| IPv6 Router Advertisement | `IPv6RouterAdvertisement` | dnsmasq (RA mode) |
+| DNS ゾーン (ローカル権威) | `DNSZone` | `routerd-dns-resolver` |
+| DNS resolver listener | `DNSResolver` | `routerd-dns-resolver` |
+| DHCP リースイベント中継 | (組み込み) | `routerd-dhcp-event-relay` |
 
 ## DHCPv4 スコープ
 
@@ -23,8 +42,8 @@ DNS ポリシーは型付き routerd リソースで扱います。
   spec:
     interface: lan
     addressPool:
-      start: 172.18.1.64
-      end: 172.18.1.191
+      start: 192.0.2.64
+      end: 192.0.2.191
       leaseTime: 12h
     gatewayFrom:
       resource: IPv4StaticAddress/lan-base
@@ -35,32 +54,33 @@ DNS ポリシーは型付き routerd リソースで扱います。
     ntpServerFrom:
       - resource: IPv4StaticAddress/lan-base
         field: address
-    domain: home.internal
+    domain: lan.example.org
 ```
 
-自動割り当ての端末と固定割り当ての端末で範囲を分けると、運用で見分けやすくなります。
+自動割り当てクライアント用と、固定アドレス用で範囲を分けると運用が読みやすくなります。
 
-## DHCPv4 固定割り当て
+## 静的 DHCPv4 予約
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv4Reservation
   metadata:
-    name: panasonic-aiseg2
+    name: smart-meter
   spec:
     server: lan-dhcpv4
-    macAddress: "18:ec:e7:33:12:6c"
-    hostname: aiseg2
-    ipAddress: 172.18.0.150
+    macAddress: "02:00:00:00:00:01"
+    hostname: smart-meter
+    ipAddress: 192.0.2.10
 ```
 
-`DHCPv4Reservation` は dnsmasq の固定割り当て状態を生成します。
-Web Console とイベントでも、端末に安定したリソース名を付けられます。
+`DHCPv4Reservation` は dnsmasq の host reservation エントリに展開されます。
+Web Console と event log には、デバイスの現在の IP に依存しない安定したリソース名で現れます。
 
 ## IPv6 RA と DHCPv6
 
-IPv6 LAN では、RA に RDNSS を載せることを基本にします。
-Android は DHCPv6 で DNS を設定しません。
+IPv6 LAN では Router Advertisement に RDNSS を含めて配布してください。
+Android は DHCPv6 で DNS を取得しないため、RDNSS が必要です。
+Windows クライアントには加えて DHCPv6 stateless サーバーも用意します。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -74,13 +94,11 @@ Android は DHCPv6 で DNS を設定しません。
       field: address
     mFlag: false
     oFlag: true
-    rdnss:
-      - 172.18.0.1
     rdnssFrom:
       - resource: IPv6DelegatedAddress/lan-base
         field: address
     dnssl:
-      - home.internal
+      - lan.example.org
     mtu: 1454
 
 - apiVersion: net.routerd.net/v1alpha1
@@ -90,13 +108,14 @@ Android は DHCPv6 で DNS を設定しません。
   spec:
     interface: lan
     mode: stateless
-    dnsServers:
-      - 172.18.0.1
+    dnsServersFrom:
+      - resource: IPv6DelegatedAddress/lan-base
+        field: address
     domainSearch:
-      - home.internal
+      - lan.example.org
 ```
 
-DHCPv6 でアドレスも配る場合は、`mode: stateful` または `mode: both` を使います。
+DHCPv6 でアドレス自体も配布したい場合は `mode: stateful` または `mode: both` を使います。
 
 ## ローカル DNS ゾーン
 
@@ -104,13 +123,15 @@ DHCPv6 でアドレスも配る場合は、`mode: stateful` または `mode: bot
 - apiVersion: net.routerd.net/v1alpha1
   kind: DNSZone
   metadata:
-    name: home
+    name: lan
   spec:
-    zone: home.internal
+    zone: lan.example.org
     ttl: 300
     records:
       - hostname: router
-        ipv4: 172.18.0.1
+        ipv4From:
+          resource: IPv4StaticAddress/lan-base
+          field: address
         ipv6From:
           resource: IPv6DelegatedAddress/lan-base
           field: address
@@ -118,15 +139,15 @@ DHCPv6 でアドレスも配る場合は、`mode: stateful` または `mode: bot
       sources:
         - DHCPv4Server/lan-dhcpv4
         - DHCPv6Server/lan-dhcpv6
-      hostnameSuffix: home.internal
+      hostnameSuffix: lan.example.org
       ddns: true
       ttl: 60
 ```
 
-`ipv4` と `ipv6` は固定値です。
-ほかのリソース状態に追従させる場合は、`ipv4From` または `ipv6From` を使います。
+固定レコードは `records:`、DHCP リース由来は `dhcpDerived.sources` から。
+両者は問い合わせ時に統合されます。
 
-## DNS リゾルバー待ち受け
+## DNS resolver の listener
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -136,9 +157,9 @@ DHCPv6 でアドレスも配る場合は、`mode: stateful` または `mode: bot
   spec:
     listen:
       - name: lan
-        addresses:
-          - 172.18.0.1
         addressFrom:
+          - resource: IPv4StaticAddress/lan-base
+            field: address
           - resource: IPv6DelegatedAddress/lan-base
             field: address
         port: 53
@@ -147,20 +168,46 @@ DHCPv6 でアドレスも配る場合は、`mode: stateful` または `mode: bot
       - name: local-zone
         kind: zone
         match:
-          - home.internal
+          - lan.example.org
         zoneRef:
-          - DNSZone/home
+          - DNSZone/lan
       - name: default
         kind: upstream
         match:
           - "."
         upstreams:
+          - https://dns.example.net/dns-query
           - udp://1.1.1.1:53
-          - udp://8.8.8.8:53
     cache:
       enabled: true
       maxEntries: 10000
 ```
 
-最初は `routerd plan` と `--dry-run` で確認します。
-実際の LAN 待ち受けは、管理経路と戻し方を確認してから有効にしてください。
+resolver は参照先 status から得られる全アドレスで listen します。
+PD 更新等で IPv6 アドレスが増えても、再起動なしで対応します。
+
+## 動作確認
+
+```sh
+# LAN インターフェースに v4 / v6 が乗っていることを確認
+routerctl describe Interface/lan
+
+# DHCP イベントの実時間 tail
+routerctl events --topic 'routerd.dhcp.lease.**' --resource DHCPv4Server/lan-dhcpv4
+
+# ローカル resolver で名前解決
+dig @<lan-ip> router.lan.example.org
+dig @<lan-ip> example.com
+```
+
+## 運用上のヒント
+
+- 最初は `routerctl plan` と `--dry-run` から始めます。本番 LAN listener を有効化するのは、管理経路と既知の rollback 経路を確保した後にしてください。
+- dnsmasq のリースを手で書き換えた場合は、`routerd-dhcp-event-relay` を再起動して in-memory state を追従させます。可能な限り routerd 経由でリースを変更してください。
+- 公共 DNS は fallback として残してください。`routerd-dns-resolver` は health check 失敗の forwarder を降格しますが、健全な代替がない場合に限ります。
+
+## 関連項目
+
+- [WAN 側サービス](./wan-side-services.md)
+- [ローカル DNS ゾーン](../how-to/dns-local-zone.md)
+- [専用 DNS upstream](../how-to/dns-private-upstream.md)
