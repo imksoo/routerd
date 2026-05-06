@@ -468,6 +468,7 @@ func TestDnsmasqRCScriptUsesFreeBSDRuntimeDirectory(t *testing.T) {
 	for _, want := range []string{
 		`name="routerd_dnsmasq"`,
 		`rcvar="routerd_dnsmasq_enable"`,
+		`# REQUIRE: NETWORKING mpd5`,
 		`command="/usr/local/sbin/dnsmasq"`,
 		`pidfile="/var/run/routerd/dnsmasq.pid"`,
 		`--conf-file=/usr/local/etc/routerd/dnsmasq.conf`,

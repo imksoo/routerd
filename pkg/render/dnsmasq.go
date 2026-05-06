@@ -454,7 +454,7 @@ func DnsmasqRCScript(configPath, runtimeDir string) []byte {
 	return []byte(`#!/bin/sh
 
 # PROVIDE: routerd_dnsmasq
-# REQUIRE: NETWORKING
+# REQUIRE: NETWORKING mpd5
 # KEYWORD: shutdown
 
 . /etc/rc.subr

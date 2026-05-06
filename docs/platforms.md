@@ -76,6 +76,7 @@ Implemented:
 - `pflog0` ingestion through direct BPF reads for firewall logs
 - DNS resolver daemon builds on FreeBSD; `viaInterface` can target `fib:<n>` for FIB-bound upstream routing
 - rc.d script generation, installation, and `service <name> onestart` activation from `SystemdUnit`
+- dnsmasq rc.d ordering after `mpd5` for PPPoE coexistence
 - Static DS-Lite gif tunnel rendering
 
 Not yet covered:
