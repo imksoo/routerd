@@ -1176,8 +1176,15 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, err
 	}
+	leaseDir := filepath.Dir(path)
+	if strings.TrimSpace(leaseDir) == "" {
+		leaseDir = filepath.Dir(pidFile)
+	}
+	if err := os.MkdirAll(leaseDir, 0755); err != nil {
+		return false, err
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-interfaces\npid-file=%s\n", pidFile)
+	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-interfaces\npid-file=%s\ndhcp-leasefile=%s\n", pidFile, filepath.Join(leaseDir, "dnsmasq.leases"))
 	for _, line := range dnsmasqLANServiceLines(router, store) {
 		b.WriteString(line)
 		b.WriteByte('\n')

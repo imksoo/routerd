@@ -87,14 +87,15 @@ func Apply(ctx context.Context, router *api.Router, opts Options) (Result, error
 	}
 
 	before, _ := readlink("/run/current-system")
-	output, err := command(ctx, "nixos-rebuild", args...)
+	rebuild := nixosRebuildCommand()
+	output, err := command(ctx, rebuild, args...)
 	after, _ := readlink("/run/current-system")
 	result := Result{
 		Mode:             mode,
 		ModulePath:       modulePath,
 		WrapperPath:      wrapper,
 		ChangedFiles:     changed,
-		Command:          append([]string{"nixos-rebuild"}, args...),
+		Command:          append([]string{rebuild}, args...),
 		CommandOutput:    string(output),
 		GenerationBefore: before,
 		GenerationAfter:  after,
@@ -110,6 +111,18 @@ func Apply(ctx context.Context, router *api.Router, opts Options) (Result, error
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+func nixosRebuildCommand() string {
+	for _, path := range []string{
+		"/run/current-system/sw/bin/nixos-rebuild",
+		"/nix/var/nix/profiles/system/sw/bin/nixos-rebuild",
+	} {
+		if st, err := os.Stat(path); err == nil && !st.IsDir() && st.Mode()&0111 != 0 {
+			return path
+		}
+	}
+	return "nixos-rebuild"
 }
 
 func writeFileIfChanged(path string, data []byte, mode os.FileMode) (bool, error) {
