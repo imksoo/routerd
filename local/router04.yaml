@@ -462,6 +462,41 @@ spec:
           - 172.16.0.0/12
           - 10.0.0.0/8
 
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: wan
+      spec:
+        role: untrust
+        interfaces:
+          - Interface/wan
+          - DSLiteTunnel/ds-lite
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces:
+          - Interface/lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: mgmt
+      spec:
+        role: mgmt
+        interfaces:
+          - Interface/mgmt
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: default
+      spec:
+        logDeny: true
+
     - apiVersion: net.routerd.net/v1alpha1
       kind: Bridge
       metadata:

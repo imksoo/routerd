@@ -220,11 +220,17 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 		if len(from.IfNames) == 0 {
 			continue
 		}
+		if err := writePFDisallowedForwardDestinations(buf, from, zones, policy); err != nil {
+			return err
+		}
 		for _, to := range sortedFirewallZones(zones) {
 			if implicitFirewallAction(from.Role, to.Role, policy) != "accept" {
 				continue
 			}
 			if from.Name == to.Name && !policy.SameRoleAccept {
+				continue
+			}
+			if !pfCanRenderBroadForwardPass(from, to) {
 				continue
 			}
 			buf.WriteString("pass in quick on $" + pfZoneMacro(from) + " keep state label " + pfQuote("routerd:"+from.Name+"-to-"+to.Name) + "\n")
@@ -245,6 +251,28 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 		}
 	}
 	return nil
+}
+
+func writePFDisallowedForwardDestinations(buf *bytes.Buffer, from firewallZone, zones map[string]firewallZone, policy firewallPolicy) error {
+	if from.Role != "trust" {
+		return nil
+	}
+	for _, to := range sortedFirewallZones(zones) {
+		if len(to.IfNames) == 0 || implicitFirewallAction(from.Role, to.Role, policy) != "drop" {
+			continue
+		}
+		for _, ifname := range to.IfNames {
+			buf.WriteString("block drop in quick on $" + pfZoneMacro(from) + " to (" + ifname + ":network) label " + pfQuote("routerd:"+from.Name+"-to-"+to.Name+"-deny") + "\n")
+		}
+	}
+	return nil
+}
+
+func pfCanRenderBroadForwardPass(from, to firewallZone) bool {
+	if from.Role == "untrust" && to.Role == "untrust" {
+		return false
+	}
+	return true
 }
 
 func pfNATTarget(spec api.IPv4NATTranslationSpec, ifname string) (string, error) {

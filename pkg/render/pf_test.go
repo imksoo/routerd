@@ -20,6 +20,11 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 			Spec:     api.InterfaceSpec{IfName: "em1", Managed: true, Owner: "routerd"},
 		},
 		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "mgmt"},
+			Spec:     api.InterfaceSpec{IfName: "em2", Managed: true, Owner: "routerd"},
+		},
+		{
 			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
 			Metadata: api.ObjectMeta{Name: "wan"},
 			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
@@ -28,6 +33,11 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
 			Metadata: api.ObjectMeta{Name: "lan"},
 			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "mgmt"},
+			Spec:     api.FirewallZoneSpec{Role: "mgmt", Interfaces: []string{"mgmt"}},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
@@ -62,12 +72,15 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 	for _, want := range []string{
 		`set skip on lo0`,
 		`lan_if = "em1"`,
+		`mgmt_if = "em2"`,
 		`wan_if = "em0"`,
 		`nat on em0 from 172.18.0.0/16 to any -> (em0)`,
 		`block drop all`,
 		`pass out quick all keep state`,
 		`pass quick inet6 proto icmp6 all keep state`,
 		`pass in quick on $lan_if to self keep state`,
+		`pass in quick on $mgmt_if to self keep state`,
+		`block drop in quick on $lan_if to (em2:network) label "routerd:lan-to-mgmt-deny"`,
 		`pass in quick on $lan_if keep state label "routerd:lan-to-wan"`,
 		`pass in quick on $wan_if proto udp to self port 546 keep state label "routerd:dhcpv6-client"`,
 		`pass in log quick on $wan_if proto tcp from 192.0.2.0/24 to self port 22 keep state label "routerd:wan-ssh"`,
