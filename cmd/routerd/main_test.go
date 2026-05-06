@@ -576,6 +576,94 @@ exit 0
 	}
 }
 
+func TestApplyFreeBSDDSLiteSupportsDynamicDelegatedAddress(t *testing.T) {
+	dir := t.TempDir()
+	oldDefaults := platformDefaults
+	platformDefaults = platform.Defaults{OS: platform.OSFreeBSD}
+	t.Cleanup(func() { platformDefaults = oldDefaults })
+
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	ifconfigLog := filepath.Join(dir, "ifconfig.log")
+	routeLog := filepath.Join(dir, "route.log")
+	writeExecutable(t, filepath.Join(binDir, "ifconfig"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "vtnet1" ] && [ "$#" -eq 1 ]; then
+  cat <<'OUT'
+vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> metric 0 mtu 1500
+	inet6 fe80::1%%vtnet1 prefixlen 64 scopeid 0x2
+	inet6 2001:db8:1234:5678::abcd prefixlen 64
+OUT
+  exit 0
+fi
+if [ "$#" -eq 1 ]; then
+  exit 1
+fi
+exit 0
+`, ifconfigLog))
+	writeExecutable(t, filepath.Join(binDir, "route"), fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+if [ "$1" = "-n" ] && [ "$2" = "get" ]; then
+  printf 'interface: vtnet0\n'
+  exit 0
+fi
+exit 0
+`, routeLog))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", SubnetID: "0", AddressSuffix: "::1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{
+			Interface:             "wan",
+			TunnelName:            "ds-lite",
+			LocalAddressSource:    "delegatedAddress",
+			LocalDelegatedAddress: "lan-ipv6",
+			LocalAddressSuffix:    "::11",
+			AFTRIPv6:              "2001:db8::feed",
+			MTU:                   1454,
+			DefaultRoute:          true,
+		}},
+	}}}
+
+	store := routerstate.New()
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{CurrentPrefix: "2001:db8:1234:5678::/64"}), "test")
+	changed, err := applyDSLiteTunnelsWithState(router, store)
+	if err != nil {
+		t.Fatalf("apply DS-Lite tunnels: %v", err)
+	}
+	if !containsString(changed, "ds-lite") {
+		t.Fatalf("changed = %v, want ds-lite", changed)
+	}
+	gif := freeBSDDSLiteRuntimeIfName("ds-lite")
+	ifconfigCalls, err := os.ReadFile(ifconfigLog)
+	if err != nil {
+		t.Fatalf("read ifconfig log: %v", err)
+	}
+	for _, want := range []string{
+		"vtnet1 inet6 2001:db8:1234:5678::11 prefixlen 64 alias",
+		gif + " create",
+		gif + " tunnel 2001:db8:1234:5678::11 2001:db8::feed",
+		gif + " mtu 1454",
+		gif + " up",
+	} {
+		if !strings.Contains(string(ifconfigCalls), want) {
+			t.Fatalf("ifconfig calls missing %q:\n%s", want, ifconfigCalls)
+		}
+	}
+	routeCalls, err := os.ReadFile(routeLog)
+	if err != nil {
+		t.Fatalf("read route log: %v", err)
+	}
+	if !strings.Contains(string(routeCalls), "-n change default -interface "+gif) {
+		t.Fatalf("route change not called for %s:\n%s", gif, routeCalls)
+	}
+}
+
 func writeExecutable(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0755); err != nil {

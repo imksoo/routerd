@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -173,6 +174,20 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	}
 	files := map[string][]byte{
 		"rc.conf.d-routerd": data.RCConf,
+	}
+	dnsmasqConfig, dnsmasqWarnings, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
+		RuntimeDir: "/var/run/routerd",
+		LeaseFile:  "/var/db/routerd/dnsmasq/dnsmasq.leases",
+	})
+	if err != nil {
+		return err
+	}
+	for _, warning := range dnsmasqWarnings {
+		fmt.Fprintf(stdout, "warning: %s\n", warning)
+	}
+	if len(dnsmasqConfig) > 0 {
+		files["dnsmasq.conf"] = dnsmasqConfig
+		files["rc.d-routerd_dnsmasq"] = render.DnsmasqRCScript("/usr/local/etc/routerd/dnsmasq.conf", "/var/run/routerd", "/var/db/routerd/dnsmasq", "/usr/local/sbin/dnsmasq")
 	}
 	if len(data.DHCPClient) > 0 {
 		files["dhclient.conf"] = data.DHCPClient
@@ -1336,6 +1351,14 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	}()); err != nil {
 		return nil, err
 	}
+	var appliedTunnels []string
+	if err := recordStageError("ds-lite", func() error {
+		var err error
+		appliedTunnels, err = applyDSLiteTunnelsWithState(router, stateStore)
+		return err
+	}()); err != nil {
+		return nil, err
+	}
 	var appliedIPv6DefaultRoutes []string
 	if err := recordStageError("ipv6-default-route", func() error {
 		var err error
@@ -1360,10 +1383,13 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	for _, path := range dnsmasqChangedFiles {
 		fmt.Fprintf(stdout, "applied dnsmasq %s\n", path)
 	}
+	for _, tunnel := range appliedTunnels {
+		fmt.Fprintf(stdout, "applied DS-Lite tunnel %s\n", tunnel)
+	}
 	for _, route := range appliedIPv6DefaultRoutes {
 		fmt.Fprintf(stdout, "applied IPv6 default route %s\n", route)
 	}
-	if len(changedFreeBSD) == 0 && len(appliedRuntime) == 0 && len(appliedHostnames) == 0 && len(appliedIPv6DelegatedAddresses) == 0 && len(dnsmasqChangedFiles) == 0 && len(appliedIPv6DefaultRoutes) == 0 {
+	if len(changedFreeBSD) == 0 && len(appliedRuntime) == 0 && len(appliedHostnames) == 0 && len(appliedIPv6DelegatedAddresses) == 0 && len(dnsmasqChangedFiles) == 0 && len(appliedTunnels) == 0 && len(appliedIPv6DefaultRoutes) == 0 {
 		fmt.Fprintln(stdout, "FreeBSD configuration already up to date")
 	}
 
@@ -1408,6 +1434,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 		"hostnames":           fmt.Sprintf("%d", len(appliedHostnames)),
 		"delegatedAddresses":  fmt.Sprintf("%d", len(appliedIPv6DelegatedAddresses)),
 		"dnsmasqFiles":        fmt.Sprintf("%d", len(dnsmasqChangedFiles)),
+		"dsliteTunnels":       fmt.Sprintf("%d", len(appliedTunnels)),
 		"ipv6DefaultRoutes":   fmt.Sprintf("%d", len(appliedIPv6DefaultRoutes)),
 		"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 	})
@@ -5119,7 +5146,7 @@ func applyDSLiteTunnelsWithState(router *api.Router, store routerstate.Store) ([
 			applied = append(applied, "removed-unusable:"+tunnelName)
 			continue
 		}
-		remote := spec.RemoteAddress
+		remote := firstNonEmptyString(spec.RemoteAddress, spec.AFTRIPv6)
 		if remote == "" {
 			remote, err = resolveAAAAWithServers(spec.AFTRFQDN, spec.AFTRDNSServers, spec.AFTRAddressOrdinal, spec.AFTRAddressSelection)
 			if err != nil {
@@ -5149,6 +5176,10 @@ func applyDSLiteTunnelsWithState(router *api.Router, store routerstate.Store) ([
 func deleteDSLiteTunnel(name string) error {
 	if name == "" {
 		return nil
+	}
+	if platformDefaults.OS == platform.OSFreeBSD {
+		name = freeBSDDSLiteRuntimeIfName(name)
+		return exec.Command("ifconfig", name, "destroy").Run()
 	}
 	return exec.Command("ip", "-6", "tunnel", "del", name).Run()
 }
@@ -5335,6 +5366,9 @@ func deleteIPv6LocalAddress(ifname, address string, prefixLen int) error {
 }
 
 func ensureDSLiteTunnel(name, ifname, local, remote string, spec api.DSLiteTunnelSpec) (bool, error) {
+	if platformDefaults.OS == platform.OSFreeBSD {
+		return ensureFreeBSDDSLiteTunnel(name, ifname, local, remote, spec)
+	}
 	desiredRouteMetric := spec.RouteMetric
 	if desiredRouteMetric == 0 {
 		desiredRouteMetric = 50
@@ -5368,6 +5402,60 @@ func ensureDSLiteTunnel(name, ifname, local, remote string, spec api.DSLiteTunne
 		}
 	}
 	return needsRecreate, nil
+}
+
+func ensureFreeBSDDSLiteTunnel(name, ifname, local, remote string, spec api.DSLiteTunnelSpec) (bool, error) {
+	name = freeBSDDSLiteRuntimeIfName(name)
+	show, showErr := exec.Command("ifconfig", name).CombinedOutput()
+	mtuText := ""
+	if spec.MTU != 0 {
+		mtuText = "mtu " + strconv.Itoa(spec.MTU)
+	}
+	needsRecreate := showErr != nil ||
+		!strings.Contains(string(show), "tunnel inet6 "+local+" --> "+remote) ||
+		(mtuText != "" && !strings.Contains(string(show), mtuText))
+	if needsRecreate {
+		_ = exec.Command("ifconfig", name, "destroy").Run()
+		if err := runLogged("ifconfig", name, "create"); err != nil {
+			return false, err
+		}
+		if err := runLogged("ifconfig", name, "tunnel", local, remote); err != nil {
+			return false, err
+		}
+		if spec.MTU != 0 {
+			if err := runLogged("ifconfig", name, "mtu", strconv.Itoa(spec.MTU)); err != nil {
+				return false, err
+			}
+		}
+		if err := runLogged("ifconfig", name, "up"); err != nil {
+			return false, err
+		}
+	}
+	if spec.DefaultRoute {
+		routeOut, routeErr := exec.Command("route", "-n", "get", "default").CombinedOutput()
+		routeMissing := routeErr != nil || !strings.Contains(string(routeOut), "interface: "+name)
+		if routeMissing {
+			if out, err := exec.Command("route", "-n", "change", "default", "-interface", name).CombinedOutput(); err != nil {
+				if addErr := runLogged("route", "-n", "add", "default", "-interface", name); addErr != nil {
+					return false, fmt.Errorf("route change default: %w: %s; route add default: %w", err, strings.TrimSpace(string(out)), addErr)
+				}
+			}
+			needsRecreate = true
+		}
+	}
+	return needsRecreate, nil
+}
+
+var freeBSDDSLiteRuntimeGIFNamePattern = regexp.MustCompile(`^gif[0-9]+$`)
+
+func freeBSDDSLiteRuntimeIfName(name string) string {
+	name = strings.TrimSpace(name)
+	if freeBSDDSLiteRuntimeGIFNamePattern.MatchString(name) {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	index := 100 + int(binary.BigEndian.Uint16(sum[:2])%900)
+	return "gif" + strconv.Itoa(index)
 }
 
 func resolveAAAAWithServers(host string, servers []string, ordinal int, selection string) (string, error) {
