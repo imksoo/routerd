@@ -3,12 +3,13 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -66,9 +67,11 @@ func daemon(args []string, stdin io.Reader) error {
 		return err
 	}
 	defer log.Close()
-	var cmd *exec.Cmd
 	if opts.group > 0 && opts.inputFile == "" && opts.pflogInterface == "" {
 		return runNFLogDaemon(context.Background(), opts, log)
+	}
+	if opts.pflogInterface != "" && opts.inputFile == "" {
+		return runPflogDaemon(context.Background(), opts, log)
 	}
 	reader := stdin
 	if opts.inputFile != "" {
@@ -78,21 +81,6 @@ func daemon(args []string, stdin io.Reader) error {
 		}
 		defer file.Close()
 		reader = file
-	} else if opts.pflogInterface != "" {
-		cmd = exec.Command(opts.tcpdumpPath, "-n", "-e", "-tttt", "-l", "-Z", "root", "-i", opts.pflogInterface)
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			return err
-		}
-		cmd.Stderr = os.Stderr
-		if err := cmd.Start(); err != nil {
-			return err
-		}
-		defer func() {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}()
-		reader = stdout
 	}
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
@@ -106,9 +94,6 @@ func daemon(args []string, stdin io.Reader) error {
 	}
 	if err := scanner.Err(); err != nil {
 		return err
-	}
-	if cmd != nil {
-		return cmd.Wait()
 	}
 	return nil
 }
@@ -151,12 +136,104 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.IntVar(&opts.group, "nflog-group", 0, "read Linux NFLOG directly from this group; 0 disables NFLOG input")
 	fs.StringVar(&opts.inputFile, "input-file", "", "read firewall log lines from file")
 	fs.StringVar(&opts.inputFormat, "input-format", "auto", "input format: auto, json, kv, nflog-tcpdump, pflog-tcpdump")
-	fs.StringVar(&opts.pflogInterface, "pflog-interface", "", "read FreeBSD pflog through tcpdump on this interface")
-	fs.StringVar(&opts.tcpdumpPath, "tcpdump", "tcpdump", "tcpdump command path for pflog input")
+	fs.StringVar(&opts.pflogInterface, "pflog-interface", "", "read FreeBSD pflog directly from this interface")
+	fs.StringVar(&opts.tcpdumpPath, "tcpdump", "tcpdump", "deprecated; tcpdump is no longer used for pflog input")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
 	return opts, nil
+}
+
+func firewallLogEntryFromIPPacket(timestamp time.Time, payload []byte, hint string) (logstore.FirewallLogEntry, bool) {
+	if len(payload) < 1 {
+		return logstore.FirewallLogEntry{}, false
+	}
+	version := payload[0] >> 4
+	switch version {
+	case 4:
+		return firewallLogEntryFromIPv4Packet(timestamp, payload, hint)
+	case 6:
+		return firewallLogEntryFromIPv6Packet(timestamp, payload, hint)
+	default:
+		return logstore.FirewallLogEntry{}, false
+	}
+}
+
+func firewallLogEntryFromIPv4Packet(timestamp time.Time, payload []byte, hint string) (logstore.FirewallLogEntry, bool) {
+	if len(payload) < 20 {
+		return logstore.FirewallLogEntry{}, false
+	}
+	ihl := int(payload[0]&0x0f) * 4
+	if ihl < 20 || len(payload) < ihl {
+		return logstore.FirewallLogEntry{}, false
+	}
+	proto := ipProtocolName(payload[9])
+	src := netip.AddrFrom4([4]byte(payload[12:16])).String()
+	dst := netip.AddrFrom4([4]byte(payload[16:20])).String()
+	srcPort, dstPort := transportPorts(proto, payload[ihl:])
+	return logstore.FirewallLogEntry{
+		Timestamp:  timestamp,
+		Action:     "drop",
+		SrcAddress: src,
+		SrcPort:    srcPort,
+		DstAddress: dst,
+		DstPort:    dstPort,
+		Protocol:   proto,
+		L3Proto:    "ipv4",
+		Hint:       hint,
+	}, true
+}
+
+func firewallLogEntryFromIPv6Packet(timestamp time.Time, payload []byte, hint string) (logstore.FirewallLogEntry, bool) {
+	if len(payload) < 40 {
+		return logstore.FirewallLogEntry{}, false
+	}
+	proto := ipProtocolName(payload[6])
+	src, ok := netip.AddrFromSlice(payload[8:24])
+	if !ok {
+		return logstore.FirewallLogEntry{}, false
+	}
+	dst, ok := netip.AddrFromSlice(payload[24:40])
+	if !ok {
+		return logstore.FirewallLogEntry{}, false
+	}
+	srcPort, dstPort := transportPorts(proto, payload[40:])
+	return logstore.FirewallLogEntry{
+		Timestamp:  timestamp,
+		Action:     "drop",
+		SrcAddress: src.String(),
+		SrcPort:    srcPort,
+		DstAddress: dst.String(),
+		DstPort:    dstPort,
+		Protocol:   proto,
+		L3Proto:    "ipv6",
+		Hint:       hint,
+	}, true
+}
+
+func transportPorts(proto string, payload []byte) (int, int) {
+	if proto != "tcp" && proto != "udp" {
+		return 0, 0
+	}
+	if len(payload) < 4 {
+		return 0, 0
+	}
+	return int(binary.BigEndian.Uint16(payload[0:2])), int(binary.BigEndian.Uint16(payload[2:4]))
+}
+
+func ipProtocolName(proto byte) string {
+	switch proto {
+	case 1:
+		return "icmp"
+	case 6:
+		return "tcp"
+	case 17:
+		return "udp"
+	case 58:
+		return "icmpv6"
+	default:
+		return strconv.Itoa(int(proto))
+	}
 }
 
 func parseFirewallLogLine(line, format string) (logstore.FirewallLogEntry, bool) {

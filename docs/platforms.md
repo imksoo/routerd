@@ -73,7 +73,7 @@ Implemented:
 - pf NAT rendering from `IPv4SourceNAT` and `NAT44Rule`
 - automatic `pfctl -nf` validation and `pfctl -f` application for generated `pf.conf`
 - conntrack-equivalent traffic flows from `pfctl -ss -v`
-- `pflog0` ingestion via `tcpdump` for firewall logs
+- `pflog0` ingestion through direct BPF reads for firewall logs
 - DNS resolver daemon builds on FreeBSD; `viaInterface` can target `fib:<n>` for FIB-bound upstream routing
 - rc.d script generation, installation, and `service <name> onestart` activation from `SystemdUnit`
 - Static DS-Lite gif tunnel rendering
@@ -91,7 +91,7 @@ FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The `Packa
 | --- | --- |
 | Runtime | `dnsmasq`, `wireguard-tools`, `strongswan`, `mpd5` |
 | Diagnostics | `bind-tools` |
-| Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `tcpdump`, `ping`, `traceroute` |
+| Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `ping`, `traceroute` |
 
 `routerd render freebsd --out-dir <dir>` produces:
 

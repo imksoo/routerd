@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSelftestCreatesDatabase(t *testing.T) {
@@ -89,6 +90,37 @@ func TestParseNFLogTCPDumpIPv6UDPLine(t *testing.T) {
 		t.Fatalf("entry = %+v", entry)
 	}
 	if entry.SrcAddress != "2409:10:3d60:1271::100" || entry.DstAddress != "ff02::fb" || entry.PacketBytes != 32 {
+		t.Fatalf("entry = %+v", entry)
+	}
+}
+
+func TestFirewallLogEntryFromIPv4Packet(t *testing.T) {
+	packet := []byte{
+		0x45, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00, 64, 6, 0, 0,
+		172, 18, 0, 101,
+		198, 51, 100, 10,
+		0xcf, 0xb0, 0x01, 0xbb,
+	}
+	entry, ok := firewallLogEntryFromIPPacket(time.Unix(1, 0).UTC(), packet, "test")
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	if entry.L3Proto != "ipv4" || entry.Protocol != "tcp" || entry.SrcAddress != "172.18.0.101" || entry.DstPort != 443 {
+		t.Fatalf("entry = %+v", entry)
+	}
+}
+
+func TestFirewallLogEntryFromIPv6Packet(t *testing.T) {
+	packet := append([]byte{
+		0x60, 0, 0, 0, 0, 8, 17, 64,
+		0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+		0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+	}, []byte{0x14, 0xe9, 0x00, 0x35}...)
+	entry, ok := firewallLogEntryFromIPPacket(time.Unix(1, 0).UTC(), packet, "test")
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	if entry.L3Proto != "ipv6" || entry.Protocol != "udp" || entry.SrcAddress != "2001:db8::1" || entry.DstPort != 53 {
 		t.Fatalf("entry = %+v", entry)
 	}
 }
