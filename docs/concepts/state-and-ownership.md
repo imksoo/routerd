@@ -1,49 +1,49 @@
 ---
-title: 状態と所有
+title: State and ownership
 slug: /concepts/state-and-ownership
 sidebar_position: 5
 ---
 
-# 状態と所有
+# State and ownership
 
-routerd は、宣言した意図と観測した状態を分けて扱います。
-YAML は利用者が管理する意図です。
-SQLite、lease ファイル、events.jsonl は routerd と専用デーモンが観測した状態です。
+routerd separates declared intent from observed state.
+YAML is the intent you manage.
+SQLite, lease files, and `events.jsonl` are state that routerd and its dedicated daemons observe.
 
-## 状態の置き場所
+## Where state lives
 
-Linux の既定値は次の通りです。
+Linux defaults:
 
-| 種類 | 例 |
+| Kind | Example |
 | --- | --- |
-| routerd 状態データベース | `/var/lib/routerd/routerd.db` |
-| DHCPv6-PD リース | `/var/lib/routerd/dhcpv6-client/wan-pd/lease.json` |
-| DHCPv4 リース | `/var/lib/routerd/dhcpv4-client/wan/lease.json` |
-| PPPoE 状態 | `/var/lib/routerd/pppoe-client/<name>/state.json` |
-| ヘルスチェック状態 | `/var/lib/routerd/healthcheck/<name>/state.json` |
-| 実行時ソケット | `/run/routerd/.../*.sock` |
+| routerd state database | `/var/lib/routerd/routerd.db` |
+| DHCPv6-PD lease | `/var/lib/routerd/dhcpv6-client/wan-pd/lease.json` |
+| DHCPv4 lease | `/var/lib/routerd/dhcpv4-client/wan/lease.json` |
+| PPPoE state | `/var/lib/routerd/pppoe-client/<name>/state.json` |
+| HealthCheck state | `/var/lib/routerd/healthcheck/<name>/state.json` |
+| Runtime sockets | `/run/routerd/.../*.sock` |
 
-FreeBSD では `/var/run` と `/var/db` 系のパスを使う構成があります。
+FreeBSD layouts use `/var/run` and `/var/db` instead.
 
-## 所有の考え方
+## Ownership
 
-routerd が作るホスト側の構成物には、所有元のリソースがあります。
-たとえば dnsmasq 設定は DHCP と RA の各リソースから、`routerd-dns-resolver` の設定は `DNSResolver` と `DNSZone` から、nftables の NAT テーブルは `NAT44Rule` から作られます。
+Every host-side artifact routerd creates has an owning resource.
+For example, the dnsmasq configuration is owned by the DHCP and RA resources, the `routerd-dns-resolver` configuration by `DNSResolver` and `DNSZone`, and the nftables NAT table by `NAT44Rule`.
 
-所有元が分かると、次の判断ができます。
+Knowing the owner answers three questions:
 
-- この構成物は routerd が変更してよいものか。
-- YAML からリソースを消したとき、ホスト側も消してよいか。
-- 既存の設定を取り込むだけか、routerd が新しく作るのか。
+- Is this artifact safe for routerd to modify?
+- When the resource is removed from YAML, should routerd remove the host-side artifact too?
+- Does routerd adopt an existing object, or create a new one from scratch?
 
-## 古くなった状態を使わない
+## Don't act on stale state
 
-リースや観測値は便利ですが、古くなった値を使い続けると危険です。
-特に DHCPv6-PD のプレフィックスは、Bound であることを確認できる場合だけ下流へ展開します。
-確認できない場合は、AAAA、RA、DHCPv6 サーバー、LAN IPv6 アドレスの適用を止めます。
+Leases and observed values are useful, but acting on stale data is dangerous.
+DHCPv6-PD prefixes in particular are propagated downstream only while they are confirmed `Bound`.
+When that confirmation is missing, routerd suppresses the matching AAAA records, RA, DHCPv6 server, and LAN IPv6 address applications instead of advertising broken connectivity.
 
-## イベント
+## Events
 
-routerd と専用デーモンは、状態変化をイベントとして記録します。
-イベントは SQLite の `events` テーブルやデーモンごとの `events.jsonl` に残ります。
-EventRule と DerivedEvent は、このイベントや状態を使って仮想的な状態変化を作ります。
+routerd and its daemons record state changes as events.
+Events are persisted in the SQLite `events` table and in per-daemon `events.jsonl` files.
+`EventRule` and `DerivedEvent` consume that stream to synthesize virtual state changes.
