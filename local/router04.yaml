@@ -172,6 +172,44 @@ spec:
         exclusive: false
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-dhcpv4-server
+      spec:
+        server: dnsmasq
+        managed: true
+        listenInterfaces:
+          - lan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Scope
+      metadata:
+        name: lan-dhcpv4
+      spec:
+        server: lan-dhcpv4-server
+        interface: lan
+        rangeStart: 192.168.160.180
+        rangeEnd: 192.168.160.189
+        leaseTime: 12h
+        routerSource: interfaceAddress
+        dnsSource: static
+        dnsServers:
+          - 1.1.1.1
+          - 8.8.8.8
+        authoritative: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Reservation
+      metadata:
+        name: lab-client
+      spec:
+        scope: lan-dhcpv4
+        macAddress: "02:00:00:00:04:10"
+        ipAddress: 192.168.160.184
+        hostname: router04-lab-client
+        leaseTime: infinite
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
       metadata:
         name: lan-ipv6-pd-address

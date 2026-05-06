@@ -180,10 +180,16 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		}
 		return []resource.Intent{artifact("net.vxlan.tunnel", defaultString(spec.IfName, res.Metadata.Name), resource.ActionEnsure, "ip-link", map[string]string{"vni": fmt.Sprintf("%d", spec.VNI)})}
 	case "DHCPv4Server", "DHCPv6Server":
-		return []resource.Intent{
+		intents := []resource.Intent{
 			artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil),
-			artifact("systemd.service", "routerd-dnsmasq.service", resource.ActionEnsure, "systemctl", nil),
 		}
+		_, features := platform.Current()
+		if features.HasRCD {
+			intents = append(intents, artifact("rc.d.service", "routerd_dnsmasq", resource.ActionEnsure, "service", nil))
+		} else {
+			intents = append(intents, artifact("systemd.service", "routerd-dnsmasq.service", resource.ActionEnsure, "systemctl", nil))
+		}
+		return intents
 	case "DHCPv4Reservation":
 		spec, err := res.DHCPv4ReservationSpec()
 		if err != nil {
