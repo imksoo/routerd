@@ -38,6 +38,7 @@ import (
 	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
 	routerotel "routerd/pkg/otel"
+	"routerd/pkg/pdclient"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
@@ -72,6 +73,7 @@ var (
 	defaultStatePath           = platformDefaults.DBFile()
 	pppoeCHAPSecretsPath       = platformDefaults.PPPoEChapSecretsFile
 	pppoePAPSecretsPath        = platformDefaults.PPPoEPapSecretsFile
+	pdClientLeaseDir           = "/var/lib/routerd/dhcpv6-client"
 )
 
 var errNoIPv6PrefixAvailable = errors.New("no IPv6 prefix available")
@@ -1489,6 +1491,9 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		prefixLength := api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		lease, _ := routerstate.PDLeaseFromStore(store, base)
+		if snapshot, ok := managedPDClientSnapshot(res.Metadata.Name); ok {
+			lease = mergePDLeaseSnapshot(lease, snapshot)
+		}
 		previousClient := store.Get(base + ".client").Value
 		if previousClient != "" && previousClient != client {
 			var cleared bool
@@ -1551,6 +1556,9 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 				}
 			}
 		}
+		if observedPrefix == "" && lease.CurrentPrefix != "" && lease.HasFreshTransactionEvidence(store.Now()) {
+			observedPrefix = lease.CurrentPrefix
+		}
 		if observedPrefix == "" {
 			if recorder, ok := store.(routerstate.EventRecorder); ok {
 				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixMissing", "delegated IPv6 prefix is not observable")
@@ -1587,6 +1595,54 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		)
 	}
 	return changes, nil
+}
+
+func managedPDClientSnapshot(resource string) (pdclient.Snapshot, bool) {
+	path := filepath.Join(pdClientLeaseDir, resource, "lease.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return pdclient.Snapshot{}, false
+	}
+	var snapshot pdclient.Snapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return pdclient.Snapshot{}, false
+	}
+	if snapshot.CurrentPrefix == "" || snapshot.State != pdclient.StateBound {
+		return pdclient.Snapshot{}, false
+	}
+	return snapshot, true
+}
+
+func mergePDLeaseSnapshot(lease routerstate.PDLease, snapshot pdclient.Snapshot) routerstate.PDLease {
+	lease.CurrentPrefix = snapshot.CurrentPrefix
+	lease.LastPrefix = snapshot.CurrentPrefix
+	if !snapshot.UpdatedAt.IsZero() {
+		lease.LastObservedAt = snapshot.UpdatedAt.Format(time.RFC3339)
+	}
+	if !snapshot.AcquiredAt.IsZero() {
+		lease.LastReplyAt = snapshot.AcquiredAt.Format(time.RFC3339)
+	} else if !snapshot.UpdatedAt.IsZero() {
+		lease.LastReplyAt = snapshot.UpdatedAt.Format(time.RFC3339)
+	}
+	if snapshot.T1Seconds > 0 {
+		lease.T1 = strconv.FormatInt(snapshot.T1Seconds, 10)
+	}
+	if snapshot.T2Seconds > 0 {
+		lease.T2 = strconv.FormatInt(snapshot.T2Seconds, 10)
+	}
+	if snapshot.Preferred > 0 {
+		lease.PLTime = strconv.FormatInt(snapshot.Preferred, 10)
+	}
+	if snapshot.Valid > 0 {
+		lease.VLTime = strconv.FormatInt(snapshot.Valid, 10)
+	}
+	if snapshot.ServerDUID != "" {
+		lease.DUID = snapshot.ServerDUID
+	}
+	if snapshot.IAID != 0 {
+		lease.IAID = strconv.FormatUint(uint64(snapshot.IAID), 10)
+	}
+	return lease
 }
 
 func pdLeaseCurrentValue(lease routerstate.PDLease) routerstate.Value {

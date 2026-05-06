@@ -1211,6 +1211,62 @@ func TestAppendPrefixDelegationStateWarningsWithoutLastPrefix(t *testing.T) {
 	}
 }
 
+func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
+	dir := t.TempDir()
+	oldDir := pdClientLeaseDir
+	pdClientLeaseDir = dir
+	t.Cleanup(func() { pdClientLeaseDir = oldDir })
+	leaseDir := filepath.Join(dir, "wan-pd")
+	if err := os.MkdirAll(leaseDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{
+  "resource": "wan-pd",
+  "interface": "ens18",
+  "state": "bound",
+  "currentPrefix": "2001:db8:1230::/60",
+  "serverDUID": "00030001020000000001",
+  "iaid": 1,
+  "t1Seconds": 7200,
+  "t2Seconds": 12600,
+  "preferredSeconds": 14400,
+  "validSeconds": 14400,
+  "acquiredAt": "2026-05-06T05:00:00Z",
+  "updatedAt": "2026-05-06T05:10:00Z"
+}`)
+	if err := os.WriteFile(filepath.Join(leaseDir, "lease.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+			Metadata: api.ObjectMeta{Name: "wan-pd"},
+			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
+		},
+	}}}
+	store := routerstate.New()
+	if _, err := recordObservedPrefixDelegationState(router, store); err != nil {
+		t.Fatalf("record PD state: %v", err)
+	}
+	result := &apply.Result{}
+	appendPrefixDelegationStateWarnings(result, router, store)
+	if len(result.Warnings) != 0 {
+		t.Fatalf("warnings = %#v", result.Warnings)
+	}
+	lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
+	if !ok {
+		t.Fatal("lease missing")
+	}
+	if lease.CurrentPrefix != "2001:db8:1230::/60" || lease.VLTime != "14400" || lease.LastReplyAt != "2026-05-06T05:00:00Z" {
+		t.Fatalf("lease = %+v", lease)
+	}
+}
+
 func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := routerstate.OpenSQLite(path)
