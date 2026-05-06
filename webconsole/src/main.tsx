@@ -222,6 +222,9 @@ type NavSubItem = { key: string; label: string; count?: number; view: ViewKey; t
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
 const basePath = normalizeBasePath(cfg.basePath);
+const connectionPageSize = 50;
+const collapsedStorageKey = "routerd.webconsole.collapsed";
+const connectionPagesStorageKey = "routerd.webconsole.connectionPages";
 const navItems: { key: ViewKey; label: string; description: string; icon: React.ReactNode }[] = [
   { key: "overview", label: "Overview", description: "Status and interfaces", icon: <HomeRegular /> },
   { key: "clients", label: "Clients", description: "Leases and endpoint traffic", icon: <PeopleRegular /> },
@@ -892,8 +895,8 @@ function App() {
   const [error, setError] = useState<string>("");
   const [selected, setSelected] = useState<ViewKey>(() => parseLocationHash().view);
   const [navCollapsed, setNavCollapsed] = useState(false);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [connectionPages, setConnectionPages] = useState<Record<string, number>>({});
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => readStoredRecord(collapsedStorageKey));
+  const [connectionPages, setConnectionPages] = useState<Record<string, number>>(() => readStoredRecord(connectionPagesStorageKey));
   const [connectionFilters, setConnectionFilters] = useState<ConnectionFilters>({
     query: "",
     family: "all",
@@ -956,6 +959,14 @@ function App() {
   }, [connectionFilters]);
 
   useEffect(() => {
+    writeStoredRecord(collapsedStorageKey, collapsed);
+  }, [collapsed]);
+
+  useEffect(() => {
+    writeStoredRecord(connectionPagesStorageKey, connectionPages);
+  }, [connectionPages]);
+
+  useEffect(() => {
     const onHashChange = () => {
       const next = parseLocationHash();
       setSelected(next.view);
@@ -974,7 +985,7 @@ function App() {
     if (next.view === selected && targetID) {
       window.setTimeout(() => scrollToElement(targetID), 80);
     }
-  }, [selected, connectionGroupsList.length]);
+  }, [selected, connectionGroupsList.map(group => group.key).join("|"), summary?.generatedAt]);
 
   function updateConnectionFilter<K extends keyof ConnectionFilters>(key: K, value: ConnectionFilters[K]) {
     setConnectionFilters(current => ({ ...current, [key]: value }));
@@ -1495,7 +1506,7 @@ function ConnectionGroup({
 }) {
   const styles = useStyles();
   const label = connectionGroupLabel(group.key);
-  const pageSize = 100;
+  const pageSize = connectionPageSize;
   const totalPages = Math.max(1, Math.ceil(group.rows.length / pageSize));
   const currentPage = Math.min(Math.max(page, 0), totalPages - 1);
   const start = currentPage * pageSize;
@@ -1510,7 +1521,7 @@ function ConnectionGroup({
       {!collapsed ? (
         <>
           <div className={styles.connectionHeader}>
-            <Text className={styles.muted}>Page {currentPage + 1} of {totalPages} / 100 rows per page</Text>
+            <Text className={styles.muted}>Page {currentPage + 1} of {totalPages} / {pageSize} rows per page</Text>
             <div className={styles.pager}>
               <Button size="small" appearance="subtle" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Prev</Button>
               <Button size="small" appearance="subtle" disabled={currentPage >= totalPages - 1} onClick={() => setPage(currentPage + 1)}>Next</Button>
@@ -2116,6 +2127,26 @@ function hashForView(view: ViewKey, targetID?: string) {
   const prefix = `${view}-`;
   const section = targetID.startsWith(prefix) ? targetID.slice(prefix.length) : targetID;
   return `#${view}/${section}`;
+}
+
+function readStoredRecord<T extends number | boolean>(key: string): Record<string, T> {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, T>;
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredRecord<T extends number | boolean>(key: string, value: Record<string, T>) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage failures; the URL hash still preserves the selected section.
+  }
 }
 
 function scrollToElement(id: string) {
