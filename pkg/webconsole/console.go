@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,6 +56,7 @@ type Snapshot struct {
 	TrafficFlows []logstore.TrafficFlow      `json:"trafficFlows,omitempty"`
 	FirewallLogs []logstore.FirewallLogEntry `json:"firewallLogs,omitempty"`
 	DHCPLeases   []DHCPLease                 `json:"dhcpLeases,omitempty"`
+	Neighbors    []NeighborEntry             `json:"neighbors,omitempty"`
 	Errors       []string                    `json:"errors,omitempty"`
 }
 
@@ -71,6 +73,15 @@ type DHCPLease struct {
 	ClientID  string    `json:"clientId,omitempty"`
 	Vendor    string    `json:"vendor,omitempty"`
 	Source    string    `json:"source,omitempty"`
+}
+
+type NeighborEntry struct {
+	IP     string `json:"ip"`
+	IfName string `json:"ifname,omitempty"`
+	MAC    string `json:"mac,omitempty"`
+	State  string `json:"state,omitempty"`
+	Source string `json:"source,omitempty"`
+	Vendor string `json:"vendor,omitempty"`
 }
 
 type InterfaceSummary struct {
@@ -180,6 +191,10 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
+	neighbors, err := neighborList()
+	if err != nil {
+		errors = append(errors, err.Error())
+	}
 	result := (*apply.Result)(nil)
 	if h.opts.Result != nil {
 		result = h.opts.Result()
@@ -196,6 +211,7 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		TrafficFlows: trafficFlows,
 		FirewallLogs: firewallLogs,
 		DHCPLeases:   dhcpLeases,
+		Neighbors:    neighbors,
 		Errors:       errors,
 	}
 }
@@ -458,6 +474,66 @@ func readDnsmasqLeases(path string) ([]DHCPLease, error) {
 		out = append(out, lease)
 	}
 	return out, nil
+}
+
+func neighborList() ([]NeighborEntry, error) {
+	out, err := exec.Command("ip", "-j", "neigh", "show").Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseIPNeighborJSON(out)
+}
+
+func parseIPNeighborJSON(data []byte) ([]NeighborEntry, error) {
+	var raw []struct {
+		Dst    string          `json:"dst"`
+		Dev    string          `json:"dev"`
+		LLAddr string          `json:"lladdr"`
+		State  json.RawMessage `json:"state"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	seen := map[string]NeighborEntry{}
+	for _, item := range raw {
+		ip := strings.TrimSpace(item.Dst)
+		if ip == "" {
+			continue
+		}
+		mac := strings.ToLower(strings.TrimSpace(item.LLAddr))
+		entry := NeighborEntry{
+			IP:     ip,
+			IfName: strings.TrimSpace(item.Dev),
+			MAC:    mac,
+			State:  parseNeighborState(item.State),
+			Source: "ip-neigh",
+			Vendor: macVendor(mac),
+		}
+		seen[ip+"|"+entry.IfName] = entry
+	}
+	out := make([]NeighborEntry, 0, len(seen))
+	for _, entry := range seen {
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IfName != out[j].IfName {
+			return out[i].IfName < out[j].IfName
+		}
+		return out[i].IP < out[j].IP
+	})
+	return out, nil
+}
+
+func parseNeighborState(raw json.RawMessage) string {
+	var values []string
+	if err := json.Unmarshal(raw, &values); err == nil {
+		return strings.Join(values, ",")
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return value
+	}
+	return ""
 }
 
 func macVendor(mac string) string {

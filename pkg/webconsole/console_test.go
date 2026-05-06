@@ -231,6 +231,22 @@ func TestReadDnsmasqLeases(t *testing.T) {
 	}
 }
 
+func TestParseIPNeighborJSON(t *testing.T) {
+	rows, err := parseIPNeighborJSON([]byte(`[
+	  {"dst":"172.18.1.110","dev":"ens19","lladdr":"4e:20:15:aa:e0:67","state":["REACHABLE"]},
+	  {"dst":"2409:10:3d60:1271::abcd","dev":"ens19","lladdr":"4e:20:15:aa:e0:67","state":["STALE"]}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d", len(rows))
+	}
+	if rows[0].MAC != "4e:20:15:aa:e0:67" || rows[0].Vendor != "Apple private address" {
+		t.Fatalf("row = %+v", rows[0])
+	}
+}
+
 func TestHandlerServesConfigReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "router.yaml")
 	if err := os.WriteFile(path, []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\n"), 0644); err != nil {
