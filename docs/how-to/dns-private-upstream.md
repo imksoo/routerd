@@ -5,28 +5,29 @@ slug: /how-to/dns-private-upstream
 
 # Private DNS upstreams
 
-`DNSResolver` starts `routerd-dns-resolver`.
-The daemon listens on UDP and TCP.
-It evaluates `spec.sources` in order for each listen profile.
+## Scenario
 
-dnsmasq no longer serves DNS. It remains the DHCPv4, DHCPv6, DHCP relay, and RA
-helper.
+You want the resolver on the router to:
 
-## Upstream protocols
+- Forward queries for the access network's internal zones (e.g. an ISP's AFTR FQDN, an enterprise intranet domain) to a specific DNS server learned dynamically.
+- Use a private encrypted DNS provider (DoH / DoT / DoQ) as the default upstream.
+- Keep a fast plain-DNS fallback if the encrypted upstream becomes unhealthy.
+- Avoid exposing provider account IDs or private endpoints in shared examples.
+
+## How routerd solves it
+
+`DNSResolver` runs `routerd-dns-resolver`. The daemon listens on UDP/TCP and evaluates `spec.sources` in order for each listen profile. Sources can be `zone` (local), `forward` (forward queries that match a domain pattern), or `upstream` (regular forwarder for the rest).
 
 | Scheme | Protocol | Default port |
 | --- | --- | --- |
-| `https://` | DNS over HTTPS | URL dependent |
+| `https://` | DNS over HTTPS | URL-dependent |
 | `tls://` | DNS over TLS | 853 |
 | `quic://` | DNS over QUIC | 853 |
 | `udp://` | Plain DNS over UDP | 53 |
 
-The order in `upstreams` is the priority order. routerd tries the highest
-healthy upstream first. If it fails, the resolver tries the next upstream.
+The order in `upstreams` is the priority order. routerd tries the highest-priority upstream that is healthy, and falls back through the list when one fails.
 
-Use `upstreamFrom` when an upstream list comes from another resource status.
-This is important for access-network DNS servers learned through DHCPv6
-information request.
+`upstreamFrom` (instead of `upstreams`) lets the upstream list come from another resource's status. This is the mechanism for using DNS servers learned through DHCPv6 information request.
 
 ## Conditional forwarding example
 
@@ -39,34 +40,35 @@ information request.
     listen:
       - name: lan
         addresses:
-          - 172.18.0.1
+          - 192.0.2.1
         port: 53
         sources:
           - local-zone
-          - ngn-aftr
-          - private-provider-bootstrap
+          - access-network
+          - provider-bootstrap
           - default
 
     sources:
       - name: local-zone
         kind: zone
         match:
-          - home.internal
+          - lan.example.org
         zoneRef:
-          - DNSZone/home
+          - DNSZone/lan
 
-      - name: ngn-aftr
+      - name: access-network
         kind: forward
         match:
           - transix.jp
+          - corp.example.com
         upstreamFrom:
           - resource: DHCPv6Information/wan-info
             field: dnsServers
 
-      - name: private-provider-bootstrap
+      - name: provider-bootstrap
         kind: forward
         match:
-          - example-dns-provider.test
+          - dns.example-provider.net
         upstreams:
           - udp://1.1.1.1:53
           - udp://8.8.8.8:53
@@ -76,9 +78,9 @@ information request.
         match:
           - "."
         upstreams:
-          - https://dns.example.net/dns-query
-          - tls://dns.example.net
-          - quic://dns.example.net
+          - https://dns.example-provider.net/dns-query
+          - tls://dns.example-provider.net
+          - quic://dns.example-provider.net
           - udp://1.1.1.1:53
         healthcheck:
           interval: 15s
@@ -101,21 +103,19 @@ information request.
 
 ## Provider bootstrap
 
-Some private DNS providers serve the resolver endpoint from the same domain
-that the resolver is going to use. If a browser or host tries to resolve that
-provider name through the provider itself, the query can fail or loop through
-an unwanted path.
+Some private DNS providers serve their resolver endpoint from a domain that the resolver itself is going to use. If a host tries to resolve that provider name through the provider, the query loops or fails before the resolver is healthy.
 
-Add a conditional source for the provider domain and send it to an access
-network DNS server or a public resolver. Keep provider account IDs only in the
-host-local YAML file. Do not commit them to shared examples.
+Add a conditional source for the provider domain that points to a public resolver or to access-network DNS. Keep account IDs (e.g. provider profile IDs) out of shared examples; put them only in your local secrets file or in a per-host YAML overlay.
+
+The `bootstrapResolver` field on a source provides the same protection at a finer granularity: it specifies which resolvers to use for resolving the upstream URL itself, before the encrypted transport is established.
 
 ## Interface binding
 
-`sources[].viaInterface` binds outgoing queries to a Linux interface name.
-Use a literal OS interface name such as `ens18`. If the interface itself is
-created by another resource, declare that relationship with `ownerRefs` or
-resource ordering and keep the resolver pending until the interface exists.
+`sources[].viaInterface` binds outgoing DNS queries to a specific Linux interface name. Use a literal OS interface name such as `ens18`. If the interface is created by another resource (e.g. a tunnel), declare the relationship with `ownerRefs` or resource ordering and keep the resolver pending until the interface exists.
 
-FreeBSD does not currently provide the same `SO_BINDTODEVICE` behavior, so
-platform-specific docs should not promise identical enforcement there.
+FreeBSD does not currently provide the same `SO_BINDTODEVICE` enforcement, so platform-specific docs do not promise identical behaviour there.
+
+## See also
+
+- [Local DNS zones](./dns-local-zone.md)
+- [DNS resolver concept](../concepts/dns-resolver.md)
