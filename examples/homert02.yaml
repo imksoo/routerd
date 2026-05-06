@@ -360,6 +360,13 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
+        name: tailscale
+      spec:
+        ifname: tailscale0
+        managed: false
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
         name: lo
       spec:
         ifname: lo
@@ -1222,6 +1229,7 @@ spec:
         role: mgmt
         interfaces:
           - Interface/mgmt
+          - Interface/tailscale
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallPolicy
