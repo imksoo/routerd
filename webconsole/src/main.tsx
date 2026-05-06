@@ -503,9 +503,10 @@ const useStyles = makeStyles({
   metricValue: {
     display: "block",
     marginTop: "4px",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+    lineHeight: tokens.lineHeightBase400,
   },
   sectionGrid: {
     display: "grid",

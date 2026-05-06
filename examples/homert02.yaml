@@ -1220,6 +1220,7 @@ spec:
         role: trust
         interfaces:
           - Interface/lan
+          - Interface/tailscale
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
@@ -1229,7 +1230,6 @@ spec:
         role: mgmt
         interfaces:
           - Interface/mgmt
-          - Interface/tailscale
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallPolicy
