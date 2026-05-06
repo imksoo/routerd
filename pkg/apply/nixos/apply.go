@@ -110,7 +110,9 @@ func Apply(ctx context.Context, router *api.Router, opts Options) (Result, error
 }
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = nixosRebuildEnv(os.Environ())
+	return cmd.CombinedOutput()
 }
 
 func nixosRebuildCommand() string {
@@ -123,6 +125,19 @@ func nixosRebuildCommand() string {
 		}
 	}
 	return "nixos-rebuild"
+}
+
+func nixosRebuildEnv(base []string) []string {
+	for _, entry := range base {
+		if strings.HasPrefix(entry, "NIX_PATH=") {
+			return base
+		}
+	}
+	if _, err := os.Stat("/nix/var/nix/profiles/per-user/root/channels/nixos"); err != nil {
+		return base
+	}
+	nixPath := "nixpkgs=/nix/var/nix/profiles/per-user/root/channels/nixos:nixos-config=/etc/nixos/configuration.nix:/nix/var/nix/profiles/per-user/root/channels"
+	return append(base, "NIX_PATH="+nixPath)
 }
 
 func writeFileIfChanged(path string, data []byte, mode os.FileMode) (bool, error) {

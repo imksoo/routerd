@@ -31,5 +31,6 @@ Observed runtime:
 
 Fixes found during validation:
 - `routerd.service` on NixOS did not have `nixos-rebuild` in PATH. The NixOS apply helper now prefers `/run/current-system/sw/bin/nixos-rebuild`.
+- `routerd.service` also did not inherit `NIX_PATH`. The NixOS apply helper now supplies the standard root channel path when it is absent.
 - controller-chain dnsmasq did not set a lease file. On NixOS this caused dnsmasq to look for `/var/lib/misc/dnsmasq.leases`. It now writes the lease file beside the managed pid/config under routerd runtime state.
 - Runtime systemd unit writes are not appropriate on NixOS because units are generated through the NixOS module. `local/router02/router.yaml` keeps `--controller-chain-dry-run-systemd-unit=true`.

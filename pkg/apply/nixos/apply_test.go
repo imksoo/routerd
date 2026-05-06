@@ -94,6 +94,13 @@ func TestApplyRejectsUnsupportedMode(t *testing.T) {
 	}
 }
 
+func TestNixosRebuildEnvPreservesExistingNIXPath(t *testing.T) {
+	got := nixosRebuildEnv([]string{"PATH=/bin", "NIX_PATH=nixpkgs=/custom"})
+	if !reflect.DeepEqual(got, []string{"PATH=/bin", "NIX_PATH=nixpkgs=/custom"}) {
+		t.Fatalf("env = %#v", got)
+	}
+}
+
 func testRouter() *api.Router {
 	return &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
