@@ -2,6 +2,7 @@ package nixos
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -94,11 +95,71 @@ func TestApplyRejectsUnsupportedMode(t *testing.T) {
 	}
 }
 
+func TestApplyRollsBackFailedSwitch(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "configuration.nix")
+	module := filepath.Join(dir, "routerd-generated.nix")
+	wrapper := filepath.Join(dir, "routerd-wrapper.nix")
+	if err := os.WriteFile(base, []byte("{ ... }: { }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var commands [][]string
+	readlinkCalls := 0
+	result, err := Apply(context.Background(), testRouter(), Options{
+		Mode:           "switch",
+		ModulePath:     module,
+		WrapperPath:    wrapper,
+		BaseConfigPath: base,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, append([]string{name}, args...))
+			if len(args) >= 1 && args[0] == "switch" && !contains(args, "--rollback") {
+				return []byte("activation failed"), errors.New("switch failed")
+			}
+			return []byte("rolled back"), nil
+		},
+		Readlink: func(path string) (string, error) {
+			readlinkCalls++
+			if readlinkCalls == 1 {
+				return "/nix/store/generation-old", nil
+			}
+			if readlinkCalls == 2 {
+				return "/nix/store/generation-new", nil
+			}
+			return "/nix/store/generation-old", nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "activation failed") {
+		t.Fatalf("err = %v", err)
+	}
+	if !result.RollbackAttempted {
+		t.Fatal("rollback was not attempted")
+	}
+	wantRollback := []string{"nixos-rebuild", "switch", "--rollback", "-I", "nixos-config=" + wrapper}
+	if !reflect.DeepEqual(result.RollbackCommand, wantRollback) {
+		t.Fatalf("rollback command = %#v, want %#v", result.RollbackCommand, wantRollback)
+	}
+	if result.GenerationAfter != "/nix/store/generation-old" {
+		t.Fatalf("generation after rollback = %q", result.GenerationAfter)
+	}
+	if len(commands) != 2 {
+		t.Fatalf("commands = %#v", commands)
+	}
+}
+
 func TestNixosRebuildEnvPreservesExistingNIXPath(t *testing.T) {
 	got := nixosRebuildEnv([]string{"PATH=/bin", "NIX_PATH=nixpkgs=/custom"})
 	if !reflect.DeepEqual(got, []string{"PATH=/bin", "NIX_PATH=nixpkgs=/custom"}) {
 		t.Fatalf("env = %#v", got)
 	}
+}
+
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func testRouter() *api.Router {

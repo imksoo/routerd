@@ -31,14 +31,18 @@ type Options struct {
 }
 
 type Result struct {
-	Mode             string
-	ModulePath       string
-	WrapperPath      string
-	ChangedFiles     []string
-	Command          []string
-	CommandOutput    string
-	GenerationBefore string
-	GenerationAfter  string
+	Mode              string
+	ModulePath        string
+	WrapperPath       string
+	ChangedFiles      []string
+	Command           []string
+	CommandOutput     string
+	GenerationBefore  string
+	GenerationAfter   string
+	RollbackAttempted bool
+	RollbackCommand   []string
+	RollbackOutput    string
+	RollbackError     string
 }
 
 func Apply(ctx context.Context, router *api.Router, opts Options) (Result, error) {
@@ -101,6 +105,22 @@ func Apply(ctx context.Context, router *api.Router, opts Options) (Result, error
 		GenerationAfter:  after,
 	}
 	if err != nil {
+		if mode == "switch" && before != "" {
+			rollbackArgs := append([]string{"switch", "--rollback"}, args[1:]...)
+			result.RollbackAttempted = true
+			result.RollbackCommand = append([]string{rebuild}, rollbackArgs...)
+			rollbackOutput, rollbackErr := command(ctx, rebuild, rollbackArgs...)
+			result.RollbackOutput = string(rollbackOutput)
+			if rollbackErr != nil {
+				result.RollbackError = fmt.Sprintf("%v", rollbackErr)
+				if len(rollbackOutput) > 0 {
+					result.RollbackError += "\n" + string(bytes.TrimSpace(rollbackOutput))
+				}
+			}
+			if rollbackAfter, readErr := readlink("/run/current-system"); readErr == nil {
+				result.GenerationAfter = rollbackAfter
+			}
+		}
 		if len(output) > 0 {
 			return result, fmt.Errorf("nixos-rebuild %s failed: %w\n%s", mode, err, bytes.TrimSpace(output))
 		}
