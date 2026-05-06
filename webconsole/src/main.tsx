@@ -190,6 +190,7 @@ type ClientRow = {
 };
 
 type ViewKey = "overview" | "clients" | "connections" | "events" | "firewall" | "config";
+type NavSubItem = { key: string; label: string; count?: number; view: ViewKey; targetID: string };
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
 const basePath = normalizeBasePath(cfg.basePath);
@@ -201,6 +202,7 @@ const navItems: { key: ViewKey; label: string; description: string; icon: React.
   { key: "firewall", label: "Firewall", description: "Deny ranking and timeline", icon: <ShieldRegular /> },
   { key: "config", label: "Config", description: "Read-only YAML tree", icon: <DocumentTextRegular /> },
 ];
+const viewKeys = new Set<string>(navItems.map(item => item.key));
 
 const useStyles = makeStyles({
   shell: {
@@ -228,31 +230,46 @@ const useStyles = makeStyles({
     gap: "10px",
     minWidth: 0,
   },
-  azureMark: {
-    width: "28px",
-    height: "28px",
-    display: "grid",
-    placeItems: "center",
-    borderRadius: "4px",
-    backgroundColor: "#0078d4",
-    color: "#fff",
-    fontWeight: 700,
-    flexShrink: 0,
-  },
   title: {
     minWidth: 0,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
+  navToggle: {
+    flexShrink: 0,
+  },
+  productTitleBlock: {
+    display: "grid",
+    gridTemplateRows: "auto auto",
+    gap: "1px",
+    minWidth: 0,
+    lineHeight: 1.1,
+  },
+  productTitleText: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    lineHeight: 1.2,
+  },
   subtitle: {
     color: tokens.colorNeutralForeground3,
-    lineHeight: 1,
+    lineHeight: 1.2,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   layout: {
     display: "grid",
     gridTemplateColumns: "248px minmax(0, 1fr)",
     minHeight: "calc(100vh - 49px)",
+    "@media (max-width: 860px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
+  layoutCollapsed: {
+    gridTemplateColumns: "56px minmax(0, 1fr)",
     "@media (max-width: 860px)": {
       gridTemplateColumns: "1fr",
     },
@@ -275,6 +292,12 @@ const useStyles = makeStyles({
       borderRight: 0,
       borderBottom: "1px solid #243041",
       padding: "8px",
+    },
+  },
+  sidebarCollapsed: {
+    padding: "12px 6px",
+    "@media (max-width: 860px)": {
+      display: "none",
     },
   },
   navSection: {
@@ -302,6 +325,11 @@ const useStyles = makeStyles({
       width: "auto",
       minWidth: "132px",
     },
+  },
+  navButtonCollapsed: {
+    padding: "9px 8px",
+    justifyContent: "center",
+    minWidth: 0,
   },
   navButtonActive: {
     backgroundColor: "#1b2a40",
@@ -333,6 +361,9 @@ const useStyles = makeStyles({
     display: "grid",
     gap: "2px",
     minWidth: 0,
+  },
+  navTextCollapsed: {
+    display: "none",
   },
   navDescription: {
     color: tokens.colorNeutralForeground3,
@@ -831,7 +862,8 @@ function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [config, setConfig] = useState<ConfigSnapshot | null>(null);
   const [error, setError] = useState<string>("");
-  const [selected, setSelected] = useState<ViewKey>("overview");
+  const [selected, setSelected] = useState<ViewKey>(() => parseLocationHash().view);
+  const [navCollapsed, setNavCollapsed] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [connectionPages, setConnectionPages] = useState<Record<string, number>>({});
   const [connectionPageSizes, setConnectionPageSizes] = useState<Record<string, number>>({});
@@ -878,6 +910,7 @@ function App() {
   );
   const connectionGroupsList = useMemo(() => connectionGroups(filteredConnections), [filteredConnections]);
   const connectionFacets = useMemo(() => connectionFilterFacets(connections), [connections]);
+  const navSubItems = useMemo(() => navigationSubItems(selected, connectionGroupsList, summary), [selected, connectionGroupsList, summary]);
   const resources = useMemo(() => importantResources(summary?.resources ?? []), [summary?.resources]);
   const events = summary?.events ?? [];
   const selectedEvent = useMemo(() => {
@@ -895,6 +928,27 @@ function App() {
     setConnectionPages({});
   }, [connectionFilters]);
 
+  useEffect(() => {
+    const onHashChange = () => {
+      const next = parseLocationHash();
+      setSelected(next.view);
+      const targetID = next.targetID;
+      if (targetID) {
+        window.setTimeout(() => scrollToElement(targetID), 80);
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  useEffect(() => {
+    const next = parseLocationHash();
+    const targetID = next.targetID;
+    if (next.view === selected && targetID) {
+      window.setTimeout(() => scrollToElement(targetID), 80);
+    }
+  }, [selected, connectionGroupsList.length]);
+
   function updateConnectionFilter<K extends keyof ConnectionFilters>(key: K, value: ConnectionFilters[K]) {
     setConnectionFilters(current => ({ ...current, [key]: value }));
   }
@@ -904,10 +958,26 @@ function App() {
   }
 
   function showConnectionsGroup(key: string) {
-    setSelected("connections");
+    showSection({ key, label: key, view: "connections", targetID: connectionGroupID(key) });
     setCollapsed(current => ({ ...current, [key]: false }));
+  }
+
+  function showSection(item: NavSubItem) {
+    navigateTo(item.view, item.targetID);
+  }
+
+  function navigateTo(view: ViewKey, targetID?: string) {
+    setSelected(view);
+    const nextHash = hashForView(view, targetID);
+    if (window.location.hash !== nextHash) {
+      window.history.pushState(null, "", nextHash);
+    }
     window.setTimeout(() => {
-      document.getElementById(connectionGroupID(key))?.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (targetID) {
+        scrollToElement(targetID);
+      } else {
+        scrollToTop();
+      }
     }, 80);
   }
 
@@ -917,52 +987,55 @@ function App() {
     <FluentProvider theme={webDarkTheme} className={styles.shell}>
       <header className={styles.header}>
         <div className={styles.productArea}>
-          <div className={styles.azureMark}><NavigationRegular /></div>
-          <div className={styles.title}>
-            <Text size={500} weight="semibold">{cfg.title || "routerd"}</Text>
+          <Button
+            className={styles.navToggle}
+            appearance="subtle"
+            icon={<NavigationRegular />}
+            aria-label={navCollapsed ? "Open navigation" : "Close navigation"}
+            onClick={() => setNavCollapsed(value => !value)}
+          />
+          <div className={styles.productTitleBlock}>
+            <Text size={500} weight="semibold" className={styles.productTitleText}>{cfg.title || "routerd"}</Text>
             <Text size={200} className={styles.subtitle}>Local router control plane</Text>
           </div>
         </div>
         <div className={styles.toolbar}>
           {loading ? <Spinner size="tiny" /> : null}
-          <Button appearance="subtle" icon={<ArrowClockwiseRegular />} onClick={refresh}>Refresh</Button>
         </div>
       </header>
-      <div className={styles.layout}>
-        <aside className={styles.sidebar} aria-label="Web console navigation">
+      <div className={`${styles.layout} ${navCollapsed ? styles.layoutCollapsed : ""}`}>
+        <aside className={`${styles.sidebar} ${navCollapsed ? styles.sidebarCollapsed : ""}`} aria-label="Web console navigation">
           <div className={styles.navSection}>
             {navItems.map(item => (
               <React.Fragment key={item.key}>
                 <Button
                   appearance="subtle"
-                  className={`${styles.navButton} ${selected === item.key ? styles.navButtonActive : ""}`}
-                  onClick={() => setSelected(item.key)}
+                  className={`${styles.navButton} ${navCollapsed ? styles.navButtonCollapsed : ""} ${selected === item.key ? styles.navButtonActive : ""}`}
+                  onClick={() => navigateTo(item.key)}
+                  aria-label={item.label}
                 >
                   <span className={styles.navButtonInner}>
                     <span className={styles.navIcon}>{item.icon}</span>
-                    <span className={styles.navText}>
+                    <span className={`${styles.navText} ${navCollapsed ? styles.navTextCollapsed : ""}`}>
                       <Text weight={selected === item.key ? "semibold" : "regular"}>{item.label}</Text>
                       <Text size={200} className={styles.navDescription}>{item.description}</Text>
                     </span>
                   </span>
                 </Button>
-                {item.key === "connections" && connectionGroupsList.length > 0 ? (
+                {!navCollapsed && item.key === selected && navSubItems.length > 0 ? (
                   <div className={styles.navSubMenu}>
-                    {connectionGroupsList.map(group => {
-                      const label = connectionGroupLabel(group.key);
-                      return (
-                        <Button
-                          key={group.key}
-                          size="small"
-                          appearance="subtle"
-                          className={styles.navSubButton}
-                          onClick={() => showConnectionsGroup(group.key)}
-                        >
-                          <span>{label.family}/{label.protocol.toUpperCase()}</span>
-                          <span>{group.rows.length}</span>
-                        </Button>
-                      );
-                    })}
+                    {navSubItems.map(sub => (
+                      <Button
+                        key={sub.key}
+                        size="small"
+                        appearance="subtle"
+                        className={styles.navSubButton}
+                        onClick={() => showSection(sub)}
+                      >
+                        <span>{sub.label}</span>
+                        {sub.count !== undefined ? <span>{sub.count}</span> : null}
+                      </Button>
+                    ))}
                   </div>
                 ) : null}
               </React.Fragment>
@@ -988,40 +1061,42 @@ function App() {
             {error ? <Card><Text role="alert">Web console error: {error}</Text></Card> : null}
             {selected === "overview" ? (
               <>
-            <div className={styles.grid}>
-              <Metric label="phase" value={String(summary?.status?.status?.phase ?? "Unknown")} />
-              <Metric label="generation" value={String(summary?.status?.status?.generation ?? "-")} />
-              <Metric label="resources" value={String(summary?.status?.status?.resourceCount ?? resources.length)} />
-              <Metric label="conntrack" value={conntrackLabel(summary?.connections)} />
-              <Metric label="families" value={connectionFamilyCounts(summary?.connections)} />
-            </div>
-            <Card>
-              <CardHeader header={<Text weight="semibold">Interfaces</Text>} description={<Text className={styles.muted}>Role, link state, MTU, and assigned addresses</Text>} />
-              <InterfaceOverview interfaces={summary?.interfaces ?? []} />
-            </Card>
-            <Card>
-              <CardHeader header={<Text weight="semibold">Resources</Text>} />
-              <ResourceTable resources={resources} />
-            </Card>
+                <div id="overview-metrics" className={styles.connectionAnchor}>
+                  <div className={styles.grid}>
+                    <Metric label="phase" value={String(summary?.status?.status?.phase ?? "Unknown")} />
+                    <Metric label="generation" value={String(summary?.status?.status?.generation ?? "-")} />
+                    <Metric label="resources" value={String(summary?.status?.status?.resourceCount ?? resources.length)} />
+                    <Metric label="conntrack" value={conntrackLabel(summary?.connections)} />
+                    <Metric label="families" value={connectionFamilyCounts(summary?.connections)} />
+                  </div>
+                </div>
+                <Card>
+                  <CardHeader header={<Text weight="semibold">Interfaces</Text>} description={<Text className={styles.muted}>Role, link state, MTU, and assigned addresses</Text>} />
+                  <InterfaceOverview interfaces={summary?.interfaces ?? []} />
+                </Card>
+                <Card>
+                  <CardHeader header={<Text weight="semibold">Resources</Text>} />
+                  <ResourceTable resources={resources} />
+                </Card>
               </>
             ) : null}
             {selected === "clients" ? (
               <div className={styles.clientsGrid}>
-            <Card>
-              <CardHeader
-                header={<Text weight="semibold">Client inventory</Text>}
-                description={<Text className={styles.muted}>DHCP leases combined with observed traffic</Text>}
-              />
-              <ClientInventory leases={summary?.dhcpLeases ?? []} flows={summary?.trafficFlows ?? []} />
-            </Card>
-            <Card>
-              <CardHeader header={<Text weight="semibold">Client traffic</Text>} />
-              <ClientTraffic flows={summary?.trafficFlows ?? []} />
-            </Card>
-            <Card>
-              <CardHeader header={<Text weight="semibold">DHCP leases</Text>} />
-              <DHCPLeaseTable leases={summary?.dhcpLeases ?? []} />
-            </Card>
+                <Card id="clients-inventory" className={styles.connectionAnchor}>
+                  <CardHeader
+                    header={<Text weight="semibold">Client inventory</Text>}
+                    description={<Text className={styles.muted}>DHCP leases combined with observed traffic</Text>}
+                  />
+                  <ClientInventory leases={summary?.dhcpLeases ?? []} flows={summary?.trafficFlows ?? []} />
+                </Card>
+                <Card id="clients-traffic" className={styles.connectionAnchor}>
+                  <CardHeader header={<Text weight="semibold">Client traffic</Text>} />
+                  <ClientTraffic flows={summary?.trafficFlows ?? []} />
+                </Card>
+                <Card id="clients-leases" className={styles.connectionAnchor}>
+                  <CardHeader header={<Text weight="semibold">DHCP leases</Text>} />
+                  <DHCPLeaseTable leases={summary?.dhcpLeases ?? []} />
+                </Card>
               </div>
             ) : null}
             {selected === "connections" ? (
@@ -1115,29 +1190,29 @@ function App() {
             ) : null}
             {selected === "events" ? (
               <div className={styles.eventsGrid}>
-            <Card>
-              <CardHeader header={<Text weight="semibold">Events</Text>} />
-              <EventTable events={events} selectedKey={eventKey(selectedEvent)} onSelect={event => setSelectedEventKey(eventKey(event))} />
-            </Card>
-            <EventDetail event={selectedEvent} />
+                <Card>
+                  <CardHeader header={<Text weight="semibold">Events</Text>} />
+                  <EventTable events={events} selectedKey={eventKey(selectedEvent)} onSelect={event => setSelectedEventKey(eventKey(event))} />
+                </Card>
+                <EventDetail event={selectedEvent} />
               </div>
             ) : null}
             {selected === "firewall" ? (
               <div className={styles.firewallStack}>
-            <Card>
-              <CardHeader header={<Text weight="semibold">Deny ranking</Text>} description={<Text className={styles.muted}>Grouped by source, destination, and protocol</Text>} />
-              <RecentDeny logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} relatedClients={relatedClients} />
-            </Card>
-            <Card>
-              <CardHeader header={<Text weight="semibold">Deny timeline</Text>} description={<Text className={styles.muted}>Newest firewall log rows</Text>} />
-              <FirewallTimeline logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} relatedClients={relatedClients} />
-            </Card>
+                <Card id="firewall-ranking" className={styles.connectionAnchor}>
+                  <CardHeader header={<Text weight="semibold">Deny ranking</Text>} description={<Text className={styles.muted}>Grouped by source, destination, and protocol</Text>} />
+                  <RecentDeny logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} relatedClients={relatedClients} />
+                </Card>
+                <Card id="firewall-timeline" className={styles.connectionAnchor}>
+                  <CardHeader header={<Text weight="semibold">Deny timeline</Text>} description={<Text className={styles.muted}>Newest firewall log rows</Text>} />
+                  <FirewallTimeline logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} relatedClients={relatedClients} />
+                </Card>
               </div>
             ) : null}
             {selected === "config" ? (
               <Card>
-            <CardHeader header={<Text weight="semibold">Config</Text>} description={<Text className={styles.muted}>{config?.path ?? ""}</Text>} />
-            <ConfigView config={config} />
+                <CardHeader header={<Text weight="semibold">Config</Text>} description={<Text className={styles.muted}>{config?.path ?? ""}</Text>} />
+                <ConfigView config={config} />
               </Card>
             ) : null}
           </main>
@@ -1970,6 +2045,57 @@ function connectionGroupLabel(key: string) {
 
 function connectionGroupID(key: string) {
   return `connections-${key.replace(/[^a-zA-Z0-9_-]+/g, "-")}`;
+}
+
+function navigationSubItems(selected: ViewKey, groups: { key: string; rows: ConnectionEntry[] }[], summary: Summary | null): NavSubItem[] {
+  if (selected === "connections") {
+    return groups.map(group => {
+      const label = connectionGroupLabel(group.key);
+      return {
+        key: group.key,
+        label: `${label.family}/${label.protocol.toUpperCase()}`,
+        count: group.rows.length,
+        view: "connections",
+        targetID: connectionGroupID(group.key),
+      };
+    });
+  }
+  if (selected === "clients") {
+    const leases = summary?.dhcpLeases ?? [];
+    const flows = summary?.trafficFlows ?? [];
+    return [
+      { key: "inventory", label: "Inventory", count: clientInventoryRows(leases, flows).length, view: "clients", targetID: "clients-inventory" },
+      { key: "traffic", label: "Traffic", count: clientTrafficRows(flows).length, view: "clients", targetID: "clients-traffic" },
+      { key: "leases", label: "DHCP leases", count: leases.length, view: "clients", targetID: "clients-leases" },
+    ];
+  }
+  if (selected === "firewall") {
+    const logs = summary?.firewallLogs ?? [];
+    return [
+      { key: "ranking", label: "Deny ranking", count: denyRows(logs).length, view: "firewall", targetID: "firewall-ranking" },
+      { key: "timeline", label: "Deny timeline", count: logs.length, view: "firewall", targetID: "firewall-timeline" },
+    ];
+  }
+  return [];
+}
+
+function parseLocationHash(): { view: ViewKey; targetID?: string } {
+  const raw = window.location.hash.replace(/^#/, "").trim();
+  const [viewPart, sectionPart] = raw.split("/", 2);
+  const view = viewKeys.has(viewPart) ? viewPart as ViewKey : "overview";
+  if (!sectionPart) return { view };
+  return { view, targetID: `${view}-${sectionPart}` };
+}
+
+function hashForView(view: ViewKey, targetID?: string) {
+  if (!targetID) return `#${view}`;
+  const prefix = `${view}-`;
+  const section = targetID.startsWith(prefix) ? targetID.slice(prefix.length) : targetID;
+  return `#${view}/${section}`;
+}
+
+function scrollToElement(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function endpoint(tuple?: ConnTuple) {
