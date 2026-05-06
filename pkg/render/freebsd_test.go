@@ -193,3 +193,29 @@ func TestFreeBSDSkipsDynamicDSLiteGIFWithWarning(t *testing.T) {
 		t.Fatalf("warnings = %#v", got.Warnings)
 	}
 }
+
+func TestFreeBSDRenderPackageInstallScript(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"},
+			Metadata: api.ObjectMeta{Name: "deps"},
+			Spec: api.PackageSpec{Packages: []api.OSPackageSetSpec{
+				{OS: "freebsd", Manager: "pkg", Names: []string{"dnsmasq", "bind-tools"}},
+				{OS: "ubuntu", Manager: "apt", Names: []string{"dnsmasq-base"}},
+			}},
+		},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(got.PackageInstall)
+	for _, want := range []string{"pkg info -e", "pkg install -y", "'dnsmasq'", "'bind-tools'"} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("package script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "dnsmasq-base") {
+		t.Fatalf("package script included Ubuntu package:\n%s", script)
+	}
+}

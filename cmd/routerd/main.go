@@ -181,6 +181,9 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	if len(data.PF) > 0 {
 		files["pf.conf"] = data.PF
 	}
+	if len(data.PackageInstall) > 0 {
+		files["install-packages.sh"] = data.PackageInstall
+	}
 	for name, content := range data.RCDScripts {
 		files["rc.d-"+name] = content
 	}
@@ -189,7 +192,7 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 		perm := os.FileMode(0644)
 		if name == "mpd5.conf" {
 			perm = 0600
-		} else if strings.HasPrefix(name, "rc.d-") {
+		} else if strings.HasPrefix(name, "rc.d-") || name == "install-packages.sh" {
 			perm = 0755
 		}
 		if err := os.WriteFile(path, content, perm); err != nil {
@@ -3425,6 +3428,11 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 	}
 	var changed []string
 	var restartIfnames []string
+	appliedPackages, err := applyFreeBSDPackages(router)
+	if err != nil {
+		return changed, warnings, err
+	}
+	changed = append(changed, appliedPackages...)
 	newKeys := sortedStringMapKeys(rcValues)
 	for _, key := range newKeys {
 		value := rcValues[key]
@@ -3515,6 +3523,51 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 		changed = append(changed, "netif:"+ifname)
 	}
 	return changed, warnings, nil
+}
+
+func applyFreeBSDPackages(router *api.Router) ([]string, error) {
+	var missing []string
+	seen := map[string]bool{}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "Package" {
+			continue
+		}
+		spec, err := resource.PackageSpec()
+		if err != nil {
+			return nil, err
+		}
+		set, ok := packageSetForOSMain(spec, "freebsd")
+		if !ok {
+			continue
+		}
+		for _, name := range set.Names {
+			name = strings.TrimSpace(name)
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			if _, err := exec.Command("pkg", "info", "-e", name).CombinedOutput(); err != nil {
+				missing = append(missing, name)
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil, nil
+	}
+	args := append([]string{"install", "-y"}, missing...)
+	if err := runLogged("pkg", args...); err != nil {
+		return nil, err
+	}
+	return []string{"pkg:" + strings.Join(missing, ",")}, nil
+}
+
+func packageSetForOSMain(spec api.PackageSpec, osName string) (api.OSPackageSetSpec, bool) {
+	for _, set := range spec.Packages {
+		if set.OS == osName {
+			return set, true
+		}
+	}
+	return api.OSPackageSetSpec{}, false
 }
 
 func applyFreeBSDPFConfig(data []byte, pfPath string) ([]string, error) {

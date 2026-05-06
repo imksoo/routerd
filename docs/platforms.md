@@ -69,6 +69,7 @@ Implemented:
 - VXLAN over WireGuard
 - PPPoE skeleton
 - `Package` install through `pkg`
+- `render freebsd --out-dir` emits `install-packages.sh` for reviewable `pkg install` bootstrap
 - pf rendering from `FirewallZone`, `FirewallPolicy`, `FirewallRule`
 - pf NAT rendering from `IPv4SourceNAT` and `NAT44Rule`
 - automatic `pfctl -nf` validation and `pfctl -f` application for generated `pf.conf`
