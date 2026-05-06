@@ -23,6 +23,7 @@ spec:
               - dnsmasq
               - bind-tools
               - wireguard-tools
+              - tailscale
               - strongswan
               - mpd5
 
@@ -72,6 +73,21 @@ spec:
         interface: wan
         client: dhclient
         required: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: PPPoEInterface
+      metadata:
+        name: wan-pppoe
+      spec:
+        interface: wan
+        ifname: ppp0
+        username: user@example.jp
+        password: change-me
+        managed: true
+        defaultRoute: false
+        usePeerDNS: false
+        mtu: 1454
+        mru: 1454
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
@@ -160,6 +176,36 @@ spec:
         destination: 2001:db8:100::/64
         via: fe80::1
         metric: 100
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-lab
+      spec:
+        listenPort: 51820
+        mtu: 1420
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: TailscaleNode
+      metadata:
+        name: home
+      spec:
+        hostname: freebsd-edge
+        advertiseRoutes:
+          - 192.0.2.0/24
+        acceptDNS: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPsecConnection
+      metadata:
+        name: cloud-vpn-example
+      spec:
+        localAddress: 198.51.100.10
+        remoteAddress: 203.0.113.10
+        preSharedKey: change-me
+        leftSubnet: 192.0.2.0/24
+        rightSubnet: 10.10.0.0/16
+        cloudProviderHint: aws
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel

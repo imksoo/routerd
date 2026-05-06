@@ -41,7 +41,8 @@ system, but observed like a service.
 Implemented resource areas include:
 
 - interface aliases, links, bridges, VRF, VXLAN, WireGuard, Tailscale exit
-  node / subnet router setup, and cloud-oriented IPsec groundwork
+  node / subnet router setup, and cloud-oriented IPsec connection definitions
+  with strongSwan `swanctl` rendering
 - WAN acquisition through DHCPv6 prefix delegation, DHCPv6 information request,
   DHCPv4 leases, PPPoE sessions, and DS-Lite tunnels
 - LAN service through managed dnsmasq: DHCPv4 scopes and reservations,
@@ -62,9 +63,9 @@ Implemented resource areas include:
 - OpenTelemetry SDK hooks for logs, metrics, and traces when exporters are
   configured
 
-Stateful firewall filtering is still evolving. NAT44 and narrowly scoped
-firewall/logging groundwork exist, but routerd is not yet a general-purpose
-firewall rule language.
+Stateful firewall filtering is intentionally scoped. routerd renders NAT44,
+zone policy, service holes, denial logging, and traffic inspection, but it is
+not a general-purpose firewall rule language.
 
 ## Example Shape
 
@@ -75,7 +76,8 @@ The production-style examples show how the pieces fit together:
   RA, NAT44, log storage, and Web Console.
 - `examples/router-lab.yaml`: smaller Linux lab configuration.
 - `examples/nixos-edge.yaml`: NixOS-oriented rendering path.
-- `examples/freebsd-edge.yaml`: FreeBSD service-manager and package groundwork.
+- `examples/freebsd-edge.yaml`: FreeBSD-native rc.d, pf, mpd5, dnsmasq, DS-Lite,
+  package, and service examples.
 - `examples/tailscale-exit-subnet.yaml`: Tailscale exit-node and subnet-router
   advertisement through a managed systemd unit.
 
@@ -168,10 +170,9 @@ Managed daemons expose the same local contract:
 
 ## Platform Notes
 
-Ubuntu Server is the primary implementation target. NixOS and FreeBSD are
-active second-tier targets with working binaries and service-manager
-groundwork. Do not assume full renderer parity yet; see `docs/platforms.md` for
-the current matrix.
+Ubuntu Server is the most exercised deployment target. NixOS and FreeBSD use
+the same resource model through their native activation paths. See
+`docs/platforms.md` for the current OS surface matrix.
 
 The implementation is pre-release. v1alpha1 names and fields may still change
 when a breaking cleanup makes the router safer or easier to operate.

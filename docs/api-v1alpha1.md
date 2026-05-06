@@ -92,11 +92,11 @@ the full setup flow.
 | `IPv4StaticAddress` | Assigns a static IPv4 address. |
 | `DHCPv4Address` | Legacy host DHCP client path. Prefer `DHCPv4Lease` for new configs. |
 | `DHCPv4Lease` | DHCPv4 lease managed by `routerd-dhcpv4-client`. |
-| `DHCPv6Address` | Groundwork for DHCPv6 IA_NA. |
+| `DHCPv6Address` | Represents DHCPv6 IA_NA intent for platform renderers. |
 | `DHCPv6PrefixDelegation` | DHCPv6-PD lease managed by `routerd-dhcpv6-client`. |
 | `DHCPv6Information` | DHCPv6 information request result, including DNS, SNTP, domain search, and AFTR observations. |
 | `IPv6DelegatedAddress` | Derives a LAN-side address from a delegated prefix. |
-| `IPv6RAAddress` | Groundwork for IPv6 addresses learned from RA/SLAAC. |
+| `IPv6RAAddress` | Represents IPv6 addresses learned from RA/SLAAC. |
 
 `DHCPv6PrefixDelegation` no longer selects an OS DHCPv6 client. DHCPv6-PD is
 owned by `routerd-dhcpv6-client`.
@@ -138,7 +138,7 @@ endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
 | `IPv4Route` | Adds IPv4 routes, including DS-Lite defaults and explicit drop routes. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
-| `IPv4SourceNAT` | Legacy IPv4 source NAT groundwork. |
+| `IPv4SourceNAT` | Older IPv4 source NAT resource. Prefer `NAT44Rule` for new configs. |
 | `IPv4PolicyRoute` | Represents IPv4 policy routing. |
 | `IPv4PolicyRouteSet` | Groups multiple policy routes. |
 | `IPv4DefaultRoutePolicy` | Represents default-route policy. |

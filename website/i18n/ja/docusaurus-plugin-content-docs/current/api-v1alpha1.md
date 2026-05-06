@@ -84,11 +84,11 @@ routerd は広告するノード設定だけを再適用します。
 | `IPv4StaticAddress` | 静的 IPv4 アドレスを付与します。 |
 | `DHCPv4Address` | 旧来のホスト DHCP クライアント経路です。新しい実装では `DHCPv4Lease` を優先します。 |
 | `DHCPv4Lease` | `routerd-dhcpv4-client` が管理する DHCPv4 リースです。 |
-| `DHCPv6Address` | DHCPv6 IA_NA を表す土台です。 |
+| `DHCPv6Address` | DHCPv6 IA_NA の意図を表します。 |
 | `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` が管理する DHCPv6-PD リースです。 |
 | `DHCPv6Information` | DHCPv6 情報要求の結果です。DNS、SNTP、ドメイン検索、AFTR 情報を観測します。 |
 | `IPv6DelegatedAddress` | 委譲プレフィックスから LAN 側アドレスを導出します。 |
-| `IPv6RAAddress` | RA で得る IPv6 アドレスの土台です。 |
+| `IPv6RAAddress` | RA/SLAAC で得る IPv6 アドレスを表します。 |
 
 `DHCPv6PrefixDelegation` は旧 OS クライアント選択フィールドを持ちません。
 DHCPv6-PD は `routerd-dhcpv6-client` が担当します。
@@ -126,7 +126,7 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 | `DSLiteTunnel` | AFTR へ `ip6tnl` トンネルを張ります。AFTR は直接 IPv6、FQDN、または DHCPv6 情報から得ます。 |
 | `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路や、明示的な破棄経路にも使います。 |
 | `NAT44Rule` | nftables の `routerd_nat` テーブルで IPv4 NAPT を行います。 |
-| `IPv4SourceNAT` | 旧来の IPv4 送信元 NAT の土台です。 |
+| `IPv4SourceNAT` | 旧来の IPv4 送信元 NAT リソースです。新しい設定では `NAT44Rule` を優先します。 |
 | `IPv4PolicyRoute` | IPv4 ポリシールーティングを表します。 |
 | `IPv4PolicyRouteSet` | 複数のポリシールートをまとめます。 |
 | `IPv4DefaultRoutePolicy` | 既定経路の方針を表します。 |

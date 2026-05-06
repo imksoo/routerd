@@ -6,11 +6,11 @@ sidebar_position: 1
 
 # What is routerd?
 
-routerd is a declarative router control plane for Linux hosts, with NixOS and
-FreeBSD groundwork in progress. You write the router intent as YAML resources.
-routerd turns that intent into interfaces, addresses, DHCP service, DNS service,
-NAT, routes, tunnels, health checks, system packages, sysctl values, service
-units, logs, and status.
+routerd is a declarative router control plane for Linux hosts, NixOS, and
+FreeBSD. You write the router intent as YAML resources. routerd turns that
+intent into interfaces, addresses, DHCP service, DNS service, NAT, routes,
+tunnels, health checks, system packages, sysctl values, service units, logs,
+and status.
 
 routerd is not a distribution and it is not a hosted controller. It runs on each
 router host. It uses local kernel features and host components such as
@@ -66,8 +66,8 @@ The current implementation can manage:
   UDP fallback, multiple listen profiles, and cache
 - NAT44, private-destination exclusions, IPv4 route policy, reverse-path
   filter settings, Path MTU policy, and TCP MSS clamping
-- PPPoE, WireGuard, VXLAN, VRF, and cloud-oriented IPsec configuration
-  groundwork
+- PPPoE, WireGuard, VXLAN, VRF, and cloud-oriented IPsec connection
+  definitions with strongSwan `swanctl` rendering
 - package installation, sysctl profiles, network adoption, systemd units,
   NTP client configuration, log sinks, log retention, and Web Console
 - `EgressRoutePolicy`, `HealthCheck`, `EventRule`, and `DerivedEvent`
@@ -75,16 +75,17 @@ The current implementation can manage:
 - status, event, DNS query, connection, traffic-flow, and firewall-log
   inspection
 
-## What Is Still Deliberately Narrow
+## Deliberate Boundaries
 
 routerd is v1alpha1 pre-release software. Names and fields may change without a
 compatibility alias when the cleanup makes the router safer or the configuration
 more understandable.
 
-Stateful firewall filtering exists as groundwork, but routerd is not yet a
-general-purpose firewall rule language. NixOS and FreeBSD support is active,
-but not at full Ubuntu parity. Platform-specific claims are tracked in the
-platform matrix.
+Stateful firewall filtering is intentionally scoped. routerd renders NAT44,
+zone policy, service holes, denial logging, and traffic inspection, but it is
+not a general-purpose firewall rule language. NixOS and FreeBSD use the same
+resource model through their native activation paths. Platform-specific host
+surfaces are tracked in the platform matrix.
 
 ## Next Pages
 

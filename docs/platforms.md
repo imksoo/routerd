@@ -33,7 +33,10 @@ Even on Ubuntu, routerd does not assume packages are pre-installed. Declare depe
 
 ## NixOS
 
-NixOS is a first-class secondary platform. Instead of writing transient systemd units, routerd targets `/etc/nixos/routerd-generated.nix` and lets `nixos-rebuild test` / `nixos-rebuild switch` manage activation.
+NixOS uses the same routerd resource model as Ubuntu, but activation goes
+through the NixOS module system. Instead of writing transient systemd units,
+routerd targets `/etc/nixos/routerd-generated.nix` and lets
+`nixos-rebuild test` / `nixos-rebuild switch` manage activation.
 
 Implemented:
 
@@ -49,7 +52,7 @@ Implemented:
 - generated `routerd-dnsmasq` service when DHCP or RA resources require dnsmasq
 - generated DNS resolver, HealthCheck, firewall logger, Tailscale, DHCPv4 client, DHCPv6 client, and PPPoE client services
 - generated `networking.nftables.enable = true` when NAT, firewall, policy routing, or Path MTU resources require nftables
-- WireGuard, Tailscale, VXLAN, and VRF coverage
+- WireGuard, Tailscale, VXLAN, and native systemd-networkd VRF generation
 - Linux runtime resources that are not native NixOS network declarations are reconciled by `routerd.service` after NixOS activation
 
 On NixOS, populate `systemd.services.routerd.path` with the commands routerd needs. When `Package` resources have `os: nixos`, routerd does **not** install packages imperatively at runtime. It writes them to `environment.systemPackages` in `/etc/nixos/routerd-generated.nix`, then lets `nixos-rebuild` activate the system profile.
@@ -62,14 +65,17 @@ On NixOS, populate `systemd.services.routerd.path` with the commands routerd nee
 
 ## FreeBSD
 
-FreeBSD is the other secondary platform. The DHCPv6-PD client runs under `daemon(8)` and reliably keeps a lease bound. routerd maps resources to FreeBSD-native `rc.conf`, `rc.d`, `pf`, `mpd5`, `ifconfig`, and dnsmasq surfaces instead of using Linux tools.
+FreeBSD uses the same routerd resource model as Ubuntu, mapped onto FreeBSD
+host mechanisms. The DHCPv6-PD client runs under `daemon(8)` and reliably keeps
+a lease bound. routerd maps resources to FreeBSD-native `rc.conf`, `rc.d`,
+`pf`, `mpd5`, `ifconfig`, and dnsmasq surfaces instead of using Linux tools.
 
 Implemented:
 
 - DHCPv6-PD daemon with persistent lease
 - WireGuard interop with Linux / NixOS
 - VXLAN over WireGuard
-- PPPoE skeleton
+- PPPoE via generated `mpd5.conf`, `mpd_enable`, and `mpd5` service restart
 - `Package` install through `pkg`
 - `render freebsd --out-dir` emits `install-packages.sh` for reviewable `pkg install` bootstrap
 - FreeBSD-idiomatic `rc.conf.d` output for `gateway_enable`, `ipv6_gateway_enable`, `cloned_interfaces`, `ifconfig_*`, `static_routes`, `ipv6_static_routes`, `pf_enable`, `pflog_enable`, and `mpd_enable`
@@ -84,6 +90,7 @@ Implemented:
 - dnsmasq config validation with `dnsmasq --test` before service restart
 - automatic pf holes for routerd-owned DHCP, DNS, RA, DHCPv6-PD, DS-Lite, WireGuard, and healthcheck traffic
 - DNS resolver daemon builds on FreeBSD; `viaInterface` can target `fib:<n>` for FIB-bound upstream routing
+- cloud VPN `IPsecConnection` validates and renders strongSwan `swanctl` connection definitions; live cloud gateway validation remains deployment-specific
 - rc.d script generation, installation, and `service <name> onestart` activation from `SystemdUnit`
 - rc.d script generation for `routerd-healthcheck`
 - rc.d script generation for `routerd-firewall-logger` with direct `pflog0` input
@@ -92,7 +99,10 @@ Implemented:
 - Static DS-Lite gif tunnel rendering
 - Dynamic DS-Lite apply from static AFTR IPv6, AFTR FQDN, or delegated-address local source
 
-FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The `Package` examples for FreeBSD only cover what is already ported or has a working skeleton.
+FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The
+`Package` examples declare FreeBSD-native replacements: `pf` and `pflog0` from
+the base system, `mpd5` for PPPoE, `ifconfig gif` for DS-Lite, dnsmasq for LAN
+DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 
 | Category | Packages |
 | --- | --- |
