@@ -20,6 +20,7 @@ func TestDHCPv6ClientSystemdUnit(t *testing.T) {
 		"ExecStart=/usr/local/sbin/routerd-dhcpv6-client --resource \"wan-pd\" --interface \"wan0\"",
 		"--socket \"/run/routerd/dhcpv6-client/wan-pd.sock\"",
 		"ProtectSystem=strict",
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
 		"CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE",
 	} {
 		if !strings.Contains(unit, want) {

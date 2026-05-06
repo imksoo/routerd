@@ -59,7 +59,7 @@ PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
 ReadWritePaths=/run/routerd /var/lib/routerd /var/log/routerd
-RestrictAddressFamilies=AF_UNIX AF_INET6 AF_NETLINK
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 
