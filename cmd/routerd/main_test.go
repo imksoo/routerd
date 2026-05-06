@@ -1286,3 +1286,38 @@ func TestSelectAAAAModulo(t *testing.T) {
 		t.Fatalf("AAAA = %s, want 2404:8e00::feed:100", got)
 	}
 }
+
+func TestWebConsoleResolvesListenAddressFromResourceStatus(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer store.Close()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "mgmt", map[string]any{
+		"phase":         "Up",
+		"ipv4Addresses": []string{"192.168.123.129/24"},
+	}); err != nil {
+		t.Fatalf("save status: %v", err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "WebConsole"},
+			Metadata: api.ObjectMeta{Name: "mgmt"},
+			Spec: api.WebConsoleSpec{
+				ListenAddressFrom: api.StatusValueSourceSpec{Resource: "Interface/mgmt", Field: "ipv4Addresses"},
+				Port:              8080,
+			},
+		},
+	}}}
+	spec, ok, err := webConsoleFromRouter(router, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("web console disabled")
+	}
+	if spec.ListenAddress != "192.168.123.129" {
+		t.Fatalf("listen address = %q", spec.ListenAddress)
+	}
+}

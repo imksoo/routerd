@@ -40,6 +40,7 @@ import (
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
+	"routerd/pkg/resourcequery"
 	routerstate "routerd/pkg/state"
 	statuswriter "routerd/pkg/status"
 	"routerd/pkg/sysctlprofile"
@@ -2428,10 +2429,12 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	if *applyInterval > 0 {
 		go runApplySchedule(stop, *applyInterval, router, applyOpts, cache, logger, applyMu)
 	}
-	if console, ok := webConsoleFromRouter(router); ok {
+	if webConsoleResourcePresent(router) {
 		var webStore routerstate.Store
+		var webObjectStore routerstate.ObjectStatusStore
 		if stateStore != nil {
 			webStore = stateStore
+			webObjectStore = stateStore
 		} else {
 			opened, openErr := routerstate.OpenSQLite(defaultStatePath)
 			if openErr != nil {
@@ -2439,9 +2442,16 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			}
 			defer opened.Close()
 			webStore = opened
+			webObjectStore = opened
 		}
-		if err := startWebConsole(ctx, console, router, webStore, cache, logger, *configPath); err != nil {
-			return err
+		console, ok, webErr := webConsoleFromRouter(router, webObjectStore)
+		if webErr != nil {
+			return webErr
+		}
+		if ok {
+			if err := startWebConsole(ctx, console, router, webStore, cache, logger, *configPath); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -2661,9 +2671,21 @@ func configuredFirewallLogPath(router *api.Router) string {
 	return fallback
 }
 
-func webConsoleFromRouter(router *api.Router) (api.WebConsoleSpec, bool) {
+func webConsoleResourcePresent(router *api.Router) bool {
 	if router == nil {
-		return api.WebConsoleSpec{}, false
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind == "WebConsole" {
+			return true
+		}
+	}
+	return false
+}
+
+func webConsoleFromRouter(router *api.Router, store routerstate.ObjectStatusStore) (api.WebConsoleSpec, bool, error) {
+	if router == nil {
+		return api.WebConsoleSpec{}, false, nil
 	}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "WebConsole" {
@@ -2674,11 +2696,13 @@ func webConsoleFromRouter(router *api.Router) (api.WebConsoleSpec, bool) {
 			continue
 		}
 		if spec.Enabled != nil && !*spec.Enabled {
-			return api.WebConsoleSpec{}, false
+			return api.WebConsoleSpec{}, false, nil
 		}
-		if spec.ListenAddress == "" {
-			spec.ListenAddress = "127.0.0.1"
+		resolved, err := resolveWebConsoleListenAddress(router, store, spec)
+		if err != nil {
+			return api.WebConsoleSpec{}, false, err
 		}
+		spec.ListenAddress = resolved
 		if spec.Port == 0 {
 			spec.Port = 8080
 		}
@@ -2688,9 +2712,103 @@ func webConsoleFromRouter(router *api.Router) (api.WebConsoleSpec, bool) {
 		if spec.Title == "" {
 			spec.Title = "routerd"
 		}
-		return spec, true
+		return spec, true, nil
 	}
-	return api.WebConsoleSpec{}, false
+	return api.WebConsoleSpec{}, false, nil
+}
+
+func resolveWebConsoleListenAddress(router *api.Router, store routerstate.ObjectStatusStore, spec api.WebConsoleSpec) (string, error) {
+	if strings.TrimSpace(spec.ListenAddressFrom.Resource) != "" {
+		if address := firstAddressValue(resourcequery.Values(store, spec.ListenAddressFrom)); address != "" {
+			return address, nil
+		}
+		if address := firstInterfaceAddressValue(router, spec.ListenAddressFrom); address != "" {
+			return address, nil
+		}
+		if strings.TrimSpace(spec.ListenAddress) == "" {
+			return "", fmt.Errorf("web console listenAddressFrom unresolved: %s.%s", spec.ListenAddressFrom.Resource, spec.ListenAddressFrom.Field)
+		}
+	}
+	if strings.TrimSpace(spec.ListenAddress) != "" {
+		return strings.TrimSpace(spec.ListenAddress), nil
+	}
+	return "127.0.0.1", nil
+}
+
+func firstAddressValue(values []string) string {
+	for _, value := range values {
+		if address := statusAddressValue(value); address != "" {
+			return address
+		}
+	}
+	return ""
+}
+
+func firstInterfaceAddressValue(router *api.Router, source api.StatusValueSourceSpec) string {
+	kind, name, ok := resourcequery.SplitResource(source.Resource)
+	if !ok || kind != "Interface" || router == nil {
+		return ""
+	}
+	ifname := ""
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "Interface" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.InterfaceSpec()
+		if err == nil {
+			ifname = strings.TrimSpace(spec.IfName)
+		}
+		break
+	}
+	if ifname == "" {
+		return ""
+	}
+	ifi, err := net.InterfaceByName(ifname)
+	if err != nil {
+		return ""
+	}
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return ""
+	}
+	field := strings.TrimSpace(source.Field)
+	var candidates []string
+	for _, addr := range addrs {
+		value := statusAddressValue(addr.String())
+		if value == "" {
+			continue
+		}
+		parsed, err := netip.ParseAddr(value)
+		if err != nil || parsed.IsLinkLocalUnicast() {
+			continue
+		}
+		if (field == "ipv4Addresses" || field == "primaryIPv4") && !parsed.Is4() {
+			continue
+		}
+		if (field == "ipv6Addresses" || field == "primaryIPv6") && !parsed.Is6() {
+			continue
+		}
+		candidates = append(candidates, value)
+	}
+	sort.Strings(candidates)
+	if len(candidates) == 0 {
+		return ""
+	}
+	return candidates[0]
+}
+
+func statusAddressValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix.Addr().String()
+	}
+	if addr, err := netip.ParseAddr(value); err == nil {
+		return addr.String()
+	}
+	return ""
 }
 
 func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, cache *resultCache, logger *eventlog.Logger, configPath string) error {

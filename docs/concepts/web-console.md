@@ -14,13 +14,17 @@ metadata:
   name: mgmt
 spec:
   enabled: true
-  listenAddress: 192.168.123.129
+  listenAddressFrom:
+    resource: Interface/mgmt
+    field: ipv4Addresses
   port: 8080
   title: homert02
 ```
 
 Keep the listener on a management address. Do not expose it on an untrusted
-WAN interface.
+WAN interface. Use `listenAddressFrom` when the management address is owned by
+the operating system or IPAM. The value is resolved from resource status at
+startup, and `listenAddress` remains available for a literal fallback address.
 
 ## What the console reads
 
@@ -56,7 +60,7 @@ The current Fluent UI web app provides:
   hints, and current conntrack reply tuples. This helps explain whether a
   denied packet is unsolicited traffic or an off-path reply for an existing
   NAT mapping.
-- a Config view with syntax-highlighted, foldable, read-only YAML
+- a Config view with a structured, foldable YAML tree and a raw YAML fallback
 
 Connection rows show the forward direction by default. Return-path data is not
 shown as a separate primary row because conntrack commonly reports the same

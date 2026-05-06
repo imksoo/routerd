@@ -154,6 +154,11 @@ it to the OS interface name at runtime. `via` and `sourceAddress` can also be
 specified. `sourceAddressFrom` derives the probe source address from another
 resource status.
 
+`WebConsole.spec.listenAddressFrom` derives the HTTP listener address from
+another resource status, for example `Interface/mgmt.status.ipv4Addresses`.
+Use it instead of a literal `listenAddress` when the management address comes
+from DHCP, IPAM, or another declarative resource.
+
 ## Firewall
 
 | Kind | Role |

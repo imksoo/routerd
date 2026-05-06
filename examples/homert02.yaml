@@ -326,7 +326,9 @@ spec:
         name: mgmt
       spec:
         enabled: true
-        listenAddress: 192.168.123.129
+        listenAddressFrom:
+          resource: Interface/mgmt
+          field: ipv4Addresses
         port: 8080
         title: homert02
 
@@ -970,7 +972,9 @@ spec:
           - name: local
             addresses:
               - 127.0.0.1
-              - 192.168.123.129
+            addressFrom:
+              - resource: Interface/mgmt
+                field: ipv4Addresses
             port: 53
             sources: [local-zone, home-wirednet-jp, lab-wirednet-jp, fab-wirednet-jp, lain-local, ngn-aftr, nextdns-bootstrap-ngn, nextdns-bootstrap-public, default]
           - name: lan

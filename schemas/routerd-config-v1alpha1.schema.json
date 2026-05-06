@@ -886,6 +886,24 @@
                       "listenAddress": {
                         "type": "string"
                       },
+                      "listenAddressFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
                       "port": {
                         "maximum": 65535,
                         "minimum": 1,

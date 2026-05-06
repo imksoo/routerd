@@ -131,11 +131,12 @@ type NTPClientSpec struct {
 }
 
 type WebConsoleSpec struct {
-	Enabled       *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	ListenAddress string `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
-	Port          int    `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
-	BasePath      string `yaml:"basePath,omitempty" json:"basePath,omitempty"`
-	Title         string `yaml:"title,omitempty" json:"title,omitempty"`
+	Enabled           *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ListenAddress     string                `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
+	ListenAddressFrom StatusValueSourceSpec `yaml:"listenAddressFrom,omitempty" json:"listenAddressFrom,omitempty"`
+	Port              int                   `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	BasePath          string                `yaml:"basePath,omitempty" json:"basePath,omitempty"`
+	Title             string                `yaml:"title,omitempty" json:"title,omitempty"`
 }
 
 type NixOSHostSpec struct {

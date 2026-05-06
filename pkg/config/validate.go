@@ -888,6 +888,9 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.listenAddress must be an IP address", res.ID())
 			}
 		}
+		if spec.ListenAddressFrom.Resource != "" && spec.ListenAddressFrom.Field == "" {
+			return fmt.Errorf("%s spec.listenAddressFrom.field is required", res.ID())
+		}
 		if spec.Port < 0 || spec.Port > 65535 {
 			return fmt.Errorf("%s spec.port must be omitted or between 1 and 65535", res.ID())
 		}

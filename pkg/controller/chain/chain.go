@@ -692,6 +692,18 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 		} else if ifi, err := net.InterfaceByName(ifname); err == nil {
 			status["index"] = ifi.Index
 			status["flags"] = ifi.Flags.String()
+			addresses, ipv4, ipv6 := interfaceStatusAddresses(ifi)
+			if len(addresses) > 0 {
+				status["addresses"] = addresses
+			}
+			if len(ipv4) > 0 {
+				status["ipv4Addresses"] = ipv4
+				status["primaryIPv4"] = ipv4[0]
+			}
+			if len(ipv6) > 0 {
+				status["ipv6Addresses"] = ipv6
+				status["primaryIPv6"] = ipv6[0]
+			}
 			if ifi.Flags&net.FlagUp != 0 {
 				status["phase"] = "Up"
 			}
@@ -733,6 +745,38 @@ func (c LinkController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func interfaceStatusAddresses(ifi *net.Interface) ([]string, []string, []string) {
+	if ifi == nil {
+		return nil, nil, nil
+	}
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return nil, nil, nil
+	}
+	var all []string
+	var ipv4 []string
+	var ipv6 []string
+	for _, addr := range addrs {
+		prefix, err := netip.ParsePrefix(addr.String())
+		if err != nil {
+			continue
+		}
+		if prefix.Addr().IsLinkLocalUnicast() {
+			continue
+		}
+		all = append(all, prefix.String())
+		if prefix.Addr().Is4() {
+			ipv4 = append(ipv4, prefix.String())
+		} else if prefix.Addr().Is6() {
+			ipv6 = append(ipv6, prefix.String())
+		}
+	}
+	sort.Strings(all)
+	sort.Strings(ipv4)
+	sort.Strings(ipv6)
+	return all, ipv4, ipv6
 }
 
 type IPv4StaticAddressController struct {

@@ -14,13 +14,18 @@ metadata:
   name: mgmt
 spec:
   enabled: true
-  listenAddress: 192.168.123.129
+  listenAddressFrom:
+    resource: Interface/mgmt
+    field: ipv4Addresses
   port: 8080
   title: homert02
 ```
 
 待ち受けは管理アドレスに限定してください。
 untrust WAN インターフェースでは公開しないでください。
+管理アドレスを OS や IPAM から受け取る場合は、`listenAddressFrom` を使います。
+routerd は起動時にリソース状態から値を解決します。
+固定の予備アドレスが必要な場合は、`listenAddress` も併用できます。
 
 ## 読み取る情報
 
@@ -52,7 +57,7 @@ Web Console は次の情報を読み取ります。
 - Firewall 行では、ファイアウォールログ、DNS 応答、DHCP リース、
   MAC ベンダー候補、現在の conntrack 復路タプルを合わせて表示します。
   拒否されたパケットが不要な外部通信か、既存 NAT 変換に近い別経路の応答かを判断しやすくします。
-- シンタックスハイライトと折りたたみを持つ読み取り専用 Config 画面
+- 構造化した折りたたみツリーと Raw YAML 表示を持つ読み取り専用 Config 画面
 
 コネクション行は、基本的に往路を表示します。
 conntrack は同じ通信を往復方向で報告するため、復路を主要行として重ねて表示しません。
