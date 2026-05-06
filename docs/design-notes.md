@@ -53,9 +53,9 @@ The following kinds work together for higher-level coordination:
 
 ## 6. Tier S building blocks
 
-WireGuard, IPsec, VRF, and VXLAN are the building blocks for the Tier S (SOHO / branch) capability. WireGuard and VXLAN-over-WireGuard interoperability is verified across the supported operating systems.
+WireGuard, Tailscale, IPsec, VRF, and VXLAN are the building blocks for the Tier S (SOHO / branch) capability. WireGuard and VXLAN-over-WireGuard interoperability is verified across the supported operating systems. `TailscaleNode` covers exit-node and subnet-router advertisement without turning every VPN into one abstract shape.
 
-There is no abstract `VPNTunnel` resource. WireGuard, IPsec, and future Tailscale or SoftEther integrations are added as their own kinds. The motivation is that each of these has materially different state machines; collapsing them into one polymorphic kind would lose semantics.
+There is no abstract `VPNTunnel` resource. WireGuard, Tailscale, IPsec, and future SoftEther integrations are added as their own kinds. The motivation is that each of these has materially different state machines; collapsing them into one polymorphic kind would lose semantics.
 
 ## 7. Open work
 

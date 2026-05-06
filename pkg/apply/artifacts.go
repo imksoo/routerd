@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	"routerd/pkg/render"
 	"routerd/pkg/resource"
 	"routerd/pkg/sysctlprofile"
 )
@@ -141,6 +142,19 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		return []resource.Intent{artifact("net.wireguard.peer", spec.Interface+"/"+res.Metadata.Name, resource.ActionEnsure, "wg", map[string]string{"interface": spec.Interface})}
+	case "TailscaleNode":
+		spec, err := res.TailscaleNodeSpec()
+		if err != nil {
+			return nil
+		}
+		action := resource.ActionEnsure
+		if defaultString(spec.State, "present") == "absent" {
+			action = resource.ActionDelete
+		}
+		return []resource.Intent{
+			artifact("systemd.unit", render.TailscaleUnitName(res.Metadata.Name), action, "systemd", nil),
+			artifact("tailscale.node", res.Metadata.Name, action, "tailscale", nil),
+		}
 	case "IPsecConnection":
 		return []resource.Intent{
 			artifact("ipsec.swanctl.connection", res.Metadata.Name, resource.ActionEnsure, "swanctl", nil),

@@ -33,6 +33,7 @@ If a configuration depends on a feature the host does not provide, routerd repor
 | `conntrack` | IPv4/IPv6 connection observation |
 | `pppd`, `ppp` | PPPoE |
 | `wg` | WireGuard |
+| `tailscale` | Tailscale exit-node and subnet-router advertisement |
 | `swanctl` | IPsec |
 | `radvd` | Optional radvd RA path |
 | `sysctl` | Kernel settings |

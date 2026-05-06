@@ -284,6 +284,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "PPPoESession", api.PPPoESessionSpec{}),
 			resourceSchema(api.NetAPIVersion, "WireGuardInterface", api.WireGuardInterfaceSpec{}),
 			resourceSchema(api.NetAPIVersion, "WireGuardPeer", api.WireGuardPeerSpec{}),
+			resourceSchema(api.NetAPIVersion, "TailscaleNode", api.TailscaleNodeSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPsecConnection", api.IPsecConnectionSpec{}),
 			resourceSchema(api.NetAPIVersion, "VRF", api.VRFSpec{}),
 			resourceSchema(api.NetAPIVersion, "VXLANTunnel", api.VXLANTunnelSpec{}),

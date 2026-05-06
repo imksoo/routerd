@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"routerd/pkg/api"
@@ -229,6 +230,7 @@ func TestValidateTierSResources(t *testing.T) {
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br240"}, Spec: api.BridgeSpec{IfName: "br240", Members: []string{"vx240"}}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-lab"}, Spec: api.WireGuardInterfaceSpec{ListenPort: 51820, MTU: 1420}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"}, Metadata: api.ObjectMeta{Name: "peer-a"}, Spec: api.WireGuardPeerSpec{Interface: "wg-lab", PublicKey: "pub", AllowedIPs: []string{"10.44.0.2/32"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.TailscaleNodeSpec{Hostname: "router", AdvertiseExitNode: true, AdvertiseRoutes: []string{"172.18.0.0/16"}, AuthKeyEnv: "TS_AUTHKEY"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"}, Metadata: api.ObjectMeta{Name: "aws-a"}, Spec: api.IPsecConnectionSpec{LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.10", PreSharedKey: "secret", LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16", CloudProviderHint: "aws"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VRF"}, Metadata: api.ObjectMeta{Name: "vrf-guest"}, Spec: api.VRFSpec{RouteTable: 1001, Members: []string{"wg-lab"}}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx240"}, Spec: api.VXLANTunnelSpec{VNI: 240, LocalAddress: "10.44.0.1", UnderlayInterface: "wg-lab", Peers: []string{"10.44.0.2"}, Bridge: "br240"}},
@@ -237,6 +239,19 @@ func TestValidateTierSResources(t *testing.T) {
 
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate Tier S resources: %v", err)
+	}
+}
+
+func TestValidateTailscaleNodeRejectsInvalidRoute(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.TailscaleNodeSpec{AdvertiseRoutes: []string{"172.18.0.0"}}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.advertiseRoutes[0]") {
+		t.Fatalf("expected invalid Tailscale route error, got %v", err)
 	}
 }
 

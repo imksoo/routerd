@@ -20,13 +20,13 @@ routerd が Linux 上で利用する OS 機能：
 - conntrack (コネクション観測)
 - iproute2 (interface + 経路)
 - pppd / rp-pppoe (PPPoE)
-- WireGuard、strongSwan、radvd
+- WireGuard、Tailscale、strongSwan、radvd
 
 Ubuntu でも、パッケージが事前導入されていることを前提にしません。`Package` リソースで依存関係を宣言してください。リファレンス：
 
 | 分類 | パッケージ |
 | --- | --- |
-| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `ppp`, `wireguard-tools`, `strongswan-swanctl`, `radvd` |
+| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `ppp`, `wireguard-tools`, `tailscale`, `strongswan-swanctl`, `radvd` |
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS 制御 | `procps`, `systemd`, `kmod` |
 
@@ -43,7 +43,7 @@ transient な systemd unit を書く代わりに、`/etc/nixos/routerd-generated
 - `Package`、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit` の NixOS module 生成
 - `nixos-rebuild test` / `nixos-rebuild switch` 連携
 - DHCPv6-PD が `Bound` まで到達
-- WireGuard と VXLAN の対応
+- WireGuard、Tailscale、VXLAN の対応
 - VRF の部分対応
 
 未対応：
@@ -57,7 +57,7 @@ NixOS では、routerd が必要とするコマンドを `systemd.services.route
 
 | 分類 | パッケージ |
 | --- | --- |
-| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `ppp`, `wireguard-tools`, `strongswan`, `radvd` |
+| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `ppp`, `wireguard-tools`, `tailscale`, `strongswan`, `radvd` |
 | Diagnostics | `bind`, `iputils`, `tcpdump`, `traceroute`, `nettools` |
 | OS 制御 | `procps`, `systemd`, `kmod` |
 

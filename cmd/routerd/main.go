@@ -621,6 +621,9 @@ func canonicalResourceKind(kind string) string {
 		"wireguardinterface":     "WireGuardInterface",
 		"wireguardpeer":          "WireGuardPeer",
 		"wgpeer":                 "WireGuardPeer",
+		"tailscale":              "TailscaleNode",
+		"tailscalenode":          "TailscaleNode",
+		"ts":                     "TailscaleNode",
 		"ipsec":                  "IPsecConnection",
 		"ipsecconnection":        "IPsecConnection",
 		"vrf":                    "VRF",
@@ -694,7 +697,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""

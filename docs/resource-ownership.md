@@ -31,6 +31,7 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `IPv4Route` | Kernel route |
 | `NAT44Rule` | nftables `routerd_nat` table |
 | `WireGuardInterface` / `WireGuardPeer` | WireGuard configuration |
+| `TailscaleNode` | `routerd-tailscale-<name>.service` systemd unit and `tailscale up` arguments |
 | `VRF` | Linux VRF device and routing table |
 | `VXLANTunnel` | VXLAN device |
 | `Package` | apt / dnf / pkg / Nix install state |

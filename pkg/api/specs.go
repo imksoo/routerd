@@ -101,6 +101,7 @@ type SystemdUnitSpec struct {
 	State                    string   `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present,enum=absent"`
 	UnitName                 string   `yaml:"unitName,omitempty" json:"unitName,omitempty"`
 	Description              string   `yaml:"description,omitempty" json:"description,omitempty"`
+	Type                     string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=simple,enum=oneshot"`
 	ExecStart                []string `yaml:"execStart,omitempty" json:"execStart,omitempty"`
 	Environment              []string `yaml:"environment,omitempty" json:"environment,omitempty"`
 	Wants                    []string `yaml:"wants,omitempty" json:"wants,omitempty"`
@@ -123,6 +124,7 @@ type SystemdUnitSpec struct {
 	ProtectHome              string   `yaml:"protectHome,omitempty" json:"protectHome,omitempty" jsonschema:"enum=,enum=true,enum=read-only,enum=tmpfs"`
 	NoNewPrivileges          *bool    `yaml:"noNewPrivileges,omitempty" json:"noNewPrivileges,omitempty"`
 	PrivateTmp               *bool    `yaml:"privateTmp,omitempty" json:"privateTmp,omitempty"`
+	RemainAfterExit          *bool    `yaml:"remainAfterExit,omitempty" json:"remainAfterExit,omitempty"`
 	Enabled                  *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Started                  *bool    `yaml:"started,omitempty" json:"started,omitempty"`
 }
@@ -250,6 +252,23 @@ type WireGuardPeerSpec struct {
 	Endpoint            string   `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
 	PersistentKeepalive int      `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
 	PresharedKey        string   `yaml:"presharedKey,omitempty" json:"presharedKey,omitempty"`
+}
+
+type TailscaleNodeSpec struct {
+	State             string   `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present,enum=absent"`
+	Hostname          string   `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	LoginServer       string   `yaml:"loginServer,omitempty" json:"loginServer,omitempty"`
+	AuthKey           string   `yaml:"authKey,omitempty" json:"authKey,omitempty"`
+	AuthKeyEnv        string   `yaml:"authKeyEnv,omitempty" json:"authKeyEnv,omitempty"`
+	AdvertiseExitNode bool     `yaml:"advertiseExitNode,omitempty" json:"advertiseExitNode,omitempty"`
+	AdvertiseRoutes   []string `yaml:"advertiseRoutes,omitempty" json:"advertiseRoutes,omitempty"`
+	AdvertiseTags     []string `yaml:"advertiseTags,omitempty" json:"advertiseTags,omitempty"`
+	AcceptRoutes      *bool    `yaml:"acceptRoutes,omitempty" json:"acceptRoutes,omitempty"`
+	AcceptDNS         *bool    `yaml:"acceptDNS,omitempty" json:"acceptDNS,omitempty"`
+	SSH               bool     `yaml:"ssh,omitempty" json:"ssh,omitempty"`
+	Operator          string   `yaml:"operator,omitempty" json:"operator,omitempty"`
+	ShieldsUp         *bool    `yaml:"shieldsUp,omitempty" json:"shieldsUp,omitempty"`
+	BinaryPath        string   `yaml:"binaryPath,omitempty" json:"binaryPath,omitempty"`
 }
 
 type IPsecConnectionSpec struct {
@@ -1108,6 +1127,10 @@ func (r Resource) WireGuardInterfaceSpec() (WireGuardInterfaceSpec, error) {
 
 func (r Resource) WireGuardPeerSpec() (WireGuardPeerSpec, error) {
 	return specAs[WireGuardPeerSpec](r)
+}
+
+func (r Resource) TailscaleNodeSpec() (TailscaleNodeSpec, error) {
+	return specAs[TailscaleNodeSpec](r)
 }
 
 func (r Resource) IPsecConnectionSpec() (IPsecConnectionSpec, error) {

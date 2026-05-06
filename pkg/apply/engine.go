@@ -12,6 +12,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/config"
+	"routerd/pkg/render"
 	"routerd/pkg/sysctlprofile"
 )
 
@@ -91,6 +92,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeWireGuardInterface(res, includePlan, &rr)
 		case "WireGuardPeer":
 			e.observeWireGuardPeer(res, aliases, includePlan, &rr)
+		case "TailscaleNode":
+			e.observeTailscaleNode(res, includePlan, &rr)
 		case "IPsecConnection":
 			e.observeIPsecConnection(res, includePlan, &rr)
 		case "VRF":
@@ -702,6 +705,43 @@ func (e *Engine) observeIPsecConnection(res api.Resource, includePlan bool, rr *
 	}
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("render swanctl connection %s for cloud VPN peer %s", res.Metadata.Name, spec.RemoteAddress))
+	}
+}
+
+func (e *Engine) observeTailscaleNode(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.TailscaleNodeSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	unitName := render.TailscaleUnitName(res.Metadata.Name)
+	rr.Observed["unitName"] = unitName
+	rr.Observed["state"] = defaultString(spec.State, "present")
+	if spec.Hostname != "" {
+		rr.Observed["hostname"] = spec.Hostname
+	}
+	rr.Observed["advertiseExitNode"] = fmt.Sprintf("%t", spec.AdvertiseExitNode)
+	rr.Observed["advertiseRoutes"] = strings.Join(spec.AdvertiseRoutes, ",")
+	if defaultString(spec.State, "present") == "absent" {
+		if includePlan {
+			rr.Plan = append(rr.Plan, "remove Tailscale systemd unit "+unitName)
+		}
+		return
+	}
+	if out, err := e.Command("tailscale", "status", "--json"); err == nil && len(bytes.TrimSpace(out)) > 0 {
+		rr.Observed["tailscaleStatus"] = "available"
+	} else if includePlan {
+		rr.Warnings = append(rr.Warnings, "tailscale is required to observe Tailscale runtime status")
+	}
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure Tailscale node %s via %s", res.Metadata.Name, unitName))
+		if spec.AdvertiseExitNode {
+			rr.Plan = append(rr.Plan, "advertise Tailscale exit node capability")
+		}
+		if len(spec.AdvertiseRoutes) > 0 {
+			rr.Plan = append(rr.Plan, "advertise Tailscale subnet routes "+strings.Join(spec.AdvertiseRoutes, ","))
+		}
 	}
 }
 

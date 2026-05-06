@@ -65,6 +65,7 @@ spec:
 | `PPPoESession` | `routerd-pppoe-client` が管理する PPPoE セッションです。 |
 | `WireGuardInterface` | WireGuard インターフェースを表します。 |
 | `WireGuardPeer` | WireGuard の相手を表します。 |
+| `TailscaleNode` | Tailscale ノードを設定します。Exit node と subnet router の広告を管理対象 systemd ユニットで行います。 |
 | `IPsecConnection` | strongSwan の cloud VPN 向け接続定義を表します。 |
 | `VRF` | Linux VRF デバイスと経路表を表します。 |
 | `VXLANTunnel` | VXLAN トンネルを表します。 |

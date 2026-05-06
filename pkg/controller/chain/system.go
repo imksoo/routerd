@@ -225,6 +225,63 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	if features.HasSystemd {
 		explicitUnits := systemdUnitNames(c.Router)
 		for _, resource := range c.Router.Spec.Resources {
+			if resource.Kind != "TailscaleNode" {
+				continue
+			}
+			spec, err := resource.TailscaleNodeSpec()
+			if err != nil {
+				return err
+			}
+			unit := render.TailscaleSystemdSpec(resource.Metadata.Name, spec)
+			unitName := firstNonEmpty(unit.UnitName, render.TailscaleUnitName(resource.Metadata.Name))
+			if explicitUnits[unitName] {
+				continue
+			}
+			path := filepath.Join(c.SystemdSystemDir, unitName)
+			changed, err := c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, unit, command)
+			if err != nil {
+				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", resource.Metadata.Name, map[string]any{
+					"phase":     "Error",
+					"reason":    "ApplyFailed",
+					"unitName":  unitName,
+					"path":      path,
+					"error":     err.Error(),
+					"dryRun":    c.DryRun,
+					"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				}); saveErr != nil {
+					return saveErr
+				}
+				return err
+			}
+			phase := "Applied"
+			if c.DryRun && changed {
+				phase = "Rendered"
+			}
+			if firstNonEmpty(spec.State, "present") == "absent" {
+				phase = "Removed"
+			}
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", resource.Metadata.Name, map[string]any{
+				"phase":             phase,
+				"unitName":          unitName,
+				"path":              path,
+				"changed":           changed,
+				"dryRun":            c.DryRun,
+				"advertiseExitNode": spec.AdvertiseExitNode,
+				"advertiseRoutes":   strings.Join(spec.AdvertiseRoutes, ","),
+				"updatedAt":         time.Now().UTC().Format(time.RFC3339Nano),
+			}); err != nil {
+				return err
+			}
+			if changed && !c.DryRun && c.Bus != nil {
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.tailscale.node.applied", daemonapi.SeverityInfo)
+				event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode", Name: resource.Metadata.Name}
+				event.Attributes = map[string]string{"unitName": unitName, "advertiseRoutes": strings.Join(spec.AdvertiseRoutes, ","), "advertiseExitNode": fmt.Sprint(spec.AdvertiseExitNode)}
+				if err := c.Bus.Publish(ctx, event); err != nil {
+					return err
+				}
+			}
+		}
+		for _, resource := range c.Router.Spec.Resources {
 			if resource.Kind != "HealthCheck" {
 				continue
 			}

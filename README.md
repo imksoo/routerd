@@ -40,8 +40,8 @@ system, but observed like a service.
 
 Implemented resource areas include:
 
-- interface aliases, links, bridges, VRF, VXLAN, WireGuard, and cloud-oriented
-  IPsec groundwork
+- interface aliases, links, bridges, VRF, VXLAN, WireGuard, Tailscale exit
+  node / subnet router setup, and cloud-oriented IPsec groundwork
 - WAN acquisition through DHCPv6 prefix delegation, DHCPv6 information request,
   DHCPv4 leases, PPPoE sessions, and DS-Lite tunnels
 - LAN service through managed dnsmasq: DHCPv4 scopes and reservations,
@@ -76,6 +76,8 @@ The production-style examples show how the pieces fit together:
 - `examples/router-lab.yaml`: smaller Linux lab configuration.
 - `examples/nixos-edge.yaml`: NixOS-oriented rendering path.
 - `examples/freebsd-edge.yaml`: FreeBSD service-manager and package groundwork.
+- `examples/tailscale-exit-subnet.yaml`: Tailscale exit-node and subnet-router
+  advertisement through a managed systemd unit.
 
 Static DHCPv4 reservations are declared as resources:
 

@@ -32,6 +32,7 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `IPv4Route` | カーネル経路 |
 | `NAT44Rule` | nftables `routerd_nat` テーブル |
 | `WireGuardInterface` / `WireGuardPeer` | WireGuard 設定 |
+| `TailscaleNode` | `routerd-tailscale-<name>.service` systemd ユニットと `tailscale up` 引数 |
 | `VRF` | Linux VRF デバイスと経路表 |
 | `VXLANTunnel` | VXLAN デバイス |
 | `Package` | apt、dnf、pkg、Nix のパッケージ導入状態 |

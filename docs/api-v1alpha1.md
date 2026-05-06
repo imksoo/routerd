@@ -73,6 +73,7 @@ spec:
 | `PPPoESession` | Represents a `routerd-pppoe-client` session. |
 | `WireGuardInterface` | Represents a WireGuard interface. |
 | `WireGuardPeer` | Represents a WireGuard peer. |
+| `TailscaleNode` | Configures a local Tailscale node for exit-node and subnet-router advertisement through a managed systemd unit. |
 | `IPsecConnection` | Defines a cloud VPN oriented strongSwan connection. |
 | `VRF` | Represents a Linux VRF device and route table. |
 | `VXLANTunnel` | Represents a VXLAN tunnel. |

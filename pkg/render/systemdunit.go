@@ -37,6 +37,10 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	if restartSec == "" {
 		restartSec = "5s"
 	}
+	serviceType := spec.Type
+	if serviceType == "" {
+		serviceType = "simple"
+	}
 	protectSystem := spec.ProtectSystem
 	if protectSystem == "" {
 		protectSystem = "no"
@@ -59,7 +63,7 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 		b.WriteString("Wants=" + strings.Join(wants, " ") + "\n")
 	}
 	b.WriteString("\n[Service]\n")
-	b.WriteString("Type=simple\n")
+	b.WriteString("Type=" + serviceType + "\n")
 	if len(spec.Environment) > 0 {
 		for _, env := range spec.Environment {
 			b.WriteString("Environment=" + strconv.Quote(env) + "\n")
@@ -86,6 +90,9 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	writeSpaceList(&b, "ReadWritePaths", spec.ReadWritePaths)
 	b.WriteString("NoNewPrivileges=" + yesNo(noNewPrivileges) + "\n")
 	b.WriteString("PrivateTmp=" + yesNo(privateTmp) + "\n")
+	if spec.RemainAfterExit != nil {
+		b.WriteString("RemainAfterExit=" + yesNo(*spec.RemainAfterExit) + "\n")
+	}
 	b.WriteString("ProtectHome=" + protectHome + "\n")
 	b.WriteString("ProtectSystem=" + protectSystem + "\n")
 	writeSpaceList(&b, "RestrictAddressFamilies", spec.RestrictAddressFamilies)

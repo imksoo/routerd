@@ -19,13 +19,13 @@ routerd uses the following OS surfaces on Linux:
 - conntrack for connection observation
 - iproute2 for interfaces and routes
 - pppd / rp-pppoe for PPPoE
-- WireGuard, strongSwan, radvd
+- WireGuard, Tailscale, strongSwan, radvd
 
 Even on Ubuntu, routerd does not assume packages are pre-installed. Declare dependencies with the `Package` resource. The reference list:
 
 | Category | Packages |
 | --- | --- |
-| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `ppp`, `wireguard-tools`, `strongswan-swanctl`, `radvd` |
+| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `ppp`, `wireguard-tools`, `tailscale`, `strongswan-swanctl`, `radvd` |
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS control | `procps`, `systemd`, `kmod` |
 
@@ -42,7 +42,7 @@ Implemented:
 - automatic `nixos-rebuild test` from `routerd apply --dry-run`
 - automatic `nixos-rebuild switch` from `routerd apply`
 - DHCPv6-PD reaches `Bound`
-- WireGuard and VXLAN coverage
+- WireGuard, Tailscale, and VXLAN coverage
 - Partial VRF coverage
 
 Not yet covered:
@@ -54,7 +54,7 @@ On NixOS, populate `systemd.services.routerd.path` with the commands routerd nee
 
 | Category | Packages |
 | --- | --- |
-| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `ppp`, `wireguard-tools`, `strongswan`, `radvd` |
+| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `ppp`, `wireguard-tools`, `tailscale`, `strongswan`, `radvd` |
 | Diagnostics | `bind`, `iputils`, `tcpdump`, `traceroute`, `nettools` |
 | OS control | `procps`, `systemd`, `kmod` |
 

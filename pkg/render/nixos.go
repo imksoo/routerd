@@ -67,6 +67,7 @@ type nixOSDHCPv6Client struct {
 type nixOSSystemdUnit struct {
 	Name string
 	Spec api.SystemdUnitSpec
+	Path []string
 }
 
 func NixOSModule(router *api.Router) ([]byte, error) {
@@ -180,6 +181,9 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		buf.WriteString("  services.resolved.extraConfig = ''\n")
 		buf.WriteString("    DNSStubListener=no\n")
 		buf.WriteString("  '';\n")
+	}
+	if nixOSTailscaleEnabled(router) {
+		buf.WriteString("  services.tailscale.enable = true;\n")
 	}
 	if len(sysctls) > 0 {
 		buf.WriteString("  boot.kernel.sysctl = {\n")
@@ -861,6 +865,23 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 	}
 	aliases := linkAliases(router)
 	for _, res := range router.Spec.Resources {
+		if res.Kind != "TailscaleNode" {
+			continue
+		}
+		spec, err := res.TailscaleNodeSpec()
+		if err != nil {
+			return nil, err
+		}
+		if firstNonEmpty(spec.State, "present") != "absent" {
+			spec.BinaryPath = firstNonEmpty(spec.BinaryPath, "tailscale")
+		}
+		unit := renderTailscaleNixOSUnit(res.Metadata.Name, spec)
+		if explicit[unit.Name] {
+			continue
+		}
+		out = append(out, unit)
+	}
+	for _, res := range router.Spec.Resources {
 		if res.Kind != "HealthCheck" {
 			continue
 		}
@@ -950,6 +971,14 @@ func firewallLoggerSystemdSpec(spec api.FirewallLogSpec) api.SystemdUnitSpec {
 	}
 }
 
+func renderTailscaleNixOSUnit(name string, spec api.TailscaleNodeSpec) nixOSSystemdUnit {
+	return nixOSSystemdUnit{
+		Name: TailscaleUnitName(name),
+		Spec: TailscaleSystemdSpec(name, spec),
+		Path: []string{"tailscale"},
+	}
+}
+
 func writeNixOSSystemdUnit(buf *bytes.Buffer, unit nixOSSystemdUnit) {
 	spec := unit.Spec
 	name := nixOSSystemdServiceName(unit.Name)
@@ -966,6 +995,13 @@ func writeNixOSSystemdUnit(buf *bytes.Buffer, unit nixOSSystemdUnit) {
 	if len(spec.Wants) > 0 {
 		buf.WriteString("    wants = " + nixStringList(spec.Wants) + ";\n")
 	}
+	if len(unit.Path) > 0 {
+		buf.WriteString("    path = with pkgs; [\n")
+		for _, pkg := range unit.Path {
+			buf.WriteString("      " + pkg + "\n")
+		}
+		buf.WriteString("    ];\n")
+	}
 	buf.WriteString("    serviceConfig = {\n")
 	if len(spec.ExecStart) > 0 {
 		buf.WriteString("      ExecStart = lib.concatStringsSep \" \" [\n")
@@ -976,6 +1012,7 @@ func writeNixOSSystemdUnit(buf *bytes.Buffer, unit nixOSSystemdUnit) {
 	}
 	writeNixOSSystemdString(buf, "Restart", spec.Restart)
 	writeNixOSSystemdString(buf, "RestartSec", spec.RestartSec)
+	writeNixOSSystemdString(buf, "Type", spec.Type)
 	writeNixOSSystemdString(buf, "User", spec.User)
 	writeNixOSSystemdString(buf, "Group", spec.Group)
 	writeNixOSSystemdString(buf, "WorkingDirectory", spec.WorkingDirectory)
@@ -995,6 +1032,9 @@ func writeNixOSSystemdUnit(buf *bytes.Buffer, unit nixOSSystemdUnit) {
 	}
 	if spec.PrivateTmp != nil {
 		buf.WriteString("      PrivateTmp = " + nixBool(*spec.PrivateTmp) + ";\n")
+	}
+	if spec.RemainAfterExit != nil {
+		buf.WriteString("      RemainAfterExit = " + nixBool(*spec.RemainAfterExit) + ";\n")
 	}
 	buf.WriteString("    };\n")
 	buf.WriteString("  };\n")
@@ -1046,6 +1086,19 @@ func nixOSResolvedStubDisabled(router *api.Router) bool {
 			continue
 		}
 		if defaultString(spec.State, "present") != "absent" && spec.SystemdResolved.DisableDNSStubListener {
+			return true
+		}
+	}
+	return false
+}
+
+func nixOSTailscaleEnabled(router *api.Router) bool {
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "TailscaleNode" {
+			continue
+		}
+		spec, err := res.TailscaleNodeSpec()
+		if err == nil && firstNonEmpty(spec.State, "present") != "absent" {
 			return true
 		}
 	}
@@ -1116,6 +1169,15 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 		case "PPPoEInterface":
 			service["ppp"] = true
 			debug["ppp"] = true
+		case "TailscaleNode":
+			spec, err := res.TailscaleNodeSpec()
+			if err != nil {
+				return nil, nil, err
+			}
+			if firstNonEmpty(spec.State, "present") != "absent" {
+				service["tailscale"] = true
+				debug["tailscale"] = true
+			}
 		}
 	}
 	for _, pkg := range host.AdditionalServicePath {

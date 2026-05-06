@@ -777,6 +777,9 @@
                         },
                         "type": "array"
                       },
+                      "remainAfterExit": {
+                        "type": "boolean"
+                      },
                       "restart": {
                         "enum": [
                           "",
@@ -826,6 +829,14 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "type": {
+                        "enum": [
+                          "",
+                          "simple",
+                          "oneshot"
+                        ],
+                        "type": "string"
                       },
                       "unitName": {
                         "type": "string"
@@ -1615,6 +1626,102 @@
                       "publicKey",
                       "allowedIPs"
                     ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "TailscaleNode",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "acceptDNS": {
+                        "type": "boolean"
+                      },
+                      "acceptRoutes": {
+                        "type": "boolean"
+                      },
+                      "advertiseExitNode": {
+                        "type": "boolean"
+                      },
+                      "advertiseRoutes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "advertiseTags": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "authKey": {
+                        "type": "string"
+                      },
+                      "authKeyEnv": {
+                        "type": "string"
+                      },
+                      "binaryPath": {
+                        "type": "string"
+                      },
+                      "hostname": {
+                        "type": "string"
+                      },
+                      "loginServer": {
+                        "type": "string"
+                      },
+                      "operator": {
+                        "type": "string"
+                      },
+                      "shieldsUp": {
+                        "type": "boolean"
+                      },
+                      "ssh": {
+                        "type": "boolean"
+                      },
+                      "state": {
+                        "enum": [
+                          "",
+                          "present",
+                          "absent"
+                        ],
+                        "type": "string"
+                      }
+                    },
                     "type": "object"
                   },
                   "status": {

@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: tailscale-edge
+
+spec:
+  resources:
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Package
+      metadata:
+        name: tailscale-runtime
+      spec:
+        packages:
+          - os: ubuntu
+            manager: apt
+            names:
+              - tailscale
+          - os: nixos
+            manager: nix
+            names:
+              - tailscale
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: TailscaleNode
+      metadata:
+        name: home
+      spec:
+        hostname: edge-router
+        advertiseExitNode: true
+        advertiseRoutes:
+          - 172.18.0.0/16
+          - 192.168.123.0/24
+        acceptDNS: false
+        # Omit authKey/authKeyEnv when the node is already logged in.
+        # authKeyEnv: TS_AUTHKEY

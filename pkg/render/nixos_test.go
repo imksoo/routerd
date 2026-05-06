@@ -205,6 +205,52 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 	}
 }
 
+func TestNixOSModuleRendersTailscaleNode(t *testing.T) {
+	acceptDNS := false
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NixOSHost"},
+				Metadata: api.ObjectMeta{Name: "router02"},
+				Spec:     api.NixOSHostSpec{Hostname: "router02", StateVersion: "25.11"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"},
+				Metadata: api.ObjectMeta{Name: "home"},
+				Spec: api.TailscaleNodeSpec{
+					Hostname:          "router02",
+					AdvertiseExitNode: true,
+					AdvertiseRoutes:   []string{"172.18.0.0/16"},
+					AcceptDNS:         &acceptDNS,
+				},
+			},
+		}},
+	}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatalf("render NixOS module: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`services.tailscale.enable = true;`,
+		`systemd.services."routerd-tailscale-home" = {`,
+		`path = with pkgs; [`,
+		`tailscale`,
+		`Type = "oneshot";`,
+		`RemainAfterExit = true;`,
+		`"tailscale"`,
+		`"--advertise-exit-node"`,
+		`"--advertise-routes=172.18.0.0/16"`,
+		`"--accept-dns=false"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("NixOS module missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 	enabled := true
 	router := &api.Router{

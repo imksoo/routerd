@@ -798,6 +798,11 @@ func validateResource(res api.Resource) error {
 		if defaultString(spec.State, "present") == "present" && len(spec.ExecStart) == 0 {
 			return fmt.Errorf("%s spec.execStart is required when state is present", res.ID())
 		}
+		switch spec.Type {
+		case "", "simple", "oneshot":
+		default:
+			return fmt.Errorf("%s spec.type must be simple or oneshot", res.ID())
+		}
 		for i, arg := range spec.ExecStart {
 			if strings.TrimSpace(arg) == "" {
 				return fmt.Errorf("%s spec.execStart[%d] must not be empty", res.ID(), i)
@@ -1147,6 +1152,46 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.PersistentKeepalive < 0 || spec.PersistentKeepalive > 65535 {
 			return fmt.Errorf("%s spec.persistentKeepalive must be within 0-65535", res.ID())
+		}
+	case "TailscaleNode":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.TailscaleNodeSpec()
+		if err != nil {
+			return err
+		}
+		switch defaultString(spec.State, "present") {
+		case "present", "absent":
+		default:
+			return fmt.Errorf("%s spec.state must be present or absent", res.ID())
+		}
+		if spec.AuthKey != "" && spec.AuthKeyEnv != "" {
+			return fmt.Errorf("%s spec.authKey and spec.authKeyEnv are mutually exclusive", res.ID())
+		}
+		for field, value := range map[string]string{
+			"hostname":    spec.Hostname,
+			"loginServer": spec.LoginServer,
+			"authKeyEnv":  spec.AuthKeyEnv,
+			"operator":    spec.Operator,
+			"binaryPath":  spec.BinaryPath,
+		} {
+			if strings.ContainsAny(value, "\x00\n\r") {
+				return fmt.Errorf("%s spec.%s contains invalid characters", res.ID(), field)
+			}
+		}
+		if spec.AuthKeyEnv != "" && !validEnvironmentName(spec.AuthKeyEnv) {
+			return fmt.Errorf("%s spec.authKeyEnv must be an environment variable name", res.ID())
+		}
+		for i, route := range spec.AdvertiseRoutes {
+			if _, err := netip.ParsePrefix(route); err != nil {
+				return fmt.Errorf("%s spec.advertiseRoutes[%d] must be an IP prefix", res.ID(), i)
+			}
+		}
+		for i, tag := range spec.AdvertiseTags {
+			if strings.TrimSpace(tag) == "" || strings.ContainsAny(tag, " \t\n\r\x00") {
+				return fmt.Errorf("%s spec.advertiseTags[%d] must be a Tailscale tag", res.ID(), i)
+			}
 		}
 	case "IPsecConnection":
 		if res.APIVersion != api.NetAPIVersion {
@@ -3042,6 +3087,22 @@ func parseRetentionDuration(value string) (time.Duration, error) {
 		return time.Duration(days) * 24 * time.Hour, nil
 	}
 	return time.ParseDuration(value)
+}
+
+func validEnvironmentName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i, r := range value {
+		if r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r == '_' {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func stringInSlice(value string, values []string) bool {

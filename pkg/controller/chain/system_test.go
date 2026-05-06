@@ -206,6 +206,51 @@ func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitControllerSynthesizesTailscaleUnits(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.TailscaleNodeSpec{
+			Hostname:          "homert02",
+			AdvertiseExitNode: true,
+			AdvertiseRoutes:   []string{"172.18.0.0/16"},
+		}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            store,
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	unitPath := filepath.Join(dir, "routerd-tailscale-home.service")
+	data, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatalf("read Tailscale unit: %v", err)
+	}
+	gotUnit := string(data)
+	for _, want := range []string{"Type=oneshot", "/usr/bin/tailscale up", "--advertise-exit-node", "--advertise-routes=172.18.0.0/16", "RemainAfterExit=yes"} {
+		if !strings.Contains(gotUnit, want) {
+			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
+		}
+	}
+	gotCommands := strings.Join(commands, "\n")
+	if !strings.Contains(gotCommands, "systemctl restart routerd-tailscale-home.service") {
+		t.Fatalf("commands missing Tailscale restart:\n%s", gotCommands)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "TailscaleNode", "home")
+	if status["phase"] != "Applied" || status["advertiseExitNode"] != true {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func systemBoolPtr(v bool) *bool {
 	return &v
 }

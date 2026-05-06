@@ -34,6 +34,7 @@ routerd はホストの OS、利用可能なコマンド、ネットワーク機
 | `conntrack` | IPv4/IPv6 コネクション観測 |
 | `pppd`, `ppp` | PPPoE |
 | `wg` | WireGuard |
+| `tailscale` | Tailscale の exit node と subnet router の広告 |
 | `swanctl` | IPsec |
 | `radvd` | radvd 経由の RA (任意) |
 | `sysctl` | カーネル設定 |
