@@ -39,18 +39,18 @@ Implemented:
 
 - systemd unit generation for `routerd-dhcpv6-client`
 - NixOS module generation for `Package`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`
-- `nixos-rebuild test` / `nixos-rebuild switch` integration
+- automatic `nixos-rebuild test` from `routerd apply --dry-run`
+- automatic `nixos-rebuild switch` from `routerd apply`
 - DHCPv6-PD reaches `Bound`
 - WireGuard and VXLAN coverage
 - Partial VRF coverage
 
 Not yet covered:
 
-- Materialising every NixOS module to a running host (some modules are generated but not yet applied automatically)
 - nftables, dnsmasq, DNS resolver, HealthCheck and other long-running daemons end-to-end
-- Integration with NixOS `generation` rollback semantics
+- Full rollback orchestration across routerd state and NixOS generations
 
-On NixOS, populate `systemd.services.routerd.path` with the commands routerd needs. When `Package` resources have `os: nixos`, routerd does **not** install packages at runtime. `routerd render nixos` produces the `environment.systemPackages` list instead.
+On NixOS, populate `systemd.services.routerd.path` with the commands routerd needs. When `Package` resources have `os: nixos`, routerd does **not** install packages imperatively at runtime. It writes them to `environment.systemPackages` in `/etc/nixos/routerd-generated.nix`, then lets `nixos-rebuild` activate the system profile.
 
 | Category | Packages |
 | --- | --- |

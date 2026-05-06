@@ -27,6 +27,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
+	nixosapply "routerd/pkg/apply/nixos"
 	"routerd/pkg/bus"
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
@@ -930,10 +931,29 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			return nil
 		}
 
+		var nixOSChangedFiles []string
+		if isNixOSHost() {
+			if err := recordStageError("nixos-rebuild", func() error {
+				nixResult, err := nixosapply.Apply(context.Background(), effectiveRouter, nixosapply.Options{Mode: "switch"})
+				nixOSChangedFiles = append(nixOSChangedFiles, nixResult.ChangedFiles...)
+				if err == nil {
+					logger.Emit(eventlog.LevelInfo, "apply", "applied NixOS module", map[string]string{
+						"mode":             nixResult.Mode,
+						"module":           nixResult.ModulePath,
+						"generationBefore": nixResult.GenerationBefore,
+						"generationAfter":  nixResult.GenerationAfter,
+					})
+				}
+				return err
+			}()); err != nil {
+				return nil, err
+			}
+		}
+
 		var networkChangedFiles []string
 		if err := recordStageError("network", func() error {
 			if isNixOSHost() {
-				logger.Emit(eventlog.LevelInfo, "apply", "skipping live network apply on NixOS; persist network state via 'routerd render nixos' + 'nixos-rebuild switch'", map[string]string{"stage": "network"})
+				logger.Emit(eventlog.LevelInfo, "apply", "skipping direct network apply on NixOS; nixos-rebuild owns activation", map[string]string{"stage": "network"})
 				return nil
 			}
 			netplanData, err := render.Netplan(effectiveRouter)
@@ -1090,7 +1110,8 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		} else {
 			result.Warnings = append(result.Warnings, "skipped ledger orphan cleanup and ownership recording because apply completed with stage errors")
 		}
-		changedFiles := append(networkChangedFiles, dnsmasqChangedFiles...)
+		changedFiles := append(nixOSChangedFiles, networkChangedFiles...)
+		changedFiles = append(changedFiles, dnsmasqChangedFiles...)
 		changedFiles = append(changedFiles, nftablesChangedFiles...)
 		changedFiles = append(changedFiles, pppoeChangedFiles...)
 		changedFiles = append(changedFiles, timesyncdChangedFiles...)
@@ -1195,6 +1216,22 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	}
 	if opts.AnnounceDryRunToCLI {
 		fmt.Fprintf(stdout, "dry-run apply plan for %s\n", opts.ConfigPath)
+	}
+	if isNixOSHost() {
+		nixResult, err := nixosapply.Apply(context.Background(), effectiveRouter, nixosapply.Options{Mode: "test"})
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range nixResult.ChangedFiles {
+			fmt.Fprintf(stdout, "wrote %s\n", path)
+		}
+		fmt.Fprintln(stdout, "tested NixOS module with nixos-rebuild test")
+		logger.Emit(eventlog.LevelInfo, "apply", "tested NixOS module", map[string]string{
+			"mode":             nixResult.Mode,
+			"module":           nixResult.ModulePath,
+			"generationBefore": nixResult.GenerationBefore,
+			"generationAfter":  nixResult.GenerationAfter,
+		})
 	}
 	logger.Emit(eventlog.LevelInfo, "apply", "routerd dry-run completed", map[string]string{
 		"phase":     result.Phase,
