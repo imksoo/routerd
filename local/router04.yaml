@@ -222,6 +222,53 @@ spec:
         announce: true
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6RouterAdvertisement
+      metadata:
+        name: lan-ra
+      spec:
+        interface: lan
+        prefixFrom:
+          resource: IPv6DelegatedAddress/lan-ipv6-pd-address
+          field: address
+        rdnssFrom:
+          - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
+            field: address
+            optional: true
+        dnssl:
+          - router04.lab.local
+        mFlag: true
+        oFlag: true
+        mtu: 1500
+        prfPreference: high
+        preferredLifetime: "3600"
+        validLifetime: "7200"
+        dependsOn:
+          - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
+            phase: Healthy
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6Server
+      metadata:
+        name: lan-dhcpv6
+      spec:
+        interface: lan
+        mode: both
+        addressPool:
+          start: "::100"
+          end: "::1ff"
+          leaseTime: 12h
+        dnsServerFrom:
+          - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
+            field: address
+            optional: true
+        domainSearch:
+          - router04.lab.local
+        leaseTime: 12h
+        dependsOn:
+          - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
+            phase: Healthy
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: Bridge
       metadata:
         name: br-vxlan-test

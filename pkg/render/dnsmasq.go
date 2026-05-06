@@ -148,7 +148,9 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 	if len(v6Scopes) > 0 {
 		buf.WriteString("enable-ra\n")
 	}
-	writeDirectDnsmasqLANService(&buf, router, aliases)
+	if err := writeDirectDnsmasqLANService(&buf, router, aliases, staticIPv4, delegatedIPv6, runtime); err != nil {
+		return nil, warnings, err
+	}
 
 	for _, res := range v4Scopes {
 		spec, err := res.DHCPv4ScopeSpec()
@@ -302,7 +304,7 @@ func directDnsmasqIfnames(router *api.Router, aliases map[string]string) []strin
 	return uniqueStrings(ifnames)
 }
 
-func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases map[string]string) {
+func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases map[string]string, staticIPv4 map[string]netip.Prefix, delegatedIPv6 map[string]delegatedIPv6Address, runtime DnsmasqRuntime) error {
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "DHCPv4Server" {
 			continue
@@ -323,11 +325,19 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		if spec.Gateway != "" {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:router,%s\n", tag, spec.Gateway))
 		}
-		if len(spec.DNSServers) > 0 {
-			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:dns-server,%s\n", tag, strings.Join(spec.DNSServers, ",")))
+		dnsServers, err := dnsmasqExpandIPv4Servers(append([]string(nil), spec.DNSServers...), spec.DNSServerFrom, aliases, staticIPv4, delegatedIPv6, runtime)
+		if err != nil {
+			return err
 		}
-		if len(spec.NTPServers) > 0 {
-			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:ntp-server,%s\n", tag, strings.Join(spec.NTPServers, ",")))
+		if len(dnsServers) > 0 {
+			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:dns-server,%s\n", tag, strings.Join(dnsServers, ",")))
+		}
+		ntpServers, err := dnsmasqExpandIPv4Servers(append([]string(nil), spec.NTPServers...), spec.NTPServerFrom, aliases, staticIPv4, delegatedIPv6, runtime)
+		if err != nil {
+			return err
+		}
+		if len(ntpServers) > 0 {
+			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:ntp-server,%s\n", tag, strings.Join(ntpServers, ",")))
 		}
 		if spec.Domain != "" {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s\n", tag, spec.Domain))
@@ -372,13 +382,21 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		default:
 			buf.WriteString(fmt.Sprintf("dhcp-range=set:%s,::,constructor:%s,ra-stateless,64,%s\n", tag, ifname, leaseTime))
 		}
-		for _, server := range spec.DNSServers {
+		dnsServers, err := dnsmasqExpandIPv6Servers(append([]string(nil), spec.DNSServers...), spec.DNSServerFrom, aliases, delegatedIPv6, runtime)
+		if err != nil {
+			return err
+		}
+		for _, server := range dnsServers {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server,[%s]\n", tag, strings.Trim(server, "[]")))
 		}
 		if len(spec.DomainSearch) > 0 {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:domain-search,%s\n", tag, strings.Join(spec.DomainSearch, ",")))
 		}
-		for _, server := range spec.SNTPServers {
+		sntpServers, err := dnsmasqExpandIPv6Servers(append([]string(nil), spec.SNTPServers...), spec.SNTPServerFrom, aliases, delegatedIPv6, runtime)
+		if err != nil {
+			return err
+		}
+		for _, server := range sntpServers {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:sntp-server,[%s]\n", tag, strings.Trim(server, "[]")))
 		}
 	}
@@ -412,7 +430,11 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		if len(params) > 0 {
 			buf.WriteString(fmt.Sprintf("ra-param=%s,%s\n", ifname, strings.Join(params, ",")))
 		}
-		for _, server := range spec.RDNSS {
+		rdnss, err := dnsmasqExpandIPv6Servers(append([]string(nil), spec.RDNSS...), spec.RDNSSFrom, aliases, delegatedIPv6, runtime)
+		if err != nil {
+			return err
+		}
+		for _, server := range rdnss {
 			buf.WriteString(fmt.Sprintf("dhcp-option=option6:dns-server,[%s]\n", strings.Trim(server, "[]")))
 		}
 		if len(spec.DNSSL) > 0 {
@@ -430,6 +452,93 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 				}
 			}
 		}
+	}
+	return nil
+}
+
+func dnsmasqExpandIPv4Servers(base []string, sources []api.StatusValueSourceSpec, aliases map[string]string, staticIPv4 map[string]netip.Prefix, delegatedIPv6 map[string]delegatedIPv6Address, runtime DnsmasqRuntime) ([]string, error) {
+	values, err := dnsmasqExpandStatusSources(sources, aliases, staticIPv4, delegatedIPv6, runtime)
+	if err != nil {
+		return nil, err
+	}
+	return filterIPv4Strings(append(base, values...)), nil
+}
+
+func dnsmasqExpandIPv6Servers(base []string, sources []api.StatusValueSourceSpec, aliases map[string]string, delegatedIPv6 map[string]delegatedIPv6Address, runtime DnsmasqRuntime) ([]string, error) {
+	values, err := dnsmasqExpandStatusSources(sources, aliases, nil, delegatedIPv6, runtime)
+	if err != nil {
+		return nil, err
+	}
+	return filterGlobalIPv6Strings(append(base, values...)), nil
+}
+
+func dnsmasqExpandStatusSources(sources []api.StatusValueSourceSpec, aliases map[string]string, staticIPv4 map[string]netip.Prefix, delegatedIPv6 map[string]delegatedIPv6Address, runtime DnsmasqRuntime) ([]string, error) {
+	var out []string
+	for _, source := range sources {
+		values, err := dnsmasqResolveStatusSource(source, aliases, staticIPv4, delegatedIPv6, runtime)
+		if err != nil {
+			if source.Optional {
+				continue
+			}
+			return nil, err
+		}
+		out = append(out, values...)
+	}
+	return uniqueStrings(out), nil
+}
+
+func dnsmasqResolveStatusSource(source api.StatusValueSourceSpec, aliases map[string]string, staticIPv4 map[string]netip.Prefix, delegatedIPv6 map[string]delegatedIPv6Address, runtime DnsmasqRuntime) ([]string, error) {
+	kind, name, ok := strings.Cut(source.Resource, "/")
+	if !ok {
+		return nil, fmt.Errorf("unsupported status source %q", source.Resource)
+	}
+	switch kind {
+	case "IPv4StaticAddress":
+		prefix := staticIPv4[name]
+		if !prefix.IsValid() {
+			return nil, fmt.Errorf("IPv4StaticAddress/%s is not available", name)
+		}
+		switch defaultString(source.Field, "address") {
+		case "address", "ipv4", "ipv4Address":
+			return []string{prefix.Addr().String()}, nil
+		default:
+			return nil, fmt.Errorf("unsupported IPv4StaticAddress field %q", source.Field)
+		}
+	case "IPv6DelegatedAddress":
+		delegated := delegatedIPv6[name]
+		if delegated.IfName == "" {
+			return nil, fmt.Errorf("IPv6DelegatedAddress/%s is not available", name)
+		}
+		switch defaultString(source.Field, "address") {
+		case "address", "ipv6", "ipv6Address":
+			address, err := deriveIPv6Address(runtime.IPv6PrefixesByInterface[delegated.IfName], delegated.AddressSuffix)
+			if err == nil {
+				return []string{address}, nil
+			}
+			for _, candidate := range filterGlobalIPv6Strings(runtime.IPv6AddressesByInterface[delegated.IfName]) {
+				if ipv6AddressMatchesSuffix(candidate, delegated.AddressSuffix) {
+					return []string{candidate}, nil
+				}
+			}
+			return nil, fmt.Errorf("derive IPv6DelegatedAddress/%s: %w", name, err)
+		default:
+			return nil, fmt.Errorf("unsupported IPv6DelegatedAddress field %q", source.Field)
+		}
+	case "Interface":
+		ifname := aliases[name]
+		if ifname == "" {
+			return nil, fmt.Errorf("Interface/%s is not available", name)
+		}
+		switch defaultString(source.Field, "ipv4Addresses") {
+		case "ipv4Addresses":
+			return filterIPv4Strings(runtime.DHCPv4DNSServersByInterface[ifname]), nil
+		case "ipv6Addresses":
+			return filterGlobalIPv6Strings(runtime.IPv6AddressesByInterface[ifname]), nil
+		default:
+			return nil, fmt.Errorf("unsupported Interface field %q", source.Field)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported status source kind %q", kind)
 	}
 }
 
@@ -603,6 +712,7 @@ func dnsmasqInputs(router *api.Router) (map[string]string, map[string]netip.Pref
 				return nil, nil, nil, nil, err
 			}
 			staticIPv4[spec.Interface] = prefix
+			staticIPv4[res.Metadata.Name] = prefix
 		case "IPv6DelegatedAddress":
 			spec, err := res.IPv6DelegatedAddressSpec()
 			if err != nil {

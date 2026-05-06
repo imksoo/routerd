@@ -201,6 +201,73 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigResolvesDirectIPv6SourcesFromDelegatedAddress(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{
+				PrefixDelegation: "wan-pd",
+				Interface:        "lan",
+				SubnetID:         "0",
+				AddressSuffix:    "::4",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv6"}, Spec: api.DHCPv6ServerSpec{
+				Interface:     "lan",
+				Mode:          "both",
+				AddressPool:   api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "12h"},
+				DNSServerFrom: []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan-ipv6", Field: "address"}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{
+				Interface: "lan",
+				RDNSSFrom: []api.StatusValueSourceSpec{{
+					Resource: "IPv6DelegatedAddress/lan-ipv6",
+					Field:    "address",
+				}},
+			}},
+		}},
+	}
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{IPv6PrefixesByInterface: map[string][]string{"vtnet1": {"2001:db8:10::/64"}}})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"dhcp-range=set:lan-dhcpv6,::100,::1ff,constructor:vtnet1,slaac,64,12h",
+		"dhcp-option=tag:lan-dhcpv6,option6:dns-server,[2001:db8:10::4]",
+		"dhcp-option=option6:dns-server,[2001:db8:10::4]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestDnsmasqConfigResolvesDirectIPv6SourcesFromObservedAddressFallback(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{
+			PrefixDelegation: "wan-pd",
+			Interface:        "lan",
+			SubnetID:         "0",
+			AddressSuffix:    "::4",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{
+			Interface: "lan",
+			RDNSSFrom: []api.StatusValueSourceSpec{{
+				Resource: "IPv6DelegatedAddress/lan-ipv6",
+				Field:    "address",
+			}},
+		}},
+	}}}
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{IPv6AddressesByInterface: map[string][]string{"vtnet1": {"2001:db8:10::4"}}})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	if got, want := string(data), "dhcp-option=option6:dns-server,[2001:db8:10::4]"; !strings.Contains(got, want) {
+		t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
+	}
+}
+
 func TestDnsmasqConfigCanPassThroughDHCPv4DNS(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
