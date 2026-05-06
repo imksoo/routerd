@@ -24,6 +24,7 @@ func currentDefaults() Defaults {
 		PPPoEChapSecretsFile:      "/etc/ppp/chap-secrets",
 		PPPoEPapSecretsFile:       "/etc/ppp/pap-secrets",
 		FreeBSDMPD5ConfigFile:     "/usr/local/etc/mpd5/mpd.conf",
+		FreeBSDPFConfigFile:       "/etc/pf.conf",
 	}
 }
 

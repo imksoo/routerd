@@ -71,15 +71,15 @@ Implemented:
 - `Package` install through `pkg`
 - pf rendering from `FirewallZone`, `FirewallPolicy`, `FirewallRule`
 - pf NAT rendering from `IPv4SourceNAT` and `NAT44Rule`
+- automatic `pfctl -nf` validation and `pfctl -f` application for generated `pf.conf`
 - conntrack-equivalent traffic flows from `pfctl -ss -v`
 - `pflog0` ingestion via `tcpdump` for firewall logs
-- rc.d script generation from `SystemdUnit`
+- rc.d script generation, installation, and `service <name> onestart` activation from `SystemdUnit`
 - Static DS-Lite gif tunnel rendering
 
 Not yet covered:
 
 - Full FreeBSD-idiomatic network configuration generation
-- Automatic apply of generated pf and rc.d artefacts (manual `pfctl -nf` and `service <name> onestart` are still needed)
 - Dynamic DS-Lite from AFTR FQDN or delegated address
 - Vendor-specific pf log format variants
 - DNS resolver, HealthCheck, and DHCP server long-running daemons on FreeBSD
@@ -100,7 +100,7 @@ FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The `Packa
 - `pf.conf`
 - `rc.d-*`
 
-`pf.conf` and `rc.d-*` are the foundation for the upcoming production renderer. Validate them with `pfctl -nf pf.conf` and `service <name> onestart` on a FreeBSD host before pointing real traffic at them.
+`routerd apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, and starts generated rc.d scripts with `service <name> onestart` when they are not already running. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
 
 ## Implementation guideline for OS abstraction
 

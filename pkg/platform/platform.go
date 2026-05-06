@@ -74,6 +74,8 @@ type Defaults struct {
 	// FreeBSDMPD5ConfigFile is the mpd5 configuration file used for
 	// FreeBSD PPPoE sessions.
 	FreeBSDMPD5ConfigFile string
+	// FreeBSDPFConfigFile is the pf.conf path on FreeBSD.
+	FreeBSDPFConfigFile string
 }
 
 // Features describes which host integrations the current platform

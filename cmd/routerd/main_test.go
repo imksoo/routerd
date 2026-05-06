@@ -376,7 +376,7 @@ exit 0
 	store := routerstate.New()
 	store.Set(freebsdSysrcStateKey, "ifconfig_vxlan102,ifconfig_vxlan103,gateway_enable", "test seed")
 
-	_, _, err := applyFreeBSDConfig(router, store, "", "")
+	_, _, err := applyFreeBSDConfig(router, store, "", "", "", "")
 	if err != nil {
 		t.Fatalf("apply FreeBSD config: %v", err)
 	}
@@ -392,6 +392,101 @@ exit 0
 	}
 	if strings.Contains(string(got), "-x gateway_enable") {
 		t.Fatalf("gateway_enable should remain (still in current render): %s", got)
+	}
+}
+
+func TestApplyFreeBSDConfigAppliesPFAndRCDScripts(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	sysrcLog := filepath.Join(dir, "sysrc.log")
+	serviceLog := filepath.Join(dir, "service.log")
+	pfctlLog := filepath.Join(dir, "pfctl.log")
+	writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+case "$1" in
+  -x) exit 0 ;;
+  *) echo "$1: NO"; exit 0 ;;
+esac
+`, sysrcLog))
+	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "-l" ]; then
+  printf 'pf\npflog\nrouterd_healthcheck_internet\n'
+  exit 0
+fi
+if [ "$2" = "status" ]; then
+  exit 1
+fi
+exit 0
+`, serviceLog))
+	writeExecutable(t, filepath.Join(binDir, "pfctl"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+exit 0
+`, pfctlLog))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "routerd-healthcheck@internet.service"},
+			Spec: api.SystemdUnitSpec{
+				ExecStart:        []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", "internet"},
+				RuntimeDirectory: []string{"routerd/healthcheck"},
+				StateDirectory:   []string{"routerd/healthcheck"},
+			},
+		},
+	}}}
+
+	pfPath := filepath.Join(dir, "etc", "pf.conf")
+	rcDir := filepath.Join(dir, "rc.d")
+	changed, warnings, err := applyFreeBSDConfig(router, routerstate.New(), "", "", pfPath, rcDir)
+	if err != nil {
+		t.Fatalf("apply FreeBSD config: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	for _, path := range []string{pfPath, filepath.Join(rcDir, "routerd_healthcheck_internet")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s to be written: %v", path, err)
+		}
+	}
+	pfctlCalls, err := os.ReadFile(pfctlLog)
+	if err != nil {
+		t.Fatalf("read pfctl log: %v", err)
+	}
+	for _, want := range []string{"-nf " + pfPath, "-f " + pfPath} {
+		if !strings.Contains(string(pfctlCalls), want) {
+			t.Fatalf("pfctl calls missing %q:\n%s", want, pfctlCalls)
+		}
+	}
+	serviceCalls, err := os.ReadFile(serviceLog)
+	if err != nil {
+		t.Fatalf("read service log: %v", err)
+	}
+	for _, want := range []string{"pf onestart", "pflog onestart", "routerd_healthcheck_internet onestart"} {
+		if !strings.Contains(string(serviceCalls), want) {
+			t.Fatalf("service calls missing %q:\n%s", want, serviceCalls)
+		}
+	}
+	gotChanged := strings.Join(changed, "\n")
+	for _, want := range []string{pfPath, filepath.Join(rcDir, "routerd_healthcheck_internet"), "service:pf", "service:pflog", "service:routerd_healthcheck_internet"} {
+		if !strings.Contains(gotChanged, want) {
+			t.Fatalf("changed missing %q:\n%v", want, changed)
+		}
 	}
 }
 

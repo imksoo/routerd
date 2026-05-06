@@ -63,6 +63,7 @@ var (
 	defaultDnsmasqServicePath  = platformDefaults.DnsmasqServiceFile
 	defaultFreeBSDDHClientPath = platformDefaults.FreeBSDDHClientConfigFile
 	defaultFreeBSDMPD5Path     = platformDefaults.FreeBSDMPD5ConfigFile
+	defaultFreeBSDPFPath       = platformDefaults.FreeBSDPFConfigFile
 	defaultNftablesPath        = platformDefaults.NftablesFile
 	defaultRouteNftablesPath   = platformDefaults.DefaultRouteNftablesFile
 	defaultTimesyncdPath       = platformDefaults.TimesyncdDropinFile
@@ -1230,7 +1231,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	if err := recordStageError("freebsd-network", func() error {
 		var err error
 		var fbWarnings []string
-		changedFreeBSD, fbWarnings, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDMPD5Path)
+		changedFreeBSD, fbWarnings, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDMPD5Path, defaultFreeBSDPFPath, platformDefaults.RCScriptDir)
 		for _, w := range fbWarnings {
 			result.Warnings = append(result.Warnings, w)
 			logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "freebsd-network"})
@@ -3375,7 +3376,7 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 	return changedFiles, nil
 }
 
-func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, mpd5Path string) ([]string, []string, error) {
+func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, mpd5Path, pfPath, rcScriptDir string) ([]string, []string, error) {
 	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
 		return nil, nil, err
@@ -3434,6 +3435,20 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 			restartIfnames = append(restartIfnames, freeBSDDHCPClientIfnames(data.DHCPClient)...)
 		}
 	}
+	if len(data.PF) > 0 && pfPath != "" {
+		applied, err := applyFreeBSDPFConfig(data.PF, pfPath)
+		if err != nil {
+			return changed, warnings, err
+		}
+		changed = append(changed, applied...)
+	}
+	if len(data.RCDScripts) > 0 && rcScriptDir != "" {
+		applied, err := applyFreeBSDRCDScripts(data.RCDScripts, rcScriptDir)
+		if err != nil {
+			return changed, warnings, err
+		}
+		changed = append(changed, applied...)
+	}
 	if len(data.MPD5) > 0 && mpd5Path != "" {
 		if err := os.MkdirAll(filepathDir(mpd5Path), 0755); err != nil {
 			return changed, warnings, err
@@ -3463,6 +3478,76 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 		changed = append(changed, "netif:"+ifname)
 	}
 	return changed, warnings, nil
+}
+
+func applyFreeBSDPFConfig(data []byte, pfPath string) ([]string, error) {
+	if len(data) == 0 || pfPath == "" {
+		return nil, nil
+	}
+	if err := os.MkdirAll(filepathDir(pfPath), 0755); err != nil {
+		return nil, fmt.Errorf("create directory for %s: %w", pfPath, err)
+	}
+	fileChanged, err := writeFileIfChanged(pfPath, data, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("write pf config %s: %w", pfPath, err)
+	}
+	if err := runLogged("pfctl", "-nf", pfPath); err != nil {
+		return nil, err
+	}
+	var changed []string
+	if fileChanged {
+		if err := runLogged("pfctl", "-f", pfPath); err != nil {
+			return nil, err
+		}
+		changed = append(changed, pfPath)
+	}
+	if !freeBSDServiceRunning("pf") {
+		if err := runLogged("service", "pf", "onestart"); err != nil {
+			return changed, err
+		}
+		changed = append(changed, "service:pf")
+	}
+	if !freeBSDServiceRunning("pflog") {
+		if err := runLogged("service", "pflog", "onestart"); err != nil {
+			return changed, err
+		}
+		changed = append(changed, "service:pflog")
+	}
+	return changed, nil
+}
+
+func applyFreeBSDRCDScripts(scripts map[string][]byte, rcScriptDir string) ([]string, error) {
+	if len(scripts) == 0 || rcScriptDir == "" {
+		return nil, nil
+	}
+	if err := os.MkdirAll(rcScriptDir, 0755); err != nil {
+		return nil, fmt.Errorf("create rc.d directory %s: %w", rcScriptDir, err)
+	}
+	var changed []string
+	for _, name := range sortedByteSliceMapKeys(scripts) {
+		path := filepath.Join(rcScriptDir, name)
+		fileChanged, err := writeFileIfChanged(path, scripts[name], 0555)
+		if err != nil {
+			return changed, fmt.Errorf("write rc.d script %s: %w", path, err)
+		}
+		if fileChanged {
+			changed = append(changed, path)
+		}
+		if fileChanged && freeBSDServiceRunning(name) {
+			if err := runLogged("service", name, "onerestart"); err != nil {
+				return changed, err
+			}
+			changed = append(changed, "service:"+name)
+			continue
+		}
+		if !freeBSDServiceRunning(name) {
+			if err := runLogged("service", name, "onestart"); err != nil {
+				return changed, err
+			}
+			changed = append(changed, "service:"+name)
+		}
+	}
+	return changed, nil
 }
 
 func freeBSDProtectedIfnames(router *api.Router) map[string]bool {
@@ -3593,6 +3678,15 @@ func freeBSDDHCPClientIfnames(data []byte) []string {
 }
 
 func sortedStringMapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedByteSliceMapKeys(values map[string][]byte) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

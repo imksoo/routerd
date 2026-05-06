@@ -187,7 +187,6 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	if len(pf) > 0 {
 		rc.WriteString("pf_enable=\"YES\"\n")
 		rc.WriteString("pflog_enable=\"YES\"\n")
-		warnings = append(warnings, "FreeBSD pf.conf was generated, but live pf apply is not wired yet. Install the generated pf.conf and validate with pfctl -nf before enabling.")
 	}
 	rcdScripts, err := freeBSDRCDScripts(router)
 	if err != nil {
