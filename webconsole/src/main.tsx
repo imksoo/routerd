@@ -60,6 +60,7 @@ type Summary = {
   firewallLogs?: FirewallLog[];
   dhcpLeases?: DHCPLease[];
   neighbors?: NeighborEntry[];
+  clients?: ClientEntry[];
   errors?: string[];
 };
 
@@ -160,6 +161,19 @@ type NeighborEntry = {
   vendor?: string;
 };
 
+type ClientEntry = {
+  id?: string;
+  hostname?: string;
+  mac?: string;
+  vendor?: string;
+  addresses?: string[];
+  state?: string;
+  sources?: string[];
+  peers?: string[];
+  bytesOut?: number;
+  bytesIn?: number;
+};
+
 type InterfaceSummary = {
   name?: string;
   ifname?: string;
@@ -189,6 +203,7 @@ type ConnectionFilters = {
 };
 
 type ClientRow = {
+  id?: string;
   ip: string;
   addresses: Set<string>;
   hostname: string;
@@ -879,7 +894,6 @@ function App() {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [connectionPages, setConnectionPages] = useState<Record<string, number>>({});
-  const [connectionPageSizes, setConnectionPageSizes] = useState<Record<string, number>>({});
   const [connectionFilters, setConnectionFilters] = useState<ConnectionFilters>({
     query: "",
     family: "all",
@@ -1100,7 +1114,7 @@ function App() {
                     header={<Text weight="semibold">Client inventory</Text>}
                     description={<Text className={styles.muted}>DHCP leases combined with observed traffic</Text>}
                   />
-                  <ClientInventory leases={summary?.dhcpLeases ?? []} neighbors={summary?.neighbors ?? []} flows={summary?.trafficFlows ?? []} />
+                  <ClientInventory clients={summary?.clients ?? []} />
                 </Card>
                 <Card id="clients-traffic" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Client traffic</Text>} />
@@ -1189,12 +1203,7 @@ function App() {
                   collapsed={collapsed[group.key] ?? false}
                   toggle={() => setCollapsed(current => ({ ...current, [group.key]: !(current[group.key] ?? false) }))}
                   page={connectionPages[group.key] ?? 0}
-                  pageSize={connectionPageSizes[group.key] ?? 10}
                   setPage={page => setConnectionPages(current => ({ ...current, [group.key]: page }))}
-                  setPageSize={size => {
-                    setConnectionPageSizes(current => ({ ...current, [group.key]: size }));
-                    setConnectionPages(current => ({ ...current, [group.key]: 0 }));
-                  }}
                 />
               ))}
             </div>
@@ -1475,21 +1484,18 @@ function ConnectionGroup({
   collapsed,
   toggle,
   page,
-  pageSize,
   setPage,
-  setPageSize,
 }: {
   group: { key: string; rows: ConnectionEntry[] };
   dnsLabels: Record<string, string>;
   collapsed: boolean;
   toggle: () => void;
   page: number;
-  pageSize: number;
   setPage: (page: number) => void;
-  setPageSize: (size: number) => void;
 }) {
   const styles = useStyles();
   const label = connectionGroupLabel(group.key);
+  const pageSize = 100;
   const totalPages = Math.max(1, Math.ceil(group.rows.length / pageSize));
   const currentPage = Math.min(Math.max(page, 0), totalPages - 1);
   const start = currentPage * pageSize;
@@ -1504,12 +1510,8 @@ function ConnectionGroup({
       {!collapsed ? (
         <>
           <div className={styles.connectionHeader}>
-            <Text className={styles.muted}>Page {currentPage + 1} of {totalPages}</Text>
+            <Text className={styles.muted}>Page {currentPage + 1} of {totalPages} / 100 rows per page</Text>
             <div className={styles.pager}>
-              <Text className={styles.muted}>Rows</Text>
-              <Select className={styles.pageSize} size="small" value={String(pageSize)} onChange={event => setPageSize(Number(event.target.value))}>
-                {[10, 25, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
-              </Select>
               <Button size="small" appearance="subtle" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Prev</Button>
               <Button size="small" appearance="subtle" disabled={currentPage >= totalPages - 1} onClick={() => setPage(currentPage + 1)}>Next</Button>
             </div>
@@ -1595,8 +1597,9 @@ function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
   );
 }
 
-function ClientInventory({ leases, neighbors, flows }: { leases: DHCPLease[]; neighbors: NeighborEntry[]; flows: TrafficFlow[] }) {
+function ClientInventory({ clients }: { clients: ClientEntry[] }) {
   const styles = useStyles();
+  const rows = clients.map(clientEntryToRow);
   return (
     <div className={styles.tableWrap}>
       <Table size="small" className={styles.clientInventoryTable}>
@@ -1617,8 +1620,8 @@ function ClientInventory({ leases, neighbors, flows }: { leases: DHCPLease[]; ne
           </TableRow>
         </TableHeader>
         <TableBody>
-          {clientInventoryRows(leases, neighbors, flows).map(row => (
-            <TableRow key={row.ip}>
+          {rows.map(row => (
+            <TableRow key={row.id || row.mac || row.ip || row.hostname}>
               <TableCell>
                 <div className={styles.connectionFlow}>
                   <Text>{row.hostname || "-"}</Text>
@@ -1627,7 +1630,7 @@ function ClientInventory({ leases, neighbors, flows }: { leases: DHCPLease[]; ne
               </TableCell>
               <TableCell>
                 <div className={styles.connectionFlow}>
-                  {Array.from(row.addresses).slice(0, 4).map(address => (
+                  {Array.from(row.addresses ?? []).slice(0, 6).map(address => (
                     <code className={styles.code} key={address}>{address}</code>
                   ))}
                   {row.state ? <Text size={200} className={styles.muted}>{row.state}</Text> : null}
@@ -1640,7 +1643,7 @@ function ClientInventory({ leases, neighbors, flows }: { leases: DHCPLease[]; ne
                   <Text size={200}>in {formatBytes(row.bytesIn)}</Text>
                 </div>
               </TableCell>
-              <TableCell><code className={styles.wrapCode}>{Array.from(row.peers).slice(0, 4).join(", ") || "-"}</code></TableCell>
+              <TableCell><code className={styles.wrapCode}>{Array.from(row.peers ?? []).slice(0, 4).join(", ") || "-"}</code></TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -2083,9 +2086,9 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
   if (selected === "clients") {
     const leases = summary?.dhcpLeases ?? [];
     const flows = summary?.trafficFlows ?? [];
-    const neighbors = summary?.neighbors ?? [];
+    const clients = summary?.clients ?? [];
     return [
-      { key: "inventory", label: "Inventory", count: clientInventoryRows(leases, neighbors, flows).length, view: "clients", targetID: "clients-inventory" },
+      { key: "inventory", label: "Inventory", count: clients.length, view: "clients", targetID: "clients-inventory" },
       { key: "traffic", label: "Traffic", count: clientTrafficRows(flows).length, view: "clients", targetID: "clients-traffic" },
       { key: "leases", label: "DHCP leases", count: leases.length, view: "clients", targetID: "clients-leases" },
     ];
@@ -2186,66 +2189,21 @@ function clientTrafficRows(flows: TrafficFlow[]) {
   return Array.from(totals.values()).sort((a, b) => a.client.localeCompare(b.client)).slice(0, 10);
 }
 
-function clientInventoryRows(leases: DHCPLease[], neighbors: NeighborEntry[], flows: TrafficFlow[]) {
-  const rows = new Map<string, ClientRow>();
-  const ipToKey = new Map<string, string>();
-  const upsert = (key: string, address?: string): ClientRow => {
-    const row = rows.get(key) ?? {
-      ip: address || key,
-      addresses: new Set<string>(),
-      hostname: "",
-      mac: "",
-      vendor: "",
-      expiresAt: "",
-      peers: new Set<string>(),
-      sources: new Set<string>(),
-    };
-    if (address) {
-      row.addresses.add(address);
-      if (!row.ip || row.ip === key) row.ip = address;
-      ipToKey.set(address, key);
-    }
-    rows.set(key, row);
-    return row;
+function clientEntryToRow(entry: ClientEntry): ClientRow {
+  return {
+    id: entry.id,
+    ip: entry.addresses?.[0] || entry.id || entry.mac || "-",
+    addresses: new Set(entry.addresses ?? []),
+    hostname: entry.hostname ?? "",
+    mac: normalizeMAC(entry.mac),
+    vendor: entry.vendor ?? "",
+    state: entry.state ?? "",
+    sources: new Set(entry.sources ?? []),
+    expiresAt: "",
+    bytesOut: entry.bytesOut,
+    bytesIn: entry.bytesIn,
+    peers: new Set(entry.peers ?? []),
   };
-  for (const lease of leases) {
-    if (!lease.ip) continue;
-    const key = clientKey(lease.mac, lease.ip);
-    const row = upsert(key, lease.ip);
-    row.hostname ||= lease.hostname ?? "";
-    row.mac ||= normalizeMAC(lease.mac);
-    row.vendor ||= lease.vendor ?? "";
-    row.expiresAt ||= lease.expiresAt ?? "";
-    row.sources.add("dhcpv4");
-  }
-  for (const neighbor of neighbors) {
-    if (!neighbor.ip) continue;
-    const key = clientKey(neighbor.mac, neighbor.ip);
-    const row = upsert(key, neighbor.ip);
-    row.mac ||= normalizeMAC(neighbor.mac);
-    row.vendor ||= neighbor.vendor ?? "";
-    row.state ||= neighbor.state ?? "";
-    row.sources.add(neighbor.source || "neighbor");
-  }
-  for (const flow of flows) {
-    const ip = flow.clientAddress || "-";
-    const key = ipToKey.get(ip) ?? ip;
-    const row = upsert(key, ip);
-    row.bytesOut = addOptionalBytes(row.bytesOut, flow.bytesOut, flow.accounting);
-    row.bytesIn = addOptionalBytes(row.bytesIn, flow.bytesIn, flow.accounting);
-    const peer = flow.resolvedHostname || flow.tlsSNI || flow.peerAddress;
-    if (peer) row.peers.add(peer);
-    row.sources.add("traffic");
-  }
-  return Array.from(rows.values()).sort((a, b) => {
-    const traffic = (b.bytesOut ?? 0) + (b.bytesIn ?? 0) - ((a.bytesOut ?? 0) + (a.bytesIn ?? 0));
-    return traffic || stringSort(a.ip, b.ip);
-  });
-}
-
-function clientKey(mac?: string, ip?: string) {
-  const normalized = normalizeMAC(mac);
-  return normalized || ip || "-";
 }
 
 function normalizeMAC(mac?: string) {

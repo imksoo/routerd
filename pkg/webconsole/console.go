@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"sort"
@@ -57,6 +58,7 @@ type Snapshot struct {
 	FirewallLogs []logstore.FirewallLogEntry `json:"firewallLogs,omitempty"`
 	DHCPLeases   []DHCPLease                 `json:"dhcpLeases,omitempty"`
 	Neighbors    []NeighborEntry             `json:"neighbors,omitempty"`
+	Clients      []ClientEntry               `json:"clients,omitempty"`
 	Errors       []string                    `json:"errors,omitempty"`
 }
 
@@ -82,6 +84,19 @@ type NeighborEntry struct {
 	State  string `json:"state,omitempty"`
 	Source string `json:"source,omitempty"`
 	Vendor string `json:"vendor,omitempty"`
+}
+
+type ClientEntry struct {
+	ID        string   `json:"id"`
+	Hostname  string   `json:"hostname,omitempty"`
+	MAC       string   `json:"mac,omitempty"`
+	Vendor    string   `json:"vendor,omitempty"`
+	Addresses []string `json:"addresses,omitempty"`
+	State     string   `json:"state,omitempty"`
+	Sources   []string `json:"sources,omitempty"`
+	Peers     []string `json:"peers,omitempty"`
+	BytesOut  int64    `json:"bytesOut,omitempty"`
+	BytesIn   int64    `json:"bytesIn,omitempty"`
 }
 
 type InterfaceSummary struct {
@@ -146,6 +161,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.trafficFlows(w, r)
 	case "api/v1/firewall-logs":
 		h.firewallLogs(w, r)
+	case "api/v1/clients":
+		h.clients(w)
 	case "api/v1/config":
 		h.config(w)
 	default:
@@ -212,6 +229,7 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		FirewallLogs: firewallLogs,
 		DHCPLeases:   dhcpLeases,
 		Neighbors:    neighbors,
+		Clients:      correlateClients(dhcpLeases, neighbors, trafficFlows),
 		Errors:       errors,
 	}
 }
@@ -227,6 +245,7 @@ func (h Handler) index(w http.ResponseWriter) {
 	page = strings.ReplaceAll(page, "__ROUTERD_TITLE_JS__", template.JSEscapeString(h.opts.Title))
 	page = strings.ReplaceAll(page, "__ROUTERD_BASE_PATH__", template.JSEscapeString(h.basePath()))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(page))
 }
 
@@ -341,6 +360,25 @@ func (h Handler) firewallLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, rows)
+}
+
+func (h Handler) clients(w http.ResponseWriter) {
+	leases, err := h.dhcpLeaseList()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	neighbors, err := neighborList()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	flows, err := h.trafficFlowList(logstore.TrafficFlowFilter{Since: time.Now().Add(-time.Hour), Limit: 200})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, correlateClients(leases, neighbors, flows))
 }
 
 func (h Handler) config(w http.ResponseWriter) {
@@ -532,6 +570,175 @@ func parseNeighborState(raw json.RawMessage) string {
 	var value string
 	if err := json.Unmarshal(raw, &value); err == nil {
 		return value
+	}
+	return ""
+}
+
+func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []logstore.TrafficFlow) []ClientEntry {
+	type mutableClient struct {
+		ClientEntry
+		addresses map[string]bool
+		sources   map[string]bool
+		peers     map[string]bool
+	}
+	rows := map[string]*mutableClient{}
+	ipToKey := map[string]string{}
+	upsert := func(key, address string) *mutableClient {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			key = strings.TrimSpace(address)
+		}
+		if key == "" {
+			key = "-"
+		}
+		row := rows[key]
+		if row == nil {
+			row = &mutableClient{
+				ClientEntry: ClientEntry{ID: key},
+				addresses:   map[string]bool{},
+				sources:     map[string]bool{},
+				peers:       map[string]bool{},
+			}
+			rows[key] = row
+		}
+		if address = strings.TrimSpace(address); address != "" {
+			row.addresses[address] = true
+			ipToKey[address] = key
+		}
+		return row
+	}
+	for _, lease := range leases {
+		if strings.TrimSpace(lease.IP) == "" {
+			continue
+		}
+		key := clientCorrelationKey(lease.MAC, lease.IP)
+		row := upsert(key, lease.IP)
+		if row.Hostname == "" {
+			row.Hostname = lease.Hostname
+		}
+		if row.MAC == "" {
+			row.MAC = normalizeClientMAC(lease.MAC)
+		}
+		if row.Vendor == "" {
+			row.Vendor = lease.Vendor
+		}
+		row.sources["dhcpv4"] = true
+	}
+	for _, neighbor := range neighbors {
+		if strings.TrimSpace(neighbor.IP) == "" {
+			continue
+		}
+		key := clientCorrelationKey(neighbor.MAC, neighbor.IP)
+		row := upsert(key, neighbor.IP)
+		if row.MAC == "" {
+			row.MAC = normalizeClientMAC(neighbor.MAC)
+		}
+		if row.Vendor == "" {
+			row.Vendor = neighbor.Vendor
+		}
+		if row.State == "" {
+			row.State = neighbor.State
+		}
+		source := strings.TrimSpace(neighbor.Source)
+		if source == "" {
+			source = "neighbor"
+		}
+		row.sources[source] = true
+	}
+	for _, flow := range flows {
+		ip := strings.TrimSpace(flow.ClientAddress)
+		if ip == "" {
+			continue
+		}
+		key := ipToKey[ip]
+		if key == "" {
+			key = ip
+		}
+		row := upsert(key, ip)
+		if flow.Accounting {
+			row.BytesOut += flow.BytesOut
+			row.BytesIn += flow.BytesIn
+		}
+		peer := firstNonEmptyString(flow.ResolvedHostname, flow.TLSSNI, flow.PeerAddress)
+		if peer != "" {
+			row.peers[peer] = true
+		}
+		row.sources["traffic"] = true
+	}
+	out := make([]ClientEntry, 0, len(rows))
+	for _, row := range rows {
+		row.Addresses = sortedClientAddresses(row.addresses)
+		row.Sources = sortedSet(row.sources)
+		row.Peers = sortedSet(row.peers)
+		out = append(out, row.ClientEntry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		trafficI := out[i].BytesOut + out[i].BytesIn
+		trafficJ := out[j].BytesOut + out[j].BytesIn
+		if trafficI != trafficJ {
+			return trafficI > trafficJ
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func clientCorrelationKey(mac, ip string) string {
+	if normalized := normalizeClientMAC(mac); normalized != "" {
+		return normalized
+	}
+	return strings.TrimSpace(ip)
+}
+
+func normalizeClientMAC(mac string) string {
+	return strings.ToLower(strings.TrimSpace(mac))
+}
+
+func sortedClientAddresses(values map[string]bool) []string {
+	out := sortedSet(values)
+	sort.SliceStable(out, func(i, j int) bool {
+		return compareClientAddress(out[i], out[j]) < 0
+	})
+	return out
+}
+
+func compareClientAddress(a, b string) int {
+	pa, erra := netip.ParseAddr(a)
+	pb, errb := netip.ParseAddr(b)
+	if erra != nil || errb != nil {
+		return strings.Compare(a, b)
+	}
+	if pa.Is4() != pb.Is4() {
+		if pa.Is4() {
+			return -1
+		}
+		return 1
+	}
+	if pa.Is6() && pa.IsLinkLocalUnicast() != pb.IsLinkLocalUnicast() {
+		if pa.IsLinkLocalUnicast() {
+			return 1
+		}
+		return -1
+	}
+	return pa.Compare(pb)
+}
+
+func sortedSet(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
 	}
 	return ""
 }
@@ -822,6 +1029,7 @@ func enrichTrafficFlowsWithDNS(flows []logstore.TrafficFlow, queries []logstore.
 
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	_ = encoder.Encode(value)

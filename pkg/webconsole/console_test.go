@@ -247,6 +247,38 @@ func TestParseIPNeighborJSON(t *testing.T) {
 	}
 }
 
+func TestCorrelateClientsMergesDHCPLeaseAndIPv6NeighborByMAC(t *testing.T) {
+	rows := correlateClients(
+		[]DHCPLease{{
+			MAC:      "4e:20:15:aa:e0:67",
+			IP:       "172.18.1.110",
+			Hostname: "MacBookAir",
+			Vendor:   "Apple private address",
+		}},
+		[]NeighborEntry{
+			{MAC: "4e:20:15:aa:e0:67", IP: "172.18.1.110", IfName: "ens19", State: "REACHABLE", Source: "ip-neigh"},
+			{MAC: "4e:20:15:aa:e0:67", IP: "2409:10:3d60:1271::abcd", IfName: "ens19", State: "STALE", Source: "ip-neigh"},
+			{MAC: "4e:20:15:aa:e0:67", IP: "fe80::14c5:6fd7:b848:a739", IfName: "ens19", State: "STALE", Source: "ip-neigh"},
+		},
+		[]logstore.TrafficFlow{{ClientAddress: "2409:10:3d60:1271::abcd", PeerAddress: "2001:4860:4860::8888", Accounting: true, BytesOut: 120, BytesIn: 240}},
+	)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	row := rows[0]
+	if row.MAC != "4e:20:15:aa:e0:67" || row.Hostname != "MacBookAir" {
+		t.Fatalf("row identity = %+v", row)
+	}
+	for _, want := range []string{"172.18.1.110", "2409:10:3d60:1271::abcd", "fe80::14c5:6fd7:b848:a739"} {
+		if !containsString(row.Addresses, want) {
+			t.Fatalf("addresses missing %s: %+v", want, row.Addresses)
+		}
+	}
+	if row.BytesOut != 120 || row.BytesIn != 240 {
+		t.Fatalf("traffic was not joined to client: %+v", row)
+	}
+}
+
 func TestHandlerServesConfigReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "router.yaml")
 	if err := os.WriteFile(path, []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\n"), 0644); err != nil {
@@ -264,6 +296,15 @@ func TestHandlerServesConfigReadOnly(t *testing.T) {
 			t.Fatalf("config response missing %q:\n%s", want, rec.Body.String())
 		}
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestHandlerRendersUsableBasePath(t *testing.T) {
