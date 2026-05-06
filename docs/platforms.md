@@ -74,6 +74,7 @@ Implemented:
 - automatic `pfctl -nf` validation and `pfctl -f` application for generated `pf.conf`
 - conntrack-equivalent traffic flows from `pfctl -ss -v`
 - `pflog0` ingestion via `tcpdump` for firewall logs
+- DNS resolver daemon builds on FreeBSD; `viaInterface` can target `fib:<n>` for FIB-bound upstream routing
 - rc.d script generation, installation, and `service <name> onestart` activation from `SystemdUnit`
 - Static DS-Lite gif tunnel rendering
 
@@ -82,7 +83,7 @@ Not yet covered:
 - Full FreeBSD-idiomatic network configuration generation
 - Dynamic DS-Lite from AFTR FQDN or delegated address
 - Vendor-specific pf log format variants
-- DNS resolver, HealthCheck, and DHCP server long-running daemons on FreeBSD
+- HealthCheck and DHCP server long-running daemons on FreeBSD
 
 FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The `Package` examples for FreeBSD only cover what is already ported or has a working skeleton.
 

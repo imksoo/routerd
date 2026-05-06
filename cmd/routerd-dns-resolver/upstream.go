@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -329,7 +328,7 @@ func udpNetworkForIP(ip net.IP) string {
 
 func interfaceControl(name string) func(network, address string, c syscall.RawConn) error {
 	name = strings.TrimSpace(name)
-	if name == "" || runtime.GOOS != "linux" {
+	if name == "" {
 		return nil
 	}
 	return bindToDeviceControl(name)
