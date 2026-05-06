@@ -11,7 +11,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -398,15 +397,16 @@ func ProbeICMP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
 }
 
 func dialContext(ctx context.Context, spec api.HealthCheckSpec, network, address string) (net.Conn, error) {
-	dialer, err := dialerForSpec(spec, network)
+	dialer, err := dialerForSpec(spec, network, address)
 	if err != nil {
 		return nil, err
 	}
 	return dialer.DialContext(ctx, network, address)
 }
 
-func dialerForSpec(spec api.HealthCheckSpec, network string) (net.Dialer, error) {
+func dialerForSpec(spec api.HealthCheckSpec, network, address string) (net.Dialer, error) {
 	dialer := net.Dialer{}
+	hasSourceAddress := false
 	if spec.SourceAddress != "" {
 		addr := net.ParseIP(spec.SourceAddress)
 		if addr == nil {
@@ -420,11 +420,11 @@ func dialerForSpec(spec api.HealthCheckSpec, network string) (net.Dialer, error)
 		default:
 			dialer.LocalAddr = &net.IPAddr{IP: addr}
 		}
+		hasSourceAddress = true
 	}
 	if spec.SourceInterface != "" {
-		ifname := spec.SourceInterface
-		dialer.Control = func(network, address string, conn syscall.RawConn) error {
-			return bindToDevice(conn, ifname)
+		if err := bindDialerToDevice(&dialer, spec.SourceInterface, network, address, spec.AddressFamily, hasSourceAddress); err != nil {
+			return net.Dialer{}, err
 		}
 	}
 	return dialer, nil

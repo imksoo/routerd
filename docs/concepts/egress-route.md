@@ -111,9 +111,11 @@ spec:
 ```
 
 On Linux, `routerd-healthcheck` uses `SO_BINDTODEVICE` for
-`sourceInterface`. In routerd config, `sourceInterface` names an `Interface`,
-`DSLiteTunnel`, or similar network resource. routerd resolves that resource to
-the OS interface name before running the probe. Standalone
+`sourceInterface`. On FreeBSD, it selects a source address from the named
+interface because FreeBSD does not provide the Linux socket option. In routerd
+config, `sourceInterface` names an `Interface`, `DSLiteTunnel`, or similar
+network resource. routerd resolves that resource to the OS interface name before
+running the probe. Standalone
 `routerd-healthcheck` flags still take the OS interface name directly. It also
 binds to `sourceAddress` when that field is set. Use `sourceAddressFrom` when
 the probe source should follow a managed address resource such as

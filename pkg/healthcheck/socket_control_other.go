@@ -1,9 +1,12 @@
-//go:build !linux
+//go:build !linux && !freebsd
 
 package healthcheck
 
-import "syscall"
+import (
+	"fmt"
+	"net"
+)
 
-func bindToDevice(conn syscall.RawConn, ifname string) error {
-	return nil
+func bindDialerToDevice(_ *net.Dialer, ifname, _, _, _ string, _ bool) error {
+	return fmt.Errorf("sourceInterface %q is only supported on Linux and FreeBSD", ifname)
 }

@@ -151,6 +151,11 @@ DS-Lite、IPv4 既定経路、NAT44 は実 lab で動作確認済みです。
 | `SelfAddressPolicy` | 自ホストアドレスの選択方針を表します。 |
 | `StatePolicy` | 状態管理の方針を表します。 |
 
+`HealthCheck.spec.sourceInterface` は実行時に OS のインターフェース名へ解決されます。
+Linux では `SO_BINDTODEVICE` を使います。
+FreeBSD では、指定したインターフェースから送信元アドレスを選びます。
+FreeBSD には Linux と同じ socket option がないためです。
+
 ## システム
 
 | Kind | 役割 |

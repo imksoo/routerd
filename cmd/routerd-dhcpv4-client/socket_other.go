@@ -2,6 +2,8 @@
 
 package main
 
+import "fmt"
+
 func bindSocketToDevice(_ int, _ string) error {
-	return nil
+	return fmt.Errorf("routerd-dhcpv4-client requires Linux SO_BINDTODEVICE; use the platform DHCPv4 path on this OS")
 }

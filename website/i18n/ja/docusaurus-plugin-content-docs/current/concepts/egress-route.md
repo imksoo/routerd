@@ -112,6 +112,8 @@ spec:
 
 Linux では、`routerd-healthcheck` が `sourceInterface` に
 `SO_BINDTODEVICE` を使います。
+FreeBSD では、指定したインターフェースから送信元アドレスを選びます。
+FreeBSD には Linux と同じ socket option がないためです。
 routerd の設定では、`sourceInterface` に `Interface` や
 `DSLiteTunnel` などのネットワークリソース名を書きます。
 routerd は probe を実行する前に、リソース名を OS のインターフェース名へ解決します。

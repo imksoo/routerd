@@ -167,7 +167,9 @@ stay un-NATed.
 `HealthCheck.spec.sourceInterface` accepts a network resource name and resolves
 it to the OS interface name at runtime. `via` and `sourceAddress` can also be
 specified. `sourceAddressFrom` derives the probe source address from another
-resource status.
+resource status. On Linux, `routerd-healthcheck` uses `SO_BINDTODEVICE`. On
+FreeBSD, it selects a source address from the named interface because FreeBSD
+does not provide the Linux socket option.
 
 `WebConsole.spec.listenAddressFrom` derives the HTTP listener address from
 another resource status, for example `Interface/mgmt.status.ipv4Addresses`.

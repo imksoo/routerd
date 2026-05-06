@@ -2,7 +2,17 @@
 
 package healthcheck
 
-import "syscall"
+import (
+	"net"
+	"syscall"
+)
+
+func bindDialerToDevice(dialer *net.Dialer, ifname, _, _, _ string, _ bool) error {
+	dialer.Control = func(_, _ string, conn syscall.RawConn) error {
+		return bindToDevice(conn, ifname)
+	}
+	return nil
+}
 
 func bindToDevice(conn syscall.RawConn, ifname string) error {
 	var bindErr error
