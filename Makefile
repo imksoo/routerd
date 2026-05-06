@@ -46,6 +46,7 @@ ROUTERD_DHCP_EVENT_RELAY_BIN := $(BUILDDIR)/routerd-dhcp-event-relay
 ROUTERD_HEALTHCHECK_BIN := $(BUILDDIR)/routerd-healthcheck
 ROUTERD_DNS_RESOLVER_BIN := $(BUILDDIR)/routerd-dns-resolver
 ROUTERD_FIREWALL_LOGGER_BIN := $(BUILDDIR)/routerd-firewall-logger
+ROUTERD_PPPOE_CLIENT_BIN := $(BUILDDIR)/routerd-pppoe-client
 GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
@@ -67,6 +68,7 @@ build: webconsole-build
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_HEALTHCHECK_BIN) ./cmd/routerd-healthcheck
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DNS_RESOLVER_BIN) ./cmd/routerd-dns-resolver
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_FIREWALL_LOGGER_BIN) ./cmd/routerd-firewall-logger
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_PPPOE_CLIENT_BIN) ./cmd/routerd-pppoe-client
 
 webconsole-build:
 	cd webconsole && npm ci && npm run build
@@ -149,6 +151,7 @@ install: check-build-deps build
 	install -m 0755 $(ROUTERD_HEALTHCHECK_BIN) $(DESTDIR)$(BINDIR)/routerd-healthcheck
 	install -m 0755 $(ROUTERD_DNS_RESOLVER_BIN) $(DESTDIR)$(BINDIR)/routerd-dns-resolver
 	install -m 0755 $(ROUTERD_FIREWALL_LOGGER_BIN) $(DESTDIR)$(BINDIR)/routerd-firewall-logger
+	install -m 0755 $(ROUTERD_PPPOE_CLIENT_BIN) $(DESTDIR)$(BINDIR)/routerd-pppoe-client
 	install -d $(DESTDIR)$(SYSCONFDIR)
 	install -m 0644 examples/basic-static.yaml $(DESTDIR)$(SYSCONFDIR)/router.yaml.example
 	install -d $(DESTDIR)$(SYSCONFDIR)/examples
