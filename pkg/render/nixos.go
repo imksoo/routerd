@@ -888,8 +888,66 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 			}),
 		})
 	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "FirewallLog" {
+			continue
+		}
+		spec, err := res.FirewallLogSpec()
+		if err != nil {
+			return nil, err
+		}
+		if !spec.Enabled {
+			continue
+		}
+		name := "routerd-firewall-logger.service"
+		if explicit[name] {
+			continue
+		}
+		out = append(out, nixOSSystemdUnit{
+			Name: name,
+			Spec: firewallLoggerSystemdSpec(spec),
+		})
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func firewallLoggerSystemdSpec(spec api.FirewallLogSpec) api.SystemdUnitSpec {
+	path := spec.Path
+	if path == "" {
+		path = "/var/lib/routerd/firewall-logs.db"
+	}
+	group := spec.NFLogGroup
+	if group == 0 {
+		group = 1
+	}
+	noNewPrivileges := true
+	privateTmp := true
+	return api.SystemdUnitSpec{
+		Description: "routerd firewall log collector",
+		ExecStart: []string{
+			"/usr/local/sbin/routerd-firewall-logger",
+			"daemon",
+			"--path", path,
+			"--nflog-group", strconv.Itoa(group),
+		},
+		Wants:                    []string{"network-online.target"},
+		After:                    []string{"network-online.target", "routerd.service"},
+		WantedBy:                 []string{"multi-user.target"},
+		Restart:                  "always",
+		RestartSec:               "5s",
+		RuntimeDirectory:         []string{"routerd"},
+		RuntimeDirectoryPreserve: "yes",
+		StateDirectory:           []string{"routerd"},
+		ReadWritePaths:           []string{"/var/lib/routerd"},
+		AmbientCapabilities:      []string{"CAP_NET_ADMIN", "CAP_NET_RAW"},
+		CapabilityBoundingSet:    []string{"CAP_NET_ADMIN", "CAP_NET_RAW"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
+		ProtectSystem:            "strict",
+		ProtectHome:              "true",
+		NoNewPrivileges:          &noNewPrivileges,
+		PrivateTmp:               &privateTmp,
+	}
 }
 
 func writeNixOSSystemdUnit(buf *bytes.Buffer, unit nixOSSystemdUnit) {

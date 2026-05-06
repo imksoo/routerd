@@ -453,6 +453,40 @@ func TestNixOSModuleSynthesizesHealthCheckDaemonUnit(t *testing.T) {
 	}
 }
 
+func TestNixOSModuleSynthesizesFirewallLoggerUnit(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec: api.FirewallLogSpec{
+				Enabled:    true,
+				Path:       "/var/lib/routerd/firewall-logs.db",
+				NFLogGroup: 7,
+			},
+		},
+	}}}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`systemd.services."routerd-firewall-logger"`,
+		`"/usr/local/sbin/routerd-firewall-logger"`,
+		`"--path"`,
+		`"/var/lib/routerd/firewall-logs.db"`,
+		`"--nflog-group"`,
+		`"7"`,
+		`RuntimeDirectory = [ "routerd" ];`,
+		`CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];`,
+		`RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("NixOS module missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNixOSModuleIgnoresLegacyPrefixDelegationClient(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
