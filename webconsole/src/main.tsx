@@ -222,9 +222,11 @@ type NavSubItem = { key: string; label: string; count?: number; view: ViewKey; t
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
 const basePath = normalizeBasePath(cfg.basePath);
-const connectionPageSize = 50;
+const defaultConnectionPageSize = 25;
+const connectionPageSizeOptions = [25, 50, 100];
 const collapsedStorageKey = "routerd.webconsole.collapsed";
 const connectionPagesStorageKey = "routerd.webconsole.connectionPages";
+const connectionPageSizesStorageKey = "routerd.webconsole.connectionPageSizes";
 const navItems: { key: ViewKey; label: string; description: string; icon: React.ReactNode }[] = [
   { key: "overview", label: "Overview", description: "Status and interfaces", icon: <HomeRegular /> },
   { key: "clients", label: "Clients", description: "Leases and endpoint traffic", icon: <PeopleRegular /> },
@@ -897,6 +899,7 @@ function App() {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => readStoredRecord(collapsedStorageKey));
   const [connectionPages, setConnectionPages] = useState<Record<string, number>>(() => readStoredRecord(connectionPagesStorageKey));
+  const [connectionPageSizes, setConnectionPageSizes] = useState<Record<string, number>>(() => readStoredRecord(connectionPageSizesStorageKey));
   const [connectionFilters, setConnectionFilters] = useState<ConnectionFilters>({
     query: "",
     family: "all",
@@ -965,6 +968,10 @@ function App() {
   useEffect(() => {
     writeStoredRecord(connectionPagesStorageKey, connectionPages);
   }, [connectionPages]);
+
+  useEffect(() => {
+    writeStoredRecord(connectionPageSizesStorageKey, connectionPageSizes);
+  }, [connectionPageSizes]);
 
   useEffect(() => {
     const onHashChange = () => {
@@ -1214,7 +1221,12 @@ function App() {
                   collapsed={collapsed[group.key] ?? false}
                   toggle={() => setCollapsed(current => ({ ...current, [group.key]: !(current[group.key] ?? false) }))}
                   page={connectionPages[group.key] ?? 0}
+                  pageSize={connectionPageSizes[group.key] ?? defaultConnectionPageSize}
                   setPage={page => setConnectionPages(current => ({ ...current, [group.key]: page }))}
+                  setPageSize={size => {
+                    setConnectionPageSizes(current => ({ ...current, [group.key]: size }));
+                    setConnectionPages(current => ({ ...current, [group.key]: 0 }));
+                  }}
                 />
               ))}
             </div>
@@ -1495,18 +1507,21 @@ function ConnectionGroup({
   collapsed,
   toggle,
   page,
+  pageSize,
   setPage,
+  setPageSize,
 }: {
   group: { key: string; rows: ConnectionEntry[] };
   dnsLabels: Record<string, string>;
   collapsed: boolean;
   toggle: () => void;
   page: number;
+  pageSize: number;
   setPage: (page: number) => void;
+  setPageSize: (size: number) => void;
 }) {
   const styles = useStyles();
   const label = connectionGroupLabel(group.key);
-  const pageSize = connectionPageSize;
   const totalPages = Math.max(1, Math.ceil(group.rows.length / pageSize));
   const currentPage = Math.min(Math.max(page, 0), totalPages - 1);
   const start = currentPage * pageSize;
@@ -1523,6 +1538,10 @@ function ConnectionGroup({
           <div className={styles.connectionHeader}>
             <Text className={styles.muted}>Page {currentPage + 1} of {totalPages} / {pageSize} rows per page</Text>
             <div className={styles.pager}>
+              <Text className={styles.muted}>Rows</Text>
+              <Select className={styles.pageSize} size="small" value={String(pageSize)} onChange={event => setPageSize(Number(event.target.value))}>
+                {connectionPageSizeOptions.map(size => <option key={size} value={size}>{size}</option>)}
+              </Select>
               <Button size="small" appearance="subtle" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Prev</Button>
               <Button size="small" appearance="subtle" disabled={currentPage >= totalPages - 1} onClick={() => setPage(currentPage + 1)}>Next</Button>
             </div>
