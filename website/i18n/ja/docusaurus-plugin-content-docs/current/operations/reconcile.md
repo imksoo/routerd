@@ -1,22 +1,22 @@
 ---
-title: 調整と削除
+title: Reconcile と削除
 ---
 
-# 調整と削除
+# Reconcile と削除
 
-routerd は、YAML の意図とホストの現在状態を比べます。
-差がある場合、必要な変更を計画し、予行実行または実適用します。
+routerd は、YAML が宣言する意図とホスト現在状態を比べます。
+差があれば計画 (plan) を作り、必要なら dry-run で確認してから apply します。
 
-## 基本順序
+## 標準シーケンス
 
 ```bash
 routerd validate --config router.yaml
-routerd plan --config router.yaml
-routerd apply --config router.yaml --once --dry-run
-routerd apply --config router.yaml --once
+routerd plan     --config router.yaml
+routerd apply    --config router.yaml --once --dry-run
+routerd apply    --config router.yaml --once
 ```
 
-遠隔ルーターでは、実適用前に管理用接続が残ることを確認します。
+遠隔ルーターでは、本番 `apply` の前に管理経路 (SSH、コンソール、ハイパーバイザーコンソール) が変更を生き残ることを確認してください。
 
 ## 常駐モード
 
@@ -24,13 +24,19 @@ routerd apply --config router.yaml --once
 routerd serve --config router.yaml
 ```
 
-常駐モードでは、routerd はイベントを受けて対象リソースを再評価します。
-DHCPv6-PD の更新、ヘルスチェック結果、DerivedEvent などが入力になります。
+serve モードでは、bus 上のイベントに反応して影響範囲のリソースだけを再評価します。
+入力は DHCPv6-PD renewal、health check 結果、derived event、inotify による設定変更検知などです。
 
 ## 削除
 
-routerd は、所有元が分かる構成物だけを削除対象にします。
-知らない設定や手作業で作った設定を勝手に消しません。
+routerd は所有を確認できる artefact (routerd が以前作成、または明示的に adopt したもの) のみ削除します。
+第三者構成や手動変更は触りません。
 
-完全なロールバックは現在の対象外です。
-削除を伴う変更では、計画と予行実行を必ず確認してください。
+過去の設定への完全 rollback は現状の対象外です。
+削除を含む変更の場合は、必ず `routerd plan` と `routerd apply --dry-run` で削除リストを確認してから適用してください。
+
+## 関連項目
+
+- [状態と所有権](../concepts/state-and-ownership.md)
+- [Apply と render](../concepts/apply-and-render.md)
+- [トラブルシューティング](../how-to/troubleshooting.md)

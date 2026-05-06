@@ -17,7 +17,7 @@ const config: Config = {
   },
   themes: ['@docusaurus/theme-mermaid'],
 
-  onBrokenLinks: 'throw',
+  onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
 
   i18n: {

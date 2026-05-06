@@ -35,7 +35,7 @@ reconfigure the daemon when the source resource changes.
 listen:
   - name: lan
     addresses:
-      - 172.18.0.1
+      - 192.0.2.1
     addressFrom:
       - resource: IPv6DelegatedAddress/lan-base
         field: address

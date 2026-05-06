@@ -130,7 +130,7 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 `NAT44Rule` は `destinationCIDRs` と `excludeDestinationCIDRs` を持ちます。
 これにより、インターネット向け通信だけをマスカレードし、静的経路を持つプライベート宛先は NAT しない構成にできます。
 
-Phase 1.5e では router05 で DS-Lite、IPv4 既定経路、NAT44 の実適用を確認しています。
+DS-Lite、IPv4 既定経路、NAT44 は実 lab で動作確認済みです。
 
 ## 状態連携
 
