@@ -67,9 +67,22 @@ const config: Config = {
         src: 'img/logo.svg',
       },
       items: [
-        {to: '/docs/tutorials/getting-started', label: 'Tutorial', position: 'left'},
-        {to: '/docs/reference/api-v1alpha1', label: 'Resources', position: 'left'},
-        {to: '/docs/releases/changelog', label: 'Changelog', position: 'left'},
+        {
+          type: 'dropdown',
+          label: 'Docs',
+          position: 'left',
+          items: [
+            {to: '/docs/', label: 'Overview'},
+            {to: '/docs/concepts/what-is-routerd', label: 'Concepts'},
+            {to: '/docs/tutorials/getting-started', label: 'Tutorials'},
+            {to: '/docs/how-to/multi-wan', label: 'How-to'},
+            {to: '/docs/knowledge-base/dhcpv6-pd-clients', label: 'Knowledge base'},
+            {to: '/docs/reference/api-v1alpha1', label: 'Reference'},
+            {to: '/docs/operations/reconcile', label: 'Operations'},
+            {to: '/docs/design-notes', label: 'Design notes'},
+            {to: '/docs/releases/changelog', label: 'Releases'},
+          ],
+        },
         {
           type: 'localeDropdown',
           position: 'right',
