@@ -74,6 +74,8 @@ Use a separate range for automatic clients and reserve a smaller block for fixed
 
 `DHCPv4Reservation` renders to a dnsmasq host reservation entry. It also gives the Web Console and event log a stable resource name for the device, independent of its current IP.
 
+On FreeBSD, routerd keeps the dnsmasq lease file under `/var/db/routerd/dnsmasq` instead of `/var/run`. The rc.d script creates both the runtime directory and the lease directory before starting dnsmasq. During `routerd apply`, routerd runs `dnsmasq --test` before restarting the service and renders the pf exceptions required for DHCP, DHCPv6, Router Advertisement, and DNS traffic.
+
 ## IPv6 RA and DHCPv6
 
 For an IPv6 LAN, publish RDNSS in Router Advertisement so Android clients can pick up the resolver (Android does not use DHCPv6 for DNS configuration). For Windows clients you usually also need a DHCPv6 stateless server.

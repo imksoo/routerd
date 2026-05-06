@@ -140,6 +140,7 @@ func writePFNAT(buf *bytes.Buffer, aliases map[string]string, nats []api.Resourc
 func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api.Resource, holes []FirewallHole, policy firewallPolicy, logging firewallLogging) error {
 	buf.WriteString("block drop all\n")
 	buf.WriteString("pass quick on lo0 all\n")
+	buf.WriteString("pass out quick all keep state\n")
 	buf.WriteString("pass quick inet6 proto icmp6 all keep state\n")
 	for _, zone := range sortedFirewallZones(zones) {
 		if len(zone.IfNames) == 0 {

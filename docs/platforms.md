@@ -78,6 +78,10 @@ Implemented:
 - automatic `pfctl -nf` validation and `pfctl -f` application for generated `pf.conf`
 - conntrack-equivalent traffic flows from `pfctl -ss -v`
 - `pflog0` ingestion through direct BPF reads for firewall logs
+- managed dnsmasq for DHCPv4, DHCPv6, and Router Advertisement
+- dnsmasq lease persistence under `/var/db/routerd/dnsmasq`
+- dnsmasq config validation with `dnsmasq --test` before service restart
+- automatic pf holes for routerd-owned DHCP, DNS, RA, DHCPv6-PD, DS-Lite, WireGuard, and healthcheck traffic
 - DNS resolver daemon builds on FreeBSD; `viaInterface` can target `fib:<n>` for FIB-bound upstream routing
 - rc.d script generation, installation, and `service <name> onestart` activation from `SystemdUnit`
 - rc.d script generation for `routerd-healthcheck`
@@ -86,12 +90,11 @@ Implemented:
 - dnsmasq rc.d ordering after `mpd5` for PPPoE coexistence
 - Static DS-Lite gif tunnel rendering
 
-Not yet covered:
+Still limited:
 
 - Full FreeBSD-idiomatic network configuration generation
 - Dynamic DS-Lite from AFTR FQDN or delegated address
 - Vendor-specific pf log format variants
-- DHCP server long-running daemon supervision on FreeBSD
 
 FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The `Package` examples for FreeBSD only cover what is already ported or has a working skeleton.
 
@@ -109,7 +112,7 @@ FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The `Packa
 - `pf.conf`
 - `rc.d-*`
 
-`routerd apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, and starts generated rc.d scripts with `service <name> onestart` when they are not already running. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
+`routerd apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, validates dnsmasq with `dnsmasq --test`, and starts generated rc.d scripts with `service <name> onestart` when they are not already running. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
 
 ## Implementation guideline for OS abstraction
 

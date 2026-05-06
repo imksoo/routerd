@@ -463,19 +463,65 @@ func TestDnsmasqServiceUnitDoesNotOwnRouterdRuntimeDirectory(t *testing.T) {
 	}
 }
 
-func TestDnsmasqRCScriptUsesFreeBSDRuntimeDirectory(t *testing.T) {
-	script := string(DnsmasqRCScript("/usr/local/etc/routerd/dnsmasq.conf", "/var/run/routerd"))
+func TestDnsmasqRCScriptUsesFreeBSDRuntimeAndLeaseDirectories(t *testing.T) {
+	script := string(DnsmasqRCScript("/usr/local/etc/routerd/dnsmasq.conf", "/var/run/routerd", "/var/db/routerd/dnsmasq", "/usr/local/sbin/dnsmasq"))
 	for _, want := range []string{
 		`name="routerd_dnsmasq"`,
 		`rcvar="routerd_dnsmasq_enable"`,
 		`# REQUIRE: NETWORKING mpd5`,
 		`command="/usr/local/sbin/dnsmasq"`,
 		`pidfile="/var/run/routerd/dnsmasq.pid"`,
+		`start_precmd="${name}_prestart"`,
+		`mkdir -p "/var/run/routerd"`,
+		`mkdir -p "/var/db/routerd/dnsmasq"`,
 		`--conf-file=/usr/local/etc/routerd/dnsmasq.conf`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("rc.d script missing %q:\n%s", want, script)
 		}
+	}
+}
+
+func TestDnsmasqConfigUsesPersistentLeaseFileWhenProvided(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+			Metadata: api.ObjectMeta{Name: "lan-ipv4"},
+			Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.0.2.1/24"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+			Metadata: api.ObjectMeta{Name: "lan-server"},
+			Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+			Metadata: api.ObjectMeta{Name: "lan-scope"},
+			Spec: api.DHCPv4ScopeSpec{
+				Server:       "lan-server",
+				Interface:    "lan",
+				RangeStart:   "192.0.2.10",
+				RangeEnd:     "192.0.2.20",
+				RouterSource: "interfaceAddress",
+				DNSSource:    "none",
+			},
+		},
+	}}}
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{
+		RuntimeDir: "/var/run/routerd",
+		LeaseFile:  "/var/db/routerd/dnsmasq/dnsmasq.leases",
+	})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "dhcp-leasefile=/var/db/routerd/dnsmasq/dnsmasq.leases") {
+		t.Fatalf("dnsmasq config did not use persistent lease file:\n%s", got)
 	}
 }
 

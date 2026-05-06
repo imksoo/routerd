@@ -35,6 +35,7 @@ import (
 	"routerd/pkg/egressroute"
 	"routerd/pkg/eventrule"
 	"routerd/pkg/healthcheck"
+	"routerd/pkg/platform"
 	"routerd/pkg/resourcequery"
 	daemonsource "routerd/pkg/source/daemon"
 )
@@ -1180,11 +1181,20 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 	if strings.TrimSpace(leaseDir) == "" {
 		leaseDir = filepath.Dir(pidFile)
 	}
+	leaseFile := filepath.Join(leaseDir, "dnsmasq.leases")
+	defaults, features := platform.Current()
+	if features.HasRCD {
+		leaseFile = filepath.Join(defaults.StateDir, "dnsmasq", "dnsmasq.leases")
+		leaseDir = filepath.Dir(leaseFile)
+	}
+	if err := os.MkdirAll(filepath.Dir(pidFile), 0755); err != nil {
+		return false, err
+	}
 	if err := os.MkdirAll(leaseDir, 0755); err != nil {
 		return false, err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-interfaces\npid-file=%s\ndhcp-leasefile=%s\n", pidFile, filepath.Join(leaseDir, "dnsmasq.leases"))
+	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-interfaces\npid-file=%s\ndhcp-leasefile=%s\n", pidFile, leaseFile)
 	for _, line := range dnsmasqLANServiceLines(router, store) {
 		b.WriteString(line)
 		b.WriteByte('\n')

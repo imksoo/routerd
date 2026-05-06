@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"routerd/pkg/api"
+	"routerd/pkg/render"
 )
 
 func TestDeriveHolesIncludesDSLiteAndDHCPv6(t *testing.T) {
@@ -13,7 +14,7 @@ func TestDeriveHolesIncludesDSLiteAndDHCPv6(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-routerd"}},
 	}}}
-	holes := deriveHoles(router)
+	holes := render.InternalFirewallHoles(router)
 	seen := map[string]bool{}
 	for _, hole := range holes {
 		seen[hole.Name+"|"+hole.FromZone+"|"+hole.ToZone+"|"+hole.Protocol] = true

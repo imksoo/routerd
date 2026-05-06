@@ -181,7 +181,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 		rc.WriteString("mpd_enable=\"YES\"\n")
 		rc.WriteString("mpd_flags=\"-b\"\n")
 	}
-	pf, err := PF(router, nil)
+	pf, err := PF(router, InternalFirewallHoles(router))
 	if err != nil {
 		return FreeBSDConfig{}, err
 	}

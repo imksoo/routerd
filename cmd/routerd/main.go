@@ -1009,6 +1009,8 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 				DHCPv6DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
 				IPv6AddressesByInterface:    observedIPv6AddressesByInterface(effectiveRouter),
 				IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(effectiveRouter),
+				RuntimeDir:                  platformDefaults.RuntimeDir,
+				LeaseFile:                   dnsmasqLeaseFileForPlatform(),
 			})
 			if err != nil {
 				return err
@@ -1320,6 +1322,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 			IPv6AddressesByInterface:    observedIPv6AddressesByInterface(router),
 			IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(router),
 			RuntimeDir:                  platformDefaults.RuntimeDir,
+			LeaseFile:                   dnsmasqLeaseFileForPlatform(),
 		})
 		if err != nil {
 			return err
@@ -5450,7 +5453,7 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 		return nil, fmt.Errorf("dnsmasq is required for managed IPv4 DHCP service: %w", err)
 	}
 	if platformDefaults.OS == platform.OSFreeBSD {
-		return applyFreeBSDDnsmasqConfig(configPath, servicePath, configData)
+		return applyFreeBSDDnsmasqConfig(configPath, servicePath, configData, dnsmasqPath)
 	}
 
 	var changedFiles []string
@@ -5504,10 +5507,16 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	return nil, nil
 }
 
-func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte) ([]string, error) {
+func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte, dnsmasqPath string) ([]string, error) {
 	var changedFiles []string
 	if err := os.MkdirAll(filepathDir(configPath), 0755); err != nil {
 		return nil, fmt.Errorf("create directory for %s: %w", configPath, err)
+	}
+	leaseFile := dnsmasqLeaseFileForPlatform()
+	if leaseFile != "" {
+		if err := os.MkdirAll(filepathDir(leaseFile), 0755); err != nil {
+			return nil, fmt.Errorf("create dnsmasq lease directory %s: %w", filepathDir(leaseFile), err)
+		}
 	}
 	changed, err := writeFileIfChanged(configPath, configData, 0644)
 	if err != nil {
@@ -5516,13 +5525,17 @@ func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte
 	if changed {
 		changedFiles = append(changedFiles, configPath)
 	}
+	out, err := exec.Command(dnsmasqPath, "--test", "--conf-file="+configPath).CombinedOutput()
+	if err != nil {
+		return changedFiles, fmt.Errorf("%s --test --conf-file=%s: %w: %s", dnsmasqPath, configPath, err, strings.TrimSpace(string(out)))
+	}
 	if err := os.MkdirAll(platformDefaults.RuntimeDir, 0755); err != nil {
 		return changedFiles, fmt.Errorf("create runtime directory %s: %w", platformDefaults.RuntimeDir, err)
 	}
 	if err := os.MkdirAll(filepathDir(servicePath), 0755); err != nil {
 		return changedFiles, fmt.Errorf("create directory for %s: %w", servicePath, err)
 	}
-	serviceChanged, err := writeFileIfChanged(servicePath, render.DnsmasqRCScript(configPath, platformDefaults.RuntimeDir), 0555)
+	serviceChanged, err := writeFileIfChanged(servicePath, render.DnsmasqRCScript(configPath, platformDefaults.RuntimeDir, filepathDir(leaseFile), dnsmasqPath), 0555)
 	if err != nil {
 		return changedFiles, fmt.Errorf("write dnsmasq rc.d script %s: %w", servicePath, err)
 	}
@@ -5545,6 +5558,13 @@ func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte
 		changedFiles = append(changedFiles, "service:routerd_dnsmasq")
 	}
 	return changedFiles, nil
+}
+
+func dnsmasqLeaseFileForPlatform() string {
+	if platformDefaults.OS == platform.OSFreeBSD {
+		return strings.TrimRight(platformDefaults.StateDir, "/") + "/dnsmasq/dnsmasq.leases"
+	}
+	return ""
 }
 
 func applyFreeBSDIPv6DefaultRoutes(router *api.Router) ([]string, error) {

@@ -133,8 +133,9 @@ func TestDnsmasqLANServiceLinesStripIPv6PrefixLengthFromOptions(t *testing.T) {
 }
 
 func TestWriteDnsmasqConfigDisablesDNSPort(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "dnsmasq.conf")
-	changed, err := writeDnsmasqConfig(&api.Router{}, mapStore{}, path, "/run/routerd/test.pid", 53, []string{"127.0.0.1", "192.168.160.5"})
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dnsmasq.conf")
+	changed, err := writeDnsmasqConfig(&api.Router{}, mapStore{}, path, filepath.Join(dir, "run", "test.pid"), 53, []string{"127.0.0.1", "192.168.160.5"})
 	if err != nil {
 		t.Fatal(err)
 	}

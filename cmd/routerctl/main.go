@@ -833,7 +833,7 @@ func firewallCommand(args []string, stdout, stderr io.Writer) error {
 }
 
 func describeFirewall(stdout io.Writer, router *api.Router) error {
-	holes := internalFirewallHolesForCLI(router)
+	holes := render.InternalFirewallHoles(router)
 	fmt.Fprintln(stdout, "SOURCE\tFROM\tTO\tMATCH\tACTION")
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	for _, res := range router.Spec.Resources {
@@ -931,7 +931,7 @@ func firewallDecisionForCLI(router *api.Router, from, to, proto string, dport in
 		}
 		return spec.Action, "user/" + res.Metadata.Name
 	}
-	for _, hole := range internalFirewallHolesForCLI(router) {
+	for _, hole := range render.InternalFirewallHoles(router) {
 		if hole.FromZone == from && hole.ToZone == to && (hole.Protocol == "" || proto == "" || hole.Protocol == proto) && (hole.Port == 0 || dport == 0 || hole.Port == dport) {
 			return "accept", "internal/" + hole.Name
 		}
@@ -960,24 +960,6 @@ func firewallImplicitActionForCLI(fromRole, toRole string) string {
 		return "accept"
 	}
 	return "drop"
-}
-
-func internalFirewallHolesForCLI(router *api.Router) []render.FirewallHole {
-	var out []render.FirewallHole
-	zones := firewallZonesForCLI(router)
-	for _, zone := range zones {
-		if zone.Role == "trust" {
-			out = append(out, render.FirewallHole{Name: "dns-" + zone.Name, FromZone: zone.Name, ToZone: "self", Protocol: "udp", Port: 53})
-			out = append(out, render.FirewallHole{Name: "dns-tcp-" + zone.Name, FromZone: zone.Name, ToZone: "self", Protocol: "tcp", Port: 53})
-			out = append(out, render.FirewallHole{Name: "dhcp4-" + zone.Name, FromZone: zone.Name, ToZone: "self", Protocol: "udp", Port: 67})
-			out = append(out, render.FirewallHole{Name: "dhcp6-" + zone.Name, FromZone: zone.Name, ToZone: "self", Protocol: "udp", Port: 547})
-		}
-		if zone.Role == "untrust" {
-			out = append(out, render.FirewallHole{Name: "dhcpv6-client-" + zone.Name, FromZone: zone.Name, ToZone: "self", Protocol: "udp", Port: 546})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
 }
 
 func showCommand(args []string, stdout, stderr io.Writer) error {

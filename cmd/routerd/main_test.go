@@ -11,6 +11,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
+	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
@@ -493,6 +494,84 @@ exit 0
 	for _, want := range []string{pfPath, filepath.Join(rcDir, "routerd_healthcheck_internet"), "service:pf", "service:pflog", "service:routerd_healthcheck_internet"} {
 		if !strings.Contains(gotChanged, want) {
 			t.Fatalf("changed missing %q:\n%v", want, changed)
+		}
+	}
+}
+
+func TestApplyFreeBSDDnsmasqConfigValidatesAndUsesPersistentLeaseDirectory(t *testing.T) {
+	dir := t.TempDir()
+	oldDefaults := platformDefaults
+	platformDefaults = platform.Defaults{
+		OS:         platform.OSFreeBSD,
+		RuntimeDir: filepath.Join(dir, "var", "run", "routerd"),
+		StateDir:   filepath.Join(dir, "var", "db", "routerd"),
+	}
+	t.Cleanup(func() { platformDefaults = oldDefaults })
+
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	dnsmasqLog := filepath.Join(dir, "dnsmasq.log")
+	serviceLog := filepath.Join(dir, "service.log")
+	sysrcLog := filepath.Join(dir, "sysrc.log")
+	writeExecutable(t, filepath.Join(binDir, "dnsmasq"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+exit 0
+`, dnsmasqLog))
+	writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+exit 0
+`, sysrcLog))
+	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "-l" ]; then
+  printf 'routerd_dnsmasq\n'
+  exit 0
+fi
+if [ "$2" = "status" ]; then
+  exit 1
+fi
+exit 0
+`, serviceLog))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	configPath := filepath.Join(dir, "usr", "local", "etc", "routerd", "dnsmasq.conf")
+	servicePath := filepath.Join(dir, "usr", "local", "etc", "rc.d", "routerd_dnsmasq")
+	changed, err := applyFreeBSDDnsmasqConfig(configPath, servicePath, []byte("port=0\ndhcp-leasefile="+dnsmasqLeaseFileForPlatform()+"\n"), filepath.Join(binDir, "dnsmasq"))
+	if err != nil {
+		t.Fatalf("apply FreeBSD dnsmasq: %v", err)
+	}
+	for _, path := range []string{
+		configPath,
+		servicePath,
+		filepath.Join(platformDefaults.StateDir, "dnsmasq"),
+		platformDefaults.RuntimeDir,
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s to exist: %v", path, err)
+		}
+	}
+	if !containsString(changed, configPath) || !containsString(changed, servicePath) {
+		t.Fatalf("changed = %v", changed)
+	}
+	dnsmasqCalls, err := os.ReadFile(dnsmasqLog)
+	if err != nil {
+		t.Fatalf("read dnsmasq log: %v", err)
+	}
+	if !strings.Contains(string(dnsmasqCalls), "--test --conf-file="+configPath) {
+		t.Fatalf("dnsmasq --test not called:\n%s", dnsmasqCalls)
+	}
+	serviceData, err := os.ReadFile(servicePath)
+	if err != nil {
+		t.Fatalf("read rc.d script: %v", err)
+	}
+	for _, want := range []string{
+		`mkdir -p "` + platformDefaults.RuntimeDir + `"`,
+		`mkdir -p "` + filepath.Join(platformDefaults.StateDir, "dnsmasq") + `"`,
+	} {
+		if !strings.Contains(string(serviceData), want) {
+			t.Fatalf("rc.d script missing %q:\n%s", want, serviceData)
 		}
 	}
 }
