@@ -26,6 +26,23 @@ func TestParseConntrackEntry(t *testing.T) {
 	}
 }
 
+func TestParseConntrackEntryWithAccounting(t *testing.T) {
+	line := "ipv4 2 tcp 6 299 ESTABLISHED src=172.18.1.10 dst=93.184.216.34 sport=44882 dport=443 packets=12 bytes=3456 src=93.184.216.34 dst=192.168.1.249 sport=443 dport=44882 packets=34 bytes=98765 [ASSURED] mark=256 use=1"
+	entry, ok := parseConntrackEntry(line)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	if !entry.Original.Accounting || entry.Original.Packets != 12 || entry.Original.Bytes != 3456 {
+		t.Fatalf("original counters = %+v", entry.Original)
+	}
+	if !entry.Reply.Accounting || entry.Reply.Packets != 34 || entry.Reply.Bytes != 98765 {
+		t.Fatalf("reply counters = %+v", entry.Reply)
+	}
+	if entry.RawAttributes == nil || entry.RawAttributes["use"] != "1" {
+		t.Fatalf("raw attributes = %+v", entry.RawAttributes)
+	}
+}
+
 func TestParseConntrackEntriesLimitAndMarkCount(t *testing.T) {
 	output := `ipv4 2 udp 17 20 src=192.0.2.1 dst=198.51.100.1 sport=12345 dport=53 src=198.51.100.1 dst=192.0.2.1 sport=53 dport=12345 mark=0 use=1
 ipv4 2 tcp 6 30 SYN_SENT src=192.0.2.2 dst=198.51.100.2 sport=23456 dport=443 src=198.51.100.2 dst=192.0.2.2 sport=443 dport=23456 mark=257 use=1

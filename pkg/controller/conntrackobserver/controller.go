@@ -200,6 +200,11 @@ func trafficFlowFromConnection(entry observe.ConnectionEntry, now time.Time) log
 		PeerPort:             peerPort,
 		Protocol:             strings.ToLower(entry.Protocol),
 		NATTranslatedAddress: natAddress,
+		Accounting:           entry.Original.Accounting || entry.Reply.Accounting,
+		BytesOut:             entry.Original.Bytes,
+		BytesIn:              entry.Reply.Bytes,
+		PacketsOut:           entry.Original.Packets,
+		PacketsIn:            entry.Reply.Packets,
 	}
 	flow.FlowKey = logstore.FlowKey(flow.Protocol, flow.ClientAddress, flow.ClientPort, flow.PeerAddress, flow.PeerPort)
 	return flow

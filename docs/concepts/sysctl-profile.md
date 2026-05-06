@@ -64,6 +64,7 @@ spec:
 | `net.ipv4.conf.all.src_valid_mark` | `1` | fwmark を使う経路選択で reverse path 判定が mark を考慮できるようにします。 |
 | `net.ipv6.conf.all.forwarding` | `1` | IPv6 転送を有効にします。 |
 | `net.ipv6.conf.default.forwarding` | `1` | 後から作られるインターフェースでも IPv6 転送を有効にします。 |
+| `net.netfilter.nf_conntrack_acct` | `1` | conntrack の packet / byte accounting を有効にし、Web Console の client traffic 集計に使います。conntrack が未ロードの環境では任意扱いです。 |
 | `net.netfilter.nf_conntrack_max` | `262144` | 多数の端末とアプリの同時接続で conntrack が詰まることを避けます。conntrack が未ロードの環境では任意扱いです。 |
 | `net.netfilter.nf_conntrack_buckets` | `65536` | `nf_conntrack_max / 4` を目安にします。環境によって書けないため任意扱いです。 |
 | `net.netfilter.nf_conntrack_tcp_timeout_established` | `86400` | 既定の 5 日は家庭用ルーターでは長すぎるため、24 時間へ短縮します。conntrack が未ロードの環境では任意扱いです。 |

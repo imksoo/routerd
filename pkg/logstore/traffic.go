@@ -24,6 +24,7 @@ type TrafficFlow struct {
 	PeerPort             int       `json:"peerPort,omitempty"`
 	Protocol             string    `json:"protocol"`
 	NATTranslatedAddress string    `json:"natTranslatedAddress,omitempty"`
+	Accounting           bool      `json:"accounting,omitempty"`
 	BytesOut             int64     `json:"bytesOut,omitempty"`
 	BytesIn              int64     `json:"bytesIn,omitempty"`
 	PacketsOut           int64     `json:"packetsOut,omitempty"`
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS flows (
   peer_port INTEGER,
   protocol TEXT NOT NULL,
   nat_translated_address TEXT,
+  accounting INTEGER,
   bytes_out INTEGER,
   bytes_in INTEGER,
   packets_out INTEGER,
@@ -101,7 +103,14 @@ CREATE TABLE IF NOT EXISTS flows (
 CREATE INDEX IF NOT EXISTS flows_client_ts ON flows(client_address, ts_started);
 CREATE INDEX IF NOT EXISTS flows_peer_ts ON flows(peer_address, ts_started);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN accounting INTEGER`)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return err
+	}
+	return nil
 }
 
 func (l *TrafficFlowLog) Close() error {
@@ -121,8 +130,8 @@ func (l *TrafficFlowLog) UpsertActive(ctx context.Context, flow TrafficFlow) err
 	if flow.FlowKey == "" {
 		flow.FlowKey = FlowKey(flow.Protocol, flow.ClientAddress, flow.ClientPort, flow.PeerAddress, flow.PeerPort)
 	}
-	_, err := l.db.ExecContext(ctx, `INSERT INTO flows(flow_key,ts_started,client_address,client_port,peer_address,peer_port,protocol,nat_translated_address,bytes_out,bytes_in,packets_out,packets_in,app_name,app_category,app_confidence,tls_sni,resolved_hostname)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := l.db.ExecContext(ctx, `INSERT INTO flows(flow_key,ts_started,client_address,client_port,peer_address,peer_port,protocol,nat_translated_address,accounting,bytes_out,bytes_in,packets_out,packets_in,app_name,app_category,app_confidence,tls_sni,resolved_hostname)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(flow_key) DO UPDATE SET
   ts_ended = NULL,
   client_address = excluded.client_address,
@@ -131,6 +140,7 @@ ON CONFLICT(flow_key) DO UPDATE SET
   peer_port = excluded.peer_port,
   protocol = excluded.protocol,
   nat_translated_address = excluded.nat_translated_address,
+  accounting = excluded.accounting,
   bytes_out = excluded.bytes_out,
   bytes_in = excluded.bytes_in,
   packets_out = excluded.packets_out,
@@ -148,6 +158,7 @@ ON CONFLICT(flow_key) DO UPDATE SET
 		flow.PeerPort,
 		flow.Protocol,
 		flow.NATTranslatedAddress,
+		flow.Accounting,
 		flow.BytesOut,
 		flow.BytesIn,
 		flow.PacketsOut,
@@ -212,7 +223,7 @@ func (l *TrafficFlowLog) List(ctx context.Context, filter TrafficFlowFilter) ([]
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	args = append(args, limit)
-	rows, err := l.db.QueryContext(ctx, `SELECT flow_key,ts_started,coalesce(ts_ended,0),coalesce(client_address,''),coalesce(client_port,0),coalesce(peer_address,''),coalesce(peer_port,0),protocol,coalesce(nat_translated_address,''),coalesce(bytes_out,0),coalesce(bytes_in,0),coalesce(packets_out,0),coalesce(packets_in,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(tls_sni,''),coalesce(resolved_hostname,'')
+	rows, err := l.db.QueryContext(ctx, `SELECT flow_key,ts_started,coalesce(ts_ended,0),coalesce(client_address,''),coalesce(client_port,0),coalesce(peer_address,''),coalesce(peer_port,0),protocol,coalesce(nat_translated_address,''),coalesce(accounting,0),coalesce(bytes_out,0),coalesce(bytes_in,0),coalesce(packets_out,0),coalesce(packets_in,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(tls_sni,''),coalesce(resolved_hostname,'')
 FROM flows`+where+` ORDER BY ts_started DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -222,7 +233,7 @@ FROM flows`+where+` ORDER BY ts_started DESC LIMIT ?`, args...)
 	for rows.Next() {
 		var flow TrafficFlow
 		var started, ended int64
-		if err := rows.Scan(&flow.FlowKey, &started, &ended, &flow.ClientAddress, &flow.ClientPort, &flow.PeerAddress, &flow.PeerPort, &flow.Protocol, &flow.NATTranslatedAddress, &flow.BytesOut, &flow.BytesIn, &flow.PacketsOut, &flow.PacketsIn, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.TLSSNI, &flow.ResolvedHostname); err != nil {
+		if err := rows.Scan(&flow.FlowKey, &started, &ended, &flow.ClientAddress, &flow.ClientPort, &flow.PeerAddress, &flow.PeerPort, &flow.Protocol, &flow.NATTranslatedAddress, &flow.Accounting, &flow.BytesOut, &flow.BytesIn, &flow.PacketsOut, &flow.PacketsIn, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.TLSSNI, &flow.ResolvedHostname); err != nil {
 			return nil, err
 		}
 		flow.StartedAt = time.Unix(0, started).UTC()

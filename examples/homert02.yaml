@@ -86,6 +86,8 @@ spec:
         profile: router-linux
         runtime: true
         persistent: true
+        overrides:
+          net.netfilter.nf_conntrack_acct: "1"
     - apiVersion: system.routerd.net/v1alpha1
       kind: Sysctl
       metadata:

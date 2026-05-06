@@ -45,8 +45,8 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 		Connections: func(limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Protocol: "tcp",
-				Original: observe.ConntrackTuple{Source: "172.18.0.10", SourcePort: "12345", Destination: "1.1.1.1", DestinationPort: "443"},
-				Reply:    observe.ConntrackTuple{Source: "1.1.1.1", SourcePort: "443", Destination: "172.18.0.10", DestinationPort: "12345"},
+				Original: observe.ConntrackTuple{Source: "172.18.0.10", SourcePort: "12345", Destination: "1.1.1.1", DestinationPort: "443", Packets: 3, Bytes: 300, Accounting: true},
+				Reply:    observe.ConntrackTuple{Source: "1.1.1.1", SourcePort: "443", Destination: "172.18.0.10", DestinationPort: "12345", Packets: 4, Bytes: 1200, Accounting: true},
 			}}}, nil
 		},
 	}
@@ -62,7 +62,7 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(flows) != 1 || flows[0].PeerAddress != "1.1.1.1" || flows[0].PeerPort != 443 {
+	if len(flows) != 1 || flows[0].PeerAddress != "1.1.1.1" || flows[0].PeerPort != 443 || !flows[0].Accounting || flows[0].BytesOut != 300 || flows[0].BytesIn != 1200 {
 		t.Fatalf("flows = %#v", flows)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "TrafficFlowLog", "default")

@@ -284,11 +284,20 @@
                 "original": {
                   "additionalProperties": false,
                   "properties": {
+                    "accounting": {
+                      "type": "boolean"
+                    },
+                    "bytes": {
+                      "type": "integer"
+                    },
                     "destination": {
                       "type": "string"
                     },
                     "destinationPort": {
                       "type": "string"
+                    },
+                    "packets": {
+                      "type": "integer"
                     },
                     "source": {
                       "type": "string"
@@ -311,11 +320,20 @@
                 "reply": {
                   "additionalProperties": false,
                   "properties": {
+                    "accounting": {
+                      "type": "boolean"
+                    },
+                    "bytes": {
+                      "type": "integer"
+                    },
                     "destination": {
                       "type": "string"
                     },
                     "destinationPort": {
                       "type": "string"
+                    },
+                    "packets": {
+                      "type": "integer"
                     },
                     "source": {
                       "type": "string"
@@ -778,6 +796,9 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "accounting": {
+                  "type": "boolean"
+                },
                 "appCategory": {
                   "type": "string"
                 },

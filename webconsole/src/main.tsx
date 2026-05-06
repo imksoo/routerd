@@ -112,6 +112,7 @@ type TrafficFlow = {
   peerAddress?: string;
   resolvedHostname?: string;
   tlsSNI?: string;
+  accounting?: boolean;
   bytesOut?: number;
   bytesIn?: number;
 };
@@ -176,8 +177,8 @@ type ClientRow = {
   mac: string;
   vendor: string;
   expiresAt: string;
-  bytesOut: number;
-  bytesIn: number;
+  bytesOut?: number;
+  bytesIn?: number;
   peers: Set<string>;
 };
 
@@ -1458,12 +1459,12 @@ function formatDetailValue(value: unknown) {
 }
 
 function clientTrafficRows(flows: TrafficFlow[]) {
-  const totals = new Map<string, { client: string; bytesOut: number; bytesIn: number; peers: Set<string> }>();
+  const totals = new Map<string, { client: string; bytesOut?: number; bytesIn?: number; peers: Set<string> }>();
   for (const flow of flows) {
     const key = flow.clientAddress || "-";
-    const row = totals.get(key) ?? { client: key, bytesOut: 0, bytesIn: 0, peers: new Set<string>() };
-    row.bytesOut += Number(flow.bytesOut || 0);
-    row.bytesIn += Number(flow.bytesIn || 0);
+    const row = totals.get(key) ?? { client: key, peers: new Set<string>() };
+    row.bytesOut = addOptionalBytes(row.bytesOut, flow.bytesOut, flow.accounting);
+    row.bytesIn = addOptionalBytes(row.bytesIn, flow.bytesIn, flow.accounting);
     const peer = flow.resolvedHostname || flow.tlsSNI || flow.peerAddress;
     if (peer) row.peers.add(peer);
     totals.set(key, row);
@@ -1481,28 +1482,33 @@ function clientInventoryRows(leases: DHCPLease[], flows: TrafficFlow[]) {
       mac: lease.mac ?? "",
       vendor: lease.vendor ?? "",
       expiresAt: lease.expiresAt ?? "",
-      bytesOut: 0,
-      bytesIn: 0,
       peers: new Set<string>(),
     });
   }
   for (const flow of flows) {
     const ip = flow.clientAddress || "-";
-    const row = rows.get(ip) ?? { ip, hostname: "", mac: "", vendor: "", expiresAt: "", bytesOut: 0, bytesIn: 0, peers: new Set<string>() };
-    row.bytesOut += Number(flow.bytesOut || 0);
-    row.bytesIn += Number(flow.bytesIn || 0);
+    const row = rows.get(ip) ?? { ip, hostname: "", mac: "", vendor: "", expiresAt: "", peers: new Set<string>() };
+    row.bytesOut = addOptionalBytes(row.bytesOut, flow.bytesOut, flow.accounting);
+    row.bytesIn = addOptionalBytes(row.bytesIn, flow.bytesIn, flow.accounting);
     const peer = flow.resolvedHostname || flow.tlsSNI || flow.peerAddress;
     if (peer) row.peers.add(peer);
     rows.set(ip, row);
   }
   return Array.from(rows.values()).sort((a, b) => {
-    const traffic = b.bytesOut + b.bytesIn - (a.bytesOut + a.bytesIn);
+    const traffic = (b.bytesOut ?? 0) + (b.bytesIn ?? 0) - ((a.bytesOut ?? 0) + (a.bytesIn ?? 0));
     return traffic || stringSort(a.ip, b.ip);
   });
 }
 
-function formatBytes(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return "0 B";
+function addOptionalBytes(current: number | undefined, next: number | undefined, accounting?: boolean) {
+  if (!accounting) return current;
+  const value = typeof next === "number" && Number.isFinite(next) ? next : 0;
+  return (current ?? 0) + value;
+}
+
+function formatBytes(value?: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "not collected";
+  if (value <= 0) return "0 B";
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   let current = value;
   let unit = 0;

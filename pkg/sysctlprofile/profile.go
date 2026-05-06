@@ -56,6 +56,7 @@ func routerLinux() []Entry {
 		{Key: "net.ipv6.conf.all.forwarding", Value: "1"},
 		{Key: "net.ipv6.conf.default.forwarding", Value: "1"},
 		{Key: "net.ipv6.route.max_size", Value: "16384", Compare: "atLeast"},
+		{Key: "net.netfilter.nf_conntrack_acct", Value: "1", Optional: true},
 		{Key: "net.netfilter.nf_conntrack_buckets", Value: "65536", Compare: "atLeast", Optional: true},
 		{Key: "net.netfilter.nf_conntrack_max", Value: "262144", Compare: "atLeast", Optional: true},
 		{Key: "net.netfilter.nf_conntrack_tcp_timeout_established", Value: "86400", Optional: true},

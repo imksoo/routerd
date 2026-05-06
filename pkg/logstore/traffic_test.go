@@ -20,6 +20,7 @@ func TestTrafficFlowLogUpsertAndEndMissing(t *testing.T) {
 		PeerAddress:   "1.1.1.1",
 		PeerPort:      443,
 		Protocol:      "tcp",
+		Accounting:    true,
 		BytesOut:      100,
 	}
 	flow.FlowKey = FlowKey(flow.Protocol, flow.ClientAddress, flow.ClientPort, flow.PeerAddress, flow.PeerPort)
@@ -40,7 +41,7 @@ func TestTrafficFlowLogUpsertAndEndMissing(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("len = %d", len(rows))
 	}
-	if rows[0].BytesOut != 200 || rows[0].EndedAt.IsZero() {
+	if !rows[0].Accounting || rows[0].BytesOut != 200 || rows[0].EndedAt.IsZero() {
 		t.Fatalf("flow = %#v", rows[0])
 	}
 }

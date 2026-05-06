@@ -37,6 +37,9 @@ type ConntrackTuple struct {
 	Destination     string `json:"destination,omitempty" yaml:"destination,omitempty"`
 	SourcePort      string `json:"sourcePort,omitempty" yaml:"sourcePort,omitempty"`
 	DestinationPort string `json:"destinationPort,omitempty" yaml:"destinationPort,omitempty"`
+	Packets         int64  `json:"packets,omitempty" yaml:"packets,omitempty"`
+	Bytes           int64  `json:"bytes,omitempty" yaml:"bytes,omitempty"`
+	Accounting      bool   `json:"accounting,omitempty" yaml:"accounting,omitempty"`
 }
 
 type ConntrackCPUStats struct {
@@ -334,6 +337,14 @@ func parseConntrackEntry(line string) (ConnectionEntry, bool) {
 			tupleIndex++
 			continue
 		}
+		if key == "packets" || key == "bytes" {
+			if tupleIndex <= 4 {
+				setTupleCounter(&entry.Original, key, value)
+				continue
+			}
+			setTupleCounter(&entry.Reply, key, value)
+			continue
+		}
 		entry.RawAttributes[key] = value
 	}
 	if entry.Original.Source == "" && entry.Reply.Source == "" {
@@ -364,6 +375,21 @@ func setTupleField(tuple *ConntrackTuple, key, value string) {
 		tuple.SourcePort = value
 	case "dport":
 		tuple.DestinationPort = value
+	}
+}
+
+func setTupleCounter(tuple *ConntrackTuple, key, value string) {
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return
+	}
+	switch key {
+	case "packets":
+		tuple.Packets = parsed
+		tuple.Accounting = true
+	case "bytes":
+		tuple.Bytes = parsed
+		tuple.Accounting = true
 	}
 }
 
