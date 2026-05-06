@@ -78,6 +78,12 @@ spec:
 | `VRF` | Represents a Linux VRF device and route table. |
 | `VXLANTunnel` | Represents a VXLAN tunnel. |
 
+`TailscaleNode` can use `authKey` for one-shot bootstrap, but production
+configs should prefer `authKeyEnv` and `authKeyFile` so the secret value stays
+outside the YAML and the Git history. If neither is set, routerd assumes
+`tailscaled` is already logged in and only reapplies the advertised node
+options.
+
 ## WAN Addressing and Delegation
 
 | Kind | Role |

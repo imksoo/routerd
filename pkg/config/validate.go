@@ -811,6 +811,11 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.execStart[%d] contains invalid characters", res.ID(), i)
 			}
 		}
+		for i, path := range spec.EnvironmentFiles {
+			if err := validateSystemdEnvironmentFilePath(path); err != nil {
+				return fmt.Errorf("%s spec.environmentFiles[%d] %w", res.ID(), i, err)
+			}
+		}
 		switch spec.Restart {
 		case "", "no", "on-failure", "always":
 		default:
@@ -1166,13 +1171,14 @@ func validateResource(res api.Resource) error {
 		default:
 			return fmt.Errorf("%s spec.state must be present or absent", res.ID())
 		}
-		if spec.AuthKey != "" && spec.AuthKeyEnv != "" {
-			return fmt.Errorf("%s spec.authKey and spec.authKeyEnv are mutually exclusive", res.ID())
+		if spec.AuthKey != "" && (spec.AuthKeyEnv != "" || spec.AuthKeyFile != "") {
+			return fmt.Errorf("%s spec.authKey is mutually exclusive with spec.authKeyEnv and spec.authKeyFile", res.ID())
 		}
 		for field, value := range map[string]string{
 			"hostname":    spec.Hostname,
 			"loginServer": spec.LoginServer,
 			"authKeyEnv":  spec.AuthKeyEnv,
+			"authKeyFile": spec.AuthKeyFile,
 			"operator":    spec.Operator,
 			"binaryPath":  spec.BinaryPath,
 		} {
@@ -1182,6 +1188,11 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.AuthKeyEnv != "" && !validEnvironmentName(spec.AuthKeyEnv) {
 			return fmt.Errorf("%s spec.authKeyEnv must be an environment variable name", res.ID())
+		}
+		if spec.AuthKeyFile != "" {
+			if err := validateSystemdEnvironmentFilePath(spec.AuthKeyFile); err != nil {
+				return fmt.Errorf("%s spec.authKeyFile %w", res.ID(), err)
+			}
 		}
 		for i, route := range spec.AdvertiseRoutes {
 			if _, err := netip.ParsePrefix(route); err != nil {
@@ -3103,6 +3114,20 @@ func validEnvironmentName(value string) bool {
 		return false
 	}
 	return true
+}
+
+func validateSystemdEnvironmentFilePath(value string) error {
+	path := strings.TrimPrefix(strings.TrimSpace(value), "-")
+	if path == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("must be an absolute path")
+	}
+	if strings.ContainsAny(path, "\x00\n\r") {
+		return fmt.Errorf("contains invalid characters")
+	}
+	return nil
 }
 
 func stringInSlice(value string, values []string) bool {

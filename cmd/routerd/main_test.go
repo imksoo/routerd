@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
@@ -1220,7 +1221,9 @@ func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
 	if err := os.MkdirAll(leaseDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	data := []byte(`{
+	acquiredAt := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
+	updatedAt := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
+	data := []byte(fmt.Sprintf(`{
   "resource": "wan-pd",
   "interface": "ens18",
   "state": "bound",
@@ -1231,9 +1234,9 @@ func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
   "t2Seconds": 12600,
   "preferredSeconds": 14400,
   "validSeconds": 14400,
-  "acquiredAt": "2026-05-06T05:00:00Z",
-  "updatedAt": "2026-05-06T05:10:00Z"
-}`)
+  "acquiredAt": %q,
+  "updatedAt": %q
+}`, acquiredAt, updatedAt))
 	if err := os.WriteFile(filepath.Join(leaseDir, "lease.json"), data, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1262,7 +1265,7 @@ func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
 	if !ok {
 		t.Fatal("lease missing")
 	}
-	if lease.CurrentPrefix != "2001:db8:1230::/60" || lease.VLTime != "14400" || lease.LastReplyAt != "2026-05-06T05:00:00Z" {
+	if lease.CurrentPrefix != "2001:db8:1230::/60" || lease.VLTime != "14400" || lease.LastReplyAt != acquiredAt {
 		t.Fatalf("lease = %+v", lease)
 	}
 }

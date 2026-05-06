@@ -730,6 +730,12 @@
                         },
                         "type": "array"
                       },
+                      "environmentFiles": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "execStart": {
                         "items": {
                           "type": "string"
@@ -1693,6 +1699,9 @@
                         "type": "string"
                       },
                       "authKeyEnv": {
+                        "type": "string"
+                      },
+                      "authKeyFile": {
                         "type": "string"
                       },
                       "binaryPath": {

@@ -70,6 +70,12 @@ spec:
 | `VRF` | Linux VRF デバイスと経路表を表します。 |
 | `VXLANTunnel` | VXLAN トンネルを表します。 |
 
+`TailscaleNode` は初回登録用に `authKey` を使えます。
+本番設定では `authKeyEnv` と `authKeyFile` を推奨します。
+これにより、秘密値を YAML と Git 履歴に残しません。
+どちらも未指定の場合、`tailscaled` はログイン済みとみなします。
+routerd は広告するノード設定だけを再適用します。
+
 ## WAN アドレスと委譲
 
 | Kind | 役割 |

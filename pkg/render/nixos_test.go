@@ -221,6 +221,7 @@ func TestNixOSModuleRendersTailscaleNode(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "home"},
 				Spec: api.TailscaleNodeSpec{
 					Hostname:          "router02",
+					AuthKeyFile:       "/run/secrets/tailscale.env",
 					AdvertiseExitNode: true,
 					AdvertiseRoutes:   []string{"172.18.0.0/16"},
 					AcceptDNS:         &acceptDNS,
@@ -239,8 +240,10 @@ func TestNixOSModuleRendersTailscaleNode(t *testing.T) {
 		`path = with pkgs; [`,
 		`tailscale`,
 		`Type = "oneshot";`,
+		`EnvironmentFile = [ "/run/secrets/tailscale.env" ];`,
 		`RemainAfterExit = true;`,
 		`"tailscale"`,
+		`"--auth-key=${TS_AUTHKEY}"`,
 		`"--advertise-exit-node"`,
 		`"--advertise-routes=172.18.0.0/16"`,
 		`"--accept-dns=false"`,

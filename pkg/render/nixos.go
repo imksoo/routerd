@@ -1017,6 +1017,7 @@ func writeNixOSSystemdUnit(buf *bytes.Buffer, unit nixOSSystemdUnit) {
 	writeNixOSSystemdString(buf, "Group", spec.Group)
 	writeNixOSSystemdString(buf, "WorkingDirectory", spec.WorkingDirectory)
 	writeNixOSSystemdStringList(buf, "Environment", spec.Environment)
+	writeNixOSSystemdStringList(buf, "EnvironmentFile", spec.EnvironmentFiles)
 	writeNixOSSystemdStringList(buf, "RuntimeDirectory", spec.RuntimeDirectory)
 	writeNixOSSystemdString(buf, "RuntimeDirectoryPreserve", spec.RuntimeDirectoryPreserve)
 	writeNixOSSystemdStringList(buf, "StateDirectory", spec.StateDirectory)

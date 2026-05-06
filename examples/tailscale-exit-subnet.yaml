@@ -32,5 +32,5 @@ spec:
           - 172.18.0.0/16
           - 192.168.123.0/24
         acceptDNS: false
-        # Omit authKey/authKeyEnv when the node is already logged in.
-        # authKeyEnv: TS_AUTHKEY
+        authKeyEnv: TS_AUTHKEY
+        authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env

@@ -47,6 +47,8 @@ spec:
               - net-tools
               - kmod
               - libnetfilter-log1
+              - tailscale
+              - tailscale-archive-keyring
           - os: nixos
             manager: nix
             names:
@@ -67,6 +69,7 @@ spec:
               - nettools
               - kmod
               - libnetfilter_log
+              - tailscale
             optional: true
           - os: freebsd
             manager: pkg
@@ -76,6 +79,7 @@ spec:
               - strongswan
               - mpd5
               - bind-tools
+              - tailscale
             optional: true
 
     - apiVersion: system.routerd.net/v1alpha1
@@ -379,6 +383,19 @@ spec:
         name: mgmt
       spec:
         ifname: ens20
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: TailscaleNode
+      metadata:
+        name: homert02
+      spec:
+        hostname: homert02
+        advertiseExitNode: true
+        advertiseRoutes:
+          - 172.17.0.0/16
+          - 172.18.0.0/16
+        acceptDNS: false
+        acceptRoutes: false
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv6PrefixDelegation

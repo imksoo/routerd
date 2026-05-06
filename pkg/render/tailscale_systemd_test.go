@@ -12,6 +12,7 @@ func TestTailscaleSystemdSpecRendersExitNodeAndSubnetRoutes(t *testing.T) {
 	spec := TailscaleSystemdSpec("home", api.TailscaleNodeSpec{
 		Hostname:          "homert02",
 		AuthKeyEnv:        "TS_AUTHKEY",
+		AuthKeyFile:       "/usr/local/etc/routerd/secrets/tailscale.env",
 		AdvertiseExitNode: true,
 		AdvertiseRoutes:   []string{"172.18.0.0/16", "192.168.123.0/24"},
 		AcceptDNS:         &acceptDNS,
@@ -20,6 +21,7 @@ func TestTailscaleSystemdSpecRendersExitNodeAndSubnetRoutes(t *testing.T) {
 	for _, want := range []string{
 		"Type=oneshot",
 		"RemainAfterExit=yes",
+		"EnvironmentFile=/usr/local/etc/routerd/secrets/tailscale.env",
 		"ExecStart=/usr/bin/tailscale up --hostname=homert02 --auth-key=${TS_AUTHKEY} --advertise-exit-node --advertise-routes=172.18.0.0/16,192.168.123.0/24 --accept-dns=false",
 		"Wants=network-online.target tailscaled.service",
 		"After=network-online.target tailscaled.service",

@@ -104,6 +104,7 @@ type SystemdUnitSpec struct {
 	Type                     string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=simple,enum=oneshot"`
 	ExecStart                []string `yaml:"execStart,omitempty" json:"execStart,omitempty"`
 	Environment              []string `yaml:"environment,omitempty" json:"environment,omitempty"`
+	EnvironmentFiles         []string `yaml:"environmentFiles,omitempty" json:"environmentFiles,omitempty"`
 	Wants                    []string `yaml:"wants,omitempty" json:"wants,omitempty"`
 	After                    []string `yaml:"after,omitempty" json:"after,omitempty"`
 	WantedBy                 []string `yaml:"wantedBy,omitempty" json:"wantedBy,omitempty"`
@@ -260,6 +261,7 @@ type TailscaleNodeSpec struct {
 	LoginServer       string   `yaml:"loginServer,omitempty" json:"loginServer,omitempty"`
 	AuthKey           string   `yaml:"authKey,omitempty" json:"authKey,omitempty"`
 	AuthKeyEnv        string   `yaml:"authKeyEnv,omitempty" json:"authKeyEnv,omitempty"`
+	AuthKeyFile       string   `yaml:"authKeyFile,omitempty" json:"authKeyFile,omitempty"`
 	AdvertiseExitNode bool     `yaml:"advertiseExitNode,omitempty" json:"advertiseExitNode,omitempty"`
 	AdvertiseRoutes   []string `yaml:"advertiseRoutes,omitempty" json:"advertiseRoutes,omitempty"`
 	AdvertiseTags     []string `yaml:"advertiseTags,omitempty" json:"advertiseTags,omitempty"`

@@ -69,6 +69,9 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 			b.WriteString("Environment=" + strconv.Quote(env) + "\n")
 		}
 	}
+	for _, envFile := range spec.EnvironmentFiles {
+		b.WriteString("EnvironmentFile=" + systemdValue(envFile) + "\n")
+	}
 	if spec.User != "" {
 		b.WriteString("User=" + spec.User + "\n")
 	}

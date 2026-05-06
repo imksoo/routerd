@@ -15,14 +15,22 @@ func TailscaleSystemdSpec(name string, spec api.TailscaleNodeSpec) api.SystemdUn
 	if firstNonEmpty(spec.State, "present") == "absent" {
 		return api.SystemdUnitSpec{State: "absent", UnitName: TailscaleUnitName(name)}
 	}
+	if spec.AuthKeyFile != "" && spec.AuthKeyEnv == "" {
+		spec.AuthKeyEnv = "TS_AUTHKEY"
+	}
 	noNewPrivileges := true
 	privateTmp := true
 	remainAfterExit := true
+	var environmentFiles []string
+	if spec.AuthKeyFile != "" {
+		environmentFiles = append(environmentFiles, spec.AuthKeyFile)
+	}
 	return api.SystemdUnitSpec{
 		UnitName:                 TailscaleUnitName(name),
 		Description:              "routerd Tailscale node " + name,
 		Type:                     "oneshot",
 		ExecStart:                TailscaleUpArgs(spec),
+		EnvironmentFiles:         environmentFiles,
 		Wants:                    []string{"network-online.target", "tailscaled.service"},
 		After:                    []string{"network-online.target", "tailscaled.service"},
 		WantedBy:                 []string{"multi-user.target"},
