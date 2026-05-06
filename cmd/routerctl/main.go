@@ -92,8 +92,15 @@ func statusCommand(args []string, stdout io.Writer) error {
 	fs.SetOutput(io.Discard)
 	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
+	output := "json"
+	jsonOutput := fs.Bool("json", false, "output JSON")
+	fs.StringVar(&output, "o", output, "output format: json, yaml")
+	fs.StringVar(&output, "output", output, "output format: json, yaml")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *jsonOutput {
+		output = "json"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
@@ -101,7 +108,14 @@ func statusCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return writeJSON(stdout, status)
+	switch output {
+	case "", "json":
+		return writeJSON(stdout, status)
+	case "yaml":
+		return writeYAML(stdout, status)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
 }
 
 func applyCommand(args []string, stdout io.Writer) error {
@@ -2065,7 +2079,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "usage: routerctl <command> [options]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "commands:")
-	fmt.Fprintln(w, "  status [--socket <path>]")
+	fmt.Fprintln(w, "  status [--socket <path>] [--json|-o json|yaml]")
 	fmt.Fprintln(w, "  events [--state-file <path>] [--topic <topic>] [--resource <kind>/<name>] [--limit <n>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  dns-queries [--socket <path>] [--db <path>] [--since 1h] [--client <ip>] [--qname <pattern>] [--limit 100] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  connections [--socket <path>] [--limit 100] [-o table|json|yaml]")

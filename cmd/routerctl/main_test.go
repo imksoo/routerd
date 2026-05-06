@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"routerd/pkg/api"
+	"routerd/pkg/apply"
 	"routerd/pkg/controlapi"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/logstore"
@@ -128,6 +129,10 @@ func TestLogCommandsUseControlSocketByDefault(t *testing.T) {
 	}
 	defer listener.Close()
 	server := &http.Server{Handler: controlapi.Handler{
+		Status: func(r *http.Request) (*controlapi.Status, error) {
+			result := controlapi.NewStatus(&apply.Result{Phase: "Healthy", Generation: 7})
+			return &result, nil
+		},
 		DNSQueries: func(r *http.Request, req controlapi.DNSQueriesRequest) (*controlapi.DNSQueries, error) {
 			if req.Limit != 3 {
 				t.Fatalf("dns limit = %d", req.Limit)
@@ -151,6 +156,8 @@ func TestLogCommandsUseControlSocketByDefault(t *testing.T) {
 		args []string
 		want string
 	}{
+		{[]string{"status", "--socket", socketPath, "--json"}, `"phase": "Healthy"`},
+		{[]string{"status", "--socket", socketPath, "-o", "json"}, `"generation": 7`},
 		{[]string{"dns-queries", "--socket", socketPath, "--limit", "3"}, "socket.example"},
 		{[]string{"traffic-flows", "--socket", socketPath}, "1.1.1.1"},
 		{[]string{"firewall-logs", "--socket", socketPath}, "deny-test"},
