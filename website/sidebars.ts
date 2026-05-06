@@ -29,6 +29,7 @@ const sidebars: SidebarsConfig = {
         'tutorials/lan-side-services',
         'tutorials/basic-firewall',
         'tutorials/nixos-getting-started',
+        'tutorials/freebsd-getting-started',
       ],
     },
     {

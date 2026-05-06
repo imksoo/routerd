@@ -132,4 +132,4 @@ dnsmasq も `dnsmasq --test` で設定を確認してから再起動します。
 
 新しい OS 固有の振る舞いを足すときは、business logic 層で `runtime.GOOS` を直接読まないでください。
 `pkg/platform` 層 (`platform.Features`) または Go の build tag を使って境界を明示します。
-未対応 OS で実行時に予期せず失敗するより、validation や planning の段階で明示的にエラーにする方を優先します。
+対象外 OS で実行時に予期せず失敗するより、validation や planning の段階で明示的にエラーにする方を優先します。
