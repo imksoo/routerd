@@ -539,6 +539,7 @@ spec:
         role: trust
         interfaces:
           - Interface/lan
+          - WireGuardInterface/wg0
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
@@ -555,6 +556,34 @@ spec:
         name: default
       spec:
         logDeny: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg0
+      spec:
+        privateKeyFile: /usr/local/etc/routerd/secrets/router04-wg0.key
+        listenPort: 51824
+        mtu: 1420
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: lab-peer
+      spec:
+        interface: wg0
+        publicKey: mf2R6JeByfoob+xD0e1sTgjPC6fcDEq5k5FuNpminUM=
+        allowedIPs:
+          - 10.44.4.2/32
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: wg0-ipv4
+      spec:
+        interface: wg0
+        address: 10.44.4.4/24
+        exclusive: false
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Bridge

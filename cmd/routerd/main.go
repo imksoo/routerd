@@ -3611,6 +3611,12 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 			changed = append(changed, "service:mpd5")
 		}
 	}
+	if rcValues["tailscaled_enable"] == "YES" && freeBSDServiceExists("tailscaled") && !freeBSDServiceRunning("tailscaled") {
+		if err := runLogged("service", "tailscaled", "onestart"); err != nil {
+			return changed, warnings, err
+		}
+		changed = append(changed, "service:tailscaled")
+	}
 	for _, ifname := range orderFreeBSDNetifRestarts(compactStringList(restartIfnames)) {
 		if freeBSDProtectedIfnames(router)[ifname] {
 			changed = append(changed, "netif:skipped-protected:"+ifname)
@@ -5584,6 +5590,14 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 		return nil, nil
 	}
 	dnsmasqPath, err := exec.LookPath("dnsmasq")
+	if err != nil {
+		if platformDefaults.OS == platform.OSFreeBSD {
+			if _, statErr := os.Stat("/usr/local/sbin/dnsmasq"); statErr == nil {
+				dnsmasqPath = "/usr/local/sbin/dnsmasq"
+				err = nil
+			}
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("dnsmasq is required for managed IPv4 DHCP service: %w", err)
 	}

@@ -531,9 +531,9 @@ func Validate(router *api.Router) error {
 			for i, name := range spec.Interfaces {
 				refKind, refName := splitFirewallInterfaceRef(name)
 				switch refKind {
-				case "Interface", "PPPoEInterface":
+				case "Interface", "PPPoEInterface", "WireGuardInterface":
 					if !interfaces[refName] && !dsliteTunnels[refName] {
-						return fmt.Errorf("%s spec.interfaces[%d] references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), i, refName)
+						return fmt.Errorf("%s spec.interfaces[%d] references missing Interface, PPPoEInterface, WireGuardInterface, or DSLiteTunnel %q", res.ID(), i, refName)
 					}
 				case "DSLiteTunnel":
 					if !dsliteTunnels[refName] {

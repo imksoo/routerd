@@ -140,6 +140,7 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 	tailscale := string(got.RCDScripts["routerd_tailscale_home"])
 	for _, want := range []string{
 		`PROVIDE: routerd_tailscale_home`,
+		`'service' 'tailscaled' 'onestart'`,
 		`/usr/local/bin/tailscale`,
 		`up`,
 		`--hostname=router01`,
@@ -162,6 +163,57 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 	} {
 		if !strings.Contains(firewall, want) {
 			t.Fatalf("firewall logger rc.d script missing %q:\n%s", want, firewall)
+		}
+	}
+}
+
+func TestFreeBSDRendersWireGuardRCDScript(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+			Metadata: api.ObjectMeta{Name: "wg0"},
+			Spec: api.WireGuardInterfaceSpec{
+				PrivateKeyFile: "/usr/local/etc/routerd/secrets/wg0.key",
+				ListenPort:     51824,
+				MTU:            1420,
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"},
+			Metadata: api.ObjectMeta{Name: "peer-a"},
+			Spec: api.WireGuardPeerSpec{
+				Interface:           "wg0",
+				PublicKey:           "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+				AllowedIPs:          []string{"10.44.4.2/32"},
+				Endpoint:            "192.0.2.2:51824",
+				PersistentKeepalive: 25,
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+			Metadata: api.ObjectMeta{Name: "wg0-ipv4"},
+			Spec:     api.IPv4StaticAddressSpec{Interface: "wg0", Address: "10.44.4.4/24"},
+		},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	rc := string(got.RCConf)
+	if strings.Contains(rc, "ifconfig_wg0=\"inet") {
+		t.Fatalf("WireGuard address should be owned by rc.d script, not rc.conf:\n%s", rc)
+	}
+	script := string(got.RCDScripts["routerd_wireguard_wg0"])
+	for _, want := range []string{
+		`PROVIDE: routerd_wireguard_wg0`,
+		`kldload if_wg`,
+		`ifconfig 'wg0' create`,
+		`wg set 'wg0' listen-port '51824' private-key '/usr/local/etc/routerd/secrets/wg0.key'`,
+		`wg set 'wg0' peer 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' allowed-ips '10.44.4.2/32' endpoint '192.0.2.2:51824' persistent-keepalive '25'`,
+		`ifconfig 'wg0' inet '10.44.4.4/24' alias`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("wireguard rc.d script missing %q:\n%s", want, script)
 		}
 	}
 }

@@ -82,8 +82,12 @@ spec:
 configs should prefer `authKeyEnv` and `authKeyFile` so the secret value stays
 outside the YAML and the Git history. If neither is set, routerd assumes
 `tailscaled` is already logged in and only reapplies the advertised node
-options. See [Tailscale exit node and subnet router](./how-to/tailscale.md) for
-the full setup flow.
+options. The Tailscale how-to covers the full setup flow.
+
+`WireGuardInterface` accepts `privateKeyFile` so the private key can stay out of
+the router YAML. On FreeBSD, routerd renders an rc.d service that creates the
+`wg` interface, loads the key from that file, applies peers, and then assigns
+declared static addresses for the WireGuard interface.
 
 ## WAN Addressing and Delegation
 

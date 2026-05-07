@@ -42,7 +42,7 @@ metadata:
 spec:
   listenPort: 51820
   mtu: 1420
-  privateKeyFromSecret: wg-cluster-key
+  privateKeyFile: /usr/local/etc/routerd/secrets/wg-cluster.key
 ---
 apiVersion: net.routerd.net/v1alpha1
 kind: WireGuardPeer

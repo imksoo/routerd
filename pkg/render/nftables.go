@@ -243,6 +243,8 @@ func nftOutboundAliases(router *api.Router) (map[string]string, error) {
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+		case "WireGuardInterface":
+			aliases[res.Metadata.Name] = res.Metadata.Name
 		}
 	}
 	return aliases, nil

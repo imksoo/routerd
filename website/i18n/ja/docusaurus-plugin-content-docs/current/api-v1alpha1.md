@@ -75,7 +75,13 @@ spec:
 これにより、秘密値を YAML と Git 履歴に残しません。
 どちらも未指定の場合、`tailscaled` はログイン済みとみなします。
 routerd は広告するノード設定だけを再適用します。
-詳しい設定手順は [Tailscale の exit node と subnet router](./how-to/tailscale.md) を参照してください。
+詳しい設定手順は Tailscale の設定ガイドを参照してください。
+
+`WireGuardInterface` は `privateKeyFile` を受け取れます。
+秘密鍵を router YAML の外に置くためです。
+FreeBSD では、routerd が rc.d サービスを生成します。
+そのサービスは `wg` インターフェースを作成し、ファイルから秘密鍵を読み込み、
+ピアと静的アドレスを適用します。
 
 ## WAN アドレスと委譲
 
