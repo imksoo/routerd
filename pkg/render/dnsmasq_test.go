@@ -441,6 +441,42 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigAcceptsDHCPv6InformationSourcesInStaticRender(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"},
+				Metadata: api.ObjectMeta{Name: "dhcpv6"},
+				Spec: api.DHCPv6ServerSpec{
+					Interface: "lan",
+					Mode:      "stateless",
+					DNSServerFrom: []api.StatusValueSourceSpec{
+						{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"},
+					},
+					SNTPServerFrom: []api.StatusValueSourceSpec{
+						{Resource: "DHCPv6Information/wan-info", Field: "sntpServers"},
+					},
+				},
+			},
+		}},
+	}
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{
+		DHCPv6DNSServersByInterface: map[string][]string{"ens18": {"2001:4860:4860::8888"}},
+	})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "dhcp-option=tag:dhcpv6,option6:dns-server,[2001:4860:4860::8888]") {
+		t.Fatalf("dnsmasq output missing DHCPv6Information DNS source:\n%s", got)
+	}
+}
+
 func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

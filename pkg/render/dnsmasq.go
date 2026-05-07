@@ -537,6 +537,19 @@ func dnsmasqResolveStatusSource(source api.StatusValueSourceSpec, aliases map[st
 		default:
 			return nil, fmt.Errorf("unsupported Interface field %q", source.Field)
 		}
+	case "DHCPv6Information":
+		switch defaultString(source.Field, "dnsServers") {
+		case "dnsServers":
+			var values []string
+			for _, servers := range runtime.DHCPv6DNSServersByInterface {
+				values = append(values, servers...)
+			}
+			return uniqueStrings(filterGlobalIPv6Strings(values)), nil
+		case "sntpServers", "domainSearch", "aftrName":
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("unsupported DHCPv6Information field %q", source.Field)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported status source kind %q", kind)
 	}
