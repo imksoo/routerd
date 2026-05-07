@@ -2,9 +2,11 @@ package chain
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"routerd/pkg/api"
+	routerstate "routerd/pkg/state"
 )
 
 func TestIPv4RouteControllerInstallsBlackholeRouteInDryRun(t *testing.T) {
@@ -74,4 +76,67 @@ func TestIPv4RouteControllerDoesNotRefreshInstalledAtWhenUnchanged(t *testing.T)
 	if second != first {
 		t.Fatalf("installedAt changed for unchanged route: first=%v second=%v", first, second)
 	}
+}
+
+func TestIPv4RouteControllerDeletesRemovedRoute(t *testing.T) {
+	store := &routeCleanupStore{statuses: []routerstate.ObjectStatus{
+		{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "IPv4Route",
+			Name:       "dslite-a-healthcheck",
+			Status: map[string]any{
+				"phase":       "Installed",
+				"type":        "unicast",
+				"destination": "1.1.1.1/32",
+				"device":      "ds-lite-a",
+				"metric":      10,
+			},
+		},
+	}}
+	var commands [][]string
+	controller := IPv4RouteController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: nil}},
+		Store:  store,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, append([]string{name}, args...))
+			return nil, nil
+		},
+	}
+
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	want := []string{"ip", "route", "del", "1.1.1.1/32", "dev", "ds-lite-a", "metric", "10"}
+	if len(commands) != 1 || !reflect.DeepEqual(commands[0], want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+	if !store.deleted["net.routerd.net/v1alpha1/IPv4Route/dslite-a-healthcheck"] {
+		t.Fatalf("removed route status was not deleted")
+	}
+}
+
+type routeCleanupStore struct {
+	statuses []routerstate.ObjectStatus
+	deleted  map[string]bool
+}
+
+func (s *routeCleanupStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
+	return nil
+}
+
+func (s *routeCleanupStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	return map[string]any{}
+}
+
+func (s *routeCleanupStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
+	return s.statuses, nil
+}
+
+func (s *routeCleanupStore) DeleteObject(apiVersion, kind, name string) error {
+	if s.deleted == nil {
+		s.deleted = map[string]bool{}
+	}
+	s.deleted[apiVersion+"/"+kind+"/"+name] = true
+	return nil
 }

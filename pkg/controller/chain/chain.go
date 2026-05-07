@@ -38,6 +38,7 @@ import (
 	"routerd/pkg/platform"
 	"routerd/pkg/resourcequery"
 	daemonsource "routerd/pkg/source/daemon"
+	routerstate "routerd/pkg/state"
 )
 
 var dnsmasqMu sync.Mutex
@@ -82,6 +83,32 @@ func (s eventedStore) ObjectStatus(apiVersion, kind, name string) map[string]any
 		return nil
 	}
 	return s.Store.ObjectStatus(apiVersion, kind, name)
+}
+
+func (s eventedStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
+	if s.Store == nil {
+		return nil, nil
+	}
+	lister, ok := s.Store.(interface {
+		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return lister.ListObjectStatuses()
+}
+
+func (s eventedStore) DeleteObject(apiVersion, kind, name string) error {
+	if s.Store == nil {
+		return nil
+	}
+	deleter, ok := s.Store.(interface {
+		DeleteObject(apiVersion, kind, name string) error
+	})
+	if !ok {
+		return nil
+	}
+	return deleter.DeleteObject(apiVersion, kind, name)
 }
 
 func newerStatus(current, next map[string]any) bool {

@@ -735,20 +735,6 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
-        name: dslite-a-healthcheck
-      spec:
-        destination: 1.1.1.1/32
-        deviceFrom:
-          resource: DSLiteTunnel/ds-lite-a
-          field: interface
-        metric: 10
-        dependsOn:
-          - resource: DSLiteTunnel/ds-lite-a
-            phase: Up
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4Route
-      metadata:
         name: hgw-lan-via-wan
       spec:
         destination: 192.168.0.0/16

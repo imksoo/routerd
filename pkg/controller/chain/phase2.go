@@ -21,6 +21,7 @@ import (
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/resourcequery"
+	routerstate "routerd/pkg/state"
 )
 
 type DHCPv6InformationController struct {
@@ -253,11 +254,12 @@ func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLi
 }
 
 type IPv4RouteController struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	DryRun bool
-	Logger *slog.Logger
+	Router  *api.Router
+	Bus     *bus.Bus
+	Store   Store
+	DryRun  bool
+	Logger  *slog.Logger
+	Command func(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
 func (c IPv4RouteController) Start(ctx context.Context) {
@@ -286,6 +288,9 @@ func (c IPv4RouteController) Start(ctx context.Context) {
 }
 
 func (c IPv4RouteController) reconcile(ctx context.Context) error {
+	if err := c.cleanupRemovedRoutes(ctx); err != nil {
+		return err
+	}
 	var failures []string
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "IPv4Route" {
@@ -329,8 +334,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			if spec.Metric > 0 {
 				args = append(args, "metric", fmt.Sprintf("%d", spec.Metric))
 			}
-			cmd := exec.CommandContext(ctx, "ip", args...)
-			out, err := cmd.CombinedOutput()
+			out, err := c.run(ctx, "ip", args...)
 			if err != nil {
 				message := strings.TrimSpace(string(out))
 				status := map[string]any{"phase": "Error", "reason": "ApplyFailed", "destination": destination, "device": device, "gateway": gateway, "metric": spec.Metric, "dryRun": c.DryRun, "error": err.Error(), "command": "ip " + strings.Join(args, " ")}
@@ -358,6 +362,105 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
+	if c.Store == nil {
+		return nil
+	}
+	lister, ok := c.Store.(interface {
+		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
+	})
+	if !ok {
+		return nil
+	}
+	deleter, ok := c.Store.(interface {
+		DeleteObject(apiVersion, kind, name string) error
+	})
+	if !ok {
+		return nil
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	desired := map[string]bool{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4Route" {
+			desired[resource.Metadata.Name] = true
+		}
+	}
+	for _, status := range statuses {
+		if status.APIVersion != api.NetAPIVersion || status.Kind != "IPv4Route" || desired[status.Name] {
+			continue
+		}
+		if !c.DryRun {
+			args := ipv4RouteDeleteArgs(status.Status)
+			if len(args) > 0 {
+				out, err := c.run(ctx, "ip", args...)
+				if err != nil && !missingIPv4RouteDelete(err, out) {
+					return fmt.Errorf("delete removed IPv4Route %s: ip %s: %w: %s", status.Name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+				}
+			}
+		}
+		if err := deleter.DeleteObject(api.NetAPIVersion, "IPv4Route", status.Name); err != nil {
+			return err
+		}
+		if c.Bus != nil {
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.removed", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: status.Name}
+			event.Attributes = map[string]string{"destination": fmt.Sprint(status.Status["destination"]), "device": fmt.Sprint(status.Status["device"])}
+			if err := c.Bus.Publish(ctx, event); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c IPv4RouteController) run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if c.Command != nil {
+		return c.Command(ctx, name, args...)
+	}
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+func ipv4RouteDeleteArgs(status map[string]any) []string {
+	destination := fmt.Sprint(status["destination"])
+	if destination == "" || destination == "<nil>" {
+		return nil
+	}
+	routeType := fmt.Sprint(status["type"])
+	if routeType == "" || routeType == "<nil>" {
+		routeType = "unicast"
+	}
+	args := []string{"route", "del"}
+	if routeType == "blackhole" {
+		args = append(args, "blackhole", destination)
+	} else {
+		args = append(args, destination)
+		gateway := fmt.Sprint(status["gateway"])
+		if gateway != "" && gateway != "<nil>" {
+			args = append(args, "via", gateway)
+		}
+		device := fmt.Sprint(status["device"])
+		if device != "" && device != "<nil>" {
+			args = append(args, "dev", device)
+		}
+	}
+	metric := fmt.Sprint(status["metric"])
+	if metric != "" && metric != "0" && metric != "<nil>" {
+		args = append(args, "metric", metric)
+	}
+	return args
+}
+
+func missingIPv4RouteDelete(err error, output []byte) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(string(output))
+	return strings.Contains(message, "no such process") || strings.Contains(message, "cannot find")
 }
 
 func routeInstallStatusChanged(previous, next map[string]any) bool {
