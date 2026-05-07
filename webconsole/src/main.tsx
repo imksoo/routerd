@@ -194,6 +194,15 @@ type ConfigSnapshot = {
   text?: string;
 };
 
+type GenerationRecord = {
+  generation: number;
+  startedAt?: string;
+  finishedAt?: string;
+  phase?: string;
+  configHash?: string;
+  hasYaml?: boolean;
+};
+
 type ConnectionFilters = {
   query: string;
   family: string;
@@ -218,7 +227,7 @@ type ClientRow = {
   peers: Set<string>;
 };
 
-type ViewKey = "overview" | "clients" | "connections" | "events" | "firewall" | "config";
+type ViewKey = "overview" | "clients" | "connections" | "events" | "firewall" | "config" | "generations";
 type NavSubItem = { key: string; label: string; count?: number; view: ViewKey; targetID: string };
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
@@ -235,6 +244,7 @@ const navItems: { key: ViewKey; label: string; description: string; icon: React.
   { key: "events", label: "Events", description: "Bus events and resource changes", icon: <ServerRegular /> },
   { key: "firewall", label: "Firewall", description: "Deny ranking and timeline", icon: <ShieldRegular /> },
   { key: "config", label: "Config", description: "Read-only YAML tree", icon: <DocumentTextRegular /> },
+  { key: "generations", label: "Generations", description: "Applied YAML history and diffs", icon: <DocumentTextRegular /> },
 ];
 const viewKeys = new Set<string>(navItems.map(item => item.key));
 
@@ -829,6 +839,43 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
     backgroundColor: tokens.colorPaletteRedBackground2,
   },
+  generationTable: {
+    minWidth: "960px",
+    tableLayout: "fixed",
+  },
+  generationActions: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    alignItems: "center",
+    marginBottom: "12px",
+  },
+  generationSelect: {
+    width: "180px",
+  },
+  diffPanel: {
+    maxHeight: "62vh",
+    overflow: "auto",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    padding: "10px",
+  },
+  diffLine: {
+    display: "block",
+    fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
+    fontSize: "12px",
+    lineHeight: 1.45,
+    whiteSpace: "pre",
+  },
+  diffAdded: {
+    color: "#8ee68e",
+    backgroundColor: "rgba(37, 113, 37, 0.24)",
+  },
+  diffRemoved: {
+    color: "#ffb3ad",
+    backgroundColor: "rgba(150, 48, 44, 0.28)",
+  },
   tree: {
     display: "grid",
     gap: "2px",
@@ -897,6 +944,11 @@ function App() {
   const initialLocation = parseLocationHash();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [config, setConfig] = useState<ConfigSnapshot | null>(null);
+  const [generations, setGenerations] = useState<GenerationRecord[]>([]);
+  const [generationDiff, setGenerationDiff] = useState<string>("");
+  const [generationConfig, setGenerationConfig] = useState<{ generation: number; text: string } | null>(null);
+  const [generationFrom, setGenerationFrom] = useState<string>("");
+  const [generationTo, setGenerationTo] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [selected, setSelected] = useState<ViewKey>(initialLocation.view);
   const [selectedTargetID, setSelectedTargetID] = useState<string | undefined>(initialLocation.targetID);
@@ -917,12 +969,14 @@ function App() {
 
   async function refresh() {
     try {
-      const [summaryResponse, configResponse] = await Promise.all([
+      const [summaryResponse, configResponse, generationResponse] = await Promise.all([
         fetchJSON<Summary>("api/v1/summary?events=15&connections=240"),
         config ? Promise.resolve(config) : fetchJSON<ConfigSnapshot>("api/v1/config"),
+        fetchJSON<GenerationRecord[]>("api/v1/generations?limit=200"),
       ]);
       setSummary(summaryResponse);
       if (!config) setConfig(configResponse as ConfigSnapshot);
+      setGenerations(generationResponse);
       setError("");
     } catch (err) {
       setError(String(err));
@@ -936,6 +990,13 @@ function App() {
     const id = window.setInterval(refresh, 5000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    const withYaml = generations.filter(row => row.hasYaml);
+    if (!generationTo && withYaml[0]) setGenerationTo(String(withYaml[0].generation));
+    if (!generationFrom && withYaml[1]) setGenerationFrom(String(withYaml[1].generation));
+    if (!generationFrom && withYaml.length === 1) setGenerationFrom(String(withYaml[0].generation));
+  }, [generations, generationFrom, generationTo]);
 
   const connections = summary?.connections?.entries ?? [];
   const dnsLabels = useMemo(() => dnsLabelMap(summary?.dnsQueries ?? []), [summary?.dnsQueries]);
@@ -1021,6 +1082,31 @@ function App() {
         scrollToTop();
       }
     }, 80);
+  }
+
+  async function loadGenerationConfig(generation: number) {
+    try {
+      const text = await fetchText(`api/v1/generations/${generation}/config`);
+      setGenerationConfig({ generation, text });
+      setGenerationDiff("");
+      setError("");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function loadGenerationDiff() {
+    const from = Number(generationFrom);
+    const to = Number(generationTo);
+    if (!from || !to) return;
+    try {
+      const text = await fetchText(`api/v1/generations/${from}/diff/${to}`);
+      setGenerationDiff(text);
+      setGenerationConfig(null);
+      setError("");
+    } catch (err) {
+      setError(String(err));
+    }
   }
 
   const selectedNav = navItems.find(item => item.key === selected) ?? navItems[0];
@@ -1264,6 +1350,19 @@ function App() {
                 <ConfigView config={config} />
               </Card>
             ) : null}
+            {selected === "generations" ? (
+              <GenerationsView
+                generations={generations}
+                from={generationFrom}
+                to={generationTo}
+                setFrom={setGenerationFrom}
+                setTo={setGenerationTo}
+                diff={generationDiff}
+                config={generationConfig}
+                loadDiff={loadGenerationDiff}
+                loadConfig={loadGenerationConfig}
+              />
+            ) : null}
           </main>
         </section>
       </div>
@@ -1302,6 +1401,117 @@ function ConfigView({ config }: { config: ConfigSnapshot | null }) {
         )}
       </div>
     </>
+  );
+}
+
+function GenerationsView({
+  generations,
+  from,
+  to,
+  setFrom,
+  setTo,
+  diff,
+  config,
+  loadDiff,
+  loadConfig,
+}: {
+  generations: GenerationRecord[];
+  from: string;
+  to: string;
+  setFrom: (value: string) => void;
+  setTo: (value: string) => void;
+  diff: string;
+  config: { generation: number; text: string } | null;
+  loadDiff: () => void;
+  loadConfig: (generation: number) => void;
+}) {
+  const styles = useStyles();
+  const diffable = generations.filter(row => row.hasYaml);
+  return (
+    <>
+      <Card>
+        <CardHeader
+          header={<Text weight="semibold">Generations</Text>}
+          description={<Text className={styles.muted}>Applied router YAML snapshots. Older rows without YAML cannot be diffed.</Text>}
+        />
+        <div className={styles.generationActions}>
+          <Text size={200} className={styles.muted}>From</Text>
+          <Select className={styles.generationSelect} size="small" value={from} onChange={event => setFrom(event.target.value)}>
+            {diffable.map(row => <option key={row.generation} value={row.generation}>#{row.generation}</option>)}
+          </Select>
+          <Text size={200} className={styles.muted}>To</Text>
+          <Select className={styles.generationSelect} size="small" value={to} onChange={event => setTo(event.target.value)}>
+            {diffable.map(row => <option key={row.generation} value={row.generation}>#{row.generation}</option>)}
+          </Select>
+          <Button appearance="primary" disabled={!from || !to} onClick={loadDiff}>Diff</Button>
+        </div>
+        <div className={styles.tableWrap}>
+          <Table size="small" className={styles.generationTable}>
+            <colgroup>
+              <col style={{ width: "92px" }} />
+              <col style={{ width: "150px" }} />
+              <col style={{ width: "150px" }} />
+              <col style={{ width: "104px" }} />
+              <col />
+              <col style={{ width: "96px" }} />
+              <col style={{ width: "124px" }} />
+            </colgroup>
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell>Generation</TableHeaderCell>
+                <TableHeaderCell>Started</TableHeaderCell>
+                <TableHeaderCell>Finished</TableHeaderCell>
+                <TableHeaderCell>Phase</TableHeaderCell>
+                <TableHeaderCell>Hash</TableHeaderCell>
+                <TableHeaderCell>YAML</TableHeaderCell>
+                <TableHeaderCell>Actions</TableHeaderCell>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {generations.map(row => (
+                <TableRow key={row.generation}>
+                  <TableCell><code className={styles.code}>#{row.generation}</code></TableCell>
+                  <TableCell>{formatTime(row.startedAt)}</TableCell>
+                  <TableCell>{formatTime(row.finishedAt)}</TableCell>
+                  <TableCell><Badge appearance="tint" color={phaseColor(row.phase)}>{row.phase || "Unknown"}</Badge></TableCell>
+                  <TableCell><code className={styles.wrapCode}>{shortHash(row.configHash)}</code></TableCell>
+                  <TableCell>{row.hasYaml ? <Badge appearance="tint" color="success">stored</Badge> : <Badge appearance="outline">unavailable</Badge>}</TableCell>
+                  <TableCell>
+                    <Button size="small" appearance="subtle" disabled={!row.hasYaml} onClick={() => loadConfig(row.generation)}>View</Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
+      {diff ? (
+        <Card>
+          <CardHeader header={<Text weight="semibold">Diff</Text>} description={<Text className={styles.muted}>Unified diff between selected generations</Text>} />
+          <DiffView diff={diff} />
+        </Card>
+      ) : null}
+      {config ? (
+        <Card>
+          <CardHeader header={<Text weight="semibold">Generation #{config.generation}</Text>} description={<Text className={styles.muted}>Stored YAML snapshot</Text>} />
+          <div className={styles.diffPanel}><pre className={styles.pre}>{config.text}</pre></div>
+        </Card>
+      ) : null}
+    </>
+  );
+}
+
+function DiffView({ diff }: { diff: string }) {
+  const styles = useStyles();
+  const lines = diff.split(/\n/);
+  return (
+    <div className={styles.diffPanel}>
+      {lines.map((line, index) => (
+        <span key={index} className={`${styles.diffLine} ${line.startsWith("+") && !line.startsWith("+++") ? styles.diffAdded : ""} ${line.startsWith("-") && !line.startsWith("---") ? styles.diffRemoved : ""}`}>
+          {line}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -1391,6 +1601,11 @@ function formatConfigScalar(value: unknown) {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function shortHash(value?: string) {
+  if (!value) return "-";
+  return value.length > 16 ? `${value.slice(0, 16)}...` : value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1866,6 +2081,12 @@ async function fetchJSON<T>(path: string): Promise<T> {
   const response = await fetch(basePath + path, { cache: "no-store" });
   if (!response.ok) throw new Error(`${path}: ${response.status}`);
   return response.json() as Promise<T>;
+}
+
+async function fetchText(path: string): Promise<string> {
+  const response = await fetch(basePath + path, { cache: "no-store" });
+  if (!response.ok) throw new Error(`${path}: ${response.status}`);
+  return response.text();
 }
 
 function normalizeBasePath(value: string) {

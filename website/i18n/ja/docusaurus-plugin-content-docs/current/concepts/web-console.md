@@ -77,3 +77,6 @@ Web Console API は読み取り専用です。
 | `/api/v1/traffic-flows?since=1h&client=&peer=&limit=100` | DNS 由来ホスト名を含む通信フローログ行 |
 | `/api/v1/firewall-logs?since=24h&action=drop&src=&limit=100` | ファイアウォールログ行 |
 | `/api/v1/config` | 現在の YAML 設定 |
+| `/api/v1/generations?limit=100` | 完了した適用世代と YAML スナップショットの有無 |
+| `/api/v1/generations/<id>/config` | 1 つの適用世代に保存された YAML |
+| `/api/v1/generations/<from>/diff/<to>` | 2 つの YAML 世代の unified diff |

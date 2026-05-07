@@ -71,7 +71,8 @@ CREATE TABLE IF NOT EXISTS generations (
   finished_at TEXT,
   phase TEXT,
   warnings TEXT,
-  config_hash TEXT
+  config_hash TEXT,
+  config_yaml TEXT
 );
 CREATE TABLE IF NOT EXISTS objects (
   api_version TEXT NOT NULL,
@@ -120,8 +121,29 @@ CREATE TABLE IF NOT EXISTS access_logs (
 	if err := s.ensureEventColumns(); err != nil {
 		return err
 	}
+	if err := s.ensureGenerationColumns(); err != nil {
+		return err
+	}
 	if err := s.ensureArtifactsTable(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ensureGenerationColumns() error {
+	columns := map[string]string{
+		"config_yaml": "TEXT",
+	}
+	for column, typ := range columns {
+		hasColumn, err := s.tableHasColumn("generations", column)
+		if err != nil {
+			return err
+		}
+		if !hasColumn {
+			if _, err := s.db.Exec(`ALTER TABLE generations ADD COLUMN ` + column + ` ` + typ); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -475,6 +497,17 @@ func (s *SQLiteStore) BeginGeneration(configHash string) (int64, error) {
 	return generation, nil
 }
 
+func (s *SQLiteStore) RecordGenerationConfig(generation int64, configYAML string) error {
+	if generation == 0 {
+		generation = s.generation
+	}
+	if generation == 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE generations SET config_yaml = ? WHERE generation = ?`, configYAML, generation)
+	return err
+}
+
 func (s *SQLiteStore) FinishGeneration(generation int64, phase string, warnings []string) error {
 	if generation == 0 {
 		generation = s.generation
@@ -493,6 +526,50 @@ func (s *SQLiteStore) LatestGeneration() int64 {
 		return 0
 	}
 	return generation.Int64
+}
+
+func (s *SQLiteStore) ListGenerations(limit int) ([]GenerationRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.Query(`SELECT generation,started_at,coalesce(finished_at,''),coalesce(phase,''),coalesce(config_hash,''),config_yaml IS NOT NULL FROM generations ORDER BY generation DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GenerationRecord
+	for rows.Next() {
+		var rec GenerationRecord
+		var started, finished string
+		if err := rows.Scan(&rec.Generation, &started, &finished, &rec.Phase, &rec.ConfigHash, &rec.HasYAML); err != nil {
+			return nil, err
+		}
+		if parsed, err := time.Parse(time.RFC3339Nano, started); err == nil {
+			rec.StartedAt = parsed
+		}
+		if finished != "" {
+			if parsed, err := time.Parse(time.RFC3339Nano, finished); err == nil {
+				rec.FinishedAt = parsed
+			}
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteStore) GenerationConfig(generation int64) (string, bool, error) {
+	var value sql.NullString
+	err := s.db.QueryRow(`SELECT config_yaml FROM generations WHERE generation = ?`, generation).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !value.Valid {
+		return "", false, nil
+	}
+	return value.String, true, nil
 }
 
 func (s *SQLiteStore) ObjectGeneration(apiVersion, kind, name string) int64 {

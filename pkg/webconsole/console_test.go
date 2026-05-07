@@ -110,6 +110,55 @@ func TestHandlerServesEmbeddedAppShell(t *testing.T) {
 	}
 }
 
+func TestHandlerServesGenerationHistoryAndDiff(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	first, err := store.BeginGeneration("hash-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordGenerationConfig(first, "kind: Router\nmetadata:\n  name: old\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishGeneration(first, "Healthy", nil); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.BeginGeneration("hash-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordGenerationConfig(second, "kind: Router\nmetadata:\n  name: new\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishGeneration(second, "Healthy", nil); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(Options{Store: store})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/generations", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{`"generation": 2`, `"configHash": "hash-b"`, `"hasYaml": true`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("generations missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/generations/1/diff/2", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{"--- generation-1.yaml", "+++ generation-2.yaml", "-  name: old", "+  name: new"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("diff missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+}
+
 func reqContext() context.Context { return context.Background() }
 
 func TestHandlerRejectsWriteMethods(t *testing.T) {

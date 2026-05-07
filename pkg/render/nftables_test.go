@@ -145,6 +145,30 @@ func TestNftablesNAT44ResolvedSNATRule(t *testing.T) {
 	}
 }
 
+func TestNftablesSkipsRuntimeResolvedNAT44Policy(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
+				Metadata: api.ObjectMeta{Name: "lan-to-egress"},
+				Spec: api.NAT44RuleSpec{
+					Type:            "masquerade",
+					EgressPolicyRef: "ipv4-default",
+					SourceRanges:    []string{"172.18.0.0/16"},
+				},
+			},
+		}},
+	}
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "skipped: egressInterface is resolved by ipv4-default at runtime") {
+		t.Fatalf("nftables output missing runtime-resolved NAT44 skip comment:\n%s", got)
+	}
+}
+
 func TestNftablesDefaultRoutePolicyFlushesTable(t *testing.T) {
 	data, err := NftablesIPv4DefaultRoutePolicy(
 		"net.routerd.net/v1alpha1/IPv4DefaultRoutePolicy/default",

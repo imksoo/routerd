@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -212,6 +213,23 @@ func TestSQLiteStoreGenerationsAndEvents(t *testing.T) {
 	}
 	if got := store.LatestGeneration(); got != generation {
 		t.Fatalf("latest generation = %d, want %d", got, generation)
+	}
+	if err := store.RecordGenerationConfig(generation, "kind: Router\nmetadata:\n  name: lab\n"); err != nil {
+		t.Fatalf("record generation config: %v", err)
+	}
+	records, err := store.ListGenerations(10)
+	if err != nil {
+		t.Fatalf("list generations: %v", err)
+	}
+	if len(records) != 1 || !records[0].HasYAML || records[0].ConfigHash != "abc123" {
+		t.Fatalf("generation records = %+v", records)
+	}
+	configYAML, ok, err := store.GenerationConfig(generation)
+	if err != nil {
+		t.Fatalf("generation config: %v", err)
+	}
+	if !ok || !strings.Contains(configYAML, "kind: Router") {
+		t.Fatalf("generation config ok=%t yaml=%q", ok, configYAML)
 	}
 
 	db, err := sql.Open("sqlite", path)

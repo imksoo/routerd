@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
 	nixosapply "routerd/pkg/apply/nixos"
@@ -803,6 +804,16 @@ func routerConfigHash(router *api.Router) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func routerConfigYAML(router *api.Router, opts applyOptions) string {
+	if path := strings.TrimSpace(opts.ConfigPath); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			return string(data)
+		}
+	}
+	data, _ := yaml.Marshal(router)
+	return string(data)
+}
+
 func recordWarningEvents(router *api.Router, store routerstate.Store, warnings []string) {
 	recorder, ok := store.(routerstate.EventRecorder)
 	if !ok {
@@ -888,6 +899,11 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			generation, err = store.BeginGeneration(routerConfigHash(router))
 			if err != nil {
 				return nil, err
+			}
+			if recorder, ok := stateStore.(routerstate.GenerationConfigRecorder); ok {
+				if err := recorder.RecordGenerationConfig(generation, routerConfigYAML(router, opts)); err != nil {
+					return nil, err
+				}
 			}
 			defer func() {
 				if generation != 0 && !generationFinished {

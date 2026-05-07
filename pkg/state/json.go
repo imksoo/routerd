@@ -40,8 +40,26 @@ type GenerationStore interface {
 	CurrentGeneration() int64
 }
 
+type GenerationConfigRecorder interface {
+	RecordGenerationConfig(generation int64, configYAML string) error
+}
+
 type LatestGenerationReader interface {
 	LatestGeneration() int64
+}
+
+type GenerationRecord struct {
+	Generation int64     `json:"generation" yaml:"generation"`
+	StartedAt  time.Time `json:"startedAt" yaml:"startedAt"`
+	FinishedAt time.Time `json:"finishedAt,omitempty" yaml:"finishedAt,omitempty"`
+	Phase      string    `json:"phase,omitempty" yaml:"phase,omitempty"`
+	ConfigHash string    `json:"configHash,omitempty" yaml:"configHash,omitempty"`
+	HasYAML    bool      `json:"hasYaml" yaml:"hasYaml"`
+}
+
+type GenerationHistoryReader interface {
+	ListGenerations(limit int) ([]GenerationRecord, error)
+	GenerationConfig(generation int64) (string, bool, error)
 }
 
 type EventRecorder interface {
