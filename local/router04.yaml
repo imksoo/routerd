@@ -61,6 +61,13 @@ spec:
         name: routerd.service
       spec:
         description: routerd control plane for router04
+        execStartPre:
+          - /usr/local/sbin/routerd
+          - apply
+          - --config
+          - /usr/local/etc/routerd/router.yaml
+          - --once
+          - --skip-service-manager
         execStart:
           - /usr/local/sbin/routerd
           - serve
@@ -73,6 +80,11 @@ spec:
           - --observe-interval
           - 30s
           - --controller-chain
+          - --controller-chain-dry-run-address=false
+          - --controller-chain-dry-run-dslite=false
+          - --controller-chain-dry-run-route=false
+          - --controller-chain-dry-run-ra=false
+          - --controller-chain-dry-run-dhcpv6=false
           - --controller-chain-dry-run-dns-resolver=false
           - --controller-chain-dnsmasq-port
           - "53"

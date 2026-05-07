@@ -436,6 +436,7 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 	overrideProfile := fs.String("override-profile", "", "override DHCPv6PrefixDelegation profile for this apply")
 	once := fs.Bool("once", false, "run one apply loop")
 	dryRun := fs.Bool("dry-run", false, "plan without applying changes")
+	skipServiceManager := fs.Bool("skip-service-manager", false, "skip applying service-manager units during this apply")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -473,6 +474,7 @@ func applyCommand(args []string, stdout io.Writer) (err error) {
 		OverrideClient:      *overrideClient,
 		OverrideProfile:     *overrideProfile,
 		DryRun:              *dryRun,
+		SkipServiceManager:  *skipServiceManager,
 		AnnounceDryRunToCLI: true,
 	}
 	_, err = runApplyOnce(router, opts, stdout, logger)
@@ -731,6 +733,7 @@ type applyOptions struct {
 	OverrideClient      string
 	OverrideProfile     string
 	DryRun              bool
+	SkipServiceManager  bool
 	AnnounceDryRunToCLI bool
 }
 
@@ -1296,7 +1299,11 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	if err := recordStageError("freebsd-network", func() error {
 		var err error
 		var fbWarnings []string
-		changedFreeBSD, fbWarnings, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDMPD5Path, defaultFreeBSDPFPath, platformDefaults.RCScriptDir)
+		rcScriptDir := platformDefaults.RCScriptDir
+		if opts.SkipServiceManager {
+			rcScriptDir = ""
+		}
+		changedFreeBSD, fbWarnings, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDMPD5Path, defaultFreeBSDPFPath, rcScriptDir)
 		for _, w := range fbWarnings {
 			result.Warnings = append(result.Warnings, w)
 			logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "freebsd-network"})

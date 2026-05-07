@@ -81,6 +81,9 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	if spec.WorkingDirectory != "" {
 		b.WriteString("WorkingDirectory=" + spec.WorkingDirectory + "\n")
 	}
+	if len(spec.ExecStartPre) > 0 {
+		b.WriteString("ExecStartPre=" + quoteCommand(spec.ExecStartPre) + "\n")
+	}
 	b.WriteString("ExecStart=" + quoteCommand(spec.ExecStart) + "\n")
 	b.WriteString("Restart=" + restart + "\n")
 	b.WriteString("RestartSec=" + restartSec + "\n")

@@ -9,6 +9,7 @@ import (
 
 func TestFreeBSDRCDScript(t *testing.T) {
 	data, err := FreeBSDRCDScript("routerd-dns-resolver.service", api.SystemdUnitSpec{
+		ExecStartPre:             []string{"/usr/local/sbin/routerd", "apply", "--once"},
 		ExecStart:                []string{"/usr/local/sbin/routerd-dns-resolver", "--config", "/usr/local/etc/routerd/dns-resolver.yaml"},
 		RuntimeDirectory:         []string{"routerd/dns-resolver"},
 		RuntimeDirectoryPreserve: "yes",
@@ -28,6 +29,7 @@ func TestFreeBSDRCDScript(t *testing.T) {
 		`mkdir -p '/var/run/routerd/dns-resolver'`,
 		`mkdir -p '/var/db/routerd/dns-resolver'`,
 		`mkdir -p '/var/log/routerd'`,
+		`'/usr/local/sbin/routerd' 'apply' '--once'`,
 		`: ${routerd_dns_resolver_enable:="YES"}`,
 	} {
 		if !strings.Contains(got, want) {

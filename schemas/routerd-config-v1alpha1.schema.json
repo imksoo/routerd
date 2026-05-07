@@ -742,6 +742,12 @@
                         },
                         "type": "array"
                       },
+                      "execStartPre": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "group": {
                         "type": "string"
                       },

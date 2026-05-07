@@ -3,9 +3,18 @@ package render
 import (
 	"strings"
 	"testing"
+
+	"routerd/pkg/api"
 )
 
 func TestHealthCheckSystemdUnit(t *testing.T) {
+	unitWithPre := string(SystemdUnit("routerd.service", api.SystemdUnitSpec{
+		ExecStartPre: []string{"/usr/local/sbin/routerd", "apply", "--once"},
+		ExecStart:    []string{"/usr/local/sbin/routerd", "serve"},
+	}))
+	if !strings.Contains(unitWithPre, "ExecStartPre=/usr/local/sbin/routerd apply --once") {
+		t.Fatalf("unit missing ExecStartPre:\n%s", unitWithPre)
+	}
 	unit := string(HealthCheckSystemdUnit(HealthCheckSystemdOptions{
 		BinaryPath:      "/usr/local/sbin/routerd-healthcheck",
 		Resource:        "internet-icmp",
