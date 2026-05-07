@@ -40,6 +40,10 @@ type GenerationStore interface {
 	CurrentGeneration() int64
 }
 
+type LatestGenerationReader interface {
+	LatestGeneration() int64
+}
+
 type EventRecorder interface {
 	RecordEvent(apiVersion, kind, name, eventType, reason, message string) error
 	Events(apiVersion, kind, name string, limit int) []Event

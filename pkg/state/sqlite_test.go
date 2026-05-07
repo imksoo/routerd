@@ -210,6 +210,9 @@ func TestSQLiteStoreGenerationsAndEvents(t *testing.T) {
 	if err := store.FinishGeneration(generation, "Healthy", []string{"warning"}); err != nil {
 		t.Fatalf("finish generation: %v", err)
 	}
+	if got := store.LatestGeneration(); got != generation {
+		t.Fatalf("latest generation = %d, want %d", got, generation)
+	}
 
 	db, err := sql.Open("sqlite", path)
 	if err != nil {

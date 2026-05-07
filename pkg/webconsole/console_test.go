@@ -20,6 +20,7 @@ import (
 type fakeStore struct {
 	resources []routerstate.ObjectStatus
 	events    []routerstate.StoredEvent
+	latest    int64
 }
 
 func (s fakeStore) Get(string) routerstate.Value                            { return routerstate.Value{} }
@@ -31,6 +32,7 @@ func (s fakeStore) Age(string) time.Duration                                { re
 func (s fakeStore) Now() time.Time                                          { return time.Now() }
 func (s fakeStore) Save(string) error                                       { return nil }
 func (s fakeStore) Variables() map[string]routerstate.Value                 { return nil }
+func (s fakeStore) LatestGeneration() int64                                 { return s.latest }
 func (s fakeStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) { return s.resources, nil }
 func (s fakeStore) ListEvents(routerstate.EventQuery) ([]routerstate.StoredEvent, error) {
 	return s.events, nil
@@ -68,6 +70,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		Store: fakeStore{
 			resources: []routerstate.ObjectStatus{{APIVersion: "net.routerd.net/v1alpha1", Kind: "HealthCheck", Name: "internet", Status: map[string]any{"phase": "Healthy"}}},
 			events:    []routerstate.StoredEvent{{ID: 1, Topic: "routerd.dhcp.lease.renewed", CreatedAt: time.Date(2026, 5, 4, 1, 2, 3, 0, time.UTC), Attributes: map[string]any{"mac": "18:ec:e7:33:12:6c", "ip": "172.18.0.150", "hostname": "aiseg2"}}},
+			latest:    11,
 		},
 		Result: func() *apply.Result {
 			return &apply.Result{Phase: "Healthy", Generation: 7, Resources: []apply.ResourceResult{{ID: "x", Phase: "Healthy"}}}
@@ -85,7 +88,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 7`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}

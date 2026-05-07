@@ -217,6 +217,7 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	if h.opts.Result != nil {
 		result = h.opts.Result()
 	}
+	result = resultWithLatestGeneration(result, h.opts.Store)
 	return Snapshot{
 		GeneratedAt:  time.Now().UTC(),
 		Status:       controlapi.NewStatus(result),
@@ -233,6 +234,26 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		Clients:      correlateClients(dhcpLeases, neighbors, trafficFlows),
 		Errors:       errors,
 	}
+}
+
+func resultWithLatestGeneration(result *apply.Result, store routerstate.Store) *apply.Result {
+	if store == nil {
+		return result
+	}
+	reader, ok := store.(routerstate.LatestGenerationReader)
+	if !ok {
+		return result
+	}
+	generation := reader.LatestGeneration()
+	if generation == 0 {
+		return result
+	}
+	if result == nil {
+		return &apply.Result{Generation: generation}
+	}
+	next := *result
+	next.Generation = generation
+	return &next
 }
 
 func (h Handler) index(w http.ResponseWriter) {

@@ -2610,7 +2610,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 
 	handler := controlapi.Handler{
 		Status: func(r *http.Request) (*controlapi.Status, error) {
-			status := controlapi.NewStatus(cache.Load())
+			status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore))
 			return &status, nil
 		},
 		Connections: func(r *http.Request, req controlapi.ConnectionsRequest) (*controlapi.ConnectionTable, error) {
@@ -3002,6 +3002,22 @@ func (c *resultCache) Load() *apply.Result {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.result
+}
+
+func resultWithLatestGeneration(result *apply.Result, store *routerstate.SQLiteStore) *apply.Result {
+	if store == nil {
+		return result
+	}
+	generation := store.LatestGeneration()
+	if generation == 0 {
+		return result
+	}
+	if result == nil {
+		return &apply.Result{Generation: generation}
+	}
+	next := *result
+	next.Generation = generation
+	return &next
 }
 
 func runObserveSchedule(stop <-chan struct{}, interval time.Duration, router *api.Router, cache *resultCache, statusFile string, logger *eventlog.Logger) {
