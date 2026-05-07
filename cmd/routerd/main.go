@@ -5573,7 +5573,15 @@ func freeBSDDSLiteRuntimeIfName(name string) string {
 
 func resolveAAAAWithServers(host string, servers []string, ordinal int, selection string) (string, error) {
 	if len(servers) == 0 {
-		return resolveAAAA(host, "", ordinal, selection)
+		value, err := resolveAAAA(host, "", ordinal, selection)
+		if err == nil {
+			return value, nil
+		}
+		localValue, localErr := resolveAAAA(host, "127.0.0.1", ordinal, selection)
+		if localErr == nil {
+			return localValue, nil
+		}
+		return "", err
 	}
 	var lastErr error
 	for _, server := range servers {
@@ -5594,7 +5602,7 @@ func resolveAAAA(host, server string, ordinal int, selection string) (string, er
 		resolver = &net.Resolver{
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, "udp", net.JoinHostPort(server, "53"))
+				return (&net.Dialer{}).DialContext(ctx, "udp", dnsServerAddress(server))
 			},
 		}
 	}
@@ -5613,6 +5621,17 @@ func resolveAAAA(host, server string, ordinal int, selection string) (string, er
 		return "", fmt.Errorf("no AAAA records for %s", host)
 	}
 	return selectAAAA(values, ordinal, selection)
+}
+
+func dnsServerAddress(server string) string {
+	server = strings.TrimSpace(server)
+	if server == "" {
+		return ""
+	}
+	if _, _, err := net.SplitHostPort(server); err == nil {
+		return server
+	}
+	return net.JoinHostPort(server, "53")
 }
 
 func selectAAAA(values []string, ordinal int, selection string) (string, error) {

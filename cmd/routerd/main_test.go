@@ -1006,6 +1006,20 @@ func TestApplyDSLiteSkipsAFTRResolutionWithoutDelegatedPrefix(t *testing.T) {
 	}
 }
 
+func TestDNSServerAddressAddsDefaultPort(t *testing.T) {
+	tests := map[string]string{
+		"127.0.0.1":         "127.0.0.1:53",
+		"127.0.0.1:1053":    "127.0.0.1:1053",
+		"2001:db8::53":      "[2001:db8::53]:53",
+		"[2001:db8::53]:53": "[2001:db8::53]:53",
+	}
+	for input, want := range tests {
+		if got := dnsServerAddress(input); got != want {
+			t.Fatalf("dnsServerAddress(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestStaleIPv4ManagedFwmarkRules(t *testing.T) {
 	desired := map[ipv4FwmarkRule]bool{
 		{Priority: 10, Mark: 0x111, Table: 111}: true,
