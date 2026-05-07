@@ -95,25 +95,27 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
+	if c.DryRun {
+		return c.savePolicyStatuses(ctx, path, changed, len(holes))
+	}
 	nft := firstNonEmpty(c.NftCommand, "nft")
-	if changed {
-		if err := checkNftablesRuleset(ctx, nft, path); err != nil {
-			return err
-		}
+	if err := checkNftablesRuleset(ctx, nft, path); err != nil {
+		return err
 	}
-	missing := exec.CommandContext(ctx, nft, "list", "table", "inet", "routerd_filter").Run() != nil
-	if (changed || missing) && !c.DryRun {
-		out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
-		}
+	out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
+	return c.savePolicyStatuses(ctx, path, changed, len(holes))
+}
+
+func (c Controller) savePolicyStatuses(ctx context.Context, path string, changed bool, internalHoles int) error {
 	status := map[string]any{
 		"phase":         "Applied",
 		"dryRun":        c.DryRun,
 		"changed":       changed,
 		"rules":         firewallRuleCount(c.Router),
-		"internalHoles": len(holes),
+		"internalHoles": internalHoles,
 		"nftablesPath":  path,
 		"conditions":    []map[string]any{{"type": "Applied", "status": "True", "reason": "Rendered"}},
 	}
@@ -127,7 +129,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	}
 	if changed && c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.firewall.rules.applied", daemonapi.SeverityInfo)
-		event.Attributes = map[string]string{"nftablesPath": path, "dryRun": fmt.Sprintf("%t", c.DryRun), "internalHoles": fmt.Sprintf("%d", len(holes))}
+		event.Attributes = map[string]string{"nftablesPath": path, "dryRun": fmt.Sprintf("%t", c.DryRun), "internalHoles": fmt.Sprintf("%d", internalHoles)}
 		_ = c.Bus.Publish(ctx, event)
 	}
 	return nil

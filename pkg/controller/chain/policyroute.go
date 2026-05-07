@@ -436,13 +436,11 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	if !changed && exec.CommandContext(ctx, nft, "list", "table", family, table).Run() == nil {
-		return nil
-	}
+	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
 	if out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	if c.Bus != nil {
+	if (changed || missing) && c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.policy_route.applied", daemonapi.SeverityInfo)
 		event.Attributes = map[string]string{"table": table, "path": path}
 		_ = c.Bus.Publish(ctx, event)

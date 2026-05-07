@@ -424,16 +424,12 @@ func (c PathMTUPolicyController) applyTable(ctx context.Context, nft, path strin
 	if c.DryRun {
 		return changed, nil
 	}
-	if changed {
-		if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
-			return changed, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
-		}
+	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
+		return changed, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	if !changed && exec.CommandContext(ctx, nft, "list", "table", "inet", "routerd_mss").Run() == nil {
-		return false, nil
-	}
+	missing := exec.CommandContext(ctx, nft, "list", "table", "inet", "routerd_mss").Run() != nil
 	if out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput(); err != nil {
 		return changed, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	return true, nil
+	return changed || missing, nil
 }

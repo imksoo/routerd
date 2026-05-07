@@ -128,29 +128,23 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
+	if c.DryRun {
+		return c.saveRuleStatuses(ctx, rules, path, changed, false)
+	}
 	nft := firstNonEmpty(c.NftCommand, "nft")
-	if changed {
-		if err := checkNftablesRuleset(ctx, nft, path); err != nil {
-			return err
-		}
+	if err := checkNftablesRuleset(ctx, nft, path); err != nil {
+		return err
 	}
-	if changed && !c.DryRun {
-		cmd := exec.CommandContext(ctx, nft, "-f", path)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
-		}
+	missing := !nat44TableExists(ctx, nft)
+	cmd := exec.CommandContext(ctx, nft, "-f", path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
-	if !changed && !c.DryRun && !nat44TableExists(ctx, nft) {
-		if err := checkNftablesRuleset(ctx, nft, path); err != nil {
-			return err
-		}
-		cmd := exec.CommandContext(ctx, nft, "-f", path)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
-		}
-	}
+	return c.saveRuleStatuses(ctx, rules, path, changed, missing)
+}
+
+func (c Controller) saveRuleStatuses(ctx context.Context, rules []render.NAT44RenderRule, path string, changed, missing bool) error {
 	for _, rule := range rules {
 		status := map[string]any{
 			"phase":                   "Active",
@@ -165,7 +159,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "NAT44Rule", rule.Name, status); err != nil {
 			return err
 		}
-		if changed && c.Bus != nil {
+		if (changed || missing) && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.nat44.rule.applied", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule", Name: rule.Name}
 			event.Attributes = map[string]string{"egressInterface": rule.EgressInterface, "nftablesPath": path, "dryRun": fmt.Sprintf("%t", c.DryRun)}
