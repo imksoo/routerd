@@ -340,8 +340,11 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 		`RuntimeDirectoryPreserve = "yes";`,
 		`systemd.services."routerd-dnsmasq" = {`,
 		`description = "routerd managed dnsmasq DHCP service";`,
+		`"/run/current-system/sw/bin/dnsmasq"`,
+		`"--user=root"`,
+		`"--group=root"`,
 		`"--conf-file=/usr/local/etc/routerd/dnsmasq.conf"`,
-		`CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" "CAP_NET_RAW" "CAP_NET_ADMIN" ];`,
+		`CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" "CAP_NET_RAW" "CAP_NET_ADMIN" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("NixOS routerd service missing %q:\n%s", want, got)

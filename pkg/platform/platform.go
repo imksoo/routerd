@@ -1,5 +1,10 @@
 package platform
 
+import (
+	"os"
+	"strings"
+)
+
 // OS identifies the host operating system family routerd is running on.
 type OS string
 
@@ -112,6 +117,23 @@ func Current() (Defaults, Features) {
 // CurrentOS returns the OS identifier for the build.
 func CurrentOS() OS {
 	return currentDefaults().OS
+}
+
+// IsNixOSHost reports whether the running Linux host is NixOS.
+//
+// NixOS is still a Linux platform from routerd's point of view, but service
+// activation is owned by nixos-rebuild instead of direct systemd unit writes.
+func IsNixOSHost() bool {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "ID=nixos" || line == `ID="nixos"` {
+			return true
+		}
+	}
+	return false
 }
 
 // StatusFile returns the default status file path.

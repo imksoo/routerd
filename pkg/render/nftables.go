@@ -84,7 +84,7 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 		writeBridgeL2FilterTable(&buf, l2FilterVXLANS)
 	}
 	if len(zones) > 0 || len(firewallPolicies) > 0 || len(firewallLogs) > 0 || len(firewallRules) > 0 {
-		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, firewallLogs, firewallRules, nil); err != nil {
+		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, firewallLogs, firewallRules, InternalFirewallHoles(router)); err != nil {
 			return nil, err
 		}
 	}

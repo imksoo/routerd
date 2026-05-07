@@ -40,6 +40,9 @@ routerd targets `/etc/nixos/routerd-generated.nix` and lets
 
 Implemented:
 
+- real-machine validation for NixOS activation, reboot recovery, DHCPv6-PD,
+  dnsmasq LAN service, DNS resolver, DS-Lite, nftables NAT/firewall,
+  health checks, Web Console generation diffs, and OpenTelemetry export
 - systemd unit generation for `routerd-dhcpv6-client`
 - systemd unit generation for `routerd-dhcpv4-client`
 - systemd unit generation for `routerd-pppoe-client`
@@ -50,6 +53,9 @@ Implemented:
 - generation tracking before and after `nixos-rebuild`
 - DHCPv6-PD reaches `Bound`
 - generated `routerd-dnsmasq` service when DHCP or RA resources require dnsmasq
+- generated `routerd-dnsmasq` service uses an absolute NixOS system-profile
+  binary path and explicit root execution options so hardened systemd
+  activation does not depend on shell `PATH` lookup or privilege dropping
 - generated DNS resolver, HealthCheck, firewall logger, Tailscale, DHCPv4 client, DHCPv6 client, and PPPoE client services
 - generated `networking.nftables.enable = true` when NAT, firewall, policy routing, or Path MTU resources require nftables
 - WireGuard, Tailscale, VXLAN, and native systemd-networkd VRF generation

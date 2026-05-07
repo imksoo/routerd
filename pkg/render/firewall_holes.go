@@ -62,6 +62,11 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 			if spec.ListenPort != 0 {
 				add(resource.Metadata.Name+"-wireguard", zones.firstUntrust(), "self", "udp", spec.ListenPort, resource.ID())
 			}
+		case "VXLANSegment":
+			spec, _ := resource.VXLANSegmentSpec()
+			if port := defaultInt(spec.UDPPort, 4789); port != 0 {
+				add(resource.Metadata.Name+"-vxlan", zones.byResource(spec.UnderlayInterface), "self", "udp", port, resource.ID())
+			}
 		case "HealthCheck":
 			spec, _ := resource.HealthCheckSpec()
 			if spec.Protocol == "tcp" || spec.Protocol == "dns" || spec.Protocol == "http" {

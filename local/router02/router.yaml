@@ -49,11 +49,10 @@ spec:
             - --controller-chain-dry-run-package=false
             - --controller-chain-dry-run-network-adoption=true
             - --controller-chain-dry-run-systemd-unit=true
-            - --controller-chain-supervise-client-daemons=true
             - --controller-chain-dnsmasq-command
             - dnsmasq
             - --controller-chain-dnsmasq-config
-            - /run/routerd/dnsmasq.conf
+            - /usr/local/etc/routerd/dnsmasq.conf
             - --controller-chain-dnsmasq-pid
             - /run/routerd/dnsmasq.pid
             - --controller-chain-dnsmasq-port

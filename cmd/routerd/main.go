@@ -3453,22 +3453,10 @@ func applyHostnames(router *api.Router) ([]string, error) {
 }
 
 func isNixOSHost() bool {
-	data, err := os.ReadFile("/etc/os-release")
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if line == "ID=nixos" || line == `ID="nixos"` {
-			return true
-		}
-	}
-	return false
+	return platform.IsNixOSHost()
 }
 
 func runtimeDnsmasqServicePath(path string) string {
-	if isNixOSHost() && path == defaultDnsmasqServicePath {
-		return "/run/systemd/system/" + routerdDnsmasqService
-	}
 	return path
 }
 
@@ -5668,20 +5656,15 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	if len(configData) == 0 {
 		return nil, nil
 	}
-	dnsmasqPath, err := exec.LookPath("dnsmasq")
-	if err != nil {
-		if platformDefaults.OS == platform.OSFreeBSD {
-			if _, statErr := os.Stat("/usr/local/sbin/dnsmasq"); statErr == nil {
-				dnsmasqPath = "/usr/local/sbin/dnsmasq"
-				err = nil
-			}
-		}
-	}
+	dnsmasqPath, err := findDnsmasqPath()
 	if err != nil {
 		return nil, fmt.Errorf("dnsmasq is required for managed IPv4 DHCP service: %w", err)
 	}
 	if platformDefaults.OS == platform.OSFreeBSD {
 		return applyFreeBSDDnsmasqConfig(configPath, servicePath, configData, dnsmasqPath)
+	}
+	if isNixOSHost() {
+		return applyNixOSDnsmasqConfig(configPath, configData, dnsmasqPath)
 	}
 
 	var changedFiles []string
@@ -5733,6 +5716,78 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 		}
 	}
 	return nil, nil
+}
+
+func findDnsmasqPath() (string, error) {
+	dnsmasqPath, err := exec.LookPath("dnsmasq")
+	if err == nil {
+		return dnsmasqPath, nil
+	}
+	for _, path := range []string{
+		"/run/current-system/sw/bin/dnsmasq",
+		"/nix/var/nix/profiles/system/sw/bin/dnsmasq",
+		"/usr/local/sbin/dnsmasq",
+		"/usr/sbin/dnsmasq",
+	} {
+		if st, statErr := os.Stat(path); statErr == nil && !st.IsDir() && st.Mode()&0111 != 0 {
+			return path, nil
+		}
+	}
+	return "", err
+}
+
+func applyNixOSDnsmasqConfig(configPath string, configData []byte, dnsmasqPath string) ([]string, error) {
+	var changedFiles []string
+	if err := os.MkdirAll(filepathDir(configPath), 0755); err != nil {
+		return nil, fmt.Errorf("create directory for %s: %w", configPath, err)
+	}
+	changed, err := writeFileIfChanged(configPath, configData, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("write dnsmasq config %s: %w", configPath, err)
+	}
+	if changed {
+		changedFiles = append(changedFiles, configPath)
+	}
+	if err := runLogged(dnsmasqPath, "--test", "--conf-file="+configPath); err != nil {
+		return nil, err
+	}
+	if err := removeStaleNixOSRuntimeDnsmasqUnit(&changedFiles); err != nil {
+		return nil, err
+	}
+	if changed {
+		if err := restartNixOSDnsmasqService(); err != nil {
+			return nil, err
+		}
+		return changedFiles, nil
+	}
+	if err := runLogged("systemctl", "is-active", "--quiet", routerdDnsmasqService); err != nil {
+		if err := restartNixOSDnsmasqService(); err != nil {
+			return nil, err
+		}
+	}
+	return changedFiles, nil
+}
+
+func removeStaleNixOSRuntimeDnsmasqUnit(changedFiles *[]string) error {
+	path := "/run/systemd/system/" + routerdDnsmasqService
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	if changedFiles != nil {
+		*changedFiles = append(*changedFiles, path)
+	}
+	return runLogged("systemctl", "daemon-reload")
+}
+
+func restartNixOSDnsmasqService() error {
+	_ = runLogged("systemctl", "reset-failed", routerdDnsmasqService)
+	return runLogged("systemctl", "restart", routerdDnsmasqService)
 }
 
 func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte, dnsmasqPath string) ([]string, error) {

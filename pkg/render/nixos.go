@@ -1076,7 +1076,7 @@ func dnsmasqNixOSSystemdSpec() api.SystemdUnitSpec {
 	privateTmp := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd managed dnsmasq DHCP service",
-		ExecStart:                []string{"dnsmasq", "--keep-in-foreground", "--conf-file=/usr/local/etc/routerd/dnsmasq.conf", "--pid-file=/run/routerd/dnsmasq.pid"},
+		ExecStart:                []string{"/run/current-system/sw/bin/dnsmasq", "--keep-in-foreground", "--user=root", "--group=root", "--conf-file=/usr/local/etc/routerd/dnsmasq.conf", "--pid-file=/run/routerd/dnsmasq.pid"},
 		Wants:                    []string{"network-online.target"},
 		After:                    []string{"network-online.target", "routerd.service"},
 		WantedBy:                 []string{"multi-user.target"},
@@ -1086,8 +1086,8 @@ func dnsmasqNixOSSystemdSpec() api.SystemdUnitSpec {
 		RuntimeDirectoryPreserve: "yes",
 		StateDirectory:           []string{"routerd"},
 		ReadWritePaths:           []string{"/run/routerd", "/var/lib/routerd", "/usr/local/etc/routerd"},
-		AmbientCapabilities:      []string{"CAP_NET_BIND_SERVICE", "CAP_NET_RAW", "CAP_NET_ADMIN"},
-		CapabilityBoundingSet:    []string{"CAP_NET_BIND_SERVICE", "CAP_NET_RAW", "CAP_NET_ADMIN"},
+		AmbientCapabilities:      []string{"CAP_NET_BIND_SERVICE", "CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN"},
+		CapabilityBoundingSet:    []string{"CAP_NET_BIND_SERVICE", "CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN"},
 		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
 		ProtectSystem:            "strict",
 		ProtectHome:              "true",

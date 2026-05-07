@@ -1492,6 +1492,9 @@ func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, cha
 	if err := testDnsmasqConfig(ctx, command, configPath); err != nil {
 		return err
 	}
+	if platform.IsNixOSHost() {
+		return ensureNixOSDnsmasqService(ctx, changed)
+	}
 	proc, alive := dnsmasqProcess(pidFile)
 	if alive && changed {
 		return proc.Signal(syscall.SIGHUP)
@@ -1500,6 +1503,48 @@ func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, cha
 		return nil
 	}
 	return startDnsmasq(ctx, command, configPath, pidFile)
+}
+
+func ensureNixOSDnsmasqService(ctx context.Context, changed bool) error {
+	const service = "routerd-dnsmasq.service"
+	if err := removeStaleRuntimeDnsmasqUnit(ctx); err != nil {
+		return err
+	}
+	if changed {
+		_ = exec.CommandContext(ctx, "systemctl", "reset-failed", service).Run()
+		out, err := exec.CommandContext(ctx, "systemctl", "restart", service).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("systemctl restart %s: %w: %s", service, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	if err := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", service).Run(); err == nil {
+		return nil
+	}
+	_ = exec.CommandContext(ctx, "systemctl", "reset-failed", service).Run()
+	out, err := exec.CommandContext(ctx, "systemctl", "restart", service).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("systemctl restart %s: %w: %s", service, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func removeStaleRuntimeDnsmasqUnit(ctx context.Context) error {
+	const service = "/run/systemd/system/routerd-dnsmasq.service"
+	if _, err := os.Stat(service); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.Remove(service); err != nil {
+		return err
+	}
+	out, err := exec.CommandContext(ctx, "systemctl", "daemon-reload").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("systemctl daemon-reload: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func testDnsmasqConfig(ctx context.Context, command, configPath string) error {

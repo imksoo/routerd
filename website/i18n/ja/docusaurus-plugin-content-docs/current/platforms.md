@@ -43,6 +43,7 @@ NixOS は Ubuntu と同じ routerd リソースモデルを使います。
 
 実装済み：
 
+- NixOS の有効化、再起動後の復元、DHCPv6-PD、dnsmasq による LAN サービス、DNS リゾルバー、DS-Lite、nftables の NAT とファイアウォール、HealthCheck、Web Console の世代差分、OpenTelemetry 送信の実機検証
 - `routerd-dhcpv6-client` の systemd unit 生成
 - `routerd-dhcpv4-client` の systemd unit 生成
 - `routerd-pppoe-client` の systemd unit 生成
@@ -52,6 +53,7 @@ NixOS は Ubuntu と同じ routerd リソースモデルを使います。
 - `nixos-rebuild` 前後の `generation` 記録
 - DHCPv6-PD が `Bound` まで到達
 - DHCP または RA リソースが dnsmasq を必要とする場合の `routerd-dnsmasq` サービス生成
+- `routerd-dnsmasq` サービスでは NixOS のシステムプロファイル内の絶対パスを使います。root のまま実行する指定も入れるため、systemd の保護設定下でも `PATH` 探索や権限降格に依存しません
 - DNS resolver、HealthCheck、firewall logger、Tailscale、DHCPv4 クライアント、DHCPv6 クライアント、PPPoE クライアントのサービス生成
 - NAT、firewall、policy routing、Path MTU リソースが nftables を必要とする場合の `networking.nftables.enable = true` 生成
 - WireGuard、Tailscale、VXLAN、systemd-networkd による VRF 生成

@@ -308,6 +308,14 @@ func TestNftablesVXLANUnderlayUDPAcceptInputChain(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "default-home"},
 				Spec:     api.FirewallPolicySpec{LogDeny: true},
 			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec: api.FirewallZoneSpec{
+					Role:       "untrust",
+					Interfaces: []string{"Interface/underlay"},
+				},
+			},
 		}},
 	}
 
@@ -320,6 +328,7 @@ func TestNftablesVXLANUnderlayUDPAcceptInputChain(t *testing.T) {
 		"add table inet routerd_filter",
 		"flush table inet routerd_filter",
 		"table inet routerd_filter",
+		`udp dport 4789 counter accept comment "net.routerd.net/v1alpha1/VXLANSegment/home-vxlan"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
