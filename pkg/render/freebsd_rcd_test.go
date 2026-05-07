@@ -130,3 +130,37 @@ func TestFreeBSDRenderSynthesizesHealthCheckDaemonRCD(t *testing.T) {
 		}
 	}
 }
+
+func TestFreeBSDHealthCheckDaemonResolvesDSLiteSourceInterface(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet0", AdminUp: true},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+			Metadata: api.ObjectMeta{Name: "ds-lite"},
+			Spec:     api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "gif40", LocalAddress: "2001:db8::1", RemoteAddress: "2001:db8::2"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+			Metadata: api.ObjectMeta{Name: "internet"},
+			Spec: api.HealthCheckSpec{
+				Daemon:          "routerd-healthcheck",
+				Target:          "1.1.1.1",
+				Protocol:        "tcp",
+				Port:            443,
+				SourceInterface: "ds-lite",
+			},
+		},
+	}}}
+	cfg, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(cfg.RCDScripts["routerd_healthcheck_internet"])
+	if !strings.Contains(script, `--source-interface' 'gif40'`) {
+		t.Fatalf("rc.d script did not resolve DSLite source interface:\n%s", script)
+	}
+}

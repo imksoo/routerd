@@ -37,7 +37,10 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		}
 		out[name] = data
 	}
-	aliases := linkAliases(router)
+	aliases, err := nftOutboundAliases(router)
+	if err != nil {
+		return nil, err
+	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "DHCPv6PrefixDelegation" {
 			continue
