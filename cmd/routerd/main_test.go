@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
+	"routerd/pkg/eventlog"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
@@ -56,6 +58,38 @@ func TestApplyFilesReportsCreatedAndChanged(t *testing.T) {
 	}
 	if len(created) != 0 {
 		t.Fatalf("second call created = %v, want none", created)
+	}
+}
+
+func TestRunApplyOnceDryRunDoesNotCreateGeneration(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	statusPath := filepath.Join(dir, "status.json")
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{
+			Name: "test-router",
+		},
+	}
+	result, err := runApplyOnce(router, applyOptions{
+		DryRun:     true,
+		StatePath:  statePath,
+		StatusFile: statusPath,
+		ConfigPath: filepath.Join(dir, "router.yaml"),
+	}, io.Discard, &eventlog.Logger{})
+	if err != nil {
+		t.Fatalf("dry-run apply: %v", err)
+	}
+	if result.Generation != 0 {
+		t.Fatalf("dry-run generation = %d, want 0", result.Generation)
+	}
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if got := store.LatestGeneration(); got != 0 {
+		t.Fatalf("latest generation after dry-run = %d, want 0", got)
 	}
 }
 

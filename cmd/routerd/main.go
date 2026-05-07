@@ -883,16 +883,18 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	}
 	var generation int64
 	generationFinished := false
-	if store, ok := stateStore.(routerstate.GenerationStore); ok {
-		generation, err = store.BeginGeneration(routerConfigHash(router))
-		if err != nil {
-			return nil, err
-		}
-		defer func() {
-			if !generationFinished {
-				_ = store.FinishGeneration(generation, "Errored", nil)
+	if !opts.DryRun {
+		if store, ok := stateStore.(routerstate.GenerationStore); ok {
+			generation, err = store.BeginGeneration(routerConfigHash(router))
+			if err != nil {
+				return nil, err
 			}
-		}()
+			defer func() {
+				if generation != 0 && !generationFinished {
+					_ = store.FinishGeneration(generation, "Errored", nil)
+				}
+			}()
+		}
 	}
 	if !opts.DryRun {
 		if err := recordHostInventoryState(stateStore); err != nil {
@@ -938,7 +940,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		})
 		if platformDefaults.OS == platform.OSFreeBSD {
 			next, err := runFreeBSDApplyOnce(effectiveRouter, opts, stdout, logger, engine, result, generation, stateStore)
-			if store, ok := stateStore.(routerstate.GenerationStore); ok && next != nil {
+			if store, ok := stateStore.(routerstate.GenerationStore); ok && generation != 0 && next != nil {
 				_ = store.FinishGeneration(generation, next.Phase, next.Warnings)
 				generationFinished = true
 			}
@@ -1239,7 +1241,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 			return nil, err
 		}
-		if store, ok := stateStore.(routerstate.GenerationStore); ok {
+		if store, ok := stateStore.(routerstate.GenerationStore); ok && generation != 0 {
 			_ = store.FinishGeneration(generation, result.Phase, result.Warnings)
 			generationFinished = true
 		}
@@ -1271,7 +1273,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 		return nil, err
 	}
-	if store, ok := stateStore.(routerstate.GenerationStore); ok {
+	if store, ok := stateStore.(routerstate.GenerationStore); ok && generation != 0 {
 		_ = store.FinishGeneration(generation, result.Phase, result.Warnings)
 		generationFinished = true
 	}

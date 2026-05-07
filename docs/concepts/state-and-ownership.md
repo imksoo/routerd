@@ -48,6 +48,13 @@ routerd and its daemons record state changes as events.
 Events are persisted in the SQLite `events` table and in per-daemon `events.jsonl` files.
 `EventRule` and `DerivedEvent` consume that stream to synthesize virtual state changes.
 
+## Apply generations
+
+The `generation` value in status output is the latest committed apply generation.
+It is incremented when `routerd apply` changes the host-side intent store and records a completed apply in SQLite.
+It is not a reconcile loop counter.
+Dry-run plans, daemon events, health checks, and periodic controller-chain reconciliation do not increment it.
+
 ## Stateful packet filters
 
 On Linux, routerd updates managed nftables tables with a single `nft -f` transaction.

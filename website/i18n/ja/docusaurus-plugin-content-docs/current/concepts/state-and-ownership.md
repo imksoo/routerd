@@ -48,6 +48,13 @@ routerd と専用デーモンは、状態変化をイベントとして記録し
 イベントは SQLite の `events` テーブルやデーモンごとの `events.jsonl` に残ります。
 EventRule と DerivedEvent は、このイベントや状態を使って仮想的な状態変化を作ります。
 
+## 適用世代
+
+status に出る `generation` は、最後に完了した適用世代です。
+`routerd apply` がホスト側の意図を更新し、SQLite に適用完了を記録したときに増えます。
+これは調整ループの回数ではありません。
+dry-run の計画、デーモンイベント、ヘルスチェック、controller chain の定期調整では増えません。
+
 ## 状態を持つパケットフィルター
 
 Linux では、routerd は nftables の管理テーブルを 1 回の `nft -f` トランザクションで更新します。
