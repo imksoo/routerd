@@ -101,8 +101,8 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
-	if changed && !c.DryRun {
-		_ = exec.CommandContext(ctx, nft, "delete", "table", "inet", "routerd_filter").Run()
+	missing := exec.CommandContext(ctx, nft, "list", "table", "inet", "routerd_filter").Run() != nil
+	if (changed || missing) && !c.DryRun {
 		out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))

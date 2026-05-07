@@ -40,6 +40,8 @@ func TestNftablesIPv4SourceNAT(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
+		"add table ip routerd_nat",
+		"flush table ip routerd_nat",
 		"table ip routerd_nat",
 		"type nat hook postrouting priority srcnat; policy accept;",
 		`oifname "ens18" ip saddr 192.168.10.0/24 meta l4proto { tcp, udp } masquerade to :1024-65535`,
@@ -109,6 +111,8 @@ func TestNftablesNAT44Rule(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
+		"add table ip routerd_nat",
+		"flush table ip routerd_nat",
 		`oifname "ens18" ip saddr 10.0.0.0/8 masquerade`,
 		`oifname "ens18" ip saddr 192.168.10.0/24 masquerade`,
 	} {
@@ -129,8 +133,39 @@ func TestNftablesNAT44ResolvedSNATRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
-	if !strings.Contains(string(data), `oifname "ppp0" ip saddr 192.168.10.0/24 snat to 198.51.100.10`) {
-		t.Fatalf("nftables output missing snat rule:\n%s", string(data))
+	got := string(data)
+	for _, want := range []string{
+		"add table ip routerd_nat",
+		"flush table ip routerd_nat",
+		`oifname "ppp0" ip saddr 192.168.10.0/24 snat to 198.51.100.10`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesDefaultRoutePolicyFlushesTable(t *testing.T) {
+	data, err := NftablesIPv4DefaultRoutePolicy(
+		"net.routerd.net/v1alpha1/IPv4DefaultRoutePolicy/default",
+		api.IPv4DefaultRoutePolicySpec{SourceCIDRs: []string{"172.18.0.0/16"}},
+		api.IPv4DefaultRoutePolicyCandidate{Name: "wan", Mark: 100},
+		[]api.IPv4DefaultRoutePolicyCandidate{{Name: "wan", Mark: 100}},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"add table ip routerd_default_route",
+		"flush table ip routerd_default_route",
+		"table ip routerd_default_route",
+		"ip saddr 172.18.0.0/16 ct mark 0x0 meta mark set 0x64 ct mark set meta mark",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
 	}
 }
 
@@ -180,6 +215,8 @@ func TestNftablesVXLANL2Filter(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
+		"add table bridge routerd_l2_filter",
+		"flush table bridge routerd_l2_filter",
 		"table bridge routerd_l2_filter",
 		`iifname "vxlan100" ether type ip udp sport { 67, 68 } counter drop`,
 		`oifname "vxlan100" ether type ip6 udp dport { 546, 547 } counter drop`,
@@ -255,9 +292,14 @@ func TestNftablesVXLANUnderlayUDPAcceptInputChain(t *testing.T) {
 		t.Fatalf("render nftables: %v", err)
 	}
 	got := string(data)
-	want := `table inet routerd_filter`
-	if !strings.Contains(got, want) {
-		t.Fatalf("nftables output missing VXLAN underlay accept rule %q:\n%s", want, got)
+	for _, want := range []string{
+		"add table inet routerd_filter",
+		"flush table inet routerd_filter",
+		"table inet routerd_filter",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
 	}
 }
 
@@ -349,6 +391,8 @@ func TestNftablesIPv4PolicyRoute(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
+		"add table ip routerd_policy",
+		"flush table ip routerd_policy",
 		"table ip routerd_policy",
 		"type filter hook prerouting priority mangle; policy accept;",
 		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 meta mark set 0x100",
@@ -473,6 +517,8 @@ func TestNftablesTCPMSSClamp(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
+		"add table inet routerd_mss",
+		"flush table inet routerd_mss",
 		"table inet routerd_mss",
 		"type filter hook forward priority mangle; policy accept;",
 		`iifname "ens19" oifname { "ds-lite-a", "ppp0" } ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size set 1414`,
@@ -536,6 +582,8 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
+		"add table inet routerd_filter",
+		"flush table inet routerd_filter",
 		"table inet routerd_filter",
 		"type filter hook input priority filter; policy drop;",
 		"ct state invalid counter drop",
@@ -621,6 +669,8 @@ func TestNftablesAllowsWANIPv6ClientControlPlane(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
+		"add table inet routerd_filter",
+		"flush table inet routerd_filter",
 		"meta l4proto ipv6-icmp counter accept",
 		`udp dport 546 counter accept`,
 	} {

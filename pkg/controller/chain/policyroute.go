@@ -426,11 +426,11 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 	if c.DryRun {
 		return nil
 	}
-	changed, err := writeFileIfChanged(path, data, 0644, false)
-	if err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	changed, err := writeFileIfChanged(path, data, 0644, false)
+	if err != nil {
 		return err
 	}
 	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
@@ -439,7 +439,6 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 	if !changed && exec.CommandContext(ctx, nft, "list", "table", family, table).Run() == nil {
 		return nil
 	}
-	_ = exec.CommandContext(ctx, nft, "delete", "table", family, table).Run()
 	if out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}

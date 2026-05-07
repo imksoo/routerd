@@ -135,7 +135,6 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		}
 	}
 	if changed && !c.DryRun {
-		_ = exec.CommandContext(ctx, nft, "delete", "table", "ip", "routerd_nat").Run()
 		cmd := exec.CommandContext(ctx, nft, "-f", path)
 		out, err := cmd.CombinedOutput()
 		if err != nil {

@@ -4024,10 +4024,37 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 	if !changed && !natMissing && !policyMissing && !filterMissing && !mssMissing && !l2FilterMissing && !dnatMissing && !staleManaged {
 		return nil, nil
 	}
-	for _, table := range managedTables {
-		_ = exec.Command("nft", "delete", "table", table.family, table.name).Run()
+	applyPath := path
+	var cleanupPath string
+	if staleManaged {
+		var staged bytes.Buffer
+		for _, table := range managedTables {
+			if existingTables[table.name] && !bytes.Contains(data, []byte(table.header)) {
+				staged.WriteString("delete table " + table.family + " " + table.name + "\n")
+			}
+		}
+		staged.Write(data)
+		file, err := os.CreateTemp(filepathDir(path), ".routerd-nft-*.nft")
+		if err != nil {
+			return nil, fmt.Errorf("create temporary nftables config: %w", err)
+		}
+		cleanupPath = file.Name()
+		if _, err := file.Write(staged.Bytes()); err != nil {
+			_ = file.Close()
+			_ = os.Remove(cleanupPath)
+			return nil, fmt.Errorf("write temporary nftables config %s: %w", cleanupPath, err)
+		}
+		if err := file.Close(); err != nil {
+			_ = os.Remove(cleanupPath)
+			return nil, fmt.Errorf("close temporary nftables config %s: %w", cleanupPath, err)
+		}
+		defer os.Remove(cleanupPath)
+		if err := runLogged("nft", "-c", "-f", cleanupPath); err != nil {
+			return nil, fmt.Errorf("validate nftables config %s: %w", cleanupPath, err)
+		}
+		applyPath = cleanupPath
 	}
-	if err := runLogged("nft", "-f", path); err != nil {
+	if err := runLogged("nft", "-f", applyPath); err != nil {
 		return nil, err
 	}
 	if changed {
@@ -4976,7 +5003,6 @@ func applyIPv4DefaultRoutePolicyMarks(resourceID string, spec api.IPv4DefaultRou
 	if _, err := writeFileIfChanged(defaultRouteNftablesPath, data, 0644); err != nil {
 		return err
 	}
-	_ = exec.Command("nft", "delete", "table", "ip", "routerd_default_route").Run()
 	return runLogged("nft", "-f", defaultRouteNftablesPath)
 }
 

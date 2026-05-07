@@ -47,3 +47,14 @@ When that confirmation is missing, routerd suppresses the matching AAAA records,
 routerd and its daemons record state changes as events.
 Events are persisted in the SQLite `events` table and in per-daemon `events.jsonl` files.
 `EventRule` and `DerivedEvent` consume that stream to synthesize virtual state changes.
+
+## Stateful packet filters
+
+On Linux, routerd updates managed nftables tables with a single `nft -f` transaction.
+Generated rulesets create the managed table if needed, flush that table, and then load the replacement chains in the same nftables batch.
+routerd does not delete a live NAT or filter table before adding the replacement table.
+Existing conntrack entries therefore remain attached to the kernel state table during routerd restarts and normal configuration changes.
+
+On FreeBSD, routerd loads generated pf rules with `pfctl -f`.
+pf keeps the existing state table across rule reloads unless states are explicitly flushed.
+routerd does not flush pf states during normal apply.

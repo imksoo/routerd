@@ -432,7 +432,6 @@ func (c PathMTUPolicyController) applyTable(ctx context.Context, nft, path strin
 	if !changed && exec.CommandContext(ctx, nft, "list", "table", "inet", "routerd_mss").Run() == nil {
 		return false, nil
 	}
-	_ = exec.CommandContext(ctx, nft, "delete", "table", "inet", "routerd_mss").Run()
 	if out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput(); err != nil {
 		return changed, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
