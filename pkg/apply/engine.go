@@ -54,9 +54,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 	desiredV4 := desiredIPv4Prefixes(router, aliases)
 	overlaps := ipv4Overlaps(desiredV4, observedV4)
 	result := &Result{
-		Generation: time.Now().Unix(),
-		Timestamp:  time.Now().UTC(),
-		Phase:      "Healthy",
+		Timestamp: time.Now().UTC(),
+		Phase:     "Healthy",
 	}
 
 	for _, res := range router.Spec.Resources {
