@@ -334,6 +334,22 @@ func TestCorrelateClientsMergesDHCPLeaseAndIPv6NeighborByMAC(t *testing.T) {
 	}
 }
 
+func TestCorrelateClientsSkipsFailedNeighbors(t *testing.T) {
+	rows := correlateClients(nil, []NeighborEntry{
+		{IP: "192.168.178.40", IfName: "ens18", State: "FAILED", Source: "ip-neigh"},
+		{IP: "172.18.1.110", IfName: "ens19", MAC: "4e:20:15:aa:e0:67", State: "REACHABLE", Source: "ip-neigh"},
+	}, nil)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	if containsString(rows[0].Addresses, "192.168.178.40") {
+		t.Fatalf("failed neighbor leaked into clients: %+v", rows[0])
+	}
+	if !containsString(rows[0].Addresses, "172.18.1.110") {
+		t.Fatalf("reachable neighbor missing from clients: %+v", rows[0])
+	}
+}
+
 func TestHandlerServesConfigReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "router.yaml")
 	if err := os.WriteFile(path, []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\n"), 0644); err != nil {

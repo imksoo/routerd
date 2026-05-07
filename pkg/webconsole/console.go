@@ -773,6 +773,9 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		if strings.TrimSpace(neighbor.IP) == "" {
 			continue
 		}
+		if neighborStateFailed(neighbor.State) {
+			continue
+		}
 		key := clientCorrelationKey(neighbor.MAC, neighbor.IP)
 		row := upsert(key, neighbor.IP)
 		if row.MAC == "" {
@@ -826,6 +829,15 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		return out[i].ID < out[j].ID
 	})
 	return out
+}
+
+func neighborStateFailed(state string) bool {
+	for _, part := range strings.Split(strings.ToUpper(state), ",") {
+		if strings.TrimSpace(part) == "FAILED" {
+			return true
+		}
+	}
+	return false
 }
 
 func clientCorrelationKey(mac, ip string) string {
