@@ -317,7 +317,8 @@ spec:
         validLifetime: "7200"
         dependsOn:
           - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
-            phase: Applied
+            field: address
+            notEmpty: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv6Server
@@ -342,7 +343,8 @@ spec:
         leaseTime: 12h
         dependsOn:
           - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
-            phase: Applied
+            field: address
+            notEmpty: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSZone
@@ -435,6 +437,7 @@ spec:
             match:
               - "."
             upstreams:
+              - https://cloudflare-dns.com/dns-query
               - udp://1.1.1.1:53
               - udp://8.8.8.8:53
         cache:
@@ -466,29 +469,136 @@ spec:
           - 2404:1a8:7f01:b::3
         aftrAddressOrdinal: 1
         mtu: 1454
-        defaultRoute: true
+        defaultRoute: false
         routeMetric: 50
         dependsOn:
           - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
-            phase: Applied
+            field: address
+            notEmpty: true
           - resource: DNSResolver/lan-resolver
             phase: Applied
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
-        name: default-via-dslite
+        name: default-via-wan
         ownerRefs:
-          - kind: DSLiteTunnel
-            name: ds-lite
+          - kind: DHCPv4Address
+            name: wan-dhcp4
       spec:
         destination: 0.0.0.0/0
+        device: vtnet0
+        gateway: 192.168.1.1
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: homert02-lan-via-mgmt
+      spec:
+        destination: 172.18.0.0/16
         deviceFrom:
-          resource: DSLiteTunnel/ds-lite
-          field: interface
+          resource: Interface/mgmt
+          field: ifname
+        gateway: 192.168.123.129
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: dslite-a-source-address
+      spec:
+        prefixDelegation: wan-pd
+        interface: lan
+        subnetID: "0"
+        addressSuffix: "::11"
+        sendRA: false
+        announce: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: dslite-b-source-address
+      spec:
+        prefixDelegation: wan-pd
+        interface: lan
+        subnetID: "0"
+        addressSuffix: "::12"
+        sendRA: false
+        announce: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: dslite-c-source-address
+      spec:
+        prefixDelegation: wan-pd
+        interface: lan
+        subnetID: "0"
+        addressSuffix: "::13"
+        sendRA: false
+        announce: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-a
+        ownerRefs:
+          - kind: IPv6DelegatedAddress
+            name: dslite-a-source-address
+      spec:
+        interface: wan
+        tunnelName: gif41
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: dslite-a-source-address
+        localAddressSuffix: "::11"
+        aftrIPv6: 2404:8e00::feed:100
+        mtu: 1454
+        defaultRoute: false
         dependsOn:
-          - resource: DSLiteTunnel/ds-lite
-            phase: Up
+          - resource: IPv6DelegatedAddress/dslite-a-source-address
+            field: address
+            notEmpty: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-b
+        ownerRefs:
+          - kind: IPv6DelegatedAddress
+            name: dslite-b-source-address
+      spec:
+        interface: wan
+        tunnelName: gif42
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: dslite-b-source-address
+        localAddressSuffix: "::12"
+        aftrIPv6: 2404:8e00::feed:101
+        mtu: 1454
+        defaultRoute: false
+        dependsOn:
+          - resource: IPv6DelegatedAddress/dslite-b-source-address
+            field: address
+            notEmpty: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-c
+        ownerRefs:
+          - kind: IPv6DelegatedAddress
+            name: dslite-c-source-address
+      spec:
+        interface: wan
+        tunnelName: gif43
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: dslite-c-source-address
+        localAddressSuffix: "::13"
+        aftrIPv6: 2404:8e00::feed:102
+        mtu: 1454
+        defaultRoute: false
+        dependsOn:
+          - resource: IPv6DelegatedAddress/dslite-c-source-address
+            field: address
+            notEmpty: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: HealthCheck
@@ -501,14 +611,138 @@ spec:
         daemon: routerd-healthcheck
         socketSource: /var/run/routerd/healthcheck/internet-via-dslite.sock
         targetSource: static
-        target: 1.1.1.1
-        protocol: tcp
-        port: 443
+        target: 1.0.0.1
+        protocol: dns
+        port: 53
         sourceInterface: ds-lite
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
         unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-a
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite-a
+      spec:
+        daemon: routerd-healthcheck
+        socketSource: /var/run/routerd/healthcheck/internet-via-dslite-a.sock
+        targetSource: static
+        target: 1.1.1.1
+        protocol: dns
+        port: 53
+        sourceInterface: ds-lite-a
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-b
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite-b
+      spec:
+        daemon: routerd-healthcheck
+        socketSource: /var/run/routerd/healthcheck/internet-via-dslite-b.sock
+        targetSource: static
+        target: 8.8.8.8
+        protocol: dns
+        port: 53
+        sourceInterface: ds-lite-b
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-c
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite-c
+      spec:
+        daemon: routerd-healthcheck
+        socketSource: /var/run/routerd/healthcheck/internet-via-dslite-c.sock
+        targetSource: static
+        target: 9.9.9.9
+        protocol: dns
+        port: 53
+        sourceInterface: ds-lite-c
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: dslite-healthcheck
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite
+      spec:
+        destination: 1.0.0.1/32
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite
+          field: interface
+        dependsOn:
+          - resource: DSLiteTunnel/ds-lite
+            phase: Up
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: dslite-a-healthcheck
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite-a
+      spec:
+        destination: 1.1.1.1/32
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite-a
+          field: interface
+        dependsOn:
+          - resource: DSLiteTunnel/ds-lite-a
+            phase: Up
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: dslite-b-healthcheck
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite-b
+      spec:
+        destination: 8.8.8.8/32
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite-b
+          field: interface
+        dependsOn:
+          - resource: DSLiteTunnel/ds-lite-b
+            phase: Up
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: dslite-c-healthcheck
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite-c
+      spec:
+        destination: 9.9.9.9/32
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite-c
+          field: interface
+        dependsOn:
+          - resource: DSLiteTunnel/ds-lite-c
+            phase: Up
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: EgressRoutePolicy
@@ -535,6 +769,42 @@ spec:
             healthCheck: internet-via-dslite
             dependsOn:
               - resource: DSLiteTunnel/ds-lite
+                phase: Up
+          - name: ds-lite-a
+            source: DSLiteTunnel/ds-lite-a
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite-a
+              field: interface
+            gatewaySource: none
+            metric: 60
+            weight: 120
+            healthCheck: internet-via-dslite-a
+            dependsOn:
+              - resource: DSLiteTunnel/ds-lite-a
+                phase: Up
+          - name: ds-lite-b
+            source: DSLiteTunnel/ds-lite-b
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite-b
+              field: interface
+            gatewaySource: none
+            metric: 60
+            weight: 120
+            healthCheck: internet-via-dslite-b
+            dependsOn:
+              - resource: DSLiteTunnel/ds-lite-b
+                phase: Up
+          - name: ds-lite-c
+            source: DSLiteTunnel/ds-lite-c
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite-c
+              field: interface
+            gatewaySource: none
+            metric: 60
+            weight: 120
+            healthCheck: internet-via-dslite-c
+            dependsOn:
+              - resource: DSLiteTunnel/ds-lite-c
                 phase: Up
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -563,6 +833,9 @@ spec:
         interfaces:
           - Interface/wan
           - DSLiteTunnel/ds-lite
+          - DSLiteTunnel/ds-lite-a
+          - DSLiteTunnel/ds-lite-b
+          - DSLiteTunnel/ds-lite-c
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
