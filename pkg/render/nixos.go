@@ -1086,6 +1086,7 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 			Spec: HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{
 				Resource:    res.Metadata.Name,
 				Spec:        spec,
+				Router:      router,
 				Aliases:     aliases,
 				Environment: telemetryEnv,
 				RuntimeRoot: "/run",

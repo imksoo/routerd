@@ -28,6 +28,7 @@ type HealthCheckSystemdOptions struct {
 type HealthCheckDaemonUnitOptions struct {
 	Resource    string
 	Spec        api.HealthCheckSpec
+	Router      *api.Router
 	Aliases     map[string]string
 	Environment []string
 	RuntimeRoot string
@@ -45,6 +46,12 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 	if options.Aliases != nil && options.Aliases[sourceInterface] != "" {
 		sourceInterface = options.Aliases[sourceInterface]
 	}
+	sourceAddress := strings.TrimSpace(spec.SourceAddress)
+	if sourceAddress == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" {
+		if value, err := renderAddressFromResource(options.Router, spec.SourceAddressFrom); err == nil {
+			sourceAddress = value
+		}
+	}
 	socket := strings.TrimSpace(spec.SocketSource)
 	if socket == "" {
 		socket = runtimeRoot + "/routerd/healthcheck/" + resource + ".sock"
@@ -60,7 +67,7 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 	appendFlag("--address-family", spec.AddressFamily)
 	appendFlag("--via", spec.Via)
 	appendFlag("--source-interface", sourceInterface)
-	appendFlag("--source-address", spec.SourceAddress)
+	appendFlag("--source-address", sourceAddress)
 	if spec.Port != 0 {
 		execStart = append(execStart, "--port", strconv.Itoa(spec.Port))
 	}

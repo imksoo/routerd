@@ -496,14 +496,20 @@ func TestNixOSModuleSynthesizesHealthCheckDaemonUnit(t *testing.T) {
 			Spec:     api.InterfaceSpec{IfName: "ens18", AdminUp: true},
 		},
 		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+			Metadata: api.ObjectMeta{Name: "wan-source"},
+			Spec:     api.IPv4StaticAddressSpec{Interface: "wan", Address: "192.0.0.2/29"},
+		},
+		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
 			Metadata: api.ObjectMeta{Name: "internet"},
 			Spec: api.HealthCheckSpec{
-				Daemon:          "routerd-healthcheck",
-				Target:          "1.1.1.1",
-				Protocol:        "icmp",
-				SourceInterface: "wan",
-				Interval:        "30s",
+				Daemon:            "routerd-healthcheck",
+				Target:            "1.1.1.1",
+				Protocol:          "icmp",
+				SourceInterface:   "wan",
+				SourceAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/wan-source", Field: "address"},
+				Interval:          "30s",
 			},
 		},
 	}}}
@@ -517,6 +523,8 @@ func TestNixOSModuleSynthesizesHealthCheckDaemonUnit(t *testing.T) {
 		`"/usr/local/sbin/routerd-healthcheck"`,
 		`"--source-interface"`,
 		`"ens18"`,
+		`"--source-address"`,
+		`"192.0.0.2"`,
 		`RuntimeDirectory = [ "routerd/healthcheck" ];`,
 		`CapabilityBoundingSet = [ "CAP_NET_RAW" ];`,
 	} {

@@ -146,14 +146,20 @@ func TestFreeBSDHealthCheckDaemonResolvesDSLiteSourceInterface(t *testing.T) {
 			Spec:     api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "gif40", LocalAddress: "2001:db8::1", RemoteAddress: "2001:db8::2"},
 		},
 		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+			Metadata: api.ObjectMeta{Name: "ds-lite-source"},
+			Spec:     api.IPv4StaticAddressSpec{Interface: "ds-lite", Address: "192.0.0.2/29"},
+		},
+		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
 			Metadata: api.ObjectMeta{Name: "internet"},
 			Spec: api.HealthCheckSpec{
-				Daemon:          "routerd-healthcheck",
-				Target:          "1.1.1.1",
-				Protocol:        "tcp",
-				Port:            443,
-				SourceInterface: "ds-lite",
+				Daemon:            "routerd-healthcheck",
+				Target:            "1.1.1.1",
+				Protocol:          "tcp",
+				Port:              443,
+				SourceInterface:   "ds-lite",
+				SourceAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/ds-lite-source", Field: "address"},
 			},
 		},
 	}}}
@@ -164,5 +170,8 @@ func TestFreeBSDHealthCheckDaemonResolvesDSLiteSourceInterface(t *testing.T) {
 	script := string(cfg.RCDScripts["routerd_healthcheck_internet"])
 	if !strings.Contains(script, `--source-interface' 'gif40'`) {
 		t.Fatalf("rc.d script did not resolve DSLite source interface:\n%s", script)
+	}
+	if !strings.Contains(script, `--source-address' '192.0.0.2'`) {
+		t.Fatalf("rc.d script did not resolve source address:\n%s", script)
 	}
 }

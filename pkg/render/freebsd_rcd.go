@@ -81,6 +81,7 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		unit := HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{
 			Resource:    res.Metadata.Name,
 			Spec:        spec,
+			Router:      router,
 			Aliases:     aliases,
 			Environment: telemetryEnv,
 			RuntimeRoot: "/var/run",
