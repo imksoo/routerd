@@ -194,6 +194,63 @@ func TestIPv4StaticAddressControllerAppliesAddressOnAliasedInterface(t *testing.
 	}
 }
 
+func TestIPv4StaticAddressApplyCommandFreeBSD(t *testing.T) {
+	name, args := ipv4StaticAddressApplyCommand("freebsd", "vtnet1", "192.168.160.4/24")
+	got := strings.Join(append([]string{name}, args...), " ")
+	want := "ifconfig vtnet1 inet 192.168.160.4/24 alias"
+	if got != want {
+		t.Fatalf("command = %q, want %q", got, want)
+	}
+}
+
+func TestIfconfigHasIPv4AddressIgnoresPrefix(t *testing.T) {
+	out := []byte("vtnet1: flags=...\n\tinet 192.168.160.4 netmask 0xffffff00 broadcast 192.168.160.255\n")
+	if !ifconfigHasIPv4Address(out, "192.168.160.4/24") {
+		t.Fatal("ifconfigHasIPv4Address = false, want true")
+	}
+}
+
+func TestInterfaceIfNameResolvesBridgeIfName(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br-lab"}, Spec: api.BridgeSpec{IfName: "bridge100"}},
+	}}}
+	if got := interfaceIfName(router, "br-lab"); got != "bridge100" {
+		t.Fatalf("interfaceIfName = %q, want bridge100", got)
+	}
+	if got := interfaceName(router, "br-lab"); got != "bridge100" {
+		t.Fatalf("interfaceName = %q, want bridge100", got)
+	}
+}
+
+func TestIPv6StaticAddressApplyCommandFreeBSD(t *testing.T) {
+	name, args := ipv6StaticAddressApplyCommand("freebsd", "vtnet1", "2409:10:3d60:1250::11/64")
+	got := strings.Join(append([]string{name}, args...), " ")
+	want := "ifconfig vtnet1 inet6 2409:10:3d60:1250::11 prefixlen 64 alias"
+	if got != want {
+		t.Fatalf("command = %q, want %q", got, want)
+	}
+}
+
+func TestFreeBSDIPv4RouteApplyCommandUsesDSLiteInnerGateway(t *testing.T) {
+	name, args := freeBSDIPv4RouteApplyCommand("unicast", "0.0.0.0/0", "gif40", "")
+	got := strings.Join(append([]string{name}, args...), " ")
+	want := "route -n change default 192.0.0.1"
+	if got != want {
+		t.Fatalf("command = %q, want %q", got, want)
+	}
+}
+
+func TestFreeBSDIPv4RouteAddArgsFallback(t *testing.T) {
+	got := strings.Join(freeBSDIPv4RouteAddArgs([]string{"-n", "change", "default", "192.168.1.1"}), " ")
+	want := "-n add default 192.168.1.1"
+	if got != want {
+		t.Fatalf("add args = %q, want %q", got, want)
+	}
+	if !freeBSDRouteNeedsAdd([]byte("route: route has not been found\nnot in table")) {
+		t.Fatal("expected FreeBSD route output to trigger add fallback")
+	}
+}
+
 func TestIPv4StaticAddressControllerRestoresMissingAddressWithUnchangedStatus(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
@@ -310,6 +367,13 @@ func TestLANAddressControllerRestoresMissingAddressWithUnchangedStatus(t *testin
 	}
 }
 
+func TestLocalIPv6AddressKeepsHostBitsFromPrefix(t *testing.T) {
+	got := localIPv6Address("2409:10:3d60:1250::11/64")
+	if got != "2409:10:3d60:1250::11" {
+		t.Fatalf("localIPv6Address = %q", got)
+	}
+}
+
 func TestLinkControllerPublishesInterfaceIfName(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lo"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
@@ -396,5 +460,25 @@ func TestFirstUsableGlobalIPv6PrefersDynamicStableAddress(t *testing.T) {
 	]}]`)
 	if got := firstUsableGlobalIPv6(data); got != "2409:10:3d60:1200::stable" {
 		t.Fatalf("firstUsableGlobalIPv6 = %q", got)
+	}
+}
+
+func TestFirstUsableIfconfigGlobalIPv6PrefersAutoconf(t *testing.T) {
+	data := []byte(`vtnet0: flags=...
+	inet6 fe80::be24:11ff:fefb:928d%vtnet0 prefixlen 64 scopeid 0x1
+	inet6 2409:10:3d60:1200::dead prefixlen 64 temporary
+	inet6 2409:10:3d60:1200:be24:11ff:fefb:928d prefixlen 64 autoconf
+`)
+	if got := firstUsableIfconfigGlobalIPv6(data); got != "2409:10:3d60:1200:be24:11ff:fefb:928d" {
+		t.Fatalf("firstUsableIfconfigGlobalIPv6 = %q", got)
+	}
+}
+
+func TestFreeBSDDSLiteRuntimeIfNameKeepsGIFNames(t *testing.T) {
+	if got := freeBSDDSLiteRuntimeIfName("gif40"); got != "gif40" {
+		t.Fatalf("runtime ifname = %q, want gif40", got)
+	}
+	if got := freeBSDDSLiteRuntimeIfName("ds-lite-a"); !strings.HasPrefix(got, "gif") || got == "gif40" {
+		t.Fatalf("runtime ifname for ds-lite-a = %q, want generated gif name", got)
 	}
 }

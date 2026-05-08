@@ -2,6 +2,7 @@ package chain
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/platform"
 	"routerd/pkg/resourcequery"
 	routerstate "routerd/pkg/state"
 )
@@ -129,10 +132,24 @@ type DSLiteTunnelController struct {
 }
 
 func (c DSLiteTunnelController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.info.*", "routerd.dhcpv6.client.prefix.*", "routerd.dns.resolver.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.info.*", "routerd.dhcpv6.client.prefix.*", "routerd.dns.resolver.*", "routerd.resource.status.changed"}}, 32)
 	go func() {
-		for range ch {
-			if err := c.reconcile(ctx); err != nil && c.Logger != nil {
+		if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
+			c.Logger.Warn("dslite tunnel initial reconcile failed", "error", err)
+		}
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+			case <-ticker.C:
+			case <-ctx.Done():
+				return
+			}
+			if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
 				c.Logger.Warn("dslite tunnel reconcile failed", "error", err)
 			}
 		}
@@ -200,7 +217,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 				status["aliasOf"] = actualIfName
 				status["desiredTunnelName"] = ifname
 			}
-			if err := exec.CommandContext(ctx, "ip", "link", "set", actualIfName, "mtu", fmt.Sprintf("%d", mtu), "up").Run(); err != nil {
+			if err := setDSLiteTunnelLinkUp(ctx, actualIfName, mtu); err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
 				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "LinkApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun})
 				continue
@@ -334,10 +351,18 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			if spec.Metric > 0 {
 				args = append(args, "metric", fmt.Sprintf("%d", spec.Metric))
 			}
-			out, err := c.run(ctx, "ip", args...)
+			name := "ip"
+			if platform.CurrentOS() == platform.OSFreeBSD {
+				name, args = freeBSDIPv4RouteApplyCommand(routeType, destination, device, gateway)
+			}
+			out, err := c.run(ctx, name, args...)
+			if err != nil && platform.CurrentOS() == platform.OSFreeBSD && freeBSDRouteNeedsAdd(out) {
+				args = freeBSDIPv4RouteAddArgs(args)
+				out, err = c.run(ctx, name, args...)
+			}
 			if err != nil {
 				message := strings.TrimSpace(string(out))
-				status := map[string]any{"phase": "Error", "reason": "ApplyFailed", "destination": destination, "device": device, "gateway": gateway, "metric": spec.Metric, "dryRun": c.DryRun, "error": err.Error(), "command": "ip " + strings.Join(args, " ")}
+				status := map[string]any{"phase": "Error", "reason": "ApplyFailed", "destination": destination, "device": device, "gateway": gateway, "metric": spec.Metric, "dryRun": c.DryRun, "error": err.Error(), "command": name + " " + strings.Join(args, " ")}
 				if message != "" {
 					status["message"] = message
 				}
@@ -397,9 +422,13 @@ func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 		if !c.DryRun {
 			args := ipv4RouteDeleteArgs(status.Status)
 			if len(args) > 0 {
-				out, err := c.run(ctx, "ip", args...)
+				name := "ip"
+				if platform.CurrentOS() == platform.OSFreeBSD {
+					name, args = freeBSDIPv4RouteDeleteCommand(status.Status)
+				}
+				out, err := c.run(ctx, name, args...)
 				if err != nil && !missingIPv4RouteDelete(err, out) {
-					return fmt.Errorf("delete removed IPv4Route %s: ip %s: %w: %s", status.Name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+					return fmt.Errorf("delete removed IPv4Route %s: %s %s: %w: %s", status.Name, name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 				}
 			}
 		}
@@ -460,7 +489,71 @@ func missingIPv4RouteDelete(err error, output []byte) bool {
 		return false
 	}
 	message := strings.ToLower(string(output))
-	return strings.Contains(message, "no such process") || strings.Contains(message, "cannot find")
+	return strings.Contains(message, "no such process") || strings.Contains(message, "cannot find") || strings.Contains(message, "not in table")
+}
+
+func freeBSDIPv4RouteApplyCommand(routeType, destination, device, gateway string) (string, []string) {
+	dest := freeBSDRouteDestination(destination)
+	destArgs := freeBSDRouteDestinationArgs(destination)
+	if routeType == "blackhole" {
+		return "route", append([]string{"-n", "add"}, append(destArgs, "-blackhole")...)
+	}
+	if gateway == "" && strings.HasPrefix(device, "gif") && dest == "default" {
+		gateway = freeBSDDSLiteInnerRemoteIPv4
+	}
+	args := append([]string{"-n", "change"}, destArgs...)
+	if gateway != "" {
+		args = append(args, gateway)
+	} else {
+		args = append(args, "-interface", device)
+	}
+	return "route", args
+}
+
+func freeBSDRouteNeedsAdd(output []byte) bool {
+	message := strings.ToLower(string(output))
+	return strings.Contains(message, "not in table") || strings.Contains(message, "route has not been found")
+}
+
+func freeBSDIPv4RouteAddArgs(changeArgs []string) []string {
+	out := append([]string(nil), changeArgs...)
+	for i, arg := range out {
+		if arg == "change" {
+			out[i] = "add"
+			return out
+		}
+	}
+	return out
+}
+
+func freeBSDIPv4RouteDeleteCommand(status map[string]any) (string, []string) {
+	return "route", append([]string{"-n", "delete"}, freeBSDRouteDestinationArgs(fmt.Sprint(status["destination"]))...)
+}
+
+func freeBSDRouteDestination(destination string) string {
+	switch destination {
+	case "", "<nil>", "0.0.0.0/0", "default":
+		return "default"
+	default:
+		return destination
+	}
+}
+
+func freeBSDRouteDestinationArgs(destination string) []string {
+	dest := freeBSDRouteDestination(destination)
+	if dest == "default" {
+		return []string{"default"}
+	}
+	if prefix, err := netip.ParsePrefix(dest); err == nil {
+		if prefix.Bits() == 32 && prefix.Addr().Is4() {
+			return []string{"-host", prefix.Addr().String()}
+		}
+		return []string{"-net", prefix.String()}
+	}
+	if addr, err := netip.ParseAddr(dest); err == nil && addr.Is4() {
+		return []string{"-host", addr.String()}
+	}
+	return []string{dest}
 }
 
 func routeInstallStatusChanged(previous, next map[string]any) bool {
@@ -484,10 +577,24 @@ type IPv6RouterAdvertisementController struct {
 }
 
 func (c IPv6RouterAdvertisementController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.address.*", "routerd.dhcpv6.info.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.address.*", "routerd.dhcpv6.info.*", "routerd.resource.status.changed"}}, 32)
 	go func() {
-		for range ch {
-			if err := c.reconcile(ctx); err != nil && c.Logger != nil {
+		if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
+			c.Logger.Warn("ipv6 router advertisement initial reconcile failed", "error", err)
+		}
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+			case <-ticker.C:
+			case <-ctx.Done():
+				return
+			}
+			if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
 				c.Logger.Warn("ipv6 router advertisement reconcile failed", "error", err)
 			}
 		}
@@ -553,10 +660,24 @@ type DHCPv6ServerController struct {
 }
 
 func (c DHCPv6ServerController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.address.*", "routerd.dhcpv6.info.*"}}, 32)
+	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.address.*", "routerd.dhcpv6.info.*", "routerd.resource.status.changed"}}, 32)
 	go func() {
-		for range ch {
-			if err := c.reconcile(ctx); err != nil && c.Logger != nil {
+		if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
+			c.Logger.Warn("ipv6 dhcpv6 server initial reconcile failed", "error", err)
+		}
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+			case <-ticker.C:
+			case <-ctx.Done():
+				return
+			}
+			if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
 				c.Logger.Warn("ipv6 dhcpv6 server reconcile failed", "error", err)
 			}
 		}
@@ -573,7 +694,7 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			return err
 		}
 		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse", "dependencies": dependencyStatusSnapshot(c.Store, spec.DependsOn)})
 			continue
 		}
 		dnsServers := append(expandServers(c.Store, spec.DNSServers), expandServerSources(c.Store, spec.DNSServerFrom)...)
@@ -622,6 +743,24 @@ func suffixedPath(path, oldSuffix, newSuffix string) string {
 		return ""
 	}
 	return strings.TrimSuffix(path, oldSuffix) + newSuffix
+}
+
+func dependencyStatusSnapshot(store Store, dependencies []api.ResourceDependencySpec) []string {
+	var out []string
+	for _, dependency := range dependencies {
+		kind, name, ok := resourcequery.SplitResource(dependency.Resource)
+		if !ok {
+			out = append(out, dependency.Resource+" invalid")
+			continue
+		}
+		status := store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+		field := firstNonEmpty(dependency.Field, "phase")
+		if dependency.Phase != "" {
+			field = "phase"
+		}
+		out = append(out, fmt.Sprintf("%s %s=%v want=%s optional=%t", dependency.Resource, field, status[field], firstNonEmpty(dependency.Phase, dependency.Equals), dependency.Optional))
+	}
+	return out
 }
 
 func postDaemonCommand(ctx context.Context, socketPath, command string) (daemonapi.CommandResult, error) {
@@ -774,6 +913,17 @@ type ipJSONLink struct {
 }
 
 func interfaceGlobalIPv6(ifname string) (string, string, error) {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		out, err := exec.Command("ifconfig", ifname).CombinedOutput()
+		if err != nil {
+			return "", "", fmt.Errorf("ifconfig %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
+		}
+		addr := firstUsableIfconfigGlobalIPv6(out)
+		if addr == "" {
+			return "", "", fmt.Errorf("no usable global IPv6 address on %s", ifname)
+		}
+		return addr, "", nil
+	}
 	out, err := exec.Command("ip", "-j", "-6", "addr", "show", "dev", ifname, "scope", "global").CombinedOutput()
 	if err != nil {
 		return "", "", fmt.Errorf("ip -j -6 addr show dev %s scope global: %w: %s", ifname, err, strings.TrimSpace(string(out)))
@@ -802,6 +952,33 @@ func firstUsableGlobalIPv6(data []byte) string {
 			if info.Dynamic {
 				return info.Local
 			}
+		}
+	}
+	return fallback
+}
+
+func firstUsableIfconfigGlobalIPv6(data []byte) string {
+	var fallback string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 || fields[0] != "inet6" {
+			continue
+		}
+		raw := strings.Split(fields[1], "%")[0]
+		raw = strings.TrimSuffix(raw, ",")
+		addr, err := netip.ParseAddr(raw)
+		if err != nil || !addr.Is6() || addr.IsLinkLocalUnicast() || addr.IsMulticast() {
+			continue
+		}
+		text := strings.Join(fields[2:], " ")
+		if strings.Contains(text, "deprecated") || strings.Contains(text, "temporary") {
+			continue
+		}
+		if fallback == "" {
+			fallback = addr.String()
+		}
+		if strings.Contains(text, "autoconf") {
+			return addr.String()
 		}
 	}
 	return fallback
@@ -871,7 +1048,7 @@ func localIPv6Address(value string) string {
 		return ""
 	}
 	if prefix, err := netip.ParsePrefix(value); err == nil {
-		return prefix.Masked().Addr().String()
+		return prefix.Addr().String()
 	}
 	if addr, err := netip.ParseAddr(value); err == nil && addr.Is6() {
 		return addr.String()
@@ -988,12 +1165,25 @@ func interfaceName(router *api.Router, name string) string {
 		return ""
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "Interface" || resource.Metadata.Name != name {
+		if resource.Metadata.Name != name {
 			continue
 		}
-		spec, err := resource.InterfaceSpec()
-		if err == nil && spec.IfName != "" {
-			return spec.IfName
+		switch resource.Kind {
+		case "Interface":
+			spec, err := resource.InterfaceSpec()
+			if err == nil && spec.IfName != "" {
+				return spec.IfName
+			}
+		case "Bridge":
+			spec, err := resource.BridgeSpec()
+			if err == nil && spec.IfName != "" {
+				return spec.IfName
+			}
+		case "VXLANSegment":
+			spec, err := resource.VXLANSegmentSpec()
+			if err == nil && spec.IfName != "" {
+				return spec.IfName
+			}
 		}
 	}
 	return name
@@ -1003,10 +1193,23 @@ func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string) error 
 	if ifname == "" || address == "" {
 		return nil
 	}
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		out, err := exec.CommandContext(ctx, "ifconfig", ifname).CombinedOutput()
+		if err == nil && ifconfigHasIPv6Address(out, address) {
+			return nil
+		}
+		if err := exec.CommandContext(ctx, "ifconfig", ifname, "inet6", address, "prefixlen", "128", "alias").Run(); err != nil {
+			return fmt.Errorf("ifconfig %s inet6 %s prefixlen 128 alias: %w", ifname, address, err)
+		}
+		return nil
+	}
 	return exec.CommandContext(ctx, "ip", "-6", "addr", "replace", address+"/128", "dev", ifname).Run()
 }
 
 func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLiteTunnelSpec, ifname, remote, local string) (string, error) {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		return ensureFreeBSDDSLiteTunnel(ctx, spec, ifname, remote, local)
+	}
 	show, showErr := exec.CommandContext(ctx, "ip", "-6", "tunnel", "show", ifname).CombinedOutput()
 	if showErr == nil && strings.Contains(string(show), "remote "+remote) && strings.Contains(string(show), "local "+local) {
 		return ifname, nil
@@ -1043,6 +1246,94 @@ func existingDSLiteTunnel(ctx context.Context, remote, local string) string {
 		}
 	}
 	return ""
+}
+
+func setDSLiteTunnelLinkUp(ctx context.Context, ifname string, mtu int) error {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		args := []string{ifname}
+		if mtu > 0 {
+			args = append(args, "mtu", strconv.Itoa(mtu))
+		}
+		args = append(args, "up")
+		out, err := exec.CommandContext(ctx, "ifconfig", args...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("ifconfig %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	return exec.CommandContext(ctx, "ip", "link", "set", ifname, "mtu", fmt.Sprintf("%d", mtu), "up").Run()
+}
+
+func ifconfigHasIPv6Address(out []byte, address string) bool {
+	want := localIPv6Address(address)
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 || fields[0] != "inet6" {
+			continue
+		}
+		raw := strings.Split(fields[1], "%")[0]
+		if localIPv6Address(raw) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureFreeBSDDSLiteTunnel(ctx context.Context, spec api.DSLiteTunnelSpec, desiredName, remote, local string) (string, error) {
+	name := freeBSDDSLiteRuntimeIfName(desiredName)
+	show, showErr := exec.CommandContext(ctx, "ifconfig", name).CombinedOutput()
+	mtuText := ""
+	if spec.MTU != 0 {
+		mtuText = "mtu " + strconv.Itoa(spec.MTU)
+	}
+	innerIPv4Text := "inet " + freeBSDDSLiteInnerLocalIPv4 + " --> " + freeBSDDSLiteInnerRemoteIPv4
+	needsRecreate := showErr != nil ||
+		!strings.Contains(string(show), "tunnel inet6 "+local+" --> "+remote) ||
+		!strings.Contains(string(show), innerIPv4Text) ||
+		(mtuText != "" && !strings.Contains(string(show), mtuText))
+	if needsRecreate {
+		_ = exec.CommandContext(ctx, "ifconfig", name, "destroy").Run()
+		if out, err := exec.CommandContext(ctx, "ifconfig", name, "create").CombinedOutput(); err != nil {
+			return "", fmt.Errorf("ifconfig %s create: %w: %s", name, err, strings.TrimSpace(string(out)))
+		}
+		if out, err := exec.CommandContext(ctx, "ifconfig", name, "inet6", "tunnel", local, remote).CombinedOutput(); err != nil {
+			return "", fmt.Errorf("ifconfig %s inet6 tunnel %s %s: %w: %s", name, local, remote, err, strings.TrimSpace(string(out)))
+		}
+		if out, err := exec.CommandContext(ctx, "ifconfig", name, "inet", freeBSDDSLiteInnerLocalIPv4, freeBSDDSLiteInnerRemoteIPv4, "netmask", "255.255.255.255").CombinedOutput(); err != nil {
+			return "", fmt.Errorf("ifconfig %s inet %s %s: %w: %s", name, freeBSDDSLiteInnerLocalIPv4, freeBSDDSLiteInnerRemoteIPv4, err, strings.TrimSpace(string(out)))
+		}
+	}
+	if spec.DefaultRoute {
+		routeOut, routeErr := exec.CommandContext(ctx, "route", "-n", "get", "default").CombinedOutput()
+		routeMissing := routeErr != nil ||
+			!strings.Contains(string(routeOut), "gateway: "+freeBSDDSLiteInnerRemoteIPv4) ||
+			!strings.Contains(string(routeOut), "interface: "+name)
+		if routeMissing {
+			if out, err := exec.CommandContext(ctx, "route", "-n", "change", "default", freeBSDDSLiteInnerRemoteIPv4).CombinedOutput(); err != nil {
+				if addOut, addErr := exec.CommandContext(ctx, "route", "-n", "add", "default", freeBSDDSLiteInnerRemoteIPv4).CombinedOutput(); addErr != nil {
+					return "", fmt.Errorf("route default via %s: change: %w: %s; add: %w: %s", freeBSDDSLiteInnerRemoteIPv4, err, strings.TrimSpace(string(out)), addErr, strings.TrimSpace(string(addOut)))
+				}
+			}
+		}
+	}
+	return name, nil
+}
+
+const (
+	freeBSDDSLiteInnerLocalIPv4  = "192.0.0.2"
+	freeBSDDSLiteInnerRemoteIPv4 = "192.0.0.1"
+)
+
+var freeBSDDSLiteRuntimeGIFNamePattern = regexp.MustCompile(`^gif[0-9]+$`)
+
+func freeBSDDSLiteRuntimeIfName(name string) string {
+	name = strings.TrimSpace(name)
+	if freeBSDDSLiteRuntimeGIFNamePattern.MatchString(name) {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	index := 100 + int(binary.BigEndian.Uint16(sum[:2])%900)
+	return "gif" + strconv.Itoa(index)
 }
 
 func writeRadvdConfig(path, ifname, prefix string, rdnss []string, preferred, valid string) (bool, error) {

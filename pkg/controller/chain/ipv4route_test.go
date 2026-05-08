@@ -116,6 +116,22 @@ func TestIPv4RouteControllerDeletesRemovedRoute(t *testing.T) {
 	}
 }
 
+func TestFreeBSDIPv4RouteHostCommand(t *testing.T) {
+	name, args := freeBSDIPv4RouteApplyCommand("unicast", "1.1.1.1/32", "gif41", "")
+	want := []string{"-n", "change", "-host", "1.1.1.1", "-interface", "gif41"}
+	if name != "route" || !reflect.DeepEqual(args, want) {
+		t.Fatalf("command = %s %#v, want route %#v", name, args, want)
+	}
+}
+
+func TestFreeBSDIPv4RouteDefaultDSLiteCommand(t *testing.T) {
+	name, args := freeBSDIPv4RouteApplyCommand("unicast", "0.0.0.0/0", "gif41", "")
+	want := []string{"-n", "change", "default", "192.0.0.1"}
+	if name != "route" || !reflect.DeepEqual(args, want) {
+		t.Fatalf("command = %s %#v, want route %#v", name, args, want)
+	}
+}
+
 type routeCleanupStore struct {
 	statuses []routerstate.ObjectStatus
 	deleted  map[string]bool

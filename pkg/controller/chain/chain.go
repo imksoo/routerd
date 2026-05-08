@@ -427,12 +427,12 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 			return nil
 		}},
-		framework.FuncController{ControllerName: "dslite", Subs: statusSubscriptions("DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: dslite.reconcile},
+		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: dslite.reconcile},
 		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Link"), PeriodicFunc: policyRoute.Reconcile},
-		framework.FuncController{ControllerName: "ipv4-route", Subs: statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy"), PeriodicFunc: route.reconcile},
+		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy"), PeriodicFunc: route.reconcile},
 		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "Link"), PeriodicFunc: pathMTU.Reconcile},
-		framework.FuncController{ControllerName: "ipv6-ra", Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information"), PeriodicFunc: ra.reconcile},
-		framework.FuncController{ControllerName: "dhcpv6-server", Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information"), PeriodicFunc: dhcpv6.reconcile},
+		framework.FuncController{ControllerName: "ipv6-ra", Every: 30 * time.Second, Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information"), PeriodicFunc: ra.reconcile},
+		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information"), PeriodicFunc: dhcpv6.reconcile},
 		framework.FuncController{ControllerName: "dhcpv4-lease", Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			for _, resource := range r.Router.Spec.Resources {
 				if resource.Kind == "DHCPv4Lease" {
@@ -978,7 +978,8 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			if command == nil {
 				command = runCommandContext
 			}
-			if err := command(ctx, "ip", "-4", "addr", "replace", spec.Address, "dev", ifname); err != nil {
+			name, args := ipv4StaticAddressApplyCommand(platform.CurrentOS(), ifname, spec.Address)
+			if err := command(ctx, name, args...); err != nil {
 				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
 					"phase":     "Error",
 					"reason":    "ApplyFailed",
@@ -1009,6 +1010,13 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 }
 
 func ipv4AddressPresent(ctx context.Context, ifname, address string) bool {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		out, err := exec.CommandContext(ctx, "ifconfig", ifname).Output()
+		if err != nil {
+			return false
+		}
+		return ifconfigHasIPv4Address(out, address)
+	}
 	out, err := exec.CommandContext(ctx, "ip", "-4", "-o", "addr", "show", "dev", ifname).Output()
 	if err != nil {
 		return false
@@ -1022,7 +1030,35 @@ func ipv4AddressPresent(ctx context.Context, ifname, address string) bool {
 	return false
 }
 
+func ipv4StaticAddressApplyCommand(osName platform.OS, ifname, address string) (string, []string) {
+	if osName == platform.OSFreeBSD {
+		return "ifconfig", []string{ifname, "inet", address, "alias"}
+	}
+	return "ip", []string{"-4", "addr", "replace", address, "dev", ifname}
+}
+
+func ifconfigHasIPv4Address(out []byte, address string) bool {
+	want := strings.TrimSpace(address)
+	if host, _, ok := strings.Cut(want, "/"); ok {
+		want = host
+	}
+	fields := strings.Fields(string(out))
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "inet" && strings.TrimPrefix(fields[i+1], "addr:") == want {
+			return true
+		}
+	}
+	return false
+}
+
 func ipv6AddressPresent(ctx context.Context, ifname, address string) bool {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		out, err := exec.CommandContext(ctx, "ifconfig", ifname).Output()
+		if err != nil {
+			return false
+		}
+		return ifconfigHasIPv6Address(out, address)
+	}
 	out, err := exec.CommandContext(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname).Output()
 	if err != nil {
 		return false
@@ -1034,6 +1070,22 @@ func ipv6AddressPresent(ctx context.Context, ifname, address string) bool {
 		}
 	}
 	return false
+}
+
+func ipv6StaticAddressApplyCommand(osName platform.OS, ifname, address string) (string, []string) {
+	if osName == platform.OSFreeBSD {
+		host := strings.TrimSpace(address)
+		prefixLen := "64"
+		if parsed, err := netip.ParsePrefix(host); err == nil {
+			host = parsed.Addr().String()
+			prefixLen = fmt.Sprintf("%d", parsed.Bits())
+		} else if value, bits, ok := strings.Cut(host, "/"); ok {
+			host = value
+			prefixLen = bits
+		}
+		return "ifconfig", []string{ifname, "inet6", host, "prefixlen", prefixLen, "alias"}
+	}
+	return "ip", []string{"-6", "addr", "replace", address, "dev", ifname}
 }
 
 func runCommandContext(ctx context.Context, name string, args ...string) error {
@@ -1112,7 +1164,8 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			if command == nil {
 				command = runCommandContext
 			}
-			if err := command(ctx, "ip", "-6", "addr", "replace", addr, "dev", ifname); err != nil {
+			name, args := ipv6StaticAddressApplyCommand(platform.CurrentOS(), ifname, addr)
+			if err := command(ctx, name, args...); err != nil {
 				return err
 			}
 		}
@@ -1154,12 +1207,25 @@ func interfaceIfName(router *api.Router, name string) string {
 		return name
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "Interface" || resource.Metadata.Name != name {
+		if resource.Metadata.Name != name {
 			continue
 		}
-		spec, err := resource.InterfaceSpec()
-		if err == nil && spec.IfName != "" {
-			return spec.IfName
+		switch resource.Kind {
+		case "Interface":
+			spec, err := resource.InterfaceSpec()
+			if err == nil && spec.IfName != "" {
+				return spec.IfName
+			}
+		case "Bridge":
+			spec, err := resource.BridgeSpec()
+			if err == nil && spec.IfName != "" {
+				return spec.IfName
+			}
+		case "VXLANSegment":
+			spec, err := resource.VXLANSegmentSpec()
+			if err == nil && spec.IfName != "" {
+				return spec.IfName
+			}
 		}
 	}
 	return name
