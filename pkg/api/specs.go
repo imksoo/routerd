@@ -768,6 +768,7 @@ type DSLiteTunnelSpec struct {
 	AFTRAddressSelection  string                   `yaml:"aftrAddressSelection,omitempty" json:"aftrAddressSelection,omitempty" jsonschema:"enum=ordinal,enum=ordinalModulo"`
 	RemoteAddress         string                   `yaml:"remoteAddress,omitempty" json:"remoteAddress,omitempty"`
 	LocalAddress          string                   `yaml:"localAddress,omitempty" json:"localAddress,omitempty"`
+	LocalAddressFrom      StatusValueSourceSpec    `yaml:"localAddressFrom,omitempty" json:"localAddressFrom,omitempty"`
 	LocalIPv6Source       string                   `yaml:"localIPv6Source,omitempty" json:"-"`
 	AFTRFrom              StatusValueSourceSpec    `yaml:"aftrFrom,omitempty" json:"aftrFrom,omitempty"`
 	AFTRSource            string                   `yaml:"aftrSource,omitempty" json:"-"`
@@ -943,13 +944,14 @@ type IPv4SourceNATSpec struct {
 }
 
 type NAT44RuleSpec struct {
-	Type                    string   `yaml:"type" json:"type" jsonschema:"enum=masquerade,enum=snat"`
-	EgressInterface         string   `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
-	EgressPolicyRef         string   `yaml:"egressPolicyRef,omitempty" json:"egressPolicyRef,omitempty"`
-	SourceRanges            []string `yaml:"sourceRanges" json:"sourceRanges"`
-	DestinationCIDRs        []string `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	ExcludeDestinationCIDRs []string `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
-	SNATAddress             string   `yaml:"snatAddress,omitempty" json:"snatAddress,omitempty"`
+	Type                    string                `yaml:"type" json:"type" jsonschema:"enum=masquerade,enum=snat"`
+	EgressInterface         string                `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
+	EgressPolicyRef         string                `yaml:"egressPolicyRef,omitempty" json:"egressPolicyRef,omitempty"`
+	SourceRanges            []string              `yaml:"sourceRanges" json:"sourceRanges"`
+	DestinationCIDRs        []string              `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	ExcludeDestinationCIDRs []string              `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
+	SNATAddress             string                `yaml:"snatAddress,omitempty" json:"snatAddress,omitempty"`
+	SNATAddressFrom         StatusValueSourceSpec `yaml:"snatAddressFrom,omitempty" json:"snatAddressFrom,omitempty"`
 }
 
 type IPv4PolicyRouteSpec struct {

@@ -465,6 +465,21 @@ func TestDSLiteTunnelLocalDelegatedAddress(t *testing.T) {
 	}
 }
 
+func TestDSLiteTunnelInnerLocalAddressFromStaticAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-source"}, Spec: api.IPv4StaticAddressSpec{Interface: "ds-lite-a", Address: "192.168.160.250/32"}},
+	}}}
+	got, err := dsliteInnerLocalIPv4(router, nil, api.DSLiteTunnelSpec{
+		LocalAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/ds-lite-source", Field: "address"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "192.168.160.250" {
+		t.Fatalf("inner local = %q", got)
+	}
+}
+
 func TestFirstUsableGlobalIPv6PrefersDynamicStableAddress(t *testing.T) {
 	data := []byte(`[{"ifname":"ens18","addr_info":[
 		{"family":"inet6","local":"2409:10:3d60:1200::temp","scope":"global","dynamic":true,"temporary":true,"preferred_life_time":1000},

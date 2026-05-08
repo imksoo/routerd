@@ -964,6 +964,19 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			"address":   spec.Address,
 			"dryRun":    c.DryRun,
 		}
+		if !c.DryRun && !interfaceDevicePresent(ctx, ifname) {
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
+				"phase":     "Pending",
+				"reason":    "InterfaceNotPresent",
+				"interface": spec.Interface,
+				"ifname":    ifname,
+				"address":   spec.Address,
+				"dryRun":    c.DryRun,
+			}); err != nil {
+				return err
+			}
+			continue
+		}
 		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name), status)
 		addressPresent := true
 		if !c.DryRun {
@@ -1009,7 +1022,21 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
+func interfaceDevicePresent(ctx context.Context, ifname string) bool {
+	if strings.TrimSpace(ifname) == "" {
+		return false
+	}
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		return exec.CommandContext(ctx, "ifconfig", ifname).Run() == nil
+	}
+	return exec.CommandContext(ctx, "ip", "link", "show", "dev", ifname).Run() == nil
+}
+
 func ipv4AddressPresent(ctx context.Context, ifname, address string) bool {
+	want := strings.TrimSpace(address)
+	if host, _, ok := strings.Cut(want, "/"); ok {
+		want = host
+	}
 	if platform.CurrentOS() == platform.OSFreeBSD {
 		out, err := exec.CommandContext(ctx, "ifconfig", ifname).Output()
 		if err != nil {
@@ -1023,7 +1050,14 @@ func ipv4AddressPresent(ctx context.Context, ifname, address string) bool {
 	}
 	fields := strings.Fields(string(out))
 	for i := 0; i+1 < len(fields); i++ {
-		if fields[i] == "inet" && fields[i+1] == address {
+		if fields[i] != "inet" {
+			continue
+		}
+		got := strings.TrimPrefix(fields[i+1], "addr:")
+		if host, _, ok := strings.Cut(got, "/"); ok {
+			got = host
+		}
+		if got == want {
 			return true
 		}
 	}

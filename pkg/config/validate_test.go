@@ -682,6 +682,10 @@ func TestValidateNAT44Rule(t *testing.T) {
 	if err := Validate(router); err == nil {
 		t.Fatal("expected snat without snatAddress to be rejected")
 	}
+	router.Spec.Resources[0].Spec = api.NAT44RuleSpec{Type: "snat", EgressInterface: "wan", SourceRanges: []string{"192.168.0.0/16"}, SNATAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/ds-lite-source", Field: "address"}}
+	if err := Validate(router); err != nil {
+		t.Fatalf("expected snatAddressFrom to satisfy snat address: %v", err)
+	}
 }
 
 func TestValidateIPv4SourceNATRejectsInvalidPortRange(t *testing.T) {

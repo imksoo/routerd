@@ -4352,6 +4352,24 @@
                       "localAddress": {
                         "type": "string"
                       },
+                      "localAddressFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
                       "localAddressSource": {
                         "enum": [
                           "interface",
@@ -5677,6 +5695,24 @@
                       },
                       "snatAddress": {
                         "type": "string"
+                      },
+                      "snatAddressFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
                       },
                       "sourceRanges": {
                         "items": {

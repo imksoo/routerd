@@ -194,7 +194,12 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if mtu == 0 {
 			mtu = 1460
 		}
-		status := map[string]any{"phase": "Up", "interface": ifname, "tunnelName": ifname, "device": ifname, "localIPv6": local, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
+		innerLocal, err := dsliteInnerLocalIPv4(c.Router, c.Store, spec)
+		if err != nil {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "InnerLocalIPv4Invalid", "error": err.Error(), "dryRun": c.DryRun})
+			continue
+		}
+		status := map[string]any{"phase": "Up", "interface": ifname, "tunnelName": ifname, "device": ifname, "localIPv6": local, "innerLocalIPv4": innerLocal, "innerRemoteIPv4": dsliteInnerRemoteIPv4, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
 		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name), status)
 		if !c.DryRun && changed {
 			if localIfName != "" {
@@ -204,7 +209,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 					continue
 				}
 			}
-			resolvedIfName, err := ensureDSLiteTunnel(ctx, c.Router, spec, ifname, remote, local)
+			resolvedIfName, err := ensureDSLiteTunnel(ctx, c.Router, spec, ifname, remote, local, innerLocal)
 			if err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
 				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "TunnelApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun})
@@ -229,7 +234,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if changed && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.tunnel.ds-lite.up", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel", Name: resource.Metadata.Name}
-			event.Attributes = map[string]string{"interface": ifname, "aftrIPv6": remote, "dryRun": fmt.Sprintf("%t", c.DryRun)}
+			event.Attributes = map[string]string{"interface": ifname, "aftrIPv6": remote, "innerLocalIPv4": innerLocal, "dryRun": fmt.Sprintf("%t", c.DryRun)}
 			if err := c.Bus.Publish(ctx, event); err != nil {
 				return err
 			}
@@ -499,7 +504,7 @@ func freeBSDIPv4RouteApplyCommand(routeType, destination, device, gateway string
 		return "route", append([]string{"-n", "add"}, append(destArgs, "-blackhole")...)
 	}
 	if gateway == "" && strings.HasPrefix(device, "gif") && dest == "default" {
-		gateway = freeBSDDSLiteInnerRemoteIPv4
+		gateway = dsliteInnerRemoteIPv4
 	}
 	args := append([]string{"-n", "change"}, destArgs...)
 	if gateway != "" {
@@ -1206,12 +1211,15 @@ func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string) error 
 	return exec.CommandContext(ctx, "ip", "-6", "addr", "replace", address+"/128", "dev", ifname).Run()
 }
 
-func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLiteTunnelSpec, ifname, remote, local string) (string, error) {
+func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLiteTunnelSpec, ifname, remote, local, innerLocal string) (string, error) {
 	if platform.CurrentOS() == platform.OSFreeBSD {
-		return ensureFreeBSDDSLiteTunnel(ctx, spec, ifname, remote, local)
+		return ensureFreeBSDDSLiteTunnel(ctx, spec, ifname, remote, local, innerLocal)
 	}
 	show, showErr := exec.CommandContext(ctx, "ip", "-6", "tunnel", "show", ifname).CombinedOutput()
 	if showErr == nil && strings.Contains(string(show), "remote "+remote) && strings.Contains(string(show), "local "+local) {
+		if err := ensureLinuxDSLiteInnerIPv4(ctx, ifname, innerLocal); err != nil {
+			return "", err
+		}
 		return ifname, nil
 	}
 	_ = exec.CommandContext(ctx, "ip", "-6", "tunnel", "del", ifname).Run()
@@ -1223,9 +1231,15 @@ func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLite
 	out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
 	if err != nil {
 		if existing := existingDSLiteTunnel(ctx, remote, local); existing != "" {
+			if err := ensureLinuxDSLiteInnerIPv4(ctx, existing, innerLocal); err != nil {
+				return "", err
+			}
 			return existing, nil
 		}
 		return "", fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	if err := ensureLinuxDSLiteInnerIPv4(ctx, ifname, innerLocal); err != nil {
+		return "", err
 	}
 	return ifname, nil
 }
@@ -1279,14 +1293,14 @@ func ifconfigHasIPv6Address(out []byte, address string) bool {
 	return false
 }
 
-func ensureFreeBSDDSLiteTunnel(ctx context.Context, spec api.DSLiteTunnelSpec, desiredName, remote, local string) (string, error) {
+func ensureFreeBSDDSLiteTunnel(ctx context.Context, spec api.DSLiteTunnelSpec, desiredName, remote, local, innerLocal string) (string, error) {
 	name := freeBSDDSLiteRuntimeIfName(desiredName)
 	show, showErr := exec.CommandContext(ctx, "ifconfig", name).CombinedOutput()
 	mtuText := ""
 	if spec.MTU != 0 {
 		mtuText = "mtu " + strconv.Itoa(spec.MTU)
 	}
-	innerIPv4Text := "inet " + freeBSDDSLiteInnerLocalIPv4 + " --> " + freeBSDDSLiteInnerRemoteIPv4
+	innerIPv4Text := "inet " + innerLocal + " --> " + dsliteInnerRemoteIPv4
 	needsRecreate := showErr != nil ||
 		!strings.Contains(string(show), "tunnel inet6 "+local+" --> "+remote) ||
 		!strings.Contains(string(show), innerIPv4Text) ||
@@ -1299,19 +1313,19 @@ func ensureFreeBSDDSLiteTunnel(ctx context.Context, spec api.DSLiteTunnelSpec, d
 		if out, err := exec.CommandContext(ctx, "ifconfig", name, "inet6", "tunnel", local, remote).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("ifconfig %s inet6 tunnel %s %s: %w: %s", name, local, remote, err, strings.TrimSpace(string(out)))
 		}
-		if out, err := exec.CommandContext(ctx, "ifconfig", name, "inet", freeBSDDSLiteInnerLocalIPv4, freeBSDDSLiteInnerRemoteIPv4, "netmask", "255.255.255.255").CombinedOutput(); err != nil {
-			return "", fmt.Errorf("ifconfig %s inet %s %s: %w: %s", name, freeBSDDSLiteInnerLocalIPv4, freeBSDDSLiteInnerRemoteIPv4, err, strings.TrimSpace(string(out)))
+		if out, err := exec.CommandContext(ctx, "ifconfig", name, "inet", innerLocal, dsliteInnerRemoteIPv4, "netmask", "255.255.255.255").CombinedOutput(); err != nil {
+			return "", fmt.Errorf("ifconfig %s inet %s %s: %w: %s", name, innerLocal, dsliteInnerRemoteIPv4, err, strings.TrimSpace(string(out)))
 		}
 	}
 	if spec.DefaultRoute {
 		routeOut, routeErr := exec.CommandContext(ctx, "route", "-n", "get", "default").CombinedOutput()
 		routeMissing := routeErr != nil ||
-			!strings.Contains(string(routeOut), "gateway: "+freeBSDDSLiteInnerRemoteIPv4) ||
+			!strings.Contains(string(routeOut), "gateway: "+dsliteInnerRemoteIPv4) ||
 			!strings.Contains(string(routeOut), "interface: "+name)
 		if routeMissing {
-			if out, err := exec.CommandContext(ctx, "route", "-n", "change", "default", freeBSDDSLiteInnerRemoteIPv4).CombinedOutput(); err != nil {
-				if addOut, addErr := exec.CommandContext(ctx, "route", "-n", "add", "default", freeBSDDSLiteInnerRemoteIPv4).CombinedOutput(); addErr != nil {
-					return "", fmt.Errorf("route default via %s: change: %w: %s; add: %w: %s", freeBSDDSLiteInnerRemoteIPv4, err, strings.TrimSpace(string(out)), addErr, strings.TrimSpace(string(addOut)))
+			if out, err := exec.CommandContext(ctx, "route", "-n", "change", "default", dsliteInnerRemoteIPv4).CombinedOutput(); err != nil {
+				if addOut, addErr := exec.CommandContext(ctx, "route", "-n", "add", "default", dsliteInnerRemoteIPv4).CombinedOutput(); addErr != nil {
+					return "", fmt.Errorf("route default via %s: change: %w: %s; add: %w: %s", dsliteInnerRemoteIPv4, err, strings.TrimSpace(string(out)), addErr, strings.TrimSpace(string(addOut)))
 				}
 			}
 		}
@@ -1320,9 +1334,79 @@ func ensureFreeBSDDSLiteTunnel(ctx context.Context, spec api.DSLiteTunnelSpec, d
 }
 
 const (
-	freeBSDDSLiteInnerLocalIPv4  = "192.0.0.2"
-	freeBSDDSLiteInnerRemoteIPv4 = "192.0.0.1"
+	dsliteDefaultInnerLocalIPv4 = "192.0.0.2"
+	dsliteInnerRemoteIPv4       = "192.0.0.1"
 )
+
+func dsliteInnerLocalIPv4(router *api.Router, store Store, spec api.DSLiteTunnelSpec) (string, error) {
+	value := ""
+	if strings.TrimSpace(spec.LocalAddressFrom.Resource) != "" {
+		value = statusAddressValue(resourcequery.Value(store, spec.LocalAddressFrom))
+		if value == "" {
+			value = statusAddressValue(addressFromRouterResource(router, spec.LocalAddressFrom))
+		}
+		if value == "" {
+			if spec.LocalAddressFrom.Optional {
+				value = dsliteDefaultInnerLocalIPv4
+			} else {
+				return "", fmt.Errorf("localAddressFrom %s.%s is unresolved", spec.LocalAddressFrom.Resource, firstNonEmpty(spec.LocalAddressFrom.Field, "phase"))
+			}
+		}
+	}
+	if value == "" {
+		value = dsliteDefaultInnerLocalIPv4
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil || !addr.Is4() {
+		return "", fmt.Errorf("innerLocalAddress %q is not an IPv4 address", value)
+	}
+	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLoopback() {
+		return "", fmt.Errorf("innerLocalAddress %q must be a usable unicast IPv4 address", value)
+	}
+	return addr.String(), nil
+}
+
+func addressFromRouterResource(router *api.Router, source api.StatusValueSourceSpec) string {
+	if router == nil || strings.TrimSpace(source.Resource) == "" {
+		return ""
+	}
+	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
+	if !ok || kind == "" || name == "" {
+		return ""
+	}
+	field := firstNonEmpty(source.Field, "address")
+	for _, res := range router.Spec.Resources {
+		if res.Kind != kind || res.Metadata.Name != name {
+			continue
+		}
+		switch kind {
+		case "IPv4StaticAddress":
+			if field != "address" {
+				return ""
+			}
+			spec, err := res.IPv4StaticAddressSpec()
+			if err != nil {
+				return ""
+			}
+			return spec.Address
+		default:
+			return ""
+		}
+	}
+	return ""
+}
+
+func ensureLinuxDSLiteInnerIPv4(ctx context.Context, ifname, innerLocal string) error {
+	out, err := exec.CommandContext(ctx, "ip", "-4", "addr", "show", "dev", ifname).CombinedOutput()
+	if err == nil && strings.Contains(string(out), "inet "+innerLocal+" ") && strings.Contains(string(out), "peer "+dsliteInnerRemoteIPv4+" ") {
+		return nil
+	}
+	args := []string{"-4", "addr", "replace", innerLocal + "/32", "peer", dsliteInnerRemoteIPv4 + "/32", "dev", ifname}
+	if out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
 
 var freeBSDDSLiteRuntimeGIFNamePattern = regexp.MustCompile(`^gif[0-9]+$`)
 

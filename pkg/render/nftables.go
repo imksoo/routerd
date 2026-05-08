@@ -99,7 +99,7 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 		}
 	}
 	if len(nats) > 0 || len(nat44Rules) > 0 {
-		if err := writeIPv4SourceNATTable(&buf, aliases, nats, nat44Rules); err != nil {
+		if err := writeIPv4SourceNATTable(&buf, router, aliases, nats, nat44Rules); err != nil {
 			return nil, err
 		}
 	}
@@ -697,7 +697,7 @@ func nftIPv4SourcesMatch(resourceID string, sources []string) (string, error) {
 	return " ip saddr { " + strings.Join(values, ", ") + " }", nil
 }
 
-func writeIPv4SourceNATTable(buf *bytes.Buffer, aliases map[string]string, nats []api.Resource, nat44Rules []api.Resource) error {
+func writeIPv4SourceNATTable(buf *bytes.Buffer, router *api.Router, aliases map[string]string, nats []api.Resource, nat44Rules []api.Resource) error {
 	writeNftTablePreamble(buf, "ip", "routerd_nat")
 	buf.WriteString("table ip routerd_nat {\n")
 	buf.WriteString("  chain postrouting {\n")
@@ -741,6 +741,14 @@ func writeIPv4SourceNATTable(buf *bytes.Buffer, aliases map[string]string, nats 
 		if ifname == "" {
 			return fmt.Errorf("%s references egress interface with empty ifname", res.ID())
 		}
+		snatAddress := spec.SNATAddress
+		if snatAddress == "" && spec.SNATAddressFrom.Resource != "" {
+			var err error
+			snatAddress, err = renderAddressFromResource(router, spec.SNATAddressFrom)
+			if err != nil {
+				return fmt.Errorf("%s spec.snatAddressFrom: %w", res.ID(), err)
+			}
+		}
 		if err := writeNAT44RenderRule(buf, NAT44RenderRule{
 			Name:                    res.Metadata.Name,
 			Type:                    spec.Type,
@@ -748,7 +756,7 @@ func writeIPv4SourceNATTable(buf *bytes.Buffer, aliases map[string]string, nats 
 			SourceRanges:            spec.SourceRanges,
 			DestinationCIDRs:        spec.DestinationCIDRs,
 			ExcludeDestinationCIDRs: spec.ExcludeDestinationCIDRs,
-			SNATAddress:             spec.SNATAddress,
+			SNATAddress:             snatAddress,
 		}); err != nil {
 			return err
 		}

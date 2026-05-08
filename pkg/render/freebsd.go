@@ -182,9 +182,13 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 				continue
 			}
 			ifname := freeBSDGifIfName(spec.TunnelName, len(dslites))
-			dslites = append(dslites, freeBSDDSLite{Name: res.Metadata.Name, IfName: ifname, LocalAddress: local, RemoteAddress: remote, MTU: spec.MTU, DefaultRoute: spec.DefaultRoute})
+			innerLocal, err := freeBSDDSLiteInnerLocalIPv4(spec)
+			if err != nil {
+				return FreeBSDConfig{}, fmt.Errorf("%s: %w", res.ID(), err)
+			}
+			dslites = append(dslites, freeBSDDSLite{Name: res.Metadata.Name, IfName: ifname, LocalAddress: local, RemoteAddress: remote, InnerLocalAddress: innerLocal, MTU: spec.MTU, DefaultRoute: spec.DefaultRoute})
 			if spec.DefaultRoute {
-				staticV4Routes = append(staticV4Routes, freeBSDStaticRoute{Name: res.Metadata.Name + "-default", IfName: ifname, Destination: "default", Via: freeBSDDSLiteInnerRemoteIPv4})
+				staticV4Routes = append(staticV4Routes, freeBSDStaticRoute{Name: res.Metadata.Name + "-default", IfName: ifname, Destination: "default", Via: dsliteInnerRemoteIPv4})
 			}
 		case "NTPClient":
 			if freeBSDHasManagedNTPServer(router) {
@@ -275,8 +279,8 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 }
 
 const (
-	freeBSDDSLiteInnerLocalIPv4  = "192.0.0.2"
-	freeBSDDSLiteInnerRemoteIPv4 = "192.0.0.1"
+	dsliteDefaultInnerLocalIPv4 = "192.0.0.2"
+	dsliteInnerRemoteIPv4       = "192.0.0.1"
 )
 
 type freeBSDPPPoE struct {
@@ -295,12 +299,31 @@ type freeBSDStaticRoute struct {
 }
 
 type freeBSDDSLite struct {
-	Name          string
-	IfName        string
-	LocalAddress  string
-	RemoteAddress string
-	MTU           int
-	DefaultRoute  bool
+	Name              string
+	IfName            string
+	LocalAddress      string
+	RemoteAddress     string
+	InnerLocalAddress string
+	MTU               int
+	DefaultRoute      bool
+}
+
+func freeBSDDSLiteInnerLocalIPv4(spec api.DSLiteTunnelSpec) (string, error) {
+	value := ""
+	if strings.TrimSpace(spec.LocalAddressFrom.Resource) != "" {
+		return "", fmt.Errorf("localAddressFrom is resolved by the runtime controller")
+	}
+	if value == "" {
+		value = dsliteDefaultInnerLocalIPv4
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil || !addr.Is4() {
+		return "", fmt.Errorf("innerLocalAddress %q is not an IPv4 address", value)
+	}
+	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLoopback() {
+		return "", fmt.Errorf("innerLocalAddress %q must be a usable unicast IPv4 address", value)
+	}
+	return addr.String(), nil
 }
 
 func freeBSDNTPServers(spec api.NTPClientSpec) []string {
@@ -408,7 +431,7 @@ func writeFreeBSDDSLites(buf *bytes.Buffer, dslites []freeBSDDSLite) {
 	for _, tunnel := range dslites {
 		args := []string{
 			"inet6 tunnel " + tunnel.LocalAddress + " " + tunnel.RemoteAddress,
-			"inet " + freeBSDDSLiteInnerLocalIPv4 + " " + freeBSDDSLiteInnerRemoteIPv4 + " netmask 255.255.255.255",
+			"inet " + tunnel.InnerLocalAddress + " " + dsliteInnerRemoteIPv4 + " netmask 255.255.255.255",
 		}
 		if tunnel.MTU != 0 {
 			args = append(args, "mtu "+strconv.Itoa(tunnel.MTU))

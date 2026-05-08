@@ -79,7 +79,7 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	if err := writePFMSSClamp(&buf, aliases, mssPolicies); err != nil {
 		return nil, err
 	}
-	if err := writePFNAT(&buf, aliases, nats, nat44Rules); err != nil {
+	if err := writePFNAT(&buf, router, aliases, nats, nat44Rules); err != nil {
 		return nil, err
 	}
 	filterRequested := len(zoneMap) > 0 || len(rules) > 0 || len(holes) > 0 || len(logs) > 0
@@ -123,7 +123,7 @@ func writePFMSSClamp(buf *bytes.Buffer, aliases map[string]string, policies []pa
 	return nil
 }
 
-func writePFNAT(buf *bytes.Buffer, aliases map[string]string, nats []api.Resource, nat44Rules []api.Resource) error {
+func writePFNAT(buf *bytes.Buffer, router *api.Router, aliases map[string]string, nats []api.Resource, nat44Rules []api.Resource) error {
 	for _, res := range nats {
 		spec, err := res.IPv4SourceNATSpec()
 		if err != nil {
@@ -179,10 +179,18 @@ func writePFNAT(buf *bytes.Buffer, aliases map[string]string, nats []api.Resourc
 			}
 			target := "(" + ifname + ")"
 			if spec.Type == "snat" {
-				if spec.SNATAddress == "" {
+				snatAddress := spec.SNATAddress
+				if snatAddress == "" && spec.SNATAddressFrom.Resource != "" {
+					var err error
+					snatAddress, err = renderAddressFromResource(router, spec.SNATAddressFrom)
+					if err != nil {
+						return fmt.Errorf("%s spec.snatAddressFrom: %w", res.ID(), err)
+					}
+				}
+				if snatAddress == "" {
 					return fmt.Errorf("%s needs snat address", res.ID())
 				}
-				target = spec.SNATAddress
+				target = snatAddress
 			}
 			for _, destination := range destinations {
 				buf.WriteString("nat on " + ifname + " from " + prefix.Masked().String() + " to " + destination + " -> " + target + "\n")
