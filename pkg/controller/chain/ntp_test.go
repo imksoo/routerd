@@ -101,6 +101,21 @@ func TestRenderNTPDConfig(t *testing.T) {
 	}
 }
 
+func TestRenderNTPDConfigWithListenAddresses(t *testing.T) {
+	data := renderNTPDConfig([]string{"ntp.jst.mfeed.ad.jp"}, []string{"192.168.160.4", "2409:10:3d60:1250::4/64"})
+	for _, want := range []string{
+		"interface ignore all\n",
+		"interface listen 127.0.0.1\n",
+		"interface listen ::1\n",
+		"interface listen 192.168.160.4\n",
+		"interface listen 2409:10:3d60:1250::4\n",
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("config missing %q:\n%s", want, string(data))
+		}
+	}
+}
+
 func ntpRouter(spec api.NTPClientSpec) *api.Router {
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

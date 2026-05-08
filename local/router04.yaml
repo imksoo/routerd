@@ -53,6 +53,11 @@ spec:
         serverFrom:
           - resource: DHCPv6Information/wan-info
             field: sntpServers
+        listenAddressFrom:
+          - resource: IPv4StaticAddress/lan-ipv4
+            field: address
+          - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
+            field: address
         fallbackServers:
           - ntp.jst.mfeed.ad.jp
           - ntp.nict.jp
@@ -110,14 +115,24 @@ spec:
           - --observe-interval
           - 30s
           - --controller-chain
+          - --controller-chain-daemon-sockets
+          - wan-pd=/var/run/routerd/dhcpv6-client/wan-pd.sock
           - --controller-chain-dry-run-address=false
           - --controller-chain-dry-run-dslite=false
           - --controller-chain-dry-run-route=false
           - --controller-chain-dry-run-ra=false
           - --controller-chain-dry-run-dhcpv6=false
           - --controller-chain-dry-run-dns-resolver=false
+          - --controller-chain-dnsmasq-command
+          - /usr/local/sbin/dnsmasq
+          - --controller-chain-dnsmasq-config
+          - /usr/local/etc/routerd/dnsmasq.conf
+          - --controller-chain-dnsmasq-pid
+          - /var/run/routerd/dnsmasq.pid
           - --controller-chain-dnsmasq-port
           - "53"
+          - --controller-chain-dnsmasq-listen-addresses
+          - 127.0.0.1
         runtimeDirectory:
           - routerd
         runtimeDirectoryPreserve: "yes"

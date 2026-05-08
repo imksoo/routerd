@@ -156,6 +156,53 @@ func TestFreeBSDRendersNTPD(t *testing.T) {
 	}
 }
 
+func TestFreeBSDRendersNTPServerWithRestrictedListen(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"},
+			Metadata: api.ObjectMeta{Name: "time"},
+			Spec: api.NTPClientSpec{
+				Provider:        "ntpd",
+				Managed:         true,
+				Source:          "auto",
+				FallbackServers: []string{"ntp.nict.jp"},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPServer"},
+			Metadata: api.ObjectMeta{Name: "lan-time"},
+			Spec: api.NTPServerSpec{
+				Provider:          "ntpd",
+				Managed:           true,
+				Source:            "auto",
+				FallbackServers:   []string{"ntp.jst.mfeed.ad.jp"},
+				ListenAddresses:   []string{"192.168.160.4", "2409:10:3d60:1250::4/64"},
+				ListenAddressFrom: []api.StatusValueSourceSpec{{Resource: "IPv4StaticAddress/lan", Field: "address"}},
+			},
+		},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	ntp := string(got.NTP)
+	for _, want := range []string{
+		"interface ignore all\n",
+		"interface listen 127.0.0.1\n",
+		"interface listen ::1\n",
+		"interface listen 192.168.160.4\n",
+		"interface listen 2409:10:3d60:1250::4\n",
+		"server ntp.jst.mfeed.ad.jp iburst\n",
+	} {
+		if !strings.Contains(ntp, want) {
+			t.Fatalf("ntp.conf output missing %q:\n%s", want, ntp)
+		}
+	}
+	if strings.Contains(ntp, "server ntp.nict.jp iburst") {
+		t.Fatalf("NTPClient must not overwrite NTPServer config when both use ntpd:\n%s", ntp)
+	}
+}
+
 func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
