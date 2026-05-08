@@ -22,6 +22,10 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	var policies []api.Resource
 	var logs []api.Resource
 	var rules []api.Resource
+	mssPolicies, err := pathMTUMSSPolicies(router)
+	if err != nil {
+		return nil, err
+	}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "IPv4SourceNAT":
@@ -46,7 +50,7 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 			}
 		}
 	}
-	if len(nats) == 0 && len(nat44Rules) == 0 && len(zones) == 0 && len(rules) == 0 && len(holes) == 0 {
+	if len(nats) == 0 && len(nat44Rules) == 0 && len(zones) == 0 && len(rules) == 0 && len(holes) == 0 && len(mssPolicies) == 0 {
 		return nil, nil
 	}
 	sort.Slice(nats, func(i, j int) bool { return nats[i].Metadata.Name < nats[j].Metadata.Name })
@@ -72,6 +76,9 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 		}
 		buf.WriteString(pfZoneMacro(zone) + " = " + pfInterfaceSet(zone.IfNames) + "\n")
 	}
+	if err := writePFMSSClamp(&buf, aliases, mssPolicies); err != nil {
+		return nil, err
+	}
 	if err := writePFNAT(&buf, aliases, nats, nat44Rules); err != nil {
 		return nil, err
 	}
@@ -84,6 +91,36 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 		buf.WriteString("pass all keep state\n")
 	}
 	return buf.Bytes(), nil
+}
+
+func writePFMSSClamp(buf *bytes.Buffer, aliases map[string]string, policies []pathMTUPolicy) error {
+	for _, policy := range policies {
+		if !pathMTUFamilyEnabled(policy.Spec.TCPMSSClamp.Families, "ipv4") {
+			continue
+		}
+		fromIfname := aliases[policy.Spec.FromInterface]
+		if fromIfname == "" {
+			return fmt.Errorf("%s references fromInterface with empty ifname", policy.Resource.ID())
+		}
+		mss := policy.MTU - 40
+		if mss < 536 {
+			return fmt.Errorf("%s computed IPv4 MSS %d is too small", policy.Resource.ID(), mss)
+		}
+		buf.WriteString("match in on " + fromIfname + " proto tcp scrub (max-mss " + strconv.Itoa(mss) + ")\n")
+		var toIfnames []string
+		for _, name := range policy.Spec.ToInterfaces {
+			ifname := aliases[name]
+			if ifname == "" {
+				return fmt.Errorf("%s references toInterface with empty ifname %q", policy.Resource.ID(), name)
+			}
+			toIfnames = append(toIfnames, ifname)
+		}
+		sort.Strings(toIfnames)
+		for _, ifname := range compactStrings(toIfnames) {
+			buf.WriteString("match out on " + ifname + " proto tcp scrub (max-mss " + strconv.Itoa(mss) + ")\n")
+		}
+	}
+	return nil
 }
 
 func writePFNAT(buf *bytes.Buffer, aliases map[string]string, nats []api.Resource, nat44Rules []api.Resource) error {

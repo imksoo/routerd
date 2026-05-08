@@ -188,3 +188,42 @@ func TestPFSkipsRuntimeResolvedNAT44Policy(t *testing.T) {
 		t.Fatalf("pf output missing runtime skip comment:\n%s", got)
 	}
 }
+
+func TestPfRendersTCPMSSClamp(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "em1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+			Metadata: api.ObjectMeta{Name: "ds-lite"},
+			Spec:     api.DSLiteTunnelSpec{TunnelName: "gif40", MTU: 1454},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"},
+			Metadata: api.ObjectMeta{Name: "lan-dslite"},
+			Spec: api.PathMTUPolicySpec{
+				FromInterface: "lan",
+				ToInterfaces:  []string{"ds-lite"},
+				MTU:           api.PathMTUPolicyMTUSpec{Source: "minInterface"},
+				TCPMSSClamp:   api.PathMTUPolicyTCPMSSSpec{Enabled: true, Families: []string{"ipv4"}},
+			},
+		},
+	}}}
+	data, err := PF(router, nil)
+	if err != nil {
+		t.Fatalf("render pf: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`match in on em1 proto tcp scrub (max-mss 1414)`,
+		`match out on gif40 proto tcp scrub (max-mss 1414)`,
+		`pass all keep state`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("pf output missing %q:\n%s", want, got)
+		}
+	}
+}
