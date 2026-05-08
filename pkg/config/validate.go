@@ -883,9 +883,9 @@ func validateResource(res api.Resource) error {
 			return err
 		}
 		switch defaultString(spec.Provider, "systemd-timesyncd") {
-		case "systemd-timesyncd", "ntpd":
+		case "systemd-timesyncd", "chrony", "ntpd":
 		default:
-			return fmt.Errorf("%s spec.provider must be systemd-timesyncd or ntpd", res.ID())
+			return fmt.Errorf("%s spec.provider must be systemd-timesyncd, chrony, or ntpd", res.ID())
 		}
 		switch defaultString(spec.Source, "static") {
 		case "static", "auto", "dhcp", "dhcpv6":
@@ -912,6 +912,51 @@ func validateResource(res api.Resource) error {
 			}
 			if strings.TrimSpace(source.Field) == "" {
 				return fmt.Errorf("%s spec.serverFrom[%d].field is required", res.ID(), i)
+			}
+		}
+	case "NTPServer":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.NTPServerSpec()
+		if err != nil {
+			return err
+		}
+		switch defaultString(spec.Provider, "chrony") {
+		case "chrony", "ntpd":
+		default:
+			return fmt.Errorf("%s spec.provider must be chrony or ntpd", res.ID())
+		}
+		switch defaultString(spec.Source, "static") {
+		case "static", "auto", "dhcp", "dhcpv6":
+		default:
+			return fmt.Errorf("%s spec.source must be static, auto, dhcp, or dhcpv6", res.ID())
+		}
+		if defaultString(spec.Source, "static") == "static" && spec.Managed && len(spec.Servers) == 0 {
+			return fmt.Errorf("%s spec.servers is required when spec.source is static", res.ID())
+		}
+		if spec.Managed && len(spec.Servers) == 0 && len(spec.ServerFrom) == 0 && len(spec.FallbackServers) == 0 {
+			return fmt.Errorf("%s spec.servers, spec.serverFrom, or spec.fallbackServers is required when managed is true", res.ID())
+		}
+		for i, server := range append(append([]string{}, spec.Servers...), spec.FallbackServers...) {
+			if strings.TrimSpace(server) == "" {
+				return fmt.Errorf("%s NTP server entry %d must not be empty", res.ID(), i)
+			}
+			if strings.ContainsAny(server, " \t\n\r") {
+				return fmt.Errorf("%s NTP server entry %d must be a single hostname or IP address", res.ID(), i)
+			}
+		}
+		for i, cidr := range spec.AllowCIDRs {
+			if strings.TrimSpace(cidr) == "" {
+				return fmt.Errorf("%s spec.allowCIDRs[%d] must not be empty", res.ID(), i)
+			}
+		}
+		for i, source := range append(append([]api.StatusValueSourceSpec{}, spec.ServerFrom...), spec.ListenAddressFrom...) {
+			if strings.TrimSpace(source.Resource) == "" {
+				return fmt.Errorf("%s source reference %d resource is required", res.ID(), i)
+			}
+			if strings.TrimSpace(source.Field) == "" {
+				return fmt.Errorf("%s source reference %d field is required", res.ID(), i)
 			}
 		}
 	case "WebConsole":

@@ -12,7 +12,13 @@ func TimesyncdConfig(router *api.Router) ([]byte, error) {
 	var clients []api.Resource
 	for _, res := range router.Spec.Resources {
 		if res.Kind == "NTPClient" {
-			clients = append(clients, res)
+			spec, err := res.NTPClientSpec()
+			if err != nil {
+				return nil, err
+			}
+			if defaultString(spec.Provider, "systemd-timesyncd") == "systemd-timesyncd" {
+				clients = append(clients, res)
+			}
 		}
 	}
 	if len(clients) == 0 {

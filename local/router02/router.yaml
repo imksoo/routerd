@@ -172,6 +172,7 @@ spec:
               - strongswan
               - radvd
               - systemd
+              - chrony
               - nettools
               - kmod
               - libnetfilter_log
@@ -259,7 +260,7 @@ spec:
       metadata:
         name: system-time
       spec:
-        provider: systemd-timesyncd
+        provider: chrony
         managed: true
         source: auto
         serverFrom:
@@ -270,6 +271,26 @@ spec:
         fallbackServers:
           - ntp.jst.mfeed.ad.jp
           - ntp.nict.jp
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: NTPServer
+      metadata:
+        name: lan-time
+      spec:
+        provider: chrony
+        managed: true
+        source: auto
+        serverFrom:
+          - resource: DHCPv6Information/wan-info
+            field: sntpServers
+          - resource: DHCPv4Lease/wan-v4
+            field: ntpServers
+        fallbackServers:
+          - ntp.jst.mfeed.ad.jp
+          - ntp.nict.jp
+        allowCIDRs:
+          - 192.168.160.0/24
+          - 2409:10:3d60:1230::/64
 
     - apiVersion: system.routerd.net/v1alpha1
       kind: WebConsole

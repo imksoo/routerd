@@ -139,13 +139,25 @@ type OSPackageSetSpec struct {
 }
 
 type NTPClientSpec struct {
-	Provider        string                  `yaml:"provider,omitempty" json:"provider,omitempty" jsonschema:"enum=systemd-timesyncd,enum=ntpd"`
+	Provider        string                  `yaml:"provider,omitempty" json:"provider,omitempty" jsonschema:"enum=systemd-timesyncd,enum=chrony,enum=ntpd"`
 	Managed         bool                    `yaml:"managed,omitempty" json:"managed,omitempty"`
 	Source          string                  `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"enum=static,enum=auto,enum=dhcp,enum=dhcpv6"`
 	Interface       string                  `yaml:"interface,omitempty" json:"interface,omitempty"`
 	Servers         []string                `yaml:"servers,omitempty" json:"servers,omitempty"`
 	ServerFrom      []StatusValueSourceSpec `yaml:"serverFrom,omitempty" json:"serverFrom,omitempty"`
 	FallbackServers []string                `yaml:"fallbackServers,omitempty" json:"fallbackServers,omitempty"`
+}
+
+type NTPServerSpec struct {
+	Provider          string                  `yaml:"provider,omitempty" json:"provider,omitempty" jsonschema:"enum=chrony,enum=ntpd"`
+	Managed           bool                    `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Source            string                  `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"enum=static,enum=auto,enum=dhcp,enum=dhcpv6"`
+	ListenAddresses   []string                `yaml:"listenAddresses,omitempty" json:"listenAddresses,omitempty"`
+	ListenAddressFrom []StatusValueSourceSpec `yaml:"listenAddressFrom,omitempty" json:"listenAddressFrom,omitempty"`
+	AllowCIDRs        []string                `yaml:"allowCIDRs,omitempty" json:"allowCIDRs,omitempty"`
+	Servers           []string                `yaml:"servers,omitempty" json:"servers,omitempty"`
+	ServerFrom        []StatusValueSourceSpec `yaml:"serverFrom,omitempty" json:"serverFrom,omitempty"`
+	FallbackServers   []string                `yaml:"fallbackServers,omitempty" json:"fallbackServers,omitempty"`
 }
 
 type WebConsoleSpec struct {
@@ -1097,6 +1109,10 @@ func (r Resource) SystemdUnitSpec() (SystemdUnitSpec, error) {
 
 func (r Resource) NTPClientSpec() (NTPClientSpec, error) {
 	return specAs[NTPClientSpec](r)
+}
+
+func (r Resource) NTPServerSpec() (NTPServerSpec, error) {
+	return specAs[NTPServerSpec](r)
 }
 
 func (r Resource) WebConsoleSpec() (WebConsoleSpec, error) {

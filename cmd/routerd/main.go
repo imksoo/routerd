@@ -709,7 +709,7 @@ func apiVersionForKind(kind string) string {
 	switch kind {
 	case "FirewallZone", "FirewallPolicy", "FirewallRule":
 		return api.FirewallAPIVersion
-	case "Hostname", "Sysctl", "SysctlProfile", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "LogSink", "NixOSHost":
+	case "Hostname", "Sysctl", "SysctlProfile", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "NTPServer", "LogSink", "NixOSHost":
 		return api.SystemAPIVersion
 	case "Telemetry":
 		return api.ObservabilityAPIVersion
@@ -978,6 +978,15 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			return nil
 		}
 
+		var appliedHostPackages []string
+		if err := recordStageError("packages", func() error {
+			var err error
+			appliedHostPackages, err = applyLinuxPackages(effectiveRouter)
+			return err
+		}()); err != nil {
+			return nil, err
+		}
+
 		var nixOSChangedFiles []string
 		if isNixOSHost() {
 			if err := recordStageError("nixos-rebuild", func() error {
@@ -1190,6 +1199,9 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		}
 		for _, key := range appliedRuntime {
 			fmt.Fprintf(stdout, "applied sysctl %s\n", key)
+		}
+		for _, pkg := range appliedHostPackages {
+			fmt.Fprintf(stdout, "applied package %s\n", pkg)
 		}
 		for _, key := range appliedReversePathFilters {
 			fmt.Fprintf(stdout, "applied IPv4 reverse path filter %s\n", key)
@@ -3705,6 +3717,81 @@ func applyFreeBSDPackages(router *api.Router) ([]string, error) {
 		return nil, err
 	}
 	return []string{"pkg:" + strings.Join(missing, ",")}, nil
+}
+
+func applyLinuxPackages(router *api.Router) ([]string, error) {
+	if platformDefaults.OS != platform.OSLinux || isNixOSHost() {
+		return nil, nil
+	}
+	osName := linuxPackageOSName()
+	if osName == "" {
+		return nil, nil
+	}
+	var missing []string
+	seen := map[string]bool{}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "Package" {
+			continue
+		}
+		spec, err := resource.PackageSpec()
+		if err != nil {
+			return nil, err
+		}
+		set, ok := packageSetForOSMain(spec, osName)
+		if !ok {
+			continue
+		}
+		manager := defaultString(set.Manager, "apt")
+		if manager != "apt" {
+			continue
+		}
+		for _, name := range set.Names {
+			name = strings.TrimSpace(name)
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			out, err := exec.Command("dpkg-query", "-W", "-f=${Status}", name).CombinedOutput()
+			if err != nil || strings.TrimSpace(string(out)) != "install ok installed" {
+				missing = append(missing, name)
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil, nil
+	}
+	args := append([]string{"install", "-y"}, missing...)
+	if err := runLogged("apt-get", args...); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(missing))
+	for _, name := range missing {
+		out = append(out, "apt:"+name)
+	}
+	return out, nil
+}
+
+func linuxPackageOSName() string {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return "ubuntu"
+	}
+	text := string(data)
+	for _, line := range strings.Split(text, "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || key != "ID" {
+			continue
+		}
+		value = strings.Trim(value, "\"'")
+		switch value {
+		case "ubuntu", "debian":
+			return value
+		}
+	}
+	if strings.Contains(text, "ID_LIKE=debian") || strings.Contains(text, "ID_LIKE=\"debian\"") {
+		return "ubuntu"
+	}
+	return ""
 }
 
 func packageSetForOSMain(spec api.PackageSpec, osName string) (api.OSPackageSetSpec, bool) {

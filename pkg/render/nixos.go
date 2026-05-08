@@ -78,6 +78,13 @@ type nixOSSystemdUnit struct {
 	Path []string
 }
 
+type nixOSChronyConfig struct {
+	Enabled         bool
+	Servers         []string
+	AllowCIDRs      []string
+	ListenAddresses []string
+}
+
 func NixOSModule(router *api.Router) ([]byte, error) {
 	host, err := nixOSHost(router)
 	if err != nil {
@@ -104,6 +111,10 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	ntpServers, err := nixOSNTPServers(router)
+	if err != nil {
+		return nil, err
+	}
+	chrony, err := nixOSChronyConfigForRouter(router)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +201,25 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	if host.Sudo.WheelNeedsPassword != nil {
 		buf.WriteString("  security.sudo.wheelNeedsPassword = " + nixBool(*host.Sudo.WheelNeedsPassword) + ";\n")
 	}
-	if len(ntpServers) > 0 {
+	if chrony.Enabled {
+		buf.WriteString("  services.timesyncd.enable = false;\n")
+		buf.WriteString("  services.chrony.enable = true;\n")
+		if len(chrony.Servers) > 0 {
+			buf.WriteString("  services.chrony.servers = " + nixStringList(chrony.Servers) + ";\n")
+		}
+		if len(chrony.AllowCIDRs) > 0 || len(chrony.ListenAddresses) > 0 {
+			buf.WriteString("  services.chrony.extraConfig = ''\n")
+			for _, cidr := range chrony.AllowCIDRs {
+				buf.WriteString("    allow " + cidr + "\n")
+			}
+			for _, address := range chrony.ListenAddresses {
+				buf.WriteString("    bindaddress " + address + "\n")
+			}
+			buf.WriteString("    cmdallow 127.0.0.1\n")
+			buf.WriteString("    cmdallow ::1\n")
+			buf.WriteString("  '';\n")
+		}
+	} else if len(ntpServers) > 0 {
 		buf.WriteString("  services.timesyncd.enable = true;\n")
 		buf.WriteString("  services.timesyncd.servers = " + nixStringList(ntpServers) + ";\n")
 	}
@@ -303,7 +332,9 @@ func nixOSNTPServers(router *api.Router) ([]string, error) {
 		if !spec.Managed {
 			continue
 		}
-		if provider := defaultString(spec.Provider, "systemd-timesyncd"); provider != "systemd-timesyncd" {
+		if provider := defaultString(spec.Provider, "systemd-timesyncd"); provider == "chrony" {
+			continue
+		} else if provider != "systemd-timesyncd" {
 			return nil, fmt.Errorf("%s has unsupported provider %q", res.ID(), provider)
 		}
 		source := defaultString(spec.Source, "static")
@@ -329,6 +360,70 @@ func nixOSNTPServers(router *api.Router) ([]string, error) {
 	}
 	sort.Strings(servers)
 	return servers, nil
+}
+
+func nixOSChronyConfigForRouter(router *api.Router) (nixOSChronyConfig, error) {
+	var cfg nixOSChronyConfig
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "NTPClient":
+			spec, err := res.NTPClientSpec()
+			if err != nil {
+				return cfg, err
+			}
+			if !spec.Managed {
+				continue
+			}
+			if provider := defaultString(spec.Provider, "systemd-timesyncd"); provider != "chrony" {
+				continue
+			}
+			cfg.Enabled = true
+			cfg.Servers = append(cfg.Servers, nixOSRenderNTPServers(spec.Source, spec.Servers, spec.FallbackServers)...)
+		case "NTPServer":
+			spec, err := res.NTPServerSpec()
+			if err != nil {
+				return cfg, err
+			}
+			if !spec.Managed {
+				continue
+			}
+			if provider := defaultString(spec.Provider, "chrony"); provider != "chrony" {
+				return cfg, fmt.Errorf("%s has unsupported NixOS provider %q", res.ID(), provider)
+			}
+			cfg.Enabled = true
+			cfg.Servers = append(cfg.Servers, nixOSRenderNTPServers(spec.Source, spec.Servers, spec.FallbackServers)...)
+			cfg.AllowCIDRs = append(cfg.AllowCIDRs, spec.AllowCIDRs...)
+			cfg.ListenAddresses = append(cfg.ListenAddresses, spec.ListenAddresses...)
+		}
+	}
+	cfg.Servers = compactSortedStrings(cfg.Servers)
+	cfg.AllowCIDRs = compactSortedStrings(cfg.AllowCIDRs)
+	cfg.ListenAddresses = compactSortedStrings(cfg.ListenAddresses)
+	return cfg, nil
+}
+
+func nixOSRenderNTPServers(source string, servers, fallback []string) []string {
+	source = defaultString(source, "static")
+	out := compactRenderNTPServers(servers)
+	if source != "static" && len(out) == 0 {
+		out = compactRenderNTPServers(fallback)
+	}
+	return out
+}
+
+func compactSortedStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func nixOSSysctls(router *api.Router) (map[string]string, error) {

@@ -206,6 +206,26 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			rc.WriteString("ntpd_sync_on_start=\"YES\"\n")
 			rc.WriteString("ntpd_config=\"/usr/local/etc/routerd/ntp.conf\"\n")
 			ntpConfig = freeBSDNTPConfig(servers)
+		case "NTPServer":
+			spec, err := res.NTPServerSpec()
+			if err != nil {
+				return FreeBSDConfig{}, err
+			}
+			if !spec.Managed {
+				continue
+			}
+			if provider := defaultString(spec.Provider, "ntpd"); provider != "ntpd" {
+				return FreeBSDConfig{}, fmt.Errorf("%s has unsupported FreeBSD provider %q", res.ID(), provider)
+			}
+			servers := freeBSDNTPServerServers(spec)
+			if len(servers) == 0 {
+				warnings = append(warnings, fmt.Sprintf("%s: no static or fallback NTP servers available for boot-time ntpd; runtime controller may still derive servers from status.", res.ID()))
+				continue
+			}
+			rc.WriteString("ntpd_enable=\"YES\"\n")
+			rc.WriteString("ntpd_sync_on_start=\"YES\"\n")
+			rc.WriteString("ntpd_config=\"/usr/local/etc/routerd/ntp.conf\"\n")
+			ntpConfig = freeBSDNTPConfig(servers)
 		}
 	}
 
@@ -297,6 +317,15 @@ func freeBSDNTPConfig(servers []string) []byte {
 		buf.WriteString("server " + server + " iburst\n")
 	}
 	return buf.Bytes()
+}
+
+func freeBSDNTPServerServers(spec api.NTPServerSpec) []string {
+	source := defaultString(spec.Source, "static")
+	servers := compactRenderNTPServers(spec.Servers)
+	if source != "static" && len(servers) == 0 {
+		servers = compactRenderNTPServers(spec.FallbackServers)
+	}
+	return servers
 }
 
 func compactRenderNTPServers(values []string) []string {

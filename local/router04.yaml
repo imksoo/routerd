@@ -42,6 +42,21 @@ spec:
           - ntp.jst.mfeed.ad.jp
           - ntp.nict.jp
 
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: NTPServer
+      metadata:
+        name: lan-time
+      spec:
+        provider: ntpd
+        managed: true
+        source: auto
+        serverFrom:
+          - resource: DHCPv6Information/wan-info
+            field: sntpServers
+        fallbackServers:
+          - ntp.jst.mfeed.ad.jp
+          - ntp.nict.jp
+
     - apiVersion: net.routerd.net/v1alpha1
       kind: Hostname
       metadata:
