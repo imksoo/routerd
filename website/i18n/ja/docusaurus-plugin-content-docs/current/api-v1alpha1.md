@@ -75,6 +75,8 @@ spec:
 これにより、秘密値を YAML と Git 履歴に残しません。
 どちらも未指定の場合、`tailscaled` はログイン済みとみなします。
 routerd は広告するノード設定だけを再適用します。
+Tailscale の既定 UDP/41641 は予約済みとして扱います。
+WireGuard の待ち受けポートには別の番号を使ってください。
 詳しい設定手順は Tailscale の設定ガイドを参照してください。
 
 `WireGuardInterface` は `privateKeyFile` を受け取れます。

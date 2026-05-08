@@ -82,7 +82,9 @@ spec:
 configs should prefer `authKeyEnv` and `authKeyFile` so the secret value stays
 outside the YAML and the Git history. If neither is set, routerd assumes
 `tailscaled` is already logged in and only reapplies the advertised node
-options. The Tailscale how-to covers the full setup flow.
+options. Tailscale's default UDP/41641 port is reserved when this kind is
+present, so WireGuard listen ports must use a different value. The Tailscale
+how-to covers the full setup flow.
 
 `WireGuardInterface` accepts `privateKeyFile` so the private key can stay out of
 the router YAML. On FreeBSD, routerd renders an rc.d service that creates the

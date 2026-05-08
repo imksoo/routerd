@@ -81,6 +81,10 @@ sudo chmod 0600 /usr/local/etc/routerd/secrets/tailscale.env
 既にログイン済みのノードでは、`authKey`、`authKeyEnv`、`authKeyFile` を省略できます。
 その場合、routerd は秘密値を systemd ユニットに埋め込まず、広告設定だけを再適用します。
 
+Tailscale は既定で UDP/41641 を使います。
+routerd は `TailscaleNode` がある場合にこのポートを予約済みとして扱います。
+`WireGuardInterface` が同じポートを使う設定は検証で拒否します。
+
 ## プライベートアドレスをまとめて広告する
 
 ルーターを自宅や拠点ネットワークへの入口にする場合は、RFC 1918 のプライベートアドレス全体を広告できます。

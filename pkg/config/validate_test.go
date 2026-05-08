@@ -242,6 +242,20 @@ func TestValidateTierSResources(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsTailscaleWireGuardListenPortConflict(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-lab"}, Spec: api.WireGuardInterfaceSpec{ListenPort: 41641}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.TailscaleNodeSpec{AdvertiseExitNode: true}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "reserves Tailscale UDP port 41641") {
+		t.Fatalf("expected listen port conflict error, got %v", err)
+	}
+}
+
 func TestValidateTailscaleNodeRejectsInvalidRoute(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

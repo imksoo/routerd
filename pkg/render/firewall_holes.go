@@ -62,6 +62,11 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 			if spec.ListenPort != 0 {
 				add(resource.Metadata.Name+"-wireguard", zones.firstUntrust(), "self", "udp", spec.ListenPort, resource.ID())
 			}
+		case "TailscaleNode":
+			spec, _ := resource.TailscaleNodeSpec()
+			if firstNonEmpty(spec.State, "present") != "absent" {
+				add(resource.Metadata.Name+"-tailscale", zones.firstUntrust(), "self", "udp", 41641, resource.ID())
+			}
 		case "VXLANSegment":
 			spec, _ := resource.VXLANSegmentSpec()
 			if port := defaultInt(spec.UDPPort, 4789); port != 0 {

@@ -45,6 +45,7 @@ func Validate(router *api.Router) error {
 	routeSets := map[string]bool{}
 	healthChecks := map[string]bool{}
 	zones := map[string]bool{}
+	udpListenPorts := map[int]string{}
 	staticByInterfaceAddress := map[string]string{}
 	dhcp6AddressByInterface := map[string]struct {
 		id     string
@@ -75,6 +76,28 @@ func Validate(router *api.Router) error {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "WireGuardInterface" {
 			wireGuardInterfaces[res.Metadata.Name] = true
 			interfaces[res.Metadata.Name] = true
+			spec, err := res.WireGuardInterfaceSpec()
+			if err != nil {
+				return err
+			}
+			if spec.ListenPort != 0 {
+				if existing := udpListenPorts[spec.ListenPort]; existing != "" {
+					return fmt.Errorf("%s spec.listenPort %d conflicts with %s", res.ID(), spec.ListenPort, existing)
+				}
+				udpListenPorts[spec.ListenPort] = res.ID()
+			}
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "TailscaleNode" {
+			spec, err := res.TailscaleNodeSpec()
+			if err != nil {
+				return err
+			}
+			if defaultString(spec.State, "present") != "absent" {
+				if existing := udpListenPorts[41641]; existing != "" {
+					return fmt.Errorf("%s reserves Tailscale UDP port 41641 which conflicts with %s", res.ID(), existing)
+				}
+				udpListenPorts[41641] = res.ID()
+			}
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "VRF" {
 			interfaces[res.Metadata.Name] = true

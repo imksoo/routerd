@@ -82,6 +82,10 @@ If the node is already logged in, omit `authKey`, `authKeyEnv`, and
 `authKeyFile`. routerd will reapply the advertised node options without
 embedding a secret in the service unit.
 
+Tailscale listens on UDP/41641 by default. routerd reserves that port when a
+`TailscaleNode` is present and validation rejects any `WireGuardInterface` that
+tries to reuse it.
+
 ## Advertise private subnets
 
 Advertising all RFC 1918 private address space is useful when the router should
