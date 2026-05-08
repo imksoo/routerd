@@ -262,19 +262,35 @@ func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateS
 }
 
 func (c Controller) ready(candidate api.EgressRoutePolicyCandidate) bool {
+	healthChecked := false
 	if candidate.HealthCheck != "" {
 		status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", candidate.HealthCheck)
 		if fmt.Sprint(status["phase"]) != "Healthy" {
 			return false
 		}
+		healthChecked = true
 	}
 	if len(candidate.DependsOn) == 0 {
 		if candidate.Source == "" {
 			return true
 		}
-		return resourcequery.SourceReady(c.Store, candidate.Source)
+		if resourcequery.SourceReady(c.Store, candidate.Source) {
+			return true
+		}
+		return healthChecked && c.hasResolvedOutput(candidate)
 	}
 	return resourcequery.DependenciesReady(c.Store, candidate.DependsOn)
+}
+
+func (c Controller) hasResolvedOutput(candidate api.EgressRoutePolicyCandidate) bool {
+	device := firstNonEmpty(resourcequery.Value(c.Store, candidate.DeviceFrom), strings.TrimSpace(candidate.Device))
+	if device == "" {
+		return false
+	}
+	if candidate.GatewayFrom.Resource != "" && resourcequery.Value(c.Store, candidate.GatewayFrom) == "" {
+		return false
+	}
+	return true
 }
 
 func selectHighestWeightReady(candidates []CandidateState) (CandidateState, bool) {

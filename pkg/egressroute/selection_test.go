@@ -174,6 +174,41 @@ func TestControllerRequiresHealthyHealthCheck(t *testing.T) {
 	}
 }
 
+func TestControllerUsesHealthyOutputWhenSourceHasNoStatus(t *testing.T) {
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+	store := mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet-via-pppoe": {"phase": "Healthy"},
+	}
+	controller := Controller{
+		Router: routerWithPolicy(api.EgressRoutePolicySpec{
+			Selection: SelectionHighestWeightReady,
+			Candidates: []api.EgressRoutePolicyCandidate{
+				{
+					Name:        "pppoe-flets",
+					Source:      "PPPoEInterface/pppoe-flets",
+					Device:      "ppp-flets",
+					Weight:      60,
+					HealthCheck: "internet-via-pppoe",
+				},
+			},
+		}),
+		Bus:   bus.New(),
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["phase"] != PhaseApplied || status["selectedCandidate"] != "pppoe-flets" {
+		t.Fatalf("status = %#v", status)
+	}
+	if status["selectedDevice"] != "ppp-flets" {
+		t.Fatalf("selectedDevice = %v", status["selectedDevice"])
+	}
+}
+
 func TestControllerRepublishesWhenSelectedOutputChanges(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{

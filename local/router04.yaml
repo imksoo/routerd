@@ -683,9 +683,6 @@ spec:
         aftrIPv6: 2404:8e00::feed:100
         mtu: 1454
         defaultRoute: false
-        dependsOn:
-          - resource: IPv6RAAddress/wan-ra
-            phase: Healthy
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: HealthCheck
