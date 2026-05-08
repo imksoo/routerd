@@ -106,7 +106,7 @@ func writePFMSSClamp(buf *bytes.Buffer, aliases map[string]string, policies []pa
 		if mss < 536 {
 			return fmt.Errorf("%s computed IPv4 MSS %d is too small", policy.Resource.ID(), mss)
 		}
-		buf.WriteString("match in on " + fromIfname + " proto tcp scrub (max-mss " + strconv.Itoa(mss) + ")\n")
+		buf.WriteString("scrub in on " + fromIfname + " proto tcp max-mss " + strconv.Itoa(mss) + "\n")
 		var toIfnames []string
 		for _, name := range policy.Spec.ToInterfaces {
 			ifname := aliases[name]
@@ -117,7 +117,7 @@ func writePFMSSClamp(buf *bytes.Buffer, aliases map[string]string, policies []pa
 		}
 		sort.Strings(toIfnames)
 		for _, ifname := range compactStrings(toIfnames) {
-			buf.WriteString("match out on " + ifname + " proto tcp scrub (max-mss " + strconv.Itoa(mss) + ")\n")
+			buf.WriteString("scrub out on " + ifname + " proto tcp max-mss " + strconv.Itoa(mss) + "\n")
 		}
 	}
 	return nil

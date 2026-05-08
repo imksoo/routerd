@@ -218,8 +218,8 @@ func TestPfRendersTCPMSSClamp(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		`match in on em1 proto tcp scrub (max-mss 1414)`,
-		`match out on gif40 proto tcp scrub (max-mss 1414)`,
+		`scrub in on em1 proto tcp max-mss 1414`,
+		`scrub out on gif40 proto tcp max-mss 1414`,
 		`pass all keep state`,
 	} {
 		if !strings.Contains(got, want) {
