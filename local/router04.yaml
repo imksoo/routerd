@@ -495,6 +495,15 @@ spec:
         managed: false
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: ds-lite-ra
+      spec:
+        ifname: gif44
+        role: untrust
+        managed: false
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
         name: ds-lite-a-source
@@ -521,6 +530,16 @@ spec:
       spec:
         interface: ds-lite-c
         address: 192.0.0.4/29
+        allowOverlap: true
+        allowOverlapReason: RFC 6333 B4-AFTR link prefix is shared by parallel DS-Lite tunnels.
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: ds-lite-ra-source
+      spec:
+        interface: ds-lite-ra
+        address: 192.0.0.5/29
         allowOverlap: true
         allowOverlapReason: RFC 6333 B4-AFTR link prefix is shared by parallel DS-Lite tunnels.
 
@@ -633,6 +652,27 @@ spec:
             notEmpty: true
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-ra
+        ownerRefs:
+          - kind: IPv6RAAddress
+            name: wan-ra
+      spec:
+        interface: wan
+        tunnelName: gif44
+        localAddressSource: interface
+        localAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-ra-source
+          field: address
+        aftrIPv6: 2404:8e00::feed:100
+        mtu: 1454
+        defaultRoute: false
+        dependsOn:
+          - resource: IPv6RAAddress/wan-ra
+            phase: Healthy
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: HealthCheck
       metadata:
         name: internet-via-dslite-a
@@ -702,6 +742,29 @@ spec:
         unhealthyThreshold: 3
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-ra
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite-ra
+      spec:
+        daemon: routerd-healthcheck
+        socketSource: /var/run/routerd/healthcheck/internet-via-dslite-ra.sock
+        targetSource: static
+        target: 149.112.112.112
+        protocol: dns
+        port: 53
+        sourceInterface: ds-lite-ra
+        sourceAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-ra-source
+          field: address
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
         name: dslite-a-healthcheck
@@ -747,6 +810,22 @@ spec:
           field: interface
         dependsOn:
           - resource: DSLiteTunnel/ds-lite-c
+            phase: Up
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: dslite-ra-healthcheck
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite-ra
+      spec:
+        destination: 149.112.112.112/32
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite-ra
+          field: interface
+        dependsOn:
+          - resource: DSLiteTunnel/ds-lite-ra
             phase: Up
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -796,6 +875,18 @@ spec:
             dependsOn:
               - resource: DSLiteTunnel/ds-lite-c
                 phase: Up
+          - name: ds-lite-ra
+            source: DSLiteTunnel/ds-lite-ra
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite-ra
+              field: interface
+            gatewaySource: none
+            metric: 70
+            weight: 80
+            healthCheck: internet-via-dslite-ra
+            dependsOn:
+              - resource: DSLiteTunnel/ds-lite-ra
+                phase: Up
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
@@ -841,6 +932,7 @@ spec:
           - ds-lite-a
           - ds-lite-b
           - ds-lite-c
+          - ds-lite-ra
         mtu:
           source: static
           value: 1454
@@ -863,6 +955,7 @@ spec:
           - DSLiteTunnel/ds-lite-a
           - DSLiteTunnel/ds-lite-b
           - DSLiteTunnel/ds-lite-c
+          - DSLiteTunnel/ds-lite-ra
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
