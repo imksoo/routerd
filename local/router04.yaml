@@ -123,6 +123,7 @@ spec:
           - --controller-chain-dry-run-ra=false
           - --controller-chain-dry-run-dhcpv6=false
           - --controller-chain-dry-run-dns-resolver=false
+          - --controller-chain-dry-run-nat=false
           - --controller-chain-dnsmasq-command
           - /usr/local/sbin/dnsmasq
           - --controller-chain-dnsmasq-config
@@ -458,18 +459,6 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
-        name: default-via-wan
-        ownerRefs:
-          - kind: DHCPv4Address
-            name: wan-dhcp4
-      spec:
-        destination: 0.0.0.0/0
-        device: vtnet0
-        gateway: 192.168.1.1
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4Route
-      metadata:
         name: homert02-lan-via-mgmt
       spec:
         destination: 172.18.0.0/16
@@ -512,6 +501,8 @@ spec:
       spec:
         interface: ds-lite-a
         address: 192.0.0.2/29
+        allowOverlap: true
+        allowOverlapReason: RFC 6333 B4-AFTR link prefix is shared by parallel DS-Lite tunnels.
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
@@ -520,6 +511,8 @@ spec:
       spec:
         interface: ds-lite-b
         address: 192.0.0.3/29
+        allowOverlap: true
+        allowOverlapReason: RFC 6333 B4-AFTR link prefix is shared by parallel DS-Lite tunnels.
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
@@ -528,6 +521,8 @@ spec:
       spec:
         interface: ds-lite-c
         address: 192.0.0.4/29
+        allowOverlap: true
+        allowOverlapReason: RFC 6333 B4-AFTR link prefix is shared by parallel DS-Lite tunnels.
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
@@ -801,6 +796,26 @@ spec:
             dependsOn:
               - resource: DSLiteTunnel/ds-lite-c
                 phase: Up
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: default
+        ownerRefs:
+          - kind: EgressRoutePolicy
+            name: ipv4-default
+      spec:
+        destination: 0.0.0.0/0
+        deviceFrom:
+          resource: EgressRoutePolicy/ipv4-default
+          field: selectedDevice
+        gatewayFrom:
+          resource: EgressRoutePolicy/ipv4-default
+          field: selectedGateway
+          optional: true
+        dependsOn:
+          - resource: EgressRoutePolicy/ipv4-default
+            phase: Applied
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: NAT44Rule

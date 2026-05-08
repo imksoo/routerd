@@ -244,10 +244,10 @@ func TestIPv6StaticAddressApplyCommandFreeBSD(t *testing.T) {
 	}
 }
 
-func TestFreeBSDIPv4RouteApplyCommandUsesDSLiteInnerGateway(t *testing.T) {
+func TestFreeBSDIPv4RouteApplyCommandUsesDSLiteInterface(t *testing.T) {
 	name, args := freeBSDIPv4RouteApplyCommand("unicast", "0.0.0.0/0", "gif40", "")
 	got := strings.Join(append([]string{name}, args...), " ")
-	want := "route -n change default 192.0.0.1"
+	want := "route -n change default -interface gif40"
 	if got != want {
 		t.Fatalf("command = %q, want %q", got, want)
 	}

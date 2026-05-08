@@ -498,13 +498,9 @@ func missingIPv4RouteDelete(err error, output []byte) bool {
 }
 
 func freeBSDIPv4RouteApplyCommand(routeType, destination, device, gateway string) (string, []string) {
-	dest := freeBSDRouteDestination(destination)
 	destArgs := freeBSDRouteDestinationArgs(destination)
 	if routeType == "blackhole" {
 		return "route", append([]string{"-n", "add"}, append(destArgs, "-blackhole")...)
-	}
-	if gateway == "" && strings.HasPrefix(device, "gif") && dest == "default" {
-		gateway = dsliteInnerRemoteIPv4
 	}
 	args := append([]string{"-n", "change"}, destArgs...)
 	if gateway != "" {

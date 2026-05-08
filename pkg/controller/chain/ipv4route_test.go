@@ -126,7 +126,7 @@ func TestFreeBSDIPv4RouteHostCommand(t *testing.T) {
 
 func TestFreeBSDIPv4RouteDefaultDSLiteCommand(t *testing.T) {
 	name, args := freeBSDIPv4RouteApplyCommand("unicast", "0.0.0.0/0", "gif41", "")
-	want := []string{"-n", "change", "default", "192.0.0.1"}
+	want := []string{"-n", "change", "default", "-interface", "gif41"}
 	if name != "route" || !reflect.DeepEqual(args, want) {
 		t.Fatalf("command = %s %#v, want route %#v", name, args, want)
 	}

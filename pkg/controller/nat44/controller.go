@@ -15,6 +15,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resourcequery"
 )
@@ -124,6 +125,9 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if len(rules) == 0 {
 		return nil
 	}
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		return c.reconcilePF(ctx, rules)
+	}
 	data, err := render.NftablesNAT44Rules(rules)
 	if err != nil {
 		return err
@@ -157,6 +161,43 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
 	return c.saveRuleStatuses(ctx, rules, path, changed, missing)
+}
+
+func (c Controller) reconcilePF(ctx context.Context, rules []render.NAT44RenderRule) error {
+	data, err := render.PFNAT44Rules(rules)
+	if err != nil {
+		return err
+	}
+	defaults, _ := platform.Current()
+	path := filepath.Join(defaults.RuntimeDir, "nat44.pf")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	changed := true
+	if current, err := os.ReadFile(path); err == nil && string(current) == string(data) {
+		changed = false
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if changed {
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			return err
+		}
+	}
+	if c.DryRun {
+		return c.saveRuleStatuses(ctx, rules, path, changed, false)
+	}
+	pfctl := firstNonEmpty(c.NftCommand, "pfctl")
+	if c.NftCommand == "" || c.NftCommand == "nft" {
+		pfctl = "pfctl"
+	}
+	if out, err := exec.CommandContext(ctx, pfctl, "-n", "-a", "routerd_nat", "-f", path).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s -n -a routerd_nat -f %s: %w: %s", pfctl, path, err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.CommandContext(ctx, pfctl, "-a", "routerd_nat", "-f", path).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s -a routerd_nat -f %s: %w: %s", pfctl, path, err, strings.TrimSpace(string(out)))
+	}
+	return c.saveRuleStatuses(ctx, rules, path, changed, false)
 }
 
 func (c Controller) saveRuleStatuses(ctx context.Context, rules []render.NAT44RenderRule, path string, changed, missing bool) error {
