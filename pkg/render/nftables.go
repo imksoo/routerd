@@ -534,7 +534,14 @@ func implicitFirewallAction(fromRole, toRole string, policy firewallPolicy) stri
 func nftFirewallRuleExpr(name string, spec api.FirewallRuleSpec, logging firewallLogging) (string, error) {
 	var parts []string
 	if len(spec.SourceCIDRs) > 0 {
-		match, err := nftFirewallCIDRMatch(name, spec.SourceCIDRs)
+		match, err := nftFirewallCIDRMatch(name, "saddr", spec.SourceCIDRs)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, match)
+	}
+	if len(spec.DestinationCIDRs) > 0 {
+		match, err := nftFirewallCIDRMatch(name, "daddr", spec.DestinationCIDRs)
 		if err != nil {
 			return "", err
 		}
@@ -583,12 +590,12 @@ func nftFirewallProtocol(protocol string) string {
 	}
 }
 
-func nftFirewallCIDRMatch(resourceID string, cidrs []string) (string, error) {
+func nftFirewallCIDRMatch(resourceID, direction string, cidrs []string) (string, error) {
 	var v4, v6 []string
 	for _, cidr := range cidrs {
 		prefix, err := netip.ParsePrefix(cidr)
 		if err != nil {
-			return "", fmt.Errorf("%s has invalid source CIDR %q", resourceID, cidr)
+			return "", fmt.Errorf("%s has invalid %s CIDR %q", resourceID, direction, cidr)
 		}
 		if prefix.Addr().Is4() {
 			v4 = append(v4, prefix.Masked().String())
@@ -600,17 +607,17 @@ func nftFirewallCIDRMatch(resourceID string, cidrs []string) (string, error) {
 	if len(v4) > 0 {
 		sort.Strings(v4)
 		if len(v4) == 1 {
-			out = append(out, "ip saddr "+v4[0])
+			out = append(out, "ip "+direction+" "+v4[0])
 		} else {
-			out = append(out, "ip saddr { "+strings.Join(v4, ", ")+" }")
+			out = append(out, "ip "+direction+" { "+strings.Join(v4, ", ")+" }")
 		}
 	}
 	if len(v6) > 0 {
 		sort.Strings(v6)
 		if len(v6) == 1 {
-			out = append(out, "ip6 saddr "+v6[0])
+			out = append(out, "ip6 "+direction+" "+v6[0])
 		} else {
-			out = append(out, "ip6 saddr { "+strings.Join(v6, ", ")+" }")
+			out = append(out, "ip6 "+direction+" { "+strings.Join(v6, ", ")+" }")
 		}
 	}
 	return strings.Join(out, " "), nil

@@ -2925,6 +2925,11 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.srcCIDRs[%d] is invalid: %w", res.ID(), i, err)
 			}
 		}
+		for i, cidr := range spec.DestinationCIDRs {
+			if _, err := netip.ParsePrefix(cidr); err != nil {
+				return fmt.Errorf("%s spec.destinationCIDRs[%d] is invalid: %w", res.ID(), i, err)
+			}
+		}
 	case "Hostname":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

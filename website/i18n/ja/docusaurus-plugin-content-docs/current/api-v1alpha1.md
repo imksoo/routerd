@@ -185,7 +185,7 @@ FreeBSD には Linux と同じ socket option がないためです。
 | --- | --- |
 | `FirewallZone` | インターフェースをゾーンへ割り当て、`untrust`、`trust`、`mgmt` の役割を設定します。 |
 | `FirewallPolicy` | 拒否ログなど、全体の設定を表します。 |
-| `FirewallRule` | 役割の組み合わせでは表せない例外を表します。 |
+| `FirewallRule` | 役割の組み合わせでは表せない例外を表します。送信元と宛先の CIDR で範囲を絞れます。 |
 
 状態を持つフィルタは nftables の `inet routerd_filter` テーブルに生成します。
 確立済み通信、loopback、必要な ICMPv6 は常に許可します。

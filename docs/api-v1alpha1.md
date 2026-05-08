@@ -188,7 +188,7 @@ from DHCP, IPAM, or another declarative resource.
 | --- | --- |
 | `FirewallZone` | Assigns interfaces to zones with `untrust`, `trust`, and `mgmt` roles. |
 | `FirewallPolicy` | Represents global firewall behavior such as deny logging. |
-| `FirewallRule` | Represents exceptions that cannot be expressed by the role matrix. |
+| `FirewallRule` | Represents exceptions that cannot be expressed by the role matrix. Supports source and destination CIDR narrowing. |
 
 Stateful filtering renders into the nftables `inet routerd_filter` table.
 Established traffic, loopback, and required ICMPv6 are always accepted.

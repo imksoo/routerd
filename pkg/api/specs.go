@@ -1067,14 +1067,15 @@ type FirewallLogPolicySpec struct {
 }
 
 type FirewallRuleSpec struct {
-	FromZone    string                `yaml:"fromZone" json:"fromZone"`
-	ToZone      string                `yaml:"toZone" json:"toZone"`
-	SourceCIDRs []string              `yaml:"srcCIDRs,omitempty" json:"srcCIDRs,omitempty"`
-	Protocol    string                `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=,enum=tcp,enum=udp,enum=icmp,enum=icmpv6,enum=ipv6-icmp,enum=ipip"`
-	Port        int                   `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=0,maximum=65535"`
-	Action      string                `yaml:"action" json:"action" jsonschema:"enum=accept,enum=drop,enum=reject"`
-	Log         bool                  `yaml:"log,omitempty" json:"log,omitempty"`
-	RateLimit   FirewallRateLimitSpec `yaml:"rateLimit,omitempty" json:"rateLimit,omitempty"`
+	FromZone         string                `yaml:"fromZone" json:"fromZone"`
+	ToZone           string                `yaml:"toZone" json:"toZone"`
+	SourceCIDRs      []string              `yaml:"srcCIDRs,omitempty" json:"srcCIDRs,omitempty"`
+	DestinationCIDRs []string              `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	Protocol         string                `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=,enum=tcp,enum=udp,enum=icmp,enum=icmpv6,enum=ipv6-icmp,enum=ipip"`
+	Port             int                   `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=0,maximum=65535"`
+	Action           string                `yaml:"action" json:"action" jsonschema:"enum=accept,enum=drop,enum=reject"`
+	Log              bool                  `yaml:"log,omitempty" json:"log,omitempty"`
+	RateLimit        FirewallRateLimitSpec `yaml:"rateLimit,omitempty" json:"rateLimit,omitempty"`
 }
 
 type FirewallRateLimitSpec struct {

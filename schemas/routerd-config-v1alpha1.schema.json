@@ -6394,6 +6394,12 @@
                         ],
                         "type": "string"
                       },
+                      "destinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "fromZone": {
                         "type": "string"
                       },

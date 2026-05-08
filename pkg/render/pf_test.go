@@ -52,7 +52,7 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"},
 			Metadata: api.ObjectMeta{Name: "wan-ssh"},
-			Spec:     api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", SourceCIDRs: []string{"192.0.2.0/24"}, Protocol: "tcp", Port: 22, Action: "accept", Log: true},
+			Spec:     api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", SourceCIDRs: []string{"192.0.2.0/24"}, DestinationCIDRs: []string{"198.51.100.10/32"}, Protocol: "tcp", Port: 22, Action: "accept", Log: true},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
@@ -83,7 +83,7 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 		`block drop in quick on $lan_if to (em2:network) label "routerd:lan-to-mgmt-deny"`,
 		`pass in quick on $lan_if keep state label "routerd:lan-to-wan"`,
 		`pass in quick on $wan_if proto udp to self port 546 keep state label "routerd:dhcpv6-client"`,
-		`pass in log quick on $wan_if proto tcp from 192.0.2.0/24 to self port 22 keep state label "routerd:wan-ssh"`,
+		`pass in log quick on $wan_if proto tcp from 192.0.2.0/24 to 198.51.100.10/32 port 22 keep state label "routerd:wan-ssh"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("pf output missing %q:\n%s", want, got)

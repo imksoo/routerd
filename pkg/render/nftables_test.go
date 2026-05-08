@@ -604,7 +604,7 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"},
 				Metadata: api.ObjectMeta{Name: "nas-https"},
-				Spec:     api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "tcp", Port: 443, SourceCIDRs: []string{"203.0.113.0/24"}, Action: "accept", Log: true},
+				Spec:     api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "tcp", Port: 443, SourceCIDRs: []string{"203.0.113.0/24"}, DestinationCIDRs: []string{"198.51.100.10/32"}, Action: "accept", Log: true},
 			},
 		}},
 	}
@@ -625,7 +625,7 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 		`set if_lan { type ifname; elements = { "ens19" } }`,
 		`set if_wan { type ifname; elements = { "ppp0" } }`,
 		`chain lan_to_wan`,
-		`ip saddr 203.0.113.0/24 tcp dport 443 log prefix "routerd firewall nas-https " group 7 counter accept`,
+		`ip saddr 203.0.113.0/24 ip daddr 198.51.100.10/32 tcp dport 443 log prefix "routerd firewall nas-https " group 7 counter accept`,
 		`counter log prefix "routerd firewall wan-to-lan deny " group 7 drop`,
 	} {
 		if !strings.Contains(got, want) {

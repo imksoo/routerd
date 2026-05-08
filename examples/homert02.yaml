@@ -1269,6 +1269,19 @@ spec:
         logDeny: true
         sameRoleAccept: true
 
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallRule
+      metadata:
+        name: allow-lan-to-router04-webconsole
+      spec:
+        fromZone: lan
+        toZone: management
+        destinationCIDRs:
+          - 192.168.123.126/32
+        protocol: tcp
+        port: 8080
+        action: accept
+
     - apiVersion: net.routerd.net/v1alpha1
       kind: TrafficFlowLog
       metadata:

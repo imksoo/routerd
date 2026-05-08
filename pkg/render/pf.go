@@ -308,7 +308,9 @@ func pfFirewallRuleExpr(zone firewallZone, name string, spec api.FirewallRuleSpe
 	if len(spec.SourceCIDRs) > 0 {
 		parts = append(parts, "from", pfCIDRSet(spec.SourceCIDRs))
 	}
-	if spec.ToZone == "self" {
+	if len(spec.DestinationCIDRs) > 0 {
+		parts = append(parts, "to", pfCIDRSet(spec.DestinationCIDRs))
+	} else if spec.ToZone == "self" {
 		parts = append(parts, "to", "self")
 	}
 	if spec.Port != 0 {

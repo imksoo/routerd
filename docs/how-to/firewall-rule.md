@@ -48,6 +48,27 @@ The role-based defaults from `FirewallZone` cover the common case, but you need 
     action: accept
 ```
 
+## Example: allow one management host from the LAN
+
+Use `destinationCIDRs` when the exception should apply to a specific host
+inside the destination zone. This keeps the rest of the management segment
+closed by the role matrix.
+
+```yaml
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-lan-to-router04-webconsole
+  spec:
+    fromZone: lan
+    toZone: management
+    destinationCIDRs:
+      - 192.168.123.126/32
+    protocol: tcp
+    port: 8080
+    action: accept
+```
+
 ## Validating before apply
 
 Use the local simulator to check what the rule would do before you apply it:

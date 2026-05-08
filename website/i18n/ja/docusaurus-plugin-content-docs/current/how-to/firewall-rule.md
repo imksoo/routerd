@@ -51,6 +51,27 @@ title: ファイアウォール例外を追加する
     action: accept
 ```
 
+## 例：LAN から管理セグメント上の 1 台だけを許可する
+
+宛先ゾーン内の特定ホストだけを例外にしたい場合は、
+`destinationCIDRs` を指定します。
+これにより、管理セグメント全体を開けずに済みます。
+
+```yaml
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: allow-lan-to-router04-webconsole
+  spec:
+    fromZone: lan
+    toZone: management
+    destinationCIDRs:
+      - 192.168.123.126/32
+    protocol: tcp
+    port: 8080
+    action: accept
+```
+
 ## 適用前の確認
 
 ローカルシミュレーターで動作を確かめてから apply してください。
