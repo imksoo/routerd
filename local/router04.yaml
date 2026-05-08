@@ -176,6 +176,21 @@ spec:
         required: true
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: PPPoEInterface
+      metadata:
+        name: pppoe-flets
+      spec:
+        interface: wan
+        ifname: ppp-flets
+        username: open@open.ad.jp
+        password: open
+        managed: true
+        defaultRoute: false
+        usePeerDNS: false
+        mtu: 1454
+        mru: 1454
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
         name: mgmt
@@ -765,6 +780,26 @@ spec:
         unhealthyThreshold: 3
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-pppoe
+        ownerRefs:
+          - kind: PPPoEInterface
+            name: pppoe-flets
+      spec:
+        daemon: routerd-healthcheck
+        socketSource: /var/run/routerd/healthcheck/internet-via-pppoe.sock
+        targetSource: static
+        target: 208.67.222.222
+        protocol: dns
+        port: 53
+        sourceInterface: pppoe-flets
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
         name: dslite-a-healthcheck
@@ -829,6 +864,17 @@ spec:
             phase: Up
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: pppoe-healthcheck
+        ownerRefs:
+          - kind: PPPoEInterface
+            name: pppoe-flets
+      spec:
+        destination: 208.67.222.222/32
+        device: ppp-flets
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: EgressRoutePolicy
       metadata:
         name: ipv4-default
@@ -887,6 +933,13 @@ spec:
             dependsOn:
               - resource: DSLiteTunnel/ds-lite-ra
                 phase: Up
+          - name: pppoe-flets
+            source: PPPoEInterface/pppoe-flets
+            device: ppp-flets
+            gatewaySource: none
+            metric: 80
+            weight: 60
+            healthCheck: internet-via-pppoe
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
@@ -933,6 +986,7 @@ spec:
           - ds-lite-b
           - ds-lite-c
           - ds-lite-ra
+          - pppoe-flets
         mtu:
           source: static
           value: 1454
@@ -956,6 +1010,7 @@ spec:
           - DSLiteTunnel/ds-lite-b
           - DSLiteTunnel/ds-lite-c
           - DSLiteTunnel/ds-lite-ra
+          - PPPoEInterface/pppoe-flets
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
