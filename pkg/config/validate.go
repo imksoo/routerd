@@ -2617,25 +2617,13 @@ func validateResource(res api.Resource) error {
 			}
 		}
 		if spec.Type == "snat" {
-			if spec.SNATAddress == "" && spec.SNATAddressFrom.Resource == "" {
-				return fmt.Errorf("%s spec.snatAddress or spec.snatAddressFrom is required when type is snat", res.ID())
-			}
-			if spec.SNATAddress != "" && spec.SNATAddressFrom.Resource != "" {
-				return fmt.Errorf("%s spec.snatAddress and spec.snatAddressFrom are mutually exclusive", res.ID())
-			}
-			if spec.SNATAddressFrom.Resource != "" && spec.SNATAddressFrom.Field == "" {
-				return fmt.Errorf("%s spec.snatAddressFrom.field is required", res.ID())
-			}
 			addr, err := netip.ParseAddr(spec.SNATAddress)
-			if spec.SNATAddress != "" && (err != nil || !addr.Is4()) {
+			if err != nil || !addr.Is4() {
 				return fmt.Errorf("%s spec.snatAddress must be an IPv4 address when type is snat", res.ID())
 			}
 		}
 		if spec.Type == "masquerade" && spec.SNATAddress != "" {
 			return fmt.Errorf("%s spec.snatAddress is only valid when type is snat", res.ID())
-		}
-		if spec.Type == "masquerade" && spec.SNATAddressFrom.Resource != "" {
-			return fmt.Errorf("%s spec.snatAddressFrom is only valid when type is snat", res.ID())
 		}
 	case "IPv4PolicyRoute":
 		if res.APIVersion != api.NetAPIVersion {

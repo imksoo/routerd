@@ -741,14 +741,6 @@ func writeIPv4SourceNATTable(buf *bytes.Buffer, router *api.Router, aliases map[
 		if ifname == "" {
 			return fmt.Errorf("%s references egress interface with empty ifname", res.ID())
 		}
-		snatAddress := spec.SNATAddress
-		if snatAddress == "" && spec.SNATAddressFrom.Resource != "" {
-			var err error
-			snatAddress, err = renderAddressFromResource(router, spec.SNATAddressFrom)
-			if err != nil {
-				return fmt.Errorf("%s spec.snatAddressFrom: %w", res.ID(), err)
-			}
-		}
 		if err := writeNAT44RenderRule(buf, NAT44RenderRule{
 			Name:                    res.Metadata.Name,
 			Type:                    spec.Type,
@@ -756,7 +748,7 @@ func writeIPv4SourceNATTable(buf *bytes.Buffer, router *api.Router, aliases map[
 			SourceRanges:            spec.SourceRanges,
 			DestinationCIDRs:        spec.DestinationCIDRs,
 			ExcludeDestinationCIDRs: spec.ExcludeDestinationCIDRs,
-			SNATAddress:             snatAddress,
+			SNATAddress:             spec.SNATAddress,
 		}); err != nil {
 			return err
 		}

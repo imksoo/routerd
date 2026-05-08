@@ -179,18 +179,10 @@ func writePFNAT(buf *bytes.Buffer, router *api.Router, aliases map[string]string
 			}
 			target := "(" + ifname + ")"
 			if spec.Type == "snat" {
-				snatAddress := spec.SNATAddress
-				if snatAddress == "" && spec.SNATAddressFrom.Resource != "" {
-					var err error
-					snatAddress, err = renderAddressFromResource(router, spec.SNATAddressFrom)
-					if err != nil {
-						return fmt.Errorf("%s spec.snatAddressFrom: %w", res.ID(), err)
-					}
-				}
-				if snatAddress == "" {
+				if spec.SNATAddress == "" {
 					return fmt.Errorf("%s needs snat address", res.ID())
 				}
-				target = snatAddress
+				target = spec.SNATAddress
 			}
 			for _, destination := range destinations {
 				buf.WriteString("nat on " + ifname + " from " + prefix.Masked().String() + " to " + destination + " -> " + target + "\n")

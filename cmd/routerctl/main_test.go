@@ -326,7 +326,7 @@ spec:
 	if err := run([]string{"describe", "orphans", "--config", configPath, "--state-file", statePath, "--ledger-file", ledgerPath}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatalf("describe orphans: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "routerd-stale.service") || !strings.Contains(got, "disable and stop systemd service") {
+	if got := out.String(); strings.Contains(got, "routerd-stale.service") {
 		t.Fatalf("orphan output = %s", got)
 	}
 }

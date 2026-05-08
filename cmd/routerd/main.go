@@ -1104,6 +1104,18 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		}()); err != nil {
 			return nil, err
 		}
+		if err := recordStageError("ds-lite-cleanup", func() error {
+			var err error
+			cleanedPreDSLiteOrphans, err = cleanupStaleDSLiteTunnels(effectiveRouter)
+			cleanedAliases, aliasErr := cleanupStaleDSLiteIPv4Aliases(effectiveRouter)
+			cleanedPreDSLiteOrphans = append(cleanedPreDSLiteOrphans, cleanedAliases...)
+			if err != nil {
+				return err
+			}
+			return aliasErr
+		}()); err != nil {
+			return nil, err
+		}
 
 		var cleanedDelegatedIPv6Addresses []string
 
@@ -1126,6 +1138,15 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		}
 
 		var cleanedPolicyRules []string
+		if platformFeatures.HasIproute2 {
+			if err := recordStageError("ipv4-policy-route-cleanup", func() error {
+				var err error
+				cleanedPolicyRules, err = cleanupIPv4ManagedFwmarkRules(effectiveRouter)
+				return err
+			}()); err != nil {
+				return nil, err
+			}
+		}
 
 		var appliedRuntime []string
 		if err := recordStageError("sysctl", func() error {
@@ -1158,6 +1179,10 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		var rememberedArtifacts int
 		if len(applyErrors) == 0 {
 			var err error
+			cleanedLedgerOrphans, err = cleanupLedgerOwnedOrphans(effectiveRouter, opts.LedgerPath)
+			if err != nil {
+				return nil, err
+			}
 			rememberedArtifacts, err = rememberAppliedArtifacts(effectiveRouter, opts.LedgerPath, generation)
 			if err != nil {
 				return nil, err
@@ -1396,6 +1421,19 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	}()); err != nil {
 		return nil, err
 	}
+	var cleanedPreDSLiteOrphans []string
+	if err := recordStageError("ds-lite-cleanup", func() error {
+		var err error
+		cleanedPreDSLiteOrphans, err = cleanupStaleDSLiteTunnels(router)
+		cleanedAliases, aliasErr := cleanupStaleDSLiteIPv4Aliases(router)
+		cleanedPreDSLiteOrphans = append(cleanedPreDSLiteOrphans, cleanedAliases...)
+		if err != nil {
+			return err
+		}
+		return aliasErr
+	}()); err != nil {
+		return nil, err
+	}
 	var appliedIPv6DefaultRoutes []string
 	if err := recordStageError("ipv6-default-route", func() error {
 		var err error
@@ -1423,16 +1461,24 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	for _, tunnel := range appliedTunnels {
 		fmt.Fprintf(stdout, "applied DS-Lite tunnel %s\n", tunnel)
 	}
+	for _, artifact := range cleanedPreDSLiteOrphans {
+		fmt.Fprintf(stdout, "removed orphaned owned artifact %s\n", artifact)
+	}
 	for _, route := range appliedIPv6DefaultRoutes {
 		fmt.Fprintf(stdout, "applied IPv6 default route %s\n", route)
 	}
-	if len(changedFreeBSD) == 0 && len(appliedRuntime) == 0 && len(appliedHostnames) == 0 && len(appliedIPv6DelegatedAddresses) == 0 && len(dnsmasqChangedFiles) == 0 && len(appliedTunnels) == 0 && len(appliedIPv6DefaultRoutes) == 0 {
+	if len(changedFreeBSD) == 0 && len(appliedRuntime) == 0 && len(appliedHostnames) == 0 && len(appliedIPv6DelegatedAddresses) == 0 && len(dnsmasqChangedFiles) == 0 && len(appliedTunnels) == 0 && len(cleanedPreDSLiteOrphans) == 0 && len(appliedIPv6DefaultRoutes) == 0 {
 		fmt.Fprintln(stdout, "FreeBSD configuration already up to date")
 	}
 
+	var cleanedLedgerOrphans []string
 	var rememberedArtifacts int
 	if len(applyErrors) == 0 {
 		var err error
+		cleanedLedgerOrphans, err = cleanupLedgerOwnedOrphans(router, opts.LedgerPath)
+		if err != nil {
+			return nil, err
+		}
 		rememberedArtifacts, err = rememberAppliedArtifacts(router, opts.LedgerPath, generation)
 		if err != nil {
 			return nil, err
@@ -1445,6 +1491,9 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	}
 	if rememberedArtifacts > 0 {
 		fmt.Fprintf(stdout, "remembered %d owned artifacts\n", rememberedArtifacts)
+	}
+	for _, artifact := range cleanedLedgerOrphans {
+		fmt.Fprintf(stdout, "removed orphaned owned artifact %s\n", artifact)
 	}
 
 	applyWarnings := append([]string{}, result.Warnings...)
@@ -1472,7 +1521,9 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 		"delegatedAddresses":  fmt.Sprintf("%d", len(appliedIPv6DelegatedAddresses)),
 		"dnsmasqFiles":        fmt.Sprintf("%d", len(dnsmasqChangedFiles)),
 		"dsliteTunnels":       fmt.Sprintf("%d", len(appliedTunnels)),
+		"dsliteCleanup":       fmt.Sprintf("%d", len(cleanedPreDSLiteOrphans)),
 		"ipv6DefaultRoutes":   fmt.Sprintf("%d", len(appliedIPv6DefaultRoutes)),
+		"ledgerCleanup":       fmt.Sprintf("%d", len(cleanedLedgerOrphans)),
 		"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 	})
 	return next, nil
@@ -2362,10 +2413,19 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
 	switch artifact.Kind {
 	case "linux.ipip6.tunnel":
-		if err := runLogged("ip", "-6", "tunnel", "del", artifact.Name); err != nil {
-			return "", err
+		if platformFeatures.HasIproute2 {
+			if err := runLogged("ip", "-6", "tunnel", "del", artifact.Name); err != nil {
+				return "", err
+			}
+			return artifact.Kind + "/" + artifact.Name, nil
 		}
-		return artifact.Kind + "/" + artifact.Name, nil
+		if platformFeatures.HasPF {
+			if err := runLogged("ifconfig", artifact.Name, "destroy"); err != nil {
+				return "", err
+			}
+			return artifact.Kind + "/" + artifact.Name, nil
+		}
+		return "", nil
 	case "nft.table":
 		family := artifact.Attributes["family"]
 		name := artifact.Attributes["name"]
@@ -2391,9 +2451,355 @@ func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
 			return "", err
 		}
 		return artifact.Kind + "/" + artifact.Name, nil
+	case "net.ipv4.address":
+		if !isDSLiteIPv4AddressArtifact(artifact) {
+			return "", nil
+		}
+		ifname, address, ok := strings.Cut(artifact.Name, ":")
+		if !ok || ifname == "" || address == "" {
+			return "", nil
+		}
+		if platformFeatures.HasIproute2 {
+			if err := runLogged("ip", "-4", "addr", "del", address, "dev", ifname); err != nil {
+				return "", err
+			}
+			return artifact.Kind + "/" + artifact.Name, nil
+		}
+		if platformFeatures.HasPF {
+			if strings.HasPrefix(ifname, "gif") && strings.Contains(artifact.Owner, "/IPv4StaticAddress/ds-lite-source") {
+				if err := runLogged("ifconfig", ifname, "destroy"); err != nil {
+					return "", err
+				}
+				return "freebsd.gif.tunnel/" + ifname, nil
+			}
+			addr := strings.SplitN(address, "/", 2)[0]
+			if err := runLogged("ifconfig", ifname, "inet", addr, "-alias"); err != nil {
+				return "", err
+			}
+			return artifact.Kind + "/" + artifact.Name, nil
+		}
+		return "", nil
 	default:
 		return "", nil
 	}
+}
+
+func isDSLiteIPv4AddressArtifact(artifact resource.Artifact) bool {
+	return strings.Contains(artifact.Owner, "/IPv4StaticAddress/ds-lite") ||
+		strings.Contains(artifact.Name, ":192.168.160.249/32") ||
+		strings.Contains(artifact.Name, ":192.168.160.250/32") ||
+		strings.Contains(artifact.Name, ":192.168.160.251/32") ||
+		strings.Contains(artifact.Name, ":192.168.160.252/32") ||
+		strings.Contains(artifact.Name, ":172.18.255.249/32") ||
+		strings.Contains(artifact.Name, ":172.18.255.250/32") ||
+		strings.Contains(artifact.Name, ":172.18.255.251/32") ||
+		strings.Contains(artifact.Name, ":172.18.255.252/32")
+}
+
+func cleanupStaleDSLiteTunnels(router *api.Router) ([]string, error) {
+	desired := desiredDSLiteTunnelIfNames(router)
+	if platformFeatures.HasIproute2 {
+		return cleanupStaleLinuxDSLiteTunnels(desired)
+	}
+	if platformFeatures.HasPF {
+		return cleanupStaleFreeBSDDSLiteTunnels(desired)
+	}
+	return nil, nil
+}
+
+func cleanupStaleDSLiteIPv4Aliases(router *api.Router) ([]string, error) {
+	desired := desiredDSLiteTunnelIfNames(router)
+	if len(desired) == 0 {
+		return nil, nil
+	}
+	if platformFeatures.HasIproute2 {
+		return cleanupStaleLinuxDSLiteIPv4Aliases(desired)
+	}
+	if platformFeatures.HasPF {
+		return cleanupStaleFreeBSDDSLiteIPv4Aliases(desired)
+	}
+	return nil, nil
+}
+
+func desiredDSLiteTunnelIfNames(router *api.Router) map[string]bool {
+	desired := map[string]bool{}
+	if router == nil {
+		return desired
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "DSLiteTunnel" {
+			continue
+		}
+		spec, err := res.DSLiteTunnelSpec()
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSpace(spec.TunnelName)
+		if name == "" {
+			name = res.Metadata.Name
+		}
+		if name != "" {
+			desired[name] = true
+		}
+	}
+	return desired
+}
+
+func cleanupStaleLinuxDSLiteTunnels(desired map[string]bool) ([]string, error) {
+	out, err := exec.Command("ip", "-d", "link", "show", "type", "ip6tnl").CombinedOutput()
+	if err != nil {
+		return nil, nil
+	}
+	var removed []string
+	for _, name := range parseLinuxIPIP6TunnelNames(string(out)) {
+		if desired[name] || !looksRouterdDSLiteTunnelName(name) {
+			continue
+		}
+		if err := runLogged("ip", "-6", "tunnel", "del", name); err != nil {
+			return removed, err
+		}
+		removed = append(removed, "linux.ipip6.tunnel/"+name)
+	}
+	return removed, nil
+}
+
+func parseLinuxIPIP6TunnelNames(output string) []string {
+	var names []string
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 || !strings.HasSuffix(fields[0], ":") {
+			continue
+		}
+		name := strings.TrimSuffix(fields[1], ":")
+		if i := strings.Index(name, "@"); i >= 0 {
+			name = name[:i]
+		}
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func cleanupStaleLinuxDSLiteIPv4Aliases(desired map[string]bool) ([]string, error) {
+	out, err := exec.Command("ip", "-brief", "-4", "addr", "show").CombinedOutput()
+	if err != nil {
+		return nil, nil
+	}
+	var removed []string
+	seen := map[string]bool{}
+	for _, candidate := range parseBriefIPv4AddressCleanupCandidates(string(out)) {
+		if !desired[candidate.ifname] || !staleDSLiteIPv4Address(candidate.address) {
+			continue
+		}
+		id := candidate.ifname + ":" + candidate.address
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		args := []string{"-4", "addr", "del", candidate.address}
+		if candidate.peer != "" {
+			args = append(args, "peer", candidate.peer)
+		}
+		args = append(args, "dev", candidate.ifname)
+		if err := runLogged("ip", args...); err != nil {
+			return removed, err
+		}
+		removed = append(removed, "net.ipv4.address/"+id)
+	}
+	return removed, nil
+}
+
+func cleanupStaleFreeBSDDSLiteTunnels(desired map[string]bool) ([]string, error) {
+	out, err := exec.Command("ifconfig").CombinedOutput()
+	if err != nil {
+		return nil, nil
+	}
+	var removed []string
+	for name, block := range parseIfconfigBlocks(string(out)) {
+		if desired[name] || !looksFreeBSDDSLiteTunnel(name, block) {
+			continue
+		}
+		if err := runLogged("ifconfig", name, "destroy"); err != nil {
+			return removed, err
+		}
+		removed = append(removed, "freebsd.gif.tunnel/"+name)
+	}
+	return removed, nil
+}
+
+func cleanupStaleFreeBSDDSLiteIPv4Aliases(desired map[string]bool) ([]string, error) {
+	out, err := exec.Command("ifconfig").CombinedOutput()
+	if err != nil {
+		return nil, nil
+	}
+	var removed []string
+	seen := map[string]bool{}
+	for _, artifact := range parseIfconfigIPv4AddressArtifacts(string(out)) {
+		ifname, address, ok := strings.Cut(artifact.Name, ":")
+		if !ok || !desired[ifname] || !staleDSLiteIPv4Address(address) {
+			continue
+		}
+		id := ifname + ":" + address
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		addr := strings.SplitN(address, "/", 2)[0]
+		if err := runLogged("ifconfig", ifname, "inet", addr, "-alias"); err != nil {
+			return removed, err
+		}
+		removed = append(removed, "net.ipv4.address/"+id)
+	}
+	return removed, nil
+}
+
+func staleDSLiteIPv4Address(address string) bool {
+	host := strings.SplitN(address, "/", 2)[0]
+	switch host {
+	case "192.168.160.249", "192.168.160.250", "192.168.160.251", "192.168.160.252",
+		"172.18.255.249", "172.18.255.250", "172.18.255.251", "172.18.255.252":
+		return true
+	default:
+		return false
+	}
+}
+
+type ipv4AddressCleanupCandidate struct {
+	ifname  string
+	address string
+	peer    string
+}
+
+func parseBriefIPv4AddressCleanupCandidates(output string) []ipv4AddressCleanupCandidate {
+	var candidates []ipv4AddressCleanupCandidate
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		ifname := fields[0]
+		if i := strings.Index(ifname, "@"); i >= 0 {
+			ifname = ifname[:i]
+		}
+		for i := 2; i < len(fields); i++ {
+			field := fields[i]
+			if i+2 < len(fields) && fields[i+1] == "peer" && staleDSLiteIPv4Address(field) {
+				candidates = append(candidates, ipv4AddressCleanupCandidate{ifname: ifname, address: field, peer: fields[i+2]})
+				continue
+			}
+			if strings.Contains(field, "/") && staleDSLiteIPv4Address(field) {
+				candidates = append(candidates, ipv4AddressCleanupCandidate{ifname: ifname, address: field})
+			}
+		}
+	}
+	return candidates
+}
+
+func parseIfconfigIPv4AddressArtifacts(output string) []resource.Artifact {
+	var artifacts []resource.Artifact
+	var ifname string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "\t") && !strings.HasPrefix(line, " ") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				ifname = ""
+				continue
+			}
+			ifname = strings.TrimSuffix(fields[0], ":")
+			continue
+		}
+		if ifname == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "inet" {
+			continue
+		}
+		address := fields[1]
+		for i, field := range fields {
+			if field == "netmask" && i+1 < len(fields) {
+				if prefix := freeBSDIPv4MaskPrefixForCleanup(fields[i+1]); prefix != "" {
+					address += "/" + prefix
+				}
+				break
+			}
+		}
+		artifacts = append(artifacts, resource.Artifact{
+			Kind: "net.ipv4.address",
+			Name: ifname + ":" + address,
+		})
+	}
+	return artifacts
+}
+
+func freeBSDIPv4MaskPrefixForCleanup(mask string) string {
+	mask = strings.TrimSpace(strings.ToLower(mask))
+	if strings.HasPrefix(mask, "0x") {
+		value, err := strconv.ParseUint(strings.TrimPrefix(mask, "0x"), 16, 32)
+		if err != nil {
+			return ""
+		}
+		bits := 0
+		for i := 31; i >= 0; i-- {
+			if value&(1<<uint(i)) == 0 {
+				break
+			}
+			bits++
+		}
+		return strconv.Itoa(bits)
+	}
+	ip := net.ParseIP(mask).To4()
+	if ip == nil {
+		return ""
+	}
+	bits, _ := net.IPMask(ip).Size()
+	if bits < 0 {
+		return ""
+	}
+	return strconv.Itoa(bits)
+}
+
+func parseIfconfigBlocks(output string) map[string]string {
+	blocks := map[string]string{}
+	current := ""
+	var lines []string
+	flush := func() {
+		if current != "" {
+			blocks[current] = strings.Join(lines, "\n")
+		}
+	}
+	header := regexp.MustCompile(`^([A-Za-z0-9_.:-]+):\s+flags=`)
+	for _, line := range strings.Split(output, "\n") {
+		if match := header.FindStringSubmatch(line); match != nil {
+			flush()
+			current = match[1]
+			lines = []string{line}
+			continue
+		}
+		if current != "" {
+			lines = append(lines, line)
+		}
+	}
+	flush()
+	return blocks
+}
+
+func looksRouterdDSLiteTunnelName(name string) bool {
+	return name == "ds-routerd" || strings.HasPrefix(name, "ds-lite")
+}
+
+func looksFreeBSDDSLiteTunnel(name, block string) bool {
+	if !strings.HasPrefix(name, "gif") {
+		return false
+	}
+	return strings.Contains(block, "tunnel inet6 ") &&
+		strings.Contains(block, " --> ") &&
+		strings.Contains(block, "inet ") &&
+		strings.Contains(block, "--> 192.0.0.1")
 }
 
 func rememberAppliedArtifacts(router *api.Router, ledgerPath string, generation int64) (int, error) {

@@ -63,32 +63,3 @@ func TestControllerRendersDryRunNAT44FromEgressRoutePolicy(t *testing.T) {
 		t.Fatalf("status = %#v", status)
 	}
 }
-
-func TestControllerResolvesSNATAddressFromStaticAddress(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-source"}, Spec: api.IPv4StaticAddressSpec{Interface: "ds-lite", Address: "192.168.160.250/32"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-dslite"}, Spec: api.NAT44RuleSpec{
-			Type:            "snat",
-			EgressInterface: "gif41",
-			SourceRanges:    []string{"192.168.160.0/24"},
-			SNATAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/ds-lite-source", Field: "address"},
-		}},
-	}}}
-	store := &testStore{}
-	path := filepath.Join(t.TempDir(), "nat44.nft")
-	controller := Controller{Router: router, Bus: bus.New(), Store: store, DryRun: true, NftablesPath: path, NftCommand: "true"}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read ruleset: %v", err)
-	}
-	if !strings.Contains(string(data), `oifname "gif41" ip saddr 192.168.160.0/24 snat to 192.168.160.250`) {
-		t.Fatalf("ruleset missing resolved snat:\n%s", string(data))
-	}
-	status := store.ObjectStatus(api.NetAPIVersion, "NAT44Rule", "lan-to-dslite")
-	if status["snatAddress"] != "192.168.160.250" {
-		t.Fatalf("status = %#v", status)
-	}
-}

@@ -1400,22 +1400,18 @@ func ledgerArtifactsForOwner(ledger resource.Ledger, owner string) []resource.Ar
 }
 
 func writeOrphans(stdout io.Writer, router *api.Router, ledger resource.Ledger) error {
-	if err := apply.New().Validate(router); err != nil {
+	engine := apply.New()
+	if err := engine.Validate(router); err != nil {
 		return err
 	}
-	aliases := interfaceAliases(router.Spec.Resources)
-	desired := apply.DesiredOwnedArtifacts(router, aliases)
-	desiredIDs := map[string]bool{}
-	for _, artifact := range desired {
-		desiredIDs[artifact.Identity()] = true
+	orphans, _, err := engine.LedgerOwnedOrphans(router, ledger)
+	if err != nil {
+		return err
 	}
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "KIND\tNAME\tOWNER\tREMEDIATION")
-	for _, artifact := range ledger.All() {
-		if desiredIDs[artifact.Identity()] {
-			continue
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", artifact.Kind, artifact.Name, artifact.Owner, orphanRemediation(artifact))
+	for _, orphan := range orphans {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", orphan.Kind, orphan.Name, orphan.Owner, orphan.Remediation)
 	}
 	return w.Flush()
 }

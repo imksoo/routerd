@@ -300,18 +300,6 @@ spec:
         announce: true
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv6DelegatedAddress
-      metadata:
-        name: dslite-source-pd-address
-      spec:
-        prefixDelegation: wan-pd
-        interface: lan
-        subnetID: "0"
-        addressSuffix: "::40"
-        sendRA: false
-        announce: false
-
-    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6RouterAdvertisement
       metadata:
         name: lan-ra
@@ -468,37 +456,6 @@ spec:
           path: /var/db/routerd/dns-queries.db
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DSLiteTunnel
-      metadata:
-        name: ds-lite
-        ownerRefs:
-          - kind: IPv6DelegatedAddress
-            name: lan-ipv6-pd-address
-          - kind: DNSResolver
-            name: lan-resolver
-      spec:
-        interface: wan
-        tunnelName: gif40
-        localAddressSource: interface
-        localAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-source
-          field: address
-        aftrFQDN: gw.transix.jp
-        aftrDNSServers:
-          - 2404:1a8:7f01:a::3
-          - 2404:1a8:7f01:b::3
-        aftrAddressOrdinal: 1
-        mtu: 1454
-        defaultRoute: false
-        routeMetric: 50
-        dependsOn:
-          - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
-            field: address
-            notEmpty: true
-          - resource: DNSResolver/lan-resolver
-            phase: Applied
-
-    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
         name: default-via-wan
@@ -520,15 +477,6 @@ spec:
           resource: Interface/mgmt
           field: ifname
         gateway: 192.168.123.129
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Interface
-      metadata:
-        name: ds-lite
-      spec:
-        ifname: gif40
-        role: untrust
-        managed: false
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
@@ -560,22 +508,10 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
-        name: ds-lite-source
-      spec:
-        interface: ds-lite
-        address: 192.168.160.249/32
-        allowOverlap: true
-        allowOverlapReason: DS-Lite tunnel inner source address is carved out of the LAN range.
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4StaticAddress
-      metadata:
         name: ds-lite-a-source
       spec:
         interface: ds-lite-a
-        address: 192.168.160.250/32
-        allowOverlap: true
-        allowOverlapReason: DS-Lite tunnel inner source address is carved out of the LAN range.
+        address: 192.0.0.2/32
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
@@ -583,9 +519,7 @@ spec:
         name: ds-lite-b-source
       spec:
         interface: ds-lite-b
-        address: 192.168.160.251/32
-        allowOverlap: true
-        allowOverlapReason: DS-Lite tunnel inner source address is carved out of the LAN range.
+        address: 192.0.0.3/32
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
@@ -593,9 +527,7 @@ spec:
         name: ds-lite-c-source
       spec:
         interface: ds-lite-c
-        address: 192.168.160.252/32
-        allowOverlap: true
-        allowOverlapReason: DS-Lite tunnel inner source address is carved out of the LAN range.
+        address: 192.0.0.4/32
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
@@ -708,29 +640,6 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: HealthCheck
       metadata:
-        name: internet-via-dslite
-        ownerRefs:
-          - kind: DSLiteTunnel
-            name: ds-lite
-      spec:
-        daemon: routerd-healthcheck
-        socketSource: /var/run/routerd/healthcheck/internet-via-dslite.sock
-        targetSource: static
-        target: 1.0.0.1
-        protocol: dns
-        port: 53
-        sourceInterface: ds-lite
-        sourceAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-source
-          field: address
-        interval: 30s
-        timeout: 3s
-        healthyThreshold: 1
-        unhealthyThreshold: 3
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: HealthCheck
-      metadata:
         name: internet-via-dslite-a
         ownerRefs:
           - kind: DSLiteTunnel
@@ -800,22 +709,6 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
-        name: dslite-healthcheck
-        ownerRefs:
-          - kind: DSLiteTunnel
-            name: ds-lite
-      spec:
-        destination: 1.0.0.1/32
-        deviceFrom:
-          resource: DSLiteTunnel/ds-lite
-          field: interface
-        dependsOn:
-          - resource: DSLiteTunnel/ds-lite
-            phase: Up
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4Route
-      metadata:
         name: dslite-a-healthcheck
         ownerRefs:
           - kind: DSLiteTunnel
@@ -865,9 +758,6 @@ spec:
       kind: EgressRoutePolicy
       metadata:
         name: ipv4-default
-        ownerRefs:
-          - kind: DSLiteTunnel
-            name: ds-lite
       spec:
         family: ipv4
         destinationCIDRs:
@@ -875,18 +765,6 @@ spec:
         selection: highest-weight-ready
         hysteresis: 30s
         candidates:
-          - name: ds-lite
-            source: DSLiteTunnel/ds-lite
-            deviceFrom:
-              resource: DSLiteTunnel/ds-lite
-              field: interface
-            gatewaySource: none
-            metric: 50
-            weight: 100
-            healthCheck: internet-via-dslite
-            dependsOn:
-              - resource: DSLiteTunnel/ds-lite
-                phase: Up
           - name: ds-lite-a
             source: DSLiteTunnel/ds-lite-a
             deviceFrom:
@@ -928,66 +806,9 @@ spec:
       kind: NAT44Rule
       metadata:
         name: lan-to-dslite
-        ownerRefs:
-          - kind: DSLiteTunnel
-            name: ds-lite
       spec:
-        type: snat
-        egressInterface: ds-lite
-        snatAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-source
-          field: address
-        sourceRanges:
-          - 192.168.160.0/24
-        excludeDestinationCIDRs:
-          - 192.168.0.0/16
-          - 172.16.0.0/12
-          - 10.0.0.0/8
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: NAT44Rule
-      metadata:
-        name: lan-to-dslite-a
-      spec:
-        type: snat
-        egressInterface: ds-lite-a
-        snatAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-a-source
-          field: address
-        sourceRanges:
-          - 192.168.160.0/24
-        excludeDestinationCIDRs:
-          - 192.168.0.0/16
-          - 172.16.0.0/12
-          - 10.0.0.0/8
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: NAT44Rule
-      metadata:
-        name: lan-to-dslite-b
-      spec:
-        type: snat
-        egressInterface: ds-lite-b
-        snatAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-b-source
-          field: address
-        sourceRanges:
-          - 192.168.160.0/24
-        excludeDestinationCIDRs:
-          - 192.168.0.0/16
-          - 172.16.0.0/12
-          - 10.0.0.0/8
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: NAT44Rule
-      metadata:
-        name: lan-to-dslite-c
-      spec:
-        type: snat
-        egressInterface: ds-lite-c
-        snatAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-c-source
-          field: address
+        type: masquerade
+        egressPolicyRef: ipv4-default
         sourceRanges:
           - 192.168.160.0/24
         excludeDestinationCIDRs:
@@ -1002,7 +823,6 @@ spec:
       spec:
         fromInterface: lan
         toInterfaces:
-          - ds-lite
           - ds-lite-a
           - ds-lite-b
           - ds-lite-c
@@ -1025,7 +845,6 @@ spec:
         role: untrust
         interfaces:
           - Interface/wan
-          - DSLiteTunnel/ds-lite
           - DSLiteTunnel/ds-lite-a
           - DSLiteTunnel/ds-lite-b
           - DSLiteTunnel/ds-lite-c

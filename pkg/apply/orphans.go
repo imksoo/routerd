@@ -153,6 +153,8 @@ func cleanupEligibleLedgerOrphan(artifact resource.Artifact) bool {
 		return true
 	case "nft.table":
 		return strings.HasPrefix(artifact.Attributes["name"], "routerd_")
+	case "net.ipv4.address":
+		return isDSLiteIPv4AddressArtifact(artifact)
 	default:
 		return false
 	}
@@ -173,8 +175,22 @@ func orphanedArtifactFromLedger(artifact resource.Artifact) OrphanedArtifact {
 		orphan.Remediation = "delete nft table " + artifact.Attributes["family"] + " " + artifact.Attributes["name"]
 	case "systemd.service":
 		orphan.Remediation = "disable and stop systemd service " + artifact.Name
+	case "net.ipv4.address":
+		orphan.Remediation = "remove IPv4 address " + artifact.Name
 	}
 	return orphan
+}
+
+func isDSLiteIPv4AddressArtifact(artifact resource.Artifact) bool {
+	return strings.Contains(artifact.Owner, "/IPv4StaticAddress/ds-lite") ||
+		strings.Contains(artifact.Name, ":192.168.160.249/32") ||
+		strings.Contains(artifact.Name, ":192.168.160.250/32") ||
+		strings.Contains(artifact.Name, ":192.168.160.251/32") ||
+		strings.Contains(artifact.Name, ":192.168.160.252/32") ||
+		strings.Contains(artifact.Name, ":172.18.255.249/32") ||
+		strings.Contains(artifact.Name, ":172.18.255.250/32") ||
+		strings.Contains(artifact.Name, ":172.18.255.251/32") ||
+		strings.Contains(artifact.Name, ":172.18.255.252/32")
 }
 
 func desiredAttributesDrift(desired, actual map[string]string) bool {

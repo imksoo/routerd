@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +15,6 @@ import (
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/render"
-	"routerd/pkg/resourcequery"
 )
 
 type Store interface {
@@ -98,19 +96,6 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		snatAddress, snatReason := c.resolveSNATAddress(spec)
-		if spec.Type == "snat" && snatAddress == "" {
-			status := map[string]any{
-				"phase":      "Pending",
-				"reason":     snatReason,
-				"conditions": []map[string]any{{"type": "SNATAddressResolved", "status": "False", "reason": snatReason}},
-				"dryRun":     c.DryRun,
-			}
-			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "NAT44Rule", resource.Metadata.Name, status); err != nil {
-				return err
-			}
-			continue
-		}
 		rules = append(rules, render.NAT44RenderRule{
 			Name:                    resource.Metadata.Name,
 			Type:                    spec.Type,
@@ -118,7 +103,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			SourceRanges:            spec.SourceRanges,
 			DestinationCIDRs:        spec.DestinationCIDRs,
 			ExcludeDestinationCIDRs: spec.ExcludeDestinationCIDRs,
-			SNATAddress:             snatAddress,
+			SNATAddress:             spec.SNATAddress,
 		})
 	}
 	if len(rules) == 0 {
@@ -224,70 +209,6 @@ func (c Controller) resolveEgressInterface(spec api.NAT44RuleSpec, aliases map[s
 		return selected, ""
 	}
 	return "", "SelectedDeviceMissing"
-}
-
-func (c Controller) resolveSNATAddress(spec api.NAT44RuleSpec) (string, string) {
-	if spec.Type != "snat" {
-		return "", ""
-	}
-	if strings.TrimSpace(spec.SNATAddress) != "" {
-		return strings.TrimSpace(spec.SNATAddress), ""
-	}
-	if strings.TrimSpace(spec.SNATAddressFrom.Resource) == "" {
-		return "", "SNATAddressMissing"
-	}
-	value := statusAddressValue(resourcequery.Value(c.Store, spec.SNATAddressFrom))
-	if value == "" {
-		value = statusAddressValue(addressFromRouterResource(c.Router, spec.SNATAddressFrom))
-	}
-	if value == "" {
-		return "", "SNATAddressSourcePending"
-	}
-	return value, ""
-}
-
-func statusAddressValue(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if prefix, err := netip.ParsePrefix(value); err == nil {
-		return prefix.Addr().String()
-	}
-	return value
-}
-
-func addressFromRouterResource(router *api.Router, source api.StatusValueSourceSpec) string {
-	if router == nil || strings.TrimSpace(source.Resource) == "" {
-		return ""
-	}
-	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
-	if !ok || kind == "" || name == "" {
-		return ""
-	}
-	field := strings.TrimSpace(source.Field)
-	if field == "" {
-		field = "address"
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != kind || res.Metadata.Name != name {
-			continue
-		}
-		switch kind {
-		case "IPv4StaticAddress":
-			if field != "address" {
-				return ""
-			}
-			spec, err := res.IPv4StaticAddressSpec()
-			if err != nil {
-				return ""
-			}
-			return spec.Address
-		default:
-			return ""
-		}
-	}
-	return ""
 }
 
 func interfaceAliases(router *api.Router) map[string]string {

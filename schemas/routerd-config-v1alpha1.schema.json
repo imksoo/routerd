@@ -5696,24 +5696,6 @@
                       "snatAddress": {
                         "type": "string"
                       },
-                      "snatAddressFrom": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "field": {
-                            "type": "string"
-                          },
-                          "optional": {
-                            "type": "boolean"
-                          },
-                          "resource": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "resource"
-                        ],
-                        "type": "object"
-                      },
                       "sourceRanges": {
                         "items": {
                           "type": "string"

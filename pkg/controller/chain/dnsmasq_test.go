@@ -467,15 +467,15 @@ func TestDSLiteTunnelLocalDelegatedAddress(t *testing.T) {
 
 func TestDSLiteTunnelInnerLocalAddressFromStaticAddress(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-source"}, Spec: api.IPv4StaticAddressSpec{Interface: "ds-lite-a", Address: "192.168.160.250/32"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-a-source"}, Spec: api.IPv4StaticAddressSpec{Interface: "ds-lite-a", Address: "192.0.0.2/32"}},
 	}}}
 	got, err := dsliteInnerLocalIPv4(router, nil, api.DSLiteTunnelSpec{
-		LocalAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/ds-lite-source", Field: "address"},
+		LocalAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/ds-lite-a-source", Field: "address"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "192.168.160.250" {
+	if got != "192.0.0.2" {
 		t.Fatalf("inner local = %q", got)
 	}
 }
