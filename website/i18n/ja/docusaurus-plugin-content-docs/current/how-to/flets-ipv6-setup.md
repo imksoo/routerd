@@ -138,6 +138,11 @@ spec:
 
 NTT NGN の HGW のように DHCPv6 information-request で AFTR が返らない環境では、`aftrFQDN` または `aftrIPv6` の静的指定が正しい fallback です。
 
+トンネル内側の IPv4 アドレスは、通常は RFC 6333 の B4-AFTR リンク範囲 `192.0.0.0/29` を使います。
+LAN 範囲から切り出したアドレスを使いたい場合は、`IPv4StaticAddress` リソースで定義します。
+その値を `DSLiteTunnel.localAddressFrom` と `NAT44Rule.snatAddressFrom` から参照します。
+任意指定の例は `examples/dslite-lan-range-snat.yaml` にあります。
+
 ## 動作確認
 
 ```bash

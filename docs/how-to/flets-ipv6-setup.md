@@ -134,6 +134,10 @@ spec:
 
 When AFTR is not returned in DHCPv6 information-request (common with NTT NGN HGWs), the static `aftrFQDN` or `aftrIPv6` configuration is the correct fallback.
 
+For the tunnel inner IPv4 address, the normal DS-Lite example uses the RFC 6333 B4-AFTR link range `192.0.0.0/29`.
+If you need to carve an address from a LAN range instead, keep the address in an `IPv4StaticAddress` resource and reference it from `DSLiteTunnel.localAddressFrom` and `NAT44Rule.snatAddressFrom`.
+See `examples/dslite-lan-range-snat.yaml` for the optional form.
+
 ## Verification
 
 ```bash

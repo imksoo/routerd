@@ -1,0 +1,59 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: dslite-lan-range-snat
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: eth0
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: ds-lite-lan-range-source
+      spec:
+        interface: wan
+        address: 192.168.160.250/32
+        allowOverlap: true
+        allowOverlapReason: "Optional DS-Lite inner source carved from a LAN range."
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-lan-range
+      spec:
+        interface: wan
+        tunnelName: ds-lite-lan-range
+        localAddressSource: interface
+        localAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-lan-range-source
+          field: address
+        aftrIPv6: 2001:db8:100::1
+        mtu: 1454
+        defaultRoute: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-range-to-dslite
+      spec:
+        type: snat
+        egressInterface: ds-lite-lan-range
+        sourceRanges:
+          - 192.168.160.0/24
+        snatAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-lan-range-source
+          field: address
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8

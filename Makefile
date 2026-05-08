@@ -52,6 +52,7 @@ ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
 endif
 GO_BUILD_FLAGS ?= -trimpath -ldflags="-s -w"
+EXAMPLE_CONFIGS ?= examples/basic-static.yaml examples/dslite-lan-range-snat.yaml
 
 .PHONY: test build build-daemons webconsole-build generate-schema check-schema website-build check-build-deps install-ubuntu-deps remote-install-service-deps check-remote-deps install install-service install-systemd install-rc-freebsd dist remote-install remote-install-config remote-install-systemd-unit validate-example dry-run-example plan-config clean
 
@@ -205,7 +206,10 @@ remote-install-systemd-unit:
 	ssh $(REMOTE_HOST) 'sudo install -m 0644 /tmp/routerd-systemd-unit.service /etc/systemd/system/$(REMOTE_UNIT_NAME) && rm -f /tmp/routerd-systemd-unit.service && sudo systemctl daemon-reload'
 
 validate-example:
-	go run ./cmd/routerd validate --config examples/basic-static.yaml
+	@for config in $(EXAMPLE_CONFIGS); do \
+		echo "validating $$config"; \
+		go run ./cmd/routerd validate --config "$$config"; \
+	done
 
 dry-run-example:
 	go run ./cmd/routerd apply --config examples/basic-static.yaml --once --dry-run --status-file /tmp/routerd-status.json
