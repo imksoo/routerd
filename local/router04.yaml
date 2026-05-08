@@ -511,7 +511,7 @@ spec:
         name: ds-lite-a-source
       spec:
         interface: ds-lite-a
-        address: 192.0.0.2/32
+        address: 192.0.0.2/29
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
@@ -519,7 +519,7 @@ spec:
         name: ds-lite-b-source
       spec:
         interface: ds-lite-b
-        address: 192.0.0.3/32
+        address: 192.0.0.3/29
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
@@ -527,7 +527,7 @@ spec:
         name: ds-lite-c-source
       spec:
         interface: ds-lite-c
-        address: 192.0.0.4/32
+        address: 192.0.0.4/29
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress

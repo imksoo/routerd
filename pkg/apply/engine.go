@@ -867,6 +867,9 @@ func (e *Engine) observeNAT44Rule(res api.Resource, aliases map[string]string, i
 	if spec.SNATAddress != "" {
 		rr.Observed["snatAddress"] = spec.SNATAddress
 	}
+	if spec.SNATAddressFrom.Resource != "" {
+		rr.Observed["snatAddressFrom"] = fmt.Sprintf("%s.%s", spec.SNATAddressFrom.Resource, defaultString(spec.SNATAddressFrom.Field, "address"))
+	}
 	if !includePlan {
 		return
 	}
