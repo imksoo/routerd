@@ -3,6 +3,7 @@ package chain
 import (
 	"bytes"
 	"context"
+	"net/netip"
 	"strings"
 
 	"routerd/pkg/api"
@@ -388,6 +389,20 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 		}
 		servers, source := resolveNTPServers(c.Store, spec.Source, spec.Servers, spec.ServerFrom, spec.FallbackServers)
 		listenAddresses := compactNTPList(append(append([]string(nil), spec.ListenAddresses...), ntpServersFromSources(c.Store, spec.ListenAddressFrom)...))
+		if len(spec.ListenAddresses) > 0 || len(spec.ListenAddressFrom) > 0 {
+			if len(listenAddresses) == 0 {
+				if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPServer", resource.Metadata.Name, map[string]any{
+					"phase":    "Pending",
+					"reason":   "NoListenAddresses",
+					"provider": provider,
+					"source":   source,
+					"dryRun":   c.DryRun,
+				}); err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		configPath := c.serverConfigPath(provider)
 		data := renderNTPServerConfig(provider, servers, spec.AllowCIDRs, listenAddresses)
 		changed, err := writeFileIfChanged(configPath, data, 0o644, c.DryRun)
@@ -422,7 +437,7 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 			"provider":        provider,
 			"source":          source,
 			"servers":         servers,
-			"listenAddresses": listenAddresses,
+			"listenAddresses": ntpListenAddresses(listenAddresses),
 			"allowCIDRs":      spec.AllowCIDRs,
 			"configPath":      configPath,
 			"changed":         changed,
@@ -532,10 +547,28 @@ func renderNTPServerConfig(provider string, servers, allowCIDRs, listenAddresses
 	for _, cidr := range compactNTPList(allowCIDRs) {
 		buf.WriteString("allow " + cidr + "\n")
 	}
-	for _, address := range compactNTPList(listenAddresses) {
+	for _, address := range ntpListenAddresses(listenAddresses) {
 		buf.WriteString("bindaddress " + address + "\n")
 	}
 	buf.WriteString("cmdallow 127.0.0.1\n")
 	buf.WriteString("cmdallow ::1\n")
 	return buf.Bytes()
+}
+
+func ntpListenAddresses(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range compactNTPList(values) {
+		if strings.Contains(value, "/") {
+			if prefix, err := netip.ParsePrefix(value); err == nil {
+				value = prefix.Addr().String()
+			}
+		}
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }

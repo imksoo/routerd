@@ -52,6 +52,11 @@ spec:
         fallbackServers:
           - ntp.jst.mfeed.ad.jp
           - ntp.nict.jp
+        listenAddressFrom:
+          - resource: IPv4StaticAddress/lan-base
+            field: address
+          - resource: IPv6DelegatedAddress/lan-base
+            field: address
         allowCIDRs:
           - 172.18.0.0/16
           - 2409:10:3d60:1271::/64
