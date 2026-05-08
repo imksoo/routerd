@@ -1297,7 +1297,11 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-interfaces\npid-file=%s\ndhcp-leasefile=%s\n", pidFile, leaseFile)
-	for _, line := range dnsmasqLANServiceLines(router, store) {
+	lines, err := dnsmasqLANServiceLines(router, store)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range lines {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
@@ -1326,8 +1330,12 @@ func dnsmasqListenAddresses(addresses []string) []string {
 	return out
 }
 
-func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
+func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 	aliases := chainInterfaceAliases(router)
+	raMTUByScope, err := chainPathMTURAByScope(router)
+	if err != nil {
+		return nil, err
+	}
 	var lines []string
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DHCPv4Server" {
@@ -1432,8 +1440,9 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
 		}
 		lines = append(lines, "interface="+ifname, "enable-ra")
 		var params []string
-		if spec.MTU != 0 {
-			params = append(params, fmt.Sprintf("mtu:%d", spec.MTU))
+		mtu := chainFirstNonZero(raMTUByScope[resource.Metadata.Name], spec.MTU)
+		if mtu != 0 {
+			params = append(params, fmt.Sprintf("mtu:%d", mtu))
 		}
 		switch spec.PRFPreference {
 		case "high", "low":
@@ -1441,7 +1450,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
 		}
 		if spec.ValidLifetime != "" {
 			params = append(params, "0", spec.ValidLifetime)
-		} else if spec.MTU != 0 && (spec.PRFPreference == "high" || spec.PRFPreference == "low") {
+		} else if mtu != 0 && (spec.PRFPreference == "high" || spec.PRFPreference == "low") {
 			params = append(params, "0")
 		}
 		if len(params) > 0 {
@@ -1470,7 +1479,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) []string {
 			lines = append(lines, fmt.Sprintf("dhcp-relay=0.0.0.0,%s,%s", spec.Upstream, ifname))
 		}
 	}
-	return lines
+	return lines, nil
 }
 
 func chainInterfaceAliases(router *api.Router) map[string]string {
@@ -1703,6 +1712,90 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func chainPathMTURAByScope(router *api.Router) (map[string]int, error) {
+	mtus := chainResourceMTUs(router)
+	out := map[string]int{}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "PathMTUPolicy" {
+			continue
+		}
+		spec, err := resource.PathMTUPolicySpec()
+		if err != nil {
+			return nil, err
+		}
+		if !spec.IPv6RA.Enabled || spec.IPv6RA.Scope == "" {
+			continue
+		}
+		mtu, err := chainPathMTU(resource.ID(), spec, mtus)
+		if err != nil {
+			return nil, err
+		}
+		if current := out[spec.IPv6RA.Scope]; current == 0 || mtu < current {
+			out[spec.IPv6RA.Scope] = mtu
+		}
+	}
+	return out, nil
+}
+
+func chainResourceMTUs(router *api.Router) map[string]int {
+	mtus := map[string]int{}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "Interface":
+			mtus[resource.Metadata.Name] = 1500
+		case "PPPoEInterface":
+			spec, err := resource.PPPoEInterfaceSpec()
+			if err == nil {
+				mtus[resource.Metadata.Name] = chainFirstNonZero(spec.MTU, 1492)
+			}
+		case "DSLiteTunnel":
+			spec, err := resource.DSLiteTunnelSpec()
+			if err == nil {
+				mtus[resource.Metadata.Name] = chainFirstNonZero(spec.MTU, 1454)
+			}
+		}
+	}
+	return mtus
+}
+
+func chainPathMTU(resourceID string, spec api.PathMTUPolicySpec, mtus map[string]int) (int, error) {
+	switch firstNonEmpty(spec.MTU.Source, "minInterface") {
+	case "minInterface":
+		if len(spec.ToInterfaces) == 0 {
+			return 0, fmt.Errorf("%s spec.toInterfaces is required when mtu.source is minInterface", resourceID)
+		}
+		mtu := 0
+		for _, name := range spec.ToInterfaces {
+			candidate := mtus[name]
+			if candidate == 0 {
+				return 0, fmt.Errorf("%s references interface with unknown MTU %q", resourceID, name)
+			}
+			if mtu == 0 || candidate < mtu {
+				mtu = candidate
+			}
+		}
+		return mtu, nil
+	case "static":
+		if spec.MTU.Value == 0 {
+			return 0, fmt.Errorf("%s spec.mtu.value is required when mtu.source is static", resourceID)
+		}
+		return spec.MTU.Value, nil
+	case "probe":
+		return chainFirstNonZero(spec.MTU.Value, spec.MTU.Probe.Fallback, spec.MTU.Probe.Max, 1500), nil
+	default:
+		return 0, fmt.Errorf("%s spec.mtu.source must be minInterface, static, or probe", resourceID)
+	}
+}
+
+func chainFirstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func atoi(value string) int {

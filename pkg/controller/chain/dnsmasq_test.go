@@ -62,6 +62,13 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 			PRFPreference: "high",
 			ValidLifetime: "7200",
 		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{TunnelName: "dslite0", MTU: 1454}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"}, Metadata: api.ObjectMeta{Name: "lan-dslite-mtu"}, Spec: api.PathMTUPolicySpec{
+			FromInterface: "lan",
+			ToInterfaces:  []string{"ds-lite"},
+			MTU:           api.PathMTUPolicyMTUSpec{Source: "minInterface"},
+			IPv6RA:        api.PathMTUPolicyIPv6RASpec{Enabled: true, Scope: "lan-ra"},
+		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
 	}}}
 	store := mapStore{
@@ -69,7 +76,10 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 		api.NetAPIVersion + "/IPv4StaticAddress/lan-base": {"address": "192.168.10.1/24"},
 	}
 
-	got := dnsmasqLANServiceLines(router, store)
+	got, err := dnsmasqLANServiceLines(router, store)
+	if err != nil {
+		t.Fatalf("render lines: %v", err)
+	}
 	for _, want := range []string{
 		"interface=ens19",
 		"dhcp-range=set:lan-v4,192.168.10.100,192.168.10.199,8h",
@@ -85,7 +95,7 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 		"dhcp-option=tag:lan-v6,option6:sntp-server,[2001:db8::123]",
 		"dhcp-option=tag:lan-v6,option6:domain-search,lan",
 		"dhcp-option=tag:lan-v6,option6:rapid-commit",
-		"ra-param=ens19,mtu:1500,high,0,7200",
+		"ra-param=ens19,mtu:1454,high,0,7200",
 		"dhcp-option=option6:domain-search,lan",
 		"dhcp-relay=0.0.0.0,192.0.2.53,ens19",
 	} {
@@ -118,7 +128,10 @@ func TestDnsmasqLANServiceLinesStripIPv6PrefixLengthFromOptions(t *testing.T) {
 		},
 	}
 
-	got := dnsmasqLANServiceLines(router, store)
+	got, err := dnsmasqLANServiceLines(router, store)
+	if err != nil {
+		t.Fatalf("render lines: %v", err)
+	}
 	if !containsLine(got, "dhcp-option=tag:lan-v6,option6:dns-server,[2409:10:3d60:1271::1]") {
 		t.Fatalf("DHCPv6 DNS option did not strip prefix length:\n%#v", got)
 	}

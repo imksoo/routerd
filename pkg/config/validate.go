@@ -37,6 +37,7 @@ func Validate(router *api.Router) error {
 	dhcp6Servers := map[string]bool{}
 	dhcp6ServerSpecs := map[string]api.DHCPv6ServerSpec{}
 	dhcp6Scopes := map[string]bool{}
+	ipv6RAs := map[string]bool{}
 	prefixDelegations := map[string]bool{}
 	delegatedAddresses := map[string]bool{}
 	delegatedAddressInterfaces := map[string]string{}
@@ -129,6 +130,9 @@ func Validate(router *api.Router) error {
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv6Scope" {
 			dhcp6Scopes[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6RouterAdvertisement" {
+			ipv6RAs[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv4Scope" {
 			spec, err := res.DHCPv4ScopeSpec()
@@ -441,8 +445,8 @@ func Validate(router *api.Router) error {
 					return fmt.Errorf("%s spec.toInterfaces[%d] references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), i, name)
 				}
 			}
-			if spec.IPv6RA.Enabled && !dhcp6Scopes[spec.IPv6RA.Scope] {
-				return fmt.Errorf("%s spec.ipv6RA.scope references missing DHCPv6Scope %q", res.ID(), spec.IPv6RA.Scope)
+			if spec.IPv6RA.Enabled && !dhcp6Scopes[spec.IPv6RA.Scope] && !dhcp6Servers[spec.IPv6RA.Scope] && !ipv6RAs[spec.IPv6RA.Scope] {
+				return fmt.Errorf("%s spec.ipv6RA.scope references missing DHCPv6Scope, DHCPv6Server, or IPv6RouterAdvertisement %q", res.ID(), spec.IPv6RA.Scope)
 			}
 		}
 		if res.Kind == "IPv6DelegatedAddress" {

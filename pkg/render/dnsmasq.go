@@ -305,6 +305,10 @@ func directDnsmasqIfnames(router *api.Router, aliases map[string]string) []strin
 }
 
 func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases map[string]string, staticIPv4 map[string]netip.Prefix, delegatedIPv6 map[string]delegatedIPv6Address, runtime DnsmasqRuntime) error {
+	raMTUByScope, err := pathMTURAByScope(router)
+	if err != nil {
+		return err
+	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "DHCPv4Server" {
 			continue
@@ -415,8 +419,9 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		buf.WriteString("interface=" + ifname + "\n")
 		buf.WriteString("enable-ra\n")
 		var params []string
-		if spec.MTU != 0 {
-			params = append(params, fmt.Sprintf("mtu:%d", spec.MTU))
+		mtu := firstNonZero(raMTUByScope[res.Metadata.Name], spec.MTU)
+		if mtu != 0 {
+			params = append(params, fmt.Sprintf("mtu:%d", mtu))
 		}
 		switch spec.PRFPreference {
 		case "high", "low":
@@ -424,7 +429,7 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		}
 		if spec.ValidLifetime != "" {
 			params = append(params, "0", spec.ValidLifetime)
-		} else if spec.MTU != 0 && (spec.PRFPreference == "high" || spec.PRFPreference == "low") {
+		} else if mtu != 0 && (spec.PRFPreference == "high" || spec.PRFPreference == "low") {
 			params = append(params, "0")
 		}
 		if len(params) > 0 {

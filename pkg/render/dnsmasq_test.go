@@ -441,6 +441,50 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigRendersPathMTUOnRouterAdvertisement(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+				Metadata: api.ObjectMeta{Name: "ds-lite"},
+				Spec:     api.DSLiteTunnelSpec{TunnelName: "dslite0", MTU: 1454},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"},
+				Metadata: api.ObjectMeta{Name: "lan-ra"},
+				Spec: api.IPv6RouterAdvertisementSpec{
+					Interface:     "lan",
+					MTU:           1500,
+					PRFPreference: "high",
+					ValidLifetime: "7200",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PathMTUPolicy"},
+				Metadata: api.ObjectMeta{Name: "lan-dslite-mtu"},
+				Spec: api.PathMTUPolicySpec{
+					FromInterface: "lan",
+					ToInterfaces:  []string{"ds-lite"},
+					MTU:           api.PathMTUPolicyMTUSpec{Source: "minInterface"},
+					IPv6RA:        api.PathMTUPolicyIPv6RASpec{Enabled: true, Scope: "lan-ra"},
+				},
+			},
+		}},
+	}
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	if got, want := string(data), "ra-param=ens19,mtu:1454,high,0,7200"; !strings.Contains(got, want) {
+		t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
+	}
+}
+
 func TestDnsmasqConfigAcceptsDHCPv6InformationSourcesInStaticRender(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
