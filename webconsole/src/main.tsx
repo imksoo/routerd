@@ -61,6 +61,7 @@ type Summary = {
   dhcpLeases?: DHCPLease[];
   neighbors?: NeighborEntry[];
   clients?: ClientEntry[];
+  vpn?: VPNStatus;
   errors?: string[];
 };
 
@@ -189,6 +190,59 @@ type InterfaceSummary = {
   addresses?: string[];
 };
 
+type VPNStatus = {
+  wireGuard?: WireGuardInterfaceStatus[];
+  tailscale?: TailscaleStatus;
+  errors?: string[];
+};
+
+type WireGuardInterfaceStatus = {
+  name?: string;
+  publicKey?: string;
+  listenPort?: number;
+  fwmark?: string;
+  peers?: WireGuardPeerStatus[];
+};
+
+type WireGuardPeerStatus = {
+  publicKey?: string;
+  endpoint?: string;
+  allowedIPs?: string[];
+  latestHandshake?: string;
+  transferRxBytes?: number;
+  transferTxBytes?: number;
+  persistentKeepaliveSec?: number;
+};
+
+type TailscaleStatus = {
+  backendState?: string;
+  hostName?: string;
+  dnsName?: string;
+  tailscaleIPs?: string[];
+  allowedIPs?: string[];
+  online?: boolean;
+  active?: boolean;
+  exitNode?: boolean;
+  exitNodeOption?: boolean;
+  peers?: TailscalePeerStatus[];
+};
+
+type TailscalePeerStatus = {
+  id?: string;
+  hostName?: string;
+  dnsName?: string;
+  tailscaleIPs?: string[];
+  allowedIPs?: string[];
+  online?: boolean;
+  active?: boolean;
+  exitNode?: boolean;
+  exitNodeOption?: boolean;
+  relay?: string;
+  lastSeen?: string;
+  rxBytes?: number;
+  txBytes?: number;
+};
+
 type ConfigSnapshot = {
   path?: string;
   text?: string;
@@ -227,7 +281,7 @@ type ClientRow = {
   peers: Set<string>;
 };
 
-type ViewKey = "overview" | "clients" | "connections" | "events" | "firewall" | "config" | "generations";
+type ViewKey = "overview" | "clients" | "connections" | "vpn" | "events" | "firewall" | "config" | "generations";
 type NavSubItem = { key: string; label: string; count?: number; view: ViewKey; targetID: string };
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
@@ -241,6 +295,7 @@ const navItems: { key: ViewKey; label: string; description: string; icon: React.
   { key: "overview", label: "Overview", description: "Status and interfaces", icon: <HomeRegular /> },
   { key: "clients", label: "Clients", description: "Leases and endpoint traffic", icon: <PeopleRegular /> },
   { key: "connections", label: "Connections", description: "conntrack and live flows", icon: <PlugConnectedRegular /> },
+  { key: "vpn", label: "VPN", description: "WireGuard and Tailscale peers", icon: <PlugConnectedRegular /> },
   { key: "events", label: "Events", description: "Bus events and resource changes", icon: <ServerRegular /> },
   { key: "firewall", label: "Firewall", description: "Deny ranking and timeline", icon: <ShieldRegular /> },
   { key: "config", label: "Config", description: "Read-only YAML tree", icon: <DocumentTextRegular /> },
@@ -545,6 +600,17 @@ const useStyles = makeStyles({
     gap: "16px",
     gridTemplateColumns: "1fr",
   },
+  vpnGrid: {
+    display: "grid",
+    gap: "16px",
+    gridTemplateColumns: "1fr",
+  },
+  vpnSummaryGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+    gap: "10px",
+    marginBottom: "12px",
+  },
   interfaceGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
@@ -612,6 +678,10 @@ const useStyles = makeStyles({
   },
   dhcpLeaseTable: {
     minWidth: "900px",
+    tableLayout: "fixed",
+  },
+  vpnPeerTable: {
+    minWidth: "980px",
     tableLayout: "fixed",
   },
   code: {
@@ -1323,6 +1393,24 @@ function App() {
             <Button className={styles.scrollTopButton} appearance="primary" icon={<ArrowUpRegular />} onClick={scrollToTop}>Top</Button>
               </Card>
             ) : null}
+            {selected === "vpn" ? (
+              <div className={styles.vpnGrid}>
+                <Card id="vpn-tailscale" className={styles.connectionAnchor}>
+                  <CardHeader
+                    header={<Text weight="semibold">Tailscale</Text>}
+                    description={<Text className={styles.muted}>Local node, advertised routes, and peers from tailscale status</Text>}
+                  />
+                  <TailscalePanel status={summary?.vpn?.tailscale} errors={summary?.vpn?.errors ?? []} />
+                </Card>
+                <Card id="vpn-wireguard" className={styles.connectionAnchor}>
+                  <CardHeader
+                    header={<Text weight="semibold">WireGuard</Text>}
+                    description={<Text className={styles.muted}>Kernel WireGuard interfaces and peers from wg show</Text>}
+                  />
+                  <WireGuardPanel interfaces={summary?.vpn?.wireGuard ?? []} errors={summary?.vpn?.errors ?? []} />
+                </Card>
+              </div>
+            ) : null}
             {selected === "events" ? (
               <div className={styles.eventsGrid}>
                 <Card>
@@ -1846,6 +1934,140 @@ function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
   );
 }
 
+function TailscalePanel({ status, errors }: { status?: TailscaleStatus; errors: string[] }) {
+  const styles = useStyles();
+  if (!status) {
+    return (
+      <div className={styles.connectionFlow}>
+        <Text className={styles.muted}>Tailscale status is unavailable.</Text>
+        {errors.filter(error => error.includes("tailscale")).map(error => <code className={styles.wrapCode} key={error}>{error}</code>)}
+      </div>
+    );
+  }
+  const peers = status.peers ?? [];
+  return (
+    <>
+      <div className={styles.vpnSummaryGrid}>
+        <Metric label="backend" value={status.backendState || "Unknown"} />
+        <Metric label="node" value={status.hostName || status.dnsName || "-"} />
+        <Metric label="tailnet ip" value={(status.tailscaleIPs ?? []).join(" / ") || "-"} />
+        <Metric label="peers" value={`${peers.filter(peer => peer.online).length} online / ${peers.length} total`} />
+      </div>
+      <div className={styles.badges}>
+        <Badge appearance="tint" color={status.online ? "success" : "danger"}>{status.online ? "online" : "offline"}</Badge>
+        {status.active ? <Badge appearance="outline" color="success">active</Badge> : null}
+        {status.exitNodeOption ? <Badge appearance="outline" color="brand">exit node</Badge> : null}
+        {(status.allowedIPs ?? []).slice(0, 6).map(route => <Badge key={route} appearance="outline">{route}</Badge>)}
+      </div>
+      <div className={styles.tableWrap}>
+        <Table size="small" className={styles.vpnPeerTable}>
+          <colgroup>
+            <col style={{ width: "180px" }} />
+            <col style={{ width: "118px" }} />
+            <col style={{ width: "230px" }} />
+            <col />
+            <col style={{ width: "110px" }} />
+            <col style={{ width: "140px" }} />
+          </colgroup>
+          <TableHeader>
+            <TableRow>
+              <TableHeaderCell>Peer</TableHeaderCell>
+              <TableHeaderCell>Status</TableHeaderCell>
+              <TableHeaderCell>Tailscale IP</TableHeaderCell>
+              <TableHeaderCell>Allowed routes</TableHeaderCell>
+              <TableHeaderCell>Relay</TableHeaderCell>
+              <TableHeaderCell>Last seen</TableHeaderCell>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {peers.map(peer => (
+              <TableRow key={peer.id || peer.dnsName || peer.hostName}>
+                <TableCell>
+                  <div className={styles.connectionFlow}>
+                    <Text>{peer.hostName || "-"}</Text>
+                    <Text size={200} className={styles.muted}>{peer.dnsName || peer.id || ""}</Text>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className={styles.badges}>
+                    <Badge appearance="tint" color={peer.online ? "success" : "subtle"}>{peer.online ? "online" : "offline"}</Badge>
+                    {peer.active ? <Badge appearance="outline" color="success">active</Badge> : null}
+                    {peer.exitNode || peer.exitNodeOption ? <Badge appearance="outline" color="brand">exit</Badge> : null}
+                  </div>
+                </TableCell>
+                <TableCell><code className={styles.wrapCode}>{(peer.tailscaleIPs ?? []).join(", ") || "-"}</code></TableCell>
+                <TableCell><code className={styles.wrapCode}>{(peer.allowedIPs ?? []).join(", ") || "-"}</code></TableCell>
+                <TableCell>{peer.relay || "-"}</TableCell>
+                <TableCell>{formatTime(peer.lastSeen)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </>
+  );
+}
+
+function WireGuardPanel({ interfaces, errors }: { interfaces: WireGuardInterfaceStatus[]; errors: string[] }) {
+  const styles = useStyles();
+  if (interfaces.length === 0) {
+    return (
+      <div className={styles.connectionFlow}>
+        <Text className={styles.muted}>No WireGuard interface is currently reported.</Text>
+        {errors.filter(error => error.includes("wg show")).map(error => <code className={styles.wrapCode} key={error}>{error}</code>)}
+      </div>
+    );
+  }
+  return (
+    <div className={styles.vpnGrid}>
+      {interfaces.map(item => (
+        <div key={item.name} className={styles.connectionGroup}>
+          <div className={styles.badges}>
+            <Badge appearance="tint" color="brand">{item.name || "wg"}</Badge>
+            {item.listenPort ? <Badge appearance="outline">udp/{item.listenPort}</Badge> : null}
+            {item.fwmark ? <Badge appearance="outline">fwmark {item.fwmark}</Badge> : null}
+            <Text size={200} className={styles.muted}>public key {shortHash(item.publicKey)}</Text>
+          </div>
+          <div className={styles.tableWrap}>
+            <Table size="small" className={styles.vpnPeerTable}>
+              <colgroup>
+                <col style={{ width: "190px" }} />
+                <col style={{ width: "190px" }} />
+                <col />
+                <col style={{ width: "142px" }} />
+                <col style={{ width: "110px" }} />
+                <col style={{ width: "110px" }} />
+              </colgroup>
+              <TableHeader>
+                <TableRow>
+                  <TableHeaderCell>Peer key</TableHeaderCell>
+                  <TableHeaderCell>Endpoint</TableHeaderCell>
+                  <TableHeaderCell>Allowed IPs</TableHeaderCell>
+                  <TableHeaderCell>Handshake</TableHeaderCell>
+                  <TableHeaderCell>RX</TableHeaderCell>
+                  <TableHeaderCell>TX</TableHeaderCell>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(item.peers ?? []).map(peer => (
+                  <TableRow key={peer.publicKey}>
+                    <TableCell><code className={styles.wrapCode}>{shortHash(peer.publicKey)}</code></TableCell>
+                    <TableCell><code className={styles.wrapCode}>{peer.endpoint || "-"}</code></TableCell>
+                    <TableCell><code className={styles.wrapCode}>{(peer.allowedIPs ?? []).join(", ") || "-"}</code></TableCell>
+                    <TableCell>{formatTime(peer.latestHandshake)}</TableCell>
+                    <TableCell>{formatBytes(peer.transferRxBytes)}</TableCell>
+                    <TableCell>{formatBytes(peer.transferTxBytes)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ClientInventory({ clients }: { clients: ClientEntry[] }) {
   const styles = useStyles();
   const rows = clients.map(clientEntryToRow);
@@ -2322,6 +2544,14 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
     return [
       { key: "ranking", label: "Deny ranking", count: denyRows(logs).length, view: "firewall", targetID: "firewall-ranking" },
       { key: "timeline", label: "Deny timeline", count: logs.length, view: "firewall", targetID: "firewall-timeline" },
+    ];
+  }
+  if (selected === "vpn") {
+    const wireGuard = summary?.vpn?.wireGuard ?? [];
+    const tailscalePeers = summary?.vpn?.tailscale?.peers ?? [];
+    return [
+      { key: "tailscale", label: "Tailscale", count: tailscalePeers.length, view: "vpn", targetID: "vpn-tailscale" },
+      { key: "wireguard", label: "WireGuard", count: wireGuard.reduce((total, item) => total + (item.peers?.length ?? 0), 0), view: "vpn", targetID: "vpn-wireguard" },
     ];
   }
   return [];

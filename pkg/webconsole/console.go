@@ -31,6 +31,7 @@ type Options struct {
 	Store              routerstate.Store
 	Result             func() *apply.Result
 	Connections        func(limit int) (*observe.ConnectionTable, error)
+	VPNStatus          func() (VPNStatus, error)
 	Title              string
 	BasePath           string
 	ConnectionsLimit   int
@@ -59,6 +60,7 @@ type Snapshot struct {
 	DHCPLeases   []DHCPLease                 `json:"dhcpLeases,omitempty"`
 	Neighbors    []NeighborEntry             `json:"neighbors,omitempty"`
 	Clients      []ClientEntry               `json:"clients,omitempty"`
+	VPN          VPNStatus                   `json:"vpn,omitempty"`
 	Errors       []string                    `json:"errors,omitempty"`
 }
 
@@ -120,6 +122,59 @@ type InterfaceSummary struct {
 	Addresses       []string `json:"addresses,omitempty"`
 }
 
+type VPNStatus struct {
+	WireGuard []WireGuardInterfaceStatus `json:"wireGuard,omitempty"`
+	Tailscale *TailscaleStatus           `json:"tailscale,omitempty"`
+	Errors    []string                   `json:"errors,omitempty"`
+}
+
+type WireGuardInterfaceStatus struct {
+	Name       string                `json:"name"`
+	PublicKey  string                `json:"publicKey,omitempty"`
+	ListenPort int                   `json:"listenPort,omitempty"`
+	FwMark     string                `json:"fwmark,omitempty"`
+	Peers      []WireGuardPeerStatus `json:"peers,omitempty"`
+}
+
+type WireGuardPeerStatus struct {
+	PublicKey              string    `json:"publicKey"`
+	Endpoint               string    `json:"endpoint,omitempty"`
+	AllowedIPs             []string  `json:"allowedIPs,omitempty"`
+	LatestHandshake        time.Time `json:"latestHandshake,omitempty"`
+	TransferRxBytes        int64     `json:"transferRxBytes,omitempty"`
+	TransferTxBytes        int64     `json:"transferTxBytes,omitempty"`
+	PersistentKeepaliveSec int       `json:"persistentKeepaliveSec,omitempty"`
+}
+
+type TailscaleStatus struct {
+	BackendState   string                `json:"backendState,omitempty"`
+	HostName       string                `json:"hostName,omitempty"`
+	DNSName        string                `json:"dnsName,omitempty"`
+	TailscaleIPs   []string              `json:"tailscaleIPs,omitempty"`
+	AllowedIPs     []string              `json:"allowedIPs,omitempty"`
+	Online         bool                  `json:"online,omitempty"`
+	Active         bool                  `json:"active,omitempty"`
+	ExitNode       bool                  `json:"exitNode,omitempty"`
+	ExitNodeOption bool                  `json:"exitNodeOption,omitempty"`
+	Peers          []TailscalePeerStatus `json:"peers,omitempty"`
+}
+
+type TailscalePeerStatus struct {
+	ID             string   `json:"id,omitempty"`
+	HostName       string   `json:"hostName,omitempty"`
+	DNSName        string   `json:"dnsName,omitempty"`
+	TailscaleIPs   []string `json:"tailscaleIPs,omitempty"`
+	AllowedIPs     []string `json:"allowedIPs,omitempty"`
+	Online         bool     `json:"online,omitempty"`
+	Active         bool     `json:"active,omitempty"`
+	ExitNode       bool     `json:"exitNode,omitempty"`
+	ExitNodeOption bool     `json:"exitNodeOption,omitempty"`
+	Relay          string   `json:"relay,omitempty"`
+	LastSeen       string   `json:"lastSeen,omitempty"`
+	RxBytes        int64    `json:"rxBytes,omitempty"`
+	TxBytes        int64    `json:"txBytes,omitempty"`
+}
+
 //go:embed static
 var staticFiles embed.FS
 
@@ -170,6 +225,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.firewallLogs(w, r)
 	case "api/v1/clients":
 		h.clients(w)
+	case "api/v1/vpn":
+		h.vpn(w)
 	case "api/v1/config":
 		h.config(w)
 	case "api/v1/generations":
@@ -225,6 +282,11 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
+	vpn, err := h.vpnStatus()
+	if err != nil {
+		errors = append(errors, err.Error())
+	}
+	errors = append(errors, vpn.Errors...)
 	result := (*apply.Result)(nil)
 	if h.opts.Result != nil {
 		result = h.opts.Result()
@@ -244,6 +306,7 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		DHCPLeases:   dhcpLeases,
 		Neighbors:    neighbors,
 		Clients:      correlateClients(dhcpLeases, neighbors, trafficFlows),
+		VPN:          vpn,
 		Errors:       errors,
 	}
 }
@@ -413,6 +476,250 @@ func (h Handler) clients(w http.ResponseWriter) {
 		return
 	}
 	writeJSON(w, correlateClients(leases, neighbors, flows))
+}
+
+func (h Handler) vpn(w http.ResponseWriter) {
+	status, err := h.vpnStatus()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, status)
+}
+
+func (h Handler) vpnStatus() (VPNStatus, error) {
+	if h.opts.VPNStatus != nil {
+		return h.opts.VPNStatus()
+	}
+	return hostVPNStatus()
+}
+
+func hostVPNStatus() (VPNStatus, error) {
+	var status VPNStatus
+	if out, err := commandOutputTimeout(2*time.Second, "wg", "show", "all", "dump"); err != nil {
+		status.Errors = append(status.Errors, err.Error())
+	} else {
+		interfaces, err := parseWireGuardAllDump(out)
+		if err != nil {
+			status.Errors = append(status.Errors, err.Error())
+		} else {
+			status.WireGuard = interfaces
+		}
+	}
+	if out, err := commandOutputTimeout(2*time.Second, "tailscale", "status", "--json"); err != nil {
+		status.Errors = append(status.Errors, err.Error())
+	} else {
+		tailscale, err := parseTailscaleStatusJSON(out)
+		if err != nil {
+			status.Errors = append(status.Errors, err.Error())
+		} else {
+			status.Tailscale = tailscale
+		}
+	}
+	return status, nil
+}
+
+func commandOutputTimeout(timeout time.Duration, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("%s %s timed out", name, strings.Join(args, " "))
+	}
+	if err != nil {
+		message := strings.TrimSpace(string(out))
+		if message != "" {
+			return out, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, message)
+		}
+		return out, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+	return out, nil
+}
+
+func parseWireGuardAllDump(data []byte) ([]WireGuardInterfaceStatus, error) {
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return nil, nil
+	}
+	interfaces := map[string]*WireGuardInterfaceStatus{}
+	ensure := func(name string) *WireGuardInterfaceStatus {
+		item := interfaces[name]
+		if item == nil {
+			item = &WireGuardInterfaceStatus{Name: name}
+			interfaces[name] = item
+		}
+		return item
+	}
+	for lineNo, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		switch {
+		case len(fields) == 5:
+			item := ensure(fields[0])
+			item.PublicKey = wireGuardValue(fields[2])
+			item.ListenPort = parseWireGuardInt(fields[3])
+			item.FwMark = wireGuardValue(fields[4])
+		case len(fields) >= 9:
+			item := ensure(fields[0])
+			peer := WireGuardPeerStatus{
+				PublicKey:              wireGuardValue(fields[1]),
+				Endpoint:               wireGuardValue(fields[3]),
+				AllowedIPs:             splitWireGuardList(fields[4]),
+				LatestHandshake:        parseWireGuardHandshake(fields[5]),
+				TransferRxBytes:        parseWireGuardInt64(fields[6]),
+				TransferTxBytes:        parseWireGuardInt64(fields[7]),
+				PersistentKeepaliveSec: parseWireGuardInt(fields[8]),
+			}
+			item.Peers = append(item.Peers, peer)
+		default:
+			return nil, fmt.Errorf("wg dump line %d has %d fields", lineNo+1, len(fields))
+		}
+	}
+	out := make([]WireGuardInterfaceStatus, 0, len(interfaces))
+	for _, item := range interfaces {
+		sort.Slice(item.Peers, func(i, j int) bool {
+			return item.Peers[i].PublicKey < item.Peers[j].PublicKey
+		})
+		out = append(out, *item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
+}
+
+func wireGuardValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "(none)" || value == "off" {
+		return ""
+	}
+	return value
+}
+
+func splitWireGuardList(value string) []string {
+	value = wireGuardValue(value)
+	if value == "" {
+		return nil
+	}
+	var out []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func parseWireGuardInt(value string) int {
+	value = wireGuardValue(value)
+	if value == "" {
+		return 0
+	}
+	parsed, _ := strconv.Atoi(value)
+	return parsed
+}
+
+func parseWireGuardInt64(value string) int64 {
+	value = wireGuardValue(value)
+	if value == "" {
+		return 0
+	}
+	parsed, _ := strconv.ParseInt(value, 10, 64)
+	return parsed
+}
+
+func parseWireGuardHandshake(value string) time.Time {
+	seconds := parseWireGuardInt64(value)
+	if seconds <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0).UTC()
+}
+
+func parseTailscaleStatusJSON(data []byte) (*TailscaleStatus, error) {
+	if strings.TrimSpace(string(data)) == "" {
+		return nil, nil
+	}
+	var raw struct {
+		BackendState string                             `json:"BackendState"`
+		Self         tailscalePeerStatusJSON            `json:"Self"`
+		Peer         map[string]tailscalePeerStatusJSON `json:"Peer"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	status := &TailscaleStatus{
+		BackendState:   raw.BackendState,
+		HostName:       raw.Self.HostName,
+		DNSName:        raw.Self.DNSName,
+		TailscaleIPs:   raw.Self.TailscaleIPs,
+		AllowedIPs:     raw.Self.AllowedIPs,
+		Online:         raw.Self.Online,
+		Active:         raw.Self.Active,
+		ExitNode:       raw.Self.ExitNode,
+		ExitNodeOption: raw.Self.ExitNodeOption,
+	}
+	for id, peer := range raw.Peer {
+		status.Peers = append(status.Peers, TailscalePeerStatus{
+			ID:             id,
+			HostName:       peer.HostName,
+			DNSName:        peer.DNSName,
+			TailscaleIPs:   peer.TailscaleIPs,
+			AllowedIPs:     peer.AllowedIPs,
+			Online:         peer.Online,
+			Active:         peer.Active,
+			ExitNode:       peer.ExitNode,
+			ExitNodeOption: peer.ExitNodeOption,
+			Relay:          peer.Relay,
+			LastSeen:       peer.LastSeen,
+			RxBytes:        peer.RxBytes,
+			TxBytes:        peer.TxBytes,
+		})
+	}
+	sort.Slice(status.Peers, func(i, j int) bool {
+		left, right := status.Peers[i], status.Peers[j]
+		if left.Online != right.Online {
+			return left.Online
+		}
+		if left.Active != right.Active {
+			return left.Active
+		}
+		if lastSeenAfter(left.LastSeen, right.LastSeen) {
+			return true
+		}
+		if lastSeenAfter(right.LastSeen, left.LastSeen) {
+			return false
+		}
+		return strings.ToLower(left.HostName) < strings.ToLower(right.HostName)
+	})
+	return status, nil
+}
+
+type tailscalePeerStatusJSON struct {
+	HostName       string   `json:"HostName"`
+	DNSName        string   `json:"DNSName"`
+	TailscaleIPs   []string `json:"TailscaleIPs"`
+	AllowedIPs     []string `json:"AllowedIPs"`
+	Online         bool     `json:"Online"`
+	Active         bool     `json:"Active"`
+	ExitNode       bool     `json:"ExitNode"`
+	ExitNodeOption bool     `json:"ExitNodeOption"`
+	Relay          string   `json:"Relay"`
+	LastSeen       string   `json:"LastSeen"`
+	RxBytes        int64    `json:"RxBytes"`
+	TxBytes        int64    `json:"TxBytes"`
+}
+
+func lastSeenAfter(left, right string) bool {
+	leftTime, leftErr := time.Parse(time.RFC3339Nano, left)
+	rightTime, rightErr := time.Parse(time.RFC3339Nano, right)
+	if leftErr != nil || rightErr != nil {
+		return left != "" && right == ""
+	}
+	return leftTime.After(rightTime)
 }
 
 func (h Handler) config(w http.ResponseWriter) {

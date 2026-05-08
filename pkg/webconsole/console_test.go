@@ -2,6 +2,7 @@ package webconsole
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -78,6 +79,9 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		Connections: func(limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Count: 3, Max: 262144}, nil
 		},
+		VPNStatus: func() (VPNStatus, error) {
+			return VPNStatus{Tailscale: &TailscaleStatus{HostName: "homert02", BackendState: "Running"}}, nil
+		},
 		DNSQueryLogPath:    queryLog,
 		TrafficFlowLogPath: trafficLog,
 		FirewallLogPath:    firewallLogPath,
@@ -88,9 +92,45 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, `"tailscale"`, `"homert02"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+}
+
+func TestHandlerServesVPNStatus(t *testing.T) {
+	handler := New(Options{VPNStatus: func() (VPNStatus, error) {
+		return VPNStatus{
+			WireGuard: []WireGuardInterfaceStatus{{
+				Name:       "wg0",
+				PublicKey:  "interface-public",
+				ListenPort: 51820,
+				Peers: []WireGuardPeerStatus{{
+					PublicKey:       "peer-public",
+					Endpoint:        "203.0.113.2:51820",
+					AllowedIPs:      []string{"10.0.0.2/32"},
+					TransferRxBytes: 100,
+					TransferTxBytes: 200,
+				}},
+			}},
+			Tailscale: &TailscaleStatus{
+				BackendState: "Running",
+				HostName:     "homert02",
+				TailscaleIPs: []string{"100.64.87.102"},
+				Peers:        []TailscalePeerStatus{{HostName: "phone", Online: true}},
+			},
+		}, nil
+	}})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/vpn", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{`"wireGuard"`, `"wg0"`, `"peer-public"`, `"tailscale"`, `"homert02"`, `"phone"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("vpn response missing %q:\n%s", want, rec.Body.String())
 		}
 	}
 }
@@ -283,6 +323,58 @@ func TestReadDnsmasqLeases(t *testing.T) {
 	}
 	if leases[1].IP != "2409:10:3d60:1271::20" || leases[1].Family != "ipv6" {
 		t.Fatalf("ipv6 lease = %+v", leases[1])
+	}
+}
+
+func TestParseWireGuardAllDump(t *testing.T) {
+	rows, err := parseWireGuardAllDump([]byte("wg0\tprivate-key-must-not-leak\tinterface-public\t51820\toff\nwg0\tpeer-public\tpreshared-key-must-not-leak\t203.0.113.2:51820\t10.0.0.2/32,fd00::2/128\t1710000000\t100\t200\t25\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("interfaces = %d", len(rows))
+	}
+	if rows[0].Name != "wg0" || rows[0].PublicKey != "interface-public" || rows[0].ListenPort != 51820 {
+		t.Fatalf("interface = %+v", rows[0])
+	}
+	if strings.Contains(fmt.Sprintf("%+v", rows), "private-key") || strings.Contains(fmt.Sprintf("%+v", rows), "preshared-key") {
+		t.Fatalf("secret material leaked: %+v", rows)
+	}
+	if len(rows[0].Peers) != 1 || rows[0].Peers[0].PublicKey != "peer-public" || rows[0].Peers[0].TransferTxBytes != 200 || rows[0].Peers[0].PersistentKeepaliveSec != 25 {
+		t.Fatalf("peer = %+v", rows[0].Peers)
+	}
+	if got := rows[0].Peers[0].AllowedIPs; len(got) != 2 || got[1] != "fd00::2/128" {
+		t.Fatalf("allowed ips = %+v", got)
+	}
+	if rows[0].Peers[0].LatestHandshake.IsZero() {
+		t.Fatalf("handshake not parsed: %+v", rows[0].Peers[0])
+	}
+}
+
+func TestParseTailscaleStatusJSON(t *testing.T) {
+	status, err := parseTailscaleStatusJSON([]byte(`{
+	  "BackendState": "Running",
+	  "Self": {
+	    "HostName": "homert02",
+	    "DNSName": "homert02.example.ts.net.",
+	    "TailscaleIPs": ["100.64.87.102", "fd7a:115c:a1e0::1"],
+	    "AllowedIPs": ["100.64.87.102/32"],
+	    "Online": true,
+	    "ExitNodeOption": true
+	  },
+	  "Peer": {
+	    "node-b": {"HostName": "phone", "Online": false, "LastSeen": "2026-05-07T10:00:00Z"},
+	    "node-a": {"HostName": "laptop", "Online": true, "Active": true, "TailscaleIPs": ["100.64.0.2"], "Relay": "tok", "LastSeen": "2026-05-07T11:00:00Z", "RxBytes": 10, "TxBytes": 20}
+	  }
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status == nil || status.HostName != "homert02" || status.BackendState != "Running" || !status.Online {
+		t.Fatalf("status = %+v", status)
+	}
+	if len(status.Peers) != 2 || status.Peers[0].HostName != "laptop" || !status.Peers[0].Active {
+		t.Fatalf("peers not sorted/parsed: %+v", status.Peers)
 	}
 }
 
