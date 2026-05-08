@@ -800,6 +800,26 @@ spec:
         unhealthyThreshold: 3
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-hgw-direct
+        ownerRefs:
+          - kind: DHCPv4Address
+            name: wan-dhcp4
+      spec:
+        daemon: routerd-healthcheck
+        socketSource: /var/run/routerd/healthcheck/internet-via-hgw-direct.sock
+        targetSource: static
+        target: 1.0.0.1
+        protocol: dns
+        port: 53
+        sourceInterface: wan
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
       metadata:
         name: dslite-a-healthcheck
@@ -875,6 +895,20 @@ spec:
         device: ppp-flets
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: hgw-direct-healthcheck
+        ownerRefs:
+          - kind: DHCPv4Address
+            name: wan-dhcp4
+      spec:
+        destination: 1.0.0.1/32
+        deviceFrom:
+          resource: Interface/wan
+          field: ifname
+        gateway: 192.168.1.1
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: EgressRoutePolicy
       metadata:
         name: ipv4-default
@@ -940,6 +974,16 @@ spec:
             metric: 80
             weight: 60
             healthCheck: internet-via-pppoe
+          - name: hgw-direct
+            source: DHCPv4Address/wan-dhcp4
+            deviceFrom:
+              resource: Interface/wan
+              field: ifname
+            gatewaySource: static
+            gateway: 192.168.1.1
+            metric: 100
+            weight: 40
+            healthCheck: internet-via-hgw-direct
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
