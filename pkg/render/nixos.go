@@ -306,13 +306,24 @@ func nixOSNTPServers(router *api.Router) ([]string, error) {
 		if provider := defaultString(spec.Provider, "systemd-timesyncd"); provider != "systemd-timesyncd" {
 			return nil, fmt.Errorf("%s has unsupported provider %q", res.ID(), provider)
 		}
-		if source := defaultString(spec.Source, "static"); source != "static" {
+		source := defaultString(spec.Source, "static")
+		switch source {
+		case "static", "auto", "dhcp", "dhcpv6":
+		default:
 			return nil, fmt.Errorf("%s has unsupported source %q", res.ID(), source)
 		}
 		for _, server := range spec.Servers {
 			server = strings.TrimSpace(server)
 			if server != "" {
 				servers = append(servers, server)
+			}
+		}
+		if source != "static" && len(spec.Servers) == 0 {
+			for _, server := range spec.FallbackServers {
+				server = strings.TrimSpace(server)
+				if server != "" {
+					servers = append(servers, server)
+				}
 			}
 		}
 	}

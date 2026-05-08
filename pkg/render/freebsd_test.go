@@ -116,6 +116,46 @@ func TestFreeBSDIgnoresPrefixDelegationClientRenderer(t *testing.T) {
 	}
 }
 
+func TestFreeBSDRendersNTPD(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"},
+			Metadata: api.ObjectMeta{Name: "time"},
+			Spec: api.NTPClientSpec{
+				Provider:        "ntpd",
+				Managed:         true,
+				Source:          "auto",
+				ServerFrom:      []api.StatusValueSourceSpec{{Resource: "DHCPv6Information/wan-info", Field: "sntpServers"}},
+				FallbackServers: []string{"ntp.jst.mfeed.ad.jp", "ntp.nict.jp"},
+			},
+		},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	rc := string(got.RCConf)
+	for _, want := range []string{
+		`ntpd_enable="YES"`,
+		`ntpd_sync_on_start="YES"`,
+		`ntpd_config="/usr/local/etc/routerd/ntp.conf"`,
+	} {
+		if !strings.Contains(rc, want) {
+			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
+		}
+	}
+	ntp := string(got.NTP)
+	for _, want := range []string{
+		`driftfile /var/db/ntpd.drift`,
+		`server ntp.jst.mfeed.ad.jp iburst`,
+		`server ntp.nict.jp iburst`,
+	} {
+		if !strings.Contains(ntp, want) {
+			t.Fatalf("ntp.conf output missing %q:\n%s", want, ntp)
+		}
+	}
+}
+
 func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

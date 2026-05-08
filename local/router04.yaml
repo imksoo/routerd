@@ -27,6 +27,21 @@ spec:
               - strongswan
               - mpd5
 
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: NTPClient
+      metadata:
+        name: system-time
+      spec:
+        provider: ntpd
+        managed: true
+        source: auto
+        serverFrom:
+          - resource: DHCPv6Information/wan-info
+            field: sntpServers
+        fallbackServers:
+          - ntp.jst.mfeed.ad.jp
+          - ntp.nict.jp
+
     - apiVersion: net.routerd.net/v1alpha1
       kind: Hostname
       metadata:
@@ -214,27 +229,27 @@ spec:
         managed: true
         listenInterfaces:
           - lan
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Scope
-      metadata:
-        name: lan-dhcpv4
-      spec:
-        server: lan-dhcpv4-server
         interface: lan
-        rangeStart: 192.168.160.180
-        rangeEnd: 192.168.160.189
-        leaseTime: 12h
-        routerSource: interfaceAddress
-        dnsSource: self
-        authoritative: false
+        addressPool:
+          start: 192.168.160.180
+          end: 192.168.160.189
+          leaseTime: 12h
+        gatewayFrom:
+          resource: IPv4StaticAddress/lan-ipv4
+          field: address
+        dnsServerFrom:
+          - resource: IPv4StaticAddress/lan-ipv4
+            field: address
+        ntpServerFrom:
+          - resource: IPv4StaticAddress/lan-ipv4
+            field: address
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Reservation
       metadata:
         name: lab-client
       spec:
-        scope: lan-dhcpv4
+        server: lan-dhcpv4-server
         macAddress: "02:00:00:00:04:10"
         ipAddress: 192.168.160.184
         hostname: router04-lab-client
@@ -304,6 +319,9 @@ spec:
           - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
             field: address
             optional: true
+        sntpServerFrom:
+          - resource: IPv6DelegatedAddress/lan-ipv6-pd-address
+            field: address
         domainSearch:
           - router04.lab.local
         leaseTime: 12h

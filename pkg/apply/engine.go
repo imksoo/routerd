@@ -194,6 +194,12 @@ func (e *Engine) observeNTPClient(res api.Resource, aliases map[string]string, i
 	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
 	rr.Observed["source"] = source
 	rr.Observed["servers"] = strings.Join(spec.Servers, ",")
+	if len(spec.FallbackServers) > 0 {
+		rr.Observed["fallbackServers"] = strings.Join(spec.FallbackServers, ",")
+	}
+	if len(spec.ServerFrom) > 0 {
+		rr.Observed["serverFrom"] = fmt.Sprintf("%d sources", len(spec.ServerFrom))
+	}
 	if spec.Interface != "" {
 		rr.Observed["interface"] = spec.Interface
 		rr.Observed["ifname"] = aliases[spec.Interface]
@@ -209,9 +215,9 @@ func (e *Engine) observeNTPClient(res api.Resource, aliases map[string]string, i
 		return
 	}
 	if spec.Interface != "" {
-		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s uses static NTP servers on %s", provider, aliases[spec.Interface]))
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s uses %s NTP servers on %s", provider, source, aliases[spec.Interface]))
 	} else {
-		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s uses static global NTP servers", provider))
+		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s uses %s global NTP servers", provider, source))
 	}
 }
 

@@ -914,6 +914,12 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "fallbackServers": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "interface": {
                         "type": "string"
                       },
@@ -922,9 +928,31 @@
                       },
                       "provider": {
                         "enum": [
-                          "systemd-timesyncd"
+                          "systemd-timesyncd",
+                          "ntpd"
                         ],
                         "type": "string"
+                      },
+                      "serverFrom": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "field": {
+                              "type": "string"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "servers": {
                         "items": {
@@ -934,7 +962,10 @@
                       },
                       "source": {
                         "enum": [
-                          "static"
+                          "static",
+                          "auto",
+                          "dhcp",
+                          "dhcpv6"
                         ],
                         "type": "string"
                       }

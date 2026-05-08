@@ -3601,6 +3601,25 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 			restartIfnames = append(restartIfnames, freeBSDDHCPClientIfnames(data.DHCPClient)...)
 		}
 	}
+	if len(data.NTP) > 0 {
+		ntpPath := "/usr/local/etc/routerd/ntp.conf"
+		if err := os.MkdirAll(filepathDir(ntpPath), 0755); err != nil {
+			return changed, warnings, err
+		}
+		fileChanged, err := writeFileIfChanged(ntpPath, data.NTP, 0644)
+		if err != nil {
+			return changed, warnings, err
+		}
+		if fileChanged {
+			changed = append(changed, ntpPath)
+		}
+		if (fileChanged || freeBSDRCValuesChanged(changed, "ntpd_") || !freeBSDServiceRunning("ntpd")) && rcValues["ntpd_enable"] == "YES" && freeBSDServiceExists("ntpd") {
+			if err := runLogged("service", "ntpd", "restart"); err != nil {
+				return changed, warnings, err
+			}
+			changed = append(changed, "service:ntpd")
+		}
+	}
 	if len(data.PF) > 0 && pfPath != "" {
 		applied, err := applyFreeBSDPFConfig(data.PF, pfPath)
 		if err != nil {

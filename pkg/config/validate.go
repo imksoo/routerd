@@ -883,24 +883,35 @@ func validateResource(res api.Resource) error {
 			return err
 		}
 		switch defaultString(spec.Provider, "systemd-timesyncd") {
-		case "systemd-timesyncd":
+		case "systemd-timesyncd", "ntpd":
 		default:
-			return fmt.Errorf("%s spec.provider must be systemd-timesyncd", res.ID())
+			return fmt.Errorf("%s spec.provider must be systemd-timesyncd or ntpd", res.ID())
 		}
 		switch defaultString(spec.Source, "static") {
-		case "static":
+		case "static", "auto", "dhcp", "dhcpv6":
 		default:
-			return fmt.Errorf("%s spec.source must be static", res.ID())
+			return fmt.Errorf("%s spec.source must be static, auto, dhcp, or dhcpv6", res.ID())
 		}
-		if spec.Managed && len(spec.Servers) == 0 {
-			return fmt.Errorf("%s spec.servers is required when managed is true", res.ID())
+		if defaultString(spec.Source, "static") == "static" && spec.Managed && len(spec.Servers) == 0 {
+			return fmt.Errorf("%s spec.servers is required when spec.source is static", res.ID())
 		}
-		for i, server := range spec.Servers {
+		if spec.Managed && len(spec.Servers) == 0 && len(spec.ServerFrom) == 0 && len(spec.FallbackServers) == 0 {
+			return fmt.Errorf("%s spec.servers, spec.serverFrom, or spec.fallbackServers is required when managed is true", res.ID())
+		}
+		for i, server := range append(append([]string{}, spec.Servers...), spec.FallbackServers...) {
 			if strings.TrimSpace(server) == "" {
-				return fmt.Errorf("%s spec.servers[%d] must not be empty", res.ID(), i)
+				return fmt.Errorf("%s NTP server entry %d must not be empty", res.ID(), i)
 			}
 			if strings.ContainsAny(server, " \t\n\r") {
-				return fmt.Errorf("%s spec.servers[%d] must be a single hostname or IP address", res.ID(), i)
+				return fmt.Errorf("%s NTP server entry %d must be a single hostname or IP address", res.ID(), i)
+			}
+		}
+		for i, source := range spec.ServerFrom {
+			if strings.TrimSpace(source.Resource) == "" {
+				return fmt.Errorf("%s spec.serverFrom[%d].resource is required", res.ID(), i)
+			}
+			if strings.TrimSpace(source.Field) == "" {
+				return fmt.Errorf("%s spec.serverFrom[%d].field is required", res.ID(), i)
 			}
 		}
 	case "WebConsole":

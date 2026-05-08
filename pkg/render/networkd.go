@@ -137,11 +137,20 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 		if ifname == "" {
 			return nil, fmt.Errorf("%s references interface with empty ifname", res.ID())
 		}
+		source := defaultString(spec.Source, "static")
 		var servers []string
-		for _, server := range spec.Servers {
+		for _, server := range append([]string{}, spec.Servers...) {
 			server = strings.TrimSpace(server)
 			if server != "" {
 				servers = append(servers, server)
+			}
+		}
+		if len(servers) == 0 && source != "static" {
+			for _, server := range spec.FallbackServers {
+				server = strings.TrimSpace(server)
+				if server != "" {
+					servers = append(servers, server)
+				}
 			}
 		}
 		if len(servers) == 0 {

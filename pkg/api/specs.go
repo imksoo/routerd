@@ -139,11 +139,13 @@ type OSPackageSetSpec struct {
 }
 
 type NTPClientSpec struct {
-	Provider  string   `yaml:"provider,omitempty" json:"provider,omitempty" jsonschema:"enum=systemd-timesyncd"`
-	Managed   bool     `yaml:"managed,omitempty" json:"managed,omitempty"`
-	Source    string   `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"enum=static"`
-	Interface string   `yaml:"interface,omitempty" json:"interface,omitempty"`
-	Servers   []string `yaml:"servers,omitempty" json:"servers,omitempty"`
+	Provider        string                  `yaml:"provider,omitempty" json:"provider,omitempty" jsonschema:"enum=systemd-timesyncd,enum=ntpd"`
+	Managed         bool                    `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Source          string                  `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"enum=static,enum=auto,enum=dhcp,enum=dhcpv6"`
+	Interface       string                  `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Servers         []string                `yaml:"servers,omitempty" json:"servers,omitempty"`
+	ServerFrom      []StatusValueSourceSpec `yaml:"serverFrom,omitempty" json:"serverFrom,omitempty"`
+	FallbackServers []string                `yaml:"fallbackServers,omitempty" json:"fallbackServers,omitempty"`
 }
 
 type WebConsoleSpec struct {

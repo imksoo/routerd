@@ -20,6 +20,23 @@ spec:
           tag: routerd-homert02
 
     - apiVersion: system.routerd.net/v1alpha1
+      kind: NTPClient
+      metadata:
+        name: system-time
+      spec:
+        provider: systemd-timesyncd
+        managed: true
+        source: auto
+        serverFrom:
+          - resource: DHCPv6Information/wan-info
+            field: sntpServers
+          - resource: DHCPv4Lease/wan-v4
+            field: ntpServers
+        fallbackServers:
+          - ntp.jst.mfeed.ad.jp
+          - ntp.nict.jp
+
+    - apiVersion: system.routerd.net/v1alpha1
       kind: Package
       metadata:
         name: router-service-dependencies
@@ -44,6 +61,7 @@ spec:
               - strongswan-swanctl
               - radvd
               - systemd
+              - systemd-timesyncd
               - net-tools
               - kmod
               - libnetfilter-log1
@@ -1176,8 +1194,8 @@ spec:
           - resource: IPv6DelegatedAddress/lan-base
             field: address
         sntpServerFrom:
-          - resource: DHCPv6Information/wan-info
-            field: sntpServers
+          - resource: IPv6DelegatedAddress/lan-base
+            field: address
         domainSearch:
           - home.internal
         leaseTime: 12h

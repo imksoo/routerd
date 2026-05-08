@@ -261,10 +261,15 @@ spec:
       spec:
         provider: systemd-timesyncd
         managed: true
-        source: static
-        interface: wan
-        servers:
-          - pool.ntp.org
+        source: auto
+        serverFrom:
+          - resource: DHCPv6Information/wan-info
+            field: sntpServers
+          - resource: DHCPv4Lease/wan-v4
+            field: ntpServers
+        fallbackServers:
+          - ntp.jst.mfeed.ad.jp
+          - ntp.nict.jp
 
     - apiVersion: system.routerd.net/v1alpha1
       kind: WebConsole
@@ -902,8 +907,8 @@ spec:
           - resource: IPv6DelegatedAddress/lan-base
             field: address
         sntpServerFrom:
-          - resource: DHCPv6Information/wan-info
-            field: sntpServers
+          - resource: IPv6DelegatedAddress/lan-base
+            field: address
         domainSearch:
           - router02.internal
         leaseTime: 12h

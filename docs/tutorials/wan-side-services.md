@@ -17,6 +17,7 @@ The companion page on the [LAN side](./lan-side-services.md) covers what the rou
 | IPv4 from ISP via DHCP | `DHCPv4Lease` | `routerd-dhcpv4-client` |
 | IPv6 prefix from ISP | `DHCPv6PrefixDelegation`, `IPv6DelegatedAddress` | `routerd-dhcpv6-client` |
 | Other DHCPv6 options (DNS, AFTR, etc.) | `DHCPv6Information` | `routerd-dhcpv6-client` |
+| Upstream time sources | `NTPClient` | `systemd-timesyncd` or `ntpd` |
 | PPPoE session | `PPPoESession` | `routerd-pppoe-client` |
 | IPv4 over IPv6 (DS-Lite) | `DSLiteTunnel` | (kernel `ip6tnl`) |
 | WAN selection | `EgressRoutePolicy`, `HealthCheck` | `routerd-healthcheck@<name>` |
@@ -71,6 +72,30 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
 `DHCPv4Lease` runs `routerd-dhcpv4-client` and writes the lease to `lease.json`. The kernel takes the address; routerd publishes events for downstream resources to react.
 
 `DHCPv6PrefixDelegation` runs `routerd-dhcpv6-client` and obtains an IA_PD. `IPv6DelegatedAddress` carves a `/64` (or other length) for a LAN side.
+
+## Upstream NTP / SNTP
+
+`NTPClient` can derive time servers from DHCPv4 option 42 or DHCPv6 option 31. If the upstream does not provide one, routerd writes the configured public fallback servers to the OS NTP client (`systemd-timesyncd` on Linux / NixOS, `ntpd` on FreeBSD).
+
+```yaml
+- apiVersion: system.routerd.net/v1alpha1
+  kind: NTPClient
+  metadata: {name: system-time}
+  spec:
+    provider: systemd-timesyncd
+    managed: true
+    source: auto
+    serverFrom:
+      - resource: DHCPv4Lease/wan-v4
+        field: ntpServers
+      - resource: DHCPv6Information/wan-info
+        field: sntpServers
+    fallbackServers:
+      - ntp.jst.mfeed.ad.jp
+      - ntp.nict.jp
+```
+
+Use this with the LAN-side `ntpServerFrom` and `sntpServerFrom` fields when the router itself should be the time source advertised to clients.
 
 ## Pattern B: PPPoE for IPv4, DHCPv6-PD for IPv6
 

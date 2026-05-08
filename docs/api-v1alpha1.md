@@ -52,7 +52,7 @@ spec:
 | `NetworkAdoption` | Adjusts OS DHCP clients and systemd-resolved listeners so routerd can own the interface role. |
 | `SystemdUnit` | Generates, installs, and enables systemd units used by routerd. |
 | `Hostname` | Sets the host name. |
-| `NTPClient` | Enables the OS NTP client. |
+| `NTPClient` | Enables the OS NTP client. It can use static servers or derive servers from DHCPv4 / DHCPv6 status with public fallback servers. |
 | `LogSink` | Sends routerd events to syslog or another local sink. |
 | `LogRetention` | Manages retention for events, DNS queries, traffic flows, and firewall logs. |
 | `WebConsole` | Enables the read-only management Web Console. |

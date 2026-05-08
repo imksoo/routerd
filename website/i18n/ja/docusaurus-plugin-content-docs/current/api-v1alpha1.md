@@ -50,7 +50,7 @@ spec:
 | `NetworkAdoption` | OS 標準の DHCP クライアントや systemd-resolved の待ち受けを調整します。DHCPv4 の経路と DNS だけを無効にする設定も扱います。 |
 | `SystemdUnit` | routerd が使う systemd ユニットを生成し、有効化します。 |
 | `Hostname` | ホスト名を設定します。 |
-| `NTPClient` | OS の NTP クライアントを有効にします。 |
+| `NTPClient` | OS の NTP クライアントを有効にします。DHCPv4 / DHCPv6 の状態から時刻サーバーを導出し、空なら public NTP サーバーへ戻せます。 |
 | `LogSink` | routerd のイベントを syslog や外部プログラムへ送ります。 |
 | `LogRetention` | イベント、DNS、通信フロー、ファイアウォールログの保管期間を管理します。 |
 | `WebConsole` | 読み取り専用の Web 画面を管理ネットワークで待ち受けます。 |
@@ -168,7 +168,7 @@ FreeBSD には Linux と同じ socket option がないためです。
 | --- | --- |
 | `Hostname` | ホスト名を管理します。 |
 | `Sysctl` | sysctl 値を管理します。 |
-| `NTPClient` | NTP クライアント設定を管理します。 |
+| `NTPClient` | NTP クライアント設定を管理します。`serverFrom` で `DHCPv4Lease.status.ntpServers` や `DHCPv6Information.status.sntpServers` を参照できます。 |
 | `LogSink` | ログ送信先を表します。 |
 | `WebConsole` | 状態、イベント、IPv4/IPv6 コネクション観測を表示する読み取り専用画面です。 |
 | `NixOSHost` | NixOS 宣言設定の生成に使います。 |

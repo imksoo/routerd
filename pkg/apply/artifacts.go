@@ -91,6 +91,13 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		}
 		return intents
 	case "NTPClient":
+		spec, err := res.NTPClientSpec()
+		if err != nil {
+			return nil
+		}
+		if defaultString(spec.Provider, "systemd-timesyncd") == "ntpd" {
+			return []resource.Intent{artifact("ntp.config", "/usr/local/etc/routerd/ntp.conf", resource.ActionEnsure, "ntpd", nil)}
+		}
 		return []resource.Intent{artifact("systemd.timesyncd.config", "routerd.conf", resource.ActionEnsure, "timesyncd", nil)}
 	case "Interface":
 		spec, err := res.InterfaceSpec()

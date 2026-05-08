@@ -18,6 +18,7 @@ LAN 側 (ルーターから内側に提供するサービス) は [LAN 側サー
 | ISP から DHCP で IPv4 を取得 | `DHCPv4Lease` | `routerd-dhcpv4-client` |
 | ISP から IPv6 prefix を取得 | `DHCPv6PrefixDelegation`、`IPv6DelegatedAddress` | `routerd-dhcpv6-client` |
 | その他の DHCPv6 オプション (DNS、AFTR 等) | `DHCPv6Information` | `routerd-dhcpv6-client` |
+| 上流の時刻サーバー | `NTPClient` | `systemd-timesyncd` または `ntpd` |
 | PPPoE セッション | `PPPoESession` | `routerd-pppoe-client` |
 | IPv6 上の IPv4 (DS-Lite) | `DSLiteTunnel` | (kernel `ip6tnl`) |
 | WAN 経路選択 | `EgressRoutePolicy`、`HealthCheck` | `routerd-healthcheck@<name>` |
@@ -72,6 +73,32 @@ ISP が同一 WAN インターフェースで IPv4 (DHCPv4) と IPv6 prefix (DHC
 `DHCPv4Lease` は `routerd-dhcpv4-client` を起動し、リース内容を `lease.json` に書き込みます。アドレス自体は kernel が保持し、routerd は下流リソース向けにイベントを発行します。
 
 `DHCPv6PrefixDelegation` は `routerd-dhcpv6-client` で IA_PD を取得します。`IPv6DelegatedAddress` がそこから LAN 側に配る `/64` (またはその他の長さ) を切り出します。
+
+## 上流 NTP / SNTP
+
+`NTPClient` は、DHCPv4 option 42 または DHCPv6 option 31 から時刻サーバーを導出できます。
+上流が配布しない場合は、指定した public NTP サーバーを OS の NTP クライアントに設定します。
+Linux / NixOS では `systemd-timesyncd`、FreeBSD では `ntpd` を使います。
+
+```yaml
+- apiVersion: system.routerd.net/v1alpha1
+  kind: NTPClient
+  metadata: {name: system-time}
+  spec:
+    provider: systemd-timesyncd
+    managed: true
+    source: auto
+    serverFrom:
+      - resource: DHCPv4Lease/wan-v4
+        field: ntpServers
+      - resource: DHCPv6Information/wan-info
+        field: sntpServers
+    fallbackServers:
+      - ntp.jst.mfeed.ad.jp
+      - ntp.nict.jp
+```
+
+ルーター自身を LAN クライアントへ時刻参照先として配る場合は、LAN 側の `ntpServerFrom` と `sntpServerFrom` を併用します。
 
 ## パターン B: PPPoE (IPv4) + DHCPv6-PD (IPv6)
 

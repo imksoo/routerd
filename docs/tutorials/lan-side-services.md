@@ -27,6 +27,7 @@ Keeping DHCP next to dnsmasq avoids reimplementing a battle-tested DHCP server. 
 | DHCPv4 reservation | `DHCPv4Reservation` | dnsmasq |
 | DHCPv6 (stateless / stateful) | `DHCPv6Server` | dnsmasq |
 | IPv6 Router Advertisement | `IPv6RouterAdvertisement` | dnsmasq (RA mode) |
+| LAN time server advertisement | `DHCPv4Server`, `DHCPv6Server` | dnsmasq |
 | DNS zone (local authoritative) | `DNSZone` | `routerd-dns-resolver` |
 | DNS resolver listener | `DNSResolver` | `routerd-dns-resolver` |
 | DHCP lease event relay | (built-in) | `routerd-dhcp-event-relay` |
@@ -80,6 +81,8 @@ On FreeBSD, routerd keeps the dnsmasq lease file under `/var/db/routerd/dnsmasq`
 
 For an IPv6 LAN, publish RDNSS in Router Advertisement so Android clients can pick up the resolver (Android does not use DHCPv6 for DNS configuration). For Windows clients you usually also need a DHCPv6 stateless server.
 
+Router Advertisement does not carry a standard NTP server option. Use DHCPv4 option 42 and DHCPv6 option 31 (SNTP) when the router should advertise itself as the LAN time source.
+
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv6RouterAdvertisement
@@ -106,7 +109,10 @@ For an IPv6 LAN, publish RDNSS in Router Advertisement so Android clients can pi
   spec:
     interface: lan
     mode: stateless
-    dnsServersFrom:
+    dnsServerFrom:
+      - resource: IPv6DelegatedAddress/lan-base
+        field: address
+    sntpServerFrom:
       - resource: IPv6DelegatedAddress/lan-base
         field: address
     domainSearch:

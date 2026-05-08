@@ -367,6 +367,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNetworkAdoption}
 	systemdUnits := SystemdUnitController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunSystemdUnit}
 	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
+	ntpClient := NTPClientController{Router: r.Router, Bus: r.Bus, Store: store}
 	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	link := LinkController{Router: r.Router, Store: store, Logger: logger}
 	ipv4Static := IPv4StaticAddressController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
@@ -400,6 +401,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, PeriodicFunc: adoption.Reconcile},
 		framework.FuncController{ControllerName: "systemd-unit", Every: 5 * time.Minute, PeriodicFunc: systemdUnits.Reconcile},
 		framework.FuncController{ControllerName: "log-retention", Every: time.Hour, PeriodicFunc: logRetention.Reconcile},
+		framework.FuncController{ControllerName: "ntp-client", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Lease", "DHCPv6Information"), PeriodicFunc: ntpClient.Reconcile},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-static-address", PeriodicFunc: ipv4Static.Reconcile},
 		framework.FuncController{ControllerName: "dhcpv6-information", Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
