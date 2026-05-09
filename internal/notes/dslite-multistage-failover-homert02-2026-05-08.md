@@ -65,6 +65,12 @@ PPPoE caveat:
 - Final link state: no `ppp-flets` interface and no `pppd` process.
 - Final routing state: default route still uses `ds-lite-a`.
 - The long-term config decision is still open: keep PPPoE declared as a manually enabled test candidate, or remove it from production YAML.
+- After the session was released, a final redial test was run on 2026-05-09.
+- `routerd-pppoe-pppoe-flets.service` created session `19521`.
+- `ppp-flets` came up with `100.64.5.10 peer 202.222.12.149/32`.
+- `curl --interface ppp-flets https://www.google.com/generate_204` returned HTTP 204.
+- `HealthCheck/internet-via-pppoe` returned Healthy while the link was up.
+- After this confirmation, the PPPoE and PPPoE health check units were stopped and disabled again to keep the access-line session slot free.
 
 Parity result:
 
