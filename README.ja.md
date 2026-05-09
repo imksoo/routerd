@@ -2,6 +2,11 @@
 
 [プロジェクトサイトとドキュメント: routerd.net](https://routerd.net/)
 
+Linux amd64 と FreeBSD amd64 のビルド済みアーカイブは
+[GitHub Releases](https://github.com/imksoo/routerd/releases) で公開しています。
+インストールとアップグレードは
+[`docs/install-and-upgrade.md`](docs/install-and-upgrade.md) を参照してください。
+
 routerd は、汎用ホストを見通しのよいルーターとして動かすための、
 プレリリースの宣言的ルーター制御プレーンです。
 
@@ -110,7 +115,48 @@ spec:
     - 10.0.0.0/8
 ```
 
-## ビルド
+## クイックスタート
+
+ルーターホスト上でリリースアーカイブを展開し、同梱のインストーラーを実行します。
+
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.6/routerd-20260509.6-linux-amd64.tar.gz
+tar -xzf routerd-20260509.6-linux-amd64.tar.gz
+sudo ./install.sh
+```
+
+FreeBSD では `routerd-20260509.6-freebsd-amd64.tar.gz` を取得し、同じ
+`./install.sh` を実行します。
+
+`install.sh` は必要な OS パッケージを導入し、実行ファイルを
+`/usr/local/sbin` に配置します。
+また、サービスのテンプレートと `router.yaml.sample` を配置します。
+既存の `/usr/local/etc/routerd/router.yaml` は上書きしません。
+パッケージ一覧は次のコマンドで確認できます。
+
+```sh
+./install.sh --list-deps
+```
+
+設定ファイルを作成し、検証します。
+
+```sh
+sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
+sudo vi /usr/local/etc/routerd/router.yaml
+
+routerd validate --config /usr/local/etc/routerd/router.yaml
+routerd plan --config /usr/local/etc/routerd/router.yaml
+routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
+```
+
+管理経路が残ることを確認してから反映します。
+
+```sh
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+```
+
+## 開発者向けビルド
 
 Go 1.24 以降を前提にします。
 
@@ -121,6 +167,9 @@ make check-schema
 make validate-example
 make website-build
 ```
+
+Makefile は開発用です。
+利用者向けの配置はリリースアーカイブと `install.sh` で行います。
 
 主な生成物:
 
@@ -145,9 +194,9 @@ routerctl events --limit 20
 routerctl connections --limit 50
 ```
 
-## 配置
+## 配置先
 
-ソースインストール時の既定:
+リリースインストーラーの既定:
 
 - 設定: `/usr/local/etc/routerd/router.yaml`
 - バイナリ: `/usr/local/sbin/routerd`, `/usr/local/sbin/routerctl`,

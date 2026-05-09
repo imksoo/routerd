@@ -12,7 +12,10 @@ SQLite, lease files, and `events.jsonl` are state that routerd and its dedicated
 
 ## Where state lives
 
-Linux defaults:
+Release installs use `/usr/local/etc/routerd/router.yaml` for the canonical
+configuration and `/usr/local/sbin` for routerd binaries.
+
+Linux state defaults:
 
 | Kind | Example |
 | --- | --- |
@@ -23,7 +26,9 @@ Linux defaults:
 | HealthCheck state | `/var/lib/routerd/healthcheck/<name>/state.json` |
 | Runtime sockets | `/run/routerd/.../*.sock` |
 
-FreeBSD layouts use `/var/run` and `/var/db` instead.
+FreeBSD uses the same configuration and binary paths under `/usr/local`.
+Its runtime sockets live under `/var/run/routerd`, and persistent state lives
+under `/var/db/routerd`.
 
 ## Ownership
 

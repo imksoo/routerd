@@ -2,7 +2,7 @@
 
 routerd は、長期的な状態と運用ログを分けて保存します。
 
-既定の配置は次のとおりです。
+Linux の既定の配置は次のとおりです。
 
 | ファイル | 目的 | 標準の保管期間 |
 | --- | --- | --- |
@@ -10,6 +10,8 @@ routerd は、長期的な状態と運用ログを分けて保存します。
 | `/var/lib/routerd/dns-queries.db` | `routerd-dns-resolver` の DNS クエリー履歴 | 30 日 |
 | `/var/lib/routerd/traffic-flows.db` | conntrack から作った通信フロー履歴 | 30 日 |
 | `/var/lib/routerd/firewall-logs.db` | accept、drop、reject のファイアウォールログ | 90 日 |
+
+FreeBSD では、同じデータベース名を `/var/db/routerd` 配下に置きます。
 
 ログテーブルの列名は、OpenTelemetry のログ属性へ変換しやすい名前にしています。
 `traffic-flows.db` には、nDPI と TLS SNI 用の列を予約しています。

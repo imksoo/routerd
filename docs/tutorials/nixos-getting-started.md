@@ -6,6 +6,10 @@ title: Getting started on NixOS
 
 NixOS is a first-class secondary platform for routerd. The recommended path on NixOS is to drive routerd-managed services from declarative NixOS configuration rather than from transient systemd units.
 
+Install the routerd binaries from the release archive, but keep OS packages in
+the NixOS configuration. `install.sh` intentionally warns instead of installing
+packages with `nix-env`.
+
 ## Recommended starting scope
 
 On NixOS, start by managing the daemon-based WAN services through the declarative path. DHCPv6-PD, DHCPv4 client leases, PPPoE sessions, HealthCheck, dnsmasq, firewall logging, nftables activation, and the main `routerd.service` can now be represented in the generated NixOS module. Add more router resources after the base service set reaches a clean `nixos-rebuild test`.

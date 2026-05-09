@@ -5,87 +5,56 @@ sidebar_position: 1
 
 # インストール
 
-このページでは Ubuntu Server に routerd をソースからインストールする手順を示します。
-NixOS と FreeBSD は secondary プラットフォームとして対応していますが、最初の評価には Ubuntu の lab VM が一番スムーズです。
+routerd はリリースアーカイブから導入します。
+ルーターホストに Go や Makefile は不要です。
 
-## Ubuntu の依存パッケージ
-
-最初に runtime と diagnostics のパッケージを入れます。
-(同じ内容を `Package` リソースとして宣言しておけば、起動時に不足を検出させることもできます。)
-
-```bash
-sudo apt-get update
-sudo apt-get install -y \
-  dnsmasq-base nftables conntrack iproute2 \
-  iputils-ping iputils-tracepath dnsutils tcpdump traceroute \
-  procps ppp wireguard-tools strongswan-swanctl radvd \
-  systemd net-tools kmod
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.6/routerd-20260509.6-linux-amd64.tar.gz
+tar -xzf routerd-20260509.6-linux-amd64.tar.gz
+sudo ./install.sh
 ```
 
-各パッケージの用途：
+FreeBSD では `routerd-20260509.6-freebsd-amd64.tar.gz` を取得し、同じ
+`./install.sh` を実行します。
 
-| パッケージ | 用途 |
-| --- | --- |
-| `dnsmasq-base` | DHCPv4、DHCPv6、RA |
-| `nftables` | NAT、route mark、stateful filter |
-| `conntrack` | 実時間 IPv4/IPv6 コネクション観測 |
-| `iproute2` | アドレス、経路、DS-Lite、VRF、VXLAN、WireGuard デバイス |
-| `ppp` | PPPoE (`pppd` + `rp-pppoe.so`) |
-| `wireguard-tools` | `wg setconf` と状態確認 |
-| `strongswan-swanctl` | クラウド VPN 向け IPsec |
-| `radvd` | 任意の radvd RA path (既定は dnsmasq) |
-| `dnsutils` / `iputils-*` / `tcpdump` / `traceroute` | 検証と障害調査 |
-| `procps` / `systemd` / `net-tools` / `kmod` | sysctl、サービス管理、kernel module 確認 |
+インストーラーは次を行います。
 
-## ビルド
+- 対応するパッケージマネージャーで実行時パッケージを導入します。
+- 実行ファイルを `/usr/local/sbin` に配置します。
+- systemd または rc.d のサービステンプレートを配置します。
+- `/usr/local/etc/routerd/router.yaml.sample` を作成します。
+- 既存の `/usr/local/etc/routerd/router.yaml` は保持します。
+- `/var/lib/routerd` または `/var/db/routerd` の状態は保持します。
+- 制御ソケットがある場合は `routerctl status` を実行します。
 
-```bash
-make build
+よく使うオプション:
+
+```sh
+./install.sh --list-deps
+sudo ./install.sh --no-install-deps
+sudo ./install.sh --deps-only
+sudo ./install.sh --with-tailscale
+sudo ./install.sh --dry-run
 ```
 
-主なバイナリ：
+インストール後、設定ファイルを作成して検証します。
 
-- `routerd`
-- `routerctl`
-- `routerd-dhcpv6-client`
-- `routerd-dhcpv4-client`
-- `routerd-pppoe-client`
-- `routerd-healthcheck`
+```sh
+sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
+sudo vi /usr/local/etc/routerd/router.yaml
 
-## インストール先
-
-標準配置は `/usr/local` 配下です。
-
-| 種類 | パス |
-| --- | --- |
-| 設定 | `/usr/local/etc/routerd/router.yaml` |
-| 実行ファイル | `/usr/local/sbin` |
-| プラグイン | `/usr/local/libexec/routerd/plugins` |
-| 実行時 socket | `/run/routerd` |
-| 永続状態 | `/var/lib/routerd` |
-
-## 最初の確認
-
-ビルド後、スキーマと付属 example を確認します：
-
-```bash
-make check-schema
-make validate-example
-make dry-run-example
-```
-
-本番ルーターへ apply する前に、対象設定で必ず dry-run apply を行ってください：
-
-```bash
 routerd validate --config /usr/local/etc/routerd/router.yaml
-routerd plan     --config /usr/local/etc/routerd/router.yaml
-routerd apply    --config /usr/local/etc/routerd/router.yaml --once --dry-run
+routerd plan --config /usr/local/etc/routerd/router.yaml
+routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
 ```
 
-## systemd で動かす
+管理経路が残ることを確認してから反映します。
 
-本体は `routerd serve` として常駐します。
-DHCPv6-PD、DHCPv4、PPPoE、healthcheck は routerd が管理する別プロセスです。
+```sh
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+```
 
-初回投入時は、自動起動を有効にする前に管理 SSH 経路が生きていることを確認してください。
-WAN 側を変更する前に、コンソール (シリアルやハイパーバイザー) を必ず確保してください。
+OS 別のパッケージ一覧、アップグレード、アンインストール、開発者向け
+リリース手順は [インストールとアップグレード](../install-and-upgrade.md) を
+参照してください。

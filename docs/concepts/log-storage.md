@@ -2,7 +2,7 @@
 
 routerd keeps long-lived state separate from operational logs.
 
-The default layout is:
+The Linux default layout is:
 
 | File | Purpose | Typical retention |
 | --- | --- | --- |
@@ -10,6 +10,8 @@ The default layout is:
 | `/var/lib/routerd/dns-queries.db` | DNS query rows from `routerd-dns-resolver` | 30 days |
 | `/var/lib/routerd/traffic-flows.db` | conntrack-derived traffic flows | 30 days |
 | `/var/lib/routerd/firewall-logs.db` | firewall accept/drop/reject rows | 90 days |
+
+FreeBSD keeps the same database names under `/var/db/routerd`.
 
 The log tables use column names that can be mapped to OpenTelemetry log
 attributes. nDPI and TLS SNI columns are reserved in `traffic-flows.db`, even

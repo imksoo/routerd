@@ -9,17 +9,17 @@ const copy = {
   en: {
     title: 'Declarative router control for real hosts',
     description:
-      'routerd turns typed YAML resources into a working, observable router on a Linux host.',
+      'routerd turns typed YAML resources into a working, observable router on Linux, NixOS, and FreeBSD hosts.',
     eyebrow: 'Open router control plane',
     headline: 'Make a host router readable again.',
     subtitle:
       'routerd describes WAN acquisition, LAN services, DNS, NAT, route policy, system bootstrap, and observability as typed resources. It is built for small networks where the router must be explicit, repeatable, and inspectable.',
-    tutorial: 'Start the tutorial',
+    tutorial: 'Install routerd',
     resources: 'Browse resources',
     config: 'WAN-side services',
-    quickstartTitle: 'Validate, Plan, Apply',
+    quickstartTitle: 'Install, Validate, Apply',
     quickstartBody:
-      'Start with a normal YAML file. Validate it, inspect the plan, run a dry application, then let the daemon keep the host converged.',
+      'Start from the release archive. The installer brings in runtime packages, installs binaries and service templates, then you validate the YAML before changing the host.',
     pillars: [
       {
         title: 'One Router Intent',
@@ -49,17 +49,17 @@ const copy = {
   ja: {
     title: '実ホスト向け宣言的ルーター制御',
     description:
-      'routerd は型付き YAML リソースを、動作し観測できる Linux ルーターへ反映します。',
+      'routerd は型付き YAML リソースを、動作し観測できる Linux、NixOS、FreeBSD ルーターへ反映します。',
     eyebrow: 'オープンなルーター制御プレーン',
     headline: 'ホストルーターを、もう一度読める形に。',
     subtitle:
       'routerd は WAN 取得、LAN サービス、DNS、NAT、経路ポリシー、OS 準備、観測性を型付きリソースとして記述します。小規模ネットワークを明示的に、再現しやすく、確認しやすく運用するためのソフトウェアです。',
-    tutorial: 'チュートリアルを始める',
+    tutorial: 'routerd を導入する',
     resources: 'リソースを見る',
     config: 'WAN 側サービスを見る',
-    quickstartTitle: '検証、計画、適用',
+    quickstartTitle: '導入、検証、適用',
     quickstartBody:
-      '普通の YAML ファイルから始めます。検証し、計画を確認し、予行実行してから、デーモンでホストを望ましい状態に保ちます。',
+      'リリースアーカイブから始めます。インストーラーが実行時パッケージ、実行ファイル、サービステンプレートを配置します。その後、YAML を検証してからホストを変更します。',
     pillars: [
       {
         title: '1 つのルーター意図',
@@ -99,7 +99,7 @@ function HomepageHeader({siteCopy}: {siteCopy: typeof copy.en}) {
         <p className={styles.heroHeadline}>{siteCopy.headline}</p>
         <p className="heroSubtitle">{siteCopy.subtitle}</p>
         <div className="heroActions">
-          <Link className="button button--secondary button--lg" to="/docs/tutorials/getting-started">
+          <Link className="button button--secondary button--lg" to="/docs/install-and-upgrade">
             {siteCopy.tutorial}
           </Link>
           <Link className="button button--outline button--secondary button--lg" to="/docs/reference/api-v1alpha1">
@@ -149,7 +149,11 @@ export default function Home(): JSX.Element {
           <div className="container">
             <Heading as="h2">{siteCopy.quickstartTitle}</Heading>
             <p>{siteCopy.quickstartBody}</p>
-            <pre className="terminal"><code>{`routerd validate --config /usr/local/etc/routerd/router.yaml
+            <pre className="terminal"><code>{`curl -LO https://github.com/imksoo/routerd/releases/download/20260509.6/routerd-20260509.6-linux-amd64.tar.gz
+tar -xzf routerd-20260509.6-linux-amd64.tar.gz
+sudo ./install.sh
+sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
+routerd validate --config /usr/local/etc/routerd/router.yaml
 routerd plan --config /usr/local/etc/routerd/router.yaml
 routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
 routerd serve --config /usr/local/etc/routerd/router.yaml`}</code></pre>

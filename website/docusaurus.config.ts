@@ -73,6 +73,7 @@ const config: Config = {
           position: 'left',
           items: [
             {to: '/docs/', label: 'Overview'},
+            {to: '/docs/install-and-upgrade', label: 'Install'},
             {to: '/docs/concepts/what-is-routerd', label: 'Concepts'},
             {to: '/docs/tutorials/getting-started', label: 'Tutorials'},
             {to: '/docs/how-to/multi-wan', label: 'How-to'},
@@ -100,6 +101,7 @@ const config: Config = {
         {
           title: 'Docs',
           items: [
+            {label: 'Install and Upgrade', to: '/docs/install-and-upgrade'},
             {label: 'Getting Started', to: '/docs/tutorials/getting-started'},
             {label: 'Resource API', to: '/docs/reference/api-v1alpha1'},
             {label: 'Plugin Protocol', to: '/docs/reference/plugin-protocol'},

@@ -9,47 +9,30 @@ artifacts are FreeBSD-native. routerd renders `rc.conf.d`, `rc.d` scripts,
 `pf.conf`, `dhclient.conf`, dnsmasq configuration, `mpd5.conf`, and dynamic
 `ifconfig gif` operations for DS-Lite.
 
-This tutorial assumes FreeBSD 14.x and a source install under `/usr/local`.
+This tutorial assumes FreeBSD 14.x and a release install under `/usr/local`.
 Use `examples/freebsd-edge.yaml` as the reference configuration.
 
-## 1. Build on a development host
+## 1. Install from a release archive
 
-The usual path is to build routerd on your development machine and copy the
-binaries to the FreeBSD router. This keeps the router small and avoids needing a
-full Go build environment on the edge host.
-
-```bash
-make build
-```
-
-Copy the binaries:
-
-```bash
-scp bin/routerd bin/routerctl bin/routerd-* admin@freebsd-router:/tmp/
-```
-
-Install them on the router:
+Download the FreeBSD archive from the
+[GitHub Releases page](https://github.com/imksoo/routerd/releases), then run
+the bundled installer on the router.
 
 ```sh
-sudo install -d -m 0755 /usr/local/sbin
-sudo install -m 0755 /tmp/routerd /usr/local/sbin/routerd
-sudo install -m 0755 /tmp/routerctl /usr/local/sbin/routerctl
-sudo install -m 0755 /tmp/routerd-* /usr/local/sbin/
+fetch https://github.com/imksoo/routerd/releases/download/20260509.6/routerd-20260509.6-freebsd-amd64.tar.gz
+tar -xzf routerd-20260509.6-freebsd-amd64.tar.gz
+sudo ./install.sh
 ```
 
-## 2. Install FreeBSD packages
-
-Declare the packages in YAML through `Package`. For first bootstrap, install
-the same set manually or review the generated `install-packages.sh`.
-
-```sh
-sudo pkg install -y dnsmasq bind-tools wireguard-tools tailscale strongswan mpd5
-```
+`install.sh` installs the FreeBSD packages routerd normally needs:
+`dnsmasq`, `wireguard-tools`, `mpd5`, `bind-tools`, `tcpdump`, and `jq`.
+Tailscale is optional; include it with `sudo ./install.sh --with-tailscale`.
 
 The FreeBSD base system already provides `ifconfig`, `sysctl`, `service`,
 `sysrc`, `pfctl`, `pflog0`, `netstat`, `sockstat`, `ping`, and `traceroute`.
+Use `./install.sh --list-deps` to inspect the package and command list.
 
-## 3. Place the router configuration
+## 2. Place the router configuration
 
 ```sh
 sudo install -d -m 0755 /usr/local/etc/routerd
@@ -59,7 +42,7 @@ sudo install -m 0600 examples/freebsd-edge.yaml /usr/local/etc/routerd/router.ya
 Edit interface names, addresses, and secrets before applying. Keep management
 SSH on a separate interface or use a hypervisor console during the first run.
 
-## 4. Validate and review generated files
+## 3. Validate and review generated files
 
 Validate the configuration:
 
@@ -94,7 +77,7 @@ less /tmp/routerd-freebsd-render/pf.conf
 less /tmp/routerd-freebsd-render/dnsmasq.conf
 ```
 
-## 5. Understand the FreeBSD host surfaces
+## 4. Understand the FreeBSD host surfaces
 
 routerd maps resources to these FreeBSD components:
 
@@ -109,7 +92,7 @@ routerd maps resources to these FreeBSD components:
 | `mpd5.conf` | PPPoE bundle, link, authentication, MTU/MRU, and default-route behavior |
 | `ifconfig gif` | Dynamic DS-Lite tunnel application when static `rc.conf` is not enough |
 
-## 6. Apply
+## 5. Apply
 
 Run a plan first:
 
@@ -126,7 +109,7 @@ sudo routerd apply --config /usr/local/etc/routerd/router.yaml
 routerd validates `pf.conf` with `pfctl -nf` before loading it. It validates
 dnsmasq with `dnsmasq --test` before restarting the service.
 
-## 7. Inspect status and logs
+## 6. Inspect status and logs
 
 Read routerd status:
 

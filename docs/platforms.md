@@ -8,7 +8,9 @@ routerd is designed to be cross-OS, but each platform uses a different host inte
 
 ## Linux (Ubuntu / Debian)
 
-Linux is the primary platform. Source installs land under `/usr/local` by default.
+Linux is the primary platform. Release installs land under `/usr/local` by default.
+Install from the Linux release archive and run `sudo ./install.sh`.
+The installer can install runtime packages with `apt-get`, `dnf`, or `pacman`.
 
 routerd uses the following OS surfaces on Linux:
 
@@ -21,7 +23,10 @@ routerd uses the following OS surfaces on Linux:
 - pppd / rp-pppoe for PPPoE
 - WireGuard, Tailscale, strongSwan, radvd
 
-Even on Ubuntu, routerd does not assume packages are pre-installed. Declare dependencies with the `Package` resource. The reference list:
+Even on Ubuntu, routerd does not assume packages are pre-installed.
+For first bootstrap, `install.sh` installs a practical default set.
+For ongoing declarative management, declare dependencies with the `Package` resource.
+The reference list:
 
 | Category | Packages |
 | --- | --- |
@@ -61,7 +66,10 @@ Implemented:
 - WireGuard, Tailscale, VXLAN, and native systemd-networkd VRF generation
 - Linux runtime resources that are not native NixOS network declarations are reconciled by `routerd.service` after NixOS activation
 
-On NixOS, populate `systemd.services.routerd.path` with the commands routerd needs. When `Package` resources have `os: nixos`, routerd does **not** install packages imperatively at runtime. It writes them to `environment.systemPackages` in `/etc/nixos/routerd-generated.nix`, then lets `nixos-rebuild` activate the system profile.
+On NixOS, populate `systemd.services.routerd.path` with the commands routerd needs.
+`install.sh` warns instead of calling `nix-env`, because NixOS package state should remain declarative.
+When `Package` resources have `os: nixos`, routerd does **not** install packages imperatively at runtime.
+It writes them to `environment.systemPackages` in `/etc/nixos/routerd-generated.nix`, then lets `nixos-rebuild` activate the system profile.
 
 | Category | Packages |
 | --- | --- |
@@ -75,6 +83,8 @@ FreeBSD uses the same routerd resource model as Ubuntu, mapped onto FreeBSD
 host mechanisms. The DHCPv6-PD client runs under `daemon(8)` and reliably keeps
 a lease bound. routerd maps resources to FreeBSD-native `rc.conf`, `rc.d`,
 `pf`, `mpd5`, `ifconfig`, and dnsmasq surfaces instead of using Linux tools.
+Install from the FreeBSD release archive and run `sudo ./install.sh`.
+The installer uses `pkg` for ports packages and leaves base-system tools alone.
 
 Implemented:
 

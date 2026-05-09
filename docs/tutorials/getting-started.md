@@ -13,6 +13,8 @@ This tutorial shows the safest first loop:
 5. only then run the daemon
 
 The first pass should not change the host network.
+Install routerd first with the release archive and `install.sh`.
+See [Install and upgrade](../install-and-upgrade.md) for the OS-specific steps.
 
 ## 1. Check interface names
 

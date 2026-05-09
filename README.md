@@ -4,7 +4,9 @@
 
 Prebuilt release archives for Linux amd64 and FreeBSD amd64 are published on
 the [GitHub Releases page](https://github.com/imksoo/routerd/releases).
-The release procedure is documented in
+Installation and upgrade are documented in
+[`docs/install-and-upgrade.md`](docs/install-and-upgrade.md).
+Release automation for maintainers is documented in
 [`docs/operations/release-process.md`](docs/operations/release-process.md).
 
 routerd is a pre-release declarative router control plane for people who want a
@@ -119,7 +121,44 @@ spec:
     - 10.0.0.0/8
 ```
 
-## Build
+## Quick Start
+
+Install from a release archive on the router host:
+
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.6/routerd-20260509.6-linux-amd64.tar.gz
+tar -xzf routerd-20260509.6-linux-amd64.tar.gz
+sudo ./install.sh
+```
+
+For FreeBSD, download `routerd-20260509.6-freebsd-amd64.tar.gz` and run the
+same `./install.sh`.
+
+`install.sh` installs known OS packages, copies binaries to `/usr/local/sbin`,
+installs the service template, writes `router.yaml.sample`, and preserves an
+existing `/usr/local/etc/routerd/router.yaml`.
+Use `./install.sh --list-deps` to inspect the package list.
+Use `sudo ./install.sh --no-install-deps` when packages are managed elsewhere.
+
+Then create and validate the configuration:
+
+```sh
+sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
+sudo vi /usr/local/etc/routerd/router.yaml
+
+routerd validate --config /usr/local/etc/routerd/router.yaml
+routerd plan --config /usr/local/etc/routerd/router.yaml
+routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
+```
+
+Apply only after confirming that the management path is safe:
+
+```sh
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+```
+
+## Developer Build
 
 Go 1.24 or newer is expected.
 
@@ -130,6 +169,9 @@ make check-schema
 make validate-example
 make website-build
 ```
+
+The Makefile is for development tasks.
+End-user installation goes through the release archive and `install.sh`.
 
 Important binaries built by `make build` include:
 
@@ -156,7 +198,7 @@ routerctl connections --limit 50
 
 ## Runtime Layout
 
-Default source-install paths:
+Default release-install paths:
 
 - Config: `/usr/local/etc/routerd/router.yaml`
 - Binaries: `/usr/local/sbin/routerd`, `/usr/local/sbin/routerctl`,
