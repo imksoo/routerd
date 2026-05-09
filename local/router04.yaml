@@ -1022,10 +1022,80 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: NAT44Rule
       metadata:
-        name: lan-to-dslite
+        name: lan-to-dslite-a
       spec:
         type: masquerade
-        egressPolicyRef: ipv4-default
+        egressInterface: ds-lite-a
+        sourceRanges:
+          - 192.168.160.0/24
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-dslite-b
+      spec:
+        type: masquerade
+        egressInterface: ds-lite-b
+        sourceRanges:
+          - 192.168.160.0/24
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-dslite-c
+      spec:
+        type: masquerade
+        egressInterface: ds-lite-c
+        sourceRanges:
+          - 192.168.160.0/24
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-dslite-ra
+      spec:
+        type: masquerade
+        egressInterface: ds-lite-ra
+        sourceRanges:
+          - 192.168.160.0/24
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-pppoe-flets
+      spec:
+        type: masquerade
+        egressInterface: pppoe-flets
+        sourceRanges:
+          - 192.168.160.0/24
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-hgw-direct
+      spec:
+        type: masquerade
+        egressInterface: wan
         sourceRanges:
           - 192.168.160.0/24
         excludeDestinationCIDRs:

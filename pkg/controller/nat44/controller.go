@@ -348,6 +348,11 @@ func interfaceAliases(router *api.Router) map[string]string {
 			if err == nil {
 				aliases[resource.Metadata.Name] = firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
 			}
+		case "PPPoEInterface":
+			spec, err := resource.PPPoEInterfaceSpec()
+			if err == nil {
+				aliases[resource.Metadata.Name] = firstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
+			}
 		case "WireGuardInterface", "VRF", "VXLANTunnel", "Bridge":
 			aliases[resource.Metadata.Name] = resource.Metadata.Name
 		}

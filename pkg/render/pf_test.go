@@ -214,6 +214,46 @@ func TestPFNAT44RulesRenderResolvedMasquerade(t *testing.T) {
 	}
 }
 
+func TestPFNAT44RulesRenderPerInterfaceMasquerade(t *testing.T) {
+	data, err := PFNAT44Rules([]NAT44RenderRule{
+		{
+			Name:                    "lan-to-dslite-a",
+			Type:                    "masquerade",
+			EgressInterface:         "gif41",
+			SourceRanges:            []string{"192.168.160.0/24"},
+			ExcludeDestinationCIDRs: []string{"192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8"},
+		},
+		{
+			Name:                    "lan-to-dslite-b",
+			Type:                    "masquerade",
+			EgressInterface:         "gif42",
+			SourceRanges:            []string{"192.168.160.0/24"},
+			ExcludeDestinationCIDRs: []string{"192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8"},
+		},
+		{
+			Name:                    "lan-to-hgw-direct",
+			Type:                    "masquerade",
+			EgressInterface:         "vtnet0",
+			SourceRanges:            []string{"192.168.160.0/24"},
+			ExcludeDestinationCIDRs: []string{"192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("render pf NAT44 rules: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`no nat on gif41 from 192.168.160.0/24 to { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }`,
+		`nat on gif41 from 192.168.160.0/24 to any -> (gif41)`,
+		`nat on gif42 from 192.168.160.0/24 to any -> (gif42)`,
+		`nat on vtnet0 from 192.168.160.0/24 to any -> (vtnet0)`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("pf NAT44 output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestPfRendersTCPMSSClamp(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

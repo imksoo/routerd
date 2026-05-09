@@ -92,3 +92,31 @@ func TestControllerResolvesSNATAddressFromStaticAddress(t *testing.T) {
 		t.Fatalf("status = %#v", status)
 	}
 }
+
+func TestControllerResolvesPPPoEEgressInterface(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp-flets", Username: "open@open.ad.jp"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-pppoe"}, Spec: api.NAT44RuleSpec{
+			Type:            "masquerade",
+			EgressInterface: "pppoe-flets",
+			SourceRanges:    []string{"192.168.160.0/24"},
+		}},
+	}}}
+	store := &testStore{}
+	path := filepath.Join(t.TempDir(), "nat44.nft")
+	controller := Controller{Router: router, Bus: bus.New(), Store: store, DryRun: true, NftablesPath: path, NftCommand: "true"}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ruleset: %v", err)
+	}
+	if !strings.Contains(string(data), `oifname "ppp-flets" ip saddr 192.168.160.0/24 masquerade`) {
+		t.Fatalf("ruleset missing PPPoE masquerade:\n%s", string(data))
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "NAT44Rule", "lan-to-pppoe")
+	if status["activeEgressInterface"] != "ppp-flets" {
+		t.Fatalf("status = %#v", status)
+	}
+}

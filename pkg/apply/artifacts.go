@@ -270,8 +270,14 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 	case "IPv4DefaultRoutePolicy":
 		return ipv4DefaultRoutePolicyArtifacts(res, aliases)
 	case "IPv4SourceNAT":
+		if _, features := platform.Current(); features.HasPF {
+			return []resource.Intent{artifact("pf.anchor", "routerd_nat", resource.ActionEnsure, "pfctl", nil)}
+		}
 		return []resource.Intent{artifact("nft.table", "routerd_nat", resource.ActionEnsure, "nft", nil)}
 	case "NAT44Rule":
+		if _, features := platform.Current(); features.HasPF {
+			return []resource.Intent{artifact("pf.anchor", "routerd_nat", resource.ActionEnsure, "pfctl", nil)}
+		}
 		return []resource.Intent{artifact("nft.table", "routerd_nat", resource.ActionEnsure, "nft", nil)}
 	case "IPv4PolicyRoute":
 		return ipv4PolicyRouteArtifacts(res, aliases)
