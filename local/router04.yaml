@@ -11,6 +11,23 @@ spec:
       - mgmt
 
   resources:
+    - apiVersion: observability.routerd.net/v1alpha1
+      kind: Telemetry
+      metadata:
+        name: otlp
+      spec:
+        otlp:
+          endpoint: http://192.168.123.119:4317
+          insecure: true
+        serviceNamespace: routerd
+        attributes:
+          deployment.environment: lab
+          routerd.node: router04
+        signals:
+          - logs
+          - metrics
+          - traces
+
     - apiVersion: system.routerd.net/v1alpha1
       kind: Package
       metadata:

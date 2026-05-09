@@ -1006,6 +1006,17 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			}
 		}
 
+		var systemdUnitChangedFiles []string
+		if !opts.SkipServiceManager {
+			if err := recordStageError("systemd-units", func() error {
+				var err error
+				systemdUnitChangedFiles, err = applySystemdUnitResources(effectiveRouter)
+				return err
+			}()); err != nil {
+				return nil, err
+			}
+		}
+
 		var networkChangedFiles []string
 		if err := recordStageError("network", func() error {
 			if isNixOSHost() {
@@ -1194,6 +1205,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			result.Warnings = append(result.Warnings, "skipped ledger orphan cleanup and ownership recording because apply completed with stage errors")
 		}
 		changedFiles := append(nixOSChangedFiles, networkChangedFiles...)
+		changedFiles = append(changedFiles, systemdUnitChangedFiles...)
 		changedFiles = append(changedFiles, dnsmasqChangedFiles...)
 		changedFiles = append(changedFiles, nftablesChangedFiles...)
 		changedFiles = append(changedFiles, pppoeChangedFiles...)
@@ -6540,6 +6552,130 @@ func applyTimesyncdConfig(path string, configData []byte) ([]string, error) {
 		}
 	}
 	return nil, nil
+}
+
+func applySystemdUnitResources(router *api.Router) ([]string, error) {
+	if !platformFeatures.HasSystemd || isNixOSHost() {
+		return nil, nil
+	}
+	telemetryEnv, err := render.TelemetryEnvironment(router)
+	if err != nil {
+		return nil, err
+	}
+	var changedFiles []string
+	var changedUnits []string
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "SystemdUnit" {
+			continue
+		}
+		spec, err := res.SystemdUnitSpec()
+		if err != nil {
+			return nil, err
+		}
+		unitName := firstNonEmptyString(spec.UnitName, res.Metadata.Name)
+		if unitName == "" {
+			return nil, fmt.Errorf("%s has empty unit name", res.ID())
+		}
+		path := filepath.Join(platformDefaults.SystemdSystemDir, unitName)
+		if spec.State == "absent" {
+			_ = runLogged("systemctl", "disable", "--now", unitName)
+			if err := os.Remove(path); err == nil {
+				changedFiles = append(changedFiles, path)
+				changedUnits = append(changedUnits, unitName)
+			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("remove systemd unit %s: %w", path, err)
+			}
+			continue
+		}
+		spec.Environment = mergeEnvironmentEntries(spec.Environment, telemetryEnv)
+		data := render.SystemdUnit(res.Metadata.Name, spec)
+		if err := os.MkdirAll(filepathDir(path), 0755); err != nil {
+			return nil, fmt.Errorf("create directory for %s: %w", path, err)
+		}
+		changed, err := writeFileIfChanged(path, data, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("write systemd unit %s: %w", path, err)
+		}
+		if changed {
+			changedFiles = append(changedFiles, path)
+			changedUnits = append(changedUnits, unitName)
+		}
+	}
+	if len(changedUnits) > 0 {
+		if err := runLogged("systemctl", "daemon-reload"); err != nil {
+			return nil, err
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "SystemdUnit" {
+			continue
+		}
+		spec, err := res.SystemdUnitSpec()
+		if err != nil {
+			return nil, err
+		}
+		unitName := firstNonEmptyString(spec.UnitName, res.Metadata.Name)
+		if spec.State == "absent" {
+			continue
+		}
+		if api.BoolDefault(spec.Enabled, true) {
+			if err := runLogged("systemctl", "enable", unitName); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := runLogged("systemctl", "disable", unitName); err != nil {
+				return nil, err
+			}
+		}
+		if api.BoolDefault(spec.Started, true) {
+			if containsString(changedUnits, unitName) {
+				if err := runLogged("systemctl", "restart", unitName); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if err := runLogged("systemctl", "is-active", "--quiet", unitName); err != nil {
+				if err := runLogged("systemctl", "start", unitName); err != nil {
+					return nil, err
+				}
+			}
+		} else {
+			if err := runLogged("systemctl", "stop", unitName); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return changedFiles, nil
+}
+
+func mergeEnvironmentEntries(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	out := make([]string, 0, len(base)+len(extra))
+	seen := map[string]int{}
+	for _, value := range base {
+		key := environmentEntryKey(value)
+		seen[key] = len(out)
+		out = append(out, value)
+	}
+	for _, value := range extra {
+		key := environmentEntryKey(value)
+		if idx, ok := seen[key]; ok {
+			out[idx] = value
+			continue
+		}
+		seen[key] = len(out)
+		out = append(out, value)
+	}
+	return out
+}
+
+func environmentEntryKey(value string) string {
+	if idx := strings.IndexByte(value, '='); idx > 0 {
+		return value[:idx]
+	}
+	return value
 }
 
 func applyPPPoEConfig(router *api.Router) ([]string, error) {
