@@ -5,7 +5,31 @@ title: Changelog
 # Changelog
 
 routerd のリリース履歴です。形式は [Keep a Changelog](https://keepachangelog.com/) に準拠します。
-ソフトウェアは v1alpha1 段階のため、`0.x` の minor バージョン間でも破壊的変更を含みます。
+routerd は `20260509` から `yyyymmdd` 形式の日付ベース版番号を使います。
+ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
+
+## 20260509
+
+### Added
+
+- `EgressRoutePolicy` で、DS-Lite 主経路、RA 由来 DS-Lite、PPPoE、WAN 直結の多段フォールバックを表現できるようにしました。
+- 宣言的な `Telemetry` リソースと OTLP 環境変数の伝播により、ルーター群へ OpenTelemetry 設定を展開しました。
+- DS-Lite の例は、RFC 6333 の B4-AFTR link prefix `192.0.0.0/29` を tunnel 内側 IPv4 送信元として使う形にしました。
+- `PPPoEInterface.disabled` と無効化された経路候補により、PPPoE フォールバック定義を YAML に残しつつ、本番 PPPoE セッションの漏れを防げるようにしました。
+
+### Changed
+
+- リリース版番号を `0.x.y` から `20260509` のような日付文字列へ変更しました。
+- Linux nftables と FreeBSD pf の NAT44 生成を、インターフェース単位のルールへ寄せました。
+- 3-role firewall モデルを Linux と FreeBSD で確認し、service hole を広い zone 全体ではなく、所有する受信インターフェースへ束縛しました。
+- FreeBSD pf で `PathMTUPolicy` の TCP MSS clamp を生成できるようにし、Linux nftables とそろえました。
+- dnsmasq の RA 生成で、IPv6 RA MTU option により path MTU を配布できるようにしました。
+
+### Fixed
+
+- FreeBSD pf で DHCPv6、WireGuard、VXLAN の service hole が `wan` zone の全インターフェースへ広がる問題を修正しました。
+- FreeBSD の NAT artifact を nftables ではなく `pf.anchor/routerd_nat` として報告するようにしました。
+- NAT 生成の前に、PPPoE のリソース名を実 OS インターフェース名へ解決するようにしました。
 
 ## 0.4.0
 

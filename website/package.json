@@ -1,6 +1,6 @@
 {
   "name": "routerd-website",
-  "version": "0.4.0",
+  "version": "20260509",
   "private": true,
   "scripts": {
     "build": "docusaurus build",

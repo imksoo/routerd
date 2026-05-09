@@ -65,6 +65,8 @@ routerd 设计为 cross-OS：同一份 binary 与配置可对应多种 OS。
 OS 差异由 `pkg/platform` 层吸收。
 nftables ↔ pf、systemd-networkd ↔ rc.conf、systemd unit ↔ rc.d 之类的对应，由各 OS 的渲染器负责。
 
+版本策略：routerd 从 `20260509` 开始使用 `yyyymmdd` 格式的日期型版本号。旧的 `0.x.y` 预发布编号停止使用。
+
 ---
 
 ## 3. 整体架构图

@@ -1,5 +1,5 @@
 PREFIX ?= /usr/local
-VERSION ?= 0.4.0
+VERSION ?= 20260509
 BINDIR ?= $(PREFIX)/sbin
 SYSCONFDIR ?= $(PREFIX)/etc/routerd
 PLUGINDIR ?= $(PREFIX)/libexec/routerd/plugins

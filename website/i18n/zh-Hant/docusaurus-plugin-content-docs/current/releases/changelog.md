@@ -5,7 +5,30 @@ title: 變更記錄
 # 變更記錄
 
 routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog.com/)。
-本軟體仍在 v1alpha1 階段，`0.x` 之間的小版號變更也可能含有破壞性異動。
+routerd 自 `20260509` 起使用 `yyyymmdd` 格式的日期型版號。
+本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
+
+## 20260509
+
+### 新增
+
+- `EgressRoutePolicy` 現在可以表達 DS-Lite 主路徑、RA 來源 DS-Lite、PPPoE 與 WAN 直連的多階段備援。
+- 透過宣告式 `Telemetry` 資源與 OTLP 環境變數傳遞，將 OpenTelemetry 設定擴展到路由器群。
+- DS-Lite 範例改用 RFC 6333 的 B4-AFTR link prefix `192.0.0.0/29` 作為隧道內側 IPv4 來源位址。
+- `PPPoEInterface.disabled` 與停用的路徑候選允許在 YAML 中保留 PPPoE 備援定義，同時避免正式環境 PPPoE session 外洩。
+
+### 異動
+
+- 版號從 `0.x.y` 改為 `20260509` 這類日期字串。
+- Linux nftables 與 FreeBSD pf 的 NAT44 產生方式收斂為按介面產生規則。
+- 已在 Linux 與 FreeBSD 驗證 3-role firewall；service hole 會綁定到擁有它的接收入介面。
+- FreeBSD pf 支援為 `PathMTUPolicy` 產生 TCP MSS clamp；dnsmasq RA 也會發布 MTU option。
+
+### 修正
+
+- FreeBSD pf 不再將 DHCPv6、WireGuard、VXLAN 的 service hole 擴展到 `wan` zone 的所有介面。
+- FreeBSD NAT artifact 現在回報為 `pf.anchor/routerd_nat`。
+- NAT 產生前會將 PPPoE 資源名解析為實際 OS 介面名。
 
 ## 0.4.0
 

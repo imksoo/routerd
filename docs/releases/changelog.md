@@ -5,7 +5,31 @@ title: Changelog
 # Changelog
 
 routerd release history. The format follows [Keep a Changelog](https://keepachangelog.com/).
-The software is at the v1alpha1 stage; minor `0.x` releases may contain breaking changes.
+routerd uses date-based release versions in `yyyymmdd` format starting with `20260509`.
+The software is at the v1alpha1 stage; releases may contain breaking changes.
+
+## 20260509
+
+### Added
+
+- Multi-stage WAN fallback can now model DS-Lite primary tunnels, RA-sourced DS-Lite, PPPoE, and direct WAN fallback candidates through `EgressRoutePolicy`.
+- OpenTelemetry deployment was extended across the router fleet with declarative `Telemetry` resources and OTLP environment propagation.
+- DS-Lite examples now use the RFC 6333 B4-AFTR link prefix `192.0.0.0/29` for tunnel inner IPv4 source addresses.
+- `PPPoEInterface.disabled` and disabled route-policy candidates keep PPPoE fallback definitions in YAML without leaking a production PPPoE session.
+
+### Changed
+
+- Release versions now use date strings such as `20260509` instead of `0.x.y`.
+- NAT44 rendering was tightened around per-interface rules on Linux nftables and FreeBSD pf.
+- The 3-role firewall model was verified on Linux and FreeBSD, with service holes bound to the owning ingress interface instead of broad multi-interface zones.
+- FreeBSD pf gained TCP MSS clamp rendering for `PathMTUPolicy`, aligning it with Linux nftables behavior.
+- dnsmasq RA generation now propagates path MTU through the IPv6 RA MTU option.
+
+### Fixed
+
+- FreeBSD pf service-hole rendering no longer expands DHCPv6, WireGuard, and VXLAN holes across every member of the `wan` zone.
+- FreeBSD NAT artifacts are reported as `pf.anchor/routerd_nat` instead of nftables artifacts.
+- PPPoE interface aliases are resolved to the real OS interface name before NAT rendering.
 
 ## 0.4.0
 
