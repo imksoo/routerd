@@ -8,6 +8,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `20260509.0` から `yyyymmdd.N` 形式の日付ベース版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## 20260509.14
+
+### 検証
+
+- Ubuntu lab ルーターの router05 で、`ClientPolicy` ゲストモードを検証しました。
+- Linux nftables で、include mode のゲスト MAC アドレス集合、ゲスト向け DNS/DHCP/NTP 許可、自己隔離、RFC 1918 / ULA 拒否規則が生成されることを確認しました。
+- exclude mode は、nftables 生成テストで確認しました。
+
 ## 20260509.13
 
 ### Added

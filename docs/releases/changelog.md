@@ -8,6 +8,14 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-based release versions in `yyyymmdd.N` format starting with `20260509.0`.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## 20260509.14
+
+### Validated
+
+- Validated `ClientPolicy` guest mode on router05, an Ubuntu lab router.
+- Confirmed Linux nftables renders include-mode guest MAC sets, guest DNS/DHCP/NTP access, self-isolation, and RFC 1918 / ULA deny rules.
+- Confirmed exclude-mode rendering with the focused nftables renderer test.
+
 ## 20260509.13
 
 ### Added

@@ -8,6 +8,14 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 从 `20260509` 开始使用 `yyyymmdd` 格式的日期型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## 20260509.14
+
+### 验证
+
+- 在 Ubuntu lab router router05 上验证 `ClientPolicy` guest mode。
+- 确认 Linux nftables 会生成 include mode guest MAC set、guest DNS/DHCP/NTP allow、自我隔离，以及 RFC 1918 / ULA deny 规则。
+- exclude mode 已通过 focused nftables renderer test 验证。
+
 ## 20260509.13
 
 ### 新增
