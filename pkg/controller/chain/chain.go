@@ -820,6 +820,7 @@ type IPv4StaticAddressController struct {
 	Logger         *slog.Logger
 	Command        commandFunc
 	AddressPresent func(context.Context, string, string) bool
+	DevicePresent  func(context.Context, string) bool
 }
 
 type DaemonStatusController struct {
@@ -964,7 +965,11 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			"address":   spec.Address,
 			"dryRun":    c.DryRun,
 		}
-		if !c.DryRun && !interfaceDevicePresent(ctx, ifname) {
+		devicePresentFn := c.DevicePresent
+		if devicePresentFn == nil {
+			devicePresentFn = interfaceDevicePresent
+		}
+		if !c.DryRun && !devicePresentFn(ctx, ifname) {
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
 				"reason":    "InterfaceNotPresent",

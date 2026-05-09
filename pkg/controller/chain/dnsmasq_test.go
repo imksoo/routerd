@@ -189,6 +189,9 @@ func TestIPv4StaticAddressControllerAppliesAddressOnAliasedInterface(t *testing.
 		AddressPresent: func(context.Context, string, string) bool {
 			return false
 		},
+		DevicePresent: func(context.Context, string) bool {
+			return true
+		},
 		Command: func(ctx context.Context, name string, args ...string) error {
 			got = append([]string{name}, args...)
 			return nil
@@ -279,6 +282,9 @@ func TestIPv4StaticAddressControllerRestoresMissingAddressWithUnchangedStatus(t 
 		Store:  store,
 		AddressPresent: func(context.Context, string, string) bool {
 			return false
+		},
+		DevicePresent: func(context.Context, string) bool {
+			return true
 		},
 		Command: func(ctx context.Context, name string, args ...string) error {
 			applied = true
