@@ -17,18 +17,22 @@ title: インストールとアップグレード
 Linux amd64:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.8/routerd-20260509.8-linux-amd64.tar.gz
-tar -xzf routerd-20260509.8-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.9/routerd-20260509.9-linux-amd64.tar.gz
+tar -xzf routerd-20260509.9-linux-amd64.tar.gz
 sudo ./install.sh
 ```
+
+Linux arm64 では `linux-arm64` アーカイブを使います。
 
 FreeBSD amd64:
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/20260509.8/routerd-20260509.8-freebsd-amd64.tar.gz
-tar -xzf routerd-20260509.8-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/20260509.9/routerd-20260509.9-freebsd-amd64.tar.gz
+tar -xzf routerd-20260509.9-freebsd-amd64.tar.gz
 sudo ./install.sh
 ```
+
+FreeBSD arm64 では `freebsd-arm64` アーカイブを使います。
 
 `install.sh` は新規導入かアップグレードかを自動判定します。
 実行ファイルを `/usr/local/sbin` に配置し、サービステンプレートを導入します。
@@ -68,7 +72,7 @@ sudo ./install.sh --with-tailscale
 インストーラーは `apt-get` を使い、次を導入します。
 
 ```text
-dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoeconf conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables
 ```
 
 ### Fedora 系
@@ -76,7 +80,7 @@ dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe
 インストーラーは `dnf` を使い、次を導入します。
 
 ```text
-dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables
 ```
 
 ### Arch 系
@@ -84,7 +88,7 @@ dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppo
 インストーラーは `pacman` を使い、次を導入します。
 
 ```text
-dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables
 ```
 
 ### FreeBSD
@@ -92,10 +96,10 @@ dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conn
 インストーラーは `pkg` を使い、次を導入します。
 
 ```text
-dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq
+ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan
 ```
 
-FreeBSD の `pf`、`ifconfig`、`sysctl`、`service`、`sysrc`、`cron`、
+FreeBSD の `pf`、`ifconfig`、`route`、`sysctl`、`service`、`sysrc`、`cron`、
 `netstat`、`sockstat`、`ping`、`traceroute` は基本システムの機能です。
 パッケージとしては導入せず、コマンドの存在だけ確認します。
 
@@ -110,7 +114,7 @@ NixOS 設定、または routerd の `Package` リソースで宣言してくだ
 新しいアーカイブを展開し、同じインストーラーを実行します。
 
 ```sh
-tar -xzf routerd-20260509.8-linux-amd64.tar.gz
+tar -xzf routerd-20260509.9-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -220,7 +224,7 @@ make test
 make check-schema
 make validate-example
 make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.8
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.9
 ```
 
 利用者向けの導入経路として Makefile は使いません。

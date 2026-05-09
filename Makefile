@@ -1,6 +1,7 @@
-VERSION ?= 20260509.8
+VERSION ?= 20260509.9
 DISTBASE ?= dist
-DISTPLATFORM ?= $(ROUTERD_OS)$(if $(GOARCH),-$(GOARCH))
+DISTARCH ?= $(if $(GOARCH),$(GOARCH),$(shell go env GOARCH))
+DISTPLATFORM ?= $(ROUTERD_OS)-$(DISTARCH)
 DISTDIR ?= $(DISTBASE)/$(DISTPLATFORM)
 DISTROOT ?= $(DISTDIR)/package
 DISTTAR ?= $(DISTDIR)/routerd-$(VERSION)-$(DISTPLATFORM).tar.gz
@@ -102,6 +103,7 @@ dist:
 	if [ -f README.ja.md ]; then install -m 0644 README.ja.md $(DISTROOT)/share/doc/README.ja.md; fi
 	if [ -f LICENSE ]; then install -m 0644 LICENSE $(DISTROOT)/share/doc/LICENSE; elif [ -f LICENSE.md ]; then install -m 0644 LICENSE.md $(DISTROOT)/share/doc/LICENSE; else printf '%s\n' 'No LICENSE file is present in this repository.' > $(DISTROOT)/share/doc/LICENSE; fi
 	printf '%s\n' '$(VERSION)' > $(DISTROOT)/share/doc/VERSION
+	printf '%s\n' '$(ROUTERD_OS)-$(DISTARCH)' > $(DISTROOT)/share/doc/TARGET
 	if [ "$(ROUTERD_OS)" = "freebsd" ]; then \
 		install -d $(DISTROOT)/rc.d; \
 		install -m 0555 contrib/freebsd/routerd $(DISTROOT)/rc.d/routerd; \

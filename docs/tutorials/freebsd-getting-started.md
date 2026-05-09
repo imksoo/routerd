@@ -19,16 +19,17 @@ Download the FreeBSD archive from the
 the bundled installer on the router.
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/20260509.8/routerd-20260509.8-freebsd-amd64.tar.gz
-tar -xzf routerd-20260509.8-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/20260509.9/routerd-20260509.9-freebsd-amd64.tar.gz
+tar -xzf routerd-20260509.9-freebsd-amd64.tar.gz
 sudo ./install.sh
 ```
 
 `install.sh` installs the FreeBSD packages routerd normally needs:
-`dnsmasq`, `wireguard-tools`, `mpd5`, `bind-tools`, `tcpdump`, and `jq`.
+`ca_root_nss`, `curl`, `dnsmasq`, `wireguard-tools`, `mpd5`, `bind-tools`,
+`tcpdump`, `jq`, `chrony`, and `strongswan`.
 Tailscale is optional; include it with `sudo ./install.sh --with-tailscale`.
 
-The FreeBSD base system already provides `ifconfig`, `sysctl`, `service`,
+The FreeBSD base system already provides `ifconfig`, `route`, `sysctl`, `service`,
 `sysrc`, `pfctl`, `pflog0`, `netstat`, `sockstat`, `ping`, and `traceroute`.
 Use `./install.sh --list-deps` to inspect the package and command list.
 

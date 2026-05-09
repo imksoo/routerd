@@ -8,6 +8,19 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `20260509.0` から `yyyymmdd.N` 形式の日付ベース版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## 20260509.9
+
+### Added
+
+- リリースアーカイブに `share/doc/TARGET` を含め、`install.sh` がホストの OS と CPU アーキテクチャーを確認するようにしました。
+- GitHub Actions で Linux と FreeBSD の `amd64` / `arm64` アーカイブを生成するようにしました。
+- release CI で `install.sh` と `uninstall.sh` に `shellcheck` を実行します。
+
+### Changed
+
+- `install.sh --list-deps` の出力を、OS、CPU アーキテクチャー、パッケージマネージャー、パッケージ、確認対象コマンドが分かる形に整理しました。
+- PPPoE、RA、IPsec、パケット取得、経路制御、ファイアウォールで使う実用パッケージを依存リストへ追加しました。
+
 ## 20260509.8
 
 ### Fixed

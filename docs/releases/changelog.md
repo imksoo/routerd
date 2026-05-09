@@ -8,6 +8,19 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-based release versions in `yyyymmdd.N` format starting with `20260509.0`.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## 20260509.9
+
+### Added
+
+- Release archives now carry a `share/doc/TARGET` marker, and `install.sh` checks the archive OS and architecture against the host.
+- GitHub Actions now builds Linux and FreeBSD archives for both `amd64` and `arm64`.
+- Release CI runs `shellcheck` against the installer and uninstaller scripts.
+
+### Changed
+
+- `install.sh --list-deps` now prints a structured dependency plan with OS, architecture, package manager, packages, and checked commands.
+- Installer dependency sets were expanded for practical router use, including PPPoE, RA, IPsec, packet capture, routing, and firewall tooling.
+
 ## 20260509.8
 
 ### Fixed

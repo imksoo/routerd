@@ -97,28 +97,28 @@ This avoids a separate Makefile install path.
 On Debian and Ubuntu, the installer uses `apt-get` and installs:
 
 ```text
-dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoeconf conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables
 ```
 
 On Fedora-like systems, the installer uses `dnf` and installs:
 
 ```text
-dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables
 ```
 
 On Arch-like systems, the installer uses `pacman` and installs:
 
 ```text
-dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables
 ```
 
 On FreeBSD, the installer uses `pkg` and installs:
 
 ```text
-dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq
+ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan
 ```
 
-FreeBSD `pf`, `ifconfig`, and `cron` are base-system tools and are checked as commands rather than installed as packages.
+FreeBSD `pf`, `ifconfig`, `route`, `service`, `sysrc`, and `cron` are base-system tools and are checked as commands rather than installed as packages.
 
 On NixOS, the installer prints a warning instead of calling `nix-env`.
 Declare packages in the NixOS configuration or in routerd `Package` resources.

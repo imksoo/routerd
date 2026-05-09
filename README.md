@@ -126,13 +126,14 @@ spec:
 Install from a release archive on the router host:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.8/routerd-20260509.8-linux-amd64.tar.gz
-tar -xzf routerd-20260509.8-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.9/routerd-20260509.9-linux-amd64.tar.gz
+tar -xzf routerd-20260509.9-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-For FreeBSD, download `routerd-20260509.8-freebsd-amd64.tar.gz` and run the
+For FreeBSD, download `routerd-20260509.9-freebsd-amd64.tar.gz` and run the
 same `./install.sh`.
+Use the `linux-arm64` or `freebsd-arm64` archive on arm64 hosts.
 
 `install.sh` installs known OS packages, copies binaries to `/usr/local/sbin`,
 installs the service template, writes `router.yaml.sample`, and preserves an

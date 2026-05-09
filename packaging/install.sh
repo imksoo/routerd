@@ -30,6 +30,37 @@ supported package managers. Pass --no-install-deps to skip that step.
 USAGE
 }
 
+detect_arch()
+{
+    machine=$(uname -m)
+    case "${machine}" in
+        x86_64|amd64)
+            echo amd64
+            ;;
+        aarch64|arm64)
+            echo arm64
+            ;;
+        *)
+            echo "${machine}"
+            ;;
+    esac
+}
+
+os_id()
+{
+    case "${os}" in
+        Linux)
+            echo linux
+            ;;
+        FreeBSD)
+            echo freebsd
+            ;;
+        *)
+            printf '%s\n' "${os}" | tr '[:upper:]' '[:lower:]'
+            ;;
+    esac
+}
+
 safe_name()
 {
     printf '%s\n' "$1" | sed 's#[^A-Za-z0-9._-]#_#g'
@@ -135,16 +166,16 @@ dependency_packages()
     manager=$1
     case "${manager}" in
         apt)
-            packages="dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoeconf conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod"
+            packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables"
             ;;
         dnf)
-            packages="dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod"
+            packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables"
             ;;
         pacman)
-            packages="dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod"
+            packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables"
             ;;
         pkg)
-            packages="dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq"
+            packages="ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan"
             ;;
         nix-env)
             packages=""
@@ -163,10 +194,10 @@ dependency_commands()
 {
     case "${os}" in
         Linux)
-            commands="dnsmasq nft wg chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe"
+            commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables"
             ;;
         FreeBSD)
-            commands="dnsmasq wg mpd5 dig tcpdump jq cron ifconfig pfctl"
+            commands="curl dnsmasq wg mpd5 dig tcpdump jq cron ifconfig pfctl route service sysrc chronyc swanctl"
             ;;
         *)
             commands=""
@@ -183,16 +214,27 @@ print_dependencies()
     manager=$(detect_package_manager)
     packages=$(dependency_packages "${manager}")
     commands=$(dependency_commands)
-    echo "OS: ${os}"
-    echo "package manager: ${manager}"
+    echo "routerd dependency plan"
+    echo "  OS: ${os}"
+    echo "  architecture: ${arch}"
+    echo "  package manager: ${manager}"
     if [ -n "${packages}" ]; then
-        echo "packages: ${packages}"
+        echo "  packages:"
+        for package in ${packages}; do
+            echo "    - ${package}"
+        done
     elif [ "${manager}" = "nix-env" ]; then
-        echo "packages: declare these tools in NixOS configuration or routerd Package resources"
+        echo "  packages: declare these tools in NixOS configuration or routerd Package resources"
     else
-        echo "packages: unsupported package manager; install required commands manually"
+        echo "  packages: unsupported package manager; install required commands manually"
     fi
-    echo "commands checked after install: ${commands}"
+    echo "  commands checked after install:"
+    for cmd in ${commands}; do
+        echo "    - ${cmd}"
+    done
+    if [ "${with_tailscale}" -eq 1 ]; then
+        echo "  optional: tailscale requested"
+    fi
 }
 
 run_dependency_install()
@@ -336,11 +378,26 @@ if [ "${verbose}" -eq 1 ]; then
 fi
 
 os=$(uname -s)
+arch=$(detect_arch)
+target_os=$(os_id)
+target_expected="${target_os}-${arch}"
+target_archive=
+if [ -f share/doc/TARGET ]; then
+    target_archive=$(sed -n '1p' share/doc/TARGET)
+fi
 bindir="${prefix}/sbin"
 sysconfdir="${prefix}/etc/routerd"
 if [ "${prefix}" != "/usr/local" ]; then
     manage_host_service=0
     echo "non-default prefix ${prefix}; skipping host service manager"
+fi
+if [ -n "${target_archive}" ] && [ "${target_archive}" != "${target_expected}" ]; then
+    if [ "${manage_host_service}" -eq 1 ]; then
+        echo "archive target ${target_archive} does not match host ${target_expected}" >&2
+        echo "download the routerd archive for ${target_expected}" >&2
+        exit 2
+    fi
+    echo "warning: archive target ${target_archive} does not match host ${target_expected}; continuing for non-system prefix" >&2
 fi
 
 run_dependency_install

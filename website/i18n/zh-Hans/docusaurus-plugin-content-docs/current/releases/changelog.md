@@ -8,6 +8,19 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 从 `20260509` 开始使用 `yyyymmdd` 格式的日期型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## 20260509.9
+
+### 新增
+
+- release archive 现在包含 `share/doc/TARGET`，`install.sh` 会检查 archive 的 OS / CPU 架构是否匹配主机。
+- GitHub Actions 会生成 Linux 与 FreeBSD 的 `amd64` / `arm64` archive。
+- release CI 会对 `install.sh` 与 `uninstall.sh` 运行 `shellcheck`。
+
+### 变更
+
+- `install.sh --list-deps` 改为结构化输出，列出 OS、CPU 架构、包管理器、包与检查命令。
+- 依赖清单加入 PPPoE、RA、IPsec、包捕获、路由与 firewall 工具。
+
 ## 20260509.8
 
 ### 修复

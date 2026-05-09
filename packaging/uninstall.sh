@@ -92,7 +92,7 @@ if [ "${assume_yes}" -ne 1 ]; then
             echo "State and logs under /var/lib/routerd, /var/db/routerd, and /var/log/otelcol will also be removed."
         fi
         printf 'Continue? [y/N] '
-        read answer
+        IFS= read -r answer
         case "${answer}" in
             y|Y|yes|YES) ;;
             *) echo "aborted"; exit 1 ;;

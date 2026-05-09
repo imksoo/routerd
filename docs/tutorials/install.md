@@ -9,13 +9,16 @@ Install routerd from a release archive.
 The router host does not need Go or a Makefile.
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.8/routerd-20260509.8-linux-amd64.tar.gz
-tar -xzf routerd-20260509.8-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.9/routerd-20260509.9-linux-amd64.tar.gz
+tar -xzf routerd-20260509.9-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-For FreeBSD, download `routerd-20260509.8-freebsd-amd64.tar.gz` and run the
+On Linux arm64 hosts, use `routerd-20260509.9-linux-arm64.tar.gz`.
+
+For FreeBSD, download `routerd-20260509.9-freebsd-amd64.tar.gz` and run the
 same `./install.sh`.
+On FreeBSD arm64 hosts, use `routerd-20260509.9-freebsd-arm64.tar.gz`.
 
 The installer:
 

@@ -17,18 +17,22 @@ Download the archive for your OS and architecture from the
 Linux amd64:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.8/routerd-20260509.8-linux-amd64.tar.gz
-tar -xzf routerd-20260509.8-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.9/routerd-20260509.9-linux-amd64.tar.gz
+tar -xzf routerd-20260509.9-linux-amd64.tar.gz
 sudo ./install.sh
 ```
+
+For Linux arm64, use the `linux-arm64` archive.
 
 FreeBSD amd64:
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/20260509.8/routerd-20260509.8-freebsd-amd64.tar.gz
-tar -xzf routerd-20260509.8-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/20260509.9/routerd-20260509.9-freebsd-amd64.tar.gz
+tar -xzf routerd-20260509.9-freebsd-amd64.tar.gz
 sudo ./install.sh
 ```
+
+For FreeBSD arm64, use the `freebsd-arm64` archive.
 
 `install.sh` detects whether this is a fresh install or an upgrade.
 It installs the binaries under `/usr/local/sbin`, installs the service template,
@@ -68,7 +72,7 @@ sudo ./install.sh --with-tailscale
 The installer uses `apt-get` and installs:
 
 ```text
-dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoeconf conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables
 ```
 
 ### Fedora-like systems
@@ -76,7 +80,7 @@ dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe
 The installer uses `dnf` and installs:
 
 ```text
-dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables
 ```
 
 ### Arch-like systems
@@ -84,7 +88,7 @@ dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppo
 The installer uses `pacman` and installs:
 
 ```text
-dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables
 ```
 
 ### FreeBSD
@@ -92,11 +96,11 @@ dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conn
 The installer uses `pkg` and installs:
 
 ```text
-dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq
+ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan
 ```
 
-FreeBSD `pf`, `ifconfig`, `sysctl`, `service`, `sysrc`, `cron`, `netstat`,
-`sockstat`, `ping`, and `traceroute` are base-system tools.
+FreeBSD `pf`, `ifconfig`, `route`, `sysctl`, `service`, `sysrc`, `cron`,
+`netstat`, `sockstat`, `ping`, and `traceroute` are base-system tools.
 The installer checks for the commands but does not install them as packages.
 
 ### NixOS
@@ -111,7 +115,7 @@ Declare packages through the NixOS configuration or routerd `Package` resources.
 Extract the new archive and run the same installer:
 
 ```sh
-tar -xzf routerd-20260509.8-linux-amd64.tar.gz
+tar -xzf routerd-20260509.9-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -224,7 +228,7 @@ make test
 make check-schema
 make validate-example
 make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.8
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.9
 ```
 
 Do not use the Makefile as the user-facing install path.
