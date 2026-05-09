@@ -195,6 +195,7 @@ dist:
 	install -m 0755 $(ROUTERD_FIREWALL_LOGGER_BIN) $(DISTROOT)/bin/routerd-firewall-logger
 	install -m 0755 $(ROUTERD_PPPOE_CLIENT_BIN) $(DISTROOT)/bin/routerd-pppoe-client
 	install -m 0755 packaging/install.sh $(DISTROOT)/install.sh
+	install -m 0755 packaging/uninstall.sh $(DISTROOT)/uninstall.sh
 	install -d $(DISTROOT)/etc/routerd
 	install -m 0644 examples/router-lab.yaml $(DISTROOT)/etc/routerd/router.yaml.sample
 	install -d $(DISTROOT)/share/doc

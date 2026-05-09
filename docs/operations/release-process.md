@@ -26,6 +26,7 @@ The archive contains:
 
 - `bin/`: `routerd`, `routerctl`, and the managed daemon binaries
 - `install.sh`: POSIX sh installer
+- `uninstall.sh`: POSIX sh uninstaller
 - `etc/routerd/router.yaml.sample`: sanitized sample configuration
 - `systemd/` or `rc.d/`: service templates for the target OS
 - `share/doc/`: README, VERSION, and LICENSE notice
@@ -43,8 +44,13 @@ sudo ./install.sh
 It does not overwrite an existing `/usr/local/etc/routerd/router.yaml`.
 When an existing `/usr/local/sbin/routerd` is found, the installer switches to upgrade mode automatically.
 It prints the old and new `routerd --version` output, replaces binaries and service templates, preserves configuration and state, and restarts `routerd.service` or the FreeBSD `routerd` rc.d service if it was already running.
+Replaced files are copied to `*.backup.YYYYMMDDHHMMSS` before replacement.
 Pass `--no-restart` to replace files without restarting the service.
+Pass `--dry-run` to print planned file and service-manager changes.
+Pass `--verbose` for shell tracing.
+Pass `--no-config-update` to leave `router.yaml.sample` unchanged.
 Pass `--enable-service` or `--start-service` when you want a fresh install to call the host service manager.
+After installation, the script runs `routerctl status` when the routerd control socket exists.
 
 The installer never modifies these runtime or state locations:
 
@@ -54,6 +60,27 @@ The installer never modifies these runtime or state locations:
 - `/run/routerd`
 - `/var/run/routerd`
 - `/var/log/otelcol`
+
+## Uninstall
+
+Use `uninstall.sh` when you want to remove installed files separately from state:
+
+```sh
+sudo ./uninstall.sh --yes
+```
+
+The default uninstall stops and disables the service, removes routerd binaries, removes the service template, and removes runtime files.
+It keeps `/usr/local/etc/routerd`, `/var/lib/routerd`, `/var/db/routerd`, and `/var/log/otelcol`.
+
+Purge options are explicit:
+
+```sh
+sudo ./uninstall.sh --yes --purge-config
+sudo ./uninstall.sh --yes --purge-state
+sudo ./uninstall.sh --yes --all
+```
+
+Use `--dry-run` to preview removal without changing the host.
 
 ## Manual dispatch
 
