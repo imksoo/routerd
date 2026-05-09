@@ -18,6 +18,7 @@ routerd plan --config examples/<name>.yaml
 | `basic-dhcp.yaml` | You want to see DHCP client and DHCP server resources without WAN policy. |
 | `dns-local-zone.yaml` | You want a local authoritative DNS zone with static records. |
 | `dns-private-upstream.yaml` | You need conditional DNS forwarding or private upstream resolvers. |
+| `guest-mode.yaml` | You want MAC-based guest isolation that keeps DHCP/DNS/NTP local services available while blocking private-address egress. |
 | `telemetry-export.yaml` | You want to send routerd telemetry to an OTLP collector. |
 
 ## VPN and segmentation
@@ -46,4 +47,3 @@ routerd plan --config examples/<name>.yaml
 | `nixos-edge.yaml` | You want a routerd configuration that exercises the NixOS render path. |
 | `nixos-edge-configuration.nix` | You want the companion NixOS system configuration shape. |
 | `freebsd-edge.yaml` | You want FreeBSD rc.d, pf, mpd5, dnsmasq, DS-Lite, WireGuard, and Tailscale examples. |
-

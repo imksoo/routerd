@@ -115,6 +115,11 @@ Implemented:
 - Static DS-Lite gif tunnel rendering
 - Dynamic DS-Lite apply from static AFTR IPv6, AFTR FQDN, or delegated-address local source
 
+`ClientPolicy` is the one firewall feature that is intentionally Linux-only
+for now. It depends on nftables Ethernet source address sets for MAC-based
+guest isolation. The FreeBSD pf renderer rejects the resource with an explicit
+error instead of applying a weaker no-op policy.
+
 FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The
 `Package` examples declare FreeBSD-native replacements: `pf` and `pflog0` from
 the base system, `mpd5` for PPPoE, `ifconfig gif` for DS-Lite, dnsmasq for LAN

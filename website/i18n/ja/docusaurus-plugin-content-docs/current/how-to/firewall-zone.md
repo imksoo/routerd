@@ -68,4 +68,5 @@ established/related な接続は常に許可されます。
 ## 関連項目
 
 - [ファイアウォール例外を追加する](./firewall-rule.md)
+- [MAC アドレスでゲスト端末を隔離する](./guest-mode.md)
 - [Firewall コンセプト](../concepts/firewall.md)

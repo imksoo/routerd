@@ -777,6 +777,59 @@ func TestValidateFirewallPolicyAndRule(t *testing.T) {
 	}
 }
 
+func TestValidateClientPolicy(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+				Metadata: api.ObjectMeta{Name: "lan-v4"},
+				Spec: api.DHCPv4ServerSpec{
+					Server:      "dnsmasq",
+					Managed:     true,
+					Interface:   "lan",
+					AddressPool: api.DHCPAddressPoolSpec{Start: "172.18.0.64", End: "172.18.0.191"},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"},
+				Metadata: api.ObjectMeta{Name: "aiseg2"},
+				Spec:     api.DHCPv4ReservationSpec{Server: "lan-v4", MACAddress: "18:ec:e7:33:12:6c", Hostname: "aiseg2", IPAddress: "172.18.0.150"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+				Metadata: api.ObjectMeta{Name: "guest-devices"},
+				Spec: api.ClientPolicySpec{
+					Mode:          "include",
+					Interfaces:    []string{"Interface/lan"},
+					GuestServices: []string{"dns", "dhcp", "ntp"},
+					Classification: []api.ClientPolicyClassSpec{{
+						MACAddress:      "18:ec:e7:33:12:6c",
+						As:              "guest",
+						Name:            "aiseg2",
+						IPv4Reservation: "aiseg2",
+					}},
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate client policy: %v", err)
+	}
+}
+
 func TestValidatePathMTUPolicy(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

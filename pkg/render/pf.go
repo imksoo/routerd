@@ -48,6 +48,10 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 			if res.APIVersion == api.FirewallAPIVersion {
 				rules = append(rules, res)
 			}
+		case "ClientPolicy":
+			if res.APIVersion == api.FirewallAPIVersion {
+				return nil, fmt.Errorf("%s is not supported by the FreeBSD pf renderer; use Linux nftables for MAC-based guest isolation", res.ID())
+			}
 		}
 	}
 	if len(nats) == 0 && len(nat44Rules) == 0 && len(zones) == 0 && len(rules) == 0 && len(holes) == 0 && len(mssPolicies) == 0 {

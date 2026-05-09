@@ -66,4 +66,5 @@ This is enough for a typical home router. The role matrix supplies the defaults;
 ## See also
 
 - [Add firewall exceptions](./firewall-rule.md)
+- [Isolate guest devices by MAC address](./guest-mode.md)
 - [Firewall concept](../concepts/firewall.md)

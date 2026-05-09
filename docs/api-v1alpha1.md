@@ -37,7 +37,7 @@ spec:
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | interfaces, DHCP, DNS, routes, tunnels, events, traffic flow logs |
-| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog` |
+| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
@@ -199,11 +199,20 @@ from DHCP, IPAM, or another declarative resource.
 | `FirewallZone` | Assigns interfaces to zones with `untrust`, `trust`, and `mgmt` roles. |
 | `FirewallPolicy` | Represents global firewall behavior such as deny logging. |
 | `FirewallRule` | Represents exceptions that cannot be expressed by the role matrix. Supports source and destination CIDR narrowing. |
+| `ClientPolicy` | Classifies clients by MAC address for guest isolation on Linux nftables. |
 
 Stateful filtering renders into the nftables `inet routerd_filter` table.
 Established traffic, loopback, and required ICMPv6 are always accepted.
 routerd derives internal openings needed by DHCP, DNS, DS-Lite, and related
 managed resources.
+
+`ClientPolicy` supports `mode: include` for "listed MAC addresses are guests"
+and `mode: exclude` for "listed MAC addresses are trusted, everything else on
+the interface is guest." Guest clients can use DNS, DHCP, and NTP by default,
+but cannot reach RFC 1918 or ULA destinations unless `guestEgressAllow`
+contains an explicit exception. The FreeBSD pf renderer reports this resource
+as unsupported because pf does not provide the same MAC-based routed filtering
+model.
 
 ## Renamed Kinds
 

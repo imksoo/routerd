@@ -39,6 +39,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'how-to/flets-ipv6-setup',
         'how-to/multi-wan',
+        'how-to/guest-mode',
         'how-to/tailscale',
         'how-to/opentelemetry',
         'how-to/pve-overlay',

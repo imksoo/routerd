@@ -8,6 +8,18 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-based release versions in `yyyymmdd.N` format starting with `20260509.0`.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## 20260509.12
+
+### Added
+
+- Added `ClientPolicy`, a Linux nftables-backed guest mode that classifies LAN clients by MAC address.
+- Guest clients can keep DNS, DHCP, and NTP access while private IPv4 and ULA IPv6 destinations are denied by default.
+- Added `examples/guest-mode.yaml` and documentation for include-mode and exclude-mode client classification.
+
+### Changed
+
+- FreeBSD pf now rejects `ClientPolicy` explicitly because pf does not provide the same MAC-based routed filtering model.
+
 ## 20260509.11
 
 ### Added

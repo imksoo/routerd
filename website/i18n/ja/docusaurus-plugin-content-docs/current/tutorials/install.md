@@ -9,16 +9,16 @@ routerd はリリースアーカイブから導入します。
 ルーターホストに Go や Makefile は不要です。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.11/routerd-20260509.11-linux-amd64.tar.gz
-tar -xzf routerd-20260509.11-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.12/routerd-20260509.12-linux-amd64.tar.gz
+tar -xzf routerd-20260509.12-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-Linux arm64 ホストでは `routerd-20260509.11-linux-arm64.tar.gz` を使います。
+Linux arm64 ホストでは `routerd-20260509.12-linux-arm64.tar.gz` を使います。
 
-FreeBSD では `routerd-20260509.11-freebsd-amd64.tar.gz` を取得し、同じ
+FreeBSD では `routerd-20260509.12-freebsd-amd64.tar.gz` を取得し、同じ
 `./install.sh` を実行します。
-FreeBSD arm64 ホストでは `routerd-20260509.11-freebsd-arm64.tar.gz` を使います。
+FreeBSD arm64 ホストでは `routerd-20260509.12-freebsd-arm64.tar.gz` を使います。
 
 インストーラーは次を行います。
 

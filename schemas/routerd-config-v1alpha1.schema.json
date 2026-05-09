@@ -6412,6 +6412,113 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "ClientPolicy",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "classification": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "as": {
+                              "enum": [
+                                "",
+                                "guest",
+                                "trusted"
+                              ],
+                              "type": "string"
+                            },
+                            "ipv4Reservation": {
+                              "type": "string"
+                            },
+                            "macAddress": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "macAddress"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "guestEgressAllow": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "guestEgressDeny": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "guestServices": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "interfaces": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "mode": {
+                        "enum": [
+                          "include",
+                          "exclude"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "interfaces"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "firewall.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "FirewallRule",
                     "type": "string"
                   },

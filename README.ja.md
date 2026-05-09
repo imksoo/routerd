@@ -54,6 +54,8 @@ routerd の基本思想は単純です。
   複数待ち受け、キャッシュ
 - IPv4/IPv6 アドレス派生、静的経路、既定経路ポリシー、経路対象外指定、
   Path MTU 方針、TCP MSS 調整、NAT44、DS-Lite
+- `ClientPolicy`、DHCPv4 固定割り当て、MAC アドレスベース nftables 規則に
+  よる同一 LAN 上のゲスト端末隔離
 - `HealthCheck`、`EgressRoutePolicy`、`EventRule`、`DerivedEvent` による
   状態連携
 - `Package`、`Sysctl`、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit`、
@@ -81,6 +83,8 @@ routerd は NAT44、ゾーンポリシー、管理対象サービス用の許可
   パッケージ、サービスの例です。
 - `examples/tailscale-exit-subnet.yaml`: Tailscale の exit node と subnet router
   の広告を管理対象 systemd ユニットで行う例です。
+- `examples/guest-mode.yaml`: 同一 LAN 上の端末を MAC アドレスで分類し、
+  ゲスト端末を隔離する例です。
 - `examples/README.md`: 用途別の設定例一覧です。最小 Tailscale、
   WireGuard hub-spoke、VRF lab、multi-WAN home のテンプレートを含みます。
 
@@ -122,12 +126,12 @@ spec:
 ルーターホスト上でリリースアーカイブを展開し、同梱のインストーラーを実行します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.11/routerd-20260509.11-linux-amd64.tar.gz
-tar -xzf routerd-20260509.11-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.12/routerd-20260509.12-linux-amd64.tar.gz
+tar -xzf routerd-20260509.12-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-FreeBSD では `routerd-20260509.11-freebsd-amd64.tar.gz` を取得し、同じ
+FreeBSD では `routerd-20260509.12-freebsd-amd64.tar.gz` を取得し、同じ
 `./install.sh` を実行します。
 arm64 ホストでは `linux-arm64` または `freebsd-arm64` アーカイブを使います。
 

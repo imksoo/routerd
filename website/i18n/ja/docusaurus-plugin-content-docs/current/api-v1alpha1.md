@@ -36,7 +36,7 @@ spec:
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | インターフェース、DHCP、DNS、経路、トンネル、イベント、通信フローログ |
-| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog` |
+| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
 
@@ -193,10 +193,18 @@ FreeBSD には Linux と同じ socket option がないためです。
 | `FirewallZone` | インターフェースをゾーンへ割り当て、`untrust`、`trust`、`mgmt` の役割を設定します。 |
 | `FirewallPolicy` | 拒否ログなど、全体の設定を表します。 |
 | `FirewallRule` | 役割の組み合わせでは表せない例外を表します。送信元と宛先の CIDR で範囲を絞れます。 |
+| `ClientPolicy` | MAC アドレスでクライアントを分類し、Linux nftables でゲスト隔離を行います。 |
 
 状態を持つフィルタは nftables の `inet routerd_filter` テーブルに生成します。
 確立済み通信、loopback、必要な ICMPv6 は常に許可します。
 DHCP、DNS、DS-Lite などに必要な開口は routerd が内部で生成します。
+
+`ClientPolicy` は `mode: include` で「一覧に書いた MAC アドレスを guest」として扱います。
+`mode: exclude` では「一覧に書いた MAC アドレスを trusted」とし、対象インターフェース上の残りを guest として扱います。
+ゲスト端末は既定で DNS、DHCP、NTP を利用できます。
+ただし、RFC 1918 と ULA 宛ての通信は拒否します。
+例外は `guestEgressAllow` で指定します。
+FreeBSD pf は同じ MAC ベースの routed filtering モデルを持たないため、このリソースは FreeBSD では未対応として扱います。
 
 ## 名前変更の要点
 

@@ -60,6 +60,8 @@ Implemented resource areas include:
   DNSSEC flags, multiple listen profiles, and cache
 - IPv4 and IPv6 address derivation, static routes, default route policy,
   route-set exclusions, path MTU policy, TCP MSS clamping, NAT44, and DS-Lite
+- guest-device isolation with `ClientPolicy`, DHCPv4 reservations, and
+  MAC-based nftables filtering on shared LAN segments
 - `HealthCheck`, `EgressRoutePolicy`, `EventRule`, and `DerivedEvent`
   coordination
 - `Package`, `Sysctl`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`,
@@ -87,6 +89,8 @@ The production-style examples show how the pieces fit together:
   package, and service examples.
 - `examples/tailscale-exit-subnet.yaml`: Tailscale exit-node and subnet-router
   advertisement through a managed systemd unit.
+- `examples/guest-mode.yaml`: MAC-based guest-device isolation on a shared
+  LAN.
 - `examples/README.md`: an index of focused templates, including minimal
   Tailscale, WireGuard hub-spoke, VRF lab, and multi-WAN home patterns.
 
@@ -128,12 +132,12 @@ spec:
 Install from a release archive on the router host:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.11/routerd-20260509.11-linux-amd64.tar.gz
-tar -xzf routerd-20260509.11-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.12/routerd-20260509.12-linux-amd64.tar.gz
+tar -xzf routerd-20260509.12-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-For FreeBSD, download `routerd-20260509.11-freebsd-amd64.tar.gz` and run the
+For FreeBSD, download `routerd-20260509.12-freebsd-amd64.tar.gz` and run the
 same `./install.sh`.
 Use the `linux-arm64` or `freebsd-arm64` archive on arm64 hosts.
 

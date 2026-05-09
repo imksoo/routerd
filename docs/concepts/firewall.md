@@ -1,11 +1,12 @@
 # Stateful firewall
 
 routerd manages a stateful nftables filter table named `inet routerd_filter`.
-The firewall model has three resource kinds:
+The firewall model has four resource kinds:
 
 - `FirewallZone` assigns interfaces to a named zone and gives that zone a role.
 - `FirewallPolicy` sets global behavior such as deny logging.
 - `FirewallRule` adds explicit exceptions to the role matrix.
+- `ClientPolicy` classifies LAN clients by MAC address for guest isolation.
 
 The supported roles are `untrust`, `trust`, and `mgmt`. Zone names describe
 topology, such as `wan`, `lan`, or `management`. Roles describe policy.
@@ -25,6 +26,29 @@ dnsmasq DHCP service, and `routerd-dns-resolver`.
 
 The firewall table is separate from NAT. NAT44 continues to use `ip
 routerd_nat`.
+
+## Guest client isolation
+
+`ClientPolicy` is a MAC-based guest mode for shared LAN segments. It is meant
+for the case where trusted and guest devices receive addresses from the same
+DHCP server, but guest devices must not reach private networks.
+
+The policy has two modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `include` | Listed MAC addresses are guests. All other clients remain trusted. |
+| `exclude` | Listed MAC addresses are trusted. All other clients on the target interfaces are guests. |
+
+Guest clients can use the router's local DNS, DHCP, and NTP services. By
+default they cannot forward traffic to `10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`, or `fc00::/7`. Global internet egress still follows the
+normal zone matrix and route policy.
+
+`ClientPolicy` is currently implemented by the Linux nftables renderer with
+Ethernet source address sets. FreeBSD pf does not expose the same MAC matching
+model in the routed filter path, so the FreeBSD renderer reports the resource
+as unsupported instead of silently applying a weaker policy.
 
 ## Logging
 

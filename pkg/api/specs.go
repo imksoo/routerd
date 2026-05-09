@@ -1071,6 +1071,22 @@ type FirewallLogPolicySpec struct {
 	Reject           bool `yaml:"reject,omitempty" json:"reject,omitempty"`
 }
 
+type ClientPolicySpec struct {
+	Mode             string                  `yaml:"mode" json:"mode" jsonschema:"enum=include,enum=exclude"`
+	Interfaces       []string                `yaml:"interfaces" json:"interfaces"`
+	Classification   []ClientPolicyClassSpec `yaml:"classification,omitempty" json:"classification,omitempty"`
+	GuestServices    []string                `yaml:"guestServices,omitempty" json:"guestServices,omitempty"`
+	GuestEgressDeny  []string                `yaml:"guestEgressDeny,omitempty" json:"guestEgressDeny,omitempty"`
+	GuestEgressAllow []string                `yaml:"guestEgressAllow,omitempty" json:"guestEgressAllow,omitempty"`
+}
+
+type ClientPolicyClassSpec struct {
+	MACAddress      string `yaml:"macAddress" json:"macAddress"`
+	As              string `yaml:"as,omitempty" json:"as,omitempty" jsonschema:"enum=,enum=guest,enum=trusted"`
+	Name            string `yaml:"name,omitempty" json:"name,omitempty"`
+	IPv4Reservation string `yaml:"ipv4Reservation,omitempty" json:"ipv4Reservation,omitempty"`
+}
+
 type FirewallRuleSpec struct {
 	FromZone         string                `yaml:"fromZone" json:"fromZone"`
 	ToZone           string                `yaml:"toZone" json:"toZone"`
@@ -1331,6 +1347,10 @@ func (r Resource) FirewallZoneSpec() (FirewallZoneSpec, error) {
 
 func (r Resource) FirewallPolicySpec() (FirewallPolicySpec, error) {
 	return specAs[FirewallPolicySpec](r)
+}
+
+func (r Resource) ClientPolicySpec() (ClientPolicySpec, error) {
+	return specAs[ClientPolicySpec](r)
 }
 
 func (r Resource) FirewallRuleSpec() (FirewallRuleSpec, error) {

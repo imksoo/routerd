@@ -324,6 +324,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "TrafficFlowLog", api.TrafficFlowLogSpec{}),
 			resourceSchema(api.FirewallAPIVersion, "FirewallZone", api.FirewallZoneSpec{}),
 			resourceSchema(api.FirewallAPIVersion, "FirewallPolicy", api.FirewallPolicySpec{}),
+			resourceSchema(api.FirewallAPIVersion, "ClientPolicy", api.ClientPolicySpec{}),
 			resourceSchema(api.FirewallAPIVersion, "FirewallRule", api.FirewallRuleSpec{}),
 			resourceSchema(api.FirewallAPIVersion, "FirewallLog", api.FirewallLogSpec{}),
 			resourceSchema(api.NetAPIVersion, "Hostname", api.HostnameSpec{}),

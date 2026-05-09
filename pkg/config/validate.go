@@ -34,6 +34,7 @@ func Validate(router *api.Router) error {
 	dhcp4ServerSpecs := map[string]api.DHCPv4ServerSpec{}
 	directDHCPv4Servers := map[string]bool{}
 	dhcp4Scopes := map[string]api.DHCPv4ScopeSpec{}
+	dhcp4Reservations := map[string]bool{}
 	dhcp6Servers := map[string]bool{}
 	dhcp6ServerSpecs := map[string]api.DHCPv6ServerSpec{}
 	dhcp6Scopes := map[string]bool{}
@@ -140,6 +141,9 @@ func Validate(router *api.Router) error {
 				return err
 			}
 			dhcp4Scopes[res.Metadata.Name] = spec
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv4Reservation" {
+			dhcp4Reservations[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv6PrefixDelegation" {
 			prefixDelegations[res.Metadata.Name] = true
@@ -568,6 +572,26 @@ func Validate(router *api.Router) error {
 					}
 				default:
 					return fmt.Errorf("%s spec.interfaces[%d] has unsupported reference %q", res.ID(), i, name)
+				}
+			}
+		}
+		if res.Kind == "ClientPolicy" {
+			spec, err := res.ClientPolicySpec()
+			if err != nil {
+				return err
+			}
+			for i, name := range spec.Interfaces {
+				refKind, refName := splitFirewallInterfaceRef(name)
+				if refKind != "Interface" {
+					return fmt.Errorf("%s spec.interfaces[%d] must reference Interface, got %q", res.ID(), i, name)
+				}
+				if !interfaces[refName] {
+					return fmt.Errorf("%s spec.interfaces[%d] references missing Interface %q", res.ID(), i, name)
+				}
+			}
+			for i, entry := range spec.Classification {
+				if entry.IPv4Reservation != "" && !dhcp4Reservations[entry.IPv4Reservation] {
+					return fmt.Errorf("%s spec.classification[%d].ipv4Reservation references missing DHCPv4Reservation %q", res.ID(), i, entry.IPv4Reservation)
 				}
 			}
 		}
@@ -2896,6 +2920,64 @@ func validateResource(res api.Resource) error {
 		}
 		if _, err := res.FirewallPolicySpec(); err != nil {
 			return err
+		}
+	case "ClientPolicy":
+		if res.APIVersion != api.FirewallAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
+		}
+		spec, err := res.ClientPolicySpec()
+		if err != nil {
+			return err
+		}
+		switch spec.Mode {
+		case "include", "exclude":
+		default:
+			return fmt.Errorf("%s spec.mode must be include or exclude", res.ID())
+		}
+		if len(spec.Interfaces) == 0 {
+			return fmt.Errorf("%s spec.interfaces is required", res.ID())
+		}
+		seenInterfaces := map[string]bool{}
+		for i, name := range spec.Interfaces {
+			if strings.TrimSpace(name) == "" {
+				return fmt.Errorf("%s spec.interfaces[%d] is required", res.ID(), i)
+			}
+			if seenInterfaces[name] {
+				return fmt.Errorf("%s spec.interfaces[%d] duplicates %q", res.ID(), i, name)
+			}
+			seenInterfaces[name] = true
+		}
+		seenMACs := map[string]bool{}
+		for i, entry := range spec.Classification {
+			mac, err := net.ParseMAC(entry.MACAddress)
+			if err != nil {
+				return fmt.Errorf("%s spec.classification[%d].macAddress is invalid: %w", res.ID(), i, err)
+			}
+			normalizedMAC := strings.ToLower(mac.String())
+			if seenMACs[normalizedMAC] {
+				return fmt.Errorf("%s spec.classification[%d].macAddress duplicates %q", res.ID(), i, normalizedMAC)
+			}
+			seenMACs[normalizedMAC] = true
+			switch entry.As {
+			case "", "guest", "trusted":
+			default:
+				return fmt.Errorf("%s spec.classification[%d].as must be guest or trusted", res.ID(), i)
+			}
+			if strings.Contains(entry.IPv4Reservation, "/") {
+				return fmt.Errorf("%s spec.classification[%d].ipv4Reservation must be a DHCPv4Reservation name, not Kind/name", res.ID(), i)
+			}
+		}
+		for i, service := range spec.GuestServices {
+			switch service {
+			case "dns", "dhcp", "ntp":
+			default:
+				return fmt.Errorf("%s spec.guestServices[%d] must be dns, dhcp, or ntp", res.ID(), i)
+			}
+		}
+		for i, cidr := range append(append([]string{}, spec.GuestEgressDeny...), spec.GuestEgressAllow...) {
+			if _, err := netip.ParsePrefix(cidr); err != nil {
+				return fmt.Errorf("%s guest egress CIDR[%d] is invalid: %w", res.ID(), i, err)
+			}
 		}
 	case "FirewallLog":
 		if res.APIVersion != api.FirewallAPIVersion {

@@ -787,3 +787,97 @@ func TestNftablesInternalWANHolesUseOwningInterface(t *testing.T) {
 		t.Fatalf("nftables output missing interface-scoped DHCPv6 hole %q:\n%s", want, got)
 	}
 }
+
+func TestNftablesClientPolicyIncludeGuestMACs(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+			Metadata: api.ObjectMeta{Name: "guest-devices"},
+			Spec: api.ClientPolicySpec{
+				Mode:       "include",
+				Interfaces: []string{"lan"},
+				Classification: []api.ClientPolicyClassSpec{{
+					MACAddress: "18:ec:e7:33:12:6c",
+					As:         "guest",
+					Name:       "aiseg2",
+				}},
+			},
+		},
+	}}}
+	data, err := NftablesFirewall(router, nil)
+	if err != nil {
+		t.Fatalf("render nftables firewall: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`set client_policy_guest_devices { type ether_addr; elements = { 18:ec:e7:33:12:6c } }`,
+		`iifname "ens19" ether saddr @client_policy_guest_devices udp dport 53 counter accept`,
+		`iifname "ens19" ether saddr @client_policy_guest_devices udp dport { 67, 547 } counter accept`,
+		`iifname "ens19" ether saddr @client_policy_guest_devices ip daddr 10.0.0.0/8 counter log prefix "routerd client-policy guest-devices deny " drop`,
+		`iifname "ens19" ether saddr @client_policy_guest_devices ip6 daddr fc00::/7 counter log prefix "routerd client-policy guest-devices deny " drop`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesClientPolicyExcludeTrustedMACs(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+			Metadata: api.ObjectMeta{Name: "byod-default-guest"},
+			Spec: api.ClientPolicySpec{
+				Mode:       "exclude",
+				Interfaces: []string{"lan"},
+				Classification: []api.ClientPolicyClassSpec{{
+					MACAddress: "02:00:00:00:00:10",
+					As:         "trusted",
+				}},
+			},
+		},
+	}}}
+	data, err := NftablesFirewall(router, nil)
+	if err != nil {
+		t.Fatalf("render nftables firewall: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`set client_policy_byod_default_guest { type ether_addr; elements = { 02:00:00:00:00:10 } }`,
+		`iifname "ens19" ether saddr != @client_policy_byod_default_guest ip daddr 192.168.0.0/16 counter log prefix "routerd client-policy byod-default-guest deny " drop`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}

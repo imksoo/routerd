@@ -1,0 +1,107 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: guest-mode
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-gateway
+      spec:
+        interface: lan
+        address: 172.18.0.1/16
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-v4
+      spec:
+        server: dnsmasq
+        managed: true
+        interface: lan
+        addressPool:
+          start: 172.18.1.64
+          end: 172.18.1.191
+          leaseTime: 12h
+        gateway: 172.18.0.1
+        dnsServers:
+          - 172.18.0.1
+        ntpServers:
+          - 172.18.0.1
+        domain: home.internal
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Reservation
+      metadata:
+        name: aiseg2
+      spec:
+        server: lan-v4
+        macAddress: 18:ec:e7:33:12:6c
+        hostname: aiseg2
+        ipAddress: 172.18.0.150
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces:
+          - lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: wan
+      spec:
+        role: untrust
+        interfaces:
+          - wan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: default
+      spec:
+        logDeny: true
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: ClientPolicy
+      metadata:
+        name: guest-devices
+      spec:
+        mode: include
+        interfaces:
+          - Interface/lan
+        guestServices:
+          - dns
+          - dhcp
+          - ntp
+        classification:
+          - macAddress: 18:ec:e7:33:12:6c
+            as: guest
+            name: aiseg2
+            ipv4Reservation: aiseg2

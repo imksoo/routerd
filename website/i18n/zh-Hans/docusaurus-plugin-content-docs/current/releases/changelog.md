@@ -8,6 +8,18 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 从 `20260509` 开始使用 `yyyymmdd` 格式的日期型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## 20260509.12
+
+### 新增
+
+- 新增 `ClientPolicy`。它是由 Linux nftables 支持的 guest mode，可按 MAC 地址分类 LAN client。
+- guest client 可使用 DNS、DHCP、NTP，但默认会拒绝转发到 private IPv4 与 ULA IPv6 目的地的流量。
+- 新增 `examples/guest-mode.yaml` 与 include mode / exclude mode 文档。
+
+### 变更
+
+- FreeBSD pf 会明确拒绝 `ClientPolicy`，因为 pf 没有相同的 MAC-based routed filtering 模型。
+
 ## 20260509.11
 
 ### 新增
