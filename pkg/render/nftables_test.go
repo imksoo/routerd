@@ -715,3 +715,75 @@ func TestNftablesAllowsWANIPv6ClientControlPlane(t *testing.T) {
 		t.Fatalf("DHCPv6 client rule must not constrain server source port:\n%s", got)
 	}
 }
+
+func TestNftablesFirewallSkipsRedundantSelfHolesWhenZoneAlreadyAcceptsSelf(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{
+			Resources: []api.Resource{
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+					Metadata: api.ObjectMeta{Name: "lan"},
+					Spec:     api.InterfaceSpec{IfName: "ens19"},
+				},
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+					Metadata: api.ObjectMeta{Name: "lan"},
+					Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+				},
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+					Metadata: api.ObjectMeta{Name: "lan-resolver"},
+					Spec: api.DNSResolverSpec{
+						Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"192.0.2.1"}, Port: 53}},
+						Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
+					},
+				},
+			},
+		},
+	}
+	data, err := NftablesFirewall(router, InternalFirewallHoles(router))
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "chain lan_to_self") {
+		t.Fatalf("nftables output missing lan_to_self chain:\n%s", got)
+	}
+	if strings.Contains(got, "lan-resolver-dns") {
+		t.Fatalf("nftables output should not render redundant self DNS hole:\n%s", got)
+	}
+}
+
+func TestNftablesInternalWANHolesUseOwningInterface(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+			Metadata: api.ObjectMeta{Name: "ds-lite"},
+			Spec:     api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-lite"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"Interface/wan", "DSLiteTunnel/ds-lite"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+			Metadata: api.ObjectMeta{Name: "wan-pd"},
+			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
+		},
+	}}}
+	data, err := NftablesFirewall(router, InternalFirewallHoles(router))
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	want := `iifname "ens18" udp dport 546 counter accept comment "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd"`
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables output missing interface-scoped DHCPv6 hole %q:\n%s", want, got)
+	}
+}

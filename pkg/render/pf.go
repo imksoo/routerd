@@ -303,12 +303,18 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 		if len(zone.IfNames) == 0 {
 			continue
 		}
-		if implicitFirewallAction(zone.Role, "self", policy) == "accept" {
+		selfAccepted := implicitFirewallAction(zone.Role, "self", policy) == "accept"
+		if selfAccepted {
 			buf.WriteString("pass in quick on $" + pfZoneMacro(zone) + " to self keep state\n")
 		}
 		for _, hole := range holes {
 			if hole.FromZone == zone.Name && hole.ToZone == "self" {
-				buf.WriteString(pfFirewallHoleExpr(zone, hole, logging) + "\n")
+				if selfAccepted {
+					continue
+				}
+				for _, expr := range pfFirewallHoleExprs(zone, hole, logging) {
+					buf.WriteString(expr + "\n")
+				}
 			}
 		}
 		for _, res := range rules {
@@ -342,7 +348,9 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 		}
 		for _, hole := range holes {
 			if hole.FromZone == from.Name && hole.ToZone != "self" {
-				buf.WriteString(pfFirewallHoleExpr(from, hole, logging) + "\n")
+				for _, expr := range pfFirewallHoleExprs(from, hole, logging) {
+					buf.WriteString(expr + "\n")
+				}
 			}
 		}
 		for _, res := range rules {
@@ -395,6 +403,14 @@ func pfNATTarget(spec api.IPv4NATTranslationSpec, ifname string) (string, error)
 }
 
 func pfFirewallRuleExpr(zone firewallZone, name string, spec api.FirewallRuleSpec, logging firewallLogging) string {
+	return pfFirewallRuleExprOn("$"+pfZoneMacro(zone), name, spec, logging)
+}
+
+func pfFirewallRuleExprOn(onExpr, name string, spec api.FirewallRuleSpec, logging firewallLogging) string {
+	return pfFirewallRuleExprOnSelf(onExpr, "self", name, spec, logging)
+}
+
+func pfFirewallRuleExprOnSelf(onExpr, selfExpr, name string, spec api.FirewallRuleSpec, logging firewallLogging) string {
 	action := "block drop"
 	if spec.Action == "accept" {
 		action = "pass"
@@ -406,7 +422,7 @@ func pfFirewallRuleExpr(zone firewallZone, name string, spec api.FirewallRuleSpe
 	if spec.Log {
 		parts = append(parts, pfLogExpr(logging))
 	}
-	parts = append(parts, "quick", "on", "$"+pfZoneMacro(zone))
+	parts = append(parts, "quick", "on", onExpr)
 	if proto := pfFirewallProtocol(spec.Protocol); proto != "" {
 		parts = append(parts, proto)
 	}
@@ -416,7 +432,7 @@ func pfFirewallRuleExpr(zone firewallZone, name string, spec api.FirewallRuleSpe
 	if len(spec.DestinationCIDRs) > 0 {
 		parts = append(parts, "to", pfCIDRSet(spec.DestinationCIDRs))
 	} else if spec.ToZone == "self" {
-		parts = append(parts, "to", "self")
+		parts = append(parts, "to", selfExpr)
 	}
 	if spec.Port != 0 {
 		parts = append(parts, "port", strconv.Itoa(spec.Port))
@@ -425,7 +441,7 @@ func pfFirewallRuleExpr(zone firewallZone, name string, spec api.FirewallRuleSpe
 	return strings.Join(parts, " ")
 }
 
-func pfFirewallHoleExpr(zone firewallZone, hole FirewallHole, logging firewallLogging) string {
+func pfFirewallHoleExprs(zone firewallZone, hole FirewallHole, logging firewallLogging) []string {
 	action := defaultString(hole.Action, "accept")
 	spec := api.FirewallRuleSpec{
 		FromZone: hole.FromZone,
@@ -439,7 +455,20 @@ func pfFirewallHoleExpr(zone firewallZone, hole FirewallHole, logging firewallLo
 	if name == "" {
 		name = hole.Comment
 	}
-	return pfFirewallRuleExpr(zone, name, spec, logging)
+	if len(hole.IfNames) == 0 {
+		return []string{pfFirewallRuleExpr(zone, name, spec, logging)}
+	}
+	ifnames := compactStrings(hole.IfNames)
+	sort.Strings(ifnames)
+	exprs := make([]string, 0, len(ifnames))
+	for _, ifname := range ifnames {
+		selfExpr := "self"
+		if hole.ToZone == "self" {
+			selfExpr = "(" + ifname + ")"
+		}
+		exprs = append(exprs, pfFirewallRuleExprOnSelf(ifname, selfExpr, name, spec, logging))
+	}
+	return exprs
 }
 
 func pfFirewallProtocol(protocol string) string {

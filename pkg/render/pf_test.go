@@ -91,7 +91,7 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 	}
 }
 
-func TestPFRenderInternalDHCPDNSHoles(t *testing.T) {
+func TestPFSkipsRedundantSelfHolesWhenZoneAlreadyAcceptsSelf(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
@@ -127,15 +127,56 @@ func TestPFRenderInternalDHCPDNSHoles(t *testing.T) {
 		t.Fatalf("render pf: %v", err)
 	}
 	got := string(data)
-	for _, want := range []string{
-		`pass in quick on $lan_if proto udp to self port 67 keep state label "routerd:lan-dhcp4-dhcpv4-server-lan"`,
-		`pass in quick on $lan_if proto udp to self port 547 keep state label "routerd:lan-dhcp6-dhcpv6-server-lan"`,
-		`pass in quick on $lan_if proto udp to self port 53 keep state label "routerd:lan-resolver-dns-udp-lan"`,
-		`pass in quick on $lan_if proto tcp to self port 53 keep state label "routerd:lan-resolver-dns-tcp-lan"`,
+	if !strings.Contains(got, `pass in quick on $lan_if to self keep state`) {
+		t.Fatalf("pf output missing broad trust-to-self rule:\n%s", got)
+	}
+	for _, redundant := range []string{
+		`routerd:lan-dhcp4-dhcpv4-server-lan`,
+		`routerd:lan-dhcp6-dhcpv6-server-lan`,
+		`routerd:lan-resolver-dns-udp-lan`,
+		`routerd:lan-resolver-dns-tcp-lan`,
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("pf output missing %q:\n%s", want, got)
+		if strings.Contains(got, redundant) {
+			t.Fatalf("pf output should not render redundant self hole %q:\n%s", redundant, got)
 		}
+	}
+}
+
+func TestPFInternalWANHolesUseOwningInterface(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "em0"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+			Metadata: api.ObjectMeta{Name: "ds-lite"},
+			Spec:     api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "gif41"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"Interface/wan", "DSLiteTunnel/ds-lite"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+			Metadata: api.ObjectMeta{Name: "wan-pd"},
+			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
+		},
+	}}}
+	data, err := PF(router, InternalFirewallHoles(router))
+	if err != nil {
+		t.Fatalf("render pf: %v", err)
+	}
+	got := string(data)
+	want := `pass in quick on em0 proto udp to (em0) port 546 keep state label "routerd:wan-pd-dhcpv6-client"`
+	if !strings.Contains(got, want) {
+		t.Fatalf("pf output missing interface-scoped DHCPv6 hole %q:\n%s", want, got)
+	}
+	if strings.Contains(got, `pass in quick on gif41 proto udp to self port 546`) ||
+		strings.Contains(got, `pass in quick on $wan_if proto udp to self port 546`) {
+		t.Fatalf("pf output should not render DHCPv6 client hole on all WAN members:\n%s", got)
 	}
 }
 

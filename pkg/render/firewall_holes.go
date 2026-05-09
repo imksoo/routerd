@@ -13,11 +13,11 @@ import (
 func InternalFirewallHoles(router *api.Router) []FirewallHole {
 	zones := internalFirewallZoneIndex(router)
 	var holes []FirewallHole
-	add := func(name, from, to, proto string, port int, comment string) {
+	add := func(name, from, to, proto string, port int, comment string, ifnames ...string) {
 		if from == "" || to == "" {
 			return
 		}
-		holes = append(holes, FirewallHole{Name: name, FromZone: from, ToZone: to, Protocol: proto, Port: port, Action: "accept", Comment: comment})
+		holes = append(holes, FirewallHole{Name: name, FromZone: from, ToZone: to, IfNames: compactStrings(ifnames), Protocol: proto, Port: port, Action: "accept", Comment: comment})
 	}
 	if router == nil {
 		return nil
@@ -26,25 +26,25 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 		switch resource.Kind {
 		case "DHCPv6PrefixDelegation":
 			spec, _ := resource.DHCPv6PrefixDelegationSpec()
-			add(resource.Metadata.Name+"-dhcpv6-client", zones.byResource(spec.Interface), "self", "udp", 546, resource.ID())
+			add(resource.Metadata.Name+"-dhcpv6-client", zones.byResource(spec.Interface), "self", "udp", 546, resource.ID(), zones.ifNameByResource(spec.Interface))
 		case "DHCPv6Information":
 			spec, _ := resource.DHCPv6InformationSpec()
-			add(resource.Metadata.Name+"-dhcpv6-info", zones.byResource(spec.Interface), "self", "udp", 546, resource.ID())
+			add(resource.Metadata.Name+"-dhcpv6-info", zones.byResource(spec.Interface), "self", "udp", 546, resource.ID(), zones.ifNameByResource(spec.Interface))
 		case "DHCPv4Lease":
 			spec, _ := resource.DHCPv4LeaseSpec()
-			add(resource.Metadata.Name+"-dhcpv4-client", zones.byResource(spec.Interface), "self", "udp", 68, resource.ID())
+			add(resource.Metadata.Name+"-dhcpv4-client", zones.byResource(spec.Interface), "self", "udp", 68, resource.ID(), zones.ifNameByResource(spec.Interface))
 		case "DSLiteTunnel":
 			spec, _ := resource.DSLiteTunnelSpec()
-			add(resource.Metadata.Name+"-dslite-ipip", "self", zones.byResource(spec.Interface), "ipip", 0, resource.ID())
+			add(resource.Metadata.Name+"-dslite-ipip", "self", zones.byResource(spec.Interface), "ipip", 0, resource.ID(), zones.ifNameByResource(spec.Interface))
 		case "DHCPv4Server":
 			spec, _ := resource.DHCPv4ServerSpec()
 			for _, iface := range resourceInterfaces(spec.Interface, spec.ListenInterfaces) {
-				add(resource.Metadata.Name+"-dhcpv4-server-"+iface, zones.byResource(iface), "self", "udp", 67, resource.ID())
+				add(resource.Metadata.Name+"-dhcpv4-server-"+iface, zones.byResource(iface), "self", "udp", 67, resource.ID(), zones.ifNameByResource(iface))
 			}
 		case "DHCPv6Server":
 			spec, _ := resource.DHCPv6ServerSpec()
 			for _, iface := range resourceInterfaces(spec.Interface, spec.ListenInterfaces) {
-				add(resource.Metadata.Name+"-dhcpv6-server-"+iface, zones.byResource(iface), "self", "udp", 547, resource.ID())
+				add(resource.Metadata.Name+"-dhcpv6-server-"+iface, zones.byResource(iface), "self", "udp", 547, resource.ID(), zones.ifNameByResource(iface))
 			}
 		case "DNSResolver":
 			spec, _ := resource.DNSResolverSpec()
@@ -56,21 +56,21 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 			}
 		case "IPv6RouterAdvertisement":
 			spec, _ := resource.IPv6RouterAdvertisementSpec()
-			add(resource.Metadata.Name+"-ra", "self", zones.byResource(spec.Interface), "icmpv6", 0, resource.ID())
+			add(resource.Metadata.Name+"-ra", "self", zones.byResource(spec.Interface), "icmpv6", 0, resource.ID(), zones.ifNameByResource(spec.Interface))
 		case "WireGuardInterface":
 			spec, _ := resource.WireGuardInterfaceSpec()
 			if spec.ListenPort != 0 {
-				add(resource.Metadata.Name+"-wireguard", zones.firstUntrust(), "self", "udp", spec.ListenPort, resource.ID())
+				add(resource.Metadata.Name+"-wireguard", zones.firstUntrust(), "self", "udp", spec.ListenPort, resource.ID(), zones.firstUntrustIfName())
 			}
 		case "TailscaleNode":
 			spec, _ := resource.TailscaleNodeSpec()
 			if firstNonEmpty(spec.State, "present") != "absent" {
-				add(resource.Metadata.Name+"-tailscale", zones.firstUntrust(), "self", "udp", 41641, resource.ID())
+				add(resource.Metadata.Name+"-tailscale", zones.firstUntrust(), "self", "udp", 41641, resource.ID(), zones.firstUntrustIfName())
 			}
 		case "VXLANSegment":
 			spec, _ := resource.VXLANSegmentSpec()
 			if port := defaultInt(spec.UDPPort, 4789); port != 0 {
-				add(resource.Metadata.Name+"-vxlan", zones.byResource(spec.UnderlayInterface), "self", "udp", port, resource.ID())
+				add(resource.Metadata.Name+"-vxlan", zones.byResource(spec.UnderlayInterface), "self", "udp", port, resource.ID(), zones.ifNameByResource(spec.UnderlayInterface))
 			}
 		case "HealthCheck":
 			spec, _ := resource.HealthCheckSpec()
@@ -79,7 +79,7 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 				if spec.Protocol == "dns" {
 					proto = "udp"
 				}
-				add(resource.Metadata.Name+"-healthcheck", "self", zones.byResource(spec.Interface), proto, spec.Port, resource.ID())
+				add(resource.Metadata.Name+"-healthcheck", "self", zones.byResource(spec.Interface), proto, spec.Port, resource.ID(), zones.ifNameByResource(spec.Interface))
 			}
 		}
 	}
@@ -104,12 +104,20 @@ func resourceInterfaces(primary string, listen []string) []string {
 type internalFirewallZonesByRef struct {
 	resource map[string]string
 	role     map[string]string
+	ifname   map[string]string
+	zoneIf   map[string][]string
 }
 
 func internalFirewallZoneIndex(router *api.Router) internalFirewallZonesByRef {
-	out := internalFirewallZonesByRef{resource: map[string]string{}, role: map[string]string{}}
+	out := internalFirewallZonesByRef{resource: map[string]string{}, role: map[string]string{}, ifname: map[string]string{}, zoneIf: map[string][]string{}}
 	if router == nil {
 		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if ifname := internalFirewallResourceIfName(resource); ifname != "" {
+			out.ifname[resource.Metadata.Name] = ifname
+			out.ifname[resource.Kind+"/"+resource.Metadata.Name] = ifname
+		}
 	}
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.FirewallAPIVersion || resource.Kind != "FirewallZone" {
@@ -124,9 +132,43 @@ func internalFirewallZoneIndex(router *api.Router) internalFirewallZonesByRef {
 			kind, name := splitResourceRef(ref)
 			out.resource[name] = resource.Metadata.Name
 			out.resource[kind+"/"+name] = resource.Metadata.Name
+			if ifname := out.ifname[name]; ifname != "" && !stringSliceContains(out.zoneIf[resource.Metadata.Name], ifname) {
+				out.zoneIf[resource.Metadata.Name] = append(out.zoneIf[resource.Metadata.Name], ifname)
+			}
 		}
 	}
 	return out
+}
+
+func internalFirewallResourceIfName(resource api.Resource) string {
+	switch resource.Kind {
+	case "Interface":
+		spec, err := resource.InterfaceSpec()
+		if err == nil {
+			return strings.TrimSpace(spec.IfName)
+		}
+	case "DSLiteTunnel":
+		spec, err := resource.DSLiteTunnelSpec()
+		if err == nil {
+			return strings.TrimSpace(spec.TunnelName)
+		}
+	case "PPPoEInterface":
+		spec, err := resource.PPPoEInterfaceSpec()
+		if err == nil {
+			return strings.TrimSpace(spec.IfName)
+		}
+	case "WireGuardInterface":
+		return strings.TrimSpace(resource.Metadata.Name)
+	case "VXLANSegment":
+		spec, err := resource.VXLANSegmentSpec()
+		if err == nil {
+			if spec.IfName != "" {
+				return strings.TrimSpace(spec.IfName)
+			}
+			return strings.TrimSpace(resource.Metadata.Name)
+		}
+	}
+	return ""
 }
 
 func (z internalFirewallZonesByRef) byResource(name string) string {
@@ -151,6 +193,24 @@ func (z internalFirewallZonesByRef) firstUntrust() string {
 		return ""
 	}
 	return names[0]
+}
+
+func (z internalFirewallZonesByRef) firstUntrustIfName() string {
+	zone := z.firstUntrust()
+	if zone == "" || len(z.zoneIf[zone]) == 0 {
+		return ""
+	}
+	return z.zoneIf[zone][0]
+}
+
+func (z internalFirewallZonesByRef) ifNameByResource(name string) string {
+	if ifname := z.ifname[name]; ifname != "" {
+		return ifname
+	}
+	if _, short, ok := strings.Cut(name, "/"); ok {
+		return z.ifname[short]
+	}
+	return ""
 }
 
 func (z internalFirewallZonesByRef) byListenAddress(addresses []string) []string {

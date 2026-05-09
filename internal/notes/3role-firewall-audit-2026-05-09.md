@@ -52,7 +52,7 @@ Observed nftables table:
     - `wan_to_wan`
   - final log/drop rule: `routerd firewall forward deny`
 
-Observed role chains:
+Observed role chains before the follow-up renderer fix:
 
 | Chain | Result |
 | --- | --- |
@@ -147,6 +147,43 @@ NAT:
   - `vtnet0`
 - RFC 1918 destinations are excluded from NAT.
 
+## Root-cause follow-up
+
+After the audit, the renderer was changed to suppress self-service holes when
+the role matrix already accepts that zone to `self`. This keeps the intended
+model while reducing noise:
+
+- `trust -> self` and `mgmt -> self` keep the broad matrix accept.
+- DHCP, DNS, and similar service holes are no longer repeated under those
+  already-accepted paths.
+- `untrust -> self` still renders only the required exceptions, such as
+  DHCPv6 client traffic, Tailscale, WireGuard, or VXLAN.
+- Resource-owned holes now carry the concrete ingress interface when the
+  resource has one. For example, DHCPv6 client holes are bound to the WAN
+  underlay interface instead of every member of the `wan` zone.
+
+This is a root-cause fix for the FreeBSD pf auditability issue. The previous
+pf output expanded many labelled service holes under paths that were already
+allowed by the role matrix or under every interface in a multi-interface zone.
+
+Post-fix verification:
+
+- homert02 `wan_to_self` now binds dynamic holes to `iifname "ens18"`.
+- homert02 `lan_to_self` and `management_to_self` no longer repeat DNS/DHCP
+  holes under the already-accepted self paths.
+- router04 pf now renders one line each for the WAN self holes:
+  - `wan-pd-dhcpv6-client` on `vtnet0`
+  - `wan-info-dhcpv6-info` on `vtnet0`
+  - `wg0-wireguard` on `vtnet0`
+  - `vxlan100-vxlan` on `vtnet0`
+- router04 pf uses `to (vtnet0)` for those rules instead of global `to self`.
+- The router04 pf apply was guarded by a temporary root crontab rollback entry.
+  It copied the previous `/etc/pf.conf` back and reloaded pf after three
+  minutes if management verification failed. The guard was removed after the
+  management status check succeeded.
+- homert02 stayed `Healthy`; a direct IPv4 `curl` from the router returned
+  HTTP `204`.
+
 ## Semantic comparison
 
 | Direction | homert02/Linux nft | router04/FreeBSD pf | Result |
@@ -155,8 +192,8 @@ NAT:
 | established/related | explicit accept | pf keep-state on pass rules | Equivalent stateful model |
 | loopback | accept | accept | Equivalent |
 | ICMPv6 | accept | accept | Equivalent |
-| trust -> self | DHCP/DNS/NTP holes plus accept | service holes plus trust-to-self pass | Equivalent intent |
-| mgmt -> self | accept after service holes | management path allowed | Equivalent intent |
+| trust -> self | matrix accept; redundant service holes suppressed | trust-to-self pass; redundant service holes suppressed | Equivalent intent |
+| mgmt -> self | matrix accept; redundant service holes suppressed | management path allowed; redundant service holes suppressed | Equivalent intent |
 | untrust -> self | only required holes, then drop | only required holes, otherwise default drop | Equivalent intent |
 | trust -> trust | accept | accept | Equivalent |
 | trust -> mgmt | default drop with homert02-specific router04 Web UI exception | default drop | Intentional environment difference |
@@ -180,7 +217,5 @@ NAT:
 
 ## Follow-up candidates
 
-- Render fewer duplicate pf service-hole rules on FreeBSD by constraining holes
-  to the actual service listen addresses instead of every self address.
 - Add a small `routerctl firewall matrix` view so the semantic matrix can be
   audited without reading nft/pf syntax directly.

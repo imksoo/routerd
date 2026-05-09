@@ -309,6 +309,7 @@ type FirewallHole struct {
 	Name      string
 	FromZone  string
 	ToZone    string
+	IfNames   []string
 	Protocol  string
 	Port      int
 	Action    string
@@ -479,6 +480,9 @@ func writeFirewallPairChain(buf *bytes.Buffer, from firewallZone, to firewallZon
 	buf.WriteString("  chain " + chain + " {\n")
 	for _, hole := range holes {
 		if hole.FromZone == from.Name && hole.ToZone == to.Name {
+			if to.Name == "self" && implicitFirewallAction(from.Role, to.Role, policy) == "accept" {
+				continue
+			}
 			buf.WriteString("    " + nftFirewallHoleExpr(hole) + "\n")
 		}
 	}
@@ -562,6 +566,9 @@ func nftFirewallRuleExpr(name string, spec api.FirewallRuleSpec, logging firewal
 
 func nftFirewallHoleExpr(hole FirewallHole) string {
 	var parts []string
+	if len(hole.IfNames) > 0 {
+		parts = append(parts, nftIfNameMatch("iifname", hole.IfNames))
+	}
 	if proto := nftFirewallProtocol(hole.Protocol); proto != "" {
 		parts = append(parts, proto)
 	}
@@ -573,6 +580,15 @@ func nftFirewallHoleExpr(hole FirewallHole) string {
 		parts = append(parts, "comment "+nftQuote(hole.Comment))
 	}
 	return strings.Join(parts, " ")
+}
+
+func nftIfNameMatch(key string, ifnames []string) string {
+	values := compactStrings(ifnames)
+	sort.Strings(values)
+	if len(values) == 1 {
+		return key + " " + nftQuote(values[0])
+	}
+	return key + " { " + nftQuotedList(values) + " }"
 }
 
 func nftFirewallProtocol(protocol string) string {
