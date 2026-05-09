@@ -41,7 +41,19 @@ sudo ./install.sh
 
 `install.sh` copies binaries to `/usr/local/sbin`, installs service templates, and writes `router.yaml.sample`.
 It does not overwrite an existing `/usr/local/etc/routerd/router.yaml`.
-Pass `--enable-service` or `--start-service` when you want the installer to call the host service manager.
+When an existing `/usr/local/sbin/routerd` is found, the installer switches to upgrade mode automatically.
+It prints the old and new `routerd --version` output, replaces binaries and service templates, preserves configuration and state, and restarts `routerd.service` or the FreeBSD `routerd` rc.d service if it was already running.
+Pass `--no-restart` to replace files without restarting the service.
+Pass `--enable-service` or `--start-service` when you want a fresh install to call the host service manager.
+
+The installer never modifies these runtime or state locations:
+
+- `/usr/local/etc/routerd/router.yaml`
+- `/var/lib/routerd`
+- `/var/db/routerd`
+- `/run/routerd`
+- `/var/run/routerd`
+- `/var/log/otelcol`
 
 ## Manual dispatch
 
