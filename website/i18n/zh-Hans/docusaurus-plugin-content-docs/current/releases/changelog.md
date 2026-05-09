@@ -8,6 +8,17 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 从 `20260509` 开始使用 `yyyymmdd` 格式的日期型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## 20260509.11
+
+### 新增
+
+- 新增最小 Tailscale mesh、WireGuard hub-spoke、VRF lab 和 multi-WAN home fallback 的用途示例。
+- 新增 `examples/README.md`，说明各示例适合的使用场景。
+
+### 变更
+
+- `make validate-example` 现在会验证 `examples/` 目录下的所有 YAML 文件。
+
 ## 20260509.10
 
 ### 新增

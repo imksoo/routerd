@@ -8,6 +8,17 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `20260509.0` から `yyyymmdd.N` 形式の日付ベース版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## 20260509.11
+
+### Added
+
+- 最小 Tailscale mesh 参加、WireGuard hub-spoke 経路、VRF lab、multi-WAN home fallback の用途別 example を追加しました。
+- 各 example の用途を説明する `examples/README.md` を追加しました。
+
+### Changed
+
+- `make validate-example` が `examples/` 配下の全 YAML ファイルを検証するようにしました。
+
 ## 20260509.10
 
 ### Added

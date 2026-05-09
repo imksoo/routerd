@@ -8,6 +8,17 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-based release versions in `yyyymmdd.N` format starting with `20260509.0`.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## 20260509.11
+
+### Added
+
+- Added focused example configurations for minimal Tailscale mesh membership, WireGuard hub-spoke routing, a VRF lab, and multi-WAN home fallback.
+- Added `examples/README.md` to explain when each example should be used.
+
+### Changed
+
+- `make validate-example` now validates every YAML file under `examples/`.
+
 ## 20260509.10
 
 ### Added

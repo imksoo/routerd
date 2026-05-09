@@ -1,0 +1,92 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: vrf-lab
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: guest-lan
+      spec:
+        ifname: ens19.110
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: staff-lan
+      spec:
+        ifname: ens19.120
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: iot-lan
+      spec:
+        ifname: ens19.130
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VRF
+      metadata:
+        name: vrf-guest
+      spec:
+        ifname: vrf-guest
+        routeTable: 110
+        members:
+          - guest-lan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VRF
+      metadata:
+        name: vrf-staff
+      spec:
+        ifname: vrf-staff
+        routeTable: 120
+        members:
+          - staff-lan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VRF
+      metadata:
+        name: vrf-iot
+      spec:
+        ifname: vrf-iot
+        routeTable: 130
+        members:
+          - iot-lan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: guest-gateway
+      spec:
+        interface: guest-lan
+        address: 172.30.10.1/24
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: staff-gateway
+      spec:
+        interface: staff-lan
+        address: 172.30.20.1/24
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: iot-gateway
+      spec:
+        interface: iot-lan
+        address: 172.30.30.1/24
+

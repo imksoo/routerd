@@ -1,0 +1,341 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: multi-wan-home
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Address
+      metadata:
+        name: wan-dhcpv4
+      spec:
+        interface: wan
+        client: routerd
+        required: false
+        useRoutes: false
+        useDNS: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-gateway
+      spec:
+        interface: lan
+        address: 172.18.0.1/16
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: ds-lite-a-source
+      spec:
+        interface: wan
+        address: 192.0.0.2/32
+        allowOverlap: true
+        allowOverlapReason: "RFC 6333 B4-AFTR link source for ds-lite-a."
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: ds-lite-b-source
+      spec:
+        interface: wan
+        address: 192.0.0.3/32
+        allowOverlap: true
+        allowOverlapReason: "RFC 6333 B4-AFTR link source for ds-lite-b."
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: ds-lite-c-source
+      spec:
+        interface: wan
+        address: 192.0.0.4/32
+        allowOverlap: true
+        allowOverlapReason: "RFC 6333 B4-AFTR link source for ds-lite-c."
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-a
+      spec:
+        interface: wan
+        tunnelName: ds-lite-a
+        aftrFQDN: gw.transix.jp
+        aftrDNSServers:
+          - 2404:1a8:7f01:a::3
+          - 2404:1a8:7f01:b::3
+        aftrAddressOrdinal: 1
+        localAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-a-source
+          field: address
+        mtu: 1454
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-b
+      spec:
+        interface: wan
+        tunnelName: ds-lite-b
+        aftrFQDN: gw.transix.jp
+        aftrDNSServers:
+          - 2404:1a8:7f01:a::3
+          - 2404:1a8:7f01:b::3
+        aftrAddressOrdinal: 2
+        localAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-b-source
+          field: address
+        mtu: 1454
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-c
+      spec:
+        interface: wan
+        tunnelName: ds-lite-c
+        aftrFQDN: gw.transix.jp
+        aftrDNSServers:
+          - 2404:1a8:7f01:a::3
+          - 2404:1a8:7f01:b::3
+        aftrAddressOrdinal: 3
+        localAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-c-source
+          field: address
+        mtu: 1454
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-ra
+      spec:
+        interface: wan
+        tunnelName: ds-lite-ra
+        aftrFQDN: gw.transix.jp
+        aftrDNSServers:
+          - 2404:1a8:7f01:a::3
+          - 2404:1a8:7f01:b::3
+        localAddressSource: interface
+        mtu: 1454
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: PPPoEInterface
+      metadata:
+        name: pppoe-flets
+      spec:
+        interface: wan
+        ifname: ppp-flets
+        username: open@open.ad.jp
+        passwordFile: /usr/local/etc/routerd/secrets/pppoe-flets.password
+        mtu: 1454
+        mru: 1454
+        defaultRoute: false
+        usePeerDNS: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-a
+      spec:
+        role: internet
+        addressFamily: ipv4
+        target: 1.1.1.1
+        protocol: tcp
+        port: 443
+        sourceInterface: ds-lite-a
+        sourceAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-a-source
+          field: address
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 2
+        unhealthyThreshold: 2
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-b
+      spec:
+        role: internet
+        addressFamily: ipv4
+        target: 1.1.1.1
+        protocol: tcp
+        port: 443
+        sourceInterface: ds-lite-b
+        sourceAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-b-source
+          field: address
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 2
+        unhealthyThreshold: 2
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-c
+      spec:
+        role: internet
+        addressFamily: ipv4
+        target: 1.1.1.1
+        protocol: tcp
+        port: 443
+        sourceInterface: ds-lite-c
+        sourceAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-c-source
+          field: address
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 2
+        unhealthyThreshold: 2
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-ra
+      spec:
+        role: internet
+        addressFamily: ipv4
+        target: 1.1.1.1
+        protocol: tcp
+        port: 443
+        sourceInterface: ds-lite-ra
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 2
+        unhealthyThreshold: 2
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-pppoe
+      spec:
+        role: internet
+        addressFamily: ipv4
+        target: 1.1.1.1
+        protocol: tcp
+        port: 443
+        sourceInterface: pppoe-flets
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 2
+        unhealthyThreshold: 2
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-hgw-direct
+      spec:
+        role: internet
+        addressFamily: ipv4
+        target: 1.1.1.1
+        protocol: tcp
+        port: 443
+        sourceInterface: wan
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 2
+        unhealthyThreshold: 2
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: EgressRoutePolicy
+      metadata:
+        name: ipv4-default
+      spec:
+        family: ipv4
+        destinationCIDRs:
+          - 0.0.0.0/0
+        selection: highest-weight-ready
+        hysteresis: 30s
+        candidates:
+          - name: ds-lite-a
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite-a
+              field: device
+            gatewaySource: none
+            weight: 120
+            healthCheck: internet-via-dslite-a
+          - name: ds-lite-b
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite-b
+              field: device
+            gatewaySource: none
+            weight: 120
+            healthCheck: internet-via-dslite-b
+          - name: ds-lite-c
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite-c
+              field: device
+            gatewaySource: none
+            weight: 120
+            healthCheck: internet-via-dslite-c
+          - name: ds-lite-ra
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite-ra
+              field: device
+            gatewaySource: none
+            weight: 80
+            healthCheck: internet-via-dslite-ra
+          - name: pppoe-flets
+            device: ppp-flets
+            gatewaySource: none
+            weight: 60
+            healthCheck: internet-via-pppoe
+          - name: hgw-direct
+            device: wan
+            gatewaySource: dhcpv4
+            weight: 40
+            healthCheck: internet-via-hgw-direct
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: default
+      spec:
+        destination: 0.0.0.0/0
+        deviceFrom:
+          resource: EgressRoutePolicy/ipv4-default
+          field: selectedDevice
+        gatewayFrom:
+          resource: EgressRoutePolicy/ipv4-default
+          field: selectedGateway
+          optional: true
+        dependsOn:
+          - resource: EgressRoutePolicy/ipv4-default
+            phase: Applied
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-selected-wan
+      spec:
+        type: masquerade
+        egressPolicyRef: ipv4-default
+        sourceRanges:
+          - 172.18.0.0/16
+        excludeDestinationCIDRs:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16

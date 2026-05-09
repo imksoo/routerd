@@ -1,4 +1,4 @@
-VERSION ?= 20260509.10
+VERSION ?= 20260509.11
 DISTBASE ?= dist
 DISTARCH ?= $(if $(GOARCH),$(GOARCH),$(shell go env GOARCH))
 DISTPLATFORM ?= $(ROUTERD_OS)-$(DISTARCH)
@@ -29,7 +29,7 @@ ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
 endif
 GO_BUILD_FLAGS ?= -trimpath -ldflags="-s -w"
-EXAMPLE_CONFIGS ?= examples/basic-static.yaml examples/dslite-lan-range-snat.yaml
+EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
 
 .PHONY: test build build-daemons build-daemons-freebsd webconsole-build generate-schema check-schema website-build check-build-deps dist validate-example dry-run-example plan-config clean
 

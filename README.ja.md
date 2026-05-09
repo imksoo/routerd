@@ -81,6 +81,8 @@ routerd は NAT44、ゾーンポリシー、管理対象サービス用の許可
   パッケージ、サービスの例です。
 - `examples/tailscale-exit-subnet.yaml`: Tailscale の exit node と subnet router
   の広告を管理対象 systemd ユニットで行う例です。
+- `examples/README.md`: 用途別の設定例一覧です。最小 Tailscale、
+  WireGuard hub-spoke、VRF lab、multi-WAN home のテンプレートを含みます。
 
 DHCPv4 の固定割り当ては、リソースとして宣言します。
 
@@ -120,12 +122,12 @@ spec:
 ルーターホスト上でリリースアーカイブを展開し、同梱のインストーラーを実行します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.10/routerd-20260509.10-linux-amd64.tar.gz
-tar -xzf routerd-20260509.10-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.11/routerd-20260509.11-linux-amd64.tar.gz
+tar -xzf routerd-20260509.11-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-FreeBSD では `routerd-20260509.10-freebsd-amd64.tar.gz` を取得し、同じ
+FreeBSD では `routerd-20260509.11-freebsd-amd64.tar.gz` を取得し、同じ
 `./install.sh` を実行します。
 arm64 ホストでは `linux-arm64` または `freebsd-arm64` アーカイブを使います。
 

@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: wireguard-hub-spoke
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-hub
+      spec:
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-hub.key
+        listenPort: 51820
+        mtu: 1420
+        table: 200
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: wg-hub-ipv4
+      spec:
+        interface: wg-hub
+        address: 10.44.0.1/24
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: spoke-a
+      spec:
+        interface: wg-hub
+        publicKey: REPLACE_WITH_SPOKE_A_PUBLIC_KEY
+        allowedIPs:
+          - 10.44.0.11/32
+          - 172.30.11.0/24
+        endpoint: spoke-a.example.net:51820
+        persistentKeepalive: 25
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: spoke-b
+      spec:
+        interface: wg-hub
+        publicKey: REPLACE_WITH_SPOKE_B_PUBLIC_KEY
+        allowedIPs:
+          - 10.44.0.12/32
+          - 172.30.12.0/24
+        endpoint: spoke-b.example.net:51820
+        persistentKeepalive: 25
+
