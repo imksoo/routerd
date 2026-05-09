@@ -8,6 +8,15 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 从 `20260509` 开始使用 `yyyymmdd` 格式的日期型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## 20260509.10
+
+### 新增
+
+- Web Console Overview 会显示 generation、resource phase、HealthCheck 状态的简易趋势图。
+- Config 页可比较当前 YAML 文件与最新已应用 generation，便于执行 `routerd apply` 前确认差异。
+- Resource 表格支持 kind、name、phase、详细内容搜索、phase 筛选与结果标记。
+- VPN 页面新增 Tailscale 与 WireGuard peer 状态的视觉摘要。
+
 ## 20260509.9
 
 ### 新增

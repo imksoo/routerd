@@ -8,6 +8,15 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `20260509.0` から `yyyymmdd.N` 形式の日付ベース版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## 20260509.10
+
+### Added
+
+- Web Console の Overview に、世代、リソース phase、HealthCheck 状態の簡易時系列チャートを追加しました。
+- Config 画面で、現在の YAML ファイルと最新適用世代を比較できるようにしました。`routerd apply` の前に差分を確認できます。
+- Resource テーブルで、kind、name、phase、詳細の検索、phase 絞り込み、検索結果の強調表示ができるようにしました。
+- VPN 画面に Tailscale と WireGuard の peer 状態を示す視覚サマリーを追加しました。
+
 ## 20260509.9
 
 ### Added

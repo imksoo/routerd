@@ -257,6 +257,16 @@ type GenerationRecord = {
   hasYaml?: boolean;
 };
 
+type MetricSample = {
+  time: string;
+  generation: number;
+  healthy: number;
+  warning: number;
+  danger: number;
+  healthHealthy: number;
+  healthUnhealthy: number;
+};
+
 type ConnectionFilters = {
   query: string;
   family: string;
@@ -581,6 +591,41 @@ const useStyles = makeStyles({
     "@media (max-width: 900px)": {
       gridTemplateColumns: "1fr",
     },
+  },
+  chartGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gap: "12px",
+  },
+  chartCard: {
+    minWidth: 0,
+    display: "grid",
+    gap: "8px",
+    borderRadius: "4px",
+    border: "1px solid #243041",
+    backgroundColor: "#101a28",
+    padding: "10px",
+  },
+  chartSvg: {
+    width: "100%",
+    height: "86px",
+    display: "block",
+  },
+  resourceFilters: {
+    display: "grid",
+    gridTemplateColumns: "minmax(220px, 1fr) 180px",
+    gap: "8px",
+    alignItems: "end",
+    marginBottom: "12px",
+    "@media (max-width: 640px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
+  highlight: {
+    backgroundColor: "#6b4b00",
+    color: "#fff7d6",
+    borderRadius: "2px",
+    padding: "0 2px",
   },
   eventsGrid: {
     display: "grid",
@@ -1016,6 +1061,7 @@ function App() {
   const [config, setConfig] = useState<ConfigSnapshot | null>(null);
   const [generations, setGenerations] = useState<GenerationRecord[]>([]);
   const [generationDiff, setGenerationDiff] = useState<string>("");
+  const [configPlanDiff, setConfigPlanDiff] = useState<string>("");
   const [generationConfig, setGenerationConfig] = useState<{ generation: number; text: string } | null>(null);
   const [generationFrom, setGenerationFrom] = useState<string>("");
   const [generationTo, setGenerationTo] = useState<string>("");
@@ -1035,6 +1081,7 @@ function App() {
     direction: "asc",
   });
   const [selectedEventKey, setSelectedEventKey] = useState<string>("");
+  const [metricSamples, setMetricSamples] = useState<MetricSample[]>([]);
   const [loading, setLoading] = useState(true);
 
   async function refresh() {
@@ -1045,6 +1092,7 @@ function App() {
         fetchJSON<GenerationRecord[]>("api/v1/generations?limit=200"),
       ]);
       setSummary(summaryResponse);
+      setMetricSamples(current => appendMetricSample(current, summaryResponse));
       if (!config) setConfig(configResponse as ConfigSnapshot);
       setGenerations(generationResponse);
       setError("");
@@ -1179,6 +1227,18 @@ function App() {
     }
   }
 
+  async function loadConfigPlanDiff() {
+    const latest = generations.find(row => row.hasYaml);
+    if (!latest || !config?.text) return;
+    try {
+      const previous = await fetchText(`api/v1/generations/${latest.generation}/config`);
+      setConfigPlanDiff(unifiedLineDiff(`generation-${latest.generation}.yaml`, "current-file.yaml", previous, config.text));
+      setError("");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   const selectedNav = navItems.find(item => item.key === selected) ?? navItems[0];
   const activeClientTargetID = clientSectionID(selectedTargetID);
 
@@ -1269,6 +1329,7 @@ function App() {
                     <Metric label="families" value={connectionFamilyCounts(summary?.connections)} />
                   </div>
                 </div>
+                <MetricCharts samples={metricSamples} />
                 <Card>
                   <CardHeader header={<Text weight="semibold">Interfaces</Text>} description={<Text className={styles.muted}>Role, link state, MTU, and assigned addresses</Text>} />
                   <InterfaceOverview interfaces={summary?.interfaces ?? []} />
@@ -1435,7 +1496,7 @@ function App() {
             {selected === "config" ? (
               <Card>
                 <CardHeader header={<Text weight="semibold">Config</Text>} description={<Text className={styles.muted}>{config?.path ?? ""}</Text>} />
-                <ConfigView config={config} />
+                <ConfigView config={config} latestGeneration={generations.find(row => row.hasYaml)} planDiff={configPlanDiff} loadPlanDiff={loadConfigPlanDiff} />
               </Card>
             ) : null}
             {selected === "generations" ? (
@@ -1458,7 +1519,17 @@ function App() {
   );
 }
 
-function ConfigView({ config }: { config: ConfigSnapshot | null }) {
+function ConfigView({
+  config,
+  latestGeneration,
+  planDiff,
+  loadPlanDiff,
+}: {
+  config: ConfigSnapshot | null;
+  latestGeneration?: GenerationRecord;
+  planDiff: string;
+  loadPlanDiff: () => void;
+}) {
   const styles = useStyles();
   const [mode, setMode] = useState<"tree" | "raw">("tree");
   const parsed = useMemo(() => parseConfig(config?.text), [config?.text]);
@@ -1467,6 +1538,9 @@ function ConfigView({ config }: { config: ConfigSnapshot | null }) {
       <div className={styles.configToolbar}>
         <Text className={styles.muted}>Read-only view of the active routerd YAML</Text>
         <div className={styles.configModeButtons}>
+          <Button size="small" appearance="secondary" disabled={!latestGeneration || !config?.text} onClick={loadPlanDiff}>
+            Diff before apply
+          </Button>
           <Button size="small" appearance={mode === "tree" ? "primary" : "secondary"} onClick={() => setMode("tree")}>Tree</Button>
           <Button size="small" appearance={mode === "raw" ? "primary" : "secondary"} onClick={() => setMode("raw")}>Raw YAML</Button>
         </div>
@@ -1488,6 +1562,12 @@ function ConfigView({ config }: { config: ConfigSnapshot | null }) {
           <pre className={styles.pre}>{config?.text ?? "Config is unavailable"}</pre>
         )}
       </div>
+      {planDiff ? (
+        <div style={{ marginTop: "12px" }}>
+          <Text weight="semibold">Current file vs latest applied generation</Text>
+          <DiffView diff={planDiff} />
+        </div>
+      ) : null}
     </>
   );
 }
@@ -1658,6 +1738,66 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function MetricCharts({ samples }: { samples: MetricSample[] }) {
+  const styles = useStyles();
+  return (
+    <div className={styles.chartGrid}>
+      <div className={styles.chartCard}>
+        <Text weight="semibold">Generation trend</Text>
+        <Sparkline samples={samples.map(sample => sample.generation)} color="#60cdff" />
+        <Text size={200} className={styles.muted}>{samples.length ? `${samples.length} samples / latest #${samples[samples.length - 1].generation}` : "Waiting for samples"}</Text>
+      </div>
+      <div className={styles.chartCard}>
+        <Text weight="semibold">Resource phases</Text>
+        <StackBars samples={samples.map(sample => [sample.healthy, sample.warning, sample.danger])} colors={["#54b054", "#f7b955", "#d13438"]} />
+        <Text size={200} className={styles.muted}>Healthy / pending / unhealthy over the current browser session</Text>
+      </div>
+      <div className={styles.chartCard}>
+        <Text weight="semibold">Health checks</Text>
+        <StackBars samples={samples.map(sample => [sample.healthHealthy, sample.healthUnhealthy])} colors={["#54b054", "#d13438"]} />
+        <Text size={200} className={styles.muted}>Healthy and unhealthy HealthCheck resources</Text>
+      </div>
+    </div>
+  );
+}
+
+function Sparkline({ samples, color }: { samples: number[]; color: string }) {
+  const styles = useStyles();
+  const values = samples.length ? samples : [0];
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const span = Math.max(1, max - min);
+  const points = values.map((value, index) => {
+    const x = values.length === 1 ? 50 : (index / (values.length - 1)) * 100;
+    const y = 76 - ((value - min) / span) * 62;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
+  return (
+    <svg className={styles.chartSvg} viewBox="0 0 100 86" preserveAspectRatio="none" aria-hidden="true">
+      <polyline fill="none" stroke={color} strokeWidth="2.5" points={points} />
+    </svg>
+  );
+}
+
+function StackBars({ samples, colors }: { samples: number[][]; colors: string[] }) {
+  const styles = useStyles();
+  const rows = samples.length ? samples : [[0]];
+  const width = 100 / Math.max(1, rows.length);
+  return (
+    <svg className={styles.chartSvg} viewBox="0 0 100 86" preserveAspectRatio="none" aria-hidden="true">
+      {rows.map((row, index) => {
+        const total = Math.max(1, row.reduce((sum, value) => sum + value, 0));
+        let y = 86;
+        return row.map((value, part) => {
+          const height = (value / total) * 72;
+          y -= height;
+          return <rect key={`${index}-${part}`} x={index * width + 1} y={y} width={Math.max(1, width - 2)} height={height} fill={colors[part] ?? "#777"} />;
+        });
+      })}
+    </svg>
+  );
+}
+
 function parseConfig(text?: string): { value?: unknown; errors: string[] } {
   if (!text) return { value: undefined, errors: [] };
   try {
@@ -1696,44 +1836,95 @@ function shortHash(value?: string) {
   return value.length > 16 ? `${value.slice(0, 16)}...` : value;
 }
 
+function handshakeFresh(value?: string) {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  return Date.now() - date.getTime() < 5 * 60 * 1000;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
 }
 
 function ResourceTable({ resources }: { resources: ResourceStatus[] }) {
   const styles = useStyles();
+  const [query, setQuery] = useState("");
+  const [phase, setPhase] = useState("all");
+  const phases = useMemo(() => {
+    const values = new Set<string>();
+    for (const resource of resources) values.add(String(resource.status?.phase ?? "Unknown"));
+    return Array.from(values).sort(facetSort);
+  }, [resources]);
+  const filtered = resources.filter(resource => {
+    const resourcePhase = String(resource.status?.phase ?? "Unknown");
+    if (phase !== "all" && resourcePhase !== phase) return false;
+    if (!query.trim()) return true;
+    return resourceSearchText(resource).includes(query.trim().toLowerCase());
+  });
   return (
-    <div className={styles.tableWrap}>
-      <Table size="small" className={styles.resourceTable}>
-        <colgroup>
-          <col style={{ width: "170px" }} />
-          <col style={{ width: "220px" }} />
-          <col style={{ width: "120px" }} />
-          <col />
-        </colgroup>
-        <TableHeader>
-          <TableRow>
-            <TableHeaderCell>Kind</TableHeaderCell>
-            <TableHeaderCell>Name</TableHeaderCell>
-            <TableHeaderCell>Phase</TableHeaderCell>
-            <TableHeaderCell>Detail</TableHeaderCell>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {resources.slice(0, 80).map(resource => {
-            const status = resource.status ?? {};
-            return (
-              <TableRow key={`${resource.apiVersion}/${resource.kind}/${resource.name}`}>
-                <TableCell>{resource.kind}</TableCell>
-                <TableCell><code className={styles.code}>{resource.name}</code></TableCell>
-                <TableCell><Badge appearance="tint" color={phaseColor(status.phase)}>{String(status.phase ?? "Unknown")}</Badge></TableCell>
-                <TableCell><code className={styles.wrapCode}>{resourceDetail(status)}</code></TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </div>
+    <>
+      <div className={styles.resourceFilters}>
+        <div className={styles.filterControl}>
+          <Text size={200} className={styles.muted}>Search resources</Text>
+          <Input className={styles.filterInput} size="small" value={query} placeholder="kind, name, phase, status detail" onChange={(_, data) => setQuery(data.value)} />
+        </div>
+        <div className={styles.filterControl}>
+          <Text size={200} className={styles.muted}>Phase</Text>
+          <Select size="small" value={phase} onChange={event => setPhase(event.target.value)}>
+            <option value="all">All phases</option>
+            {phases.map(value => <option key={value} value={value}>{value}</option>)}
+          </Select>
+        </div>
+      </div>
+      <Text size={200} className={styles.muted}>Showing {Math.min(filtered.length, 120)} of {filtered.length} matched resources / {resources.length} total</Text>
+      <div className={styles.tableWrap}>
+        <Table size="small" className={styles.resourceTable}>
+          <colgroup>
+            <col style={{ width: "170px" }} />
+            <col style={{ width: "220px" }} />
+            <col style={{ width: "120px" }} />
+            <col />
+          </colgroup>
+          <TableHeader>
+            <TableRow>
+              <TableHeaderCell>Kind</TableHeaderCell>
+              <TableHeaderCell>Name</TableHeaderCell>
+              <TableHeaderCell>Phase</TableHeaderCell>
+              <TableHeaderCell>Detail</TableHeaderCell>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.slice(0, 120).map(resource => {
+              const status = resource.status ?? {};
+              return (
+                <TableRow key={`${resource.apiVersion}/${resource.kind}/${resource.name}`}>
+                  <TableCell><Highlighted text={resource.kind ?? ""} query={query} /></TableCell>
+                  <TableCell><code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code></TableCell>
+                  <TableCell><Badge appearance="tint" color={phaseColor(status.phase)}><Highlighted text={String(status.phase ?? "Unknown")} query={query} /></Badge></TableCell>
+                  <TableCell><code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code></TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+    </>
+  );
+}
+
+function Highlighted({ text, query }: { text: string; query: string }) {
+  const styles = useStyles();
+  const needle = query.trim();
+  if (!needle) return <>{text}</>;
+  const index = text.toLowerCase().indexOf(needle.toLowerCase());
+  if (index < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, index)}
+      <mark className={styles.highlight}>{text.slice(index, index + needle.length)}</mark>
+      {text.slice(index + needle.length)}
+    </>
   );
 }
 
@@ -1959,6 +2150,14 @@ function TailscalePanel({ status, errors }: { status?: TailscaleStatus; errors: 
         {status.exitNodeOption ? <Badge appearance="outline" color="brand">exit node</Badge> : null}
         {(status.allowedIPs ?? []).slice(0, 6).map(route => <Badge key={route} appearance="outline">{route}</Badge>)}
       </div>
+      <PeerStatusStrip
+        peers={peers.map(peer => ({
+          key: peer.id || peer.dnsName || peer.hostName || "-",
+          label: peer.hostName || peer.dnsName || "-",
+          active: !!peer.online,
+          detail: peer.relay || formatTime(peer.lastSeen) || "direct",
+        }))}
+      />
       <div className={styles.tableWrap}>
         <Table size="small" className={styles.vpnPeerTable}>
           <colgroup>
@@ -2018,8 +2217,15 @@ function WireGuardPanel({ interfaces, errors }: { interfaces: WireGuardInterface
       </div>
     );
   }
+  const peerCount = interfaces.reduce((total, item) => total + (item.peers?.length ?? 0), 0);
+  const freshPeers = interfaces.reduce((total, item) => total + (item.peers ?? []).filter(peer => handshakeFresh(peer.latestHandshake)).length, 0);
   return (
     <div className={styles.vpnGrid}>
+      <div className={styles.vpnSummaryGrid}>
+        <Metric label="interfaces" value={String(interfaces.length)} />
+        <Metric label="peers" value={String(peerCount)} />
+        <Metric label="recent handshakes" value={`${freshPeers}/${peerCount}`} />
+      </div>
       {interfaces.map(item => (
         <div key={item.name} className={styles.connectionGroup}>
           <div className={styles.badges}>
@@ -2028,6 +2234,14 @@ function WireGuardPanel({ interfaces, errors }: { interfaces: WireGuardInterface
             {item.fwmark ? <Badge appearance="outline">fwmark {item.fwmark}</Badge> : null}
             <Text size={200} className={styles.muted}>public key {shortHash(item.publicKey)}</Text>
           </div>
+          <PeerStatusStrip
+            peers={(item.peers ?? []).map(peer => ({
+              key: peer.publicKey || peer.endpoint || "-",
+              label: shortHash(peer.publicKey),
+              active: handshakeFresh(peer.latestHandshake),
+              detail: peer.endpoint || "no endpoint",
+            }))}
+          />
           <div className={styles.tableWrap}>
             <Table size="small" className={styles.vpnPeerTable}>
               <colgroup>
@@ -2064,6 +2278,21 @@ function WireGuardPanel({ interfaces, errors }: { interfaces: WireGuardInterface
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function PeerStatusStrip({ peers }: { peers: { key: string; label: string; active: boolean; detail: string }[] }) {
+  const styles = useStyles();
+  if (peers.length === 0) return <Text className={styles.muted}>No peers reported</Text>;
+  return (
+    <div className={styles.badges}>
+      {peers.slice(0, 24).map(peer => (
+        <Badge key={peer.key} appearance="tint" color={peer.active ? "success" : "subtle"}>
+          {peer.label} · {peer.detail}
+        </Badge>
+      ))}
+      {peers.length > 24 ? <Badge appearance="outline">+{peers.length - 24} more</Badge> : null}
     </div>
   );
 }
@@ -2398,6 +2627,41 @@ function dhcpLeaseMap(rows: DHCPLease[]) {
   return leases;
 }
 
+function appendMetricSample(current: MetricSample[], summary: Summary) {
+  const next = metricSample(summary);
+  const last = current[current.length - 1];
+  if (last && last.time === next.time) return current;
+  return [...current.slice(-35), next];
+}
+
+function metricSample(summary: Summary): MetricSample {
+  let healthy = 0;
+  let warning = 0;
+  let danger = 0;
+  let healthHealthy = 0;
+  let healthUnhealthy = 0;
+  for (const resource of summary.resources ?? []) {
+    const phase = resource.status?.phase;
+    const color = phaseColor(phase);
+    if (color === "success") healthy++;
+    else if (color === "danger") danger++;
+    else warning++;
+    if (resource.kind === "HealthCheck") {
+      if (color === "success") healthHealthy++;
+      if (color === "danger") healthUnhealthy++;
+    }
+  }
+  return {
+    time: summary.generatedAt ?? new Date().toISOString(),
+    generation: Number(summary.status?.status?.generation ?? 0),
+    healthy,
+    warning,
+    danger,
+    healthHealthy,
+    healthUnhealthy,
+  };
+}
+
 function connectionFilterFacets(entries: ConnectionEntry[]) {
   const families = new Set<string>();
   const protocols = new Set<string>();
@@ -2412,6 +2676,17 @@ function connectionFilterFacets(entries: ConnectionEntry[]) {
     protocols: Array.from(protocols).sort(facetSort),
     states: Array.from(states).sort(facetSort),
   };
+}
+
+function resourceSearchText(resource: ResourceStatus) {
+  return [
+    resource.apiVersion,
+    resource.kind,
+    resource.name,
+    resource.status?.phase,
+    resourceDetail(resource.status ?? {}),
+    JSON.stringify(resource.status ?? {}),
+  ].filter(Boolean).join(" ").toLowerCase();
 }
 
 function filterAndSortConnections(entries: ConnectionEntry[], dnsLabels: Record<string, string>, filters: ConnectionFilters) {
@@ -2658,6 +2933,35 @@ function formatDetailValue(value: unknown) {
   } catch {
     return String(value);
   }
+}
+
+function unifiedLineDiff(fromName: string, toName: string, fromText: string, toText: string) {
+  if (fromText === toText) return `--- ${fromName}\n+++ ${toName}\n# no changes\n`;
+  const from = fromText.replace(/\n$/, "").split(/\n/);
+  const to = toText.replace(/\n$/, "").split(/\n/);
+  const table = Array.from({ length: from.length + 1 }, () => Array<number>(to.length + 1).fill(0));
+  for (let i = from.length - 1; i >= 0; i--) {
+    for (let j = to.length - 1; j >= 0; j--) {
+      table[i][j] = from[i] === to[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+    }
+  }
+  const lines = [`--- ${fromName}`, `+++ ${toName}`];
+  let i = 0;
+  let j = 0;
+  while (i < from.length || j < to.length) {
+    if (i < from.length && j < to.length && from[i] === to[j]) {
+      lines.push(` ${from[i]}`);
+      i++;
+      j++;
+    } else if (j < to.length && (i === from.length || table[i][j + 1] >= table[i + 1][j])) {
+      lines.push(`+${to[j]}`);
+      j++;
+    } else if (i < from.length) {
+      lines.push(`-${from[i]}`);
+      i++;
+    }
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function clientTrafficRows(flows: TrafficFlow[]) {

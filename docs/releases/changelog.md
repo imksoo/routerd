@@ -8,6 +8,15 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-based release versions in `yyyymmdd.N` format starting with `20260509.0`.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## 20260509.10
+
+### Added
+
+- Web Console overview now shows browser-session trend charts for generation, resource phases, and HealthCheck state.
+- The Config page can compare the current YAML file with the latest applied generation before an operator runs `routerd apply`.
+- Resource tables now support kind/name/phase/detail search, phase filtering, and match highlighting.
+- VPN pages now include visual peer status strips for Tailscale and WireGuard.
+
 ## 20260509.9
 
 ### Added

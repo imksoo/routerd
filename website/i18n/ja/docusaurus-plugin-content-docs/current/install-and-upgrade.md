@@ -17,8 +17,8 @@ title: インストールとアップグレード
 Linux amd64:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.9/routerd-20260509.9-linux-amd64.tar.gz
-tar -xzf routerd-20260509.9-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.10/routerd-20260509.10-linux-amd64.tar.gz
+tar -xzf routerd-20260509.10-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -27,8 +27,8 @@ Linux arm64 では `linux-arm64` アーカイブを使います。
 FreeBSD amd64:
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/20260509.9/routerd-20260509.9-freebsd-amd64.tar.gz
-tar -xzf routerd-20260509.9-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/20260509.10/routerd-20260509.10-freebsd-amd64.tar.gz
+tar -xzf routerd-20260509.10-freebsd-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -114,7 +114,7 @@ NixOS 設定、または routerd の `Package` リソースで宣言してくだ
 新しいアーカイブを展開し、同じインストーラーを実行します。
 
 ```sh
-tar -xzf routerd-20260509.9-linux-amd64.tar.gz
+tar -xzf routerd-20260509.10-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -224,7 +224,7 @@ make test
 make check-schema
 make validate-example
 make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.9
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.10
 ```
 
 利用者向けの導入経路として Makefile は使いません。
