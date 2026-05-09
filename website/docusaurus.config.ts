@@ -16,6 +16,23 @@ const config: Config = {
     mermaid: true,
   },
   themes: ['@docusaurus/theme-mermaid'],
+  plugins: [
+    function suppressCodeBlockLanguageServerWarning() {
+      return {
+        name: 'suppress-codeblock-language-server-warning',
+        configureWebpack() {
+          return {
+            ignoreWarnings: [
+              {
+                module: /vscode-languageserver-types/,
+                message: /Critical dependency: require function is used/,
+              },
+            ],
+          };
+        },
+      };
+    },
+  ],
 
   onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',

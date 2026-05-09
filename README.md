@@ -126,12 +126,12 @@ spec:
 Install from a release archive on the router host:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.7/routerd-20260509.7-linux-amd64.tar.gz
-tar -xzf routerd-20260509.7-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.8/routerd-20260509.8-linux-amd64.tar.gz
+tar -xzf routerd-20260509.8-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-For FreeBSD, download `routerd-20260509.7-freebsd-amd64.tar.gz` and run the
+For FreeBSD, download `routerd-20260509.8-freebsd-amd64.tar.gz` and run the
 same `./install.sh`.
 
 `install.sh` installs known OS packages, copies binaries to `/usr/local/sbin`,

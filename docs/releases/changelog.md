@@ -8,6 +8,13 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-based release versions in `yyyymmdd.N` format starting with `20260509.0`.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## 20260509.8
+
+### Fixed
+
+- Fixed zh-Hant and zh-Hans documentation links so translated pages no longer point at missing locale-local documents.
+- Kept translated overview pages linked to the canonical English reference pages until full translations are available.
+
 ## 20260509.7
 
 ### Added
