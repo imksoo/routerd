@@ -69,3 +69,43 @@ func TestPPPoERendersPeerUnitAndSecrets(t *testing.T) {
 		t.Fatalf("secret line = %q", got)
 	}
 }
+
+func TestPPPoERendersDisabledManagedUnitWithoutStartingIt(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan-ether"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				Metadata: api.ObjectMeta{Name: "pppoe0"},
+				Spec: api.PPPoEInterfaceSpec{
+					Interface: "wan-ether",
+					IfName:    "ppp0",
+					Disabled:  true,
+					Username:  "user@example.jp",
+					Password:  "secret",
+					Managed:   true,
+				},
+			},
+		}},
+	}
+
+	config, err := PPPoE(router, func(res api.Resource, spec api.PPPoEInterfaceSpec) (string, error) {
+		return spec.Password, nil
+	})
+	if err != nil {
+		t.Fatalf("render PPPoE: %v", err)
+	}
+	if len(config.Files) != 2 {
+		t.Fatalf("files = %d, want 2", len(config.Files))
+	}
+	if len(config.Units) != 0 {
+		t.Fatalf("enabled units = %v", config.Units)
+	}
+	if len(config.DisabledUnits) != 1 || config.DisabledUnits[0] != "routerd-pppoe-pppoe0.service" {
+		t.Fatalf("disabled units = %v", config.DisabledUnits)
+	}
+}

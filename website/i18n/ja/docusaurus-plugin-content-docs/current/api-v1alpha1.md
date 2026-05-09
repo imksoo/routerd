@@ -70,6 +70,9 @@ spec:
 | `VRF` | Linux VRF デバイスと経路表を表します。 |
 | `VXLANTunnel` | VXLAN トンネルを表します。 |
 
+`PPPoEInterface.spec.disabled` を `true` にすると、PPPoE の定義は残したまま、管理対象の pppd ユニットを停止・無効化します。
+通常運用では PPPoE セッション枠を使わず、必要なときだけ手動で試験する fallback 経路に使えます。
+
 `TailscaleNode` は初回登録用に `authKey` を使えます。
 本番設定では `authKeyEnv` と `authKeyFile` を推奨します。
 これにより、秘密値を YAML と Git 履歴に残しません。
@@ -158,6 +161,10 @@ DS-Lite、IPv4 既定経路、NAT44 は実 lab で動作確認済みです。
 | `DerivedEvent` | 複数リソースの状態から仮想イベントを発行します。 |
 | `SelfAddressPolicy` | 自ホストアドレスの選択方針を表します。 |
 | `StatePolicy` | 状態管理の方針を表します。 |
+
+`HealthCheck.spec.disabled` を `true` にすると、daemon ユニットは生成しますが停止・無効化します。
+`EgressRoutePolicy` の候補にも `disabled: true` を指定できます。
+無効化した候補は、最後の観測状態が Healthy のままでも選択されません。
 
 `HealthCheck.spec.sourceInterface` は実行時に OS のインターフェース名へ解決されます。
 Linux では `SO_BINDTODEVICE` を使います。

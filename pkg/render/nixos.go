@@ -1554,8 +1554,14 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 			service["nftables"] = true
 			debug["nftables"] = true
 		case "PPPoEInterface":
-			service["ppp"] = true
-			debug["ppp"] = true
+			spec, err := res.PPPoEInterfaceSpec()
+			if err != nil {
+				return nil, nil, err
+			}
+			if !spec.Disabled {
+				service["ppp"] = true
+				debug["ppp"] = true
+			}
 		case "TailscaleNode":
 			spec, err := res.TailscaleNodeSpec()
 			if err != nil {

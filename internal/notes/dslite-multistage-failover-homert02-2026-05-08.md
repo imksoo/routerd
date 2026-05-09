@@ -71,6 +71,11 @@ PPPoE caveat:
 - `curl --interface ppp-flets https://www.google.com/generate_204` returned HTTP 204.
 - `HealthCheck/internet-via-pppoe` returned Healthy while the link was up.
 - After this confirmation, the PPPoE and PPPoE health check units were stopped and disabled again to keep the access-line session slot free.
+- routerd now supports keeping this fallback declared but disabled in YAML.
+- homert02 uses `PPPoEInterface.spec.disabled: true`, `HealthCheck.spec.disabled: true`, and `EgressRoutePolicy.candidates[].disabled: true` for `pppoe-flets`.
+- A normal `routerd apply --once` leaves `routerd-pppoe-pppoe-flets.service` present but inactive and disabled.
+- The PPPoE health check status is `Disabled`, and the PPPoE egress candidate is `ready: false`.
+- Manual retest remains possible by explicitly enabling the rendered unit and health check.
 
 Parity result:
 

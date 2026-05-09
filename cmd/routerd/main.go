@@ -6550,13 +6550,16 @@ func applyPPPoEConfig(router *api.Router) ([]string, error) {
 	if len(config.Files) == 0 && len(config.Secrets) == 0 {
 		return nil, nil
 	}
-	if !pppdAvailable() {
+	if len(config.Units) > 0 && !pppdAvailable() {
 		return nil, errors.New("pppd is required for managed PPPoE interfaces")
 	}
 
 	nixOS := isNixOSHost()
 	managedUnits := map[string]bool{}
 	for _, unit := range config.Units {
+		managedUnits[unit] = true
+	}
+	for _, unit := range config.DisabledUnits {
 		managedUnits[unit] = true
 	}
 	var changedFiles []string
@@ -6595,6 +6598,19 @@ func applyPPPoEConfig(router *api.Router) ([]string, error) {
 		if err := runLogged("systemctl", "daemon-reload"); err != nil {
 			return nil, err
 		}
+	}
+	for _, unit := range config.DisabledUnits {
+		if nixOS {
+			if err := runLogged("systemctl", "stop", unit); err != nil {
+				return nil, err
+			}
+			_ = runLogged("systemctl", "reset-failed", unit)
+			continue
+		}
+		if err := runLogged("systemctl", "disable", "--now", unit); err != nil {
+			return nil, err
+		}
+		_ = runLogged("systemctl", "reset-failed", unit)
 	}
 	for _, unit := range config.Units {
 		if nixOS {

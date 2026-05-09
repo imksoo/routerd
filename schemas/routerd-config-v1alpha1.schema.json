@@ -1508,6 +1508,9 @@
                       "defaultRoute": {
                         "type": "boolean"
                       },
+                      "disabled": {
+                        "type": "boolean"
+                      },
                       "ifname": {
                         "type": "string"
                       },
@@ -4767,6 +4770,9 @@
                         ],
                         "type": "string"
                       },
+                      "disabled": {
+                        "type": "boolean"
+                      },
                       "healthyThreshold": {
                         "minimum": 1,
                         "type": "integer"
@@ -4995,6 +5001,9 @@
                                 "resource"
                               ],
                               "type": "object"
+                            },
+                            "disabled": {
+                              "type": "boolean"
                             },
                             "gateway": {
                               "type": "string"

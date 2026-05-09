@@ -115,13 +115,17 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		ifname := defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
+		action := resource.ActionEnsure
+		if spec.Disabled {
+			action = resource.ActionDelete
+		}
 		return []resource.Intent{
-			artifact("ppp.interface", ifname, resource.ActionEnsure, "pppd", nil),
-			artifact("systemd.service", "routerd-pppoe-"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", nil),
+			artifact("ppp.interface", ifname, action, "pppd", nil),
+			artifact("systemd.service", "routerd-pppoe-"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", map[string]string{"disabled": fmt.Sprintf("%t", spec.Disabled)}),
 			artifact("file", "/etc/ppp/chap-secrets", resource.ActionEnsure, "file", nil),
 			artifact("file", "/etc/ppp/pap-secrets", resource.ActionEnsure, "file", nil),
 			artifact("file", "/usr/local/etc/mpd5/mpd.conf", resource.ActionEnsure, "mpd5", nil),
-			artifact("rc.d.service", "mpd5", resource.ActionEnsure, "service", nil),
+			artifact("rc.d.service", "mpd5", action, "service", nil),
 		}
 	case "PPPoESession":
 		spec, err := res.PPPoESessionSpec()
@@ -254,7 +258,15 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		}
 		return []resource.Intent{artifact("linux.ipip6.tunnel", defaultString(spec.TunnelName, res.Metadata.Name), resource.ActionEnsure, "ip-link", nil)}
 	case "HealthCheck":
-		return []resource.Intent{artifact("routerd.healthCheck", res.Metadata.Name, resource.ActionEnsure, "routerd-scheduler", nil)}
+		spec, err := res.HealthCheckSpec()
+		if err != nil {
+			return nil
+		}
+		action := resource.ActionEnsure
+		if spec.Disabled {
+			action = resource.ActionDelete
+		}
+		return []resource.Intent{artifact("routerd.healthCheck", res.Metadata.Name, action, "routerd-scheduler", nil)}
 	case "IPv4DefaultRoutePolicy":
 		return ipv4DefaultRoutePolicyArtifacts(res, aliases)
 	case "IPv4SourceNAT":

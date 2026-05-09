@@ -52,6 +52,7 @@ type CandidateState struct {
 	RouteTable    int
 	Metric        int
 	Ready         bool
+	Disabled      bool
 	Weight        int
 	Index         int
 }
@@ -245,6 +246,7 @@ func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateS
 		if name == "" {
 			name = "candidate-" + strconv.Itoa(i)
 		}
+		disabled := candidate.Disabled || c.sourceDisabled(candidate.Source)
 		out = append(out, CandidateState{
 			Name:          name,
 			Source:        candidate.Source,
@@ -253,7 +255,8 @@ func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateS
 			GatewaySource: defaultString(candidate.GatewaySource, "none"),
 			RouteTable:    candidate.RouteTable,
 			Metric:        candidate.Metric,
-			Ready:         c.ready(candidate),
+			Ready:         !disabled && c.ready(candidate),
+			Disabled:      disabled,
 			Weight:        candidate.Weight,
 			Index:         i,
 		})
@@ -280,6 +283,24 @@ func (c Controller) ready(candidate api.EgressRoutePolicyCandidate) bool {
 		return healthChecked && c.hasResolvedOutput(candidate)
 	}
 	return resourcequery.DependenciesReady(c.Store, candidate.DependsOn)
+}
+
+func (c Controller) sourceDisabled(source string) bool {
+	if c.Router == nil {
+		return false
+	}
+	kind, name, ok := resourcequery.SplitResource(source)
+	if !ok || kind != "PPPoEInterface" {
+		return false
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != kind || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.PPPoEInterfaceSpec()
+		return err == nil && spec.Disabled
+	}
+	return false
 }
 
 func (c Controller) hasResolvedOutput(candidate api.EgressRoutePolicyCandidate) bool {
@@ -337,6 +358,7 @@ func statusCandidates(candidates []CandidateState) []map[string]any {
 			"metric":        candidate.Metric,
 			"weight":        candidate.Weight,
 			"ready":         candidate.Ready,
+			"disabled":      candidate.Disabled,
 		})
 	}
 	return out

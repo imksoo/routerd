@@ -209,6 +209,73 @@ func TestControllerUsesHealthyOutputWhenSourceHasNoStatus(t *testing.T) {
 	}
 }
 
+func TestControllerSkipsDisabledCandidate(t *testing.T) {
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+	store := mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet-via-pppoe": {"phase": "Healthy"},
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":           {"phase": "Up", "device": "ds-lite"},
+	}
+	controller := Controller{
+		Router: routerWithPolicy(api.EgressRoutePolicySpec{
+			Selection: SelectionHighestWeightReady,
+			Candidates: []api.EgressRoutePolicyCandidate{
+				{Name: "pppoe-flets", Disabled: true, Source: "PPPoEInterface/pppoe-flets", Device: "ppp-flets", Weight: 120, HealthCheck: "internet-via-pppoe"},
+				{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", DeviceFrom: api.StatusValueSourceSpec{Resource: "DSLiteTunnel/ds-lite", Field: "device"}, Weight: 80},
+			},
+		}),
+		Bus:   bus.New(),
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["phase"] != PhaseApplied || status["selectedCandidate"] != "ds-lite" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestControllerSkipsDisabledPPPoESource(t *testing.T) {
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+	store := mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet-via-pppoe": {"phase": "Healthy"},
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":           {"phase": "Up", "device": "ds-lite"},
+	}
+	controller := Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				Metadata: api.ObjectMeta{Name: "pppoe-flets"},
+				Spec:     api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp-flets", Disabled: true, Username: "open@open.ad.jp", Password: "open"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
+				Metadata: api.ObjectMeta{Name: "ipv4-default"},
+				Spec: api.EgressRoutePolicySpec{
+					Selection: SelectionHighestWeightReady,
+					Candidates: []api.EgressRoutePolicyCandidate{
+						{Name: "pppoe-flets", Source: "PPPoEInterface/pppoe-flets", Device: "ppp-flets", Weight: 120, HealthCheck: "internet-via-pppoe"},
+						{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", DeviceFrom: api.StatusValueSourceSpec{Resource: "DSLiteTunnel/ds-lite", Field: "device"}, Weight: 80},
+					},
+				},
+			},
+		}}},
+		Bus:   bus.New(),
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["phase"] != PhaseApplied || status["selectedCandidate"] != "ds-lite" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestControllerRepublishesWhenSelectedOutputChanges(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{

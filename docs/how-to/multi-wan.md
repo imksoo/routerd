@@ -26,6 +26,12 @@ On a transition, routerd updates the OS route table and reapplies any NAT rule t
 
 Convergence is intentional: a low-weight backup can serve traffic the moment it is ready at boot, and routerd switches to the preferred path only after that path is confirmed healthy.
 
+For fallback links that consume scarce sessions, such as a test PPPoE login,
+keep the resource in YAML but set `disabled: true` on the `PPPoEInterface`,
+its `HealthCheck`, and the matching `EgressRoutePolicy` candidate. routerd
+will stop and disable the generated services during normal apply. The rendered
+unit remains available for an explicit manual test.
+
 ## Minimal configuration
 
 Three building blocks: a `HealthCheck` per candidate, an `EgressRoutePolicy` that lists the candidates, and a `NAT44Rule` that follows the policy.

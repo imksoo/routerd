@@ -591,7 +591,7 @@ func freeBSDRouteLabel(name string) string {
 
 func hasManagedFreeBSDPPPoE(pppoes []freeBSDPPPoE) bool {
 	for _, pppoe := range pppoes {
-		if pppoe.Spec.Managed {
+		if pppoe.Spec.Managed && !pppoe.Spec.Disabled {
 			return true
 		}
 	}
@@ -675,7 +675,7 @@ func freeBSDMPD5(pppoes []freeBSDPPPoE) ([]byte, error) {
 	buf.WriteString("default:\n")
 	managed := false
 	for _, pppoe := range pppoes {
-		if !pppoe.Spec.Managed {
+		if !pppoe.Spec.Managed || pppoe.Spec.Disabled {
 			continue
 		}
 		managed = true

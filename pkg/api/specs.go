@@ -321,6 +321,7 @@ type VXLANTunnelSpec struct {
 type PPPoEInterfaceSpec struct {
 	Interface      string `yaml:"interface" json:"interface"`
 	IfName         string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	Disabled       bool   `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	Username       string `yaml:"username" json:"username"`
 	Password       string `yaml:"password,omitempty" json:"password,omitempty"`
 	PasswordFile   string `yaml:"passwordFile,omitempty" json:"passwordFile,omitempty"`
@@ -833,6 +834,7 @@ type StateDNSResolveCondition struct {
 }
 
 type HealthCheckSpec struct {
+	Disabled           bool                  `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	Type               string                `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=ping"`
 	Daemon             string                `yaml:"daemon,omitempty" json:"daemon,omitempty" jsonschema:"enum=,enum=routerd-healthcheck"`
 	SocketSource       string                `yaml:"socketSource,omitempty" json:"socketSource,omitempty"`
@@ -864,6 +866,7 @@ type EgressRoutePolicySpec struct {
 
 type EgressRoutePolicyCandidate struct {
 	Name          string                   `yaml:"name,omitempty" json:"name,omitempty"`
+	Disabled      bool                     `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	Source        string                   `yaml:"source,omitempty" json:"source,omitempty"`
 	Device        string                   `yaml:"device,omitempty" json:"device,omitempty"`
 	DeviceFrom    StatusValueSourceSpec    `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`

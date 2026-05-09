@@ -316,6 +316,19 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if c.DryRun && changed {
 				phase = "Rendered"
 			}
+			if spec.Disabled {
+				phase = "Disabled"
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", resource.Metadata.Name, map[string]any{
+					"phase":     phase,
+					"reason":    "Disabled",
+					"daemon":    spec.Daemon,
+					"unitName":  unitName,
+					"dryRun":    c.DryRun,
+					"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				}); err != nil {
+					return err
+				}
+			}
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, map[string]any{
 				"phase":     phase,
 				"unitName":  unitName,
@@ -462,6 +475,19 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	changed, err := writeFileIfChanged(path, data, 0644, c.DryRun)
 	if err != nil {
 		return changed, err
+	}
+	if spec.Disabled {
+		if c.DryRun {
+			return changed, nil
+		}
+		if changed {
+			if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+				return changed, err
+			}
+		}
+		_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
+		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+		return changed, nil
 	}
 	if c.DryRun {
 		return changed, nil

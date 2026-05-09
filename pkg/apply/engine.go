@@ -596,6 +596,10 @@ func (e *Engine) observePPPoEInterface(res api.Resource, aliases map[string]stri
 	rr.Observed["ifname"] = ifname
 	rr.Observed["username"] = spec.Username
 	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
+	rr.Observed["disabled"] = fmt.Sprintf("%t", spec.Disabled)
+	if spec.Disabled {
+		rr.Phase = "Disabled"
+	}
 	rr.Observed["defaultRoute"] = fmt.Sprintf("%t", spec.DefaultRoute)
 	rr.Observed["usePeerDNS"] = fmt.Sprintf("%t", spec.UsePeerDNS)
 	if spec.ServiceName != "" {
@@ -605,6 +609,10 @@ func (e *Engine) observePPPoEInterface(res api.Resource, aliases map[string]stri
 		rr.Observed["acName"] = spec.ACName
 	}
 	if includePlan {
+		if spec.Disabled {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("stop and disable PPPoE interface %s over %s", ifname, lowerIfName))
+			return
+		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure PPPoE interface %s over %s", ifname, lowerIfName))
 		if spec.DefaultRoute {
 			rr.Plan = append(rr.Plan, "install IPv4 default route from PPPoE peer")
@@ -1260,6 +1268,10 @@ func (e *Engine) observeHealthCheck(res api.Resource, aliases map[string]string,
 	}
 	interval := defaultString(spec.Interval, "60s")
 	timeout := defaultString(spec.Timeout, "3s")
+	rr.Observed["disabled"] = fmt.Sprintf("%t", spec.Disabled)
+	if spec.Disabled {
+		rr.Phase = "Disabled"
+	}
 	rr.Observed["type"] = checkType
 	rr.Observed["role"] = role
 	rr.Observed["addressFamily"] = addressFamily
@@ -1274,6 +1286,10 @@ func (e *Engine) observeHealthCheck(res api.Resource, aliases map[string]string,
 		rr.Observed["ifname"] = aliases[spec.Interface]
 	}
 	if includePlan {
+		if spec.Disabled {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("disable health check %s", res.Metadata.Name))
+			return
+		}
 		target := spec.Target
 		if target == "" {
 			target = targetSource

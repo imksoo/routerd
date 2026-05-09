@@ -25,9 +25,10 @@ type PPPoESecretEntry struct {
 }
 
 type PPPoEConfig struct {
-	Files   []ManagedFile
-	Secrets []PPPoESecretEntry
-	Units   []string
+	Files         []ManagedFile
+	Secrets       []PPPoESecretEntry
+	Units         []string
+	DisabledUnits []string
 }
 
 func PPPoE(router *api.Router, passwordFor func(api.Resource, api.PPPoEInterfaceSpec) (string, error)) (PPPoEConfig, error) {
@@ -87,8 +88,11 @@ func PPPoE(router *api.Router, passwordFor func(api.Resource, api.PPPoEInterface
 			Username: spec.Username,
 			Password: password,
 		})
-		if spec.Managed {
+		if spec.Managed && !spec.Disabled {
 			config.Units = append(config.Units, unit)
+		}
+		if spec.Managed && spec.Disabled {
+			config.DisabledUnits = append(config.DisabledUnits, unit)
 		}
 	}
 	return config, nil

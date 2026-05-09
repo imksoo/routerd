@@ -325,3 +325,53 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 		t.Fatalf("status = %#v", status)
 	}
 }
+
+func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-pppoe"}, Spec: api.HealthCheckSpec{
+			Disabled:        true,
+			Daemon:          "routerd-healthcheck",
+			Target:          "208.67.222.222",
+			Protocol:        "tcp",
+			SourceInterface: "ppp-flets",
+			Port:            443,
+		}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            store,
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	unitName := "routerd-healthcheck@internet-via-pppoe.service"
+	if _, err := os.Stat(filepath.Join(dir, unitName)); err != nil {
+		t.Fatalf("expected disabled healthcheck unit to remain renderable: %v", err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"systemctl daemon-reload",
+		"systemctl disable --now routerd-healthcheck@internet-via-pppoe.service",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	unitStatus := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName)
+	if unitStatus["phase"] != "Disabled" {
+		t.Fatalf("unit status = %#v", unitStatus)
+	}
+	healthStatus := store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet-via-pppoe")
+	if healthStatus["phase"] != "Disabled" {
+		t.Fatalf("health status = %#v", healthStatus)
+	}
+}

@@ -78,6 +78,11 @@ spec:
 | `VRF` | Represents a Linux VRF device and route table. |
 | `VXLANTunnel` | Represents a VXLAN tunnel. |
 
+`PPPoEInterface.spec.disabled` keeps the PPPoE definition renderable but stops
+routerd from starting the managed pppd unit. This is useful for a fallback path
+that should remain available for manual testing without consuming a line's
+PPPoE session slot during normal operation.
+
 `TailscaleNode` can use `authKey` for one-shot bootstrap, but production
 configs should prefer `authKeyEnv` and `authKeyFile` so the secret value stays
 outside the YAML and the Git history. If neither is set, routerd assumes
@@ -169,6 +174,11 @@ stay un-NATed.
 | `DerivedEvent` | Emits virtual events derived from multiple resource states. |
 | `SelfAddressPolicy` | Selects a self address for protocols that need one. |
 | `StatePolicy` | Represents state-management policy. |
+
+`HealthCheck.spec.disabled` renders the daemon unit but disables and stops it.
+`EgressRoutePolicy` candidates also accept `disabled: true`; disabled
+candidates are not selected even if their last observed health status is still
+Healthy.
 
 `HealthCheck.spec.sourceInterface` accepts a network resource name and resolves
 it to the OS interface name at runtime. `via` and `sourceAddress` can also be
