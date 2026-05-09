@@ -52,7 +52,11 @@ PPPoE caveat:
 - After the intentional PPPoE stop, `pppd` retried on `ens18` but received no PADO packets.
 - `pppoe-flets` therefore remained Unhealthy after cleanup.
 - The candidate stayed out of selection, so production traffic stayed on `ds-lite-a`.
-- Follow-up should decide whether the SoftEther public test endpoint is acceptable for repeated redial tests on production.
+- A follow-up stop/start retry was run three times on 2026-05-09.
+- Each retry left `routerd-pppoe-pppoe-flets.service` active, but `pppd` still logged `Timeout waiting for PADO packets`.
+- `HealthCheck/internet-via-pppoe` stayed Unhealthy.
+- This points to a transient or rate-limited SoftEther public test endpoint after forced disconnect.
+- The fallback behavior is still correct: PPPoE stays out of selection while Unhealthy.
 
 Parity result:
 
