@@ -88,7 +88,7 @@ jobs:
           tar -C "${work}" -xzf "dist/${platform}/${package}"
           (
             cd "${work}"
-            ./install.sh --prefix "${smoke}" --no-restart --no-config-update
+            ./install.sh --prefix "${smoke}" --no-restart --no-config-update --no-install-deps
             if [ "${{ matrix.routerd_os }}" = "linux" ]; then
               "${smoke}/sbin/routerd" --version
             else

@@ -8,6 +8,10 @@ restart_service=1
 dry_run=0
 verbose=0
 config_update=1
+install_deps=1
+list_deps=0
+deps_only=0
+with_tailscale=0
 completed=0
 backup_dir=
 timestamp=$(date +%Y%m%d%H%M%S)
@@ -15,11 +19,14 @@ timestamp=$(date +%Y%m%d%H%M%S)
 usage()
 {
     cat <<'USAGE'
-Usage: ./install.sh [--prefix DIR] [--enable-service] [--start-service] [--no-restart] [--dry-run] [--verbose] [--no-config-update]
+Usage: ./install.sh [--prefix DIR] [--enable-service] [--start-service] [--no-restart] [--dry-run] [--verbose] [--no-config-update] [--no-install-deps] [--list-deps] [--deps-only] [--with-tailscale]
 
 Installs or upgrades routerd binaries, service templates, and a sample configuration.
 Existing /usr/local/etc/routerd/router.yaml is never overwritten.
 State databases, logs, and runtime files are never modified.
+
+By default, the installer also installs known host package dependencies on
+supported package managers. Pass --no-install-deps to skip that step.
 USAGE
 }
 
@@ -94,6 +101,181 @@ atomic_install()
     mv -f "${tmp}" "${target}"
 }
 
+detect_package_manager()
+{
+    case "${os}" in
+        Linux)
+            if command -v apt-get >/dev/null 2>&1; then
+                echo apt
+            elif command -v dnf >/dev/null 2>&1; then
+                echo dnf
+            elif command -v pacman >/dev/null 2>&1; then
+                echo pacman
+            elif command -v nix-env >/dev/null 2>&1; then
+                echo nix-env
+            else
+                echo none
+            fi
+            ;;
+        FreeBSD)
+            if command -v pkg >/dev/null 2>&1; then
+                echo pkg
+            else
+                echo none
+            fi
+            ;;
+        *)
+            echo none
+            ;;
+    esac
+}
+
+dependency_packages()
+{
+    manager=$1
+    case "${manager}" in
+        apt)
+            packages="dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoeconf conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod"
+            ;;
+        dnf)
+            packages="dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod"
+            ;;
+        pacman)
+            packages="dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod"
+            ;;
+        pkg)
+            packages="dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq"
+            ;;
+        nix-env)
+            packages=""
+            ;;
+        *)
+            packages=""
+            ;;
+    esac
+    if [ "${with_tailscale}" -eq 1 ] && [ -n "${packages}" ]; then
+        packages="${packages} tailscale"
+    fi
+    echo "${packages}"
+}
+
+dependency_commands()
+{
+    case "${os}" in
+        Linux)
+            commands="dnsmasq nft wg chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe"
+            ;;
+        FreeBSD)
+            commands="dnsmasq wg mpd5 dig tcpdump jq cron ifconfig pfctl"
+            ;;
+        *)
+            commands=""
+            ;;
+    esac
+    if [ "${with_tailscale}" -eq 1 ]; then
+        commands="${commands} tailscale"
+    fi
+    echo "${commands}"
+}
+
+print_dependencies()
+{
+    manager=$(detect_package_manager)
+    packages=$(dependency_packages "${manager}")
+    commands=$(dependency_commands)
+    echo "OS: ${os}"
+    echo "package manager: ${manager}"
+    if [ -n "${packages}" ]; then
+        echo "packages: ${packages}"
+    elif [ "${manager}" = "nix-env" ]; then
+        echo "packages: declare these tools in NixOS configuration or routerd Package resources"
+    else
+        echo "packages: unsupported package manager; install required commands manually"
+    fi
+    echo "commands checked after install: ${commands}"
+}
+
+run_dependency_install()
+{
+    manager=$(detect_package_manager)
+    packages=$(dependency_packages "${manager}")
+
+    if [ "${list_deps}" -eq 1 ]; then
+        print_dependencies
+        return 0
+    fi
+    if [ "${install_deps}" -ne 1 ]; then
+        echo "dependency installation skipped by --no-install-deps"
+        return 0
+    fi
+    if [ -z "${packages}" ]; then
+        if [ "${manager}" = "nix-env" ]; then
+            echo "warning: NixOS detected; declare dependencies in the NixOS configuration or routerd Package resources" >&2
+        else
+            echo "warning: no supported package manager detected; install dependencies manually" >&2
+        fi
+        verify_dependencies
+        return 0
+    fi
+
+    case "${manager}" in
+        apt)
+            if [ "${dry_run}" -eq 1 ]; then
+                echo "dry-run: apt-get update"
+                echo "dry-run: apt-get install -y ${packages}"
+            else
+                apt-get update
+                # shellcheck disable=SC2086
+                apt-get install -y ${packages}
+            fi
+            ;;
+        dnf)
+            if [ "${dry_run}" -eq 1 ]; then
+                echo "dry-run: dnf install -y ${packages}"
+            else
+                # shellcheck disable=SC2086
+                dnf install -y ${packages}
+            fi
+            ;;
+        pacman)
+            if [ "${dry_run}" -eq 1 ]; then
+                echo "dry-run: pacman -Sy --needed --noconfirm ${packages}"
+            else
+                # shellcheck disable=SC2086
+                pacman -Sy --needed --noconfirm ${packages}
+            fi
+            ;;
+        pkg)
+            if [ "${dry_run}" -eq 1 ]; then
+                echo "dry-run: pkg install -y ${packages}"
+            else
+                # shellcheck disable=SC2086
+                pkg install -y ${packages}
+            fi
+            ;;
+        *)
+            echo "warning: unsupported package manager: ${manager}" >&2
+            ;;
+    esac
+    verify_dependencies
+}
+
+verify_dependencies()
+{
+    missing=""
+    for cmd in $(dependency_commands); do
+        if ! command -v "${cmd}" >/dev/null 2>&1; then
+            missing="${missing} ${cmd}"
+        fi
+    done
+    if [ -n "${missing}" ]; then
+        echo "warning: missing commands after dependency check:${missing}" >&2
+        echo "warning: rerun './install.sh --list-deps' and install the missing packages manually if your OS uses different package names" >&2
+    else
+        echo "dependency command check passed"
+    fi
+}
+
 service_active=0
 service_touched=0
 manage_host_service=1
@@ -123,6 +305,19 @@ while [ "$#" -gt 0 ]; do
         --no-config-update)
             config_update=0
             ;;
+        --no-install-deps)
+            install_deps=0
+            ;;
+        --list-deps)
+            list_deps=1
+            install_deps=0
+            ;;
+        --deps-only)
+            deps_only=1
+            ;;
+        --with-tailscale)
+            with_tailscale=1
+            ;;
         -h|--help)
             usage
             exit 0
@@ -147,6 +342,13 @@ if [ "${prefix}" != "/usr/local" ]; then
     manage_host_service=0
     echo "non-default prefix ${prefix}; skipping host service manager"
 fi
+
+run_dependency_install
+if [ "${list_deps}" -eq 1 ] || [ "${deps_only}" -eq 1 ]; then
+    completed=1
+    exit 0
+fi
+
 backup_dir=$(mktemp -d "${TMPDIR:-/tmp}/routerd-install.XXXXXX")
 touch "${backup_dir}/restore.list" "${backup_dir}/remove.list"
 trap cleanup EXIT HUP INT TERM

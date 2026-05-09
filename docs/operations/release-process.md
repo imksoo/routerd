@@ -53,6 +53,7 @@ Deployment smoke checks use `install.sh`.
 After installation, `install.sh` calls `routerctl status` when the routerd control socket exists.
 The GitHub release workflow also extracts each archive and runs `install.sh` with a temporary non-system prefix.
 That smoke test verifies that the archive can install and uninstall without using a Makefile.
+The CI smoke test passes `--no-install-deps` because dependency installation belongs to the target router host.
 
 Install a release archive on the router host:
 
@@ -62,6 +63,7 @@ sudo ./install.sh
 ```
 
 `install.sh` copies binaries to `/usr/local/sbin`, installs service templates, and writes `router.yaml.sample`.
+At the start of the run, it detects the OS package manager and installs known runtime packages unless `--no-install-deps` is passed.
 It does not overwrite an existing `/usr/local/etc/routerd/router.yaml`.
 When an existing `/usr/local/sbin/routerd` is found, the installer switches to upgrade mode automatically.
 It prints the old and new `routerd --version` output, replaces binaries and service templates, preserves configuration and state, and restarts `routerd.service` or the FreeBSD `routerd` rc.d service if it was already running.
@@ -70,6 +72,10 @@ Pass `--no-restart` to replace files without restarting the service.
 Pass `--dry-run` to print planned file and service-manager changes.
 Pass `--verbose` for shell tracing.
 Pass `--no-config-update` to leave `router.yaml.sample` unchanged.
+Pass `--no-install-deps` to skip OS package installation.
+Pass `--list-deps` to print the package and command list without changing the host.
+Pass `--deps-only` to install packages and then exit before copying routerd files.
+Pass `--with-tailscale` to include the optional Tailscale package and command check.
 Pass `--enable-service` or `--start-service` when you want a fresh install to call the host service manager.
 After installation, the script runs `routerctl status` when the routerd control socket exists.
 
@@ -81,6 +87,48 @@ The installer never modifies these runtime or state locations:
 - `/run/routerd`
 - `/var/run/routerd`
 - `/var/log/otelcol`
+
+## Runtime dependencies
+
+`install.sh` keeps dependency installation in the same end-user path as binary installation.
+This avoids a separate Makefile install path.
+
+On Debian and Ubuntu, the installer uses `apt-get` and installs:
+
+```text
+dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoeconf conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod
+```
+
+On Fedora-like systems, the installer uses `dnf` and installs:
+
+```text
+dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod
+```
+
+On Arch-like systems, the installer uses `pacman` and installs:
+
+```text
+dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod
+```
+
+On FreeBSD, the installer uses `pkg` and installs:
+
+```text
+dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq
+```
+
+FreeBSD `pf`, `ifconfig`, and `cron` are base-system tools and are checked as commands rather than installed as packages.
+
+On NixOS, the installer prints a warning instead of calling `nix-env`.
+Declare packages in the NixOS configuration or in routerd `Package` resources.
+
+After dependency installation, the script checks that the expected commands exist.
+Missing commands are warnings, not fatal errors, because package names vary between distributions.
+Use this command to inspect the dependency set:
+
+```sh
+./install.sh --list-deps
+```
 
 ## Uninstall
 
