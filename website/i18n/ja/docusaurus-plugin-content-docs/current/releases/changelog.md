@@ -5,10 +5,10 @@ title: Changelog
 # Changelog
 
 routerd のリリース履歴です。形式は [Keep a Changelog](https://keepachangelog.com/) に準拠します。
-routerd は `20260509` から `yyyymmdd` 形式の日付ベース版番号を使います。
+routerd は `20260509.0` から `yyyymmdd.N` 形式の日付ベース版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
-## 20260509
+## 20260509.7
 
 ### Added
 
@@ -19,7 +19,8 @@ routerd は `20260509` から `yyyymmdd` 形式の日付ベース版番号を使
 
 ### Changed
 
-- リリース版番号を `0.x.y` から `20260509` のような日付文字列へ変更しました。
+- リリース版番号を `0.x.y` から `20260509.7` のような日付文字列へ変更しました。
+- `routerd --version`、`routerctl --version`、Web サイトのメタデータ、リリースアーカイブで同じ `yyyymmdd.N` の値を使うようにしました。
 - Linux nftables と FreeBSD pf の NAT44 生成を、インターフェース単位のルールへ寄せました。
 - 3-role firewall モデルを Linux と FreeBSD で確認し、service hole を広い zone 全体ではなく、所有する受信インターフェースへ束縛しました。
 - FreeBSD pf で `PathMTUPolicy` の TCP MSS clamp を生成できるようにし、Linux nftables とそろえました。

@@ -5,7 +5,8 @@ title: Release process
 # Release process
 
 routerd uses date-based release versions.
-The executable version is `yyyymmdd`, and GitHub release tags add a per-day build suffix such as `20260509.0`.
+The executable version, release tag, and release archive name use `yyyymmdd.N`
+format, such as `20260509.0`.
 
 ## Automated release
 

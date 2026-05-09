@@ -64,7 +64,7 @@ routerd is designed to be cross-OS. The same binary and the same configuration t
 OS-specific differences are absorbed in the `pkg/platform` layer.
 Mappings such as nftables ↔ pf, systemd-networkd ↔ rc.conf, and systemd unit ↔ rc.d script are owned by per-OS renderers.
 
-Versioning policy: routerd uses date-based release versions in `yyyymmdd` format from `20260509`; the previous `0.x.y` pre-release numbering is discontinued.
+Versioning policy: routerd uses date-based release versions in `yyyymmdd.N` format from `20260509.0`; the previous `0.x.y` pre-release numbering is discontinued.
 
 ---
 

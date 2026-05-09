@@ -17,16 +17,16 @@ Download the archive for your OS and architecture from the
 Linux amd64:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.6/routerd-20260509.6-linux-amd64.tar.gz
-tar -xzf routerd-20260509.6-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.7/routerd-20260509.7-linux-amd64.tar.gz
+tar -xzf routerd-20260509.7-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
 FreeBSD amd64:
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/20260509.6/routerd-20260509.6-freebsd-amd64.tar.gz
-tar -xzf routerd-20260509.6-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/20260509.7/routerd-20260509.7-freebsd-amd64.tar.gz
+tar -xzf routerd-20260509.7-freebsd-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -111,7 +111,7 @@ Declare packages through the NixOS configuration or routerd `Package` resources.
 Extract the new archive and run the same installer:
 
 ```sh
-tar -xzf routerd-20260509.6-linux-amd64.tar.gz
+tar -xzf routerd-20260509.7-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -224,7 +224,7 @@ make test
 make check-schema
 make validate-example
 make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.6
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.7
 ```
 
 Do not use the Makefile as the user-facing install path.

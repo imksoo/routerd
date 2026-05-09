@@ -19,8 +19,8 @@ Download the FreeBSD archive from the
 the bundled installer on the router.
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/20260509.6/routerd-20260509.6-freebsd-amd64.tar.gz
-tar -xzf routerd-20260509.6-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/20260509.7/routerd-20260509.7-freebsd-amd64.tar.gz
+tar -xzf routerd-20260509.7-freebsd-amd64.tar.gz
 sudo ./install.sh
 ```
 
