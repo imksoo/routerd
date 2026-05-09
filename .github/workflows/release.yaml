@@ -49,6 +49,12 @@ jobs:
           fi
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
 
+      - name: Run development checks
+        run: |
+          make test
+          make check-schema
+          make validate-example
+
       - name: Build release archive
         run: |
           make dist \
@@ -67,6 +73,30 @@ jobs:
           test -f "dist/${platform}/${package}.sha256"
           mkdir -p release
           cp "dist/${platform}/${package}" "dist/${platform}/${package}.sha256" release/
+
+      - name: Smoke test installer archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release.outputs.tag }}"
+          platform="${{ matrix.routerd_os }}-${{ matrix.goarch }}"
+          package="routerd-${tag}-${platform}.tar.gz"
+          smoke="${RUNNER_TEMP}/routerd-install-smoke-${platform}"
+          work="${RUNNER_TEMP}/routerd-archive-${platform}"
+          rm -rf "${smoke}" "${work}"
+          mkdir -p "${work}"
+          tar -C "${work}" -xzf "dist/${platform}/${package}"
+          (
+            cd "${work}"
+            ./install.sh --prefix "${smoke}" --no-restart --no-config-update
+            if [ "${{ matrix.routerd_os }}" = "linux" ]; then
+              "${smoke}/sbin/routerd" --version
+            else
+              test -x "${smoke}/sbin/routerd"
+            fi
+            ./uninstall.sh --prefix "${smoke}" --yes --all
+            test ! -e "${smoke}/sbin/routerd"
+          )
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

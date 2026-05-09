@@ -96,6 +96,7 @@ atomic_install()
 
 service_active=0
 service_touched=0
+manage_host_service=1
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -142,6 +143,10 @@ fi
 os=$(uname -s)
 bindir="${prefix}/sbin"
 sysconfdir="${prefix}/etc/routerd"
+if [ "${prefix}" != "/usr/local" ]; then
+    manage_host_service=0
+    echo "non-default prefix ${prefix}; skipping host service manager"
+fi
 backup_dir=$(mktemp -d "${TMPDIR:-/tmp}/routerd-install.XXXXXX")
 touch "${backup_dir}/restore.list" "${backup_dir}/remove.list"
 trap cleanup EXIT HUP INT TERM
@@ -168,12 +173,12 @@ fi
 
 case "${os}" in
     Linux)
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet routerd.service; then
+        if [ "${manage_host_service}" -eq 1 ] && command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet routerd.service; then
             service_active=1
         fi
         ;;
     FreeBSD)
-        if command -v service >/dev/null 2>&1 && service routerd status >/dev/null 2>&1; then
+        if [ "${manage_host_service}" -eq 1 ] && command -v service >/dev/null 2>&1 && service routerd status >/dev/null 2>&1; then
             service_active=1
         fi
         ;;
@@ -218,7 +223,7 @@ fi
 
 case "${os}" in
     Linux)
-        if [ -d systemd ]; then
+        if [ "${manage_host_service}" -eq 1 ] && [ -d systemd ]; then
             if [ "${dry_run}" -eq 1 ]; then
                 echo "dry-run: install -d -m 0755 /etc/systemd/system"
             else
@@ -253,7 +258,7 @@ case "${os}" in
         fi
         ;;
     FreeBSD)
-        if [ -d rc.d ]; then
+        if [ "${manage_host_service}" -eq 1 ] && [ -d rc.d ]; then
             if [ "${dry_run}" -eq 1 ]; then
                 echo "dry-run: install -d -m 0755 ${prefix}/etc/rc.d"
             else

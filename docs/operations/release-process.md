@@ -33,6 +33,27 @@ The archive contains:
 
 The workflow uploads each `.tar.gz` archive and its `.sha256` file to the GitHub Release page.
 
+## Responsibility split
+
+Installation logic lives in `install.sh`.
+The Makefile is only for development tasks such as building, testing, schema checks, example validation, website builds, and release archive generation.
+The release archive does not include the Makefile.
+This keeps end-user installation and upgrade behavior in one script.
+
+Development tests use Makefile targets:
+
+```sh
+make test
+make check-schema
+make validate-example
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.0
+```
+
+Deployment smoke checks use `install.sh`.
+After installation, `install.sh` calls `routerctl status` when the routerd control socket exists.
+The GitHub release workflow also extracts each archive and runs `install.sh` with a temporary non-system prefix.
+That smoke test verifies that the archive can install and uninstall without using a Makefile.
+
 Install a release archive on the router host:
 
 ```sh
