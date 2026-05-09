@@ -57,6 +57,14 @@ PPPoE caveat:
 - `HealthCheck/internet-via-pppoe` stayed Unhealthy.
 - This points to a transient or rate-limited SoftEther public test endpoint after forced disconnect.
 - The fallback behavior is still correct: PPPoE stays out of selection while Unhealthy.
+- PPPoE later redialed successfully at 2026-05-09T00:25:15Z and created session `17032`.
+- Because that consumed one access-line PPPoE session slot, the test unit was stopped and disabled.
+- `routerd-healthcheck@internet-via-pppoe.service` was also stopped and disabled so stale success would not keep the candidate looking ready.
+- `routerd apply --once` re-enabled the declared PPPoE SystemdUnit, so the final operational release stopped and disabled it again without another apply.
+- Final service state: `routerd.service` active, `routerd-pppoe-pppoe-flets.service` disabled and stopped, and `routerd-healthcheck@internet-via-pppoe.service` disabled and stopped.
+- Final link state: no `ppp-flets` interface and no `pppd` process.
+- Final routing state: default route still uses `ds-lite-a`.
+- The long-term config decision is still open: keep PPPoE declared as a manually enabled test candidate, or remove it from production YAML.
 
 Parity result:
 
