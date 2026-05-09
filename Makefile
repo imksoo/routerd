@@ -1,10 +1,11 @@
-VERSION ?= 20260509.15
+VERSION ?= 20260509.16
 DISTBASE ?= dist
 DISTARCH ?= $(if $(GOARCH),$(GOARCH),$(shell go env GOARCH))
 DISTPLATFORM ?= $(ROUTERD_OS)-$(DISTARCH)
 DISTDIR ?= $(DISTBASE)/$(DISTPLATFORM)
 DISTROOT ?= $(DISTDIR)/package
 DISTTAR ?= $(DISTDIR)/routerd-$(VERSION)-$(DISTPLATFORM).tar.gz
+DISTTAR_ALIAS ?= $(DISTDIR)/routerd-$(DISTPLATFORM).tar.gz
 CONFIG ?=
 UNAME_S := $(shell uname -s)
 
@@ -82,7 +83,7 @@ check-build-deps:
 	exit $$missing
 
 dist:
-	rm -rf $(DISTROOT) $(DISTTAR) $(DISTTAR).sha256
+	rm -rf $(DISTROOT) $(DISTTAR) $(DISTTAR).sha256 $(DISTTAR_ALIAS) $(DISTTAR_ALIAS).sha256
 	$(MAKE) build-daemons
 	install -d $(DISTROOT)/bin
 	install -m 0755 $(ROUTERD_BIN) $(DISTROOT)/bin/routerd
@@ -113,7 +114,9 @@ dist:
 	fi
 	install -d $(DISTDIR)
 	tar -C $(DISTROOT) -czf $(DISTTAR) .
+	cp $(DISTTAR) $(DISTTAR_ALIAS)
 	if command -v sha256sum >/dev/null 2>&1; then sha256sum $(DISTTAR) > $(DISTTAR).sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 $(DISTTAR) > $(DISTTAR).sha256; elif command -v sha256 >/dev/null 2>&1; then sha256 -r $(DISTTAR) > $(DISTTAR).sha256; else echo "missing sha256 tool" >&2; exit 1; fi
+	if command -v sha256sum >/dev/null 2>&1; then sha256sum $(DISTTAR_ALIAS) > $(DISTTAR_ALIAS).sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 $(DISTTAR_ALIAS) > $(DISTTAR_ALIAS).sha256; elif command -v sha256 >/dev/null 2>&1; then sha256 -r $(DISTTAR_ALIAS) > $(DISTTAR_ALIAS).sha256; else echo "missing sha256 tool" >&2; exit 1; fi
 
 validate-example:
 	@for config in $(EXAMPLE_CONFIGS); do \

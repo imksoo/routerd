@@ -8,6 +8,18 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `20260509.0` から `yyyymmdd.N` 形式の日付ベース版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## 20260509.16
+
+### 追加
+
+- 版番号付きアーカイブに加えて、`routerd-linux-amd64.tar.gz` のような固定名 alias をリリースアーカイブに追加しました。
+- 固定名アーカイブと `.sha256` ファイルを GitHub Releases に配置します。これにより、ドキュメントで `releases/latest/download/...` URL を使えます。
+
+### 変更
+
+- クイックスタートのドキュメントを、固定された latest download URL に変更しました。
+- release workflow で、対応している GitHub JavaScript actions が Node.js 24 runtime を使うようにしました。
+
 ## 20260509.15
 
 ### 追加

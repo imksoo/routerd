@@ -17,8 +17,10 @@ Download the archive for your OS and architecture from the
 Linux amd64:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.15/routerd-20260509.15-linux-amd64.tar.gz
-tar -xzf routerd-20260509.15-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -27,12 +29,18 @@ For Linux arm64, use the `linux-arm64` archive.
 FreeBSD amd64:
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/20260509.15/routerd-20260509.15-freebsd-amd64.tar.gz
-tar -xzf routerd-20260509.15-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz.sha256
+cat routerd-freebsd-amd64.tar.gz.sha256
+sha256 routerd-freebsd-amd64.tar.gz
+tar -xzf routerd-freebsd-amd64.tar.gz
 sudo ./install.sh
 ```
 
 For FreeBSD arm64, use the `freebsd-arm64` archive.
+The latest release also includes versioned archives such as
+`routerd-20260509.16-linux-amd64.tar.gz`.
+Use those when you need to pin a specific release.
 
 `install.sh` detects whether this is a fresh install or an upgrade.
 It installs the binaries under `/usr/local/sbin`, installs the service template,
@@ -115,7 +123,7 @@ Declare packages through the NixOS configuration or routerd `Package` resources.
 Extract the new archive and run the same installer:
 
 ```sh
-tar -xzf routerd-20260509.15-linux-amd64.tar.gz
+tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -228,7 +236,7 @@ make test
 make check-schema
 make validate-example
 make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.15
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.16
 ```
 
 Do not use the Makefile as the user-facing install path.

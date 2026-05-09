@@ -8,6 +8,18 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-based release versions in `yyyymmdd.N` format starting with `20260509.0`.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## 20260509.16
+
+### Added
+
+- Release archives now include fixed-name aliases such as `routerd-linux-amd64.tar.gz` in addition to versioned archives.
+- Fixed-name archives and their `.sha256` files are uploaded to GitHub Releases, so documentation can use `releases/latest/download/...` URLs.
+
+### Changed
+
+- Quick start documentation now uses stable latest-download URLs instead of hardcoded release versions.
+- The release workflow opts GitHub JavaScript actions into the Node.js 24 runtime where supported.
+
 ## 20260509.15
 
 ### Added

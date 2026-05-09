@@ -17,8 +17,10 @@ title: インストールとアップグレード
 Linux amd64:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.15/routerd-20260509.15-linux-amd64.tar.gz
-tar -xzf routerd-20260509.15-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -27,12 +29,18 @@ Linux arm64 では `linux-arm64` アーカイブを使います。
 FreeBSD amd64:
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/20260509.15/routerd-20260509.15-freebsd-amd64.tar.gz
-tar -xzf routerd-20260509.15-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz.sha256
+cat routerd-freebsd-amd64.tar.gz.sha256
+sha256 routerd-freebsd-amd64.tar.gz
+tar -xzf routerd-freebsd-amd64.tar.gz
 sudo ./install.sh
 ```
 
 FreeBSD arm64 では `freebsd-arm64` アーカイブを使います。
+latest release には `routerd-20260509.16-linux-amd64.tar.gz` のような
+版番号付きアーカイブもあります。
+特定の版に固定する場合は、版番号付きアーカイブを使います。
 
 `install.sh` は新規導入かアップグレードかを自動判定します。
 実行ファイルを `/usr/local/sbin` に配置し、サービステンプレートを導入します。
@@ -114,7 +122,7 @@ NixOS 設定、または routerd の `Package` リソースで宣言してくだ
 新しいアーカイブを展開し、同じインストーラーを実行します。
 
 ```sh
-tar -xzf routerd-20260509.15-linux-amd64.tar.gz
+tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -224,7 +232,7 @@ make test
 make check-schema
 make validate-example
 make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.15
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.16
 ```
 
 利用者向けの導入経路として Makefile は使いません。

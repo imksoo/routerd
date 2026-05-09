@@ -24,7 +24,12 @@ The `Release` workflow builds these targets:
 - `freebsd-amd64`
 - `freebsd-arm64`
 
-Each target archive is named `routerd-<tag>-<os>-<arch>.tar.gz`.
+Each target archive is published with two names:
+
+- `routerd-<tag>-<os>-<arch>.tar.gz` for an exact release
+- `routerd-<os>-<arch>.tar.gz` for a fixed latest-download URL
+
+Both names also have `.sha256` files.
 The archive contains:
 
 - `bin/`: `routerd`, `routerctl`, and the managed daemon binaries
@@ -34,7 +39,15 @@ The archive contains:
 - `systemd/` or `rc.d/`: service templates for the target OS
 - `share/doc/`: README, VERSION, and LICENSE notice
 
-The workflow uploads each `.tar.gz` archive and its `.sha256` file to the GitHub Release page.
+The workflow uploads the versioned archive, the fixed-name archive, and their
+`.sha256` files to the GitHub Release page.
+Documentation should use the fixed latest-download URL for quick starts:
+
+```text
+https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
+```
+
+Use versioned URLs only when a runbook must pin a specific release.
 
 Normal branch pushes and pull requests use the separate `CI` workflow.
 That workflow runs development checks only and does not publish release assets.
@@ -65,7 +78,7 @@ The CI smoke test passes `--no-install-deps` because dependency installation bel
 Install a release archive on the router host:
 
 ```sh
-tar -xzf routerd-20260509.0-linux-amd64.tar.gz
+tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
@@ -183,8 +196,12 @@ Then create a release with the GitHub CLI:
 gh release create 20260509.0 \
   dist/linux-amd64/routerd-20260509.0-linux-amd64.tar.gz \
   dist/linux-amd64/routerd-20260509.0-linux-amd64.tar.gz.sha256 \
+  dist/linux-amd64/routerd-linux-amd64.tar.gz \
+  dist/linux-amd64/routerd-linux-amd64.tar.gz.sha256 \
   dist/freebsd-amd64/routerd-20260509.0-freebsd-amd64.tar.gz \
   dist/freebsd-amd64/routerd-20260509.0-freebsd-amd64.tar.gz.sha256 \
+  dist/freebsd-amd64/routerd-freebsd-amd64.tar.gz \
+  dist/freebsd-amd64/routerd-freebsd-amd64.tar.gz.sha256 \
   --title "routerd 20260509.0" \
   --generate-notes \
   --verify-tag

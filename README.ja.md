@@ -126,14 +126,18 @@ spec:
 ルーターホスト上でリリースアーカイブを展開し、同梱のインストーラーを実行します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.15/routerd-20260509.15-linux-amd64.tar.gz
-tar -xzf routerd-20260509.15-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-FreeBSD では `routerd-20260509.15-freebsd-amd64.tar.gz` を取得し、同じ
-`./install.sh` を実行します。
-arm64 ホストでは `linux-arm64` または `freebsd-arm64` アーカイブを使います。
+FreeBSD では latest release の `routerd-freebsd-amd64.tar.gz` を取得し、
+同じ `./install.sh` を実行します。
+arm64 ホストでは `routerd-linux-arm64.tar.gz` または
+`routerd-freebsd-arm64.tar.gz` を使います。
+特定の版を固定したい場合は、各 release ページの版番号付きアーカイブを使います。
 
 `install.sh` は必要な OS パッケージを導入し、実行ファイルを
 `/usr/local/sbin` に配置します。

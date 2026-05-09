@@ -8,6 +8,18 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 自 `20260509` 起使用 `yyyymmdd` 格式的日期型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## 20260509.16
+
+### 新增
+
+- Release archive 現在除了 versioned archive，也包含 `routerd-linux-amd64.tar.gz` 這類固定名稱 alias。
+- 固定名稱 archive 與 `.sha256` 檔會上傳到 GitHub Releases，因此文件可以使用 `releases/latest/download/...` URL。
+
+### 異動
+
+- Quick start 文件改用 stable latest-download URL，不再硬編特定 release version。
+- release workflow 會在支援時讓 GitHub JavaScript actions 使用 Node.js 24 runtime。
+
 ## 20260509.15
 
 ### 新增

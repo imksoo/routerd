@@ -13,6 +13,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     name: Build ${{ matrix.routerd_os }}-${{ matrix.goarch }}
@@ -79,10 +82,14 @@ jobs:
           tag="${{ steps.release.outputs.tag }}"
           platform="${{ matrix.routerd_os }}-${{ matrix.goarch }}"
           package="routerd-${tag}-${platform}.tar.gz"
+          alias="routerd-${platform}.tar.gz"
           test -f "dist/${platform}/${package}"
           test -f "dist/${platform}/${package}.sha256"
+          test -f "dist/${platform}/${alias}"
+          test -f "dist/${platform}/${alias}.sha256"
           mkdir -p release
-          cp "dist/${platform}/${package}" "dist/${platform}/${package}.sha256" release/
+          cp "dist/${platform}/${package}" "dist/${platform}/${package}.sha256" \
+            "dist/${platform}/${alias}" "dist/${platform}/${alias}.sha256" release/
 
       - name: Smoke test installer archive
         shell: bash
