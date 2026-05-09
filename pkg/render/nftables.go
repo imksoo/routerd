@@ -559,6 +559,12 @@ func writeClientPolicyInputRules(buf *bytes.Buffer, policies []clientPolicy) {
 		if stringInSlice("ntp", policy.GuestServices) {
 			buf.WriteString("    " + match + " udp dport 123 counter accept comment " + nftQuote("routerd client policy "+policy.Name+" guest NTP") + "\n")
 		}
+		if stringInSlice("mdns", policy.GuestServices) {
+			buf.WriteString("    " + match + " udp dport 5353 counter accept comment " + nftQuote("routerd client policy "+policy.Name+" guest mDNS") + "\n")
+		}
+		if stringInSlice("ssdp", policy.GuestServices) {
+			buf.WriteString("    " + match + " udp dport 1900 counter accept comment " + nftQuote("routerd client policy "+policy.Name+" guest SSDP") + "\n")
+		}
 		buf.WriteString("    " + match + " counter drop comment " + nftQuote("routerd client policy "+policy.Name+" guest self isolation") + "\n")
 	}
 }

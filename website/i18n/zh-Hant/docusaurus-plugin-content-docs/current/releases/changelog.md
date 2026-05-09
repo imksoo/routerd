@@ -8,6 +8,14 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 自 `20260509` 起使用 `yyyymmdd` 格式的日期型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## 20260509.13
+
+### 新增
+
+- 擴充 guest mode guide，加入使用情境、內部實作、完整 `ClientPolicy` field reference、驗證步驟、troubleshooting 與安全限制。
+- 新增 include mode、exclude mode、多個 guest device、自訂 deny/allow list、local discovery service 與 IoT reservation 範例。
+- `ClientPolicy.spec.guestServices` 現在除了 `dhcp`、`dns`、`ntp`，也接受 `mdns` 與 `ssdp`。
+
 ## 20260509.12
 
 ### 新增

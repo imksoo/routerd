@@ -2969,9 +2969,9 @@ func validateResource(res api.Resource) error {
 		}
 		for i, service := range spec.GuestServices {
 			switch service {
-			case "dns", "dhcp", "ntp":
+			case "dns", "dhcp", "ntp", "mdns", "ssdp":
 			default:
-				return fmt.Errorf("%s spec.guestServices[%d] must be dns, dhcp, or ntp", res.ID(), i)
+				return fmt.Errorf("%s spec.guestServices[%d] must be dns, dhcp, ntp, mdns, or ssdp", res.ID(), i)
 			}
 		}
 		for i, cidr := range append(append([]string{}, spec.GuestEgressDeny...), spec.GuestEgressAllow...) {

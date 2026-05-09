@@ -814,8 +814,9 @@ func TestNftablesClientPolicyIncludeGuestMACs(t *testing.T) {
 			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
 			Metadata: api.ObjectMeta{Name: "guest-devices"},
 			Spec: api.ClientPolicySpec{
-				Mode:       "include",
-				Interfaces: []string{"lan"},
+				Mode:          "include",
+				Interfaces:    []string{"lan"},
+				GuestServices: []string{"dns", "dhcp", "ntp", "mdns", "ssdp"},
 				Classification: []api.ClientPolicyClassSpec{{
 					MACAddress: "18:ec:e7:33:12:6c",
 					As:         "guest",
@@ -833,6 +834,8 @@ func TestNftablesClientPolicyIncludeGuestMACs(t *testing.T) {
 		`set client_policy_guest_devices { type ether_addr; elements = { 18:ec:e7:33:12:6c } }`,
 		`iifname "ens19" ether saddr @client_policy_guest_devices udp dport 53 counter accept`,
 		`iifname "ens19" ether saddr @client_policy_guest_devices udp dport { 67, 547 } counter accept`,
+		`iifname "ens19" ether saddr @client_policy_guest_devices udp dport 5353 counter accept`,
+		`iifname "ens19" ether saddr @client_policy_guest_devices udp dport 1900 counter accept`,
 		`iifname "ens19" ether saddr @client_policy_guest_devices ip daddr 10.0.0.0/8 counter log prefix "routerd client-policy guest-devices deny " drop`,
 		`iifname "ens19" ether saddr @client_policy_guest_devices ip6 daddr fc00::/7 counter log prefix "routerd client-policy guest-devices deny " drop`,
 	} {

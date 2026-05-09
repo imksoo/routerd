@@ -149,8 +149,8 @@ export default function Home(): JSX.Element {
           <div className="container">
             <Heading as="h2">{siteCopy.quickstartTitle}</Heading>
             <p>{siteCopy.quickstartBody}</p>
-            <pre className="terminal"><code>{`curl -LO https://github.com/imksoo/routerd/releases/download/20260509.12/routerd-20260509.12-linux-amd64.tar.gz
-tar -xzf routerd-20260509.12-linux-amd64.tar.gz
+            <pre className="terminal"><code>{`curl -LO https://github.com/imksoo/routerd/releases/download/20260509.13/routerd-20260509.13-linux-amd64.tar.gz
+tar -xzf routerd-20260509.13-linux-amd64.tar.gz
 sudo ./install.sh
 sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
 routerd validate --config /usr/local/etc/routerd/router.yaml
