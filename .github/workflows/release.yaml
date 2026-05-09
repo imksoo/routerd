@@ -99,7 +99,7 @@ jobs:
           (
             cd "${work}"
             ./install.sh --prefix "${smoke}" --no-restart --no-config-update --no-install-deps
-            if [ "${{ matrix.routerd_os }}" = "linux" ]; then
+            if [ "${{ matrix.routerd_os }}" = "linux" ] && [ "${{ matrix.goarch }}" = "amd64" ]; then
               "${smoke}/sbin/routerd" --version
             else
               test -x "${smoke}/sbin/routerd"
