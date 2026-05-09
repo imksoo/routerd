@@ -2,6 +2,9 @@
 
 [Project site and documentation: routerd.net](https://routerd.net/)
 
+Prebuilt release archives for Linux amd64 and FreeBSD amd64 are published on
+the [GitHub Releases page](https://github.com/imksoo/routerd/releases).
+
 routerd is a pre-release declarative router control plane for people who want a
 general-purpose host to behave like an understandable router.
 
