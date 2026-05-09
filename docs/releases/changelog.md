@@ -8,6 +8,15 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-based release versions in `yyyymmdd.N` format starting with `20260509.0`.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## 20260509.15
+
+### Added
+
+- Added a `CI` GitHub Actions workflow for branch pushes and pull requests.
+- The CI workflow runs `go test ./...`, schema checks, example validation, and the website build on Ubuntu.
+- Added an optional `scripts/pre-commit.sh` hook that runs Go tests and schema checks before local commits.
+- Added development documentation that explains the split between CI, pre-commit checks, and tag-driven release publishing.
+
 ## 20260509.14
 
 ### Validated

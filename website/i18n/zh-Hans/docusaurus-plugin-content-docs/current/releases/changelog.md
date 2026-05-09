@@ -8,6 +8,15 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 从 `20260509` 开始使用 `yyyymmdd` 格式的日期型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## 20260509.15
+
+### 新增
+
+- 新增 branch push 与 pull request 用的 `CI` GitHub Actions workflow。
+- CI workflow 会在 Ubuntu 上执行 `go test ./...`、schema 检查、example 验证与网站构建。
+- 新增可选的 `scripts/pre-commit.sh` hook，在本地 commit 前执行 Go test 与 schema 检查。
+- 新增 development 文档，说明 CI、pre-commit check 与 tag-driven release publishing 的分工。
+
 ## 20260509.14
 
 ### 验证

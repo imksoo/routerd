@@ -20,7 +20,9 @@ git push origin 20260509.0
 The `Release` workflow builds these targets:
 
 - `linux-amd64`
+- `linux-arm64`
 - `freebsd-amd64`
+- `freebsd-arm64`
 
 Each target archive is named `routerd-<tag>-<os>-<arch>.tar.gz`.
 The archive contains:
@@ -33,6 +35,10 @@ The archive contains:
 - `share/doc/`: README, VERSION, and LICENSE notice
 
 The workflow uploads each `.tar.gz` archive and its `.sha256` file to the GitHub Release page.
+
+Normal branch pushes and pull requests use the separate `CI` workflow.
+That workflow runs development checks only and does not publish release assets.
+See [Development checks](/docs/operations/development) for the pre-commit hook and CI scope.
 
 ## Responsibility split
 

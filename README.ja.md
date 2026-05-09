@@ -126,12 +126,12 @@ spec:
 ルーターホスト上でリリースアーカイブを展開し、同梱のインストーラーを実行します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/20260509.14/routerd-20260509.14-linux-amd64.tar.gz
-tar -xzf routerd-20260509.14-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/20260509.15/routerd-20260509.15-linux-amd64.tar.gz
+tar -xzf routerd-20260509.15-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-FreeBSD では `routerd-20260509.14-freebsd-amd64.tar.gz` を取得し、同じ
+FreeBSD では `routerd-20260509.15-freebsd-amd64.tar.gz` を取得し、同じ
 `./install.sh` を実行します。
 arm64 ホストでは `linux-arm64` または `freebsd-arm64` アーカイブを使います。
 

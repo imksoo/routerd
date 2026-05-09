@@ -32,7 +32,7 @@ import (
 
 var platformDefaults, _ = platform.Current()
 
-const version = "20260509.14"
+const version = "20260509.15"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
