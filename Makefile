@@ -7,9 +7,12 @@ SYSTEMDUNITDIR ?= $(PREFIX)/lib/systemd/system
 RCDDIR ?= $(PREFIX)/etc/rc.d
 DESTDIR ?=
 DISTBASE ?= dist
-DISTDIR ?= $(DISTBASE)/$(ROUTERD_OS)$(if $(GOARCH),-$(GOARCH))
-DISTROOT ?= $(DISTDIR)/root
-DISTTAR ?= $(DISTDIR)/routerd-install.tar
+DISTPLATFORM ?= $(ROUTERD_OS)$(if $(GOARCH),-$(GOARCH))
+DISTDIR ?= $(DISTBASE)/$(DISTPLATFORM)
+DISTROOT ?= $(DISTDIR)/package
+DISTTAR ?= $(DISTDIR)/routerd-$(VERSION)-$(DISTPLATFORM).tar.gz
+ROOTFSDISTROOT ?= $(DISTDIR)/root
+ROOTFSDISTTAR ?= $(DISTDIR)/routerd-install.tar
 REMOTE_HOST ?=
 REMOTE_TAR ?= /tmp/routerd-install.tar
 CONFIG ?=
@@ -54,7 +57,7 @@ endif
 GO_BUILD_FLAGS ?= -trimpath -ldflags="-s -w"
 EXAMPLE_CONFIGS ?= examples/basic-static.yaml examples/dslite-lan-range-snat.yaml
 
-.PHONY: test build build-daemons webconsole-build generate-schema check-schema website-build check-build-deps install-ubuntu-deps remote-install-service-deps check-remote-deps install install-service install-systemd install-rc-freebsd dist remote-install remote-install-config remote-install-systemd-unit validate-example dry-run-example plan-config clean
+.PHONY: test build build-daemons webconsole-build generate-schema check-schema website-build check-build-deps install-ubuntu-deps remote-install-service-deps check-remote-deps install install-service install-systemd install-rc-freebsd dist dist-rootfs remote-install remote-install-config remote-install-systemd-unit validate-example dry-run-example plan-config clean
 
 test:
 	go test ./...
@@ -179,15 +182,47 @@ install-rc-freebsd:
 	install -m 0555 contrib/freebsd/routerd $(DESTDIR)$(RCDDIR)/routerd
 
 dist:
-	rm -rf $(DISTROOT) $(DISTTAR)
-	$(MAKE) install DESTDIR=$(abspath $(DISTROOT))
-	$(MAKE) install-service DESTDIR=$(abspath $(DISTROOT))
+	rm -rf $(DISTROOT) $(DISTTAR) $(DISTTAR).sha256
+	$(MAKE) build-daemons
+	install -d $(DISTROOT)/bin
+	install -m 0755 $(ROUTERD_BIN) $(DISTROOT)/bin/routerd
+	install -m 0755 $(ROUTERCTL_BIN) $(DISTROOT)/bin/routerctl
+	install -m 0755 $(ROUTERD_DHCPv4_CLIENT_BIN) $(DISTROOT)/bin/routerd-dhcpv4-client
+	install -m 0755 $(ROUTERD_DHCPv6_CLIENT_BIN) $(DISTROOT)/bin/routerd-dhcpv6-client
+	install -m 0755 $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(DISTROOT)/bin/routerd-dhcp-event-relay
+	install -m 0755 $(ROUTERD_HEALTHCHECK_BIN) $(DISTROOT)/bin/routerd-healthcheck
+	install -m 0755 $(ROUTERD_DNS_RESOLVER_BIN) $(DISTROOT)/bin/routerd-dns-resolver
+	install -m 0755 $(ROUTERD_FIREWALL_LOGGER_BIN) $(DISTROOT)/bin/routerd-firewall-logger
+	install -m 0755 $(ROUTERD_PPPOE_CLIENT_BIN) $(DISTROOT)/bin/routerd-pppoe-client
+	install -m 0755 packaging/install.sh $(DISTROOT)/install.sh
+	install -d $(DISTROOT)/etc/routerd
+	install -m 0644 examples/router-lab.yaml $(DISTROOT)/etc/routerd/router.yaml.sample
+	install -d $(DISTROOT)/share/doc
+	install -m 0644 README.md $(DISTROOT)/share/doc/README.md
+	if [ -f README.ja.md ]; then install -m 0644 README.ja.md $(DISTROOT)/share/doc/README.ja.md; fi
+	if [ -f LICENSE ]; then install -m 0644 LICENSE $(DISTROOT)/share/doc/LICENSE; elif [ -f LICENSE.md ]; then install -m 0644 LICENSE.md $(DISTROOT)/share/doc/LICENSE; else printf '%s\n' 'No LICENSE file is present in this repository.' > $(DISTROOT)/share/doc/LICENSE; fi
+	printf '%s\n' '$(VERSION)' > $(DISTROOT)/share/doc/VERSION
+	if [ "$(ROUTERD_OS)" = "freebsd" ]; then \
+		install -d $(DISTROOT)/rc.d; \
+		install -m 0555 contrib/freebsd/routerd $(DISTROOT)/rc.d/routerd; \
+	else \
+		install -d $(DISTROOT)/systemd; \
+		install -m 0644 contrib/systemd/routerd.service $(DISTROOT)/systemd/routerd.service; \
+	fi
 	install -d $(DISTDIR)
-	tar -C $(DISTROOT) -cf $(DISTTAR) .
+	tar -C $(DISTROOT) -czf $(DISTTAR) .
+	if command -v sha256sum >/dev/null 2>&1; then sha256sum $(DISTTAR) > $(DISTTAR).sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 $(DISTTAR) > $(DISTTAR).sha256; elif command -v sha256 >/dev/null 2>&1; then sha256 -r $(DISTTAR) > $(DISTTAR).sha256; else echo "missing sha256 tool" >&2; exit 1; fi
 
-remote-install: check-build-deps remote-install-service-deps check-remote-deps dist
+dist-rootfs:
+	rm -rf $(ROOTFSDISTROOT) $(ROOTFSDISTTAR)
+	$(MAKE) install DESTDIR=$(abspath $(ROOTFSDISTROOT))
+	$(MAKE) install-service DESTDIR=$(abspath $(ROOTFSDISTROOT))
+	install -d $(DISTDIR)
+	tar -C $(ROOTFSDISTROOT) -cf $(ROOTFSDISTTAR) .
+
+remote-install: check-build-deps remote-install-service-deps check-remote-deps dist-rootfs
 	test -n "$(REMOTE_HOST)" || (echo "REMOTE_HOST is required, for example: make remote-install REMOTE_HOST=user@router.example" >&2; exit 2)
-	scp $(DISTTAR) $(REMOTE_HOST):$(REMOTE_TAR)
+	scp $(ROOTFSDISTTAR) $(REMOTE_HOST):$(REMOTE_TAR)
 	ssh $(REMOTE_HOST) 'sudo tar --no-same-owner -C / -xf $(REMOTE_TAR) && rm -f $(REMOTE_TAR) && \
 		if [ "$$(uname)" = "FreeBSD" ] && [ -f /usr/local/etc/rc.d/routerd ]; then \
 			sudo sysrc routerd_enable=YES >/dev/null; \

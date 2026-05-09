@@ -49,34 +49,24 @@ jobs:
           fi
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
 
-      - name: Build daemons
+      - name: Build release archive
         run: |
-          make build-daemons \
+          make dist \
             ROUTERD_OS=${{ matrix.routerd_os }} \
             GOARCH=${{ matrix.goarch }} \
             VERSION=${{ steps.release.outputs.tag }}
 
-      - name: Package binaries
+      - name: Collect release archive
         shell: bash
         run: |
           set -euo pipefail
           tag="${{ steps.release.outputs.tag }}"
           platform="${{ matrix.routerd_os }}-${{ matrix.goarch }}"
-          bin_dir="bin/${platform}"
           package="routerd-${tag}-${platform}.tar.gz"
-          test -x "${bin_dir}/routerd"
+          test -f "dist/${platform}/${package}"
+          test -f "dist/${platform}/${package}.sha256"
           mkdir -p release
-          tar -C "${bin_dir}" -czf "release/${package}" \
-            routerd \
-            routerctl \
-            routerd-dhcpv4-client \
-            routerd-dhcpv6-client \
-            routerd-dhcp-event-relay \
-            routerd-healthcheck \
-            routerd-dns-resolver \
-            routerd-firewall-logger \
-            routerd-pppoe-client
-          sha256sum "release/${package}" > "release/${package}.sha256"
+          cp "dist/${platform}/${package}" "dist/${platform}/${package}.sha256" release/
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -121,7 +111,11 @@ jobs:
           set -euo pipefail
           tag="${{ steps.release.outputs.tag }}"
           ls -l release-artifacts
-          gh release create "${tag}" release-artifacts/* \
-            --title "routerd ${tag}" \
-            --generate-notes \
-            --verify-tag
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" release-artifacts/* --clobber
+          else
+            gh release create "${tag}" release-artifacts/* \
+              --title "routerd ${tag}" \
+              --generate-notes \
+              --verify-tag
+          fi
