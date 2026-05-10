@@ -8,6 +8,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260510.1626
+
+### 追加
+
+- 公開ドキュメントに法務と再配布ページを追加し、release checklist を整理しました。
+- 生成される第三者ライセンス一覧に Go module source URL を追加しました。
+- BSD routerd binary と aggregate live ISO distribution model の内部 license audit note を記録しました。
+
 ## v20260510.1612
 
 ### 追加

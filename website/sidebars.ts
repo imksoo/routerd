@@ -67,6 +67,7 @@ const sidebars: SidebarsConfig = {
         'plugin-protocol',
         'platforms',
         'hardware-compatibility',
+        'legal',
       ],
     },
     {

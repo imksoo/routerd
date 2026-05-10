@@ -8,6 +8,14 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260510.1626
+
+### Added
+
+- Added a public legal and redistribution page with release checklist.
+- Added Go module source URLs to the generated third-party license inventory.
+- Recorded an internal license audit note for the BSD routerd binary and aggregate live ISO distribution model.
+
 ## v20260510.1612
 
 ### Added

@@ -8,6 +8,14 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## v20260510.1626
+
+### 新增
+
+- 新增公开 legal 与 redistribution 页面，整理 release checklist。
+- 在生成的第三方授权清单中加入 Go module source URL。
+- 记录 BSD routerd binary 与 aggregate live ISO distribution model 的内部 license audit note。
+
 ## v20260510.1612
 
 ### 新增

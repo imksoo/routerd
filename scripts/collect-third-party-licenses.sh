@@ -65,6 +65,21 @@ license_basename()
     basename "${file}"
 }
 
+go_source_url()
+{
+    module=$1
+    version=$2
+    if [ "${module}" = "routerd" ]; then
+        echo "https://github.com/imksoo/routerd"
+        return 0
+    fi
+    if [ "${version}" = "(main module)" ] || [ -z "${version}" ]; then
+        printf 'https://pkg.go.dev/%s\n' "${module}"
+        return 0
+    fi
+    printf 'https://pkg.go.dev/%s@%s\n' "${module}" "${version}"
+}
+
 apk_packages()
 {
     awk '
@@ -151,8 +166,8 @@ fetch_apk_index "${apk_index}"
     echo
     echo "## Go modules linked into routerd"
     echo
-    echo "| Module | Version | Detected license | License file |"
-    echo "| --- | --- | --- | --- |"
+    echo "| Module | Version | Detected license | License file | Source URL |"
+    echo "| --- | --- | --- | --- | --- |"
     go list -m -json all | awk '
         /"Path":/ {
             path = $2
@@ -183,7 +198,7 @@ fetch_apk_index "${apk_index}"
                 ;;
         esac
         # shellcheck disable=SC2016 # Markdown backticks are literal output.
-        printf '| `%s` | `%s` | `%s` | %s |\n' "${module}" "${version}" "${label}" "$(license_basename "${file}")"
+        printf '| `%s` | `%s` | `%s` | %s | %s |\n' "${module}" "${version}" "${label}" "$(license_basename "${file}")" "$(go_source_url "${module}" "${version}")"
     done
     echo
     echo "### Go module copyleft check"
