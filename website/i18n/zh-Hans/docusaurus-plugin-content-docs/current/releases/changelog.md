@@ -8,6 +8,13 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## v20260510.1802
+
+### 变更
+
+- 在日文、简体中文和繁体中文的 diskless mini PC walkthrough 中嵌入 PVE live ISO boot test 的实际截图。
+- 移除 diskless mini PC walkthrough 中残留的旧 placeholder 图片引用。
+
 ## v20260510.1750
 
 ### 新增

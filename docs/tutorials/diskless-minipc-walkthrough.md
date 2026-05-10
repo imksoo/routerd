@@ -48,8 +48,6 @@ sha256sum -c routerd-live.iso.sha256
 Boot the mini PC from the ISO. The same image works on a video console and a
 serial console.
 
-![PVE VM creation placeholder](/img/tutorials/diskless-01-pve-vm-create.svg)
-
 For Proxmox VE:
 
 ```sh
@@ -153,8 +151,6 @@ Basic checks:
 dig @192.168.10.1 www.google.com A +short
 curl -4 https://www.google.com/generate_204
 ```
-
-![LAN client curl placeholder](/img/tutorials/diskless-07-client-curl.svg)
 
 Adjust the address if you chose a different LAN prefix.
 

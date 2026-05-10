@@ -8,6 +8,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260510.1802
+
+### 変更
+
+- 日本語、簡体字中国語、繁体字中国語のディスクレス mini PC walkthrough に、
+  PVE live ISO boot test で取得した実際の画面キャプチャを埋め込みました。
+- ディスクレス mini PC walkthrough に残っていた古い placeholder 画像参照を削除しました。
+
 ## v20260510.1750
 
 ### 追加

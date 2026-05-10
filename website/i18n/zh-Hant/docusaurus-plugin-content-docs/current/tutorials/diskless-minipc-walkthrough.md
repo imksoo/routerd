@@ -4,11 +4,6 @@ title: 無磁碟 mini PC 教學
 
 # 無磁碟 mini PC 教學
 
-:::info 圖片 placeholder
-本文圖片目前是結構 placeholder。取得 Proxmox VE、serial console、
-LAN client 的實機截圖後，可以直接替換。
-:::
-
 本教學說明如何用 routerd live ISO，把小型 x86 mini PC 做成不需要內建磁碟的路由器。
 設定會儲存在 USB，日誌先寫入 RAM，再每天一次壓縮寫回 USB。
 
@@ -43,8 +38,6 @@ sha256sum -c routerd-live.iso.sha256
 
 在 Proxmox VE 中，可以使用 serial console：
 
-![PVE VM creation placeholder](/img/tutorials/diskless-01-pve-vm-create.svg)
-
 ```sh
 qm create 200 \
   --name routerd-live-demo \
@@ -52,7 +45,7 @@ qm create 200 \
   --cores 2 \
   --ostype l26 \
   --serial0 socket \
-  --vga serial0 \
+  --vga std \
   --boot order=ide2 \
   --ide2 local:iso/routerd-live.iso,media=cdrom \
   --net0 virtio,bridge=vmbr0 \
@@ -63,22 +56,26 @@ qm terminal 200
 
 早期測試 DHCP 或 RA 時，請使用隔離的 LAN bridge。
 
-![PVE ISO mount placeholder](/img/tutorials/diskless-02-iso-mount.svg)
+![routerd live boot menu](/img/iso-boot/iso-boot-01-grub.png)
+
+ISO 同時啟用 video console 和 serial console。
+
+![Alpine boot messages](/img/iso-boot/iso-boot-02-alpine-boot.png)
 
 ## 執行設定精靈
 
 以 `root` 登入。live ISO 會啟動 `install.sh configure`。
 
-![Serial console placeholder](/img/tutorials/diskless-03-serial-console.svg)
+![routerd live login and message of the day](/img/iso-boot/iso-boot-03-login-motd.png)
 
 精靈會詢問 WAN、LAN、LAN 位址、DHCP、DNS、NTP、RA、firewall、NAT44、
 管理介面，以及 USB persistence。
 
-![Wizard WAN and LAN placeholder](/img/tutorials/diskless-04-wizard-wan-lan.svg)
+![WAN setup in the routerd live wizard](/img/iso-boot/iso-boot-04-wizard-wan.png)
+
+![LAN setup in the routerd live wizard](/img/iso-boot/iso-boot-05-wizard-lan.png)
 
 選擇 USB persistence 後，指定 USB 分割區。若標籤是 `ROUTERD`，通常會自動列出。
-
-![Wizard USB persistence placeholder](/img/tutorials/diskless-05-usb-persistence.svg)
 
 ## 確認套用
 
@@ -90,11 +87,13 @@ qm terminal 200
 
 然後執行驗證、計畫與一次性套用。
 
+![Wizard summary and first apply](/img/iso-boot/iso-boot-06-wizard-summary.png)
+
 ```sh
 routerctl status
 ```
 
-![routerctl status placeholder](/img/tutorials/diskless-06-routerctl-status.svg)
+![routerctl status after first apply](/img/iso-boot/iso-boot-07-routerctl-status.png)
 
 狀態應為 `Healthy`。
 
@@ -104,8 +103,6 @@ routerctl status
 dig @192.168.10.1 www.google.com A +short
 curl -4 https://www.google.com/generate_204
 ```
-
-![LAN client curl placeholder](/img/tutorials/diskless-07-client-curl.svg)
 
 ## 重新啟動測試
 
@@ -119,3 +116,5 @@ curl -4 https://www.google.com/generate_204
 ```sh
 /usr/share/routerd/live-persistence.sh flush
 ```
+
+![USB persistence flush](/img/iso-boot/iso-boot-08-usb-flush.png)
