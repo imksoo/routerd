@@ -10,13 +10,35 @@ format, such as `20260509.0`.
 
 ## Automated release
 
-Push a release tag to start the GitHub Actions workflow:
+Use the release helper from a clean working tree:
 
 ```sh
-git tag 20260509.0
-git push origin 20260509.0
+make release
 ```
 
+The helper uses the current date in `Asia/Tokyo`, finds existing tags for that
+date, increments the `.N` suffix, updates the executable version strings, adds
+a changelog stub, commits the change, creates the tag, and pushes both `main`
+and the tag.
+
+For example, if `20260510.0` and `20260510.1` already exist, the next release
+is `20260510.2`.
+For a new date, the first release is `.0`.
+
+Useful options:
+
+```sh
+scripts/release.sh --dry-run
+scripts/release.sh --date 20260510
+scripts/release.sh --timezone UTC
+scripts/release.sh --no-push
+scripts/release.sh --allow-dirty
+```
+
+Use `--allow-dirty` only when the current working tree is the intended release
+change set.
+
+Pushing the release tag starts the GitHub Actions workflow.
 The `Release` workflow builds these targets:
 
 - `linux-amd64`

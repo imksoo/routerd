@@ -1,4 +1,4 @@
-VERSION ?= 20260509.16
+VERSION ?= 20260510.0
 DISTBASE ?= dist
 DISTARCH ?= $(if $(GOARCH),$(GOARCH),$(shell go env GOARCH))
 DISTPLATFORM ?= $(ROUTERD_OS)-$(DISTARCH)
@@ -32,7 +32,7 @@ endif
 GO_BUILD_FLAGS ?= -trimpath -ldflags="-s -w"
 EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
 
-.PHONY: test build build-daemons build-daemons-freebsd webconsole-build generate-schema check-schema website-build check-build-deps dist validate-example dry-run-example plan-config clean
+.PHONY: test build build-daemons build-daemons-freebsd webconsole-build generate-schema check-schema website-build check-build-deps dist validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -130,6 +130,9 @@ dry-run-example:
 plan-config:
 	test -n "$(CONFIG)" || (echo "CONFIG is required, for example: make plan-config CONFIG=path/to/router.yaml" >&2; exit 2)
 	go run ./cmd/routerd plan --config $(CONFIG) --status-file /tmp/routerd-plan-status.json
+
+release:
+	scripts/release.sh
 
 clean:
 	rm -rf bin dist

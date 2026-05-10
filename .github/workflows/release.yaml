@@ -34,12 +34,12 @@ jobs:
             goarch: arm64
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -62,11 +62,11 @@ jobs:
           make check-schema
           make validate-example
 
-      - name: Lint installer scripts
+      - name: Lint shell scripts
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck packaging/install.sh packaging/uninstall.sh
+          shellcheck packaging/install.sh packaging/uninstall.sh scripts/pre-commit.sh scripts/release.sh
 
       - name: Build release archive
         run: |
@@ -116,7 +116,7 @@ jobs:
           )
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: routerd-${{ steps.release.outputs.tag }}-${{ matrix.routerd_os }}-${{ matrix.goarch }}
           path: release/*
@@ -128,7 +128,7 @@ jobs:
     needs: build
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
@@ -145,7 +145,7 @@ jobs:
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-artifacts
           merge-multiple: true

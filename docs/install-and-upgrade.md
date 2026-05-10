@@ -39,7 +39,7 @@ sudo ./install.sh
 
 For FreeBSD arm64, use the `freebsd-arm64` archive.
 The latest release also includes versioned archives such as
-`routerd-20260509.16-linux-amd64.tar.gz`.
+`routerd-20260510.0-linux-amd64.tar.gz`.
 Use those when you need to pin a specific release.
 
 `install.sh` detects whether this is a fresh install or an upgrade.
@@ -236,7 +236,7 @@ make test
 make check-schema
 make validate-example
 make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.16
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260510.0
 ```
 
 Do not use the Makefile as the user-facing install path.
