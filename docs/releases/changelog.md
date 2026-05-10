@@ -8,6 +8,16 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260510.1547
+
+## v20260510.1546
+
+### Added
+
+- Expanded the public positioning material with a broader comparison that includes pfSense and MikroTik RouterOS.
+- Expanded hardware compatibility guidance for Intel NUC, N100 mini PCs, Raspberry Pi 5, thin clients, and Proxmox VMs.
+- Added Chinese hardware compatibility pages and clarified the live ISO plus USB persistence path.
+
 ## v20260510.1534
 
 ## v20260510.1508

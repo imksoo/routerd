@@ -8,6 +8,16 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260510.1547
+
+## v20260510.1546
+
+### 追加
+
+- pfSense と MikroTik RouterOS を含めて、公開向けの位置づけ比較を広げました。
+- Intel NUC、N100 mini PC、Raspberry Pi 5、thin client、Proxmox VM の hardware compatibility を拡充しました。
+- 中国語の hardware compatibility ページを追加し、ライブ ISO と USB 永続化の流れを明確にしました。
+
 ## v20260510.1534
 
 ## v20260510.1508

@@ -8,6 +8,16 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 自 `20260509` 起使用 `yyyymmdd` 格式的日期型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## v20260510.1547
+
+## v20260510.1546
+
+### 新增
+
+- 擴充公開定位說明，加入 pfSense 與 MikroTik RouterOS 比較。
+- 擴充 Intel NUC、N100 mini PC、Raspberry Pi 5、thin client 與 Proxmox VM 的硬體相容性說明。
+- 新增中文硬體相容性頁面，並補充 live ISO 與 USB persistence 的使用路徑。
+
 ## v20260510.1534
 
 ## v20260510.1508

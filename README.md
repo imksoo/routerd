@@ -53,9 +53,15 @@ model. The host artifacts differ. The intent file stays recognizable.
 | --- | --- | --- | --- |
 | VyOS | Router CLI and network OS workflows | Configuration is centered on a router OS environment | routerd keeps ordinary Linux/FreeBSD host integration visible as typed resources |
 | OPNsense | Appliance UI, firewall workflows, plugins | GUI-first operation can hide generated state | routerd keeps configuration in YAML and uses the Web Console for read-only observation |
+| pfSense | Mature FreeBSD firewall appliance | Configuration is appliance-oriented and GUI-first | routerd treats FreeBSD as one host target in the same declarative model as Linux |
+| MikroTik RouterOS | Cost-effective commercial appliances | Closed source and hardware-centered lifecycle | routerd stays OSS and can run on commodity mini PCs, VMs, and lab hosts |
 | OpenWrt | Embedded hardware and package ecosystem | Less natural for Proxmox SDN/VNET labs or full Linux hosts | routerd targets general-purpose hosts and live ISO mini PCs |
 | Linux shell scripts | Fast local automation | Hard to audit desired state and event history later | routerd records resources, plans, status, generations, and events |
 | Kubernetes-style controllers | Strong reconciliation model | Cluster assumptions are heavy for a router host | routerd uses controller ideas locally, with the host as the boundary |
+
+routerd is not trying to replace every appliance UI. It is strongest when the
+same network intent must move between a Proxmox lab, a NixOS or FreeBSD router,
+an Ubuntu home gateway, and a diskless mini PC booted from the live ISO.
 
 That makes routerd useful when a network grows sideways: from a Proxmox lab, to
 a home DS-Lite router, to WireGuard/Tailscale overlays, to a diskless mini PC

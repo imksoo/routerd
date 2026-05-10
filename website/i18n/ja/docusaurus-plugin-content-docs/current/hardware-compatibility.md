@@ -16,6 +16,21 @@ routerd は、必要なカーネル機能とユーザーランド機能を持つ
 | Intel N100 mini PC | 家庭用ルーター向き | 消費電力に対する性能が高いです。Intel i226/i225 NIC と十分な冷却を持つモデルを選びます。 |
 | Raspberry Pi 5 | edge や demo 向き | 高品質な電源と対応 USB/NVMe ストレージが重要です。スループットはアダプターに依存します。 |
 
+## 候補ハードウェア
+
+この表は出発点です。
+状態が「検証済み」でないものは、期待される適性として扱ってください。
+ルーターとして使う前に、NIC、MTU、再起動後の収束を確認します。
+
+| ハードウェア | 期待する用途 | 状態 | メモ |
+| --- | --- | --- | --- |
+| USB Ethernet 付き Intel NUC | Proxmox ラボルーター、ライブ ISO デモ | 期待動作 | 実績のある USB Ethernet アダプターを選びます。試験中は管理経路を別 VLAN または別 interface に分けます。 |
+| N100 4 ポート 2.5GbE mini PC | 家庭用ルーター、DS-Lite、PPPoE fallback、VPN overlay | 期待動作 | ディスクレス routerd appliance の最初の候補です。Intel i226/i225 NIC と冷却を確認します。 |
+| N100 6 ポート 2.5GbE mini PC | 複数 LAN、guest network、管理経路分離 | 期待動作 | WAN、LAN、guest、management を物理 port で分けたい場合に向きます。BIOS の電源復帰設定も確認します。 |
+| USB または PCIe NIC 付き Raspberry Pi 5 | デモ、edge router、省電力ラボ | 期待動作 | 強い電源が必要です。スループットは NIC と storage path に強く依存します。 |
+| Intel NIC 搭載の古い thin client | 予備ルーター、ラボノード | 期待動作 | 試験には便利です。AES、発熱、ストレージの状態を確認します。 |
+| Proxmox 上の仮想マシン | SDN/VNET routing、CI 風ラボ、統合試験 | ラボ検証済み | 同じ resource をあとで物理 mini PC に移せる点が routerd の強みです。 |
+
 ## CPU とメモリー
 
 家庭または小規模オフィスでは、次を目安にします。
@@ -49,6 +64,19 @@ SSH と Web Console を WAN/LAN policy から分離できます。
 - 1 日 1 回、圧縮ログと状態スナップショットを USB へ書き出せます。
 
 これにより、低価格な flash media への書き込みを減らせます。
+
+## ライブ ISO と USB 永続化
+
+ライブ ISO は、短時間の評価とディスクレス運用の両方を想定しています。
+
+- ISO から起動します。
+- 画面またはシリアルコンソールでテキストウィザードを実行します。
+- `router.yaml` と選択した状態を USB に保存します。
+- ログは tmpfs に一時保存します。
+- 1 日 1 回、圧縮ログと状態スナップショットを USB へ書き出します。
+
+USB 永続化がない場合、ライブ ISO は一時的なデモルーターとして動きます。
+USB 永続化がある場合、同じ mini PC が保存済み設定で再起動します。
 
 ## NIC メモ
 
