@@ -16,6 +16,9 @@ const config: Config = {
   trailingSlash: false,
   markdown: {
     mermaid: true,
+    hooks: {
+      onBrokenMarkdownLinks: 'warn',
+    },
   },
   themes: ['@docusaurus/theme-mermaid'],
   plugins: [
@@ -37,7 +40,6 @@ const config: Config = {
   ],
 
   onBrokenLinks: 'warn',
-  onBrokenMarkdownLinks: 'warn',
 
   i18n: {
     defaultLocale: 'en',
