@@ -5,8 +5,9 @@ title: Release process
 # Release process
 
 routerd uses date-based release versions.
-The executable version, release tag, and release archive name use `yyyymmdd.N`
-format, such as `20260509.0`.
+The executable version, release tag, and release archive name use
+`vYYYYMMDD.HHmm` format.
+The date and time are calculated in `Asia/Tokyo` by default.
 
 ## Automated release
 
@@ -16,14 +17,11 @@ Use the release helper from a clean working tree:
 make release
 ```
 
-The helper uses the current date in `Asia/Tokyo`, finds existing tags for that
-date, increments the `.N` suffix, updates the executable version strings, adds
-a changelog stub, commits the change, creates the tag, and pushes both `main`
-and the tag.
+The helper uses the current date and start time in `Asia/Tokyo`, updates the
+executable version strings, adds a changelog stub, commits the change, creates
+the tag, and pushes both `main` and the tag.
 
-For example, if `20260510.0` and `20260510.1` already exist, the next release
-is `20260510.2`.
-For a new date, the first release is `.0`.
+For example, a release started at 15:30 JST uses the `.1530` suffix.
 
 Useful options:
 
@@ -88,7 +86,7 @@ Development tests use Makefile targets:
 make test
 make check-schema
 make validate-example
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.0
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION="$(git describe --tags --abbrev=0)"
 ```
 
 Deployment smoke checks use `install.sh`.
@@ -198,7 +196,7 @@ Use `--dry-run` to preview removal without changing the host.
 If a tag already exists, the workflow can also be started from GitHub Actions with the `workflow_dispatch` input:
 
 ```text
-tag = 20260509.0
+tag = vYYYYMMDD.HHmm
 ```
 
 The workflow checks out that tag before building.
@@ -208,23 +206,25 @@ The workflow checks out that tag before building.
 If GitHub Actions is unavailable, build the same archives locally:
 
 ```sh
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260509.0
-make dist ROUTERD_OS=freebsd GOARCH=amd64 VERSION=20260509.0
+tag=$(git describe --tags --abbrev=0)
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION="$tag"
+make dist ROUTERD_OS=freebsd GOARCH=amd64 VERSION="$tag"
 ```
 
 Then create a release with the GitHub CLI:
 
 ```sh
-gh release create 20260509.0 \
-  dist/linux-amd64/routerd-20260509.0-linux-amd64.tar.gz \
-  dist/linux-amd64/routerd-20260509.0-linux-amd64.tar.gz.sha256 \
+tag=$(git describe --tags --abbrev=0)
+gh release create "$tag" \
+  "dist/linux-amd64/routerd-${tag}-linux-amd64.tar.gz" \
+  "dist/linux-amd64/routerd-${tag}-linux-amd64.tar.gz.sha256" \
   dist/linux-amd64/routerd-linux-amd64.tar.gz \
   dist/linux-amd64/routerd-linux-amd64.tar.gz.sha256 \
-  dist/freebsd-amd64/routerd-20260509.0-freebsd-amd64.tar.gz \
-  dist/freebsd-amd64/routerd-20260509.0-freebsd-amd64.tar.gz.sha256 \
+  "dist/freebsd-amd64/routerd-${tag}-freebsd-amd64.tar.gz" \
+  "dist/freebsd-amd64/routerd-${tag}-freebsd-amd64.tar.gz.sha256" \
   dist/freebsd-amd64/routerd-freebsd-amd64.tar.gz \
   dist/freebsd-amd64/routerd-freebsd-amd64.tar.gz.sha256 \
-  --title "routerd 20260509.0" \
+  --title "routerd ${tag}" \
   --generate-notes \
   --verify-tag
 ```

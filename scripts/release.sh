@@ -5,11 +5,11 @@ usage() {
 	cat <<'EOF'
 usage: scripts/release.sh [options]
 
-Create the next date-based routerd release.
+Create a date-and-time-based routerd release.
 
 Options:
   --date YYYYMMDD       Override the release date. Defaults to Asia/Tokyo today.
-  --timezone TZ         Override the timezone used for date calculation.
+  --timezone TZ         Override the timezone used for date/time calculation.
   --allow-dirty         Include existing working tree changes in the release commit.
   --skip-checks         Skip local test/schema/example/website checks.
   --no-push             Create the commit and tag locally but do not push.
@@ -72,6 +72,7 @@ cd "$repo_root"
 if [ -z "$release_date" ]; then
 	release_date=$(TZ="$timezone" date +%Y%m%d)
 fi
+release_time=$(TZ="$timezone" date +%H%M)
 
 case "$release_date" in
 	[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
@@ -81,18 +82,7 @@ case "$release_date" in
 		;;
 esac
 
-max=-1
-for tag in $(git tag --list "${release_date}.[0-9]*"); do
-	suffix=${tag#"${release_date}".}
-	case "$suffix" in
-		''|*[!0-9]*) continue ;;
-	esac
-	if [ "$suffix" -gt "$max" ]; then
-		max=$suffix
-	fi
-done
-next=$((max + 1))
-release_tag="${release_date}.${next}"
+release_tag="v${release_date}.${release_time}"
 
 if [ "$dry_run" -eq 1 ]; then
 	printf '%s\n' "$release_tag"
@@ -125,7 +115,6 @@ replace_version() {
 replace_version Makefile
 replace_version cmd/routerd/main.go
 replace_version cmd/routerctl/main.go
-replace_version website/package.json
 replace_version docs/install-and-upgrade.md
 replace_version website/i18n/ja/docusaurus-plugin-content-docs/current/install-and-upgrade.md
 

@@ -5,7 +5,7 @@ title: Changelog
 # Changelog
 
 routerd release history. The format follows [Keep a Changelog](https://keepachangelog.com/).
-routerd uses date-based release versions in `yyyymmdd.N` format starting with `20260509.0`.
+routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## 20260510.4
@@ -118,8 +118,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Changed
 
-- Release versions now use date strings with a per-day suffix, such as `20260509.7`, instead of `0.x.y`.
-- `routerd --version`, `routerctl --version`, website metadata, and release archives now use the same `yyyymmdd.N` value.
+- Release versions moved away from `0.x.y` and toward date-based values.
+- `routerd --version`, `routerctl --version`, and release archives now use the same release tag value.
 - NAT44 rendering was tightened around per-interface rules on Linux nftables and FreeBSD pf.
 - The 3-role firewall model was verified on Linux and FreeBSD, with service holes bound to the owning ingress interface instead of broad multi-interface zones.
 - FreeBSD pf gained TCP MSS clamp rendering for `PathMTUPolicy`, aligning it with Linux nftables behavior.

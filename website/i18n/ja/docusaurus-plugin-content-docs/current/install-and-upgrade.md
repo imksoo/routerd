@@ -38,7 +38,7 @@ sudo ./install.sh
 ```
 
 FreeBSD arm64 では `freebsd-arm64` アーカイブを使います。
-latest release には `routerd-20260510.4-linux-amd64.tar.gz` のような
+latest release には `routerd-vYYYYMMDD.HHmm-linux-amd64.tar.gz` のような
 版番号付きアーカイブもあります。
 特定の版に固定する場合は、版番号付きアーカイブを使います。
 
@@ -63,7 +63,7 @@ root でログインすると、同じ `install.sh configure` ウィザードを
 ISO はデモや短時間の試用に使います。
 永続的なルーターとして使う場合は、リリースアーカイブからディスクへ導入します。
 
-`routerd-live-YYYYMMDD.N.iso` のような版番号付き ISO も公開します。
+`routerd-live-vYYYYMMDD.HHmm.iso` のような版番号付き ISO も公開します。
 
 ## 実行時の依存パッケージ
 
@@ -281,7 +281,7 @@ make test
 make check-schema
 make validate-example
 make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260510.4
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION="$(git describe --tags --abbrev=0)"
 ```
 
 利用者向けの導入経路として Makefile は使いません。
