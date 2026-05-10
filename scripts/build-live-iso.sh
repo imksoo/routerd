@@ -102,7 +102,7 @@ EOF
 chmod 0755 "${overlay_root}/etc/local.d/routerd-configure.start"
 ln -s /etc/init.d/local "${overlay_root}/etc/runlevels/default/local"
 
-( cd "${overlay_root}" && tar -czf "${iso_root}/routerd.apkovl.tar.gz" . )
+tar -C "${overlay_root}" -czf "${iso_root}/routerd.apkovl.tar.gz" .
 
 cat > "${iso_root}/boot/grub/grub.cfg" <<EOF
 set timeout=5
