@@ -1,0 +1,1065 @@
+Script started on 2026-05-10 18:42:27+09:00 [COMMAND="qm terminal 999" TERM="tmux-256color" TTY="/dev/pts/0" COLUMNS="80" LINES="24"]
+starting serial terminal on interface serial0 (press Ctrl+O to exit)
+[22;1H   The highlighted entry will be executed automatically in 0s.                 [5;78H[?25h[H[J[1;1H[H[J[1;1H7  1%                                             8[0K7  3% #                                           8[0K7  5% ##                                          8[0K7  7% ###                                         8[0K7  8% ###                                         8[0K7 10% ####                                        8[0K7 13% #####                                       8[0K7 15% ######                                      8[0K7 16% #######                                     8[0K7 17% #######                                     8[0K7 18% #######                                     8[0K7 19% ########                                    8[0K7 20% ########                                    8[0K7 21% #########                                   8[0K7 22% ##########                                  8[0K7 23% ##########                                  8[0K7 24% ##########                                  8[0K7 25% ###########                                 8[0K7 27% ############                                8[0K7 28% ############                                8[0K7 29% #############                               8[0K7 30% #############                               8[0K7 31% ##############                              8[0K7 32% ##############                              8[0K7 33% ##############                              8[0K7 34% ###############                             8[0K7 36% ###############                             8[0K7 38% ################                            8[0K7 40% #################                           8[0K7 42% ##################                          8[0K7 44% ###################                         8[0K7 46% ####################                        8[0K7 48% #####################                       8[0K7 50% ######################                      8[0K7 53% #######################                     8[0K7 55% ########################                    8[0K7 57% #########################                   8[0K7 59% ##########################                  8[0K7 61% ###########################                 8[0K7 63% ###########################                 8[0K7 65% ############################                8[0K7 66% #############################               8[0K7 68% ##############################              8[0K7 71% ###############################             8[0K7 72% ################################            8[0K7 73% ################################            8[0K7 74% ################################            8[0K7 75% #################################           8[0K7 77% #################################           8[0K7 79% ##################################          8[0K7 80% ###################################         8[0K7 82% ####################################        8[0K7 83% ####################################        8[0K7 84% #####################################       8[0K7 85% #####################################       8[0K7 86% #####################################       8[0K7 86% ######################################      8[0K7 87% ######################################      8[0K7 88% ######################################      8[0K7 89% #######################################     8[0K7 90% #######################################     8[0K7 91% ########################################    8[0K7 92% ########################################    8[0K7 93% #########################################   8[0K7 95% ##########################################  8[0K7 97% ##########################################  8[0K7 98% ########################################### 8[0K7100% ############################################8[0K
+
+   OpenRC 0.63 is starting up Linux 6.18.22-0-lts (x86_64)
+
+ * /proc is already mounted
+ * Mounting /run ... [ ok ]
+ * /run/openrc: creating directory
+ * /run/lock: creating directory
+ * /run/lock: correcting owner
+ * Caching service dependencies ... [ ok ]
+ * Remounting devtmpfs on /dev ... [ ok ]
+ * Mounting /dev/mqueue ... [ ok ]
+ * Mounting modloop /media/cdrom/boot/modloop-lts ... * Verifying modloop
+ [ ok ]
+ * Mounting security filesystem ... [ ok ]
+ * Mounting debug filesystem ... [ ok ]
+ * Mounting trace filesystem ... [ ok ]
+ * Mounting persistent storage (pstore) filesystem ... [ ok ]
+ * Mounting bpf filesystem ... [ ok ]
+ * Starting busybox mdev ... [ ok ]
+ * Scanning hardware for mdev ... [ ok ]
+ * Loading hardware drivers ... [ ok ]
+ * Loading modules ... [ ok ]
+ * Setting system clock using the hardware clock [UTC] ... [ ok ]
+ * Checking local filesystems  ... [ ok ]
+ * Remounting filesystems ... [ ok ]
+ * Mounting local filesystems ... [ ok ]
+ * Configuring kernel parameters ... [ ok ]
+ * Creating user login records ... [ ok ]
+ * Cleaning /tmp directory ... [ ok ]
+ * Setting hostname to localhost from /etc/hostname ... [ ok ]
+ * Starting busybox syslog ... [ ok ]
+ * Starting firstboot ... [ ok ]
+ * Starting local ... [ ok ]
+
+Welcome to Alpine Linux 3.23
+Kernel 6.18.22-0-lts on x86_64 (/dev/ttyS0)
+
+localhost login: root
+routerd live v20260510.1811
+
+Run the setup wizard:
+  /usr/share/routerd/install.sh configure
+
+License notices:
+  /usr/share/licenses/routerd/LICENSE
+  /usr/share/licenses/routerd/THIRD_PARTY_LICENSES.txt
+
+The wizard writes /usr/local/etc/routerd/router.yaml and can apply it.
+For a persistent router, install routerd from the release archive onto disk.
+
+routerd live v20260510.1811
+
+Run the setup wizard:
+  /usr/share/routerd/install.sh configure
+
+License notices:
+  /usr/share/licenses/routerd/LICENSE
+  /usr/share/licenses/routerd/THIRD_PARTY_LICENSES.txt
+
+The wizard writes /usr/local/etc/routerd/router.yaml and can apply it.
+For a persistent router, install routerd from the release archive onto disk.
+
+routerd-live: no USB persistence device found; running in ephemeral mode
+udhcpc: started, v1.37.0
+udhcpc: broadcasting discover
+udhcpc: broadcasting select for 192.168.1.48, server 192.168.1.66
+udhcpc: lease of 192.168.1.48 obtained from 192.168.1.66, lease time 86400
+7[fetch https://dl-cdn.alpinelinux.org/alpine...]8[0K7[fetch https://dl-cdn.alpinelinux.org/alpine...]8[0K3.23.4 [/media/cdrom/apks]
+v3.23.4-153-gf5d7e339f98 [https://dl-cdn.alpinelinux.org/alpine/latest-stable/main]
+v3.23.4-153-gf5d7e339f98 [https://dl-cdn.alpinelinux.org/alpine/latest-stable/community]
+OK: 27580 distinct packages available
+7[fetch https://dl-cdn.alpinelinux.org/alpine...]8[0K7[fetch https://dl-cdn.alpinelinux.org/alpine...]8[0K(  1/139) Installing fstrm (0.6.1-r4)
+7  0%                                             8[0K(  2/139) Installing krb5-conf (1.0-r2)
+7  0%                                             8[0K(  3/139) Installing libcom_err (1.47.3-r0)
+7  0%                                             8[0K(  4/139) Installing keyutils-libs (1.6.3-r4)
+7  0%                                             8[0K(  5/139) Installing libverto (0.3.2-r2)
+7  0%                                             8[0K7  1%                                             8[0K(  6/139) Installing krb5-libs (1.22.1-r0)
+7  1%                                             8[0K7  2% █                                           8[0K7  3% █                                           8[0K7  4% █                                           8[0K(  7/139) Installing json-c (0.18-r1)
+7  4% █                                           8[0K7  4% ██                                          8[0K(  8/139) Installing nghttp2-libs (1.69.0-r0)
+7  4% ██                                          8[0K7  5% ██                                          8[0K(  9/139) Installing protobuf-c (1.5.2-r2)
+7  5% ██                                          8[0K( 10/139) Installing userspace-rcu (0.15.3-r0)
+7  5% ██                                          8[0K7  6% ██                                          8[0K( 11/139) Installing libuv (1.51.0-r0)
+7  6% ██                                          8[0K( 12/139) Installing xz-libs (5.8.3-r0)
+7  6% ██                                          8[0K7  7% ███                                         8[0K( 13/139) Installing libxml2 (2.13.9-r0)
+7  7% ███                                         8[0K7  8% ███                                         8[0K7  9% ████                                        8[0K( 14/139) Installing bind-libs (9.20.22-r0)
+7  9% ████                                        8[0K7 10% ████                                        8[0K7 11% █████                                       8[0K7 12% █████                                       8[0K7 13% █████                                       8[0K7 13% ██████                                      8[0K7 14% ██████                                      8[0K( 15/139) Installing bind-tools (9.20.22-r0)
+7 14% ██████                                      8[0K7 15% ██████                                      8[0K7 16% ███████                                     8[0K( 16/139) Installing ca-certificates (20260413-r0)
+7 16% ███████                                     8[0K( 17/139) Installing brotli-libs (1.2.0-r0)
+7 16% ███████                                     8[0K7 17% ███████                                     8[0K7 18% ███████                                     8[0K7 18% ████████                                    8[0K( 18/139) Installing gmp (6.3.0-r4)
+7 18% ████████                                    8[0K7 19% ████████                                    8[0K( 19/139) Installing nettle (3.10.2-r0)
+7 19% ████████                                    8[0K7 20% ████████                                    8[0K7 20% █████████                                   8[0K7 21% █████████                                   8[0K( 20/139) Installing libunistring (1.4.1-r0)
+7 21% █████████                                   8[0K7 22% █████████                                   8[0K7 22% ██████████                                  8[0K7 23% ██████████                                  8[0K7 24% ██████████                                  8[0K( 21/139) Installing libidn2 (2.3.8-r0)
+7 24% ██████████                                  8[0K7 25% ███████████                                 8[0K( 22/139) Installing libffi (3.5.2-r0)
+7 25% ███████████                                 8[0K( 23/139) Installing libtasn1 (4.21.0-r0)
+7 25% ███████████                                 8[0K( 24/139) Installing p11-kit (0.25.5-r2)
+7 25% ███████████                                 8[0K7 26% ███████████                                 8[0K7 27% ███████████                                 8[0K7 27% ████████████                                8[0K( 25/139) Installing zstd-libs (1.5.7-r2)
+7 27% ████████████                                8[0K7 28% ████████████                                8[0K7 29% ████████████                                8[0K( 26/139) Installing gnutls (3.8.13-r0)
+7 29% ████████████                                8[0K7 29% █████████████                               8[0K7 30% █████████████                               8[0K7 31% █████████████                               8[0K7 32% ██████████████                              8[0K7 33% ██████████████                              8[0K( 27/139) Installing libseccomp (2.6.0-r1)
+7 33% ██████████████                              8[0K( 28/139) Installing chrony (4.8-r2)
+7 33% ██████████████                              8[0K7 34% ██████████████                              8[0K  Executing chrony-4.8-r2.pre-install
+7 34% ██████████████                              8[0K7 34% ███████████████                             8[0K( 29/139) Installing chrony-openrc (4.8-r2)
+7 34% ███████████████                             8[0K( 30/139) Installing libmnl (1.0.5-r2)
+7 34% ███████████████                             8[0K7 35% ███████████████                             8[0K( 31/139) Installing libnfnetlink (1.0.2-r3)
+7 35% ███████████████                             8[0K( 32/139) Installing libnetfilter_conntrack (1.1.0-r0)
+7 35% ███████████████                             8[0K( 33/139) Installing libnetfilter_cthelper (1.0.1-r2)
+7 35% ███████████████                             8[0K7 36% ███████████████                             8[0K( 34/139) Installing libnetfilter_cttimeout (1.0.1-r2)
+7 36% ███████████████                             8[0K7 36% ████████████████                            8[0K( 35/139) Installing libnetfilter_queue (1.0.5-r2)
+7 36% ████████████████                            8[0K( 36/139) Installing conntrack-tools (1.4.8-r0)
+7 36% ████████████████                            8[0K7 37% ████████████████                            8[0K( 37/139) Installing conntrack-tools-openrc (1.4.8-r0)
+7 37% ████████████████                            8[0K( 38/139) Installing musl-obstack (1.2.3-r2)
+7 37% ████████████████                            8[0K7 38% ████████████████                            8[0K( 39/139) Installing cronie (1.7.2-r0)
+7 38% ████████████████                            8[0K7 38% █████████████████                           8[0K( 40/139) Installing cronie-openrc (1.7.2-r0)
+7 38% █████████████████                           8[0K7 39% █████████████████                           8[0K  Executing cronie-openrc-1.7.2-r0.post-install
+7 39% █████████████████                           8[0K( 41/139) Installing c-ares (1.34.6-r0)
+7 39% █████████████████                           8[0K( 42/139) Installing nghttp3 (1.13.1-r0)
+7 39% █████████████████                           8[0K7 40% █████████████████                           8[0K( 43/139) Installing libpsl (0.21.5-r3)
+7 40% █████████████████                           8[0K( 44/139) Installing libcurl (8.17.0-r1)
+7 40% █████████████████                           8[0K7 40% ██████████████████                          8[0K7 41% ██████████████████                          8[0K7 42% ██████████████████                          8[0K( 45/139) Installing curl (8.17.0-r1)
+7 42% ██████████████████                          8[0K7 43% ██████████████████                          8[0K7 43% ███████████████████                         8[0K( 46/139) Installing dnsmasq-common (2.91-r0)
+7 43% ███████████████████                         8[0K( 47/139) Installing dnsmasq-openrc (2.91-r0)
+7 43% ███████████████████                         8[0K( 48/139) Installing dnsmasq (2.91-r0)
+7 43% ███████████████████                         8[0K7 44% ███████████████████                         8[0K  Executing dnsmasq-2.91-r0.pre-install
+7 44% ███████████████████                         8[0K( 49/139) Installing dosfstools (4.2-r2)
+7 44% ███████████████████                         8[0K7 45% ███████████████████                         8[0K( 50/139) Installing libeconf (0.8.3-r0)
+7 45% ███████████████████                         8[0K7 45% ████████████████████                        8[0K( 51/139) Installing libblkid (2.41.4-r0)
+7 45% ████████████████████                        8[0K7 46% ████████████████████                        8[0K( 52/139) Installing e2fsprogs-libs (1.47.3-r0)
+7 46% ████████████████████                        8[0K7 47% ████████████████████                        8[0K( 53/139) Installing libuuid (2.41.4-r0)
+7 47% ████████████████████                        8[0K7 47% █████████████████████                       8[0K( 54/139) Installing e2fsprogs (1.47.3-r0)
+7 47% █████████████████████                       8[0K7 48% █████████████████████                       8[0K( 55/139) Installing exfatprogs (1.3.0-r0)
+7 48% █████████████████████                       8[0K7 49% █████████████████████                       8[0K( 56/139) Installing libelf (0.194-r0)
+7 49% █████████████████████                       8[0K( 57/139) Installing iproute2-minimal (6.17.0-r0)
+7 49% █████████████████████                       8[0K7 50% ██████████████████████                      8[0K7 51% ██████████████████████                      8[0K( 58/139) Installing ifupdown-ng-iproute2 (0.12.1-r7)
+7 51% ██████████████████████                      8[0K( 59/139) Installing libxtables (1.8.11-r1)
+7 51% ██████████████████████                      8[0K( 60/139) Installing iproute2-tc (6.17.0-r0)
+7 51% ██████████████████████                      8[0K7 52% ██████████████████████                      8[0K7 52% ███████████████████████                     8[0K7 53% ███████████████████████                     8[0K( 61/139) Installing iproute2-ss (6.17.0-r0)
+7 53% ███████████████████████                     8[0K( 62/139) Installing iproute2 (6.17.0-r0)
+7 53% ███████████████████████                     8[0K7 54% ███████████████████████                     8[0K  Executing iproute2-6.17.0-r0.post-install
+7 54% ███████████████████████                     8[0K( 63/139) Installing libnftnl (1.3.0-r0)
+7 54% ███████████████████████                     8[0K7 54% ████████████████████████                    8[0K( 64/139) Installing iptables (1.8.11-r1)
+7 54% ████████████████████████                    8[0K7 55% ████████████████████████                    8[0K7 56% ████████████████████████                    8[0K( 65/139) Installing iptables-openrc (1.8.11-r1)
+7 56% ████████████████████████                    8[0K( 66/139) Installing iputils-arping (20250605-r0)
+7 56% ████████████████████████                    8[0K7 56% █████████████████████████                   8[0K( 67/139) Installing iputils-clockdiff (20250605-r0)
+7 56% █████████████████████████                   8[0K7 57% █████████████████████████                   8[0K( 68/139) Installing iputils-ping (20250605-r0)
+7 57% █████████████████████████                   8[0K( 69/139) Installing iputils-tracepath (20250605-r0)
+7 57% █████████████████████████                   8[0K( 70/139) Installing iputils (20250605-r0)
+7 57% █████████████████████████                   8[0K7 58% █████████████████████████                   8[0K( 71/139) Installing oniguruma (6.9.10-r0)
+7 58% █████████████████████████                   8[0K7 59% ██████████████████████████                  8[0K( 72/139) Installing jq (1.8.1-r0)
+7 59% ██████████████████████████                  8[0K7 60% ██████████████████████████                  8[0K( 73/139) Installing kmod (34.2-r1)
+7 60% ██████████████████████████                  8[0K( 74/139) Installing jansson (2.14.1-r0)
+7 60% ██████████████████████████                  8[0K( 75/139) Installing ncurses-terminfo-base (6.5_p20251123-r0)
+7 60% ██████████████████████████                  8[0K7 61% ██████████████████████████                  8[0K( 76/139) Installing libncursesw (6.5_p20251123-r0)
+7 61% ██████████████████████████                  8[0K7 61% ███████████████████████████                 8[0K7 62% ███████████████████████████                 8[0K( 77/139) Installing readline (8.3.1-r0)
+7 62% ███████████████████████████                 8[0K( 78/139) Installing nftables (1.1.5-r2)
+7 62% ███████████████████████████                 8[0K7 63% ███████████████████████████                 8[0K7 63% ████████████████████████████                8[0K7 64% ████████████████████████████                8[0K( 79/139) Installing nftables-openrc (1.1.5-r2)
+7 64% ████████████████████████████                8[0K( 80/139) Installing ppp-chat (2.5.2-r1)
+7 64% ████████████████████████████                8[0K7 65% ████████████████████████████                8[0K( 81/139) Installing libpcap (1.10.5-r1)
+7 65% ████████████████████████████                8[0K( 82/139) Installing ppp-daemon (2.5.2-r1)
+7 65% ████████████████████████████                8[0K7 65% █████████████████████████████               8[0K7 66% █████████████████████████████               8[0K( 83/139) Installing ifupdown-ng-ppp (0.12.1-r7)
+7 66% █████████████████████████████               8[0K( 84/139) Installing ppp-openrc (2.5.2-r1)
+7 66% █████████████████████████████               8[0K7 67% █████████████████████████████               8[0K( 85/139) Installing ppp-radius (2.5.2-r1)
+7 67% █████████████████████████████               8[0K( 86/139) Installing ppp-atm (2.5.2-r1)
+7 67% █████████████████████████████               8[0K( 87/139) Installing ppp-pppoe (2.5.2-r1)
+7 67% █████████████████████████████               8[0K7 68% █████████████████████████████               8[0K( 88/139) Installing ppp-l2tp (2.5.2-r1)
+7 68% █████████████████████████████               8[0K7 68% ██████████████████████████████              8[0K( 89/139) Installing ppp-winbind (2.5.2-r1)
+7 68% ██████████████████████████████              8[0K( 90/139) Installing ppp-passwordfd (2.5.2-r1)
+7 68% ██████████████████████████████              8[0K7 69% ██████████████████████████████              8[0K( 91/139) Installing ppp-minconn (2.5.2-r1)
+7 69% ██████████████████████████████              8[0K( 92/139) Installing ppp (2.5.2-r1)
+7 69% ██████████████████████████████              8[0K( 93/139) Installing radvd (2.20-r0)
+7 69% ██████████████████████████████              8[0K  Executing radvd-2.20-r0.pre-install
+7 69% ██████████████████████████████              8[0K7 70% ██████████████████████████████              8[0K( 94/139) Installing radvd-openrc (2.20-r0)
+7 70% ██████████████████████████████              8[0K( 95/139) Installing sqlite-libs (3.51.2-r0)
+7 70% ██████████████████████████████              8[0K7 70% ███████████████████████████████             8[0K7 71% ███████████████████████████████             8[0K7 72% ███████████████████████████████             8[0K7 73% ████████████████████████████████            8[0K( 96/139) Installing strongswan (5.9.14-r3)
+7 73% ████████████████████████████████            8[0K7 74% ████████████████████████████████            8[0K  Executing strongswan-5.9.14-r3.pre-install
+7 74% ████████████████████████████████            8[0K7 75% █████████████████████████████████           8[0K7 76% █████████████████████████████████           8[0K7 77% █████████████████████████████████           8[0K7 77% ██████████████████████████████████          8[0K7 78% ██████████████████████████████████          8[0K( 97/139) Installing strongswan-openrc (5.9.14-r3)
+7 78% ██████████████████████████████████          8[0K( 98/139) Installing tcpdump (4.99.5-r1)
+7 78% ██████████████████████████████████          8[0K7 79% ██████████████████████████████████          8[0K7 79% ███████████████████████████████████         8[0K7 80% ███████████████████████████████████         8[0K( 99/139) Installing util-linux (2.41.4-r0)
+7 80% ███████████████████████████████████         8[0K(100/139) Installing dmesg (2.41.4-r0)
+7 80% ███████████████████████████████████         8[0K7 81% ███████████████████████████████████         8[0K(101/139) Installing setarch (2.41.4-r0)
+7 81% ███████████████████████████████████         8[0K(102/139) Installing libfdisk (2.41.4-r0)
+7 81% ███████████████████████████████████         8[0K7 82% ████████████████████████████████████        8[0K(103/139) Installing libmount (2.41.4-r0)
+7 82% ████████████████████████████████████        8[0K(104/139) Installing libsmartcols (2.41.4-r0)
+7 82% ████████████████████████████████████        8[0K7 83% ████████████████████████████████████        8[0K(105/139) Installing skalibs-libs (2.14.4.0-r0)
+7 83% ████████████████████████████████████        8[0K(106/139) Installing utmps-libs (0.1.3.1-r0)
+7 83% ████████████████████████████████████        8[0K7 84% █████████████████████████████████████       8[0K(107/139) Installing util-linux-misc (2.41.4-r0)
+7 84% █████████████████████████████████████       8[0K7 85% █████████████████████████████████████       8[0K7 86% ██████████████████████████████████████      8[0K7 87% ██████████████████████████████████████      8[0K(108/139) Installing linux-pam (1.7.1-r2)
+7 87% ██████████████████████████████████████      8[0K7 88% ██████████████████████████████████████      8[0K(109/139) Installing runuser (2.41.4-r0)
+7 88% ██████████████████████████████████████      8[0K(110/139) Installing mount (2.41.4-r0)
+7 88% ██████████████████████████████████████      8[0K7 88% ███████████████████████████████████████     8[0K(111/139) Installing losetup (2.41.4-r0)
+7 88% ███████████████████████████████████████     8[0K7 89% ███████████████████████████████████████     8[0K(112/139) Installing hexdump (2.41.4-r0)
+7 89% ███████████████████████████████████████     8[0K(113/139) Installing uuidgen (2.41.4-r0)
+7 89% ███████████████████████████████████████     8[0K(114/139) Installing blkid (2.41.4-r0)
+7 89% ███████████████████████████████████████     8[0K7 90% ███████████████████████████████████████     8[0K(115/139) Installing sfdisk (2.41.4-r0)
+7 90% ███████████████████████████████████████     8[0K(116/139) Installing mcookie (2.41.4-r0)
+7 90% ███████████████████████████████████████     8[0K(117/139) Installing agetty (2.41.4-r0)
+7 90% ███████████████████████████████████████     8[0K7 90% ████████████████████████████████████████    8[0K7 91% ████████████████████████████████████████    8[0K(118/139) Installing agetty-openrc (0.63-r1)
+7 91% ████████████████████████████████████████    8[0K(119/139) Installing wipefs (2.41.4-r0)
+7 91% ████████████████████████████████████████    8[0K(120/139) Installing cfdisk (2.41.4-r0)
+7 91% ████████████████████████████████████████    8[0K(121/139) Installing umount (2.41.4-r0)
+7 91% ████████████████████████████████████████    8[0K7 92% ████████████████████████████████████████    8[0K(122/139) Installing util-linux-openrc (2.41.4-r0)
+7 92% ████████████████████████████████████████    8[0K(123/139) Installing flock (2.41.4-r0)
+7 92% ████████████████████████████████████████    8[0K(124/139) Installing lsblk (2.41.4-r0)
+7 92% ████████████████████████████████████████    8[0K7 93% ████████████████████████████████████████    8[0K7 93% █████████████████████████████████████████   8[0K(125/139) Installing libcap-ng (0.8.5-r0)
+7 93% █████████████████████████████████████████   8[0K(126/139) Installing setpriv (2.41.4-r0)
+7 93% █████████████████████████████████████████   8[0K(127/139) Installing lscpu (2.41.4-r0)
+7 93% █████████████████████████████████████████   8[0K7 94% █████████████████████████████████████████   8[0K(128/139) Installing logger (2.41.4-r0)
+7 94% █████████████████████████████████████████   8[0K(129/139) Installing partx (2.41.4-r0)
+7 94% █████████████████████████████████████████   8[0K(130/139) Installing fstrim (2.41.4-r0)
+7 94% █████████████████████████████████████████   8[0K7 95% █████████████████████████████████████████   8[0K(131/139) Installing findmnt (2.41.4-r0)
+7 95% █████████████████████████████████████████   8[0K7 95% ██████████████████████████████████████████  8[0K(132/139) Installing wireguard-tools-wg (1.0.20250521-r1)
+7 95% ██████████████████████████████████████████  8[0K(133/139) Installing ifupdown-ng-wireguard (0.12.1-r7)
+7 95% ██████████████████████████████████████████  8[0K7 96% ██████████████████████████████████████████  8[0K(134/139) Installing bash (5.3.3-r1)
+7 96% ██████████████████████████████████████████  8[0K7 97% ██████████████████████████████████████████  8[0K7 98% ███████████████████████████████████████████ 8[0K  Executing bash-5.3.3-r1.post-install
+7 98% ███████████████████████████████████████████ 8[0K(135/139) Installing openresolv (3.17.4-r0)
+7 98% ███████████████████████████████████████████ 8[0K(136/139) Installing wireguard-tools-wg-quick (1.0.20250521-r1)
+7 98% ███████████████████████████████████████████ 8[0K(137/139) Installing ifupdown-ng-wireguard-quick (0.12.1-r7)
+7 98% ███████████████████████████████████████████ 8[0K7 99% ███████████████████████████████████████████ 8[0K(138/139) Installing wireguard-tools (1.0.20250521-r1)
+7 99% ███████████████████████████████████████████ 8[0K(139/139) Installing wireguard-tools-openrc (1.0.20250521-r1)
+7 99% ███████████████████████████████████████████ 8[0K  Executing wireguard-tools-openrc-1.0.20250521-r1.post-install
+7 99% ███████████████████████████████████████████ 8[0K  * 
+7 99% ███████████████████████████████████████████ 8[0K  * To use the WireGuard OpenRC script, you need to create a symbolic link to it with the configuration name:
+7 99% ███████████████████████████████████████████ 8[0K  *     ln -s /etc/init.d/wg-quick /etc/init.d/wg-quick.wg0
+7 99% ███████████████████████████████████████████ 8[0K  * And then call it instead:
+7 99% ███████████████████████████████████████████ 8[0K  *     rc-service wg-quick.wg0 start
+7 99% ███████████████████████████████████████████ 8[0K  * 
+7 99% ███████████████████████████████████████████ 8[0K7100% ████████████████████████████████████████████8[0KExecuting busybox-1.37.0-r30.trigger
+Executing ca-certificates-20260413-r0.trigger
+7[syncing disks...]8[0KOK: 49.8 MiB in 167 packages
+dependency command check passed
+Starting routerd setup wizard. Press Ctrl+C to skip.
+routerd initial configuration wizard
+
+Available interfaces:
+  - lo
+  - eth0
+  - eth1
+
+Router name [routerd-router]: routerd-live-router-test
+WAN interface: eth0
+WAN IPv4 mode (dhcp/static) [dhcp]: dhcp
+Default DNS upstreams when DHCP DNS is unavailable [1.1.1.1]: 1.1.1.1
+LAN interface: eth1
+LAN address/CIDR [192.168.10.1/24]: 192.168.99.1/24
+LAN client CIDR [192.168.99.0/24]: 192.168.99.0/24
+Enable DHCPv4 server? (yes/no) [yes]: yes
+DHCPv4 pool start [192.168.99.100]: 
+DHCPv4 pool end [192.168.99.200]: 
+Enable DHCPv6 stateless service? (yes/no) [no]: no
+Enable IPv6 RA? (yes/no) [no]: no
+Enable DNS resolver? (yes/no) [yes]: yes
+Enable NTP server? (yes/no) [yes]: yes
+Enable 3-role firewall? (yes/no) [yes]: yes
+Enable NAT44 from LAN to WAN? (yes/no) [yes]: yes
+Management placement (separate/lan) [lan]: lan
+Save config to USB for diskless persistence? (yes/no) [no]: no
+generated candidate config: /usr/local/etc/routerd/router.yaml.configure
+candidate config:
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: routerd-live-router-test
+
+spec:
+  reconcile:
+    mode: progressive
+    protectedInterfaces:
+      - lan
+
+  resources:
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv4-forwarding
+      spec:
+        key: net.ipv4.ip_forward
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv6-forwarding
+      spec:
+        key: net.ipv6.conf.all.forwarding
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: eth0
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Address
+      metadata:
+        name: wan-dhcpv4
+      spec:
+        interface: wan
+        required: true
+        useRoutes: true
+        useDNS: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: eth1
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-ipv4
+      spec:
+        interface: lan
+        address: 192.168.99.1/24
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSResolver
+      metadata:
+        name: lan-resolver
+      spec:
+        listen:
+          - name: lan
+            addresses:
+              - 192.168.99.1
+            port: 53
+        sources:
+          - name: default
+            kind: upstream
+            match:
+              - "."
+            upstreams:
+              - udp://1.1.1.1:53
+        cache:
+          enabled: true
+          maxEntries: 10000
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-dhcpv4
+      spec:
+        server: dnsmasq
+        managed: true
+        listenInterfaces:
+          - lan
+        interface: lan
+        addressPool:
+          start: 192.168.99.100
+          end: 192.168.99.200
+          leaseTime: 12h
+        gateway: 192.168.99.1
+        dnsServers:
+          - 192.168.99.1
+        ntpServers:
+          - 192.168.99.1
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: NTPServer
+      metadata:
+        name: lan-ntp
+      spec:
+        provider: chrony
+        managed: true
+        source: static
+        listenAddresses:
+          - 192.168.99.1
+        allowCIDRs:
+          - 192.168.99.0/24
+        servers:
+          - ntp.nict.jp
+          - ntp.jst.mfeed.ad.jp
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-wan
+      spec:
+        type: masquerade
+        egressInterface: wan
+        sourceRanges:
+          - 192.168.99.0/24
+        excludeDestinationCIDRs:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: wan
+      spec:
+        role: untrust
+        interfaces:
+          - wan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces:
+          - lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: default
+      spec:
+        logDeny: true
+        sameRoleAccept: true
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: WebConsole
+      metadata:
+        name: local
+      spec:
+        enabled: true
+        listenAddress: 192.168.99.1
+        port: 8080
+        title: routerd-live-router-test
+Install this config as router.yaml? (yes/no) [no]: yes
+installed config: /usr/local/etc/routerd/router.yaml
+config /usr/local/etc/routerd/router.yaml exists
+config is valid
+{
+  "generation": 0,
+  "timestamp": "2026-05-10T09:45:04.595113906Z",
+  "phase": "Healthy",
+  "resources": [
+    {
+      "id": "system.routerd.net/v1alpha1/Sysctl/ipv4-forwarding",
+      "phase": "Drifted",
+      "observed": {
+        "current": "0",
+        "desired": "1",
+        "key": "net.ipv4.ip_forward",
+        "persistent": "false",
+        "runtime": "true"
+      },
+      "plan": [
+        "ensure runtime sysctl net.ipv4.ip_forward=1"
+      ],
+      "artifacts": [
+        {
+          "kind": "host.sysctl",
+          "name": "net.ipv4.ip_forward",
+          "action": "ensure",
+          "applyWith": "sysctl"
+        }
+      ]
+    },
+    {
+      "id": "system.routerd.net/v1alpha1/Sysctl/ipv6-forwarding",
+      "phase": "Drifted",
+      "observed": {
+        "current": "0",
+        "desired": "1",
+        "key": "net.ipv6.conf.all.forwarding",
+        "persistent": "false",
+        "runtime": "true"
+      },
+      "plan": [
+        "ensure runtime sysctl net.ipv6.conf.all.forwarding=1"
+      ],
+      "artifacts": [
+        {
+          "kind": "host.sysctl",
+          "name": "net.ipv6.conf.all.forwarding",
+          "action": "ensure",
+          "applyWith": "sysctl"
+        }
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/Interface/wan",
+      "phase": "Healthy",
+      "observed": {
+        "exists": "true",
+        "ifname": "eth0",
+        "ipv4Prefixes": "192.168.1.0/24",
+        "managed": "false",
+        "owner": "external",
+        "up": "true"
+      },
+      "plan": [
+        "observe only; interface is externally managed"
+      ],
+      "artifacts": [
+        {
+          "kind": "net.link",
+          "name": "eth0",
+          "action": "observe",
+          "applyWith": "platform-network"
+        }
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/DHCPv4Address/wan-dhcpv4",
+      "phase": "Healthy",
+      "observed": {
+        "client": "dhcpcd",
+        "clientAvailable": "false",
+        "family": "ipv4",
+        "ifname": "eth0",
+        "interface": "wan"
+      },
+      "plan": [
+        "observe only; referenced interface is externally managed"
+      ],
+      "artifacts": [
+        {
+          "kind": "routerd.dhcpv4.client",
+          "name": "eth0",
+          "action": "ensure",
+          "applyWith": "routerd-dhcpv4-client"
+        }
+      ],
+      "warnings": [
+        "dhcpcd is required to ensure DHCP on this host"
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/Interface/lan",
+      "phase": "Healthy",
+      "observed": {
+        "exists": "true",
+        "ifname": "eth1",
+        "managed": "true",
+        "owner": "routerd",
+        "up": "false"
+      },
+      "plan": [
+        "ensure link is administratively up"
+      ],
+      "artifacts": [
+        {
+          "kind": "net.link",
+          "name": "eth1",
+          "action": "ensure",
+          "applyWith": "platform-network"
+        }
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/IPv4StaticAddress/lan-ipv4",
+      "phase": "Drifted",
+      "observed": {
+        "address": "192.168.99.1/24",
+        "ifname": "eth1",
+        "interface": "lan",
+        "present": "false"
+      },
+      "plan": [
+        "ensure IPv4 address 192.168.99.1/24 on eth1"
+      ],
+      "artifacts": [
+        {
+          "kind": "net.ipv4.address",
+          "name": "eth1:192.168.99.1/24",
+          "action": "ensure",
+          "applyWith": "platform-network"
+        }
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/DNSResolver/lan-resolver",
+      "phase": "Healthy",
+      "observed": {
+        "listeners": "1",
+        "sources": "1"
+      },
+      "plan": [
+        "run routerd-dns-resolver for 1 listen profiles and 1 sources"
+      ],
+      "artifacts": [
+        {
+          "kind": "systemd.service",
+          "name": "routerd-dns-resolver@lan-resolver.service",
+          "action": "ensure",
+          "applyWith": "systemctl"
+        }
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/DHCPv4Server/lan-dhcpv4",
+      "phase": "Healthy",
+      "observed": {
+        "dnsEnabled": "false",
+        "interface": "lan",
+        "listenInterfaces": "lan",
+        "managed": "true",
+        "rangeEnd": "192.168.99.200",
+        "rangeStart": "192.168.99.100",
+        "server": "dnsmasq",
+        "serverAvailable": "true"
+      },
+      "plan": [
+        "ensure IPv4 DHCP server instance dnsmasq is available",
+        "serve dnsmasq only on lan",
+        "serve IPv4 DHCP pool 192.168.99.100-192.168.99.200 on lan"
+      ],
+      "artifacts": [
+        {
+          "kind": "dnsmasq.config",
+          "name": "routerd",
+          "action": "ensure",
+          "applyWith": "dnsmasq"
+        },
+        {
+          "kind": "systemd.service",
+          "name": "routerd-dnsmasq.service",
+          "action": "ensure",
+          "applyWith": "systemctl"
+        }
+      ]
+    },
+    {
+      "id": "system.routerd.net/v1alpha1/NTPServer/lan-ntp",
+      "phase": "Healthy"
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/NAT44Rule/lan-to-wan",
+      "phase": "Healthy",
+      "observed": {
+        "egressIfname": "eth0",
+        "egressInterface": "wan",
+        "sourceRanges": "192.168.99.0/24",
+        "type": "masquerade"
+      },
+      "plan": [
+        "ensure NAT44 masquerade for 192.168.99.0/24 via eth0"
+      ],
+      "artifacts": [
+        {
+          "kind": "nft.table",
+          "name": "routerd_nat",
+          "action": "ensure",
+          "applyWith": "nft"
+        }
+      ]
+    },
+    {
+      "id": "firewall.routerd.net/v1alpha1/FirewallZone/wan",
+      "phase": "Healthy",
+      "observed": {
+        "ifnames": "eth0",
+        "interfaces": "wan",
+        "role": "untrust"
+      },
+      "plan": [
+        "define firewall zone wan role=untrust for eth0"
+      ],
+      "artifacts": [
+        {
+          "kind": "routerd.firewall.zone",
+          "name": "wan",
+          "action": "ensure",
+          "applyWith": "nft"
+        }
+      ]
+    },
+    {
+      "id": "firewall.routerd.net/v1alpha1/FirewallZone/lan",
+      "phase": "Healthy",
+      "observed": {
+        "ifnames": "eth1",
+        "interfaces": "lan",
+        "role": "trust"
+      },
+      "plan": [
+        "define firewall zone lan role=trust for eth1"
+      ],
+      "artifacts": [
+        {
+          "kind": "routerd.firewall.zone",
+          "name": "lan",
+          "action": "ensure",
+          "applyWith": "nft"
+        }
+      ]
+    },
+    {
+      "id": "firewall.routerd.net/v1alpha1/FirewallPolicy/default",
+      "phase": "Healthy",
+      "observed": {
+        "logDeny": "true",
+        "sameRoleAccept": "true"
+      },
+      "plan": [
+        "ensure stateful firewall policy matrix for untrust/trust/mgmt roles",
+        "allow established/related traffic, loopback, and required ICMPv6"
+      ],
+      "artifacts": [
+        {
+          "kind": "nft.table",
+          "name": "routerd_filter",
+          "action": "ensure",
+          "applyWith": "nft"
+        }
+      ]
+    },
+    {
+      "id": "system.routerd.net/v1alpha1/WebConsole/local",
+      "phase": "Healthy",
+      "observed": {
+        "basePath": "/",
+        "enabled": "true",
+        "listen": "192.168.99.1:8080"
+      },
+      "plan": [
+        "serve read-only web console on 192.168.99.1:8080/"
+      ]
+    }
+  ]
+}
+wrote link:eth1
+wrote addr:eth1:192.168.99.1/24
+wrote /usr/local/etc/routerd/dnsmasq.conf
+wrote process:dnsmasq
+wrote /usr/local/etc/routerd/nftables.nft
+applied network configuration
+applied dnsmasq
+applied nftables
+applied sysctl net.ipv4.ip_forward
+applied sysctl net.ipv6.conf.all.forwarding
+remembered 6 owned artifacts
+{
+  "generation": 1,
+  "timestamp": "2026-05-10T09:45:05.005341377Z",
+  "phase": "Healthy",
+  "resources": [
+    {
+      "id": "system.routerd.net/v1alpha1/Sysctl/ipv4-forwarding",
+      "phase": "Healthy",
+      "observed": {
+        "current": "1",
+        "desired": "1",
+        "key": "net.ipv4.ip_forward",
+        "persistent": "false",
+        "runtime": "true"
+      },
+      "plan": [
+        "ensure runtime sysctl net.ipv4.ip_forward=1"
+      ],
+      "artifacts": [
+        {
+          "kind": "host.sysctl",
+          "name": "net.ipv4.ip_forward",
+          "action": "ensure",
+          "applyWith": "sysctl"
+        }
+      ]
+    },
+    {
+      "id": "system.routerd.net/v1alpha1/Sysctl/ipv6-forwarding",
+      "phase": "Healthy",
+      "observed": {
+        "current": "1",
+        "desired": "1",
+        "key": "net.ipv6.conf.all.forwarding",
+        "persistent": "false",
+        "runtime": "true"
+      },
+      "plan": [
+        "ensure runtime sysctl net.ipv6.conf.all.forwarding=1"
+      ],
+      "artifacts": [
+        {
+          "kind": "host.sysctl",
+          "name": "net.ipv6.conf.all.forwarding",
+          "action": "ensure",
+          "applyWith": "sysctl"
+        }
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/Interface/wan",
+      "phase": "Healthy",
+      "observed": {
+        "exists": "true",
+        "ifname": "eth0",
+        "ipv4Prefixes": "192.168.1.0/24",
+        "managed": "false",
+        "owner": "external",
+        "up": "true"
+      },
+      "plan": [
+        "observe only; interface is externally managed"
+      ],
+      "artifacts": [
+        {
+          "kind": "net.link",
+          "name": "eth0",
+          "action": "observe",
+          "applyWith": "platform-network"
+        }
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/DHCPv4Address/wan-dhcpv4",
+      "phase": "Healthy",
+      "observed": {
+        "client": "dhcpcd",
+        "clientAvailable": "false",
+        "family": "ipv4",
+        "ifname": "eth0",
+        "interface": "wan"
+      },
+      "plan": [
+        "observe only; referenced interface is externally managed"
+      ],
+      "artifacts": [
+        {
+          "kind": "routerd.dhcpv4.client",
+          "name": "eth0",
+          "action": "ensure",
+          "applyWith": "routerd-dhcpv4-client"
+        }
+      ],
+      "warnings": [
+        "dhcpcd is required to ensure DHCP on this host"
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/Interface/lan",
+      "phase": "Healthy",
+      "observed": {
+        "exists": "true",
+        "ifname": "eth1",
+        "ipv4Prefixes": "192.168.99.0/24",
+        "managed": "true",
+        "owner": "routerd",
+        "up": "true"
+      },
+      "plan": [
+        "ensure link is administratively up"
+      ],
+      "artifacts": [
+        {
+          "kind": "net.link",
+          "name": "eth1",
+          "action": "ensure",
+          "applyWith": "platform-network"
+        }
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/IPv4StaticAddress/lan-ipv4",
+      "phase": "Healthy",
+      "observed": {
+        "address": "192.168.99.1/24",
+        "ifname": "eth1",
+        "interface": "lan",
+        "present": "true"
+      },
+      "plan": [
+        "ensure IPv4 address 192.168.99.1/24 on eth1"
+      ],
+      "artifacts": [
+        {
+          "kind": "net.ipv4.address",
+          "name": "eth1:192.168.99.1/24",
+          "action": "ensure",
+          "applyWith": "platform-network"
+        }
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/DNSResolver/lan-resolver",
+      "phase": "Healthy",
+      "observed": {
+        "listeners": "1",
+        "sources": "1"
+      },
+      "plan": [
+        "run routerd-dns-resolver for 1 listen profiles and 1 sources"
+      ],
+      "artifacts": [
+        {
+          "kind": "systemd.service",
+          "name": "routerd-dns-resolver@lan-resolver.service",
+          "action": "ensure",
+          "applyWith": "systemctl"
+        }
+      ]
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/DHCPv4Server/lan-dhcpv4",
+      "phase": "Healthy",
+      "observed": {
+        "dnsEnabled": "false",
+        "interface": "lan",
+        "listenInterfaces": "lan",
+        "managed": "true",
+        "rangeEnd": "192.168.99.200",
+        "rangeStart": "192.168.99.100",
+        "server": "dnsmasq",
+        "serverAvailable": "true"
+      },
+      "plan": [
+        "ensure IPv4 DHCP server instance dnsmasq is available",
+        "serve dnsmasq only on lan",
+        "serve IPv4 DHCP pool 192.168.99.100-192.168.99.200 on lan"
+      ],
+      "artifacts": [
+        {
+          "kind": "dnsmasq.config",
+          "name": "routerd",
+          "action": "ensure",
+          "applyWith": "dnsmasq"
+        },
+        {
+          "kind": "systemd.service",
+          "name": "routerd-dnsmasq.service",
+          "action": "ensure",
+          "applyWith": "systemctl"
+        }
+      ]
+    },
+    {
+      "id": "system.routerd.net/v1alpha1/NTPServer/lan-ntp",
+      "phase": "Healthy"
+    },
+    {
+      "id": "net.routerd.net/v1alpha1/NAT44Rule/lan-to-wan",
+      "phase": "Healthy",
+      "observed": {
+        "egressIfname": "eth0",
+        "egressInterface": "wan",
+        "sourceRanges": "192.168.99.0/24",
+        "type": "masquerade"
+      },
+      "plan": [
+        "ensure NAT44 masquerade for 192.168.99.0/24 via eth0"
+      ],
+      "artifacts": [
+        {
+          "kind": "nft.table",
+          "name": "routerd_nat",
+          "action": "ensure",
+          "applyWith": "nft"
+        }
+      ]
+    },
+    {
+      "id": "firewall.routerd.net/v1alpha1/FirewallZone/wan",
+      "phase": "Healthy",
+      "observed": {
+        "ifnames": "eth0",
+        "interfaces": "wan",
+        "role": "untrust"
+      },
+      "plan": [
+        "define firewall zone wan role=untrust for eth0"
+      ],
+      "artifacts": [
+        {
+          "kind": "routerd.firewall.zone",
+          "name": "wan",
+          "action": "ensure",
+          "applyWith": "nft"
+        }
+      ]
+    },
+    {
+      "id": "firewall.routerd.net/v1alpha1/FirewallZone/lan",
+      "phase": "Healthy",
+      "observed": {
+        "ifnames": "eth1",
+        "interfaces": "lan",
+        "role": "trust"
+      },
+      "plan": [
+        "define firewall zone lan role=trust for eth1"
+      ],
+      "artifacts": [
+        {
+          "kind": "routerd.firewall.zone",
+          "name": "lan",
+          "action": "ensure",
+          "applyWith": "nft"
+        }
+      ]
+    },
+    {
+      "id": "firewall.routerd.net/v1alpha1/FirewallPolicy/default",
+      "phase": "Healthy",
+      "observed": {
+        "logDeny": "true",
+        "sameRoleAccept": "true"
+      },
+      "plan": [
+        "ensure stateful firewall policy matrix for untrust/trust/mgmt roles",
+        "allow established/related traffic, loopback, and required ICMPv6"
+      ],
+      "artifacts": [
+        {
+          "kind": "nft.table",
+          "name": "routerd_filter",
+          "action": "ensure",
+          "applyWith": "nft"
+        }
+      ]
+    },
+    {
+      "id": "system.routerd.net/v1alpha1/WebConsole/local",
+      "phase": "Healthy",
+      "observed": {
+        "basePath": "/",
+        "enabled": "true",
+        "listen": "192.168.99.1:8080"
+      },
+      "plan": [
+        "serve read-only web console on 192.168.99.1:8080/"
+      ]
+    }
+  ]
+}
+starting live routerd daemon for Web Console and DNS resolver
+{
+  "apiVersion": "control.routerd.net/v1alpha1",
+  "kind": "Status",
+  "metadata": {
+    "name": "routerd"
+  },
+  "status": {
+    "phase": "Healthy",
+    "generation": 1,
+    "lastApplyTime": "2026-05-10T09:45:05.164963543Z",
+    "resourceCount": 14
+  }
+}
+localhost:~# [6nrouterctl status
+{
+  "apiVersion": "control.routerd.net/v1alpha1",
+  "kind": "Status",
+  "metadata": {
+    "name": "routerd"
+  },
+  "status": {
+    "phase": "Healthy",
+    "generation": 1,
+    "lastApplyTime": "2026-05-10T09:45:35.17765914Z",
+    "resourceCount": 14
+  }
+}
+localhost:~# [6n
+Script done on 2026-05-10 18:45:58+09:00 [COMMAND_EXIT_CODE="0"]

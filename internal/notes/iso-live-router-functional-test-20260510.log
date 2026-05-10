@@ -1,0 +1,53 @@
+# routerd live ISO functional routing test
+node=pve07
+date=2026-05-10T18:47:00+09:00
+vmid=999
+iso=/var/lib/vz/template/iso/routerd-live-v20260510.1811.iso
+lan_bridge=vmbr3
+netns=routerd_iso_client
+
+## qm status
+status: running
+
+## qm config
+boot: order=ide2
+cores: 2
+ide2: local:iso/routerd-live-v20260510.1811.iso,media=cdrom,size=414650K
+memory: 1536
+meta: creation-qemu=10.1.2,ctime=1778406138
+name: routerd-live-router-test
+net0: virtio=BC:24:11:54:11:63,bridge=vmbr0
+net1: virtio=BC:24:11:67:F6:55,bridge=vmbr3
+ostype: l26
+serial0: socket
+smbios1: uuid=6bdda568-290e-4a6a-b0a1-c2defe3fa9c5
+vga: std
+vmgenid: c3ccb2d7-8012-4c4b-ae8c-1b87f7c53791
+
+## client address
+57: veth-rtest@if56: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000 link-netnsid 0
+    inet 192.168.99.186/24 brd 192.168.99.255 scope global dynamic veth-rtest
+       valid_lft 43118sec preferred_lft 43118sec
+
+## client route
+default via 192.168.99.1 dev veth-rtest 
+192.168.99.0/24 dev veth-rtest proto kernel scope link src 192.168.99.186 
+
+## dns through router
+142.251.156.119
+142.251.150.119
+142.251.151.119
+142.251.155.119
+142.251.154.119
+142.251.152.119
+142.251.157.119
+142.251.153.119
+
+## external curl through router NAT44
+http_code=204 remote_ip=142.251.156.119 time_total=0.024397
+
+## web console from LAN client
+http_code=200 remote_ip=192.168.99.1 time_total=0.000537
+
+## summary API from LAN client
+http_code=200 remote_ip=192.168.99.1 time_total=0.007145
