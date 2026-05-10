@@ -61,6 +61,7 @@ make build-daemons ROUTERD_OS=linux GOARCH=amd64
 install -d "${overlay_root}/usr/local/sbin" \
     "${overlay_root}/usr/share/routerd" \
     "${overlay_root}/usr/share/routerd/dist" \
+    "${overlay_root}/usr/share/licenses/routerd" \
     "${overlay_root}/usr/local/etc/routerd" \
     "${overlay_root}/etc" \
     "${overlay_root}/etc/local.d" \
@@ -74,6 +75,10 @@ done
 install -m 0755 packaging/install.sh "${overlay_root}/usr/share/routerd/install.sh"
 install -m 0755 packaging/uninstall.sh "${overlay_root}/usr/share/routerd/uninstall.sh"
 install -m 0644 examples/router-lab.yaml "${overlay_root}/usr/local/etc/routerd/router.yaml.sample"
+install -m 0644 LICENSE "${overlay_root}/usr/share/licenses/routerd/LICENSE"
+if [ -f THIRD_PARTY_LICENSES.md ]; then
+    install -m 0644 THIRD_PARTY_LICENSES.md "${overlay_root}/usr/share/licenses/routerd/THIRD_PARTY_LICENSES.txt"
+fi
 : > "${overlay_root}/etc/.default_boot_services"
 
 cat > "${overlay_root}/etc/inittab" <<'EOF'
@@ -514,6 +519,10 @@ routerd live ${version}
 
 Run the setup wizard:
   /usr/share/routerd/install.sh configure
+
+License notices:
+  /usr/share/licenses/routerd/LICENSE
+  /usr/share/licenses/routerd/THIRD_PARTY_LICENSES.txt
 
 The wizard writes /usr/local/etc/routerd/router.yaml and can apply it.
 For a persistent router, install routerd from the release archive onto disk.

@@ -175,6 +175,24 @@ arm64 ホストでは `routerd-linux-arm64.tar.gz` または
 ./install.sh --list-deps
 ```
 
+## ライセンスと再配布
+
+routerd 本体は BSD 3-Clause License で配布します。
+release archive とライブ ISO には、各 software が持つ別のライセンスが含まれます。
+Alpine ベースのライブ ISO は aggregate distribution です。
+dnsmasq、nftables、WireGuard tools、ppp、iproute2 などの GPL 系ツールは、
+それぞれのライセンスとソース入手経路を保ちます。
+ISO 全体が 1 つの GPL work として再ライセンスされるものではありません。
+
+release archive には `share/doc/LICENSE` と
+`share/doc/THIRD_PARTY_LICENSES.md` を同梱します。
+ライブ ISO では `/usr/share/licenses/routerd/` から同じ通知を確認できます。
+一覧は次のコマンドで再生成します。
+
+```sh
+make third-party-licenses
+```
+
 設定ファイルを作成し、検証します。
 
 ```sh

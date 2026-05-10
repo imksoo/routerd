@@ -2,21 +2,67 @@
 set -eu
 
 out=${1:-THIRD_PARTY_LICENSES.md}
+tmpdir=$(mktemp -d)
+trap 'rm -rf "${tmpdir}"' EXIT INT TERM
 
-license_name()
+alpine_mirror=${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
+alpine_branch=${ALPINE_BRANCH:-latest-stable}
+alpine_arch=${ALPINE_ARCH:-x86_64}
+
+license_file()
 {
     dir=$1
     [ -d "${dir}" ] || {
-        echo "unknown"
+        echo ""
         return 0
     }
     for file in LICENSE LICENSE.md LICENSE.txt COPYING COPYING.md COPYING.txt NOTICE NOTICE.txt; do
         if [ -f "${dir}/${file}" ]; then
-            printf '%s\n' "${file}"
+            printf '%s\n' "${dir}/${file}"
             return 0
         fi
     done
-    echo "not found in module cache"
+    echo ""
+}
+
+license_label()
+{
+    file=$1
+    [ -f "${file}" ] || {
+        echo "unknown"
+        return 0
+    }
+    if grep -qi 'Mozilla Public License[, ]*version 2.0' "${file}" || grep -qi 'Mozilla Public License Version 2.0' "${file}"; then
+        echo "MPL-2.0"
+    elif grep -qi 'GNU AFFERO GENERAL PUBLIC LICENSE' "${file}"; then
+        echo "AGPL"
+    elif grep -qi 'GNU LESSER GENERAL PUBLIC LICENSE' "${file}"; then
+        echo "LGPL"
+    elif grep -qi 'GNU GENERAL PUBLIC LICENSE' "${file}"; then
+        echo "GPL"
+    elif grep -qi 'Apache License' "${file}" && grep -qi 'Version 2.0' "${file}"; then
+        echo "Apache-2.0"
+    elif grep -qi 'Redistribution and use in source and binary forms' "${file}" && grep -qi 'Neither the name' "${file}"; then
+        echo "BSD-3-Clause"
+    elif grep -qi 'Redistribution and use in source and binary forms' "${file}"; then
+        echo "BSD-style"
+    elif grep -qi 'Permission is hereby granted, free of charge' "${file}"; then
+        echo "MIT"
+    elif grep -qi 'ISC License' "${file}"; then
+        echo "ISC"
+    else
+        echo "unknown"
+    fi
+}
+
+license_basename()
+{
+    file=$1
+    [ -n "${file}" ] || {
+        echo "not found in module cache"
+        return 0
+    }
+    basename "${file}"
 }
 
 apk_packages()
@@ -33,6 +79,58 @@ apk_packages()
     ' packaging/install.sh
 }
 
+fetch_apk_index()
+{
+    index_file=$1
+    : > "${index_file}"
+    for repo in main community; do
+        url="${alpine_mirror}/${alpine_branch}/${repo}/${alpine_arch}/APKINDEX.tar.gz"
+        if command -v curl >/dev/null 2>&1; then
+            if curl -fsSL "${url}" | tar -xzO APKINDEX >> "${index_file}" 2>/dev/null; then
+                printf '\n' >> "${index_file}"
+            else
+                echo "warning: could not fetch ${url}" >&2
+            fi
+        elif command -v wget >/dev/null 2>&1; then
+            if wget -qO- "${url}" | tar -xzO APKINDEX >> "${index_file}" 2>/dev/null; then
+                printf '\n' >> "${index_file}"
+            else
+                echo "warning: could not fetch ${url}" >&2
+            fi
+        else
+            echo "warning: curl or wget is required to collect Alpine package license metadata" >&2
+            return 0
+        fi
+    done
+}
+
+apk_field()
+{
+    index_file=$1
+    package=$2
+    key=$3
+    awk -v package="${package}" -v key="${key}" '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            found = 0
+            value = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i == "P:" package) found = 1
+                if (substr($i, 1, length(key) + 1) == key ":") value = substr($i, length(key) + 2)
+            }
+            if (found) {
+                print value
+                exit
+            }
+        }
+    ' "${index_file}"
+}
+
+go_copyleft="${tmpdir}/go-copyleft"
+: > "${go_copyleft}"
+apk_index="${tmpdir}/APKINDEX"
+fetch_apk_index "${apk_index}"
+
 {
     echo "# Third-party licenses"
     echo
@@ -42,13 +140,19 @@ apk_packages()
     echo "./scripts/collect-third-party-licenses.sh"
     echo '```'
     echo
-    echo "It summarizes dependencies used to build or install routerd. It is not a"
-    echo "substitute for reviewing the original upstream license files."
+    echo "routerd itself is distributed under the BSD 3-Clause License in"
+    echo "[LICENSE](./LICENSE). Release archives and the live ISO also include"
+    echo "third-party software. The live ISO is an aggregate distribution: each"
+    echo "included Alpine package keeps its own upstream license and source"
+    echo "availability path. The ISO is not relicensed as a single GPL work."
     echo
-    echo "## Go modules"
+    echo "This file summarizes dependencies used to build, install, or boot routerd."
+    echo "It is not a substitute for reviewing the original upstream license files."
     echo
-    echo "| Module | Version | License file |"
-    echo "| --- | --- | --- |"
+    echo "## Go modules linked into routerd"
+    echo
+    echo "| Module | Version | Detected license | License file |"
+    echo "| --- | --- | --- | --- |"
     go list -m -json all | awk '
         /"Path":/ {
             path = $2
@@ -71,21 +175,62 @@ apk_packages()
             path = ""; version = ""; dir = ""
         }
     ' | while IFS='	' read -r module version dir; do
+        file=$(license_file "${dir}")
+        label=$(license_label "${file}")
+        case "${label}" in
+            GPL|AGPL|LGPL)
+                printf '%s %s %s\n' "${module}" "${version}" "${label}" >> "${go_copyleft}"
+                ;;
+        esac
         # shellcheck disable=SC2016 # Markdown backticks are literal output.
-        printf '| `%s` | `%s` | %s |\n' "${module}" "${version}" "$(license_name "${dir}")"
+        printf '| `%s` | `%s` | `%s` | %s |\n' "${module}" "${version}" "${label}" "$(license_basename "${file}")"
     done
+    echo
+    echo "### Go module copyleft check"
+    echo
+    if [ -s "${go_copyleft}" ]; then
+        echo "The following Go modules require manual review before binary distribution:"
+        echo
+        echo '```text'
+        cat "${go_copyleft}"
+        echo '```'
+    else
+        echo "No GPL, LGPL, or AGPL license text was detected in Go module license files."
+        echo "This check is heuristic and should be reviewed before formal releases."
+    fi
     echo
     echo "## Alpine packages used by the live ISO"
     echo
-    echo "The live ISO is based on Alpine Linux. Package license metadata is provided by"
-    echo "Alpine package indexes and package build recipes."
+    echo "The live ISO is based on Alpine Linux. Package license metadata below is"
+    echo "collected from Alpine APKINDEX records for \`${alpine_branch}\` /"
+    echo "\`${alpine_arch}\`. Source code for Alpine packages is available through"
+    echo "Alpine package repositories, APKBUILD files, and upstream project URLs."
     echo
-    echo "| Package | Source |"
-    echo "| --- | --- |"
+    echo "| Package | Version | License | Upstream URL |"
+    echo "| --- | --- | --- | --- |"
     for package in $(apk_packages); do
+        version=$(apk_field "${apk_index}" "${package}" V)
+        license=$(apk_field "${apk_index}" "${package}" L)
+        url=$(apk_field "${apk_index}" "${package}" U)
+        [ -n "${version}" ] || version="unknown"
+        [ -n "${license}" ] || license="unknown"
+        [ -n "${url}" ] || url="Alpine package repository"
         # shellcheck disable=SC2016 # Markdown backticks are literal output.
-        printf '| `%s` | Alpine package repository |\n' "${package}"
+        printf '| `%s` | `%s` | `%s` | %s |\n' "${package}" "${version}" "${license}" "${url}"
     done
+    echo
+    echo "## Source availability"
+    echo
+    echo "- routerd source code is published at <https://github.com/imksoo/routerd>."
+    echo "- routerd release tags use the \`vYYYYMMDD.HHmm\` format."
+    echo "- Alpine package source information is available from Alpine package"
+    echo "  repositories and the upstream URLs listed above."
+    echo "- The routerd live ISO combines routerd binaries, scripts, and Alpine"
+    echo "  packages as separate components with their own licenses."
 } > "${out}"
+
+if [ -s "${go_copyleft}" ]; then
+    echo "warning: possible copyleft Go module license detected; review ${out}" >&2
+fi
 
 echo "wrote ${out}"

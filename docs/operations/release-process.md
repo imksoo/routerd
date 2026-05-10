@@ -57,7 +57,7 @@ The archive contains:
 - `uninstall.sh`: POSIX sh uninstaller
 - `etc/routerd/router.yaml.sample`: sanitized sample configuration
 - `systemd/` or `rc.d/`: service templates for the target OS
-- `share/doc/`: README, VERSION, and LICENSE notice
+- `share/doc/`: README, VERSION, LICENSE, and third-party license inventory
 
 The workflow uploads the versioned archive, the fixed-name archive, and their
 `.sha256` files to the GitHub Release page.
@@ -127,6 +127,21 @@ The installer never modifies these runtime or state locations:
 - `/run/routerd`
 - `/var/run/routerd`
 - `/var/log/otelcol`
+
+## License Inventory
+
+routerd itself is distributed under the BSD 3-Clause License.
+Release archives and the live ISO include third-party software with separate
+licenses. Before publishing a release, regenerate the inventory:
+
+```sh
+make third-party-licenses
+```
+
+The generated `THIRD_PARTY_LICENSES.md` records Go module license files and
+Alpine package license metadata. The live ISO is an aggregate distribution:
+GPL-licensed Alpine packages keep their own licenses and source availability
+paths. The ISO is not relicensed as a single GPL work.
 
 ## Runtime dependencies
 

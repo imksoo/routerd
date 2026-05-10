@@ -1,4 +1,4 @@
-VERSION ?= v20260510.1547
+VERSION ?= v20260510.1612
 DISTBASE ?= dist
 DISTARCH ?= $(if $(GOARCH),$(GOARCH),$(shell go env GOARCH))
 DISTPLATFORM ?= $(ROUTERD_OS)-$(DISTARCH)
@@ -32,7 +32,7 @@ endif
 GO_BUILD_FLAGS ?= -trimpath -ldflags="-s -w"
 EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
 
-.PHONY: test build build-daemons build-daemons-freebsd webconsole-build generate-schema check-schema website-build check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test build build-daemons build-daemons-freebsd webconsole-build generate-schema check-schema website-build third-party-licenses check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -75,6 +75,9 @@ check-schema:
 website-build:
 	cd website && npm ci && npm run build
 
+third-party-licenses:
+	./scripts/collect-third-party-licenses.sh THIRD_PARTY_LICENSES.md
+
 check-build-deps:
 	@missing=0; \
 	for cmd in go install tar find cp; do \
@@ -103,6 +106,7 @@ dist:
 	install -m 0644 README.md $(DISTROOT)/share/doc/README.md
 	if [ -f README.ja.md ]; then install -m 0644 README.ja.md $(DISTROOT)/share/doc/README.ja.md; fi
 	if [ -f LICENSE ]; then install -m 0644 LICENSE $(DISTROOT)/share/doc/LICENSE; elif [ -f LICENSE.md ]; then install -m 0644 LICENSE.md $(DISTROOT)/share/doc/LICENSE; else printf '%s\n' 'No LICENSE file is present in this repository.' > $(DISTROOT)/share/doc/LICENSE; fi
+	if [ -f THIRD_PARTY_LICENSES.md ]; then install -m 0644 THIRD_PARTY_LICENSES.md $(DISTROOT)/share/doc/THIRD_PARTY_LICENSES.md; fi
 	printf '%s\n' '$(VERSION)' > $(DISTROOT)/share/doc/VERSION
 	printf '%s\n' '$(ROUTERD_OS)-$(DISTARCH)' > $(DISTROOT)/share/doc/TARGET
 	if [ "$(ROUTERD_OS)" = "freebsd" ]; then \

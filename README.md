@@ -175,6 +175,23 @@ existing `/usr/local/etc/routerd/router.yaml`.
 Use `./install.sh --list-deps` to inspect the package list.
 Use `sudo ./install.sh --no-install-deps` when packages are managed elsewhere.
 
+## License and Redistribution
+
+routerd itself is released under the BSD 3-Clause License. Release archives and
+the live ISO include third-party software with their own licenses. The
+Alpine-based live ISO is an aggregate distribution: GPL-licensed tools such as
+dnsmasq, nftables, WireGuard tools, ppp, and iproute2 keep their own licenses
+and source availability paths. The ISO as a whole is not relicensed as one GPL
+work.
+
+The release archive includes `share/doc/LICENSE` and
+`share/doc/THIRD_PARTY_LICENSES.md`. The live ISO exposes the same notices under
+`/usr/share/licenses/routerd/`. Regenerate the inventory with:
+
+```sh
+make third-party-licenses
+```
+
 Then create and validate the configuration:
 
 ```sh
