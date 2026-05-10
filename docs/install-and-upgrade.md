@@ -86,6 +86,21 @@ Use an isolated LAN bridge for `net1` when you test DHCP or RA.
 The serial console runs at 115200 8N1 and uses plain text prompts, so the same
 wizard works from `qm terminal`, a framebuffer console, or a minimal terminal.
 
+The live ISO can run in two modes:
+
+- **Ephemeral demo mode:** no USB storage is selected. Configuration and logs
+  live in RAM and disappear at reboot.
+- **Persistent router mode:** select a USB partition in the wizard. The wizard
+  saves `router.yaml` to the USB device. On the next boot, the ISO mounts the
+  USB device, restores the config, and applies it automatically.
+
+For persistent mode, label the USB partition `ROUTERD` or pass
+`routerd.usb=/dev/sdX1` on the kernel command line when multiple removable
+devices are present. Logs are buffered under `/run/routerd/logs` on tmpfs.
+The wizard can enable a daily flush job that copies the config, state snapshot,
+and compressed log archive to the USB device. The default tmpfs log limit is
+100 MiB. Older log files are removed when the buffer exceeds that limit.
+
 Versioned ISO files are also published, for example
 `routerd-live-vYYYYMMDD.HHmm.iso`.
 
@@ -140,6 +155,17 @@ The installer uses `pacman` and installs:
 ```text
 ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables
 ```
+
+### Alpine
+
+The installer uses `apk` and installs:
+
+```text
+alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux
+```
+
+`alpine-conf` provides `lbu`, which routerd uses on the live ISO to preserve
+the router configuration and selected local system state on USB media.
 
 ### FreeBSD
 
@@ -219,7 +245,7 @@ sudo ./install.sh configure
 ```
 
 The wizard asks for the WAN interface, LAN interface, LAN address, LAN services,
-and management placement. It writes a candidate file to
+management placement, and optional USB persistence. It writes a candidate file to
 `/usr/local/etc/routerd/router.yaml.configure`, shows a diff when an existing
 configuration is present, and installs it as
 `/usr/local/etc/routerd/router.yaml` only after confirmation.
@@ -233,6 +259,17 @@ sudo ROUTERD_WAN_INTERFACE=ens18 \
   ROUTERD_LAN_ADDRESS=192.168.10.1/24 \
   ROUTERD_LAN_CIDR=192.168.10.0/24 \
   ROUTERD_MGMT_MODE=lan \
+  ROUTERD_ENABLE_USB_PERSISTENCE=no \
+  ./install.sh configure --non-interactive --yes
+```
+
+For live ISO USB persistence, set:
+
+```sh
+sudo ROUTERD_ENABLE_USB_PERSISTENCE=yes \
+  ROUTERD_USB_DEVICE=/dev/sdb1 \
+  ROUTERD_USB_FLUSH=yes \
+  ROUTERD_LOG_TMPFS_LIMIT=100M \
   ./install.sh configure --non-interactive --yes
 ```
 

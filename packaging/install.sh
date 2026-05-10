@@ -206,7 +206,7 @@ dependency_packages()
             packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables"
             ;;
         apk)
-            packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables"
+            packages="alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux"
             ;;
         pacman)
             packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables"
@@ -232,7 +232,7 @@ dependency_commands()
     manager=$(detect_package_manager)
     case "${manager}" in
         apk)
-            commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump crond jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables"
+            commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump crond jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables lbu lsblk blkid"
             ;;
         apt|dnf|pacman|nix-env)
             commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables"
@@ -436,6 +436,52 @@ interface_exists()
         return 0
     fi
     return 1
+}
+
+show_usb_devices()
+{
+    if [ -x /usr/share/routerd/live-persistence.sh ]; then
+        /usr/share/routerd/live-persistence.sh list-devices || true
+        return 0
+    fi
+    if command -v lsblk >/dev/null 2>&1; then
+        lsblk -rpno NAME,SIZE,FSTYPE,LABEL,TYPE 2>/dev/null | awk '$5 == "part" {print "  - " $1 " " $2 " " $3 " " $4}'
+        return 0
+    fi
+    if command -v blkid >/dev/null 2>&1; then
+        for dev in $(blkid -o device 2>/dev/null); do
+            [ -b "${dev}" ] && echo "  - ${dev} $(blkid "${dev}" 2>/dev/null)"
+        done
+        return 0
+    fi
+    for dev in /dev/sd*[0-9] /dev/vd*[0-9]; do
+        [ -b "${dev}" ] && echo "  - ${dev}"
+    done
+}
+
+save_config_persistence()
+{
+    usb_enabled=$1
+    usb_device=$2
+    final_config=$3
+    flush_enabled=$4
+    log_limit=$5
+
+    [ "${usb_enabled}" = "yes" ] || return 0
+    if [ -z "${usb_device}" ]; then
+        echo "USB persistence requested but no device was selected" >&2
+        return 1
+    fi
+    if [ ! -b "${usb_device}" ]; then
+        echo "USB persistence device is not a block device: ${usb_device}" >&2
+        return 1
+    fi
+    if [ -x /usr/share/routerd/live-persistence.sh ]; then
+        /usr/share/routerd/live-persistence.sh save-config "${usb_device}" "${final_config}" "${flush_enabled}" "${log_limit}"
+        return 0
+    fi
+    echo "warning: live persistence helper is not installed; config was not saved to USB" >&2
+    return 0
 }
 
 prompt_value()
@@ -1034,6 +1080,19 @@ run_configure()
         fi
     fi
 
+    usb_persistence_default=${ROUTERD_ENABLE_USB_PERSISTENCE:-no}
+    usb_persistence=$(prompt_bool ROUTERD_ENABLE_USB_PERSISTENCE "Save config to USB for diskless persistence? (yes/no)" "${usb_persistence_default}")
+    usb_device=
+    usb_flush=yes
+    log_limit=100M
+    if [ "${usb_persistence}" = "yes" ]; then
+        echo "Available USB or block partitions:"
+        show_usb_devices
+        usb_device=$(prompt_value ROUTERD_USB_DEVICE "USB partition device for routerd persistence" "${ROUTERD_USB_DEVICE:-}" 1)
+        usb_flush=$(prompt_bool ROUTERD_USB_FLUSH "Flush tmpfs logs and state to USB once per day? (yes/no)" "${ROUTERD_USB_FLUSH:-yes}")
+        log_limit=$(prompt_value ROUTERD_LOG_TMPFS_LIMIT "tmpfs log buffer size" "${ROUTERD_LOG_TMPFS_LIMIT:-100M}" 1)
+    fi
+
     if [ "${dry_run}" -eq 1 ]; then
         echo "dry-run: install -d -m 0755 ${sysconfdir}"
     else
@@ -1081,6 +1140,7 @@ run_configure()
     fi
     install -m 0600 "${candidate}" "${final_config}"
     echo "installed config: ${final_config}"
+    save_config_persistence "${usb_persistence}" "${usb_device}" "${final_config}" "${usb_flush}" "${log_limit}"
 
     if [ ! -x "${routerd_bin}" ]; then
         echo "routerd binary not found at ${routerd_bin}; skipping validate/apply" >&2

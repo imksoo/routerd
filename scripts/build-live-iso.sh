@@ -95,6 +95,320 @@ tty2
 ttyS0
 EOF
 
+cat > "${overlay_root}/usr/share/routerd/live-persistence.sh" <<'EOF'
+#!/bin/sh
+set -eu
+
+state_dir=/run/routerd/live
+mount_dir=/media/routerd-usb
+config_file=/usr/local/etc/routerd/router.yaml
+usb_state_file=/run/routerd/live/usb-device
+flush_enabled_file=/run/routerd/live/usb-flush-enabled
+log_limit_file=/run/routerd/live/log-limit
+log_dir=/run/routerd/logs
+persist_dir_name=routerd
+
+mkdir -p "${state_dir}"
+
+log()
+{
+    echo "routerd-live: $*"
+}
+
+cmdline_value()
+{
+    key=$1
+    for item in $(cat /proc/cmdline 2>/dev/null || true); do
+        case "${item}" in
+            "${key}="*)
+                printf '%s\n' "${item#*=}"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+normalize_limit_bytes()
+{
+    value=${1:-100M}
+    case "${value}" in
+        *[mM])
+            n=${value%[mM]}
+            echo $((n * 1024 * 1024))
+            ;;
+        *[kK])
+            n=${value%[kK]}
+            echo $((n * 1024))
+            ;;
+        *[gG])
+            n=${value%[gG]}
+            echo $((n * 1024 * 1024 * 1024))
+            ;;
+        ''|*[!0-9]*)
+            echo 104857600
+            ;;
+        *)
+            echo "${value}"
+            ;;
+    esac
+}
+
+normalize_limit_kbytes()
+{
+    bytes=$(normalize_limit_bytes "${1:-100M}")
+    echo $(((bytes + 1023) / 1024))
+}
+
+ensure_log_tmpfs()
+{
+    limit=${1:-100M}
+    mkdir -p "${log_dir}"
+    limit_kbytes=$(normalize_limit_kbytes "${limit}")
+    if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "${log_dir}"; then
+        :
+    elif grep -q " ${log_dir} " /proc/mounts 2>/dev/null; then
+        :
+    else
+        mount -t tmpfs -o "mode=0755,size=${limit}" tmpfs "${log_dir}" 2>/dev/null || true
+    fi
+    printf '%s\n' "${limit}" > "${log_limit_file}"
+    while :; do
+        used=$(du -sk "${log_dir}" 2>/dev/null | awk '{print $1}')
+        [ -n "${used}" ] || used=0
+        [ "${used}" -le "${limit_kbytes}" ] && break
+        oldest=$(find "${log_dir}" -type f -exec ls -tr {} + 2>/dev/null | sed -n '1p')
+        [ -n "${oldest}" ] || break
+        rm -f "${oldest}"
+    done
+}
+
+mount_usb()
+{
+    dev=$1
+    [ -b "${dev}" ] || {
+        log "USB device is not a block device: ${dev}"
+        return 1
+    }
+    mkdir -p "${mount_dir}"
+    if grep -q " ${mount_dir} " /proc/mounts 2>/dev/null; then
+        return 0
+    fi
+    mount "${dev}" "${mount_dir}" 2>/dev/null || mount -o rw "${dev}" "${mount_dir}"
+}
+
+discover_usb()
+{
+    if [ -f "${usb_state_file}" ]; then
+        dev=$(sed -n '1p' "${usb_state_file}")
+        [ -b "${dev}" ] && {
+            printf '%s\n' "${dev}"
+            return 0
+        }
+    fi
+    if dev=$(cmdline_value routerd.usb 2>/dev/null); then
+        [ -b "${dev}" ] && {
+            printf '%s\n' "${dev}"
+            return 0
+        }
+    fi
+    if command -v blkid >/dev/null 2>&1; then
+        dev=$(blkid -L ROUTERD 2>/dev/null || true)
+        [ -n "${dev}" ] && [ -b "${dev}" ] && {
+            printf '%s\n' "${dev}"
+            return 0
+        }
+    fi
+    for dev in /dev/disk/by-label/ROUTERD /dev/sd*[0-9] /dev/vd*[0-9]; do
+        [ -b "${dev}" ] || continue
+        printf '%s\n' "${dev}"
+        return 0
+    done
+    return 1
+}
+
+install_flush_job()
+{
+    enabled=${1:-yes}
+    printf '%s\n' "${enabled}" > "${flush_enabled_file}"
+    if [ "${enabled}" != "yes" ]; then
+        rm -f /etc/periodic/daily/routerd-usb-flush
+        return 0
+    fi
+    mkdir -p /etc/periodic/daily
+    cat > /etc/periodic/daily/routerd-usb-flush <<'EOS'
+#!/bin/sh
+/usr/share/routerd/live-persistence.sh flush >/run/routerd/logs/usb-flush.log 2>&1 || true
+EOS
+    chmod 0755 /etc/periodic/daily/routerd-usb-flush
+}
+
+setup_lbu()
+{
+    command -v lbu >/dev/null 2>&1 || return 0
+    for path in /usr/local/etc/routerd /var/lib/routerd /var/db/routerd /etc/periodic/daily/routerd-usb-flush; do
+        lbu include "${path}" >/dev/null 2>&1 || true
+    done
+}
+
+restore_config()
+{
+    dev=$1
+    mount_usb "${dev}" || return 1
+    src="${mount_dir}/${persist_dir_name}/router.yaml"
+    if [ -f "${src}" ]; then
+        mkdir -p "$(dirname "${config_file}")"
+        install -m 0600 "${src}" "${config_file}"
+        log "restored ${config_file} from ${dev}"
+        return 0
+    fi
+    return 1
+}
+
+save_config()
+{
+    dev=$1
+    src=$2
+    flush_enabled=${3:-yes}
+    log_limit=${4:-100M}
+    mount_usb "${dev}"
+    mkdir -p "${mount_dir}/${persist_dir_name}/logs" "${mount_dir}/${persist_dir_name}/state"
+    install -m 0600 "${src}" "${mount_dir}/${persist_dir_name}/router.yaml"
+    printf '%s\n' "${dev}" > "${usb_state_file}"
+    printf '%s\n' "${dev}" > "${mount_dir}/${persist_dir_name}/usb-device"
+    printf '%s\n' "${flush_enabled}" > "${mount_dir}/${persist_dir_name}/usb-flush-enabled"
+    printf '%s\n' "${log_limit}" > "${mount_dir}/${persist_dir_name}/log-limit"
+    install_flush_job "${flush_enabled}"
+    setup_lbu
+    if command -v lbu >/dev/null 2>&1; then
+        lbu commit -d "${mount_dir}" >/dev/null 2>&1 || lbu commit >/dev/null 2>&1 || true
+    fi
+    sync
+    log "saved routerd config to ${dev}"
+}
+
+flush_to_usb()
+{
+    dev=$(discover_usb 2>/dev/null || true)
+    [ -n "${dev}" ] || {
+        log "no USB persistence device found"
+        return 0
+    }
+    mount_usb "${dev}" || return 1
+    mkdir -p "${mount_dir}/${persist_dir_name}/logs" "${mount_dir}/${persist_dir_name}/state"
+    [ -f "${config_file}" ] && install -m 0600 "${config_file}" "${mount_dir}/${persist_dir_name}/router.yaml"
+    if [ -d /var/lib/routerd ]; then
+        tar -C /var/lib -czf "${mount_dir}/${persist_dir_name}/state/routerd-varlib.tgz" routerd 2>/dev/null || true
+    fi
+    if [ -d /var/db/routerd ]; then
+        tar -C /var/db -czf "${mount_dir}/${persist_dir_name}/state/routerd-vardb.tgz" routerd 2>/dev/null || true
+    fi
+    if [ -d "${log_dir}" ]; then
+        stamp=$(date +%Y%m%d-%H%M%S)
+        tar -C "${log_dir}" -czf "${mount_dir}/${persist_dir_name}/logs/${stamp}.tgz" . 2>/dev/null || true
+    fi
+    if command -v lbu >/dev/null 2>&1; then
+        lbu commit -d "${mount_dir}" >/dev/null 2>&1 || lbu commit >/dev/null 2>&1 || true
+    fi
+    sync
+    log "flushed routerd config, state, and log archive to ${dev}"
+}
+
+case "${1:-init}" in
+    init)
+        log_limit=$(cmdline_value routerd.log_size 2>/dev/null || true)
+        [ -n "${log_limit}" ] || log_limit=100M
+        ensure_log_tmpfs "${log_limit}"
+        dev=$(discover_usb 2>/dev/null || true)
+        if [ -n "${dev}" ]; then
+            printf '%s\n' "${dev}" > "${usb_state_file}"
+            restore_config "${dev}" || true
+            if mount_usb "${dev}" 2>/dev/null; then
+                enabled=$(sed -n '1p' "${mount_dir}/${persist_dir_name}/usb-flush-enabled" 2>/dev/null || true)
+                [ -n "${enabled}" ] || enabled=yes
+                install_flush_job "${enabled}"
+            fi
+        else
+            log "no USB persistence device found; running in ephemeral mode"
+        fi
+        ;;
+    list-devices)
+        if command -v lsblk >/dev/null 2>&1; then
+            lsblk -rpno NAME,SIZE,FSTYPE,LABEL,TYPE 2>/dev/null | awk '$5 == "part" {print "  - " $1 " " $2 " " $3 " " $4}'
+        elif command -v blkid >/dev/null 2>&1; then
+            for dev in $(blkid -o device 2>/dev/null); do
+                [ -b "${dev}" ] && echo "  - ${dev} $(blkid "${dev}" 2>/dev/null)"
+            done
+        else
+            for dev in /dev/sd*[0-9] /dev/vd*[0-9]; do
+                [ -b "${dev}" ] && echo "  - ${dev}"
+            done
+        fi
+        ;;
+    save-config)
+        [ "$#" -ge 3 ] || {
+            echo "usage: live-persistence.sh save-config DEVICE CONFIG [FLUSH yes|no] [LOG_LIMIT]" >&2
+            exit 2
+        }
+        save_config "$2" "$3" "${4:-yes}" "${5:-100M}"
+        ;;
+    flush)
+        flush_to_usb
+        ;;
+    ensure-logs)
+        ensure_log_tmpfs "${2:-100M}"
+        ;;
+    *)
+        echo "usage: live-persistence.sh {init|list-devices|save-config|flush|ensure-logs}" >&2
+        exit 2
+        ;;
+esac
+EOF
+chmod 0755 "${overlay_root}/usr/share/routerd/live-persistence.sh"
+
+cat > "${overlay_root}/usr/share/routerd/live-autostart.sh" <<'EOF'
+#!/bin/sh
+set -eu
+
+config=/usr/local/etc/routerd/router.yaml
+marker=/run/routerd/live-autostart.done
+routerd=/usr/local/sbin/routerd
+routerctl=/usr/local/sbin/routerctl
+socket=/run/routerd/routerd.sock
+log_dir=/run/routerd/logs
+
+mkdir -p /run/routerd "${log_dir}" /var/lib/routerd
+/usr/share/routerd/live-persistence.sh init || true
+
+[ -f "${config}" ] || exit 0
+[ -f "${marker}" ] && exit 0
+
+if command -v udhcpc >/dev/null 2>&1; then
+    for iface in $(ls /sys/class/net 2>/dev/null | grep -E '^(eth|en|ens)' || true); do
+        ip link set "$iface" up 2>/dev/null || true
+        udhcpc -q -n -t 2 -T 3 -i "$iface" >/dev/null 2>&1 && break
+    done
+fi
+
+/usr/share/routerd/install.sh --deps-only >/run/routerd/logs/deps.log 2>&1 || true
+"${routerd}" validate --config "${config}"
+"${routerd}" apply --config "${config}" --once
+if [ ! -S "${socket}" ]; then
+    nohup "${routerd}" serve \
+        --config "${config}" \
+        --socket "${socket}" \
+        --controller-chain \
+        --controller-chain-dry-run-dns-resolver=false \
+        > "${log_dir}/routerd-live.log" 2>&1 &
+    sleep 1
+fi
+if [ -x "${routerctl}" ]; then
+    "${routerctl}" status || true
+fi
+touch "${marker}"
+EOF
+chmod 0755 "${overlay_root}/usr/share/routerd/live-autostart.sh"
+
 cat > "${overlay_root}/etc/motd" <<EOF
 routerd live ${version}
 
@@ -109,6 +423,9 @@ cat > "${overlay_root}/root/.profile" <<'EOF'
 echo
 cat /etc/motd
 echo
+if [ -x /usr/share/routerd/live-autostart.sh ]; then
+  /usr/share/routerd/live-autostart.sh || true
+fi
 if [ ! -f /usr/local/etc/routerd/router.yaml ]; then
   if command -v udhcpc >/dev/null 2>&1; then
     for iface in $(ls /sys/class/net 2>/dev/null | grep -E '^(eth|en|ens)' || true); do
@@ -125,6 +442,7 @@ EOF
 cat > "${overlay_root}/etc/local.d/routerd-configure.start" <<'EOF'
 #!/bin/sh
 cat /etc/motd
+/usr/share/routerd/live-autostart.sh || true
 EOF
 chmod 0755 "${overlay_root}/etc/local.d/routerd-configure.start"
 ln -s /etc/init.d/local "${overlay_root}/etc/runlevels/default/local"

@@ -67,3 +67,6 @@ lists, upgrade behavior, uninstall options, and developer release commands.
 To try routerd without installing to disk, boot `routerd-live.iso`.
 The ISO starts the same `install.sh configure` wizard after root login.
 It also supports Proxmox VE serial consoles through `qm terminal`.
+When the wizard asks about USB persistence, choose a USB partition to turn the
+live ISO into a diskless persistent router. Without USB persistence, the ISO
+runs as an ephemeral demo and loses config at reboot.
