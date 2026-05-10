@@ -105,11 +105,14 @@ ln -s /etc/init.d/local "${overlay_root}/etc/runlevels/default/local"
 tar -C "${overlay_root}" -czf "${iso_root}/routerd.apkovl.tar.gz" .
 
 cat > "${iso_root}/boot/grub/grub.cfg" <<EOF
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+terminal_input console serial
+terminal_output console serial
 set timeout=5
 set default=0
 
 menuentry "routerd live ${version}" {
-    linux /boot/vmlinuz-lts modules=loop,squashfs,sd-mod,usb-storage,ext4,virtio,virtio_blk,virtio_net quiet alpine_dev=cdrom:iso9660 modloop=/boot/modloop-lts apkovl=/routerd.apkovl.tar.gz
+    linux /boot/vmlinuz-lts modules=loop,squashfs,sd-mod,usb-storage,ext4,virtio,virtio_blk,virtio_net quiet alpine_dev=cdrom:iso9660 modloop=/boot/modloop-lts apkovl=/routerd.apkovl.tar.gz console=tty0 console=ttyS0,115200n8
     initrd /boot/initramfs-lts
 }
 EOF
