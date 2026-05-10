@@ -10,6 +10,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'concepts/what-is-routerd',
+        'concepts/positioning',
         'concepts/design-philosophy',
         'concepts/resource-model',
         'concepts/apply-and-render',
@@ -25,6 +26,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'tutorials/getting-started',
         'tutorials/install',
+        'tutorials/diskless-minipc-walkthrough',
         'tutorials/first-router',
         'tutorials/wan-side-services',
         'tutorials/lan-side-services',
@@ -63,6 +65,7 @@ const sidebars: SidebarsConfig = {
         'control-api-v1alpha1',
         'plugin-protocol',
         'platforms',
+        'hardware-compatibility',
       ],
     },
     {

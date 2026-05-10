@@ -15,7 +15,9 @@ routerd は型付き YAML リソースから、Linux / NixOS / FreeBSD 上で動
 | --- | --- |
 | routerd を導入または更新する | [インストールとアップグレード](./install-and-upgrade.md) |
 | routerd とは何か、なぜあるのかを知る | [概要 → routerd とは](./concepts/what-is-routerd.md) |
+| routerd の位置づけを知る | [概要 → 位置づけ](./concepts/positioning.md) |
 | 初めてルーターを立てる | [チュートリアル → はじめに](./tutorials/getting-started.md) |
+| ディスクレス mini PC をルーター化する | [チュートリアル → ディスクレス mini PC](./tutorials/diskless-minipc-walkthrough.md) |
 | 特定の配置課題を解く | [How-to ガイド](./how-to/multi-wan.md) |
 | リソース種別やフィールドを引く | [リファレンス → リソース API](/docs/reference/api-v1alpha1) |
 | 稼働中のルーターを運用する | [運用 → Reconcile](./operations/reconcile.md) |
@@ -24,12 +26,12 @@ routerd は型付き YAML リソースから、Linux / NixOS / FreeBSD 上で動
 
 ## セクション一覧
 
-- **概要 (Concepts)** — ビジョン、設計思想、リソースモデル、所有のセマンティクス
+- **概要 (Concepts)** — 位置づけ、ビジョン、設計思想、リソースモデル、所有のセマンティクス
 - **インストールとアップグレード** — リリースアーカイブ、依存パッケージ、アップグレード、アンインストール
-- **チュートリアル (Tutorials)** — 最初のルーター、WAN/LAN サービス、基本ファイアウォール、NixOS クイックスタート
+- **チュートリアル (Tutorials)** — ディスクレス mini PC、最初のルーター、WAN/LAN サービス、基本ファイアウォール、NixOS クイックスタート
 - **How-to** — マルチ WAN、フレッツ初期設定、PVE オーバーレイ、OpenTelemetry 送信、トラブルシューティング
 - **ナレッジベース (Knowledge base)** — 実環境からの現場メモ (DHCPv6-PD クライアント、NTT NGN PD 取得)
-- **リファレンス (Reference)** — リソース API、制御 API、プラグインプロトコル、対応プラットフォーム、所有ルール
+- **リファレンス (Reference)** — リソース API、制御 API、プラグインプロトコル、対応プラットフォーム、ハードウェア、所有ルール
 - **運用 (Operations)** — Reconcile と削除、状態データベース、ホストインベントリ
 - **設計ノート (Design notes)** — アーキテクチャ上の未解決事項と設計の根拠
 - **リリース (Releases)** — 変更履歴

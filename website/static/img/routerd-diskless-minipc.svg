@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="360" viewBox="0 0 920 360" role="img" aria-labelledby="title desc">
+  <title id="title">routerd diskless mini PC flow</title>
+  <desc id="desc">A mini PC boots the routerd live ISO, reads configuration from USB, buffers logs in tmpfs, and serves WAN and LAN networks.</desc>
+  <rect width="920" height="360" fill="#f8fafc"/>
+  <rect x="40" y="80" width="160" height="92" rx="10" fill="#e0f2fe" stroke="#0369a1" stroke-width="2"/>
+  <text x="120" y="116" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="18" fill="#0f172a">WAN</text>
+  <text x="120" y="144" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="13" fill="#334155">DHCP / static</text>
+  <rect x="380" y="54" width="200" height="148" rx="14" fill="#ffffff" stroke="#475569" stroke-width="2"/>
+  <text x="480" y="92" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="700" fill="#0f172a">Mini PC</text>
+  <text x="480" y="124" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="14" fill="#334155">routerd live ISO</text>
+  <text x="480" y="150" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="14" fill="#334155">apply + Web Console</text>
+  <rect x="704" y="80" width="176" height="92" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+  <text x="792" y="116" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="18" fill="#0f172a">LAN</text>
+  <text x="792" y="144" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="13" fill="#334155">DHCP / DNS / NTP</text>
+  <rect x="342" y="250" width="132" height="62" rx="10" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+  <text x="408" y="276" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="700" fill="#0f172a">USB</text>
+  <text x="408" y="296" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="12" fill="#334155">router.yaml</text>
+  <rect x="520" y="250" width="154" height="62" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"/>
+  <text x="597" y="276" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="700" fill="#0f172a">tmpfs logs</text>
+  <text x="597" y="296" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="12" fill="#334155">daily USB flush</text>
+  <path d="M200 126h172" stroke="#0284c7" stroke-width="4" fill="none" marker-end="url(#arrow)"/>
+  <path d="M580 126h116" stroke="#16a34a" stroke-width="4" fill="none" marker-end="url(#arrow)"/>
+  <path d="M438 250l28-48" stroke="#b45309" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M570 202l18 48" stroke="#7c3aed" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M538 250c-30-28-72-28-98 0" stroke="#64748b" stroke-width="2" fill="none" stroke-dasharray="6 6"/>
+  <text x="488" y="238" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="12" fill="#475569">flush</text>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#475569"/>
+    </marker>
+  </defs>
+</svg>
