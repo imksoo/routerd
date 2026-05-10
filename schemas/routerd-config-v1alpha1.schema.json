@@ -651,8 +651,20 @@
                           "disableDNSStubListener": {
                             "type": "boolean"
                           },
+                          "dnsServers": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "dropinName": {
                             "type": "string"
+                          },
+                          "fallbackDNSServers": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
                           }
                         },
                         "type": "object"

@@ -30,7 +30,11 @@ func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T)
 				DisableDHCPv4: true,
 				DisableDHCPv6: true,
 			},
-			SystemdResolved: api.NetworkAdoptionResolvedSpec{DisableDNSStubListener: true},
+			SystemdResolved: api.NetworkAdoptionResolvedSpec{
+				DisableDNSStubListener: true,
+				DNSServers:             []string{"127.0.0.1"},
+				FallbackDNSServers:     []string{"1.1.1.1"},
+			},
 		}},
 	}}}
 	store := mapStore{}
@@ -64,6 +68,9 @@ func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T)
 	}
 	if !strings.Contains(string(resolved), "DNSStubListener=no") {
 		t.Fatalf("resolved drop-in = %s", resolved)
+	}
+	if !strings.Contains(string(resolved), "DNS=127.0.0.1") || !strings.Contains(string(resolved), "FallbackDNS=1.1.1.1") {
+		t.Fatalf("resolved drop-in DNS settings missing: %s", resolved)
 	}
 	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("legacy networkd drop-in still exists: %v", err)

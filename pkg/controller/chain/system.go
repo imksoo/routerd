@@ -142,7 +142,7 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 		}
 		changed = changed || networkdChanged
 	}
-	if spec.SystemdResolved.DisableDNSStubListener {
+	if resolvedAdoptionConfigured(spec.SystemdResolved) {
 		path := filepath.Join(c.ResolvedDropinDir, firstNonEmpty(spec.SystemdResolved.DropinName, "90-routerd-adoption.conf"))
 		paths = append(paths, path)
 		if state == "absent" {
@@ -152,7 +152,7 @@ func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, nam
 			}
 			resolvedChanged = removed
 		} else {
-			data := []byte("# Managed by routerd. Do not edit by hand.\n[Resolve]\nDNSStubListener=no\n")
+			data := resolvedAdoptionDropin(spec.SystemdResolved)
 			fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
 			if err != nil {
 				return paths, changed, err
@@ -198,6 +198,29 @@ func legacyNetworkdAdoptionDropins(base, ifname, desiredPath string) []string {
 		out = append(out, candidate)
 	}
 	return out
+}
+
+func resolvedAdoptionConfigured(spec api.NetworkAdoptionResolvedSpec) bool {
+	return spec.DisableDNSStubListener || len(spec.DNSServers) > 0 || len(spec.FallbackDNSServers) > 0
+}
+
+func resolvedAdoptionDropin(spec api.NetworkAdoptionResolvedSpec) []byte {
+	var b strings.Builder
+	b.WriteString("# Managed by routerd. Do not edit by hand.\n[Resolve]\n")
+	if spec.DisableDNSStubListener {
+		b.WriteString("DNSStubListener=no\n")
+	}
+	if len(spec.DNSServers) > 0 {
+		b.WriteString("DNS=")
+		b.WriteString(strings.Join(spec.DNSServers, " "))
+		b.WriteByte('\n')
+	}
+	if len(spec.FallbackDNSServers) > 0 {
+		b.WriteString("FallbackDNS=")
+		b.WriteString(strings.Join(spec.FallbackDNSServers, " "))
+		b.WriteByte('\n')
+	}
+	return []byte(b.String())
 }
 
 type SystemdUnitController struct {

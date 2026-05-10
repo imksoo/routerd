@@ -219,6 +219,8 @@ spec:
           disableDHCPv6: true
         systemdResolved:
           disableDNSStubListener: true
+          dnsServers:
+            - 127.0.0.1
     - apiVersion: system.routerd.net/v1alpha1
       kind: NetworkAdoption
       metadata:

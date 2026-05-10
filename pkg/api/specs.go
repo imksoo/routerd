@@ -95,8 +95,10 @@ type NetworkAdoptionNetworkdSpec struct {
 }
 
 type NetworkAdoptionResolvedSpec struct {
-	DisableDNSStubListener bool   `yaml:"disableDNSStubListener,omitempty" json:"disableDNSStubListener,omitempty"`
-	DropinName             string `yaml:"dropinName,omitempty" json:"dropinName,omitempty"`
+	DisableDNSStubListener bool     `yaml:"disableDNSStubListener,omitempty" json:"disableDNSStubListener,omitempty"`
+	DNSServers             []string `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
+	FallbackDNSServers     []string `yaml:"fallbackDNSServers,omitempty" json:"fallbackDNSServers,omitempty"`
+	DropinName             string   `yaml:"dropinName,omitempty" json:"dropinName,omitempty"`
 }
 
 type SystemdUnitSpec struct {
