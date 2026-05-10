@@ -8,6 +8,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 从 `20260509` 开始使用 `yyyymmdd` 格式的日期型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## 20260510.3
+
 ## 20260510.2
 
 ## 20260510.1
