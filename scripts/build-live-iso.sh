@@ -25,6 +25,9 @@ require grub-mkrescue
 require xorriso
 require tar
 
+if [ -d "${workdir}" ]; then
+    chmod -R u+w "${workdir}" 2>/dev/null || true
+fi
 rm -rf "${workdir}"
 mkdir -p "${workdir}" "${cachedir}" "${outdir}"
 
@@ -46,16 +49,12 @@ if [ ! -f "${alpine_iso}" ]; then
     curl -fL "${alpine_iso_url}" -o "${alpine_iso}"
 fi
 
-extract="${workdir}/alpine"
-mkdir -p "${extract}"
-bsdtar -C "${extract}" -xf "${alpine_iso}" boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts
-
 iso_root="${workdir}/iso-root"
 overlay_root="${workdir}/overlay"
-mkdir -p "${iso_root}/boot/grub" "${overlay_root}"
-install -m 0644 "${extract}/boot/vmlinuz-lts" "${iso_root}/boot/vmlinuz-lts"
-install -m 0644 "${extract}/boot/initramfs-lts" "${iso_root}/boot/initramfs-lts"
-install -m 0644 "${extract}/boot/modloop-lts" "${iso_root}/boot/modloop-lts"
+mkdir -p "${iso_root}" "${overlay_root}"
+bsdtar -C "${iso_root}" -xf "${alpine_iso}"
+chmod -R u+w "${iso_root}"
+install -d "${iso_root}/boot/grub"
 
 make build-daemons ROUTERD_OS=linux GOARCH=amd64
 
@@ -63,17 +62,19 @@ install -d "${overlay_root}/usr/local/sbin" \
     "${overlay_root}/usr/share/routerd" \
     "${overlay_root}/usr/share/routerd/dist" \
     "${overlay_root}/usr/local/etc/routerd" \
+    "${overlay_root}/etc" \
     "${overlay_root}/etc/local.d" \
     "${overlay_root}/etc/runlevels/default" \
     "${overlay_root}/root"
 
-for binary in bin/linux-amd64/* bin/linux/*; do
+for binary in bin/linux-amd64/*; do
     [ -f "${binary}" ] || continue
     install -m 0755 "${binary}" "${overlay_root}/usr/local/sbin/$(basename "${binary}")"
 done
 install -m 0755 packaging/install.sh "${overlay_root}/usr/share/routerd/install.sh"
 install -m 0755 packaging/uninstall.sh "${overlay_root}/usr/share/routerd/uninstall.sh"
 install -m 0644 examples/router-lab.yaml "${overlay_root}/usr/local/etc/routerd/router.yaml.sample"
+: > "${overlay_root}/etc/.default_boot_services"
 
 cat > "${overlay_root}/etc/motd" <<EOF
 routerd live ${version}
@@ -90,6 +91,13 @@ echo
 cat /etc/motd
 echo
 if [ ! -f /usr/local/etc/routerd/router.yaml ]; then
+  if command -v udhcpc >/dev/null 2>&1; then
+    for iface in $(ls /sys/class/net 2>/dev/null | grep -E '^(eth|en|ens)' || true); do
+      ip link set "$iface" up 2>/dev/null || true
+      udhcpc -q -n -t 2 -T 3 -i "$iface" && break
+    done
+  fi
+  /usr/share/routerd/install.sh --deps-only || true
   echo "Starting routerd setup wizard. Press Ctrl+C to skip."
   /usr/share/routerd/install.sh configure || true
 fi
@@ -112,7 +120,7 @@ set timeout=5
 set default=0
 
 menuentry "routerd live ${version}" {
-    linux /boot/vmlinuz-lts modules=loop,squashfs,sd-mod,usb-storage,ext4,virtio,virtio_blk,virtio_net quiet alpine_dev=cdrom:iso9660 modloop=/boot/modloop-lts apkovl=/routerd.apkovl.tar.gz console=tty0 console=ttyS0,115200n8
+    linux /boot/vmlinuz-lts modules=loop,squashfs,sd-mod,usb-storage,ext4,virtio,virtio_blk,virtio_net quiet alpine_dev=cdrom:iso9660 modloop=/boot/modloop-lts console=tty0 console=ttyS0,115200n8
     initrd /boot/initramfs-lts
 }
 EOF

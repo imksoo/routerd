@@ -71,6 +71,18 @@ func TestLinuxFeatureFlagsConsistency(t *testing.T) {
 		t.Skip("linux-only invariants")
 	}
 	_, features := Current()
+	if IsAlpineHost() {
+		if !features.HasOpenRC {
+			t.Error("alpine Defaults must declare HasOpenRC")
+		}
+		if features.HasSystemd {
+			t.Error("alpine Defaults must not declare HasSystemd")
+		}
+		if features.HasNetplan {
+			t.Error("alpine Defaults must not declare HasNetplan")
+		}
+		return
+	}
 	if !features.HasSystemd {
 		t.Error("linux Defaults must declare HasSystemd")
 	}

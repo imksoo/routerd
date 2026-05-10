@@ -3,6 +3,23 @@
 package platform
 
 func currentDefaults() Defaults {
+	if IsAlpineHost() {
+		return Defaults{
+			OS:                       OSLinux,
+			PrefixDir:                "/usr/local",
+			BinDir:                   "/usr/local/sbin",
+			SysconfDir:               "/usr/local/etc/routerd",
+			PluginDir:                "/usr/local/libexec/routerd/plugins",
+			RuntimeDir:               "/run/routerd",
+			StateDir:                 "/var/lib/routerd",
+			DnsmasqConfigFile:        "/usr/local/etc/routerd/dnsmasq.conf",
+			DnsmasqServiceFile:       "/run/routerd/dnsmasq.pid",
+			NftablesFile:             "/usr/local/etc/routerd/nftables.nft",
+			DefaultRouteNftablesFile: "/usr/local/etc/routerd/default-route.nft",
+			PPPoEChapSecretsFile:     "/etc/ppp/chap-secrets",
+			PPPoEPapSecretsFile:      "/etc/ppp/pap-secrets",
+		}
+	}
 	return Defaults{
 		OS:                       OSLinux,
 		PrefixDir:                "/usr/local",
@@ -26,6 +43,13 @@ func currentDefaults() Defaults {
 }
 
 func currentFeatures() Features {
+	if IsAlpineHost() {
+		return Features{
+			HasOpenRC:   true,
+			HasNftables: true,
+			HasIproute2: true,
+		}
+	}
 	return Features{
 		HasSystemd:          true,
 		HasNetplan:          true,

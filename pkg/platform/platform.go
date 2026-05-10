@@ -105,6 +105,23 @@ type Features struct {
 	HasResolvectl bool
 	// HasRCD indicates the FreeBSD rc.d service framework.
 	HasRCD bool
+	// HasOpenRC indicates an OpenRC-managed Linux host such as Alpine.
+	HasOpenRC bool
+}
+
+func osReleaseID() string {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || key != "ID" {
+			continue
+		}
+		return strings.Trim(value, `"`)
+	}
+	return ""
 }
 
 // Current returns the defaults and features for the OS this binary was
@@ -124,16 +141,12 @@ func CurrentOS() OS {
 // NixOS is still a Linux platform from routerd's point of view, but service
 // activation is owned by nixos-rebuild instead of direct systemd unit writes.
 func IsNixOSHost() bool {
-	data, err := os.ReadFile("/etc/os-release")
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if line == "ID=nixos" || line == `ID="nixos"` {
-			return true
-		}
-	}
-	return false
+	return osReleaseID() == "nixos"
+}
+
+// IsAlpineHost reports whether the running Linux host is Alpine Linux.
+func IsAlpineHost() bool {
+	return osReleaseID() == "alpine"
 }
 
 // StatusFile returns the default status file path.

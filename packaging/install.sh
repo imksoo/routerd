@@ -170,6 +170,8 @@ detect_package_manager()
         Linux)
             if command -v apt-get >/dev/null 2>&1; then
                 echo apt
+            elif command -v apk >/dev/null 2>&1; then
+                echo apk
             elif command -v dnf >/dev/null 2>&1; then
                 echo dnf
             elif command -v pacman >/dev/null 2>&1; then
@@ -203,6 +205,9 @@ dependency_packages()
         dnf)
             packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables"
             ;;
+        apk)
+            packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables"
+            ;;
         pacman)
             packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables"
             ;;
@@ -224,15 +229,29 @@ dependency_packages()
 
 dependency_commands()
 {
-    case "${os}" in
-        Linux)
+    manager=$(detect_package_manager)
+    case "${manager}" in
+        apk)
+            commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump crond jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables"
+            ;;
+        apt|dnf|pacman|nix-env)
             commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables"
             ;;
-        FreeBSD)
+        pkg)
             commands="curl dnsmasq wg mpd5 dig tcpdump jq cron ifconfig pfctl route service sysrc chronyc swanctl"
             ;;
         *)
-            commands=""
+            case "${os}" in
+                Linux)
+                    commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables"
+                    ;;
+                FreeBSD)
+                    commands="curl dnsmasq wg mpd5 dig tcpdump jq cron ifconfig pfctl route service sysrc chronyc swanctl"
+                    ;;
+                *)
+                    commands=""
+                    ;;
+            esac
             ;;
     esac
     if [ "${with_tailscale}" -eq 1 ]; then
@@ -309,6 +328,23 @@ run_dependency_install()
             else
                 # shellcheck disable=SC2086
                 dnf install -y ${packages}
+            fi
+            ;;
+        apk)
+            if [ "${dry_run}" -eq 1 ]; then
+                echo "dry-run: ensure Alpine main/community repositories"
+                echo "dry-run: apk update"
+                echo "dry-run: apk add --no-cache ${packages}"
+            else
+                if ! grep -q '^https://dl-cdn.alpinelinux.org/alpine/latest-stable/main$' /etc/apk/repositories 2>/dev/null; then
+                    echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" >> /etc/apk/repositories
+                fi
+                if ! grep -q '^https://dl-cdn.alpinelinux.org/alpine/latest-stable/community$' /etc/apk/repositories 2>/dev/null; then
+                    echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/community" >> /etc/apk/repositories
+                fi
+                apk update
+                # shellcheck disable=SC2086
+                apk add --no-cache ${packages}
             fi
             ;;
         pacman)
@@ -511,6 +547,7 @@ write_router_config()
     lan_interface=$1; shift
     lan_address=$1; shift
     lan_cidr=$1; shift
+    lan_ipv6_prefix=$1; shift
     dhcp4_enabled=$1; shift
     dhcp4_start=$1; shift
     dhcp4_end=$1; shift
@@ -766,6 +803,7 @@ EOF
       spec:
         interface: lan
         oFlag: true
+        prefix: ${lan_ipv6_prefix}
         prfPreference: medium
 EOF
         fi
@@ -873,6 +911,31 @@ EOF
     } > "${output}"
 }
 
+maybe_start_live_routerd()
+{
+    routerd_bin=$1
+    final_config=$2
+    socket_path=/run/routerd/routerd.sock
+    if [ -S "${socket_path}" ]; then
+        return 0
+    fi
+    if [ ! -f /media/cdrom/routerd.apkovl.tar.gz ]; then
+        return 0
+    fi
+    if [ ! -x "${routerd_bin}" ]; then
+        return 0
+    fi
+    mkdir -p /run/routerd /var/lib/routerd
+    echo "starting live routerd daemon for Web Console and DNS resolver"
+    nohup "${routerd_bin}" serve \
+        --config "${final_config}" \
+        --socket "${socket_path}" \
+        --controller-chain \
+        --controller-chain-dry-run-dns-resolver=false \
+        > /var/log/routerd-live.log 2>&1 &
+    sleep 1
+}
+
 run_configure()
 {
     sysconfdir="${prefix}/etc/routerd"
@@ -919,6 +982,7 @@ run_configure()
     validate_cidr "${lan_address}" "LAN address"
     lan_default_prefix=$(address_without_prefix "${lan_address}")
     lan_cidr=$(prompt_value ROUTERD_LAN_CIDR "LAN client CIDR" "${lan_default_prefix%.*}.0/24" 1)
+    lan_ipv6_prefix=
     dhcp4_enabled=$(prompt_bool ROUTERD_ENABLE_DHCPV4 "Enable DHCPv4 server? (yes/no)" "yes")
     dhcp4_start=
     dhcp4_end=
@@ -928,6 +992,10 @@ run_configure()
     fi
     dhcp6_enabled=$(prompt_bool ROUTERD_ENABLE_DHCPV6 "Enable DHCPv6 stateless service? (yes/no)" "no")
     ra_enabled=$(prompt_bool ROUTERD_ENABLE_RA "Enable IPv6 RA? (yes/no)" "no")
+    if [ "${ra_enabled}" = "yes" ]; then
+        lan_ipv6_prefix=$(prompt_value ROUTERD_LAN_IPV6_PREFIX "LAN IPv6 prefix for RA" "fd00:10::/64" 1)
+        validate_cidr "${lan_ipv6_prefix}" "LAN IPv6 prefix"
+    fi
     dns_enabled=$(prompt_bool ROUTERD_ENABLE_DNS "Enable DNS resolver? (yes/no)" "yes")
     ntp_enabled=$(prompt_bool ROUTERD_ENABLE_NTP "Enable NTP server? (yes/no)" "yes")
     firewall_enabled=$(prompt_bool ROUTERD_ENABLE_FIREWALL "Enable 3-role firewall? (yes/no)" "yes")
@@ -960,7 +1028,7 @@ run_configure()
         tmp="${candidate}.$$"
     fi
     write_router_config "${tmp}" "${router_name}" "${wan_interface}" "${wan_mode}" "${wan_address}" "${wan_gateway}" "${wan_dns}" \
-        "${lan_interface}" "${lan_address}" "${lan_cidr}" "${dhcp4_enabled}" "${dhcp4_start}" "${dhcp4_end}" \
+        "${lan_interface}" "${lan_address}" "${lan_cidr}" "${lan_ipv6_prefix}" "${dhcp4_enabled}" "${dhcp4_start}" "${dhcp4_end}" \
         "${dhcp6_enabled}" "${ra_enabled}" "${dns_enabled}" "${ntp_enabled}" "${firewall_enabled}" "${nat44_enabled}" \
         "${mgmt_mode}" "${mgmt_interface}" "${mgmt_address}"
     if [ "${dry_run}" -eq 1 ]; then
@@ -1006,6 +1074,7 @@ run_configure()
     "${routerd_bin}" plan --config "${final_config}" || true
     if [ "${configure_apply}" -eq 1 ]; then
         "${routerd_bin}" apply --config "${final_config}" --once
+        maybe_start_live_routerd "${routerd_bin}" "${final_config}"
         if [ -x "${routerctl_bin}" ]; then
             "${routerctl_bin}" status || true
         fi

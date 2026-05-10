@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -1023,6 +1024,11 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 				logger.Emit(eventlog.LevelInfo, "apply", "skipping direct network apply on NixOS; nixos-rebuild owns activation", map[string]string{"stage": "network"})
 				return nil
 			}
+			if !platformFeatures.HasNetplan && !platformFeatures.HasSystemdNetworkd {
+				var err error
+				networkChangedFiles, err = applyRuntimeLinuxNetworkResources(effectiveRouter)
+				return err
+			}
 			netplanData, err := render.Netplan(effectiveRouter)
 			if err != nil {
 				return err
@@ -1092,6 +1098,9 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 
 		var timesyncdChangedFiles []string
 		if err := recordStageError("timesyncd", func() error {
+			if !platformFeatures.HasSystemdTimesyncd {
+				return nil
+			}
 			timesyncdConfig, err := render.TimesyncdConfig(effectiveRouter)
 			if err != nil {
 				return err
@@ -3967,6 +3976,89 @@ func applyNetworkConfig(netplanPath string, netplanData []byte, networkdFiles []
 	return changedFiles, nil
 }
 
+func applyRuntimeLinuxNetworkResources(router *api.Router) ([]string, error) {
+	if !platformFeatures.HasIproute2 {
+		return nil, nil
+	}
+	aliases := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			return nil, err
+		}
+		aliases[res.Metadata.Name] = spec.IfName
+	}
+	var changed []string
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			return changed, err
+		}
+		if !spec.Managed || spec.Owner == "external" || !spec.AdminUp || strings.TrimSpace(spec.IfName) == "" {
+			continue
+		}
+		if !linuxLinkIsUp(spec.IfName) {
+			if err := runLogged("ip", "link", "set", "dev", spec.IfName, "up"); err != nil {
+				return changed, err
+			}
+			changed = append(changed, "link:"+spec.IfName)
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		spec, err := res.IPv4StaticAddressSpec()
+		if err != nil {
+			return changed, err
+		}
+		ifname := aliases[spec.Interface]
+		if strings.TrimSpace(ifname) == "" || strings.TrimSpace(spec.Address) == "" {
+			continue
+		}
+		if linuxIPv4AddressPresent(ifname, spec.Address) {
+			continue
+		}
+		if err := runLogged("ip", "-4", "addr", "add", spec.Address, "dev", ifname); err != nil {
+			return changed, err
+		}
+		changed = append(changed, "addr:"+ifname+":"+spec.Address)
+	}
+	return changed, nil
+}
+
+func linuxLinkIsUp(ifname string) bool {
+	out, err := exec.Command("ip", "-o", "link", "show", "dev", ifname).CombinedOutput()
+	return err == nil && strings.Contains(string(out), "UP")
+}
+
+func linuxIPv4AddressPresent(ifname, address string) bool {
+	want := strings.TrimSpace(address)
+	if host, _, ok := strings.Cut(want, "/"); ok {
+		want = host
+	}
+	out, err := exec.Command("ip", "-4", "-o", "addr", "show", "dev", ifname).CombinedOutput()
+	if err != nil {
+		return false
+	}
+	for _, field := range strings.Fields(string(out)) {
+		got := field
+		if host, _, ok := strings.Cut(got, "/"); ok {
+			got = host
+		}
+		if got == want {
+			return true
+		}
+	}
+	return false
+}
+
 func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, mpd5Path, pfPath, rcScriptDir string) ([]string, []string, error) {
 	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
@@ -6263,6 +6355,9 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	if isNixOSHost() {
 		return applyNixOSDnsmasqConfig(configPath, configData, dnsmasqPath)
 	}
+	if !platformFeatures.HasSystemd {
+		return applyDirectDnsmasqConfig(configPath, configData, dnsmasqPath)
+	}
 
 	var changedFiles []string
 	if err := os.MkdirAll(filepathDir(configPath), 0755); err != nil {
@@ -6313,6 +6408,92 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 		}
 	}
 	return nil, nil
+}
+
+func applyDirectDnsmasqConfig(configPath string, configData []byte, dnsmasqPath string) ([]string, error) {
+	var changedFiles []string
+	if err := os.MkdirAll(filepathDir(configPath), 0755); err != nil {
+		return nil, fmt.Errorf("create directory for %s: %w", configPath, err)
+	}
+	if err := os.MkdirAll(platformDefaults.RuntimeDir, 0755); err != nil {
+		return nil, fmt.Errorf("create runtime directory %s: %w", platformDefaults.RuntimeDir, err)
+	}
+	leaseFile := dnsmasqLeaseFileForPlatform()
+	if leaseFile == "" {
+		leaseFile = strings.TrimRight(platformDefaults.RuntimeDir, "/") + "/dnsmasq.leases"
+	}
+	if err := os.MkdirAll(filepathDir(leaseFile), 0755); err != nil {
+		return nil, fmt.Errorf("create dnsmasq lease directory %s: %w", filepathDir(leaseFile), err)
+	}
+	changed, err := writeFileIfChanged(configPath, configData, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("write dnsmasq config %s: %w", configPath, err)
+	}
+	if changed {
+		changedFiles = append(changedFiles, configPath)
+	}
+	out, err := exec.Command(dnsmasqPath, "--test", "--conf-file="+configPath).CombinedOutput()
+	if err != nil {
+		return changedFiles, fmt.Errorf("%s --test --conf-file=%s: %w: %s", dnsmasqPath, configPath, err, strings.TrimSpace(string(out)))
+	}
+	pidFile := strings.TrimRight(platformDefaults.RuntimeDir, "/") + "/dnsmasq.pid"
+	running := processRunningFromPIDFile(pidFile)
+	if changed && running {
+		_ = stopProcessFromPIDFile(pidFile)
+		running = false
+	}
+	if !running {
+		cmd := exec.Command(dnsmasqPath, "--conf-file="+configPath, "--pid-file="+pidFile)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			return changedFiles, fmt.Errorf("start dnsmasq: %w", err)
+		}
+		changedFiles = append(changedFiles, "process:dnsmasq")
+	}
+	return changedFiles, nil
+}
+
+func processRunningFromPIDFile(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return process.Signal(syscall.Signal(0)) == nil
+}
+
+func stopProcessFromPIDFile(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return nil
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	_ = process.Signal(syscall.SIGTERM)
+	for range 20 {
+		if process.Signal(syscall.Signal(0)) != nil {
+			_ = os.Remove(path)
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	_ = process.Signal(syscall.SIGKILL)
+	_ = os.Remove(path)
+	return nil
 }
 
 func findDnsmasqPath() (string, error) {
