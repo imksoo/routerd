@@ -10,8 +10,6 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## v20260510.1612
 
-## v20260510.1611
-
 ### Added
 
 - Added an automated third-party license inventory for Go modules and Alpine packages used by the live ISO.

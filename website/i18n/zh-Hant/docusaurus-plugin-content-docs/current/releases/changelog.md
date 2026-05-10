@@ -10,8 +10,6 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## v20260510.1612
 
-## v20260510.1611
-
 ### 新增
 
 - 新增 Go module 與 live ISO Alpine package 的第三方授權清單自動產生流程。
