@@ -1,0 +1,137 @@
+---
+title: USB persistence
+---
+
+# USB persistence
+
+The routerd live ISO can run as a diskless router. In that mode, the ISO keeps
+the active system in RAM and stores only the selected router state on a USB
+device.
+
+This is intended for mini PCs that boot from removable media. It avoids a
+permanent internal disk while still preserving the router configuration across
+reboots.
+
+## Layout
+
+When USB persistence is enabled, routerd uses this layout on the selected
+partition:
+
+```text
+routerd/
+  router.yaml
+  usb-device
+  usb-flush-enabled
+  log-limit
+  logs/
+  state/
+```
+
+At boot, `/usr/share/routerd/live-persistence.sh init` tries to find the USB
+device. It first checks the remembered device, then `routerd.usb=` on the kernel
+command line, then a partition labeled `ROUTERD`.
+
+If a saved `routerd/router.yaml` exists, it is copied to
+`/usr/local/etc/routerd/router.yaml` and applied by the live ISO startup path.
+If no saved config is found, the ISO starts the configure wizard.
+
+## Filesystems
+
+The live helper detects the filesystem with `blkid` and mounts it with
+filesystem-specific options.
+
+| Filesystem | Default mount options | Notes |
+| --- | --- | --- |
+| `ext4` | `rw,async,noatime` | Best choice for persistent router use. |
+| `vfat` | `rw,async,noatime,utf8,shortname=mixed` | Useful for simple removable media. No Unix permissions. |
+| `exfat` | `rw,async,noatime` | Useful for larger USB sticks shared with desktop OSes. |
+
+`async,noatime` is the default because it reduces write pressure on USB flash.
+For debugging or very conservative flush behavior, pass this kernel parameter:
+
+```text
+routerd.usb_mount=sync
+```
+
+Use `routerd.usb_mount=async` to force the default explicitly.
+
+## Log buffering
+
+Runtime logs are buffered in tmpfs:
+
+```text
+/run/routerd/logs
+```
+
+The default buffer limit is 100 MiB. When the buffer grows beyond the limit, the
+oldest files are removed first.
+
+If the daily flush job is enabled, `/etc/periodic/daily/routerd-usb-flush`
+copies these artifacts to USB:
+
+- current `router.yaml`
+- state archive from `/var/lib/routerd`
+- state archive from `/var/db/routerd`
+- compressed log archive from `/run/routerd/logs`
+
+You can flush manually:
+
+```sh
+/usr/share/routerd/live-persistence.sh flush
+```
+
+## Safe removal
+
+Do not pull the USB device while the persistence mount is active. Ask the live
+helper to flush and unmount it first:
+
+```sh
+/usr/share/routerd/live-persistence.sh flush
+/usr/share/routerd/live-persistence.sh umount
+```
+
+Check the current state with:
+
+```sh
+/usr/share/routerd/live-persistence.sh status
+```
+
+If the device is removed unexpectedly, routerd keeps running from RAM. The live
+helper logs a warning and stops treating the USB path as durable until the
+device is reinserted and mounted again.
+
+## Alpine lbu
+
+The ISO includes Alpine `lbu`. The live helper adds routerd paths to the lbu
+include list:
+
+```text
+/usr/local/etc/routerd
+/var/lib/routerd
+/var/db/routerd
+/etc/periodic/daily/routerd-usb-flush
+```
+
+The helper runs `lbu commit` after saving config or flushing state. You normally
+do not need to run `lbu` directly.
+
+## Useful commands
+
+List candidate devices:
+
+```sh
+/usr/share/routerd/live-persistence.sh list-devices
+```
+
+Save a config to USB:
+
+```sh
+/usr/share/routerd/live-persistence.sh save-config /dev/sdb1 /usr/local/etc/routerd/router.yaml yes 100M
+```
+
+Restore happens automatically at boot. To force the boot-time logic from a
+shell:
+
+```sh
+/usr/share/routerd/live-persistence.sh init
+```

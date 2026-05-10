@@ -23,7 +23,8 @@ once per day.
 ## 1. Prepare the USB stick
 
 Create one partition and format it with a filesystem the live ISO can mount.
-Label it `ROUTERD` so the ISO can find it automatically.
+`ext4` is the best default. `vfat` and `exfat` also work for simple removable
+media. Label it `ROUTERD` so the ISO can find it automatically.
 
 Example from a Linux workstation:
 
@@ -87,6 +88,11 @@ If the partition is labeled `ROUTERD`, it should be listed automatically.
 
 Enable the daily USB flush job unless you are only testing. The default log
 buffer is 100 MiB under `/run/routerd/logs`.
+
+The live helper detects `ext4`, `vfat`, and `exfat` with `blkid`. It mounts USB
+persistence with `async,noatime` by default to reduce writes. If you need
+synchronous writes for a specific test, add `routerd.usb_mount=sync` to the
+kernel command line.
 
 ## 4. Confirm the first apply
 
@@ -174,6 +180,17 @@ You can flush manually:
 ```sh
 /usr/share/routerd/live-persistence.sh flush
 ```
+
+Before physically removing the USB device, flush and unmount it:
+
+```sh
+/usr/share/routerd/live-persistence.sh flush
+/usr/share/routerd/live-persistence.sh umount
+```
+
+If the device is removed without unmounting, routerd keeps running from RAM and
+prints a warning. New logs remain in tmpfs until the USB device is available
+again.
 
 ## Troubleshooting
 

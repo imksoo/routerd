@@ -96,10 +96,24 @@ The live ISO can run in two modes:
 
 For persistent mode, label the USB partition `ROUTERD` or pass
 `routerd.usb=/dev/sdX1` on the kernel command line when multiple removable
-devices are present. Logs are buffered under `/run/routerd/logs` on tmpfs.
-The wizard can enable a daily flush job that copies the config, state snapshot,
-and compressed log archive to the USB device. The default tmpfs log limit is
-100 MiB. Older log files are removed when the buffer exceeds that limit.
+devices are present. The helper detects `ext4`, `vfat`, and `exfat` with
+`blkid` and mounts them with `async,noatime` by default. Pass
+`routerd.usb_mount=sync` only when you explicitly want synchronous writes.
+
+Logs are buffered under `/run/routerd/logs` on tmpfs. The wizard can enable a
+daily flush job that copies the config, state snapshot, and compressed log
+archive to the USB device. The default tmpfs log limit is 100 MiB. Older log
+files are removed when the buffer exceeds that limit.
+
+For safe USB removal, run:
+
+```sh
+/usr/share/routerd/live-persistence.sh flush
+/usr/share/routerd/live-persistence.sh umount
+```
+
+See [Operations → USB persistence](./operations/usb-persistence) for the full
+layout, mount options, and Alpine `lbu` behavior.
 
 Versioned ISO files are also published, for example
 `routerd-live-vYYYYMMDD.HHmm.iso`.
@@ -161,7 +175,7 @@ ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie
 The installer uses `apk` and installs:
 
 ```text
-alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux
+alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux e2fsprogs dosfstools exfatprogs
 ```
 
 `alpine-conf` provides `lbu`, which routerd uses on the live ISO to preserve

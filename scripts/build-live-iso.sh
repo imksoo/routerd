@@ -115,6 +115,27 @@ log()
     echo "routerd-live: $*"
 }
 
+mounted_source()
+{
+    awk -v target="${mount_dir}" '$2 == target {print $1; exit}' /proc/mounts 2>/dev/null || true
+}
+
+usb_mounted()
+{
+    grep -q " ${mount_dir} " /proc/mounts 2>/dev/null
+}
+
+warn_if_usb_removed()
+{
+    src=$(mounted_source)
+    [ -n "${src}" ] || return 1
+    if [ ! -b "${src}" ]; then
+        log "warning: USB persistence device ${src} is no longer present; keeping runtime state in RAM"
+        return 1
+    fi
+    return 0
+}
+
 cmdline_value()
 {
     key=$1
@@ -183,6 +204,44 @@ ensure_log_tmpfs()
     done
 }
 
+fs_type()
+{
+    dev=$1
+    if command -v blkid >/dev/null 2>&1; then
+        blkid -o value -s TYPE "${dev}" 2>/dev/null || true
+    fi
+}
+
+mount_policy()
+{
+    policy=$(cmdline_value routerd.usb_mount 2>/dev/null || true)
+    case "${policy}" in
+        sync|async) printf '%s\n' "${policy}" ;;
+        *) printf '%s\n' async ;;
+    esac
+}
+
+mount_options()
+{
+    dev=$1
+    fstype=$(fs_type "${dev}")
+    policy=$(mount_policy)
+    case "${fstype}" in
+        ext2|ext3|ext4)
+            printf '%s\n' "rw,${policy},noatime"
+            ;;
+        vfat|msdos)
+            printf '%s\n' "rw,${policy},noatime,utf8,shortname=mixed"
+            ;;
+        exfat)
+            printf '%s\n' "rw,${policy},noatime"
+            ;;
+        *)
+            printf '%s\n' "rw,${policy},noatime"
+            ;;
+    esac
+}
+
 mount_usb()
 {
     dev=$1
@@ -191,10 +250,33 @@ mount_usb()
         return 1
     }
     mkdir -p "${mount_dir}"
-    if grep -q " ${mount_dir} " /proc/mounts 2>/dev/null; then
+    if usb_mounted; then
+        warn_if_usb_removed || return 1
         return 0
     fi
+    opts=$(mount_options "${dev}")
+    if mount -o "${opts}" "${dev}" "${mount_dir}" 2>/dev/null; then
+        log "mounted ${dev} on ${mount_dir} with ${opts}"
+        return 0
+    fi
+    log "warning: mount with ${opts} failed for ${dev}; retrying with kernel defaults"
     mount "${dev}" "${mount_dir}" 2>/dev/null || mount -o rw "${dev}" "${mount_dir}"
+}
+
+unmount_usb()
+{
+    if ! usb_mounted; then
+        log "USB persistence mount is not active"
+        return 0
+    fi
+    src=$(mounted_source)
+    sync || true
+    if umount "${mount_dir}" 2>/dev/null; then
+        log "unmounted USB persistence device ${src:-unknown}"
+        return 0
+    fi
+    log "warning: could not unmount ${mount_dir}; stop routerd services or close files and retry"
+    return 1
 }
 
 discover_usb()
@@ -271,7 +353,7 @@ save_config()
     src=$2
     flush_enabled=${3:-yes}
     log_limit=${4:-100M}
-    mount_usb "${dev}"
+    mount_usb "${dev}" || return 1
     mkdir -p "${mount_dir}/${persist_dir_name}/logs" "${mount_dir}/${persist_dir_name}/state"
     install -m 0600 "${src}" "${mount_dir}/${persist_dir_name}/router.yaml"
     printf '%s\n' "${dev}" > "${usb_state_file}"
@@ -294,7 +376,10 @@ flush_to_usb()
         log "no USB persistence device found"
         return 0
     }
-    mount_usb "${dev}" || return 1
+    mount_usb "${dev}" || {
+        log "warning: USB persistence unavailable; runtime logs remain in tmpfs"
+        return 1
+    }
     mkdir -p "${mount_dir}/${persist_dir_name}/logs" "${mount_dir}/${persist_dir_name}/state"
     [ -f "${config_file}" ] && install -m 0600 "${config_file}" "${mount_dir}/${persist_dir_name}/router.yaml"
     if [ -d /var/lib/routerd ]; then
@@ -345,6 +430,21 @@ case "${1:-init}" in
             done
         fi
         ;;
+    status)
+        if usb_mounted; then
+            src=$(mounted_source)
+            if warn_if_usb_removed; then
+                log "USB persistence mounted: ${src} -> ${mount_dir}"
+            else
+                exit 1
+            fi
+        else
+            log "USB persistence is not mounted"
+        fi
+        ;;
+    umount|unmount)
+        unmount_usb
+        ;;
     save-config)
         [ "$#" -ge 3 ] || {
             echo "usage: live-persistence.sh save-config DEVICE CONFIG [FLUSH yes|no] [LOG_LIMIT]" >&2
@@ -359,7 +459,7 @@ case "${1:-init}" in
         ensure_log_tmpfs "${2:-100M}"
         ;;
     *)
-        echo "usage: live-persistence.sh {init|list-devices|save-config|flush|ensure-logs}" >&2
+        echo "usage: live-persistence.sh {init|list-devices|status|umount|save-config|flush|ensure-logs}" >&2
         exit 2
         ;;
 esac
@@ -457,7 +557,7 @@ set timeout=5
 set default=0
 
 menuentry "routerd live ${version}" {
-    linux /boot/vmlinuz-lts modules=loop,squashfs,sd-mod,usb-storage,ext4,virtio,virtio_blk,virtio_net quiet alpine_dev=cdrom:iso9660 modloop=/boot/modloop-lts console=tty0 console=ttyS0,115200n8
+    linux /boot/vmlinuz-lts modules=loop,squashfs,sd-mod,usb-storage,ext4,vfat,exfat,virtio,virtio_blk,virtio_net quiet alpine_dev=cdrom:iso9660 modloop=/boot/modloop-lts console=tty0 console=ttyS0,115200n8
     initrd /boot/initramfs-lts
 }
 EOF

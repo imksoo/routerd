@@ -138,3 +138,6 @@ Alpine package indexes and package build recipes.
 | `strongswan` | Alpine package repository |
 | `iptables` | Alpine package repository |
 | `util-linux` | Alpine package repository |
+| `e2fsprogs` | Alpine package repository |
+| `dosfstools` | Alpine package repository |
+| `exfatprogs` | Alpine package repository |

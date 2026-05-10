@@ -75,6 +75,7 @@ const sidebars: SidebarsConfig = {
         'operations/reconcile',
         'operations/state-database',
         'operations/inventory',
+        'operations/usb-persistence',
         'operations/development',
       ],
     },
