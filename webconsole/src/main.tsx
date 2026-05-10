@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -743,6 +745,11 @@ const useStyles = makeStyles({
   },
   muted: {
     color: tokens.colorNeutralForeground3,
+  },
+  consoleLegal: {
+    color: tokens.colorNeutralForeground3,
+    padding: "8px 2px 0",
+    textAlign: "center",
   },
   chips: {
     display: "flex",
@@ -1512,6 +1519,9 @@ function App() {
                 loadConfig={loadGenerationConfig}
               />
             ) : null}
+            <Text size={200} className={styles.consoleLegal}>
+              BSD 3-Clause License - Copyright (c) 2026 Kirino Minato (imksoo) and routerd contributors
+            </Text>
           </main>
         </section>
       </div>

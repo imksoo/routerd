@@ -8,6 +8,29 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260510.1722
+
+### 追加
+
+- routerd の Go ソース、インストーラースクリプト、プラグインスクリプト、
+  Web Console ソースに BSD 3-Clause の SPDX 識別子を追加しました。
+- README にライセンスバッジを追加し、英語版と日本語版 README から
+  BSD 3-Clause License へリンクしました。
+- 公開ドキュメントに貢献ガイドを追加し、ドキュメントの sidebar から
+  辿れるようにしました。
+- SECURITY にメールと GitHub Security Advisories の報告先を明記しました。
+
+### 変更
+
+- repository root の `LICENSE` にある著作権表示を
+  `Kirino Minato <kirino.minato@gmail.com> (https://github.com/imksoo) and routerd contributors`
+  に統一しました。
+- SPDX ヘッダーが routerd ソースファイルだけに適用されることを
+  法務ドキュメントに明記しました。同梱する第三者ソフトウェアは
+  `THIRD_PARTY_LICENSES.md` に記載された個別ライセンスに従います。
+- README から製品比較表を削除し、routerd 自身の対象範囲と特徴を説明する
+  記述に整理しました。
+
 ## v20260510.1626
 
 ### 追加
@@ -28,7 +51,7 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ### 追加
 
-- pfSense と MikroTik RouterOS を含めて、公開向けの位置づけ比較を広げました。
+- routerd 自身の対象範囲と deployment spectrum を中心に、公開向けの位置づけ説明を広げました。
 - Intel NUC、N100 mini PC、Raspberry Pi 5、thin client、Proxmox VM の hardware compatibility を拡充しました。
 - 中国語の hardware compatibility ページを追加し、ライブ ISO と USB 永続化の流れを明確にしました。
 

@@ -8,6 +8,21 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## v20260510.1722
+
+### 新增
+
+- 為 routerd Go source、installer scripts、plugin scripts 與 Web Console source 增加 BSD 3-Clause SPDX identifiers。
+- 在 README 中加入 license badge，並從英文與日文 README 連結到 BSD 3-Clause License。
+- 新增公開 contributing 文件，並從 docs sidebar 連結。
+- 在 SECURITY 中補充 email 與 GitHub Security Advisories 報告路徑。
+
+### 變更
+
+- 將 repository root 的 `LICENSE` copyright notice 統一為 `Kirino Minato <kirino.minato@gmail.com> (https://github.com/imksoo) and routerd contributors`。
+- 在 legal 文件中說明 SPDX headers 只適用於 routerd source files；bundled third-party software 繼續遵循 `THIRD_PARTY_LICENSES.md` 中的各自 license。
+- 從 README 移除產品比較表，改為說明 routerd 自身的範圍與特點。
+
 ## v20260510.1626
 
 ### 新增
@@ -28,7 +43,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 新增
 
-- 擴充公開定位說明，加入 pfSense 與 MikroTik RouterOS 比較。
+- 擴充公開定位說明，重點說明 routerd 自身的範圍與 deployment spectrum。
 - 擴充 Intel NUC、N100 mini PC、Raspberry Pi 5、thin client 與 Proxmox VM 的硬體相容性說明。
 - 新增中文硬體相容性頁面，並補充 live ISO 與 USB persistence 的使用路徑。
 

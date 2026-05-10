@@ -7,6 +7,12 @@ title: Legal and redistribution
 routerd itself is distributed under the BSD 3-Clause License. The full license
 text is in the repository root as `LICENSE`.
 
+The routerd copyright notice is:
+
+```text
+Copyright (c) 2026 Kirino Minato <kirino.minato@gmail.com> (https://github.com/imksoo) and routerd contributors
+```
+
 This page summarizes the practical redistribution rules for routerd release
 archives and the routerd live ISO. It is an operational note, not legal advice.
 
@@ -32,6 +38,16 @@ The current audit path checks Go module license files for GPL, LGPL, and AGPL
 text. If such a linked Go module appears, stop the release and review whether
 the routerd binary license needs to change or the dependency needs to be
 removed.
+
+Source files use SPDX identifiers such as:
+
+```text
+SPDX-License-Identifier: BSD-3-Clause
+```
+
+Those headers identify the routerd source license. They do not change the
+licenses of bundled tools, Alpine packages, Go modules, or other third-party
+components listed in `THIRD_PARTY_LICENSES.md`.
 
 ## Release archives
 

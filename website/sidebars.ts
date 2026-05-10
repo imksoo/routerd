@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
 
 const sidebars: SidebarsConfig = {
@@ -67,6 +69,7 @@ const sidebars: SidebarsConfig = {
         'plugin-protocol',
         'platforms',
         'hardware-compatibility',
+        'contributing',
         'legal',
       ],
     },

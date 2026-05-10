@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 package main
 
 import (
@@ -53,7 +55,7 @@ import (
 )
 
 const (
-	version               = "v20260510.1626"
+	version               = "v20260510.1722"
 	routerdDnsmasqService = "routerd-dnsmasq.service"
 	freebsdSysrcStateKey  = "freebsd.applyFreeBSDConfig.lastSysrcKeys"
 )

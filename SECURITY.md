@@ -12,10 +12,16 @@ already be fixed.
 
 Do not open a public issue for a suspected vulnerability.
 
-Report security issues by email:
+Report security issues by email or by using GitHub Security Advisories:
 
 ```text
 kirino.minato@gmail.com
+```
+
+Advisory form:
+
+```text
+https://github.com/imksoo/routerd/security/advisories/new
 ```
 
 Include:
@@ -39,3 +45,9 @@ Security-sensitive areas include:
 
 routerd does not currently provide a remote plugin registry. Any proposal to
 add remote plugin installation requires a separate security design review.
+
+## Disclosure
+
+I aim to acknowledge security reports within 7 days. When a coordinated
+disclosure is needed, the target disclosure window is 90 days unless the impact
+or fix complexity requires a different schedule.

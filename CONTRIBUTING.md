@@ -41,6 +41,14 @@ If you changed resource API fields, regenerate schema:
 make generate-schema
 ```
 
+Enable the optional pre-commit hook if you want the local safety checks to run
+before every commit:
+
+```sh
+cp scripts/pre-commit.sh .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
 ## Design expectations
 
 - Keep YAML intuitive and explicit.
@@ -67,3 +75,9 @@ under `docs/`, because the website publishes them.
 
 Use small commits with direct messages. Prefer one behavioral change per commit
 when practical. Release commits are created by `scripts/release.sh`.
+
+## License
+
+routerd is distributed under the BSD 3-Clause License. By contributing to this
+repository, you agree that your contribution is provided under the same
+license unless a file explicitly states otherwise.

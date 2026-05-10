@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Package pdclient contains an experimental, OS-independent DHCPv6-PD
 // client core.
 //

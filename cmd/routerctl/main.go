@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 package main
 
 import (
@@ -32,7 +34,7 @@ import (
 
 var platformDefaults, _ = platform.Current()
 
-const version = "v20260510.1626"
+const version = "v20260510.1722"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {

@@ -7,6 +7,12 @@ title: 法務と再配布
 routerd 本体は BSD 3-Clause License で配布します。
 全文は repository root の `LICENSE` にあります。
 
+routerd の著作権表示は次の通りです。
+
+```text
+Copyright (c) 2026 Kirino Minato <kirino.minato@gmail.com> (https://github.com/imksoo) and routerd contributors
+```
+
 このページは、routerd release archive と routerd live ISO を再配布する際の
 実務上の確認事項をまとめたものです。法的助言ではありません。
 
@@ -32,6 +38,17 @@ make third-party-licenses
 現在の audit path は、Go module の license file から GPL、LGPL、AGPL text を
 検出します。link される Go module として見つかった場合は release を止めます。
 その上で、routerd binary license の変更が必要か、依存を外すべきかを確認します。
+
+ソースファイルには次のような SPDX 識別子を付けます。
+
+```text
+SPDX-License-Identifier: BSD-3-Clause
+```
+
+このヘッダーは routerd ソースのライセンスを示します。
+同梱するツール、Alpine package、Go module、その他の第三者 component の
+ライセンスを変更するものではありません。
+それらは `THIRD_PARTY_LICENSES.md` に一覧化します。
 
 ## Release archive
 

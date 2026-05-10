@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 import type {Config} from '@docusaurus/types';
 import type {Options as PresetOptions, ThemeConfig} from '@docusaurus/preset-classic';
 
@@ -137,7 +139,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} routerd contributors.`,
+      copyright: `BSD 3-Clause License - Copyright © ${new Date().getFullYear()} Kirino Minato (imksoo) and routerd contributors.`,
     },
     prism: {
       additionalLanguages: ['bash', 'go', 'yaml', 'json'],

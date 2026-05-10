@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: BSD-3-Clause
 set -euo pipefail
 
 version=${VERSION:-$(awk '/^VERSION[[:space:]]*\\?=/{print $3; exit}' Makefile)}
@@ -570,6 +571,22 @@ menuentry "routerd live ${version}" {
     initrd /boot/initramfs-lts
 }
 EOF
+
+if [ -d "${iso_root}/boot/syslinux" ]; then
+    cat > "${iso_root}/boot/syslinux/syslinux.cfg" <<EOF
+SERIAL 0 115200
+TIMEOUT 50
+PROMPT 0
+DEFAULT routerd
+
+LABEL routerd
+MENU LABEL routerd live ${version}
+KERNEL /boot/vmlinuz-lts
+INITRD /boot/initramfs-lts
+FDTDIR /boot/dtbs-lts
+APPEND modules=loop,squashfs,sd-mod,usb-storage,ext4,vfat,exfat,virtio,virtio_blk,virtio_net quiet console=tty0 console=ttyS0,115200n8
+EOF
+fi
 
 iso_versioned="${outdir}/routerd-live-${version}.iso"
 iso_alias="${outdir}/routerd-live.iso"

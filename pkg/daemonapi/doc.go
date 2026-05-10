@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Package daemonapi defines the shared local contract used by routerd-managed
 // helper daemons.
 //

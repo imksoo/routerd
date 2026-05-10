@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSD-3-Clause
 set -eu
 
 if [ "${ROUTERD_SKIP_PRE_COMMIT:-}" = "1" ]; then

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSD-3-Clause
 set -eu
 
 out=${1:-THIRD_PARTY_LICENSES.md}
@@ -156,8 +157,10 @@ fetch_apk_index "${apk_index}"
     echo '```'
     echo
     echo "routerd itself is distributed under the BSD 3-Clause License in"
-    echo "[LICENSE](./LICENSE). Release archives and the live ISO also include"
-    echo "third-party software. The live ISO is an aggregate distribution: each"
+    echo "[LICENSE](./LICENSE): Copyright (c) 2026 Kirino Minato"
+    echo "<kirino.minato@gmail.com> (https://github.com/imksoo) and routerd"
+    echo "contributors. Release archives and the live ISO also include third-party"
+    echo "software. The live ISO is an aggregate distribution: each"
     echo "included Alpine package keeps its own upstream license and source"
     echo "availability path. The ISO is not relicensed as a single GPL work."
     echo

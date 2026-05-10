@@ -1,5 +1,7 @@
 # routerd
 
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
+
 [Project site and documentation: routerd.net](https://routerd.net/)
 
 Prebuilt release archives for Linux amd64 and FreeBSD amd64 are published on
@@ -49,19 +51,22 @@ routerd is designed to cover a rare span: a virtual router between SDN/VNET
 segments and a diskless physical mini PC router can use the same resource
 model. The host artifacts differ. The intent file stays recognizable.
 
-| Project style | Strong fit | Tradeoff | routerd difference |
-| --- | --- | --- | --- |
-| VyOS | Router CLI and network OS workflows | Configuration is centered on a router OS environment | routerd keeps ordinary Linux/FreeBSD host integration visible as typed resources |
-| OPNsense | Appliance UI, firewall workflows, plugins | GUI-first operation can hide generated state | routerd keeps configuration in YAML and uses the Web Console for read-only observation |
-| pfSense | Mature FreeBSD firewall appliance | Configuration is appliance-oriented and GUI-first | routerd treats FreeBSD as one host target in the same declarative model as Linux |
-| MikroTik RouterOS | Cost-effective commercial appliances | Closed source and hardware-centered lifecycle | routerd stays OSS and can run on commodity mini PCs, VMs, and lab hosts |
-| OpenWrt | Embedded hardware and package ecosystem | Less natural for Proxmox SDN/VNET labs or full Linux hosts | routerd targets general-purpose hosts and live ISO mini PCs |
-| Linux shell scripts | Fast local automation | Hard to audit desired state and event history later | routerd records resources, plans, status, generations, and events |
-| Kubernetes-style controllers | Strong reconciliation model | Cluster assumptions are heavy for a router host | routerd uses controller ideas locally, with the host as the boundary |
+routerd is not trying to replace every router project or appliance UI. It is
+strongest when the same network intent must move between a Proxmox lab, a NixOS
+or FreeBSD router, an Ubuntu home gateway, and a diskless mini PC booted from
+the live ISO.
 
-routerd is not trying to replace every appliance UI. It is strongest when the
-same network intent must move between a Proxmox lab, a NixOS or FreeBSD router,
-an Ubuntu home gateway, and a diskless mini PC booted from the live ISO.
+The project focuses on a few independent strengths:
+
+- **Cross-OS declarative resources** for Ubuntu, NixOS, and FreeBSD host
+  integration.
+- **Live ISO plus USB persistence** for diskless mini PC routers.
+- **Observable routing decisions** through events, generation diffs,
+  health checks, Web Console, and OpenTelemetry.
+- **Multi-stage WAN fallback** across DS-Lite, PPPoE, DHCP WAN, and local
+  route policy without flushing conntrack.
+- **Client-aware LAN policy** through DHCP reservations, neighbor inventory,
+  and MAC-based guest isolation on supported platforms.
 
 That makes routerd useful when a network grows sideways: from a Proxmox lab, to
 a home DS-Lite router, to WireGuard/Tailscale overlays, to a diskless mini PC
@@ -177,8 +182,8 @@ Use `sudo ./install.sh --no-install-deps` when packages are managed elsewhere.
 
 ## License and Redistribution
 
-routerd itself is released under the BSD 3-Clause License. Release archives and
-the live ISO include third-party software with their own licenses. The
+routerd itself is released under the [BSD 3-Clause License](LICENSE). Release
+archives and the live ISO include third-party software with their own licenses. The
 Alpine-based live ISO is an aggregate distribution: GPL-licensed tools such as
 dnsmasq, nftables, WireGuard tools, ppp, and iproute2 keep their own licenses
 and source availability paths. The ISO as a whole is not relicensed as one GPL

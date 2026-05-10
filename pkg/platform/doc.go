@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Package platform centralizes OS-specific defaults and feature flags
 // for routerd. Linux (Ubuntu/NixOS) is the primary target. FreeBSD
 // support is in-progress: the platform package exposes the surface area

@@ -8,6 +8,21 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260510.1722
+
+### Added
+
+- Added BSD 3-Clause SPDX identifiers to routerd Go sources, installer scripts, plugin scripts, and Web Console sources.
+- Added a README license badge and linked the BSD 3-Clause license from the English and Japanese READMEs.
+- Added public contributing documentation and linked it from the docs sidebar.
+- Added SECURITY reporting details for email and GitHub Security Advisories.
+
+### Changed
+
+- Unified the root `LICENSE` copyright notice as `Kirino Minato <kirino.minato@gmail.com> (https://github.com/imksoo) and routerd contributors`.
+- Clarified the legal documentation that SPDX headers apply to routerd source files only; bundled third-party software remains covered by `THIRD_PARTY_LICENSES.md`.
+- Removed product comparison tables from the README and kept the positioning text focused on routerd's own scope.
+
 ## v20260510.1626
 
 ### Added
@@ -28,7 +43,7 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Added
 
-- Expanded the public positioning material with a broader comparison that includes pfSense and MikroTik RouterOS.
+- Expanded the public positioning material around routerd's own scope and deployment spectrum.
 - Expanded hardware compatibility guidance for Intel NUC, N100 mini PCs, Raspberry Pi 5, thin clients, and Proxmox VMs.
 - Added Chinese hardware compatibility pages and clarified the live ISO plus USB persistence path.
 
