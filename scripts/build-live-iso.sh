@@ -76,6 +76,25 @@ install -m 0755 packaging/uninstall.sh "${overlay_root}/usr/share/routerd/uninst
 install -m 0644 examples/router-lab.yaml "${overlay_root}/usr/local/etc/routerd/router.yaml.sample"
 : > "${overlay_root}/etc/.default_boot_services"
 
+cat > "${overlay_root}/etc/inittab" <<'EOF'
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+
+tty1::respawn:/sbin/getty 38400 tty1
+tty2::respawn:/sbin/getty 38400 tty2
+ttyS0::respawn:/sbin/getty -L 115200 ttyS0 vt100
+
+::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/openrc shutdown
+EOF
+
+cat > "${overlay_root}/etc/securetty" <<'EOF'
+tty1
+tty2
+ttyS0
+EOF
+
 cat > "${overlay_root}/etc/motd" <<EOF
 routerd live ${version}
 

@@ -60,3 +60,26 @@ Functional checks from the client namespace:
 
 The temporary VM, network namespace, veth pair, temporary bridge, and pvetest
 ISO files were removed after validation.
+
+## Serial console follow-up
+
+After adding an explicit Alpine `/etc/inittab` overlay, the ISO was rebuilt as
+`routerd-live-routerd-live-serialtest.iso` and booted on pve06 as temporary VM
+200 with:
+
+- `--serial0 socket`
+- `--vga serial0`
+- WAN `vmbr0`
+- isolated LAN `vmbr490`
+
+`qm terminal 200` reached `/dev/ttyS0` at 115200 8N1. Root login started the
+same `install.sh configure` wizard over the serial console. The wizard accepted
+plain text input, installed `/usr/local/etc/routerd/router.yaml`, ran
+`routerd apply --once`, and reached:
+
+- phase: `Healthy`
+- generation: `1`
+- resourceCount: `14`
+
+The temporary VM, bridge, and uploaded serial-test ISO were removed after the
+check.

@@ -63,3 +63,7 @@ sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 
 See [Install and upgrade](../install-and-upgrade.md) for OS-specific package
 lists, upgrade behavior, uninstall options, and developer release commands.
+
+To try routerd without installing to disk, boot `routerd-live.iso`.
+The ISO starts the same `install.sh configure` wizard after root login.
+It also supports Proxmox VE serial consoles through `qm terminal`.

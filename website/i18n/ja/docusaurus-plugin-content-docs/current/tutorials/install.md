@@ -64,3 +64,7 @@ sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 OS 別のパッケージ一覧、アップグレード、アンインストール、開発者向け
 リリース手順は [インストールとアップグレード](../install-and-upgrade.md) を
 参照してください。
+
+ディスクへ導入せずに試す場合は、`routerd-live.iso` を起動します。
+root でログインすると、同じ `install.sh configure` ウィザードが起動します。
+Proxmox VE の `qm terminal` によるシリアルコンソールにも対応します。

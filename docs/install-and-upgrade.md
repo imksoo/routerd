@@ -63,6 +63,29 @@ The console prints routerd setup instructions and starts the same
 Use the ISO for demos and short trials.
 For a persistent router, install routerd onto disk with the release archive.
 
+The live ISO enables both the video console and a serial console.
+On Proxmox VE, add a serial socket and connect with `qm terminal`:
+
+```sh
+qm create 200 \
+  --name routerd-live-demo \
+  --memory 1536 \
+  --cores 2 \
+  --ostype l26 \
+  --serial0 socket \
+  --vga serial0 \
+  --boot order=ide2 \
+  --ide2 local:iso/routerd-live.iso,media=cdrom \
+  --net0 virtio,bridge=vmbr0 \
+  --net1 virtio,bridge=vmbr490
+qm start 200
+qm terminal 200
+```
+
+Use an isolated LAN bridge for `net1` when you test DHCP or RA.
+The serial console runs at 115200 8N1 and uses plain text prompts, so the same
+wizard works from `qm terminal`, a framebuffer console, or a minimal terminal.
+
 Versioned ISO files are also published, for example
 `routerd-live-vYYYYMMDD.HHmm.iso`.
 

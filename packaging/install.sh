@@ -386,6 +386,22 @@ verify_dependencies()
     fi
 }
 
+configure_terminal()
+{
+    case "${TERM:-}" in
+        ""|unknown)
+            TERM=dumb
+            export TERM
+            ;;
+    esac
+    if [ -t 0 ]; then
+        stty sane 2>/dev/null || true
+    fi
+    if [ "${TERM:-dumb}" = "dumb" ]; then
+        echo "terminal: dumb mode; using plain text prompts"
+    fi
+}
+
 show_interfaces()
 {
     if command -v ip >/dev/null 2>&1; then
@@ -938,6 +954,7 @@ maybe_start_live_routerd()
 
 run_configure()
 {
+    configure_terminal
     sysconfdir="${prefix}/etc/routerd"
     candidate="${sysconfdir}/router.yaml.configure"
     final_config="${sysconfdir}/router.yaml"

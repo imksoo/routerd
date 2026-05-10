@@ -63,6 +63,30 @@ root でログインすると、同じ `install.sh configure` ウィザードを
 ISO はデモや短時間の試用に使います。
 永続的なルーターとして使う場合は、リリースアーカイブからディスクへ導入します。
 
+ライブ ISO はビデオコンソールとシリアルコンソールの両方を有効にします。
+Proxmox VE では、シリアルソケットを追加し、`qm terminal` で接続します。
+
+```sh
+qm create 200 \
+  --name routerd-live-demo \
+  --memory 1536 \
+  --cores 2 \
+  --ostype l26 \
+  --serial0 socket \
+  --vga serial0 \
+  --boot order=ide2 \
+  --ide2 local:iso/routerd-live.iso,media=cdrom \
+  --net0 virtio,bridge=vmbr0 \
+  --net1 virtio,bridge=vmbr490
+qm start 200
+qm terminal 200
+```
+
+DHCP や RA を試す場合は、`net1` に隔離された LAN ブリッジを使います。
+シリアルコンソールは 115200 8N1 です。
+ウィザードはプレーンテキストで表示します。
+そのため、`qm terminal`、フレームバッファーコンソール、最小構成の端末で同じように動きます。
+
 `routerd-live-vYYYYMMDD.HHmm.iso` のような版番号付き ISO も公開します。
 
 ## 実行時の依存パッケージ
