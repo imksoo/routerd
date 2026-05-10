@@ -455,10 +455,27 @@ func (d *dhcpv4Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 func (d *dhcpv4Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	topic := r.URL.Query().Get("topic")
 	since := r.URL.Query().Get("since")
-	d.mu.Lock()
-	events, cursor := d.eventsSinceLocked(since, topic)
-	d.mu.Unlock()
-	writeHTTPJSON(w, eventsResponse{Cursor: cursor, Events: events})
+	wait, _ := time.ParseDuration(r.URL.Query().Get("wait"))
+	deadline := time.Now().Add(wait)
+	if wait > 0 {
+		timer := time.AfterFunc(wait, func() {
+			d.mu.Lock()
+			d.cond.Broadcast()
+			d.mu.Unlock()
+		})
+		defer timer.Stop()
+	}
+	for {
+		d.mu.Lock()
+		events, cursor := d.eventsSinceLocked(since, topic)
+		if len(events) > 0 || wait == 0 || time.Now().After(deadline) {
+			d.mu.Unlock()
+			writeHTTPJSON(w, eventsResponse{Cursor: cursor, Events: events})
+			return
+		}
+		d.cond.Wait()
+		d.mu.Unlock()
+	}
 }
 
 func (d *dhcpv4Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {

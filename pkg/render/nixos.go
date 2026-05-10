@@ -248,8 +248,10 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 		}
 		buf.WriteString("  ];\n")
 	}
-	for _, client := range dhcpv6Clients {
-		writeNixOSDHCPv6ClientService(&buf, client)
+	if !nixOSRouterdSupervisesClientDaemons(host.RouterdService) {
+		for _, client := range dhcpv6Clients {
+			writeNixOSDHCPv6ClientService(&buf, client)
+		}
 	}
 	for _, unit := range systemdUnits {
 		writeNixOSSystemdUnit(&buf, unit)
@@ -262,6 +264,23 @@ func NixOSModule(router *api.Router) ([]byte, error) {
 	}
 	buf.WriteString("}\n")
 	return buf.Bytes(), nil
+}
+
+func nixOSRouterdSupervisesClientDaemons(spec api.NixOSRouterdServiceSpec) bool {
+	if !api.BoolDefault(spec.Enabled, false) {
+		return false
+	}
+	for i, flag := range spec.ExtraFlags {
+		switch {
+		case flag == "--controller-chain-supervise-client-daemons=false":
+			return false
+		case flag == "--controller-chain-supervise-client-daemons=true":
+			return true
+		case flag == "--controller-chain-supervise-client-daemons" && i+1 < len(spec.ExtraFlags):
+			return spec.ExtraFlags[i+1] != "false"
+		}
+	}
+	return true
 }
 
 func nixOSDHCPv6Clients(router *api.Router, interfaces []nixOSInterface) ([]nixOSDHCPv6Client, error) {
@@ -1019,6 +1038,11 @@ func writeNixOSDHCPv6ClientService(buf *bytes.Buffer, client nixOSDHCPv6Client) 
 func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 	var out []nixOSSystemdUnit
 	explicit := map[string]bool{}
+	host, err := nixOSHost(router)
+	if err != nil {
+		return nil, err
+	}
+	routerdSupervisesClients := nixOSRouterdSupervisesClientDaemons(host.RouterdService)
 	telemetryEnv, err := TelemetryEnvironment(router)
 	if err != nil {
 		return nil, err
@@ -1088,6 +1112,9 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "DHCPv4Lease" {
+			continue
+		}
+		if routerdSupervisesClients {
 			continue
 		}
 		spec, err := res.DHCPv4LeaseSpec()

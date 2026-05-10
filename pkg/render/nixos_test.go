@@ -688,3 +688,52 @@ func TestNixOSModuleIgnoresLegacyPrefixDelegationClient(t *testing.T) {
 		t.Fatalf("NixOS module missing routerd DHCPv6 client service:\n%s", got)
 	}
 }
+
+func TestNixOSModuleSkipsDHCPv6ClientServiceWhenRouterdSupervisesClients(t *testing.T) {
+	enabled := true
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NixOSHost"},
+				Metadata: api.ObjectMeta{Name: "host"},
+				Spec: api.NixOSHostSpec{
+					RouterdService: api.NixOSRouterdServiceSpec{
+						Enabled:    &enabled,
+						ExtraFlags: []string{"--controller-chain"},
+					},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+				Metadata: api.ObjectMeta{Name: "wan-pd"},
+				Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan", Profile: "ntt-hgw-lan-pd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+				Metadata: api.ObjectMeta{Name: "wan-dhcpv4"},
+				Spec:     api.DHCPv4LeaseSpec{Interface: "wan"},
+			},
+		}},
+	}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatalf("render NixOS module: %v", err)
+	}
+	got := string(data)
+	if strings.Contains(got, `systemd.services."routerd-dhcpv6-client@wan-pd"`) {
+		t.Fatalf("NixOS module must not emit standalone DHCPv6 client service when routerd supervises clients:\n%s", got)
+	}
+	if strings.Contains(got, `systemd.services."routerd-dhcpv4-client@wan-dhcpv4"`) {
+		t.Fatalf("NixOS module must not emit standalone DHCPv4 client service when routerd supervises clients:\n%s", got)
+	}
+	if !strings.Contains(got, `systemd.services.routerd`) {
+		t.Fatalf("NixOS module missing routerd service:\n%s", got)
+	}
+}
