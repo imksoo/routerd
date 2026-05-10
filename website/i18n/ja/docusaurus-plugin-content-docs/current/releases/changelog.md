@@ -8,6 +8,30 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260510.1750
+
+### 追加
+
+- ディスクレス mini PC walkthrough に、PVE live ISO 実機検証で取得した
+  画面キャプチャを追加しました。
+- 簡体字中国語版と繁体字中国語版に、位置づけ、USB 永続化、
+  法務と再配布の不足ページを追加しました。
+
+### 変更
+
+- website footer の著作権表示を、著作権表示を先に置く慣習的な形式へ変更しました。
+- ディスクレス mini PC walkthrough の PVE 例を、VGA と serial console の
+  両方を有効にする構成へ更新しました。これにより、QEMU screenshot と
+  `qm terminal` 検証を同じ実行で取得できます。
+
+### 修正
+
+- live ISO の設定ウィザードで、DHCPv4 pool の既定値を選択した LAN
+  アドレスの prefix から導出するように修正しました。
+- PVE live ISO boot test を再実行し、
+  `/tmp/iso-boot-test-20260510-1742.log`、QEMU screenshot、routerd apply、
+  Healthy status、USB persistence flush まで確認しました。
+
 ## v20260510.1722
 
 ### 追加

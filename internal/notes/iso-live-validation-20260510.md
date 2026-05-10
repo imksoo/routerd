@@ -109,3 +109,76 @@ The PVE ISO copy was left in place for later manual testing:
 ```text
 /var/lib/vz/template/iso/routerd-live-pvetest6.iso
 ```
+
+## Follow-up validation with captured log and screenshots
+
+The validation was repeated after adding the requested serial-console log and
+QEMU monitor screenshots.
+
+- PVE node: `pve07`
+- Test VM: `999` (`routerd-live-test`)
+- Test ISO: `dist/iso/routerd-live-routerd-live-pvefix.iso`
+- PVE ISO copy: `/var/lib/vz/template/iso/routerd-live-pvefix.iso`
+- Serial log: `/tmp/iso-boot-test-20260510-1742.log`
+- Screenshot source: `/tmp/iso-boot-01-grub.png` through
+  `/tmp/iso-boot-08-usb-flush.png`
+- Screenshot repository copy: `website/static/img/iso-boot/`
+
+The VM was created with both serial and VGA consoles so that `qm terminal` and
+QEMU `screendump` could be used in the same run:
+
+```sh
+qm create 999 \
+  --name routerd-live-test \
+  --memory 1536 \
+  --cores 2 \
+  --ostype l26 \
+  --serial0 socket \
+  --vga std \
+  --boot order=ide2 \
+  --ide2 local:iso/routerd-live-pvefix.iso,media=cdrom \
+  --net0 virtio,bridge=vmbr0 \
+  --net1 virtio,bridge=vmbr3
+```
+
+The requested `vmbr490` bridge was not present on `pve07`; `vmbr3` was used as
+the isolated LAN-side bridge, matching the earlier successful validation.
+
+The run found one setup wizard bug: after entering `192.168.99.1/24` as the LAN
+address, the DHCPv4 pool defaults still showed `192.168.10.100` and
+`192.168.10.200`. The installer now derives DHCPv4 pool defaults from the LAN
+address prefix. The fixed ISO showed:
+
+```text
+DHCPv4 pool start [192.168.99.100]:
+DHCPv4 pool end [192.168.99.200]:
+```
+
+The fixed run completed with:
+
+```json
+{
+  "phase": "Healthy",
+  "generation": 1,
+  "resourceCount": 14
+}
+```
+
+USB persistence was also rechecked by hot-adding a temporary 1 GiB disk,
+creating `/dev/sda1` as `ext4`, saving the generated config, and flushing
+state/log archives:
+
+```sh
+/usr/share/routerd/live-persistence.sh save-config /dev/sda1 /usr/local/etc/routerd/router.yaml yes 10M
+/usr/share/routerd/live-persistence.sh flush
+/usr/share/routerd/live-persistence.sh status
+```
+
+The helper reported:
+
+```text
+routerd-live: USB persistence mounted: /dev/sda1 -> /media/routerd-usb
+```
+
+The test VM was stopped and destroyed with purge enabled after the screenshot
+and log capture.

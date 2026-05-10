@@ -1046,13 +1046,14 @@ run_configure()
     validate_cidr "${lan_address}" "LAN address"
     lan_default_prefix=$(address_without_prefix "${lan_address}")
     lan_cidr=$(prompt_value ROUTERD_LAN_CIDR "LAN client CIDR" "${lan_default_prefix%.*}.0/24" 1)
+    lan_pool_prefix=${lan_default_prefix%.*}
     lan_ipv6_prefix=
     dhcp4_enabled=$(prompt_bool ROUTERD_ENABLE_DHCPV4 "Enable DHCPv4 server? (yes/no)" "yes")
     dhcp4_start=
     dhcp4_end=
     if [ "${dhcp4_enabled}" = "yes" ]; then
-        dhcp4_start=$(prompt_value ROUTERD_DHCPV4_START "DHCPv4 pool start" "192.168.10.100" 1)
-        dhcp4_end=$(prompt_value ROUTERD_DHCPV4_END "DHCPv4 pool end" "192.168.10.200" 1)
+        dhcp4_start=$(prompt_value ROUTERD_DHCPV4_START "DHCPv4 pool start" "${lan_pool_prefix}.100" 1)
+        dhcp4_end=$(prompt_value ROUTERD_DHCPV4_END "DHCPv4 pool end" "${lan_pool_prefix}.200" 1)
     fi
     dhcp6_enabled=$(prompt_bool ROUTERD_ENABLE_DHCPV6 "Enable DHCPv6 stateless service? (yes/no)" "no")
     ra_enabled=$(prompt_bool ROUTERD_ENABLE_RA "Enable IPv6 RA? (yes/no)" "no")

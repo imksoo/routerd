@@ -8,6 +8,23 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## v20260510.1750
+
+### 新增
+
+- 在 diskless mini PC walkthrough 中加入 PVE live ISO 實機驗證截圖。
+- 為簡體中文和繁體中文補充 positioning、USB persistence 與 legal redistribution 頁面。
+
+### 變更
+
+- 將 website footer 的 copyright 文字改為先寫著作權聲明的慣用形式。
+- 更新 diskless mini PC walkthrough 的 PVE 範例，同時啟用 VGA 與 serial console，方便在同一次驗證中取得 QEMU screenshot 和 `qm terminal` 日誌。
+
+### 修正
+
+- 修正 live ISO configure wizard，使 DHCPv4 pool 預設值從選擇的 LAN address prefix 推導。
+- 重新執行 PVE live ISO boot test，並確認 `/tmp/iso-boot-test-20260510-1742.log`、QEMU screenshots、routerd apply、Healthy status 與 USB persistence flush。
+
 ## v20260510.1722
 
 ### 新增

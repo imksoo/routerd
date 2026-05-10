@@ -8,6 +8,23 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260510.1750
+
+### Added
+
+- Added real PVE live ISO screenshots to the diskless mini PC walkthrough.
+- Added missing Simplified and Traditional Chinese pages for positioning, USB persistence, and legal redistribution.
+
+### Changed
+
+- Changed the website footer copyright text to the conventional copyright-first form.
+- Updated the diskless mini PC walkthrough to use VGA plus serial console so QEMU screenshots and `qm terminal` validation can be captured in one run.
+
+### Fixed
+
+- Fixed the live ISO configure wizard so DHCPv4 pool defaults are derived from the selected LAN address prefix.
+- Re-ran the PVE live ISO boot test with `/tmp/iso-boot-test-20260510-1742.log`, QEMU screenshots, routerd apply, Healthy status, and USB persistence flush validation.
+
 ## v20260510.1722
 
 ### Added

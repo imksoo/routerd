@@ -139,7 +139,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `BSD 3-Clause License - Copyright © ${new Date().getFullYear()} Kirino Minato (imksoo) and routerd contributors.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Kirino Minato and routerd contributors. Licensed under the BSD 3-Clause License.`,
     },
     prism: {
       additionalLanguages: ['bash', 'go', 'yaml', 'json'],

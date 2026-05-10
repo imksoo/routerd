@@ -4,12 +4,6 @@ title: Diskless mini PC walkthrough
 
 # Diskless mini PC walkthrough
 
-:::info Screenshot placeholders
-Images in this tutorial are structured placeholders. Replace them with real
-screenshots from Proxmox VE, the serial console, and a LAN client when you
-capture a validation run.
-:::
-
 This tutorial turns a small x86 mini PC into a router without installing an OS
 to its internal disk. The router boots the routerd live ISO, stores
 configuration on USB, buffers logs in RAM, and flushes a compact archive to USB
@@ -65,7 +59,7 @@ qm create 200 \
   --cores 2 \
   --ostype l26 \
   --serial0 socket \
-  --vga serial0 \
+  --vga std \
   --boot order=ide2 \
   --ide2 local:iso/routerd-live.iso,media=cdrom \
   --net0 virtio,bridge=vmbr0 \
@@ -76,13 +70,17 @@ qm terminal 200
 
 Use an isolated LAN bridge for early DHCP and RA testing.
 
-![PVE ISO mount placeholder](/img/tutorials/diskless-02-iso-mount.svg)
+![routerd live boot menu](/img/iso-boot/iso-boot-01-grub.png)
+
+The ISO enables both the video console and the serial console.
+
+![Alpine boot messages](/img/iso-boot/iso-boot-02-alpine-boot.png)
 
 ## 3. Run the wizard
 
 Log in as `root`. The live ISO starts the setup wizard.
 
-![Serial console placeholder](/img/tutorials/diskless-03-serial-console.svg)
+![routerd live login and message of the day](/img/iso-boot/iso-boot-03-login-motd.png)
 
 The wizard asks for:
 
@@ -95,12 +93,12 @@ The wizard asks for:
 - management placement
 - USB persistence
 
-![Wizard WAN and LAN placeholder](/img/tutorials/diskless-04-wizard-wan-lan.svg)
+![WAN setup in the routerd live wizard](/img/iso-boot/iso-boot-04-wizard-wan.png)
+
+![LAN setup in the routerd live wizard](/img/iso-boot/iso-boot-05-wizard-lan.png)
 
 When asked about USB persistence, choose `yes` and select the USB partition.
 If the partition is labeled `ROUTERD`, it should be listed automatically.
-
-![Wizard USB persistence placeholder](/img/tutorials/diskless-05-usb-persistence.svg)
 
 Enable the daily USB flush job unless you are only testing. The default log
 buffer is 100 MiB under `/run/routerd/logs`.
@@ -126,13 +124,15 @@ routerd plan --config /usr/local/etc/routerd/router.yaml
 routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
+![Wizard summary and first apply](/img/iso-boot/iso-boot-06-wizard-summary.png)
+
 Check status:
 
 ```sh
 routerctl status
 ```
 
-![routerctl status placeholder](/img/tutorials/diskless-06-routerctl-status.svg)
+![routerctl status after first apply](/img/iso-boot/iso-boot-07-routerctl-status.png)
 
 The phase should become `Healthy`.
 
@@ -200,6 +200,8 @@ You can flush manually:
 ```sh
 /usr/share/routerd/live-persistence.sh flush
 ```
+
+![USB persistence flush](/img/iso-boot/iso-boot-08-usb-flush.png)
 
 Before physically removing the USB device, flush and unmount it:
 
