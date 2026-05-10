@@ -52,7 +52,7 @@ import (
 )
 
 const (
-	version               = "20260510.3"
+	version               = "20260510.4"
 	routerdDnsmasqService = "routerd-dnsmasq.service"
 	freebsdSysrcStateKey  = "freebsd.applyFreeBSDConfig.lastSysrcKeys"
 )

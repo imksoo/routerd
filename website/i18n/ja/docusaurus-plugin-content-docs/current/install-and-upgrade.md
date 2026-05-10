@@ -38,7 +38,7 @@ sudo ./install.sh
 ```
 
 FreeBSD arm64 では `freebsd-arm64` アーカイブを使います。
-latest release には `routerd-20260510.3-linux-amd64.tar.gz` のような
+latest release には `routerd-20260510.4-linux-amd64.tar.gz` のような
 版番号付きアーカイブもあります。
 特定の版に固定する場合は、版番号付きアーカイブを使います。
 
@@ -281,7 +281,7 @@ make test
 make check-schema
 make validate-example
 make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260510.3
+make dist ROUTERD_OS=linux GOARCH=amd64 VERSION=20260510.4
 ```
 
 利用者向けの導入経路として Makefile は使いません。
