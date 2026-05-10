@@ -10,8 +10,6 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## v20260510.1547
 
-## v20260510.1546
-
 ### Added
 
 - Expanded the public positioning material with a broader comparison that includes pfSense and MikroTik RouterOS.

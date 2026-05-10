@@ -10,8 +10,6 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## v20260510.1547
 
-## v20260510.1546
-
 ### 追加
 
 - pfSense と MikroTik RouterOS を含めて、公開向けの位置づけ比較を広げました。
