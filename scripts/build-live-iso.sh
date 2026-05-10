@@ -31,7 +31,7 @@ mkdir -p "${workdir}" "${cachedir}" "${outdir}"
 if [ -z "${alpine_iso_url}" ]; then
     releases="${cachedir}/latest-releases-${alpine_arch}.yaml"
     curl -fsSL "${alpine_mirror}/${alpine_branch}/releases/${alpine_arch}/latest-releases.yaml" -o "${releases}"
-    alpine_iso_file=$(awk '/file: alpine-standard-.*-'"${alpine_arch}"'\\.iso/ {print $2; exit}' "${releases}")
+    alpine_iso_file=$(awk '/file: alpine-standard-.*-'"${alpine_arch}"'\.iso/ {print $2; exit}' "${releases}")
     if [ -z "${alpine_iso_file}" ]; then
         echo "could not resolve alpine standard ISO from ${releases}" >&2
         exit 2
