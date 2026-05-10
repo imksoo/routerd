@@ -205,10 +205,11 @@ type SystemdUnitController struct {
 	Bus    interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
-	Store            Store
-	Command          outputCommandFunc
-	DryRun           bool
-	SystemdSystemDir string
+	Store                       Store
+	Command                     outputCommandFunc
+	DryRun                      bool
+	SystemdSystemDir            string
+	SynthesizeClientDaemonUnits bool
 }
 
 func (c SystemdUnitController) Reconcile(ctx context.Context) error {
@@ -226,6 +227,11 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	}
 	if features.HasSystemd {
 		explicitUnits := systemdUnitNames(c.Router)
+		if c.SynthesizeClientDaemonUnits {
+			if err := c.reconcileClientDaemonUnits(ctx, explicitUnits, telemetryEnv, command); err != nil {
+				return err
+			}
+		}
 		for _, resource := range c.Router.Spec.Resources {
 			if resource.Kind != "TailscaleNode" {
 				continue
@@ -414,6 +420,99 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
+func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, explicitUnits map[string]bool, telemetryEnv []string, command outputCommandFunc) error {
+	aliases := interfaceAliases(c.Router)
+	for _, resource := range c.Router.Spec.Resources {
+		switch resource.Kind {
+		case "DHCPv4Lease":
+			spec, err := resource.DHCPv4LeaseSpec()
+			if err != nil {
+				return err
+			}
+			ifname := aliases[spec.Interface]
+			if ifname == "" {
+				return fmt.Errorf("%s references interface %q with no ifname", resource.ID(), spec.Interface)
+			}
+			unitName := "routerd-dhcpv4-client@" + resource.Metadata.Name + ".service"
+			if explicitUnits[unitName] {
+				continue
+			}
+			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "DHCPv4Lease", resource.Metadata.Name, unitName, dhcpv4ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv), command); err != nil {
+				return err
+			}
+		case "DHCPv6PrefixDelegation":
+			spec, err := resource.DHCPv6PrefixDelegationSpec()
+			if err != nil {
+				return err
+			}
+			ifname := aliases[spec.Interface]
+			if ifname == "" {
+				return fmt.Errorf("%s references interface %q with no ifname", resource.ID(), spec.Interface)
+			}
+			unitName := "routerd-dhcpv6-client@" + resource.Metadata.Name + ".service"
+			if explicitUnits[unitName] {
+				continue
+			}
+			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "DHCPv6PrefixDelegation", resource.Metadata.Name, unitName, dhcpv6ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv), command); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context, apiVersion, kind, resourceName, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) error {
+	path := filepath.Join(c.SystemdSystemDir, unitName)
+	changed, err := c.applySystemdUnit(ctx, resourceName, path, unitName, spec, command)
+	if err != nil {
+		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, map[string]any{
+			"phase":     "Error",
+			"reason":    "ApplyFailed",
+			"unitName":  unitName,
+			"path":      path,
+			"source":    kind + "/" + resourceName,
+			"error":     err.Error(),
+			"dryRun":    c.DryRun,
+			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		}); saveErr != nil {
+			return saveErr
+		}
+		return err
+	}
+	phase := "Applied"
+	if c.DryRun && changed {
+		phase = "Rendered"
+	}
+	status := map[string]any{
+		"phase":     phase,
+		"unitName":  unitName,
+		"path":      path,
+		"source":    kind + "/" + resourceName,
+		"changed":   changed,
+		"dryRun":    c.DryRun,
+		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, status); err != nil {
+		return err
+	}
+	if err := c.Store.SaveObjectStatus(apiVersion, kind, resourceName, map[string]any{
+		"phase":     phase,
+		"unitName":  unitName,
+		"managedBy": "systemd",
+		"dryRun":    c.DryRun,
+		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		return err
+	}
+	if changed && !c.DryRun && c.Bus != nil {
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.systemd_unit.applied", daemonapi.SeverityInfo)
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit", Name: unitName}
+		event.Attributes = map[string]string{"unitName": unitName, "path": path, "source": kind + "/" + resourceName}
+		return c.Bus.Publish(ctx, event)
+	}
+	return nil
+}
+
 func systemdUnitNames(router *api.Router) map[string]bool {
 	out := map[string]bool{}
 	if router == nil {
@@ -430,6 +529,95 @@ func systemdUnitNames(router *api.Router) map[string]bool {
 		out[firstNonEmpty(spec.UnitName, resource.Metadata.Name)] = true
 	}
 	return out
+}
+
+func interfaceAliases(router *api.Router) map[string]string {
+	out := map[string]string{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "Interface" {
+			continue
+		}
+		spec, err := resource.InterfaceSpec()
+		if err != nil || strings.TrimSpace(spec.IfName) == "" {
+			continue
+		}
+		out[resource.Metadata.Name] = spec.IfName
+	}
+	return out
+}
+
+func dhcpv4ClientUnitSpec(resource, ifname string, spec api.DHCPv4LeaseSpec, telemetryEnv []string) api.SystemdUnitSpec {
+	noNewPrivileges := true
+	privateTmp := true
+	exec := []string{"/usr/local/sbin/routerd-dhcpv4-client", "daemon", "--resource", resource, "--interface", ifname}
+	if spec.Hostname != "" {
+		exec = append(exec, "--hostname", spec.Hostname)
+	}
+	if spec.RequestedAddress != "" {
+		exec = append(exec, "--requested-address", spec.RequestedAddress)
+	}
+	if spec.ClassID != "" {
+		exec = append(exec, "--class-id", spec.ClassID)
+	}
+	if spec.ClientID != "" {
+		exec = append(exec, "--client-id", spec.ClientID)
+	}
+	return api.SystemdUnitSpec{
+		Description:              "routerd DHCPv4 client " + resource,
+		ExecStart:                exec,
+		Environment:              telemetryEnv,
+		Wants:                    []string{"network-online.target"},
+		After:                    []string{"network-online.target"},
+		WantedBy:                 []string{"multi-user.target"},
+		Restart:                  "always",
+		RestartSec:               "5s",
+		RuntimeDirectory:         []string{"routerd/dhcpv4-client"},
+		RuntimeDirectoryPreserve: "yes",
+		StateDirectory:           []string{"routerd/dhcpv4-client"},
+		LogsDirectory:            []string{"routerd"},
+		ReadWritePaths:           []string{"/run/routerd", "/var/lib/routerd", "/var/log/routerd"},
+		AmbientCapabilities:      []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
+		CapabilityBoundingSet:    []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
+		ProtectSystem:            "strict",
+		ProtectHome:              "yes",
+		NoNewPrivileges:          &noNewPrivileges,
+		PrivateTmp:               &privateTmp,
+	}
+}
+
+func dhcpv6ClientUnitSpec(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, telemetryEnv []string) api.SystemdUnitSpec {
+	noNewPrivileges := true
+	privateTmp := true
+	exec := []string{"/usr/local/sbin/routerd-dhcpv6-client", "daemon", "--resource", resource, "--interface", ifname}
+	if spec.IAID != "" {
+		exec = append(exec, "--iaid", spec.IAID)
+	}
+	return api.SystemdUnitSpec{
+		Description:              "routerd DHCPv6 client " + resource,
+		ExecStart:                exec,
+		Environment:              telemetryEnv,
+		Wants:                    []string{"network-online.target"},
+		After:                    []string{"network-online.target"},
+		WantedBy:                 []string{"multi-user.target"},
+		Restart:                  "always",
+		RestartSec:               "5s",
+		RuntimeDirectory:         []string{"routerd/dhcpv6-client"},
+		RuntimeDirectoryPreserve: "yes",
+		StateDirectory:           []string{"routerd/dhcpv6-client"},
+		LogsDirectory:            []string{"routerd"},
+		ReadWritePaths:           []string{"/run/routerd", "/var/lib/routerd", "/var/log/routerd"},
+		AmbientCapabilities:      []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
+		CapabilityBoundingSet:    []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
+		ProtectSystem:            "strict",
+		ProtectHome:              "yes",
+		NoNewPrivileges:          &noNewPrivileges,
+		PrivateTmp:               &privateTmp,
+	}
 }
 
 func healthCheckUnitName(name string) string {

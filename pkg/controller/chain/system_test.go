@@ -328,6 +328,80 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan-v4"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan", Hostname: "routerd-test"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "1"}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:                      router,
+		Store:                       store,
+		SystemdSystemDir:            dir,
+		SynthesizeClientDaemonUnits: true,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		unit string
+		want []string
+	}{
+		{
+			unit: "routerd-dhcpv4-client@wan-v4.service",
+			want: []string{
+				`ExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan-v4 --interface ens18 --hostname routerd-test`,
+				`RuntimeDirectory=routerd/dhcpv4-client`,
+				`AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE`,
+			},
+		},
+		{
+			unit: "routerd-dhcpv6-client@wan-pd.service",
+			want: []string{
+				`ExecStart=/usr/local/sbin/routerd-dhcpv6-client daemon --resource wan-pd --interface ens18 --iaid 1`,
+				`RuntimeDirectory=routerd/dhcpv6-client`,
+				`AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE`,
+			},
+		},
+	} {
+		data, err := os.ReadFile(filepath.Join(dir, tc.unit))
+		if err != nil {
+			t.Fatalf("read %s: %v", tc.unit, err)
+		}
+		unit := string(data)
+		for _, want := range tc.want {
+			if !strings.Contains(unit, want) {
+				t.Fatalf("%s missing %q:\n%s", tc.unit, want, unit)
+			}
+		}
+	}
+	gotCommands := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"systemctl enable routerd-dhcpv4-client@wan-v4.service",
+		"systemctl restart routerd-dhcpv4-client@wan-v4.service",
+		"systemctl enable routerd-dhcpv6-client@wan-pd.service",
+		"systemctl restart routerd-dhcpv6-client@wan-pd.service",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	if status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", "routerd-dhcpv4-client@wan-v4.service"); status["phase"] != "Applied" {
+		t.Fatalf("dhcpv4 unit status = %#v", status)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Lease", "wan-v4"); status["managedBy"] != "systemd" {
+		t.Fatalf("dhcpv4 lease status = %#v", status)
+	}
+}
+
 func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

@@ -367,7 +367,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
 	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNetworkAdoption}
-	systemdUnits := SystemdUnitController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunSystemdUnit}
+	systemdUnits := SystemdUnitController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunSystemdUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons}
 	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
 	ntpClient := NTPClientController{Router: r.Router, Bus: r.Bus, Store: store}
 	ntpServer := NTPServerController{Router: r.Router, Bus: r.Bus, Store: store}

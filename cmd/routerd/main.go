@@ -2917,7 +2917,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDryRunPackage := fs.Bool("controller-chain-dry-run-package", true, "do not install OS packages in the experimental controller chain")
 	controllerDryRunNetworkAdoption := fs.Bool("controller-chain-dry-run-network-adoption", true, "do not write systemd-networkd/resolved adoption drop-ins in the experimental controller chain")
 	controllerDryRunSystemdUnit := fs.Bool("controller-chain-dry-run-systemd-unit", true, "do not install or restart systemd units in the experimental controller chain")
-	controllerSuperviseClientDaemons := fs.Bool("controller-chain-supervise-client-daemons", false, "start routerd DHCP/PPPoE client daemons as routerd child processes")
+	controllerSuperviseClientDaemons := fs.Bool("controller-chain-supervise-client-daemons", true, "start routerd DHCP/PPPoE client daemons as routerd child processes")
 	controllerFirewall := fs.String("controller-chain-firewall", "enable", "firewall controller mode: enable or disable")
 	controllerDaemonSockets := fs.String("controller-chain-daemon-sockets", "", "comma-separated resource=unix-socket overrides for the experimental controller chain")
 	controllerDnsmasqCommand := fs.String("controller-chain-dnsmasq-command", "dnsmasq", "dnsmasq command for the experimental controller chain")
