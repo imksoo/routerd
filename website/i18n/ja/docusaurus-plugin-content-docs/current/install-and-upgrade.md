@@ -166,6 +166,37 @@ sudo ./install.sh --no-config-update
 
 ## 最初の設定
 
+最初の試用では、組み込みの初期設定ウィザードを使えます。
+
+```sh
+sudo ./install.sh configure
+```
+
+ウィザードは WAN インターフェース、LAN インターフェース、LAN アドレス、
+LAN 向けサービス、管理経路の置き場所を確認します。
+生成した候補は `/usr/local/etc/routerd/router.yaml.configure` に保存します。
+既存の設定がある場合は差分を表示します。
+確認後に `/usr/local/etc/routerd/router.yaml` へ導入します。
+その後、`routerd validate`、`routerd plan`、`routerd apply --once` を実行します。
+
+自動化では、環境変数で値を渡して質問を省略できます。
+
+```sh
+sudo ROUTERD_WAN_INTERFACE=ens18 \
+  ROUTERD_LAN_INTERFACE=ens19 \
+  ROUTERD_LAN_ADDRESS=192.168.10.1/24 \
+  ROUTERD_LAN_CIDR=192.168.10.0/24 \
+  ROUTERD_MGMT_MODE=lan \
+  ./install.sh configure --non-interactive --yes
+```
+
+YAML ファイルの生成だけ行う場合は、`--no-apply` を使います。
+
+```sh
+sudo ./install.sh configure --no-apply
+```
+
+手動で設定することもできます。
 設定例をコピーし、インターフェース名などを編集します。
 
 ```sh

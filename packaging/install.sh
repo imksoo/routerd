@@ -2,6 +2,7 @@
 set -eu
 
 prefix=/usr/local
+command_mode=install
 enable_service=0
 start_service=0
 restart_service=1
@@ -12,6 +13,9 @@ install_deps=1
 list_deps=0
 deps_only=0
 with_tailscale=0
+configure_non_interactive=0
+configure_yes=0
+configure_apply=1
 completed=0
 backup_dir=
 timestamp=$(date +%Y%m%d%H%M%S)
@@ -19,7 +23,31 @@ timestamp=$(date +%Y%m%d%H%M%S)
 usage()
 {
     cat <<'USAGE'
-Usage: ./install.sh [--prefix DIR] [--enable-service] [--start-service] [--no-restart] [--dry-run] [--verbose] [--no-config-update] [--no-install-deps] [--list-deps] [--deps-only] [--with-tailscale]
+Usage:
+  ./install.sh [install options]
+  ./install.sh configure [configure options]
+  ./install.sh --configure [configure options]
+
+Install options:
+  --prefix DIR
+  --enable-service
+  --start-service
+  --no-restart
+  --dry-run
+  --verbose
+  --no-config-update
+  --no-install-deps
+  --list-deps
+  --deps-only
+  --with-tailscale
+
+Configure options:
+  --prefix DIR
+  --non-interactive
+  --yes
+  --no-apply
+  --dry-run
+  --verbose
 
 Installs or upgrades routerd binaries, service templates, and a sample configuration.
 Existing /usr/local/etc/routerd/router.yaml is never overwritten.
@@ -27,6 +55,10 @@ State databases, logs, and runtime files are never modified.
 
 By default, the installer also installs known host package dependencies on
 supported package managers. Pass --no-install-deps to skip that step.
+
+The configure subcommand starts a text setup wizard and writes
+/usr/local/etc/routerd/router.yaml from the answers. In non-interactive mode,
+set ROUTERD_WAN_INTERFACE, ROUTERD_LAN_INTERFACE, and related ROUTERD_* values.
 USAGE
 }
 
@@ -318,9 +350,687 @@ verify_dependencies()
     fi
 }
 
+show_interfaces()
+{
+    if command -v ip >/dev/null 2>&1; then
+        ip -br link show 2>/dev/null | awk '{print "  - " $1}' | sed 's/@.*//'
+    elif [ -d /sys/class/net ]; then
+        for iface in /sys/class/net/*; do
+            name=$(basename "${iface}")
+            [ "${name}" = "lo" ] && continue
+            echo "  - ${name}"
+        done
+    elif command -v ifconfig >/dev/null 2>&1; then
+        for name in $(ifconfig -l 2>/dev/null); do
+            [ "${name}" = "lo0" ] && continue
+            echo "  - ${name}"
+        done
+    else
+        echo "  (no interface listing command found)"
+    fi
+}
+
+interface_exists()
+{
+    name=$1
+    [ -n "${name}" ] || return 1
+    if [ -e "/sys/class/net/${name}" ]; then
+        return 0
+    fi
+    if command -v ip >/dev/null 2>&1 && ip link show "${name}" >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v ifconfig >/dev/null 2>&1 && ifconfig "${name}" >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+prompt_value()
+{
+    var_name=$1
+    label=$2
+    default_value=$3
+    required=$4
+    current=$(eval "printf '%s' \"\${${var_name}:-}\"")
+    if [ -n "${current}" ]; then
+        printf '%s\n' "${current}"
+        return 0
+    fi
+    if [ "${configure_non_interactive}" -eq 1 ]; then
+        if [ "${required}" -eq 1 ] && [ -z "${default_value}" ]; then
+            echo "missing required environment variable: ${var_name}" >&2
+            exit 2
+        fi
+        printf '%s\n' "${default_value}"
+        return 0
+    fi
+    while :; do
+        if [ -n "${default_value}" ]; then
+            printf '%s [%s]: ' "${label}" "${default_value}" >&2
+        else
+            printf '%s: ' "${label}" >&2
+        fi
+        IFS= read -r answer
+        if [ -z "${answer}" ]; then
+            answer=${default_value}
+        fi
+        if [ "${required}" -eq 0 ] || [ -n "${answer}" ]; then
+            printf '%s\n' "${answer}"
+            return 0
+        fi
+        echo "value is required" >&2
+    done
+}
+
+prompt_choice()
+{
+    var_name=$1
+    label=$2
+    default_value=$3
+    choices=$4
+    while :; do
+        value=$(prompt_value "${var_name}" "${label}" "${default_value}" 1)
+        for choice in ${choices}; do
+            if [ "${value}" = "${choice}" ]; then
+                printf '%s\n' "${value}"
+                return 0
+            fi
+        done
+        if [ "${configure_non_interactive}" -eq 1 ]; then
+            echo "${var_name} must be one of: ${choices}" >&2
+            exit 2
+        fi
+        echo "choose one of: ${choices}" >&2
+        eval "${var_name}=''"
+    done
+}
+
+prompt_bool()
+{
+    var_name=$1
+    label=$2
+    default_value=$3
+    while :; do
+        value=$(prompt_value "${var_name}" "${label}" "${default_value}" 1)
+        case "${value}" in
+            y|Y|yes|YES|true|TRUE|1)
+                echo yes
+                return 0
+                ;;
+            n|N|no|NO|false|FALSE|0)
+                echo no
+                return 0
+                ;;
+            *)
+                if [ "${configure_non_interactive}" -eq 1 ]; then
+                    echo "${var_name} must be yes or no" >&2
+                    exit 2
+                fi
+                echo "answer yes or no" >&2
+                eval "${var_name}=''"
+                ;;
+        esac
+    done
+}
+
+validate_cidr()
+{
+    value=$1
+    label=$2
+    if ! printf '%s\n' "${value}" | grep -Eq '^[0-9A-Fa-f:.]+/[0-9][0-9]?$'; then
+        echo "${label} must be CIDR notation, for example 192.168.10.1/24" >&2
+        exit 2
+    fi
+}
+
+address_without_prefix()
+{
+    value=$1
+    printf '%s\n' "${value%%/*}"
+}
+
+write_yaml_list()
+{
+    indent=$1
+    values=$2
+    for value in ${values}; do
+        printf '%s- %s\n' "${indent}" "${value}"
+    done
+}
+
+write_router_config()
+{
+    output=$1; shift
+    router_name=$1; shift
+    wan_interface=$1; shift
+    wan_mode=$1; shift
+    wan_address=$1; shift
+    wan_gateway=$1; shift
+    wan_dns=$1; shift
+    lan_interface=$1; shift
+    lan_address=$1; shift
+    lan_cidr=$1; shift
+    dhcp4_enabled=$1; shift
+    dhcp4_start=$1; shift
+    dhcp4_end=$1; shift
+    dhcp6_enabled=$1; shift
+    ra_enabled=$1; shift
+    dns_enabled=$1; shift
+    ntp_enabled=$1; shift
+    firewall_enabled=$1; shift
+    nat44_enabled=$1; shift
+    mgmt_mode=$1; shift
+    mgmt_interface=$1; shift
+    mgmt_address=$1
+
+    lan_ip=$(address_without_prefix "${lan_address}")
+    mgmt_ip=
+    if [ -n "${mgmt_address}" ]; then
+        mgmt_ip=$(address_without_prefix "${mgmt_address}")
+    fi
+    dns_upstreams=${wan_dns:-1.1.1.1}
+
+    {
+        cat <<EOF
+# yaml-language-server: \$schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: ${router_name}
+
+spec:
+  reconcile:
+    mode: progressive
+    protectedInterfaces:
+EOF
+        if [ "${mgmt_mode}" = "separate" ]; then
+            echo "      - mgmt"
+        else
+            echo "      - lan"
+        fi
+        cat <<EOF
+
+  resources:
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv4-forwarding
+      spec:
+        key: net.ipv4.ip_forward
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv6-forwarding
+      spec:
+        key: net.ipv6.conf.all.forwarding
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ${wan_interface}
+        adminUp: true
+        managed: false
+        owner: external
+EOF
+        if [ "${wan_mode}" = "dhcp" ]; then
+            cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Address
+      metadata:
+        name: wan-dhcpv4
+      spec:
+        interface: wan
+        required: true
+        useRoutes: true
+        useDNS: true
+EOF
+        else
+            cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: wan-ipv4
+      spec:
+        interface: wan
+        address: ${wan_address}
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticRoute
+      metadata:
+        name: wan-default
+      spec:
+        interface: wan
+        destination: 0.0.0.0/0
+        via: ${wan_gateway}
+        metric: 100
+EOF
+        fi
+        cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ${lan_interface}
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-ipv4
+      spec:
+        interface: lan
+        address: ${lan_address}
+        exclusive: false
+EOF
+        if [ "${mgmt_mode}" = "separate" ]; then
+            cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: mgmt
+      spec:
+        ifname: ${mgmt_interface}
+        adminUp: true
+        managed: true
+        owner: routerd
+EOF
+            if [ -n "${mgmt_address}" ]; then
+                cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: mgmt-ipv4
+      spec:
+        interface: mgmt
+        address: ${mgmt_address}
+        exclusive: false
+EOF
+            fi
+        fi
+        if [ "${dns_enabled}" = "yes" ]; then
+            cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSResolver
+      metadata:
+        name: lan-resolver
+      spec:
+        listen:
+          - name: lan
+            addresses:
+              - ${lan_ip}
+            port: 53
+EOF
+            if [ "${mgmt_mode}" = "separate" ] && [ -n "${mgmt_ip}" ]; then
+                cat <<EOF
+          - name: mgmt
+            addresses:
+              - ${mgmt_ip}
+            port: 53
+EOF
+            fi
+            cat <<EOF
+        sources:
+          - name: default
+            kind: upstream
+            match:
+              - "."
+            upstreams:
+EOF
+            for upstream in ${dns_upstreams}; do
+                case "${upstream}" in
+                    http://*|https://*|udp://*|tcp://*|tls://*|quic://*)
+                        echo "              - ${upstream}"
+                        ;;
+                    *:*)
+                        echo "              - udp://[${upstream}]:53"
+                        ;;
+                    *)
+                        echo "              - udp://${upstream}:53"
+                        ;;
+                esac
+            done
+            cat <<EOF
+        cache:
+          enabled: true
+          maxEntries: 10000
+EOF
+        fi
+        if [ "${dhcp4_enabled}" = "yes" ]; then
+            cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-dhcpv4
+      spec:
+        server: dnsmasq
+        managed: true
+        listenInterfaces:
+          - lan
+        interface: lan
+        addressPool:
+          start: ${dhcp4_start}
+          end: ${dhcp4_end}
+          leaseTime: 12h
+        gateway: ${lan_ip}
+        dnsServers:
+          - ${lan_ip}
+        ntpServers:
+          - ${lan_ip}
+EOF
+        fi
+        if [ "${dhcp6_enabled}" = "yes" ]; then
+            cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6Server
+      metadata:
+        name: lan-dhcpv6
+      spec:
+        server: dnsmasq
+        managed: true
+        listenInterfaces:
+          - lan
+        interface: lan
+        mode: stateless
+        leaseTime: 12h
+EOF
+        fi
+        if [ "${ra_enabled}" = "yes" ]; then
+            cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6RouterAdvertisement
+      metadata:
+        name: lan-ra
+      spec:
+        interface: lan
+        oFlag: true
+        prfPreference: medium
+EOF
+        fi
+        if [ "${ntp_enabled}" = "yes" ]; then
+            cat <<EOF
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: NTPServer
+      metadata:
+        name: lan-ntp
+      spec:
+        provider: chrony
+        managed: true
+        source: static
+        listenAddresses:
+          - ${lan_ip}
+        allowCIDRs:
+          - ${lan_cidr}
+        servers:
+          - ntp.nict.jp
+          - ntp.jst.mfeed.ad.jp
+EOF
+        fi
+        if [ "${nat44_enabled}" = "yes" ]; then
+            cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-wan
+      spec:
+        type: masquerade
+        egressInterface: wan
+        sourceRanges:
+          - ${lan_cidr}
+        excludeDestinationCIDRs:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+EOF
+        fi
+        if [ "${firewall_enabled}" = "yes" ]; then
+            cat <<EOF
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: wan
+      spec:
+        role: untrust
+        interfaces:
+          - wan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces:
+          - lan
+EOF
+            if [ "${mgmt_mode}" = "separate" ]; then
+                cat <<EOF
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: mgmt
+      spec:
+        role: mgmt
+        interfaces:
+          - mgmt
+EOF
+            fi
+            cat <<EOF
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: default
+      spec:
+        logDeny: true
+        sameRoleAccept: true
+EOF
+        fi
+        cat <<EOF
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: WebConsole
+      metadata:
+        name: local
+      spec:
+        enabled: true
+EOF
+        if [ "${mgmt_mode}" = "separate" ] && [ -n "${mgmt_ip}" ]; then
+            echo "        listenAddress: ${mgmt_ip}"
+        else
+            echo "        listenAddress: ${lan_ip}"
+        fi
+        cat <<EOF
+        port: 8080
+        title: ${router_name}
+EOF
+    } > "${output}"
+}
+
+run_configure()
+{
+    sysconfdir="${prefix}/etc/routerd"
+    candidate="${sysconfdir}/router.yaml.configure"
+    final_config="${sysconfdir}/router.yaml"
+    routerd_bin="${prefix}/sbin/routerd"
+    routerctl_bin="${prefix}/sbin/routerctl"
+    if [ -x bin/routerd ]; then
+        routerd_bin=bin/routerd
+    fi
+    if [ -x bin/routerctl ]; then
+        routerctl_bin=bin/routerctl
+    fi
+
+    echo "routerd initial configuration wizard"
+    echo
+    echo "Available interfaces:"
+    show_interfaces
+    echo
+
+    router_name=$(prompt_value ROUTERD_ROUTER_NAME "Router name" "routerd-router" 1)
+    wan_interface=$(prompt_value ROUTERD_WAN_INTERFACE "WAN interface" "" 1)
+    interface_exists "${wan_interface}" || echo "warning: interface ${wan_interface} was not found on this host" >&2
+    wan_mode=$(prompt_choice ROUTERD_WAN_MODE "WAN IPv4 mode (dhcp/static)" "dhcp" "dhcp static")
+    wan_address=
+    wan_gateway=
+    wan_dns=${ROUTERD_WAN_DNS:-}
+    if [ "${wan_mode}" = "static" ]; then
+        wan_address=$(prompt_value ROUTERD_WAN_ADDRESS "WAN static address/CIDR" "" 1)
+        validate_cidr "${wan_address}" "WAN address"
+        wan_gateway=$(prompt_value ROUTERD_WAN_GATEWAY "WAN gateway" "" 1)
+        wan_dns=$(prompt_value ROUTERD_WAN_DNS "WAN DNS upstreams (space separated)" "1.1.1.1" 1)
+    else
+        wan_dns=$(prompt_value ROUTERD_WAN_DNS "Default DNS upstreams when DHCP DNS is unavailable" "1.1.1.1" 1)
+    fi
+
+    lan_interface=$(prompt_value ROUTERD_LAN_INTERFACE "LAN interface" "" 1)
+    interface_exists "${lan_interface}" || echo "warning: interface ${lan_interface} was not found on this host" >&2
+    if [ "${lan_interface}" = "${wan_interface}" ]; then
+        echo "LAN interface must differ from WAN interface" >&2
+        exit 2
+    fi
+    lan_address=$(prompt_value ROUTERD_LAN_ADDRESS "LAN address/CIDR" "192.168.10.1/24" 1)
+    validate_cidr "${lan_address}" "LAN address"
+    lan_default_prefix=$(address_without_prefix "${lan_address}")
+    lan_cidr=$(prompt_value ROUTERD_LAN_CIDR "LAN client CIDR" "${lan_default_prefix%.*}.0/24" 1)
+    dhcp4_enabled=$(prompt_bool ROUTERD_ENABLE_DHCPV4 "Enable DHCPv4 server? (yes/no)" "yes")
+    dhcp4_start=
+    dhcp4_end=
+    if [ "${dhcp4_enabled}" = "yes" ]; then
+        dhcp4_start=$(prompt_value ROUTERD_DHCPV4_START "DHCPv4 pool start" "192.168.10.100" 1)
+        dhcp4_end=$(prompt_value ROUTERD_DHCPV4_END "DHCPv4 pool end" "192.168.10.200" 1)
+    fi
+    dhcp6_enabled=$(prompt_bool ROUTERD_ENABLE_DHCPV6 "Enable DHCPv6 stateless service? (yes/no)" "no")
+    ra_enabled=$(prompt_bool ROUTERD_ENABLE_RA "Enable IPv6 RA? (yes/no)" "no")
+    dns_enabled=$(prompt_bool ROUTERD_ENABLE_DNS "Enable DNS resolver? (yes/no)" "yes")
+    ntp_enabled=$(prompt_bool ROUTERD_ENABLE_NTP "Enable NTP server? (yes/no)" "yes")
+    firewall_enabled=$(prompt_bool ROUTERD_ENABLE_FIREWALL "Enable 3-role firewall? (yes/no)" "yes")
+    nat44_enabled=$(prompt_bool ROUTERD_ENABLE_NAT44 "Enable NAT44 from LAN to WAN? (yes/no)" "yes")
+
+    mgmt_mode=$(prompt_choice ROUTERD_MGMT_MODE "Management placement (separate/lan)" "lan" "separate lan")
+    mgmt_interface=
+    mgmt_address=
+    if [ "${mgmt_mode}" = "separate" ]; then
+        mgmt_interface=$(prompt_value ROUTERD_MGMT_INTERFACE "MGMT interface" "" 1)
+        interface_exists "${mgmt_interface}" || echo "warning: interface ${mgmt_interface} was not found on this host" >&2
+        if [ "${mgmt_interface}" = "${wan_interface}" ] || [ "${mgmt_interface}" = "${lan_interface}" ]; then
+            echo "MGMT interface must differ from WAN and LAN interfaces" >&2
+            exit 2
+        fi
+        mgmt_address=$(prompt_value ROUTERD_MGMT_ADDRESS "MGMT address/CIDR (blank to leave external)" "" 0)
+        if [ -n "${mgmt_address}" ]; then
+            validate_cidr "${mgmt_address}" "MGMT address"
+        fi
+    fi
+
+    if [ "${dry_run}" -eq 1 ]; then
+        echo "dry-run: install -d -m 0755 ${sysconfdir}"
+    else
+        install -d -m 0755 "${sysconfdir}"
+    fi
+    if [ "${dry_run}" -eq 1 ]; then
+        tmp=$(mktemp "${TMPDIR:-/tmp}/routerd-configure.XXXXXX")
+    else
+        tmp="${candidate}.$$"
+    fi
+    write_router_config "${tmp}" "${router_name}" "${wan_interface}" "${wan_mode}" "${wan_address}" "${wan_gateway}" "${wan_dns}" \
+        "${lan_interface}" "${lan_address}" "${lan_cidr}" "${dhcp4_enabled}" "${dhcp4_start}" "${dhcp4_end}" \
+        "${dhcp6_enabled}" "${ra_enabled}" "${dns_enabled}" "${ntp_enabled}" "${firewall_enabled}" "${nat44_enabled}" \
+        "${mgmt_mode}" "${mgmt_interface}" "${mgmt_address}"
+    if [ "${dry_run}" -eq 1 ]; then
+        echo "dry-run: write ${candidate}"
+        cat "${tmp}"
+        rm -f "${tmp}"
+        completed=1
+        return 0
+    fi
+    mv -f "${tmp}" "${candidate}"
+    chmod 0600 "${candidate}"
+    echo "generated candidate config: ${candidate}"
+
+    if command -v diff >/dev/null 2>&1 && [ -f "${final_config}" ]; then
+        echo "diff against existing router.yaml:"
+        diff -u "${final_config}" "${candidate}" || true
+    else
+        echo "candidate config:"
+        sed -n '1,260p' "${candidate}"
+    fi
+
+    if [ "${configure_yes}" -ne 1 ] && [ "${configure_non_interactive}" -ne 1 ]; then
+        answer=$(prompt_bool ROUTERD_CONFIGURE_CONFIRM "Install this config as router.yaml? (yes/no)" "no")
+        if [ "${answer}" != "yes" ]; then
+            echo "left candidate config at ${candidate}"
+            completed=1
+            return 0
+        fi
+    fi
+    if [ -f "${final_config}" ]; then
+        cp -p "${final_config}" "${final_config}.backup.${timestamp}"
+        echo "backup: ${final_config}.backup.${timestamp}"
+    fi
+    install -m 0600 "${candidate}" "${final_config}"
+    echo "installed config: ${final_config}"
+
+    if [ ! -x "${routerd_bin}" ]; then
+        echo "routerd binary not found at ${routerd_bin}; skipping validate/apply" >&2
+        completed=1
+        return 0
+    fi
+    "${routerd_bin}" validate --config "${final_config}"
+    "${routerd_bin}" plan --config "${final_config}" || true
+    if [ "${configure_apply}" -eq 1 ]; then
+        "${routerd_bin}" apply --config "${final_config}" --once
+        if [ -x "${routerctl_bin}" ]; then
+            "${routerctl_bin}" status || true
+        fi
+    else
+        echo "apply skipped by --no-apply"
+    fi
+    completed=1
+}
+
 service_active=0
 service_touched=0
 manage_host_service=1
+
+if [ "$#" -gt 0 ]; then
+    case "$1" in
+        configure)
+            command_mode=configure
+            shift
+            ;;
+        --configure)
+            command_mode=configure
+            shift
+            ;;
+    esac
+fi
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -360,6 +1070,18 @@ while [ "$#" -gt 0 ]; do
         --with-tailscale)
             with_tailscale=1
             ;;
+        --configure)
+            command_mode=configure
+            ;;
+        --non-interactive)
+            configure_non_interactive=1
+            ;;
+        --yes|-y)
+            configure_yes=1
+            ;;
+        --no-apply)
+            configure_apply=0
+            ;;
         -h|--help)
             usage
             exit 0
@@ -398,6 +1120,12 @@ if [ -n "${target_archive}" ] && [ "${target_archive}" != "${target_expected}" ]
         exit 2
     fi
     echo "warning: archive target ${target_archive} does not match host ${target_expected}; continuing for non-system prefix" >&2
+fi
+
+if [ "${command_mode}" = "configure" ]; then
+    completed=0
+    run_configure
+    exit 0
 fi
 
 run_dependency_install

@@ -170,6 +170,37 @@ The installer never removes these state locations:
 
 ## First configuration
 
+For a first trial, run the built-in setup wizard:
+
+```sh
+sudo ./install.sh configure
+```
+
+The wizard asks for the WAN interface, LAN interface, LAN address, LAN services,
+and management placement. It writes a candidate file to
+`/usr/local/etc/routerd/router.yaml.configure`, shows a diff when an existing
+configuration is present, and installs it as
+`/usr/local/etc/routerd/router.yaml` only after confirmation.
+It then runs `routerd validate`, `routerd plan`, and `routerd apply --once`.
+
+Automation can use environment variables and skip prompts:
+
+```sh
+sudo ROUTERD_WAN_INTERFACE=ens18 \
+  ROUTERD_LAN_INTERFACE=ens19 \
+  ROUTERD_LAN_ADDRESS=192.168.10.1/24 \
+  ROUTERD_LAN_CIDR=192.168.10.0/24 \
+  ROUTERD_MGMT_MODE=lan \
+  ./install.sh configure --non-interactive --yes
+```
+
+Use `--no-apply` when you want only the YAML file.
+
+```sh
+sudo ./install.sh configure --no-apply
+```
+
+Manual configuration is still available.
 Copy a sample configuration into place and edit it for your interfaces:
 
 ```sh
