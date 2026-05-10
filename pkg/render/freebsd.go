@@ -168,7 +168,10 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			local := strings.TrimSpace(spec.LocalAddress)
 			remote := defaultString(spec.RemoteAddress, spec.AFTRIPv6)
 			if local == "" || remote == "" {
-				warnings = append(warnings, fmt.Sprintf("%s: FreeBSD gif render needs static localAddress and remoteAddress or aftrIPv6; dynamic DS-Lite remains runtime-only.", res.ID()))
+				// Dynamic DS-Lite is applied by routerd at runtime, after PD,
+				// AFTR resolution, and IPv4StaticAddress references converge.
+				// The rc.conf renderer intentionally leaves it out instead of
+				// emitting noisy warnings for the normal declarative path.
 				continue
 			}
 			ifname := freeBSDGifIfName(spec.TunnelName, len(dslites))

@@ -382,7 +382,7 @@ func TestFreeBSDRendersNAT44ExcludedDestinations(t *testing.T) {
 	}
 }
 
-func TestFreeBSDSkipsDynamicDSLiteGIFWithWarning(t *testing.T) {
+func TestFreeBSDSkipsDynamicDSLiteGIFWithoutWarning(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{
@@ -398,8 +398,8 @@ func TestFreeBSDSkipsDynamicDSLiteGIFWithWarning(t *testing.T) {
 	if strings.Contains(string(got.RCConf), "ifconfig_gif") {
 		t.Fatalf("dynamic DS-Lite must not render a static gif:\n%s", got.RCConf)
 	}
-	if len(got.Warnings) == 0 || !strings.Contains(strings.Join(got.Warnings, "\n"), "needs static localAddress") {
-		t.Fatalf("warnings = %#v", got.Warnings)
+	if len(got.Warnings) != 0 {
+		t.Fatalf("dynamic DS-Lite is runtime-applied and should not warn: %#v", got.Warnings)
 	}
 }
 

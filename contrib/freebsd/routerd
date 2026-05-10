@@ -70,12 +70,25 @@ routerd_prestart()
 
 routerd_pid()
 {
-    pgrep -f "^${procname} serve --config ${routerd_config} --socket ${routerd_socket}"
+    routerd_read_pidfile "${pidfile}" || pgrep -f "^${procname} serve --config ${routerd_config} --socket ${routerd_socket}"
 }
 
 routerd_supervisor_pid()
 {
-    pgrep -f "^daemon: ${name}"
+    routerd_read_pidfile "${supervisor_pidfile}" || pgrep -f "^daemon: ${name}"
+}
+
+routerd_read_pidfile()
+{
+    _file="$1"
+    if [ -r "${_file}" ]; then
+        read _pid < "${_file}"
+        if [ -n "${_pid}" ] && kill -0 "${_pid}" 2>/dev/null; then
+            echo "${_pid}"
+            return 0
+        fi
+    fi
+    return 1
 }
 
 routerd_start()
@@ -107,12 +120,28 @@ routerd_stop()
     fi
     echo "Stopping ${name}."
     if [ -n "${supervisor_pid}" ]; then
-        kill ${supervisor_pid}
+        kill "${supervisor_pid}" 2>/dev/null || true
     fi
     if [ -n "${child_pid}" ]; then
-        kill ${child_pid}
+        kill "${child_pid}" 2>/dev/null || true
     fi
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        if ! routerd_pid >/dev/null 2>&1 && ! routerd_supervisor_pid >/dev/null 2>&1; then
+            rm -f "${pidfile}" "${supervisor_pidfile}"
+            return 0
+        fi
+        sleep 1
+    done
+    warn "${name} did not stop after TERM; sending KILL"
+    supervisor_pid="$(routerd_supervisor_pid)"
+    child_pid="$(routerd_pid)"
+    if [ -n "${supervisor_pid}" ]; then
+        kill -KILL "${supervisor_pid}" 2>/dev/null || true
+    fi
+    if [ -n "${child_pid}" ]; then
+        kill -KILL "${child_pid}" 2>/dev/null || true
+    fi
+    for _ in 1 2 3 4 5; do
         if ! routerd_pid >/dev/null 2>&1 && ! routerd_supervisor_pid >/dev/null 2>&1; then
             rm -f "${pidfile}" "${supervisor_pidfile}"
             return 0

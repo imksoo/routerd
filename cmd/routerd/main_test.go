@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/netip"
@@ -841,6 +842,47 @@ exit 0
 	}
 	if !strings.Contains(string(routeCalls), "-n change default 192.0.0.1") {
 		t.Fatalf("route change not called for %s:\n%s", gif, routeCalls)
+	}
+}
+
+func TestCleanupLegacyFreeBSDStateDirMovesVarLibRouterd(t *testing.T) {
+	dir := t.TempDir()
+	oldDefaults := platformDefaults
+	oldLegacy := legacyFreeBSDStateDir
+	platformDefaults = platform.Defaults{
+		OS:       platform.OSFreeBSD,
+		StateDir: filepath.Join(dir, "var", "db", "routerd"),
+	}
+	legacyFreeBSDStateDir = filepath.Join(dir, "var", "lib", "routerd")
+	t.Cleanup(func() {
+		platformDefaults = oldDefaults
+		legacyFreeBSDStateDir = oldLegacy
+	})
+
+	staleLease := filepath.Join(legacyFreeBSDStateDir, "dhcpv6-client", "wan-pd", "lease.json")
+	if err := os.MkdirAll(filepath.Dir(staleLease), 0755); err != nil {
+		t.Fatalf("create legacy state: %v", err)
+	}
+	if err := os.WriteFile(staleLease, []byte(`{"currentPrefix":"2001:db8::/60"}`), 0644); err != nil {
+		t.Fatalf("write stale lease: %v", err)
+	}
+
+	moved, err := cleanupLegacyFreeBSDStateDir()
+	if err != nil {
+		t.Fatalf("cleanup legacy state: %v", err)
+	}
+	if len(moved) != 1 || !strings.Contains(moved[0], "legacy-var-lib-routerd-") {
+		t.Fatalf("moved = %v", moved)
+	}
+	if _, err := os.Stat(legacyFreeBSDStateDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy state dir still exists or unexpected stat error: %v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(platformDefaults.StateDir, "legacy-var-lib-routerd-*", "dhcpv6-client", "wan-pd", "lease.json"))
+	if err != nil {
+		t.Fatalf("glob moved lease: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("moved stale lease matches = %v", matches)
 	}
 }
 

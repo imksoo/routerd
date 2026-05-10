@@ -79,6 +79,7 @@ var (
 	pppoeCHAPSecretsPath       = platformDefaults.PPPoEChapSecretsFile
 	pppoePAPSecretsPath        = platformDefaults.PPPoEPapSecretsFile
 	pdClientLeaseDir           = filepath.Join(platformDefaults.StateDir, "dhcpv6-client")
+	legacyFreeBSDStateDir      = "/var/lib/routerd"
 )
 
 var errNoIPv6PrefixAvailable = errors.New("no IPv6 prefix available")
@@ -1456,6 +1457,14 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	}()); err != nil {
 		return nil, err
 	}
+	var cleanedLegacyState []string
+	if err := recordStageError("freebsd-legacy-state-cleanup", func() error {
+		var err error
+		cleanedLegacyState, err = cleanupLegacyFreeBSDStateDir()
+		return err
+	}()); err != nil {
+		return nil, err
+	}
 	var appliedIPv6DefaultRoutes []string
 	if err := recordStageError("ipv6-default-route", func() error {
 		var err error
@@ -1486,10 +1495,13 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	for _, artifact := range cleanedPreDSLiteOrphans {
 		fmt.Fprintf(stdout, "removed orphaned owned artifact %s\n", artifact)
 	}
+	for _, artifact := range cleanedLegacyState {
+		fmt.Fprintf(stdout, "moved legacy FreeBSD state %s\n", artifact)
+	}
 	for _, route := range appliedIPv6DefaultRoutes {
 		fmt.Fprintf(stdout, "applied IPv6 default route %s\n", route)
 	}
-	if len(changedFreeBSD) == 0 && len(appliedRuntime) == 0 && len(appliedHostnames) == 0 && len(appliedIPv6DelegatedAddresses) == 0 && len(dnsmasqChangedFiles) == 0 && len(appliedTunnels) == 0 && len(cleanedPreDSLiteOrphans) == 0 && len(appliedIPv6DefaultRoutes) == 0 {
+	if len(changedFreeBSD) == 0 && len(appliedRuntime) == 0 && len(appliedHostnames) == 0 && len(appliedIPv6DelegatedAddresses) == 0 && len(dnsmasqChangedFiles) == 0 && len(appliedTunnels) == 0 && len(cleanedPreDSLiteOrphans) == 0 && len(cleanedLegacyState) == 0 && len(appliedIPv6DefaultRoutes) == 0 {
 		fmt.Fprintln(stdout, "FreeBSD configuration already up to date")
 	}
 
@@ -1544,11 +1556,50 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 		"dnsmasqFiles":        fmt.Sprintf("%d", len(dnsmasqChangedFiles)),
 		"dsliteTunnels":       fmt.Sprintf("%d", len(appliedTunnels)),
 		"dsliteCleanup":       fmt.Sprintf("%d", len(cleanedPreDSLiteOrphans)),
+		"legacyStateCleanup":  fmt.Sprintf("%d", len(cleanedLegacyState)),
 		"ipv6DefaultRoutes":   fmt.Sprintf("%d", len(appliedIPv6DefaultRoutes)),
 		"ledgerCleanup":       fmt.Sprintf("%d", len(cleanedLedgerOrphans)),
 		"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 	})
 	return next, nil
+}
+
+func cleanupLegacyFreeBSDStateDir() ([]string, error) {
+	if platformDefaults.OS != platform.OSFreeBSD {
+		return nil, nil
+	}
+	legacy := filepath.Clean(legacyFreeBSDStateDir)
+	current := filepath.Clean(platformDefaults.StateDir)
+	if legacy == "" || current == "" || legacy == current {
+		return nil, nil
+	}
+	info, err := os.Stat(legacy)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("stat legacy FreeBSD state dir %s: %w", legacy, err)
+	}
+	if !info.IsDir() {
+		return nil, nil
+	}
+	if err := os.MkdirAll(current, 0755); err != nil {
+		return nil, fmt.Errorf("create FreeBSD state dir %s: %w", current, err)
+	}
+	destination := filepath.Join(current, "legacy-var-lib-routerd-"+time.Now().UTC().Format("20060102T150405Z"))
+	for suffix := 0; ; suffix++ {
+		candidate := destination
+		if suffix > 0 {
+			candidate = fmt.Sprintf("%s-%d", destination, suffix)
+		}
+		err := os.Rename(legacy, candidate)
+		if err == nil {
+			return []string{legacy + " -> " + candidate}, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("move legacy FreeBSD state dir %s to %s: %w", legacy, candidate, err)
+		}
+	}
 }
 
 type stateChange struct {
