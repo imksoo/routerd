@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">USB persistence placeholder</title>
+  <desc id="desc">Placeholder for USB persistence wizard prompts.</desc>
+  <rect width="1280" height="720" fill="#f7fafc"/>
+  <rect x="170" y="132" width="940" height="456" rx="22" fill="#ffffff" stroke="#c7d0e3"/>
+  <text x="220" y="198" font-family="Arial, sans-serif" font-size="30" fill="#1f2937">image://wizard-usb-persistence</text>
+  <text x="220" y="282" font-family="Arial, sans-serif" font-size="30" fill="#24324b">Save config to USB? yes</text>
+  <text x="220" y="350" font-family="Arial, sans-serif" font-size="30" fill="#24324b">Device: /dev/sdb1  ext4  ROUTERD</text>
+  <text x="220" y="418" font-family="Arial, sans-serif" font-size="30" fill="#24324b">Daily flush: yes</text>
+  <text x="220" y="486" font-family="Arial, sans-serif" font-size="30" fill="#24324b">Log tmpfs limit: 100M</text>
+</svg>

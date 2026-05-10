@@ -43,6 +43,18 @@ routerd intentionally covers a wide spectrum of router work:
 | Operations | Web Console, `routerctl`, OpenTelemetry, log stores |
 | Bootstrap | packages, sysctl profiles, systemd units, live ISO |
 
+The endpoints of that spectrum are deliberately far apart:
+
+- **Virtual SDN/VNET routing:** a router VM that connects Proxmox VE SDN
+  segments, WireGuard overlays, VRFs, VXLAN experiments, and lab-only policy
+  routes.
+- **Diskless PC router:** a small x86 mini PC that boots a live ISO, restores
+  `router.yaml` from USB, buffers logs in RAM, and serves a physical LAN.
+
+Few router projects treat both ends as the same configuration problem. routerd
+does. The difference is mostly the host artifacts being rendered, not the
+intent model.
+
 The breadth matters because routers fail at the boundaries. A DNS choice may
 depend on a DHCPv6 information option. A DS-Lite tunnel may depend on an AFTR
 record that only resolves through a specific upstream. A route should not

@@ -40,6 +40,17 @@ routerd は、次のような運用を重視します。
 | 運用 | Web Console、`routerctl`、OpenTelemetry、ログストア |
 | 初期構築 | パッケージ、sysctl profile、systemd unit、ライブ ISO |
 
+この spectrum の両端は、かなり離れています。
+
+- **仮想 SDN/VNET 間ルーティング:** Proxmox VE SDN、WireGuard overlay、
+  VRF、VXLAN 実験、ラボ用 policy route をつなぐルーター VM です。
+- **ディスクレス PC ルーター:** 小型 x86 mini PC がライブ ISO から起動し、
+  USB から `router.yaml` を復元し、ログを RAM に保持し、物理 LAN を提供します。
+
+この両端を同じ設定問題として扱うルータープロジェクトは多くありません。
+routerd はそこを同じ問題として扱います。
+違いは主に生成されるホスト成果物であり、意図モデルではありません。
+
 範囲が広いことには意味があります。
 ルーターの障害は境界で起きやすいからです。
 DNS の選択が DHCPv6 information option に依存することがあります。

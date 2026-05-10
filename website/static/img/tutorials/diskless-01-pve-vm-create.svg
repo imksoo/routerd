@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">PVE VM creation placeholder</title>
+  <desc id="desc">Placeholder for a Proxmox VE VM creation screenshot.</desc>
+  <rect width="1280" height="720" fill="#f4f6fb"/>
+  <rect x="48" y="48" width="1184" height="624" rx="18" fill="#ffffff" stroke="#c7d0e3"/>
+  <rect x="48" y="48" width="1184" height="58" rx="18" fill="#24324b"/>
+  <text x="80" y="86" font-family="Arial, sans-serif" font-size="24" fill="#ffffff">image://pve-vm-create</text>
+  <rect x="80" y="142" width="280" height="486" rx="12" fill="#edf2fa"/>
+  <rect x="396" y="142" width="780" height="70" rx="10" fill="#e7eef8"/>
+  <rect x="396" y="242" width="780" height="70" rx="10" fill="#e7eef8"/>
+  <rect x="396" y="342" width="780" height="70" rx="10" fill="#e7eef8"/>
+  <rect x="396" y="442" width="780" height="70" rx="10" fill="#e7eef8"/>
+  <text x="412" y="184" font-family="Arial, sans-serif" font-size="28" fill="#24324b">Create VM: 2 vCPU, 1536 MiB RAM, serial console</text>
+  <text x="412" y="284" font-family="Arial, sans-serif" font-size="28" fill="#24324b">WAN: bridge vmbr0 or upstream test network</text>
+  <text x="412" y="384" font-family="Arial, sans-serif" font-size="28" fill="#24324b">LAN: isolated bridge for DHCP and RA testing</text>
+  <text x="412" y="484" font-family="Arial, sans-serif" font-size="28" fill="#24324b">Boot order: live ISO first</text>
+</svg>

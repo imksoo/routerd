@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Serial console placeholder</title>
+  <desc id="desc">Placeholder for qm terminal serial console output.</desc>
+  <rect width="1280" height="720" fill="#0d1117"/>
+  <text x="48" y="72" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="30" fill="#7ee787">image://serial-console</text>
+  <text x="48" y="142" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">routerd live ISO booted</text>
+  <text x="48" y="198" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">login: root</text>
+  <text x="48" y="254" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">Starting install.sh configure...</text>
+  <text x="48" y="350" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#58a6ff">Router name [routerd-live-demo]:</text>
+</svg>

@@ -4,6 +4,12 @@ title: Diskless mini PC walkthrough
 
 # Diskless mini PC walkthrough
 
+:::info Screenshot placeholders
+Images in this tutorial are structured placeholders. Replace them with real
+screenshots from Proxmox VE, the serial console, and a LAN client when you
+capture a validation run.
+:::
+
 This tutorial turns a small x86 mini PC into a router without installing an OS
 to its internal disk. The router boots the routerd live ISO, stores
 configuration on USB, buffers logs in RAM, and flushes a compact archive to USB
@@ -48,6 +54,8 @@ sha256sum -c routerd-live.iso.sha256
 Boot the mini PC from the ISO. The same image works on a video console and a
 serial console.
 
+![PVE VM creation placeholder](/img/tutorials/diskless-01-pve-vm-create.svg)
+
 For Proxmox VE:
 
 ```sh
@@ -68,9 +76,13 @@ qm terminal 200
 
 Use an isolated LAN bridge for early DHCP and RA testing.
 
+![PVE ISO mount placeholder](/img/tutorials/diskless-02-iso-mount.svg)
+
 ## 3. Run the wizard
 
 Log in as `root`. The live ISO starts the setup wizard.
+
+![Serial console placeholder](/img/tutorials/diskless-03-serial-console.svg)
 
 The wizard asks for:
 
@@ -83,8 +95,12 @@ The wizard asks for:
 - management placement
 - USB persistence
 
+![Wizard WAN and LAN placeholder](/img/tutorials/diskless-04-wizard-wan-lan.svg)
+
 When asked about USB persistence, choose `yes` and select the USB partition.
 If the partition is labeled `ROUTERD`, it should be listed automatically.
+
+![Wizard USB persistence placeholder](/img/tutorials/diskless-05-usb-persistence.svg)
 
 Enable the daily USB flush job unless you are only testing. The default log
 buffer is 100 MiB under `/run/routerd/logs`.
@@ -116,6 +132,8 @@ Check status:
 routerctl status
 ```
 
+![routerctl status placeholder](/img/tutorials/diskless-06-routerctl-status.svg)
+
 The phase should become `Healthy`.
 
 ## 5. Test a LAN client
@@ -135,6 +153,8 @@ Basic checks:
 dig @192.168.10.1 www.google.com A +short
 curl -4 https://www.google.com/generate_204
 ```
+
+![LAN client curl placeholder](/img/tutorials/diskless-07-client-curl.svg)
 
 Adjust the address if you chose a different LAN prefix.
 

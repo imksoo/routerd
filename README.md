@@ -43,6 +43,24 @@ system, but observed like a service.
   systemd-networkd adoption, systemd units, log forwarding, and Web Console
   setup are declared as resources.
 
+## Where routerd fits
+
+routerd is designed to cover a rare span: a virtual router between SDN/VNET
+segments and a diskless physical mini PC router can use the same resource
+model. The host artifacts differ. The intent file stays recognizable.
+
+| Project style | Strong fit | Tradeoff | routerd difference |
+| --- | --- | --- | --- |
+| VyOS | Router CLI and network OS workflows | Configuration is centered on a router OS environment | routerd keeps ordinary Linux/FreeBSD host integration visible as typed resources |
+| OPNsense | Appliance UI, firewall workflows, plugins | GUI-first operation can hide generated state | routerd keeps configuration in YAML and uses the Web Console for read-only observation |
+| OpenWrt | Embedded hardware and package ecosystem | Less natural for Proxmox SDN/VNET labs or full Linux hosts | routerd targets general-purpose hosts and live ISO mini PCs |
+| Linux shell scripts | Fast local automation | Hard to audit desired state and event history later | routerd records resources, plans, status, generations, and events |
+| Kubernetes-style controllers | Strong reconciliation model | Cluster assumptions are heavy for a router host | routerd uses controller ideas locally, with the host as the boundary |
+
+That makes routerd useful when a network grows sideways: from a Proxmox lab, to
+a home DS-Lite router, to WireGuard/Tailscale overlays, to a diskless mini PC
+that can be rebuilt from USB state.
+
 ## Current Scope
 
 Implemented resource areas include:

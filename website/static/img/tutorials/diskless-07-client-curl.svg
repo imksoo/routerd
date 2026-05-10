@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Client curl placeholder</title>
+  <desc id="desc">Placeholder for LAN client dig and curl output.</desc>
+  <rect width="1280" height="720" fill="#0d1117"/>
+  <text x="48" y="72" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="30" fill="#7ee787">image://client-curl-result</text>
+  <text x="48" y="150" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">$ dig @192.168.10.1 www.google.com A +short</text>
+  <text x="48" y="206" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">142.250.196.100</text>
+  <text x="48" y="300" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">$ curl -4 -I https://www.google.com/generate_204</text>
+  <text x="48" y="356" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">HTTP/2 204</text>
+</svg>

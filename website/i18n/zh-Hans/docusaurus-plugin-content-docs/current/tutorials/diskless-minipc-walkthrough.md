@@ -4,6 +4,11 @@ title: 无磁盘 mini PC 教程
 
 # 无磁盘 mini PC 教程
 
+:::info 图片 placeholder
+本文图片目前是结构 placeholder。取得 Proxmox VE、serial console、
+LAN client 的实机截图后，可以直接替换。
+:::
+
 本教程说明如何用 routerd live ISO，把小型 x86 mini PC 做成不需要内置磁盘的路由器。
 配置保存在 USB，日志先写入 RAM，再每天一次压缩写回 USB。
 
@@ -38,6 +43,8 @@ sha256sum -c routerd-live.iso.sha256
 
 在 Proxmox VE 中，可以使用 serial console：
 
+![PVE VM creation placeholder](/img/tutorials/diskless-01-pve-vm-create.svg)
+
 ```sh
 qm create 200 \
   --name routerd-live-demo \
@@ -56,14 +63,22 @@ qm terminal 200
 
 早期测试 DHCP 或 RA 时，请使用隔离的 LAN bridge。
 
+![PVE ISO mount placeholder](/img/tutorials/diskless-02-iso-mount.svg)
+
 ## 运行配置向导
 
 以 `root` 登录。live ISO 会启动 `install.sh configure`。
 
+![Serial console placeholder](/img/tutorials/diskless-03-serial-console.svg)
+
 向导会询问 WAN、LAN、LAN 地址、DHCP、DNS、NTP、RA、firewall、NAT44、
 管理接口，以及 USB persistence。
 
+![Wizard WAN and LAN placeholder](/img/tutorials/diskless-04-wizard-wan-lan.svg)
+
 选择 USB persistence 后，指定 USB 分区。若标签是 `ROUTERD`，通常会自动列出。
+
+![Wizard USB persistence placeholder](/img/tutorials/diskless-05-usb-persistence.svg)
 
 ## 确认套用
 
@@ -79,7 +94,18 @@ qm terminal 200
 routerctl status
 ```
 
+![routerctl status placeholder](/img/tutorials/diskless-06-routerctl-status.svg)
+
 状态应为 `Healthy`。
+
+## 测试 LAN client
+
+```sh
+dig @192.168.10.1 www.google.com A +short
+curl -4 https://www.google.com/generate_204
+```
+
+![LAN client curl placeholder](/img/tutorials/diskless-07-client-curl.svg)
 
 ## 重启测试
 

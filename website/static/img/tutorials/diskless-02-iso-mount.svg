@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">ISO mount placeholder</title>
+  <desc id="desc">Placeholder for a Proxmox VE ISO mount screenshot.</desc>
+  <rect width="1280" height="720" fill="#f6f8fb"/>
+  <circle cx="640" cy="360" r="220" fill="#e6eef8" stroke="#9db4d2" stroke-width="5"/>
+  <circle cx="640" cy="360" r="74" fill="#ffffff" stroke="#9db4d2" stroke-width="5"/>
+  <rect x="210" y="88" width="860" height="92" rx="14" fill="#24324b"/>
+  <text x="244" y="146" font-family="Arial, sans-serif" font-size="30" fill="#ffffff">image://pve-iso-mount</text>
+  <text x="312" y="628" font-family="Arial, sans-serif" font-size="30" fill="#24324b">Mount routerd-live.iso as CD-ROM</text>
+</svg>

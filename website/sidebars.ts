@@ -24,6 +24,7 @@ const sidebars: SidebarsConfig = {
       label: 'Tutorials',
       collapsed: false,
       items: [
+        'tutorials/index',
         'tutorials/getting-started',
         'tutorials/install',
         'tutorials/diskless-minipc-walkthrough',

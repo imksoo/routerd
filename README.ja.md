@@ -40,6 +40,25 @@ routerd の基本思想は単純です。
   systemd-networkd の引き継ぎ、systemd ユニット、ログ転送、Web Console も
   リソースとして宣言します。
 
+## routerd の位置づけ
+
+routerd は、珍しい広さの spectrum を狙っています。
+SDN/VNET セグメント間をつなぐ仮想ルーターと、ディスクレス物理 mini PC
+ルーターを、同じリソースモデルで扱えます。
+生成するホスト成果物は違っても、意図ファイルは同じ形で読めます。
+
+| 種類 | 得意な領域 | トレードオフ | routerd の違い |
+| --- | --- | --- | --- |
+| VyOS | ルーター CLI とネットワーク OS の運用 | ルーター OS 環境を中心に設定します | routerd は通常の Linux/FreeBSD ホスト統合を型付きリソースとして見せます |
+| OPNsense | アプライアンス UI、firewall 運用、plugin | GUI 優先で生成状態が見えにくいことがあります | routerd は YAML を正とし、Web Console は読み取り専用の観測に使います |
+| OpenWrt | 組み込み機器と package ecosystem | Proxmox SDN/VNET ラボや通常 Linux ホストでは扱いに差が出ます | routerd は汎用ホストとライブ ISO mini PC を主対象にします |
+| Linux シェルスクリプト | 手早いローカル自動化 | 期待状態とイベント履歴を後から監査しにくくなります | routerd はリソース、計画、状態、世代、イベントを残します |
+| Kubernetes 型 controller | 強い調整モデル | ルーターホストには cluster 前提が重くなります | routerd は controller の考え方をローカルホスト内で使います |
+
+そのため routerd は、Proxmox ラボから家庭用 DS-Lite ルーター、
+WireGuard/Tailscale overlay、USB 状態から復元できるディスクレス mini PC へと、
+ネットワークが横に広がる場面で使いやすくなります。
+
 ## 現在できること
 
 - インターフェース別名、リンク、ブリッジ、VRF、VXLAN、WireGuard、
