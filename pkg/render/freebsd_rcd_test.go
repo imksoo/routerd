@@ -76,6 +76,91 @@ func TestFreeBSDRenderSynthesizesDHCPv6ClientRCD(t *testing.T) {
 	}
 }
 
+func TestFreeBSDRenderSynthesizesDHCPv4ClientRCD(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet0", AdminUp: true},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+			Metadata: api.ObjectMeta{Name: "wan-v4"},
+			Spec:     api.DHCPv4LeaseSpec{Interface: "wan", Hostname: "router04"},
+		},
+	}}}
+	cfg, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(cfg.RCDScripts["routerd_dhcpv4_client_wan_v4"])
+	for _, want := range []string{
+		`PROVIDE: routerd_dhcpv4_client_wan_v4`,
+		`procname="/usr/sbin/daemon"`,
+		`'/usr/local/sbin/routerd-dhcpv4-client'`,
+		`'--interface' 'vtnet0'`,
+		`'--socket' '/var/run/routerd/dhcpv4-client/wan-v4.sock'`,
+		`'--lease-file' '/var/db/routerd/dhcpv4-client/wan-v4/lease.json'`,
+		`'--event-file' '/var/db/routerd/dhcpv4-client/wan-v4/events.jsonl'`,
+		`'--hostname' 'router04'`,
+		`mkdir -p '/var/run/routerd/dhcpv4-client'`,
+		`mkdir -p '/var/db/routerd/dhcpv4-client/wan-v4'`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("rc.d script missing %q:\n%s", want, script)
+		}
+	}
+}
+
+func TestFreeBSDRenderSkipsDHCPClientRCDWhenRouterdSupervisesClients(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "routerd.service"},
+			Spec: api.SystemdUnitSpec{ExecStart: []string{
+				"/usr/local/sbin/routerd",
+				"serve",
+				"--config",
+				"/usr/local/etc/routerd/router.yaml",
+				"--controller-chain",
+				"--controller-chain-dry-run-dhcpv4lease=false",
+			}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet0", AdminUp: true},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+			Metadata: api.ObjectMeta{Name: "wan-v4"},
+			Spec:     api.DHCPv4LeaseSpec{Interface: "wan", Hostname: "router04"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+			Metadata: api.ObjectMeta{Name: "wan-pd"},
+			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "1"},
+		},
+	}}}
+	cfg, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.RCDScripts["routerd"]; !ok {
+		t.Fatalf("rc.d scripts missing routerd: %#v", cfg.RCDScripts)
+	}
+	if _, ok := cfg.RCDScripts["routerd_dhcpv4_client_wan_v4"]; ok {
+		t.Fatalf("DHCPv4 rc.d script should not be synthesized when routerd supervises clients")
+	}
+	if _, ok := cfg.RCDScripts["routerd_dhcpv6_client_wan_pd"]; ok {
+		t.Fatalf("DHCPv6 rc.d script should not be synthesized when routerd supervises clients")
+	}
+	routerdScript := string(cfg.RCDScripts["routerd"])
+	if !strings.Contains(routerdScript, `'--controller-chain-dry-run-dhcpv4lease=false'`) {
+		t.Fatalf("routerd rc.d script missing DHCPv4Lease flag:\n%s", routerdScript)
+	}
+}
+
 func TestFreeBSDRenderIncludesSystemdUnitAsRCD(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

@@ -257,6 +257,7 @@ spec:
           - --controller-chain-dry-run-route=false
           - --controller-chain-dry-run-ra=true
           - --controller-chain-dry-run-dhcpv6=false
+          - --controller-chain-dry-run-dhcpv4lease=false
           - --controller-chain-dry-run-dns-resolver=false
           - --controller-chain-dry-run-nat=false
           - --controller-chain-dry-run-firewall=false

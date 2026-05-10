@@ -29,7 +29,7 @@ func TestLeaseFromACK(t *testing.T) {
 	packet[0], packet[1], packet[2] = 2, 1, 6
 	copy(packet[16:20], []byte{192, 0, 2, 10})
 	copy(packet[236:240], []byte{99, 130, 83, 99})
-	opts := []byte{OptionMessageType, 1, MessageACK, OptionRouter, 4, 192, 0, 2, 1, OptionDNSServer, 8, 192, 0, 2, 53, 192, 0, 2, 54, OptionLeaseTime, 4, 0, 0, 14, 16, OptionEnd}
+	opts := []byte{OptionMessageType, 1, MessageACK, OptionSubnetMask, 4, 255, 255, 255, 0, OptionRouter, 4, 192, 0, 2, 1, OptionDNSServer, 8, 192, 0, 2, 53, 192, 0, 2, 54, OptionLeaseTime, 4, 0, 0, 14, 16, OptionEnd}
 	packet = append(packet, opts...)
 	msg, err := Decode(packet)
 	if err != nil {
@@ -39,6 +39,9 @@ func TestLeaseFromACK(t *testing.T) {
 	lease := LeaseFromACK(msg, now)
 	if lease.Address.String() != "192.0.2.10" || lease.DefaultGateway.String() != "192.0.2.1" {
 		t.Fatalf("lease = %+v", lease)
+	}
+	if lease.PrefixLength != 24 {
+		t.Fatalf("prefix length = %d", lease.PrefixLength)
 	}
 	if got := binary.BigEndian.Uint32(msg.Options[OptionLeaseTime]); got != 3600 {
 		t.Fatalf("lease option = %d", got)

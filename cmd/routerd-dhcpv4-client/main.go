@@ -17,16 +17,15 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	"golang.org/x/sys/unix"
 
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/dhcpv4client"
 	routerotel "routerd/pkg/otel"
+	"routerd/pkg/platform"
 )
 
 const daemonKind = "routerd-dhcpv4-client"
@@ -91,15 +90,25 @@ func parseOptions(name string, args []string) (options, error) {
 		return options{}, errors.New("--interface is required")
 	}
 	if opts.socketPath == "" {
-		opts.socketPath = filepath.Join("/run/routerd/dhcpv4-client", opts.resource+".sock")
+		defaults, _ := platform.Current()
+		opts.socketPath = filepath.Join(defaults.RuntimeDir, "dhcpv4-client", opts.resource+".sock")
 	}
 	if opts.leaseFile == "" {
-		opts.leaseFile = filepath.Join("/var/lib/routerd/dhcpv4-client", opts.resource, "lease.json")
+		defaults, _ := platform.Current()
+		opts.leaseFile = filepath.Join(defaults.StateDir, "dhcpv4-client", opts.resource, "lease.json")
 	}
 	if opts.eventFile == "" {
-		opts.eventFile = filepath.Join("/var/lib/routerd/dhcpv4-client", opts.resource, "events.jsonl")
+		defaults, _ := platform.Current()
+		opts.eventFile = filepath.Join(defaults.StateDir, "dhcpv4-client", opts.resource, "events.jsonl")
 	}
 	return opts, nil
+}
+
+type dhcpv4PacketConn interface {
+	ReadFromUDP([]byte) (int, *net.UDPAddr, error)
+	WriteToUDP([]byte, *net.UDPAddr) (int, error)
+	SetReadDeadline(time.Time) error
+	Close() error
 }
 
 func onceCommand(args []string, stdout io.Writer) error {
@@ -146,7 +155,7 @@ func daemonCommand(args []string) error {
 type dhcpv4Daemon struct {
 	opts       options
 	ifi        *net.Interface
-	conn       *net.UDPConn
+	conn       dhcpv4PacketConn
 	startedAt  time.Time
 	mu         sync.Mutex
 	cond       *sync.Cond
@@ -430,6 +439,7 @@ func (d *dhcpv4Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		Observed: map[string]string{
 			"interface":      snapshot.Interface,
 			"currentAddress": snapshot.CurrentAddress,
+			"prefixLength":   strconv.Itoa(snapshot.PrefixLength),
 			"defaultGateway": snapshot.DefaultGateway,
 			"dnsServers":     jsonStringList(snapshot.DNSServers),
 			"domain":         snapshot.Domain,
@@ -558,29 +568,6 @@ func (d *dhcpv4Daemon) eventsSinceLocked(since, topic string) ([]daemonapi.Daemo
 
 func (d *dhcpv4Daemon) daemonRef() daemonapi.DaemonRef {
 	return daemonapi.DaemonRef{Name: daemonKind + "-" + d.opts.resource, Kind: daemonKind, Instance: d.opts.resource}
-}
-
-func listenDHCPv4(ifname string) (*net.UDPConn, error) {
-	lc := net.ListenConfig{Control: func(network, address string, c syscall.RawConn) error {
-		var sockErr error
-		if err := c.Control(func(fd uintptr) {
-			sockErr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
-			if sockErr == nil {
-				sockErr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_BROADCAST, 1)
-			}
-			if sockErr == nil && ifname != "" {
-				sockErr = bindSocketToDevice(int(fd), ifname)
-			}
-		}); err != nil && sockErr == nil {
-			sockErr = err
-		}
-		return sockErr
-	}}
-	pc, err := lc.ListenPacket(context.Background(), "udp4", ":68")
-	if err != nil {
-		return nil, err
-	}
-	return pc.(*net.UDPConn), nil
 }
 
 func resourcePhase(state dhcpv4client.State) string {

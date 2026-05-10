@@ -39,31 +39,56 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		}
 		out[name] = data
 	}
+	synthesizeClientDaemons := !freeBSDRouterdSupervisesClientDaemons(router)
 	aliases, err := nftOutboundAliases(router)
 	if err != nil {
 		return nil, err
 	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "DHCPv6PrefixDelegation" {
-			continue
+	if synthesizeClientDaemons {
+		for _, res := range router.Spec.Resources {
+			if res.Kind != "DHCPv6PrefixDelegation" {
+				continue
+			}
+			spec, err := res.DHCPv6PrefixDelegationSpec()
+			if err != nil {
+				return nil, err
+			}
+			ifname := aliases[spec.Interface]
+			if ifname == "" {
+				return nil, fmt.Errorf("%s references interface %q with no ifname", res.ID(), spec.Interface)
+			}
+			name := freeBSDServiceName("routerd-dhcpv6-client@" + res.Metadata.Name + ".service")
+			if explicit[name] {
+				continue
+			}
+			data, err := FreeBSDRCDScript(name, freeBSDDHCPv6ClientSystemdSpec(res.Metadata.Name, ifname, spec, telemetryEnv))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", res.ID(), err)
+			}
+			out[name] = data
 		}
-		spec, err := res.DHCPv6PrefixDelegationSpec()
-		if err != nil {
-			return nil, err
+		for _, res := range router.Spec.Resources {
+			if res.Kind != "DHCPv4Lease" {
+				continue
+			}
+			spec, err := res.DHCPv4LeaseSpec()
+			if err != nil {
+				return nil, err
+			}
+			ifname := aliases[spec.Interface]
+			if ifname == "" {
+				return nil, fmt.Errorf("%s references interface %q with no ifname", res.ID(), spec.Interface)
+			}
+			name := freeBSDServiceName("routerd-dhcpv4-client@" + res.Metadata.Name + ".service")
+			if explicit[name] {
+				continue
+			}
+			data, err := FreeBSDRCDScript(name, freeBSDDHCPv4ClientSystemdSpec(res.Metadata.Name, ifname, spec, telemetryEnv))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", res.ID(), err)
+			}
+			out[name] = data
 		}
-		ifname := aliases[spec.Interface]
-		if ifname == "" {
-			return nil, fmt.Errorf("%s references interface %q with no ifname", res.ID(), spec.Interface)
-		}
-		name := freeBSDServiceName("routerd-dhcpv6-client@" + res.Metadata.Name + ".service")
-		if explicit[name] {
-			continue
-		}
-		data, err := FreeBSDRCDScript(name, freeBSDDHCPv6ClientSystemdSpec(res.Metadata.Name, ifname, spec, telemetryEnv))
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", res.ID(), err)
-		}
-		out[name] = data
 	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "HealthCheck" {
@@ -163,6 +188,68 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		out[name] = data
 	}
 	return out, nil
+}
+
+func freeBSDRouterdSupervisesClientDaemons(router *api.Router) bool {
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "SystemdUnit" {
+			continue
+		}
+		spec, err := res.SystemdUnitSpec()
+		if err != nil || defaultString(spec.State, "present") == "absent" {
+			continue
+		}
+		unitName := defaultString(spec.UnitName, res.Metadata.Name)
+		if freeBSDServiceName(unitName) != "routerd" {
+			continue
+		}
+		if !containsFreeBSDArg(spec.ExecStart, "--controller-chain") {
+			continue
+		}
+		if freeBSDBoolFlagValue(spec.ExecStart, "--controller-chain-supervise-client-daemons", true) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFreeBSDArg(args []string, needle string) bool {
+	for _, arg := range args {
+		if arg == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func freeBSDBoolFlagValue(args []string, flag string, defaultValue bool) bool {
+	for i, arg := range args {
+		if arg == flag {
+			if i+1 >= len(args) {
+				return true
+			}
+			switch strings.ToLower(strings.TrimSpace(args[i+1])) {
+			case "false", "0", "no", "off":
+				return false
+			case "true", "1", "yes", "on":
+				return true
+			default:
+				return true
+			}
+		}
+		if strings.HasPrefix(arg, flag+"=") {
+			value := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(arg, flag+"=")))
+			switch value {
+			case "false", "0", "no", "off":
+				return false
+			case "true", "1", "yes", "on":
+				return true
+			default:
+				return defaultValue
+			}
+		}
+	}
+	return defaultValue
 }
 
 func wireGuardPeerSpecs(router *api.Router, ifname string) []api.WireGuardPeerSpec {
@@ -307,6 +394,51 @@ func freeBSDDHCPv6ClientSystemdSpec(resource, ifname string, spec api.DHCPv6Pref
 		LogsDirectory:            []string{"routerd"},
 		ReadWritePaths:           []string{"/var/run/routerd", "/var/db/routerd", "/var/log/routerd"},
 		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET6"},
+		ProtectSystem:            "strict",
+		ProtectHome:              "true",
+		NoNewPrivileges:          &noNewPrivileges,
+		PrivateTmp:               &privateTmp,
+	}
+}
+
+func freeBSDDHCPv4ClientSystemdSpec(resource, ifname string, spec api.DHCPv4LeaseSpec, telemetryEnv []string) api.SystemdUnitSpec {
+	args := []string{
+		"/usr/local/sbin/routerd-dhcpv4-client",
+		"daemon",
+		"--resource", resource,
+		"--interface", ifname,
+		"--socket", "/var/run/routerd/dhcpv4-client/" + resource + ".sock",
+		"--lease-file", "/var/db/routerd/dhcpv4-client/" + resource + "/lease.json",
+		"--event-file", "/var/db/routerd/dhcpv4-client/" + resource + "/events.jsonl",
+	}
+	if spec.Hostname != "" {
+		args = append(args, "--hostname", spec.Hostname)
+	}
+	if spec.RequestedAddress != "" {
+		args = append(args, "--requested-address", spec.RequestedAddress)
+	}
+	if spec.ClassID != "" {
+		args = append(args, "--class-id", spec.ClassID)
+	}
+	if spec.ClientID != "" {
+		args = append(args, "--client-id", spec.ClientID)
+	}
+	noNewPrivileges := true
+	privateTmp := true
+	return api.SystemdUnitSpec{
+		Description:              "routerd DHCPv4 client " + resource,
+		ExecStart:                args,
+		Environment:              telemetryEnv,
+		Wants:                    []string{"NETWORKING"},
+		After:                    []string{"NETWORKING"},
+		Restart:                  "always",
+		RestartSec:               "5s",
+		RuntimeDirectory:         []string{"routerd", "routerd/dhcpv4-client"},
+		RuntimeDirectoryPreserve: "yes",
+		StateDirectory:           []string{"routerd", "routerd/dhcpv4-client", "routerd/dhcpv4-client/" + resource},
+		LogsDirectory:            []string{"routerd"},
+		ReadWritePaths:           []string{"/var/run/routerd", "/var/db/routerd", "/var/log/routerd"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET"},
 		ProtectSystem:            "strict",
 		ProtectHome:              "true",
 		NoNewPrivileges:          &noNewPrivileges,

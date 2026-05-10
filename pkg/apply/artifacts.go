@@ -145,12 +145,6 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		return []resource.Intent{artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "platform-network", nil)}
-	case "DHCPv4Address":
-		spec, err := res.DHCPv4AddressSpec()
-		if err != nil {
-			return nil
-		}
-		return []resource.Intent{artifact("routerd.dhcpv4.client", aliases[spec.Interface], resource.ActionEnsure, "routerd-dhcpv4-client", nil)}
 	case "DHCPv4Lease":
 		return []resource.Intent{artifact("routerd.dhcpv4.client", res.Metadata.Name, resource.ActionEnsure, "routerd-dhcpv4-client", nil)}
 	case "WireGuardInterface":

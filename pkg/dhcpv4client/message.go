@@ -69,6 +69,7 @@ type Config struct {
 
 type Lease struct {
 	Address          netip.Addr
+	PrefixLength     int
 	ServerID         netip.Addr
 	DefaultGateway   netip.Addr
 	BroadcastAddress netip.Addr
@@ -204,6 +205,7 @@ func LeaseFromACK(msg Message, now time.Time) Lease {
 	}
 	lease := Lease{
 		Address:          msg.YIAddr,
+		PrefixLength:     optionMaskPrefixLength(msg.Options[OptionSubnetMask]),
 		ServerID:         optionAddr(msg.Options[OptionServerID]),
 		DefaultGateway:   firstAddr(msg.Options[OptionRouter]),
 		BroadcastAddress: optionAddr(msg.Options[OptionBroadcastAddress]),
@@ -228,6 +230,18 @@ func LeaseFromACK(msg Message, now time.Time) Lease {
 		lease.T2 = time.Duration(float64(lease.LeaseTime) * 0.875)
 	}
 	return lease
+}
+
+func optionMaskPrefixLength(b []byte) int {
+	if len(b) != 4 {
+		return 0
+	}
+	mask := net.IPMask([]byte{b[0], b[1], b[2], b[3]})
+	ones, bits := mask.Size()
+	if bits != 32 || ones < 0 {
+		return 0
+	}
+	return ones
 }
 
 func RequestOptions(cfg Config, offered Message) map[byte][]byte {

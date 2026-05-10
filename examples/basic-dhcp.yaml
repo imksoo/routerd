@@ -16,10 +16,8 @@ spec:
         managed: true
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Address
+      kind: DHCPv4Lease
       metadata:
         name: wan-dhcpv4
       spec:
         interface: wan
-        client: dhclient
-        required: true

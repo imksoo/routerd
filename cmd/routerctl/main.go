@@ -1167,7 +1167,6 @@ func canonicalShowKind(kind string) string {
 		"dhcpv6prefixdelegation": "DHCPv6PrefixDelegation",
 		"ipv4static":             "IPv4StaticAddress",
 		"ipv4staticaddress":      "IPv4StaticAddress",
-		"dhcpv4address":          "DHCPv4Address",
 		"dhcpv4lease":            "DHCPv4Lease",
 		"dhcpv4server":           "DHCPv4Server",
 		"dhcpv4scope":            "DHCPv4Scope",
@@ -1451,12 +1450,9 @@ func observeResource(res api.Resource, aliases map[string]string, opts showOptio
 	case "IPv4StaticAddress":
 		spec, _ := res.IPv4StaticAddressSpec()
 		return map[string]any{"interface": aliases[spec.Interface], "addresses": interfaceIPv4Addresses(aliases[spec.Interface])}
-	case "DHCPv4Address":
-		spec, _ := res.DHCPv4AddressSpec()
-		return map[string]any{"interface": aliases[spec.Interface], "addresses": interfaceIPv4Addresses(aliases[spec.Interface])}
 	case "DHCPv4Lease":
 		spec, _ := res.DHCPv4LeaseSpec()
-		return map[string]any{"interface": aliases[spec.Interface]}
+		return map[string]any{"interface": aliases[spec.Interface], "addresses": interfaceIPv4Addresses(aliases[spec.Interface])}
 	case "DHCPv6PrefixDelegation":
 		spec, _ := res.DHCPv6PrefixDelegationSpec()
 		return map[string]any{"interface": aliases[spec.Interface]}
@@ -1555,7 +1551,6 @@ func statePrefixForKind(kind, name string) string {
 	prefixes := map[string]string{
 		"Interface":         "interface.",
 		"IPv4StaticAddress": "ipv4StaticAddress.",
-		"DHCPv4Address":     "ipv4DHCPAddress.",
 		"DHCPv4Lease":       "dhcpv4Lease.",
 		"IPv4SourceNAT":     "ipv4SourceNAT.",
 		"DSLiteTunnel":      "dsLiteTunnel.",

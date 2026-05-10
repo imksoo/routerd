@@ -104,8 +104,6 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeVXLANTunnel(res, aliases, includePlan, &rr)
 		case "IPv4StaticAddress":
 			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
-		case "DHCPv4Address":
-			e.observeDHCP(res, aliases, policies, "ipv4", includePlan, &rr)
 		case "DHCPv4Lease":
 			e.observeDHCPv4Lease(res, aliases, policies, includePlan, &rr)
 		case "DHCPv4Server":
@@ -2173,13 +2171,6 @@ func stringSpec(res api.Resource, key string) string {
 		case "allowOverlapReason":
 			return spec.AllowOverlapReason
 		}
-	case api.DHCPv4AddressSpec:
-		switch key {
-		case "interface":
-			return spec.Interface
-		case "client":
-			return spec.Client
-		}
 	case api.DHCPv4LeaseSpec:
 		switch key {
 		case "interface":
@@ -2192,6 +2183,8 @@ func stringSpec(res api.Resource, key string) string {
 			return spec.ClassID
 		case "clientID":
 			return spec.ClientID
+		case "routeMetric":
+			return fmt.Sprint(spec.RouteMetric)
 		}
 	case api.DHCPv4ServerSpec:
 		switch key {
@@ -2269,10 +2262,6 @@ func boolSpec(res api.Resource, key string) bool {
 			return spec.Exclusive
 		case "allowOverlap":
 			return spec.AllowOverlap
-		}
-	case api.DHCPv4AddressSpec:
-		if key == "required" {
-			return spec.Required
 		}
 	case api.DHCPv6AddressSpec:
 		if key == "required" {

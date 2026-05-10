@@ -93,8 +93,7 @@ FreeBSD では、routerd が rc.d サービスを生成します。
 | Kind | 役割 |
 | --- | --- |
 | `IPv4StaticAddress` | 静的 IPv4 アドレスを付与します。 |
-| `DHCPv4Address` | 旧来のホスト DHCP クライアント経路です。新しい実装では `DHCPv4Lease` を優先します。 |
-| `DHCPv4Lease` | `routerd-dhcpv4-client` が管理する DHCPv4 リースです。 |
+| `DHCPv4Lease` | `routerd-dhcpv4-client` が DHCPv4 リース、IPv4 アドレス、任意のデフォルト経路を管理します。 |
 | `DHCPv6Address` | DHCPv6 IA_NA の意図を表します。 |
 | `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` が管理する DHCPv6-PD リースです。 |
 | `DHCPv6Information` | DHCPv6 情報要求の結果です。DNS、SNTP、ドメイン検索、AFTR 情報を観測します。 |
@@ -212,7 +211,6 @@ Phase 1.6 で次の名前に整理しました。
 
 | 旧名 | 現在の名前 |
 | --- | --- |
-| `IPv4DHCPAddress` | `DHCPv4Address` |
 | `IPv4DHCPServer` | `DHCPv4Server` |
 | `IPv4DHCPReservation` | `DHCPv4Reservation` |
 | `IPv4DHCPScope` | `DHCPv4Scope` |

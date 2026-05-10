@@ -109,13 +109,11 @@ spec:
         owner: external
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Address
+      kind: DHCPv4Lease
       metadata:
         name: wan-dhcpv4
       spec:
         interface: wan
-        client: dhcpcd
-        required: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
@@ -128,13 +126,11 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Address
+      kind: DHCPv4Lease
       metadata:
         name: mgmt-dhcpv4
       spec:
         interface: mgmt
-        client: networkd
-        required: false
         useRoutes: false
         useDNS: false
 
@@ -267,7 +263,6 @@ spec:
         name: wan-ra
       spec:
         interface: wan
-        required: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv6PrefixDelegation
@@ -277,7 +272,6 @@ spec:
         interface: wan
         client: dhcp6c
         profile: ntt-hgw-lan-pd
-        required: false
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface

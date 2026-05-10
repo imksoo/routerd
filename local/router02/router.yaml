@@ -43,6 +43,7 @@ spec:
             - --controller-chain-dry-run-route=false
             - --controller-chain-dry-run-ra=false
             - --controller-chain-dry-run-dhcpv6=false
+            - --controller-chain-dry-run-dhcpv4lease=false
             - --controller-chain-dry-run-dns-resolver=false
             - --controller-chain-dry-run-nat=false
             - --controller-chain-dry-run-firewall=false
@@ -341,23 +342,21 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Address
+      kind: DHCPv4Lease
       metadata:
         name: wan-dhcpv4
       spec:
         interface: wan
-        client: networkd
-        required: true
+        hostname: router02
         routeMetric: 1024
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Address
+      kind: DHCPv4Lease
       metadata:
         name: mgmt-dhcpv4
       spec:
         interface: mgmt
-        client: networkd
-        required: true
+        hostname: router02-mgmt
         useRoutes: false
         useDNS: false
 
@@ -730,7 +729,7 @@ spec:
               - resource: IPv4PolicyRouteSet/lan-dslite-ecmp
                 phase: Applied
           - name: wan-dhcpv4
-            source: DHCPv4Address/wan-dhcpv4
+            source: DHCPv4Lease/wan-dhcpv4
             device: wan
             gatewaySource: dhcpv4
             routeTable: 112

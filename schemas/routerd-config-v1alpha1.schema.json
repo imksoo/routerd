@@ -2228,71 +2228,6 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "DHCPv4Address",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "client": {
-                        "type": "string"
-                      },
-                      "interface": {
-                        "type": "string"
-                      },
-                      "required": {
-                        "type": "boolean"
-                      },
-                      "routeMetric": {
-                        "minimum": 0,
-                        "type": "integer"
-                      },
-                      "useDNS": {
-                        "type": "boolean"
-                      },
-                      "useRoutes": {
-                        "type": "boolean"
-                      }
-                    },
-                    "required": [
-                      "interface"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
                     "const": "DHCPv4Lease",
                     "type": "string"
                   },
@@ -2326,6 +2261,16 @@
                       },
                       "requestedAddress": {
                         "type": "string"
+                      },
+                      "routeMetric": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "useDNS": {
+                        "type": "boolean"
+                      },
+                      "useRoutes": {
+                        "type": "boolean"
                       }
                     },
                     "required": [

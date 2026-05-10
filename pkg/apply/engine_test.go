@@ -112,12 +112,12 @@ func TestPlanKeepsExternalWANObserveOnly(t *testing.T) {
 		t.Fatalf("plan: %v", err)
 	}
 
-	wanDHCP := findResult(result, "net.routerd.net/v1alpha1/DHCPv4Address/wan-dhcpv4")
+	wanDHCP := findResult(result, "net.routerd.net/v1alpha1/DHCPv4Lease/wan-dhcpv4")
 	if wanDHCP == nil {
 		t.Fatal("missing wan dhcp result")
 	}
-	if got := strings.Join(wanDHCP.Plan, "\n"); !strings.Contains(got, "observe only") {
-		t.Fatalf("wan dhcp plan = %q, want observe only", got)
+	if got := strings.Join(wanDHCP.Plan, "\n"); !strings.Contains(got, "observe daemon lease only") {
+		t.Fatalf("wan dhcp plan = %q, want observe daemon lease only", got)
 	}
 }
 

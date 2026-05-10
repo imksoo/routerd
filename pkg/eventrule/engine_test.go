@@ -69,10 +69,7 @@ func TestWindow(t *testing.T) {
 func TestAbsence(t *testing.T) {
 	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorAbsence, Trigger: "routerd.trigger", Expected: "routerd.expected", Duration: "20ms"})
 	mustReconcile(t, controller, testEvent("routerd.trigger"))
-	time.Sleep(80 * time.Millisecond)
-	if got := b.Recent("routerd.out"); len(got) != 1 {
-		t.Fatalf("events = %d", len(got))
-	}
+	waitForRecent(t, b, "routerd.out", 1)
 	controller.StopTimers()
 }
 
@@ -91,10 +88,7 @@ func TestDebounce(t *testing.T) {
 	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorDebounce, Topic: "routerd.a", Quiet: "20ms"})
 	mustReconcile(t, controller, testEvent("routerd.a"))
 	mustReconcile(t, controller, testEvent("routerd.a"))
-	time.Sleep(80 * time.Millisecond)
-	if got := b.Recent("routerd.out"); len(got) != 1 {
-		t.Fatalf("events = %d", len(got))
-	}
+	waitForRecent(t, b, "routerd.out", 1)
 	controller.StopTimers()
 }
 
@@ -130,6 +124,20 @@ func mustReconcile(t *testing.T, controller *Controller, event daemonapi.DaemonE
 	t.Helper()
 	if err := controller.Reconcile(context.Background(), event); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func waitForRecent(t *testing.T, b *bus.Bus, topic string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		if got := len(b.Recent(topic)); got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("events = %d", len(b.Recent(topic)))
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

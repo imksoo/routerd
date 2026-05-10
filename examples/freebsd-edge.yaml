@@ -66,13 +66,11 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Address
+      kind: DHCPv4Lease
       metadata:
         name: wan-dhcpv4
       spec:
         interface: wan
-        client: dhclient
-        required: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: PPPoEInterface
@@ -100,13 +98,11 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Address
+      kind: DHCPv4Lease
       metadata:
         name: mgmt-dhcpv4
       spec:
         interface: mgmt
-        client: dhclient
-        required: false
         useRoutes: false
         useDNS: false
 
@@ -117,7 +113,6 @@ spec:
       spec:
         interface: wan
         client: dhcp6c
-        required: false
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6RAAddress
@@ -125,7 +120,6 @@ spec:
         name: wan-ra
       spec:
         interface: wan
-        required: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv6PrefixDelegation
@@ -135,7 +129,6 @@ spec:
         interface: wan
         profile: ntt-hgw-lan-pd
         prefixLength: 60
-        required: false
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface

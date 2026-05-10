@@ -101,8 +101,7 @@ declared static addresses for the WireGuard interface.
 | Kind | Role |
 | --- | --- |
 | `IPv4StaticAddress` | Assigns a static IPv4 address. |
-| `DHCPv4Address` | Legacy host DHCP client path. Prefer `DHCPv4Lease` for new configs. |
-| `DHCPv4Lease` | DHCPv4 lease managed by `routerd-dhcpv4-client`. |
+| `DHCPv4Lease` | DHCPv4 lease, IPv4 address, and optional default route managed by `routerd-dhcpv4-client`. |
 | `DHCPv6Address` | Represents DHCPv6 IA_NA intent for platform renderers. |
 | `DHCPv6PrefixDelegation` | DHCPv6-PD lease managed by `routerd-dhcpv6-client`. |
 | `DHCPv6Information` | DHCPv6 information request result, including DNS, SNTP, domain search, and AFTR observations. |
@@ -220,7 +219,6 @@ Phase 1.6 renamed DHCP resources.
 
 | Old | Current |
 | --- | --- |
-| `IPv4DHCPAddress` | `DHCPv4Address` |
 | `IPv4DHCPServer` | `DHCPv4Server` |
 | `IPv4DHCPReservation` | `DHCPv4Reservation` |
 | `IPv4DHCPScope` | `DHCPv4Scope` |

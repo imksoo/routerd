@@ -1430,7 +1430,7 @@ func interfaceConfiguredAddresses(router *api.Router, statuses map[string]map[st
 			if addr != "" {
 				out[spec.Interface] = appendUnique(out[spec.Interface], addr)
 			}
-		case "DHCPv4Address", "DHCPv4Lease":
+		case "DHCPv4Lease":
 			iface, addr := addressStatusForInterface(resource, statuses)
 			if iface != "" && addr != "" {
 				out[iface] = appendUnique(out[iface], addr)
@@ -1448,11 +1448,6 @@ func addressStatusForInterface(resource api.Resource, statuses map[string]map[st
 		return iface, addr
 	}
 	switch resource.Kind {
-	case "DHCPv4Address":
-		spec, err := resource.DHCPv4AddressSpec()
-		if err == nil {
-			return spec.Interface, addr
-		}
 	case "DHCPv4Lease":
 		spec, err := resource.DHCPv4LeaseSpec()
 		if err == nil {

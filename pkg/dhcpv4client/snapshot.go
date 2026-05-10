@@ -12,6 +12,7 @@ type Snapshot struct {
 	Interface        string    `json:"interface"`
 	State            State     `json:"state"`
 	CurrentAddress   string    `json:"currentAddress,omitempty"`
+	PrefixLength     int       `json:"prefixLength,omitempty"`
 	DefaultGateway   string    `json:"defaultGateway,omitempty"`
 	ServerID         string    `json:"serverID,omitempty"`
 	DNSServers       []string  `json:"dnsServers,omitempty"`
@@ -34,6 +35,7 @@ func SnapshotFromLease(resource, ifname string, state State, lease Lease, now ti
 	s := Snapshot{Resource: resource, Interface: ifname, State: state, UpdatedAt: now}
 	if lease.Address.IsValid() {
 		s.CurrentAddress = lease.Address.String()
+		s.PrefixLength = lease.PrefixLength
 		if lease.ServerID.IsValid() {
 			s.ServerID = lease.ServerID.String()
 		}
@@ -61,6 +63,7 @@ func SnapshotFromLease(resource, ifname string, state State, lease Lease, now ti
 func LeaseFromSnapshot(s Snapshot) Lease {
 	lease := Lease{
 		Address:          parseAddr(s.CurrentAddress),
+		PrefixLength:     s.PrefixLength,
 		ServerID:         parseAddr(s.ServerID),
 		DefaultGateway:   parseAddr(s.DefaultGateway),
 		BroadcastAddress: parseAddr(s.BroadcastAddress),

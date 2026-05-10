@@ -47,9 +47,9 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external", AdminUp: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Address"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
 				Metadata: api.ObjectMeta{Name: "wan-dhcpv4"},
-				Spec:     api.DHCPv4AddressSpec{Interface: "wan"},
+				Spec:     api.DHCPv4LeaseSpec{Interface: "wan"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"},
@@ -111,9 +111,9 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Spec:     api.VRFSpec{IfName: "vrf-guest", RouteTable: 1001, Members: []string{"guest"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Address"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
 				Metadata: api.ObjectMeta{Name: "mgmt-dhcpv4"},
-				Spec:     api.DHCPv4AddressSpec{Interface: "mgmt", UseRoutes: &disabled, UseDNS: &disabled, RouteMetric: 900},
+				Spec:     api.DHCPv4LeaseSpec{Interface: "mgmt", UseRoutes: boolPtr(false), UseDNS: boolPtr(false), RouteMetric: 900},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
@@ -159,7 +159,6 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`networking.firewall.trustedInterfaces = [ "br0" ];`,
 		`networking.nftables.enable = true;`,
 		`systemd.network.networks."10-netplan-ens18"`,
-		`DHCP = "ipv4";`,
 		`systemd.network.networks."10-netplan-ens19"`,
 		`Bridge = "br0";`,
 		`systemd.network.netdevs."30-routerd-br0"`,
@@ -181,10 +180,6 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 		`bridge fdb append 00:00:00:00:00:00 dev 'vxlan100' dst "$remote"`,
 		`LinkLocalAddressing = "no";`,
 		`systemd.network.networks."10-netplan-ens20"`,
-		`DHCP = "ipv4";`,
-		`UseRoutes = false;`,
-		`UseDNS = false;`,
-		`RouteMetric = 900;`,
 		`systemd.network.netdevs."32-routerd-vrf-guest"`,
 		`Kind = "vrf";`,
 		`vrfConfig = {`,

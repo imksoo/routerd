@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/platform"
 )
 
 const (
@@ -27,12 +29,15 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
+type outputCommandFunc func(context.Context, string, ...string) ([]byte, error)
+
 type Controller struct {
 	Router        *api.Router
 	Bus           *bus.Bus
 	Store         Store
 	DaemonSockets map[string]string
 	DryRun        bool
+	Command       outputCommandFunc
 	Logger        *slog.Logger
 }
 
@@ -74,6 +79,7 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 			"observed":       observed,
 			"interface":      observed["interface"],
 			"currentAddress": observed["currentAddress"],
+			"prefixLength":   observed["prefixLength"],
 			"defaultGateway": observed["defaultGateway"],
 			"device":         observed["interface"],
 			"gateway":        observed["defaultGateway"],
@@ -86,10 +92,22 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 		if leaseTime, err := strconv.ParseInt(observed["leaseTime"], 10, 64); err == nil {
 			next["leaseTime"] = leaseTime
 		}
+		if prefixLength, err := strconv.Atoi(observed["prefixLength"]); err == nil && prefixLength > 0 {
+			next["prefixLength"] = prefixLength
+		}
 		if servers := parseJSONStringList(observed["dnsServers"]); len(servers) > 0 {
 			next["dnsServers"] = servers
 		}
 		current := c.Store.ObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name)
+		if err := c.applyLease(ctx, name, current, next); err != nil {
+			next["phase"] = "Error"
+			next["reason"] = "ApplyFailed"
+			next["error"] = err.Error()
+			if saveErr := c.Store.SaveObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name, next); saveErr != nil {
+				return saveErr
+			}
+			return err
+		}
 		changed := leaseEventChanged(current, next)
 		if err := c.Store.SaveObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name, next); err != nil {
 			return err
@@ -110,7 +128,7 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 }
 
 func leaseEventChanged(current, next map[string]any) bool {
-	for _, key := range []string{"phase", "currentAddress", "defaultGateway", "domain", "leaseTime"} {
+	for _, key := range []string{"phase", "currentAddress", "prefixLength", "defaultGateway", "domain", "leaseTime", "appliedAddress"} {
 		if fmt.Sprint(current[key]) != fmt.Sprint(next[key]) {
 			return true
 		}
@@ -121,11 +139,143 @@ func leaseEventChanged(current, next map[string]any) bool {
 	return false
 }
 
+func (c Controller) applyLease(ctx context.Context, name string, current, next map[string]any) error {
+	if fmt.Sprint(next["phase"]) != daemonapi.ResourcePhaseBound {
+		return nil
+	}
+	spec, ifname, ok, err := c.leaseSpecAndIfName(name)
+	if err != nil || !ok {
+		return err
+	}
+	address := strings.TrimSpace(fmt.Sprint(next["currentAddress"]))
+	prefixLength, _ := strconv.Atoi(fmt.Sprint(next["prefixLength"]))
+	if address == "" || prefixLength <= 0 {
+		return fmt.Errorf("DHCPv4 lease %s is bound without prefixLength", name)
+	}
+	wantedAddress := fmt.Sprintf("%s/%d", address, prefixLength)
+	next["appliedAddress"] = wantedAddress
+	next["ifname"] = ifname
+	if c.DryRun {
+		next["applyMode"] = "dry-run"
+		return nil
+	}
+	command := c.Command
+	if command == nil {
+		command = runOutputCommandContext
+	}
+	previousAddress := mapString(current, "appliedAddress")
+	if previousAddress != "" && previousAddress != wantedAddress {
+		_ = removeIPv4Address(ctx, platform.CurrentOS(), command, ifname, previousAddress)
+	}
+	if previousAddress != wantedAddress {
+		if err := replaceIPv4Address(ctx, platform.CurrentOS(), command, ifname, wantedAddress); err != nil {
+			return err
+		}
+	}
+	if api.BoolDefault(spec.UseRoutes, true) {
+		gateway := strings.TrimSpace(fmt.Sprint(next["defaultGateway"]))
+		if gateway != "" {
+			if err := replaceDefaultRoute(ctx, platform.CurrentOS(), command, ifname, gateway, spec.RouteMetric); err != nil {
+				return err
+			}
+			next["appliedDefaultGateway"] = gateway
+		}
+	}
+	next["applyMode"] = "active"
+	return nil
+}
+
+func mapString(values map[string]any, key string) string {
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func (c Controller) leaseSpecAndIfName(name string) (api.DHCPv4LeaseSpec, string, bool, error) {
+	if c.Router == nil {
+		return api.DHCPv4LeaseSpec{}, "", false, nil
+	}
+	aliases := map[string]string{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "Interface" {
+			continue
+		}
+		spec, err := resource.InterfaceSpec()
+		if err != nil {
+			return api.DHCPv4LeaseSpec{}, "", false, err
+		}
+		aliases[resource.Metadata.Name] = spec.IfName
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "DHCPv4Lease" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.DHCPv4LeaseSpec()
+		if err != nil {
+			return api.DHCPv4LeaseSpec{}, "", false, err
+		}
+		ifname := aliases[spec.Interface]
+		if ifname == "" {
+			ifname = spec.Interface
+		}
+		if ifname == "" {
+			return api.DHCPv4LeaseSpec{}, "", false, fmt.Errorf("DHCPv4Lease/%s needs spec.interface", name)
+		}
+		return spec, ifname, true, nil
+	}
+	return api.DHCPv4LeaseSpec{}, "", false, nil
+}
+
+func replaceIPv4Address(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) error {
+	if osName == platform.OSFreeBSD {
+		_, err := command(ctx, "ifconfig", ifname, "inet", address, "alias")
+		return err
+	}
+	_, err := command(ctx, "ip", "-4", "addr", "replace", address, "dev", ifname)
+	return err
+}
+
+func removeIPv4Address(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) error {
+	if osName == platform.OSFreeBSD {
+		host := address
+		if value, _, ok := strings.Cut(host, "/"); ok {
+			host = value
+		}
+		_, err := command(ctx, "ifconfig", ifname, "inet", host, "-alias")
+		return err
+	}
+	_, err := command(ctx, "ip", "-4", "addr", "del", address, "dev", ifname)
+	return err
+}
+
+func replaceDefaultRoute(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, gateway string, metric int) error {
+	if osName == platform.OSFreeBSD {
+		if _, err := command(ctx, "route", "-n", "change", "default", gateway); err == nil {
+			return nil
+		}
+		_, err := command(ctx, "route", "-n", "add", "default", gateway)
+		return err
+	}
+	args := []string{"-4", "route", "replace", "default", "via", gateway, "dev", ifname}
+	if metric != 0 {
+		args = append(args, "metric", strconv.Itoa(metric))
+	}
+	_, err := command(ctx, "ip", args...)
+	return err
+}
+
+func runOutputCommandContext(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
 func (c Controller) socketFor(resource string) string {
 	if socket := c.DaemonSockets[resource]; socket != "" {
 		return socket
 	}
-	return filepath.Join("/run/routerd/dhcpv4-client", resource+".sock")
+	defaults, _ := platform.Current()
+	return filepath.Join(defaults.RuntimeDir, "dhcpv4-client", resource+".sock")
 }
 
 func daemonStatus(ctx context.Context, socketPath string) (daemonapi.DaemonStatus, error) {

@@ -87,7 +87,7 @@ func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T)
 	}
 }
 
-func TestNetworkAdoptionControllerCanKeepDHCPv4AddressWithoutRoutes(t *testing.T) {
+func TestNetworkAdoptionControllerCanKeepDHCPv4ClientWithoutRoutes(t *testing.T) {
 	disabled := false
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

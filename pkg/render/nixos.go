@@ -553,17 +553,6 @@ func nixOSInterfaces(router *api.Router) ([]nixOSInterface, error) {
 			if iface := interfaces[spec.Interface]; iface != nil {
 				iface.Addresses = append(iface.Addresses, spec.Address)
 			}
-		case "DHCPv4Address":
-			spec, err := res.DHCPv4AddressSpec()
-			if err != nil {
-				return nil, err
-			}
-			if iface := interfaces[spec.Interface]; iface != nil {
-				iface.DHCPv4 = true
-				iface.DHCPv4UseRoutes = spec.UseRoutes
-				iface.DHCPv4UseDNS = spec.UseDNS
-				iface.DHCPv4RouteMetric = spec.RouteMetric
-			}
 		case "IPv4StaticRoute":
 			spec, err := res.IPv4StaticRouteSpec()
 			if err != nil {

@@ -366,21 +366,15 @@ type IPv4StaticAddressSpec struct {
 	AllowOverlapReason string `yaml:"allowOverlapReason,omitempty" json:"allowOverlapReason,omitempty"`
 }
 
-type DHCPv4AddressSpec struct {
-	Interface   string `yaml:"interface" json:"interface"`
-	Client      string `yaml:"client,omitempty" json:"client,omitempty"`
-	Required    bool   `yaml:"required,omitempty" json:"required,omitempty"`
-	UseRoutes   *bool  `yaml:"useRoutes,omitempty" json:"useRoutes,omitempty"`
-	UseDNS      *bool  `yaml:"useDNS,omitempty" json:"useDNS,omitempty"`
-	RouteMetric int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-}
-
 type DHCPv4LeaseSpec struct {
 	Interface        string `yaml:"interface" json:"interface"`
 	Hostname         string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
 	RequestedAddress string `yaml:"requestedAddress,omitempty" json:"requestedAddress,omitempty"`
 	ClassID          string `yaml:"classID,omitempty" json:"classID,omitempty"`
 	ClientID         string `yaml:"clientID,omitempty" json:"clientID,omitempty"`
+	UseRoutes        *bool  `yaml:"useRoutes,omitempty" json:"useRoutes,omitempty"`
+	UseDNS           *bool  `yaml:"useDNS,omitempty" json:"useDNS,omitempty"`
+	RouteMetric      int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
 }
 
 type IPv4StaticRouteSpec struct {
@@ -1203,10 +1197,6 @@ func (r Resource) PPPoESessionSpec() (PPPoESessionSpec, error) {
 
 func (r Resource) IPv4StaticAddressSpec() (IPv4StaticAddressSpec, error) {
 	return specAs[IPv4StaticAddressSpec](r)
-}
-
-func (r Resource) DHCPv4AddressSpec() (DHCPv4AddressSpec, error) {
-	return specAs[DHCPv4AddressSpec](r)
 }
 
 func (r Resource) DHCPv4LeaseSpec() (DHCPv4LeaseSpec, error) {

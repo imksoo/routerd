@@ -655,7 +655,6 @@ func canonicalResourceKind(kind string) string {
 		"dhcpv6prefixdelegation": "DHCPv6PrefixDelegation",
 		"ipv4static":             "IPv4StaticAddress",
 		"ipv4staticaddress":      "IPv4StaticAddress",
-		"dhcpv4address":          "DHCPv4Address",
 		"dhcpv4lease":            "DHCPv4Lease",
 		"dhcpv4server":           "DHCPv4Server",
 		"dhcpv4scope":            "DHCPv4Scope",
@@ -718,7 +717,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -4126,7 +4125,7 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 		}
 	}
 	if len(data.NTP) > 0 {
-		ntpPath := "/usr/local/etc/routerd/ntp.conf"
+		ntpPath := filepath.Join(defaultString(platformDefaults.SysconfDir, "/usr/local/etc/routerd"), "ntp.conf")
 		if err := os.MkdirAll(filepathDir(ntpPath), 0755); err != nil {
 			return changed, warnings, err
 		}
@@ -4138,10 +4137,15 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 			changed = append(changed, ntpPath)
 		}
 		if (fileChanged || freeBSDRCValuesChanged(changed, "ntpd_") || !freeBSDServiceRunning("ntpd")) && rcValues["ntpd_enable"] == "YES" && freeBSDServiceExists("ntpd") {
-			if err := runLogged("service", "ntpd", "restart"); err != nil {
-				return changed, warnings, err
+			action := "restart"
+			if !freeBSDServiceRunning("ntpd") {
+				action = "start"
 			}
-			changed = append(changed, "service:ntpd")
+			if err := runLogged("service", "ntpd", action); err != nil {
+				warnings = append(warnings, fmt.Sprintf("service ntpd %s: %v", action, err))
+			} else {
+				changed = append(changed, "service:ntpd")
+			}
 		}
 	}
 	if len(data.PF) > 0 && pfPath != "" {
@@ -4404,6 +4408,12 @@ func applyFreeBSDRCDScripts(scripts map[string][]byte, rcScriptDir string) ([]st
 		}
 		if fileChanged {
 			changed = append(changed, path)
+		}
+		if name == "routerd" {
+			if fileChanged {
+				changed = append(changed, "service:routerd:restart-required")
+			}
+			continue
 		}
 		if fileChanged && freeBSDServiceRunning(name) {
 			if err := runFreeBSDService(name, "onerestart"); err != nil {

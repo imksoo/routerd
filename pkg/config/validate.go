@@ -227,7 +227,7 @@ func Validate(router *api.Router) error {
 
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4StaticAddress", "DHCPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Scope", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface", "PPPoESession":
+		case "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Scope", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface", "PPPoESession":
 			name, err := interfaceRef(res)
 			if err != nil {
 				return err
@@ -1501,7 +1501,7 @@ func validateResource(res api.Resource) error {
 		if spec.AllowOverlap && spec.AllowOverlapReason == "" {
 			return fmt.Errorf("%s spec.allowOverlapReason is required when allowOverlap is true", res.ID())
 		}
-	case "DHCPv4Address", "DHCPv6Address", "IPv6RAAddress":
+	case "DHCPv6Address", "IPv6RAAddress":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
 		}
@@ -3184,9 +3184,6 @@ func interfaceRef(res api.Resource) (string, error) {
 	switch res.Kind {
 	case "IPv4StaticAddress":
 		spec, err := res.IPv4StaticAddressSpec()
-		return spec.Interface, err
-	case "DHCPv4Address":
-		spec, err := res.DHCPv4AddressSpec()
 		return spec.Interface, err
 	case "DHCPv4Lease":
 		spec, err := res.DHCPv4LeaseSpec()

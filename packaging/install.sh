@@ -686,12 +686,11 @@ EOF
             cat <<EOF
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Address
+      kind: DHCPv4Lease
       metadata:
         name: wan-dhcpv4
       spec:
         interface: wan
-        required: true
         useRoutes: true
         useDNS: true
 EOF

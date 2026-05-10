@@ -537,6 +537,126 @@ exit 0
 	}
 }
 
+func TestApplyFreeBSDConfigContinuesAfterNTPStartFailure(t *testing.T) {
+	dir := t.TempDir()
+	oldDefaults := platformDefaults
+	platformDefaults.SysconfDir = filepath.Join(dir, "usr", "local", "etc", "routerd")
+	t.Cleanup(func() { platformDefaults = oldDefaults })
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	serviceLog := filepath.Join(dir, "service.log")
+	writeExecutable(t, filepath.Join(binDir, "sysrc"), `#!/bin/sh
+case "$1" in
+  -x) exit 0 ;;
+  *) echo "$1: NO"; exit 0 ;;
+esac
+`)
+	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "-l" ]; then
+  printf 'ntpd\nrouterd_healthcheck_internet\n'
+  exit 0
+fi
+if [ "$1" = "ntpd" ] && [ "$2" = "start" ]; then
+  echo "ntpd failed to start" >&2
+  exit 1
+fi
+if [ "$2" = "status" ]; then
+  exit 1
+fi
+exit 0
+`, serviceLog))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"},
+			Metadata: api.ObjectMeta{Name: "time"},
+			Spec: api.NTPClientSpec{
+				Provider: "ntpd",
+				Managed:  true,
+				Source:   "static",
+				Servers:  []string{"ntp.example.net"},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "routerd-healthcheck@internet.service"},
+			Spec: api.SystemdUnitSpec{
+				ExecStart:        []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", "internet"},
+				RuntimeDirectory: []string{"routerd/healthcheck"},
+				StateDirectory:   []string{"routerd/healthcheck"},
+			},
+		},
+	}}}
+
+	rcDir := filepath.Join(dir, "rc.d")
+	changed, warnings, err := applyFreeBSDConfig(router, routerstate.New(), "", "", "", rcDir)
+	if err != nil {
+		t.Fatalf("apply FreeBSD config should continue after ntpd failure: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rcDir, "routerd_healthcheck_internet")); err != nil {
+		t.Fatalf("expected rc.d script to be written after ntpd warning: %v", err)
+	}
+	if !stringSliceContainsPrefix(warnings, "service ntpd start:") {
+		t.Fatalf("warnings = %v, want ntpd warning", warnings)
+	}
+	if !stringSliceContains(changed, filepath.Join(rcDir, "routerd_healthcheck_internet")) {
+		t.Fatalf("changed = %v, want rc.d script path", changed)
+	}
+}
+
+func TestApplyFreeBSDRCDScriptsDoesNotRestartRouterdFromApply(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	serviceLog := filepath.Join(dir, "service.log")
+	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$2" = "status" ]; then
+  exit 0
+fi
+exit 0
+`, serviceLog))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	changed, err := applyFreeBSDRCDScripts(map[string][]byte{
+		"routerd": []byte("#!/bin/sh\n# PROVIDE: routerd\n"),
+	}, filepath.Join(dir, "rc.d"))
+	if err != nil {
+		t.Fatalf("apply rc.d scripts: %v", err)
+	}
+	if !stringSliceContains(changed, "service:routerd:restart-required") {
+		t.Fatalf("changed = %v, want restart-required marker", changed)
+	}
+	serviceCalls, err := os.ReadFile(serviceLog)
+	if err == nil && strings.Contains(string(serviceCalls), "routerd") {
+		t.Fatalf("routerd service must not be controlled from routerd apply:\n%s", serviceCalls)
+	}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSliceContainsPrefix(values []string, prefix string) bool {
+	for _, value := range values {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRunFreeBSDServiceTreatsAlreadyRunningAsIdempotentStart(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")

@@ -139,6 +139,7 @@ spec:
           - --controller-chain-dry-run-route=false
           - --controller-chain-dry-run-ra=false
           - --controller-chain-dry-run-dhcpv6=false
+          - --controller-chain-dry-run-dhcpv4lease=false
           - --controller-chain-dry-run-dns-resolver=false
           - --controller-chain-dry-run-nat=false
           - --controller-chain-dnsmasq-command
@@ -184,13 +185,14 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Address
+      kind: DHCPv4Lease
       metadata:
         name: wan-dhcp4
       spec:
         interface: wan
-        client: dhclient
-        required: true
+        hostname: router04
+        useRoutes: false
+        useDNS: false
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: PPPoEInterface
@@ -218,13 +220,12 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Address
+      kind: DHCPv4Lease
       metadata:
         name: mgmt-dhcp4
       spec:
         interface: mgmt
-        client: dhclient
-        required: false
+        hostname: router04-mgmt
         useRoutes: false
         useDNS: false
 
@@ -818,7 +819,7 @@ spec:
       metadata:
         name: internet-via-hgw-direct
         ownerRefs:
-          - kind: DHCPv4Address
+          - kind: DHCPv4Lease
             name: wan-dhcp4
       spec:
         daemon: routerd-healthcheck
@@ -913,7 +914,7 @@ spec:
       metadata:
         name: hgw-direct-healthcheck
         ownerRefs:
-          - kind: DHCPv4Address
+          - kind: DHCPv4Lease
             name: wan-dhcp4
       spec:
         destination: 1.0.0.1/32
@@ -989,7 +990,7 @@ spec:
             weight: 60
             healthCheck: internet-via-pppoe
           - name: hgw-direct
-            source: DHCPv4Address/wan-dhcp4
+            source: DHCPv4Lease/wan-dhcp4
             deviceFrom:
               resource: Interface/wan
               field: ifname

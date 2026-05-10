@@ -278,7 +278,8 @@ func (r *Runner) Start(ctx context.Context) error {
 		name := resource.Metadata.Name
 		socket := r.Opts.DaemonSockets[name]
 		if socket == "" {
-			socket = filepath.Join("/run/routerd/dhcpv6-client", name+".sock")
+			defaults, _ := platform.Current()
+			socket = filepath.Join(defaults.RuntimeDir, "dhcpv6-client", name+".sock")
 		}
 		source := daemonsource.DaemonSource{
 			Daemon:    daemonapi.DaemonRef{Name: "routerd-dhcpv6-client-" + name, Kind: "routerd-dhcpv6-client", Instance: name},
@@ -298,7 +299,8 @@ func (r *Runner) Start(ctx context.Context) error {
 		name := resource.Metadata.Name
 		socket := r.Opts.DaemonSockets[name]
 		if socket == "" {
-			socket = filepath.Join("/run/routerd/dhcpv4-client", name+".sock")
+			defaults, _ := platform.Current()
+			socket = filepath.Join(defaults.RuntimeDir, "dhcpv4-client", name+".sock")
 		}
 		source := daemonsource.DaemonSource{
 			Daemon:    daemonapi.DaemonRef{Name: "routerd-dhcpv4-client-" + name, Kind: "routerd-dhcpv4-client", Instance: name},
@@ -496,7 +498,12 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 			if ifname == "" {
 				ifname = spec.Interface
 			}
-			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname}
+			defaults, _ := platform.Current()
+			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname,
+				"--socket", filepath.Join(defaults.RuntimeDir, "dhcpv6-client", resource.Metadata.Name+".sock"),
+				"--lease-file", filepath.Join(defaults.StateDir, "dhcpv6-client", resource.Metadata.Name, "lease.json"),
+				"--event-file", filepath.Join(defaults.StateDir, "dhcpv6-client", resource.Metadata.Name, "events.jsonl"),
+			}
 			if spec.IAID != "" {
 				args = append(args, "--iaid", spec.IAID)
 			}
@@ -510,7 +517,12 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 			if ifname == "" {
 				ifname = spec.Interface
 			}
-			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname}
+			defaults, _ := platform.Current()
+			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname,
+				"--socket", filepath.Join(defaults.RuntimeDir, "dhcpv4-client", resource.Metadata.Name+".sock"),
+				"--lease-file", filepath.Join(defaults.StateDir, "dhcpv4-client", resource.Metadata.Name, "lease.json"),
+				"--event-file", filepath.Join(defaults.StateDir, "dhcpv4-client", resource.Metadata.Name, "events.jsonl"),
+			}
 			if spec.Hostname != "" {
 				args = append(args, "--hostname", spec.Hostname)
 			}
@@ -613,13 +625,14 @@ func routerdClientBinary(name string) string {
 }
 
 func defaultClientSocket(binary, resource string) string {
+	defaults, _ := platform.Current()
 	switch binary {
 	case "routerd-dhcpv6-client":
-		return filepath.Join("/run/routerd/dhcpv6-client", resource+".sock")
+		return filepath.Join(defaults.RuntimeDir, "dhcpv6-client", resource+".sock")
 	case "routerd-dhcpv4-client":
-		return filepath.Join("/run/routerd/dhcpv4-client", resource+".sock")
+		return filepath.Join(defaults.RuntimeDir, "dhcpv4-client", resource+".sock")
 	case "routerd-pppoe-client":
-		return filepath.Join("/run/routerd/pppoe-client", resource+".sock")
+		return filepath.Join(defaults.RuntimeDir, "pppoe-client", resource+".sock")
 	default:
 		return ""
 	}

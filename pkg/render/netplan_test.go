@@ -30,11 +30,6 @@ func TestNetplanRendersOnlyRouterdManagedInterfaces(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
 				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
 			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Address"},
-				Metadata: api.ObjectMeta{Name: "wan-dhcpv4"},
-				Spec:     api.DHCPv4AddressSpec{Interface: "wan"},
-			},
 		}},
 	}
 
@@ -102,8 +97,7 @@ func TestNetplanEnablesIPv6LinkLocalForDelegatedAddress(t *testing.T) {
 	}
 }
 
-func TestNetplanRendersDHCPv4Overrides(t *testing.T) {
-	disabled := false
+func TestNetplanDoesNotRenderDHCPv4LeaseAsHostDHCPClient(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -114,9 +108,9 @@ func TestNetplanRendersDHCPv4Overrides(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens20", Managed: true, Owner: "routerd", AdminUp: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Address"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
 				Metadata: api.ObjectMeta{Name: "mgmt-dhcpv4"},
-				Spec:     api.DHCPv4AddressSpec{Interface: "mgmt", Client: "networkd", UseRoutes: &disabled, UseDNS: &disabled, RouteMetric: 900},
+				Spec:     api.DHCPv4LeaseSpec{Interface: "mgmt", UseRoutes: boolPtr(false), UseDNS: boolPtr(false), RouteMetric: 900},
 			},
 		}},
 	}
@@ -127,14 +121,15 @@ func TestNetplanRendersDHCPv4Overrides(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"ens20:",
-		"dhcp4: true",
-		"dhcp4-overrides:",
-		"use-routes: false",
-		"use-dns: false",
-		"route-metric: 900",
+		"dhcp4: false",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("netplan output missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"dhcp4: true", "dhcp4-overrides:", "route-metric: 900"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("netplan output must not render daemon-owned DHCPv4Lease as host DHCP %q:\n%s", unwanted, got)
 		}
 	}
 }
