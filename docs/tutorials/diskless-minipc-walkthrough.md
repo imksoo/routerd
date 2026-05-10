@@ -25,6 +25,8 @@ once per day.
 Create one partition and format it with a filesystem the live ISO can mount.
 `ext4` is the best default. `vfat` and `exfat` also work for simple removable
 media. Label it `ROUTERD` so the ISO can find it automatically.
+FAT32 is reported by `blkid` as `vfat`; it is supported, but `ext4` is better
+for a USB stick that is dedicated to routerd.
 
 Example from a Linux workstation:
 
@@ -71,6 +73,9 @@ Use an isolated LAN bridge for early DHCP and RA testing.
 ![routerd live boot menu](/img/iso-boot/iso-boot-01-grub.png)
 
 The ISO enables both the video console and the serial console.
+On Proxmox VE, the interactive wizard is normally easier to read through
+`qm terminal`; the VGA screenshots are useful for boot evidence, while the
+serial transcript below shows the actual inputs and results.
 
 ![Alpine boot messages](/img/iso-boot/iso-boot-02-alpine-boot.png)
 
@@ -79,6 +84,27 @@ The ISO enables both the video console and the serial console.
 Log in as `root`. The live ISO starts the setup wizard.
 
 ![routerd live login and message of the day](/img/iso-boot/iso-boot-03-login-motd.png)
+
+The serial console should show the live ISO message and the wizard prompt:
+
+```text
+Welcome to Alpine Linux 3.23
+Kernel 6.18.22-0-lts on x86_64 (/dev/ttyS0)
+
+localhost login: root
+routerd live v20260510.1811
+
+Run the setup wizard:
+  /usr/share/routerd/install.sh configure
+
+Starting routerd setup wizard. Press Ctrl+C to skip.
+routerd initial configuration wizard
+
+Available interfaces:
+  - lo
+  - eth0
+  - eth1
+```
 
 The wizard asks for:
 
@@ -95,6 +121,31 @@ The wizard asks for:
 
 ![LAN setup in the routerd live wizard](/img/iso-boot/iso-boot-05-wizard-lan.png)
 
+This is the same run captured from the serial console:
+
+```text
+Router name [routerd-router]: routerd-live-router-test
+WAN interface: eth0
+WAN IPv4 mode (dhcp/static) [dhcp]: dhcp
+Default DNS upstreams when DHCP DNS is unavailable [1.1.1.1]: 1.1.1.1
+LAN interface: eth1
+LAN address/CIDR [192.168.10.1/24]: 192.168.99.1/24
+LAN client CIDR [192.168.99.0/24]: 192.168.99.0/24
+Enable DHCPv4 server? (yes/no) [yes]: yes
+DHCPv4 pool start [192.168.99.100]:
+DHCPv4 pool end [192.168.99.200]:
+Enable DHCPv6 stateless service? (yes/no) [no]: no
+Enable IPv6 RA? (yes/no) [no]: no
+Enable DNS resolver? (yes/no) [yes]: yes
+Enable NTP server? (yes/no) [yes]: yes
+Enable 3-role firewall? (yes/no) [yes]: yes
+Enable NAT44 from LAN to WAN? (yes/no) [yes]: yes
+Management placement (separate/lan) [lan]: lan
+Save config to USB for diskless persistence? (yes/no) [no]: no
+generated candidate config: /usr/local/etc/routerd/router.yaml.configure
+Install this config as router.yaml? (yes/no) [no]: yes
+```
+
 When asked about USB persistence, choose `yes` and select the USB partition.
 If the partition is labeled `ROUTERD`, it should be listed automatically.
 
@@ -105,6 +156,10 @@ The live helper detects `ext4`, `vfat`, and `exfat` with `blkid`. It mounts USB
 persistence with `async,noatime` by default to reduce writes. If you need
 synchronous writes for a specific test, add `routerd.usb_mount=sync` to the
 kernel command line.
+
+The selected USB partition is mounted at `/media/routerd-usb`. The saved
+configuration path is `/media/routerd-usb/routerd/router.yaml`. It is not
+`/mnt/routerd/router.yaml`.
 
 ## 4. Confirm the first apply
 
@@ -133,6 +188,19 @@ routerctl status
 ![routerctl status after first apply](/img/iso-boot/iso-boot-07-routerctl-status.png)
 
 The phase should become `Healthy`.
+The serial log should contain a status response like this:
+
+```json
+{
+  "apiVersion": "control.routerd.net/v1alpha1",
+  "kind": "Status",
+  "status": {
+    "phase": "Healthy",
+    "generation": 1,
+    "resourceCount": 14
+  }
+}
+```
 
 ## 5. Test a LAN client
 
@@ -154,17 +222,40 @@ curl -4 https://www.google.com/generate_204
 
 Adjust the address if you chose a different LAN prefix.
 
+The PVE validation used a temporary network namespace connected to the isolated
+LAN bridge. It received a lease from routerd and reached the Internet through
+routerd NAT44:
+
+```text
+inet 192.168.99.186/24
+default via 192.168.99.1 dev veth-rtest
+
+dig @192.168.99.1 www.google.com A +short
+142.251.156.119
+142.251.150.119
+142.251.151.119
+...
+
+curl -4 https://www.google.com/generate_204
+http_code=204 remote_ip=142.251.156.119 time_total=0.024397
+
+curl http://192.168.99.1:8080/
+http_code=200 remote_ip=192.168.99.1 time_total=0.000537
+```
+
 ## 6. Reboot and confirm persistence
 
 Reboot the mini PC with the USB stick still attached.
 
 At boot, the live ISO:
 
-1. mounts the USB device
-2. restores `routerd/router.yaml`
-3. prepares `/run/routerd/logs` as tmpfs
-4. applies the router configuration
-5. starts the live routerd daemon
+1. finds the USB device from the remembered device, `routerd.usb=`, or the
+   `ROUTERD` filesystem label
+2. mounts it at `/media/routerd-usb`
+3. restores `/media/routerd-usb/routerd/router.yaml`
+4. prepares `/run/routerd/logs` as tmpfs
+5. applies the router configuration
+6. starts the live routerd daemon
 
 Log in and run:
 
@@ -173,6 +264,8 @@ routerctl status
 ```
 
 The router should converge without rerunning the wizard.
+If no USB config is restored and `/usr/local/etc/routerd/router.yaml` is still
+missing, the root login profile starts the configure wizard.
 
 ## 7. How log persistence works
 
@@ -232,8 +325,8 @@ routerd.usb=/dev/sdb1
 The ISO did not find a saved config. Mount the USB device and check:
 
 ```sh
-mount /dev/sdX1 /mnt
-ls -l /mnt/routerd/router.yaml
+mount /dev/sdX1 /media/routerd-usb
+ls -l /media/routerd-usb/routerd/router.yaml
 ```
 
 ### Logs are missing after reboot

@@ -24,7 +24,7 @@ routerd/
 
 启动时，`/usr/share/routerd/live-persistence.sh init` 会尝试查找 USB 设备。它先检查记录过的设备，再检查 kernel command line 上的 `routerd.usb=`，最后查找标签为 `ROUTERD` 的分区。
 
-如果存在已保存的 `routerd/router.yaml`，它会被复制到 `/usr/local/etc/routerd/router.yaml`，然后由 live ISO 的启动流程应用。如果没有找到已保存配置，ISO 会启动配置向导。
+选中的分区会挂载到 `/media/routerd-usb`。如果存在已保存的 `/media/routerd-usb/routerd/router.yaml`，它会被复制到 `/usr/local/etc/routerd/router.yaml`，然后由 live ISO 的启动流程应用。如果没有找到已保存配置，并且 `/usr/local/etc/routerd/router.yaml` 也不存在，ISO 会启动配置向导。
 
 ## 文件系统
 
@@ -35,6 +35,8 @@ live helper 使用 `blkid` 检测文件系统，并根据文件系统选择 moun
 | `ext4` | `rw,async,noatime` | 持久化路由器用途的首选。 |
 | `vfat` | `rw,async,noatime,utf8,shortname=mixed` | 适合简单 USB 介质。没有 Unix 权限。 |
 | `exfat` | `rw,async,noatime` | 适合与桌面操作系统共用的大容量 USB 介质。 |
+
+FAT32 在 `blkid` 输出中通常显示为 `vfat`。live helper 不会先按 FAT32 硬编码挂载，而是先检测文件系统类型，再选择对应的挂载选项。
 
 默认使用 `async,noatime`，因为它可以减少对 USB flash 的写入压力。调试或需要更保守写入行为时，可以传入以下 kernel parameter。
 

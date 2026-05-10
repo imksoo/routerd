@@ -30,9 +30,12 @@ routerd/
 次に kernel command line の `routerd.usb=` を確認します。
 最後に `ROUTERD` ラベルのパーティションを探します。
 
-`routerd/router.yaml` があれば、`/usr/local/etc/routerd/router.yaml` へコピーします。
+選択したパーティションは `/media/routerd-usb` に mount します。
+`/media/routerd-usb/routerd/router.yaml` があれば、
+`/usr/local/etc/routerd/router.yaml` へコピーします。
 その後、ライブ ISO の起動処理が設定を反映します。
-保存済み設定がなければ、設定ウィザードを起動します。
+保存済み設定がなく、`/usr/local/etc/routerd/router.yaml` もなければ、
+設定ウィザードを起動します。
 
 ## ファイルシステム
 
@@ -44,6 +47,10 @@ live helper は `blkid` でファイルシステムを判定します。
 | `ext4` | `rw,async,noatime` | 永続ルーター用途では第一候補です。 |
 | `vfat` | `rw,async,noatime,utf8,shortname=mixed` | 単純な USB メモリーで便利です。Unix permission はありません。 |
 | `exfat` | `rw,async,noatime` | 大容量 USB メモリーを desktop OS と共用しやすい形式です。 |
+
+FAT32 は通常 `blkid` では `vfat` として表示されます。
+live helper は FAT32 と決め打ちで mount しません。
+ファイルシステム種別を判定してから、対応する option を選びます。
 
 既定は `async,noatime` です。
 USB flash への書き込みを減らすためです。

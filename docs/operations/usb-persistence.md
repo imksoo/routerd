@@ -31,9 +31,11 @@ At boot, `/usr/share/routerd/live-persistence.sh init` tries to find the USB
 device. It first checks the remembered device, then `routerd.usb=` on the kernel
 command line, then a partition labeled `ROUTERD`.
 
-If a saved `routerd/router.yaml` exists, it is copied to
+The selected partition is mounted at `/media/routerd-usb`. If a saved
+`/media/routerd-usb/routerd/router.yaml` exists, it is copied to
 `/usr/local/etc/routerd/router.yaml` and applied by the live ISO startup path.
-If no saved config is found, the ISO starts the configure wizard.
+If no saved config is found and `/usr/local/etc/routerd/router.yaml` is still
+missing, the ISO starts the configure wizard.
 
 ## Filesystems
 
@@ -45,6 +47,10 @@ filesystem-specific options.
 | `ext4` | `rw,async,noatime` | Best choice for persistent router use. |
 | `vfat` | `rw,async,noatime,utf8,shortname=mixed` | Useful for simple removable media. No Unix permissions. |
 | `exfat` | `rw,async,noatime` | Useful for larger USB sticks shared with desktop OSes. |
+
+FAT32 normally appears as `vfat` in `blkid` output. The live helper does not
+force a FAT32 mount first; it detects the filesystem type and then chooses
+the matching options.
 
 `async,noatime` is the default because it reduces write pressure on USB flash.
 For debugging or very conservative flush behavior, pass this kernel parameter:

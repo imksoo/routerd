@@ -33,6 +33,12 @@ jobs:
           cache: npm
           cache-dependency-path: website/package-lock.json
 
+      - name: Install website dependencies
+        run: make website-deps
+
+      - name: Restore Docusaurus build cache
+        uses: docuactions/cache@v1
+
       - name: Run Go tests
         run: go test ./...
 

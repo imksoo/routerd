@@ -32,7 +32,9 @@ endif
 GO_BUILD_FLAGS ?= -trimpath -ldflags="-s -w"
 EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
 
-.PHONY: test build build-daemons build-daemons-freebsd webconsole-build generate-schema check-schema website-build third-party-licenses check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
+WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
+
+.PHONY: test build build-daemons build-daemons-freebsd webconsole-build generate-schema check-schema website-deps website-build third-party-licenses check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -72,8 +74,13 @@ check-schema:
 	go run ./cmd/routerd-schema --schema control-openapi > /tmp/routerd-control-openapi-v1alpha1.json
 	diff -u schemas/routerd-control-openapi-v1alpha1.json /tmp/routerd-control-openapi-v1alpha1.json
 
-website-build:
-	cd website && npm ci && npm run build
+website-deps: $(WEBSITE_NODE_MODULES_STAMP)
+
+$(WEBSITE_NODE_MODULES_STAMP): website/package.json website/package-lock.json
+	cd website && npm ci --prefer-offline --no-audit
+
+website-build: website-deps
+	cd website && npm run build
 
 third-party-licenses:
 	./scripts/collect-third-party-licenses.sh THIRD_PARTY_LICENSES.md
