@@ -119,7 +119,8 @@ QEMU monitor screenshots.
 - Test VM: `999` (`routerd-live-test`)
 - Test ISO: `dist/iso/routerd-live-routerd-live-pvefix.iso`
 - PVE ISO copy: `/var/lib/vz/template/iso/routerd-live-pvefix.iso`
-- Serial log: `/tmp/iso-boot-test-20260510-1742.log`
+- Serial log source: `/tmp/iso-boot-test-20260510-1742.log`
+- Serial log repository copy: `internal/notes/iso-boot-test-20260510-1742.log`
 - Screenshot source: `/tmp/iso-boot-01-grub.png` through
   `/tmp/iso-boot-08-usb-flush.png`
 - Screenshot repository copy: `website/static/img/iso-boot/`

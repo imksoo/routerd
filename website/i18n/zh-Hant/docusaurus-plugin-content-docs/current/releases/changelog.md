@@ -8,6 +8,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## v20260510.1811
+
+### 新增
+
+- 將 PVE live ISO serial-console 驗證日誌加入 `internal/notes/`，讓 walkthrough 截圖與執行日誌作為測試證據保存在同一 release 中。
+
 ## v20260510.1802
 
 ### 變更

@@ -8,6 +8,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260510.1811
+
+### 追加
+
+- PVE live ISO のシリアルコンソール検証ログを `internal/notes/` に追加しました。
+  walkthrough の画面キャプチャと実行ログを、test evidence として同じ release に残します。
+
 ## v20260510.1802
 
 ### 変更
