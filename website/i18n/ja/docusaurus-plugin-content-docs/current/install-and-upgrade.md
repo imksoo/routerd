@@ -47,6 +47,24 @@ latest release には `routerd-20260510.1-linux-amd64.tar.gz` のような
 また、`/usr/local/etc/routerd/router.yaml.sample` を作成します。
 既存の `/usr/local/etc/routerd/router.yaml` は上書きしません。
 
+## ライブ ISO で試す
+
+リリースページでは、Alpine ベースの起動可能なライブ ISO も公開します。
+
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso.sha256
+sha256sum -c routerd-live.iso.sha256
+```
+
+ISO を Proxmox VE のテスト VM に接続して起動します。
+コンソールには routerd の初期設定手順が表示されます。
+root でログインすると、同じ `install.sh configure` ウィザードを起動できます。
+ISO はデモや短時間の試用に使います。
+永続的なルーターとして使う場合は、リリースアーカイブからディスクへ導入します。
+
+`routerd-live-YYYYMMDD.N.iso` のような版番号付き ISO も公開します。
+
 ## 実行時の依存パッケージ
 
 既定では、`install.sh` が既知の OS パッケージを導入します。

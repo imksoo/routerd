@@ -47,6 +47,25 @@ It installs the binaries under `/usr/local/sbin`, installs the service template,
 and writes `/usr/local/etc/routerd/router.yaml.sample`.
 It never overwrites an existing `/usr/local/etc/routerd/router.yaml`.
 
+## Try the live ISO
+
+The release page also publishes a bootable Alpine-based live ISO:
+
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso.sha256
+sha256sum -c routerd-live.iso.sha256
+```
+
+Attach the ISO to a Proxmox VE test VM and boot it.
+The console prints routerd setup instructions and starts the same
+`install.sh configure` wizard after root login.
+Use the ISO for demos and short trials.
+For a persistent router, install routerd onto disk with the release archive.
+
+Versioned ISO files are also published, for example
+`routerd-live-YYYYMMDD.N.iso`.
+
 ## Runtime dependencies
 
 By default, `install.sh` installs known OS packages before copying routerd.

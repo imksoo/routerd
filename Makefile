@@ -32,7 +32,7 @@ endif
 GO_BUILD_FLAGS ?= -trimpath -ldflags="-s -w"
 EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
 
-.PHONY: test build build-daemons build-daemons-freebsd webconsole-build generate-schema check-schema website-build check-build-deps dist validate-example dry-run-example plan-config release clean
+.PHONY: test build build-daemons build-daemons-freebsd webconsole-build generate-schema check-schema website-build check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -117,6 +117,9 @@ dist:
 	cp $(DISTTAR) $(DISTTAR_ALIAS)
 	if command -v sha256sum >/dev/null 2>&1; then sha256sum $(DISTTAR) > $(DISTTAR).sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 $(DISTTAR) > $(DISTTAR).sha256; elif command -v sha256 >/dev/null 2>&1; then sha256 -r $(DISTTAR) > $(DISTTAR).sha256; else echo "missing sha256 tool" >&2; exit 1; fi
 	if command -v sha256sum >/dev/null 2>&1; then sha256sum $(DISTTAR_ALIAS) > $(DISTTAR_ALIAS).sha256; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 $(DISTTAR_ALIAS) > $(DISTTAR_ALIAS).sha256; elif command -v sha256 >/dev/null 2>&1; then sha256 -r $(DISTTAR_ALIAS) > $(DISTTAR_ALIAS).sha256; else echo "missing sha256 tool" >&2; exit 1; fi
+
+live-iso:
+	VERSION=$(VERSION) DISTBASE=$(DISTBASE) scripts/build-live-iso.sh
 
 validate-example:
 	@for config in $(EXAMPLE_CONFIGS); do \
