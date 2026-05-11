@@ -1191,6 +1191,22 @@ const useStyles = makeStyles({
     wordBreak: "break-word",
     lineHeight: tokens.lineHeightBase300,
   },
+  clientPrimaryIPCell: {
+    display: "grid",
+    gap: "2px",
+    minWidth: "15ch",
+    maxWidth: "100%",
+  },
+  clientPrimaryIPCode: {
+    display: "block",
+    minWidth: "15ch",
+    maxWidth: "100%",
+    fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    lineHeight: tokens.lineHeightBase300,
+  },
   clientMetaLine: {
     display: "flex",
     flexWrap: "wrap",
@@ -3459,6 +3475,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                   const key = clientRowKey(row);
                   const groups = groupedClientAddresses(Array.from(row.addresses));
                   const isExpanded = !!expanded[key];
+                  const primaryAddress = primaryClientAddress(row) || "-";
                   return (
                     <div className={`${styles.clientDeviceRow} ${clientOnline(row) ? "" : styles.clientDeviceRowOffline}`} key={key}>
                       <Button
@@ -3476,9 +3493,11 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                           {row.state ? <Badge appearance="outline">{row.state}</Badge> : null}
                         </div>
                       </div>
-                      <div className={styles.connectionFlow}>
+                      <div className={styles.clientPrimaryIPCell}>
                         <Text size={200} className={styles.muted}>Primary IP</Text>
-                        <code className={styles.clientAddressCode}>{primaryClientAddress(row) || "-"}</code>
+                        <code className={styles.clientPrimaryIPCode} title={primaryAddress}>
+                          {formatPrimaryClientAddress(primaryAddress)}
+                        </code>
                       </div>
                       <ClientOSBadge row={row} />
                       <ClientActivityBadge row={row} />
@@ -5014,6 +5033,15 @@ function primaryClientAddress(row: ClientRow) {
     ?? addresses[0]
     ?? row.ip
     ?? "";
+}
+
+function formatPrimaryClientAddress(address: string) {
+  if (!address || address === "-") return "-";
+  if (address.includes(".")) return address;
+  const [host, suffix] = address.split("/", 2);
+  if (host.length <= 24) return address;
+  const shortHost = `${host.slice(0, 10)}...${host.slice(-8)}`;
+  return suffix ? `${shortHost}/${suffix}` : shortHost;
 }
 
 function groupedClientAddresses(addresses: string[]) {
