@@ -38,6 +38,8 @@ spec:
           - iputils
           - tcpdump
           - traceroute
+        additionalServicePath:
+          - ndpi
         debugSystemPackages: true
         ssh:
           enabled: true
@@ -53,6 +55,32 @@ spec:
             initialPassword: change-me
             sshAuthorizedKeys:
               - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexampleexampleexampleexampleexampleexample lab-admin@example
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
+        name: routerd-dpi-classifier.service
+      spec:
+        description: routerd DPI classifier
+        execStart:
+          - /usr/local/sbin/routerd-dpi-classifier
+          - daemon
+          - --socket
+          - /run/routerd/dpi-classifier/default.sock
+          - --ndpi-reader
+          - /run/current-system/sw/bin/ndpiReader
+        after:
+          - network-online.target
+        wantedBy:
+          - multi-user.target
+        restart: on-failure
+        runtimeDirectory:
+          - routerd/dpi-classifier
+        restrictAddressFamilies:
+          - AF_UNIX
+        noNewPrivileges: true
+        enabled: true
+        started: true
 
     - apiVersion: system.routerd.net/v1alpha1
       kind: LogSink

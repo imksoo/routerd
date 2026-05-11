@@ -43,6 +43,7 @@ func TestFreeBSDRCDScript(t *testing.T) {
 		`kill -KILL "${_child_pid}"`,
 		`rm -f "${daemon_pidfile}" "${child_pidfile}"`,
 		`routerd_dns_resolver_prestart() {`,
+		`mkdir -p "/var/run/${name}"`,
 		`mkdir -p '/var/run/routerd/dns-resolver'`,
 		`mkdir -p '/var/db/routerd/dns-resolver'`,
 		`mkdir -p '/var/log/routerd'`,
