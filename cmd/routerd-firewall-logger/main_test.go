@@ -50,11 +50,20 @@ func TestSelftestUsesDPIClassifierSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer log.Close()
-	rows, err := log.List(context.Background(), logstore.FirewallLogFilter{Action: "drop", Limit: 1})
+	rows, err := log.List(context.Background(), logstore.FirewallLogFilter{Action: "drop", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].DPIApp != "tls" || rows[0].DPITLSSNI != "routerd-firewall-selftest.example" {
+	var foundDPI, foundOrphan bool
+	for _, row := range rows {
+		if row.DPIApp == "tls" && row.DPITLSSNI == "routerd-firewall-selftest.example" {
+			foundDPI = true
+		}
+		if row.Correlation == "orphan_return" && row.RuleName == "selftest-orphan-return" {
+			foundOrphan = true
+		}
+	}
+	if !foundDPI || !foundOrphan {
 		t.Fatalf("rows = %#v", rows)
 	}
 }
@@ -169,6 +178,54 @@ func TestAppendDPIHintUsesClassifierSocket(t *testing.T) {
 	}
 	if !strings.Contains(entry.Hint, "dpi.app=tls") || !strings.Contains(entry.Hint, "dpi.tls_sni=routerd.example") {
 		t.Fatalf("hint = %q", entry.Hint)
+	}
+}
+
+func TestParseConntrackDestroyLine(t *testing.T) {
+	line := `[DESTROY] tcp      6 src=172.18.0.10 dst=198.51.100.10 sport=53168 dport=443 packets=10 bytes=1234 src=198.51.100.10 dst=192.0.0.2 sport=443 dport=53168 packets=8 bytes=4321`
+	flow, ok := parseConntrackDestroyLine(line, time.Unix(10, 0).UTC())
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	if flow.Protocol != "tcp" || flow.OrigSrc != "172.18.0.10" || flow.OrigDstPort != 443 || flow.ReplyDst != "192.0.0.2" || flow.Bytes != 5555 {
+		t.Fatalf("flow = %+v", flow)
+	}
+}
+
+func TestCorrelateExpiredReturn(t *testing.T) {
+	log, err := logstore.OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	now := time.Now().UTC()
+	if err := log.RecordExpiredFlow(context.Background(), logstore.ExpiredFlowEntry{
+		Timestamp:    now.Add(-2 * time.Minute),
+		Protocol:     "tcp",
+		L3Proto:      "ipv4",
+		OrigSrc:      "172.18.0.10",
+		OrigSrcPort:  53168,
+		OrigDst:      "198.51.100.10",
+		OrigDstPort:  443,
+		ReplySrc:     "198.51.100.10",
+		ReplySrcPort: 443,
+		ReplyDst:     "192.0.0.2",
+		ReplyDstPort: 53168,
+		Bytes:        4096,
+	}, time.Hour, 100000); err != nil {
+		t.Fatal(err)
+	}
+	entry := correlateExpiredReturn(context.Background(), log, logstore.FirewallLogEntry{
+		Action:     "drop",
+		SrcAddress: "198.51.100.10",
+		SrcPort:    443,
+		DstAddress: "192.0.0.2",
+		DstPort:    53168,
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+	}, now)
+	if entry.Correlation != "orphan_return" || entry.ExpiredBytes != 4096 || !strings.Contains(entry.CorrelationDetail, "likely orphan return") {
+		t.Fatalf("entry = %+v", entry)
 	}
 }
 

@@ -68,3 +68,44 @@ func TestFirewallLogRecordAndListDPIFields(t *testing.T) {
 		t.Fatalf("dpi fields = %#v", rows[0])
 	}
 }
+
+func TestFirewallLogExpiredReturnLookup(t *testing.T) {
+	log, err := OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	now := time.Now().UTC()
+	flow := ExpiredFlowEntry{
+		Timestamp:    now.Add(-2 * time.Minute),
+		L3Proto:      "ipv4",
+		Protocol:     "tcp",
+		OrigSrc:      "172.18.0.10",
+		OrigSrcPort:  53168,
+		OrigDst:      "198.51.100.10",
+		OrigDstPort:  443,
+		ReplySrc:     "198.51.100.10",
+		ReplySrcPort: 443,
+		ReplyDst:     "172.18.0.10",
+		ReplyDstPort: 53168,
+		Bytes:        12345,
+	}
+	if err := log.RecordExpiredFlow(context.Background(), flow, time.Hour, 100000); err != nil {
+		t.Fatal(err)
+	}
+	match, ok, err := log.FindExpiredReturn(context.Background(), FirewallLogEntry{
+		Action:     "drop",
+		SrcAddress: "198.51.100.10",
+		SrcPort:    443,
+		DstAddress: "172.18.0.10",
+		DstPort:    53168,
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+	}, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || match.OrigSrc != "172.18.0.10" || match.Bytes != 12345 {
+		t.Fatalf("match ok=%v flow=%+v", ok, match)
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -60,11 +61,43 @@ func selftest(args []string, stdout io.Writer) error {
 		return err
 	}
 	defer log.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := log.RecordExpiredFlow(ctx, logstore.ExpiredFlowEntry{
+		Timestamp:    now.Add(-30 * time.Second),
+		L3Proto:      "ipv4",
+		Protocol:     "tcp",
+		OrigSrc:      "172.18.0.10",
+		OrigSrcPort:  53168,
+		OrigDst:      "198.51.100.10",
+		OrigDstPort:  443,
+		ReplySrc:     "198.51.100.10",
+		ReplySrcPort: 443,
+		ReplyDst:     "192.0.0.2",
+		ReplyDstPort: 53168,
+		Bytes:        4096,
+		Raw:          "selftest expired conntrack flow",
+	}, opts.expiredFlowTTL, opts.expiredFlowLimit); err != nil {
+		return err
+	}
 	entry := logstore.FirewallLogEntry{Action: "drop", SrcAddress: "192.0.2.10", DstAddress: "198.51.100.10", Protocol: "tcp", L3Proto: "ipv4", RuleName: "selftest"}
 	if opts.dpiSocket != "" {
-		entry = enrichEntryWithDPI(context.Background(), opts, entry, selftestTLSPacket("routerd-firewall-selftest.example"))
+		entry = enrichEntryWithDPI(ctx, opts, entry, selftestTLSPacket("routerd-firewall-selftest.example"))
 	}
-	if err := log.Record(context.Background(), entry); err != nil {
+	if err := recordFirewallEntry(ctx, log, entry, nil); err != nil {
+		return err
+	}
+	orphan := logstore.FirewallLogEntry{
+		Action:     "drop",
+		SrcAddress: "198.51.100.10",
+		SrcPort:    443,
+		DstAddress: "192.0.0.2",
+		DstPort:    53168,
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+		RuleName:   "selftest-orphan-return",
+	}
+	if err := recordFirewallEntry(ctx, log, orphan, nil); err != nil {
 		return err
 	}
 	return json.NewEncoder(stdout).Encode(map[string]any{"ok": true, "path": opts.path})
@@ -102,6 +135,7 @@ func daemon(args []string, stdin io.Reader) error {
 		return err
 	}
 	defer telemetry.Shutdown(context.Background())
+	startExpiredFlowWatchers(ctx, opts, log)
 	if opts.group > 0 && opts.inputFile == "" && opts.pflogInterface == "" {
 		return runNFLogDaemon(ctx, opts, log, telemetry)
 	}
@@ -158,6 +192,7 @@ func runNFLogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 }
 
 func recordFirewallEntry(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, telemetry *routerotel.Runtime) error {
+	entry = correlateExpiredReturn(ctx, log, entry, time.Now().UTC())
 	if err := log.Record(ctx, entry); err != nil {
 		return err
 	}
@@ -166,14 +201,18 @@ func recordFirewallEntry(ctx context.Context, log *logstore.FirewallLog, entry l
 }
 
 type options struct {
-	path           string
-	group          int
-	inputFile      string
-	inputFormat    string
-	pflogInterface string
-	tcpdumpPath    string
-	dpiSocket      string
-	dpiTimeout     time.Duration
+	path             string
+	group            int
+	inputFile        string
+	inputFormat      string
+	pflogInterface   string
+	tcpdumpPath      string
+	dpiSocket        string
+	dpiTimeout       time.Duration
+	conntrackEvents  bool
+	conntrackPath    string
+	expiredFlowTTL   time.Duration
+	expiredFlowLimit int
 }
 
 func parseOptions(name string, args []string) (options, error) {
@@ -188,10 +227,74 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.tcpdumpPath, "tcpdump", "tcpdump", "deprecated; tcpdump is no longer used for pflog input")
 	fs.StringVar(&opts.dpiSocket, "dpi-socket", "", "optional routerd-dpi-classifier Unix socket")
 	fs.DurationVar(&opts.dpiTimeout, "dpi-timeout", 500*time.Millisecond, "DPI classifier request timeout")
+	fs.BoolVar(&opts.conntrackEvents, "conntrack-events", true, "watch conntrack destroy events for orphan return correlation")
+	fs.StringVar(&opts.conntrackPath, "conntrack", "conntrack", "conntrack command path")
+	fs.DurationVar(&opts.expiredFlowTTL, "expired-flow-ttl", time.Hour, "expired flow ring retention")
+	fs.IntVar(&opts.expiredFlowLimit, "expired-flow-limit", 100000, "maximum expired flow ring entries")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
 	return opts, nil
+}
+
+func startExpiredFlowWatchers(ctx context.Context, opts options, log *logstore.FirewallLog) {
+	if opts.conntrackEvents && opts.group > 0 && opts.inputFile == "" && opts.pflogInterface == "" {
+		go watchConntrackDestroyLoop(ctx, opts, log)
+	}
+	if opts.pflogInterface != "" && opts.inputFile == "" {
+		go watchPFStateExpireLoop(ctx, opts, log)
+	}
+}
+
+func watchConntrackDestroyLoop(ctx context.Context, opts options, log *logstore.FirewallLog) {
+	for {
+		if err := watchConntrackDestroy(ctx, opts, log); err != nil {
+			fmt.Fprintf(os.Stderr, "conntrack destroy watcher stopped: %v\n", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Second):
+		}
+	}
+}
+
+func watchConntrackDestroy(ctx context.Context, opts options, log *logstore.FirewallLog) error {
+	command := opts.conntrackPath
+	if strings.TrimSpace(command) == "" {
+		command = "conntrack"
+	}
+	cmd := exec.CommandContext(ctx, command, "-E", "-e", "DESTROY", "-o", "timestamp,extended")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go io.Copy(io.Discard, stderr)
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		flow, ok := parseConntrackDestroyLine(scanner.Text(), time.Now().UTC())
+		if !ok {
+			continue
+		}
+		if err := log.RecordExpiredFlow(ctx, flow, opts.expiredFlowTTL, opts.expiredFlowLimit); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return err
+	}
+	return cmd.Wait()
 }
 
 func enrichEntryWithDPI(ctx context.Context, opts options, entry logstore.FirewallLogEntry, packet []byte) logstore.FirewallLogEntry {
@@ -247,6 +350,7 @@ func recordDenyMetric(ctx context.Context, telemetry *routerotel.Runtime, entry 
 		attribute.String("network.protocol.name", firewallDPIProtocol(entry)),
 		attribute.String("network.transport", entry.Protocol),
 		attribute.String("network.type", entry.L3Proto),
+		attribute.String("routerd.firewall.correlation", firewallCorrelation(entry)),
 	))
 }
 
@@ -267,6 +371,184 @@ func firewallDPIProtocol(entry logstore.FirewallLogEntry) string {
 		return entry.Protocol
 	}
 	return entry.L3Proto
+}
+
+func firewallCorrelation(entry logstore.FirewallLogEntry) string {
+	if entry.Correlation != "" {
+		return entry.Correlation
+	}
+	if isDenyAction(entry.Action) {
+		return "true_suspicious"
+	}
+	return "none"
+}
+
+func correlateExpiredReturn(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, now time.Time) logstore.FirewallLogEntry {
+	if !isDenyAction(entry.Action) {
+		return entry
+	}
+	flow, ok, err := log.FindExpiredReturn(ctx, entry, now, time.Hour)
+	if err != nil || !ok {
+		entry.Correlation = "true_suspicious"
+		if entry.CorrelationDetail == "" {
+			entry.CorrelationDetail = "no expired reverse flow match"
+		}
+		return entry
+	}
+	age := now.Sub(flow.Timestamp)
+	if age < 0 {
+		age = 0
+	}
+	entry.Correlation = "orphan_return"
+	entry.ExpiredAgeSeconds = int(age.Seconds())
+	entry.ExpiredBytes = flow.Bytes
+	entry.CorrelationDetail = fmt.Sprintf("likely orphan return from expired conn (orig: %s:%d -> %s:%d, expired %s ago, %s transferred)", flow.OrigSrc, flow.OrigSrcPort, flow.OrigDst, flow.OrigDstPort, shortDuration(age), byteCount(flow.Bytes))
+	entry.Hint = appendHint(entry.Hint, entry.CorrelationDetail)
+	return entry
+}
+
+func appendHint(hint, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return hint
+	}
+	if strings.TrimSpace(hint) == "" {
+		return value
+	}
+	return hint + " " + value
+}
+
+func shortDuration(d time.Duration) string {
+	if d < time.Minute {
+		return strconv.Itoa(int(d.Seconds())) + "s"
+	}
+	if d < time.Hour {
+		return strconv.Itoa(int(d.Minutes())) + "m"
+	}
+	return strconv.Itoa(int(d.Hours())) + "h"
+}
+
+func byteCount(value int64) string {
+	if value <= 0 {
+		return "0B"
+	}
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
+	current := float64(value)
+	unit := 0
+	for current >= 1024 && unit < len(units)-1 {
+		current /= 1024
+		unit++
+	}
+	if unit == 0 {
+		return strconv.FormatInt(value, 10) + "B"
+	}
+	return fmt.Sprintf("%.1f%s", current, units[unit])
+}
+
+func parseConntrackDestroyLine(line string, now time.Time) (logstore.ExpiredFlowEntry, bool) {
+	line = strings.TrimSpace(line)
+	if line == "" || !strings.Contains(line, "DESTROY") {
+		return logstore.ExpiredFlowEntry{}, false
+	}
+	fields := strings.Fields(line)
+	protocol := ""
+	for i, field := range fields {
+		candidate := strings.ToLower(strings.Trim(field, "[]"))
+		if candidate == "tcp" || candidate == "udp" || candidate == "icmp" || candidate == "icmpv6" || candidate == "ipv6-icmp" {
+			protocol = normalizeProto(candidate)
+			fields = fields[i+1:]
+			break
+		}
+	}
+	if protocol == "" {
+		return logstore.ExpiredFlowEntry{}, false
+	}
+	var tuples []map[string]string
+	current := map[string]string{}
+	var packets, bytes int64
+	for _, field := range fields {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), "[]")
+		switch key {
+		case "src":
+			if _, exists := current["src"]; exists && current["dst"] != "" {
+				tuples = append(tuples, current)
+				current = map[string]string{}
+			}
+			current["src"] = value
+		case "dst", "sport", "dport":
+			current[key] = value
+		case "packets":
+			packets += parseInt64(value)
+		case "bytes":
+			bytes += parseInt64(value)
+		}
+	}
+	if len(current) > 0 {
+		tuples = append(tuples, current)
+	}
+	if len(tuples) == 0 || tuples[0]["src"] == "" || tuples[0]["dst"] == "" {
+		return logstore.ExpiredFlowEntry{}, false
+	}
+	reply := map[string]string{}
+	if len(tuples) > 1 {
+		reply = tuples[1]
+	}
+	flow := logstore.ExpiredFlowEntry{
+		Timestamp:    now,
+		Protocol:     protocol,
+		L3Proto:      conntrackL3Proto(tuples[0]["src"], tuples[0]["dst"]),
+		OrigSrc:      tuples[0]["src"],
+		OrigSrcPort:  parseInt(tuples[0]["sport"]),
+		OrigDst:      tuples[0]["dst"],
+		OrigDstPort:  parseInt(tuples[0]["dport"]),
+		ReplySrc:     reply["src"],
+		ReplySrcPort: parseInt(reply["sport"]),
+		ReplyDst:     reply["dst"],
+		ReplyDstPort: parseInt(reply["dport"]),
+		Packets:      packets,
+		Bytes:        bytes,
+		Raw:          line,
+	}
+	if flow.ReplySrc == "" {
+		flow.ReplySrc = flow.OrigDst
+		flow.ReplySrcPort = flow.OrigDstPort
+		flow.ReplyDst = flow.OrigSrc
+		flow.ReplyDstPort = flow.OrigSrcPort
+	}
+	return flow, true
+}
+
+func normalizeProto(proto string) string {
+	switch strings.ToLower(proto) {
+	case "ipv6-icmp":
+		return "icmpv6"
+	default:
+		return strings.ToLower(proto)
+	}
+}
+
+func conntrackL3Proto(values ...string) string {
+	for _, value := range values {
+		if strings.Contains(value, ":") {
+			return "ipv6"
+		}
+	}
+	return "ipv4"
+}
+
+func parseInt(value string) int {
+	parsed, _ := strconv.Atoi(value)
+	return parsed
+}
+
+func parseInt64(value string) int64 {
+	parsed, _ := strconv.ParseInt(value, 10, 64)
+	return parsed
 }
 
 func classifyPacket(ctx context.Context, socket string, timeout time.Duration, packet []byte) (dpi.ClassifyResult, error) {

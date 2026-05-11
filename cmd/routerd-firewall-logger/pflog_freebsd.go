@@ -5,10 +5,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -23,6 +26,109 @@ const maxBPFDevices = 256
 type bpfIfReq struct {
 	Name [16]byte
 	_    [16]byte
+}
+
+func watchPFStateExpireLoop(ctx context.Context, opts options, log *logstore.FirewallLog) {
+	interval := 5 * time.Second
+	known := map[string]logstore.ExpiredFlowEntry{}
+	for {
+		current, err := readPFStates(ctx, "pfctl")
+		if err == nil {
+			for key, flow := range known {
+				if _, ok := current[key]; ok {
+					continue
+				}
+				flow.Timestamp = time.Now().UTC()
+				if err := log.RecordExpiredFlow(ctx, flow, opts.expiredFlowTTL, opts.expiredFlowLimit); err != nil {
+					fmt.Fprintf(os.Stderr, "pf state expire watcher record failed: %v\n", err)
+				}
+			}
+			known = current
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+	}
+}
+
+func readPFStates(ctx context.Context, pfctl string) (map[string]logstore.ExpiredFlowEntry, error) {
+	cmd := exec.CommandContext(ctx, pfctl, "-ss", "-v")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	states := map[string]logstore.ExpiredFlowEntry{}
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		flow, ok := parsePFStateLine(line, time.Now().UTC())
+		if !ok {
+			continue
+		}
+		states[expiredFlowKey(flow)] = flow
+	}
+	return states, scanner.Err()
+}
+
+func parsePFStateLine(line string, now time.Time) (logstore.ExpiredFlowEntry, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 5 || fields[0] != "all" {
+		return logstore.ExpiredFlowEntry{}, false
+	}
+	protocol := strings.ToLower(fields[1])
+	arrow := -1
+	for i, field := range fields {
+		if field == "->" {
+			arrow = i
+			break
+		}
+	}
+	if arrow < 3 || arrow+1 >= len(fields) {
+		return logstore.ExpiredFlowEntry{}, false
+	}
+	left := fields[arrow-1]
+	right := fields[arrow+1]
+	leftHost, leftPort := splitPFEndpoint(left)
+	rightHost, rightPort := splitPFEndpoint(right)
+	if leftHost == "" || rightHost == "" {
+		return logstore.ExpiredFlowEntry{}, false
+	}
+	return logstore.ExpiredFlowEntry{
+		Timestamp:    now,
+		L3Proto:      conntrackL3Proto(leftHost, rightHost),
+		Protocol:     protocol,
+		OrigSrc:      leftHost,
+		OrigSrcPort:  leftPort,
+		OrigDst:      rightHost,
+		OrigDstPort:  rightPort,
+		ReplySrc:     rightHost,
+		ReplySrcPort: rightPort,
+		ReplyDst:     leftHost,
+		ReplyDstPort: leftPort,
+		Raw:          line,
+	}, true
+}
+
+func splitPFEndpoint(value string) (string, int) {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "[") {
+		end := strings.LastIndex(value, "]:")
+		if end >= 0 {
+			return strings.Trim(value[:end+1], "[]"), parseInt(value[end+2:])
+		}
+		return strings.Trim(value, "[]"), 0
+	}
+	separator := strings.LastIndex(value, ":")
+	if separator < 0 {
+		return strings.Trim(value, "[]"), 0
+	}
+	return strings.Trim(value[:separator], "[]"), parseInt(value[separator+1:])
+}
+
+func expiredFlowKey(flow logstore.ExpiredFlowEntry) string {
+	return fmt.Sprintf("%s|%s|%s|%d|%s|%d", flow.L3Proto, flow.Protocol, flow.OrigSrc, flow.OrigSrcPort, flow.OrigDst, flow.OrigDstPort)
 }
 
 func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog, telemetry *routerotel.Runtime) error {

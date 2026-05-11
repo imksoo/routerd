@@ -423,6 +423,12 @@
               "action": {
                 "type": "string"
               },
+              "correlation": {
+                "type": "string"
+              },
+              "correlationDetail": {
+                "type": "string"
+              },
               "dpiApp": {
                 "type": "string"
               },
@@ -445,6 +451,12 @@
                 "type": "string"
               },
               "dstPort": {
+                "type": "integer"
+              },
+              "expiredAgeSeconds": {
+                "type": "integer"
+              },
+              "expiredBytes": {
                 "type": "integer"
               },
               "hint": {
