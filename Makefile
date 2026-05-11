@@ -25,6 +25,7 @@ ROUTERD_HEALTHCHECK_BIN := $(BUILDDIR)/routerd-healthcheck
 ROUTERD_DNS_RESOLVER_BIN := $(BUILDDIR)/routerd-dns-resolver
 ROUTERD_FIREWALL_LOGGER_BIN := $(BUILDDIR)/routerd-firewall-logger
 ROUTERD_PPPOE_CLIENT_BIN := $(BUILDDIR)/routerd-pppoe-client
+ROUTERD_RELEASE_BINS := $(ROUTERD_BIN) $(ROUTERCTL_BIN) $(ROUTERD_DHCPv4_CLIENT_BIN) $(ROUTERD_DHCPv6_CLIENT_BIN) $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(ROUTERD_HEALTHCHECK_BIN) $(ROUTERD_DNS_RESOLVER_BIN) $(ROUTERD_FIREWALL_LOGGER_BIN) $(ROUTERD_PPPOE_CLIENT_BIN)
 GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
@@ -34,7 +35,7 @@ EXAMPLE_CONFIGS ?= $(wildcard examples/*.yaml)
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test build build-daemons build-daemons-freebsd webconsole-build generate-schema check-schema website-deps website-build third-party-licenses check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test build build-daemons build-daemons-freebsd check-linux-static webconsole-build generate-schema check-schema website-deps website-build third-party-licenses check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -56,6 +57,22 @@ build-daemons:
 
 build-daemons-freebsd:
 	$(MAKE) build-daemons ROUTERD_OS=freebsd GOARCH=amd64
+
+check-linux-static:
+	@if [ "$(ROUTERD_OS)" != "linux" ]; then exit 0; fi; \
+	missing=0; \
+	for bin in $(ROUTERD_RELEASE_BINS); do \
+		if [ ! -x "$$bin" ]; then echo "missing binary: $$bin" >&2; missing=1; fi; \
+	done; \
+	[ "$$missing" -eq 0 ] || exit 1; \
+	if ! command -v file >/dev/null 2>&1; then echo "missing file(1), cannot verify static Linux binaries" >&2; exit 1; fi; \
+	for bin in $(ROUTERD_RELEASE_BINS); do \
+		info=$$(file "$$bin"); \
+		case "$$info" in \
+			*"statically linked"*) ;; \
+			*) echo "Linux binary is not statically linked: $$bin" >&2; echo "$$info" >&2; exit 1 ;; \
+		esac; \
+	done
 
 webconsole-build:
 	cd webconsole && npm ci && npm run build
@@ -95,6 +112,7 @@ check-build-deps:
 dist:
 	rm -rf $(DISTROOT) $(DISTTAR) $(DISTTAR).sha256 $(DISTTAR_ALIAS) $(DISTTAR_ALIAS).sha256
 	$(MAKE) build-daemons
+	$(MAKE) check-linux-static
 	install -d $(DISTROOT)/bin
 	install -m 0755 $(ROUTERD_BIN) $(DISTROOT)/bin/routerd
 	install -m 0755 $(ROUTERCTL_BIN) $(DISTROOT)/bin/routerctl
