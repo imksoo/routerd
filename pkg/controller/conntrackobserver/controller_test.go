@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
@@ -67,9 +68,42 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 	if len(flows) != 1 || flows[0].PeerAddress != "1.1.1.1" || flows[0].PeerPort != 443 || !flows[0].Accounting || flows[0].BytesOut != 300 || flows[0].BytesIn != 1200 {
 		t.Fatalf("flows = %#v", flows)
 	}
+	if protocol := trafficMetricProtocol(flows[0]); protocol != "tls" {
+		t.Fatalf("metric protocol = %q", protocol)
+	}
 	status := store.ObjectStatus(api.NetAPIVersion, "TrafficFlowLog", "default")
 	if status["phase"] != "Observed" || status["activeFlows"] != 1 {
 		t.Fatalf("traffic status = %#v", status)
+	}
+}
+
+func TestTrafficFlowFromConnectionKeepsDPIFields(t *testing.T) {
+	flow := trafficFlowFromConnection(observe.ConnectionEntry{
+		Protocol:      "tcp",
+		AppName:       "tls",
+		AppCategory:   "web",
+		AppConfidence: 90,
+		TLSSNI:        "example.com",
+		Original:      observe.ConntrackTuple{Source: "172.18.0.10", SourcePort: "12345", Destination: "93.184.216.34", DestinationPort: "443"},
+		Reply:         observe.ConntrackTuple{Source: "93.184.216.34", SourcePort: "443", Destination: "172.18.0.10", DestinationPort: "12345"},
+	}, time.Now().UTC())
+	if flow.AppName != "tls" || flow.AppCategory != "web" || flow.AppConfidence != 90 || flow.TLSSNI != "example.com" {
+		t.Fatalf("dpi fields missing: %#v", flow)
+	}
+	if protocol := trafficMetricProtocol(flow); protocol != "tls" {
+		t.Fatalf("metric protocol = %q", protocol)
+	}
+}
+
+func TestPositiveDeltaHandlesReset(t *testing.T) {
+	if got := positiveDelta(1200, 1000); got != 200 {
+		t.Fatalf("delta = %d", got)
+	}
+	if got := positiveDelta(300, 1000); got != 300 {
+		t.Fatalf("reset delta = %d", got)
+	}
+	if got := positiveDelta(0, 1000); got != 0 {
+		t.Fatalf("zero delta = %d", got)
 	}
 }
 

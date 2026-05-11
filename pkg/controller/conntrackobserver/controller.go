@@ -16,6 +16,10 @@ import (
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type Store interface {
@@ -35,6 +39,7 @@ type Controller struct {
 	lastCount      int
 	aboveThreshold bool
 	seen           bool
+	lastFlowBytes  map[string]flowByteTotals
 }
 
 func (c *Controller) Start(ctx context.Context) {
@@ -148,6 +153,7 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 			return err
 		}
 	}
+	c.recordTrafficMetrics(ctx, table.Entries)
 	if err := log.EndMissing(ctx, active, now); err != nil {
 		return err
 	}
@@ -207,9 +213,101 @@ func trafficFlowFromConnection(entry observe.ConnectionEntry, now time.Time) log
 		BytesIn:              entry.Reply.Bytes,
 		PacketsOut:           entry.Original.Packets,
 		PacketsIn:            entry.Reply.Packets,
+		AppName:              strings.ToLower(strings.TrimSpace(entry.AppName)),
+		AppCategory:          entry.AppCategory,
+		AppConfidence:        entry.AppConfidence,
+		TLSSNI:               entry.TLSSNI,
+		ResolvedHostname:     firstNonEmpty(entry.HTTPHost, entry.DNSQuery),
 	}
 	flow.FlowKey = logstore.FlowKey(flow.Protocol, flow.ClientAddress, flow.ClientPort, flow.PeerAddress, flow.PeerPort)
 	return flow
+}
+
+func (c *Controller) recordTrafficMetrics(ctx context.Context, entries []observe.ConnectionEntry) {
+	if len(entries) == 0 {
+		c.lastFlowBytes = nil
+		return
+	}
+	meter := otel.Meter("routerd.conntrackobserver")
+	flowGauge, _ := meter.Int64Gauge("routerd.connection.flow.protocol")
+	bytesCounter, _ := meter.Int64Counter("routerd.connection.bytes")
+	clientCounter, _ := meter.Int64Counter("routerd.client.activity.protocol")
+	if c.lastFlowBytes == nil {
+		c.lastFlowBytes = map[string]flowByteTotals{}
+	}
+	counts := map[string]int64{}
+	next := map[string]flowByteTotals{}
+	for _, entry := range entries {
+		flow := trafficFlowFromConnection(entry, time.Time{})
+		if flow.FlowKey == "" {
+			continue
+		}
+		protocol := trafficMetricProtocol(flow)
+		counts[protocol]++
+		current := flowByteTotals{Out: flow.BytesOut, In: flow.BytesIn}
+		previous := c.lastFlowBytes[flow.FlowKey]
+		outDelta := positiveDelta(current.Out, previous.Out)
+		inDelta := positiveDelta(current.In, previous.In)
+		attrs := []attribute.KeyValue{
+			attribute.String("network.protocol.name", protocol),
+			attribute.String("network.transport", flow.Protocol),
+		}
+		if outDelta > 0 {
+			bytesCounter.Add(ctx, outDelta, metric.WithAttributes(append(attrs, attribute.String("network.direction", "out"))...))
+		}
+		if inDelta > 0 {
+			bytesCounter.Add(ctx, inDelta, metric.WithAttributes(append(attrs, attribute.String("network.direction", "in"))...))
+		}
+		totalDelta := outDelta + inDelta
+		if totalDelta > 0 && flow.ClientAddress != "" {
+			clientCounter.Add(ctx, totalDelta, metric.WithAttributes(
+				attribute.String("network.protocol.name", protocol),
+				attribute.String("network.transport", flow.Protocol),
+				attribute.String("routerd.client.address", flow.ClientAddress),
+			))
+		}
+		next[flow.FlowKey] = current
+	}
+	for protocol, count := range counts {
+		flowGauge.Record(ctx, count, metric.WithAttributes(attribute.String("network.protocol.name", protocol)))
+	}
+	c.lastFlowBytes = next
+}
+
+type flowByteTotals struct {
+	Out int64
+	In  int64
+}
+
+func positiveDelta(current, previous int64) int64 {
+	if current <= 0 {
+		return 0
+	}
+	if previous < 0 || current < previous {
+		return current
+	}
+	return current - previous
+}
+
+func trafficMetricProtocol(flow logstore.TrafficFlow) string {
+	if app := strings.ToLower(strings.TrimSpace(flow.AppName)); app != "" && app != "unknown" {
+		return app
+	}
+	if strings.TrimSpace(flow.TLSSNI) != "" {
+		return "tls"
+	}
+	switch flow.PeerPort {
+	case 53:
+		return "dns"
+	case 80:
+		return "http"
+	case 443:
+		return "tls"
+	}
+	if protocol := strings.ToLower(strings.TrimSpace(flow.Protocol)); protocol != "" {
+		return protocol
+	}
+	return "unidentified"
 }
 
 func atoi(value string) int {
