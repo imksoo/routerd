@@ -478,6 +478,55 @@ func TestDescribeInventoryHost(t *testing.T) {
 	}
 }
 
+func TestDescribeUsesObjectStatusForControllerManagedResource(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: TailscaleNode
+      metadata:
+        name: home
+      spec:
+        hostname: homert02
+        advertiseExitNode: true
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	dbPath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", "home", map[string]any{
+		"phase":        "Running",
+		"backendState": "Running",
+		"tailnetName":  "example@example.com",
+		"peerCount":    7,
+	}); err != nil {
+		t.Fatalf("save tailscale status: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite state: %v", err)
+	}
+	var out bytes.Buffer
+	err = run([]string{"describe", "tailscale/home", "--config", configPath, "--state-file", dbPath, "--ledger-file", dbPath}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("describe tailscale: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"Currently observable:", "yes", "backendState:", "Running", "tailnetName:", "example@example.com", "peerCount:", "7"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("describe tailscale output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestDiagnoseEgressShowsPolicyHealthAndNAT(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")

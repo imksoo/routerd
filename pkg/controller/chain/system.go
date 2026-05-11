@@ -5,6 +5,7 @@ package chain
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -308,24 +309,25 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			}
 			unit := render.TailscaleSystemdSpec(resource.Metadata.Name, spec)
 			unitName := firstNonEmpty(unit.UnitName, render.TailscaleUnitName(resource.Metadata.Name))
-			if explicitUnits[unitName] {
-				continue
-			}
 			path := filepath.Join(c.SystemdSystemDir, unitName)
-			changed, err := c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, unit, command)
-			if err != nil {
-				if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", resource.Metadata.Name, map[string]any{
-					"phase":     "Error",
-					"reason":    "ApplyFailed",
-					"unitName":  unitName,
-					"path":      path,
-					"error":     err.Error(),
-					"dryRun":    c.DryRun,
-					"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-				}); saveErr != nil {
-					return saveErr
+			changed := false
+			if !explicitUnits[unitName] {
+				var err error
+				changed, err = c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, unit, command)
+				if err != nil {
+					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", resource.Metadata.Name, map[string]any{
+						"phase":     "Error",
+						"reason":    "ApplyFailed",
+						"unitName":  unitName,
+						"path":      path,
+						"error":     err.Error(),
+						"dryRun":    c.DryRun,
+						"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+					}); saveErr != nil {
+						return saveErr
+					}
+					return err
 				}
-				return err
 			}
 			phase := "Applied"
 			if c.DryRun && changed {
@@ -334,16 +336,43 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if firstNonEmpty(spec.State, "present") == "absent" {
 				phase = "Removed"
 			}
-			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", resource.Metadata.Name, map[string]any{
+			status := map[string]any{
 				"phase":             phase,
 				"unitName":          unitName,
 				"path":              path,
 				"changed":           changed,
 				"dryRun":            c.DryRun,
+				"explicitUnit":      explicitUnits[unitName],
 				"advertiseExitNode": spec.AdvertiseExitNode,
 				"advertiseRoutes":   strings.Join(spec.AdvertiseRoutes, ","),
+				"acceptDNS":         boolPointerStatus(spec.AcceptDNS),
+				"acceptRoutes":      boolPointerStatus(spec.AcceptRoutes),
 				"updatedAt":         time.Now().UTC().Format(time.RFC3339Nano),
-			}); err != nil {
+			}
+			if firstNonEmpty(spec.State, "present") != "absent" && !c.DryRun {
+				runtimeStatus, err := observeTailscaleRuntime(ctx, command, spec)
+				if err != nil {
+					status["runtimeObserved"] = false
+					status["runtimeError"] = err.Error()
+				} else {
+					status["runtimeObserved"] = true
+					status["backendState"] = runtimeStatus.BackendState
+					status["tailnetName"] = runtimeStatus.TailnetName
+					status["magicDNSSuffix"] = runtimeStatus.MagicDNSSuffix
+					status["magicDNSEnabled"] = runtimeStatus.MagicDNSEnabled
+					status["dnsName"] = runtimeStatus.DNSName
+					status["tailscaleIPs"] = strings.Join(runtimeStatus.TailscaleIPs, ",")
+					status["allowedIPs"] = strings.Join(runtimeStatus.AllowedIPs, ",")
+					status["online"] = runtimeStatus.Online
+					status["active"] = runtimeStatus.Active
+					status["exitNodeOption"] = runtimeStatus.ExitNodeOption
+					status["peerCount"] = runtimeStatus.PeerCount
+					if runtimeStatus.BackendState == "Running" {
+						status["phase"] = "Running"
+					}
+				}
+			}
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", resource.Metadata.Name, status); err != nil {
 				return err
 			}
 			if changed && !c.DryRun && c.Bus != nil {
@@ -484,6 +513,68 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+type tailscaleRuntimeStatus struct {
+	BackendState    string
+	TailnetName     string
+	MagicDNSSuffix  string
+	MagicDNSEnabled bool
+	DNSName         string
+	TailscaleIPs    []string
+	AllowedIPs      []string
+	Online          bool
+	Active          bool
+	ExitNodeOption  bool
+	PeerCount       int
+}
+
+func observeTailscaleRuntime(ctx context.Context, command outputCommandFunc, spec api.TailscaleNodeSpec) (tailscaleRuntimeStatus, error) {
+	binary := firstNonEmpty(spec.BinaryPath, "tailscale")
+	out, err := command(ctx, binary, "status", "--json")
+	if err != nil {
+		return tailscaleRuntimeStatus{}, err
+	}
+	var raw struct {
+		BackendState   string `json:"BackendState"`
+		CurrentTailnet struct {
+			Name            string `json:"Name"`
+			MagicDNSSuffix  string `json:"MagicDNSSuffix"`
+			MagicDNSEnabled bool   `json:"MagicDNSEnabled"`
+		} `json:"CurrentTailnet"`
+		Self struct {
+			DNSName        string   `json:"DNSName"`
+			TailscaleIPs   []string `json:"TailscaleIPs"`
+			AllowedIPs     []string `json:"AllowedIPs"`
+			Online         bool     `json:"Online"`
+			Active         bool     `json:"Active"`
+			ExitNodeOption bool     `json:"ExitNodeOption"`
+		} `json:"Self"`
+		Peer map[string]any `json:"Peer"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return tailscaleRuntimeStatus{}, err
+	}
+	return tailscaleRuntimeStatus{
+		BackendState:    raw.BackendState,
+		TailnetName:     raw.CurrentTailnet.Name,
+		MagicDNSSuffix:  raw.CurrentTailnet.MagicDNSSuffix,
+		MagicDNSEnabled: raw.CurrentTailnet.MagicDNSEnabled,
+		DNSName:         raw.Self.DNSName,
+		TailscaleIPs:    raw.Self.TailscaleIPs,
+		AllowedIPs:      raw.Self.AllowedIPs,
+		Online:          raw.Self.Online,
+		Active:          raw.Self.Active,
+		ExitNodeOption:  raw.Self.ExitNodeOption,
+		PeerCount:       len(raw.Peer),
+	}, nil
+}
+
+func boolPointerStatus(value *bool) any {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, explicitUnits map[string]bool, telemetryEnv []string, command outputCommandFunc) error {

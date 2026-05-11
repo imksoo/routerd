@@ -356,6 +356,8 @@ func TestParseWireGuardAllDump(t *testing.T) {
 func TestParseTailscaleStatusJSON(t *testing.T) {
 	status, err := parseTailscaleStatusJSON([]byte(`{
 	  "BackendState": "Running",
+	  "CurrentTailnet": {"Name": "example@example.com", "MagicDNSSuffix": "example.ts.net", "MagicDNSEnabled": true},
+	  "CertDomains": ["homert02.example.ts.net"],
 	  "Self": {
 	    "HostName": "homert02",
 	    "DNSName": "homert02.example.ts.net.",
@@ -374,6 +376,9 @@ func TestParseTailscaleStatusJSON(t *testing.T) {
 	}
 	if status == nil || status.HostName != "homert02" || status.BackendState != "Running" || !status.Online {
 		t.Fatalf("status = %+v", status)
+	}
+	if status.TailnetName != "example@example.com" || status.MagicDNSSuffix != "example.ts.net" || !status.MagicDNSEnabled || len(status.CertDomains) != 1 {
+		t.Fatalf("tailnet fields = %+v", status)
 	}
 	if len(status.Peers) != 2 || status.Peers[0].HostName != "laptop" || !status.Peers[0].Active {
 		t.Fatalf("peers not sorted/parsed: %+v", status.Peers)

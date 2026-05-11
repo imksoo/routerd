@@ -1274,7 +1274,14 @@ func buildShowResources(router *api.Router, resources []api.Resource, store rout
 		}
 		if !opts.LedgerOnly {
 			item.Observed = observeResource(res, aliases, opts)
+			objectStatus := objectStatusForResource(res, store)
+			if len(item.Observed) == 0 && len(objectStatus) > 0 {
+				item.Observed = objectStatus
+			}
 			item.State = stateForResource(res, store)
+			if len(item.State) == 0 && len(objectStatus) > 0 {
+				item.State = objectStatus
+			}
 			if opts.Diff {
 				item.Diff = diffSpecObserved(res.Spec, item.Observed)
 				item.Spec = nil
@@ -1310,6 +1317,14 @@ func buildShowResources(router *api.Router, resources []api.Resource, store rout
 		rows = append(rows, item)
 	}
 	return rows, nil
+}
+
+func objectStatusForResource(res api.Resource, store routerstate.Store) map[string]any {
+	objectStore, ok := store.(routerstate.ObjectStatusStore)
+	if !ok {
+		return nil
+	}
+	return objectStore.ObjectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
 }
 
 func inventoryShowResources(store routerstate.Store, name string, includeEvents bool) ([]showResource, error) {

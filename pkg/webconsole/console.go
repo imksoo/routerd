@@ -152,16 +152,20 @@ type WireGuardPeerStatus struct {
 }
 
 type TailscaleStatus struct {
-	BackendState   string                `json:"backendState,omitempty"`
-	HostName       string                `json:"hostName,omitempty"`
-	DNSName        string                `json:"dnsName,omitempty"`
-	TailscaleIPs   []string              `json:"tailscaleIPs,omitempty"`
-	AllowedIPs     []string              `json:"allowedIPs,omitempty"`
-	Online         bool                  `json:"online,omitempty"`
-	Active         bool                  `json:"active,omitempty"`
-	ExitNode       bool                  `json:"exitNode,omitempty"`
-	ExitNodeOption bool                  `json:"exitNodeOption,omitempty"`
-	Peers          []TailscalePeerStatus `json:"peers,omitempty"`
+	BackendState    string                `json:"backendState,omitempty"`
+	TailnetName     string                `json:"tailnetName,omitempty"`
+	MagicDNSSuffix  string                `json:"magicDNSSuffix,omitempty"`
+	MagicDNSEnabled bool                  `json:"magicDNSEnabled,omitempty"`
+	CertDomains     []string              `json:"certDomains,omitempty"`
+	HostName        string                `json:"hostName,omitempty"`
+	DNSName         string                `json:"dnsName,omitempty"`
+	TailscaleIPs    []string              `json:"tailscaleIPs,omitempty"`
+	AllowedIPs      []string              `json:"allowedIPs,omitempty"`
+	Online          bool                  `json:"online,omitempty"`
+	Active          bool                  `json:"active,omitempty"`
+	ExitNode        bool                  `json:"exitNode,omitempty"`
+	ExitNodeOption  bool                  `json:"exitNodeOption,omitempty"`
+	Peers           []TailscalePeerStatus `json:"peers,omitempty"`
 }
 
 type TailscalePeerStatus struct {
@@ -680,23 +684,33 @@ func parseTailscaleStatusJSON(data []byte) (*TailscaleStatus, error) {
 		return nil, nil
 	}
 	var raw struct {
-		BackendState string                             `json:"BackendState"`
-		Self         tailscalePeerStatusJSON            `json:"Self"`
-		Peer         map[string]tailscalePeerStatusJSON `json:"Peer"`
+		BackendState   string `json:"BackendState"`
+		CurrentTailnet struct {
+			Name            string `json:"Name"`
+			MagicDNSSuffix  string `json:"MagicDNSSuffix"`
+			MagicDNSEnabled bool   `json:"MagicDNSEnabled"`
+		} `json:"CurrentTailnet"`
+		CertDomains []string                           `json:"CertDomains"`
+		Self        tailscalePeerStatusJSON            `json:"Self"`
+		Peer        map[string]tailscalePeerStatusJSON `json:"Peer"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, err
 	}
 	status := &TailscaleStatus{
-		BackendState:   raw.BackendState,
-		HostName:       raw.Self.HostName,
-		DNSName:        raw.Self.DNSName,
-		TailscaleIPs:   raw.Self.TailscaleIPs,
-		AllowedIPs:     raw.Self.AllowedIPs,
-		Online:         raw.Self.Online,
-		Active:         raw.Self.Active,
-		ExitNode:       raw.Self.ExitNode,
-		ExitNodeOption: raw.Self.ExitNodeOption,
+		BackendState:    raw.BackendState,
+		TailnetName:     raw.CurrentTailnet.Name,
+		MagicDNSSuffix:  raw.CurrentTailnet.MagicDNSSuffix,
+		MagicDNSEnabled: raw.CurrentTailnet.MagicDNSEnabled,
+		CertDomains:     raw.CertDomains,
+		HostName:        raw.Self.HostName,
+		DNSName:         raw.Self.DNSName,
+		TailscaleIPs:    raw.Self.TailscaleIPs,
+		AllowedIPs:      raw.Self.AllowedIPs,
+		Online:          raw.Self.Online,
+		Active:          raw.Self.Active,
+		ExitNode:        raw.Self.ExitNode,
+		ExitNodeOption:  raw.Self.ExitNodeOption,
 	}
 	for id, peer := range raw.Peer {
 		status.Peers = append(status.Peers, TailscalePeerStatus{

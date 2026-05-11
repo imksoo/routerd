@@ -261,6 +261,14 @@ func TestSystemdUnitControllerSynthesizesTailscaleUnits(t *testing.T) {
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if strings.HasSuffix(name, "tailscale") && strings.Join(args, " ") == "status --json" {
+				return []byte(`{
+				  "BackendState": "Running",
+				  "CurrentTailnet": {"Name": "example@example.com", "MagicDNSSuffix": "example.ts.net", "MagicDNSEnabled": true},
+				  "Self": {"DNSName": "homert02.example.ts.net.", "TailscaleIPs": ["100.64.87.102"], "AllowedIPs": ["100.64.87.102/32"], "Online": true, "ExitNodeOption": true},
+				  "Peer": {"node-a": {}}
+				}`), nil
+			}
 			return []byte("ok"), nil
 		},
 	}
@@ -283,7 +291,7 @@ func TestSystemdUnitControllerSynthesizesTailscaleUnits(t *testing.T) {
 		t.Fatalf("commands missing Tailscale restart:\n%s", gotCommands)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "TailscaleNode", "home")
-	if status["phase"] != "Applied" || status["advertiseExitNode"] != true {
+	if status["phase"] != "Running" || status["advertiseExitNode"] != true || status["tailnetName"] != "example@example.com" || status["peerCount"] != 1 {
 		t.Fatalf("status = %#v", status)
 	}
 }

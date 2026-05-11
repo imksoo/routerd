@@ -227,6 +227,10 @@ type WireGuardPeerStatus = {
 
 type TailscaleStatus = {
   backendState?: string;
+  tailnetName?: string;
+  magicDNSSuffix?: string;
+  magicDNSEnabled?: boolean;
+  certDomains?: string[];
   hostName?: string;
   dnsName?: string;
   tailscaleIPs?: string[];
@@ -2245,6 +2249,8 @@ function TailscalePanel({ status, errors }: { status?: TailscaleStatus; errors: 
     <>
       <div className={styles.vpnSummaryGrid}>
         <Metric label="backend" value={status.backendState || "Unknown"} />
+        <Metric label="tailnet" value={status.tailnetName || "-"} />
+        <Metric label="MagicDNS" value={status.magicDNSSuffix ? `${status.magicDNSSuffix} (${status.magicDNSEnabled ? "on" : "off"})` : "-"} />
         <Metric label="node" value={status.hostName || status.dnsName || "-"} />
         <Metric label="tailnet ip" value={(status.tailscaleIPs ?? []).join(" / ") || "-"} />
         <Metric label="peers" value={`${peers.filter(peer => peer.online).length} online / ${peers.length} total`} />
@@ -2254,6 +2260,7 @@ function TailscalePanel({ status, errors }: { status?: TailscaleStatus; errors: 
         {status.active ? <Badge appearance="outline" color="success">active</Badge> : null}
         {status.exitNodeOption ? <Badge appearance="outline" color="brand">exit node</Badge> : null}
         {(status.allowedIPs ?? []).slice(0, 6).map(route => <Badge key={route} appearance="outline">{route}</Badge>)}
+        {(status.certDomains ?? []).slice(0, 4).map(domain => <Badge key={domain} appearance="outline" color="informative">{domain}</Badge>)}
       </div>
       <PeerStatusStrip
         peers={peers.map(peer => ({
@@ -3010,7 +3017,7 @@ function eventKey(event?: RouterEvent) {
 }
 
 function resourceDetail(status: Record<string, unknown>) {
-  return ["selectedCandidate", "selectedDevice", "activeEgressInterface", "target", "address", "currentPrefix", "changedFields"]
+  return ["selectedCandidate", "selectedDevice", "activeEgressInterface", "target", "address", "currentPrefix", "backendState", "tailnetName", "tailscaleIPs", "peerCount", "changedFields"]
     .map(key => status[key] ? `${key}=${status[key]}` : "")
     .filter(Boolean)
     .join(" ");
