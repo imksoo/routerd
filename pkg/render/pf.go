@@ -453,7 +453,11 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 			if !pfCanRenderBroadForwardPass(from, to) {
 				continue
 			}
-			buf.WriteString("pass in quick on $" + pfZoneMacro(from) + " keep state label " + pfQuote("routerd:"+from.Name+"-to-"+to.Name) + "\n")
+			logExpr := ""
+			if logging.Enabled && logging.AcceptSampleRate > 0 {
+				logExpr = " log"
+			}
+			buf.WriteString("pass in" + logExpr + " quick on $" + pfZoneMacro(from) + " keep state label " + pfQuote("routerd:"+from.Name+"-to-"+to.Name) + "\n")
 		}
 		for _, hole := range holes {
 			if hole.FromZone == from.Name && hole.ToZone != "self" {

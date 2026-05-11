@@ -167,7 +167,7 @@ func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 			if opts.dpiSocket != "" && len(payload) > 0 {
 				entry = enrichEntryWithDPI(ctx, opts, entry, payload)
 			}
-			if err := recordFirewallEntry(ctx, log, entry, telemetry); err != nil {
+			if err := recordFirewallEntry(ctx, log, entry, telemetry, opts); err != nil {
 				return err
 			}
 		}

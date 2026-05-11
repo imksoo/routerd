@@ -405,7 +405,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 		buf.WriteString("    iifname @if_" + nftIdent(zone.Name) + " jump " + nftChainName(zone.Name+"-to-self") + "\n")
 	}
 	if policy.LogDeny {
-		buf.WriteString("    counter " + nftLogExpr("routerd firewall input deny ", logging) + " drop\n")
+		buf.WriteString("    counter " + nftSampledLogExpr("routerd firewall input deny ", logging.DropSampleRate, logging) + " drop\n")
 	} else {
 		buf.WriteString("    counter drop\n")
 	}
@@ -413,6 +413,9 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	buf.WriteString("  chain forward {\n")
 	buf.WriteString("    type filter hook forward priority filter; policy drop;\n")
 	buf.WriteString("    ct state invalid counter drop\n")
+	if logging.Enabled && logging.AcceptSampleRate > 0 {
+		buf.WriteString("    ct state { new, established } " + nftSampledLogExpr("routerd firewall forward accept ", logging.AcceptSampleRate, logging) + "\n")
+	}
 	buf.WriteString("    ct state { established, related } counter accept\n")
 	buf.WriteString("    meta l4proto ipv6-icmp counter accept\n")
 	writeClientPolicyForwardRules(buf, clientPolicies, logging)
@@ -425,7 +428,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 		}
 	}
 	if policy.LogDeny {
-		buf.WriteString("    counter " + nftLogExpr("routerd firewall forward deny ", logging) + " drop\n")
+		buf.WriteString("    counter " + nftSampledLogExpr("routerd firewall forward deny ", logging.DropSampleRate, logging) + " drop\n")
 	} else {
 		buf.WriteString("    counter drop\n")
 	}
@@ -450,8 +453,10 @@ type firewallPolicy struct {
 }
 
 type firewallLogging struct {
-	Enabled bool
-	Group   int
+	Enabled          bool
+	Group            int
+	AcceptSampleRate int
+	DropSampleRate   int
 }
 
 type firewallZone struct {
@@ -647,7 +652,7 @@ func firewallLogOptions(resources []api.Resource) firewallLogging {
 		if group == 0 {
 			group = 1
 		}
-		return firewallLogging{Enabled: true, Group: group}
+		return firewallLogging{Enabled: true, Group: group, AcceptSampleRate: spec.Log.AcceptSampleRate, DropSampleRate: spec.Log.DropSampleRate}
 	}
 	return firewallLogging{}
 }
@@ -658,6 +663,13 @@ func nftLogExpr(prefix string, logging firewallLogging) string {
 		expr += " group " + strconv.Itoa(logging.Group)
 	}
 	return expr
+}
+
+func nftSampledLogExpr(prefix string, sampleRate int, logging firewallLogging) string {
+	if sampleRate <= 1 {
+		return nftLogExpr(prefix, logging)
+	}
+	return "numgen random mod " + strconv.Itoa(sampleRate) + " == 0 " + nftLogExpr(prefix, logging)
 }
 
 func writeFirewallPairChain(buf *bytes.Buffer, from firewallZone, to firewallZone, rules []api.Resource, holes []FirewallHole, policy firewallPolicy, logging firewallLogging) error {
@@ -687,7 +699,10 @@ func writeFirewallPairChain(buf *bytes.Buffer, from firewallZone, to firewallZon
 	}
 	action := implicitFirewallAction(from.Role, to.Role, policy)
 	if policy.LogDeny && (action == "drop" || action == "reject") {
-		buf.WriteString("    counter " + nftLogExpr("routerd firewall "+from.Name+"-to-"+to.Name+" deny ", logging) + " " + action + "\n")
+		buf.WriteString("    counter " + nftSampledLogExpr("routerd firewall "+from.Name+"-to-"+to.Name+" deny ", logging.DropSampleRate, logging) + " " + action + "\n")
+	} else if action == "accept" && logging.Enabled && logging.AcceptSampleRate > 0 {
+		buf.WriteString("    ct state new " + nftSampledLogExpr("routerd firewall "+from.Name+"-to-"+to.Name+" accept ", logging.AcceptSampleRate, logging) + " counter accept\n")
+		buf.WriteString("    counter accept\n")
 	} else {
 		buf.WriteString("    counter " + action + "\n")
 	}

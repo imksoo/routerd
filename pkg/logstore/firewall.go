@@ -60,6 +60,26 @@ type ExpiredFlowEntry struct {
 	Raw          string    `json:"raw,omitempty"`
 }
 
+type DPIFlowEntry struct {
+	FlowID        string    `json:"flowID,omitempty"`
+	FirstSeen     time.Time `json:"firstSeen,omitempty"`
+	LastSeen      time.Time `json:"lastSeen,omitempty"`
+	L3Proto       string    `json:"l3Proto,omitempty"`
+	Protocol      string    `json:"protocol"`
+	SrcAddress    string    `json:"srcAddress"`
+	SrcPort       int       `json:"srcPort,omitempty"`
+	DstAddress    string    `json:"dstAddress"`
+	DstPort       int       `json:"dstPort,omitempty"`
+	AppName       string    `json:"appName,omitempty"`
+	AppCategory   string    `json:"appCategory,omitempty"`
+	AppConfidence int       `json:"appConfidence,omitempty"`
+	TLSSNI        string    `json:"tlsSNI,omitempty"`
+	HTTPHost      string    `json:"httpHost,omitempty"`
+	DNSQuery      string    `json:"dnsQuery,omitempty"`
+	ClassifiedAt  time.Time `json:"classifiedAt,omitempty"`
+	PacketCount   int       `json:"packetCount,omitempty"`
+}
+
 type FirewallLogFilter struct {
 	Since  time.Time
 	Action string
@@ -147,12 +167,33 @@ CREATE TABLE IF NOT EXISTS expired_flows (
   bytes INTEGER,
   raw TEXT
 );
+CREATE TABLE IF NOT EXISTS dpi_flow (
+  flow_id TEXT PRIMARY KEY,
+  ts_first INTEGER NOT NULL,
+  ts_last INTEGER NOT NULL,
+  l3_proto TEXT,
+  protocol TEXT NOT NULL,
+  src_address TEXT NOT NULL,
+  src_port INTEGER,
+  dst_address TEXT NOT NULL,
+  dst_port INTEGER,
+  app_name TEXT,
+  app_category TEXT,
+  app_confidence INTEGER,
+  tls_sni TEXT,
+  http_host TEXT,
+  dns_query TEXT,
+  classified_at INTEGER,
+  packet_count INTEGER
+);
 CREATE INDEX IF NOT EXISTS firewall_logs_ts ON firewall_logs(ts);
 CREATE INDEX IF NOT EXISTS firewall_logs_src_ts ON firewall_logs(src_address, ts);
 CREATE INDEX IF NOT EXISTS firewall_logs_action_ts ON firewall_logs(action, ts);
 CREATE INDEX IF NOT EXISTS firewall_logs_zone ON firewall_logs(zone_from, zone_to, ts);
 CREATE INDEX IF NOT EXISTS expired_flows_ts ON expired_flows(ts);
 CREATE INDEX IF NOT EXISTS expired_flows_reply ON expired_flows(protocol, reply_src, reply_dst, reply_src_port, reply_dst_port, ts);
+CREATE INDEX IF NOT EXISTS dpi_flow_tuple ON dpi_flow(protocol, src_address, dst_address, src_port, dst_port, ts_last);
+CREATE INDEX IF NOT EXISTS dpi_flow_reverse ON dpi_flow(protocol, dst_address, src_address, dst_port, src_port, ts_last);
 `); err != nil {
 		return err
 	}
@@ -320,6 +361,156 @@ func (l *FirewallLog) PruneExpiredFlows(ctx context.Context, now time.Time, ttl 
 SELECT id FROM expired_flows ORDER BY ts DESC, id DESC LIMIT -1 OFFSET ?
 )`, limit)
 	return err
+}
+
+func (l *FirewallLog) RecordDPIFlow(ctx context.Context, flow DPIFlowEntry, ttl time.Duration, limit int) error {
+	if l == nil || l.db == nil {
+		return nil
+	}
+	flow.Protocol = strings.ToLower(strings.TrimSpace(flow.Protocol))
+	flow.L3Proto = strings.ToLower(strings.TrimSpace(flow.L3Proto))
+	if flow.Protocol == "" || flow.SrcAddress == "" || flow.DstAddress == "" {
+		return nil
+	}
+	if flow.AppName == "" || flow.AppName == "unknown" {
+		return nil
+	}
+	now := time.Now().UTC()
+	if flow.FirstSeen.IsZero() {
+		flow.FirstSeen = now
+	}
+	if flow.LastSeen.IsZero() {
+		flow.LastSeen = flow.FirstSeen
+	}
+	if flow.ClassifiedAt.IsZero() {
+		flow.ClassifiedAt = flow.LastSeen
+	}
+	if flow.FlowID == "" {
+		flow.FlowID = FlowKey(flow.Protocol, flow.SrcAddress, flow.SrcPort, flow.DstAddress, flow.DstPort)
+	}
+	if flow.PacketCount <= 0 {
+		flow.PacketCount = 1
+	}
+	if _, err := l.db.ExecContext(ctx, `INSERT INTO dpi_flow(flow_id,ts_first,ts_last,l3_proto,protocol,src_address,src_port,dst_address,dst_port,app_name,app_category,app_confidence,tls_sni,http_host,dns_query,classified_at,packet_count)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(flow_id) DO UPDATE SET
+  ts_last = excluded.ts_last,
+  l3_proto = excluded.l3_proto,
+  app_name = excluded.app_name,
+  app_category = excluded.app_category,
+  app_confidence = excluded.app_confidence,
+  tls_sni = excluded.tls_sni,
+  http_host = excluded.http_host,
+  dns_query = excluded.dns_query,
+  classified_at = excluded.classified_at,
+  packet_count = coalesce(dpi_flow.packet_count, 0) + excluded.packet_count`,
+		flow.FlowID, flow.FirstSeen.UnixNano(), flow.LastSeen.UnixNano(), flow.L3Proto, flow.Protocol, flow.SrcAddress, flow.SrcPort, flow.DstAddress, flow.DstPort, flow.AppName, flow.AppCategory, flow.AppConfidence, flow.TLSSNI, flow.HTTPHost, flow.DNSQuery, flow.ClassifiedAt.UnixNano(), flow.PacketCount); err != nil {
+		return err
+	}
+	return l.PruneDPIFlows(ctx, now, ttl, limit)
+}
+
+func (l *FirewallLog) PruneDPIFlows(ctx context.Context, now time.Time, ttl time.Duration, limit int) error {
+	if l == nil || l.db == nil {
+		return nil
+	}
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	if limit <= 0 {
+		limit = 100000
+	}
+	if _, err := l.db.ExecContext(ctx, `DELETE FROM dpi_flow WHERE ts_last < ?`, now.Add(-ttl).UnixNano()); err != nil {
+		return err
+	}
+	_, err := l.db.ExecContext(ctx, `DELETE FROM dpi_flow WHERE flow_id IN (
+SELECT flow_id FROM dpi_flow ORDER BY ts_last DESC LIMIT -1 OFFSET ?
+)`, limit)
+	return err
+}
+
+func (l *FirewallLog) FindDPIFlowForFirewallEntry(ctx context.Context, entry FirewallLogEntry, now time.Time, ttl time.Duration) (DPIFlowEntry, bool, error) {
+	if l == nil || l.db == nil {
+		return DPIFlowEntry{}, false, nil
+	}
+	return l.findDPIFlow(ctx, dpiFlowLookup{
+		Protocol:   entry.Protocol,
+		SrcAddress: entry.SrcAddress,
+		SrcPort:    entry.SrcPort,
+		DstAddress: entry.DstAddress,
+		DstPort:    entry.DstPort,
+		Now:        now,
+		TTL:        ttl,
+	})
+}
+
+func (l *FirewallLog) FindDPIFlowForExpiredFlow(ctx context.Context, flow ExpiredFlowEntry, now time.Time, ttl time.Duration) (DPIFlowEntry, bool, error) {
+	if l == nil || l.db == nil {
+		return DPIFlowEntry{}, false, nil
+	}
+	return l.findDPIFlow(ctx, dpiFlowLookup{
+		Protocol:   flow.Protocol,
+		SrcAddress: flow.OrigSrc,
+		SrcPort:    flow.OrigSrcPort,
+		DstAddress: flow.OrigDst,
+		DstPort:    flow.OrigDstPort,
+		Now:        now,
+		TTL:        ttl,
+	})
+}
+
+type dpiFlowLookup struct {
+	Protocol   string
+	SrcAddress string
+	SrcPort    int
+	DstAddress string
+	DstPort    int
+	Now        time.Time
+	TTL        time.Duration
+}
+
+func (l *FirewallLog) findDPIFlow(ctx context.Context, lookup dpiFlowLookup) (DPIFlowEntry, bool, error) {
+	protocol := strings.ToLower(strings.TrimSpace(lookup.Protocol))
+	if protocol == "" || lookup.SrcAddress == "" || lookup.DstAddress == "" {
+		return DPIFlowEntry{}, false, nil
+	}
+	now := lookup.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	ttl := lookup.TTL
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	rows, err := l.db.QueryContext(ctx, `SELECT flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
+FROM dpi_flow
+WHERE ts_last >= ? AND protocol = ? AND (
+  (src_address = ? AND dst_address = ? AND coalesce(src_port,0) = ? AND coalesce(dst_port,0) = ?)
+  OR
+  (dst_address = ? AND src_address = ? AND coalesce(dst_port,0) = ? AND coalesce(src_port,0) = ?)
+)
+ORDER BY ts_last DESC LIMIT 1`,
+		now.Add(-ttl).UnixNano(), protocol,
+		lookup.SrcAddress, lookup.DstAddress, lookup.SrcPort, lookup.DstPort,
+		lookup.SrcAddress, lookup.DstAddress, lookup.SrcPort, lookup.DstPort)
+	if err != nil {
+		return DPIFlowEntry{}, false, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return DPIFlowEntry{}, false, rows.Err()
+	}
+	var flow DPIFlowEntry
+	var first, last, classified int64
+	if err := rows.Scan(&flow.FlowID, &first, &last, &flow.L3Proto, &flow.Protocol, &flow.SrcAddress, &flow.SrcPort, &flow.DstAddress, &flow.DstPort, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &classified, &flow.PacketCount); err != nil {
+		return DPIFlowEntry{}, false, err
+	}
+	flow.FirstSeen = time.Unix(0, first).UTC()
+	flow.LastSeen = time.Unix(0, last).UTC()
+	if classified > 0 {
+		flow.ClassifiedAt = time.Unix(0, classified).UTC()
+	}
+	return flow, true, nil
 }
 
 func (l *FirewallLog) FindExpiredReturn(ctx context.Context, entry FirewallLogEntry, now time.Time, ttl time.Duration) (ExpiredFlowEntry, bool, error) {

@@ -670,6 +670,53 @@ func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 	}
 }
 
+func TestNftablesSamplesAcceptedForwardFlows(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "ens19"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec: api.FirewallLogSpec{
+				Enabled:    true,
+				NFLogGroup: 7,
+				Log:        api.FirewallLogPolicySpec{AcceptSampleRate: 100},
+			},
+		},
+	}}}
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`ct state { new, established } numgen random mod 100 == 0 log prefix "routerd firewall forward accept " group 7`,
+		`ct state new numgen random mod 100 == 0 log prefix "routerd firewall lan-to-wan accept " group 7 counter accept`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing sampled accept log %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNftablesAllowsWANIPv6ClientControlPlane(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{

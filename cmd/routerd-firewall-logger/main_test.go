@@ -229,6 +229,77 @@ func TestCorrelateExpiredReturn(t *testing.T) {
 	}
 }
 
+func TestAcceptDPIFlowEnrichesLaterDeny(t *testing.T) {
+	log, err := logstore.OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	opts := options{dpiFlowTTL: time.Hour, dpiFlowLimit: 100000}
+	now := time.Now().UTC()
+	accept := logstore.FirewallLogEntry{
+		Timestamp:     now.Add(-30 * time.Second),
+		Action:        "accept",
+		SrcAddress:    "172.18.0.10",
+		SrcPort:       53168,
+		DstAddress:    "198.51.100.10",
+		DstPort:       443,
+		Protocol:      "tcp",
+		L3Proto:       "ipv4",
+		DPIApp:        "tls",
+		DPICategory:   "web",
+		DPIConfidence: 90,
+		DPITLSSNI:     "cached.example",
+	}
+	if err := recordFirewallEntry(context.Background(), log, accept, nil, opts); err != nil {
+		t.Fatal(err)
+	}
+	deny := logstore.FirewallLogEntry{
+		Action:     "drop",
+		SrcAddress: "198.51.100.10",
+		SrcPort:    443,
+		DstAddress: "172.18.0.10",
+		DstPort:    53168,
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+	}
+	deny = enrichEntryWithDPIFlow(context.Background(), log, deny, opts, now)
+	if deny.DPIApp != "tls" || deny.DPITLSSNI != "cached.example" || !strings.Contains(deny.Hint, "prior TLS-SNI=cached.example flow") {
+		t.Fatalf("deny = %+v", deny)
+	}
+}
+
+func TestShouldClassifyForwardDPISkipsKnownFlow(t *testing.T) {
+	log, err := logstore.OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	opts := options{dpiSocket: "/tmp/dpi.sock", dpiFlowTTL: time.Hour, dpiFlowLimit: 100000, dpiFlowFirstPackets: 10}
+	entry := logstore.FirewallLogEntry{
+		Action:     "accept",
+		SrcAddress: "172.18.0.10",
+		SrcPort:    53168,
+		DstAddress: "198.51.100.10",
+		DstPort:    443,
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+	}
+	if !shouldClassifyForwardDPI(context.Background(), log, entry, opts, time.Now().UTC()) {
+		t.Fatal("empty cache should classify")
+	}
+	entry.DPIApp = "tls"
+	entry.DPITLSSNI = "cached.example"
+	if err := recordDPIFlowFromEntry(context.Background(), log, entry, opts); err != nil {
+		t.Fatal(err)
+	}
+	entry.DPIApp = ""
+	entry.DPITLSSNI = ""
+	if shouldClassifyForwardDPI(context.Background(), log, entry, opts, time.Now().UTC()) {
+		t.Fatal("known cached flow should not be classified again")
+	}
+}
+
 func logstoreEntry(hint string) logstore.FirewallLogEntry {
 	return logstore.FirewallLogEntry{Action: "drop", Protocol: "tcp", L3Proto: "ipv4", Hint: hint}
 }

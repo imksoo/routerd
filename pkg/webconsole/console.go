@@ -295,6 +295,11 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		errors = append(errors, err.Error())
 	}
 	trafficFlows = enrichTrafficFlowsWithDNS(trafficFlows, dnsQueries)
+	if enriched, err := h.enrichTrafficFlowsWithDPI(trafficFlows, time.Now().UTC(), time.Hour); err == nil {
+		trafficFlows = enriched
+	} else {
+		errors = append(errors, err.Error())
+	}
 	firewallLogs, err := h.firewallLogList(logstore.FirewallLogFilter{Since: time.Now().Add(-24 * time.Hour), Action: "drop", Limit: 200})
 	if err != nil {
 		errors = append(errors, err.Error())
@@ -432,12 +437,19 @@ func (h Handler) eventStream(w http.ResponseWriter, r *http.Request) {
 	header.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	_ = writeSSE(w, "connected", map[string]string{"status": "connected", "generatedAt": time.Now().UTC().Format(time.RFC3339Nano)})
-	flusher.Flush()
-
 	ctx := r.Context()
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
+	var events <-chan bus.Event
+	var cancel func()
+	if h.opts.Bus != nil {
+		events, cancel = h.opts.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 64)
+		defer cancel()
+	}
+
+	_ = writeSSE(w, "connected", map[string]string{"status": "connected", "generatedAt": time.Now().UTC().Format(time.RFC3339Nano)})
+	flusher.Flush()
+
 	if h.opts.Bus == nil {
 		for {
 			select {
@@ -450,8 +462,6 @@ func (h Handler) eventStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	events, cancel := h.opts.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 64)
-	defer cancel()
 	for {
 		select {
 		case <-ctx.Done():
@@ -539,6 +549,9 @@ func (h Handler) trafficFlows(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		rows = enrichTrafficFlowsWithDNS(rows, queries)
 	}
+	if enriched, err := h.enrichTrafficFlowsWithDPI(rows, time.Now().UTC(), time.Hour); err == nil {
+		rows = enriched
+	}
 	writeJSON(w, rows)
 }
 
@@ -577,6 +590,9 @@ func (h Handler) clients(w http.ResponseWriter) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if enriched, err := h.enrichTrafficFlowsWithDPI(flows, time.Now().UTC(), time.Hour); err == nil {
+		flows = enriched
 	}
 	queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-24 * time.Hour), Limit: 1000})
 	if err != nil {
@@ -1020,6 +1036,49 @@ func (h Handler) firewallLogList(filter logstore.FirewallLogFilter) ([]logstore.
 	}
 	defer store.Close()
 	return store.List(context.Background(), filter)
+}
+
+func (h Handler) enrichTrafficFlowsWithDPI(flows []logstore.TrafficFlow, now time.Time, ttl time.Duration) ([]logstore.TrafficFlow, error) {
+	if len(flows) == 0 || strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+		return flows, nil
+	}
+	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
+	if err != nil {
+		return flows, err
+	}
+	defer store.Close()
+	for i := range flows {
+		entry := logstore.FirewallLogEntry{
+			Protocol:   flows[i].Protocol,
+			SrcAddress: flows[i].ClientAddress,
+			SrcPort:    flows[i].ClientPort,
+			DstAddress: flows[i].PeerAddress,
+			DstPort:    flows[i].PeerPort,
+		}
+		dpiFlow, ok, err := store.FindDPIFlowForFirewallEntry(context.Background(), entry, now, ttl)
+		if err != nil {
+			return flows, err
+		}
+		if !ok {
+			continue
+		}
+		if flows[i].AppName == "" {
+			flows[i].AppName = dpiFlow.AppName
+		}
+		if flows[i].AppCategory == "" {
+			flows[i].AppCategory = dpiFlow.AppCategory
+		}
+		if flows[i].AppConfidence == 0 {
+			flows[i].AppConfidence = dpiFlow.AppConfidence
+		}
+		if flows[i].TLSSNI == "" {
+			flows[i].TLSSNI = dpiFlow.TLSSNI
+		}
+		if flows[i].ResolvedHostname == "" {
+			flows[i].ResolvedHostname = firstNonEmpty(dpiFlow.HTTPHost, dpiFlow.DNSQuery)
+		}
+	}
+	return flows, nil
 }
 
 func (h Handler) dhcpLeaseList() ([]DHCPLease, error) {

@@ -84,7 +84,12 @@ func selftest(args []string, stdout io.Writer) error {
 	if opts.dpiSocket != "" {
 		entry = enrichEntryWithDPI(ctx, opts, entry, selftestTLSPacket("routerd-firewall-selftest.example"))
 	}
-	if err := recordFirewallEntry(ctx, log, entry, nil); err != nil {
+	if err := recordFirewallEntry(ctx, log, entry, nil, opts); err != nil {
+		return err
+	}
+	accept := logstore.FirewallLogEntry{Action: "accept", SrcAddress: "172.18.0.10", SrcPort: 53168, DstAddress: "198.51.100.10", DstPort: 443, Protocol: "tcp", L3Proto: "ipv4", RuleName: "selftest-forward-accept"}
+	accept = enrichEntryWithDPI(ctx, opts, accept, selftestTLSPacket("routerd-flow-cache.example"))
+	if err := recordFirewallEntry(ctx, log, accept, nil, opts); err != nil {
 		return err
 	}
 	orphan := logstore.FirewallLogEntry{
@@ -97,7 +102,7 @@ func selftest(args []string, stdout io.Writer) error {
 		L3Proto:    "ipv4",
 		RuleName:   "selftest-orphan-return",
 	}
-	if err := recordFirewallEntry(ctx, log, orphan, nil); err != nil {
+	if err := recordFirewallEntry(ctx, log, orphan, nil, opts); err != nil {
 		return err
 	}
 	return json.NewEncoder(stdout).Encode(map[string]any{"ok": true, "path": opts.path})
@@ -157,7 +162,7 @@ func daemon(args []string, stdin io.Reader) error {
 		if !ok {
 			continue
 		}
-		if err := recordFirewallEntry(ctx, log, entry, telemetry); err != nil {
+		if err := recordFirewallEntry(ctx, log, entry, telemetry, opts); err != nil {
 			return err
 		}
 	}
@@ -179,19 +184,27 @@ func runNFLogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 			return err
 		}
 		entry := firewallLogEntryFromNFLogPacket(packet)
-		if opts.dpiSocket != "" && len(packet.Payload) > 0 {
+		if opts.dpiSocket != "" && len(packet.Payload) > 0 && (!isAcceptAction(entry.Action) || shouldClassifyForwardDPI(ctx, log, entry, opts, time.Now().UTC())) {
 			entry = enrichEntryWithDPI(ctx, opts, entry, packet.Payload)
 		}
 		if entry.SrcAddress == "" || entry.DstAddress == "" || entry.Protocol == "" {
 			continue
 		}
-		if err := recordFirewallEntry(ctx, log, entry, telemetry); err != nil {
+		if err := recordFirewallEntry(ctx, log, entry, telemetry, opts); err != nil {
 			return err
 		}
 	}
 }
 
-func recordFirewallEntry(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, telemetry *routerotel.Runtime) error {
+func recordFirewallEntry(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, telemetry *routerotel.Runtime, opts options) error {
+	if isAcceptAction(entry.Action) {
+		if err := recordDPIFlowFromEntry(ctx, log, entry, opts); err != nil {
+			return err
+		}
+		recordDPIForwardMetric(ctx, telemetry, entry)
+		return nil
+	}
+	entry = enrichEntryWithDPIFlow(ctx, log, entry, opts, time.Now().UTC())
 	entry = correlateExpiredReturn(ctx, log, entry, time.Now().UTC())
 	if err := log.Record(ctx, entry); err != nil {
 		return err
@@ -201,18 +214,21 @@ func recordFirewallEntry(ctx context.Context, log *logstore.FirewallLog, entry l
 }
 
 type options struct {
-	path             string
-	group            int
-	inputFile        string
-	inputFormat      string
-	pflogInterface   string
-	tcpdumpPath      string
-	dpiSocket        string
-	dpiTimeout       time.Duration
-	conntrackEvents  bool
-	conntrackPath    string
-	expiredFlowTTL   time.Duration
-	expiredFlowLimit int
+	path                string
+	group               int
+	inputFile           string
+	inputFormat         string
+	pflogInterface      string
+	tcpdumpPath         string
+	dpiSocket           string
+	dpiTimeout          time.Duration
+	conntrackEvents     bool
+	conntrackPath       string
+	expiredFlowTTL      time.Duration
+	expiredFlowLimit    int
+	dpiFlowTTL          time.Duration
+	dpiFlowLimit        int
+	dpiFlowFirstPackets int
 }
 
 func parseOptions(name string, args []string) (options, error) {
@@ -231,6 +247,9 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.conntrackPath, "conntrack", "conntrack", "conntrack command path")
 	fs.DurationVar(&opts.expiredFlowTTL, "expired-flow-ttl", time.Hour, "expired flow ring retention")
 	fs.IntVar(&opts.expiredFlowLimit, "expired-flow-limit", 100000, "maximum expired flow ring entries")
+	fs.DurationVar(&opts.dpiFlowTTL, "dpi-flow-ttl", time.Hour, "DPI flow cache retention")
+	fs.IntVar(&opts.dpiFlowLimit, "dpi-flow-limit", 100000, "maximum DPI flow cache entries")
+	fs.IntVar(&opts.dpiFlowFirstPackets, "dpi-flow-first-packets", 10, "skip forward DPI classification after this many cached packets per flow")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -312,6 +331,124 @@ func enrichEntryWithDPI(ctx context.Context, opts options, entry logstore.Firewa
 	return entry
 }
 
+func shouldClassifyForwardDPI(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, opts options, now time.Time) bool {
+	if !isAcceptAction(entry.Action) || opts.dpiSocket == "" {
+		return false
+	}
+	limit := opts.dpiFlowFirstPackets
+	if limit <= 0 {
+		limit = 10
+	}
+	flow, ok, err := log.FindDPIFlowForFirewallEntry(ctx, entry, now, opts.dpiFlowTTL)
+	if err != nil || !ok {
+		return true
+	}
+	if flow.AppName != "" && flow.AppName != "unknown" {
+		return false
+	}
+	return flow.PacketCount < limit
+}
+
+func enrichEntryWithDPIFlow(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, opts options, now time.Time) logstore.FirewallLogEntry {
+	if entry.DPIApp != "" || !isDenyAction(entry.Action) {
+		return entry
+	}
+	flow, ok, err := log.FindDPIFlowForFirewallEntry(ctx, entry, now, opts.dpiFlowTTL)
+	if err != nil || !ok {
+		return entry
+	}
+	entry = applyDPIFlow(entry, flow)
+	age := now.Sub(flow.ClassifiedAt)
+	if flow.ClassifiedAt.IsZero() || age < 0 {
+		age = now.Sub(flow.LastSeen)
+	}
+	if age < 0 {
+		age = 0
+	}
+	detail := "dpi flow cache hit"
+	if label := dpiFlowLabel(flow); label != "" {
+		detail = fmt.Sprintf("denied packet matched prior %s flow classified %s ago", label, shortDuration(age))
+	}
+	entry.Hint = appendHint(entry.Hint, detail)
+	return entry
+}
+
+func recordDPIFlowFromEntry(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, opts options) error {
+	if entry.DPIApp == "" || entry.DPIApp == "unknown" {
+		return nil
+	}
+	now := entry.Timestamp
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return log.RecordDPIFlow(ctx, logstore.DPIFlowEntry{
+		FirstSeen:     now,
+		LastSeen:      now,
+		L3Proto:       entry.L3Proto,
+		Protocol:      entry.Protocol,
+		SrcAddress:    entry.SrcAddress,
+		SrcPort:       entry.SrcPort,
+		DstAddress:    entry.DstAddress,
+		DstPort:       entry.DstPort,
+		AppName:       entry.DPIApp,
+		AppCategory:   entry.DPICategory,
+		AppConfidence: entry.DPIConfidence,
+		TLSSNI:        entry.DPITLSSNI,
+		HTTPHost:      entry.DPIHTTPHost,
+		DNSQuery:      entry.DPIDNSQuery,
+		ClassifiedAt:  now,
+		PacketCount:   1,
+	}, opts.dpiFlowTTL, opts.dpiFlowLimit)
+}
+
+func applyDPIFlow(entry logstore.FirewallLogEntry, flow logstore.DPIFlowEntry) logstore.FirewallLogEntry {
+	if entry.DPIApp == "" {
+		entry.DPIApp = flow.AppName
+	}
+	if entry.DPICategory == "" {
+		entry.DPICategory = flow.AppCategory
+	}
+	if entry.DPIConfidence == 0 {
+		entry.DPIConfidence = flow.AppConfidence
+	}
+	if entry.DPITLSSNI == "" {
+		entry.DPITLSSNI = flow.TLSSNI
+	}
+	if entry.DPIHTTPHost == "" {
+		entry.DPIHTTPHost = flow.HTTPHost
+	}
+	if entry.DPIDNSQuery == "" {
+		entry.DPIDNSQuery = flow.DNSQuery
+	}
+	entry.Hint = appendDPIHintFields(entry.Hint, dpi.ClassifyResult{
+		AppName:       entry.DPIApp,
+		AppCategory:   entry.DPICategory,
+		AppConfidence: entry.DPIConfidence,
+		TLSSNI:        entry.DPITLSSNI,
+		HTTPHost:      entry.DPIHTTPHost,
+		DNSQuery:      entry.DPIDNSQuery,
+	})
+	return entry
+}
+
+func dpiFlowLabel(flow logstore.DPIFlowEntry) string {
+	switch {
+	case flow.TLSSNI != "":
+		return "TLS-SNI=" + flow.TLSSNI
+	case flow.HTTPHost != "":
+		return "HTTP-Host=" + flow.HTTPHost
+	case flow.DNSQuery != "":
+		if flow.AppName == "netbios" {
+			return "NBNS-query=" + flow.DNSQuery
+		}
+		return "DNS-query=" + flow.DNSQuery
+	case flow.AppName != "":
+		return flow.AppName
+	default:
+		return ""
+	}
+}
+
 func appendDPIHintFields(hint string, result dpi.ClassifyResult) string {
 	parts := []string{}
 	if strings.TrimSpace(hint) != "" {
@@ -354,9 +491,33 @@ func recordDenyMetric(ctx context.Context, telemetry *routerotel.Runtime, entry 
 	))
 }
 
+func recordDPIForwardMetric(ctx context.Context, telemetry *routerotel.Runtime, entry logstore.FirewallLogEntry) {
+	if telemetry == nil || entry.DPIApp == "" {
+		return
+	}
+	counter := telemetry.Counter("routerd.dpi.forward.sampled.total")
+	if counter == nil {
+		return
+	}
+	counter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("network.protocol.name", firewallDPIProtocol(entry)),
+		attribute.String("network.transport", entry.Protocol),
+		attribute.String("network.type", entry.L3Proto),
+	))
+}
+
 func isDenyAction(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "drop", "deny", "reject", "block":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAcceptAction(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "accept", "pass", "allow":
 		return true
 	default:
 		return false
@@ -402,7 +563,16 @@ func correlateExpiredReturn(ctx context.Context, log *logstore.FirewallLog, entr
 	entry.Correlation = "orphan_return"
 	entry.ExpiredAgeSeconds = int(age.Seconds())
 	entry.ExpiredBytes = flow.Bytes
-	entry.CorrelationDetail = fmt.Sprintf("likely orphan return from expired conn (orig: %s:%d -> %s:%d, expired %s ago, %s transferred)", flow.OrigSrc, flow.OrigSrcPort, flow.OrigDst, flow.OrigDstPort, shortDuration(age), byteCount(flow.Bytes))
+	dpiLabel := ""
+	if dpiFlow, ok, err := log.FindDPIFlowForExpiredFlow(ctx, flow, now, time.Hour); err == nil && ok {
+		entry = applyDPIFlow(entry, dpiFlow)
+		dpiLabel = dpiFlowLabel(dpiFlow)
+	}
+	if dpiLabel != "" {
+		entry.CorrelationDetail = fmt.Sprintf("likely orphan return from expired %s conn (orig: %s:%d -> %s:%d, expired %s ago, %s transferred)", dpiLabel, flow.OrigSrc, flow.OrigSrcPort, flow.OrigDst, flow.OrigDstPort, shortDuration(age), byteCount(flow.Bytes))
+	} else {
+		entry.CorrelationDetail = fmt.Sprintf("likely orphan return from expired conn (orig: %s:%d -> %s:%d, expired %s ago, %s transferred)", flow.OrigSrc, flow.OrigSrcPort, flow.OrigDst, flow.OrigDstPort, shortDuration(age), byteCount(flow.Bytes))
+	}
 	entry.Hint = appendHint(entry.Hint, entry.CorrelationDetail)
 	return entry
 }

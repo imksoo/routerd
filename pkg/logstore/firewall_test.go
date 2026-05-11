@@ -109,3 +109,43 @@ func TestFirewallLogExpiredReturnLookup(t *testing.T) {
 		t.Fatalf("match ok=%v flow=%+v", ok, match)
 	}
 }
+
+func TestFirewallLogDPIFlowLookupDirectAndReverse(t *testing.T) {
+	log, err := OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	now := time.Now().UTC()
+	if err := log.RecordDPIFlow(context.Background(), DPIFlowEntry{
+		FirstSeen:     now.Add(-2 * time.Minute),
+		LastSeen:      now.Add(-30 * time.Second),
+		L3Proto:       "ipv4",
+		Protocol:      "tcp",
+		SrcAddress:    "172.18.0.10",
+		SrcPort:       53168,
+		DstAddress:    "198.51.100.10",
+		DstPort:       443,
+		AppName:       "tls",
+		AppCategory:   "web",
+		AppConfidence: 90,
+		TLSSNI:        "cached.example",
+	}, time.Hour, 100000); err != nil {
+		t.Fatal(err)
+	}
+	flow, ok, err := log.FindDPIFlowForFirewallEntry(context.Background(), FirewallLogEntry{
+		Action:     "drop",
+		SrcAddress: "198.51.100.10",
+		SrcPort:    443,
+		DstAddress: "172.18.0.10",
+		DstPort:    53168,
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+	}, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || flow.TLSSNI != "cached.example" || flow.AppName != "tls" {
+		t.Fatalf("flow ok=%v flow=%+v", ok, flow)
+	}
+}
