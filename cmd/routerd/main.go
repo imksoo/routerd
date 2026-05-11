@@ -5545,7 +5545,7 @@ func dsliteRemoteAddress(router *api.Router, name string) (string, error) {
 		if spec.AFTRFQDN == "" {
 			return "", fmt.Errorf("%s has no remoteAddress or aftrFQDN", res.ID())
 		}
-		return resolveAAAAWithServers(spec.AFTRFQDN, spec.AFTRDNSServers, spec.AFTRAddressOrdinal, spec.AFTRAddressSelection)
+		return resolveDSLiteRemoteWithState(spec, nil)
 	}
 	return "", fmt.Errorf("missing DSLiteTunnel %q", name)
 }
@@ -6067,12 +6067,9 @@ func applyDSLiteTunnelsWithState(router *api.Router, store routerstate.Store) ([
 			applied = append(applied, "removed-unusable:"+tunnelName)
 			continue
 		}
-		remote := firstNonEmptyString(spec.RemoteAddress, spec.AFTRIPv6)
-		if remote == "" {
-			remote, err = resolveAAAAWithServers(spec.AFTRFQDN, spec.AFTRDNSServers, spec.AFTRAddressOrdinal, spec.AFTRAddressSelection)
-			if err != nil {
-				return nil, fmt.Errorf("%s resolve AFTR: %w", res.ID(), err)
-			}
+		remote, err := resolveDSLiteRemoteWithState(spec, store)
+		if err != nil {
+			return nil, fmt.Errorf("%s resolve AFTR: %w", res.ID(), err)
 		}
 		if localIfName != "" {
 			ensured, err := ensureIPv6LocalAddress(localIfName, local)
@@ -6092,6 +6089,52 @@ func applyDSLiteTunnelsWithState(router *api.Router, store routerstate.Store) ([
 		}
 	}
 	return applied, nil
+}
+
+func resolveDSLiteRemoteWithState(spec api.DSLiteTunnelSpec, store routerstate.Store) (string, error) {
+	for _, candidate := range []string{
+		spec.RemoteAddress,
+		spec.AFTRIPv6,
+		resourcequery.Value(objectStatusStore(store), spec.AFTRFrom),
+		spec.AFTRFQDN,
+	} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if addr, err := netip.ParseAddr(candidate); err == nil {
+			if addr.Is6() {
+				return addr.String(), nil
+			}
+			return "", fmt.Errorf("%s is not an IPv6 address", candidate)
+		}
+		return resolveAAAAWithServers(candidate, dsliteAFTRDNSServersWithState(spec, store), spec.AFTRAddressOrdinal, spec.AFTRAddressSelection)
+	}
+	return "", fmt.Errorf("missing AFTR source")
+}
+
+func dsliteAFTRDNSServersWithState(spec api.DSLiteTunnelSpec, store routerstate.Store) []string {
+	servers := append([]string{}, spec.AFTRDNSServers...)
+	sourceStore := objectStatusStore(store)
+	if sourceStore != nil && strings.TrimSpace(spec.AFTRFrom.Resource) != "" {
+		source := spec.AFTRFrom
+		source.Field = "dnsServers"
+		servers = append(servers, resourcequery.Values(sourceStore, source)...)
+	}
+	return compactStringList(servers)
+}
+
+func objectStatusStore(store routerstate.Store) resourcequery.Store {
+	if store == nil {
+		return nil
+	}
+	statusStore, ok := store.(interface {
+		ObjectStatus(apiVersion, kind, name string) map[string]any
+	})
+	if !ok {
+		return nil
+	}
+	return statusStore
 }
 
 func deleteDSLiteTunnel(name string) error {

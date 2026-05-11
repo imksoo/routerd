@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1222,6 +1223,30 @@ func TestApplyDSLiteSkipsAFTRResolutionWithoutDelegatedPrefix(t *testing.T) {
 	}
 	if len(applied) != 1 || applied[0] != "removed-unusable:ds-transix-a" {
 		t.Fatalf("applied = %v, want removed-unusable tunnel", applied)
+	}
+}
+
+func TestDSLiteAFTRDNSServersIncludeAFTRSourceStatus(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Information", "wan-info", map[string]any{
+		"phase":      "Ready",
+		"dnsServers": []string{"2404:1a8:7f01:a::3", "2404:1a8:7f01:b::3"},
+	}); err != nil {
+		t.Fatalf("save status: %v", err)
+	}
+	got := dsliteAFTRDNSServersWithState(api.DSLiteTunnelSpec{
+		AFTRDNSServers: []string{"2001:db8::53"},
+		AFTRFrom: api.StatusValueSourceSpec{
+			Resource: "DHCPv6Information/wan-info",
+			Field:    "aftrName",
+		},
+	}, store)
+	want := []string{"2001:db8::53", "2404:1a8:7f01:a::3", "2404:1a8:7f01:b::3"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dns servers = %#v, want %#v", got, want)
 	}
 }
 
