@@ -196,6 +196,10 @@ type ClientEntry = {
   peers?: string[];
   bytesOut?: number;
   bytesIn?: number;
+  inferredOSFamily?: string;
+  inferredDeviceClass?: string;
+  fingerprintConfidence?: number;
+  fingerprintSignals?: string[];
 };
 
 type InterfaceSummary = {
@@ -331,6 +335,10 @@ type ClientRow = {
   bytesOut?: number;
   bytesIn?: number;
   peers: Set<string>;
+  inferredOSFamily: string;
+  inferredDeviceClass: string;
+  fingerprintConfidence?: number;
+  fingerprintSignals: Set<string>;
 };
 
 type ViewKey = "overview" | "controllers" | "clients" | "connections" | "vpn" | "events" | "firewall" | "config" | "generations";
@@ -2957,7 +2965,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
             <col style={{ width: "210px" }} />
             <col style={{ width: "104px" }} />
             <col style={{ width: "210px" }} />
-            <col style={{ width: "104px" }} />
+            <col style={{ width: "150px" }} />
             <col style={{ width: "92px" }} />
             <col style={{ width: "118px" }} />
             <col />
@@ -2991,7 +2999,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                     </div>
                   </TableCell>
                   <TableCell><code className={styles.code}>{primaryClientAddress(row) || "-"}</code></TableCell>
-                  <TableCell><Text className={styles.muted}>{clientOSFamily(row)}</Text></TableCell>
+                  <TableCell><ClientOSBadge row={row} /></TableCell>
                   <TableCell>{row.addresses.size}</TableCell>
                   <TableCell>{clientLastSeen(row)}</TableCell>
                   <TableCell>
@@ -2999,11 +3007,12 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                       <ClientAddressGroup label="IPv4" addresses={groups.ipv4} />
                       <ClientAddressGroup label="IPv6 stable" addresses={groups.ipv6Stable} />
                       <ClientAddressGroup label="IPv6 privacy" addresses={groups.ipv6Privacy} />
-                      <div className={styles.clientMetaLine}>
-                        <code className={styles.wrapCode}>{row.mac || "-"}</code>
-                        <Text size={200} className={styles.muted}>out {formatBytes(row.bytesOut)} / in {formatBytes(row.bytesIn)}</Text>
-                        {row.peers.size > 0 ? <Text size={200} className={styles.muted}>peers {Array.from(row.peers).slice(0, 3).join(", ")}</Text> : null}
-                      </div>
+	                      <div className={styles.clientMetaLine}>
+	                        <code className={styles.wrapCode}>{row.mac || "-"}</code>
+	                        <Text size={200} className={styles.muted}>out {formatBytes(row.bytesOut)} / in {formatBytes(row.bytesIn)}</Text>
+	                        {row.fingerprintSignals.size > 0 ? <Text size={200} className={styles.muted}>signals {Array.from(row.fingerprintSignals).slice(0, 3).join(", ")}</Text> : null}
+	                        {row.peers.size > 0 ? <Text size={200} className={styles.muted}>peers {Array.from(row.peers).slice(0, 3).join(", ")}</Text> : null}
+	                      </div>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -3013,6 +3022,19 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
         </Table>
       </div>
     </>
+  );
+}
+
+function ClientOSBadge({ row }: { row: ClientRow }) {
+  const styles = useStyles();
+  const family = clientOSFamily(row);
+  if (family === "-") return <Text className={styles.muted}>-</Text>;
+  return (
+    <div className={styles.badges}>
+      <Badge appearance="tint" color={clientOSBadgeColor(family)}>{family}</Badge>
+      {row.inferredDeviceClass ? <Badge appearance="outline">{row.inferredDeviceClass}</Badge> : null}
+      {row.fingerprintConfidence ? <Text size={200} className={styles.muted}>{row.fingerprintConfidence}%</Text> : null}
+    </div>
   );
 }
 
@@ -3900,6 +3922,10 @@ function clientEntryToRow(entry: ClientEntry): ClientRow {
     bytesOut: entry.bytesOut,
     bytesIn: entry.bytesIn,
     peers: new Set(entry.peers ?? []),
+    inferredOSFamily: entry.inferredOSFamily ?? "",
+    inferredDeviceClass: entry.inferredDeviceClass ?? "",
+    fingerprintConfidence: entry.fingerprintConfidence,
+    fingerprintSignals: new Set(entry.fingerprintSignals ?? []),
   };
 }
 
@@ -3926,9 +3952,13 @@ function clientSearchText(client: ClientEntry) {
     client.mac,
     client.vendor,
     client.state,
+    client.inferredOSFamily,
+    client.inferredDeviceClass,
+    client.fingerprintConfidence,
     ...(client.addresses ?? []),
     ...(client.sources ?? []),
     ...(client.peers ?? []),
+    ...(client.fingerprintSignals ?? []),
   ].filter(Boolean).join(" ").toLowerCase();
 }
 
@@ -3979,8 +4009,23 @@ function isStableIPv6(address: string) {
   return text.includes(":ff:fe") || /(^|:)0*1[123]$/.test(text) || text.endsWith("::1");
 }
 
-function clientOSFamily(_row: ClientRow) {
-  return "-";
+function clientOSFamily(row: ClientRow) {
+  return row.inferredOSFamily || "-";
+}
+
+function clientOSBadgeColor(family: string) {
+  switch (family.toLowerCase()) {
+    case "apple":
+      return "brand";
+    case "windows":
+      return "informative";
+    case "android":
+      return "success";
+    case "embedded":
+      return "warning";
+    default:
+      return "subtle";
+  }
 }
 
 function clientLastSeen(row: ClientRow) {

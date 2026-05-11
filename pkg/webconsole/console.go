@@ -101,16 +101,20 @@ type NeighborEntry struct {
 }
 
 type ClientEntry struct {
-	ID        string   `json:"id"`
-	Hostname  string   `json:"hostname,omitempty"`
-	MAC       string   `json:"mac,omitempty"`
-	Vendor    string   `json:"vendor,omitempty"`
-	Addresses []string `json:"addresses,omitempty"`
-	State     string   `json:"state,omitempty"`
-	Sources   []string `json:"sources,omitempty"`
-	Peers     []string `json:"peers,omitempty"`
-	BytesOut  int64    `json:"bytesOut,omitempty"`
-	BytesIn   int64    `json:"bytesIn,omitempty"`
+	ID                    string   `json:"id"`
+	Hostname              string   `json:"hostname,omitempty"`
+	MAC                   string   `json:"mac,omitempty"`
+	Vendor                string   `json:"vendor,omitempty"`
+	Addresses             []string `json:"addresses,omitempty"`
+	State                 string   `json:"state,omitempty"`
+	Sources               []string `json:"sources,omitempty"`
+	Peers                 []string `json:"peers,omitempty"`
+	BytesOut              int64    `json:"bytesOut,omitempty"`
+	BytesIn               int64    `json:"bytesIn,omitempty"`
+	InferredOSFamily      string   `json:"inferredOSFamily,omitempty"`
+	InferredDeviceClass   string   `json:"inferredDeviceClass,omitempty"`
+	FingerprintConfidence int      `json:"fingerprintConfidence,omitempty"`
+	FingerprintSignals    []string `json:"fingerprintSignals,omitempty"`
 }
 
 type InterfaceSummary struct {
@@ -276,6 +280,12 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
+	fingerprintDNSQueries := dnsQueries
+	if queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-24 * time.Hour), Limit: 1000}); err == nil {
+		fingerprintDNSQueries = queries
+	} else {
+		errors = append(errors, err.Error())
+	}
 	trafficFlows, err := h.trafficFlowList(logstore.TrafficFlowFilter{Since: time.Now().Add(-time.Hour), Limit: 200})
 	if err != nil {
 		errors = append(errors, err.Error())
@@ -317,7 +327,7 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		FirewallLogs: firewallLogs,
 		DHCPLeases:   dhcpLeases,
 		Neighbors:    neighbors,
-		Clients:      correlateClients(dhcpLeases, neighbors, trafficFlows),
+		Clients:      correlateClients(dhcpLeases, neighbors, trafficFlows, fingerprintDNSQueries, firewallLogs),
 		VPN:          vpn,
 		Errors:       errors,
 	}
@@ -498,7 +508,17 @@ func (h Handler) clients(w http.ResponseWriter) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, correlateClients(leases, neighbors, flows))
+	queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-24 * time.Hour), Limit: 1000})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	firewallLogs, err := h.firewallLogList(logstore.FirewallLogFilter{Since: time.Now().Add(-24 * time.Hour), Action: "drop", Limit: 1000})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, correlateClients(leases, neighbors, flows, queries, firewallLogs))
 }
 
 func (h Handler) vpn(w http.ResponseWriter) {
@@ -1149,16 +1169,11 @@ func parseNeighborState(raw json.RawMessage) string {
 	return ""
 }
 
-func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []logstore.TrafficFlow) []ClientEntry {
-	type mutableClient struct {
-		ClientEntry
-		addresses map[string]bool
-		sources   map[string]bool
-		peers     map[string]bool
-	}
-	rows := map[string]*mutableClient{}
+func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []logstore.TrafficFlow, queries []logstore.DNSQuery, firewallLogs []logstore.FirewallLogEntry) []ClientEntry {
+	rows := map[string]*clientMutableEntry{}
 	ipToKey := map[string]string{}
-	upsert := func(key, address string) *mutableClient {
+	passive := buildPassiveFingerprints(leases, flows, queries, firewallLogs)
+	upsert := func(key, address string) *clientMutableEntry {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			key = strings.TrimSpace(address)
@@ -1168,7 +1183,7 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		}
 		row := rows[key]
 		if row == nil {
-			row = &mutableClient{
+			row = &clientMutableEntry{
 				ClientEntry: ClientEntry{ID: key},
 				addresses:   map[string]bool{},
 				sources:     map[string]bool{},
@@ -1223,6 +1238,30 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		}
 		row.sources[source] = true
 	}
+	for ip, fingerprint := range passive {
+		if ip == "" || ipToKey[ip] != "" {
+			continue
+		}
+		if key := matchFingerprintToClient(rows, fingerprint); key != "" {
+			ipToKey[ip] = key
+			rows[key].addresses[ip] = true
+		}
+	}
+	for _, query := range queries {
+		ip := strings.TrimSpace(query.ClientAddress)
+		if ip == "" {
+			continue
+		}
+		key := ipToKey[ip]
+		if key == "" {
+			key = passiveCorrelationKey(passive[ip], ip)
+		}
+		row := upsert(key, ip)
+		if query.QuestionName != "" {
+			row.peers[strings.TrimSuffix(query.QuestionName, ".")] = true
+		}
+		row.sources["dns"] = true
+	}
 	for _, flow := range flows {
 		ip := strings.TrimSpace(flow.ClientAddress)
 		if ip == "" {
@@ -1230,7 +1269,7 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		}
 		key := ipToKey[ip]
 		if key == "" {
-			key = ip
+			key = passiveCorrelationKey(passive[ip], ip)
 		}
 		row := upsert(key, ip)
 		if flow.Accounting {
@@ -1248,6 +1287,11 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		row.Addresses = sortedClientAddresses(row.addresses)
 		row.Sources = sortedSet(row.sources)
 		row.Peers = sortedSet(row.peers)
+		fingerprint := inferClientFingerprint(row.ClientEntry, passive)
+		row.InferredOSFamily = fingerprint.OSFamily
+		row.InferredDeviceClass = fingerprint.DeviceClass
+		row.FingerprintConfidence = fingerprint.Confidence
+		row.FingerprintSignals = fingerprint.Signals
 		out = append(out, row.ClientEntry)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -1279,6 +1323,369 @@ func clientCorrelationKey(mac, ip string) string {
 
 func normalizeClientMAC(mac string) string {
 	return strings.ToLower(strings.TrimSpace(mac))
+}
+
+type clientMutableEntry struct {
+	ClientEntry
+	addresses map[string]bool
+	sources   map[string]bool
+	peers     map[string]bool
+}
+
+type clientFingerprint struct {
+	OSFamily    string
+	DeviceClass string
+	Confidence  int
+	Signals     []string
+	Hostname    string
+	Vendor      string
+}
+
+type fingerprintAccumulator struct {
+	osScores      map[string]int
+	classScores   map[string]int
+	osClassScores map[string]int
+	signals       map[string]bool
+	hostname      string
+	vendor        string
+	hasMulticast  bool
+}
+
+func buildPassiveFingerprints(_ []DHCPLease, flows []logstore.TrafficFlow, queries []logstore.DNSQuery, firewallLogs []logstore.FirewallLogEntry) map[string]*fingerprintAccumulator {
+	out := map[string]*fingerprintAccumulator{}
+	acc := func(ip string) *fingerprintAccumulator {
+		ip = strings.TrimSpace(ip)
+		if ip == "" {
+			return nil
+		}
+		item := out[ip]
+		if item == nil {
+			item = &fingerprintAccumulator{osScores: map[string]int{}, classScores: map[string]int{}, osClassScores: map[string]int{}, signals: map[string]bool{}}
+			out[ip] = item
+		}
+		return item
+	}
+	for _, query := range queries {
+		item := acc(query.ClientAddress)
+		if item == nil {
+			continue
+		}
+		applyDomainFingerprint(item, query.QuestionName)
+	}
+	for _, flow := range flows {
+		item := acc(flow.ClientAddress)
+		if item == nil {
+			continue
+		}
+		applyDomainFingerprint(item, flow.ResolvedHostname)
+		applyDomainFingerprint(item, flow.TLSSNI)
+		applyTransportFingerprint(item, flow.Protocol, flow.PeerAddress, flow.PeerPort)
+		applyAppFingerprint(item, flow.AppName, flow.AppCategory, flow.AppConfidence)
+	}
+	for _, entry := range firewallLogs {
+		ip := firewallClientAddress(entry)
+		item := acc(ip)
+		if item == nil {
+			continue
+		}
+		applyDomainFingerprint(item, entry.DPITLSSNI)
+		applyDomainFingerprint(item, entry.DPIHTTPHost)
+		applyDomainFingerprint(item, entry.DPIDNSQuery)
+		applyTransportFingerprint(item, entry.Protocol, entry.DstAddress, entry.DstPort)
+		applyAppFingerprint(item, entry.DPIApp, entry.DPICategory, entry.DPIConfidence)
+	}
+	return out
+}
+
+func applyHostVendorFingerprint(item *fingerprintAccumulator, hostname, vendor, clientID string) {
+	hostText := strings.ToLower(strings.Join([]string{hostname, clientID}, " "))
+	switch {
+	case strings.Contains(hostText, "iphone"):
+		addFingerprintSignal(item, "Apple", "phone", 120, "hostname=iphone")
+	case strings.Contains(hostText, "ipad"):
+		addFingerprintSignal(item, "Apple", "tablet", 120, "hostname=ipad")
+	case strings.Contains(hostText, "macbook") || strings.Contains(hostText, "imac") || strings.Contains(hostText, "mac mini"):
+		addFingerprintSignal(item, "Apple", "computer", 100, "hostname/mac")
+	case strings.Contains(hostText, "windows") || strings.HasPrefix(strings.TrimSpace(hostText), "win-") || strings.Contains(hostText, "microsoft"):
+		addFingerprintSignal(item, "Windows", "computer", 90, "hostname/windows")
+	case strings.Contains(hostText, "android") || strings.Contains(hostText, "pixel") || strings.Contains(hostText, "samsung") || strings.Contains(hostText, "xiaomi") || strings.Contains(hostText, "oneplus") || strings.Contains(hostText, "motorola"):
+		addFingerprintSignal(item, "Android", "phone", 100, "hostname/android")
+	}
+	vendorText := strings.ToLower(strings.TrimSpace(vendor))
+	switch {
+	case strings.Contains(vendorText, "apple") && !strings.Contains(vendorText, "private"):
+		addFingerprintSignal(item, "Apple", "", 35, "vendor/apple")
+	case strings.Contains(vendorText, "google"):
+		addFingerprintSignal(item, "Android", "", 35, "vendor/google")
+	case strings.Contains(vendorText, "panasonic") || strings.Contains(vendorText, "amazon") || strings.Contains(vendorText, "espressif") || strings.Contains(vendorText, "ecoflow"):
+		addFingerprintSignal(item, "Embedded", "iot", 45, "vendor/iot")
+	}
+}
+
+func applyDomainFingerprint(item *fingerprintAccumulator, name string) {
+	name = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), "."))
+	if name == "" {
+		return
+	}
+	switch {
+	case strings.Contains(name, "icloud.com") || strings.Contains(name, "apple.com") || strings.Contains(name, "mzstatic.com") || strings.Contains(name, "push.apple.com") || strings.Contains(name, "captive.apple.com"):
+		addFingerprintSignal(item, "Apple", "", 35, "dns/apple:"+shortFingerprintSignal(name))
+	case strings.Contains(name, "windowsupdate.com") || strings.Contains(name, "msftconnecttest.com") || strings.Contains(name, "microsoft.com") || strings.Contains(name, "office365.com") || strings.Contains(name, "live.com"):
+		addFingerprintSignal(item, "Windows", "computer", 35, "dns/windows:"+shortFingerprintSignal(name))
+	case strings.Contains(name, "connectivitycheck.gstatic.com") || strings.Contains(name, "android.clients.google.com") || strings.Contains(name, "gms.") || strings.Contains(name, "googleapis.com"):
+		addFingerprintSignal(item, "Android", "", 35, "dns/android:"+shortFingerprintSignal(name))
+	case strings.Contains(name, "_airplay.") || strings.Contains(name, "_raop.") || strings.Contains(name, "_companion-link."):
+		addFingerprintSignal(item, "Apple", "", 45, "mdns/apple")
+	case strings.Contains(name, "_googlecast.") || strings.Contains(name, "_androidtvremote."):
+		addFingerprintSignal(item, "Android", "media", 45, "mdns/googlecast")
+	case strings.Contains(name, "_smb.") || strings.Contains(name, "_workstation.") || strings.Contains(name, "wpad."):
+		addFingerprintSignal(item, "Windows", "computer", 35, "dns/windows-service")
+	}
+}
+
+func applyTransportFingerprint(item *fingerprintAccumulator, proto, peer string, port int) {
+	proto = strings.ToLower(strings.TrimSpace(proto))
+	peer = strings.ToLower(strings.TrimSpace(peer))
+	if proto != "udp" {
+		return
+	}
+	switch {
+	case port == 5353 || peer == "224.0.0.251" || peer == "ff02::fb":
+		item.hasMulticast = true
+		addFingerprintSignal(item, "", "", 5, "multicast/mdns")
+	case port == 1900 || peer == "239.255.255.250" || peer == "ff02::c":
+		item.hasMulticast = true
+		addFingerprintSignal(item, "Embedded", "iot", 15, "multicast/ssdp")
+	case port == 137 || port == 138 || port == 139:
+		item.hasMulticast = true
+		addFingerprintSignal(item, "Windows", "computer", 35, "multicast/netbios")
+	}
+}
+
+func applyAppFingerprint(item *fingerprintAccumulator, app, category string, confidence int) {
+	text := strings.ToLower(strings.Join([]string{app, category}, " "))
+	if text == "" {
+		return
+	}
+	weight := 10
+	if confidence >= 80 {
+		weight = 20
+	}
+	switch {
+	case strings.Contains(text, "mdns"):
+		addFingerprintSignal(item, "", "", weight, "dpi/mdns")
+	case strings.Contains(text, "ssdp"):
+		addFingerprintSignal(item, "Embedded", "iot", weight, "dpi/ssdp")
+	case strings.Contains(text, "netbios") || strings.Contains(text, "smb"):
+		addFingerprintSignal(item, "Windows", "computer", weight+10, "dpi/netbios")
+	}
+}
+
+func addFingerprintSignal(item *fingerprintAccumulator, osFamily, deviceClass string, score int, signal string) {
+	if item == nil {
+		return
+	}
+	if item.osScores == nil {
+		item.osScores = map[string]int{}
+	}
+	if item.classScores == nil {
+		item.classScores = map[string]int{}
+	}
+	if item.osClassScores == nil {
+		item.osClassScores = map[string]int{}
+	}
+	if item.signals == nil {
+		item.signals = map[string]bool{}
+	}
+	if osFamily != "" {
+		item.osScores[osFamily] += score
+	}
+	if deviceClass != "" {
+		item.classScores[deviceClass] += score
+	}
+	if osFamily != "" && deviceClass != "" {
+		item.osClassScores[osClassScoreKey(osFamily, deviceClass)] += score
+	}
+	if signal != "" {
+		item.signals[signal] = true
+	}
+}
+
+func matchFingerprintToClient(rows map[string]*clientMutableEntry, fingerprint *fingerprintAccumulator) string {
+	if fingerprint == nil {
+		return ""
+	}
+	fp := fingerprint.result()
+	if fp.Confidence < 60 || fp.OSFamily == "" {
+		return ""
+	}
+	var matched string
+	for key, row := range rows {
+		if row.MAC == "" {
+			continue
+		}
+		rowFP := inferClientFingerprint(row.ClientEntry, nil)
+		if rowFP.OSFamily != fp.OSFamily {
+			continue
+		}
+		if fp.DeviceClass != "" && rowFP.DeviceClass != "" && fp.DeviceClass != rowFP.DeviceClass {
+			continue
+		}
+		if matched != "" {
+			return ""
+		}
+		matched = key
+	}
+	return matched
+}
+
+func passiveCorrelationKey(fingerprint *fingerprintAccumulator, ip string) string {
+	if fingerprint == nil {
+		return ip
+	}
+	fp := fingerprint.result()
+	if fp.Confidence >= 60 && fingerprint.hostname != "" {
+		return "host:" + strings.ToLower(fingerprint.hostname)
+	}
+	return ip
+}
+
+func inferClientFingerprint(entry ClientEntry, passive map[string]*fingerprintAccumulator) clientFingerprint {
+	acc := &fingerprintAccumulator{osScores: map[string]int{}, classScores: map[string]int{}, osClassScores: map[string]int{}, signals: map[string]bool{}}
+	applyHostVendorFingerprint(acc, entry.Hostname, entry.Vendor, "")
+	for _, peer := range entry.Peers {
+		applyDomainFingerprint(acc, peer)
+	}
+	for _, address := range entry.Addresses {
+		if passive != nil {
+			acc.merge(passive[address])
+		}
+	}
+	return acc.result()
+}
+
+func (f *fingerprintAccumulator) merge(other *fingerprintAccumulator) {
+	if f == nil || other == nil {
+		return
+	}
+	if f.osScores == nil {
+		f.osScores = map[string]int{}
+	}
+	if f.classScores == nil {
+		f.classScores = map[string]int{}
+	}
+	if f.osClassScores == nil {
+		f.osClassScores = map[string]int{}
+	}
+	if f.signals == nil {
+		f.signals = map[string]bool{}
+	}
+	for key, value := range other.osScores {
+		f.osScores[key] += value
+	}
+	for key, value := range other.classScores {
+		f.classScores[key] += value
+	}
+	for key, value := range other.osClassScores {
+		f.osClassScores[key] += value
+	}
+	for key := range other.signals {
+		f.signals[key] = true
+	}
+	f.hostname = firstNonEmptyString(f.hostname, other.hostname)
+	f.vendor = firstNonEmptyString(f.vendor, other.vendor)
+	f.hasMulticast = f.hasMulticast || other.hasMulticast
+}
+
+func (f *fingerprintAccumulator) result() clientFingerprint {
+	if f == nil {
+		return clientFingerprint{}
+	}
+	osFamily, osScore := bestFingerprintScore(f.osScores)
+	deviceClass, classScore := f.bestDeviceClassForOS(osFamily)
+	confidence := osScore
+	if classScore > 0 {
+		confidence += classScore / 3
+	}
+	if len(f.signals) > 1 {
+		confidence += 10
+	}
+	if confidence > 100 {
+		confidence = 100
+	}
+	if confidence < 25 {
+		return clientFingerprint{}
+	}
+	return clientFingerprint{
+		OSFamily:    osFamily,
+		DeviceClass: deviceClass,
+		Confidence:  confidence,
+		Signals:     sortedSet(f.signals),
+		Hostname:    f.hostname,
+		Vendor:      f.vendor,
+	}
+}
+
+func (f *fingerprintAccumulator) bestDeviceClassForOS(osFamily string) (string, int) {
+	if osFamily != "" {
+		filtered := map[string]int{}
+		prefix := osFamily + "|"
+		for key, value := range f.osClassScores {
+			if strings.HasPrefix(key, prefix) {
+				filtered[strings.TrimPrefix(key, prefix)] += value
+			}
+		}
+		if len(filtered) > 0 {
+			return bestFingerprintScore(filtered)
+		}
+	}
+	return bestFingerprintScore(f.classScores)
+}
+
+func osClassScoreKey(osFamily, deviceClass string) string {
+	return osFamily + "|" + deviceClass
+}
+
+func bestFingerprintScore(scores map[string]int) (string, int) {
+	var best string
+	var bestScore int
+	for key, score := range scores {
+		if score > bestScore || (score == bestScore && key < best) {
+			best = key
+			bestScore = score
+		}
+	}
+	return best, bestScore
+}
+
+func firewallClientAddress(entry logstore.FirewallLogEntry) string {
+	if isLikelyClientAddress(entry.SrcAddress) {
+		return entry.SrcAddress
+	}
+	if isLikelyClientAddress(entry.DstAddress) {
+		return entry.DstAddress
+	}
+	return ""
+}
+
+func isLikelyClientAddress(address string) bool {
+	addr, err := netip.ParseAddr(strings.TrimSpace(address))
+	if err != nil {
+		return false
+	}
+	if addr.Is4() {
+		return addr.IsPrivate()
+	}
+	return addr.IsPrivate() || addr.IsLinkLocalUnicast()
+}
+
+func shortFingerprintSignal(name string) string {
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	parts := strings.Split(name, ".")
+	if len(parts) >= 2 {
+		return strings.Join(parts[len(parts)-2:], ".")
+	}
+	return name
 }
 
 func sortedClientAddresses(values map[string]bool) []string {

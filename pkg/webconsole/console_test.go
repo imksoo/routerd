@@ -437,6 +437,8 @@ func TestCorrelateClientsMergesDHCPLeaseAndIPv6NeighborByMAC(t *testing.T) {
 			{MAC: "4e:20:15:aa:e0:67", IP: "fe80::14c5:6fd7:b848:a739", IfName: "ens19", State: "STALE", Source: "ip-neigh"},
 		},
 		[]logstore.TrafficFlow{{ClientAddress: "2409:10:3d60:1271::abcd", PeerAddress: "2001:4860:4860::8888", Accounting: true, BytesOut: 120, BytesIn: 240}},
+		[]logstore.DNSQuery{{ClientAddress: "2409:10:3d60:1271::abcd", QuestionName: "www.icloud.com", QuestionType: "AAAA"}},
+		nil,
 	)
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d: %+v", len(rows), rows)
@@ -453,13 +455,16 @@ func TestCorrelateClientsMergesDHCPLeaseAndIPv6NeighborByMAC(t *testing.T) {
 	if row.BytesOut != 120 || row.BytesIn != 240 {
 		t.Fatalf("traffic was not joined to client: %+v", row)
 	}
+	if row.InferredOSFamily != "Apple" || row.FingerprintConfidence == 0 {
+		t.Fatalf("fingerprint missing: %+v", row)
+	}
 }
 
 func TestCorrelateClientsSkipsFailedNeighbors(t *testing.T) {
 	rows := correlateClients(nil, []NeighborEntry{
 		{IP: "192.168.178.40", IfName: "ens18", State: "FAILED", Source: "ip-neigh"},
 		{IP: "172.18.1.110", IfName: "ens19", MAC: "4e:20:15:aa:e0:67", State: "REACHABLE", Source: "ip-neigh"},
-	}, nil)
+	}, nil, nil, nil)
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d: %+v", len(rows), rows)
 	}
@@ -468,6 +473,54 @@ func TestCorrelateClientsSkipsFailedNeighbors(t *testing.T) {
 	}
 	if !containsString(rows[0].Addresses, "172.18.1.110") {
 		t.Fatalf("reachable neighbor missing from clients: %+v", rows[0])
+	}
+}
+
+func TestCorrelateClientsGroupsPrivacyAddressByFingerprintWhenUnique(t *testing.T) {
+	rows := correlateClients(
+		[]DHCPLease{{
+			MAC:      "4e:20:15:aa:e0:67",
+			IP:       "172.18.1.110",
+			Hostname: "mcberry-iPhone",
+			Vendor:   "Apple private address",
+		}},
+		nil,
+		[]logstore.TrafficFlow{{ClientAddress: "2409:10:3d60:1271:abcd::1234", PeerAddress: "17.253.144.10", ResolvedHostname: "gateway.icloud.com"}},
+		[]logstore.DNSQuery{{ClientAddress: "2409:10:3d60:1271:abcd::1234", QuestionName: "gateway.icloud.com", QuestionType: "AAAA"}},
+		nil,
+	)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	if !containsString(rows[0].Addresses, "2409:10:3d60:1271:abcd::1234") {
+		t.Fatalf("privacy address not grouped: %+v", rows[0])
+	}
+	if rows[0].InferredOSFamily != "Apple" || rows[0].InferredDeviceClass != "phone" {
+		t.Fatalf("fingerprint = %+v", rows[0])
+	}
+}
+
+func TestCorrelateClientsKeepsDeviceClassWithinInferredOSFamily(t *testing.T) {
+	rows := correlateClients(
+		[]DHCPLease{{
+			MAC:      "66:1f:8c:8d:0d:58",
+			IP:       "172.18.1.133",
+			Hostname: "iPhone",
+		}},
+		nil,
+		nil,
+		[]logstore.DNSQuery{
+			{ClientAddress: "172.18.1.133", QuestionName: "www.icloud.com", QuestionType: "A"},
+			{ClientAddress: "172.18.1.133", QuestionName: "login.microsoft.com", QuestionType: "A"},
+			{ClientAddress: "172.18.1.133", QuestionName: "office365.com", QuestionType: "A"},
+		},
+		nil,
+	)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	if rows[0].InferredOSFamily != "Apple" || rows[0].InferredDeviceClass != "phone" {
+		t.Fatalf("mixed signals should keep iPhone as Apple phone: %+v", rows[0])
 	}
 }
 
