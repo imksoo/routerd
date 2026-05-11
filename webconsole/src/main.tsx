@@ -477,6 +477,7 @@ const useStyles = makeStyles({
       display: "flex",
       overflowX: "auto",
       overflowY: "hidden",
+      overscrollBehaviorX: "contain",
       borderRight: 0,
       borderBottom: "1px solid #243041",
       padding: "8px",
@@ -596,6 +597,7 @@ const useStyles = makeStyles({
     "@media (max-width: 640px)": {
       flexWrap: "nowrap",
       overflowX: "auto",
+      overscrollBehaviorX: "contain",
       padding: "8px 12px",
     },
   },
@@ -901,6 +903,7 @@ const useStyles = makeStyles({
   },
   tableWrap: {
     overflowX: "auto",
+    overscrollBehaviorX: "contain",
     maxWidth: "100%",
     WebkitOverflowScrolling: "touch",
     "@media (max-width: 640px)": {
@@ -1101,6 +1104,7 @@ const useStyles = makeStyles({
     gap: "6px",
     maxWidth: "100%",
     overflowX: "auto",
+    overscrollBehaviorX: "contain",
     paddingBottom: "4px",
     WebkitOverflowScrolling: "touch",
   },
@@ -1265,6 +1269,7 @@ const useStyles = makeStyles({
   config: {
     maxHeight: "66vh",
     overflow: "auto",
+    overscrollBehavior: "contain",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
     padding: "10px",
@@ -1314,6 +1319,7 @@ const useStyles = makeStyles({
     position: "relative",
     maxHeight: "62vh",
     overflow: "auto",
+    overscrollBehavior: "contain",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
     backgroundColor: tokens.colorNeutralBackground2,
