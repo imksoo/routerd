@@ -594,11 +594,11 @@ rm -f "${iso_versioned}" "${iso_versioned}.sha256" "${iso_alias}" "${iso_alias}.
 grub-mkrescue -o "${iso_versioned}" "${iso_root}" >/dev/null
 cp "${iso_versioned}" "${iso_alias}"
 if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "${iso_versioned}" > "${iso_versioned}.sha256"
-    sha256sum "${iso_alias}" > "${iso_alias}.sha256"
+    (cd "${outdir}" && sha256sum "$(basename "${iso_versioned}")" > "$(basename "${iso_versioned}").sha256")
+    (cd "${outdir}" && sha256sum "$(basename "${iso_alias}")" > "$(basename "${iso_alias}").sha256")
 else
-    shasum -a 256 "${iso_versioned}" > "${iso_versioned}.sha256"
-    shasum -a 256 "${iso_alias}" > "${iso_alias}.sha256"
+    (cd "${outdir}" && shasum -a 256 "$(basename "${iso_versioned}")" > "$(basename "${iso_versioned}").sha256")
+    (cd "${outdir}" && shasum -a 256 "$(basename "${iso_alias}")" > "$(basename "${iso_alias}").sha256")
 fi
 
 echo "${iso_versioned}"
