@@ -80,6 +80,45 @@ func TestIPv4RouteControllerDoesNotRefreshInstalledAtWhenUnchanged(t *testing.T)
 	}
 }
 
+func TestIPv4RouteControllerReappliesUnchangedKernelRoute(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+			Metadata: api.ObjectMeta{
+				Name: "default",
+			},
+			Spec: api.IPv4RouteSpec{
+				Destination: "0.0.0.0/0",
+				Device:      "ens18",
+			},
+		},
+	}}}
+	store := mapStore{}
+	var commands [][]string
+	controller := IPv4RouteController{
+		Router: router,
+		Store:  store,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, append([]string{name}, args...))
+			return nil, nil
+		},
+	}
+
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	want := []string{"ip", "route", "replace", "0.0.0.0/0", "dev", "ens18"}
+	if len(commands) != 2 || !reflect.DeepEqual(commands[0], want) || !reflect.DeepEqual(commands[1], want) {
+		t.Fatalf("commands = %#v, want two %#v", commands, want)
+	}
+	if changed := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", "default")["changed"]; changed != false {
+		t.Fatalf("second reconcile should preserve unchanged status, changed=%#v", changed)
+	}
+}
+
 func TestIPv4RouteControllerDeletesRemovedRoute(t *testing.T) {
 	store := &routeCleanupStore{statuses: []routerstate.ObjectStatus{
 		{

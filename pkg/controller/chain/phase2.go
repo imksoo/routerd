@@ -378,6 +378,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 				continue
 			}
 		}
+		status["changed"] = changed
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
 			return err
 		}
