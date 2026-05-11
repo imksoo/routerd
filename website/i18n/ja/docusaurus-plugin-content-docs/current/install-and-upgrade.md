@@ -42,6 +42,12 @@ latest release には `routerd-vYYYYMMDD.HHmm-linux-amd64.tar.gz` のような
 版番号付きアーカイブもあります。
 特定の版に固定する場合は、版番号付きアーカイブを使います。
 
+Linux 用アーカイブには、`CGO_ENABLED=0` で静的リンクした routerd バイナリを
+含めます。
+配置先ホストの glibc 版には依存しません。
+`dnsmasq`、`nft`、`ip`、`conntrack`、`tcpdump` などの実行時ツールは、
+引き続き `install.sh` が導入または確認します。
+
 `install.sh` は新規導入かアップグレードかを自動判定します。
 実行ファイルを `/usr/local/sbin` に配置し、サービステンプレートを導入します。
 また、`/usr/local/etc/routerd/router.yaml.sample` を作成します。

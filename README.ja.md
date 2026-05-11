@@ -170,6 +170,10 @@ arm64 ホストでは `routerd-linux-arm64.tar.gz` または
 `routerd-freebsd-arm64.tar.gz` を使います。
 特定の版を固定したい場合は、各 release ページの版番号付きアーカイブを使います。
 
+Linux 用の release archive には、静的リンクした routerd バイナリを含めます
+(`CGO_ENABLED=0`)。
+配置先ホストの glibc 版には依存しません。
+
 `install.sh` は必要な OS パッケージを導入し、実行ファイルを
 `/usr/local/sbin` に配置します。
 また、サービスのテンプレートと `router.yaml.sample` を配置します。

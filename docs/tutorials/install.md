@@ -23,6 +23,9 @@ same `./install.sh`.
 On FreeBSD arm64 hosts, use `routerd-freebsd-arm64.tar.gz`.
 Use the versioned archives on a release page when you need an exact release.
 
+Linux archives contain statically linked routerd binaries (`CGO_ENABLED=0`).
+They are not tied to the glibc version on the router host.
+
 The installer:
 
 - installs runtime packages on supported package managers

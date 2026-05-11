@@ -174,6 +174,9 @@ Use `routerd-linux-arm64.tar.gz` or `routerd-freebsd-arm64.tar.gz` on arm64 host
 Versioned archives remain available on each release page when you need an exact
 release.
 
+Linux release archives contain statically linked routerd binaries
+(`CGO_ENABLED=0`). They do not depend on the target host's glibc version.
+
 `install.sh` installs known OS packages, copies binaries to `/usr/local/sbin`,
 installs the service template, writes `router.yaml.sample`, and preserves an
 existing `/usr/local/etc/routerd/router.yaml`.

@@ -49,6 +49,11 @@ Each target archive is published with two names:
 - `routerd-<tag>-<os>-<arch>.tar.gz` for an exact release
 - `routerd-<os>-<arch>.tar.gz` for a fixed latest-download URL
 
+Linux archives are built with `CGO_ENABLED=0`, so the routerd binaries in those
+archives are statically linked and do not depend on the target host's glibc
+version. The workflow runs `make check-linux-static` before packaging Linux
+archives.
+
 Both names also have `.sha256` files.
 The archive contains:
 

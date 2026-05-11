@@ -23,6 +23,10 @@ FreeBSD では `routerd-freebsd-amd64.tar.gz` を取得し、同じ
 FreeBSD arm64 ホストでは `routerd-freebsd-arm64.tar.gz` を使います。
 特定の版を固定したい場合は、release ページの版番号付きアーカイブを使います。
 
+Linux 用アーカイブには、静的リンクした routerd バイナリを含めます
+(`CGO_ENABLED=0`)。
+ルーターホストの glibc 版には依存しません。
+
 インストーラーは次を行います。
 
 - 対応するパッケージマネージャーで実行時パッケージを導入します。

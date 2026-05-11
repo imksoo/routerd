@@ -42,6 +42,11 @@ The latest release also includes versioned archives such as
 `routerd-vYYYYMMDD.HHmm-linux-amd64.tar.gz`.
 Use those when you need to pin a specific release.
 
+Linux archives are built with `CGO_ENABLED=0` and contain statically linked
+routerd binaries. They do not require the router host to have the same glibc
+version as the build machine. Runtime tools such as `dnsmasq`, `nft`, `ip`,
+`conntrack`, and `tcpdump` are still installed or checked by `install.sh`.
+
 `install.sh` detects whether this is a fresh install or an upgrade.
 It installs the binaries under `/usr/local/sbin`, installs the service template,
 and writes `/usr/local/etc/routerd/router.yaml.sample`.
