@@ -760,7 +760,7 @@ const useStyles = makeStyles({
     tableLayout: "fixed",
   },
   clientInventoryTable: {
-    minWidth: "1040px",
+    minWidth: "1120px",
     tableLayout: "fixed",
   },
   clientTrafficTable: {
@@ -847,6 +847,29 @@ const useStyles = makeStyles({
   connectionFlow: {
     display: "grid",
     gap: "2px",
+    minWidth: 0,
+  },
+  clientDetailStack: {
+    display: "grid",
+    gap: "7px",
+    minWidth: 0,
+  },
+  clientAddressGroup: {
+    display: "grid",
+    gap: "3px",
+    minWidth: 0,
+  },
+  clientAddressList: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "4px 8px",
+    minWidth: 0,
+  },
+  clientMetaLine: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px 10px",
+    alignItems: "center",
     minWidth: 0,
   },
   firewallTable: {
@@ -2446,54 +2469,98 @@ function PeerStatusStrip({ peers }: { peers: { key: string; label: string; activ
 function ClientInventory({ clients }: { clients: ClientEntry[] }) {
   const styles = useStyles();
   const rows = clients.map(clientEntryToRow);
+  const online = rows.filter(row => clientOnline(row)).length;
+  const addressCount = rows.reduce((sum, row) => sum + row.addresses.size, 0);
   return (
-    <div className={styles.tableWrap}>
-      <Table size="small" className={styles.clientInventoryTable}>
-        <colgroup>
-          <col style={{ width: "190px" }} />
-          <col style={{ width: "320px" }} />
-          <col style={{ width: "150px" }} />
-          <col style={{ width: "96px" }} />
-          <col />
-        </colgroup>
-        <TableHeader>
-          <TableRow>
-            <TableHeaderCell>Client</TableHeaderCell>
-            <TableHeaderCell>Address</TableHeaderCell>
-            <TableHeaderCell>MAC</TableHeaderCell>
-            <TableHeaderCell>Traffic</TableHeaderCell>
-            <TableHeaderCell>Peers</TableHeaderCell>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map(row => (
-            <TableRow key={row.id || row.mac || row.ip || row.hostname}>
-              <TableCell>
-                <div className={styles.connectionFlow}>
-                  <Text>{row.hostname || "-"}</Text>
-                  <Text size={200} className={styles.muted}>{row.vendor || "-"}</Text>
-                </div>
-              </TableCell>
-              <TableCell>
-                <div className={styles.connectionFlow}>
-                  {Array.from(row.addresses ?? []).slice(0, 6).map(address => (
-                    <code className={styles.code} key={address}>{address}</code>
-                  ))}
-                  {row.state ? <Text size={200} className={styles.muted}>{row.state}</Text> : null}
-                </div>
-              </TableCell>
-              <TableCell><code className={styles.wrapCode}>{row.mac || "-"}</code></TableCell>
-              <TableCell>
-                <div className={styles.connectionFlow}>
-                  <Text size={200}>out {formatBytes(row.bytesOut)}</Text>
-                  <Text size={200}>in {formatBytes(row.bytesIn)}</Text>
-                </div>
-              </TableCell>
-              <TableCell><code className={styles.wrapCode}>{Array.from(row.peers ?? []).slice(0, 4).join(", ") || "-"}</code></TableCell>
+    <>
+      <div className={styles.vpnSummaryGrid}>
+        <Metric label="devices" value={String(rows.length)} />
+        <Metric label="online" value={`${online}/${rows.length}`} />
+        <Metric label="addresses" value={String(addressCount)} />
+      </div>
+      <PeerStatusStrip
+        peers={rows.slice(0, 24).map(row => ({
+          key: row.id || row.mac || row.ip || row.hostname || "-",
+          label: row.hostname || row.mac || row.ip || "-",
+          active: clientOnline(row),
+          detail: primaryClientAddress(row) || `${row.addresses.size} addresses`,
+        }))}
+      />
+      <div className={styles.tableWrap}>
+        <Table size="small" className={styles.clientInventoryTable}>
+          <colgroup>
+            <col style={{ width: "210px" }} />
+            <col style={{ width: "104px" }} />
+            <col style={{ width: "210px" }} />
+            <col style={{ width: "104px" }} />
+            <col style={{ width: "92px" }} />
+            <col style={{ width: "118px" }} />
+            <col />
+          </colgroup>
+          <TableHeader>
+            <TableRow>
+              <TableHeaderCell>Name</TableHeaderCell>
+              <TableHeaderCell>Status</TableHeaderCell>
+              <TableHeaderCell>Primary IP</TableHeaderCell>
+              <TableHeaderCell>OS family</TableHeaderCell>
+              <TableHeaderCell>Addresses</TableHeaderCell>
+              <TableHeaderCell>Last seen</TableHeaderCell>
+              <TableHeaderCell>Details</TableHeaderCell>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {rows.map(row => {
+              const groups = groupedClientAddresses(Array.from(row.addresses));
+              return (
+                <TableRow key={row.id || row.mac || row.ip || row.hostname}>
+                  <TableCell>
+                    <div className={styles.connectionFlow}>
+                      <Text weight="semibold">{row.hostname || "unknown client"}</Text>
+                      <Text size={200} className={styles.muted}>{row.vendor || row.mac || "-"}</Text>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className={styles.badges}>
+                      <Badge appearance="tint" color={clientOnline(row) ? "success" : "subtle"}>{clientOnline(row) ? "online" : "offline"}</Badge>
+                      {row.state ? <Badge appearance="outline">{row.state}</Badge> : null}
+                    </div>
+                  </TableCell>
+                  <TableCell><code className={styles.code}>{primaryClientAddress(row) || "-"}</code></TableCell>
+                  <TableCell><Text className={styles.muted}>{clientOSFamily(row)}</Text></TableCell>
+                  <TableCell>{row.addresses.size}</TableCell>
+                  <TableCell>{clientLastSeen(row)}</TableCell>
+                  <TableCell>
+                    <div className={styles.clientDetailStack}>
+                      <ClientAddressGroup label="IPv4" addresses={groups.ipv4} />
+                      <ClientAddressGroup label="IPv6 stable" addresses={groups.ipv6Stable} />
+                      <ClientAddressGroup label="IPv6 privacy" addresses={groups.ipv6Privacy} />
+                      <div className={styles.clientMetaLine}>
+                        <code className={styles.wrapCode}>{row.mac || "-"}</code>
+                        <Text size={200} className={styles.muted}>out {formatBytes(row.bytesOut)} / in {formatBytes(row.bytesIn)}</Text>
+                        {row.peers.size > 0 ? <Text size={200} className={styles.muted}>peers {Array.from(row.peers).slice(0, 3).join(", ")}</Text> : null}
+                      </div>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+    </>
+  );
+}
+
+function ClientAddressGroup({ label, addresses }: { label: string; addresses: string[] }) {
+  const styles = useStyles();
+  if (addresses.length === 0) return null;
+  return (
+    <div className={styles.clientAddressGroup}>
+      <Text size={200} className={styles.muted}>{label}</Text>
+      <div className={styles.clientAddressList}>
+        {addresses.slice(0, 6).map(address => <code className={styles.code} key={address}>{address}</code>)}
+        {addresses.length > 6 ? <Badge appearance="outline">+{addresses.length - 6}</Badge> : null}
+      </div>
     </div>
   );
 }
@@ -3180,6 +3247,46 @@ function addOptionalBytes(current: number | undefined, next: number | undefined,
   if (!accounting) return current;
   const value = typeof next === "number" && Number.isFinite(next) ? next : 0;
   return (current ?? 0) + value;
+}
+
+function clientOnline(row: ClientRow) {
+  const state = String(row.state ?? "").toLowerCase();
+  if (/failed|stale|expired|offline/.test(state)) return false;
+  return row.addresses.size > 0 || !!row.bytesIn || !!row.bytesOut || row.peers.size > 0;
+}
+
+function primaryClientAddress(row: ClientRow) {
+  const addresses = Array.from(row.addresses);
+  return addresses.find(address => address.includes("."))
+    ?? addresses.find(address => isStableIPv6(address))
+    ?? addresses[0]
+    ?? row.ip
+    ?? "";
+}
+
+function groupedClientAddresses(addresses: string[]) {
+  const groups = { ipv4: [] as string[], ipv6Stable: [] as string[], ipv6Privacy: [] as string[] };
+  for (const address of addresses) {
+    if (address.includes(".")) groups.ipv4.push(address);
+    else if (isStableIPv6(address)) groups.ipv6Stable.push(address);
+    else groups.ipv6Privacy.push(address);
+  }
+  return groups;
+}
+
+function isStableIPv6(address: string) {
+  const text = address.split("/")[0].toLowerCase();
+  return text.includes(":ff:fe") || /(^|:)0*1[123]$/.test(text) || text.endsWith("::1");
+}
+
+function clientOSFamily(_row: ClientRow) {
+  return "-";
+}
+
+function clientLastSeen(row: ClientRow) {
+  if (clientOnline(row)) return "now";
+  if (row.expiresAt) return formatTime(row.expiresAt);
+  return "-";
 }
 
 function formatBytes(value?: number) {
