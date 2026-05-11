@@ -116,8 +116,6 @@ spec:
       prfPreference: high
       preferredLifetime: "3600"
       validLifetime: "7200"
-      configPath: /run/routerd/radvd.conf
-      pidFile: /run/routerd/radvd.pid
       dependsOn:
       - resource: IPv6DelegatedAddress/lan-base
         phase: Applied

@@ -1522,7 +1522,6 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 		"nftables":        true,
 		"ppp":             true,
 		"procps":          true,
-		"radvd":           true,
 		"strongswan":      true,
 		"systemd":         true,
 		"tcpdump":         true,

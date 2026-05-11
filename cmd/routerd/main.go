@@ -3001,7 +3001,7 @@ func controllerResourceKinds(name string) []string {
 	case "dhcpv4lease":
 		return []string{"DHCPv4Lease"}
 	case "dhcpv6":
-		return []string{"IPv6DHCPv6Server", "DHCPv6Scope"}
+		return []string{"IPv6DHCPv6Server", "DHCPv6Scope", "IPv6RouterAdvertisement"}
 	case "dns-resolver":
 		return []string{"DNSResolver", "DNSZone"}
 	case "dslite":
@@ -3016,8 +3016,6 @@ func controllerResourceKinds(name string) []string {
 		return []string{"Package"}
 	case "pppoesession":
 		return []string{"PPPoEInterface", "PPPoESession"}
-	case "ra":
-		return []string{"IPv6RouterAdvertisement"}
 	case "route":
 		return []string{"IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy", "PathMTUPolicy"}
 	case "systemd-unit":
@@ -3065,7 +3063,6 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDryRunAddress := fs.Bool("controller-chain-dry-run-address", true, "do not mutate LAN addresses in the experimental controller chain")
 	controllerDryRunDSLite := fs.Bool("controller-chain-dry-run-dslite", true, "do not mutate DS-Lite tunnels in the experimental controller chain")
 	controllerDryRunRoute := fs.Bool("controller-chain-dry-run-route", true, "do not mutate IPv4 routes in the experimental controller chain")
-	controllerDryRunRA := fs.Bool("controller-chain-dry-run-ra", true, "do not start radvd in the experimental controller chain")
 	controllerDryRunDHCPv6 := fs.Bool("controller-chain-dry-run-dhcpv6", true, "do not start DHCPv6 service in the experimental controller chain")
 	controllerDryRunDHCPv4Lease := fs.Bool("controller-chain-dry-run-dhcpv4lease", true, "do not apply DHCPv4 lease address/default route in the experimental controller chain")
 	controllerDryRunPPPoESession := fs.Bool("controller-chain-dry-run-pppoesession", true, "do not apply PPPoE session route/DNS in the experimental controller chain")
@@ -3094,7 +3091,6 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		"address":          *controllerDryRunAddress,
 		"dslite":           *controllerDryRunDSLite,
 		"route":            *controllerDryRunRoute,
-		"ra":               *controllerDryRunRA,
 		"dhcpv6":           *controllerDryRunDHCPv6,
 		"dhcpv4lease":      *controllerDryRunDHCPv4Lease,
 		"pppoesession":     *controllerDryRunPPPoESession,
@@ -3170,7 +3166,6 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 				DryRunAddress:          *controllerDryRunAddress,
 				DryRunDSLite:           *controllerDryRunDSLite,
 				DryRunRoute:            *controllerDryRunRoute,
-				DryRunRA:               *controllerDryRunRA,
 				DryRunDHCPv6:           *controllerDryRunDHCPv6,
 				DryRunDHCPv4Lease:      *controllerDryRunDHCPv4Lease,
 				DryRunPPPoESession:     *controllerDryRunPPPoESession,

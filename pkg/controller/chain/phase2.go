@@ -571,84 +571,6 @@ func routeInstallStatusChanged(previous, next map[string]any) bool {
 	return false
 }
 
-type IPv6RouterAdvertisementController struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	DryRun bool
-	Logger *slog.Logger
-}
-
-func (c IPv6RouterAdvertisementController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.lan.address.*", "routerd.dhcpv6.info.*", "routerd.resource.status.changed"}}, 32)
-	go func() {
-		if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
-			c.Logger.Warn("ipv6 router advertisement initial reconcile failed", "error", err)
-		}
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case _, ok := <-ch:
-				if !ok {
-					return
-				}
-			case <-ticker.C:
-			case <-ctx.Done():
-				return
-			}
-			if err := c.reconcile(ctx); err != nil && c.Logger != nil && ctx.Err() == nil {
-				c.Logger.Warn("ipv6 router advertisement reconcile failed", "error", err)
-			}
-		}
-	}()
-}
-
-func (c IPv6RouterAdvertisementController) reconcile(ctx context.Context) error {
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "IPv6RouterAdvertisement" {
-			continue
-		}
-		spec, err := resource.IPv6RouterAdvertisementSpec()
-		if err != nil {
-			return err
-		}
-		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
-			continue
-		}
-		prefix := firstNonEmpty(prefixFromStatusOrAddress(c.Store, resourcequery.Value(c.Store, spec.PrefixFrom)), prefixFromStatusOrAddress(c.Store, spec.Prefix), prefixFromStatusOrAddress(c.Store, spec.PrefixSource))
-		if prefix == "" {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "PrefixMissing"})
-			continue
-		}
-		rdnss := append(expandServers(c.Store, spec.RDNSS), expandServerSources(c.Store, spec.RDNSSFrom)...)
-		configPath := firstNonEmpty(spec.ConfigPath, "/run/routerd/radvd-phase2.conf")
-		configChanged, err := writeRadvdConfig(configPath, spec.Interface, prefix, rdnss, spec.PreferredLifetime, spec.ValidLifetime)
-		if err != nil {
-			return err
-		}
-		if !c.DryRun && configChanged {
-			if err := exec.CommandContext(ctx, "radvd", "-C", configPath, "-p", firstNonEmpty(spec.PIDFile, "/run/routerd/radvd-phase2.pid")).Start(); err != nil {
-				return err
-			}
-		}
-		status := map[string]any{"phase": "Applied", "interface": spec.Interface, "prefix": prefix, "rdnss": rdnss, "configPath": configPath, "dryRun": c.DryRun}
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status); err != nil {
-			return err
-		}
-		if configChanged && c.Bus != nil {
-			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ra.applied", daemonapi.SeverityInfo)
-			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement", Name: resource.Metadata.Name}
-			event.Attributes = map[string]string{"interface": spec.Interface, "prefix": prefix, "dryRun": fmt.Sprintf("%t", c.DryRun)}
-			if err := c.Bus.Publish(ctx, event); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 type DHCPv6ServerController struct {
 	Router          *api.Router
 	Bus             *bus.Bus
@@ -688,6 +610,29 @@ func (c DHCPv6ServerController) Start(ctx context.Context) {
 }
 
 func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
+	if !routerNeedsDnsmasq(c.Router) {
+		return nil
+	}
+	configPath := firstNonEmpty(c.ConfigPath, "/run/routerd/dnsmasq-phase1.conf")
+	pidFile := firstNonEmpty(c.PIDFile, "/run/routerd/dnsmasq-phase1.pid")
+	port := c.Port
+	if port == 0 {
+		port = 1053
+	}
+	changed, err := writeDnsmasqConfig(c.Router, c.Store, configPath, pidFile, port, c.ListenAddresses)
+	if err != nil {
+		return err
+	}
+	if c.DryRun {
+		command := firstNonEmpty(c.Command, "dnsmasq")
+		if err := testDnsmasqConfig(ctx, command, configPath); err != nil {
+			return err
+		}
+	} else {
+		if err := ensureDnsmasq(ctx, c.Command, configPath, pidFile, changed); err != nil {
+			return err
+		}
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DHCPv6Server" {
 			continue
@@ -701,26 +646,6 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			continue
 		}
 		dnsServers := append(expandServers(c.Store, spec.DNSServers), expandServerSources(c.Store, spec.DNSServerFrom)...)
-		configPath := firstNonEmpty(c.ConfigPath, "/run/routerd/dnsmasq-phase1.conf")
-		pidFile := firstNonEmpty(c.PIDFile, "/run/routerd/dnsmasq-phase1.pid")
-		port := c.Port
-		if port == 0 {
-			port = 1053
-		}
-		changed, err := writeDnsmasqConfig(c.Router, c.Store, configPath, pidFile, port, c.ListenAddresses)
-		if err != nil {
-			return err
-		}
-		if c.DryRun {
-			command := firstNonEmpty(c.Command, "dnsmasq")
-			if err := testDnsmasqConfig(ctx, command, configPath); err != nil {
-				return err
-			}
-		} else {
-			if err := ensureDnsmasq(ctx, c.Command, configPath, pidFile, changed); err != nil {
-				return err
-			}
-		}
 		phase := "Applied"
 		if c.DryRun {
 			phase = "Rendered"
@@ -733,6 +658,53 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.service.dhcpv6.applied", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server", Name: resource.Metadata.Name}
 			event.Attributes = map[string]string{"interface": spec.Interface, "dryRun": fmt.Sprintf("%t", c.DryRun)}
+			if err := c.Bus.Publish(ctx, event); err != nil {
+				return err
+			}
+		}
+	}
+	if err := c.reconcileRouterAdvertisements(ctx, configPath, pidFile, changed); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Context, configPath, pidFile string, changed bool) error {
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "IPv6RouterAdvertisement" {
+			continue
+		}
+		spec, err := resource.IPv6RouterAdvertisementSpec()
+		if err != nil {
+			return err
+		}
+		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse", "dependencies": dependencyStatusSnapshot(c.Store, spec.DependsOn)})
+			continue
+		}
+		rdnss := append(expandServers(c.Store, spec.RDNSS), expandServerSources(c.Store, spec.RDNSSFrom)...)
+		prefix := firstNonEmpty(prefixFromStatusOrAddress(c.Store, resourcequery.Value(c.Store, spec.PrefixFrom)), prefixFromStatusOrAddress(c.Store, spec.Prefix), prefixFromStatusOrAddress(c.Store, spec.PrefixSource))
+		phase := "Applied"
+		if c.DryRun {
+			phase = "Rendered"
+		}
+		status := map[string]any{
+			"phase":      phase,
+			"interface":  spec.Interface,
+			"prefix":     prefix,
+			"rdnss":      rdnss,
+			"configPath": configPath,
+			"pidFile":    pidFile,
+			"renderer":   "dnsmasq",
+			"dryRun":     c.DryRun,
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status); err != nil {
+			return err
+		}
+		if changed && c.Bus != nil {
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ra.applied", daemonapi.SeverityInfo)
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement", Name: resource.Metadata.Name}
+			event.Attributes = map[string]string{"interface": spec.Interface, "prefix": prefix, "renderer": "dnsmasq", "dryRun": fmt.Sprintf("%t", c.DryRun)}
 			if err := c.Bus.Publish(ctx, event); err != nil {
 				return err
 			}
@@ -1416,26 +1388,6 @@ func freeBSDDSLiteRuntimeIfName(name string) string {
 	sum := sha256.Sum256([]byte(name))
 	index := 100 + int(binary.BigEndian.Uint16(sum[:2])%900)
 	return "gif" + strconv.Itoa(index)
-}
-
-func writeRadvdConfig(path, ifname, prefix string, rdnss []string, preferred, valid string) (bool, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return false, err
-	}
-	preferred = firstNonEmpty(preferred, "3600")
-	valid = firstNonEmpty(valid, "7200")
-	var b strings.Builder
-	fmt.Fprintf(&b, "interface %s {\n", ifname)
-	b.WriteString("  AdvSendAdvert on;\n")
-	fmt.Fprintf(&b, "  prefix %s {\n", prefix)
-	fmt.Fprintf(&b, "    AdvPreferredLifetime %s;\n", preferred)
-	fmt.Fprintf(&b, "    AdvValidLifetime %s;\n", valid)
-	b.WriteString("  };\n")
-	if len(rdnss) > 0 {
-		fmt.Fprintf(&b, "  RDNSS %s {};\n", strings.Join(rdnss, " "))
-	}
-	b.WriteString("};\n")
-	return writeFileIfChanged(path, []byte(b.String()), 0644, false)
 }
 
 func writeDnsmasqDHCPv6Config(path, pidFile, ifname string, dnsServers []string, port int) error {

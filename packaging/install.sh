@@ -201,16 +201,16 @@ dependency_packages()
     manager=$1
     case "${manager}" in
         apt)
-            packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables"
+            packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod strongswan-swanctl iptables"
             ;;
         dnf)
-            packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables"
+            packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod strongswan iptables"
             ;;
         apk)
-            packages="alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux e2fsprogs dosfstools exfatprogs"
+            packages="alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod strongswan iptables util-linux e2fsprogs dosfstools exfatprogs"
             ;;
         pacman)
-            packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables"
+            packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod strongswan iptables"
             ;;
         pkg)
             packages="ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan"
@@ -233,10 +233,10 @@ dependency_commands()
     manager=$(detect_package_manager)
     case "${manager}" in
         apk)
-            commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump crond jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables lbu lsblk blkid mkfs.ext4 mkfs.vfat fsck.exfat"
+            commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump crond jq pppd conntrack ip ping tracepath modprobe swanctl iptables lbu lsblk blkid mkfs.ext4 mkfs.vfat fsck.exfat"
             ;;
         apt|dnf|pacman|nix-env)
-            commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables"
+            commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe swanctl iptables"
             ;;
         pkg)
             commands="curl dnsmasq wg mpd5 dig tcpdump jq cron ifconfig pfctl route service sysrc chronyc swanctl"
@@ -244,7 +244,7 @@ dependency_commands()
         *)
             case "${os}" in
                 Linux)
-                    commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables"
+                    commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe swanctl iptables"
                     ;;
                 FreeBSD)
                     commands="curl dnsmasq wg mpd5 dig tcpdump jq cron ifconfig pfctl route service sysrc chronyc swanctl"

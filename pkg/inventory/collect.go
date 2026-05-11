@@ -81,7 +81,6 @@ func (c Collector) Collect() Status {
 		"nft",
 		"pf",
 		"dnsmasq",
-		"radvd",
 		"dhcp6c",
 		"conntrack",
 		"sysctl",

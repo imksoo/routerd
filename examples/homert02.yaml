@@ -84,7 +84,6 @@ spec:
               - ppp
               - wireguard-tools
               - strongswan-swanctl
-              - radvd
               - systemd
               - chrony
               - net-tools
@@ -107,7 +106,6 @@ spec:
               - ppp
               - wireguard-tools
               - strongswan
-              - radvd
               - systemd
               - chrony
               - nettools
@@ -255,7 +253,6 @@ spec:
           - --controller-chain-dry-run-address=false
           - --controller-chain-dry-run-dslite=false
           - --controller-chain-dry-run-route=false
-          - --controller-chain-dry-run-ra=true
           - --controller-chain-dry-run-dhcpv6=false
           - --controller-chain-dry-run-dhcpv4lease=false
           - --controller-chain-dry-run-pppoesession=false

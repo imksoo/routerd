@@ -229,7 +229,6 @@ type Options struct {
 	DryRunAddress          bool
 	DryRunDSLite           bool
 	DryRunRoute            bool
-	DryRunRA               bool
 	DryRunDHCPv6           bool
 	DryRunDHCPv4Lease      bool
 	DryRunPPPoESession     bool
@@ -381,7 +380,6 @@ func (r *Runner) Start(ctx context.Context) error {
 	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	policyRoute := IPv4PolicyRouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand, Logger: logger}
 	pathMTU := PathMTUPolicyController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand}
-	ra := IPv6RouterAdvertisementController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRA, Logger: logger}
 	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
 	dhcp4Lease := dhcpv4lease.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Lease, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
@@ -435,8 +433,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Link"), PeriodicFunc: policyRoute.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy"), PeriodicFunc: route.reconcile},
 		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "Link"), PeriodicFunc: pathMTU.Reconcile},
-		framework.FuncController{ControllerName: "ipv6-ra", Every: 30 * time.Second, Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information"), PeriodicFunc: ra.reconcile},
-		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information"), PeriodicFunc: dhcpv6.reconcile},
+		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement"), PeriodicFunc: dhcpv6.reconcile},
 		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			return dhcp4Lease.ReconcileAll(ctx)
 		}, PeriodicFunc: dhcp4Lease.ReconcileAll},
