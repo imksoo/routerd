@@ -1173,6 +1173,23 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     gap: "4px 8px",
     minWidth: 0,
+    maxWidth: "100%",
+    overscrollBehaviorX: "contain",
+    "@media (max-width: 640px)": {
+      display: "grid",
+      gridTemplateColumns: "1fr",
+      gap: "5px",
+    },
+  },
+  clientAddressCode: {
+    display: "block",
+    minWidth: 0,
+    maxWidth: "100%",
+    fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+    lineHeight: tokens.lineHeightBase300,
   },
   clientMetaLine: {
     display: "flex",
@@ -3461,7 +3478,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                       </div>
                       <div className={styles.connectionFlow}>
                         <Text size={200} className={styles.muted}>Primary IP</Text>
-                        <code className={styles.code}>{primaryClientAddress(row) || "-"}</code>
+                        <code className={styles.clientAddressCode}>{primaryClientAddress(row) || "-"}</code>
                       </div>
                       <ClientOSBadge row={row} />
                       <ClientActivityBadge row={row} />
@@ -3537,7 +3554,7 @@ function ClientAddressGroup({ label, addresses }: { label: string; addresses: st
     <div className={styles.clientAddressGroup}>
       <Text size={200} className={styles.muted}>{label}</Text>
       <div className={styles.clientAddressList}>
-        {addresses.slice(0, 6).map(address => <code className={styles.code} key={address}>{address}</code>)}
+        {addresses.slice(0, 6).map(address => <code className={styles.clientAddressCode} key={address}>{address}</code>)}
         {addresses.length > 6 ? <Badge appearance="outline">+{addresses.length - 6}</Badge> : null}
       </div>
     </div>
