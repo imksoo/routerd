@@ -4267,9 +4267,10 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 	var restartIfnames []string
 	appliedPackages, err := applyFreeBSDPackages(router)
 	if err != nil {
-		return changed, warnings, err
+		warnings = append(warnings, fmt.Sprintf("pkg install: %v", err))
+	} else {
+		changed = append(changed, appliedPackages...)
 	}
-	changed = append(changed, appliedPackages...)
 	newKeys := sortedStringMapKeys(rcValues)
 	for _, key := range newKeys {
 		value := rcValues[key]

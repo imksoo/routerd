@@ -675,6 +675,65 @@ exit 0
 	}
 }
 
+func TestApplyFreeBSDConfigContinuesAfterPackageFailure(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	writeExecutable(t, filepath.Join(binDir, "pkg"), `#!/bin/sh
+exit 3
+`)
+	writeExecutable(t, filepath.Join(binDir, "sysrc"), `#!/bin/sh
+if [ "$#" -eq 1 ]; then
+  echo "$1: NO"
+  exit 0
+fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(binDir, "service"), `#!/bin/sh
+if [ "$2" = "status" ]; then
+  exit 1
+fi
+exit 0
+`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"},
+			Metadata: api.ObjectMeta{Name: "deps"},
+			Spec: api.PackageSpec{Packages: []api.OSPackageSetSpec{{
+				OS:      "freebsd",
+				Manager: "pkg",
+				Names:   []string{"dnsmasq"},
+			}}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "routerd-healthcheck@internet.service"},
+			Spec: api.SystemdUnitSpec{
+				ExecStart: []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", "internet"},
+			},
+		},
+	}}}
+
+	rcDir := filepath.Join(dir, "rc.d")
+	changed, warnings, err := applyFreeBSDConfig(router, routerstate.New(), "", "", "", rcDir)
+	if err != nil {
+		t.Fatalf("apply FreeBSD config should continue after package failure: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rcDir, "routerd_healthcheck_internet")); err != nil {
+		t.Fatalf("expected rc.d script to be written after package warning: %v", err)
+	}
+	if !stringSliceContainsPrefix(warnings, "pkg install:") {
+		t.Fatalf("warnings = %v, want package warning", warnings)
+	}
+	if !stringSliceContains(changed, filepath.Join(rcDir, "routerd_healthcheck_internet")) {
+		t.Fatalf("changed = %v, want rc.d script path", changed)
+	}
+}
+
 func TestApplyFreeBSDRCDScriptsDisablesExecutableBackups(t *testing.T) {
 	dir := t.TempDir()
 	rcDir := filepath.Join(dir, "rc.d")

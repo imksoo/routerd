@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,6 +23,68 @@ type mapStore map[string]map[string]any
 func (s mapStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
 	s[apiVersion+"/"+kind+"/"+name] = status
 	return nil
+}
+
+func TestControllerAppliesLeaseDNS(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "wan.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status := daemonapi.NewStatus(daemonapi.DaemonRef{Name: "routerd-dhcpv4-client-wan", Kind: "routerd-dhcpv4-client", Instance: "wan"})
+		status.Resources = []daemonapi.ResourceStatus{{
+			Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease", Name: "wan"},
+			Phase:    daemonapi.ResourcePhaseBound,
+			Observed: map[string]string{
+				"interface":      "ens18",
+				"currentAddress": "192.0.2.10",
+				"prefixLength":   "24",
+				"dnsServers":     `["192.0.2.53","192.0.2.54"]`,
+			},
+		}}
+		_ = json.NewEncoder(w).Encode(status)
+	})}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	resolvPath := filepath.Join(t.TempDir(), "resolv.conf")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan", UseRoutes: boolPtr(false)}},
+	}}}
+	store := mapStore{}
+	controller := Controller{
+		Router:         router,
+		Bus:            bus.New(),
+		Store:          store,
+		DaemonSockets:  map[string]string{"wan": socket},
+		ResolvConfPath: resolvPath,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background(), "wan"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(resolvPath)
+	if err != nil {
+		t.Fatalf("read resolv.conf: %v", err)
+	}
+	for _, want := range []string{"# Source: DHCPv4Lease/wan", "nameserver 192.0.2.53", "nameserver 192.0.2.54"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("resolv.conf missing %q:\n%s", want, data)
+		}
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Lease", "wan")
+	if status["appliedDNSServers"] != "192.0.2.53,192.0.2.54" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {

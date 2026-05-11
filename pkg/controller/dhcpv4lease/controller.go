@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -33,13 +34,14 @@ type Store interface {
 type outputCommandFunc func(context.Context, string, ...string) ([]byte, error)
 
 type Controller struct {
-	Router        *api.Router
-	Bus           *bus.Bus
-	Store         Store
-	DaemonSockets map[string]string
-	DryRun        bool
-	Command       outputCommandFunc
-	Logger        *slog.Logger
+	Router         *api.Router
+	Bus            *bus.Bus
+	Store          Store
+	DaemonSockets  map[string]string
+	DryRun         bool
+	Command        outputCommandFunc
+	Logger         *slog.Logger
+	ResolvConfPath string
 }
 
 func (c Controller) Start(ctx context.Context) {
@@ -205,6 +207,15 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 			next["appliedDefaultGateway"] = gateway
 		}
 	}
+	if api.BoolDefault(spec.UseDNS, true) {
+		servers := stringSlice(next["dnsServers"])
+		if len(servers) > 0 {
+			next["appliedDNSServers"] = strings.Join(servers, ",")
+			if err := writeResolvConf(defaultString(c.ResolvConfPath, "/etc/resolv.conf"), name, servers, c.DryRun); err != nil {
+				return err
+			}
+		}
+	}
 	next["applyMode"] = "active"
 	return nil
 }
@@ -215,6 +226,63 @@ func mapString(values map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func stringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		var out []string
+		for _, item := range typed {
+			if text := strings.TrimSpace(fmt.Sprint(item)); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil
+		}
+		return parseJSONStringList(typed)
+	default:
+		return nil
+	}
+}
+
+func defaultString(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
+}
+
+func writeResolvConf(path, resource string, servers []string, dryRun bool) error {
+	var b strings.Builder
+	b.WriteString("# Managed by routerd. Do not edit by hand.\n")
+	b.WriteString("# Source: DHCPv4Lease/")
+	b.WriteString(resource)
+	b.WriteByte('\n')
+	for _, server := range servers {
+		server = strings.TrimSpace(server)
+		if server == "" {
+			continue
+		}
+		b.WriteString("nameserver ")
+		b.WriteString(server)
+		b.WriteByte('\n')
+	}
+	data := []byte(b.String())
+	if dryRun {
+		return nil
+	}
+	if current, err := os.ReadFile(path); err == nil && string(current) == string(data) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 func (c Controller) leaseSpecAndIfName(name string) (api.DHCPv4LeaseSpec, string, bool, error) {
