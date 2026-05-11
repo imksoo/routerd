@@ -1782,9 +1782,16 @@ type fingerprintAccumulator struct {
 	classScores   map[string]int
 	osClassScores map[string]int
 	signals       map[string]bool
+	signalScores  map[string]fingerprintSignalScore
 	hostname      string
 	vendor        string
 	hasMulticast  bool
+}
+
+type fingerprintSignalScore struct {
+	OSFamily    string
+	DeviceClass string
+	Score       int
 }
 
 func buildPassiveFingerprints(_ []DHCPLease, flows []logstore.TrafficFlow, queries []logstore.DNSQuery, firewallLogs []logstore.FirewallLogEntry) map[string]*fingerprintAccumulator {
@@ -1796,7 +1803,7 @@ func buildPassiveFingerprints(_ []DHCPLease, flows []logstore.TrafficFlow, queri
 		}
 		item := out[ip]
 		if item == nil {
-			item = &fingerprintAccumulator{osScores: map[string]int{}, classScores: map[string]int{}, osClassScores: map[string]int{}, signals: map[string]bool{}}
+			item = &fingerprintAccumulator{osScores: map[string]int{}, classScores: map[string]int{}, osClassScores: map[string]int{}, signals: map[string]bool{}, signalScores: map[string]fingerprintSignalScore{}}
 			out[ip] = item
 		}
 		return item
@@ -1836,6 +1843,14 @@ func buildPassiveFingerprints(_ []DHCPLease, flows []logstore.TrafficFlow, queri
 func applyHostVendorFingerprint(item *fingerprintAccumulator, hostname, vendor, clientID string) {
 	hostText := strings.ToLower(strings.Join([]string{hostname, clientID}, " "))
 	switch {
+	case strings.Contains(hostText, "nintendo"):
+		addFingerprintSignal(item, "nintendo", "gaming-console", 140, "hostname/nintendo")
+	case strings.Contains(hostText, "playstation") || strings.Contains(hostText, "ps5") || strings.Contains(hostText, "ps4"):
+		addFingerprintSignal(item, "playstation", "gaming-console", 140, "hostname/playstation")
+	case strings.Contains(hostText, "xbox"):
+		addFingerprintSignal(item, "xbox", "gaming-console", 140, "hostname/xbox")
+	case strings.Contains(hostText, "steamdeck") || strings.Contains(hostText, "steam deck"):
+		addFingerprintSignal(item, "steam-os", "gaming-console", 140, "hostname/steamdeck")
 	case strings.Contains(hostText, "iphone"):
 		addFingerprintSignal(item, "Apple", "phone", 120, "hostname=iphone")
 	case strings.Contains(hostText, "ipad"):
@@ -1864,6 +1879,14 @@ func applyDomainFingerprint(item *fingerprintAccumulator, name string) {
 		return
 	}
 	switch {
+	case domainMatchesAny(name, "nintendo.net", "npln.jp", "ndas.srv.nintendo.net", "gs.nintendo.net", "accounts.nintendo.com"):
+		addUniqueFingerprintSignal(item, "nintendo", "gaming-console", 120, "dns/nintendo:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "playstation.net", "sonyentertainmentnetwork.com", "scea.com"):
+		addUniqueFingerprintSignal(item, "playstation", "gaming-console", 120, "dns/playstation:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "xboxlive.com", "xbox.com"):
+		addUniqueFingerprintSignal(item, "xbox", "gaming-console", 120, "dns/xbox:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "steampowered.com", "steamcontent.com"):
+		addUniqueFingerprintSignal(item, "steam-os", "gaming-console", 120, "dns/steam:"+shortFingerprintSignal(name))
 	case strings.Contains(name, "icloud.com") || strings.Contains(name, "apple.com") || strings.Contains(name, "mzstatic.com") || strings.Contains(name, "push.apple.com") || strings.Contains(name, "captive.apple.com"):
 		addFingerprintSignal(item, "Apple", "", 35, "dns/apple:"+shortFingerprintSignal(name))
 	case strings.Contains(name, "windowsupdate.com") || strings.Contains(name, "msftconnecttest.com") || strings.Contains(name, "microsoft.com") || strings.Contains(name, "office365.com") || strings.Contains(name, "live.com"):
@@ -1877,6 +1900,20 @@ func applyDomainFingerprint(item *fingerprintAccumulator, name string) {
 	case strings.Contains(name, "_smb.") || strings.Contains(name, "_workstation.") || strings.Contains(name, "wpad."):
 		addFingerprintSignal(item, "Windows", "computer", 35, "dns/windows-service")
 	}
+}
+
+func domainMatchesAny(name string, suffixes ...string) bool {
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	for _, suffix := range suffixes {
+		suffix = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(suffix)), ".")
+		if suffix == "" {
+			continue
+		}
+		if name == suffix || strings.HasSuffix(name, "."+suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func applyTransportFingerprint(item *fingerprintAccumulator, proto, peer string, port int) {
@@ -1933,6 +1970,21 @@ func addFingerprintSignal(item *fingerprintAccumulator, osFamily, deviceClass st
 	if item.signals == nil {
 		item.signals = map[string]bool{}
 	}
+	if item.signalScores == nil {
+		item.signalScores = map[string]fingerprintSignalScore{}
+	}
+	if signal != "" {
+		item.signals[signal] = true
+		contribution := item.signalScores[signal]
+		if contribution.OSFamily == "" {
+			contribution.OSFamily = osFamily
+		}
+		if contribution.DeviceClass == "" {
+			contribution.DeviceClass = deviceClass
+		}
+		contribution.Score += score
+		item.signalScores[signal] = contribution
+	}
 	if osFamily != "" {
 		item.osScores[osFamily] += score
 	}
@@ -1942,9 +1994,13 @@ func addFingerprintSignal(item *fingerprintAccumulator, osFamily, deviceClass st
 	if osFamily != "" && deviceClass != "" {
 		item.osClassScores[osClassScoreKey(osFamily, deviceClass)] += score
 	}
-	if signal != "" {
-		item.signals[signal] = true
+}
+
+func addUniqueFingerprintSignal(item *fingerprintAccumulator, osFamily, deviceClass string, score int, signal string) {
+	if item != nil && signal != "" && item.signals != nil && item.signals[signal] {
+		return
 	}
+	addFingerprintSignal(item, osFamily, deviceClass, score, signal)
 }
 
 func matchFingerprintToClient(rows map[string]*clientMutableEntry, fingerprint *fingerprintAccumulator) string {
@@ -1987,7 +2043,7 @@ func passiveCorrelationKey(fingerprint *fingerprintAccumulator, ip string) strin
 }
 
 func inferClientFingerprint(entry ClientEntry, passive map[string]*fingerprintAccumulator) clientFingerprint {
-	acc := &fingerprintAccumulator{osScores: map[string]int{}, classScores: map[string]int{}, osClassScores: map[string]int{}, signals: map[string]bool{}}
+	acc := &fingerprintAccumulator{osScores: map[string]int{}, classScores: map[string]int{}, osClassScores: map[string]int{}, signals: map[string]bool{}, signalScores: map[string]fingerprintSignalScore{}}
 	applyHostVendorFingerprint(acc, entry.Hostname, entry.Vendor, "")
 	for _, peer := range entry.Peers {
 		applyDomainFingerprint(acc, peer)
@@ -2016,17 +2072,29 @@ func (f *fingerprintAccumulator) merge(other *fingerprintAccumulator) {
 	if f.signals == nil {
 		f.signals = map[string]bool{}
 	}
-	for key, value := range other.osScores {
-		f.osScores[key] += value
+	if f.signalScores == nil {
+		f.signalScores = map[string]fingerprintSignalScore{}
 	}
-	for key, value := range other.classScores {
-		f.classScores[key] += value
-	}
-	for key, value := range other.osClassScores {
-		f.osClassScores[key] += value
-	}
-	for key := range other.signals {
-		f.signals[key] = true
+	if len(other.signalScores) > 0 {
+		for signal, contribution := range other.signalScores {
+			if f.signals[signal] {
+				continue
+			}
+			addFingerprintSignal(f, contribution.OSFamily, contribution.DeviceClass, contribution.Score, signal)
+		}
+	} else {
+		for key, value := range other.osScores {
+			f.osScores[key] += value
+		}
+		for key, value := range other.classScores {
+			f.classScores[key] += value
+		}
+		for key, value := range other.osClassScores {
+			f.osClassScores[key] += value
+		}
+		for key := range other.signals {
+			f.signals[key] = true
+		}
 	}
 	f.hostname = firstNonEmptyString(f.hostname, other.hostname)
 	f.vendor = firstNonEmptyString(f.vendor, other.vendor)

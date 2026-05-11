@@ -3559,7 +3559,7 @@ function ClientOSBadge({ row }: { row: ClientRow }) {
   if (family === "-") return <Text className={styles.muted}>-</Text>;
   return (
     <div className={styles.badges}>
-      <Badge appearance="tint" color={clientOSBadgeColor(family)}>{family}</Badge>
+      <Badge appearance="tint" color={clientOSBadgeColor(family)}>{formatClientOSFamily(family)}</Badge>
       {row.inferredDeviceClass ? <Badge appearance="outline">{row.inferredDeviceClass}</Badge> : null}
       {row.fingerprintConfidence ? <Text size={200} className={styles.muted}>{row.fingerprintConfidence}%</Text> : null}
     </div>
@@ -4889,7 +4889,7 @@ function clientRowKey(row: ClientRow) {
 }
 
 function clientSections(rows: ClientRow[]) {
-  const order = ["Apple", "Android", "Windows", "Linux", "Embedded", "Other"];
+  const order = ["Nintendo", "PlayStation", "Xbox", "SteamOS", "Apple", "Android", "Windows", "Linux", "Embedded", "Other"];
   const sections = new Map<string, { key: string; label: string; rows: ClientRow[]; addressCount: number }>();
   for (const row of rows) {
     const label = clientSectionLabel(clientOSFamily(row));
@@ -4925,6 +4925,10 @@ function clientRowLabel(row: ClientRow) {
 function clientSectionLabel(family: string) {
   const normalized = family.trim().toLowerCase();
   if (!normalized || normalized === "-") return "Other";
+  if (normalized === "nintendo") return "Nintendo";
+  if (normalized === "playstation") return "PlayStation";
+  if (normalized === "xbox") return "Xbox";
+  if (normalized === "steam-os" || normalized === "steamos") return "SteamOS";
   if (normalized === "ios" || normalized === "macos" || normalized === "apple") return "Apple";
   if (normalized === "android") return "Android";
   if (normalized === "windows") return "Windows";
@@ -5063,8 +5067,23 @@ function clientOSFamily(row: ClientRow) {
   return row.inferredOSFamily || "-";
 }
 
+function formatClientOSFamily(family: string) {
+  const normalized = family.trim().toLowerCase();
+  if (normalized === "nintendo") return "Nintendo";
+  if (normalized === "playstation") return "PlayStation";
+  if (normalized === "xbox") return "Xbox";
+  if (normalized === "steam-os" || normalized === "steamos") return "SteamOS";
+  return family;
+}
+
 function clientOSBadgeColor(family: string) {
   switch (family.toLowerCase()) {
+    case "nintendo":
+    case "playstation":
+    case "xbox":
+    case "steam-os":
+    case "steamos":
+      return "important";
     case "apple":
       return "brand";
     case "windows":

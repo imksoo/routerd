@@ -719,6 +719,84 @@ func TestCorrelateClientsKeepsDeviceClassWithinInferredOSFamily(t *testing.T) {
 	}
 }
 
+func TestCorrelateClientsInfersGamingConsoleDNSFamilies(t *testing.T) {
+	tests := []struct {
+		name   string
+		query  string
+		family string
+	}{
+		{name: "nintendo", query: "api.lp1.av5ja.srv.nintendo.net", family: "nintendo"},
+		{name: "npln", query: "matchmaking.npln.jp", family: "nintendo"},
+		{name: "playstation", query: "auth.api.playstation.net", family: "playstation"},
+		{name: "xbox", query: "user.auth.xboxlive.com", family: "xbox"},
+		{name: "steam", query: "cdn.steamcontent.com", family: "steam-os"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows := correlateClients(
+				nil,
+				nil,
+				nil,
+				[]logstore.DNSQuery{{ClientAddress: "172.18.1.150", QuestionName: tt.query, QuestionType: "A"}},
+				nil,
+			)
+			if len(rows) != 1 {
+				t.Fatalf("rows = %d: %+v", len(rows), rows)
+			}
+			if rows[0].InferredOSFamily != tt.family || rows[0].InferredDeviceClass != "gaming-console" {
+				t.Fatalf("fingerprint = %+v, want family=%s class=gaming-console", rows[0], tt.family)
+			}
+		})
+	}
+}
+
+func TestCorrelateClientsNintendoDNSBeatsGenericAppleUsage(t *testing.T) {
+	rows := correlateClients(
+		nil,
+		nil,
+		[]logstore.TrafficFlow{{ClientAddress: "172.18.1.151", ResolvedHostname: "gateway.icloud.com"}},
+		[]logstore.DNSQuery{
+			{ClientAddress: "172.18.1.151", QuestionName: "accounts.nintendo.com", QuestionType: "A"},
+			{ClientAddress: "172.18.1.151", QuestionName: "gateway.icloud.com", QuestionType: "AAAA"},
+		},
+		nil,
+	)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	if rows[0].InferredOSFamily != "nintendo" || rows[0].InferredDeviceClass != "gaming-console" {
+		t.Fatalf("Nintendo signal should win over generic Apple usage: %+v", rows[0])
+	}
+	if !containsString(rows[0].FingerprintSignals, "dns/nintendo:nintendo.com") {
+		t.Fatalf("Nintendo signal missing: %+v", rows[0].FingerprintSignals)
+	}
+}
+
+func TestCorrelateClientsStrongHostnameBeatsRepeatedGamingDNS(t *testing.T) {
+	rows := correlateClients(
+		[]DHCPLease{{
+			MAC:      "76:ed:c9:67:89:e5",
+			IP:       "172.18.1.177",
+			Hostname: "Pixel-10",
+		}},
+		[]NeighborEntry{{MAC: "76:ed:c9:67:89:e5", IP: "172.18.1.178", State: "REACHABLE", Source: "ip-neigh"}},
+		nil,
+		[]logstore.DNSQuery{
+			{ClientAddress: "172.18.1.177", QuestionName: "api-lp1.znc.srv.nintendo.net", QuestionType: "A"},
+			{ClientAddress: "172.18.1.178", QuestionName: "api-lp1.znc.srv.nintendo.net", QuestionType: "A"},
+			{ClientAddress: "172.18.1.177", QuestionName: "android.clients.google.com", QuestionType: "A"},
+			{ClientAddress: "172.18.1.178", QuestionName: "www.googleapis.com", QuestionType: "A"},
+		},
+		nil,
+	)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	if rows[0].InferredOSFamily != "Android" || rows[0].InferredDeviceClass != "phone" {
+		t.Fatalf("strong Android hostname should win over repeated Nintendo usage: %+v", rows[0])
+	}
+}
+
 func TestHandlerServesConfigReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "router.yaml")
 	if err := os.WriteFile(path, []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\n"), 0644); err != nil {
