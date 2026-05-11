@@ -291,6 +291,14 @@ type ConnectionFilters = {
   direction: string;
 };
 
+type FirewallFilters = {
+  query: string;
+  source: string;
+  destination: string;
+  port: string;
+  protocol: string;
+};
+
 type ClientRow = {
   id?: string;
   ip: string;
@@ -821,6 +829,17 @@ const useStyles = makeStyles({
       gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
     },
   },
+  firewallFilters: {
+    display: "grid",
+    gridTemplateColumns: "minmax(220px, 1.4fr) repeat(4, minmax(130px, 1fr))",
+    gap: "8px",
+    alignItems: "end",
+    marginTop: "12px",
+    marginBottom: "8px",
+    "@media (max-width: 900px)": {
+      gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+    },
+  },
   filterControl: {
     display: "grid",
     gap: "4px",
@@ -875,6 +894,31 @@ const useStyles = makeStyles({
   firewallTable: {
     display: "grid",
     gap: "6px",
+  },
+  firewallChartWrap: {
+    display: "grid",
+    gap: "8px",
+  },
+  firewallTopN: {
+    display: "grid",
+    gap: "8px",
+  },
+  firewallTopRow: {
+    display: "grid",
+    gridTemplateColumns: "64px minmax(0, 1fr) 80px",
+    gap: "10px",
+    alignItems: "center",
+    padding: "8px 10px",
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    "@media (max-width: 640px)": {
+      gridTemplateColumns: "48px minmax(0, 1fr)",
+    },
+  },
+  firewallBar: {
+    height: "8px",
+    borderRadius: "999px",
+    backgroundColor: "#d13438",
+    minWidth: "3px",
   },
   firewallRankHeader: {
     display: "grid",
@@ -1154,6 +1198,13 @@ function App() {
     sort: "observed",
     direction: "asc",
   });
+  const [firewallFilters, setFirewallFilters] = useState<FirewallFilters>({
+    query: "",
+    source: "",
+    destination: "",
+    port: "",
+    protocol: "all",
+  });
   const [selectedEventKey, setSelectedEventKey] = useState<string>("");
   const [metricSamples, setMetricSamples] = useState<MetricSample[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1204,6 +1255,9 @@ function App() {
   const controllers = summary?.controllers ?? (summary?.status?.status?.controllers as ControllerStatus[] | undefined) ?? [];
   const dryRunControllers = useMemo(() => controllers.filter(controller => controller.mode === "dry-run"), [controllers]);
   const events = summary?.events ?? [];
+  const firewallLogs = summary?.firewallLogs ?? [];
+  const filteredFirewallLogs = useMemo(() => filterFirewallLogs(firewallLogs, firewallFilters), [firewallLogs, firewallFilters]);
+  const firewallProtocols = useMemo(() => firewallProtocolFacets(firewallLogs), [firewallLogs]);
   const selectedEvent = useMemo(() => {
     if (events.length === 0) return undefined;
     return events.find(event => eventKey(event) === selectedEventKey) ?? events[0];
@@ -1597,13 +1651,50 @@ function App() {
             ) : null}
             {selected === "firewall" ? (
               <div className={styles.firewallStack}>
+                <Card>
+                  <CardHeader
+                    header={<Text weight="semibold">Deny activity</Text>}
+                    description={<Text className={styles.muted}>Drop/reject rate over the last 24 hours. Filters below narrow the ranking and timeline.</Text>}
+                  />
+                  <DenyRateChart logs={firewallLogs} />
+                  <div className={styles.firewallFilters}>
+                    <div className={styles.filterControl}>
+                      <Text size={200} className={styles.muted}>Search</Text>
+                      <Input className={styles.filterInput} size="small" value={firewallFilters.query} placeholder="rule, interface, address, protocol" onChange={(_, data) => setFirewallFilters(current => ({ ...current, query: data.value }))} />
+                    </div>
+                    <div className={styles.filterControl}>
+                      <Text size={200} className={styles.muted}>Source</Text>
+                      <Input className={styles.filterInput} size="small" value={firewallFilters.source} placeholder="source IP" onChange={(_, data) => setFirewallFilters(current => ({ ...current, source: data.value }))} />
+                    </div>
+                    <div className={styles.filterControl}>
+                      <Text size={200} className={styles.muted}>Destination</Text>
+                      <Input className={styles.filterInput} size="small" value={firewallFilters.destination} placeholder="destination IP" onChange={(_, data) => setFirewallFilters(current => ({ ...current, destination: data.value }))} />
+                    </div>
+                    <div className={styles.filterControl}>
+                      <Text size={200} className={styles.muted}>Port</Text>
+                      <Input className={styles.filterInput} size="small" value={firewallFilters.port} placeholder="dst/src port" onChange={(_, data) => setFirewallFilters(current => ({ ...current, port: data.value }))} />
+                    </div>
+                    <div className={styles.filterControl}>
+                      <Text size={200} className={styles.muted}>Protocol</Text>
+                      <Select size="small" value={firewallFilters.protocol} onChange={event => setFirewallFilters(current => ({ ...current, protocol: event.target.value }))}>
+                        <option value="all">All</option>
+                        {firewallProtocols.map(value => <option key={value} value={value}>{value.toUpperCase()}</option>)}
+                      </Select>
+                    </div>
+                  </div>
+                  <Text size={200} className={styles.muted}>Showing {filteredFirewallLogs.length} of {firewallLogs.length} deny log rows</Text>
+                </Card>
+                <Card>
+                  <CardHeader header={<Text weight="semibold">Source IP top-N</Text>} description={<Text className={styles.muted}>Top denied sources in the filtered view</Text>} />
+                  <FirewallSourceTopN logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} />
+                </Card>
                 <Card id="firewall-ranking" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Deny ranking</Text>} description={<Text className={styles.muted}>Grouped by source, destination, and protocol</Text>} />
-                  <RecentDeny logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} />
+                  <RecentDeny logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} />
                 </Card>
                 <Card id="firewall-timeline" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Deny timeline</Text>} description={<Text className={styles.muted}>Newest firewall log rows</Text>} />
-                  <FirewallTimeline logs={summary?.firewallLogs ?? []} dnsLabels={dnsLabels} leases={leaseMap} />
+                  <FirewallTimeline logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} />
                 </Card>
               </div>
             ) : null}
@@ -2670,6 +2761,47 @@ function RecentDeny({
   );
 }
 
+function DenyRateChart({ logs }: { logs: FirewallLog[] }) {
+  const styles = useStyles();
+  const samples = denyRateSamples(logs);
+  const max = Math.max(0, ...samples);
+  return (
+    <div className={styles.firewallChartWrap}>
+      <Sparkline samples={samples} color="#ff8a80" />
+      <Text size={200} className={styles.muted}>{logs.length} rows / peak {max} denies per bucket</Text>
+    </div>
+  );
+}
+
+function FirewallSourceTopN({
+  logs,
+  dnsLabels,
+  leases,
+}: {
+  logs: FirewallLog[];
+  dnsLabels: Record<string, string>;
+  leases: Record<string, DHCPLease>;
+}) {
+  const styles = useStyles();
+  const rows = sourceTopRows(logs);
+  const max = Math.max(1, ...rows.map(row => row.count));
+  if (rows.length === 0) return <Text className={styles.muted}>No deny rows match the current filters</Text>;
+  return (
+    <div className={styles.firewallTopN}>
+      {rows.map((row, index) => (
+        <div className={styles.firewallTopRow} key={row.source}>
+          <Text weight="semibold">#{index + 1}</Text>
+          <div className={styles.connectionFlow}>
+            <EndpointDetail address={row.source} dnsLabels={dnsLabels} leases={leases} />
+            <div className={styles.firewallBar} style={{ width: `${Math.max(3, (row.count / max) * 100)}%` }} />
+          </div>
+          <Text>{row.count}</Text>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function FirewallTimeline({
   logs,
   dnsLabels,
@@ -2838,6 +2970,74 @@ function dhcpLeaseMap(rows: DHCPLease[]) {
     if (row.ip) leases[row.ip] = row;
   }
   return leases;
+}
+
+function firewallProtocolFacets(logs: FirewallLog[]) {
+  const values = new Set<string>();
+  for (const log of logs) {
+    const proto = normalizeFacet(log.protocol || log.l3Proto, "");
+    if (proto) values.add(proto);
+  }
+  return Array.from(values).sort(facetSort);
+}
+
+function filterFirewallLogs(logs: FirewallLog[], filters: FirewallFilters) {
+  const query = filters.query.trim().toLowerCase();
+  const source = filters.source.trim().toLowerCase();
+  const destination = filters.destination.trim().toLowerCase();
+  const port = filters.port.trim().toLowerCase();
+  const protocol = filters.protocol.trim().toLowerCase();
+  return logs.filter(log => {
+    if (source && !String(log.srcAddress ?? "").toLowerCase().includes(source)) return false;
+    if (destination && !String(log.dstAddress ?? "").toLowerCase().includes(destination)) return false;
+    if (port && !String(log.srcPort ?? "").includes(port) && !String(log.dstPort ?? "").includes(port)) return false;
+    if (protocol && protocol !== "all" && normalizeFacet(log.protocol || log.l3Proto, "") !== protocol) return false;
+    if (!query) return true;
+    return firewallSearchText(log).includes(query);
+  });
+}
+
+function firewallSearchText(log: FirewallLog) {
+  return [
+    log.action,
+    log.srcAddress,
+    log.srcPort,
+    log.dstAddress,
+    log.dstPort,
+    log.protocol,
+    log.l3Proto,
+    log.ruleName,
+    log.inIface,
+    log.outIface,
+  ].filter(value => value !== undefined && value !== "").join(" ").toLowerCase();
+}
+
+function denyRateSamples(logs: FirewallLog[]) {
+  const now = Date.now();
+  const bucketCount = 24;
+  const bucketMs = 60 * 60 * 1000;
+  const buckets = Array(bucketCount).fill(0);
+  for (const log of logs) {
+    const ts = Date.parse(log.ts ?? "");
+    if (Number.isNaN(ts)) continue;
+    const age = now - ts;
+    if (age < 0 || age >= bucketCount * bucketMs) continue;
+    const bucket = bucketCount - 1 - Math.floor(age / bucketMs);
+    buckets[bucket]++;
+  }
+  return buckets;
+}
+
+function sourceTopRows(logs: FirewallLog[]) {
+  const counts = new Map<string, number>();
+  for (const log of logs) {
+    const source = log.srcAddress || "-";
+    counts.set(source, (counts.get(source) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([source, count]) => ({ source, count }))
+    .sort((a, b) => b.count - a.count || stringSort(a.source, b.source))
+    .slice(0, 10);
 }
 
 function appendMetricSample(current: MetricSample[], summary: Summary) {
