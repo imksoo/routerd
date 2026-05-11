@@ -357,6 +357,57 @@ func TestHandlerServesFirewallLogs(t *testing.T) {
 	}
 }
 
+func TestHandlerEnrichesConnectionsWithDPI(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall-logs.db")
+	firewallLog, err := logstore.OpenFirewallLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := firewallLog.RecordDPIFlow(context.Background(), logstore.DPIFlowEntry{
+		FirstSeen:     now.Add(-time.Minute),
+		LastSeen:      now,
+		Protocol:      "tcp",
+		SrcAddress:    "172.18.0.10",
+		SrcPort:       53168,
+		DstAddress:    "198.51.100.10",
+		DstPort:       443,
+		AppName:       "tls",
+		AppCategory:   "web",
+		AppConfidence: 90,
+		TLSSNI:        "cached.example",
+	}, time.Hour, 100000); err != nil {
+		t.Fatal(err)
+	}
+	_ = firewallLog.Close()
+	handler := New(Options{
+		FirewallLogPath: path,
+		Connections: func(limit int) (*observe.ConnectionTable, error) {
+			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
+				Family:   "ipv4",
+				Protocol: "tcp",
+				Original: observe.ConntrackTuple{
+					Source:          "172.18.0.10",
+					SourcePort:      "53168",
+					Destination:     "198.51.100.10",
+					DestinationPort: "443",
+				},
+			}}}, nil
+		},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{`"appName": "tls"`, `"tlsSNI": "cached.example"`, `"appConfidence": 90`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("connections missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+}
+
 func TestHandlerIncludesDHCPLeases(t *testing.T) {
 	leasePath := filepath.Join(t.TempDir(), "dnsmasq.leases")
 	if err := os.WriteFile(leasePath, []byte("1778014867 7c:dd:e9:01:40:15 172.18.1.78 ATOM 01:7c:dd:e9:01:40:15\n"), 0o644); err != nil {

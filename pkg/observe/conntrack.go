@@ -31,6 +31,12 @@ type ConnectionEntry struct {
 	Reply         ConntrackTuple    `json:"reply" yaml:"reply"`
 	Mark          string            `json:"mark,omitempty" yaml:"mark,omitempty"`
 	Assured       bool              `json:"assured,omitempty" yaml:"assured,omitempty"`
+	AppName       string            `json:"appName,omitempty" yaml:"appName,omitempty"`
+	AppCategory   string            `json:"appCategory,omitempty" yaml:"appCategory,omitempty"`
+	AppConfidence int               `json:"appConfidence,omitempty" yaml:"appConfidence,omitempty"`
+	TLSSNI        string            `json:"tlsSNI,omitempty" yaml:"tlsSNI,omitempty"`
+	HTTPHost      string            `json:"httpHost,omitempty" yaml:"httpHost,omitempty"`
+	DNSQuery      string            `json:"dnsQuery,omitempty" yaml:"dnsQuery,omitempty"`
 	RawAttributes map[string]string `json:"rawAttributes,omitempty" yaml:"rawAttributes,omitempty"`
 }
 

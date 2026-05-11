@@ -142,6 +142,12 @@ type ConnectionEntry = {
   mark?: string;
   original?: ConnTuple;
   reply?: ConnTuple;
+  appName?: string;
+  appCategory?: string;
+  appConfidence?: number;
+  tlsSNI?: string;
+  httpHost?: string;
+  dnsQuery?: string;
 };
 
 type DNSQuery = {
@@ -154,6 +160,9 @@ type TrafficFlow = {
   peerAddress?: string;
   resolvedHostname?: string;
   tlsSNI?: string;
+  appName?: string;
+  appCategory?: string;
+  appConfidence?: number;
   accounting?: boolean;
   bytesOut?: number;
   bytesIn?: number;
@@ -322,6 +331,7 @@ type ConnectionFilters = {
   query: string;
   family: string;
   protocol: string;
+  app: string;
   state: string;
   sort: string;
   direction: string;
@@ -939,7 +949,7 @@ const useStyles = makeStyles({
   },
   connectionTable: {
     width: "max-content",
-    minWidth: "min(100%, 51rem)",
+    minWidth: "min(100%, 68rem)",
     tableLayout: "auto",
     "@media (max-width: 640px)": {
       minWidth: "100%",
@@ -1014,7 +1024,7 @@ const useStyles = makeStyles({
   },
   connectionFilters: {
     display: "grid",
-    gridTemplateColumns: "minmax(min(100%, 14rem), 1.4fr) repeat(5, minmax(min-content, 1fr))",
+    gridTemplateColumns: "minmax(min(100%, 14rem), 1.4fr) repeat(6, minmax(min-content, 1fr))",
     gap: "8px",
     alignItems: "end",
     marginBottom: "12px",
@@ -1453,6 +1463,7 @@ function App() {
     query: "",
     family: "all",
     protocol: "all",
+    app: "all",
     state: "all",
     sort: "observed",
     direction: "asc",
@@ -1924,6 +1935,13 @@ function App() {
                 </Select>
               </div>
               <div className={styles.filterControl}>
+                <Text size={200} className={styles.muted}>App</Text>
+                <Select size="small" value={connectionFilters.app} onChange={event => updateConnectionFilter("app", event.target.value)}>
+                  <option value="all">All</option>
+                  {connectionFacets.apps.map(value => <option key={value} value={value}>{formatConnectionApp(value)}</option>)}
+                </Select>
+              </div>
+              <div className={styles.filterControl}>
                 <Text size={200} className={styles.muted}>State</Text>
                 <Select size="small" value={connectionFilters.state} onChange={event => updateConnectionFilter("state", event.target.value)}>
                   <option value="all">All</option>
@@ -1938,6 +1956,7 @@ function App() {
                   <option value="source">Source</option>
                   <option value="destination">Destination</option>
                   <option value="label">Label</option>
+                  <option value="app">App</option>
                   <option value="timeout">Timeout</option>
                 </Select>
               </div>
@@ -2843,6 +2862,7 @@ function ConnectionGroup({
   const styles = useStyles();
   const label = connectionGroupLabel(group.key);
   const states = connectionStateSummary(group.rows);
+  const apps = connectionAppSummary(group.rows);
   const totalPages = Math.max(1, Math.ceil(group.rows.length / pageSize));
   const currentPage = Math.min(Math.max(page, 0), totalPages - 1);
   const start = currentPage * pageSize;
@@ -2850,12 +2870,13 @@ function ConnectionGroup({
   return (
     <Card id={connectionGroupID(group.key)} className={styles.connectionAnchor}>
       <CardHeader
-        header={<Text weight="semibold">{label.family}/{label.protocol.toUpperCase()} {group.rows.length}</Text>}
+        header={<Text weight="semibold">{label.family}/{label.protocol.toUpperCase()} / {formatConnectionApp(label.app)} {group.rows.length}</Text>}
         description={!collapsed ? <Text className={styles.muted}>Showing {visibleRows.length ? start + 1 : 0}-{start + visibleRows.length} of {group.rows.length}</Text> : undefined}
         action={<Button appearance="subtle" icon={collapsed ? <ChevronRightRegular /> : <ChevronDownRegular />} onClick={toggle}>{collapsed ? "Open" : "Close"}</Button>}
       />
       <div className={styles.badges}>
         {states.map(state => <Badge key={state.label} appearance="outline" color={stateColor(state.label)}>{state.label} {state.count}</Badge>)}
+        {apps.map(app => <Badge key={app.label} appearance="outline" color={connectionAppColor(app.label)}>{formatConnectionApp(app.label)} {app.count}</Badge>)}
       </div>
       {!collapsed ? (
         <>
@@ -2874,14 +2895,16 @@ function ConnectionGroup({
             <Table size="small" className={styles.connectionTable}>
               <colgroup>
                 <col style={{ width: "132px" }} />
-                <col />
-                <col style={{ width: "28%" }} />
+                <col style={{ width: "30%" }} />
+                <col style={{ width: "24%" }} />
+                <col style={{ width: "22%" }} />
                 <col style={{ width: "80px" }} />
               </colgroup>
               <TableHeader>
                 <TableRow>
                   <TableHeaderCell>State</TableHeaderCell>
                   <TableHeaderCell>Flow</TableHeaderCell>
+                  <TableHeaderCell>DPI</TableHeaderCell>
                   <TableHeaderCell>Destination label</TableHeaderCell>
                   <TableHeaderCell>Timeout</TableHeaderCell>
                 </TableRow>
@@ -2893,6 +2916,7 @@ function ConnectionGroup({
                       <div className={styles.badges}>
                         <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
                         {entry.assured ? <Badge appearance="outline" color="success">assured</Badge> : null}
+                        <Badge appearance="outline" color={connectionClassColor(entry)}>{connectionClass(entry)}</Badge>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -2900,6 +2924,7 @@ function ConnectionGroup({
                         <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
                       </div>
                     </TableCell>
+                    <TableCell><ConnectionDPI entry={entry} /></TableCell>
                     <TableCell><code className={styles.wrapCode}>{dnsLabels[entry.original?.destination ?? ""] ?? "-"}</code></TableCell>
                     <TableCell>{entry.timeout ?? 0}s</TableCell>
                   </TableRow>
@@ -2910,6 +2935,25 @@ function ConnectionGroup({
         </>
       ) : null}
     </Card>
+  );
+}
+
+function ConnectionDPI({ entry }: { entry: ConnectionEntry }) {
+  const styles = useStyles();
+  const app = connectionApp(entry);
+  const detail = connectionDPIDetail(entry);
+  if (app === "unidentified" && !detail) {
+    return <Text className={styles.muted}>-</Text>;
+  }
+  return (
+    <div className={styles.connectionFlow}>
+      <div className={styles.badges}>
+        <Badge appearance="tint" color={connectionAppColor(app)}>{formatConnectionApp(app)}</Badge>
+        {entry.appConfidence ? <Badge appearance="outline">{entry.appConfidence}%</Badge> : null}
+      </div>
+      {detail ? <code className={styles.wrapCode}>{detail}</code> : null}
+      {entry.appCategory ? <Text size={200} className={styles.muted}>{entry.appCategory}</Text> : null}
+    </div>
   );
 }
 
@@ -3839,15 +3883,18 @@ function metricSample(summary: Summary): MetricSample {
 function connectionFilterFacets(entries: ConnectionEntry[]) {
   const families = new Set<string>();
   const protocols = new Set<string>();
+  const apps = new Set<string>();
   const states = new Set<string>();
   for (const entry of entries) {
     families.add(normalizeFacet(entry.family, "other"));
     protocols.add(normalizeFacet(entry.protocol, "other"));
+    apps.add(connectionApp(entry));
     states.add(normalizeFacet(entry.state, "stateless"));
   }
   return {
     families: Array.from(families).sort(facetSort),
     protocols: Array.from(protocols).sort(facetSort),
+    apps: Array.from(apps).sort(facetSort),
     states: Array.from(states).sort(facetSort),
   };
 }
@@ -3869,6 +3916,7 @@ function filterAndSortConnections(entries: ConnectionEntry[], dnsLabels: Record<
   const filtered = indexed.filter(({ entry }) => {
     if (filters.family !== "all" && normalizeFacet(entry.family, "other") !== filters.family) return false;
     if (filters.protocol !== "all" && normalizeFacet(entry.protocol, "other") !== filters.protocol) return false;
+    if (filters.app !== "all" && connectionApp(entry) !== filters.app) return false;
     if (filters.state !== "all" && normalizeFacet(entry.state, "stateless") !== filters.state) return false;
     if (!query) return true;
     return connectionSearchText(entry, dnsLabels).includes(query);
@@ -3898,6 +3946,10 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
     entry.assured ? "assured" : "",
     entry.timeout,
     entry.mark,
+    connectionApp(entry),
+    connectionDPIDetail(entry),
+    entry.appCategory,
+    entry.appConfidence,
     endpoint(entry.original),
     endpoint(entry.reply),
     ...labels,
@@ -3914,6 +3966,7 @@ function connectionSortValue(entry: ConnectionEntry, sort: string, dnsLabels: Re
   if (sort === "source") return hostPort(entry.original?.source, entry.original?.sourcePort);
   if (sort === "destination") return hostPort(entry.original?.destination, entry.original?.destinationPort);
   if (sort === "label") return dnsLabels[entry.original?.destination ?? ""] ?? entry.original?.destination ?? "";
+  if (sort === "app") return `${connectionApp(entry)} ${connectionDPIDetail(entry)}`;
   return "";
 }
 
@@ -3928,8 +3981,52 @@ function formatFacet(value: string) {
   return value.toUpperCase();
 }
 
+function connectionApp(entry: ConnectionEntry) {
+  return normalizeFacet(entry.appName, "unidentified");
+}
+
+function connectionDPIDetail(entry: ConnectionEntry) {
+  if (entry.tlsSNI) return `TLS-SNI=${entry.tlsSNI}`;
+  if (entry.httpHost) return `HTTP-Host=${entry.httpHost}`;
+  if (entry.dnsQuery) return `${connectionApp(entry) === "netbios" ? "NBNS-query" : "DNS-query"}=${entry.dnsQuery}`;
+  return "";
+}
+
+function formatConnectionApp(value: string) {
+  if (value === "unidentified") return "Unidentified";
+  if (value === "tls") return "TLS";
+  if (value === "http") return "HTTP";
+  if (value === "dns") return "DNS";
+  if (value === "netbios") return "NetBIOS";
+  return value.toUpperCase();
+}
+
+function connectionAppColor(value: string): "brand" | "danger" | "informative" | "severe" | "subtle" | "success" | "warning" {
+  if (value === "tls" || value === "http") return "brand";
+  if (value === "dns") return "success";
+  if (value === "netbios") return "warning";
+  if (value === "unidentified") return "subtle";
+  return "informative";
+}
+
+function connectionClass(entry: ConnectionEntry) {
+  if (connectionApp(entry) !== "unidentified") return "dpi identified";
+  const state = normalizeFacet(entry.state, "stateless");
+  if (entry.assured || state.includes("established")) return "established";
+  if (state.includes("syn") || state.includes("unreplied")) return "probe";
+  return "unidentified";
+}
+
+function connectionClassColor(entry: ConnectionEntry): "brand" | "danger" | "informative" | "severe" | "subtle" | "success" | "warning" {
+  const cls = connectionClass(entry);
+  if (cls === "dpi identified") return "success";
+  if (cls === "probe") return "warning";
+  if (cls === "established") return "brand";
+  return "subtle";
+}
+
 function facetSort(a: string, b: string) {
-  const order: Record<string, number> = { ipv4: 0, ipv6: 1, tcp: 0, udp: 1, icmp: 2, icmpv6: 3, ipv6_icmp: 3, established: 0 };
+  const order: Record<string, number> = { ipv4: 0, ipv6: 1, tcp: 0, udp: 1, icmp: 2, icmpv6: 3, ipv6_icmp: 3, established: 0, tls: 0, http: 1, dns: 2, netbios: 3, unidentified: 99 };
   return (order[a] ?? 9) - (order[b] ?? 9) || a.localeCompare(b);
 }
 
@@ -3940,15 +4037,15 @@ function stringSort(a: string, b: string) {
 function connectionGroups(entries: ConnectionEntry[]) {
   const groups = new Map<string, ConnectionEntry[]>();
   for (const entry of entries) {
-    const key = `${String(entry.family || "other").toLowerCase()}/${String(entry.protocol || "other").toLowerCase()}`;
+    const key = `${String(entry.family || "other").toLowerCase()}/${String(entry.protocol || "other").toLowerCase()}/${connectionApp(entry)}`;
     groups.set(key, [...(groups.get(key) ?? []), entry]);
   }
-  const order: Record<string, number> = { ipv4: 0, ipv6: 1, other: 9, tcp: 0, udp: 1, icmp: 2, icmpv6: 3, ipv6_icmp: 3 };
+  const order: Record<string, number> = { ipv4: 0, ipv6: 1, other: 9, tcp: 0, udp: 1, icmp: 2, icmpv6: 3, ipv6_icmp: 3, tls: 0, http: 1, dns: 2, netbios: 3, unidentified: 99 };
   return Array.from(groups.entries())
     .sort((a, b) => {
-      const [af, ap] = a[0].split("/");
-      const [bf, bp] = b[0].split("/");
-      return (order[af] ?? 9) - (order[bf] ?? 9) || (order[ap] ?? 9) - (order[bp] ?? 9) || a[0].localeCompare(b[0]);
+      const [af, ap, aa] = a[0].split("/");
+      const [bf, bp, ba] = b[0].split("/");
+      return (order[af] ?? 9) - (order[bf] ?? 9) || (order[ap] ?? 9) - (order[bp] ?? 9) || (order[aa] ?? 50) - (order[ba] ?? 50) || a[0].localeCompare(b[0]);
     })
     .map(([key, rows]) => ({ key, rows }));
 }
@@ -3964,11 +4061,24 @@ function connectionStateSummary(entries: ConnectionEntry[]) {
     .sort((a, b) => b.count - a.count || facetSort(a.label, b.label));
 }
 
+function connectionAppSummary(entries: ConnectionEntry[]) {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    const app = connectionApp(entry);
+    counts.set(app, (counts.get(app) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || facetSort(a.label, b.label))
+    .slice(0, 5);
+}
+
 function connectionGroupLabel(key: string) {
-  const [family, protocol] = key.split("/");
+  const [family, protocol, app] = key.split("/");
   return {
     family: family === "ipv4" ? "IPv4" : family === "ipv6" ? "IPv6" : "Other",
     protocol: protocol || "other",
+    app: app || "unidentified",
   };
 }
 
@@ -3995,7 +4105,7 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
       const label = connectionGroupLabel(group.key);
       return {
         key: group.key,
-        label: `${label.family}/${label.protocol.toUpperCase()}`,
+        label: `${label.family}/${label.protocol.toUpperCase()} ${formatConnectionApp(label.app)}`,
         count: group.rows.length,
         view: "connections",
         targetID: connectionGroupID(group.key),
@@ -4147,7 +4257,7 @@ function firewallEndpoint(host?: string, port?: number) {
 }
 
 function flowKey(entry: ConnectionEntry) {
-  return [entry.family, entry.protocol, entry.state, endpoint(entry.original), endpoint(entry.reply), entry.mark].join("|");
+  return [entry.family, entry.protocol, entry.state, endpoint(entry.original), endpoint(entry.reply), entry.mark, connectionApp(entry), connectionDPIDetail(entry)].join("|");
 }
 
 function eventKey(event?: RouterEvent) {

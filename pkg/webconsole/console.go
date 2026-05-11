@@ -278,6 +278,8 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		connections, err = h.opts.Connections(connectionsLimit)
 		if err != nil {
 			errors = append(errors, err.Error())
+		} else if err := h.enrichConnectionsWithDPI(connections, time.Now().UTC(), time.Hour); err != nil {
+			errors = append(errors, err.Error())
 		}
 	}
 	dnsQueries, err := h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-time.Hour), Limit: 200})
@@ -502,6 +504,10 @@ func (h Handler) connections(w http.ResponseWriter, r *http.Request) {
 	}
 	table, err := h.opts.Connections(intQuery(r, "limit", h.opts.ConnectionsLimit))
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.enrichConnectionsWithDPI(table, time.Now().UTC(), time.Hour); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1079,6 +1085,40 @@ func (h Handler) enrichTrafficFlowsWithDPI(flows []logstore.TrafficFlow, now tim
 		}
 	}
 	return flows, nil
+}
+
+func (h Handler) enrichConnectionsWithDPI(table *observe.ConnectionTable, now time.Time, ttl time.Duration) error {
+	if table == nil || len(table.Entries) == 0 || strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+		return nil
+	}
+	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	for i := range table.Entries {
+		entry := &table.Entries[i]
+		flow, ok, err := store.FindDPIFlowForFirewallEntry(context.Background(), logstore.FirewallLogEntry{
+			Protocol:   entry.Protocol,
+			SrcAddress: entry.Original.Source,
+			SrcPort:    atoiDefault(entry.Original.SourcePort, 0),
+			DstAddress: entry.Original.Destination,
+			DstPort:    atoiDefault(entry.Original.DestinationPort, 0),
+		}, now, ttl)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		entry.AppName = flow.AppName
+		entry.AppCategory = flow.AppCategory
+		entry.AppConfidence = flow.AppConfidence
+		entry.TLSSNI = flow.TLSSNI
+		entry.HTTPHost = flow.HTTPHost
+		entry.DNSQuery = flow.DNSQuery
+	}
+	return nil
 }
 
 func (h Handler) dhcpLeaseList() ([]DHCPLease, error) {
@@ -2102,6 +2142,14 @@ func intQuery(r *http.Request, key string, fallback int) int {
 	}
 	if value > 1000 {
 		return 1000
+	}
+	return value
+}
+
+func atoiDefault(raw string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return fallback
 	}
 	return value
 }
