@@ -1501,7 +1501,7 @@ function App() {
             </div>
             <div className={styles.bladeActions}>
               <Badge appearance="tint" color={phaseColor(summary?.status?.status?.phase)}>{String(summary?.status?.status?.phase ?? "Unknown")}</Badge>
-              <Text size={200} className={styles.muted}>{summary?.generatedAt ? `Updated ${formatTime(summary.generatedAt)}` : ""}</Text>
+              <Text size={200} className={styles.muted}>{summary?.generatedAt ? <>Updated <RelativeTime value={summary.generatedAt} /></> : ""}</Text>
               <Button appearance="primary" icon={<ArrowClockwiseRegular />} onClick={refresh}>Refresh</Button>
             </div>
           </div>
@@ -1934,8 +1934,8 @@ function GenerationsView({
               {generations.map(row => (
                 <TableRow key={row.generation}>
                   <TableCell><code className={styles.code}>#{row.generation}</code></TableCell>
-                  <TableCell>{formatTime(row.startedAt)}</TableCell>
-                  <TableCell>{formatTime(row.finishedAt)}</TableCell>
+                  <TableCell><RelativeTime value={row.startedAt} /></TableCell>
+                  <TableCell><RelativeTime value={row.finishedAt} /></TableCell>
                   <TableCell><Badge appearance="tint" color={phaseColor(row.phase)}>{row.phase || "Unknown"}</Badge></TableCell>
                   <TableCell><code className={styles.wrapCode}>{shortHash(row.configHash)}</code></TableCell>
                   <TableCell>{row.hasYaml ? <Badge appearance="tint" color="success">stored</Badge> : <Badge appearance="outline">unavailable</Badge>}</TableCell>
@@ -2289,6 +2289,13 @@ function Highlighted({ text, query }: { text: string; query: string }) {
   );
 }
 
+function RelativeTime({ value }: { value?: string }) {
+  const absolute = absoluteTime(value);
+  const relative = relativeTimeText(value);
+  if (!value) return null;
+  return <span title={absolute}>{relative || absolute}</span>;
+}
+
 function EventTable({ events, selectedKey, onSelect, query }: { events: RouterEvent[]; selectedKey: string; onSelect: (event: RouterEvent) => void; query?: string }) {
   const styles = useStyles();
   return (
@@ -2313,7 +2320,7 @@ function EventTable({ events, selectedKey, onSelect, query }: { events: RouterEv
             const key = eventKey(event);
             return (
               <TableRow key={key} className={key === selectedKey ? styles.eventRowSelected : undefined} onClick={() => onSelect(event)}>
-                <TableCell>{formatTime(event.createdAt)}</TableCell>
+                <TableCell><RelativeTime value={event.createdAt} /></TableCell>
                 <TableCell><Highlighted text={event.severity ?? ""} query={query ?? ""} /></TableCell>
                 <TableCell><code className={styles.wrapCode}><Highlighted text={event.topic ?? event.type ?? ""} query={query ?? ""} /></code></TableCell>
                 <TableCell><Highlighted text={resourceName(event)} query={query ?? ""} /></TableCell>
@@ -2337,7 +2344,7 @@ function EventDetail({ event, id }: { event?: RouterEvent; id?: string }) {
     );
   }
   const baseRows: [string, unknown][] = [
-    ["time", formatTime(event.createdAt)],
+    ["time", absoluteTime(event.createdAt)],
     ["severity", event.severity ?? ""],
     ["topic", event.topic ?? event.type ?? ""],
     ["resource", resourceName(event)],
@@ -2536,7 +2543,7 @@ function OverviewActivity({
           <div className={styles.alertList}>
             {recent.map(event => (
               <div className={styles.alertRow} key={eventKey(event)}>
-                <Text size={200} className={styles.muted}>{formatTime(event.createdAt)}</Text>
+                <Text size={200} className={styles.muted}><RelativeTime value={event.createdAt} /></Text>
                 <div className={styles.connectionFlow}>
                   <Text><code className={styles.wrapCode}>{event.topic ?? event.type ?? "-"}</code></Text>
                   <Text size={200} className={styles.muted}>{resourceName(event)}</Text>
@@ -2583,7 +2590,7 @@ function TailscalePanel({ status, errors }: { status?: TailscaleStatus; errors: 
           key: peer.id || peer.dnsName || peer.hostName || "-",
           label: peer.hostName || peer.dnsName || "-",
           active: !!peer.online,
-          detail: peer.relay || formatTime(peer.lastSeen) || "direct",
+          detail: peer.relay || relativeTimeText(peer.lastSeen) || "direct",
         }))}
       />
       <div className={styles.tableWrap}>
@@ -2625,7 +2632,7 @@ function TailscalePanel({ status, errors }: { status?: TailscaleStatus; errors: 
                 <TableCell><code className={styles.wrapCode}>{(peer.tailscaleIPs ?? []).join(", ") || "-"}</code></TableCell>
                 <TableCell><code className={styles.wrapCode}>{(peer.allowedIPs ?? []).join(", ") || "-"}</code></TableCell>
                 <TableCell>{peer.relay || "-"}</TableCell>
-                <TableCell>{formatTime(peer.lastSeen)}</TableCell>
+                <TableCell><RelativeTime value={peer.lastSeen} /></TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -2696,7 +2703,7 @@ function WireGuardPanel({ interfaces, errors }: { interfaces: WireGuardInterface
                     <TableCell><code className={styles.wrapCode}>{shortHash(peer.publicKey)}</code></TableCell>
                     <TableCell><code className={styles.wrapCode}>{peer.endpoint || "-"}</code></TableCell>
                     <TableCell><code className={styles.wrapCode}>{(peer.allowedIPs ?? []).join(", ") || "-"}</code></TableCell>
-                    <TableCell>{formatTime(peer.latestHandshake)}</TableCell>
+                    <TableCell><RelativeTime value={peer.latestHandshake} /></TableCell>
                     <TableCell>{formatBytes(peer.transferRxBytes)}</TableCell>
                     <TableCell>{formatBytes(peer.transferTxBytes)}</TableCell>
                   </TableRow>
@@ -2890,7 +2897,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
               <TableCell>{lease.hostname || "-"}</TableCell>
               <TableCell><code className={styles.wrapCode}>{lease.mac || "-"}</code></TableCell>
               <TableCell>{lease.vendor || "-"}</TableCell>
-              <TableCell>{formatTime(lease.expiresAt)}</TableCell>
+              <TableCell><RelativeTime value={lease.expiresAt} /></TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -2992,7 +2999,7 @@ function FirewallTimeline({
       </div>
       {logs.slice(0, 50).map((log, index) => (
         <div className={styles.firewallTimelineRow} role="row" key={log.id ?? `${log.ts}-${log.srcAddress}-${log.dstAddress}-${index}`}>
-          <FirewallCell label="Time">{formatTime(log.ts)}</FirewallCell>
+          <FirewallCell label="Time"><RelativeTime value={log.ts} /></FirewallCell>
           <FirewallCell label="Action"><Badge appearance="tint" color={firewallActionColor(log.action)}>{log.action || "-"}</Badge></FirewallCell>
           <FirewallCell label="Source"><EndpointDetail address={log.srcAddress} port={log.srcPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Destination"><EndpointDetail address={log.dstAddress} port={log.dstPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
@@ -3741,7 +3748,7 @@ function clientOSFamily(_row: ClientRow) {
 
 function clientLastSeen(row: ClientRow) {
   if (clientOnline(row)) return "now";
-  if (row.expiresAt) return formatTime(row.expiresAt);
+  if (row.expiresAt) return relativeTimeText(row.expiresAt) || absoluteTime(row.expiresAt);
   return "-";
 }
 
@@ -3778,11 +3785,27 @@ function firewallTupleKey(source?: string, sourcePort?: string | number, destina
   return `${source || "-"}:${sourcePort || ""}>${destination || "-"}:${destinationPort || ""}>${protocol || "-"}`;
 }
 
-function formatTime(value?: string) {
+function absoluteTime(value?: string) {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return `${new Intl.DateTimeFormat(undefined, { month: "2-digit", day: "2-digit" }).format(date)} ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date)}`;
+}
+
+function relativeTimeText(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const diffSeconds = Math.round((date.getTime() - Date.now()) / 1000);
+  const abs = Math.abs(diffSeconds);
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (abs < 60) return rtf.format(diffSeconds, "second");
+  const diffMinutes = Math.round(diffSeconds / 60);
+  if (Math.abs(diffMinutes) < 60) return rtf.format(diffMinutes, "minute");
+  const diffHours = Math.round(diffMinutes / 60);
+  if (Math.abs(diffHours) < 48) return rtf.format(diffHours, "hour");
+  const diffDays = Math.round(diffHours / 24);
+  return rtf.format(diffDays, "day");
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
