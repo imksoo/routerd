@@ -135,9 +135,9 @@ function summaryFixture() {
       },
     },
     controllers: [
-      { name: "address", mode: "live", reason: "Live", resourceKinds: ["IPv4StaticAddress", "IPv6DelegatedAddress"] },
-      { name: "firewall", mode: "dry-run", reason: "Manual", resourceKinds: ["FirewallZone", "FirewallPolicy", "FirewallRule"] },
-      { name: "dns-resolver", mode: "live", reason: "Live", resourceKinds: ["DNSResolver", "DNSZone"] },
+      { name: "address", mode: "live", reason: "Live", message: "controller is applying host state", resourceKinds: ["IPv4StaticAddress", "IPv6DelegatedAddress"] },
+      { name: "firewall", mode: "dry-run", reason: "Manual", message: "controller-chain dry-run flag is true; firewall rules are observed but not enforced by this controller", resourceKinds: ["FirewallZone", "FirewallPolicy", "FirewallRule"] },
+      { name: "dns-resolver", mode: "live", reason: "Live", message: "controller is applying host state", resourceKinds: ["DNSResolver", "DNSZone"] },
     ],
     phases: { Healthy: 39, "Dry-run": 3 },
     resources: resourceFixture(),

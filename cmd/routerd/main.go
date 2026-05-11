@@ -2964,33 +2964,35 @@ func controllerStatusesFromDryRunModes(modes map[string]bool) []controlapi.Contr
 	out := make([]controlapi.ControllerStatus, 0, len(names))
 	for _, name := range names {
 		mode := "live"
-		reason := "controller-chain dry-run flag is false"
+		reason := controlapi.ControllerModeReasonLive
+		message := "controller is applying host state"
 		if modes[name] {
 			mode = "dry-run"
-			reason = controllerDryRunReason(name)
+			reason, message = controllerDryRunReason(name)
 		}
 		out = append(out, controlapi.ControllerStatus{
 			Name:          name,
 			Mode:          mode,
 			Reason:        reason,
+			Message:       message,
 			ResourceKinds: controllerResourceKinds(name),
 		})
 	}
 	return out
 }
 
-func controllerDryRunReason(name string) string {
+func controllerDryRunReason(name string) (controlapi.ControllerModeReason, string) {
 	switch name {
 	case "firewall":
-		return "controller-chain dry-run flag is true; firewall rules are observed but not enforced by this controller"
+		return controlapi.ControllerModeReasonManual, "controller-chain dry-run flag is true; firewall rules are observed but not enforced by this controller"
 	case "network-adoption":
-		return "controller-chain dry-run flag is true; networkd/resolved adoption drop-ins are not written"
+		return controlapi.ControllerModeReasonManual, "controller-chain dry-run flag is true; networkd/resolved adoption drop-ins are not written"
 	case "package":
-		return "controller-chain dry-run flag is true; OS packages are not installed"
+		return controlapi.ControllerModeReasonManual, "controller-chain dry-run flag is true; OS packages are not installed"
 	case "systemd-unit":
-		return "controller-chain dry-run flag is true; service-manager units are not installed or restarted"
+		return controlapi.ControllerModeReasonManual, "controller-chain dry-run flag is true; service-manager units are not installed or restarted"
 	default:
-		return "controller-chain dry-run flag is true"
+		return controlapi.ControllerModeReasonManual, "controller-chain dry-run flag is true"
 	}
 }
 
@@ -3039,7 +3041,8 @@ func publishControllerModeEvents(ctx context.Context, b *bus.Bus, controllers []
 			"controller":    controller.Name,
 			"mode":          controller.Mode,
 			"previousMode":  "unknown",
-			"reason":        controller.Reason,
+			"reason":        string(controller.Reason),
+			"message":       controller.Message,
 			"resourceKinds": strings.Join(controller.ResourceKinds, ","),
 		}
 		_ = b.Publish(ctx, event)

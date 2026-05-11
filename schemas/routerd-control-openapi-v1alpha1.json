@@ -762,6 +762,9 @@
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "message": {
+                      "type": "string"
+                    },
                     "mode": {
                       "type": "string"
                     },

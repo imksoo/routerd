@@ -36,11 +36,23 @@ type StatusStatus struct {
 }
 
 type ControllerStatus struct {
-	Name          string   `json:"name" yaml:"name"`
-	Mode          string   `json:"mode" yaml:"mode"`
-	Reason        string   `json:"reason,omitempty" yaml:"reason,omitempty"`
-	ResourceKinds []string `json:"resourceKinds,omitempty" yaml:"resourceKinds,omitempty"`
+	Name          string               `json:"name" yaml:"name"`
+	Mode          string               `json:"mode" yaml:"mode"`
+	Reason        ControllerModeReason `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Message       string               `json:"message,omitempty" yaml:"message,omitempty"`
+	ResourceKinds []string             `json:"resourceKinds,omitempty" yaml:"resourceKinds,omitempty"`
 }
+
+type ControllerModeReason string
+
+const (
+	ControllerModeReasonLive            ControllerModeReason = "Live"
+	ControllerModeReasonManual          ControllerModeReason = "Manual"
+	ControllerModeReasonOSUnsupported   ControllerModeReason = "OSUnsupported"
+	ControllerModeReasonDependencyUnmet ControllerModeReason = "DependencyUnmet"
+	ControllerModeReasonSpecDisabled    ControllerModeReason = "SpecDisabled"
+	ControllerModeReasonUnknown         ControllerModeReason = "Unknown"
+)
 
 type Controllers struct {
 	TypeMeta `json:",inline" yaml:",inline"`

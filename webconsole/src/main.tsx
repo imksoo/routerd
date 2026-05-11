@@ -79,6 +79,7 @@ type ControllerStatus = {
   name?: string;
   mode?: string;
   reason?: string;
+  message?: string;
   resourceKinds?: string[];
 };
 
@@ -2003,7 +2004,12 @@ function ControllerTable({ controllers }: { controllers: ControllerStatus[] }) {
                   {(controller.resourceKinds ?? []).map(kind => <Badge key={kind} appearance="outline">{kind}</Badge>)}
                 </div>
               </TableCell>
-              <TableCell><Text className={styles.muted}>{controller.reason || "-"}</Text></TableCell>
+              <TableCell>
+                <div className={styles.connectionFlow}>
+                  <Text>{controller.reason || "-"}</Text>
+                  {controller.message ? <Text size={200} className={styles.muted}>{controller.message}</Text> : null}
+                </div>
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>

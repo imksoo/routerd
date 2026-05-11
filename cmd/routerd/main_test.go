@@ -16,6 +16,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
+	"routerd/pkg/controlapi"
 	"routerd/pkg/eventlog"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
@@ -121,8 +122,14 @@ func TestControllerStatusesFromDryRunModes(t *testing.T) {
 	if got[0].Name != "nat" || got[0].Mode != "dry-run" {
 		t.Fatalf("first status = %+v, want nat dry-run", got[0])
 	}
+	if got[0].Reason != controlapi.ControllerModeReasonManual || got[0].Message == "" {
+		t.Fatalf("first reason = %q message = %q, want manual reason with message", got[0].Reason, got[0].Message)
+	}
 	if got[1].Name != "route" || got[1].Mode != "live" {
 		t.Fatalf("second status = %+v, want route live", got[1])
+	}
+	if got[1].Reason != controlapi.ControllerModeReasonLive || got[1].Message == "" {
+		t.Fatalf("second reason = %q message = %q, want live reason with message", got[1].Reason, got[1].Message)
 	}
 	if len(got[0].ResourceKinds) == 0 {
 		t.Fatalf("nat resource kinds should be populated")
