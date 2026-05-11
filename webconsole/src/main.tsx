@@ -388,8 +388,15 @@ const viewKeys = new Set<string>(navItems.map(item => item.key));
 const useStyles = makeStyles({
   shell: {
     minHeight: "100vh",
+    width: "min(100%, clamp(64rem, 94vw, 96rem))",
+    margin: "0 auto",
     backgroundColor: "#0b1118",
     color: tokens.colorNeutralForeground1,
+    boxShadow: "0 0 0 1px rgba(255,255,255,0.03)",
+    "@media (max-width: 860px)": {
+      width: "100%",
+      boxShadow: "none",
+    },
   },
   header: {
     position: "sticky",
@@ -443,14 +450,14 @@ const useStyles = makeStyles({
   },
   layout: {
     display: "grid",
-    gridTemplateColumns: "248px minmax(0, 1fr)",
+    gridTemplateColumns: "clamp(11rem, 16vw, 14rem) minmax(0, 1fr)",
     minHeight: "calc(100vh - 49px)",
     "@media (max-width: 860px)": {
       gridTemplateColumns: "1fr",
     },
   },
   layoutCollapsed: {
-    gridTemplateColumns: "56px minmax(0, 1fr)",
+    gridTemplateColumns: "3.5rem minmax(0, 1fr)",
     "@media (max-width: 860px)": {
       gridTemplateColumns: "1fr",
     },
@@ -504,7 +511,7 @@ const useStyles = makeStyles({
     },
     "@media (max-width: 860px)": {
       width: "auto",
-      minWidth: "132px",
+      minWidth: "max-content",
     },
   },
   navButtonCollapsed: {
@@ -703,7 +710,7 @@ const useStyles = makeStyles({
   },
   sectionGrid: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1.4fr) minmax(320px, 0.8fr)",
+    gridTemplateColumns: "minmax(0, 1.4fr) minmax(min-content, 0.8fr)",
     gap: "16px",
     "@media (max-width: 900px)": {
       gridTemplateColumns: "1fr",
@@ -726,7 +733,7 @@ const useStyles = makeStyles({
   },
   chartGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 16rem), 1fr))",
     gap: "12px",
   },
   chartCard: {
@@ -745,7 +752,7 @@ const useStyles = makeStyles({
   },
   resourceFilters: {
     display: "grid",
-    gridTemplateColumns: "minmax(220px, 1fr) 180px",
+    gridTemplateColumns: "minmax(min(100%, 14rem), 1fr) max-content",
     gap: "8px",
     alignItems: "end",
     marginBottom: "12px",
@@ -755,7 +762,7 @@ const useStyles = makeStyles({
   },
   singleSearchRow: {
     display: "grid",
-    gridTemplateColumns: "minmax(220px, 420px)",
+    gridTemplateColumns: "minmax(min(100%, 14rem), 26rem)",
     gap: "8px",
     marginBottom: "12px",
     "@media (max-width: 640px)": {
@@ -770,7 +777,7 @@ const useStyles = makeStyles({
   },
   eventsGrid: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1.25fr) minmax(320px, 0.75fr)",
+    gridTemplateColumns: "minmax(0, 1.25fr) minmax(min-content, 0.75fr)",
     gap: "16px",
     alignItems: "start",
     "@media (max-width: 900px)": {
@@ -779,12 +786,12 @@ const useStyles = makeStyles({
   },
   eventFilters: {
     display: "grid",
-    gridTemplateColumns: "minmax(220px, 1.4fr) repeat(4, minmax(120px, 1fr))",
+    gridTemplateColumns: "minmax(min(100%, 14rem), 1.4fr) repeat(4, minmax(min-content, 1fr))",
     gap: "8px",
     alignItems: "end",
     marginBottom: "12px",
     "@media (max-width: 900px)": {
-      gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+      gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr))",
     },
   },
   firewallStack: {
@@ -819,7 +826,7 @@ const useStyles = makeStyles({
   },
   clientDeviceRow: {
     display: "grid",
-    gridTemplateColumns: "32px minmax(180px, 1.1fr) minmax(180px, 1fr) minmax(150px, 0.7fr) minmax(96px, 0.4fr)",
+    gridTemplateColumns: "2rem minmax(12rem, 1.1fr) minmax(11rem, 1fr) minmax(9rem, 0.7fr) max-content",
     gap: "10px",
     alignItems: "start",
     padding: "10px",
@@ -851,13 +858,13 @@ const useStyles = makeStyles({
   },
   vpnSummaryGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 13rem), 1fr))",
     gap: "10px",
     marginBottom: "12px",
   },
   interfaceGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 14rem), 1fr))",
     gap: "10px",
   },
   interfaceCard: {
@@ -902,55 +909,64 @@ const useStyles = makeStyles({
     },
   },
   dataTable: {
-    minWidth: "720px",
-    tableLayout: "fixed",
+    width: "max-content",
+    minWidth: "min(100%, 45rem)",
+    tableLayout: "auto",
   },
   resourceTable: {
-    minWidth: "900px",
-    tableLayout: "fixed",
+    width: "max-content",
+    minWidth: "min(100%, 56rem)",
+    tableLayout: "auto",
     "@media (max-width: 640px)": {
-      minWidth: "760px",
+      minWidth: "100%",
     },
   },
   controllerTable: {
-    minWidth: "820px",
-    tableLayout: "fixed",
+    width: "max-content",
+    minWidth: "min(100%, 51rem)",
+    tableLayout: "auto",
   },
   eventTable: {
-    minWidth: "760px",
-    tableLayout: "fixed",
+    width: "max-content",
+    minWidth: "min(100%, 48rem)",
+    tableLayout: "auto",
     "@media (max-width: 640px)": {
-      minWidth: "620px",
+      minWidth: "100%",
     },
   },
   connectionTable: {
-    minWidth: "820px",
-    tableLayout: "fixed",
+    width: "max-content",
+    minWidth: "min(100%, 51rem)",
+    tableLayout: "auto",
     "@media (max-width: 640px)": {
-      minWidth: "680px",
+      minWidth: "100%",
     },
   },
   clientInventoryTable: {
-    minWidth: "1120px",
-    tableLayout: "fixed",
+    width: "max-content",
+    minWidth: "min(100%, 62rem)",
+    tableLayout: "auto",
     "@media (max-width: 640px)": {
-      minWidth: "820px",
+      minWidth: "100%",
     },
   },
   clientTrafficTable: {
-    minWidth: "760px",
-    tableLayout: "fixed",
+    width: "max-content",
+    minWidth: "min(100%, 48rem)",
+    tableLayout: "auto",
   },
   dhcpLeaseTable: {
-    minWidth: "900px",
-    tableLayout: "fixed",
+    width: "max-content",
+    minWidth: "min(100%, 56rem)",
+    tableLayout: "auto",
     "@media (max-width: 640px)": {
-      minWidth: "720px",
+      minWidth: "100%",
     },
   },
   vpnPeerTable: {
-    minWidth: "980px",
-    tableLayout: "fixed",
+    width: "max-content",
+    minWidth: "min(100%, 56rem)",
+    tableLayout: "auto",
   },
   code: {
     fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
@@ -995,23 +1011,23 @@ const useStyles = makeStyles({
   },
   connectionFilters: {
     display: "grid",
-    gridTemplateColumns: "minmax(220px, 1.4fr) repeat(5, minmax(120px, 1fr))",
+    gridTemplateColumns: "minmax(min(100%, 14rem), 1.4fr) repeat(5, minmax(min-content, 1fr))",
     gap: "8px",
     alignItems: "end",
     marginBottom: "12px",
     "@media (max-width: 900px)": {
-      gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+      gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr))",
     },
   },
   firewallFilters: {
     display: "grid",
-    gridTemplateColumns: "minmax(220px, 1.4fr) repeat(4, minmax(130px, 1fr))",
+    gridTemplateColumns: "minmax(min(100%, 14rem), 1.4fr) repeat(4, minmax(min-content, 1fr))",
     gap: "8px",
     alignItems: "end",
     marginTop: "12px",
     marginBottom: "8px",
     "@media (max-width: 900px)": {
-      gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+      gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr))",
     },
   },
   filterControl: {
@@ -1039,7 +1055,7 @@ const useStyles = makeStyles({
   },
   connectionSummaryGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 11rem), 1fr))",
     gap: "10px",
     marginBottom: "12px",
   },
@@ -1094,13 +1110,13 @@ const useStyles = makeStyles({
   },
   firewallTopRow: {
     display: "grid",
-    gridTemplateColumns: "64px minmax(0, 1fr) 80px",
+    gridTemplateColumns: "4rem minmax(0, 1fr) max-content",
     gap: "10px",
     alignItems: "center",
     padding: "8px 10px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     "@media (max-width: 640px)": {
-      gridTemplateColumns: "48px minmax(0, 1fr)",
+      gridTemplateColumns: "3rem minmax(0, 1fr)",
     },
   },
   firewallBar: {
@@ -1111,7 +1127,7 @@ const useStyles = makeStyles({
   },
   firewallRankHeader: {
     display: "grid",
-    gridTemplateColumns: "56px minmax(220px, 1.25fr) minmax(220px, 1.25fr) 72px minmax(140px, 0.75fr) minmax(160px, 0.8fr)",
+    gridTemplateColumns: "3.5rem minmax(13rem, 1.25fr) minmax(13rem, 1.25fr) max-content minmax(8rem, 0.75fr) minmax(9rem, 0.8fr)",
     gap: "10px",
     padding: "0 10px 6px",
     color: tokens.colorNeutralForeground3,
@@ -1123,7 +1139,7 @@ const useStyles = makeStyles({
   },
   firewallTimelineHeader: {
     display: "grid",
-    gridTemplateColumns: "96px 68px minmax(220px, 1.35fr) minmax(220px, 1.35fr) 72px minmax(140px, 0.75fr) minmax(180px, 0.9fr) minmax(120px, 0.7fr)",
+    gridTemplateColumns: "6rem max-content minmax(13rem, 1.35fr) minmax(13rem, 1.35fr) max-content minmax(8rem, 0.75fr) minmax(10rem, 0.9fr) minmax(7rem, 0.7fr)",
     gap: "10px",
     padding: "0 10px 6px",
     color: tokens.colorNeutralForeground3,
@@ -1135,7 +1151,7 @@ const useStyles = makeStyles({
   },
   firewallRankRow: {
     display: "grid",
-    gridTemplateColumns: "56px minmax(220px, 1.25fr) minmax(220px, 1.25fr) 72px minmax(140px, 0.75fr) minmax(160px, 0.8fr)",
+    gridTemplateColumns: "3.5rem minmax(13rem, 1.25fr) minmax(13rem, 1.25fr) max-content minmax(8rem, 0.75fr) minmax(9rem, 0.8fr)",
     gap: "10px",
     alignItems: "start",
     padding: "8px 10px",
@@ -1151,7 +1167,7 @@ const useStyles = makeStyles({
   },
   firewallTimelineRow: {
     display: "grid",
-    gridTemplateColumns: "96px 68px minmax(220px, 1.35fr) minmax(220px, 1.35fr) 72px minmax(140px, 0.75fr) minmax(180px, 0.9fr) minmax(120px, 0.7fr)",
+    gridTemplateColumns: "6rem max-content minmax(13rem, 1.35fr) minmax(13rem, 1.35fr) max-content minmax(8rem, 0.75fr) minmax(10rem, 0.9fr) minmax(7rem, 0.7fr)",
     gap: "10px",
     alignItems: "start",
     padding: "8px 10px",
@@ -1194,7 +1210,7 @@ const useStyles = makeStyles({
     justifyContent: "flex-end",
   },
   pageSize: {
-    width: "86px",
+    width: "5.5rem",
   },
   scrollTopButton: {
     position: "fixed",
@@ -1262,8 +1278,9 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorPaletteRedBackground2,
   },
   generationTable: {
-    minWidth: "960px",
-    tableLayout: "fixed",
+    width: "max-content",
+    minWidth: "min(100%, 60rem)",
+    tableLayout: "auto",
   },
   generationActions: {
     display: "flex",
@@ -1279,15 +1296,16 @@ const useStyles = makeStyles({
     alignItems: "center",
   },
   generationSelect: {
-    width: "180px",
+    width: "11rem",
   },
   diffPanel: {
+    position: "relative",
     maxHeight: "62vh",
     overflow: "auto",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
     backgroundColor: tokens.colorNeutralBackground2,
-    padding: "10px",
+    padding: "10px 18px 10px 10px",
   },
   diffLine: {
     display: "block",
@@ -1303,6 +1321,32 @@ const useStyles = makeStyles({
   diffRemoved: {
     color: "#ffb3ad",
     backgroundColor: "rgba(150, 48, 44, 0.28)",
+  },
+  diffRuler: {
+    position: "sticky",
+    top: 0,
+    float: "right",
+    width: "6px",
+    height: "62vh",
+    maxHeight: "100%",
+    marginRight: "-12px",
+    marginLeft: "6px",
+    borderRadius: "999px",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    pointerEvents: "none",
+  },
+  diffRulerMark: {
+    position: "absolute",
+    left: 0,
+    width: "100%",
+    minHeight: "3px",
+    borderRadius: "999px",
+  },
+  diffRulerAdded: {
+    backgroundColor: "#6ccb5f",
+  },
+  diffRulerRemoved: {
+    backgroundColor: "#d13438",
   },
   tree: {
     display: "grid",
@@ -1343,7 +1387,7 @@ const useStyles = makeStyles({
   },
   treeLeaf: {
     display: "grid",
-    gridTemplateColumns: "minmax(130px, 0.42fr) minmax(0, 1fr)",
+    gridTemplateColumns: "minmax(8rem, 0.42fr) minmax(0, 1fr)",
     gap: "10px",
     minWidth: 0,
     padding: "2px 0",
@@ -1616,6 +1660,7 @@ function App() {
       setGenerationConfig({ generation, text });
       setGenerationDiff("");
       setError("");
+      scrollToGenerationResult();
     } catch (err) {
       setError(String(err));
     }
@@ -1630,6 +1675,7 @@ function App() {
       setGenerationDiff(text);
       setGenerationConfig(null);
       setError("");
+      scrollToGenerationResult();
     } catch (err) {
       setError(String(err));
     }
@@ -1643,6 +1689,7 @@ function App() {
       setGenerationDiff(text);
       setGenerationConfig(null);
       setError("");
+      scrollToGenerationResult();
     } catch (err) {
       setError(String(err));
     }
@@ -2167,6 +2214,18 @@ function GenerationsView({
           </Select>
           <Button appearance="primary" disabled={!from || !to} onClick={loadDiff}>Diff</Button>
         </div>
+        {diff ? (
+          <Card id="generation-result" tabIndex={-1} aria-live="polite">
+            <CardHeader header={<Text weight="semibold">Diff</Text>} description={<Text className={styles.muted}>Unified diff between selected generations</Text>} />
+            <DiffView diff={diff} />
+          </Card>
+        ) : null}
+        {config ? (
+          <Card id="generation-result" tabIndex={-1} aria-live="polite">
+            <CardHeader header={<Text weight="semibold">Generation #{config.generation}</Text>} description={<Text className={styles.muted}>Stored YAML snapshot</Text>} />
+            <div className={styles.diffPanel} data-routerd-scroll-key={`generation-${config.generation}-yaml`}><pre className={styles.pre}>{config.text}</pre></div>
+          </Card>
+        ) : null}
         <div className={styles.tableWrap} data-routerd-scroll-key="generations-table">
           <Table size="small" className={styles.generationTable}>
             <colgroup>
@@ -2205,7 +2264,6 @@ function GenerationsView({
                     <div className={styles.generationRowActions}>
                       <Button size="small" appearance="subtle" disabled={!row.hasYaml} onClick={() => loadConfig(row.generation)}>View</Button>
                       <Button size="small" appearance="subtle" disabled={!canDiffPrevious} onClick={() => previous && loadAdjacentDiff(previous.generation, row.generation)}>Diff prev</Button>
-                      <Badge appearance="outline">rollback CLI only</Badge>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -2215,18 +2273,6 @@ function GenerationsView({
           </Table>
         </div>
       </Card>
-      {diff ? (
-        <Card>
-          <CardHeader header={<Text weight="semibold">Diff</Text>} description={<Text className={styles.muted}>Unified diff between selected generations</Text>} />
-          <DiffView diff={diff} />
-        </Card>
-      ) : null}
-      {config ? (
-        <Card>
-          <CardHeader header={<Text weight="semibold">Generation #{config.generation}</Text>} description={<Text className={styles.muted}>Stored YAML snapshot</Text>} />
-          <div className={styles.diffPanel} data-routerd-scroll-key={`generation-${config.generation}-yaml`}><pre className={styles.pre}>{config.text}</pre></div>
-        </Card>
-      ) : null}
     </>
   );
 }
@@ -2234,8 +2280,20 @@ function GenerationsView({
 function DiffView({ diff }: { diff: string }) {
   const styles = useStyles();
   const lines = diff.split(/\n/);
+  const markers = diffOverviewMarkers(lines);
   return (
     <div className={styles.diffPanel} data-routerd-scroll-key="generation-diff">
+      {markers.length > 0 ? (
+        <div className={styles.diffRuler} aria-hidden="true">
+          {markers.map((marker, index) => (
+            <span
+              key={`${marker.kind}-${marker.top}-${index}`}
+              className={`${styles.diffRulerMark} ${marker.kind === "added" ? styles.diffRulerAdded : styles.diffRulerRemoved}`}
+              style={{ top: `${marker.top}%`, height: `${marker.height}%` }}
+            />
+          ))}
+        </div>
+      ) : null}
       {lines.map((line, index) => (
         <span key={index} className={`${styles.diffLine} ${line.startsWith("+") && !line.startsWith("+++") ? styles.diffAdded : ""} ${line.startsWith("-") && !line.startsWith("---") ? styles.diffRemoved : ""}`}>
           {line}
@@ -2243,6 +2301,36 @@ function DiffView({ diff }: { diff: string }) {
       ))}
     </div>
   );
+}
+
+function diffOverviewMarkers(lines: string[]) {
+  const total = Math.max(lines.length, 1);
+  const markers: { kind: "added" | "removed"; top: number; height: number }[] = [];
+  let current: { kind: "added" | "removed"; start: number; end: number } | null = null;
+  lines.forEach((line, index) => {
+    const kind = line.startsWith("+") && !line.startsWith("+++") ? "added" : line.startsWith("-") && !line.startsWith("---") ? "removed" : "";
+    if (!kind) {
+      if (current) {
+        markers.push(markerFromRange(current, total));
+        current = null;
+      }
+      return;
+    }
+    if (current && current.kind === kind && index <= current.end + 1) {
+      current.end = index;
+      return;
+    }
+    if (current) markers.push(markerFromRange(current, total));
+    current = { kind, start: index, end: index };
+  });
+  if (current) markers.push(markerFromRange(current, total));
+  return markers.slice(0, 200);
+}
+
+function markerFromRange(marker: { kind: "added" | "removed"; start: number; end: number }, total: number) {
+  const top = Math.max(0, Math.min(100, marker.start / total * 100));
+  const height = Math.max(0.7, ((marker.end - marker.start + 1) / total) * 100);
+  return { kind: marker.kind, top, height };
 }
 
 function ConfigTreeNode({ label, value, depth, query }: { label: string; value: unknown; depth: number; query: string }) {
@@ -3979,6 +4067,16 @@ function writeStoredRecord<T extends number | boolean>(key: string, value: Recor
 
 function scrollToElement(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function scrollToGenerationResult() {
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      const target = document.getElementById("generation-result");
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+      target?.focus({ preventScroll: true });
+    });
+  });
 }
 
 function captureScrollSnapshot(): ScrollSnapshot {
