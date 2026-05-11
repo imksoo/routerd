@@ -1,0 +1,325 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: router01
+
+spec:
+  reconcile:
+    mode: progressive
+    protectedInterfaces:
+      - mgmt
+
+  resources:
+    - apiVersion: observability.routerd.net/v1alpha1
+      kind: Telemetry
+      metadata:
+        name: otlp
+      spec:
+        otlp:
+          endpoint: http://192.168.123.119:4317
+          insecure: true
+        serviceNamespace: routerd
+        attributes:
+          deployment.environment: lab
+          routerd.node: router01
+        signals:
+          - logs
+          - metrics
+          - traces
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Package
+      metadata:
+        name: service-deps
+      spec:
+        packages:
+          - os: freebsd
+            manager: pkg
+            names:
+              - dnsmasq
+              - bind-tools
+              - wireguard-tools
+              - mpd5
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
+        name: routerd.service
+      spec:
+        description: routerd control plane for router01
+        execStartPre:
+          - /usr/local/sbin/routerd
+          - apply
+          - --config
+          - /usr/local/etc/routerd/router.yaml
+          - --once
+          - --skip-service-manager
+        execStart:
+          - /usr/local/sbin/routerd
+          - serve
+          - --config
+          - /usr/local/etc/routerd/router.yaml
+          - --socket
+          - /var/run/routerd/routerd.sock
+          - --status-file
+          - /var/run/routerd/status.json
+          - --observe-interval
+          - 30s
+          - --controller-chain
+          - --controller-chain-daemon-sockets
+          - wan-pd=/var/run/routerd/dhcpv6-client/wan-pd.sock
+          - --controller-chain-dry-run-address=false
+          - --controller-chain-dry-run-dslite=false
+          - --controller-chain-dry-run-route=false
+          - --controller-chain-dry-run-dhcpv6=false
+          - --controller-chain-dry-run-dhcpv4lease=false
+          - --controller-chain-dry-run-pppoesession=false
+          - --controller-chain-dry-run-dns-resolver=false
+          - --controller-chain-dry-run-nat=false
+          - --controller-chain-dry-run-firewall=false
+          - --controller-chain-dry-run-package=false
+          - --controller-chain-dry-run-network-adoption=true
+          - --controller-chain-dry-run-systemd-unit=true
+          - --controller-chain-dnsmasq-command
+          - /usr/local/sbin/dnsmasq
+          - --controller-chain-dnsmasq-config
+          - /usr/local/etc/routerd/dnsmasq.conf
+          - --controller-chain-dnsmasq-pid
+          - /var/run/routerd/dnsmasq.pid
+          - --controller-chain-dnsmasq-port
+          - "53"
+          - --controller-chain-dnsmasq-listen-addresses
+          - 127.0.0.1
+        runtimeDirectory:
+          - routerd
+        runtimeDirectoryPreserve: "yes"
+        stateDirectory:
+          - routerd
+        logsDirectory:
+          - routerd
+        enabled: true
+        started: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Hostname
+      metadata:
+        name: system-hostname
+      spec:
+        hostname: router01.lain.local
+        managed: true
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv4-forwarding
+      spec:
+        key: net.inet.ip.forwarding
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv6-forwarding
+      spec:
+        key: net.inet6.ip6.forwarding
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: vtnet0
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Lease
+      metadata:
+        name: wan-dhcp4
+      spec:
+        interface: wan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: PPPoEInterface
+      metadata:
+        name: wan-pppoe
+      spec:
+        interface: wan
+        ifname: ppp0
+        username: open@open.ad.jp
+        password: open
+        defaultRoute: false
+        usePeerDNS: false
+        managed: false
+        mtu: 1492
+        mru: 1492
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: mgmt
+      spec:
+        ifname: vtnet2
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Lease
+      metadata:
+        name: mgmt-dhcp4
+      spec:
+        interface: mgmt
+        useRoutes: false
+        useDNS: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6Address
+      metadata:
+        name: wan-dhcp6
+      spec:
+        interface: wan
+        client: dhcp6c
+        required: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6RAAddress
+      metadata:
+        name: wan-ra
+      spec:
+        interface: wan
+        required: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6PrefixDelegation
+      metadata:
+        name: wan-pd
+      spec:
+        interface: wan
+        client: dhcp6c
+        profile: ntt-hgw-lan-pd
+        prefixLength: 60
+        required: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: vtnet1
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-ipv4
+      spec:
+        interface: lan
+        address: 192.168.160.1/24
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata:
+        name: lan-ipv6-pd-address
+      spec:
+        prefixDelegation: wan-pd
+        interface: lan
+        subnetID: "0"
+        addressSuffix: "::1"
+        sendRA: false
+        announce: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-dhcp4-server
+      spec:
+        server: dnsmasq
+        managed: true
+        listenInterfaces:
+          - lan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Scope
+      metadata:
+        name: lan-dhcp4
+      spec:
+        server: lan-dhcp4-server
+        interface: lan
+        rangeStart: 192.168.160.110
+        rangeEnd: 192.168.160.119
+        leaseTime: 12h
+        routerSource: interfaceAddress
+        dnsSource: self
+        authoritative: true
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6Server
+      metadata:
+        name: lan-dhcp6-server
+      spec:
+        server: dnsmasq
+        managed: true
+        listenInterfaces:
+          - lan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6Scope
+      metadata:
+        name: lan-dhcp6
+      spec:
+        server: lan-dhcp6-server
+        delegatedAddress: lan-ipv6-pd-address
+        mode: stateless
+        defaultRoute: true
+        dnsSource: self
+        leaseTime: 12h
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Bridge
+      metadata:
+        name: br-vxlan-test
+      spec:
+        ifname: bridge100
+        members:
+          - vxlan100
+        stp: true
+        rstp: true
+        multicastSnooping: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VXLANSegment
+      metadata:
+        name: vxlan100
+      spec:
+        ifname: vxlan104
+        vni: 100
+        localAddress: 192.168.1.36
+        remotes:
+          - 192.168.1.35
+          - 192.168.1.34
+          - 192.168.1.32
+        underlayInterface: wan
+        udpPort: 4789
+        mtu: 1450
+        bridge: br-vxlan-test
+        l2Filter: default
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: br-vxlan-test-ipv4
+      spec:
+        interface: br-vxlan-test
+        address: 10.99.100.1/24
+        exclusive: false
