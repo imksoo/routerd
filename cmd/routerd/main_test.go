@@ -96,6 +96,19 @@ func TestRunApplyOnceDryRunDoesNotCreateGeneration(t *testing.T) {
 	}
 }
 
+func TestActiveControllerDryRunModes(t *testing.T) {
+	got := activeControllerDryRunModes(map[string]bool{
+		"route": false,
+		"ra":    true,
+		"nat":   false,
+		"foo":   true,
+	})
+	want := []string{"foo", "ra"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("activeControllerDryRunModes = %v, want %v", got, want)
+	}
+}
+
 func TestHasNewNetdevFiles(t *testing.T) {
 	if !hasNewNetdevFiles([]string{"/etc/systemd/network/10-vxlan.netdev"}) {
 		t.Fatal("expected new .netdev to be detected")

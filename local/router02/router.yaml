@@ -44,6 +44,7 @@ spec:
             - --controller-chain-dry-run-ra=false
             - --controller-chain-dry-run-dhcpv6=false
             - --controller-chain-dry-run-dhcpv4lease=false
+            - --controller-chain-dry-run-pppoesession=false
             - --controller-chain-dry-run-dns-resolver=false
             - --controller-chain-dry-run-nat=false
             - --controller-chain-dry-run-firewall=false

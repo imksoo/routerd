@@ -2940,6 +2940,17 @@ func parseCSV(raw string) []string {
 	return out
 }
 
+func activeControllerDryRunModes(modes map[string]bool) []string {
+	var out []string
+	for name, dryRun := range modes {
+		if dryRun {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func serveCommand(args []string, stdout io.Writer) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -2997,6 +3008,28 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		"observeInterval": observeInterval.String(),
 		"applyInterval":   applyInterval.String(),
 	})
+	if *controllerChain {
+		dryRunModes := activeControllerDryRunModes(map[string]bool{
+			"address":          *controllerDryRunAddress,
+			"dslite":           *controllerDryRunDSLite,
+			"route":            *controllerDryRunRoute,
+			"ra":               *controllerDryRunRA,
+			"dhcpv6":           *controllerDryRunDHCPv6,
+			"dhcpv4lease":      *controllerDryRunDHCPv4Lease,
+			"pppoesession":     *controllerDryRunPPPoESession,
+			"dns-resolver":     *controllerDryRunDNSResolver,
+			"nat":              *controllerDryRunNAT,
+			"firewall":         *controllerDryRunFirewall,
+			"package":          *controllerDryRunPackage,
+			"network-adoption": *controllerDryRunNetworkAdoption,
+			"systemd-unit":     *controllerDryRunSystemdUnit,
+		})
+		if len(dryRunModes) > 0 {
+			logger.Emit(eventlog.LevelWarning, "serve", "controller dry-run modes active", map[string]string{
+				"controllers": strings.Join(dryRunModes, ","),
+			})
+		}
+	}
 
 	cache := &resultCache{}
 	engine := apply.New()
