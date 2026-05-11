@@ -1843,6 +1843,42 @@ func buildPassiveFingerprints(_ []DHCPLease, flows []logstore.TrafficFlow, queri
 func applyHostVendorFingerprint(item *fingerprintAccumulator, hostname, vendor, clientID string) {
 	hostText := strings.ToLower(strings.Join([]string{hostname, clientID}, " "))
 	switch {
+	case containsAny(hostText, "echo", "alexa"):
+		addFingerprintSignal(item, "iot", "smart-speaker", 130, "hostname/amazon-echo")
+	case containsAny(hostText, "google-nest", "google home", "google-home", "nest-mini", "nest hub"):
+		addFingerprintSignal(item, "iot", "smart-speaker", 130, "hostname/google-nest")
+	case strings.Contains(hostText, "chromecast"):
+		addFingerprintSignal(item, "iot", "smart-tv", 130, "hostname/chromecast")
+	case strings.Contains(hostText, "roku"):
+		addFingerprintSignal(item, "iot", "smart-tv", 130, "hostname/roku")
+	case strings.Contains(hostText, "firetv") || strings.Contains(hostText, "fire-tv"):
+		addFingerprintSignal(item, "iot", "smart-tv", 130, "hostname/fire-tv")
+	case strings.Contains(hostText, "switchbot"):
+		addFingerprintSignal(item, "iot", "iot", 130, "hostname/switchbot")
+	case containsAny(hostText, "hue", "philips-hue"):
+		addFingerprintSignal(item, "iot", "lighting", 130, "hostname/hue")
+	case strings.Contains(hostText, "ring"):
+		addFingerprintSignal(item, "iot", "camera", 130, "hostname/ring")
+	case containsAny(hostText, "roomba", "irobot", "roborock"):
+		addFingerprintSignal(item, "iot", "vacuum", 130, "hostname/vacuum")
+	case strings.Contains(hostText, "sonos"):
+		addFingerprintSignal(item, "iot", "smart-speaker", 130, "hostname/sonos")
+	case strings.Contains(hostText, "synology"):
+		addFingerprintSignal(item, "nas", "nas", 140, "hostname/synology")
+	case strings.Contains(hostText, "qnap"):
+		addFingerprintSignal(item, "nas", "nas", 140, "hostname/qnap")
+	case containsAny(hostText, "hp-printer", "officejet", "laserjet", "deskjet"):
+		addFingerprintSignal(item, "printer", "printer", 140, "hostname/hp-printer")
+	case strings.Contains(hostText, "canon"):
+		addFingerprintSignal(item, "printer", "printer", 130, "hostname/canon")
+	case strings.Contains(hostText, "epson"):
+		addFingerprintSignal(item, "printer", "printer", 130, "hostname/epson")
+	case strings.Contains(hostText, "brother"):
+		addFingerprintSignal(item, "printer", "printer", 130, "hostname/brother")
+	case containsAny(hostText, "yealink", "polycom"):
+		addFingerprintSignal(item, "voip", "voip", 130, "hostname/voip")
+	case strings.Contains(hostText, "tesla"):
+		addFingerprintSignal(item, "iot", "ev", 140, "hostname/tesla")
 	case strings.Contains(hostText, "nintendo"):
 		addFingerprintSignal(item, "nintendo", "gaming-console", 140, "hostname/nintendo")
 	case strings.Contains(hostText, "playstation") || strings.Contains(hostText, "ps5") || strings.Contains(hostText, "ps4"):
@@ -1859,17 +1895,41 @@ func applyHostVendorFingerprint(item *fingerprintAccumulator, hostname, vendor, 
 		addFingerprintSignal(item, "Apple", "computer", 100, "hostname/mac")
 	case strings.Contains(hostText, "windows") || strings.HasPrefix(strings.TrimSpace(hostText), "win-") || strings.Contains(hostText, "microsoft"):
 		addFingerprintSignal(item, "Windows", "computer", 90, "hostname/windows")
-	case strings.Contains(hostText, "android") || strings.Contains(hostText, "pixel") || strings.Contains(hostText, "samsung") || strings.Contains(hostText, "xiaomi") || strings.Contains(hostText, "oneplus") || strings.Contains(hostText, "motorola"):
+	case strings.Contains(hostText, "samsung"):
+		addFingerprintSignal(item, "Android", "phone", 110, "hostname/samsung")
+	case strings.Contains(hostText, "xiaomi"):
+		addFingerprintSignal(item, "Android", "phone", 110, "hostname/xiaomi")
+	case strings.Contains(hostText, "huawei"):
+		addFingerprintSignal(item, "Android", "phone", 110, "hostname/huawei")
+	case strings.Contains(hostText, "oppo"):
+		addFingerprintSignal(item, "Android", "phone", 110, "hostname/oppo")
+	case strings.Contains(hostText, "android") || strings.Contains(hostText, "pixel") || strings.Contains(hostText, "oneplus") || strings.Contains(hostText, "motorola"):
 		addFingerprintSignal(item, "Android", "phone", 100, "hostname/android")
 	}
 	vendorText := strings.ToLower(strings.TrimSpace(vendor))
 	switch {
+	case containsAny(vendorText, "synology"):
+		addFingerprintSignal(item, "nas", "nas", 70, "vendor/synology")
+	case containsAny(vendorText, "qnap"):
+		addFingerprintSignal(item, "nas", "nas", 70, "vendor/qnap")
+	case containsAny(vendorText, "hewlett", "hp inc", "canon", "epson", "brother", "ricoh", "konica"):
+		addFingerprintSignal(item, "printer", "printer", 70, "vendor/printer")
+	case containsAny(vendorText, "yealink", "polycom"):
+		addFingerprintSignal(item, "voip", "voip", 70, "vendor/voip")
+	case containsAny(vendorText, "amazon"):
+		addFingerprintSignal(item, "iot", "smart-speaker", 55, "vendor/amazon")
+	case containsAny(vendorText, "roku"):
+		addFingerprintSignal(item, "iot", "smart-tv", 55, "vendor/roku")
+	case containsAny(vendorText, "ring", "irobot", "roborock", "sonos", "philips"):
+		addFingerprintSignal(item, "iot", "iot", 55, "vendor/iot")
 	case strings.Contains(vendorText, "apple") && !strings.Contains(vendorText, "private"):
 		addFingerprintSignal(item, "Apple", "", 35, "vendor/apple")
 	case strings.Contains(vendorText, "google"):
-		addFingerprintSignal(item, "Android", "", 35, "vendor/google")
+		addFingerprintSignal(item, "Android", "", 20, "vendor/google")
+	case containsAny(vendorText, "samsung", "xiaomi", "huawei", "oppo"):
+		addFingerprintSignal(item, "Android", "phone", 55, "vendor/android-oem")
 	case strings.Contains(vendorText, "panasonic") || strings.Contains(vendorText, "amazon") || strings.Contains(vendorText, "espressif") || strings.Contains(vendorText, "ecoflow"):
-		addFingerprintSignal(item, "Embedded", "iot", 45, "vendor/iot")
+		addFingerprintSignal(item, "iot", "iot", 45, "vendor/iot")
 	}
 }
 
@@ -1879,6 +1939,56 @@ func applyDomainFingerprint(item *fingerprintAccumulator, name string) {
 		return
 	}
 	switch {
+	case domainMatchesAny(name, "amazonalexa.com"):
+		addUniqueFingerprintSignal(item, "iot", "smart-speaker", 110, "dns/amazon-echo:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "dms.amazon.com"):
+		addUniqueFingerprintSignal(item, "iot", "smart-speaker", 70, "dns/amazon-device:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "googlecast.com"):
+		addUniqueFingerprintSignal(item, "iot", "smart-tv", 110, "dns/googlecast:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "gvt1.com", "clients3.google.com", "l.google.com"):
+		addUniqueFingerprintSignal(item, "iot", "smart-tv", 45, "dns/google-media:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "roku.com", "rokulabs.net"):
+		addUniqueFingerprintSignal(item, "iot", "smart-tv", 120, "dns/roku:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "switchbot.com"):
+		addUniqueFingerprintSignal(item, "iot", "iot", 120, "dns/switchbot:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "meethue.com"):
+		addUniqueFingerprintSignal(item, "iot", "lighting", 120, "dns/hue:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "ring.com"):
+		addUniqueFingerprintSignal(item, "iot", "camera", 120, "dns/ring:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "eufylife.com"):
+		addUniqueFingerprintSignal(item, "iot", "camera", 120, "dns/eufy:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "irobotapi.com", "iadc.irobot.com", "roborock.com"):
+		addUniqueFingerprintSignal(item, "iot", "vacuum", 120, "dns/vacuum:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "sonos.com"):
+		addUniqueFingerprintSignal(item, "iot", "smart-speaker", 120, "dns/sonos:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "synology.com", "quickconnect.to"):
+		addUniqueFingerprintSignal(item, "nas", "nas", 120, "dns/synology:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "qnap.com"):
+		addUniqueFingerprintSignal(item, "nas", "nas", 120, "dns/qnap:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "hpconnected.com"):
+		addUniqueFingerprintSignal(item, "printer", "printer", 120, "dns/hp-printer:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "cps.canon.jp", "epsonconnect.com"):
+		addUniqueFingerprintSignal(item, "printer", "printer", 120, "dns/printer:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "hp.com", "canon.com", "epson.com", "epson.jp", "brother.com", "ricoh.com", "konicaminolta.com"):
+		addUniqueFingerprintSignal(item, "printer", "printer", 65, "dns/printer:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "yealink.com", "polycom.com"):
+		addUniqueFingerprintSignal(item, "voip", "voip", 120, "dns/voip:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "zoom.us", "zoomgov.com", "webex.com"):
+		addUniqueFingerprintSignal(item, "voip", "voip", 25, "dns/conference:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "teams.microsoft.com", "skype.com"):
+		addUniqueFingerprintSignal(item, "voip", "voip", 20, "dns/conference:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "zerotier.com"):
+		addUniqueFingerprintSignal(item, "linux", "", 25, "dns/zerotier:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "samsung.com", "samsungcloud.com", "samsungelectronics.com"):
+		addUniqueFingerprintSignal(item, "Android", "phone", 90, "dns/samsung:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "xiaomi.com", "mi.com"):
+		addUniqueFingerprintSignal(item, "Android", "phone", 90, "dns/xiaomi:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "huawei.com", "hicloud.com"):
+		addUniqueFingerprintSignal(item, "Android", "phone", 90, "dns/huawei:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "oppo.com"):
+		addUniqueFingerprintSignal(item, "Android", "phone", 90, "dns/oppo:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "tesla.com", "teslamotors.com"):
+		addUniqueFingerprintSignal(item, "iot", "ev", 120, "dns/tesla:"+shortFingerprintSignal(name))
 	case domainMatchesAny(name, "nintendo.net", "npln.jp", "ndas.srv.nintendo.net", "gs.nintendo.net", "accounts.nintendo.com"):
 		addUniqueFingerprintSignal(item, "nintendo", "gaming-console", 120, "dns/nintendo:"+shortFingerprintSignal(name))
 	case domainMatchesAny(name, "playstation.net", "sonyentertainmentnetwork.com", "scea.com"):
@@ -1892,14 +2002,25 @@ func applyDomainFingerprint(item *fingerprintAccumulator, name string) {
 	case strings.Contains(name, "windowsupdate.com") || strings.Contains(name, "msftconnecttest.com") || strings.Contains(name, "microsoft.com") || strings.Contains(name, "office365.com") || strings.Contains(name, "live.com"):
 		addFingerprintSignal(item, "Windows", "computer", 35, "dns/windows:"+shortFingerprintSignal(name))
 	case strings.Contains(name, "connectivitycheck.gstatic.com") || strings.Contains(name, "android.clients.google.com") || strings.Contains(name, "gms.") || strings.Contains(name, "googleapis.com"):
-		addFingerprintSignal(item, "Android", "", 35, "dns/android:"+shortFingerprintSignal(name))
+		addUniqueFingerprintSignal(item, "Android", "", 20, "dns/android:"+shortFingerprintSignal(name))
 	case strings.Contains(name, "_airplay.") || strings.Contains(name, "_raop.") || strings.Contains(name, "_companion-link."):
 		addFingerprintSignal(item, "Apple", "", 45, "mdns/apple")
 	case strings.Contains(name, "_googlecast.") || strings.Contains(name, "_androidtvremote."):
-		addFingerprintSignal(item, "Android", "media", 45, "mdns/googlecast")
+		addFingerprintSignal(item, "iot", "smart-tv", 45, "mdns/googlecast")
 	case strings.Contains(name, "_smb.") || strings.Contains(name, "_workstation.") || strings.Contains(name, "wpad."):
 		addFingerprintSignal(item, "Windows", "computer", 35, "dns/windows-service")
+	case domainMatchesAny(name, "amazonaws.com"):
+		addUniqueFingerprintSignal(item, "iot", "", 15, "dns/aws-device:"+shortFingerprintSignal(name))
 	}
+}
+
+func containsAny(text string, needles ...string) bool {
+	for _, needle := range needles {
+		if needle != "" && strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func domainMatchesAny(name string, suffixes ...string) bool {
@@ -1928,7 +2049,7 @@ func applyTransportFingerprint(item *fingerprintAccumulator, proto, peer string,
 		addFingerprintSignal(item, "", "", 5, "multicast/mdns")
 	case port == 1900 || peer == "239.255.255.250" || peer == "ff02::c":
 		item.hasMulticast = true
-		addFingerprintSignal(item, "Embedded", "iot", 15, "multicast/ssdp")
+		addFingerprintSignal(item, "iot", "iot", 15, "multicast/ssdp")
 	case port == 137 || port == 138 || port == 139:
 		item.hasMulticast = true
 		addFingerprintSignal(item, "Windows", "computer", 35, "multicast/netbios")
@@ -1948,7 +2069,7 @@ func applyAppFingerprint(item *fingerprintAccumulator, app, category string, con
 	case strings.Contains(text, "mdns"):
 		addFingerprintSignal(item, "", "", weight, "dpi/mdns")
 	case strings.Contains(text, "ssdp"):
-		addFingerprintSignal(item, "Embedded", "iot", weight, "dpi/ssdp")
+		addFingerprintSignal(item, "iot", "iot", weight, "dpi/ssdp")
 	case strings.Contains(text, "netbios") || strings.Contains(text, "smb"):
 		addFingerprintSignal(item, "Windows", "computer", weight+10, "dpi/netbios")
 	}

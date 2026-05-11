@@ -797,6 +797,107 @@ func TestCorrelateClientsStrongHostnameBeatsRepeatedGamingDNS(t *testing.T) {
 	}
 }
 
+func TestCorrelateClientsInfersHomeAndOfficeDeviceSignals(t *testing.T) {
+	tests := []struct {
+		name   string
+		query  string
+		family string
+		class  string
+	}{
+		{name: "amazon echo", query: "device-metrics.amazonalexa.com", family: "iot", class: "smart-speaker"},
+		{name: "chromecast", query: "clients3.google.com", family: "iot", class: "smart-tv"},
+		{name: "roku", query: "api.roku.com", family: "iot", class: "smart-tv"},
+		{name: "switchbot", query: "api.switchbot.com", family: "iot", class: "iot"},
+		{name: "hue", query: "discovery.meethue.com", family: "iot", class: "lighting"},
+		{name: "ring", query: "api.ring.com", family: "iot", class: "camera"},
+		{name: "roomba", query: "prod.irobotapi.com", family: "iot", class: "vacuum"},
+		{name: "sonos", query: "update.sonos.com", family: "iot", class: "smart-speaker"},
+		{name: "synology", query: "global.quickconnect.to", family: "nas", class: "nas"},
+		{name: "qnap", query: "update.qnap.com", family: "nas", class: "nas"},
+		{name: "hp printer", query: "www.hpconnected.com", family: "printer", class: "printer"},
+		{name: "epson printer", query: "printer.epsonconnect.com", family: "printer", class: "printer"},
+		{name: "yealink", query: "rps.yealink.com", family: "voip", class: "voip"},
+		{name: "samsung", query: "dc.di.atlas.samsungcloud.com", family: "Android", class: "phone"},
+		{name: "xiaomi", query: "api.io.mi.com", family: "Android", class: "phone"},
+		{name: "tesla", query: "owner-api.teslamotors.com", family: "iot", class: "ev"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows := correlateClients(
+				nil,
+				nil,
+				nil,
+				[]logstore.DNSQuery{{ClientAddress: "172.18.1.160", QuestionName: tt.query, QuestionType: "A"}},
+				nil,
+			)
+			if len(rows) != 1 {
+				t.Fatalf("rows = %d: %+v", len(rows), rows)
+			}
+			if rows[0].InferredOSFamily != tt.family || rows[0].InferredDeviceClass != tt.class {
+				t.Fatalf("fingerprint = %+v, want family=%s class=%s", rows[0], tt.family, tt.class)
+			}
+		})
+	}
+}
+
+func TestCorrelateClientsInfersHomeDeviceHostnames(t *testing.T) {
+	rows := correlateClients(
+		[]DHCPLease{{
+			MAC:      "00:f6:20:74:00:bc",
+			IP:       "172.18.1.70",
+			Hostname: "Google-Nest-Mini",
+			Vendor:   "Google",
+		}},
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	if rows[0].InferredOSFamily != "iot" || rows[0].InferredDeviceClass != "smart-speaker" {
+		t.Fatalf("Google Nest should be an IoT smart speaker: %+v", rows[0])
+	}
+}
+
+func TestCorrelateClientsWeakGenericCloudSignalDoesNotForceIdentity(t *testing.T) {
+	rows := correlateClients(
+		nil,
+		nil,
+		nil,
+		[]logstore.DNSQuery{{ClientAddress: "172.18.1.161", QuestionName: "abcd.execute-api.us-east-1.amazonaws.com", QuestionType: "A"}},
+		nil,
+	)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	if rows[0].InferredOSFamily != "" || rows[0].InferredDeviceClass != "" {
+		t.Fatalf("generic cloud DNS should stay unknown: %+v", rows[0])
+	}
+}
+
+func TestCorrelateClientsGoogleMediaBeatsGenericAndroidUsage(t *testing.T) {
+	rows := correlateClients(
+		nil,
+		nil,
+		nil,
+		[]logstore.DNSQuery{
+			{ClientAddress: "172.18.1.162", QuestionName: "www.googleapis.com", QuestionType: "A"},
+			{ClientAddress: "172.18.1.162", QuestionName: "connectivitycheck.gstatic.com", QuestionType: "A"},
+			{ClientAddress: "172.18.1.162", QuestionName: "foo.l.google.com", QuestionType: "A"},
+			{ClientAddress: "172.18.1.162", QuestionName: "foo.l.google.com", QuestionType: "AAAA"},
+		},
+		nil,
+	)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	if rows[0].InferredOSFamily != "iot" || rows[0].InferredDeviceClass != "smart-tv" {
+		t.Fatalf("specific Google media signal should beat generic Android DNS: %+v", rows[0])
+	}
+}
+
 func TestHandlerServesConfigReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "router.yaml")
 	if err := os.WriteFile(path, []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\n"), 0644); err != nil {

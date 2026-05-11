@@ -4889,7 +4889,7 @@ function clientRowKey(row: ClientRow) {
 }
 
 function clientSections(rows: ClientRow[]) {
-  const order = ["Nintendo", "PlayStation", "Xbox", "SteamOS", "Apple", "Android", "Windows", "Linux", "Embedded", "Other"];
+  const order = ["Nintendo", "PlayStation", "Xbox", "SteamOS", "Apple", "Android", "Windows", "Linux", "IoT", "Printer", "NAS", "VoIP", "Embedded", "Other"];
   const sections = new Map<string, { key: string; label: string; rows: ClientRow[]; addressCount: number }>();
   for (const row of rows) {
     const label = clientSectionLabel(clientOSFamily(row));
@@ -4933,6 +4933,10 @@ function clientSectionLabel(family: string) {
   if (normalized === "android") return "Android";
   if (normalized === "windows") return "Windows";
   if (normalized === "linux") return "Linux";
+  if (normalized === "iot") return "IoT";
+  if (normalized === "printer") return "Printer";
+  if (normalized === "nas") return "NAS";
+  if (normalized === "voip") return "VoIP";
   if (normalized === "embedded" || normalized === "iot") return "Embedded";
   return family;
 }
@@ -5073,6 +5077,10 @@ function formatClientOSFamily(family: string) {
   if (normalized === "playstation") return "PlayStation";
   if (normalized === "xbox") return "Xbox";
   if (normalized === "steam-os" || normalized === "steamos") return "SteamOS";
+  if (normalized === "iot") return "IoT";
+  if (normalized === "printer") return "Printer";
+  if (normalized === "nas") return "NAS";
+  if (normalized === "voip") return "VoIP";
   return family;
 }
 
@@ -5090,6 +5098,12 @@ function clientOSBadgeColor(family: string) {
       return "informative";
     case "android":
       return "success";
+    case "iot":
+      return "warning";
+    case "printer":
+    case "nas":
+    case "voip":
+      return "informative";
     case "embedded":
       return "warning";
     default:
