@@ -3988,7 +3988,7 @@ function absoluteTime(value?: string) {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return `${new Intl.DateTimeFormat(undefined, { month: "2-digit", day: "2-digit" }).format(date)} ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date)}`;
+  return `${new Intl.DateTimeFormat("en-US", { month: "2-digit", day: "2-digit" }).format(date)} ${new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date)}`;
 }
 
 function relativeTimeText(value?: string) {
@@ -3997,7 +3997,7 @@ function relativeTimeText(value?: string) {
   if (Number.isNaN(date.getTime())) return value;
   const diffSeconds = Math.round((date.getTime() - Date.now()) / 1000);
   const abs = Math.abs(diffSeconds);
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const rtf = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
   if (abs < 60) return rtf.format(diffSeconds, "second");
   const diffMinutes = Math.round(diffSeconds / 60);
   if (Math.abs(diffMinutes) < 60) return rtf.format(diffMinutes, "minute");
