@@ -2225,7 +2225,7 @@ function App() {
               />
             ) : null}
             <Text size={200} className={styles.consoleLegal}>
-              BSD 3-Clause License - Copyright (c) 2026 Kirino Minato (imksoo) and routerd contributors
+              Copyright © 2026 Kirino Minato and routerd contributors. Licensed under the BSD 3-Clause License.
             </Text>
           </main>
         </section>
