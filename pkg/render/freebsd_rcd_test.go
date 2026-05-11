@@ -3,6 +3,7 @@
 package render
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -24,13 +25,23 @@ func TestFreeBSDRCDScript(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		`# PROVIDE: routerd_dns_resolver`,
-		`command="/usr/sbin/daemon"`,
-		`procname="/usr/sbin/daemon"`,
-		`child_pidfile="/var/run/${name}.pid"`,
-		`command_args="-P ${pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-dns-resolver' '--config' '/usr/local/etc/routerd/dns-resolver.yaml'"`,
+		`daemon_command="/usr/sbin/daemon"`,
+		`daemon_pidfile="/var/run/${name}/${name}.daemon.pid"`,
+		`child_pidfile="/var/run/${name}/${name}.pid"`,
+		`daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-dns-resolver' '--config' '/usr/local/etc/routerd/dns-resolver.yaml'"`,
+		`routerd_dns_resolver_start() {`,
+		`eval "${daemon_command} ${daemon_args}"`,
+		`routerd_dns_resolver_pgrep_child() {`,
+		`ps -axo pid,command | awk -v exe='/usr/local/sbin/routerd-dns-resolver' -v pat='/usr/local/sbin/routerd-dns-resolver .*--config .*/usr/local/etc/routerd/dns-resolver\.yaml' '$0 ~ exe && $0 ~ pat { print $1; exit }'`,
+		`routerd_dns_resolver_parent_daemon_pid() {`,
+		`routerd_dns_resolver_managed_child_pid() {`,
+		`ps -o ppid= -p "${_child_pid}"`,
+		`daemon:*|*/daemon*)`,
+		`routerd_dns_resolver_read_pidfile "${daemon_pidfile}" || routerd_dns_resolver_parent_daemon_pid`,
+		`routerd_dns_resolver_read_pidfile "${child_pidfile}" || routerd_dns_resolver_pgrep_child`,
 		`routerd_dns_resolver_stop() {`,
 		`kill -KILL "${_child_pid}"`,
-		`rm -f "${pidfile}" "${child_pidfile}"`,
+		`rm -f "${daemon_pidfile}" "${child_pidfile}"`,
 		`routerd_dns_resolver_prestart() {`,
 		`mkdir -p '/var/run/routerd/dns-resolver'`,
 		`mkdir -p '/var/db/routerd/dns-resolver'`,
@@ -64,7 +75,7 @@ func TestFreeBSDRenderSynthesizesDHCPv6ClientRCD(t *testing.T) {
 	script := string(cfg.RCDScripts["routerd_dhcpv6_client_wan_pd"])
 	for _, want := range []string{
 		`PROVIDE: routerd_dhcpv6_client_wan_pd`,
-		`procname="/usr/sbin/daemon"`,
+		`daemon_command="/usr/sbin/daemon"`,
 		`'/usr/local/sbin/routerd-dhcpv6-client'`,
 		`'--interface' 'vtnet0'`,
 		`'--socket' '/var/run/routerd/dhcpv6-client/wan-pd.sock'`,
@@ -77,6 +88,20 @@ func TestFreeBSDRenderSynthesizesDHCPv6ClientRCD(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("rc.d script missing %q:\n%s", want, script)
 		}
+	}
+}
+
+func TestFreeBSDRCDPgrepPatternIncludesResourceName(t *testing.T) {
+	got := freeBSDRCDPgrepPattern([]string{
+		"/usr/local/sbin/routerd-healthcheck",
+		"daemon",
+		"--resource",
+		"internet-via-dslite-c",
+		"--target",
+		"9.9.9.9",
+	})
+	if !strings.Contains(got, regexp.QuoteMeta("internet-via-dslite-c")) {
+		t.Fatalf("pgrep pattern should include resource name, got %q", got)
 	}
 }
 
@@ -100,7 +125,7 @@ func TestFreeBSDRenderSynthesizesDHCPv4ClientRCD(t *testing.T) {
 	script := string(cfg.RCDScripts["routerd_dhcpv4_client_wan_v4"])
 	for _, want := range []string{
 		`PROVIDE: routerd_dhcpv4_client_wan_v4`,
-		`procname="/usr/sbin/daemon"`,
+		`daemon_command="/usr/sbin/daemon"`,
 		`'/usr/local/sbin/routerd-dhcpv4-client'`,
 		`'--interface' 'vtnet0'`,
 		`'--socket' '/var/run/routerd/dhcpv4-client/wan-v4.sock'`,

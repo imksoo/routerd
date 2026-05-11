@@ -519,11 +519,10 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 			}
 		}
 	} else {
-		buf.WriteString("pidfile=\"/var/run/${name}.daemon.pid\"\n")
-		buf.WriteString("child_pidfile=\"/var/run/${name}.pid\"\n")
-		buf.WriteString("command=\"/usr/sbin/daemon\"\n")
-		buf.WriteString("procname=\"/usr/sbin/daemon\"\n")
-		buf.WriteString("command_args=\"-P ${pidfile} -p ${child_pidfile} -r -f --")
+		buf.WriteString("daemon_pidfile=\"/var/run/${name}/${name}.daemon.pid\"\n")
+		buf.WriteString("child_pidfile=\"/var/run/${name}/${name}.pid\"\n")
+		buf.WriteString("daemon_command=\"/usr/sbin/daemon\"\n")
+		buf.WriteString("daemon_args=\"-P ${daemon_pidfile} -p ${child_pidfile} -r -f --")
 		if len(spec.Environment) > 0 {
 			buf.WriteString(" env")
 			for _, env := range spec.Environment {
@@ -534,6 +533,7 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 			buf.WriteString(" " + shellSingleQuote(arg))
 		}
 		buf.WriteString("\"\n")
+		buf.WriteString("start_cmd=\"${name}_start\"\n")
 		buf.WriteString("stop_cmd=\"${name}_stop\"\n")
 		buf.WriteString("status_cmd=\"${name}_status\"\n")
 	}
@@ -576,11 +576,66 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 		buf.WriteString("  fi\n")
 		buf.WriteString("  return 1\n")
 		buf.WriteString("}\n\n")
+		buf.WriteString(name + "_pgrep_child() {\n")
+		buf.WriteString("  ps -axo pid,command | awk -v exe=")
+		buf.WriteString(shellSingleQuote(freeBSDRCDExecPath(spec.ExecStart)))
+		buf.WriteString(" -v pat=")
+		buf.WriteString(shellSingleQuote(freeBSDRCDPgrepPattern(spec.ExecStart)))
+		buf.WriteString(" '$0 ~ exe && $0 ~ pat { print $1; exit }'\n")
+		buf.WriteString("}\n\n")
+		buf.WriteString(name + "_managed_child_pid() {\n")
+		buf.WriteString("  _candidate_pid=$(" + name + "_child_pid)\n")
+		buf.WriteString("  if [ -z \"${_candidate_pid}\" ]; then\n")
+		buf.WriteString("    return 1\n")
+		buf.WriteString("  fi\n")
+		buf.WriteString("  _parent_pid=$(ps -o ppid= -p \"${_candidate_pid}\" 2>/dev/null | tr -d ' ')\n")
+		buf.WriteString("  _supervisor_pid=$(" + name + "_supervisor_pid)\n")
+		buf.WriteString("  if [ -n \"${_supervisor_pid}\" ] && [ \"${_parent_pid}\" = \"${_supervisor_pid}\" ]; then\n")
+		buf.WriteString("    echo \"${_candidate_pid}\"\n")
+		buf.WriteString("    return 0\n")
+		buf.WriteString("  fi\n")
+		buf.WriteString("  return 1\n")
+		buf.WriteString("}\n\n")
+		buf.WriteString(name + "_parent_daemon_pid() {\n")
+		buf.WriteString("  _child_pid=$(" + name + "_child_pid)\n")
+		buf.WriteString("  if [ -z \"${_child_pid}\" ]; then\n")
+		buf.WriteString("    return 1\n")
+		buf.WriteString("  fi\n")
+		buf.WriteString("  _parent_pid=$(ps -o ppid= -p \"${_child_pid}\" 2>/dev/null | tr -d ' ')\n")
+		buf.WriteString("  if [ -z \"${_parent_pid}\" ] || [ \"${_parent_pid}\" = \"1\" ]; then\n")
+		buf.WriteString("    return 1\n")
+		buf.WriteString("  fi\n")
+		buf.WriteString("  _parent_command=$(ps -o command= -p \"${_parent_pid}\" 2>/dev/null)\n")
+		buf.WriteString("  case \"${_parent_command}\" in\n")
+		buf.WriteString("  daemon:*|*/daemon*)\n")
+		buf.WriteString("    echo \"${_parent_pid}\"\n")
+		buf.WriteString("    return 0\n")
+		buf.WriteString("    ;;\n")
+		buf.WriteString("  esac\n")
+		buf.WriteString("  return 1\n")
+		buf.WriteString("}\n\n")
 		buf.WriteString(name + "_supervisor_pid() {\n")
-		buf.WriteString("  " + name + "_read_pidfile \"${pidfile}\"\n")
+		buf.WriteString("  " + name + "_read_pidfile \"${daemon_pidfile}\" || " + name + "_parent_daemon_pid\n")
 		buf.WriteString("}\n\n")
 		buf.WriteString(name + "_child_pid() {\n")
-		buf.WriteString("  " + name + "_read_pidfile \"${child_pidfile}\"\n")
+		buf.WriteString("  " + name + "_read_pidfile \"${child_pidfile}\" || " + name + "_pgrep_child\n")
+		buf.WriteString("}\n\n")
+		buf.WriteString(name + "_start() {\n")
+		buf.WriteString("  _child_pid=$(${name}_child_pid)\n")
+		buf.WriteString("  if [ -n \"${_child_pid}\" ]; then\n")
+		buf.WriteString("    echo \"${name} is already running as pid ${_child_pid}.\"\n")
+		buf.WriteString("    return 0\n")
+		buf.WriteString("  fi\n")
+		buf.WriteString("  echo \"Starting ${name}.\"\n")
+		buf.WriteString("  eval \"${daemon_command} ${daemon_args}\"\n")
+		buf.WriteString("  for _try in 1 2 3 4 5 6 7 8 9 10; do\n")
+		buf.WriteString("    if ${name}_child_pid >/dev/null 2>&1; then\n")
+		buf.WriteString("      return 0\n")
+		buf.WriteString("    fi\n")
+		buf.WriteString("    sleep 1\n")
+		buf.WriteString("  done\n")
+		buf.WriteString("  warn \"failed to start ${name}\"\n")
+		buf.WriteString("  return 1\n")
 		buf.WriteString("}\n\n")
 		buf.WriteString(name + "_stop() {\n")
 		buf.WriteString("  _supervisor_pid=$(${name}_supervisor_pid)\n")
@@ -593,8 +648,8 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 		buf.WriteString("  if [ -n \"${_supervisor_pid}\" ]; then kill \"${_supervisor_pid}\" 2>/dev/null || true; fi\n")
 		buf.WriteString("  if [ -n \"${_child_pid}\" ]; then kill \"${_child_pid}\" 2>/dev/null || true; fi\n")
 		buf.WriteString("  for _try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do\n")
-		buf.WriteString("    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_child_pid >/dev/null 2>&1; then\n")
-		buf.WriteString("      rm -f \"${pidfile}\" \"${child_pidfile}\"\n")
+		buf.WriteString("    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then\n")
+		buf.WriteString("      rm -f \"${daemon_pidfile}\" \"${child_pidfile}\"\n")
 		buf.WriteString("      return 0\n")
 		buf.WriteString("    fi\n")
 		buf.WriteString("    sleep 1\n")
@@ -605,8 +660,8 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 		buf.WriteString("  if [ -n \"${_supervisor_pid}\" ]; then kill -KILL \"${_supervisor_pid}\" 2>/dev/null || true; fi\n")
 		buf.WriteString("  if [ -n \"${_child_pid}\" ]; then kill -KILL \"${_child_pid}\" 2>/dev/null || true; fi\n")
 		buf.WriteString("  for _try in 1 2 3 4 5; do\n")
-		buf.WriteString("    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_child_pid >/dev/null 2>&1; then\n")
-		buf.WriteString("      rm -f \"${pidfile}\" \"${child_pidfile}\"\n")
+		buf.WriteString("    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then\n")
+		buf.WriteString("      rm -f \"${daemon_pidfile}\" \"${child_pidfile}\"\n")
 		buf.WriteString("      return 0\n")
 		buf.WriteString("    fi\n")
 		buf.WriteString("    sleep 1\n")
@@ -662,6 +717,31 @@ func freeBSDServiceName(value string) string {
 
 func FreeBSDServiceName(value string) string {
 	return freeBSDServiceName(value)
+}
+
+func freeBSDRCDPgrepPattern(args []string) string {
+	var parts []string
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
+		}
+		parts = append(parts, regexp.QuoteMeta(arg))
+		if len(parts) >= 5 {
+			break
+		}
+	}
+	return strings.Join(parts, " .*")
+}
+
+func freeBSDRCDExecPath(args []string) string {
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if arg != "" {
+			return arg
+		}
+	}
+	return ""
 }
 
 func sortedByteMapKeys(values map[string][]byte) []string {
