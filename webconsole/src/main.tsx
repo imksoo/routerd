@@ -299,6 +299,14 @@ type FirewallFilters = {
   protocol: string;
 };
 
+type EventFilters = {
+  query: string;
+  severity: string;
+  resourceKind: string;
+  range: string;
+  customHours: string;
+};
+
 type ClientRow = {
   id?: string;
   ip: string;
@@ -684,6 +692,16 @@ const useStyles = makeStyles({
     alignItems: "start",
     "@media (max-width: 900px)": {
       gridTemplateColumns: "1fr",
+    },
+  },
+  eventFilters: {
+    display: "grid",
+    gridTemplateColumns: "minmax(220px, 1.4fr) repeat(4, minmax(120px, 1fr))",
+    gap: "8px",
+    alignItems: "end",
+    marginBottom: "12px",
+    "@media (max-width: 900px)": {
+      gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
     },
   },
   firewallStack: {
@@ -1205,6 +1223,13 @@ function App() {
     port: "",
     protocol: "all",
   });
+  const [eventFilters, setEventFilters] = useState<EventFilters>({
+    query: "",
+    severity: "all",
+    resourceKind: "all",
+    range: "24h",
+    customHours: "24",
+  });
   const [selectedEventKey, setSelectedEventKey] = useState<string>("");
   const [metricSamples, setMetricSamples] = useState<MetricSample[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1212,7 +1237,7 @@ function App() {
   async function refresh() {
     try {
       const [summaryResponse, configResponse, generationResponse] = await Promise.all([
-        fetchJSON<Summary>("api/v1/summary?events=15&connections=240"),
+        fetchJSON<Summary>("api/v1/summary?events=200&connections=240"),
         config ? Promise.resolve(config) : fetchJSON<ConfigSnapshot>("api/v1/config"),
         fetchJSON<GenerationRecord[]>("api/v1/generations?limit=200"),
       ]);
@@ -1255,19 +1280,21 @@ function App() {
   const controllers = summary?.controllers ?? (summary?.status?.status?.controllers as ControllerStatus[] | undefined) ?? [];
   const dryRunControllers = useMemo(() => controllers.filter(controller => controller.mode === "dry-run"), [controllers]);
   const events = summary?.events ?? [];
+  const filteredEvents = useMemo(() => filterEvents(events, eventFilters), [events, eventFilters]);
+  const eventFacets = useMemo(() => eventFilterFacets(events), [events]);
   const firewallLogs = summary?.firewallLogs ?? [];
   const filteredFirewallLogs = useMemo(() => filterFirewallLogs(firewallLogs, firewallFilters), [firewallLogs, firewallFilters]);
   const firewallProtocols = useMemo(() => firewallProtocolFacets(firewallLogs), [firewallLogs]);
   const selectedEvent = useMemo(() => {
-    if (events.length === 0) return undefined;
-    return events.find(event => eventKey(event) === selectedEventKey) ?? events[0];
-  }, [events, selectedEventKey]);
+    if (filteredEvents.length === 0) return undefined;
+    return filteredEvents.find(event => eventKey(event) === selectedEventKey) ?? filteredEvents[0];
+  }, [filteredEvents, selectedEventKey]);
 
   useEffect(() => {
-    if (events.length > 0 && !events.some(event => eventKey(event) === selectedEventKey)) {
-      setSelectedEventKey(eventKey(events[0]));
+    if (filteredEvents.length > 0 && !filteredEvents.some(event => eventKey(event) === selectedEventKey)) {
+      setSelectedEventKey(eventKey(filteredEvents[0]));
     }
-  }, [events, selectedEventKey]);
+  }, [filteredEvents, selectedEventKey]);
 
   useEffect(() => {
     setConnectionPages({});
@@ -1643,8 +1670,43 @@ function App() {
             {selected === "events" ? (
               <div className={styles.eventsGrid}>
                 <Card id="events-list" className={styles.connectionAnchor}>
-                  <CardHeader header={<Text weight="semibold">Events</Text>} />
-                  <EventTable events={events} selectedKey={eventKey(selectedEvent)} onSelect={event => setSelectedEventKey(eventKey(event))} />
+                  <CardHeader header={<Text weight="semibold">Events</Text>} description={<Text className={styles.muted}>Showing {filteredEvents.length} of {events.length} bus events</Text>} />
+                  <div className={styles.eventFilters}>
+                    <div className={styles.filterControl}>
+                      <Text size={200} className={styles.muted}>Search</Text>
+                      <Input className={styles.filterInput} size="small" value={eventFilters.query} placeholder="topic, reason, message, resource" onChange={(_, data) => setEventFilters(current => ({ ...current, query: data.value }))} />
+                    </div>
+                    <div className={styles.filterControl}>
+                      <Text size={200} className={styles.muted}>Severity</Text>
+                      <Select size="small" value={eventFilters.severity} onChange={event => setEventFilters(current => ({ ...current, severity: event.target.value }))}>
+                        <option value="all">All</option>
+                        {eventFacets.severities.map(value => <option key={value} value={value}>{value}</option>)}
+                      </Select>
+                    </div>
+                    <div className={styles.filterControl}>
+                      <Text size={200} className={styles.muted}>Kind</Text>
+                      <Select size="small" value={eventFilters.resourceKind} onChange={event => setEventFilters(current => ({ ...current, resourceKind: event.target.value }))}>
+                        <option value="all">All</option>
+                        {eventFacets.kinds.map(value => <option key={value} value={value}>{value}</option>)}
+                      </Select>
+                    </div>
+                    <div className={styles.filterControl}>
+                      <Text size={200} className={styles.muted}>Range</Text>
+                      <Select size="small" value={eventFilters.range} onChange={event => setEventFilters(current => ({ ...current, range: event.target.value }))}>
+                        <option value="1h">Last 1h</option>
+                        <option value="6h">Last 6h</option>
+                        <option value="24h">Last 24h</option>
+                        <option value="custom">Custom</option>
+                      </Select>
+                    </div>
+                    {eventFilters.range === "custom" ? (
+                      <div className={styles.filterControl}>
+                        <Text size={200} className={styles.muted}>Hours</Text>
+                        <Input className={styles.filterInput} size="small" value={eventFilters.customHours} onChange={(_, data) => setEventFilters(current => ({ ...current, customHours: data.value }))} />
+                      </div>
+                    ) : null}
+                  </div>
+                  <EventTable events={filteredEvents} selectedKey={eventKey(selectedEvent)} onSelect={event => setSelectedEventKey(eventKey(event))} query={eventFilters.query} />
                 </Card>
                 <EventDetail event={selectedEvent} id="events-detail" />
               </div>
@@ -2185,7 +2247,7 @@ function Highlighted({ text, query }: { text: string; query: string }) {
   );
 }
 
-function EventTable({ events, selectedKey, onSelect }: { events: RouterEvent[]; selectedKey: string; onSelect: (event: RouterEvent) => void }) {
+function EventTable({ events, selectedKey, onSelect, query }: { events: RouterEvent[]; selectedKey: string; onSelect: (event: RouterEvent) => void; query?: string }) {
   const styles = useStyles();
   return (
     <div className={styles.tableWrap}>
@@ -2205,14 +2267,14 @@ function EventTable({ events, selectedKey, onSelect }: { events: RouterEvent[]; 
           </TableRow>
         </TableHeader>
         <TableBody>
-          {events.slice(0, 15).map(event => {
+          {events.slice(0, 100).map(event => {
             const key = eventKey(event);
             return (
               <TableRow key={key} className={key === selectedKey ? styles.eventRowSelected : undefined} onClick={() => onSelect(event)}>
                 <TableCell>{formatTime(event.createdAt)}</TableCell>
-                <TableCell>{event.severity ?? ""}</TableCell>
-                <TableCell><code className={styles.wrapCode}>{event.topic ?? event.type}</code></TableCell>
-                <TableCell>{resourceName(event)}</TableCell>
+                <TableCell><Highlighted text={event.severity ?? ""} query={query ?? ""} /></TableCell>
+                <TableCell><code className={styles.wrapCode}><Highlighted text={event.topic ?? event.type ?? ""} query={query ?? ""} /></code></TableCell>
+                <TableCell><Highlighted text={resourceName(event)} query={query ?? ""} /></TableCell>
               </TableRow>
             );
           })}
@@ -2970,6 +3032,58 @@ function dhcpLeaseMap(rows: DHCPLease[]) {
     if (row.ip) leases[row.ip] = row;
   }
   return leases;
+}
+
+function eventFilterFacets(events: RouterEvent[]) {
+  const severities = new Set<string>();
+  const kinds = new Set<string>();
+  for (const event of events) {
+    if (event.severity) severities.add(event.severity);
+    const kind = event.resourceKind || event.kind;
+    if (kind) kinds.add(kind);
+  }
+  return {
+    severities: Array.from(severities).sort(facetSort),
+    kinds: Array.from(kinds).sort(facetSort),
+  };
+}
+
+function filterEvents(events: RouterEvent[], filters: EventFilters) {
+  const query = filters.query.trim().toLowerCase();
+  const severity = filters.severity.trim();
+  const kind = filters.resourceKind.trim();
+  const since = eventRangeSince(filters);
+  return events.filter(event => {
+    if (since) {
+      const ts = Date.parse(event.createdAt ?? "");
+      if (Number.isNaN(ts) || ts < since) return false;
+    }
+    if (severity && severity !== "all" && event.severity !== severity) return false;
+    if (kind && kind !== "all" && (event.resourceKind || event.kind) !== kind) return false;
+    if (!query) return true;
+    return eventSearchText(event).includes(query);
+  });
+}
+
+function eventRangeSince(filters: EventFilters) {
+  const hours = filters.range === "custom" ? Number(filters.customHours) : Number(filters.range.replace(/h$/, ""));
+  if (!Number.isFinite(hours) || hours <= 0) return 0;
+  return Date.now() - hours * 60 * 60 * 1000;
+}
+
+function eventSearchText(event: RouterEvent) {
+  return [
+    event.severity,
+    event.topic,
+    event.type,
+    event.reason,
+    event.message,
+    event.resourceKind,
+    event.resourceName,
+    event.kind,
+    event.name,
+    JSON.stringify(event.attributes ?? {}),
+  ].filter(Boolean).join(" ").toLowerCase();
 }
 
 function firewallProtocolFacets(logs: FirewallLog[]) {
