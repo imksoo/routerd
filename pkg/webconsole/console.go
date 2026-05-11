@@ -1039,7 +1039,13 @@ func (h Handler) firewallLogList(filter logstore.FirewallLogFilter) ([]logstore.
 }
 
 func (h Handler) enrichTrafficFlowsWithDPI(flows []logstore.TrafficFlow, now time.Time, ttl time.Duration) ([]logstore.TrafficFlow, error) {
-	if len(flows) == 0 || strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+	if len(flows) == 0 {
+		return flows, nil
+	}
+	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+		for i := range flows {
+			applyTrafficFlowPortFallback(&flows[i])
+		}
 		return flows, nil
 	}
 	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
@@ -1060,6 +1066,7 @@ func (h Handler) enrichTrafficFlowsWithDPI(flows []logstore.TrafficFlow, now tim
 			return flows, err
 		}
 		if !ok {
+			applyTrafficFlowPortFallback(&flows[i])
 			continue
 		}
 		if flows[i].AppName == "" {
@@ -1077,12 +1084,19 @@ func (h Handler) enrichTrafficFlowsWithDPI(flows []logstore.TrafficFlow, now tim
 		if flows[i].ResolvedHostname == "" {
 			flows[i].ResolvedHostname = firstNonEmpty(dpiFlow.HTTPHost, dpiFlow.DNSQuery)
 		}
+		applyTrafficFlowPortFallback(&flows[i])
 	}
 	return flows, nil
 }
 
 func (h Handler) enrichConnectionsWithDPI(table *observe.ConnectionTable, now time.Time, ttl time.Duration) error {
-	if table == nil || len(table.Entries) == 0 || strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+	if table == nil || len(table.Entries) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+		for i := range table.Entries {
+			applyConnectionPortFallback(&table.Entries[i])
+		}
 		return nil
 	}
 	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
@@ -1103,6 +1117,7 @@ func (h Handler) enrichConnectionsWithDPI(table *observe.ConnectionTable, now ti
 			return err
 		}
 		if !ok {
+			applyConnectionPortFallback(entry)
 			continue
 		}
 		entry.AppName = flow.AppName
@@ -1111,8 +1126,123 @@ func (h Handler) enrichConnectionsWithDPI(table *observe.ConnectionTable, now ti
 		entry.TLSSNI = flow.TLSSNI
 		entry.HTTPHost = flow.HTTPHost
 		entry.DNSQuery = flow.DNSQuery
+		applyConnectionPortFallback(entry)
 	}
 	return nil
+}
+
+type portProtocolFallback struct {
+	app        string
+	category   string
+	confidence int
+}
+
+func applyTrafficFlowPortFallback(flow *logstore.TrafficFlow) {
+	if flow == nil || knownAppName(flow.AppName) {
+		return
+	}
+	if fallback, ok := portProtocolFallbackFor(flow.Protocol, flow.PeerPort, flow.ClientPort); ok {
+		flow.AppName = fallback.app
+		flow.AppCategory = fallback.category
+		flow.AppConfidence = fallback.confidence
+	}
+}
+
+func applyConnectionPortFallback(entry *observe.ConnectionEntry) {
+	if entry == nil || knownAppName(entry.AppName) {
+		return
+	}
+	if fallback, ok := portProtocolFallbackFor(entry.Protocol, atoiDefault(entry.Original.DestinationPort, 0), atoiDefault(entry.Original.SourcePort, 0)); ok {
+		entry.AppName = fallback.app
+		entry.AppCategory = fallback.category
+		entry.AppConfidence = fallback.confidence
+	}
+}
+
+func knownAppName(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value != "" && value != "unknown" && value != "unidentified"
+}
+
+func portProtocolFallbackFor(protocol string, primaryPort, secondaryPort int) (portProtocolFallback, bool) {
+	transport := strings.ToLower(strings.TrimSpace(protocol))
+	for _, port := range []int{primaryPort, secondaryPort} {
+		if fallback, ok := portProtocolFallbackByPort(transport, port); ok {
+			return fallback, true
+		}
+	}
+	return portProtocolFallback{}, false
+}
+
+func portProtocolFallbackByPort(protocol string, port int) (portProtocolFallback, bool) {
+	if port <= 0 {
+		return portProtocolFallback{}, false
+	}
+	confidence := 40
+	category := "port-fallback"
+	switch port {
+	case 20, 21:
+		return portProtocolFallback{app: "ftp", category: category, confidence: confidence}, true
+	case 22:
+		return portProtocolFallback{app: "ssh", category: category, confidence: confidence}, true
+	case 25, 465, 587:
+		return portProtocolFallback{app: "smtp", category: category, confidence: confidence}, true
+	case 53:
+		return portProtocolFallback{app: "dns", category: category, confidence: confidence}, true
+	case 67, 68:
+		if protocol == "udp" {
+			return portProtocolFallback{app: "dhcp", category: category, confidence: confidence}, true
+		}
+	case 80, 8080, 8000, 8888:
+		return portProtocolFallback{app: "http", category: category, confidence: confidence}, true
+	case 110, 995:
+		return portProtocolFallback{app: "pop3", category: category, confidence: confidence}, true
+	case 123:
+		if protocol == "udp" {
+			return portProtocolFallback{app: "ntp", category: category, confidence: confidence}, true
+		}
+	case 137, 138:
+		if protocol == "udp" {
+			return portProtocolFallback{app: "netbios", category: category, confidence: confidence}, true
+		}
+	case 139, 445:
+		return portProtocolFallback{app: "smb", category: category, confidence: confidence}, true
+	case 143, 993:
+		return portProtocolFallback{app: "imap", category: category, confidence: confidence}, true
+	case 443, 8443:
+		return portProtocolFallback{app: "tls", category: category, confidence: confidence}, true
+	case 500, 4500:
+		if protocol == "udp" {
+			return portProtocolFallback{app: "ipsec", category: category, confidence: confidence}, true
+		}
+	case 853:
+		return portProtocolFallback{app: "dns", category: category, confidence: confidence}, true
+	case 1900:
+		if protocol == "udp" {
+			return portProtocolFallback{app: "ssdp", category: category, confidence: confidence}, true
+		}
+	case 3306:
+		return portProtocolFallback{app: "mysql", category: category, confidence: confidence}, true
+	case 3389:
+		return portProtocolFallback{app: "rdp", category: category, confidence: confidence}, true
+	case 3478, 5349:
+		return portProtocolFallback{app: "stun", category: category, confidence: confidence}, true
+	case 5353:
+		if protocol == "udp" {
+			return portProtocolFallback{app: "mdns", category: category, confidence: confidence}, true
+		}
+	case 5355:
+		if protocol == "udp" {
+			return portProtocolFallback{app: "llmnr", category: category, confidence: confidence}, true
+		}
+	case 5432:
+		return portProtocolFallback{app: "postgresql", category: category, confidence: confidence}, true
+	case 51820:
+		if protocol == "udp" {
+			return portProtocolFallback{app: "wireguard", category: category, confidence: confidence}, true
+		}
+	}
+	return portProtocolFallback{}, false
 }
 
 func (h Handler) dhcpLeaseList() ([]DHCPLease, error) {

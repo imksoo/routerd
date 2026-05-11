@@ -799,6 +799,26 @@ const useStyles = makeStyles({
     borderRadius: "999px",
     backgroundColor: tokens.colorBrandBackground,
   },
+  classificationStack: {
+    display: "grid",
+    gap: "6px",
+  },
+  classificationMeter: {
+    display: "flex",
+    height: "8px",
+    borderRadius: "999px",
+    overflow: "hidden",
+    backgroundColor: tokens.colorNeutralBackground5,
+  },
+  classificationSegmentDPI: {
+    backgroundColor: "#54b054",
+  },
+  classificationSegmentGuess: {
+    backgroundColor: "#60cdff",
+  },
+  classificationSegmentUnknown: {
+    backgroundColor: "#6b7280",
+  },
   chartSvg: {
     width: "100%",
     height: "86px",
@@ -1986,6 +2006,7 @@ function App() {
                 );
               })}
             </div>
+            <ConnectionClassificationSummary entries={filteredConnections} />
             <ConnectionSummaryCharts groups={connectionGroupsList} />
             <div className={styles.connectionFilters}>
               <SearchControl label="Filter" value={connectionFilters.query} placeholder="address, port, state, label" onChange={value => updateConnectionFilter("query", value)} />
@@ -2524,8 +2545,13 @@ function OverviewDPIInsights({ flows, clients, connections }: { flows: TrafficFl
   const talkers = topTalkers(clients, flows);
   const domains = topDomains(flows);
   const classes = connectionClassSummary(connections?.entries ?? []);
+  const classification = connectionClassificationStats(connections?.entries ?? []);
   return (
     <div id="overview-dpi" className={`${styles.dpiInsightGrid} ${styles.connectionAnchor}`}>
+      <Card className={styles.chartCard}>
+        <CardHeader header={<Text weight="semibold">Classification</Text>} description={<Text className={styles.muted}>Active flow identification ratio from DPI and port fallback</Text>} />
+        <ConnectionClassificationMeter stats={classification} />
+      </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top protocols</Text>} description={<Text className={styles.muted}>DPI protocol mix from recent observed flows</Text>} />
         <RankList rows={protocols} empty="No DPI protocol data" formatLabel={formatConnectionApp} formatValue={formatBytes} />
@@ -2633,6 +2659,53 @@ function ConnectionSummaryCharts({ groups }: { groups: { key: string; rows: Conn
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function ConnectionClassificationSummary({ entries }: { entries: ConnectionEntry[] }) {
+  const styles = useStyles();
+  const stats = connectionClassificationStats(entries);
+  return (
+    <div className={styles.connectionSummaryGrid}>
+      <div className={styles.connectionSummaryCard}>
+        <div className={styles.interfaceHeader}>
+          <Text weight="semibold">Classification</Text>
+          <Badge appearance="tint" color={stats.classifiedRatio >= 70 ? "success" : stats.classifiedRatio >= 40 ? "warning" : "danger"}>
+            {stats.classifiedRatio}%
+          </Badge>
+        </div>
+        <ConnectionClassificationMeter stats={stats} />
+      </div>
+      <div className={styles.connectionSummaryCard}>
+        <Text weight="semibold">Identified</Text>
+        <div className={styles.badges}>
+          <Badge appearance="tint" color="success">DPI {stats.dpi}</Badge>
+          <Badge appearance="tint" color="brand">Port guess {stats.guessed}</Badge>
+          <Badge appearance="outline" color="subtle">Unclassified {stats.unclassified}</Badge>
+        </div>
+        <Text size={200} className={styles.muted}>{stats.classified} of {stats.total} active rows carry a protocol label</Text>
+      </div>
+    </div>
+  );
+}
+
+function ConnectionClassificationMeter({ stats }: { stats: ConnectionClassificationStats }) {
+  const styles = useStyles();
+  const total = Math.max(1, stats.total);
+  const dpiWidth = (stats.dpi / total) * 100;
+  const guessWidth = (stats.guessed / total) * 100;
+  const unknownWidth = Math.max(0, 100 - dpiWidth - guessWidth);
+  return (
+    <div className={styles.classificationStack}>
+      <div className={styles.classificationMeter} aria-label={`classified ${stats.classifiedRatio}%`}>
+        <div className={styles.classificationSegmentDPI} style={{ width: `${dpiWidth}%` }} />
+        <div className={styles.classificationSegmentGuess} style={{ width: `${guessWidth}%` }} />
+        <div className={styles.classificationSegmentUnknown} style={{ width: `${unknownWidth}%` }} />
+      </div>
+      <Text size={200} className={styles.muted}>
+        Classified {stats.classified}/{stats.total} / DPI {stats.dpi} / Port guess {stats.guessed} / Unclassified {stats.unclassified}
+      </Text>
     </div>
   );
 }
@@ -3070,6 +3143,7 @@ function ConnectionDPI({ entry }: { entry: ConnectionEntry }) {
   const styles = useStyles();
   const app = connectionApp(entry);
   const detail = connectionDPIDetail(entry);
+  const source = connectionAppSource(entry);
   if (app === "unidentified" && !detail) {
     return <Text className={styles.muted}>-</Text>;
   }
@@ -3077,10 +3151,12 @@ function ConnectionDPI({ entry }: { entry: ConnectionEntry }) {
     <div className={styles.connectionFlow}>
       <div className={styles.badges}>
         <Badge appearance="tint" color={connectionAppColor(app)}>{formatConnectionApp(app)}</Badge>
+        {source === "dpi" ? <Badge appearance="outline" color="success">DPI</Badge> : null}
+        {source === "port-fallback" ? <Badge appearance="outline" color="brand">Port guess</Badge> : null}
         {entry.appConfidence ? <Badge appearance="outline">{entry.appConfidence}%</Badge> : null}
       </div>
       {detail ? <code className={styles.wrapCode}>{detail}</code> : null}
-      {entry.appCategory ? <Text size={200} className={styles.muted}>{entry.appCategory}</Text> : null}
+      {entry.appCategory && entry.appCategory !== "port-fallback" ? <Text size={200} className={styles.muted}>{entry.appCategory}</Text> : null}
     </div>
   );
 }
@@ -4123,6 +4199,7 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
     entry.mark,
     connectionApp(entry),
     connectionDPIDetail(entry),
+    connectionAppSource(entry),
     entry.appCategory,
     entry.appConfidence,
     endpoint(entry.original),
@@ -4157,13 +4234,17 @@ function formatFacet(value: string) {
 }
 
 function connectionApp(entry: ConnectionEntry) {
-  return normalizeFacet(entry.appName, "unidentified");
+  const app = normalizeFacet(entry.appName, "");
+  if (app && app !== "unknown" && app !== "unidentified") return app;
+  return connectionPortFallback(entry)?.app ?? "unidentified";
 }
 
 function connectionDPIDetail(entry: ConnectionEntry) {
   if (entry.tlsSNI) return `TLS-SNI=${entry.tlsSNI}`;
   if (entry.httpHost) return `HTTP-Host=${entry.httpHost}`;
   if (entry.dnsQuery) return `${connectionApp(entry) === "netbios" ? "NBNS-query" : "DNS-query"}=${entry.dnsQuery}`;
+  const fallback = connectionPortFallback(entry);
+  if (fallback) return `port ${fallback.port}/${normalizeFacet(entry.protocol, "other")} guess`;
   return "";
 }
 
@@ -4173,6 +4254,17 @@ function formatConnectionApp(value: string) {
   if (value === "http") return "HTTP";
   if (value === "dns") return "DNS";
   if (value === "netbios") return "NetBIOS";
+  if (value === "ssh") return "SSH";
+  if (value === "smb") return "SMB";
+  if (value === "ntp") return "NTP";
+  if (value === "dhcp") return "DHCP";
+  if (value === "mdns") return "mDNS";
+  if (value === "llmnr") return "LLMNR";
+  if (value === "ssdp") return "SSDP";
+  if (value === "ipsec") return "IPsec";
+  if (value === "wireguard") return "WireGuard";
+  if (value === "stun") return "STUN";
+  if (value === "rdp") return "RDP";
   return value.toUpperCase();
 }
 
@@ -4180,12 +4272,14 @@ function connectionAppColor(value: string): "brand" | "danger" | "informative" |
   if (value === "tls" || value === "http") return "brand";
   if (value === "dns") return "success";
   if (value === "netbios") return "warning";
+  if (value === "ssh" || value === "rdp") return "danger";
+  if (value === "smb" || value === "ipsec" || value === "wireguard") return "informative";
   if (value === "unidentified") return "subtle";
   return "informative";
 }
 
 function connectionClass(entry: ConnectionEntry) {
-  if (connectionApp(entry) !== "unidentified") return "dpi identified";
+  if (connectionApp(entry) !== "unidentified") return connectionAppSource(entry) === "port-fallback" ? "port guess" : "dpi identified";
   const state = normalizeFacet(entry.state, "stateless");
   if (entry.assured || state.includes("established")) return "established";
   if (state.includes("syn") || state.includes("unreplied")) return "probe";
@@ -4195,9 +4289,132 @@ function connectionClass(entry: ConnectionEntry) {
 function connectionClassColor(entry: ConnectionEntry): "brand" | "danger" | "informative" | "severe" | "subtle" | "success" | "warning" {
   const cls = connectionClass(entry);
   if (cls === "dpi identified") return "success";
+  if (cls === "port guess") return "informative";
   if (cls === "probe") return "warning";
   if (cls === "established") return "brand";
   return "subtle";
+}
+
+type ConnectionPortFallback = {
+  app: string;
+  port: string;
+};
+
+type ConnectionClassificationStats = {
+  total: number;
+  classified: number;
+  dpi: number;
+  guessed: number;
+  unclassified: number;
+  classifiedRatio: number;
+};
+
+function connectionAppSource(entry: ConnectionEntry) {
+  if (normalizeFacet(entry.appCategory, "") === "port-fallback") return "port-fallback";
+  const raw = normalizeFacet(entry.appName, "");
+  if (raw && raw !== "unknown" && raw !== "unidentified") return "dpi";
+  return connectionPortFallback(entry) ? "port-fallback" : "none";
+}
+
+function connectionPortFallback(entry: ConnectionEntry): ConnectionPortFallback | undefined {
+  const raw = normalizeFacet(entry.appName, "");
+  if (raw && raw !== "unknown" && raw !== "unidentified") return undefined;
+  const protocol = normalizeFacet(entry.protocol, "");
+  const ports = [entry.original?.destinationPort, entry.original?.sourcePort].filter(Boolean) as string[];
+  for (const port of ports) {
+    const app = portProtocolFallback(protocol, port);
+    if (app) return { app, port };
+  }
+  return undefined;
+}
+
+function portProtocolFallback(protocol: string, port: string) {
+  const numeric = Number(port);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "";
+  switch (numeric) {
+    case 20:
+    case 21:
+      return "ftp";
+    case 22:
+      return "ssh";
+    case 25:
+    case 465:
+    case 587:
+      return "smtp";
+    case 53:
+    case 853:
+      return "dns";
+    case 67:
+    case 68:
+      return protocol === "udp" ? "dhcp" : "";
+    case 80:
+    case 8000:
+    case 8080:
+    case 8888:
+      return "http";
+    case 110:
+    case 995:
+      return "pop3";
+    case 123:
+      return protocol === "udp" ? "ntp" : "";
+    case 137:
+    case 138:
+      return protocol === "udp" ? "netbios" : "";
+    case 139:
+    case 445:
+      return "smb";
+    case 143:
+    case 993:
+      return "imap";
+    case 443:
+    case 8443:
+      return "tls";
+    case 500:
+    case 4500:
+      return protocol === "udp" ? "ipsec" : "";
+    case 1900:
+      return protocol === "udp" ? "ssdp" : "";
+    case 3306:
+      return "mysql";
+    case 3389:
+      return "rdp";
+    case 3478:
+    case 5349:
+      return "stun";
+    case 5353:
+      return protocol === "udp" ? "mdns" : "";
+    case 5355:
+      return protocol === "udp" ? "llmnr" : "";
+    case 5432:
+      return "postgresql";
+    case 51820:
+      return protocol === "udp" ? "wireguard" : "";
+    default:
+      return "";
+  }
+}
+
+function connectionClassificationStats(entries: ConnectionEntry[]): ConnectionClassificationStats {
+  const stats: ConnectionClassificationStats = {
+    total: entries.length,
+    classified: 0,
+    dpi: 0,
+    guessed: 0,
+    unclassified: 0,
+    classifiedRatio: 0,
+  };
+  for (const entry of entries) {
+    const app = connectionApp(entry);
+    if (app === "unidentified") {
+      stats.unclassified++;
+      continue;
+    }
+    stats.classified++;
+    if (connectionAppSource(entry) === "port-fallback") stats.guessed++;
+    else stats.dpi++;
+  }
+  stats.classifiedRatio = stats.total ? Math.round((stats.classified / stats.total) * 100) : 0;
+  return stats;
 }
 
 function topTrafficProtocols(flows: TrafficFlow[]) {
