@@ -51,11 +51,13 @@ import (
 	routerstate "routerd/pkg/state"
 	statuswriter "routerd/pkg/status"
 	"routerd/pkg/sysctlprofile"
+	routerversion "routerd/pkg/version"
 	"routerd/pkg/webconsole"
 )
 
+var version = routerversion.Version
+
 const (
-	version               = "v20260511.1240"
 	routerdDnsmasqService = "routerd-dnsmasq.service"
 	freebsdSysrcStateKey  = "freebsd.applyFreeBSDConfig.lastSysrcKeys"
 )

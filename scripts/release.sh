@@ -114,8 +114,7 @@ replace_version() {
 }
 
 replace_version Makefile
-replace_version cmd/routerd/main.go
-replace_version cmd/routerctl/main.go
+replace_version pkg/version/version.go
 replace_version docs/install-and-upgrade.md
 replace_version website/i18n/ja/docusaurus-plugin-content-docs/current/install-and-upgrade.md
 

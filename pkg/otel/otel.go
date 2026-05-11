@@ -6,8 +6,11 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 	"time"
+
+	"routerd/pkg/version"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
@@ -49,9 +52,7 @@ func Setup(ctx context.Context, serviceName string, attrs ...attribute.KeyValue)
 		return runtime, nil
 	}
 
-	res := resource.NewWithAttributes(semconv.SchemaURL, append([]attribute.KeyValue{
-		semconv.ServiceName(serviceName),
-	}, attrs...)...)
+	res := resource.NewWithAttributes(semconv.SchemaURL, resourceAttributes(serviceName, attrs...)...)
 
 	if signalEnabled("logs") {
 		logExporter, err := otlploggrpc.New(ctx)
@@ -98,6 +99,57 @@ func Setup(ctx context.Context, serviceName string, attrs ...attribute.KeyValue)
 	}
 	runtime.Enabled = true
 	return runtime, nil
+}
+
+func resourceAttributes(serviceName string, attrs ...attribute.KeyValue) []attribute.KeyValue {
+	hostName, _ := os.Hostname()
+	values := []attribute.KeyValue{
+		semconv.ServiceName(serviceName),
+		semconv.ServiceVersion(version.Version),
+		semconv.OSTypeKey.String(runtime.GOOS),
+		attribute.String("routerd.service.name", serviceName),
+		attribute.String("routerd.version", version.Version),
+	}
+	if hostName != "" {
+		values = append(values, semconv.HostName(hostName))
+	}
+	if namespace := strings.TrimSpace(os.Getenv("OTEL_SERVICE_NAMESPACE")); namespace != "" {
+		values = append(values, semconv.ServiceNamespace(namespace))
+	}
+	values = append(values, parseResourceAttributes(os.Getenv("OTEL_RESOURCE_ATTRIBUTES"))...)
+	values = append(values, attrs...)
+	return dedupeAttributes(values)
+}
+
+func parseResourceAttributes(raw string) []attribute.KeyValue {
+	var out []attribute.KeyValue
+	for _, field := range strings.Split(raw, ",") {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(field, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			continue
+		}
+		out = append(out, attribute.String(key, strings.TrimSpace(value)))
+	}
+	return out
+}
+
+func dedupeAttributes(values []attribute.KeyValue) []attribute.KeyValue {
+	last := map[attribute.Key]int{}
+	out := make([]attribute.KeyValue, 0, len(values))
+	for _, value := range values {
+		if idx, ok := last[value.Key]; ok {
+			out[idx] = value
+			continue
+		}
+		last[value.Key] = len(out)
+		out = append(out, value)
+	}
+	return out
 }
 
 func signalEnabled(signal string) bool {

@@ -30,11 +30,12 @@ import (
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
+	routerversion "routerd/pkg/version"
 )
 
 var platformDefaults, _ = platform.Current()
 
-const version = "v20260511.1240"
+var version = routerversion.Version
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
