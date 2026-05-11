@@ -144,6 +144,96 @@ func TestPFSkipsRedundantSelfHolesWhenZoneAlreadyAcceptsSelf(t *testing.T) {
 	}
 }
 
+func TestPFClientPolicyUsesIPv4Reservations(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"},
+			Metadata: api.ObjectMeta{Name: "guest-phone"},
+			Spec:     api.DHCPv4ReservationSpec{MACAddress: "02:00:00:00:00:44", IPAddress: "192.168.160.184"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.FirewallPolicySpec{LogDeny: true},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+			Metadata: api.ObjectMeta{Name: "guest-devices"},
+			Spec: api.ClientPolicySpec{
+				Mode:          "include",
+				Interfaces:    []string{"lan"},
+				GuestServices: []string{"dns", "dhcp", "ntp"},
+				Classification: []api.ClientPolicyClassSpec{{
+					MACAddress:      "02:00:00:00:00:44",
+					As:              "guest",
+					IPv4Reservation: "guest-phone",
+				}},
+			},
+		},
+	}}}
+	data, err := PF(router, nil)
+	if err != nil {
+		t.Fatalf("render pf: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`pass in quick on vtnet1 proto udp from 192.168.160.184 to self port 53 keep state label "routerd:client-policy:guest-devices:dns"`,
+		`pass in quick on vtnet1 proto udp from 192.168.160.184 to self port 67 keep state label "routerd:client-policy:guest-devices:dhcp"`,
+		`block drop in log quick on vtnet1 from 192.168.160.184 to 192.168.0.0/16 label "routerd:client-policy:guest-devices:deny"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("pf output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `192.168.160.184 to fc00::/7`) {
+		t.Fatalf("pf output must not combine IPv4 client addresses with IPv6 deny CIDRs:\n%s", got)
+	}
+	if strings.Contains(got, `dhcpv6-server`) {
+		t.Fatalf("pf output must not render DHCPv6 service holes for IPv4-only ClientPolicy reservations:\n%s", got)
+	}
+}
+
+func TestPFClientPolicyRequiresReservation(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+			Metadata: api.ObjectMeta{Name: "guest-devices"},
+			Spec: api.ClientPolicySpec{
+				Mode:       "include",
+				Interfaces: []string{"lan"},
+				Classification: []api.ClientPolicyClassSpec{{
+					MACAddress: "02:00:00:00:00:44",
+					As:         "guest",
+				}},
+			},
+		},
+	}}}
+	_, err := PF(router, nil)
+	if err == nil || !strings.Contains(err.Error(), "needs ipv4Reservation") {
+		t.Fatalf("expected ipv4Reservation error, got %v", err)
+	}
+}
+
 func TestPFInternalWANHolesUseOwningInterface(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

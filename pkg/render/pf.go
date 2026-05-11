@@ -24,6 +24,7 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	var policies []api.Resource
 	var logs []api.Resource
 	var rules []api.Resource
+	var clientPolicies []api.Resource
 	mssPolicies, err := pathMTUMSSPolicies(router)
 	if err != nil {
 		return nil, err
@@ -52,7 +53,7 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 			}
 		case "ClientPolicy":
 			if res.APIVersion == api.FirewallAPIVersion {
-				return nil, fmt.Errorf("%s is not supported by the FreeBSD pf renderer; use Linux nftables for MAC-based guest isolation", res.ID())
+				clientPolicies = append(clientPolicies, res)
 			}
 		}
 	}
@@ -65,8 +66,13 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	sort.Slice(policies, func(i, j int) bool { return policies[i].Metadata.Name < policies[j].Metadata.Name })
 	sort.Slice(logs, func(i, j int) bool { return logs[i].Metadata.Name < logs[j].Metadata.Name })
 	sort.Slice(rules, func(i, j int) bool { return rules[i].Metadata.Name < rules[j].Metadata.Name })
+	sort.Slice(clientPolicies, func(i, j int) bool { return clientPolicies[i].Metadata.Name < clientPolicies[j].Metadata.Name })
 
 	zoneMap, err := nftFirewallZones(aliases, zones)
+	if err != nil {
+		return nil, err
+	}
+	pfClientPolicies, err := pfClientPolicies(router, aliases, clientPolicies)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +99,7 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	}
 	filterRequested := len(zoneMap) > 0 || len(rules) > 0 || len(holes) > 0 || len(logs) > 0
 	if filterRequested {
-		if err := writePFFilter(&buf, zoneMap, rules, holes, policy, logging); err != nil {
+		if err := writePFFilter(&buf, zoneMap, rules, holes, pfClientPolicies, policy, logging); err != nil {
 			return nil, err
 		}
 	} else {
@@ -300,7 +306,94 @@ func pfIPv4AddressSet(resourceID, label string, cidrs []string) (string, error) 
 	return "{ " + strings.Join(values, ", ") + " }", nil
 }
 
-func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api.Resource, holes []FirewallHole, policy firewallPolicy, logging firewallLogging) error {
+type pfClientPolicy struct {
+	Name          string
+	Mode          string
+	IfNames       []string
+	Addresses     []string
+	GuestServices []string
+	EgressDeny    []string
+	EgressAllow   []string
+}
+
+func pfClientPolicies(router *api.Router, aliases map[string]string, resources []api.Resource) ([]pfClientPolicy, error) {
+	reservations := map[string]api.DHCPv4ReservationSpec{}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "DHCPv4Reservation" {
+			continue
+		}
+		spec, err := res.DHCPv4ReservationSpec()
+		if err != nil {
+			return nil, err
+		}
+		reservations["DHCPv4Reservation/"+res.Metadata.Name] = spec
+		reservations[res.Metadata.Name] = spec
+	}
+	var out []pfClientPolicy
+	for _, res := range resources {
+		spec, err := res.ClientPolicySpec()
+		if err != nil {
+			return nil, err
+		}
+		var ifnames []string
+		for _, iface := range spec.Interfaces {
+			ref := iface
+			if kind, name, ok := strings.Cut(iface, "/"); ok {
+				if kind != "Interface" {
+					return nil, fmt.Errorf("%s references unsupported client policy interface %q", res.ID(), iface)
+				}
+				ref = name
+			}
+			ifname := aliases[ref]
+			if ifname == "" {
+				return nil, fmt.Errorf("%s references interface with empty ifname %q", res.ID(), iface)
+			}
+			ifnames = append(ifnames, ifname)
+		}
+		sort.Strings(ifnames)
+		policy := pfClientPolicy{
+			Name:          res.Metadata.Name,
+			Mode:          spec.Mode,
+			IfNames:       compactStrings(ifnames),
+			GuestServices: clientPolicyGuestServices(spec.GuestServices),
+			EgressDeny:    pfIPv4ClientPolicyCIDRs(clientPolicyEgressCIDRs(spec.GuestEgressDeny, []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"})),
+			EgressAllow:   clientPolicyEgressCIDRs(spec.GuestEgressAllow, nil),
+		}
+		for _, entry := range spec.Classification {
+			if entry.IPv4Reservation == "" {
+				if entry.As == "guest" || (spec.Mode == "include" && entry.As == "") {
+					return nil, fmt.Errorf("%s classification %q needs ipv4Reservation on FreeBSD because pf cannot match client MAC addresses", res.ID(), entry.MACAddress)
+				}
+				continue
+			}
+			reservation, ok := reservations[entry.IPv4Reservation]
+			if !ok {
+				return nil, fmt.Errorf("%s references unknown DHCPv4 reservation %q", res.ID(), entry.IPv4Reservation)
+			}
+			if reservation.IPAddress == "" {
+				return nil, fmt.Errorf("%s references DHCPv4 reservation %q with empty ipAddress", res.ID(), entry.IPv4Reservation)
+			}
+			switch spec.Mode {
+			case "include":
+				if entry.As == "" || entry.As == "guest" {
+					policy.Addresses = append(policy.Addresses, reservation.IPAddress)
+				}
+			case "exclude":
+				if entry.As == "" || entry.As == "trusted" {
+					policy.Addresses = append(policy.Addresses, reservation.IPAddress)
+				}
+			default:
+				return nil, fmt.Errorf("%s has unsupported client policy mode %q", res.ID(), spec.Mode)
+			}
+		}
+		sort.Strings(policy.Addresses)
+		policy.Addresses = compactStrings(policy.Addresses)
+		out = append(out, policy)
+	}
+	return out, nil
+}
+
+func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api.Resource, holes []FirewallHole, clientPolicies []pfClientPolicy, policy firewallPolicy, logging firewallLogging) error {
 	buf.WriteString("block drop all\n")
 	buf.WriteString("pass quick on lo0 all\n")
 	buf.WriteString("pass out quick all keep state\n")
@@ -332,10 +425,20 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 				buf.WriteString(pfFirewallRuleExpr(zone, res.Metadata.Name, spec, logging) + "\n")
 			}
 		}
+		for _, clientPolicy := range clientPolicies {
+			for _, expr := range pfClientPolicyInputExprs(zone, clientPolicy, logging) {
+				buf.WriteString(expr + "\n")
+			}
+		}
 	}
 	for _, from := range sortedFirewallZones(zones) {
 		if len(from.IfNames) == 0 {
 			continue
+		}
+		for _, clientPolicy := range clientPolicies {
+			for _, expr := range pfClientPolicyForwardExprs(from, clientPolicy, logging) {
+				buf.WriteString(expr + "\n")
+			}
 		}
 		if err := writePFDisallowedForwardDestinations(buf, from, zones, policy); err != nil {
 			return err
@@ -385,6 +488,105 @@ func writePFDisallowedForwardDestinations(buf *bytes.Buffer, from firewallZone, 
 		}
 	}
 	return nil
+}
+
+func pfClientPolicyInputExprs(zone firewallZone, policy pfClientPolicy, logging firewallLogging) []string {
+	if len(policy.Addresses) == 0 || !pfClientPolicyAppliesToZone(zone, policy) {
+		return nil
+	}
+	match := pfClientPolicySourceMatch(policy)
+	if match == "" {
+		return nil
+	}
+	var exprs []string
+	for _, ifname := range policy.IfNames {
+		onExpr := ifname
+		if stringInSlice("dns", policy.GuestServices) {
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "udp", 53, "dns", logging))
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "tcp", 53, "dns", logging))
+		}
+		if stringInSlice("dhcp", policy.GuestServices) {
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "udp", 67, "dhcp", logging))
+		}
+		if stringInSlice("ntp", policy.GuestServices) {
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "udp", 123, "ntp", logging))
+		}
+		if stringInSlice("mdns", policy.GuestServices) {
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "udp", 5353, "mdns", logging))
+		}
+		if stringInSlice("ssdp", policy.GuestServices) {
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "udp", 1900, "ssdp", logging))
+		}
+		exprs = append(exprs, "block drop in "+pfLogExpr(logging)+" quick on "+onExpr+" from "+match+" to self label "+pfQuote("routerd:client-policy:"+policy.Name+":self-deny"))
+	}
+	return exprs
+}
+
+func pfClientPolicyForwardExprs(zone firewallZone, policy pfClientPolicy, logging firewallLogging) []string {
+	if len(policy.Addresses) == 0 || !pfClientPolicyAppliesToZone(zone, policy) {
+		return nil
+	}
+	match := pfClientPolicySourceMatch(policy)
+	if match == "" {
+		return nil
+	}
+	var exprs []string
+	for _, ifname := range policy.IfNames {
+		onExpr := ifname
+		for _, cidr := range policy.EgressAllow {
+			exprs = append(exprs, "pass in quick on "+onExpr+" from "+match+" to "+cidr+" keep state label "+pfQuote("routerd:client-policy:"+policy.Name+":allow"))
+		}
+		for _, cidr := range policy.EgressDeny {
+			exprs = append(exprs, "block drop in "+pfLogExpr(logging)+" quick on "+onExpr+" from "+match+" to "+cidr+" label "+pfQuote("routerd:client-policy:"+policy.Name+":deny"))
+		}
+	}
+	return exprs
+}
+
+func pfClientPolicyAppliesToZone(zone firewallZone, policy pfClientPolicy) bool {
+	for _, zoneIfname := range zone.IfNames {
+		if stringInSlice(zoneIfname, policy.IfNames) {
+			return true
+		}
+	}
+	return false
+}
+
+func pfClientPolicySourceMatch(policy pfClientPolicy) string {
+	addresses := append([]string(nil), policy.Addresses...)
+	sort.Strings(addresses)
+	if policy.Mode == "exclude" {
+		if len(addresses) == 0 {
+			return "any"
+		}
+		return "! " + pfAddressSet(addresses)
+	}
+	if len(addresses) == 0 {
+		return ""
+	}
+	return pfAddressSet(addresses)
+}
+
+func pfAddressSet(values []string) string {
+	if len(values) == 1 {
+		return values[0]
+	}
+	return "{ " + strings.Join(values, ", ") + " }"
+}
+
+func pfIPv4ClientPolicyCIDRs(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.Contains(value, ":") {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+func pfClientPolicyServiceExpr(onExpr, name, source, proto string, port int, service string, logging firewallLogging) string {
+	return "pass in quick on " + onExpr + " proto " + proto + " from " + source + " to self port " + strconv.Itoa(port) + " keep state label " + pfQuote("routerd:client-policy:"+name+":"+service)
 }
 
 func pfCanRenderBroadForwardPass(from, to firewallZone) bool {

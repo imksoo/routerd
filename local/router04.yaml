@@ -1169,6 +1169,24 @@ spec:
       spec:
         logDeny: true
 
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: ClientPolicy
+      metadata:
+        name: lab-guest-devices
+      spec:
+        mode: include
+        interfaces:
+          - Interface/lan
+        classification:
+          - macAddress: "02:00:00:00:04:10"
+            as: guest
+            name: router04-lab-client
+            ipv4Reservation: lab-client
+        guestServices:
+          - dns
+          - dhcp
+          - ntp
+
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardInterface
       metadata:
