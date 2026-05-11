@@ -25,15 +25,26 @@ import {
 import {
   ArrowClockwiseRegular,
   ArrowUpRegular,
+  CameraRegular,
   ChevronDownRegular,
   ChevronRightRegular,
+  DatabaseRegular,
+  DesktopRegular,
   DocumentTextRegular,
+  GamesRegular,
   HomeRegular,
+  LaptopRegular,
   NavigationRegular,
   PeopleRegular,
+  PhoneRegular,
   PlugConnectedRegular,
+  PrintRegular,
   ServerRegular,
   ShieldRegular,
+  Speaker2Regular,
+  TabletRegular,
+  TvRegular,
+  VehicleCarRegular,
 } from "@fluentui/react-icons";
 import { parseDocument } from "yaml";
 import "./styles.css";
@@ -904,9 +915,48 @@ const useStyles = makeStyles({
     justifyContent: "space-between",
     gap: "8px",
   },
+  clientSectionToggle: {
+    appearance: "none",
+    border: 0,
+    padding: 0,
+    margin: 0,
+    background: "transparent",
+    color: "inherit",
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "8px",
+    textAlign: "left",
+    cursor: "pointer",
+    minWidth: 0,
+    "@media (min-width: 861px)": {
+      cursor: "default",
+    },
+  },
+  clientSectionTitle: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    minWidth: 0,
+    fontWeight: tokens.fontWeightSemibold,
+  },
+  clientDesktopOnly: {
+    "@media (max-width: 860px)": {
+      display: "none",
+    },
+  },
+  clientMobileOnly: {
+    display: "none",
+    "@media (max-width: 860px)": {
+      display: "flex",
+    },
+  },
   clientDeviceList: {
     display: "grid",
     gap: "8px",
+    "@media (max-width: 860px)": {
+      gap: "6px",
+    },
   },
   clientDeviceRow: {
     display: "grid",
@@ -919,7 +969,10 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
     transition: "background-color 180ms ease, border-color 180ms ease, opacity 180ms ease",
     "@media (max-width: 860px)": {
-      gridTemplateColumns: "32px minmax(0, 1fr)",
+      gridTemplateColumns: "minmax(0, 1fr)",
+      gap: 0,
+      padding: 0,
+      overflow: "hidden",
     },
   },
   clientDeviceRowOffline: {
@@ -933,7 +986,90 @@ const useStyles = makeStyles({
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     "@media (max-width: 860px)": {
       gridColumn: "1 / -1",
+      padding: "8px",
     },
+  },
+  clientMobileSummary: {
+    appearance: "none",
+    border: 0,
+    margin: 0,
+    padding: "8px 10px",
+    width: "100%",
+    background: "transparent",
+    color: "inherit",
+    display: "none",
+    textAlign: "left",
+    cursor: "pointer",
+    "@media (max-width: 860px)": {
+      display: "grid",
+      gap: "5px",
+      minHeight: "62px",
+    },
+  },
+  clientMobileMainLine: {
+    display: "grid",
+    gridTemplateColumns: "24px minmax(0, 1fr) auto",
+    gap: "8px",
+    alignItems: "center",
+    minWidth: 0,
+  },
+  clientMobileIcon: {
+    width: "24px",
+    height: "24px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: tokens.colorNeutralForeground2,
+  },
+  clientMobileName: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    minWidth: 0,
+  },
+  clientMobileStatus: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    color: tokens.colorNeutralForeground3,
+    whiteSpace: "nowrap",
+  },
+  clientOnlineDot: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "999px",
+    backgroundColor: tokens.colorPaletteGreenForeground1,
+    flex: "0 0 auto",
+  },
+  clientOfflineDot: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "999px",
+    backgroundColor: tokens.colorNeutralForegroundDisabled,
+    flex: "0 0 auto",
+  },
+  clientMobileSubLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    minWidth: 0,
+    paddingLeft: "32px",
+    color: tokens.colorNeutralForeground3,
+    whiteSpace: "nowrap",
+  },
+  clientMobileIP: {
+    flex: "0 0 auto",
+    minWidth: "15ch",
+    maxWidth: "18ch",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
+    color: tokens.colorNeutralForeground2,
+  },
+  clientMobileMeta: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   vpnGrid: {
     display: "grid",
@@ -3448,7 +3584,9 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
   const activeActivities = new Set(rows.map(row => row.primaryActivity).filter(Boolean));
   const sections = clientSections(rows);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const toggleExpanded = (key: string) => setExpanded(current => ({ ...current, [key]: !current[key] }));
+  const toggleSection = (key: string) => setCollapsedSections(current => ({ ...current, [key]: !current[key] }));
   return (
     <>
       <div className={styles.vpnSummaryGrid}>
@@ -3460,32 +3598,70 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
       <div className={styles.clientSections}>
         {sections.map(section => {
           const sectionOnline = section.rows.filter(row => clientOnline(row)).length;
+          const isSectionCollapsed = !!collapsedSections[section.key];
           return (
             <section className={styles.clientSection} key={section.key}>
               <div className={styles.clientSectionHeader}>
-                <div className={styles.badges}>
-                  <Badge appearance="tint" color={clientOSBadgeColor(section.label)}>{section.label}</Badge>
-                  <Badge appearance="outline">{section.rows.length} devices</Badge>
-                  <Badge appearance="outline">{sectionOnline} online</Badge>
-                </div>
+                <button
+                  type="button"
+                  className={styles.clientSectionToggle}
+                  aria-expanded={!isSectionCollapsed}
+                  onClick={() => toggleSection(section.key)}
+                >
+                  <span className={`${styles.clientSectionTitle} ${styles.clientMobileOnly}`}>
+                    {isSectionCollapsed ? <ChevronRightRegular /> : <ChevronDownRegular />}
+                    <ClientSectionIcon family={section.label} />
+                    <span>{section.label}</span>
+                    <span className={styles.muted}>({section.rows.length} devices, {sectionOnline} online)</span>
+                  </span>
+                  <span className={`${styles.badges} ${styles.clientDesktopOnly}`}>
+                    <Badge appearance="tint" color={clientOSBadgeColor(section.label)}>{section.label}</Badge>
+                    <Badge appearance="outline">{section.rows.length} devices</Badge>
+                    <Badge appearance="outline">{sectionOnline} online</Badge>
+                  </span>
+                </button>
                 <Text size={200} className={styles.muted}>{section.addressCount} addresses</Text>
               </div>
-              <div className={styles.clientDeviceList}>
+              <div className={styles.clientDeviceList} hidden={isSectionCollapsed}>
                 {section.rows.map(row => {
                   const key = clientRowKey(row);
                   const groups = groupedClientAddresses(Array.from(row.addresses));
                   const isExpanded = !!expanded[key];
                   const primaryAddress = primaryClientAddress(row) || "-";
                   return (
-                    <div className={`${styles.clientDeviceRow} ${clientOnline(row) ? "" : styles.clientDeviceRowOffline}`} key={key}>
+                    <div className={`${styles.clientDeviceRow} ${clientOnline(row) ? "" : styles.clientDeviceRowOffline}`} data-client-row="true" key={key}>
                       <Button
+                        className={styles.clientDesktopOnly}
                         appearance="subtle"
                         size="small"
                         icon={isExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
                         aria-label={isExpanded ? "Collapse client details" : "Expand client details"}
                         onClick={() => toggleExpanded(key)}
                       />
-                      <div className={styles.connectionFlow}>
+                      <button
+                        type="button"
+                        className={styles.clientMobileSummary}
+                        aria-expanded={isExpanded}
+                        aria-label={`${isExpanded ? "Collapse" : "Expand"} ${row.hostname || primaryAddress || "client"} details`}
+                        onClick={() => toggleExpanded(key)}
+                      >
+                        <span className={styles.clientMobileMainLine}>
+                          <span className={styles.clientMobileIcon}><ClientDeviceIcon row={row} /></span>
+                          <Text weight="semibold" className={styles.clientMobileName}>{row.hostname || row.vendor || row.mac || "unknown client"}</Text>
+                          <span className={styles.clientMobileStatus}>
+                            <span className={clientOnline(row) ? styles.clientOnlineDot : styles.clientOfflineDot} />
+                            <Text size={200}>{clientLastSeen(row)}</Text>
+                          </span>
+                        </span>
+                        <span className={styles.clientMobileSubLine}>
+                          <code className={styles.clientMobileIP} title={primaryAddress}>{formatPrimaryClientAddress(primaryAddress)}</code>
+                          <span>·</span>
+                          <span className={styles.clientMobileMeta}>{formatClientOSFamily(clientOSFamily(row))}</span>
+                          <span>·</span>
+                          <span>{row.addresses.size} IPs</span>
+                        </span>
+                      </button>
+                      <div className={`${styles.connectionFlow} ${styles.clientDesktopOnly}`}>
                         <Text weight="semibold">{row.hostname || "unknown client"}</Text>
                         <Text size={200} className={styles.muted}>{row.vendor || row.mac || "-"}</Text>
                         <div className={styles.badges}>
@@ -3493,15 +3669,15 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                           {row.state ? <Badge appearance="outline">{row.state}</Badge> : null}
                         </div>
                       </div>
-                      <div className={styles.clientPrimaryIPCell}>
+                      <div className={`${styles.clientPrimaryIPCell} ${styles.clientDesktopOnly}`}>
                         <Text size={200} className={styles.muted}>Primary IP</Text>
                         <code className={styles.clientPrimaryIPCode} title={primaryAddress}>
                           {formatPrimaryClientAddress(primaryAddress)}
                         </code>
                       </div>
-                      <ClientOSBadge row={row} />
-                      <ClientActivityBadge row={row} />
-                      <div className={styles.connectionFlow}>
+                      <div className={styles.clientDesktopOnly}><ClientOSBadge row={row} /></div>
+                      <div className={styles.clientDesktopOnly}><ClientActivityBadge row={row} /></div>
+                      <div className={`${styles.connectionFlow} ${styles.clientDesktopOnly}`}>
                         <Text size={200} className={styles.muted}>Addresses</Text>
                         <Text>{row.addresses.size}</Text>
                       </div>
@@ -3564,6 +3740,64 @@ function ClientOSBadge({ row }: { row: ClientRow }) {
       {row.fingerprintConfidence ? <Text size={200} className={styles.muted}>{row.fingerprintConfidence}%</Text> : null}
     </div>
   );
+}
+
+function ClientSectionIcon({ family }: { family: string }) {
+  const normalized = family.trim().toLowerCase();
+  if (normalized === "nintendo" || normalized === "playstation" || normalized === "xbox" || normalized === "steamos") return <GamesRegular />;
+  if (normalized === "printer") return <PrintRegular />;
+  if (normalized === "nas") return <DatabaseRegular />;
+  if (normalized === "voip") return <PhoneRegular />;
+  if (normalized === "iot" || normalized === "embedded") return <HomeRegular />;
+  if (normalized === "android" || normalized === "apple") return <PhoneRegular />;
+  if (normalized === "windows" || normalized === "linux") return <DesktopRegular />;
+  return <ServerRegular />;
+}
+
+function ClientDeviceIcon({ row }: { row: ClientRow }) {
+  const deviceClass = row.inferredDeviceClass.trim().toLowerCase();
+  const family = clientOSFamily(row).trim().toLowerCase();
+  switch (deviceClass) {
+    case "phone":
+      return <PhoneRegular />;
+    case "tablet":
+      return <TabletRegular />;
+    case "laptop":
+      return <LaptopRegular />;
+    case "desktop":
+    case "computer":
+      return <DesktopRegular />;
+    case "smart-tv":
+    case "media":
+      return <TvRegular />;
+    case "smart-speaker":
+      return <Speaker2Regular />;
+    case "gaming-console":
+      return <GamesRegular />;
+    case "printer":
+      return <PrintRegular />;
+    case "camera":
+      return <CameraRegular />;
+    case "nas":
+      return <DatabaseRegular />;
+    case "ev":
+      return <VehicleCarRegular />;
+    case "iot":
+    case "lighting":
+    case "vacuum":
+      return <HomeRegular />;
+    case "voip":
+      return <PhoneRegular />;
+    default:
+      if (family === "nintendo" || family === "playstation" || family === "xbox" || family === "steam-os") return <GamesRegular />;
+      if (family === "printer") return <PrintRegular />;
+      if (family === "nas") return <DatabaseRegular />;
+      if (family === "voip") return <PhoneRegular />;
+      if (family === "iot" || family === "embedded") return <HomeRegular />;
+      if (family === "android" || family === "apple") return <PhoneRegular />;
+      if (family === "windows" || family === "linux") return <DesktopRegular />;
+      return <ServerRegular />;
+  }
 }
 
 function ClientAddressGroup({ label, addresses }: { label: string; addresses: string[] }) {
