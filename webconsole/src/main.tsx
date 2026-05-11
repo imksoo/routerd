@@ -650,6 +650,21 @@ const useStyles = makeStyles({
       gridTemplateColumns: "1fr",
     },
   },
+  alertList: {
+    display: "grid",
+    gap: "8px",
+  },
+  alertRow: {
+    display: "grid",
+    gridTemplateColumns: "110px minmax(0, 1fr)",
+    gap: "10px",
+    alignItems: "start",
+    padding: "8px 0",
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    "@media (max-width: 640px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
   chartGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
@@ -1520,10 +1535,7 @@ function App() {
                   <CardHeader header={<Text weight="semibold">Interfaces</Text>} description={<Text className={styles.muted}>Role, link state, MTU, and assigned addresses</Text>} />
                   <InterfaceOverview interfaces={summary?.interfaces ?? []} />
                 </Card>
-                <Card id="overview-resources" className={styles.connectionAnchor}>
-                  <CardHeader header={<Text weight="semibold">Resources</Text>} />
-                  <ResourceTable resources={resources} controllers={controllers} />
-                </Card>
+                <OverviewActivity resources={summary?.resources ?? []} events={events} navigateTo={navigateTo} />
               </>
             ) : null}
             {selected === "controllers" ? (
@@ -2444,6 +2456,70 @@ function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
   );
 }
 
+function OverviewActivity({
+  resources,
+  events,
+  navigateTo,
+}: {
+  resources: ResourceStatus[];
+  events: RouterEvent[];
+  navigateTo: (view: ViewKey, targetID?: string) => void;
+}) {
+  const styles = useStyles();
+  const alerts = resources
+    .filter(resource => ["danger", "warning"].includes(phaseColor(resource.status?.phase)))
+    .slice(0, 8);
+  const recent = events.slice(0, 8);
+  return (
+    <div id="overview-activity" className={`${styles.sectionGrid} ${styles.connectionAnchor}`}>
+      <Card>
+        <CardHeader
+          header={<Text weight="semibold">Active alerts</Text>}
+          description={<Text className={styles.muted}>Resources that are not currently in a healthy applied phase</Text>}
+          action={<Button size="small" appearance="secondary" onClick={() => navigateTo("clients")}>Clients</Button>}
+        />
+        {alerts.length === 0 ? (
+          <Text className={styles.muted}>No active resource alerts</Text>
+        ) : (
+          <div className={styles.alertList}>
+            {alerts.map(resource => (
+              <div className={styles.alertRow} key={`${resource.kind}/${resource.name}`}>
+                <Badge appearance="tint" color={phaseColor(resource.status?.phase)}>{String(resource.status?.phase ?? "Unknown")}</Badge>
+                <div className={styles.connectionFlow}>
+                  <Text><code className={styles.code}>{resource.kind}/{resource.name}</code></Text>
+                  <Text size={200} className={styles.muted}>{resourceDetail(resource.status ?? {}) || "No detail"}</Text>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+      <Card>
+        <CardHeader
+          header={<Text weight="semibold">Recent changes</Text>}
+          description={<Text className={styles.muted}>Latest bus events observed by routerd</Text>}
+          action={<Button size="small" appearance="secondary" onClick={() => navigateTo("events")}>Events</Button>}
+        />
+        {recent.length === 0 ? (
+          <Text className={styles.muted}>No recent events</Text>
+        ) : (
+          <div className={styles.alertList}>
+            {recent.map(event => (
+              <div className={styles.alertRow} key={eventKey(event)}>
+                <Text size={200} className={styles.muted}>{formatTime(event.createdAt)}</Text>
+                <div className={styles.connectionFlow}>
+                  <Text><code className={styles.wrapCode}>{event.topic ?? event.type ?? "-"}</code></Text>
+                  <Text size={200} className={styles.muted}>{resourceName(event)}</Text>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 function TailscalePanel({ status, errors }: { status?: TailscaleStatus; errors: string[] }) {
   const styles = useStyles();
   if (!status) {
@@ -3323,7 +3399,7 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
     return [
       { key: "metrics", label: "Metrics", view: "overview", targetID: "overview-metrics" },
       { key: "interfaces", label: "Interfaces", count: summary?.interfaces?.length ?? 0, view: "overview", targetID: "overview-interfaces" },
-      { key: "resources", label: "Resources", count: importantResources(summary?.resources ?? []).length, view: "overview", targetID: "overview-resources" },
+      { key: "activity", label: "Activity", count: (summary?.events ?? []).length, view: "overview", targetID: "overview-activity" },
     ];
   }
   if (selected === "controllers") {
