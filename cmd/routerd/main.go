@@ -7064,6 +7064,9 @@ func applySystemdUnitResources(router *api.Router) ([]string, error) {
 		if spec.State == "absent" {
 			continue
 		}
+		if err := runLogged("systemctl", "unmask", unitName); err != nil {
+			return nil, err
+		}
 		if api.BoolDefault(spec.Enabled, true) {
 			if err := runLogged("systemctl", "enable", unitName); err != nil {
 				return nil, err

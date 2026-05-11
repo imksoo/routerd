@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
+
+	"routerd/pkg/version"
 )
 
 func TestResourceAttributesMergeDefaultsEnvAndExplicit(t *testing.T) {
@@ -24,7 +26,7 @@ func TestResourceAttributesMergeDefaultsEnvAndExplicit(t *testing.T) {
 	for key, want := range map[attribute.Key]string{
 		"service.name":           "routerd",
 		"service.namespace":      "routerd",
-		"service.version":        "v20260511.1240",
+		"service.version":        version.Version,
 		"os.type":                runtime.GOOS,
 		"deployment.environment": "lab",
 		"routerd.node":           "override",

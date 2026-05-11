@@ -211,7 +211,7 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 		servers := stringSlice(next["dnsServers"])
 		if len(servers) > 0 {
 			next["appliedDNSServers"] = strings.Join(servers, ",")
-			if err := writeResolvConf(defaultString(c.ResolvConfPath, "/etc/resolv.conf"), name, servers, c.DryRun); err != nil {
+			if err := applyDNS(ctx, platform.CurrentOS(), command, ifname, defaultString(c.ResolvConfPath, "/etc/resolv.conf"), name, servers, c.DryRun); err != nil {
 				return err
 			}
 		}
@@ -255,6 +255,35 @@ func defaultString(value, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func applyDNS(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, resolvConfPath, resource string, servers []string, dryRun bool) error {
+	if osName == platform.OSLinux && systemdResolvedResolvConf(resolvConfPath) {
+		if dryRun {
+			return nil
+		}
+		args := append([]string{"dns", ifname}, servers...)
+		if _, err := command(ctx, "resolvectl", args...); err != nil {
+			return fmt.Errorf("set systemd-resolved DNS for %s: %w", ifname, err)
+		}
+		if _, err := command(ctx, "resolvectl", "domain", ifname, "~."); err != nil {
+			return fmt.Errorf("set systemd-resolved default DNS domain for %s: %w", ifname, err)
+		}
+		return nil
+	}
+	return writeResolvConf(resolvConfPath, resource, servers, dryRun)
+}
+
+func systemdResolvedResolvConf(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	target, err := os.Readlink(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(target, "systemd/resolve") || strings.Contains(target, "stub-resolv.conf")
 }
 
 func writeResolvConf(path, resource string, servers []string, dryRun bool) error {

@@ -738,7 +738,7 @@ func dhcpv4ClientUnitSpec(resource, ifname string, spec api.DHCPv4LeaseSpec, tel
 		ReadWritePaths:           []string{"/run/routerd", "/var/lib/routerd", "/var/log/routerd"},
 		AmbientCapabilities:      []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
 		CapabilityBoundingSet:    []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
+		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK", "AF_PACKET"},
 		ProtectSystem:            "strict",
 		ProtectHome:              "yes",
 		NoNewPrivileges:          &noNewPrivileges,
@@ -891,6 +891,9 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
 			return changed, err
 		}
+	}
+	if _, err := command(ctx, "systemctl", "unmask", unitName); err != nil {
+		return changed, err
 	}
 	if api.BoolDefault(spec.Enabled, true) {
 		if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {

@@ -404,6 +404,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 				`ExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan-v4 --interface ens18 --hostname routerd-test`,
 				`RuntimeDirectory=routerd/dhcpv4-client`,
 				`AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE`,
+				`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET`,
 			},
 		},
 		{
@@ -428,8 +429,10 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 	}
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{
+		"systemctl unmask routerd-dhcpv4-client@wan-v4.service",
 		"systemctl enable routerd-dhcpv4-client@wan-v4.service",
 		"systemctl restart routerd-dhcpv4-client@wan-v4.service",
+		"systemctl unmask routerd-dhcpv6-client@wan-pd.service",
 		"systemctl enable routerd-dhcpv6-client@wan-pd.service",
 		"systemctl restart routerd-dhcpv6-client@wan-pd.service",
 	} {
