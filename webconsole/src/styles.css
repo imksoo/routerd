@@ -23,4 +23,18 @@ code {
     overflow-x: auto;
     max-width: 100vw;
   }
+
+  button,
+  [role="button"] {
+    min-height: 44px;
+  }
+
+  th,
+  td {
+    vertical-align: top;
+  }
+
+  code {
+    overflow-wrap: anywhere;
+  }
 }

@@ -546,9 +546,18 @@ const useStyles = makeStyles({
     padding: "10px 20px",
     borderBottom: "1px solid #243041",
     backgroundColor: "#0b1118",
+    "@media (max-width: 640px)": {
+      flexWrap: "nowrap",
+      overflowX: "auto",
+      padding: "8px 12px",
+    },
   },
   sectionButton: {
     borderRadius: "4px",
+    "@media (max-width: 640px)": {
+      minWidth: "max-content",
+      minHeight: "44px",
+    },
   },
   jumpBar: {
     display: "flex",
@@ -611,6 +620,10 @@ const useStyles = makeStyles({
     padding: "16px 20px 24px",
     display: "grid",
     gap: "16px",
+    "@media (max-width: 640px)": {
+      padding: "12px 10px 20px",
+      gap: "12px",
+    },
   },
   dryRunBanner: {
     display: "flex",
@@ -788,6 +801,11 @@ const useStyles = makeStyles({
   tableWrap: {
     overflowX: "auto",
     maxWidth: "100%",
+    WebkitOverflowScrolling: "touch",
+    "@media (max-width: 640px)": {
+      border: `1px solid ${tokens.colorNeutralStroke2}`,
+      borderRadius: tokens.borderRadiusMedium,
+    },
   },
   dataTable: {
     minWidth: "720px",
@@ -796,6 +814,9 @@ const useStyles = makeStyles({
   resourceTable: {
     minWidth: "900px",
     tableLayout: "fixed",
+    "@media (max-width: 640px)": {
+      minWidth: "760px",
+    },
   },
   controllerTable: {
     minWidth: "820px",
@@ -804,14 +825,23 @@ const useStyles = makeStyles({
   eventTable: {
     minWidth: "760px",
     tableLayout: "fixed",
+    "@media (max-width: 640px)": {
+      minWidth: "620px",
+    },
   },
   connectionTable: {
     minWidth: "820px",
     tableLayout: "fixed",
+    "@media (max-width: 640px)": {
+      minWidth: "680px",
+    },
   },
   clientInventoryTable: {
     minWidth: "1120px",
     tableLayout: "fixed",
+    "@media (max-width: 640px)": {
+      minWidth: "820px",
+    },
   },
   clientTrafficTable: {
     minWidth: "760px",
@@ -820,6 +850,9 @@ const useStyles = makeStyles({
   dhcpLeaseTable: {
     minWidth: "900px",
     tableLayout: "fixed",
+    "@media (max-width: 640px)": {
+      minWidth: "720px",
+    },
   },
   vpnPeerTable: {
     minWidth: "980px",
@@ -830,6 +863,11 @@ const useStyles = makeStyles({
     whiteSpace: "nowrap",
     wordBreak: "normal",
     overflowWrap: "normal",
+    "@media (max-width: 640px)": {
+      whiteSpace: "normal",
+      overflowWrap: "anywhere",
+      wordBreak: "break-word",
+    },
   },
   wrapCode: {
     fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
