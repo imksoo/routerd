@@ -943,6 +943,21 @@ const useStyles = makeStyles({
     justifyContent: "space-between",
     marginBottom: "8px",
   },
+  connectionSummaryGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: "10px",
+    marginBottom: "12px",
+  },
+  connectionSummaryCard: {
+    minWidth: 0,
+    display: "grid",
+    gap: "8px",
+    padding: "10px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
   connectionFlow: {
     display: "grid",
     gap: "2px",
@@ -1662,6 +1677,7 @@ function App() {
                 );
               })}
             </div>
+            <ConnectionSummaryCharts groups={connectionGroupsList} />
             <div className={styles.connectionFilters}>
               <SearchControl label="Filter" value={connectionFilters.query} placeholder="address, port, state, label" onChange={value => updateConnectionFilter("query", value)} />
               <div className={styles.filterControl}>
@@ -2181,6 +2197,29 @@ function StackBars({ samples, colors }: { samples: number[][]; colors: string[] 
   );
 }
 
+function ConnectionSummaryCharts({ groups }: { groups: { key: string; rows: ConnectionEntry[] }[] }) {
+  const styles = useStyles();
+  const max = Math.max(1, ...groups.map(group => group.rows.length));
+  if (groups.length === 0) return <Text className={styles.muted}>No active connections reported</Text>;
+  return (
+    <div className={styles.connectionSummaryGrid}>
+      {groups.map(group => {
+        const label = connectionGroupLabel(group.key);
+        return (
+          <div className={styles.connectionSummaryCard} key={group.key}>
+            <div className={styles.interfaceHeader}>
+              <Text weight="semibold">{label.family}/{label.protocol.toUpperCase()}</Text>
+              <Badge appearance="tint" color={label.family === "IPv6" ? "brand" : "success"}>{group.rows.length}</Badge>
+            </div>
+            <div className={styles.firewallBar} style={{ width: `${Math.max(3, (group.rows.length / max) * 100)}%` }} />
+            <Text size={200} className={styles.muted}>{connectionStateSummary(group.rows).map(row => `${row.label} ${row.count}`).join(" / ") || "stateless"}</Text>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function parseConfig(text?: string): { value?: unknown; errors: string[] } {
   if (!text) return { value: undefined, errors: [] };
   try {
@@ -2533,6 +2572,7 @@ function ConnectionGroup({
 }) {
   const styles = useStyles();
   const label = connectionGroupLabel(group.key);
+  const states = connectionStateSummary(group.rows);
   const totalPages = Math.max(1, Math.ceil(group.rows.length / pageSize));
   const currentPage = Math.min(Math.max(page, 0), totalPages - 1);
   const start = currentPage * pageSize;
@@ -2544,6 +2584,9 @@ function ConnectionGroup({
         description={!collapsed ? <Text className={styles.muted}>Showing {visibleRows.length ? start + 1 : 0}-{start + visibleRows.length} of {group.rows.length}</Text> : undefined}
         action={<Button appearance="subtle" icon={collapsed ? <ChevronRightRegular /> : <ChevronDownRegular />} onClick={toggle}>{collapsed ? "Open" : "Close"}</Button>}
       />
+      <div className={styles.badges}>
+        {states.map(state => <Badge key={state.label} appearance="outline" color={stateColor(state.label)}>{state.label} {state.count}</Badge>)}
+      </div>
       {!collapsed ? (
         <>
           <div className={styles.connectionHeader}>
@@ -3562,6 +3605,17 @@ function connectionGroups(entries: ConnectionEntry[]) {
       return (order[af] ?? 9) - (order[bf] ?? 9) || (order[ap] ?? 9) - (order[bp] ?? 9) || a[0].localeCompare(b[0]);
     })
     .map(([key, rows]) => ({ key, rows }));
+}
+
+function connectionStateSummary(entries: ConnectionEntry[]) {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    const state = normalizeFacet(entry.state, "stateless");
+    counts.set(state, (counts.get(state) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || facetSort(a.label, b.label));
 }
 
 function connectionGroupLabel(key: string) {
