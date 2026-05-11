@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Badge,
@@ -111,6 +111,12 @@ type StreamEvent = {
     name?: string;
   };
   attributes?: Record<string, string>;
+};
+
+type ScrollSnapshot = {
+  windowX: number;
+  windowY: number;
+  elements: { key: string; top: number; left: number }[];
 };
 
 type ConnectionTable = {
@@ -1412,6 +1418,7 @@ function App() {
   const queuedRefresh = useRef(false);
   const refreshTimer = useRef<number | null>(null);
   const configRef = useRef<ConfigSnapshot | null>(null);
+  const pendingScrollSnapshot = useRef<ScrollSnapshot | null>(null);
 
   async function refresh() {
     if (refreshInFlight.current) {
@@ -1419,12 +1426,14 @@ function App() {
       return;
     }
     refreshInFlight.current = true;
+    const scrollSnapshot = captureScrollSnapshot();
     try {
       const [summaryResponse, configResponse, generationResponse] = await Promise.all([
         fetchJSON<Summary>("api/v1/summary?events=200&connections=240"),
         configRef.current ? Promise.resolve(configRef.current) : fetchJSON<ConfigSnapshot>("api/v1/config"),
         fetchJSON<GenerationRecord[]>("api/v1/generations?limit=200"),
       ]);
+      pendingScrollSnapshot.current = scrollSnapshot;
       setSummary(current => reconcileSummary(current, summaryResponse));
       setMetricSamples(current => appendMetricSample(current, summaryResponse));
       if (!configRef.current) {
@@ -1486,6 +1495,14 @@ function App() {
       source?.close();
     };
   }, []);
+
+  useLayoutEffect(() => {
+    const snapshot = pendingScrollSnapshot.current;
+    if (!snapshot) return;
+    pendingScrollSnapshot.current = null;
+    restoreScrollSnapshot(snapshot);
+    restoreScrollAfterRender(snapshot);
+  });
 
   useEffect(() => {
     const withYaml = generations.filter(row => row.hasYaml);
@@ -2150,7 +2167,7 @@ function GenerationsView({
           </Select>
           <Button appearance="primary" disabled={!from || !to} onClick={loadDiff}>Diff</Button>
         </div>
-        <div className={styles.tableWrap}>
+        <div className={styles.tableWrap} data-routerd-scroll-key="generations-table">
           <Table size="small" className={styles.generationTable}>
             <colgroup>
               <col style={{ width: "92px" }} />
@@ -2207,7 +2224,7 @@ function GenerationsView({
       {config ? (
         <Card>
           <CardHeader header={<Text weight="semibold">Generation #{config.generation}</Text>} description={<Text className={styles.muted}>Stored YAML snapshot</Text>} />
-          <div className={styles.diffPanel}><pre className={styles.pre}>{config.text}</pre></div>
+          <div className={styles.diffPanel} data-routerd-scroll-key={`generation-${config.generation}-yaml`}><pre className={styles.pre}>{config.text}</pre></div>
         </Card>
       ) : null}
     </>
@@ -2218,7 +2235,7 @@ function DiffView({ diff }: { diff: string }) {
   const styles = useStyles();
   const lines = diff.split(/\n/);
   return (
-    <div className={styles.diffPanel}>
+    <div className={styles.diffPanel} data-routerd-scroll-key="generation-diff">
       {lines.map((line, index) => (
         <span key={index} className={`${styles.diffLine} ${line.startsWith("+") && !line.startsWith("+++") ? styles.diffAdded : ""} ${line.startsWith("-") && !line.startsWith("---") ? styles.diffRemoved : ""}`}>
           {line}
@@ -2502,7 +2519,7 @@ function ResourceTable({ resources, controllers }: { resources: ResourceStatus[]
         </div>
       </div>
       <Text size={200} className={styles.muted}>Showing {Math.min(filtered.length, 120)} of {filtered.length} matched resources / {resources.length} total</Text>
-      <div className={styles.tableWrap}>
+      <div className={styles.tableWrap} data-routerd-scroll-key="resources-table">
         <Table size="small" className={styles.resourceTable}>
           <colgroup>
             <col style={{ width: "170px" }} />
@@ -2565,7 +2582,7 @@ function ControllerTable({ controllers }: { controllers: ControllerStatus[] }) {
   const styles = useStyles();
   const rows = [...controllers].sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? "")));
   return (
-    <div className={styles.tableWrap}>
+    <div className={styles.tableWrap} data-routerd-scroll-key="controllers-table">
       <Table size="small" className={styles.controllerTable}>
         <colgroup>
           <col style={{ width: "170px" }} />
@@ -2630,7 +2647,7 @@ function RelativeTime({ value }: { value?: string }) {
 function EventTable({ events, selectedKey, onSelect, query }: { events: RouterEvent[]; selectedKey: string; onSelect: (event: RouterEvent) => void; query?: string }) {
   const styles = useStyles();
   return (
-    <div className={styles.tableWrap}>
+    <div className={styles.tableWrap} data-routerd-scroll-key="events-table">
       <Table size="small" className={styles.eventTable}>
         <colgroup>
           <col style={{ width: "104px" }} />
@@ -2747,7 +2764,7 @@ function ConnectionGroup({
               <Button size="small" appearance="subtle" disabled={currentPage >= totalPages - 1} onClick={() => setPage(currentPage + 1)}>Next</Button>
             </div>
           </div>
-          <div className={styles.tableWrap}>
+          <div className={styles.tableWrap} data-routerd-scroll-key={`connections-${group.key}`}>
             <Table size="small" className={styles.connectionTable}>
               <colgroup>
                 <col style={{ width: "132px" }} />
@@ -2920,15 +2937,7 @@ function TailscalePanel({ status, errors }: { status?: TailscaleStatus; errors: 
         {(status.allowedIPs ?? []).slice(0, 6).map(route => <Badge key={route} appearance="outline">{route}</Badge>)}
         {(status.certDomains ?? []).slice(0, 4).map(domain => <Badge key={domain} appearance="outline" color="informative">{domain}</Badge>)}
       </div>
-      <PeerStatusStrip
-        peers={peers.map(peer => ({
-          key: peer.id || peer.dnsName || peer.hostName || "-",
-          label: peer.hostName || peer.dnsName || "-",
-          active: !!peer.online,
-          detail: peer.relay || relativeTimeText(peer.lastSeen) || "direct",
-        }))}
-      />
-      <div className={styles.tableWrap}>
+      <div className={styles.tableWrap} data-routerd-scroll-key="tailscale-peers">
         <Table size="small" className={styles.vpnPeerTable}>
           <colgroup>
             <col style={{ width: "180px" }} />
@@ -3004,15 +3013,7 @@ function WireGuardPanel({ interfaces, errors }: { interfaces: WireGuardInterface
             {item.fwmark ? <Badge appearance="outline">fwmark {item.fwmark}</Badge> : null}
             <Text size={200} className={styles.muted}>public key {shortHash(item.publicKey)}</Text>
           </div>
-          <PeerStatusStrip
-            peers={(item.peers ?? []).map(peer => ({
-              key: peer.publicKey || peer.endpoint || "-",
-              label: shortHash(peer.publicKey),
-              active: handshakeFresh(peer.latestHandshake),
-              detail: peer.endpoint || "no endpoint",
-            }))}
-          />
-          <div className={styles.tableWrap}>
+          <div className={styles.tableWrap} data-routerd-scroll-key={`wireguard-${item.name || item.publicKey || "interface"}`}>
             <Table size="small" className={styles.vpnPeerTable}>
               <colgroup>
                 <col style={{ width: "190px" }} />
@@ -3052,21 +3053,6 @@ function WireGuardPanel({ interfaces, errors }: { interfaces: WireGuardInterface
   );
 }
 
-function PeerStatusStrip({ peers }: { peers: { key: string; label: string; active: boolean; detail: string }[] }) {
-  const styles = useStyles();
-  if (peers.length === 0) return <Text className={styles.muted}>No peers reported</Text>;
-  return (
-    <div className={styles.badges}>
-      {peers.slice(0, 24).map(peer => (
-        <Badge key={peer.key} appearance="tint" color={peer.active ? "success" : "subtle"}>
-          {peer.label} · {peer.detail}
-        </Badge>
-      ))}
-      {peers.length > 24 ? <Badge appearance="outline">+{peers.length - 24} more</Badge> : null}
-    </div>
-  );
-}
-
 function ClientInventory({ clients }: { clients: ClientEntry[] }) {
   const styles = useStyles();
   const rows = clients.map(clientEntryToRow);
@@ -3082,14 +3068,6 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
         <Metric label="online" value={`${online}/${rows.length}`} />
         <Metric label="addresses" value={String(addressCount)} />
       </div>
-      <PeerStatusStrip
-        peers={rows.slice(0, 24).map(row => ({
-          key: row.id || row.mac || row.ip || row.hostname || "-",
-          label: row.hostname || row.mac || row.ip || "-",
-          active: clientOnline(row),
-          detail: primaryClientAddress(row) || `${row.addresses.size} addresses`,
-        }))}
-      />
       <div className={styles.clientSections}>
         {sections.map(section => {
           const sectionOnline = section.rows.filter(row => clientOnline(row)).length;
@@ -3193,7 +3171,7 @@ function ClientAddressGroup({ label, addresses }: { label: string; addresses: st
 function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
   const styles = useStyles();
   return (
-    <div className={styles.tableWrap}>
+    <div className={styles.tableWrap} data-routerd-scroll-key="client-traffic">
       <Table size="small" className={styles.clientTrafficTable}>
         <colgroup>
           <col style={{ width: "170px" }} />
@@ -3228,7 +3206,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
   const styles = useStyles();
   const rows = [...leases].sort((a, b) => stringSort(a.ip ?? "", b.ip ?? ""));
   return (
-    <div className={styles.tableWrap}>
+    <div className={styles.tableWrap} data-routerd-scroll-key="dhcp-leases">
       <Table size="small" className={styles.dhcpLeaseTable}>
         <colgroup>
           <col style={{ width: "82px" }} />
@@ -3276,7 +3254,7 @@ function RecentDeny({
 }) {
   const styles = useStyles();
   return (
-    <div className={styles.firewallTable} role="table" aria-label="Deny ranking">
+    <div className={styles.firewallTable} role="table" aria-label="Deny ranking" data-routerd-scroll-key="firewall-ranking-table">
       <div className={styles.firewallRankHeader} role="row">
         <span>Count</span>
         <span>Source</span>
@@ -3351,7 +3329,7 @@ function FirewallTimeline({
 }) {
   const styles = useStyles();
   return (
-    <div className={styles.firewallTable} role="table" aria-label="Deny timeline">
+    <div className={styles.firewallTable} role="table" aria-label="Deny timeline" data-routerd-scroll-key="firewall-timeline-table">
       <div className={styles.firewallTimelineHeader} role="row">
         <span>Time</span>
         <span>Action</span>
@@ -4001,6 +3979,42 @@ function writeStoredRecord<T extends number | boolean>(key: string, value: Recor
 
 function scrollToElement(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function captureScrollSnapshot(): ScrollSnapshot {
+  const elements = Array.from(document.querySelectorAll<HTMLElement>("[data-routerd-scroll-key]")).map(element => ({
+    key: element.dataset.routerdScrollKey ?? "",
+    top: element.scrollTop,
+    left: element.scrollLeft,
+  })).filter(item => item.key);
+  return {
+    windowX: window.scrollX,
+    windowY: window.scrollY,
+    elements,
+  };
+}
+
+function restoreScrollSnapshot(snapshot: ScrollSnapshot) {
+  window.scrollTo(snapshot.windowX, snapshot.windowY);
+  const elements = new Map<string, HTMLElement>();
+  document.querySelectorAll<HTMLElement>("[data-routerd-scroll-key]").forEach(element => {
+    const key = element.dataset.routerdScrollKey;
+    if (key) elements.set(key, element);
+  });
+  for (const item of snapshot.elements) {
+    const element = elements.get(item.key);
+    if (!element) continue;
+    element.scrollTop = item.top;
+    element.scrollLeft = item.left;
+  }
+}
+
+function restoreScrollAfterRender(snapshot: ScrollSnapshot) {
+  window.requestAnimationFrame(() => {
+    restoreScrollSnapshot(snapshot);
+    window.requestAnimationFrame(() => restoreScrollSnapshot(snapshot));
+  });
+  window.setTimeout(() => restoreScrollSnapshot(snapshot), 120);
 }
 
 function endpoint(tuple?: ConnTuple) {
