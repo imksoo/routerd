@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"routerd/internal/hostcmd"
 	"routerd/pkg/dpi"
 	"routerd/pkg/logstore"
 	"routerd/pkg/nflog"
@@ -279,10 +280,7 @@ func watchConntrackDestroyLoop(ctx context.Context, opts options, log *logstore.
 }
 
 func watchConntrackDestroy(ctx context.Context, opts options, log *logstore.FirewallLog) error {
-	command := opts.conntrackPath
-	if strings.TrimSpace(command) == "" {
-		command = "conntrack"
-	}
+	command := hostcmd.ResolveConntrack(opts.conntrackPath)
 	cmd := exec.CommandContext(ctx, command, "-E", "-e", "DESTROY", "-o", "timestamp,extended")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

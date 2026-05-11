@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"routerd/internal/hostcmd"
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
 	"routerd/pkg/bus"
@@ -678,19 +679,7 @@ func commandOutputTimeout(timeout time.Duration, name string, args ...string) ([
 }
 
 func hostCommandPath(name string) string {
-	if strings.Contains(name, "/") {
-		return name
-	}
-	if path, err := exec.LookPath(name); err == nil {
-		return path
-	}
-	for _, dir := range []string{"/usr/local/bin", "/usr/local/sbin", "/usr/bin", "/usr/sbin", "/bin", "/sbin"} {
-		candidate := dir + "/" + name
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	return name
+	return hostcmd.Resolve(name)
 }
 
 func parseWireGuardAllDump(data []byte) ([]WireGuardInterfaceStatus, error) {

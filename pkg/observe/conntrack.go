@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"routerd/internal/hostcmd"
 	"routerd/pkg/platform"
 )
 
@@ -60,9 +61,10 @@ func Connections(limit int) (*ConnectionTable, error) {
 	if features.HasPF && !features.HasIproute2 {
 		return PFStates(limit)
 	}
-	out, err := exec.Command("conntrack", "-L", "-o", "extended").CombinedOutput()
+	command := hostcmd.ResolveConntrack("conntrack")
+	out, err := exec.Command(command, "-L", "-o", "extended").CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("conntrack -L -o extended: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("%s -L -o extended: %w: %s", command, err, strings.TrimSpace(string(out)))
 	}
 	allEntries := parseConntrackEntries(string(out), 0)
 	table := &ConnectionTable{
@@ -466,7 +468,8 @@ func conntrackEntriesByFamily(entries []ConnectionEntry) map[string]int {
 }
 
 func conntrackStats() ([]ConntrackCPUStats, error) {
-	out, err := exec.Command("conntrack", "-S").CombinedOutput()
+	command := hostcmd.ResolveConntrack("conntrack")
+	out, err := exec.Command(command, "-S").CombinedOutput()
 	if err != nil {
 		return nil, err
 	}
