@@ -2,4 +2,4 @@
 
 package version
 
-const Version = "v20260512.0008"
+const Version = "v20260512.0027"
