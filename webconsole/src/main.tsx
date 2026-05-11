@@ -1838,17 +1838,35 @@ function ConfigView({
 }) {
   const styles = useStyles();
   const [mode, setMode] = useState<"tree" | "raw">("tree");
+  const [query, setQuery] = useState("");
+  const [copied, setCopied] = useState(false);
   const parsed = useMemo(() => parseConfig(config?.text), [config?.text]);
+  const kindTargets = useMemo(() => configKindTargets(parsed.value), [parsed.value]);
+  async function copyRawYAML() {
+    if (!config?.text || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(config.text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
   return (
     <>
       <div className={styles.configToolbar}>
-        <Text className={styles.muted}>Read-only view of the active routerd YAML</Text>
+        <Text className={styles.muted}>Read-only view of the active routerd YAML. Edit the source file and run routerd apply from the CLI.</Text>
         <div className={styles.configModeButtons}>
           <Button size="small" appearance="secondary" disabled={!latestGeneration || !config?.text} onClick={loadPlanDiff}>
             Diff before apply
           </Button>
           <Button size="small" appearance={mode === "tree" ? "primary" : "secondary"} onClick={() => setMode("tree")}>Tree</Button>
           <Button size="small" appearance={mode === "raw" ? "primary" : "secondary"} onClick={() => setMode("raw")}>Raw YAML</Button>
+        </div>
+      </div>
+      <div className={styles.configToolbar}>
+        <SearchControl label="Search config" value={query} placeholder="kind, name, field, value" onChange={setQuery} />
+        <div className={styles.configModeButtons}>
+          {kindTargets.slice(0, 8).map(target => (
+            <Button key={target.id} size="small" appearance="secondary" onClick={() => scrollToElement(target.id)}>{target.label}</Button>
+          ))}
+          {mode === "raw" ? <Button size="small" appearance="secondary" disabled={!config?.text} onClick={copyRawYAML}>{copied ? "Copied" : "Copy YAML"}</Button> : null}
         </div>
       </div>
       {parsed.errors.length > 0 ? (
@@ -1862,15 +1880,16 @@ function ConfigView({
       <div className={styles.config}>
         {mode === "tree" && parsed.value !== undefined ? (
           <div className={styles.tree}>
-            <ConfigTreeNode label="config" value={parsed.value} depth={0} />
+            <ConfigTreeNode label="config" value={parsed.value} depth={0} query={query} />
           </div>
         ) : (
-          <pre className={styles.pre}>{config?.text ?? "Config is unavailable"}</pre>
+          <pre className={styles.pre}>{highlightYAML(config?.text ?? "Config is unavailable", query).map((part, index) => part.match ? <mark className={styles.highlight} key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>)}</pre>
         )}
       </div>
       {planDiff ? (
         <div style={{ marginTop: "12px" }}>
           <Text weight="semibold">Current file vs latest applied generation</Text>
+          <Text className={styles.muted}>Review only. The Web Console does not edit or apply YAML.</Text>
           <DiffView diff={planDiff} />
         </div>
       ) : null}
@@ -2008,20 +2027,21 @@ function DiffView({ diff }: { diff: string }) {
   );
 }
 
-function ConfigTreeNode({ label, value, depth }: { label: string; value: unknown; depth: number }) {
+function ConfigTreeNode({ label, value, depth, query }: { label: string; value: unknown; depth: number; query: string }) {
   const styles = useStyles();
+  const nodeID = configNodeID(label, value);
   if (Array.isArray(value)) {
     return (
-      <details className={styles.treeNode} open={depth < 2}>
+      <details id={nodeID} className={styles.treeNode} open={depth < 2 || configNodeMatches(label, value, query)}>
         <summary className={styles.treeSummary}>
           <span className={styles.treeRow}>
-            <span className={styles.treeKey}>{label}</span>
+            <span className={styles.treeKey}><Highlighted text={label} query={query} /></span>
             <span className={styles.treeMeta}>[{value.length} items]</span>
           </span>
         </summary>
         <div className={styles.treeChildren}>
           {value.map((item, index) => (
-            <ConfigTreeNode key={`${index}-${configNodeLabel(index, item)}`} label={configNodeLabel(index, item)} value={item} depth={depth + 1} />
+            <ConfigTreeNode key={`${index}-${configNodeLabel(index, item)}`} label={configNodeLabel(index, item)} value={item} depth={depth + 1} query={query} />
           ))}
         </div>
       </details>
@@ -2030,16 +2050,16 @@ function ConfigTreeNode({ label, value, depth }: { label: string; value: unknown
   if (isRecord(value)) {
     const entries = Object.entries(value);
     return (
-      <details className={styles.treeNode} open={depth < 2}>
+      <details id={nodeID} className={styles.treeNode} open={depth < 2 || configNodeMatches(label, value, query)}>
         <summary className={styles.treeSummary}>
           <span className={styles.treeRow}>
-            <span className={styles.treeKey}>{label}</span>
+            <span className={styles.treeKey}><Highlighted text={label} query={query} /></span>
             <span className={styles.treeMeta}>{entries.length} keys</span>
           </span>
         </summary>
         <div className={styles.treeChildren}>
           {entries.map(([key, item]) => (
-            <ConfigTreeNode key={key} label={key} value={item} depth={depth + 1} />
+            <ConfigTreeNode key={key} label={key} value={item} depth={depth + 1} query={query} />
           ))}
         </div>
       </details>
@@ -2047,8 +2067,8 @@ function ConfigTreeNode({ label, value, depth }: { label: string; value: unknown
   }
   return (
     <div className={styles.treeLeaf}>
-      <span className={styles.treeKey}>{label}</span>
-      <code className={styles.treeValue}>{formatConfigScalar(value)}</code>
+      <span className={styles.treeKey}><Highlighted text={label} query={query} /></span>
+      <code className={styles.treeValue}><Highlighted text={formatConfigScalar(value)} query={query} /></code>
     </div>
   );
 }
@@ -2141,6 +2161,63 @@ function configNodeLabel(index: number, value: unknown) {
   if (kind && name) return `${index}: ${kind}/${name}`;
   if (kind) return `${index}: ${kind}`;
   return `[${index}]`;
+}
+
+function configNodeID(label: string, value: unknown) {
+  if (!isRecord(value)) return undefined;
+  const kind = stringValue(value.kind);
+  const name = stringValue(value.name) || (isRecord(value.metadata) ? stringValue(value.metadata.name) : "");
+  if (!kind) return undefined;
+  return `config-${kind}-${name || label}`.replace(/[^a-zA-Z0-9_-]+/g, "-");
+}
+
+function configNodeMatches(label: string, value: unknown, query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return false;
+  return `${label} ${JSON.stringify(value)}`.toLowerCase().includes(needle);
+}
+
+function configKindTargets(value: unknown) {
+  const targets: { id: string; label: string }[] = [];
+  const visit = (item: unknown, label: string) => {
+    if (Array.isArray(item)) {
+      item.forEach((child, index) => visit(child, configNodeLabel(index, child)));
+      return;
+    }
+    if (!isRecord(item)) return;
+    const id = configNodeID(label, item);
+    const kind = stringValue(item.kind);
+    const name = stringValue(item.name) || (isRecord(item.metadata) ? stringValue(item.metadata.name) : "");
+    if (id && kind) targets.push({ id, label: name ? `${kind}/${name}` : kind });
+    Object.entries(item).forEach(([key, child]) => {
+      if (key !== "metadata" && key !== "spec" && key !== "status") visit(child, key);
+    });
+  };
+  visit(value, "config");
+  const seen = new Set<string>();
+  return targets.filter(target => {
+    if (seen.has(target.id)) return false;
+    seen.add(target.id);
+    return true;
+  });
+}
+
+function highlightYAML(text: string, query: string) {
+  const needle = query.trim();
+  if (!needle) return [{ text, match: false }];
+  const lower = text.toLowerCase();
+  const lowerNeedle = needle.toLowerCase();
+  const parts: { text: string; match: boolean }[] = [];
+  let cursor = 0;
+  for (;;) {
+    const index = lower.indexOf(lowerNeedle, cursor);
+    if (index < 0) break;
+    if (index > cursor) parts.push({ text: text.slice(cursor, index), match: false });
+    parts.push({ text: text.slice(index, index + needle.length), match: true });
+    cursor = index + needle.length;
+  }
+  if (cursor < text.length) parts.push({ text: text.slice(cursor), match: false });
+  return parts;
 }
 
 function formatConfigScalar(value: unknown) {
