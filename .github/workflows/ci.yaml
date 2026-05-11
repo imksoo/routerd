@@ -31,7 +31,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: website/package-lock.json
+          cache-dependency-path: |
+            website/package-lock.json
+            webconsole/package-lock.json
 
       - name: Install website dependencies
         run: make website-deps
@@ -55,3 +57,6 @@ jobs:
 
       - name: Build website
         run: make website-build
+
+      - name: Capture Web Console screenshots
+        run: make webconsole-screenshot PLAYWRIGHT_INSTALL_FLAGS=--with-deps
