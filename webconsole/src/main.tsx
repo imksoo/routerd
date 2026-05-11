@@ -519,6 +519,21 @@ const useStyles = makeStyles({
       backgroundColor: "#172235",
     },
   },
+  navSubButtonActive: {
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: "#1b2a40",
+  },
+  sectionBar: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    padding: "10px 20px",
+    borderBottom: "1px solid #243041",
+    backgroundColor: "#0b1118",
+  },
+  sectionButton: {
+    borderRadius: "4px",
+  },
   jumpBar: {
     display: "flex",
     flexWrap: "wrap",
@@ -1224,6 +1239,10 @@ function App() {
     navigateTo(item.view, item.targetID);
   }
 
+  function sectionActive(item: NavSubItem) {
+    return item.view === selected && selectedTargetID === item.targetID;
+  }
+
   function navigateTo(view: ViewKey, targetID?: string) {
     setSelected(view);
     setSelectedTargetID(targetID);
@@ -1326,7 +1345,7 @@ function App() {
                         key={sub.key}
                         size="small"
                         appearance="subtle"
-                        className={styles.navSubButton}
+                        className={`${styles.navSubButton} ${sectionActive(sub) ? styles.navSubButtonActive : ""}`}
                         onClick={() => showSection(sub)}
                       >
                         <span>{sub.label}</span>
@@ -1354,6 +1373,21 @@ function App() {
               <Button appearance="primary" icon={<ArrowClockwiseRegular />} onClick={refresh}>Refresh</Button>
             </div>
           </div>
+          {navSubItems.length > 0 ? (
+            <div className={styles.sectionBar} aria-label={`${selectedNav.label} sections`}>
+              {navSubItems.map(sub => (
+                <Button
+                  key={sub.key}
+                  size="small"
+                  appearance={sectionActive(sub) ? "primary" : "secondary"}
+                  className={styles.sectionButton}
+                  onClick={() => showSection(sub)}
+                >
+                  {sub.label}{sub.count !== undefined ? ` ${sub.count}` : ""}
+                </Button>
+              ))}
+            </div>
+          ) : null}
           <main className={styles.main}>
             {error ? <Card><Text role="alert">Web console error: {error}</Text></Card> : null}
             {selected === "overview" ? (
@@ -1378,18 +1412,18 @@ function App() {
                   </div>
                 </div>
                 <MetricCharts samples={metricSamples} />
-                <Card>
+                <Card id="overview-interfaces" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Interfaces</Text>} description={<Text className={styles.muted}>Role, link state, MTU, and assigned addresses</Text>} />
                   <InterfaceOverview interfaces={summary?.interfaces ?? []} />
                 </Card>
-                <Card>
+                <Card id="overview-resources" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Resources</Text>} />
                   <ResourceTable resources={resources} controllers={controllers} />
                 </Card>
               </>
             ) : null}
             {selected === "controllers" ? (
-              <Card>
+              <Card id="controllers-table" className={styles.connectionAnchor}>
                 <CardHeader
                   header={<Text weight="semibold">Controllers</Text>}
                   description={<Text className={styles.muted}>Controller mode, reason, and resource ownership surface</Text>}
@@ -1531,11 +1565,11 @@ function App() {
             ) : null}
             {selected === "events" ? (
               <div className={styles.eventsGrid}>
-                <Card>
+                <Card id="events-list" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Events</Text>} />
                   <EventTable events={events} selectedKey={eventKey(selectedEvent)} onSelect={event => setSelectedEventKey(eventKey(event))} />
                 </Card>
-                <EventDetail event={selectedEvent} />
+                <EventDetail event={selectedEvent} id="events-detail" />
               </div>
             ) : null}
             {selected === "firewall" ? (
@@ -2074,11 +2108,11 @@ function EventTable({ events, selectedKey, onSelect }: { events: RouterEvent[]; 
   );
 }
 
-function EventDetail({ event }: { event?: RouterEvent }) {
+function EventDetail({ event, id }: { event?: RouterEvent; id?: string }) {
   const styles = useStyles();
   if (!event) {
     return (
-      <Card className={styles.detailPanel}>
+      <Card id={id} className={styles.detailPanel}>
         <CardHeader header={<Text weight="semibold">Detail</Text>} />
         <Text className={styles.muted}>No event selected</Text>
       </Card>
@@ -2094,7 +2128,7 @@ function EventDetail({ event }: { event?: RouterEvent }) {
   ];
   const rows = [...baseRows, ...eventAttributeEntries(event)].filter(([, value]) => value !== undefined && value !== "");
   return (
-    <Card className={styles.detailPanel}>
+    <Card id={id} className={styles.detailPanel}>
       <CardHeader header={<Text weight="semibold">Detail</Text>} description={<Text className={styles.muted}>Event {event.id ?? "-"}</Text>} />
       <div className={styles.detailList}>
         {rows.map(([key, value]) => (
@@ -2904,6 +2938,19 @@ function connectionGroupID(key: string) {
 }
 
 function navigationSubItems(selected: ViewKey, groups: { key: string; rows: ConnectionEntry[] }[], summary: Summary | null): NavSubItem[] {
+  if (selected === "overview") {
+    return [
+      { key: "metrics", label: "Metrics", view: "overview", targetID: "overview-metrics" },
+      { key: "interfaces", label: "Interfaces", count: summary?.interfaces?.length ?? 0, view: "overview", targetID: "overview-interfaces" },
+      { key: "resources", label: "Resources", count: importantResources(summary?.resources ?? []).length, view: "overview", targetID: "overview-resources" },
+    ];
+  }
+  if (selected === "controllers") {
+    const controllers = summary?.controllers ?? (summary?.status?.status?.controllers as ControllerStatus[] | undefined) ?? [];
+    return [
+      { key: "controllers", label: "Controllers", count: controllers.length, view: "controllers", targetID: "controllers-table" },
+    ];
+  }
   if (selected === "connections") {
     return groups.map(group => {
       const label = connectionGroupLabel(group.key);
@@ -2939,6 +2986,13 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
     return [
       { key: "tailscale", label: "Tailscale", count: tailscalePeers.length, view: "vpn", targetID: "vpn-tailscale" },
       { key: "wireguard", label: "WireGuard", count: wireGuard.reduce((total, item) => total + (item.peers?.length ?? 0), 0), view: "vpn", targetID: "vpn-wireguard" },
+    ];
+  }
+  if (selected === "events") {
+    const events = summary?.events ?? [];
+    return [
+      { key: "list", label: "Event list", count: events.length, view: "events", targetID: "events-list" },
+      { key: "detail", label: "Detail", view: "events", targetID: "events-detail" },
     ];
   }
   return [];
