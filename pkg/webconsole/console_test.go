@@ -580,6 +580,53 @@ func TestCorrelateClientsMergesDHCPLeaseAndIPv6NeighborByMAC(t *testing.T) {
 	}
 }
 
+func TestCorrelateClientsAddsDPIActivitySummary(t *testing.T) {
+	now := time.Now().UTC()
+	rows := correlateClients(
+		nil,
+		nil,
+		[]logstore.TrafficFlow{
+			{
+				ClientAddress: "172.18.1.120",
+				PeerAddress:   "93.184.216.34",
+				AppName:       "tls",
+				TLSSNI:        "example.com",
+				Accounting:    true,
+				BytesOut:      1600,
+				BytesIn:       6400,
+				EndedAt:       now.Add(-2 * time.Minute),
+			},
+			{
+				ClientAddress:    "172.18.1.120",
+				PeerAddress:      "1.1.1.1",
+				AppName:          "dns",
+				ResolvedHostname: "one.one.one.one",
+				Accounting:       true,
+				BytesOut:         120,
+				BytesIn:          240,
+				EndedAt:          now,
+			},
+		},
+		nil,
+		nil,
+	)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	row := rows[0]
+	if row.PrimaryActivity != "web-heavy" {
+		t.Fatalf("primary activity = %q, row = %+v", row.PrimaryActivity, row)
+	}
+	if row.LastProtocol != "dns" || row.LastProtocolDetail != "DNS-query=one.one.one.one" {
+		t.Fatalf("last protocol = %q detail = %q", row.LastProtocol, row.LastProtocolDetail)
+	}
+	for _, want := range []string{"tls", "dns"} {
+		if !containsString(row.ProtocolMix, want) {
+			t.Fatalf("protocol mix missing %q: %+v", want, row.ProtocolMix)
+		}
+	}
+}
+
 func TestCorrelateClientsSkipsFailedNeighbors(t *testing.T) {
 	rows := correlateClients(nil, []NeighborEntry{
 		{IP: "192.168.178.40", IfName: "ens18", State: "FAILED", Source: "ip-neigh"},

@@ -160,6 +160,7 @@ type TrafficFlow = {
   peerAddress?: string;
   resolvedHostname?: string;
   tlsSNI?: string;
+  protocol?: string;
   appName?: string;
   appCategory?: string;
   appConfidence?: number;
@@ -226,6 +227,10 @@ type ClientEntry = {
   peers?: string[];
   bytesOut?: number;
   bytesIn?: number;
+  primaryActivity?: string;
+  lastProtocol?: string;
+  lastProtocolDetail?: string;
+  protocolMix?: string[];
   inferredOSFamily?: string;
   inferredDeviceClass?: string;
   fingerprintConfidence?: number;
@@ -366,6 +371,10 @@ type ClientRow = {
   bytesOut?: number;
   bytesIn?: number;
   peers: Set<string>;
+  primaryActivity: string;
+  lastProtocol: string;
+  lastProtocolDetail: string;
+  protocolMix: Set<string>;
   inferredOSFamily: string;
   inferredDeviceClass: string;
   fingerprintConfidence?: number;
@@ -781,6 +790,16 @@ const useStyles = makeStyles({
       gridTemplateColumns: "1fr",
     },
   },
+  clientFilters: {
+    display: "grid",
+    gridTemplateColumns: "minmax(min(100%, 14rem), 1.4fr) minmax(min-content, 12rem)",
+    gap: "8px",
+    alignItems: "end",
+    marginBottom: "12px",
+    "@media (max-width: 640px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
   highlight: {
     backgroundColor: "#6b4b00",
     color: "#fff7d6",
@@ -838,7 +857,7 @@ const useStyles = makeStyles({
   },
   clientDeviceRow: {
     display: "grid",
-    gridTemplateColumns: "2rem minmax(12rem, 1.1fr) minmax(11rem, 1fr) minmax(9rem, 0.7fr) max-content",
+    gridTemplateColumns: "2rem minmax(12rem, 1.1fr) minmax(11rem, 1fr) minmax(9rem, 0.7fr) minmax(10rem, 0.8fr) max-content",
     gap: "10px",
     alignItems: "start",
     padding: "10px",
@@ -1452,6 +1471,7 @@ function App() {
   const [generationTo, setGenerationTo] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [clientQuery, setClientQuery] = useState("");
+  const [clientActivityFilter, setClientActivityFilter] = useState("all");
   const [generationQuery, setGenerationQuery] = useState("");
   const [selected, setSelected] = useState<ViewKey>(initialLocation.view);
   const [selectedTargetID, setSelectedTargetID] = useState<string | undefined>(initialLocation.targetID);
@@ -1607,7 +1627,11 @@ function App() {
     if (filteredEvents.length === 0) return undefined;
     return filteredEvents.find(event => eventKey(event) === selectedEventKey) ?? filteredEvents[0];
   }, [filteredEvents, selectedEventKey]);
-  const filteredClients = useMemo(() => filterClients(summary?.clients ?? [], clientQuery), [summary?.clients, clientQuery]);
+  const clientActivityOptions = useMemo(() => clientActivityFacets(summary?.clients ?? []), [summary?.clients]);
+  const filteredClients = useMemo(
+    () => filterClients(summary?.clients ?? [], clientQuery, clientActivityFilter),
+    [summary?.clients, clientQuery, clientActivityFilter],
+  );
   const filteredGenerations = useMemo(() => filterGenerations(generations, generationQuery), [generations, generationQuery]);
 
   useEffect(() => {
@@ -1880,8 +1904,15 @@ function App() {
                       header={<Text weight="semibold">Client inventory</Text>}
                       description={<Text className={styles.muted}>DHCP leases, neighbors, and observed traffic grouped by client. Showing {filteredClients.length} of {summary?.clients?.length ?? 0}</Text>}
                     />
-                    <div className={styles.singleSearchRow}>
+                    <div className={styles.clientFilters}>
                       <SearchControl label="Search clients" value={clientQuery} placeholder="name, MAC, address, vendor, peer" onChange={setClientQuery} />
+                      <div className={styles.filterControl}>
+                        <Text size={200} className={styles.muted}>Activity</Text>
+                        <Select size="small" value={clientActivityFilter} onChange={event => setClientActivityFilter(event.target.value)}>
+                          <option value="all">All activity</option>
+                          {clientActivityOptions.map(activity => <option key={activity} value={activity}>{formatClientActivity(activity)}</option>)}
+                        </Select>
+                      </div>
                     </div>
                     <ClientInventory clients={filteredClients} />
                   </Card>
@@ -3208,6 +3239,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
   const rows = clients.map(clientEntryToRow);
   const online = rows.filter(row => clientOnline(row)).length;
   const addressCount = rows.reduce((sum, row) => sum + row.addresses.size, 0);
+  const activeActivities = new Set(rows.map(row => row.primaryActivity).filter(Boolean));
   const sections = clientSections(rows);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggleExpanded = (key: string) => setExpanded(current => ({ ...current, [key]: !current[key] }));
@@ -3217,6 +3249,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
         <Metric label="devices" value={String(rows.length)} />
         <Metric label="online" value={`${online}/${rows.length}`} />
         <Metric label="addresses" value={String(addressCount)} />
+        <Metric label="activity types" value={String(activeActivities.size)} />
       </div>
       <div className={styles.clientSections}>
         {sections.map(section => {
@@ -3258,6 +3291,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                         <code className={styles.code}>{primaryClientAddress(row) || "-"}</code>
                       </div>
                       <ClientOSBadge row={row} />
+                      <ClientActivityBadge row={row} />
                       <div className={styles.connectionFlow}>
                         <Text size={200} className={styles.muted}>Addresses</Text>
                         <Text>{row.addresses.size}</Text>
@@ -3271,6 +3305,9 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                             <div className={styles.clientMetaLine}>
                               <code className={styles.wrapCode}>{row.mac || "-"}</code>
                               <Text size={200} className={styles.muted}>last seen {clientLastSeen(row)}</Text>
+                              {row.primaryActivity ? <Text size={200} className={styles.muted}>activity {formatClientActivity(row.primaryActivity)}</Text> : null}
+                              {row.lastProtocol ? <Text size={200} className={styles.muted}>last protocol {formatConnectionApp(row.lastProtocol)}{row.lastProtocolDetail ? ` ${row.lastProtocolDetail}` : ""}</Text> : null}
+                              {row.protocolMix.size > 0 ? <Text size={200} className={styles.muted}>protocol mix {Array.from(row.protocolMix).map(formatConnectionApp).join(", ")}</Text> : null}
                               <Text size={200} className={styles.muted}>out {formatBytes(row.bytesOut)} / in {formatBytes(row.bytesIn)}</Text>
                               {row.sources.size > 0 ? <Text size={200} className={styles.muted}>sources {Array.from(row.sources).join(", ")}</Text> : null}
                               {row.fingerprintSignals.size > 0 ? <Text size={200} className={styles.muted}>signals {Array.from(row.fingerprintSignals).slice(0, 5).join(", ")}</Text> : null}
@@ -3288,6 +3325,22 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
         })}
       </div>
     </>
+  );
+}
+
+function ClientActivityBadge({ row }: { row: ClientRow }) {
+  const styles = useStyles();
+  if (!row.primaryActivity && row.protocolMix.size === 0) return <Text className={styles.muted}>-</Text>;
+  return (
+    <div className={styles.connectionFlow}>
+      <Text size={200} className={styles.muted}>Activity</Text>
+      <div className={styles.badges}>
+        {row.primaryActivity ? <Badge appearance="tint" color={clientActivityColor(row.primaryActivity)}>{formatClientActivity(row.primaryActivity)}</Badge> : null}
+        {Array.from(row.protocolMix).slice(0, 3).map(protocol => (
+          <Badge appearance="outline" color={connectionAppColor(protocol)} key={protocol}>{formatConnectionApp(protocol)}</Badge>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -3327,6 +3380,7 @@ function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
           <col style={{ width: "170px" }} />
           <col style={{ width: "96px" }} />
           <col style={{ width: "96px" }} />
+          <col style={{ width: "190px" }} />
           <col />
         </colgroup>
         <TableHeader>
@@ -3334,6 +3388,7 @@ function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
             <TableHeaderCell>Client</TableHeaderCell>
             <TableHeaderCell>Bytes out</TableHeaderCell>
             <TableHeaderCell>Bytes in</TableHeaderCell>
+            <TableHeaderCell>Protocol mix</TableHeaderCell>
             <TableHeaderCell>Peers</TableHeaderCell>
           </TableRow>
         </TableHeader>
@@ -3343,6 +3398,14 @@ function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
               <TableCell><code className={styles.code}>{row.client}</code></TableCell>
               <TableCell>{formatBytes(row.bytesOut)}</TableCell>
               <TableCell>{formatBytes(row.bytesIn)}</TableCell>
+              <TableCell>
+                <div className={styles.badges}>
+                  {Array.from(row.protocols).slice(0, 3).map(protocol => (
+                    <Badge appearance="outline" color={connectionAppColor(protocol)} key={protocol}>{formatConnectionApp(protocol)}</Badge>
+                  ))}
+                  {row.protocols.size === 0 ? <Text className={styles.muted}>-</Text> : null}
+                </div>
+              </TableCell>
               <TableCell><code className={styles.wrapCode}>{Array.from(row.peers).slice(0, 3).join(", ") || "-"}</code></TableCell>
             </TableRow>
           ))}
@@ -4337,14 +4400,16 @@ function unifiedLineDiff(fromName: string, toName: string, fromText: string, toT
 }
 
 function clientTrafficRows(flows: TrafficFlow[]) {
-  const totals = new Map<string, { client: string; bytesOut?: number; bytesIn?: number; peers: Set<string> }>();
+  const totals = new Map<string, { client: string; bytesOut?: number; bytesIn?: number; peers: Set<string>; protocols: Set<string> }>();
   for (const flow of flows) {
     const key = flow.clientAddress || "-";
-    const row = totals.get(key) ?? { client: key, peers: new Set<string>() };
+    const row = totals.get(key) ?? { client: key, peers: new Set<string>(), protocols: new Set<string>() };
     row.bytesOut = addOptionalBytes(row.bytesOut, flow.bytesOut, flow.accounting);
     row.bytesIn = addOptionalBytes(row.bytesIn, flow.bytesIn, flow.accounting);
     const peer = flow.resolvedHostname || flow.tlsSNI || flow.peerAddress;
     if (peer) row.peers.add(peer);
+    const protocol = normalizeFacet(flow.appName || flow.protocol, "unidentified");
+    if (protocol) row.protocols.add(protocol);
     totals.set(key, row);
   }
   return Array.from(totals.values()).sort((a, b) => a.client.localeCompare(b.client)).slice(0, 10);
@@ -4364,6 +4429,10 @@ function clientEntryToRow(entry: ClientEntry): ClientRow {
     bytesOut: entry.bytesOut,
     bytesIn: entry.bytesIn,
     peers: new Set(entry.peers ?? []),
+    primaryActivity: entry.primaryActivity ?? "",
+    lastProtocol: entry.lastProtocol ?? "",
+    lastProtocolDetail: entry.lastProtocolDetail ?? "",
+    protocolMix: new Set(entry.protocolMix ?? []),
     inferredOSFamily: entry.inferredOSFamily ?? "",
     inferredDeviceClass: entry.inferredDeviceClass ?? "",
     fingerprintConfidence: entry.fingerprintConfidence,
@@ -4436,10 +4505,22 @@ function addOptionalBytes(current: number | undefined, next: number | undefined,
   return (current ?? 0) + value;
 }
 
-function filterClients(clients: ClientEntry[], query: string) {
+function clientActivityFacets(clients: ClientEntry[]) {
+  const values = new Set<string>();
+  for (const client of clients) {
+    const activity = normalizeFacet(client.primaryActivity, "");
+    if (activity) values.add(activity);
+  }
+  return Array.from(values).sort(facetSort);
+}
+
+function filterClients(clients: ClientEntry[], query: string, activity: string) {
   const needle = query.trim().toLowerCase();
-  if (!needle) return clients;
-  return clients.filter(client => clientSearchText(client).includes(needle));
+  return clients.filter(client => {
+    if (activity !== "all" && normalizeFacet(client.primaryActivity, "unclassified") !== activity) return false;
+    if (!needle) return true;
+    return clientSearchText(client).includes(needle);
+  });
 }
 
 function clientSearchText(client: ClientEntry) {
@@ -4449,14 +4530,39 @@ function clientSearchText(client: ClientEntry) {
     client.mac,
     client.vendor,
     client.state,
+    client.primaryActivity,
+    client.lastProtocol,
+    client.lastProtocolDetail,
     client.inferredOSFamily,
     client.inferredDeviceClass,
     client.fingerprintConfidence,
     ...(client.addresses ?? []),
     ...(client.sources ?? []),
     ...(client.peers ?? []),
+    ...(client.protocolMix ?? []),
     ...(client.fingerprintSignals ?? []),
   ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function formatClientActivity(value: string) {
+  const normalized = normalizeFacet(value, "unclassified");
+  if (normalized === "iot-telemetry") return "IoT telemetry";
+  if (normalized === "resolver-only") return "Resolver only";
+  if (normalized === "web-heavy") return "Web heavy";
+  if (normalized === "streaming") return "Streaming";
+  if (normalized === "gaming") return "Gaming";
+  if (normalized === "mixed") return "Mixed";
+  if (normalized === "unclassified") return "Unclassified";
+  return normalized.split("-").map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+function clientActivityColor(value: string): "brand" | "danger" | "informative" | "severe" | "subtle" | "success" | "warning" {
+  const normalized = normalizeFacet(value, "unclassified");
+  if (normalized === "web-heavy") return "brand";
+  if (normalized === "iot-telemetry") return "warning";
+  if (normalized === "resolver-only") return "success";
+  if (normalized === "mixed") return "informative";
+  return "subtle";
 }
 
 function filterGenerations(generations: GenerationRecord[], query: string) {

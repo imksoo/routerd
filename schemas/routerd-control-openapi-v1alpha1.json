@@ -272,10 +272,25 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "appCategory": {
+                  "type": "string"
+                },
+                "appConfidence": {
+                  "type": "integer"
+                },
+                "appName": {
+                  "type": "string"
+                },
                 "assured": {
                   "type": "boolean"
                 },
+                "dnsQuery": {
+                  "type": "string"
+                },
                 "family": {
+                  "type": "string"
+                },
+                "httpHost": {
                   "type": "string"
                 },
                 "mark": {
@@ -349,6 +364,9 @@
                 },
                 "timeout": {
                   "type": "integer"
+                },
+                "tlsSNI": {
+                  "type": "string"
                 }
               },
               "required": [

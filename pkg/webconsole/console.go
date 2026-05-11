@@ -113,6 +113,10 @@ type ClientEntry struct {
 	Peers                 []string `json:"peers,omitempty"`
 	BytesOut              int64    `json:"bytesOut,omitempty"`
 	BytesIn               int64    `json:"bytesIn,omitempty"`
+	PrimaryActivity       string   `json:"primaryActivity,omitempty"`
+	LastProtocol          string   `json:"lastProtocol,omitempty"`
+	LastProtocolDetail    string   `json:"lastProtocolDetail,omitempty"`
+	ProtocolMix           []string `json:"protocolMix,omitempty"`
 	InferredOSFamily      string   `json:"inferredOSFamily,omitempty"`
 	InferredDeviceClass   string   `json:"inferredDeviceClass,omitempty"`
 	FingerprintConfidence int      `json:"fingerprintConfidence,omitempty"`
@@ -597,13 +601,14 @@ func (h Handler) clients(w http.ResponseWriter) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if enriched, err := h.enrichTrafficFlowsWithDPI(flows, time.Now().UTC(), time.Hour); err == nil {
-		flows = enriched
-	}
 	queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-24 * time.Hour), Limit: 1000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	flows = enrichTrafficFlowsWithDNS(flows, queries)
+	if enriched, err := h.enrichTrafficFlowsWithDPI(flows, time.Now().UTC(), time.Hour); err == nil {
+		flows = enriched
 	}
 	firewallLogs, err := h.firewallLogList(logstore.FirewallLogFilter{Since: time.Now().Add(-24 * time.Hour), Action: "drop", Limit: 1000})
 	if err != nil {
@@ -1357,6 +1362,7 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 				addresses:   map[string]bool{},
 				sources:     map[string]bool{},
 				peers:       map[string]bool{},
+				activity:    map[string]*clientActivityStat{},
 			}
 			rows[key] = row
 		}
@@ -1449,6 +1455,7 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		if peer != "" {
 			row.peers[peer] = true
 		}
+		row.recordActivity(flowActivityName(flow), flowActivityDetail(flow), flow.BytesOut+flow.BytesIn, flow.EndedAt)
 		row.sources["traffic"] = true
 	}
 	out := make([]ClientEntry, 0, len(rows))
@@ -1456,6 +1463,7 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		row.Addresses = sortedClientAddresses(row.addresses)
 		row.Sources = sortedSet(row.sources)
 		row.Peers = sortedSet(row.peers)
+		row.applyActivitySummary()
 		fingerprint := inferClientFingerprint(row.ClientEntry, passive)
 		row.InferredOSFamily = fingerprint.OSFamily
 		row.InferredDeviceClass = fingerprint.DeviceClass
@@ -1494,11 +1502,151 @@ func normalizeClientMAC(mac string) string {
 	return strings.ToLower(strings.TrimSpace(mac))
 }
 
+func (row *clientMutableEntry) recordActivity(protocol, detail string, bytes int64, seen time.Time) {
+	protocol = strings.ToLower(strings.TrimSpace(protocol))
+	if protocol == "" || protocol == "unknown" {
+		protocol = "unidentified"
+	}
+	if row.activity == nil {
+		row.activity = map[string]*clientActivityStat{}
+	}
+	stat := row.activity[protocol]
+	if stat == nil {
+		stat = &clientActivityStat{Protocol: protocol}
+		row.activity[protocol] = stat
+	}
+	stat.Count++
+	if bytes > 0 {
+		stat.Bytes += bytes
+	}
+	if strings.TrimSpace(detail) != "" {
+		stat.Detail = detail
+	}
+	if seen.IsZero() {
+		seen = time.Now().UTC()
+	}
+	if stat.LastSeen.IsZero() || seen.After(stat.LastSeen) {
+		stat.LastSeen = seen
+	}
+}
+
+func (row *clientMutableEntry) applyActivitySummary() {
+	if len(row.activity) == 0 {
+		return
+	}
+	stats := make([]*clientActivityStat, 0, len(row.activity))
+	for _, stat := range row.activity {
+		stats = append(stats, stat)
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].Bytes != stats[j].Bytes {
+			return stats[i].Bytes > stats[j].Bytes
+		}
+		if stats[i].Count != stats[j].Count {
+			return stats[i].Count > stats[j].Count
+		}
+		return stats[i].Protocol < stats[j].Protocol
+	})
+	row.ProtocolMix = make([]string, 0, min(len(stats), 3))
+	for _, stat := range stats {
+		if len(row.ProtocolMix) >= 3 {
+			break
+		}
+		row.ProtocolMix = append(row.ProtocolMix, stat.Protocol)
+	}
+	row.PrimaryActivity = classifyClientActivity(stats)
+	sort.Slice(stats, func(i, j int) bool {
+		return stats[i].LastSeen.After(stats[j].LastSeen)
+	})
+	row.LastProtocol = stats[0].Protocol
+	row.LastProtocolDetail = stats[0].Detail
+}
+
+func flowActivityName(flow logstore.TrafficFlow) string {
+	return flowActivityProtocol(flow)
+}
+
+func flowActivityDetail(flow logstore.TrafficFlow) string {
+	app := flowActivityProtocol(flow)
+	switch {
+	case strings.TrimSpace(flow.TLSSNI) != "":
+		return "TLS-SNI=" + strings.TrimSpace(flow.TLSSNI)
+	case strings.TrimSpace(flow.ResolvedHostname) != "":
+		if app == "netbios" {
+			return "NBNS-query=" + strings.TrimSpace(flow.ResolvedHostname)
+		}
+		if app == "dns" {
+			return "DNS-query=" + strings.TrimSpace(flow.ResolvedHostname)
+		}
+		if app == "http" {
+			return "HTTP-Host=" + strings.TrimSpace(flow.ResolvedHostname)
+		}
+		return "Host=" + strings.TrimSpace(flow.ResolvedHostname)
+	case strings.TrimSpace(flow.PeerAddress) != "":
+		return strings.TrimSpace(flow.PeerAddress)
+	default:
+		return ""
+	}
+}
+
+func flowActivityProtocol(flow logstore.TrafficFlow) string {
+	if name := strings.ToLower(strings.TrimSpace(flow.AppName)); name != "" && name != "unknown" {
+		return name
+	}
+	if strings.TrimSpace(flow.TLSSNI) != "" {
+		return "tls"
+	}
+	switch flow.PeerPort {
+	case 53:
+		return "dns"
+	case 80:
+		return "http"
+	case 443:
+		return "tls"
+	}
+	return strings.ToLower(strings.TrimSpace(flow.Protocol))
+}
+
+func classifyClientActivity(stats []*clientActivityStat) string {
+	totalBytes := int64(0)
+	totalCount := 0
+	seen := map[string]bool{}
+	for _, stat := range stats {
+		totalBytes += stat.Bytes
+		totalCount += stat.Count
+		seen[stat.Protocol] = true
+	}
+	if len(seen) >= 4 {
+		return "mixed"
+	}
+	if seen["netbios"] || seen["mdns"] || seen["ssdp"] {
+		return "iot-telemetry"
+	}
+	if seen["dns"] && len(seen) == 1 {
+		return "resolver-only"
+	}
+	for _, stat := range stats {
+		if (stat.Protocol == "tls" || stat.Protocol == "http") && (totalBytes == 0 || stat.Bytes*100 >= totalBytes*60 || stat.Count*100 >= totalCount*60) {
+			return "web-heavy"
+		}
+	}
+	return "mixed"
+}
+
 type clientMutableEntry struct {
 	ClientEntry
 	addresses map[string]bool
 	sources   map[string]bool
 	peers     map[string]bool
+	activity  map[string]*clientActivityStat
+}
+
+type clientActivityStat struct {
+	Protocol string
+	Detail   string
+	Bytes    int64
+	Count    int
+	LastSeen time.Time
 }
 
 type clientFingerprint struct {
