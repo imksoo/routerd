@@ -16,6 +16,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/platform"
 	"routerd/pkg/render"
 )
 
@@ -81,6 +82,9 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if !hasFirewall(c.Router) {
 		return nil
 	}
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		return c.reconcilePF(ctx)
+	}
 	holes := render.InternalFirewallHoles(c.Router)
 	data, err := render.NftablesFirewall(c.Router, holes)
 	if err != nil {
@@ -98,7 +102,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		}
 	}
 	if c.DryRun {
-		return c.savePolicyStatuses(ctx, path, changed, len(holes))
+		return c.savePolicyStatuses(ctx, "nftables", path, changed, len(holes))
 	}
 	nft := firstNonEmpty(c.NftCommand, "nft")
 	if err := checkNftablesRuleset(ctx, nft, path); err != nil {
@@ -108,16 +112,55 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
-	return c.savePolicyStatuses(ctx, path, changed, len(holes))
+	return c.savePolicyStatuses(ctx, "nftables", path, changed, len(holes))
 }
 
-func (c Controller) savePolicyStatuses(ctx context.Context, path string, changed bool, internalHoles int) error {
+func (c Controller) reconcilePF(ctx context.Context) error {
+	holes := render.InternalFirewallHoles(c.Router)
+	data, err := render.PF(c.Router, holes)
+	if err != nil {
+		return err
+	}
+	defaults, _ := platform.Current()
+	path := firstNonEmpty(c.NftablesPath, filepath.Join(defaults.RuntimeDir, "firewall.pf"))
+	if strings.HasSuffix(path, ".nft") {
+		path = strings.TrimSuffix(path, ".nft") + ".pf"
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	previous, readErr := os.ReadFile(path)
+	changed := readErr != nil || !bytes.Equal(previous, data)
+	if changed {
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			return err
+		}
+	}
+	if c.DryRun {
+		return c.savePolicyStatuses(ctx, "pf", path, changed, len(holes))
+	}
+	pfctl := firstNonEmpty(c.NftCommand, "pfctl")
+	if c.NftCommand == "" || c.NftCommand == "nft" {
+		pfctl = "pfctl"
+	}
+	if out, err := exec.CommandContext(ctx, pfctl, "-n", "-f", path).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s -n -f %s: %w: %s", pfctl, path, err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.CommandContext(ctx, pfctl, "-f", path).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s -f %s: %w: %s", pfctl, path, err, strings.TrimSpace(string(out)))
+	}
+	return c.savePolicyStatuses(ctx, "pf", path, changed, len(holes))
+}
+
+func (c Controller) savePolicyStatuses(ctx context.Context, backend, path string, changed bool, internalHoles int) error {
 	status := map[string]any{
 		"phase":         "Applied",
+		"backend":       backend,
 		"dryRun":        c.DryRun,
 		"changed":       changed,
 		"rules":         firewallRuleCount(c.Router),
 		"internalHoles": internalHoles,
+		"rulesetPath":   path,
 		"nftablesPath":  path,
 		"conditions":    []map[string]any{{"type": "Applied", "status": "True", "reason": "Rendered"}},
 	}
@@ -131,7 +174,7 @@ func (c Controller) savePolicyStatuses(ctx context.Context, path string, changed
 	}
 	if changed && c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.firewall.rules.applied", daemonapi.SeverityInfo)
-		event.Attributes = map[string]string{"nftablesPath": path, "dryRun": fmt.Sprintf("%t", c.DryRun), "internalHoles": fmt.Sprintf("%d", internalHoles)}
+		event.Attributes = map[string]string{"backend": backend, "nftablesPath": path, "dryRun": fmt.Sprintf("%t", c.DryRun), "internalHoles": fmt.Sprintf("%d", internalHoles)}
 		_ = c.Bus.Publish(ctx, event)
 	}
 	return nil

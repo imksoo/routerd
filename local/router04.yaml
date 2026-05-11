@@ -142,7 +142,7 @@ spec:
           - --controller-chain-dry-run-pppoesession=false
           - --controller-chain-dry-run-dns-resolver=false
           - --controller-chain-dry-run-nat=false
-          - --controller-chain-dry-run-firewall=true
+          - --controller-chain-dry-run-firewall=false
           - --controller-chain-dry-run-package=false
           - --controller-chain-dry-run-network-adoption=true
           - --controller-chain-dry-run-systemd-unit=true
