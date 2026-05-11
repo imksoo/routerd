@@ -694,6 +694,15 @@ const useStyles = makeStyles({
       gridTemplateColumns: "1fr",
     },
   },
+  singleSearchRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(220px, 420px)",
+    gap: "8px",
+    marginBottom: "12px",
+    "@media (max-width: 640px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
   highlight: {
     backgroundColor: "#6b4b00",
     color: "#fff7d6",
@@ -1217,6 +1226,8 @@ function App() {
   const [generationFrom, setGenerationFrom] = useState<string>("");
   const [generationTo, setGenerationTo] = useState<string>("");
   const [error, setError] = useState<string>("");
+  const [clientQuery, setClientQuery] = useState("");
+  const [generationQuery, setGenerationQuery] = useState("");
   const [selected, setSelected] = useState<ViewKey>(initialLocation.view);
   const [selectedTargetID, setSelectedTargetID] = useState<string | undefined>(initialLocation.targetID);
   const [navCollapsed, setNavCollapsed] = useState(false);
@@ -1304,6 +1315,8 @@ function App() {
     if (filteredEvents.length === 0) return undefined;
     return filteredEvents.find(event => eventKey(event) === selectedEventKey) ?? filteredEvents[0];
   }, [filteredEvents, selectedEventKey]);
+  const filteredClients = useMemo(() => filterClients(summary?.clients ?? [], clientQuery), [summary?.clients, clientQuery]);
+  const filteredGenerations = useMemo(() => filterGenerations(generations, generationQuery), [generations, generationQuery]);
 
   useEffect(() => {
     if (filteredEvents.length > 0 && !filteredEvents.some(event => eventKey(event) === selectedEventKey)) {
@@ -1553,9 +1566,12 @@ function App() {
                   <Card id="clients-inventory" className={styles.connectionAnchor}>
                     <CardHeader
                       header={<Text weight="semibold">Client inventory</Text>}
-                      description={<Text className={styles.muted}>DHCP leases, neighbors, and observed traffic grouped by client</Text>}
+                      description={<Text className={styles.muted}>DHCP leases, neighbors, and observed traffic grouped by client. Showing {filteredClients.length} of {summary?.clients?.length ?? 0}</Text>}
                     />
-                    <ClientInventory clients={summary?.clients ?? []} />
+                    <div className={styles.singleSearchRow}>
+                      <SearchControl label="Search clients" value={clientQuery} placeholder="name, MAC, address, vendor, peer" onChange={setClientQuery} />
+                    </div>
+                    <ClientInventory clients={filteredClients} />
                   </Card>
                 ) : null}
                 {activeClientTargetID === "clients-traffic" ? (
@@ -1590,16 +1606,7 @@ function App() {
               })}
             </div>
             <div className={styles.connectionFilters}>
-              <div className={styles.filterControl}>
-                <Text size={200} className={styles.muted}>Filter</Text>
-                <Input
-                  className={styles.filterInput}
-                  size="small"
-                  value={connectionFilters.query}
-                  placeholder="address, port, state, label"
-                  onChange={(_, data) => updateConnectionFilter("query", data.value)}
-                />
-              </div>
+              <SearchControl label="Filter" value={connectionFilters.query} placeholder="address, port, state, label" onChange={value => updateConnectionFilter("query", value)} />
               <div className={styles.filterControl}>
                 <Text size={200} className={styles.muted}>Family</Text>
                 <Select size="small" value={connectionFilters.family} onChange={event => updateConnectionFilter("family", event.target.value)}>
@@ -1684,10 +1691,7 @@ function App() {
                 <Card id="events-list" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Events</Text>} description={<Text className={styles.muted}>Showing {filteredEvents.length} of {events.length} bus events</Text>} />
                   <div className={styles.eventFilters}>
-                    <div className={styles.filterControl}>
-                      <Text size={200} className={styles.muted}>Search</Text>
-                      <Input className={styles.filterInput} size="small" value={eventFilters.query} placeholder="topic, reason, message, resource" onChange={(_, data) => setEventFilters(current => ({ ...current, query: data.value }))} />
-                    </div>
+                    <SearchControl label="Search" value={eventFilters.query} placeholder="topic, reason, message, resource" onChange={value => setEventFilters(current => ({ ...current, query: value }))} />
                     <div className={styles.filterControl}>
                       <Text size={200} className={styles.muted}>Severity</Text>
                       <Select size="small" value={eventFilters.severity} onChange={event => setEventFilters(current => ({ ...current, severity: event.target.value }))}>
@@ -1732,10 +1736,7 @@ function App() {
                   />
                   <DenyRateChart logs={firewallLogs} />
                   <div className={styles.firewallFilters}>
-                    <div className={styles.filterControl}>
-                      <Text size={200} className={styles.muted}>Search</Text>
-                      <Input className={styles.filterInput} size="small" value={firewallFilters.query} placeholder="rule, interface, address, protocol" onChange={(_, data) => setFirewallFilters(current => ({ ...current, query: data.value }))} />
-                    </div>
+                    <SearchControl label="Search" value={firewallFilters.query} placeholder="rule, interface, address, protocol" onChange={value => setFirewallFilters(current => ({ ...current, query: value }))} />
                     <div className={styles.filterControl}>
                       <Text size={200} className={styles.muted}>Source</Text>
                       <Input className={styles.filterInput} size="small" value={firewallFilters.source} placeholder="source IP" onChange={(_, data) => setFirewallFilters(current => ({ ...current, source: data.value }))} />
@@ -1780,7 +1781,10 @@ function App() {
             ) : null}
             {selected === "generations" ? (
               <GenerationsView
-                generations={generations}
+                generations={filteredGenerations}
+                totalGenerations={generations.length}
+                query={generationQuery}
+                setQuery={setGenerationQuery}
                 from={generationFrom}
                 to={generationTo}
                 setFrom={setGenerationFrom}
@@ -1856,6 +1860,9 @@ function ConfigView({
 
 function GenerationsView({
   generations,
+  totalGenerations,
+  query,
+  setQuery,
   from,
   to,
   setFrom,
@@ -1866,6 +1873,9 @@ function GenerationsView({
   loadConfig,
 }: {
   generations: GenerationRecord[];
+  totalGenerations: number;
+  query: string;
+  setQuery: (value: string) => void;
   from: string;
   to: string;
   setFrom: (value: string) => void;
@@ -1882,8 +1892,11 @@ function GenerationsView({
       <Card>
         <CardHeader
           header={<Text weight="semibold">Generations</Text>}
-          description={<Text className={styles.muted}>Applied router YAML snapshots. Older rows without YAML cannot be diffed.</Text>}
+          description={<Text className={styles.muted}>Applied router YAML snapshots. Showing {generations.length} of {totalGenerations}. Older rows without YAML cannot be diffed.</Text>}
         />
+        <div className={styles.singleSearchRow}>
+          <SearchControl label="Search generations" value={query} placeholder="generation, phase, hash, time" onChange={setQuery} />
+        </div>
         <div className={styles.generationActions}>
           <Text size={200} className={styles.muted}>From</Text>
           <Select className={styles.generationSelect} size="small" value={from} onChange={event => setFrom(event.target.value)}>
@@ -2148,10 +2161,7 @@ function ResourceTable({ resources, controllers }: { resources: ResourceStatus[]
   return (
     <>
       <div className={styles.resourceFilters}>
-        <div className={styles.filterControl}>
-          <Text size={200} className={styles.muted}>Search resources</Text>
-          <Input className={styles.filterInput} size="small" value={query} placeholder="kind, name, phase, status detail" onChange={(_, data) => setQuery(data.value)} />
-        </div>
+        <SearchControl label="Search resources" value={query} placeholder="kind, name, phase, status detail" onChange={setQuery} />
         <div className={styles.filterControl}>
           <Text size={200} className={styles.muted}>Phase</Text>
           <Select size="small" value={phase} onChange={event => setPhase(event.target.value)}>
@@ -2197,6 +2207,26 @@ function ResourceTable({ resources, controllers }: { resources: ResourceStatus[]
         </Table>
       </div>
     </>
+  );
+}
+
+function SearchControl({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  const styles = useStyles();
+  return (
+    <div className={styles.filterControl}>
+      <Text size={200} className={styles.muted}>{label}</Text>
+      <Input className={styles.filterInput} size="small" value={value} placeholder={placeholder} onChange={(_, data) => onChange(data.value)} />
+    </div>
   );
 }
 
@@ -3637,6 +3667,42 @@ function addOptionalBytes(current: number | undefined, next: number | undefined,
   if (!accounting) return current;
   const value = typeof next === "number" && Number.isFinite(next) ? next : 0;
   return (current ?? 0) + value;
+}
+
+function filterClients(clients: ClientEntry[], query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return clients;
+  return clients.filter(client => clientSearchText(client).includes(needle));
+}
+
+function clientSearchText(client: ClientEntry) {
+  return [
+    client.id,
+    client.hostname,
+    client.mac,
+    client.vendor,
+    client.state,
+    ...(client.addresses ?? []),
+    ...(client.sources ?? []),
+    ...(client.peers ?? []),
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function filterGenerations(generations: GenerationRecord[], query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return generations;
+  return generations.filter(row => generationSearchText(row).includes(needle));
+}
+
+function generationSearchText(row: GenerationRecord) {
+  return [
+    row.generation,
+    row.phase,
+    row.configHash,
+    row.startedAt,
+    row.finishedAt,
+    row.hasYaml ? "yaml stored" : "yaml unavailable",
+  ].filter(value => value !== undefined && value !== "").join(" ").toLowerCase();
 }
 
 function clientOnline(row: ClientRow) {
