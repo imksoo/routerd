@@ -1125,6 +1125,12 @@ const useStyles = makeStyles({
     alignItems: "center",
     marginBottom: "12px",
   },
+  generationRowActions: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    alignItems: "center",
+  },
   generationSelect: {
     width: "180px",
   },
@@ -1408,6 +1414,19 @@ function App() {
     if (!from || !to) return;
     try {
       const text = await fetchText(`api/v1/generations/${from}/diff/${to}`);
+      setGenerationDiff(text);
+      setGenerationConfig(null);
+      setError("");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function loadAdjacentGenerationDiff(from: number, to: number) {
+    try {
+      const text = await fetchText(`api/v1/generations/${from}/diff/${to}`);
+      setGenerationFrom(String(from));
+      setGenerationTo(String(to));
       setGenerationDiff(text);
       setGenerationConfig(null);
       setError("");
@@ -1792,6 +1811,7 @@ function App() {
                 diff={generationDiff}
                 config={generationConfig}
                 loadDiff={loadGenerationDiff}
+                loadAdjacentDiff={loadAdjacentGenerationDiff}
                 loadConfig={loadGenerationConfig}
               />
             ) : null}
@@ -1870,6 +1890,7 @@ function GenerationsView({
   diff,
   config,
   loadDiff,
+  loadAdjacentDiff,
   loadConfig,
 }: {
   generations: GenerationRecord[];
@@ -1883,6 +1904,7 @@ function GenerationsView({
   diff: string;
   config: { generation: number; text: string } | null;
   loadDiff: () => void;
+  loadAdjacentDiff: (from: number, to: number) => void;
   loadConfig: (generation: number) => void;
 }) {
   const styles = useStyles();
@@ -1917,7 +1939,7 @@ function GenerationsView({
               <col style={{ width: "104px" }} />
               <col />
               <col style={{ width: "96px" }} />
-              <col style={{ width: "124px" }} />
+              <col style={{ width: "230px" }} />
             </colgroup>
             <TableHeader>
               <TableRow>
@@ -1931,7 +1953,10 @@ function GenerationsView({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {generations.map(row => (
+              {generations.map((row, index) => {
+                const previous = generations[index + 1];
+                const canDiffPrevious = !!previous?.hasYaml && !!row.hasYaml;
+                return (
                 <TableRow key={row.generation}>
                   <TableCell><code className={styles.code}>#{row.generation}</code></TableCell>
                   <TableCell><RelativeTime value={row.startedAt} /></TableCell>
@@ -1940,10 +1965,15 @@ function GenerationsView({
                   <TableCell><code className={styles.wrapCode}>{shortHash(row.configHash)}</code></TableCell>
                   <TableCell>{row.hasYaml ? <Badge appearance="tint" color="success">stored</Badge> : <Badge appearance="outline">unavailable</Badge>}</TableCell>
                   <TableCell>
-                    <Button size="small" appearance="subtle" disabled={!row.hasYaml} onClick={() => loadConfig(row.generation)}>View</Button>
+                    <div className={styles.generationRowActions}>
+                      <Button size="small" appearance="subtle" disabled={!row.hasYaml} onClick={() => loadConfig(row.generation)}>View</Button>
+                      <Button size="small" appearance="subtle" disabled={!canDiffPrevious} onClick={() => previous && loadAdjacentDiff(previous.generation, row.generation)}>Diff prev</Button>
+                      <Badge appearance="outline">rollback CLI only</Badge>
+                    </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </div>
