@@ -13,6 +13,7 @@ const Prefix = "/api/control.routerd.net/v1alpha1"
 
 type Handler struct {
 	Status         func(*http.Request) (*Status, error)
+	Controllers    func(*http.Request) (*Controllers, error)
 	Connections    func(*http.Request, ConnectionsRequest) (*ConnectionTable, error)
 	DNSQueries     func(*http.Request, DNSQueriesRequest) (*DNSQueries, error)
 	TrafficFlows   func(*http.Request, TrafficFlowsRequest) (*TrafficFlows, error)
@@ -31,6 +32,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/status":
 		h.handleStatus(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/controllers":
+		h.handleControllers(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/connections":
 		h.handleConnections(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == Prefix+"/dns-queries":
@@ -94,6 +97,19 @@ func (h Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+func (h Handler) handleControllers(w http.ResponseWriter, r *http.Request) {
+	if h.Controllers == nil {
+		writeError(w, http.StatusNotImplemented, "controllers handler is not configured")
+		return
+	}
+	controllers, err := h.Controllers(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, controllers)
 }
 
 func (h Handler) handleConnections(w http.ResponseWriter, r *http.Request) {

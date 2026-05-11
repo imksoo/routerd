@@ -758,6 +758,34 @@
           "status": {
             "additionalProperties": false,
             "properties": {
+              "controllers": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "mode": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "resourceKinds": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "mode"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
               "generation": {
                 "type": "integer"
               },

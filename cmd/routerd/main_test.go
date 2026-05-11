@@ -109,6 +109,25 @@ func TestActiveControllerDryRunModes(t *testing.T) {
 	}
 }
 
+func TestControllerStatusesFromDryRunModes(t *testing.T) {
+	got := controllerStatusesFromDryRunModes(map[string]bool{
+		"route": false,
+		"nat":   true,
+	})
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Name != "nat" || got[0].Mode != "dry-run" {
+		t.Fatalf("first status = %+v, want nat dry-run", got[0])
+	}
+	if got[1].Name != "route" || got[1].Mode != "live" {
+		t.Fatalf("second status = %+v, want route live", got[1])
+	}
+	if len(got[0].ResourceKinds) == 0 {
+		t.Fatalf("nat resource kinds should be populated")
+	}
+}
+
 func TestHasNewNetdevFiles(t *testing.T) {
 	if !hasNewNetdevFiles([]string{"/etc/systemd/network/10-vxlan.netdev"}) {
 		t.Fatal("expected new .netdev to be detected")

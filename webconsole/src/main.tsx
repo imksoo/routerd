@@ -52,6 +52,7 @@ declare global {
 type Summary = {
   generatedAt?: string;
   status?: { status?: Record<string, unknown> };
+  controllers?: ControllerStatus[];
   phases?: Record<string, number>;
   resources?: ResourceStatus[];
   interfaces?: InterfaceSummary[];
@@ -72,6 +73,13 @@ type ResourceStatus = {
   kind?: string;
   name?: string;
   status?: Record<string, unknown>;
+};
+
+type ControllerStatus = {
+  name?: string;
+  mode?: string;
+  reason?: string;
+  resourceKinds?: string[];
 };
 
 type RouterEvent = {
@@ -293,7 +301,7 @@ type ClientRow = {
   peers: Set<string>;
 };
 
-type ViewKey = "overview" | "clients" | "connections" | "vpn" | "events" | "firewall" | "config" | "generations";
+type ViewKey = "overview" | "controllers" | "clients" | "connections" | "vpn" | "events" | "firewall" | "config" | "generations";
 type NavSubItem = { key: string; label: string; count?: number; view: ViewKey; targetID: string };
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
@@ -305,6 +313,7 @@ const connectionPagesStorageKey = "routerd.webconsole.connectionPages";
 const connectionPageSizesStorageKey = "routerd.webconsole.connectionPageSizes";
 const navItems: { key: ViewKey; label: string; description: string; icon: React.ReactNode }[] = [
   { key: "overview", label: "Overview", description: "Status and interfaces", icon: <HomeRegular /> },
+  { key: "controllers", label: "Controllers", description: "Live and dry-run controller modes", icon: <ServerRegular /> },
   { key: "clients", label: "Clients", description: "Leases and endpoint traffic", icon: <PeopleRegular /> },
   { key: "connections", label: "Connections", description: "conntrack and live flows", icon: <PlugConnectedRegular /> },
   { key: "vpn", label: "VPN", description: "WireGuard and Tailscale peers", icon: <PlugConnectedRegular /> },
@@ -567,6 +576,17 @@ const useStyles = makeStyles({
     display: "grid",
     gap: "16px",
   },
+  dryRunBanner: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "10px",
+    padding: "12px",
+    border: "1px solid #8a5a00",
+    borderRadius: "4px",
+    backgroundColor: "#332300",
+  },
   grid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
@@ -705,6 +725,10 @@ const useStyles = makeStyles({
   },
   resourceTable: {
     minWidth: "900px",
+    tableLayout: "fixed",
+  },
+  controllerTable: {
+    minWidth: "820px",
     tableLayout: "fixed",
   },
   eventTable: {
@@ -1134,6 +1158,8 @@ function App() {
   const connectionFacets = useMemo(() => connectionFilterFacets(connections), [connections]);
   const navSubItems = useMemo(() => navigationSubItems(selected, connectionGroupsList, summary), [selected, connectionGroupsList, summary]);
   const resources = useMemo(() => importantResources(summary?.resources ?? []), [summary?.resources]);
+  const controllers = summary?.controllers ?? (summary?.status?.status?.controllers as ControllerStatus[] | undefined) ?? [];
+  const dryRunControllers = useMemo(() => controllers.filter(controller => controller.mode === "dry-run"), [controllers]);
   const events = summary?.events ?? [];
   const selectedEvent = useMemo(() => {
     if (events.length === 0) return undefined;
@@ -1327,6 +1353,16 @@ function App() {
             {error ? <Card><Text role="alert">Web console error: {error}</Text></Card> : null}
             {selected === "overview" ? (
               <>
+                {dryRunControllers.length > 0 ? (
+                  <div className={styles.dryRunBanner}>
+                    <div className={styles.badges}>
+                      <Badge appearance="tint" color="warning">dry-run</Badge>
+                      <Text weight="semibold">{dryRunControllers.length} controllers are running in dry-run mode</Text>
+                      <Text className={styles.muted}>{dryRunControllers.map(controller => controller.name).join(", ")}</Text>
+                    </div>
+                    <Button appearance="secondary" onClick={() => navigateTo("controllers")}>View controllers</Button>
+                  </div>
+                ) : null}
                 <div id="overview-metrics" className={styles.connectionAnchor}>
                   <div className={styles.grid}>
                     <Metric label="phase" value={String(summary?.status?.status?.phase ?? "Unknown")} />
@@ -1343,9 +1379,18 @@ function App() {
                 </Card>
                 <Card>
                   <CardHeader header={<Text weight="semibold">Resources</Text>} />
-                  <ResourceTable resources={resources} />
+                  <ResourceTable resources={resources} controllers={controllers} />
                 </Card>
               </>
+            ) : null}
+            {selected === "controllers" ? (
+              <Card>
+                <CardHeader
+                  header={<Text weight="semibold">Controllers</Text>}
+                  description={<Text className={styles.muted}>Controller mode, reason, and resource ownership surface</Text>}
+                />
+                <ControllerTable controllers={controllers} />
+              </Card>
             ) : null}
             {selected === "clients" ? (
               <div className={styles.clientsGrid}>
@@ -1857,8 +1902,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
 }
 
-function ResourceTable({ resources }: { resources: ResourceStatus[] }) {
+function ResourceTable({ resources, controllers }: { resources: ResourceStatus[]; controllers: ControllerStatus[] }) {
   const styles = useStyles();
+  const dryRunByKind = useMemo(() => dryRunControllerByKind(controllers), [controllers]);
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState("all");
   const phases = useMemo(() => {
@@ -1894,6 +1940,7 @@ function ResourceTable({ resources }: { resources: ResourceStatus[] }) {
             <col style={{ width: "170px" }} />
             <col style={{ width: "220px" }} />
             <col style={{ width: "120px" }} />
+            <col style={{ width: "130px" }} />
             <col />
           </colgroup>
           <TableHeader>
@@ -1901,17 +1948,20 @@ function ResourceTable({ resources }: { resources: ResourceStatus[] }) {
               <TableHeaderCell>Kind</TableHeaderCell>
               <TableHeaderCell>Name</TableHeaderCell>
               <TableHeaderCell>Phase</TableHeaderCell>
+              <TableHeaderCell>Mode</TableHeaderCell>
               <TableHeaderCell>Detail</TableHeaderCell>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.slice(0, 120).map(resource => {
               const status = resource.status ?? {};
+              const dryRunController = dryRunByKind.get(String(resource.kind ?? ""));
               return (
                 <TableRow key={`${resource.apiVersion}/${resource.kind}/${resource.name}`}>
                   <TableCell><Highlighted text={resource.kind ?? ""} query={query} /></TableCell>
                   <TableCell><code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code></TableCell>
                   <TableCell><Badge appearance="tint" color={phaseColor(status.phase)}><Highlighted text={String(status.phase ?? "Unknown")} query={query} /></Badge></TableCell>
+                  <TableCell>{dryRunController ? <Badge appearance="tint" color="warning">dry-run</Badge> : <Text size={200} className={styles.muted}>live</Text>}</TableCell>
                   <TableCell><code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code></TableCell>
                 </TableRow>
               );
@@ -1920,6 +1970,45 @@ function ResourceTable({ resources }: { resources: ResourceStatus[] }) {
         </Table>
       </div>
     </>
+  );
+}
+
+function ControllerTable({ controllers }: { controllers: ControllerStatus[] }) {
+  const styles = useStyles();
+  const rows = [...controllers].sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? "")));
+  return (
+    <div className={styles.tableWrap}>
+      <Table size="small" className={styles.controllerTable}>
+        <colgroup>
+          <col style={{ width: "170px" }} />
+          <col style={{ width: "110px" }} />
+          <col style={{ width: "260px" }} />
+          <col />
+        </colgroup>
+        <TableHeader>
+          <TableRow>
+            <TableHeaderCell>Controller</TableHeaderCell>
+            <TableHeaderCell>Mode</TableHeaderCell>
+            <TableHeaderCell>Resource kinds</TableHeaderCell>
+            <TableHeaderCell>Reason</TableHeaderCell>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map(controller => (
+            <TableRow key={controller.name}>
+              <TableCell><code className={styles.code}>{controller.name}</code></TableCell>
+              <TableCell><Badge appearance="tint" color={controller.mode === "dry-run" ? "warning" : "success"}>{controller.mode ?? "unknown"}</Badge></TableCell>
+              <TableCell>
+                <div className={styles.badges}>
+                  {(controller.resourceKinds ?? []).map(kind => <Badge key={kind} appearance="outline">{kind}</Badge>)}
+                </div>
+              </TableCell>
+              <TableCell><Text className={styles.muted}>{controller.reason || "-"}</Text></TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
@@ -2919,6 +3008,17 @@ function resourceDetail(status: Record<string, unknown>) {
     .map(key => status[key] ? `${key}=${status[key]}` : "")
     .filter(Boolean)
     .join(" ");
+}
+
+function dryRunControllerByKind(controllers: ControllerStatus[]) {
+  const byKind = new Map<string, ControllerStatus>();
+  for (const controller of controllers) {
+    if (controller.mode !== "dry-run") continue;
+    for (const kind of controller.resourceKinds ?? []) {
+      byKind.set(kind, controller);
+    }
+  }
+  return byKind;
 }
 
 function resourceName(event: RouterEvent) {

@@ -43,6 +43,7 @@ type Options struct {
 	FirewallLogPath    string
 	DHCPLeasePaths     []string
 	ConfigPath         string
+	ControllerModes    []controlapi.ControllerStatus
 }
 
 type Handler struct {
@@ -50,21 +51,22 @@ type Handler struct {
 }
 
 type Snapshot struct {
-	GeneratedAt  time.Time                   `json:"generatedAt"`
-	Status       controlapi.Status           `json:"status"`
-	Phases       map[string]int              `json:"phases"`
-	Resources    []routerstate.ObjectStatus  `json:"resources"`
-	Interfaces   []InterfaceSummary          `json:"interfaces,omitempty"`
-	Events       []routerstate.StoredEvent   `json:"events"`
-	Connections  *observe.ConnectionTable    `json:"connections,omitempty"`
-	DNSQueries   []logstore.DNSQuery         `json:"dnsQueries,omitempty"`
-	TrafficFlows []logstore.TrafficFlow      `json:"trafficFlows,omitempty"`
-	FirewallLogs []logstore.FirewallLogEntry `json:"firewallLogs,omitempty"`
-	DHCPLeases   []DHCPLease                 `json:"dhcpLeases,omitempty"`
-	Neighbors    []NeighborEntry             `json:"neighbors,omitempty"`
-	Clients      []ClientEntry               `json:"clients,omitempty"`
-	VPN          VPNStatus                   `json:"vpn,omitempty"`
-	Errors       []string                    `json:"errors,omitempty"`
+	GeneratedAt  time.Time                     `json:"generatedAt"`
+	Status       controlapi.Status             `json:"status"`
+	Controllers  []controlapi.ControllerStatus `json:"controllers,omitempty"`
+	Phases       map[string]int                `json:"phases"`
+	Resources    []routerstate.ObjectStatus    `json:"resources"`
+	Interfaces   []InterfaceSummary            `json:"interfaces,omitempty"`
+	Events       []routerstate.StoredEvent     `json:"events"`
+	Connections  *observe.ConnectionTable      `json:"connections,omitempty"`
+	DNSQueries   []logstore.DNSQuery           `json:"dnsQueries,omitempty"`
+	TrafficFlows []logstore.TrafficFlow        `json:"trafficFlows,omitempty"`
+	FirewallLogs []logstore.FirewallLogEntry   `json:"firewallLogs,omitempty"`
+	DHCPLeases   []DHCPLease                   `json:"dhcpLeases,omitempty"`
+	Neighbors    []NeighborEntry               `json:"neighbors,omitempty"`
+	Clients      []ClientEntry                 `json:"clients,omitempty"`
+	VPN          VPNStatus                     `json:"vpn,omitempty"`
+	Errors       []string                      `json:"errors,omitempty"`
 }
 
 type ConfigSnapshot struct {
@@ -216,6 +218,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.summary(w, r)
 	case "api/v1/resources":
 		h.resources(w)
+	case "api/v1/controllers":
+		h.controllers(w)
 	case "api/v1/events":
 		h.events(w, r)
 	case "api/v1/connections":
@@ -297,7 +301,8 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	result = resultWithLatestGeneration(result, h.opts.Store)
 	return Snapshot{
 		GeneratedAt:  time.Now().UTC(),
-		Status:       controlapi.NewStatus(result),
+		Status:       statusWithControllers(result, h.opts.ControllerModes),
+		Controllers:  h.opts.ControllerModes,
 		Phases:       phaseCounts(resources),
 		Resources:    resources,
 		Interfaces:   h.interfaceSummaries(resources),
@@ -312,6 +317,12 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		VPN:          vpn,
 		Errors:       errors,
 	}
+}
+
+func statusWithControllers(result *apply.Result, controllers []controlapi.ControllerStatus) controlapi.Status {
+	status := controlapi.NewStatus(result)
+	status.Status.Controllers = controllers
+	return status
 }
 
 func resultWithLatestGeneration(result *apply.Result, store routerstate.Store) *apply.Result {
@@ -374,6 +385,11 @@ func (h Handler) resources(w http.ResponseWriter) {
 		return
 	}
 	writeJSON(w, resources)
+}
+
+func (h Handler) controllers(w http.ResponseWriter) {
+	controllers := controlapi.NewControllers(h.opts.ControllerModes)
+	writeJSON(w, controllers)
 }
 
 func (h Handler) events(w http.ResponseWriter, r *http.Request) {

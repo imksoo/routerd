@@ -28,10 +28,24 @@ type Status struct {
 }
 
 type StatusStatus struct {
-	Phase         string    `json:"phase" yaml:"phase"`
-	Generation    int64     `json:"generation,omitempty" yaml:"generation,omitempty"`
-	LastApplyTime time.Time `json:"lastApplyTime,omitempty" yaml:"lastApplyTime,omitempty"`
-	ResourceCount int       `json:"resourceCount,omitempty" yaml:"resourceCount,omitempty"`
+	Phase         string             `json:"phase" yaml:"phase"`
+	Generation    int64              `json:"generation,omitempty" yaml:"generation,omitempty"`
+	LastApplyTime time.Time          `json:"lastApplyTime,omitempty" yaml:"lastApplyTime,omitempty"`
+	ResourceCount int                `json:"resourceCount,omitempty" yaml:"resourceCount,omitempty"`
+	Controllers   []ControllerStatus `json:"controllers,omitempty" yaml:"controllers,omitempty"`
+}
+
+type ControllerStatus struct {
+	Name          string   `json:"name" yaml:"name"`
+	Mode          string   `json:"mode" yaml:"mode"`
+	Reason        string   `json:"reason,omitempty" yaml:"reason,omitempty"`
+	ResourceKinds []string `json:"resourceKinds,omitempty" yaml:"resourceKinds,omitempty"`
+}
+
+type Controllers struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Metadata ObjectMeta         `json:"metadata" yaml:"metadata"`
+	Items    []ControllerStatus `json:"items" yaml:"items"`
 }
 
 type ApplyRequest struct {
@@ -189,6 +203,17 @@ func NewFirewallLogs(rows []logstore.FirewallLogEntry) FirewallLogs {
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "FirewallLogs"},
 		Metadata: ObjectMeta{Name: "firewall-logs"},
 		Items:    rows,
+	}
+}
+
+func NewControllers(items []ControllerStatus) Controllers {
+	if items == nil {
+		items = []ControllerStatus{}
+	}
+	return Controllers{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "Controllers"},
+		Metadata: ObjectMeta{Name: "controllers"},
+		Items:    items,
 	}
 }
 

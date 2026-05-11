@@ -43,6 +43,18 @@ func (c *Client) Status(ctx context.Context) (*Status, error) {
 	return &status, nil
 }
 
+func (c *Client) Controllers(ctx context.Context) (*Controllers, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+Prefix+"/controllers", nil)
+	if err != nil {
+		return nil, err
+	}
+	var controllers Controllers
+	if err := c.do(req, &controllers); err != nil {
+		return nil, err
+	}
+	return &controllers, nil
+}
+
 func (c *Client) Apply(ctx context.Context, request ApplyRequest) (*ApplyResult, error) {
 	request.APIVersion = APIVersion
 	request.Kind = "ApplyRequest"

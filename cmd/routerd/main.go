@@ -2941,14 +2941,111 @@ func parseCSV(raw string) []string {
 }
 
 func activeControllerDryRunModes(modes map[string]bool) []string {
+	return activeControllerDryRunNames(controllerStatusesFromDryRunModes(modes))
+}
+
+func activeControllerDryRunNames(controllers []controlapi.ControllerStatus) []string {
 	var out []string
-	for name, dryRun := range modes {
-		if dryRun {
-			out = append(out, name)
+	for _, controller := range controllers {
+		if controller.Mode == "dry-run" {
+			out = append(out, controller.Name)
 		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+func controllerStatusesFromDryRunModes(modes map[string]bool) []controlapi.ControllerStatus {
+	names := make([]string, 0, len(modes))
+	for name := range modes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]controlapi.ControllerStatus, 0, len(names))
+	for _, name := range names {
+		mode := "live"
+		reason := "controller-chain dry-run flag is false"
+		if modes[name] {
+			mode = "dry-run"
+			reason = controllerDryRunReason(name)
+		}
+		out = append(out, controlapi.ControllerStatus{
+			Name:          name,
+			Mode:          mode,
+			Reason:        reason,
+			ResourceKinds: controllerResourceKinds(name),
+		})
+	}
+	return out
+}
+
+func controllerDryRunReason(name string) string {
+	switch name {
+	case "firewall":
+		return "controller-chain dry-run flag is true; firewall rules are observed but not enforced by this controller"
+	case "network-adoption":
+		return "controller-chain dry-run flag is true; networkd/resolved adoption drop-ins are not written"
+	case "package":
+		return "controller-chain dry-run flag is true; OS packages are not installed"
+	case "systemd-unit":
+		return "controller-chain dry-run flag is true; service-manager units are not installed or restarted"
+	default:
+		return "controller-chain dry-run flag is true"
+	}
+}
+
+func controllerResourceKinds(name string) []string {
+	switch name {
+	case "address":
+		return []string{"IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress"}
+	case "dhcpv4lease":
+		return []string{"DHCPv4Lease"}
+	case "dhcpv6":
+		return []string{"IPv6DHCPv6Server", "DHCPv6Scope"}
+	case "dns-resolver":
+		return []string{"DNSResolver", "DNSZone"}
+	case "dslite":
+		return []string{"DSLiteTunnel"}
+	case "firewall":
+		return []string{"FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy"}
+	case "nat":
+		return []string{"NAT44Rule", "IPv4SourceNAT"}
+	case "network-adoption":
+		return []string{"NetworkAdoption"}
+	case "package":
+		return []string{"Package"}
+	case "pppoesession":
+		return []string{"PPPoEInterface", "PPPoESession"}
+	case "ra":
+		return []string{"IPv6RouterAdvertisement"}
+	case "route":
+		return []string{"IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy", "PathMTUPolicy"}
+	case "systemd-unit":
+		return []string{"SystemdUnit", "TailscaleNode", "HealthCheck"}
+	default:
+		return nil
+	}
+}
+
+func publishControllerModeEvents(ctx context.Context, b *bus.Bus, controllers []controlapi.ControllerStatus) {
+	if b == nil {
+		return
+	}
+	for _, controller := range controllers {
+		severity := daemonapi.SeverityInfo
+		if controller.Mode == "dry-run" {
+			severity = daemonapi.SeverityWarning
+		}
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.controller.mode.changed", severity)
+		event.Attributes = map[string]string{
+			"controller":    controller.Name,
+			"mode":          controller.Mode,
+			"previousMode":  "unknown",
+			"reason":        controller.Reason,
+			"resourceKinds": strings.Join(controller.ResourceKinds, ","),
+		}
+		_ = b.Publish(ctx, event)
+	}
 }
 
 func serveCommand(args []string, stdout io.Writer) (err error) {
@@ -2993,6 +3090,25 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	controllerDryRunModes := map[string]bool{
+		"address":          *controllerDryRunAddress,
+		"dslite":           *controllerDryRunDSLite,
+		"route":            *controllerDryRunRoute,
+		"ra":               *controllerDryRunRA,
+		"dhcpv6":           *controllerDryRunDHCPv6,
+		"dhcpv4lease":      *controllerDryRunDHCPv4Lease,
+		"pppoesession":     *controllerDryRunPPPoESession,
+		"dns-resolver":     *controllerDryRunDNSResolver,
+		"nat":              *controllerDryRunNAT,
+		"firewall":         *controllerDryRunFirewall,
+		"package":          *controllerDryRunPackage,
+		"network-adoption": *controllerDryRunNetworkAdoption,
+		"systemd-unit":     *controllerDryRunSystemdUnit,
+	}
+	controllerStatuses := controllerStatusesFromDryRunModes(controllerDryRunModes)
+	if !*controllerChain {
+		controllerStatuses = nil
+	}
 	router, err := config.Load(*configPath)
 	if err != nil {
 		return err
@@ -3009,21 +3125,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		"applyInterval":   applyInterval.String(),
 	})
 	if *controllerChain {
-		dryRunModes := activeControllerDryRunModes(map[string]bool{
-			"address":          *controllerDryRunAddress,
-			"dslite":           *controllerDryRunDSLite,
-			"route":            *controllerDryRunRoute,
-			"ra":               *controllerDryRunRA,
-			"dhcpv6":           *controllerDryRunDHCPv6,
-			"dhcpv4lease":      *controllerDryRunDHCPv4Lease,
-			"pppoesession":     *controllerDryRunPPPoESession,
-			"dns-resolver":     *controllerDryRunDNSResolver,
-			"nat":              *controllerDryRunNAT,
-			"firewall":         *controllerDryRunFirewall,
-			"package":          *controllerDryRunPackage,
-			"network-adoption": *controllerDryRunNetworkAdoption,
-			"systemd-unit":     *controllerDryRunSystemdUnit,
-		})
+		dryRunModes := activeControllerDryRunNames(controllerStatuses)
 		if len(dryRunModes) > 0 {
 			logger.Emit(eventlog.LevelWarning, "serve", "controller dry-run modes active", map[string]string{
 				"controllers": strings.Join(dryRunModes, ","),
@@ -3058,6 +3160,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		defer stateStore.Close()
 		controllerBus = bus.NewWithStore(stateStore)
 		controllerBus.SetLogger(slog.Default())
+		publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
 		chainRunner := controllerchain.Runner{
 			Router: router,
 			Bus:    controllerBus,
@@ -3131,7 +3234,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			return webErr
 		}
 		if ok {
-			if err := startWebConsole(ctx, console, router, webStore, cache, logger, *configPath); err != nil {
+			if err := startWebConsole(ctx, console, router, webStore, cache, logger, *configPath, controllerStatuses); err != nil {
 				return err
 			}
 		}
@@ -3153,7 +3256,12 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	handler := controlapi.Handler{
 		Status: func(r *http.Request) (*controlapi.Status, error) {
 			status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore))
+			status.Status.Controllers = controllerStatuses
 			return &status, nil
+		},
+		Controllers: func(r *http.Request) (*controlapi.Controllers, error) {
+			controllers := controlapi.NewControllers(controllerStatuses)
+			return &controllers, nil
 		},
 		Connections: func(r *http.Request, req controlapi.ConnectionsRequest) (*controlapi.ConnectionTable, error) {
 			table, err := observe.Connections(req.Limit)
@@ -3493,7 +3601,7 @@ func statusAddressValue(value string) string {
 	return ""
 }
 
-func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, cache *resultCache, logger *eventlog.Logger, configPath string) error {
+func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, cache *resultCache, logger *eventlog.Logger, configPath string, controllerStatuses []controlapi.ControllerStatus) error {
 	addr := net.JoinHostPort(spec.ListenAddress, fmt.Sprintf("%d", spec.Port))
 	handler := webconsole.New(webconsole.Options{
 		Router:             router,
@@ -3506,6 +3614,7 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		TrafficFlowLogPath: platformDefaults.StateDir + "/traffic-flows.db",
 		FirewallLogPath:    platformDefaults.StateDir + "/firewall-logs.db",
 		ConfigPath:         configPath,
+		ControllerModes:    controllerStatuses,
 	})
 	server := &http.Server{Addr: addr, Handler: handler}
 	listener, err := net.Listen("tcp", addr)
