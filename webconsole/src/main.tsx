@@ -790,6 +790,54 @@ const useStyles = makeStyles({
     gap: "16px",
     gridTemplateColumns: "1fr",
   },
+  clientSections: {
+    display: "grid",
+    gap: "12px",
+  },
+  clientSection: {
+    display: "grid",
+    gap: "8px",
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    paddingTop: "10px",
+  },
+  clientSectionHeader: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+  },
+  clientDeviceList: {
+    display: "grid",
+    gap: "8px",
+  },
+  clientDeviceRow: {
+    display: "grid",
+    gridTemplateColumns: "32px minmax(180px, 1.1fr) minmax(180px, 1fr) minmax(150px, 0.7fr) minmax(96px, 0.4fr)",
+    gap: "10px",
+    alignItems: "start",
+    padding: "10px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    transition: "background-color 180ms ease, border-color 180ms ease, opacity 180ms ease",
+    "@media (max-width: 860px)": {
+      gridTemplateColumns: "32px minmax(0, 1fr)",
+    },
+  },
+  clientDeviceRowOffline: {
+    opacity: 0.68,
+  },
+  clientDeviceDetails: {
+    gridColumn: "2 / -1",
+    display: "grid",
+    gap: "8px",
+    paddingTop: "8px",
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    "@media (max-width: 860px)": {
+      gridColumn: "1 / -1",
+    },
+  },
   vpnGrid: {
     display: "grid",
     gap: "16px",
@@ -3024,6 +3072,9 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
   const rows = clients.map(clientEntryToRow);
   const online = rows.filter(row => clientOnline(row)).length;
   const addressCount = rows.reduce((sum, row) => sum + row.addresses.size, 0);
+  const sections = clientSections(rows);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggleExpanded = (key: string) => setExpanded(current => ({ ...current, [key]: !current[key] }));
   return (
     <>
       <div className={styles.vpnSummaryGrid}>
@@ -3039,67 +3090,74 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
           detail: primaryClientAddress(row) || `${row.addresses.size} addresses`,
         }))}
       />
-      <div className={styles.tableWrap}>
-        <Table size="small" className={styles.clientInventoryTable}>
-          <colgroup>
-            <col style={{ width: "210px" }} />
-            <col style={{ width: "104px" }} />
-            <col style={{ width: "210px" }} />
-            <col style={{ width: "150px" }} />
-            <col style={{ width: "92px" }} />
-            <col style={{ width: "118px" }} />
-            <col />
-          </colgroup>
-          <TableHeader>
-            <TableRow>
-              <TableHeaderCell>Name</TableHeaderCell>
-              <TableHeaderCell>Status</TableHeaderCell>
-              <TableHeaderCell>Primary IP</TableHeaderCell>
-              <TableHeaderCell>OS family</TableHeaderCell>
-              <TableHeaderCell>Addresses</TableHeaderCell>
-              <TableHeaderCell>Last seen</TableHeaderCell>
-              <TableHeaderCell>Details</TableHeaderCell>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map(row => {
-              const groups = groupedClientAddresses(Array.from(row.addresses));
-              return (
-                <TableRow key={row.id || row.mac || row.ip || row.hostname}>
-                  <TableCell>
-                    <div className={styles.connectionFlow}>
-                      <Text weight="semibold">{row.hostname || "unknown client"}</Text>
-                      <Text size={200} className={styles.muted}>{row.vendor || row.mac || "-"}</Text>
+      <div className={styles.clientSections}>
+        {sections.map(section => {
+          const sectionOnline = section.rows.filter(row => clientOnline(row)).length;
+          return (
+            <section className={styles.clientSection} key={section.key}>
+              <div className={styles.clientSectionHeader}>
+                <div className={styles.badges}>
+                  <Badge appearance="tint" color={clientOSBadgeColor(section.label)}>{section.label}</Badge>
+                  <Badge appearance="outline">{section.rows.length} devices</Badge>
+                  <Badge appearance="outline">{sectionOnline} online</Badge>
+                </div>
+                <Text size={200} className={styles.muted}>{section.addressCount} addresses</Text>
+              </div>
+              <div className={styles.clientDeviceList}>
+                {section.rows.map(row => {
+                  const key = clientRowKey(row);
+                  const groups = groupedClientAddresses(Array.from(row.addresses));
+                  const isExpanded = !!expanded[key];
+                  return (
+                    <div className={`${styles.clientDeviceRow} ${clientOnline(row) ? "" : styles.clientDeviceRowOffline}`} key={key}>
+                      <Button
+                        appearance="subtle"
+                        size="small"
+                        icon={isExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                        aria-label={isExpanded ? "Collapse client details" : "Expand client details"}
+                        onClick={() => toggleExpanded(key)}
+                      />
+                      <div className={styles.connectionFlow}>
+                        <Text weight="semibold">{row.hostname || "unknown client"}</Text>
+                        <Text size={200} className={styles.muted}>{row.vendor || row.mac || "-"}</Text>
+                        <div className={styles.badges}>
+                          <Badge appearance="tint" color={clientOnline(row) ? "success" : "subtle"}>{clientOnline(row) ? "online" : "offline"}</Badge>
+                          {row.state ? <Badge appearance="outline">{row.state}</Badge> : null}
+                        </div>
+                      </div>
+                      <div className={styles.connectionFlow}>
+                        <Text size={200} className={styles.muted}>Primary IP</Text>
+                        <code className={styles.code}>{primaryClientAddress(row) || "-"}</code>
+                      </div>
+                      <ClientOSBadge row={row} />
+                      <div className={styles.connectionFlow}>
+                        <Text size={200} className={styles.muted}>Addresses</Text>
+                        <Text>{row.addresses.size}</Text>
+                      </div>
+                      {isExpanded ? (
+                        <div className={styles.clientDeviceDetails}>
+                          <div className={styles.clientDetailStack}>
+                            <ClientAddressGroup label="IPv4" addresses={groups.ipv4} />
+                            <ClientAddressGroup label="IPv6 stable" addresses={groups.ipv6Stable} />
+                            <ClientAddressGroup label="IPv6 privacy" addresses={groups.ipv6Privacy} />
+                            <div className={styles.clientMetaLine}>
+                              <code className={styles.wrapCode}>{row.mac || "-"}</code>
+                              <Text size={200} className={styles.muted}>last seen {clientLastSeen(row)}</Text>
+                              <Text size={200} className={styles.muted}>out {formatBytes(row.bytesOut)} / in {formatBytes(row.bytesIn)}</Text>
+                              {row.sources.size > 0 ? <Text size={200} className={styles.muted}>sources {Array.from(row.sources).join(", ")}</Text> : null}
+                              {row.fingerprintSignals.size > 0 ? <Text size={200} className={styles.muted}>signals {Array.from(row.fingerprintSignals).slice(0, 5).join(", ")}</Text> : null}
+                              {row.peers.size > 0 ? <Text size={200} className={styles.muted}>peers {Array.from(row.peers).slice(0, 5).join(", ")}</Text> : null}
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className={styles.badges}>
-                      <Badge appearance="tint" color={clientOnline(row) ? "success" : "subtle"}>{clientOnline(row) ? "online" : "offline"}</Badge>
-                      {row.state ? <Badge appearance="outline">{row.state}</Badge> : null}
-                    </div>
-                  </TableCell>
-                  <TableCell><code className={styles.code}>{primaryClientAddress(row) || "-"}</code></TableCell>
-                  <TableCell><ClientOSBadge row={row} /></TableCell>
-                  <TableCell>{row.addresses.size}</TableCell>
-                  <TableCell>{clientLastSeen(row)}</TableCell>
-                  <TableCell>
-                    <div className={styles.clientDetailStack}>
-                      <ClientAddressGroup label="IPv4" addresses={groups.ipv4} />
-                      <ClientAddressGroup label="IPv6 stable" addresses={groups.ipv6Stable} />
-                      <ClientAddressGroup label="IPv6 privacy" addresses={groups.ipv6Privacy} />
-	                      <div className={styles.clientMetaLine}>
-	                        <code className={styles.wrapCode}>{row.mac || "-"}</code>
-	                        <Text size={200} className={styles.muted}>out {formatBytes(row.bytesOut)} / in {formatBytes(row.bytesIn)}</Text>
-	                        {row.fingerprintSignals.size > 0 ? <Text size={200} className={styles.muted}>signals {Array.from(row.fingerprintSignals).slice(0, 3).join(", ")}</Text> : null}
-	                        {row.peers.size > 0 ? <Text size={200} className={styles.muted}>peers {Array.from(row.peers).slice(0, 3).join(", ")}</Text> : null}
-	                      </div>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
       </div>
     </>
   );
@@ -4071,6 +4129,61 @@ function clientEntryToRow(entry: ClientEntry): ClientRow {
     fingerprintConfidence: entry.fingerprintConfidence,
     fingerprintSignals: new Set(entry.fingerprintSignals ?? []),
   };
+}
+
+function clientRowKey(row: ClientRow) {
+  return [
+    row.id,
+    row.mac,
+    row.hostname,
+    primaryClientAddress(row),
+    Array.from(row.addresses).sort().join(","),
+  ].find(value => value && value !== "-") ?? "-";
+}
+
+function clientSections(rows: ClientRow[]) {
+  const order = ["Apple", "Android", "Windows", "Linux", "Embedded", "Other"];
+  const sections = new Map<string, { key: string; label: string; rows: ClientRow[]; addressCount: number }>();
+  for (const row of rows) {
+    const label = clientSectionLabel(clientOSFamily(row));
+    const section = sections.get(label) ?? { key: label.toLowerCase(), label, rows: [], addressCount: 0 };
+    section.rows.push(row);
+    section.addressCount += row.addresses.size;
+    sections.set(label, section);
+  }
+  return Array.from(sections.values())
+    .sort((a, b) => {
+      const ai = order.indexOf(a.label);
+      const bi = order.indexOf(b.label);
+      const ao = ai === -1 ? order.length : ai;
+      const bo = bi === -1 ? order.length : bi;
+      return ao - bo || a.label.localeCompare(b.label);
+    })
+    .map(section => ({
+      ...section,
+      rows: [...section.rows].sort(clientRowSort),
+    }));
+}
+
+function clientRowSort(a: ClientRow, b: ClientRow) {
+  const onlineDiff = Number(clientOnline(b)) - Number(clientOnline(a));
+  if (onlineDiff !== 0) return onlineDiff;
+  return clientRowLabel(a).localeCompare(clientRowLabel(b));
+}
+
+function clientRowLabel(row: ClientRow) {
+  return `${row.hostname || row.vendor || row.mac || primaryClientAddress(row) || row.id || ""}`.toLowerCase();
+}
+
+function clientSectionLabel(family: string) {
+  const normalized = family.trim().toLowerCase();
+  if (!normalized || normalized === "-") return "Other";
+  if (normalized === "ios" || normalized === "macos" || normalized === "apple") return "Apple";
+  if (normalized === "android") return "Android";
+  if (normalized === "windows") return "Windows";
+  if (normalized === "linux") return "Linux";
+  if (normalized === "embedded" || normalized === "iot") return "Embedded";
+  return family;
 }
 
 function normalizeMAC(mac?: string) {
