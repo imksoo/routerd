@@ -51,8 +51,8 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 		manager := firstNonEmpty(set.Manager, packageManagerForOS(set.OS))
 		if manager == "nix" {
 			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
-				"phase":     "Rendered",
-				"reason":    "NixOSDeclarativeOnly",
+				"phase":     "Applied",
+				"reason":    "NixOSDeclarativePackageSet",
 				"os":        set.OS,
 				"manager":   manager,
 				"names":     set.Names,

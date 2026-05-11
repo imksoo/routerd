@@ -126,6 +126,34 @@ func TestNetworkAdoptionControllerCanKeepDHCPv4ClientWithoutRoutes(t *testing.T)
 	}
 }
 
+func TestNetworkAdoptionControllerTreatsNixOSAsDeclarative(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NetworkAdoption"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.NetworkAdoptionSpec{
+			Interface:       "wan",
+			SystemdNetworkd: api.NetworkAdoptionNetworkdSpec{DisableDHCPv4: true, DisableDHCPv6: true},
+			SystemdResolved: api.NetworkAdoptionResolvedSpec{DisableDNSStubListener: true},
+		}},
+	}}}
+	store := mapStore{}
+	controller := NetworkAdoptionController{
+		Router: router,
+		Store:  store,
+		OSName: "nixos",
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			t.Fatalf("NixOS network adoption must be rendered declaratively, got command %s %v", name, args)
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "NetworkAdoption", "wan")
+	if status["phase"] != "Applied" || status["reason"] != "NixOSDeclarativeNetworkConfig" || status["ifname"] != "ens18" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

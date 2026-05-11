@@ -152,7 +152,7 @@ func TestPackageControllerReportsNixOSPackagesAsDeclarative(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.SystemAPIVersion, "Package", "service-deps")
-	if status["phase"] != "Rendered" || status["reason"] != "NixOSDeclarativeOnly" {
+	if status["phase"] != "Applied" || status["reason"] != "NixOSDeclarativePackageSet" {
 		t.Fatalf("status = %#v", status)
 	}
 }

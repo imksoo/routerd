@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ type NetworkAdoptionController struct {
 	DryRun             bool
 	NetworkdDropinBase string
 	ResolvedDropinDir  string
+	OSName             string
 }
 
 func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
@@ -51,10 +53,33 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		osName := c.OSName
+		if osName == "" {
+			osName = networkAdoptionOSName(runtime.GOOS)
+		}
+		if osName == "nixos" {
+			ifname := strings.TrimSpace(spec.IfName)
+			if ifname == "" && spec.Interface != "" {
+				ifname = interfaceIfName(c.Router, spec.Interface)
+			}
+			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoption", resource.Metadata.Name, map[string]any{
+				"phase":     "Applied",
+				"reason":    "NixOSDeclarativeNetworkConfig",
+				"os":        osName,
+				"ifname":    ifname,
+				"changed":   false,
+				"dryRun":    c.DryRun,
+				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			}); err != nil {
+				return err
+			}
+			continue
+		}
 		if !features.HasSystemd {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoption", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
 				"reason":    "SystemdUnsupported",
+				"os":        osName,
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 			}); err != nil {
 				return err
@@ -104,6 +129,24 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func networkAdoptionOSName(goos string) string {
+	if goos == "freebsd" {
+		return "freebsd"
+	}
+	if goos != "linux" {
+		return goos
+	}
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return "linux"
+	}
+	id := parseOSReleaseID(string(data))
+	if id == "" {
+		return "linux"
+	}
+	return id
 }
 
 func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, name, ifname string, spec api.NetworkAdoptionSpec, command outputCommandFunc) ([]string, bool, error) {

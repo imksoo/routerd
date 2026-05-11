@@ -51,6 +51,10 @@ func Validate(router *api.Router) error {
 	zones := map[string]bool{}
 	udpListenPorts := map[int]string{}
 	staticByInterfaceAddress := map[string]string{}
+	protectedInterfaces := map[string]bool{}
+	for _, name := range router.Spec.Apply.ProtectedInterfaces {
+		protectedInterfaces[name] = true
+	}
 	dhcp6AddressByInterface := map[string]struct {
 		id     string
 		client string
@@ -111,6 +115,15 @@ func Validate(router *api.Router) error {
 		}
 		if res.APIVersion == api.NetAPIVersion && (res.Kind == "PPPoEInterface" || res.Kind == "PPPoESession") {
 			interfaces[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.SystemAPIVersion && res.Kind == "NetworkAdoption" {
+			spec, err := res.NetworkAdoptionSpec()
+			if err != nil {
+				return err
+			}
+			if defaultString(spec.State, "present") != "absent" && spec.Interface != "" && protectedInterfaces[spec.Interface] {
+				return fmt.Errorf("%s must not adopt protected interface %q; remove it from spec.reconcile.protectedInterfaces first", res.ID(), spec.Interface)
+			}
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv4Server" {
 			dhcp4Servers[res.Metadata.Name] = true

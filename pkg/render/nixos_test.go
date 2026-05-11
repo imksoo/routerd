@@ -485,6 +485,32 @@ func TestNixOSModuleOnlyTrustsBridgesAttachedToVXLAN(t *testing.T) {
 	}
 }
 
+func TestNixOSNetworkAdoptionDisableDHCPv4DoesNotEnableDHCPv6(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NixOSHost"}, Metadata: api.ObjectMeta{Name: "host"}, Spec: api.NixOSHostSpec{Hostname: "host"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NetworkAdoption"}, Metadata: api.ObjectMeta{Name: "wan-adoption"}, Spec: api.NetworkAdoptionSpec{
+				Interface:       "wan",
+				SystemdNetworkd: api.NetworkAdoptionNetworkdSpec{DisableDHCPv4: true},
+			}},
+		}},
+	}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatalf("render NixOS module: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, `DHCP = "no";`) {
+		t.Fatalf("NixOS network should disable DHCP, got:\n%s", got)
+	}
+	if strings.Contains(got, `DHCP = "ipv6";`) {
+		t.Fatalf("disableDHCPv4 must not enable DHCPv6:\n%s", got)
+	}
+}
+
 func TestNixOSModuleSynthesizesHealthCheckDaemonUnit(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

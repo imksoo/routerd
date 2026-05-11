@@ -37,6 +37,28 @@ func TestValidateSysctl(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsNetworkAdoptionOnProtectedInterface(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{
+			Apply: api.ApplyPolicySpec{ProtectedInterfaces: []string{"mgmt"}},
+			Resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "mgmt"}, Spec: api.InterfaceSpec{IfName: "ens20"}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NetworkAdoption"}, Metadata: api.ObjectMeta{Name: "mgmt-adoption"}, Spec: api.NetworkAdoptionSpec{
+					Interface:       "mgmt",
+					SystemdNetworkd: api.NetworkAdoptionNetworkdSpec{DisableDHCPv4: true},
+				}},
+			},
+		},
+	}
+
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "protected interface") {
+		t.Fatalf("expected protected interface error, got %v", err)
+	}
+}
+
 func TestValidateLogSinkSyslog(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

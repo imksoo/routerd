@@ -837,14 +837,16 @@ func writeNixOSNetwork(buf *bytes.Buffer, iface nixOSInterface) {
 	buf.WriteString("    matchConfig.Name = " + nixString(iface.IfName) + ";\n")
 	if iface.DHCPv4 || iface.AcceptRA || iface.Bridge != "" || iface.VRF != "" || len(iface.Addresses) == 0 || iface.DisableDHCPv4 || iface.DisableDHCPv6 || iface.DisableIPv6RA {
 		buf.WriteString("    networkConfig = {\n")
-		if iface.DisableDHCPv4 && iface.DisableDHCPv6 {
-			buf.WriteString("      DHCP = \"no\";\n")
-		} else if iface.DisableDHCPv4 {
+		dhcpv4 := iface.DHCPv4 && !iface.DisableDHCPv4
+		dhcpv6 := false
+		if dhcpv4 && dhcpv6 {
+			buf.WriteString("      DHCP = \"yes\";\n")
+		} else if dhcpv4 {
+			buf.WriteString("      DHCP = \"ipv4\";\n")
+		} else if dhcpv6 {
 			buf.WriteString("      DHCP = \"ipv6\";\n")
-		} else if iface.DisableDHCPv6 {
-			buf.WriteString("      DHCP = \"ipv4\";\n")
-		} else if iface.DHCPv4 {
-			buf.WriteString("      DHCP = \"ipv4\";\n")
+		} else if iface.DHCPv4 || iface.DisableDHCPv4 || iface.DisableDHCPv6 {
+			buf.WriteString("      DHCP = \"no\";\n")
 		}
 		if iface.DisableIPv6RA {
 			buf.WriteString("      IPv6AcceptRA = false;\n")
