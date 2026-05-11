@@ -237,6 +237,16 @@ fetch_apk_index "${apk_index}"
         printf '| `%s` | `%s` | `%s` | %s |\n' "${package}" "${version}" "${license}" "${url}"
     done
     echo
+    echo "## Optional runtime dependencies"
+    echo
+    echo "These packages are not bundled into routerd release archives or the"
+    echo "default live ISO, but routerd can install or use them when the matching"
+    echo "feature is explicitly enabled."
+    echo
+    echo "| Component | Package names | License | Source URL | Notes |"
+    echo "| --- | --- | --- | --- | --- |"
+    echo "| nDPI runtime | \`libndpi-bin\` (Debian/Ubuntu), \`ndpi\` (other package managers where available) | \`LGPL-3.0-only\` or upstream package license metadata | <https://github.com/ntop/nDPI> | Used by \`routerd-dpi-classifier\` as an external tool / IPC dependency; routerd does not statically link nDPI. |"
+    echo
     echo "## Source availability"
     echo
     echo "- routerd source code is published at <https://github.com/imksoo/routerd>."

@@ -4,18 +4,22 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"routerd/pkg/dpi"
 	"routerd/pkg/logstore"
 	"routerd/pkg/nflog"
 )
@@ -112,6 +116,9 @@ func runNFLogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 			return err
 		}
 		entry := firewallLogEntryFromNFLogPacket(packet)
+		if opts.dpiSocket != "" && len(packet.Payload) > 0 {
+			entry.Hint = appendDPIHint(ctx, opts, entry.Hint, packet.Payload)
+		}
 		if entry.SrcAddress == "" || entry.DstAddress == "" || entry.Protocol == "" {
 			continue
 		}
@@ -128,6 +135,8 @@ type options struct {
 	inputFormat    string
 	pflogInterface string
 	tcpdumpPath    string
+	dpiSocket      string
+	dpiTimeout     time.Duration
 }
 
 func parseOptions(name string, args []string) (options, error) {
@@ -140,10 +149,75 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.inputFormat, "input-format", "auto", "input format: auto, json, kv, nflog-tcpdump, pflog-tcpdump")
 	fs.StringVar(&opts.pflogInterface, "pflog-interface", "", "read FreeBSD pflog directly from this interface")
 	fs.StringVar(&opts.tcpdumpPath, "tcpdump", "tcpdump", "deprecated; tcpdump is no longer used for pflog input")
+	fs.StringVar(&opts.dpiSocket, "dpi-socket", "", "optional routerd-dpi-classifier Unix socket")
+	fs.DurationVar(&opts.dpiTimeout, "dpi-timeout", 500*time.Millisecond, "DPI classifier request timeout")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
 	return opts, nil
+}
+
+func appendDPIHint(ctx context.Context, opts options, hint string, packet []byte) string {
+	result, err := classifyPacket(ctx, opts.dpiSocket, opts.dpiTimeout, packet)
+	if err != nil || result.AppName == "" || result.AppName == "unknown" {
+		return hint
+	}
+	parts := []string{}
+	if strings.TrimSpace(hint) != "" {
+		parts = append(parts, hint)
+	}
+	parts = append(parts, "dpi.app="+result.AppName)
+	if result.AppCategory != "" {
+		parts = append(parts, "dpi.category="+result.AppCategory)
+	}
+	if result.TLSSNI != "" {
+		parts = append(parts, "dpi.tls_sni="+result.TLSSNI)
+	}
+	if result.HTTPHost != "" {
+		parts = append(parts, "dpi.http_host="+result.HTTPHost)
+	}
+	if result.DNSQuery != "" {
+		parts = append(parts, "dpi.dns_query="+result.DNSQuery)
+	}
+	if result.AppConfidence > 0 {
+		parts = append(parts, "dpi.confidence="+strconv.Itoa(result.AppConfidence))
+	}
+	return strings.Join(parts, " ")
+}
+
+func classifyPacket(ctx context.Context, socket string, timeout time.Duration, packet []byte) (dpi.ClassifyResult, error) {
+	if socket == "" {
+		return dpi.ClassifyResult{}, nil
+	}
+	request, err := json.Marshal(dpi.ClassifyRequest{Packet: packet})
+	if err != nil {
+		return dpi.ClassifyResult{}, err
+	}
+	client := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socket)
+		}},
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/classify", bytes.NewReader(request))
+	if err != nil {
+		return dpi.ClassifyResult{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return dpi.ClassifyResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return dpi.ClassifyResult{}, fmt.Errorf("dpi classifier status %s", resp.Status)
+	}
+	var result dpi.ClassifyResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return dpi.ClassifyResult{}, err
+	}
+	return result, nil
 }
 
 func firewallLogEntryFromIPPacket(timestamp time.Time, payload []byte, hint string) (logstore.FirewallLogEntry, bool) {

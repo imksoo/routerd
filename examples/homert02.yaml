@@ -89,6 +89,7 @@ spec:
               - net-tools
               - kmod
               - libnetfilter-log1
+              - libndpi-bin
               - tailscale
               - tailscale-archive-keyring
           - os: nixos
@@ -111,6 +112,7 @@ spec:
               - nettools
               - kmod
               - libnetfilter_log
+              - ndpi
               - tailscale
             optional: true
           - os: freebsd
@@ -336,6 +338,31 @@ spec:
     - apiVersion: system.routerd.net/v1alpha1
       kind: SystemdUnit
       metadata:
+        name: routerd-dpi-classifier.service
+      spec:
+        description: routerd DPI classifier
+        execStart:
+          - /usr/local/sbin/routerd-dpi-classifier
+          - daemon
+          - --socket
+          - /run/routerd/dpi-classifier/default.sock
+          - --ndpi-reader
+          - ndpiReader
+        after:
+          - network-online.target
+        wantedBy:
+          - multi-user.target
+        restart: on-failure
+        runtimeDirectory:
+          - routerd/dpi-classifier
+        restrictAddressFamilies:
+          - AF_UNIX
+        noNewPrivileges: true
+        enabled: true
+        started: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
         name: routerd-firewall-logger.service
       spec:
         description: routerd firewall NFLOG writer
@@ -346,8 +373,13 @@ spec:
           - /var/lib/routerd/firewall-logs.db
           - --nflog-group
           - "1"
+          - --dpi-socket
+          - /run/routerd/dpi-classifier/default.sock
         after:
           - network-online.target
+          - routerd-dpi-classifier.service
+        wants:
+          - routerd-dpi-classifier.service
         wantedBy:
           - multi-user.target
         restart: on-failure

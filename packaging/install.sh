@@ -14,6 +14,7 @@ install_deps=1
 list_deps=0
 deps_only=0
 with_tailscale=0
+with_ndpi=0
 configure_non_interactive=0
 configure_yes=0
 configure_apply=1
@@ -41,6 +42,7 @@ Install options:
   --list-deps
   --deps-only
   --with-tailscale
+  --with-ndpi
 
 Configure options:
   --prefix DIR
@@ -225,6 +227,16 @@ dependency_packages()
     if [ "${with_tailscale}" -eq 1 ] && [ -n "${packages}" ]; then
         packages="${packages} tailscale"
     fi
+    if [ "${with_ndpi}" -eq 1 ] && [ -n "${packages}" ]; then
+        case "${manager}" in
+            apt)
+                packages="${packages} libndpi-bin"
+                ;;
+            dnf|pacman|apk|pkg)
+                packages="${packages} ndpi"
+                ;;
+        esac
+    fi
     echo "${packages}"
 }
 
@@ -258,6 +270,9 @@ dependency_commands()
     if [ "${with_tailscale}" -eq 1 ]; then
         commands="${commands} tailscale"
     fi
+    if [ "${with_ndpi}" -eq 1 ]; then
+        commands="${commands} ndpiReader"
+    fi
     echo "${commands}"
 }
 
@@ -286,6 +301,9 @@ print_dependencies()
     done
     if [ "${with_tailscale}" -eq 1 ]; then
         echo "  optional: tailscale requested"
+    fi
+    if [ "${with_ndpi}" -eq 1 ]; then
+        echo "  optional: nDPI runtime requested"
     fi
 }
 
@@ -1216,6 +1234,9 @@ while [ "$#" -gt 0 ]; do
             ;;
         --with-tailscale)
             with_tailscale=1
+            ;;
+        --with-ndpi)
+            with_ndpi=1
             ;;
         --configure)
             command_mode=configure

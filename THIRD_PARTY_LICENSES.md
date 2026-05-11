@@ -157,6 +157,16 @@ Alpine package repositories, APKBUILD files, and upstream project URLs.
 | `dosfstools` | `4.2-r2` | `GPL-3.0-or-later` | https://github.com/dosfstools/dosfstools |
 | `exfatprogs` | `1.3.0-r0` | `GPL-2.0-or-later` | https://github.com/exfatprogs/exfatprogs |
 
+## Optional runtime dependencies
+
+These packages are not bundled into routerd release archives or the
+default live ISO, but routerd can install or use them when the matching
+feature is explicitly enabled.
+
+| Component | Package names | License | Source URL | Notes |
+| --- | --- | --- | --- | --- |
+| nDPI runtime | `libndpi-bin` (Debian/Ubuntu), `ndpi` (other package managers where available) | `LGPL-3.0-only` or upstream package license metadata | <https://github.com/ntop/nDPI> | Used by `routerd-dpi-classifier` as an external tool / IPC dependency; routerd does not statically link nDPI. |
+
 ## Source availability
 
 - routerd source code is published at <https://github.com/imksoo/routerd>.

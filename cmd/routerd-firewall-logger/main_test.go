@@ -4,10 +4,16 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"net"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"routerd/pkg/dpi"
 )
 
 func TestSelftestCreatesDatabase(t *testing.T) {
@@ -109,6 +115,25 @@ func TestFirewallLogEntryFromIPv4Packet(t *testing.T) {
 	}
 	if entry.L3Proto != "ipv4" || entry.Protocol != "tcp" || entry.SrcAddress != "172.18.0.101" || entry.DstPort != 443 {
 		t.Fatalf("entry = %+v", entry)
+	}
+}
+
+func TestAppendDPIHintUsesClassifierSocket(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "dpi.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(dpi.ClassifyResult{AppName: "tls", AppCategory: "web", AppConfidence: 90, TLSSNI: "routerd.example"})
+	})}
+	defer server.Shutdown(context.Background())
+	go server.Serve(listener)
+
+	hint := appendDPIHint(context.Background(), options{dpiSocket: socket, dpiTimeout: time.Second}, "nflog-netlink", []byte{0x45})
+	if !strings.Contains(hint, "dpi.app=tls") || !strings.Contains(hint, "dpi.tls_sni=routerd.example") {
+		t.Fatalf("hint = %q", hint)
 	}
 }
 

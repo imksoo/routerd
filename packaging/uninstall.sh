@@ -150,6 +150,7 @@ for binary in \
     routerd-healthcheck \
     routerd-dns-resolver \
     routerd-firewall-logger \
+    routerd-dpi-classifier \
     routerd-pppoe-client
 do
     rm_path "${prefix}/sbin/${binary}"
