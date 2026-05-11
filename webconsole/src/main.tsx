@@ -152,6 +152,13 @@ type FirewallLog = {
   inIface?: string;
   outIface?: string;
   packetBytes?: number;
+  hint?: string;
+  dpiApp?: string;
+  dpiCategory?: string;
+  dpiTlsSNI?: string;
+  dpiHttpHost?: string;
+  dpiDnsQuery?: string;
+  dpiConfidence?: number;
 };
 
 type DHCPLease = {
@@ -1017,7 +1024,7 @@ const useStyles = makeStyles({
   },
   firewallRankHeader: {
     display: "grid",
-    gridTemplateColumns: "56px minmax(240px, 1.35fr) minmax(240px, 1.35fr) 72px",
+    gridTemplateColumns: "56px minmax(220px, 1.25fr) minmax(220px, 1.25fr) 72px minmax(160px, 0.8fr)",
     gap: "10px",
     padding: "0 10px 6px",
     color: tokens.colorNeutralForeground3,
@@ -1029,7 +1036,7 @@ const useStyles = makeStyles({
   },
   firewallTimelineHeader: {
     display: "grid",
-    gridTemplateColumns: "96px 68px minmax(240px, 1.4fr) minmax(240px, 1.4fr) 72px minmax(120px, 0.7fr)",
+    gridTemplateColumns: "96px 68px minmax(220px, 1.35fr) minmax(220px, 1.35fr) 72px minmax(180px, 0.9fr) minmax(120px, 0.7fr)",
     gap: "10px",
     padding: "0 10px 6px",
     color: tokens.colorNeutralForeground3,
@@ -1041,7 +1048,7 @@ const useStyles = makeStyles({
   },
   firewallRankRow: {
     display: "grid",
-    gridTemplateColumns: "56px minmax(240px, 1.35fr) minmax(240px, 1.35fr) 72px",
+    gridTemplateColumns: "56px minmax(220px, 1.25fr) minmax(220px, 1.25fr) 72px minmax(160px, 0.8fr)",
     gap: "10px",
     alignItems: "start",
     padding: "8px 10px",
@@ -1057,7 +1064,7 @@ const useStyles = makeStyles({
   },
   firewallTimelineRow: {
     display: "grid",
-    gridTemplateColumns: "96px 68px minmax(240px, 1.4fr) minmax(240px, 1.4fr) 72px minmax(120px, 0.7fr)",
+    gridTemplateColumns: "96px 68px minmax(220px, 1.35fr) minmax(220px, 1.35fr) 72px minmax(180px, 0.9fr) minmax(120px, 0.7fr)",
     gap: "10px",
     alignItems: "start",
     padding: "8px 10px",
@@ -1809,7 +1816,7 @@ function App() {
                   />
                   <DenyRateChart logs={firewallLogs} />
                   <div className={styles.firewallFilters}>
-                    <SearchControl label="Search" value={firewallFilters.query} placeholder="rule, interface, address, protocol" onChange={value => setFirewallFilters(current => ({ ...current, query: value }))} />
+                    <SearchControl label="Search" value={firewallFilters.query} placeholder="rule, interface, address, protocol, DPI" onChange={value => setFirewallFilters(current => ({ ...current, query: value }))} />
                     <div className={styles.filterControl}>
                       <Text size={200} className={styles.muted}>Source</Text>
                       <Input className={styles.filterInput} size="small" value={firewallFilters.source} placeholder="source IP" onChange={(_, data) => setFirewallFilters(current => ({ ...current, source: data.value }))} />
@@ -3111,13 +3118,15 @@ function RecentDeny({
         <span>Source</span>
         <span>Destination</span>
         <span>Proto</span>
+        <span>DPI</span>
       </div>
       {denyRows(logs).map(row => (
-        <div className={styles.firewallRankRow} role="row" key={`${row.src}-${row.dst}-${row.proto}`}>
+        <div className={styles.firewallRankRow} role="row" key={`${row.src}-${row.dst}-${row.proto}-${row.dpi}`}>
           <FirewallCell label="Count">{row.count}</FirewallCell>
           <FirewallCell label="Source"><EndpointDetail address={row.src} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Destination"><EndpointDetail address={row.dst} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Proto">{row.proto}</FirewallCell>
+          <FirewallCell label="DPI"><code className={styles.wrapCode}>{row.dpi || "-"}</code></FirewallCell>
         </div>
       ))}
     </div>
@@ -3183,6 +3192,7 @@ function FirewallTimeline({
         <span>Source</span>
         <span>Destination</span>
         <span>Proto</span>
+        <span>DPI</span>
         <span>Rule</span>
       </div>
       {logs.slice(0, 50).map((log, index) => (
@@ -3192,6 +3202,7 @@ function FirewallTimeline({
           <FirewallCell label="Source"><EndpointDetail address={log.srcAddress} port={log.srcPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Destination"><EndpointDetail address={log.dstAddress} port={log.dstPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Proto">{[log.l3Proto, log.protocol].filter(Boolean).join("/") || "-"}</FirewallCell>
+          <FirewallCell label="DPI"><code className={styles.wrapCode}>{firewallDPIText(log) || "-"}</code></FirewallCell>
           <FirewallCell label="Rule"><code className={styles.wrapCode}>{log.ruleName || "-"}</code></FirewallCell>
         </div>
       ))}
@@ -3424,6 +3435,14 @@ function firewallSearchText(log: FirewallLog) {
     log.ruleName,
     log.inIface,
     log.outIface,
+    log.hint,
+    log.dpiApp,
+    log.dpiCategory,
+    log.dpiTlsSNI,
+    log.dpiHttpHost,
+    log.dpiDnsQuery,
+    log.dpiConfidence,
+    firewallDPIText(log),
   ].filter(value => value !== undefined && value !== "").join(" ").toLowerCase();
 }
 
@@ -3966,10 +3985,11 @@ function formatBytes(value?: number) {
 }
 
 function denyRows(logs: FirewallLog[]) {
-  const totals = new Map<string, { key: string; src: string; dst: string; proto: string; count: number }>();
+  const totals = new Map<string, { key: string; src: string; dst: string; proto: string; dpi: string; count: number }>();
   for (const log of logs) {
     const key = firewallLogKey(log);
-    const row = totals.get(key) ?? { key, src: log.srcAddress || "-", dst: log.dstAddress || "-", proto: log.protocol || "-", count: 0 };
+    const row = totals.get(key) ?? { key, src: log.srcAddress || "-", dst: log.dstAddress || "-", proto: log.protocol || "-", dpi: firewallDPIText(log), count: 0 };
+    if (!row.dpi) row.dpi = firewallDPIText(log);
     row.count++;
     totals.set(key, row);
   }
@@ -3978,6 +3998,30 @@ function denyRows(logs: FirewallLog[]) {
 
 function firewallLogKey(log: FirewallLog) {
   return firewallTupleKey(log.srcAddress, log.srcPort, log.dstAddress, log.dstPort, log.protocol);
+}
+
+function firewallDPIText(log: FirewallLog) {
+  if (log.dpiTlsSNI) return `TLS-SNI=${log.dpiTlsSNI}`;
+  if (log.dpiHttpHost) return `HTTP-Host=${log.dpiHttpHost}`;
+  if (log.dpiDnsQuery) return `DNS-query=${log.dpiDnsQuery}`;
+  const parts = [log.dpiApp, log.dpiCategory].filter(Boolean);
+  if (log.dpiConfidence) parts.push(`${log.dpiConfidence}%`);
+  const structured = parts.join(" ");
+  if (structured) return structured;
+  return firewallDPITextFromHint(log.hint);
+}
+
+function firewallDPITextFromHint(hint?: string) {
+  if (!hint) return "";
+  const values = new Map<string, string>();
+  for (const part of hint.split(/\s+/)) {
+    const [key, value] = part.split("=", 2);
+    if (key?.startsWith("dpi.") && value) values.set(key, value);
+  }
+  if (values.has("dpi.tls_sni")) return `TLS-SNI=${values.get("dpi.tls_sni")}`;
+  if (values.has("dpi.http_host")) return `HTTP-Host=${values.get("dpi.http_host")}`;
+  if (values.has("dpi.dns_query")) return `DNS-query=${values.get("dpi.dns_query")}`;
+  return [values.get("dpi.app"), values.get("dpi.category"), values.get("dpi.confidence") ? `${values.get("dpi.confidence")}%` : ""].filter(Boolean).join(" ");
 }
 
 function firewallTupleKey(source?: string, sourcePort?: string | number, destination?: string, destinationPort?: string | number, protocol?: string) {

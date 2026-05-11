@@ -19,9 +19,13 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
 	"routerd/pkg/dpi"
 	"routerd/pkg/logstore"
 	"routerd/pkg/nflog"
+	routerotel "routerd/pkg/otel"
 )
 
 func main() {
@@ -57,10 +61,29 @@ func selftest(args []string, stdout io.Writer) error {
 	}
 	defer log.Close()
 	entry := logstore.FirewallLogEntry{Action: "drop", SrcAddress: "192.0.2.10", DstAddress: "198.51.100.10", Protocol: "tcp", L3Proto: "ipv4", RuleName: "selftest"}
+	if opts.dpiSocket != "" {
+		entry = enrichEntryWithDPI(context.Background(), opts, entry, selftestTLSPacket("routerd-firewall-selftest.example"))
+	}
 	if err := log.Record(context.Background(), entry); err != nil {
 		return err
 	}
 	return json.NewEncoder(stdout).Encode(map[string]any{"ok": true, "path": opts.path})
+}
+
+func selftestTLSPacket(host string) []byte {
+	payload := dpi.MinimalTLSClientHello(host)
+	packet := append([]byte{
+		0x45, 0x00, 0x00, 0x00, 0, 0, 0, 0, 64, 6, 0, 0,
+		192, 0, 2, 10,
+		198, 51, 100, 10,
+		0xcf, 0xb0, 0x01, 0xbb,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0x50, 0x18, 0, 0, 0, 0, 0, 0,
+	}, payload...)
+	totalLen := len(packet)
+	binary.BigEndian.PutUint16(packet[2:4], uint16(totalLen))
+	return packet
 }
 
 func daemon(args []string, stdin io.Reader) error {
@@ -73,11 +96,17 @@ func daemon(args []string, stdin io.Reader) error {
 		return err
 	}
 	defer log.Close()
+	ctx := context.Background()
+	telemetry, err := routerotel.Setup(ctx, "routerd-firewall-logger")
+	if err != nil {
+		return err
+	}
+	defer telemetry.Shutdown(context.Background())
 	if opts.group > 0 && opts.inputFile == "" && opts.pflogInterface == "" {
-		return runNFLogDaemon(context.Background(), opts, log)
+		return runNFLogDaemon(ctx, opts, log, telemetry)
 	}
 	if opts.pflogInterface != "" && opts.inputFile == "" {
-		return runPflogDaemon(context.Background(), opts, log)
+		return runPflogDaemon(ctx, opts, log, telemetry)
 	}
 	reader := stdin
 	if opts.inputFile != "" {
@@ -94,7 +123,7 @@ func daemon(args []string, stdin io.Reader) error {
 		if !ok {
 			continue
 		}
-		if err := log.Record(context.Background(), entry); err != nil {
+		if err := recordFirewallEntry(ctx, log, entry, telemetry); err != nil {
 			return err
 		}
 	}
@@ -104,7 +133,7 @@ func daemon(args []string, stdin io.Reader) error {
 	return nil
 }
 
-func runNFLogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog) error {
+func runNFLogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog, telemetry *routerotel.Runtime) error {
 	reader, err := nflog.Open(opts.group)
 	if err != nil {
 		return err
@@ -117,15 +146,23 @@ func runNFLogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 		}
 		entry := firewallLogEntryFromNFLogPacket(packet)
 		if opts.dpiSocket != "" && len(packet.Payload) > 0 {
-			entry.Hint = appendDPIHint(ctx, opts, entry.Hint, packet.Payload)
+			entry = enrichEntryWithDPI(ctx, opts, entry, packet.Payload)
 		}
 		if entry.SrcAddress == "" || entry.DstAddress == "" || entry.Protocol == "" {
 			continue
 		}
-		if err := log.Record(ctx, entry); err != nil {
+		if err := recordFirewallEntry(ctx, log, entry, telemetry); err != nil {
 			return err
 		}
 	}
+}
+
+func recordFirewallEntry(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, telemetry *routerotel.Runtime) error {
+	if err := log.Record(ctx, entry); err != nil {
+		return err
+	}
+	recordDenyMetric(ctx, telemetry, entry)
+	return nil
 }
 
 type options struct {
@@ -157,11 +194,22 @@ func parseOptions(name string, args []string) (options, error) {
 	return opts, nil
 }
 
-func appendDPIHint(ctx context.Context, opts options, hint string, packet []byte) string {
+func enrichEntryWithDPI(ctx context.Context, opts options, entry logstore.FirewallLogEntry, packet []byte) logstore.FirewallLogEntry {
 	result, err := classifyPacket(ctx, opts.dpiSocket, opts.dpiTimeout, packet)
 	if err != nil || result.AppName == "" || result.AppName == "unknown" {
-		return hint
+		return entry
 	}
+	entry.DPIApp = result.AppName
+	entry.DPICategory = result.AppCategory
+	entry.DPITLSSNI = result.TLSSNI
+	entry.DPIHTTPHost = result.HTTPHost
+	entry.DPIDNSQuery = result.DNSQuery
+	entry.DPIConfidence = result.AppConfidence
+	entry.Hint = appendDPIHintFields(entry.Hint, result)
+	return entry
+}
+
+func appendDPIHintFields(hint string, result dpi.ClassifyResult) string {
 	parts := []string{}
 	if strings.TrimSpace(hint) != "" {
 		parts = append(parts, hint)
@@ -183,6 +231,42 @@ func appendDPIHint(ctx context.Context, opts options, hint string, packet []byte
 		parts = append(parts, "dpi.confidence="+strconv.Itoa(result.AppConfidence))
 	}
 	return strings.Join(parts, " ")
+}
+
+func recordDenyMetric(ctx context.Context, telemetry *routerotel.Runtime, entry logstore.FirewallLogEntry) {
+	if telemetry == nil || !isDenyAction(entry.Action) {
+		return
+	}
+	counter := telemetry.Counter("routerd.firewall.deny.total")
+	if counter == nil {
+		return
+	}
+	counter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("routerd.firewall.rule", entry.RuleName),
+		attribute.String("routerd.firewall.action", entry.Action),
+		attribute.String("network.protocol.name", firewallDPIProtocol(entry)),
+		attribute.String("network.transport", entry.Protocol),
+		attribute.String("network.type", entry.L3Proto),
+	))
+}
+
+func isDenyAction(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "drop", "deny", "reject", "block":
+		return true
+	default:
+		return false
+	}
+}
+
+func firewallDPIProtocol(entry logstore.FirewallLogEntry) string {
+	if entry.DPIApp != "" {
+		return entry.DPIApp
+	}
+	if entry.Protocol != "" {
+		return entry.Protocol
+	}
+	return entry.L3Proto
 }
 
 func classifyPacket(ctx context.Context, socket string, timeout time.Duration, packet []byte) (dpi.ClassifyResult, error) {

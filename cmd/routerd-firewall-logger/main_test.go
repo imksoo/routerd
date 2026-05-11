@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"routerd/pkg/dpi"
+	"routerd/pkg/logstore"
 )
 
 func TestSelftestCreatesDatabase(t *testing.T) {
@@ -24,6 +25,37 @@ func TestSelftestCreatesDatabase(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"ok":true`) && !strings.Contains(out.String(), `"ok": true`) {
 		t.Fatalf("output = %s", out.String())
+	}
+}
+
+func TestSelftestUsesDPIClassifierSocket(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "dpi.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(dpi.ClassifyResult{AppName: "tls", AppCategory: "web", AppConfidence: 90, TLSSNI: "routerd-firewall-selftest.example"})
+	})}
+	defer server.Shutdown(context.Background())
+	go server.Serve(listener)
+
+	path := filepath.Join(t.TempDir(), "firewall-logs.db")
+	if err := run([]string{"selftest", "--path", path, "--dpi-socket", socket}, &bytes.Buffer{}, strings.NewReader("")); err != nil {
+		t.Fatal(err)
+	}
+	log, err := logstore.OpenFirewallLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	rows, err := log.List(context.Background(), logstore.FirewallLogFilter{Action: "drop", Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].DPIApp != "tls" || rows[0].DPITLSSNI != "routerd-firewall-selftest.example" {
+		t.Fatalf("rows = %#v", rows)
 	}
 }
 
@@ -131,10 +163,17 @@ func TestAppendDPIHintUsesClassifierSocket(t *testing.T) {
 	defer server.Shutdown(context.Background())
 	go server.Serve(listener)
 
-	hint := appendDPIHint(context.Background(), options{dpiSocket: socket, dpiTimeout: time.Second}, "nflog-netlink", []byte{0x45})
-	if !strings.Contains(hint, "dpi.app=tls") || !strings.Contains(hint, "dpi.tls_sni=routerd.example") {
-		t.Fatalf("hint = %q", hint)
+	entry := enrichEntryWithDPI(context.Background(), options{dpiSocket: socket, dpiTimeout: time.Second}, logstoreEntry("nflog-netlink"), []byte{0x45})
+	if entry.DPIApp != "tls" || entry.DPITLSSNI != "routerd.example" || entry.DPIConfidence != 90 {
+		t.Fatalf("entry = %+v", entry)
 	}
+	if !strings.Contains(entry.Hint, "dpi.app=tls") || !strings.Contains(entry.Hint, "dpi.tls_sni=routerd.example") {
+		t.Fatalf("hint = %q", entry.Hint)
+	}
+}
+
+func logstoreEntry(hint string) logstore.FirewallLogEntry {
+	return logstore.FirewallLogEntry{Action: "drop", Protocol: "tcp", L3Proto: "ipv4", Hint: hint}
 }
 
 func TestFirewallLogEntryFromIPv6Packet(t *testing.T) {

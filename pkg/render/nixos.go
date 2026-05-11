@@ -1049,6 +1049,10 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 	if err != nil {
 		return nil, err
 	}
+	dpiSocket := ""
+	if hasSystemdUnit(router, "routerd-dpi-classifier.service") {
+		dpiSocket = "/run/routerd/dpi-classifier/default.sock"
+	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "SystemdUnit" {
 			continue
@@ -1181,7 +1185,7 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 		}
 		out = append(out, nixOSSystemdUnit{
 			Name: name,
-			Spec: firewallLoggerSystemdSpec(spec),
+			Spec: firewallLoggerSystemdSpec(spec, dpiSocket),
 		})
 	}
 	if nixOSNeedsDnsmasq(router) {
@@ -1319,7 +1323,7 @@ func pppoeSessionSystemdSpec(name, ifname string, spec api.PPPoESessionSpec, tel
 	}, nil
 }
 
-func firewallLoggerSystemdSpec(spec api.FirewallLogSpec) api.SystemdUnitSpec {
+func firewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.SystemdUnitSpec {
 	path := spec.Path
 	if path == "" {
 		path = "/var/lib/routerd/firewall-logs.db"
@@ -1328,18 +1332,26 @@ func firewallLoggerSystemdSpec(spec api.FirewallLogSpec) api.SystemdUnitSpec {
 	if group == 0 {
 		group = 1
 	}
+	exec := []string{
+		"/usr/local/sbin/routerd-firewall-logger",
+		"daemon",
+		"--path", path,
+		"--nflog-group", strconv.Itoa(group),
+	}
+	wants := []string{"network-online.target"}
+	after := []string{"network-online.target", "routerd.service"}
+	if dpiSocket != "" {
+		exec = append(exec, "--dpi-socket", dpiSocket)
+		wants = append(wants, "routerd-dpi-classifier.service")
+		after = append(after, "routerd-dpi-classifier.service")
+	}
 	noNewPrivileges := true
 	privateTmp := true
 	return api.SystemdUnitSpec{
-		Description: "routerd firewall log collector",
-		ExecStart: []string{
-			"/usr/local/sbin/routerd-firewall-logger",
-			"daemon",
-			"--path", path,
-			"--nflog-group", strconv.Itoa(group),
-		},
-		Wants:                    []string{"network-online.target"},
-		After:                    []string{"network-online.target", "routerd.service"},
+		Description:              "routerd firewall log collector",
+		ExecStart:                exec,
+		Wants:                    wants,
+		After:                    after,
 		WantedBy:                 []string{"multi-user.target"},
 		Restart:                  "always",
 		RestartSec:               "5s",
@@ -1355,6 +1367,22 @@ func firewallLoggerSystemdSpec(spec api.FirewallLogSpec) api.SystemdUnitSpec {
 		NoNewPrivileges:          &noNewPrivileges,
 		PrivateTmp:               &privateTmp,
 	}
+}
+
+func hasSystemdUnit(router *api.Router, unitName string) bool {
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "SystemdUnit" {
+			continue
+		}
+		spec, err := res.SystemdUnitSpec()
+		if err != nil || defaultString(spec.State, "present") == "absent" {
+			continue
+		}
+		if defaultString(spec.UnitName, res.Metadata.Name) == unitName {
+			return true
+		}
+	}
+	return false
 }
 
 func renderTailscaleNixOSUnit(name string, spec api.TailscaleNodeSpec) nixOSSystemdUnit {

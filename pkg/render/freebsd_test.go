@@ -213,6 +213,13 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec:     api.FirewallLogSpec{Enabled: true, Path: "/var/db/routerd/firewall-logs.db"},
 		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"},
+			Spec: api.SystemdUnitSpec{
+				ExecStart: []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon"},
+			},
+		},
 	}}}
 	got, err := FreeBSD(router)
 	if err != nil {
@@ -241,6 +248,8 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 		`/var/db/routerd/firewall-logs.db`,
 		`--pflog-interface`,
 		`pflog0`,
+		`--dpi-socket`,
+		`/var/run/routerd/dpi-classifier/default.sock`,
 	} {
 		if !strings.Contains(firewall, want) {
 			t.Fatalf("firewall logger rc.d script missing %q:\n%s", want, firewall)

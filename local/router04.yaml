@@ -1194,6 +1194,14 @@ spec:
         logDeny: true
 
     - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallLog
+      metadata:
+        name: default
+      spec:
+        enabled: true
+        path: /var/db/routerd/firewall-logs.db
+
+    - apiVersion: firewall.routerd.net/v1alpha1
       kind: ClientPolicy
       metadata:
         name: lab-guest-devices

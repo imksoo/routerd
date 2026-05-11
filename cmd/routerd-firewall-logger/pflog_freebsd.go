@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"routerd/pkg/logstore"
+	routerotel "routerd/pkg/otel"
 )
 
 const maxBPFDevices = 256
@@ -24,7 +25,7 @@ type bpfIfReq struct {
 	_    [16]byte
 }
 
-func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog) error {
+func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog, telemetry *routerotel.Runtime) error {
 	fd, err := openBPF()
 	if err != nil {
 		return err
@@ -53,11 +54,14 @@ func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 			return err
 		}
 		for _, packet := range bpfPackets(buf[:n]) {
-			entry, ok := firewallLogEntryFromPflogPacket(packet)
+			entry, payload, ok := firewallLogEntryAndPayloadFromPflogPacket(packet)
 			if !ok {
 				continue
 			}
-			if err := log.Record(ctx, entry); err != nil {
+			if opts.dpiSocket != "" && len(payload) > 0 {
+				entry = enrichEntryWithDPI(ctx, opts, entry, payload)
+			}
+			if err := recordFirewallEntry(ctx, log, entry, telemetry); err != nil {
 				return err
 			}
 		}
@@ -116,22 +120,28 @@ func bpfWordAlign(n int) int {
 }
 
 func firewallLogEntryFromPflogPacket(packet []byte) (logstore.FirewallLogEntry, bool) {
+	entry, _, ok := firewallLogEntryAndPayloadFromPflogPacket(packet)
+	return entry, ok
+}
+
+func firewallLogEntryAndPayloadFromPflogPacket(packet []byte) (logstore.FirewallLogEntry, []byte, bool) {
 	if len(packet) < 1 {
-		return logstore.FirewallLogEntry{}, false
+		return logstore.FirewallLogEntry{}, nil, false
 	}
 	headerLen := int(packet[0])
 	if headerLen <= 0 || headerLen > len(packet) {
-		return logstore.FirewallLogEntry{}, false
+		return logstore.FirewallLogEntry{}, nil, false
 	}
-	entry, ok := firewallLogEntryFromIPPacket(time.Now().UTC(), packet[headerLen:], "pflog-bpf")
+	payload := packet[headerLen:]
+	entry, ok := firewallLogEntryFromIPPacket(time.Now().UTC(), payload, "pflog-bpf")
 	if !ok {
-		return logstore.FirewallLogEntry{}, false
+		return logstore.FirewallLogEntry{}, nil, false
 	}
 	if headerLen >= 6 {
 		entry.Action = pflogAction(packet[2])
 		entry.RuleName = fmt.Sprintf("pf-rule-%d", binary.BigEndian.Uint16(packet[4:6]))
 	}
-	return entry, true
+	return entry, payload, true
 }
 
 func pflogAction(action byte) string {

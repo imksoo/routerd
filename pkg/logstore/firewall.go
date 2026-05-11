@@ -14,22 +14,28 @@ import (
 )
 
 type FirewallLogEntry struct {
-	ID          int64     `json:"id,omitempty"`
-	Timestamp   time.Time `json:"ts"`
-	ZoneFrom    string    `json:"zoneFrom,omitempty"`
-	ZoneTo      string    `json:"zoneTo,omitempty"`
-	RuleName    string    `json:"ruleName,omitempty"`
-	Action      string    `json:"action"`
-	SrcAddress  string    `json:"srcAddress"`
-	SrcPort     int       `json:"srcPort,omitempty"`
-	DstAddress  string    `json:"dstAddress"`
-	DstPort     int       `json:"dstPort,omitempty"`
-	Protocol    string    `json:"protocol"`
-	L3Proto     string    `json:"l3Proto"`
-	InIface     string    `json:"inIface,omitempty"`
-	OutIface    string    `json:"outIface,omitempty"`
-	PacketBytes int       `json:"packetBytes,omitempty"`
-	Hint        string    `json:"hint,omitempty"`
+	ID            int64     `json:"id,omitempty"`
+	Timestamp     time.Time `json:"ts"`
+	ZoneFrom      string    `json:"zoneFrom,omitempty"`
+	ZoneTo        string    `json:"zoneTo,omitempty"`
+	RuleName      string    `json:"ruleName,omitempty"`
+	Action        string    `json:"action"`
+	SrcAddress    string    `json:"srcAddress"`
+	SrcPort       int       `json:"srcPort,omitempty"`
+	DstAddress    string    `json:"dstAddress"`
+	DstPort       int       `json:"dstPort,omitempty"`
+	Protocol      string    `json:"protocol"`
+	L3Proto       string    `json:"l3Proto"`
+	InIface       string    `json:"inIface,omitempty"`
+	OutIface      string    `json:"outIface,omitempty"`
+	PacketBytes   int       `json:"packetBytes,omitempty"`
+	Hint          string    `json:"hint,omitempty"`
+	DPIApp        string    `json:"dpiApp,omitempty"`
+	DPICategory   string    `json:"dpiCategory,omitempty"`
+	DPITLSSNI     string    `json:"dpiTlsSNI,omitempty"`
+	DPIHTTPHost   string    `json:"dpiHttpHost,omitempty"`
+	DPIDNSQuery   string    `json:"dpiDnsQuery,omitempty"`
+	DPIConfidence int       `json:"dpiConfidence,omitempty"`
 }
 
 type FirewallLogFilter struct {
@@ -73,7 +79,7 @@ func OpenFirewallLogReadOnly(path string) (*FirewallLog, error) {
 }
 
 func (l *FirewallLog) Init(ctx context.Context) error {
-	_, err := l.db.ExecContext(ctx, `
+	if _, err := l.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS firewall_logs (
   id INTEGER PRIMARY KEY,
   ts INTEGER NOT NULL,
@@ -90,14 +96,22 @@ CREATE TABLE IF NOT EXISTS firewall_logs (
   in_iface TEXT,
   out_iface TEXT,
   packet_bytes INTEGER,
-  hint TEXT
+  hint TEXT,
+  dpi_app TEXT,
+  dpi_category TEXT,
+  dpi_tls_sni TEXT,
+  dpi_http_host TEXT,
+  dpi_dns_query TEXT,
+  dpi_confidence INTEGER
 );
 CREATE INDEX IF NOT EXISTS firewall_logs_ts ON firewall_logs(ts);
 CREATE INDEX IF NOT EXISTS firewall_logs_src_ts ON firewall_logs(src_address, ts);
 CREATE INDEX IF NOT EXISTS firewall_logs_action_ts ON firewall_logs(action, ts);
 CREATE INDEX IF NOT EXISTS firewall_logs_zone ON firewall_logs(zone_from, zone_to, ts);
-`)
-	return err
+`); err != nil {
+		return err
+	}
+	return l.ensureDPIColumns(ctx)
 }
 
 func (l *FirewallLog) Close() error {
@@ -114,9 +128,9 @@ func (l *FirewallLog) Record(ctx context.Context, entry FirewallLogEntry) error 
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now().UTC()
 	}
-	_, err := l.db.ExecContext(ctx, `INSERT INTO firewall_logs(ts,zone_from,zone_to,rule_name,action,src_address,src_port,dst_address,dst_port,protocol,l3_proto,in_iface,out_iface,packet_bytes,hint)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		entry.Timestamp.UnixNano(), entry.ZoneFrom, entry.ZoneTo, entry.RuleName, entry.Action, entry.SrcAddress, entry.SrcPort, entry.DstAddress, entry.DstPort, entry.Protocol, entry.L3Proto, entry.InIface, entry.OutIface, entry.PacketBytes, entry.Hint)
+	_, err := l.db.ExecContext(ctx, `INSERT INTO firewall_logs(ts,zone_from,zone_to,rule_name,action,src_address,src_port,dst_address,dst_port,protocol,l3_proto,in_iface,out_iface,packet_bytes,hint,dpi_app,dpi_category,dpi_tls_sni,dpi_http_host,dpi_dns_query,dpi_confidence)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		entry.Timestamp.UnixNano(), entry.ZoneFrom, entry.ZoneTo, entry.RuleName, entry.Action, entry.SrcAddress, entry.SrcPort, entry.DstAddress, entry.DstPort, entry.Protocol, entry.L3Proto, entry.InIface, entry.OutIface, entry.PacketBytes, entry.Hint, entry.DPIApp, entry.DPICategory, entry.DPITLSSNI, entry.DPIHTTPHost, entry.DPIDNSQuery, entry.DPIConfidence)
 	return err
 }
 
@@ -150,7 +164,7 @@ func (l *FirewallLog) List(ctx context.Context, filter FirewallLogFilter) ([]Fir
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	args = append(args, limit)
-	rows, err := l.db.QueryContext(ctx, `SELECT id,ts,coalesce(zone_from,''),coalesce(zone_to,''),coalesce(rule_name,''),action,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),protocol,l3_proto,coalesce(in_iface,''),coalesce(out_iface,''),coalesce(packet_bytes,0),coalesce(hint,'')
+	rows, err := l.db.QueryContext(ctx, `SELECT id,ts,coalesce(zone_from,''),coalesce(zone_to,''),coalesce(rule_name,''),action,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),protocol,l3_proto,coalesce(in_iface,''),coalesce(out_iface,''),coalesce(packet_bytes,0),coalesce(hint,''),coalesce(dpi_app,''),coalesce(dpi_category,''),coalesce(dpi_tls_sni,''),coalesce(dpi_http_host,''),coalesce(dpi_dns_query,''),coalesce(dpi_confidence,0)
 FROM firewall_logs`+where+` ORDER BY ts DESC, id DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -160,11 +174,54 @@ FROM firewall_logs`+where+` ORDER BY ts DESC, id DESC LIMIT ?`, args...)
 	for rows.Next() {
 		var entry FirewallLogEntry
 		var ts int64
-		if err := rows.Scan(&entry.ID, &ts, &entry.ZoneFrom, &entry.ZoneTo, &entry.RuleName, &entry.Action, &entry.SrcAddress, &entry.SrcPort, &entry.DstAddress, &entry.DstPort, &entry.Protocol, &entry.L3Proto, &entry.InIface, &entry.OutIface, &entry.PacketBytes, &entry.Hint); err != nil {
+		if err := rows.Scan(&entry.ID, &ts, &entry.ZoneFrom, &entry.ZoneTo, &entry.RuleName, &entry.Action, &entry.SrcAddress, &entry.SrcPort, &entry.DstAddress, &entry.DstPort, &entry.Protocol, &entry.L3Proto, &entry.InIface, &entry.OutIface, &entry.PacketBytes, &entry.Hint, &entry.DPIApp, &entry.DPICategory, &entry.DPITLSSNI, &entry.DPIHTTPHost, &entry.DPIDNSQuery, &entry.DPIConfidence); err != nil {
 			return nil, err
 		}
 		entry.Timestamp = time.Unix(0, ts).UTC()
 		out = append(out, entry)
 	}
 	return out, rows.Err()
+}
+
+func (l *FirewallLog) ensureDPIColumns(ctx context.Context) error {
+	rows, err := l.db.QueryContext(ctx, `PRAGMA table_info(firewall_logs)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	existing := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull int
+		var defaultValue any
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, column := range []struct {
+		name string
+		typ  string
+	}{
+		{"dpi_app", "TEXT"},
+		{"dpi_category", "TEXT"},
+		{"dpi_tls_sni", "TEXT"},
+		{"dpi_http_host", "TEXT"},
+		{"dpi_dns_query", "TEXT"},
+		{"dpi_confidence", "INTEGER"},
+	} {
+		if existing[column.name] {
+			continue
+		}
+		if _, err := l.db.ExecContext(ctx, `ALTER TABLE firewall_logs ADD COLUMN `+column.name+` `+column.typ); err != nil {
+			return err
+		}
+	}
+	_, err = l.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS firewall_logs_dpi_app_ts ON firewall_logs(dpi_app, ts);`)
+	return err
 }

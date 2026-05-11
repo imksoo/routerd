@@ -19,6 +19,10 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	dpiSocket := ""
+	if hasSystemdUnit(router, "routerd-dpi-classifier.service") {
+		dpiSocket = "/var/run/routerd/dpi-classifier/default.sock"
+	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "SystemdUnit" {
 			continue
@@ -181,7 +185,7 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		if explicit[name] {
 			continue
 		}
-		data, err := FreeBSDRCDScript(name, freeBSDFirewallLoggerSystemdSpec(spec))
+		data, err := FreeBSDRCDScript(name, freeBSDFirewallLoggerSystemdSpec(spec, dpiSocket))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", res.ID(), err)
 		}
@@ -446,18 +450,26 @@ func freeBSDDHCPv4ClientSystemdSpec(resource, ifname string, spec api.DHCPv4Leas
 	}
 }
 
-func freeBSDFirewallLoggerSystemdSpec(spec api.FirewallLogSpec) api.SystemdUnitSpec {
+func freeBSDFirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.SystemdUnitSpec {
 	path := spec.Path
 	if path == "" {
 		path = "/var/db/routerd/firewall-logs.db"
+	}
+	exec := []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", path, "--pflog-interface", "pflog0"}
+	wants := []string{"NETWORKING"}
+	after := []string{"NETWORKING"}
+	if dpiSocket != "" {
+		exec = append(exec, "--dpi-socket", dpiSocket)
+		wants = append(wants, "routerd_dpi_classifier")
+		after = append(after, "routerd_dpi_classifier")
 	}
 	noNewPrivileges := true
 	privateTmp := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd firewall log collector",
-		ExecStart:                []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", path, "--pflog-interface", "pflog0"},
-		Wants:                    []string{"NETWORKING"},
-		After:                    []string{"NETWORKING"},
+		ExecStart:                exec,
+		Wants:                    wants,
+		After:                    after,
 		Restart:                  "always",
 		RestartSec:               "5s",
 		RuntimeDirectory:         []string{"routerd"},

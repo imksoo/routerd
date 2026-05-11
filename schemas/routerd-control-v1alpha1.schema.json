@@ -423,6 +423,24 @@
               "action": {
                 "type": "string"
               },
+              "dpiApp": {
+                "type": "string"
+              },
+              "dpiCategory": {
+                "type": "string"
+              },
+              "dpiConfidence": {
+                "type": "integer"
+              },
+              "dpiDnsQuery": {
+                "type": "string"
+              },
+              "dpiHttpHost": {
+                "type": "string"
+              },
+              "dpiTlsSNI": {
+                "type": "string"
+              },
               "dstAddress": {
                 "type": "string"
               },

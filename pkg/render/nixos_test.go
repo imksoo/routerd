@@ -568,6 +568,13 @@ func TestNixOSModuleSynthesizesFirewallLoggerUnit(t *testing.T) {
 				NFLogGroup: 7,
 			},
 		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"},
+			Spec: api.SystemdUnitSpec{
+				ExecStart: []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon"},
+			},
+		},
 	}}}
 	data, err := NixOSModule(router)
 	if err != nil {
@@ -581,6 +588,9 @@ func TestNixOSModuleSynthesizesFirewallLoggerUnit(t *testing.T) {
 		`"/var/lib/routerd/firewall-logs.db"`,
 		`"--nflog-group"`,
 		`"7"`,
+		`"--dpi-socket"`,
+		`"/run/routerd/dpi-classifier/default.sock"`,
+		`"routerd-dpi-classifier.service"`,
 		`RuntimeDirectory = [ "routerd" ];`,
 		`CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];`,
 		`RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];`,

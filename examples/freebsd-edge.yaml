@@ -297,6 +297,12 @@ spec:
           - /var/db/routerd/firewall-logs.db
           - --pflog-interface
           - pflog0
+          - --dpi-socket
+          - /var/run/routerd/dpi-classifier/default.sock
+        wants:
+          - routerd-dpi-classifier.service
+        after:
+          - routerd-dpi-classifier.service
         runtimeDirectory:
           - routerd
         stateDirectory:
