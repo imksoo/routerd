@@ -83,6 +83,7 @@ spec:
           - strongswan
           - kmod
           - nettools
+          - ndpi
         debugSystemPackages: true
         ssh:
           enabled: true
@@ -174,6 +175,7 @@ spec:
               - nettools
               - kmod
               - libnetfilter_log
+              - ndpi
             optional: true
           - os: freebsd
             manager: pkg
@@ -332,6 +334,32 @@ spec:
         listenAddress: 127.0.0.1
         port: 8080
         title: router02
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
+        name: routerd-dpi-classifier.service
+      spec:
+        description: routerd DPI classifier
+        execStart:
+          - /usr/local/sbin/routerd-dpi-classifier
+          - daemon
+          - --socket
+          - /run/routerd/dpi-classifier/default.sock
+          - --ndpi-reader
+          - /run/current-system/sw/bin/ndpiReader
+        after:
+          - network-online.target
+        wantedBy:
+          - multi-user.target
+        restart: on-failure
+        runtimeDirectory:
+          - routerd/dpi-classifier
+        restrictAddressFamilies:
+          - AF_UNIX
+        noNewPrivileges: true
+        enabled: true
+        started: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface

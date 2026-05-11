@@ -43,6 +43,7 @@ spec:
               - tailscale
               - strongswan
               - mpd5
+              - ndpi
 
     - apiVersion: system.routerd.net/v1alpha1
       kind: NTPClient
@@ -177,6 +178,29 @@ spec:
           field: ipv4Addresses
         port: 8080
         title: router04
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
+        name: routerd-dpi-classifier.service
+      spec:
+        description: routerd DPI classifier
+        execStart:
+          - /usr/local/sbin/routerd-dpi-classifier
+          - daemon
+          - --socket
+          - /var/run/routerd/dpi-classifier/default.sock
+          - --ndpi-reader
+          - /usr/local/bin/ndpiReader
+        after:
+          - NETWORKING
+        wantedBy:
+          - multi-user
+        restart: on-failure
+        runtimeDirectory:
+          - routerd/dpi-classifier
+        enabled: true
+        started: true
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
