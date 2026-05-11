@@ -158,6 +158,7 @@ type DNSQuery = {
 type TrafficFlow = {
   clientAddress?: string;
   peerAddress?: string;
+  peerPort?: number;
   resolvedHostname?: string;
   tlsSNI?: string;
   protocol?: string;
@@ -765,6 +766,37 @@ const useStyles = makeStyles({
     border: "1px solid #243041",
     backgroundColor: "#101a28",
     padding: "10px",
+  },
+  dpiInsightGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 17rem), 1fr))",
+    gap: "12px",
+  },
+  rankList: {
+    display: "grid",
+    gap: "8px",
+  },
+  rankRow: {
+    display: "grid",
+    gap: "4px",
+    minWidth: 0,
+  },
+  rankLine: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) max-content",
+    gap: "8px",
+    alignItems: "center",
+  },
+  barTrack: {
+    height: "6px",
+    borderRadius: "999px",
+    backgroundColor: tokens.colorNeutralBackground5,
+    overflow: "hidden",
+  },
+  barFill: {
+    height: "100%",
+    borderRadius: "999px",
+    backgroundColor: tokens.colorBrandBackground,
   },
   chartSvg: {
     width: "100%",
@@ -1880,6 +1912,11 @@ function App() {
                   </div>
                 </div>
                 <MetricCharts samples={metricSamples} />
+                <OverviewDPIInsights
+                  flows={summary?.trafficFlows ?? []}
+                  clients={summary?.clients ?? []}
+                  connections={summary?.connections}
+                />
                 <Card id="overview-interfaces" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Interfaces</Text>} description={<Text className={styles.muted}>Role, link state, MTU, and assigned addresses</Text>} />
                   <InterfaceOverview interfaces={summary?.interfaces ?? []} />
@@ -2476,6 +2513,65 @@ function MetricCharts({ samples }: { samples: MetricSample[] }) {
         <StackBars samples={samples.map(sample => [sample.healthHealthy, sample.healthUnhealthy])} colors={["#54b054", "#d13438"]} />
         <Text size={200} className={styles.muted}>Healthy and unhealthy HealthCheck resources</Text>
       </div>
+    </div>
+  );
+}
+
+function OverviewDPIInsights({ flows, clients, connections }: { flows: TrafficFlow[]; clients: ClientEntry[]; connections?: ConnectionTable }) {
+  const styles = useStyles();
+  const protocols = topTrafficProtocols(flows);
+  const talkers = topTalkers(clients, flows);
+  const domains = topDomains(flows);
+  const classes = connectionClassSummary(connections?.entries ?? []);
+  return (
+    <div id="overview-dpi" className={`${styles.dpiInsightGrid} ${styles.connectionAnchor}`}>
+      <Card className={styles.chartCard}>
+        <CardHeader header={<Text weight="semibold">Top protocols</Text>} description={<Text className={styles.muted}>DPI protocol mix from recent observed flows</Text>} />
+        <RankList rows={protocols} empty="No DPI protocol data" formatLabel={formatConnectionApp} formatValue={formatBytes} />
+      </Card>
+      <Card className={styles.chartCard}>
+        <CardHeader header={<Text weight="semibold">Top talkers</Text>} description={<Text className={styles.muted}>Clients with DPI-classified traffic volume</Text>} />
+        <RankList rows={talkers} empty="No client traffic observed" formatValue={formatBytes} />
+      </Card>
+      <Card className={styles.chartCard}>
+        <CardHeader header={<Text weight="semibold">Top SNI / domains</Text>} description={<Text className={styles.muted}>Recent TLS SNI, HTTP host, DNS, or reverse DNS labels</Text>} />
+        <RankList rows={domains} empty="No domain labels observed" formatValue={formatBytes} />
+      </Card>
+      <Card className={styles.chartCard}>
+        <CardHeader header={<Text weight="semibold">Traffic classes</Text>} description={<Text className={styles.muted}>Active connection visibility from conntrack and DPI enrichment</Text>} />
+        <RankList rows={classes} empty="No active connection classes" />
+      </Card>
+    </div>
+  );
+}
+
+function RankList({
+  rows,
+  empty,
+  formatLabel = value => value,
+  formatValue = value => String(value),
+}: {
+  rows: { label: string; value: number }[];
+  empty: string;
+  formatLabel?: (value: string) => string;
+  formatValue?: (value: number) => string;
+}) {
+  const styles = useStyles();
+  const max = Math.max(1, ...rows.map(row => row.value));
+  if (rows.length === 0) return <Text className={styles.muted}>{empty}</Text>;
+  return (
+    <div className={styles.rankList}>
+      {rows.map(row => (
+        <div className={styles.rankRow} key={row.label}>
+          <div className={styles.rankLine}>
+            <Text><code className={styles.wrapCode}>{formatLabel(row.label)}</code></Text>
+            <Text size={200} className={styles.muted}>{formatValue(row.value)}</Text>
+          </div>
+          <div className={styles.barTrack} aria-hidden="true">
+            <div className={styles.barFill} style={{ width: `${Math.max(4, (row.value / max) * 100)}%` }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -4086,6 +4182,79 @@ function connectionClassColor(entry: ConnectionEntry): "brand" | "danger" | "inf
   if (cls === "probe") return "warning";
   if (cls === "established") return "brand";
   return "subtle";
+}
+
+function topTrafficProtocols(flows: TrafficFlow[]) {
+  const totals = new Map<string, number>();
+  for (const flow of flows) {
+    const app = trafficFlowApp(flow);
+    totals.set(app, (totals.get(app) ?? 0) + trafficFlowBytes(flow));
+  }
+  return topRows(totals, 5);
+}
+
+function topTalkers(clients: ClientEntry[], flows: TrafficFlow[]) {
+  const labels = new Map<string, string>();
+  for (const client of clients) {
+    const label = client.hostname || client.mac || client.id || "";
+    for (const address of client.addresses ?? []) {
+      if (address && label) labels.set(address, label);
+    }
+    if (client.id && label) labels.set(client.id, label);
+  }
+  const totals = new Map<string, number>();
+  for (const flow of flows) {
+    const bytes = trafficFlowBytes(flow);
+    if (bytes <= 0) continue;
+    const key = labels.get(flow.clientAddress ?? "") || flow.clientAddress || "-";
+    totals.set(key, (totals.get(key) ?? 0) + bytes);
+  }
+  return topRows(totals, 5);
+}
+
+function topDomains(flows: TrafficFlow[]) {
+  const totals = new Map<string, number>();
+  for (const flow of flows) {
+    const label = trafficFlowDomain(flow);
+    if (!label) continue;
+    totals.set(label, (totals.get(label) ?? 0) + Math.max(1, trafficFlowBytes(flow)));
+  }
+  return topRows(totals, 5);
+}
+
+function connectionClassSummary(entries: ConnectionEntry[]) {
+  const totals = new Map<string, number>();
+  for (const entry of entries) {
+    const cls = connectionClass(entry);
+    totals.set(cls, (totals.get(cls) ?? 0) + 1);
+  }
+  return topRows(totals, 5);
+}
+
+function trafficFlowApp(flow: TrafficFlow) {
+  const app = normalizeFacet(flow.appName, "");
+  if (app && app !== "unknown") return app;
+  if (flow.tlsSNI) return "tls";
+  if (flow.peerPort === 53) return "dns";
+  if (flow.peerPort === 80) return "http";
+  if (flow.peerPort === 443) return "tls";
+  return normalizeFacet(flow.protocol, "unidentified");
+}
+
+function trafficFlowDomain(flow: TrafficFlow) {
+  return String(flow.tlsSNI || flow.resolvedHostname || "").trim();
+}
+
+function trafficFlowBytes(flow: TrafficFlow) {
+  return Math.max(0, Number(flow.bytesOut ?? 0)) + Math.max(0, Number(flow.bytesIn ?? 0));
+}
+
+function topRows(values: Map<string, number>, limit: number) {
+  return Array.from(values.entries())
+    .filter(([, value]) => value > 0)
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value || stringSort(a.label, b.label))
+    .slice(0, limit);
 }
 
 function facetSort(a: string, b: string) {
