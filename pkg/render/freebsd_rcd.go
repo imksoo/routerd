@@ -478,6 +478,15 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 		return nil, fmt.Errorf("execStart is required")
 	}
 	name = freeBSDServiceName(name)
+	execStartPre := spec.ExecStartPre
+	if name == "routerd" && containsFreeBSDArg(spec.ExecStart, "serve") && containsFreeBSDArg(spec.ExecStart, "--controller-chain") {
+		// Running routerd apply from routerd's own rc.d prestart path can
+		// start managed child daemons before the supervisor is up and can
+		// leave rc boot ordering sensitive to stale pid files. The service
+		// itself reconciles after startup, so keep prestart to directory
+		// creation only for the control-plane daemon.
+		execStartPre = nil
+	}
 	var buf bytes.Buffer
 	buf.WriteString("#!/bin/sh\n")
 	buf.WriteString("#\n")
@@ -528,11 +537,11 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 		buf.WriteString("stop_cmd=\"${name}_stop\"\n")
 		buf.WriteString("status_cmd=\"${name}_status\"\n")
 	}
-	if len(spec.RuntimeDirectory) > 0 || len(spec.StateDirectory) > 0 || len(spec.LogsDirectory) > 0 || len(spec.ExecStartPre) > 0 {
+	if len(spec.RuntimeDirectory) > 0 || len(spec.StateDirectory) > 0 || len(spec.LogsDirectory) > 0 || len(execStartPre) > 0 {
 		buf.WriteString("start_precmd=\"${name}_prestart\"\n")
 	}
 	buf.WriteString("\n")
-	if len(spec.RuntimeDirectory) > 0 || len(spec.StateDirectory) > 0 || len(spec.LogsDirectory) > 0 || len(spec.ExecStartPre) > 0 {
+	if len(spec.RuntimeDirectory) > 0 || len(spec.StateDirectory) > 0 || len(spec.LogsDirectory) > 0 || len(execStartPre) > 0 {
 		buf.WriteString(name + "_prestart() {\n")
 		for _, dir := range freeBSDServiceDirs("/var/run", spec.RuntimeDirectory) {
 			buf.WriteString("  mkdir -p " + shellSingleQuote(dir) + "\n")
@@ -543,9 +552,9 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 		for _, dir := range freeBSDServiceDirs("/var/log", spec.LogsDirectory) {
 			buf.WriteString("  mkdir -p " + shellSingleQuote(dir) + "\n")
 		}
-		if len(spec.ExecStartPre) > 0 {
+		if len(execStartPre) > 0 {
 			buf.WriteString("  ")
-			for i, arg := range spec.ExecStartPre {
+			for i, arg := range execStartPre {
 				if i > 0 {
 					buf.WriteString(" ")
 				}
@@ -574,8 +583,8 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 		buf.WriteString("  " + name + "_read_pidfile \"${child_pidfile}\"\n")
 		buf.WriteString("}\n\n")
 		buf.WriteString(name + "_stop() {\n")
-		buf.WriteString("  _supervisor_pid=$(\"${name}_supervisor_pid\")\n")
-		buf.WriteString("  _child_pid=$(\"${name}_child_pid\")\n")
+		buf.WriteString("  _supervisor_pid=$(${name}_supervisor_pid)\n")
+		buf.WriteString("  _child_pid=$(${name}_child_pid)\n")
 		buf.WriteString("  if [ -z \"${_supervisor_pid}\" ] && [ -z \"${_child_pid}\" ]; then\n")
 		buf.WriteString("    echo \"${name} is not running.\"\n")
 		buf.WriteString("    return 0\n")
@@ -584,19 +593,19 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 		buf.WriteString("  if [ -n \"${_supervisor_pid}\" ]; then kill \"${_supervisor_pid}\" 2>/dev/null || true; fi\n")
 		buf.WriteString("  if [ -n \"${_child_pid}\" ]; then kill \"${_child_pid}\" 2>/dev/null || true; fi\n")
 		buf.WriteString("  for _try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do\n")
-		buf.WriteString("    if ! \"${name}_supervisor_pid\" >/dev/null 2>&1 && ! \"${name}_child_pid\" >/dev/null 2>&1; then\n")
+		buf.WriteString("    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_child_pid >/dev/null 2>&1; then\n")
 		buf.WriteString("      rm -f \"${pidfile}\" \"${child_pidfile}\"\n")
 		buf.WriteString("      return 0\n")
 		buf.WriteString("    fi\n")
 		buf.WriteString("    sleep 1\n")
 		buf.WriteString("  done\n")
 		buf.WriteString("  warn \"${name} did not stop after TERM; sending KILL\"\n")
-		buf.WriteString("  _supervisor_pid=$(\"${name}_supervisor_pid\")\n")
-		buf.WriteString("  _child_pid=$(\"${name}_child_pid\")\n")
+		buf.WriteString("  _supervisor_pid=$(${name}_supervisor_pid)\n")
+		buf.WriteString("  _child_pid=$(${name}_child_pid)\n")
 		buf.WriteString("  if [ -n \"${_supervisor_pid}\" ]; then kill -KILL \"${_supervisor_pid}\" 2>/dev/null || true; fi\n")
 		buf.WriteString("  if [ -n \"${_child_pid}\" ]; then kill -KILL \"${_child_pid}\" 2>/dev/null || true; fi\n")
 		buf.WriteString("  for _try in 1 2 3 4 5; do\n")
-		buf.WriteString("    if ! \"${name}_supervisor_pid\" >/dev/null 2>&1 && ! \"${name}_child_pid\" >/dev/null 2>&1; then\n")
+		buf.WriteString("    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_child_pid >/dev/null 2>&1; then\n")
 		buf.WriteString("      rm -f \"${pidfile}\" \"${child_pidfile}\"\n")
 		buf.WriteString("      return 0\n")
 		buf.WriteString("    fi\n")
@@ -606,7 +615,7 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 		buf.WriteString("  return 1\n")
 		buf.WriteString("}\n\n")
 		buf.WriteString(name + "_status() {\n")
-		buf.WriteString("  _child_pid=$(\"${name}_child_pid\")\n")
+		buf.WriteString("  _child_pid=$(${name}_child_pid)\n")
 		buf.WriteString("  if [ -z \"${_child_pid}\" ]; then\n")
 		buf.WriteString("    echo \"${name} is not running.\"\n")
 		buf.WriteString("    return 1\n")

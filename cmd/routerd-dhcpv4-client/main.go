@@ -209,9 +209,16 @@ func (d *dhcpv4Daemon) Run(ctx context.Context) error {
 	}
 	d.publish(daemonapi.EventDaemonReady, daemonapi.SeverityInfo, "Ready", "DHCPv4 client daemon is ready", nil)
 	buf := make([]byte, 1500)
+	nextAcquireAttempt := time.Now().Add(30 * time.Second)
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if d.shouldAcquire() && time.Now().After(nextAcquireAttempt) {
+			if err := d.acquire(ctx); err != nil {
+				d.publish("routerd.dhcpv4.client.acquire.failed", daemonapi.SeverityWarning, "AcquireFailed", err.Error(), nil)
+			}
+			nextAcquireAttempt = time.Now().Add(30 * time.Second)
 		}
 		if d.shouldRenew() {
 			if err := d.renew(ctx); err != nil {
@@ -224,6 +231,7 @@ func (d *dhcpv4Daemon) Run(ctx context.Context) error {
 			if timeoutError(err) {
 				continue
 			}
+			d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "ReadFailed", err.Error(), nil)
 			return err
 		}
 		_ = d.handlePacket(ctx, buf[:n])
@@ -340,6 +348,17 @@ func (d *dhcpv4Daemon) shouldRenew() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.state == dhcpv4client.StateBound && !d.lease.RenewAt().IsZero() && time.Now().After(d.lease.RenewAt())
+}
+
+func (d *dhcpv4Daemon) shouldAcquire() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	switch d.state {
+	case dhcpv4client.StateBound, dhcpv4client.StateRenewing, dhcpv4client.StateRebinding:
+		return false
+	default:
+		return true
+	}
 }
 
 func (d *dhcpv4Daemon) snapshotLocked() dhcpv4client.Snapshot {
@@ -634,8 +653,15 @@ func jsonStringList(values []string) string {
 }
 
 func timeoutError(err error) bool {
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
 	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "deadline exceeded") || strings.Contains(text, "i/o timeout") || strings.Contains(text, "operation timed out")
 }
 
 func hasFlag(args []string, name string) bool {

@@ -4144,25 +4144,6 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 		}
 	}
 	if stateStore != nil {
-		newSet := map[string]bool{}
-		for _, k := range newKeys {
-			newSet[k] = true
-		}
-		prevKeys := strings.Split(stateStore.Get(freebsdSysrcStateKey).Value, ",")
-		for _, oldKey := range prevKeys {
-			oldKey = strings.TrimSpace(oldKey)
-			if oldKey == "" || newSet[oldKey] {
-				continue
-			}
-			if err := runLogged("sysrc", "-x", oldKey); err != nil {
-				warnings = append(warnings, fmt.Sprintf("reclaim sysrc key %s: %v", oldKey, err))
-				continue
-			}
-			changed = append(changed, "sysrc:-x:"+oldKey)
-			if ifname := freeBSDIfconfigKeyInterface(oldKey); ifname != "" {
-				restartIfnames = append(restartIfnames, ifname)
-			}
-		}
 		stateStore.Set(freebsdSysrcStateKey, strings.Join(newKeys, ","), "applyFreeBSDConfig: tracked sysrc keys")
 	}
 	if len(data.DHCPClient) > 0 && dhclientPath != "" {
@@ -4451,6 +4432,11 @@ func applyFreeBSDRCDScripts(scripts map[string][]byte, rcScriptDir string) ([]st
 		return nil, fmt.Errorf("create rc.d directory %s: %w", rcScriptDir, err)
 	}
 	var changed []string
+	disabled, err := disableStaleFreeBSDRCDBackups(rcScriptDir)
+	if err != nil {
+		return changed, err
+	}
+	changed = append(changed, disabled...)
 	for _, name := range sortedByteSliceMapKeys(scripts) {
 		path := filepath.Join(rcScriptDir, name)
 		fileChanged, err := writeFileIfChanged(path, scripts[name], 0555)
@@ -4479,6 +4465,36 @@ func applyFreeBSDRCDScripts(scripts map[string][]byte, rcScriptDir string) ([]st
 			}
 			changed = append(changed, "service:"+name)
 		}
+	}
+	return changed, nil
+}
+
+func disableStaleFreeBSDRCDBackups(rcScriptDir string) ([]string, error) {
+	entries, err := os.ReadDir(rcScriptDir)
+	if err != nil {
+		return nil, err
+	}
+	var changed []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !(strings.HasPrefix(name, "routerd.backup.") || strings.HasPrefix(name, "routerd.recovery.") || strings.HasPrefix(name, "routerd.recursive-bad.")) {
+			continue
+		}
+		path := filepath.Join(rcScriptDir, name)
+		info, err := entry.Info()
+		if err != nil {
+			return changed, err
+		}
+		if info.Mode()&0111 == 0 {
+			continue
+		}
+		if err := os.Chmod(path, info.Mode()&^os.FileMode(0111)); err != nil {
+			return changed, err
+		}
+		changed = append(changed, "rc.d:disable-stale:"+path)
 	}
 	return changed, nil
 }

@@ -388,7 +388,7 @@ func TestParseFreeBSDSysrcValue(t *testing.T) {
 	}
 }
 
-func TestApplyFreeBSDConfigReclaimsStaleSysrcKeys(t *testing.T) {
+func TestApplyFreeBSDConfigDoesNotReclaimStaleSysrcKeys(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -424,13 +424,8 @@ exit 0
 	if err != nil {
 		t.Fatalf("read sysrc log: %v", err)
 	}
-	for _, want := range []string{"-x ifconfig_vxlan102", "-x ifconfig_vxlan103"} {
-		if !strings.Contains(string(got), want) {
-			t.Fatalf("sysrc log missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(string(got), "-x gateway_enable") {
-		t.Fatalf("gateway_enable should remain (still in current render): %s", got)
+	if strings.Contains(string(got), "-x ") {
+		t.Fatalf("FreeBSD apply must not remove sysrc keys implicitly:\n%s", got)
 	}
 }
 
@@ -637,6 +632,34 @@ exit 0
 	serviceCalls, err := os.ReadFile(serviceLog)
 	if err == nil && strings.Contains(string(serviceCalls), "routerd") {
 		t.Fatalf("routerd service must not be controlled from routerd apply:\n%s", serviceCalls)
+	}
+}
+
+func TestApplyFreeBSDRCDScriptsDisablesExecutableBackups(t *testing.T) {
+	dir := t.TempDir()
+	rcDir := filepath.Join(dir, "rc.d")
+	if err := os.MkdirAll(rcDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(rcDir, "routerd.recovery.20260510T235157Z")
+	if err := os.WriteFile(backup, []byte("#!/bin/sh\n# PROVIDE: routerd\n"), 0555); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := applyFreeBSDRCDScripts(map[string][]byte{
+		"routerd": []byte("#!/bin/sh\n# PROVIDE: routerd\n"),
+	}, rcDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stringSliceContainsPrefix(changed, "rc.d:disable-stale:") {
+		t.Fatalf("changed = %v, want stale rc.d backup disable marker", changed)
+	}
+	info, err := os.Stat(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&0111 != 0 {
+		t.Fatalf("backup remained executable: %v", info.Mode())
 	}
 }
 

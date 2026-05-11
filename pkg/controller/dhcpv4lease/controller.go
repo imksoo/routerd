@@ -5,6 +5,7 @@ package dhcpv4lease
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -60,6 +61,29 @@ func (c Controller) Start(ctx context.Context) {
 
 func (c Controller) Reconcile(ctx context.Context, name string) error {
 	return c.reconcile(ctx, name)
+}
+
+func (c Controller) ReconcileAll(ctx context.Context) error {
+	if c.Router == nil {
+		return nil
+	}
+	var errs []string
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "DHCPv4Lease" {
+			continue
+		}
+		name := resource.Metadata.Name
+		if err := c.reconcile(ctx, name); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", name, err))
+			if c.Logger != nil {
+				c.Logger.Warn("DHCPv4 lease reconcile failed", "resource", name, "error", err)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 func (c Controller) reconcile(ctx context.Context, name string) error {

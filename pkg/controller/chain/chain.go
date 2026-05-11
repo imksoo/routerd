@@ -437,16 +437,9 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "Link"), PeriodicFunc: pathMTU.Reconcile},
 		framework.FuncController{ControllerName: "ipv6-ra", Every: 30 * time.Second, Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information"), PeriodicFunc: ra.reconcile},
 		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information"), PeriodicFunc: dhcpv6.reconcile},
-		framework.FuncController{ControllerName: "dhcpv4-lease", Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
-			for _, resource := range r.Router.Spec.Resources {
-				if resource.Kind == "DHCPv4Lease" {
-					if err := dhcp4Lease.Reconcile(ctx, resource.Metadata.Name); err != nil {
-						return err
-					}
-				}
-			}
-			return nil
-		}},
+		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
+			return dhcp4Lease.ReconcileAll(ctx)
+		}, PeriodicFunc: dhcp4Lease.ReconcileAll},
 		framework.FuncController{ControllerName: "pppoe-session", Subs: []bus.Subscription{{Topics: []string{"routerd.pppoe.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			for _, resource := range r.Router.Spec.Resources {
 				if resource.Kind == "PPPoESession" {

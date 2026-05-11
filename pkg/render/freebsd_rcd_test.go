@@ -163,6 +163,12 @@ func TestFreeBSDRenderSkipsDHCPClientRCDWhenRouterdSupervisesClients(t *testing.
 	if !strings.Contains(routerdScript, `'--controller-chain-dry-run-dhcpv4lease=false'`) {
 		t.Fatalf("routerd rc.d script missing DHCPv4Lease flag:\n%s", routerdScript)
 	}
+	if strings.Contains(routerdScript, "apply") || strings.Contains(routerdScript, "--skip-service-manager") {
+		t.Fatalf("routerd rc.d script must not run routerd apply from prestart:\n%s", routerdScript)
+	}
+	if strings.Contains(routerdScript, `$("`) {
+		t.Fatalf("routerd rc.d script contains quoted command substitution:\n%s", routerdScript)
+	}
 }
 
 func TestFreeBSDRenderIncludesSystemdUnitAsRCD(t *testing.T) {

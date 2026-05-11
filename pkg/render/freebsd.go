@@ -83,6 +83,43 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	rc.WriteString("gateway_enable=\"YES\"\n")
 	rc.WriteString("ipv6_gateway_enable=\"YES\"\n")
 
+	adminUpIfaces := map[string]string{}
+	hasPrimaryIfconfig := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "Interface" {
+			continue
+		}
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			return FreeBSDConfig{}, err
+		}
+		if spec.AdminUp && spec.IfName != "" && spec.Managed && spec.Owner != "external" {
+			adminUpIfaces[res.Metadata.Name] = spec.IfName
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		spec, err := res.IPv4StaticAddressSpec()
+		if err != nil {
+			return FreeBSDConfig{}, err
+		}
+		if managed[spec.Interface] && resourceKind(router, spec.Interface) != "Bridge" && resourceKind(router, spec.Interface) != "WireGuardInterface" {
+			hasPrimaryIfconfig[spec.Interface] = true
+		}
+	}
+	adminNames := make([]string, 0, len(adminUpIfaces))
+	for name := range adminUpIfaces {
+		adminNames = append(adminNames, name)
+	}
+	sort.Strings(adminNames)
+	for _, name := range adminNames {
+		if !hasPrimaryIfconfig[name] {
+			rc.WriteString(fmt.Sprintf("ifconfig_%s=\"up\"\n", adminUpIfaces[name]))
+		}
+	}
+
 	var staticV4Routes []freeBSDStaticRoute
 	var staticV6Routes []freeBSDStaticRoute
 	staticBridgeV4 := map[string][]string{}
