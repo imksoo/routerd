@@ -3,6 +3,7 @@
 package webconsole
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io/fs"
@@ -15,6 +16,8 @@ import (
 	"time"
 
 	"routerd/pkg/apply"
+	"routerd/pkg/bus"
+	"routerd/pkg/daemonapi"
 	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
 	routerstate "routerd/pkg/state"
@@ -133,6 +136,72 @@ func TestHandlerServesVPNStatus(t *testing.T) {
 	for _, want := range []string{`"wireGuard"`, `"wg0"`, `"peer-public"`, `"tailscale"`, `"homert02"`, `"phone"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("vpn response missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+}
+
+func TestHandlerStreamsBusEventsOverSSE(t *testing.T) {
+	eventBus := bus.New()
+	handler := New(Options{Bus: eventBus})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/events/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
+		t.Fatalf("content type = %q", contentType)
+	}
+
+	reader := bufio.NewReader(resp.Body)
+	if line, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(line) != "event: connected" {
+		t.Fatalf("connected event line = %q err=%v", line, err)
+	}
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimSpace(line) == "" {
+			break
+		}
+	}
+
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "test"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "HealthCheck", Name: "internet"}
+	event.Attributes = map[string]string{"phase": "Healthy"}
+	if err := eventBus.Publish(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+
+	var sawEvent bool
+	var sawData bool
+	deadline := time.After(2 * time.Second)
+	for !(sawEvent && sawData) {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for streamed event")
+		default:
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "event: routerd-event" {
+			sawEvent = true
+		}
+		if strings.HasPrefix(trimmed, "data: ") && strings.Contains(trimmed, "routerd.resource.status.changed") && strings.Contains(trimmed, "HealthCheck") {
+			sawData = true
 		}
 	}
 }

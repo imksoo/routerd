@@ -3234,7 +3234,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			return webErr
 		}
 		if ok {
-			if err := startWebConsole(ctx, console, router, webStore, cache, logger, *configPath, controllerStatuses); err != nil {
+			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerStatuses); err != nil {
 				return err
 			}
 		}
@@ -3601,7 +3601,7 @@ func statusAddressValue(value string) string {
 	return ""
 }
 
-func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, cache *resultCache, logger *eventlog.Logger, configPath string, controllerStatuses []controlapi.ControllerStatus) error {
+func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, logger *eventlog.Logger, configPath string, controllerStatuses []controlapi.ControllerStatus) error {
 	addr := net.JoinHostPort(spec.ListenAddress, fmt.Sprintf("%d", spec.Port))
 	handler := webconsole.New(webconsole.Options{
 		Router:             router,
@@ -3615,6 +3615,7 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		FirewallLogPath:    platformDefaults.StateDir + "/firewall-logs.db",
 		ConfigPath:         configPath,
 		ControllerModes:    controllerStatuses,
+		Bus:                eventBus,
 	})
 	server := &http.Server{Addr: addr, Handler: handler}
 	listener, err := net.Listen("tcp", addr)

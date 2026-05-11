@@ -22,6 +22,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
+	"routerd/pkg/bus"
 	"routerd/pkg/controlapi"
 	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
@@ -44,6 +45,7 @@ type Options struct {
 	DHCPLeasePaths     []string
 	ConfigPath         string
 	ControllerModes    []controlapi.ControllerStatus
+	Bus                *bus.Bus
 }
 
 type Handler struct {
@@ -230,6 +232,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.controllers(w)
 	case "api/v1/events":
 		h.events(w, r)
+	case "api/v1/events/stream", "v1/events/stream":
+		h.eventStream(w, r)
 	case "api/v1/connections":
 		h.connections(w, r)
 	case "api/v1/dns-queries":
@@ -413,6 +417,72 @@ func (h Handler) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, events)
+}
+
+func (h Handler) eventStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming is unavailable")
+		return
+	}
+	header := w.Header()
+	header.Set("Content-Type", "text/event-stream")
+	header.Set("Cache-Control", "no-store")
+	header.Set("Connection", "keep-alive")
+	header.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	_ = writeSSE(w, "connected", map[string]string{"status": "connected", "generatedAt": time.Now().UTC().Format(time.RFC3339Nano)})
+	flusher.Flush()
+
+	ctx := r.Context()
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	if h.opts.Bus == nil {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-heartbeat.C:
+				_, _ = fmt.Fprint(w, ": heartbeat\n\n")
+				flusher.Flush()
+			}
+		}
+	}
+
+	events, cancel := h.opts.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 64)
+	defer cancel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-heartbeat.C:
+			_, _ = fmt.Fprint(w, ": heartbeat\n\n")
+			flusher.Flush()
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			if err := writeSSE(w, "routerd-event", event); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func writeSSE(w http.ResponseWriter, eventName string, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\n", eventName); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (h Handler) connections(w http.ResponseWriter, r *http.Request) {

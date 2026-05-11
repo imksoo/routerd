@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Badge,
@@ -96,6 +96,21 @@ type RouterEvent = {
   kind?: string;
   name?: string;
   attributes?: Record<string, unknown>;
+};
+
+type StreamEvent = {
+  cursor?: string;
+  time?: string;
+  type?: string;
+  severity?: string;
+  reason?: string;
+  message?: string;
+  resource?: {
+    apiVersion?: string;
+    kind?: string;
+    name?: string;
+  };
+  attributes?: Record<string, string>;
 };
 
 type ConnectionTable = {
@@ -634,6 +649,12 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: "8px",
     flexWrap: "wrap",
+  },
+  streamBadge: {
+    transition: "background-color 160ms ease, color 160ms ease, border-color 160ms ease",
+  },
+  softUpdate: {
+    transition: "background-color 180ms ease, opacity 180ms ease, color 180ms ease",
   },
   main: {
     padding: "16px 20px 24px",
@@ -1337,30 +1358,85 @@ function App() {
   const [selectedEventKey, setSelectedEventKey] = useState<string>("");
   const [metricSamples, setMetricSamples] = useState<MetricSample[]>([]);
   const [loading, setLoading] = useState(true);
+  const [streamState, setStreamState] = useState<"connecting" | "live" | "polling">("connecting");
+  const [lastStreamEvent, setLastStreamEvent] = useState<StreamEvent | null>(null);
+  const refreshInFlight = useRef(false);
+  const queuedRefresh = useRef(false);
+  const refreshTimer = useRef<number | null>(null);
+  const configRef = useRef<ConfigSnapshot | null>(null);
 
   async function refresh() {
+    if (refreshInFlight.current) {
+      queuedRefresh.current = true;
+      return;
+    }
+    refreshInFlight.current = true;
     try {
       const [summaryResponse, configResponse, generationResponse] = await Promise.all([
         fetchJSON<Summary>("api/v1/summary?events=200&connections=240"),
-        config ? Promise.resolve(config) : fetchJSON<ConfigSnapshot>("api/v1/config"),
+        configRef.current ? Promise.resolve(configRef.current) : fetchJSON<ConfigSnapshot>("api/v1/config"),
         fetchJSON<GenerationRecord[]>("api/v1/generations?limit=200"),
       ]);
-      setSummary(summaryResponse);
+      setSummary(current => reconcileSummary(current, summaryResponse));
       setMetricSamples(current => appendMetricSample(current, summaryResponse));
-      if (!config) setConfig(configResponse as ConfigSnapshot);
-      setGenerations(generationResponse);
+      if (!configRef.current) {
+        configRef.current = configResponse as ConfigSnapshot;
+        setConfig(configResponse as ConfigSnapshot);
+      }
+      setGenerations(current => reconcileRecords(current, generationResponse, row => String(row.generation)));
       setError("");
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
+      refreshInFlight.current = false;
+      if (queuedRefresh.current) {
+        queuedRefresh.current = false;
+        scheduleRefresh(150);
+      }
     }
+  }
+
+  function scheduleRefresh(delay = 350) {
+    if (refreshTimer.current !== null) {
+      window.clearTimeout(refreshTimer.current);
+    }
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      refresh();
+    }, delay);
   }
 
   useEffect(() => {
     refresh();
-    const id = window.setInterval(refresh, 5000);
-    return () => window.clearInterval(id);
+    const pollID = window.setInterval(refresh, 30000);
+    let source: EventSource | null = null;
+    if ("EventSource" in window) {
+      source = new EventSource(basePath + "api/v1/events/stream");
+      source.addEventListener("connected", () => {
+        setStreamState("live");
+      });
+      source.addEventListener("routerd-event", event => {
+        try {
+          const parsed = JSON.parse((event as MessageEvent).data) as StreamEvent;
+          setLastStreamEvent(parsed);
+        } catch {
+          setLastStreamEvent(null);
+        }
+        setStreamState("live");
+        scheduleRefresh(250);
+      });
+      source.onerror = () => {
+        setStreamState("polling");
+      };
+    } else {
+      setStreamState("polling");
+    }
+    return () => {
+      window.clearInterval(pollID);
+      if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+      source?.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -1592,7 +1668,11 @@ function App() {
             </div>
             <div className={styles.bladeActions}>
               <Badge appearance="tint" color={phaseColor(summary?.status?.status?.phase)}>{String(summary?.status?.status?.phase ?? "Unknown")}</Badge>
+              <Badge appearance="outline" color={streamState === "live" ? "success" : streamState === "polling" ? "warning" : "subtle"} className={styles.streamBadge}>
+                {streamState === "live" ? "Live updates" : streamState === "polling" ? "Polling fallback" : "Connecting"}
+              </Badge>
               <Text size={200} className={styles.muted}>{summary?.generatedAt ? <>Updated <RelativeTime value={summary.generatedAt} /></> : ""}</Text>
+              {lastStreamEvent?.type ? <Text size={200} className={styles.muted}>{lastStreamEvent.type}</Text> : null}
               <Button appearance="primary" icon={<ArrowClockwiseRegular />} onClick={refresh}>Refresh</Button>
             </div>
           </div>
@@ -3294,6 +3374,70 @@ async function fetchText(path: string): Promise<string> {
   const response = await fetch(basePath + path, { cache: "no-store" });
   if (!response.ok) throw new Error(`${path}: ${response.status}`);
   return response.text();
+}
+
+function reconcileSummary(current: Summary | null, next: Summary): Summary {
+  if (!current) return next;
+  return {
+    ...next,
+    controllers: reconcileRecords(current.controllers, next.controllers, row => row.name ?? ""),
+    resources: reconcileRecords(current.resources, next.resources, row => `${row.apiVersion ?? ""}/${row.kind ?? ""}/${row.name ?? ""}`),
+    interfaces: reconcileRecords(current.interfaces, next.interfaces, row => row.ifname ?? row.name ?? ""),
+    events: reconcileRecords(current.events, next.events, row => eventKey(row)),
+    connections: reconcileConnectionTable(current.connections, next.connections),
+    dnsQueries: reconcileRecords(current.dnsQueries, next.dnsQueries, row => `${row.questionName ?? ""}/${(row.answers ?? []).join(",")}`),
+    trafficFlows: reconcileRecords(current.trafficFlows, next.trafficFlows, row => `${row.clientAddress ?? ""}/${row.peerAddress ?? ""}/${row.resolvedHostname ?? ""}/${row.tlsSNI ?? ""}`),
+    firewallLogs: reconcileRecords(current.firewallLogs, next.firewallLogs, row => String(row.id ?? `${row.ts ?? ""}/${row.srcAddress ?? ""}/${row.dstAddress ?? ""}/${row.protocol ?? ""}`)),
+    dhcpLeases: reconcileRecords(current.dhcpLeases, next.dhcpLeases, row => `${row.family ?? ""}/${row.ip ?? ""}/${row.mac ?? ""}`),
+    neighbors: reconcileRecords(current.neighbors, next.neighbors, row => `${row.ip ?? ""}/${row.mac ?? ""}/${row.ifname ?? ""}`),
+    clients: reconcileRecords(current.clients, next.clients, row => row.id ?? row.mac ?? row.hostname ?? (row.addresses ?? []).join(",")),
+    vpn: reconcileVPNStatus(current.vpn, next.vpn),
+  };
+}
+
+function reconcileConnectionTable(current?: ConnectionTable, next?: ConnectionTable): ConnectionTable | undefined {
+  if (!next) return next;
+  return {
+    ...next,
+    entries: reconcileRecords(current?.entries, next.entries, row => flowKey(row)),
+  };
+}
+
+function reconcileVPNStatus(current?: VPNStatus, next?: VPNStatus): VPNStatus | undefined {
+  if (!next) return next;
+  return {
+    ...next,
+    wireGuard: reconcileRecords(current?.wireGuard, next.wireGuard, row => row.name ?? ""),
+    tailscale: next.tailscale
+      ? {
+          ...next.tailscale,
+          peers: reconcileRecords(current?.tailscale?.peers, next.tailscale.peers, row => row.id ?? row.dnsName ?? row.hostName ?? (row.tailscaleIPs ?? []).join(",")),
+        }
+      : next.tailscale,
+  };
+}
+
+function reconcileRecords<T>(current: T[] | undefined, next: T[] | undefined, keyFn: (row: T) => string): T[] {
+  if (!next) return [];
+  if (!current || current.length === 0) return next;
+  const previous = new Map<string, T>();
+  for (const row of current) {
+    const key = keyFn(row);
+    if (key) previous.set(key, row);
+  }
+  return next.map(row => {
+    const key = keyFn(row);
+    const old = key ? previous.get(key) : undefined;
+    return old && stableJSON(old) === stableJSON(row) ? old : row;
+  });
+}
+
+function stableJSON(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function normalizeBasePath(value: string) {
