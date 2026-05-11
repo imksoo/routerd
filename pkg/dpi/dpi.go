@@ -92,6 +92,14 @@ func Classify(req ClassifyRequest) ClassifyResult {
 		result.Reason = "http_host"
 		return result
 	}
+	if name, ok := ExtractNBNSQuery(payload); ok {
+		result.AppName = "netbios"
+		result.AppCategory = "network"
+		result.AppConfidence = 75
+		result.DNSQuery = name
+		result.Reason = "nbns_query"
+		return result
+	}
 	if qname, ok := ExtractDNSQuery(payload); ok {
 		result.AppName = "dns"
 		result.AppCategory = "network"
@@ -347,4 +355,48 @@ func ExtractDNSQuery(payload []byte) (string, bool) {
 		return "", false
 	}
 	return strings.Join(labels, "."), true
+}
+
+func ExtractNBNSQuery(payload []byte) (string, bool) {
+	if len(payload) < 12+1+32+4 {
+		return "", false
+	}
+	qdCount := binary.BigEndian.Uint16(payload[4:6])
+	if qdCount == 0 {
+		return "", false
+	}
+	pos := 12
+	if int(payload[pos]) != 32 || pos+1+32+4 > len(payload) {
+		return "", false
+	}
+	pos++
+	encoded := payload[pos : pos+32]
+	decoded := make([]byte, 16)
+	for i := 0; i < 16; i++ {
+		hi := encoded[i*2]
+		lo := encoded[i*2+1]
+		if hi < 'A' || hi > 'P' || lo < 'A' || lo > 'P' {
+			return "", false
+		}
+		decoded[i] = ((hi - 'A') << 4) | (lo - 'A')
+	}
+	pos += 32
+	if pos >= len(payload) || payload[pos] != 0x00 {
+		return "", false
+	}
+	pos++
+	if pos+4 > len(payload) {
+		return "", false
+	}
+	qtype := binary.BigEndian.Uint16(payload[pos : pos+2])
+	qclass := binary.BigEndian.Uint16(payload[pos+2 : pos+4])
+	if qclass != 0x0001 || (qtype != 0x0020 && qtype != 0x0021) {
+		return "", false
+	}
+	name := strings.TrimRight(string(decoded[:15]), " \x00")
+	suffix := decoded[15]
+	if name == "" {
+		name = "*"
+	}
+	return fmt.Sprintf("%s<0x%02x>", name, suffix), true
 }

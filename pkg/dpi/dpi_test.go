@@ -48,3 +48,20 @@ func TestClassifyDNSQuery(t *testing.T) {
 		t.Fatalf("classification = %+v", got)
 	}
 }
+
+func TestClassifyNBNSQuery(t *testing.T) {
+	payload := []byte{
+		0x12, 0x34, 0x01, 0x10, 0x00, 0x01, 0, 0, 0, 0, 0, 0,
+		0x20,
+		'E', 'M', 'E', 'B', 'E', 'J', 'E', 'O',
+		'C', 'A', 'C', 'A', 'C', 'A', 'C', 'A',
+		'C', 'A', 'C', 'A', 'C', 'A', 'C', 'A',
+		'C', 'A', 'C', 'A', 'C', 'A', 'A', 'B',
+		0x00,
+		0x00, 0x20, 0x00, 0x01,
+	}
+	got := Classify(ClassifyRequest{L4Payload: payload, TransportProtocol: "udp", DstPort: 137})
+	if got.AppName != "netbios" || got.DNSQuery != "LAIN<0x01>" || got.Reason != "nbns_query" {
+		t.Fatalf("classification = %+v", got)
+	}
+}

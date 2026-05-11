@@ -4342,7 +4342,7 @@ function firewallCorrelation(log: FirewallLog) {
 function firewallDPIText(log: FirewallLog) {
   if (log.dpiTlsSNI) return `TLS-SNI=${log.dpiTlsSNI}`;
   if (log.dpiHttpHost) return `HTTP-Host=${log.dpiHttpHost}`;
-  if (log.dpiDnsQuery) return `DNS-query=${log.dpiDnsQuery}`;
+  if (log.dpiDnsQuery) return `${firewallQueryLabel(log.dpiApp)}=${log.dpiDnsQuery}`;
   const parts = [log.dpiApp, log.dpiCategory].filter(Boolean);
   if (log.dpiConfidence) parts.push(`${log.dpiConfidence}%`);
   const structured = parts.join(" ");
@@ -4359,8 +4359,12 @@ function firewallDPITextFromHint(hint?: string) {
   }
   if (values.has("dpi.tls_sni")) return `TLS-SNI=${values.get("dpi.tls_sni")}`;
   if (values.has("dpi.http_host")) return `HTTP-Host=${values.get("dpi.http_host")}`;
-  if (values.has("dpi.dns_query")) return `DNS-query=${values.get("dpi.dns_query")}`;
+  if (values.has("dpi.dns_query")) return `${firewallQueryLabel(values.get("dpi.app"))}=${values.get("dpi.dns_query")}`;
   return [values.get("dpi.app"), values.get("dpi.category"), values.get("dpi.confidence") ? `${values.get("dpi.confidence")}%` : ""].filter(Boolean).join(" ");
+}
+
+function firewallQueryLabel(app?: string) {
+  return String(app ?? "").toLowerCase() === "netbios" ? "NBNS-query" : "DNS-query";
 }
 
 function firewallTupleKey(source?: string, sourcePort?: string | number, destination?: string, destinationPort?: string | number, protocol?: string) {
