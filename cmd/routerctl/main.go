@@ -34,7 +34,7 @@ import (
 
 var platformDefaults, _ = platform.Current()
 
-const version = "v20260511.1041"
+const version = "v20260511.1240"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
