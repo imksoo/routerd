@@ -25,6 +25,7 @@ type FirewallLogEntry struct {
 	DstAddress        string    `json:"dstAddress"`
 	DstPort           int       `json:"dstPort,omitempty"`
 	Protocol          string    `json:"protocol"`
+	TCPFlags          string    `json:"tcpFlags,omitempty"`
 	L3Proto           string    `json:"l3Proto"`
 	InIface           string    `json:"inIface,omitempty"`
 	OutIface          string    `json:"outIface,omitempty"`
@@ -134,6 +135,7 @@ CREATE TABLE IF NOT EXISTS firewall_logs (
   dst_address TEXT NOT NULL,
   dst_port INTEGER,
   protocol TEXT NOT NULL,
+  tcp_flags TEXT,
   l3_proto TEXT NOT NULL,
   in_iface TEXT,
   out_iface TEXT,
@@ -214,9 +216,9 @@ func (l *FirewallLog) Record(ctx context.Context, entry FirewallLogEntry) error 
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now().UTC()
 	}
-	_, err := l.db.ExecContext(ctx, `INSERT INTO firewall_logs(ts,zone_from,zone_to,rule_name,action,src_address,src_port,dst_address,dst_port,protocol,l3_proto,in_iface,out_iface,packet_bytes,hint,dpi_app,dpi_category,dpi_tls_sni,dpi_http_host,dpi_dns_query,dpi_confidence,correlation,correlation_detail,expired_age_seconds,expired_bytes)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		entry.Timestamp.UnixNano(), entry.ZoneFrom, entry.ZoneTo, entry.RuleName, entry.Action, entry.SrcAddress, entry.SrcPort, entry.DstAddress, entry.DstPort, entry.Protocol, entry.L3Proto, entry.InIface, entry.OutIface, entry.PacketBytes, entry.Hint, entry.DPIApp, entry.DPICategory, entry.DPITLSSNI, entry.DPIHTTPHost, entry.DPIDNSQuery, entry.DPIConfidence, entry.Correlation, entry.CorrelationDetail, entry.ExpiredAgeSeconds, entry.ExpiredBytes)
+	_, err := l.db.ExecContext(ctx, `INSERT INTO firewall_logs(ts,zone_from,zone_to,rule_name,action,src_address,src_port,dst_address,dst_port,protocol,tcp_flags,l3_proto,in_iface,out_iface,packet_bytes,hint,dpi_app,dpi_category,dpi_tls_sni,dpi_http_host,dpi_dns_query,dpi_confidence,correlation,correlation_detail,expired_age_seconds,expired_bytes)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		entry.Timestamp.UnixNano(), entry.ZoneFrom, entry.ZoneTo, entry.RuleName, entry.Action, entry.SrcAddress, entry.SrcPort, entry.DstAddress, entry.DstPort, entry.Protocol, entry.TCPFlags, entry.L3Proto, entry.InIface, entry.OutIface, entry.PacketBytes, entry.Hint, entry.DPIApp, entry.DPICategory, entry.DPITLSSNI, entry.DPIHTTPHost, entry.DPIDNSQuery, entry.DPIConfidence, entry.Correlation, entry.CorrelationDetail, entry.ExpiredAgeSeconds, entry.ExpiredBytes)
 	return err
 }
 
@@ -250,7 +252,7 @@ func (l *FirewallLog) List(ctx context.Context, filter FirewallLogFilter) ([]Fir
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	args = append(args, limit)
-	rows, err := l.db.QueryContext(ctx, `SELECT id,ts,coalesce(zone_from,''),coalesce(zone_to,''),coalesce(rule_name,''),action,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),protocol,l3_proto,coalesce(in_iface,''),coalesce(out_iface,''),coalesce(packet_bytes,0),coalesce(hint,''),coalesce(dpi_app,''),coalesce(dpi_category,''),coalesce(dpi_tls_sni,''),coalesce(dpi_http_host,''),coalesce(dpi_dns_query,''),coalesce(dpi_confidence,0),coalesce(correlation,''),coalesce(correlation_detail,''),coalesce(expired_age_seconds,0),coalesce(expired_bytes,0)
+	rows, err := l.db.QueryContext(ctx, `SELECT id,ts,coalesce(zone_from,''),coalesce(zone_to,''),coalesce(rule_name,''),action,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),protocol,coalesce(tcp_flags,''),l3_proto,coalesce(in_iface,''),coalesce(out_iface,''),coalesce(packet_bytes,0),coalesce(hint,''),coalesce(dpi_app,''),coalesce(dpi_category,''),coalesce(dpi_tls_sni,''),coalesce(dpi_http_host,''),coalesce(dpi_dns_query,''),coalesce(dpi_confidence,0),coalesce(correlation,''),coalesce(correlation_detail,''),coalesce(expired_age_seconds,0),coalesce(expired_bytes,0)
 FROM firewall_logs`+where+` ORDER BY ts DESC, id DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -260,7 +262,7 @@ FROM firewall_logs`+where+` ORDER BY ts DESC, id DESC LIMIT ?`, args...)
 	for rows.Next() {
 		var entry FirewallLogEntry
 		var ts int64
-		if err := rows.Scan(&entry.ID, &ts, &entry.ZoneFrom, &entry.ZoneTo, &entry.RuleName, &entry.Action, &entry.SrcAddress, &entry.SrcPort, &entry.DstAddress, &entry.DstPort, &entry.Protocol, &entry.L3Proto, &entry.InIface, &entry.OutIface, &entry.PacketBytes, &entry.Hint, &entry.DPIApp, &entry.DPICategory, &entry.DPITLSSNI, &entry.DPIHTTPHost, &entry.DPIDNSQuery, &entry.DPIConfidence, &entry.Correlation, &entry.CorrelationDetail, &entry.ExpiredAgeSeconds, &entry.ExpiredBytes); err != nil {
+		if err := rows.Scan(&entry.ID, &ts, &entry.ZoneFrom, &entry.ZoneTo, &entry.RuleName, &entry.Action, &entry.SrcAddress, &entry.SrcPort, &entry.DstAddress, &entry.DstPort, &entry.Protocol, &entry.TCPFlags, &entry.L3Proto, &entry.InIface, &entry.OutIface, &entry.PacketBytes, &entry.Hint, &entry.DPIApp, &entry.DPICategory, &entry.DPITLSSNI, &entry.DPIHTTPHost, &entry.DPIDNSQuery, &entry.DPIConfidence, &entry.Correlation, &entry.CorrelationDetail, &entry.ExpiredAgeSeconds, &entry.ExpiredBytes); err != nil {
 			return nil, err
 		}
 		entry.Timestamp = time.Unix(0, ts).UTC()
@@ -295,6 +297,7 @@ func (l *FirewallLog) ensureDPIColumns(ctx context.Context) error {
 		typ  string
 	}{
 		{"dpi_app", "TEXT"},
+		{"tcp_flags", "TEXT"},
 		{"dpi_category", "TEXT"},
 		{"dpi_tls_sni", "TEXT"},
 		{"dpi_http_host", "TEXT"},

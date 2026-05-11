@@ -68,7 +68,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := firewallLog.Record(context.Background(), logstore.FirewallLogEntry{Timestamp: time.Now(), Action: "drop", SrcAddress: "172.18.0.2", DstAddress: "198.51.100.1", Protocol: "tcp", L3Proto: "ipv4"}); err != nil {
+	if err := firewallLog.Record(context.Background(), logstore.FirewallLogEntry{Timestamp: time.Now(), Action: "drop", SrcAddress: "172.18.0.2", DstAddress: "198.51.100.1", Protocol: "tcp", TCPFlags: "SYN", L3Proto: "ipv4"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = firewallLog.Close()
@@ -97,7 +97,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, `"tailscale"`, `"homert02"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, `"tcpFlags": "SYN"`, `"tailscale"`, `"homert02"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}
@@ -341,7 +341,7 @@ func TestHandlerServesFirewallLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := firewallLog.Record(context.Background(), logstore.FirewallLogEntry{Timestamp: time.Now(), Action: "drop", SrcAddress: "172.18.0.2", DstAddress: "198.51.100.1", Protocol: "tcp", L3Proto: "ipv4"}); err != nil {
+	if err := firewallLog.Record(context.Background(), logstore.FirewallLogEntry{Timestamp: time.Now(), Action: "drop", SrcAddress: "172.18.0.2", DstAddress: "198.51.100.1", Protocol: "tcp", TCPFlags: "SYN", L3Proto: "ipv4"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = firewallLog.Close()
@@ -352,7 +352,7 @@ func TestHandlerServesFirewallLogs(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "198.51.100.1") {
+	if !strings.Contains(rec.Body.String(), "198.51.100.1") || !strings.Contains(rec.Body.String(), `"tcpFlags": "SYN"`) {
 		t.Fatalf("firewall logs missing row:\n%s", rec.Body.String())
 	}
 }

@@ -735,6 +735,9 @@
                 "srcPort": {
                   "type": "integer"
                 },
+                "tcpFlags": {
+                  "type": "string"
+                },
                 "ts": {
                   "format": "date-time",
                   "type": "string"

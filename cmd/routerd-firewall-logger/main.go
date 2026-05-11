@@ -80,7 +80,7 @@ func selftest(args []string, stdout io.Writer) error {
 	}, opts.expiredFlowTTL, opts.expiredFlowLimit); err != nil {
 		return err
 	}
-	entry := logstore.FirewallLogEntry{Action: "drop", SrcAddress: "192.0.2.10", DstAddress: "198.51.100.10", Protocol: "tcp", L3Proto: "ipv4", RuleName: "selftest"}
+	entry := logstore.FirewallLogEntry{Action: "drop", SrcAddress: "192.0.2.10", DstAddress: "198.51.100.10", Protocol: "tcp", TCPFlags: "SYN", L3Proto: "ipv4", RuleName: "selftest"}
 	if opts.dpiSocket != "" {
 		entry = enrichEntryWithDPI(ctx, opts, entry, selftestTLSPacket("routerd-firewall-selftest.example"))
 	}
@@ -783,6 +783,7 @@ func firewallLogEntryFromIPv4Packet(timestamp time.Time, payload []byte, hint st
 	src := netip.AddrFrom4([4]byte(payload[12:16])).String()
 	dst := netip.AddrFrom4([4]byte(payload[16:20])).String()
 	srcPort, dstPort := transportPorts(proto, payload[ihl:])
+	flags := tcpFlagsFromTransport(proto, payload[ihl:])
 	return logstore.FirewallLogEntry{
 		Timestamp:  timestamp,
 		Action:     "drop",
@@ -791,6 +792,7 @@ func firewallLogEntryFromIPv4Packet(timestamp time.Time, payload []byte, hint st
 		DstAddress: dst,
 		DstPort:    dstPort,
 		Protocol:   proto,
+		TCPFlags:   flags,
 		L3Proto:    "ipv4",
 		Hint:       hint,
 	}, true
@@ -809,7 +811,13 @@ func firewallLogEntryFromIPv6Packet(timestamp time.Time, payload []byte, hint st
 	if !ok {
 		return logstore.FirewallLogEntry{}, false
 	}
-	srcPort, dstPort := transportPorts(proto, payload[40:])
+	offset := 40
+	if next, transportOffset, ok := ipv6TransportOffset(payload); ok {
+		proto = ipProtocolName(next)
+		offset = transportOffset
+	}
+	srcPort, dstPort := transportPorts(proto, payload[offset:])
+	flags := tcpFlagsFromTransport(proto, payload[offset:])
 	return logstore.FirewallLogEntry{
 		Timestamp:  timestamp,
 		Action:     "drop",
@@ -818,6 +826,7 @@ func firewallLogEntryFromIPv6Packet(timestamp time.Time, payload []byte, hint st
 		DstAddress: dst.String(),
 		DstPort:    dstPort,
 		Protocol:   proto,
+		TCPFlags:   flags,
 		L3Proto:    "ipv6",
 		Hint:       hint,
 	}, true
@@ -831,6 +840,95 @@ func transportPorts(proto string, payload []byte) (int, int) {
 		return 0, 0
 	}
 	return int(binary.BigEndian.Uint16(payload[0:2])), int(binary.BigEndian.Uint16(payload[2:4]))
+}
+
+func tcpFlagsFromIPPacket(payload []byte) string {
+	if len(payload) < 1 {
+		return ""
+	}
+	switch payload[0] >> 4 {
+	case 4:
+		if len(payload) < 20 {
+			return ""
+		}
+		ihl := int(payload[0]&0x0f) * 4
+		if ihl < 20 || len(payload) < ihl || payload[9] != 6 {
+			return ""
+		}
+		return tcpFlagsFromTransport("tcp", payload[ihl:])
+	case 6:
+		next, offset, ok := ipv6TransportOffset(payload)
+		if !ok || next != 6 || len(payload) < offset {
+			return ""
+		}
+		return tcpFlagsFromTransport("tcp", payload[offset:])
+	default:
+		return ""
+	}
+}
+
+func tcpFlagsFromTransport(proto string, payload []byte) string {
+	if proto != "tcp" || len(payload) < 14 {
+		return ""
+	}
+	return tcpFlagsFromByte(payload[13])
+}
+
+func tcpFlagsFromByte(flags byte) string {
+	var out []string
+	for _, flag := range []struct {
+		mask byte
+		name string
+	}{
+		{0x02, "SYN"},
+		{0x10, "ACK"},
+		{0x08, "PSH"},
+		{0x04, "RST"},
+		{0x01, "FIN"},
+		{0x20, "URG"},
+	} {
+		if flags&flag.mask != 0 {
+			out = append(out, flag.name)
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+func ipv6TransportOffset(payload []byte) (byte, int, bool) {
+	if len(payload) < 40 {
+		return 0, 0, false
+	}
+	next := payload[6]
+	offset := 40
+	for {
+		switch next {
+		case 0, 43, 60:
+			if len(payload) < offset+2 {
+				return 0, 0, false
+			}
+			headerLen := (int(payload[offset+1]) + 1) * 8
+			next = payload[offset]
+			offset += headerLen
+		case 44:
+			if len(payload) < offset+8 {
+				return 0, 0, false
+			}
+			next = payload[offset]
+			offset += 8
+		case 51:
+			if len(payload) < offset+2 {
+				return 0, 0, false
+			}
+			headerLen := (int(payload[offset+1]) + 2) * 4
+			next = payload[offset]
+			offset += headerLen
+		default:
+			return next, offset, offset <= len(payload)
+		}
+		if offset > len(payload) {
+			return 0, 0, false
+		}
+	}
 }
 
 func ipProtocolName(proto byte) string {
@@ -912,6 +1010,7 @@ func firewallLogEntryFromNFLogPacket(packet nflog.Packet) logstore.FirewallLogEn
 		DstAddress:  packet.DstAddress,
 		DstPort:     packet.DstPort,
 		Protocol:    packet.Protocol,
+		TCPFlags:    tcpFlagsFromIPPacket(packet.Payload),
 		L3Proto:     packet.L3Proto,
 		InIface:     packet.InIface,
 		OutIface:    packet.OutIface,
@@ -939,6 +1038,7 @@ func parseKeyValueFirewallLogLine(line string) (logstore.FirewallLogEntry, bool)
 		SrcPort:     atoi(fields["src_port"]),
 		DstPort:     atoi(fields["dst_port"]),
 		Protocol:    firstNonEmpty(fields["protocol"], fields["proto"]),
+		TCPFlags:    normalizeTCPFlags(firstNonEmpty(fields["tcp_flags"], fields["tcpFlags"], fields["flags"])),
 		L3Proto:     firstNonEmpty(fields["l3_proto"], fields["family"], "ipv4"),
 		InIface:     fields["in_iface"],
 		OutIface:    fields["out_iface"],
@@ -1010,6 +1110,7 @@ func parsePflogTCPDumpLine(line string) (logstore.FirewallLogEntry, bool) {
 		DstAddress:  dstAddress,
 		DstPort:     atoi(dstPort),
 		Protocol:    protocol,
+		TCPFlags:    parseTCPDumpFlags(rest),
 		L3Proto:     l3,
 		PacketBytes: packetBytesFromPflogPayload(rest),
 		Hint:        "pflog-tcpdump",
@@ -1052,6 +1153,7 @@ func parseNFLogTCPDumpLine(line string) (logstore.FirewallLogEntry, bool) {
 		DstAddress:  dstAddress,
 		DstPort:     atoi(dstPort),
 		Protocol:    protocol,
+		TCPFlags:    parseTCPDumpFlags(rest),
 		L3Proto:     l3,
 		PacketBytes: packetBytesFromPflogPayload(rest),
 		Hint:        "nflog-tcpdump",
@@ -1173,6 +1275,71 @@ func packetBytesFromPflogPayload(value string) int {
 		}
 	}
 	return 0
+}
+
+func parseTCPDumpFlags(value string) string {
+	start := strings.Index(value, "Flags [")
+	if start < 0 {
+		return ""
+	}
+	start += len("Flags [")
+	end := strings.Index(value[start:], "]")
+	if end < 0 {
+		return ""
+	}
+	return normalizeTCPFlags(value[start : start+end])
+}
+
+func normalizeTCPFlags(value string) string {
+	value = strings.TrimSpace(strings.Trim(value, "[]"))
+	if value == "" {
+		return ""
+	}
+	upper := strings.ToUpper(value)
+	if strings.Contains(upper, ",") {
+		flags := map[string]bool{}
+		for _, part := range strings.Split(upper, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				flags[part] = true
+			}
+		}
+		return joinTCPFlags(flags)
+	}
+	flags := map[string]bool{}
+	for _, r := range upper {
+		switch r {
+		case 'S':
+			flags["SYN"] = true
+		case '.':
+			flags["ACK"] = true
+		case 'P':
+			flags["PSH"] = true
+		case 'R':
+			flags["RST"] = true
+		case 'F':
+			flags["FIN"] = true
+		case 'U':
+			flags["URG"] = true
+		}
+	}
+	if len(flags) == 0 {
+		if upper == "NONE" {
+			return ""
+		}
+		return upper
+	}
+	return joinTCPFlags(flags)
+}
+
+func joinTCPFlags(flags map[string]bool) string {
+	var out []string
+	for _, flag := range []string{"SYN", "ACK", "PSH", "RST", "FIN", "URG"} {
+		if flags[flag] {
+			out = append(out, flag)
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 func atoi(value string) int {

@@ -21,6 +21,7 @@ func TestFirewallLogRecordAndList(t *testing.T) {
 		SrcAddress: "172.18.0.10",
 		DstAddress: "198.51.100.1",
 		Protocol:   "tcp",
+		TCPFlags:   "SYN",
 		L3Proto:    "ipv4",
 		RuleName:   "deny-test",
 	}
@@ -33,6 +34,9 @@ func TestFirewallLogRecordAndList(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].RuleName != "deny-test" {
 		t.Fatalf("rows = %#v", rows)
+	}
+	if rows[0].TCPFlags != "SYN" {
+		t.Fatalf("tcp flags = %#v", rows[0])
 	}
 }
 

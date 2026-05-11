@@ -54,7 +54,7 @@ func TestSelftestUsesDPIClassifierSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var foundDPI, foundOrphan bool
+	var foundDPI, foundOrphan, foundSYN bool
 	for _, row := range rows {
 		if row.DPIApp == "tls" && row.DPITLSSNI == "routerd-firewall-selftest.example" {
 			foundDPI = true
@@ -62,8 +62,11 @@ func TestSelftestUsesDPIClassifierSocket(t *testing.T) {
 		if row.Correlation == "orphan_return" && row.RuleName == "selftest-orphan-return" {
 			foundOrphan = true
 		}
+		if row.RuleName == "selftest" && row.TCPFlags == "SYN" {
+			foundSYN = true
+		}
 	}
-	if !foundDPI || !foundOrphan {
+	if !foundDPI || !foundOrphan || !foundSYN {
 		t.Fatalf("rows = %#v", rows)
 	}
 }
@@ -110,6 +113,9 @@ func TestParsePflogTCPDumpLine(t *testing.T) {
 	if entry.DstAddress != "198.51.100.10" || entry.DstPort != 443 || entry.RuleName != "rule 12/0(match)" {
 		t.Fatalf("entry = %+v", entry)
 	}
+	if entry.TCPFlags != "SYN" {
+		t.Fatalf("entry = %+v", entry)
+	}
 }
 
 func TestParseNFLogTCPDumpLine(t *testing.T) {
@@ -125,6 +131,9 @@ func TestParseNFLogTCPDumpLine(t *testing.T) {
 		t.Fatalf("entry = %+v", entry)
 	}
 	if entry.DstAddress != "198.51.100.10" || entry.DstPort != 443 || entry.RuleName != "routerd firewall forward deny" {
+		t.Fatalf("entry = %+v", entry)
+	}
+	if entry.TCPFlags != "SYN" {
 		t.Fatalf("entry = %+v", entry)
 	}
 }
@@ -149,12 +158,29 @@ func TestFirewallLogEntryFromIPv4Packet(t *testing.T) {
 		172, 18, 0, 101,
 		198, 51, 100, 10,
 		0xcf, 0xb0, 0x01, 0xbb,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0x50, 0x02, 0, 0,
+		0, 0, 0, 0,
 	}
 	entry, ok := firewallLogEntryFromIPPacket(time.Unix(1, 0).UTC(), packet, "test")
 	if !ok {
 		t.Fatal("parse failed")
 	}
 	if entry.L3Proto != "ipv4" || entry.Protocol != "tcp" || entry.SrcAddress != "172.18.0.101" || entry.DstPort != 443 {
+		t.Fatalf("entry = %+v", entry)
+	}
+	if entry.TCPFlags != "SYN" {
+		t.Fatalf("entry = %+v", entry)
+	}
+}
+
+func TestParseKeyValueTCPFlags(t *testing.T) {
+	entry, ok := parseFirewallLogLine(`action=drop src=172.18.0.10 dst=198.51.100.10 proto=tcp flags=SYN,ACK`, "kv")
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	if entry.TCPFlags != "SYN,ACK" {
 		t.Fatalf("entry = %+v", entry)
 	}
 }

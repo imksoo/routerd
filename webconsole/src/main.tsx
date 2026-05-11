@@ -179,6 +179,7 @@ type FirewallLog = {
   dstAddress?: string;
   dstPort?: number;
   protocol?: string;
+  tcpFlags?: string;
   l3Proto?: string;
   ruleName?: string;
   inIface?: string;
@@ -1196,7 +1197,7 @@ const useStyles = makeStyles({
   },
   firewallRankHeader: {
     display: "grid",
-    gridTemplateColumns: "3.5rem minmax(13rem, 1.25fr) minmax(13rem, 1.25fr) max-content minmax(8rem, 0.75fr) minmax(9rem, 0.8fr)",
+    gridTemplateColumns: "3.5rem minmax(13rem, 1.2fr) minmax(13rem, 1.2fr) max-content minmax(5rem, max-content) minmax(12rem, 0.9fr) minmax(8rem, 0.7fr) minmax(9rem, 0.8fr)",
     gap: "10px",
     width: "max-content",
     minWidth: "100%",
@@ -1210,7 +1211,7 @@ const useStyles = makeStyles({
   },
   firewallTimelineHeader: {
     display: "grid",
-    gridTemplateColumns: "6rem max-content minmax(13rem, 1.35fr) minmax(13rem, 1.35fr) max-content minmax(8rem, 0.75fr) minmax(10rem, 0.9fr) minmax(7rem, 0.7fr)",
+    gridTemplateColumns: "6rem max-content minmax(13rem, 1.3fr) minmax(13rem, 1.3fr) max-content minmax(5rem, max-content) minmax(12rem, 0.9fr) minmax(8rem, 0.75fr) minmax(10rem, 0.9fr) minmax(7rem, 0.7fr)",
     gap: "10px",
     width: "max-content",
     minWidth: "100%",
@@ -1224,7 +1225,7 @@ const useStyles = makeStyles({
   },
   firewallRankRow: {
     display: "grid",
-    gridTemplateColumns: "3.5rem minmax(13rem, 1.25fr) minmax(13rem, 1.25fr) max-content minmax(8rem, 0.75fr) minmax(9rem, 0.8fr)",
+    gridTemplateColumns: "3.5rem minmax(13rem, 1.2fr) minmax(13rem, 1.2fr) max-content minmax(5rem, max-content) minmax(12rem, 0.9fr) minmax(8rem, 0.7fr) minmax(9rem, 0.8fr)",
     gap: "10px",
     width: "max-content",
     minWidth: "100%",
@@ -1242,7 +1243,7 @@ const useStyles = makeStyles({
   },
   firewallTimelineRow: {
     display: "grid",
-    gridTemplateColumns: "6rem max-content minmax(13rem, 1.35fr) minmax(13rem, 1.35fr) max-content minmax(8rem, 0.75fr) minmax(10rem, 0.9fr) minmax(7rem, 0.7fr)",
+    gridTemplateColumns: "6rem max-content minmax(13rem, 1.3fr) minmax(13rem, 1.3fr) max-content minmax(5rem, max-content) minmax(12rem, 0.9fr) minmax(8rem, 0.75fr) minmax(10rem, 0.9fr) minmax(7rem, 0.7fr)",
     gap: "10px",
     width: "max-content",
     minWidth: "100%",
@@ -3569,15 +3570,19 @@ function RecentDeny({
         <span>Source</span>
         <span>Destination</span>
         <span>Proto</span>
+        <span>Flags</span>
+        <span>Traffic</span>
         <span>Class</span>
         <span>DPI</span>
       </div>
       {denyRows(logs).map(row => (
-        <div className={styles.firewallRankRow} role="row" key={`${row.src}-${row.dst}-${row.proto}-${row.dpi}`}>
+        <div className={styles.firewallRankRow} role="row" key={`${row.key}-${row.dpi}`}>
           <FirewallCell label="Count">{row.count}</FirewallCell>
           <FirewallCell label="Source"><EndpointDetail address={row.src} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Destination"><EndpointDetail address={row.dst} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Proto">{row.proto}</FirewallCell>
+          <FirewallCell label="Flags"><code className={styles.wrapCode}>{row.tcpFlags || "-"}</code></FirewallCell>
+          <FirewallCell label="Traffic"><FirewallTrafficClassBadge value={row.trafficClass} /></FirewallCell>
           <FirewallCell label="Class"><FirewallCorrelationBadge correlation={row.correlation} /></FirewallCell>
           <FirewallCell label="DPI"><code className={styles.wrapCode}>{row.dpi || "-"}</code></FirewallCell>
         </div>
@@ -3645,6 +3650,8 @@ function FirewallTimeline({
         <span>Source</span>
         <span>Destination</span>
         <span>Proto</span>
+        <span>Flags</span>
+        <span>Traffic</span>
         <span>Class</span>
         <span>DPI</span>
         <span>Rule</span>
@@ -3656,6 +3663,8 @@ function FirewallTimeline({
           <FirewallCell label="Source"><EndpointDetail address={log.srcAddress} port={log.srcPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Destination"><EndpointDetail address={log.dstAddress} port={log.dstPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Proto">{[log.l3Proto, log.protocol].filter(Boolean).join("/") || "-"}</FirewallCell>
+          <FirewallCell label="Flags"><code className={styles.wrapCode}>{firewallTCPFlags(log) || "-"}</code></FirewallCell>
+          <FirewallCell label="Traffic"><FirewallTrafficClassBadge value={firewallTrafficClass(log)} /></FirewallCell>
           <FirewallCell label="Class"><FirewallCorrelationBadge correlation={firewallCorrelation(log)} /></FirewallCell>
           <FirewallCell label="DPI"><code className={styles.wrapCode}>{firewallDPIText(log) || "-"}</code></FirewallCell>
           <FirewallCell label="Rule"><code className={styles.wrapCode}>{log.ruleName || "-"}</code></FirewallCell>
@@ -3680,6 +3689,10 @@ function FirewallCorrelationBadge({ correlation }: { correlation?: string }) {
   if (value === "orphan_return") return <Badge appearance="tint" color="warning">orphan return</Badge>;
   if (value === "true_suspicious") return <Badge appearance="tint" color="danger">true suspicious</Badge>;
   return <Badge appearance="outline">{value}</Badge>;
+}
+
+function FirewallTrafficClassBadge({ value }: { value: string }) {
+  return <Badge appearance="tint" color={firewallTrafficClassColor(value)}>{value || "unclassified"}</Badge>;
 }
 
 function EndpointDetail({
@@ -3957,6 +3970,7 @@ function firewallSearchText(log: FirewallLog) {
     log.dstAddress,
     log.dstPort,
     log.protocol,
+    log.tcpFlags,
     log.l3Proto,
     log.ruleName,
     log.inIface,
@@ -3969,6 +3983,8 @@ function firewallSearchText(log: FirewallLog) {
     log.dpiDnsQuery,
     log.dpiConfidence,
     firewallDPIText(log),
+    firewallTCPFlags(log),
+    firewallTrafficClass(log),
     firewallCorrelation(log),
     log.correlationDetail,
     log.expiredAgeSeconds,
@@ -4821,10 +4837,22 @@ function formatBytes(value?: number) {
 }
 
 function denyRows(logs: FirewallLog[]) {
-  const totals = new Map<string, { key: string; src: string; dst: string; proto: string; correlation: string; dpi: string; count: number }>();
+  const totals = new Map<string, { key: string; src: string; dst: string; proto: string; tcpFlags: string; trafficClass: string; correlation: string; dpi: string; count: number }>();
   for (const log of logs) {
     const key = firewallLogKey(log);
-    const row = totals.get(key) ?? { key, src: log.srcAddress || "-", dst: log.dstAddress || "-", proto: log.protocol || "-", correlation: firewallCorrelation(log), dpi: firewallDPIText(log), count: 0 };
+    const row = totals.get(key) ?? {
+      key,
+      src: log.srcAddress || "-",
+      dst: log.dstAddress || "-",
+      proto: log.protocol || "-",
+      tcpFlags: firewallTCPFlags(log),
+      trafficClass: firewallTrafficClass(log),
+      correlation: firewallCorrelation(log),
+      dpi: firewallDPIText(log),
+      count: 0,
+    };
+    if (!row.tcpFlags) row.tcpFlags = firewallTCPFlags(log);
+    if (!row.trafficClass || row.trafficClass === "unclassified") row.trafficClass = firewallTrafficClass(log);
     if (!row.dpi) row.dpi = firewallDPIText(log);
     row.count++;
     totals.set(key, row);
@@ -4833,11 +4861,42 @@ function denyRows(logs: FirewallLog[]) {
 }
 
 function firewallLogKey(log: FirewallLog) {
-  return firewallTupleKey(log.srcAddress, log.srcPort, log.dstAddress, log.dstPort, log.protocol);
+  return `${firewallTupleKey(log.srcAddress, log.srcPort, log.dstAddress, log.dstPort, log.protocol)}>${firewallTCPFlags(log)}>${firewallTrafficClass(log)}`;
 }
 
 function firewallCorrelation(log: FirewallLog) {
   return log.correlation || "true_suspicious";
+}
+
+function firewallTCPFlags(log: FirewallLog) {
+  return String(log.tcpFlags ?? "").trim();
+}
+
+function firewallTrafficClass(log: FirewallLog) {
+  if (firewallDPIText(log)) return "DPI label";
+  const protocol = normalizeFacet(log.protocol || log.l3Proto, "");
+  if (protocol === "udp" || protocol === "icmp" || protocol === "icmpv6") return "stateless probe";
+  if (protocol === "tcp") {
+    const flags = new Set(firewallTCPFlags(log).split(/[, ]+/).map(flag => flag.trim().toUpperCase()).filter(Boolean));
+    if (flags.size === 1 && flags.has("SYN")) return "new-connection attempt / scan";
+    if (flags.size === 1 && flags.has("ACK")) {
+      return firewallCorrelation(log) === "orphan_return" ? "orphan return" : "established follow";
+    }
+    if (flags.has("RST") || flags.has("FIN")) return "termination";
+  }
+  if (firewallCorrelation(log) === "orphan_return") return "orphan return";
+  return "unclassified";
+}
+
+function firewallTrafficClassColor(value: string): "brand" | "danger" | "informative" | "severe" | "subtle" | "success" | "warning" {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("scan")) return "danger";
+  if (normalized.includes("orphan")) return "warning";
+  if (normalized.includes("established")) return "informative";
+  if (normalized.includes("termination")) return "subtle";
+  if (normalized.includes("stateless")) return "warning";
+  if (normalized.includes("dpi")) return "brand";
+  return "subtle";
 }
 
 function firewallDPIText(log: FirewallLog) {
