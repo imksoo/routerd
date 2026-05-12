@@ -2227,7 +2227,7 @@ function App() {
                 const label = connectionGroupLabel(group.key);
                 return (
                   <Button key={group.key} size="small" appearance="secondary" onClick={() => showConnectionsGroup(group.key)}>
-                    {label.family}/{label.protocol.toUpperCase()} {group.rows.length}
+                    {formatConnectionGroupTitle(label)} {group.rows.length}
                   </Button>
                 );
               })}
@@ -3304,7 +3304,7 @@ function ConnectionGroup({
   return (
     <Card id={connectionGroupID(group.key)} className={styles.connectionAnchor}>
       <CardHeader
-        header={<Text weight="semibold">{label.family}/{label.protocol.toUpperCase()} / {formatConnectionApp(label.app)} {group.rows.length}</Text>}
+        header={<Text weight="semibold">{formatConnectionGroupTitle(label)} {group.rows.length}</Text>}
         description={!collapsed ? <Text className={styles.muted}>Showing {visibleRows.length ? start + 1 : 0}-{start + visibleRows.length} of {group.rows.length}</Text> : undefined}
         action={<Button appearance="subtle" icon={collapsed ? <ChevronRightRegular /> : <ChevronDownRegular />} onClick={toggle}>{collapsed ? "Open" : "Close"}</Button>}
       />
@@ -4926,6 +4926,10 @@ function connectionGroupLabel(key: string) {
   };
 }
 
+function formatConnectionGroupTitle(label: { family: string; protocol: string; app: string }) {
+  return `${label.family}/${label.protocol.toUpperCase()} ${formatConnectionApp(label.app)}`;
+}
+
 function connectionGroupID(key: string) {
   return `connections-${key.replace(/[^a-zA-Z0-9_-]+/g, "-")}`;
 }
@@ -4949,7 +4953,7 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
       const label = connectionGroupLabel(group.key);
       return {
         key: group.key,
-        label: `${label.family}/${label.protocol.toUpperCase()} ${formatConnectionApp(label.app)}`,
+        label: formatConnectionGroupTitle(label),
         count: group.rows.length,
         view: "connections",
         targetID: connectionGroupID(group.key),
