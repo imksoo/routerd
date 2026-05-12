@@ -2490,7 +2490,7 @@ function App() {
               />
             ) : null}
             <Text size={200} className={styles.consoleLegal}>
-              Copyright © 2026 Kirino Minato and routerd contributors. Licensed under the BSD 3-Clause License.
+              Powered by routerd.
             </Text>
           </main>
         </section>
