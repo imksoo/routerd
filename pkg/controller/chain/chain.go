@@ -179,17 +179,67 @@ func stableStatus(status map[string]any) map[string]any {
 	out := map[string]any{}
 	for key, value := range status {
 		switch key {
-		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions":
+		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions", "mtuObservedAt":
 			continue
 		case "activeFlows", "count", "max", "usageRatio":
 			if fmt.Sprint(status["phase"]) == "Observed" {
 				continue
 			}
 		default:
-			out[key] = value
+			out[key] = stableStatusValue(value)
 		}
 	}
 	return out
+}
+
+func stableStatusValue(value any) any {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed)
+	case int8:
+		return int64(typed)
+	case int16:
+		return int64(typed)
+	case int32:
+		return int64(typed)
+	case int64:
+		return typed
+	case uint:
+		return uint64(typed)
+	case uint8:
+		return uint64(typed)
+	case uint16:
+		return uint64(typed)
+	case uint32:
+		return uint64(typed)
+	case uint64:
+		return typed
+	case float32:
+		return stableFloat64(float64(typed))
+	case float64:
+		return stableFloat64(typed)
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, stableStatusValue(item))
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = stableStatusValue(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func stableFloat64(value float64) any {
+	if value == float64(int64(value)) {
+		return int64(value)
+	}
+	return value
 }
 
 func statusSubscriptions(kinds ...string) []bus.Subscription {

@@ -29,6 +29,33 @@ func TestStatusChangedIgnoresObservedTrafficCounters(t *testing.T) {
 	}
 }
 
+func TestStatusChangedIgnoresPathMTUObservationTimestamp(t *testing.T) {
+	current := map[string]any{
+		"phase":         "Applied",
+		"mtu":           float64(1445),
+		"mtuSource":     "probe",
+		"mtuObservedAt": "2026-05-12T00:52:18Z",
+	}
+	next := map[string]any{
+		"phase":         "Applied",
+		"mtu":           1445,
+		"mtuSource":     "probe",
+		"mtuObservedAt": "2026-05-12T01:02:43Z",
+	}
+	if statusChanged(current, next) {
+		t.Fatalf("PathMTUPolicy probe timestamp-only update should not be a resource status change")
+	}
+	if fields := statusChangedFields(current, next); len(fields) != 0 {
+		t.Fatalf("changed fields = %v, want none", fields)
+	}
+
+	next["mtu"] = 1444
+	fields := statusChangedFields(current, next)
+	if len(fields) != 1 || fields[0] != "mtu" {
+		t.Fatalf("changed fields = %v, want [mtu]", fields)
+	}
+}
+
 func TestStatusChangedFieldsReportsMeaningfulChanges(t *testing.T) {
 	current := map[string]any{
 		"phase":             "Applied",
