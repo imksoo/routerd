@@ -73,6 +73,62 @@ func TestFirewallLogRecordAndListDPIFields(t *testing.T) {
 	}
 }
 
+func TestFirewallLogDenyTimelineAggregatesBeyondListLimit(t *testing.T) {
+	log, err := OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 250; i++ {
+		if err := log.Record(context.Background(), FirewallLogEntry{
+			Timestamp:  now.Add(-23 * time.Hour).Add(time.Duration(i%30) * time.Minute),
+			Action:     "drop",
+			SrcAddress: "172.18.0.10",
+			DstAddress: "198.51.100.1",
+			Protocol:   "tcp",
+			L3Proto:    "ipv4",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := log.Record(context.Background(), FirewallLogEntry{
+		Timestamp:  now.Add(-22 * time.Hour),
+		Action:     "accept",
+		SrcAddress: "172.18.0.10",
+		DstAddress: "198.51.100.2",
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := log.List(context.Background(), FirewallLogFilter{Since: now.Add(-24 * time.Hour), Action: "drop", Limit: 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 200 {
+		t.Fatalf("list rows = %d, want capped 200", len(rows))
+	}
+	timeline, err := log.DenyTimeline(context.Background(), now.Add(-24*time.Hour), now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(timeline) != 24 {
+		t.Fatalf("timeline buckets = %d, want 24", len(timeline))
+	}
+	total := 0
+	nonzero := false
+	for _, bucket := range timeline {
+		total += bucket.Count
+		if bucket.Start.Equal(now.Add(-23*time.Hour)) && bucket.Count == 250 {
+			nonzero = true
+		}
+	}
+	if total != 250 || !nonzero {
+		t.Fatalf("timeline total=%d nonzero=%v rows=%+v", total, nonzero, timeline)
+	}
+}
+
 func TestFirewallLogExpiredReturnLookup(t *testing.T) {
 	log, err := OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
 	if err != nil {

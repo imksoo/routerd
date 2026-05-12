@@ -5,6 +5,7 @@ package webconsole
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -357,6 +358,59 @@ func TestHandlerServesFirewallLogs(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "198.51.100.1") || !strings.Contains(rec.Body.String(), `"tcpFlags": "SYN"`) {
 		t.Fatalf("firewall logs missing row:\n%s", rec.Body.String())
+	}
+}
+
+func TestHandlerServesFirewallDenyTimeline(t *testing.T) {
+	path := t.TempDir() + "/firewall-logs.db"
+	firewallLog, err := logstore.OpenFirewallLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for i := 0; i < 250; i++ {
+		if err := firewallLog.Record(context.Background(), logstore.FirewallLogEntry{
+			Timestamp:  now.Add(-23 * time.Hour).Add(time.Duration(i%30) * time.Minute),
+			Action:     "drop",
+			SrcAddress: "172.18.0.2",
+			DstAddress: "198.51.100.1",
+			Protocol:   "tcp",
+			L3Proto:    "ipv4",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := firewallLog.Record(context.Background(), logstore.FirewallLogEntry{
+		Timestamp:  now.Add(-23 * time.Hour),
+		Action:     "accept",
+		SrcAddress: "172.18.0.2",
+		DstAddress: "198.51.100.2",
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = firewallLog.Close()
+	handler := New(Options{FirewallLogPath: path})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/firewall/deny-timeline?range=24h&bucket=1h", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var timeline []logstore.FirewallDenyTimelineBucket
+	if err := json.Unmarshal(rec.Body.Bytes(), &timeline); err != nil {
+		t.Fatal(err)
+	}
+	if len(timeline) != 24 {
+		t.Fatalf("timeline buckets = %d, want 24", len(timeline))
+	}
+	total := 0
+	for _, bucket := range timeline {
+		total += bucket.Count
+	}
+	if total != 250 {
+		t.Fatalf("timeline total = %d, want 250: %+v", total, timeline)
 	}
 }
 

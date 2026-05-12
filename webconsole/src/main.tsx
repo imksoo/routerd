@@ -210,6 +210,12 @@ type FirewallLog = {
   expiredBytes?: number;
 };
 
+type FirewallDenyTimelineBucket = {
+  start?: string;
+  end?: string;
+  count?: number;
+};
+
 type ConntrackTuningSummary = {
   generatedAt?: string;
   window?: string;
@@ -1743,6 +1749,7 @@ function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [config, setConfig] = useState<ConfigSnapshot | null>(null);
   const [generations, setGenerations] = useState<GenerationRecord[]>([]);
+  const [firewallDenyTimeline, setFirewallDenyTimeline] = useState<FirewallDenyTimelineBucket[]>([]);
   const [generationDiff, setGenerationDiff] = useState<string>("");
   const [configPlanDiff, setConfigPlanDiff] = useState<string>("");
   const [generationConfig, setGenerationConfig] = useState<{ generation: number; text: string } | null>(null);
@@ -1800,13 +1807,15 @@ function App() {
     refreshInFlight.current = true;
     const scrollSnapshot = captureScrollSnapshot();
     try {
-      const [summaryResponse, configResponse, generationResponse] = await Promise.all([
+      const [summaryResponse, configResponse, generationResponse, denyTimelineResponse] = await Promise.all([
         fetchJSON<Summary>("api/v1/summary?events=200&connections=240"),
         configRef.current ? Promise.resolve(configRef.current) : fetchJSON<ConfigSnapshot>("api/v1/config"),
         fetchJSON<GenerationRecord[]>("api/v1/generations?limit=200"),
+        fetchJSON<FirewallDenyTimelineBucket[]>("api/v1/firewall/deny-timeline?range=24h&bucket=5min"),
       ]);
       pendingScrollSnapshot.current = scrollSnapshot;
       setSummary(current => reconcileSummary(current, summaryResponse));
+      setFirewallDenyTimeline(Array.isArray(denyTimelineResponse) ? denyTimelineResponse : []);
       setMetricSamples(current => appendMetricSample(current, summaryResponse));
       if (!configRef.current) {
         configRef.current = configResponse as ConfigSnapshot;
@@ -2371,7 +2380,7 @@ function App() {
                     header={<Text weight="semibold">Deny activity</Text>}
                     description={<Text className={styles.muted}>Drop/reject rate over the last 24 hours. Filters below narrow the ranking and timeline.</Text>}
                   />
-                  <DenyRateChart logs={firewallLogs} />
+                  <DenyRateChart timeline={firewallDenyTimeline} />
                   <div className={styles.firewallFilters}>
                     <SearchControl label="Search" value={firewallFilters.query} placeholder="rule, interface, address, protocol, DPI, orphan" onChange={value => setFirewallFilters(current => ({ ...current, query: value }))} />
                     <div className={styles.filterControl}>
@@ -4045,14 +4054,15 @@ function RecentDeny({
   );
 }
 
-function DenyRateChart({ logs }: { logs: FirewallLog[] }) {
+function DenyRateChart({ timeline }: { timeline: FirewallDenyTimelineBucket[] }) {
   const styles = useStyles();
-  const samples = denyRateSamples(logs);
+  const samples = denyTimelineSamples(timeline);
   const max = Math.max(0, ...samples);
+  const total = samples.reduce((sum, value) => sum + value, 0);
   return (
     <div className={styles.firewallChartWrap}>
       <Sparkline samples={samples} color="#ff8a80" />
-      <Text size={200} className={styles.muted}>{logs.length} rows / peak {max} denies per bucket</Text>
+      <Text size={200} className={styles.muted}>{total} denies / peak {max} per 5 min bucket</Text>
     </div>
   );
 }
@@ -4447,20 +4457,8 @@ function firewallSearchText(log: FirewallLog) {
   ].filter(value => value !== undefined && value !== "").join(" ").toLowerCase();
 }
 
-function denyRateSamples(logs: FirewallLog[]) {
-  const now = Date.now();
-  const bucketCount = 24;
-  const bucketMs = 60 * 60 * 1000;
-  const buckets = Array(bucketCount).fill(0);
-  for (const log of logs) {
-    const ts = Date.parse(log.ts ?? "");
-    if (Number.isNaN(ts)) continue;
-    const age = now - ts;
-    if (age < 0 || age >= bucketCount * bucketMs) continue;
-    const bucket = bucketCount - 1 - Math.floor(age / bucketMs);
-    buckets[bucket]++;
-  }
-  return buckets;
+function denyTimelineSamples(timeline: FirewallDenyTimelineBucket[]) {
+  return timeline.map(bucket => Math.max(0, Math.trunc(Number(bucket.count ?? 0)) || 0));
 }
 
 function sourceTopRows(logs: FirewallLog[]) {

@@ -256,6 +256,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.trafficFlows(w, r)
 	case "api/v1/firewall-logs":
 		h.firewallLogs(w, r)
+	case "api/v1/firewall/deny-timeline":
+		h.firewallDenyTimeline(w, r)
 	case "api/v1/clients":
 		h.clients(w)
 	case "api/v1/vpn":
@@ -601,6 +603,43 @@ func (h Handler) firewallLogs(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	writeJSON(w, rows)
+}
+
+func (h Handler) firewallDenyTimeline(w http.ResponseWriter, r *http.Request) {
+	window := 24 * time.Hour
+	if raw := strings.TrimSpace(r.URL.Query().Get("range")); raw != "" {
+		if duration, err := parseConsoleDuration(raw); err == nil {
+			window = duration
+		}
+	}
+	if window < time.Minute {
+		window = time.Minute
+	}
+	if window > 7*24*time.Hour {
+		window = 7 * 24 * time.Hour
+	}
+	bucket := 5 * time.Minute
+	if raw := strings.TrimSpace(r.URL.Query().Get("bucket")); raw != "" {
+		if duration, err := parseConsoleDuration(raw); err == nil {
+			bucket = duration
+		}
+	}
+	if bucket < time.Minute {
+		bucket = time.Minute
+	}
+	if bucket > time.Hour {
+		bucket = time.Hour
+	}
+	now := time.Now().UTC()
+	rows, err := h.firewallDenyTimelineList(now.Add(-window), now, bucket)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []logstore.FirewallDenyTimelineBucket{}
 	}
 	writeJSON(w, rows)
 }
@@ -1060,6 +1099,18 @@ func (h Handler) firewallLogList(filter logstore.FirewallLogFilter) ([]logstore.
 	}
 	defer store.Close()
 	return store.List(context.Background(), filter)
+}
+
+func (h Handler) firewallDenyTimelineList(since time.Time, until time.Time, bucket time.Duration) ([]logstore.FirewallDenyTimelineBucket, error) {
+	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+		return nil, nil
+	}
+	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	return store.DenyTimeline(context.Background(), since, until, bucket)
 }
 
 func (h Handler) conntrackTuningSummary(now time.Time, window time.Duration, autoApply bool) (conntracktuning.Summary, error) {

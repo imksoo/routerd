@@ -88,6 +88,12 @@ type FirewallLogFilter struct {
 	Limit  int
 }
 
+type FirewallDenyTimelineBucket struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+	Count int       `json:"count"`
+}
+
 type DPIFlowFilter struct {
 	Since time.Time
 	Limit int
@@ -279,6 +285,67 @@ FROM firewall_logs`+where+` ORDER BY ts DESC, id DESC LIMIT ?`, args...)
 		out = append(out, entry)
 	}
 	return out, rows.Err()
+}
+
+func (l *FirewallLog) DenyTimeline(ctx context.Context, since time.Time, until time.Time, bucket time.Duration) ([]FirewallDenyTimelineBucket, error) {
+	if l == nil || l.db == nil {
+		return nil, nil
+	}
+	if until.IsZero() {
+		until = time.Now().UTC()
+	}
+	until = until.UTC()
+	if since.IsZero() {
+		since = until.Add(-24 * time.Hour)
+	}
+	since = since.UTC()
+	if !since.Before(until) {
+		return nil, nil
+	}
+	if bucket <= 0 {
+		bucket = 5 * time.Minute
+	}
+	bucketNanos := bucket.Nanoseconds()
+	if bucketNanos <= 0 {
+		bucketNanos = int64((5 * time.Minute).Nanoseconds())
+	}
+	sinceNanos := since.UnixNano()
+	untilNanos := until.UnixNano()
+	rows, err := l.db.QueryContext(ctx, `SELECT ((ts - ?) / ?) * ? + ? AS bucket_start, COUNT(*)
+FROM firewall_logs
+WHERE ts >= ? AND ts < ? AND lower(action) IN ('drop','deny','reject','block')
+GROUP BY bucket_start
+ORDER BY bucket_start ASC`,
+		sinceNanos, bucketNanos, bucketNanos, sinceNanos, sinceNanos, untilNanos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[int64]int{}
+	for rows.Next() {
+		var start int64
+		var count int
+		if err := rows.Scan(&start, &count); err != nil {
+			return nil, err
+		}
+		counts[start] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var out []FirewallDenyTimelineBucket
+	for start := since; start.Before(until); start = start.Add(bucket) {
+		end := start.Add(bucket)
+		if end.After(until) {
+			end = until
+		}
+		out = append(out, FirewallDenyTimelineBucket{
+			Start: start,
+			End:   end,
+			Count: counts[start.UnixNano()],
+		})
+	}
+	return out, nil
 }
 
 func (l *FirewallLog) ensureDPIColumns(ctx context.Context) error {
