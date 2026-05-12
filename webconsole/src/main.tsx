@@ -7,8 +7,12 @@ import {
   Button,
   Card,
   CardHeader,
+  DrawerBody,
+  DrawerHeader,
+  DrawerHeaderTitle,
   FluentProvider,
   Input,
+  OverlayDrawer,
   Select,
   Spinner,
   Table,
@@ -86,6 +90,9 @@ type ResourceStatus = {
   apiVersion?: string;
   kind?: string;
   name?: string;
+  owner?: string;
+  managedBy?: string;
+  management?: string;
   status?: Record<string, unknown>;
 };
 
@@ -198,6 +205,10 @@ type FirewallLog = {
   srcPort?: number;
   dstAddress?: string;
   dstPort?: number;
+  srcHostname?: string;
+  dstHostname?: string;
+  srcService?: string;
+  dstService?: string;
   protocol?: string;
   tcpFlags?: string;
   l3Proto?: string;
@@ -481,6 +492,22 @@ const navItems: { key: ViewKey; label: string; description: string; icon: React.
 ];
 const viewKeys = new Set<string>(navItems.map(item => item.key));
 
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(query).matches;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const media = window.matchMedia(query);
+    const onChange = () => setMatches(media.matches);
+    onChange();
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [query]);
+  return matches;
+}
+
 const useStyles = makeStyles({
   shell: {
     minHeight: "100vh",
@@ -574,15 +601,7 @@ const useStyles = makeStyles({
       display: "none",
     },
     "@media (max-width: 860px)": {
-      position: "static",
-      height: "auto",
-      display: "flex",
-      overflowX: "auto",
-      overflowY: "hidden",
-      overscrollBehaviorX: "contain",
-      borderRight: 0,
-      borderBottom: "1px solid #243041",
-      padding: "8px",
+      display: "none",
     },
   },
   sidebarCollapsed: {
@@ -595,10 +614,16 @@ const useStyles = makeStyles({
     display: "grid",
     gap: "2px",
     "@media (max-width: 860px)": {
-      display: "flex",
-      gap: "6px",
-      minWidth: "max-content",
+      gap: "4px",
+      minWidth: 0,
     },
+  },
+  mobileDrawer: {
+    backgroundColor: "#0f1722",
+    color: tokens.colorNeutralForeground1,
+  },
+  mobileDrawerBody: {
+    padding: "8px",
   },
   navButton: {
     width: "100%",
@@ -613,8 +638,8 @@ const useStyles = makeStyles({
       color: tokens.colorNeutralForeground1,
     },
     "@media (max-width: 860px)": {
-      width: "auto",
-      minWidth: "max-content",
+      width: "100%",
+      minWidth: 0,
     },
   },
   navButtonCollapsed: {
@@ -630,8 +655,8 @@ const useStyles = makeStyles({
       backgroundColor: "#22324a",
     },
     "@media (max-width: 860px)": {
-      borderLeft: "1px solid #2f4664",
-      borderBottom: "3px solid #60cdff",
+      borderLeft: "3px solid #60cdff",
+      borderBottom: "1px solid #2f4664",
     },
   },
   navButtonInner: {
@@ -879,8 +904,12 @@ const useStyles = makeStyles({
   },
   grid: {
     display: "grid",
+    containerType: "inline-size",
     gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
     gap: "12px",
+    "@container (max-width: 430px)": {
+      gridTemplateColumns: "1fr",
+    },
   },
   metric: {
     minWidth: 0,
@@ -898,8 +927,12 @@ const useStyles = makeStyles({
   },
   sectionGrid: {
     display: "grid",
+    containerType: "inline-size",
     gridTemplateColumns: "minmax(0, 1.4fr) minmax(min-content, 0.8fr)",
     gap: "16px",
+    "@container (max-width: 720px)": {
+      gridTemplateColumns: "1fr",
+    },
     "@media (max-width: 860px)": {
       gridTemplateColumns: "1fr",
     },
@@ -924,6 +957,7 @@ const useStyles = makeStyles({
   },
   chartGrid: {
     display: "grid",
+    containerType: "inline-size",
     gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 16rem), 1fr))",
     gap: "12px",
   },
@@ -939,6 +973,7 @@ const useStyles = makeStyles({
   },
   dpiInsightGrid: {
     display: "grid",
+    containerType: "inline-size",
     gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 17rem), 1fr))",
     gap: "12px",
   },
@@ -1075,6 +1110,7 @@ const useStyles = makeStyles({
   },
   resourceMobileCard: {
     display: "grid",
+    containerType: "inline-size",
     gap: "6px",
     padding: "10px 12px",
     border: "1px solid #243041",
@@ -1093,6 +1129,7 @@ const useStyles = makeStyles({
   },
   clientsGrid: {
     display: "grid",
+    containerType: "inline-size",
     gap: "16px",
     gridTemplateColumns: "1fr",
   },
@@ -1151,6 +1188,7 @@ const useStyles = makeStyles({
   },
   clientDeviceList: {
     display: "grid",
+    containerType: "inline-size",
     gap: "8px",
     "@media (max-width: 860px)": {
       gap: "6px",
@@ -1158,6 +1196,7 @@ const useStyles = makeStyles({
   },
   clientDeviceRow: {
     display: "grid",
+    containerType: "inline-size",
     gridTemplateColumns: "2rem minmax(12rem, 1.1fr) minmax(11rem, 1fr) minmax(9rem, 0.7fr) minmax(10rem, 0.8fr) max-content",
     gap: "10px",
     alignItems: "start",
@@ -1279,6 +1318,7 @@ const useStyles = makeStyles({
   },
   vpnGrid: {
     display: "grid",
+    containerType: "inline-size",
     gap: "16px",
     gridTemplateColumns: "1fr",
   },
@@ -1290,6 +1330,7 @@ const useStyles = makeStyles({
   },
   interfaceGrid: {
     display: "grid",
+    containerType: "inline-size",
     gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 14rem), 1fr))",
     gap: "10px",
   },
@@ -1329,6 +1370,7 @@ const useStyles = makeStyles({
   },
   tableWrap: {
     overflowX: "auto",
+    containerType: "inline-size",
     overscrollBehaviorX: "contain",
     maxWidth: "100%",
     WebkitOverflowScrolling: "touch",
@@ -1717,6 +1759,7 @@ const useStyles = makeStyles({
   },
   tuningGrid: {
     display: "grid",
+    containerType: "inline-size",
     gap: "8px",
   },
   tuningHeader: {
@@ -1727,6 +1770,9 @@ const useStyles = makeStyles({
     fontSize: "12px",
     fontWeight: 600,
     padding: "0 10px 6px",
+    "@container (max-width: 760px)": {
+      display: "none",
+    },
     "@media (max-width: 860px)": {
       display: "none",
     },
@@ -1740,6 +1786,15 @@ const useStyles = makeStyles({
     padding: "8px 10px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     transition: "none",
+    "@container (max-width: 760px)": {
+      gridTemplateColumns: "1fr",
+      gap: "8px",
+      minHeight: "148px",
+      padding: "10px",
+      border: `1px solid ${tokens.colorNeutralStroke2}`,
+      borderRadius: tokens.borderRadiusMedium,
+      backgroundColor: tokens.colorNeutralBackground2,
+    },
     "@media (max-width: 860px)": {
       gridTemplateColumns: "1fr",
       gap: "8px",
@@ -2004,11 +2059,23 @@ function App() {
       return false;
     }
   });
+  const isMobileNav = useMediaQuery("(max-width: 860px)");
+  const mobileNavInitialized = useRef(false);
   useEffect(() => {
     try {
       window.localStorage?.setItem("routerd:nav:collapsed", navCollapsed ? "1" : "0");
     } catch {}
   }, [navCollapsed]);
+  useEffect(() => {
+    if (!isMobileNav) {
+      mobileNavInitialized.current = false;
+      return;
+    }
+    if (!mobileNavInitialized.current) {
+      mobileNavInitialized.current = true;
+      setNavCollapsed(true);
+    }
+  }, [isMobileNav]);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => readStoredRecord(collapsedStorageKey));
   const [connectionPages, setConnectionPages] = useState<Record<string, number>>(() => readStoredRecord(connectionPagesStorageKey));
   const [connectionPageSizes, setConnectionPageSizes] = useState<Record<string, number>>(() => readStoredRecord(connectionPageSizesStorageKey));
@@ -2303,6 +2370,7 @@ function App() {
   function navigateTo(view: ViewKey, targetID?: string) {
     setSelected(view);
     setSelectedTargetID(targetID);
+    if (isMobileNav) setNavCollapsed(true);
     const nextHash = hashForView(view, targetID);
     if (window.location.hash !== nextHash) {
       window.history.pushState(null, "", nextHash);
@@ -2375,6 +2443,48 @@ function App() {
     const base = cfg.title || "routerd";
     document.title = selectedNav.label ? `${selectedNav.label} - ${base}` : base;
   }, [selectedNav.label, cfg.title]);
+  const renderNavigation = (compact: boolean) => (
+    <div className={styles.navSection}>
+      {navItems.map(item => (
+        <React.Fragment key={item.key}>
+          <Button
+            appearance="subtle"
+            className={`${styles.navButton} ${compact ? "" : navCollapsed ? styles.navButtonCollapsed : ""} ${selected === item.key ? styles.navButtonActive : ""}`}
+            onClick={() => navigateTo(item.key)}
+            aria-label={item.label}
+          >
+            <span className={styles.navButtonInner}>
+              <span className={styles.navIcon}>{item.icon}</span>
+              <span className={`${styles.navText} ${!compact && navCollapsed ? styles.navTextCollapsed : ""}`}>
+                <span className={styles.navTextHeader}>
+                  <Text weight={selected === item.key ? "semibold" : "regular"}>{item.label}</Text>
+                  {item.key === "resources" && dryRunControllers.length > 0 ? <Badge size="small" appearance="tint" color="warning">{dryRunControllers.length}</Badge> : null}
+                  {item.key === "resources" && resources.filter(r => ["danger","warning"].includes(phaseColor(r.status?.phase))).length > 0 ? <Badge size="small" appearance="tint" color="danger">{resources.filter(r => ["danger","warning"].includes(phaseColor(r.status?.phase))).length}</Badge> : null}
+                </span>
+                <Text size={200} className={styles.navDescription}>{item.description}</Text>
+              </span>
+            </span>
+          </Button>
+          {!compact && !navCollapsed && item.key === selected && navSubItems.length > 0 && selected !== "connections" ? (
+            <div className={styles.navSubMenu}>
+              {navSubItems.map(sub => (
+                <Button
+                  key={sub.key}
+                  size="small"
+                  appearance="subtle"
+                  className={`${styles.navSubButton} ${sectionActive(sub) ? styles.navSubButtonActive : ""}`}
+                  onClick={() => showSection(sub)}
+                >
+                  <span>{sub.label}</span>
+                  {sub.count !== undefined ? <span>{sub.count}</span> : null}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+        </React.Fragment>
+      ))}
+    </div>
+  );
 
   return (
     <FluentProvider theme={webDarkTheme} className={styles.shell}>
@@ -2396,48 +2506,27 @@ function App() {
           {loading ? <Spinner size="tiny" /> : null}
         </div>
       </header>
+      {isMobileNav ? (
+        <OverlayDrawer
+          className={styles.mobileDrawer}
+          modalType="modal"
+          open={!navCollapsed}
+          position="start"
+          onOpenChange={(_, data) => setNavCollapsed(!data.open)}
+        >
+          <DrawerHeader>
+            <DrawerHeaderTitle action={<Button appearance="subtle" aria-label="Close navigation" icon={<ChevronRightRegular />} onClick={() => setNavCollapsed(true)} />}>
+              Navigation
+            </DrawerHeaderTitle>
+          </DrawerHeader>
+          <DrawerBody className={styles.mobileDrawerBody}>
+            {renderNavigation(true)}
+          </DrawerBody>
+        </OverlayDrawer>
+      ) : null}
       <div className={`${styles.layout} ${navCollapsed ? styles.layoutCollapsed : ""}`}>
         <aside className={`${styles.sidebar} ${navCollapsed ? styles.sidebarCollapsed : ""}`} aria-label="Web console navigation">
-          <div className={styles.navSection}>
-            {navItems.map(item => (
-              <React.Fragment key={item.key}>
-                <Button
-                  appearance="subtle"
-                  className={`${styles.navButton} ${navCollapsed ? styles.navButtonCollapsed : ""} ${selected === item.key ? styles.navButtonActive : ""}`}
-                  onClick={() => navigateTo(item.key)}
-                  aria-label={item.label}
-                >
-                  <span className={styles.navButtonInner}>
-                    <span className={styles.navIcon}>{item.icon}</span>
-                    <span className={`${styles.navText} ${navCollapsed ? styles.navTextCollapsed : ""}`}>
-                      <span className={styles.navTextHeader}>
-                        <Text weight={selected === item.key ? "semibold" : "regular"}>{item.label}</Text>
-                        {item.key === "resources" && dryRunControllers.length > 0 ? <Badge size="small" appearance="tint" color="warning">{dryRunControllers.length}</Badge> : null}
-                        {item.key === "resources" && resources.filter(r => ["danger","warning"].includes(phaseColor(r.status?.phase))).length > 0 ? <Badge size="small" appearance="tint" color="danger">{resources.filter(r => ["danger","warning"].includes(phaseColor(r.status?.phase))).length}</Badge> : null}
-                      </span>
-                      <Text size={200} className={styles.navDescription}>{item.description}</Text>
-                    </span>
-                  </span>
-                </Button>
-                {!navCollapsed && item.key === selected && navSubItems.length > 0 && selected !== "connections" ? (
-                  <div className={styles.navSubMenu}>
-                    {navSubItems.map(sub => (
-                      <Button
-                        key={sub.key}
-                        size="small"
-                        appearance="subtle"
-                        className={`${styles.navSubButton} ${sectionActive(sub) ? styles.navSubButtonActive : ""}`}
-                        onClick={() => showSection(sub)}
-                      >
-                        <span>{sub.label}</span>
-                        {sub.count !== undefined ? <span>{sub.count}</span> : null}
-                      </Button>
-                    ))}
-                  </div>
-                ) : null}
-              </React.Fragment>
-            ))}
-          </div>
+          {renderNavigation(false)}
         </aside>
         <section className={styles.content}>
           <div className={styles.bladeHeader}>
@@ -3563,6 +3652,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
                   <TableCell>{dryRunController ? <Badge appearance="tint" color="warning">dry-run</Badge> : <Text size={200} className={styles.muted}>live</Text>}</TableCell>
                   <TableCell>
                     <div className={styles.connectionFlow}>
+                      <OwnershipLine resource={resource} />
                       <code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code>
                       {navigateTo ? <Button size="small" appearance="outline" icon={<DocumentTextRegular />} onClick={() => { try { window.localStorage?.setItem("routerd:config:initialQuery", String(resource.name ?? "")); } catch {} navigateTo("config"); }}>YAML</Button> : null}
                     </div>
@@ -3586,6 +3676,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
               <code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code>
               <div className={styles.resourceMobileMeta}>
                 {dryRunController ? <Badge appearance="tint" color="warning">dry-run</Badge> : <Text size={200} className={styles.muted}>live</Text>}
+                <OwnershipLine resource={resource} />
                 <code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code>
                 {navigateTo ? <Button size="small" appearance="subtle" onClick={() => navigateTo("config")}>View YAML</Button> : null}
               </div>
@@ -3595,6 +3686,21 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
       </div>
     </>
   );
+}
+
+function OwnershipLine({ resource }: { resource: ResourceStatus }) {
+  const styles = useStyles();
+  const status = resource.status ?? {};
+  const owner = String(resource.owner ?? status.owner ?? "").trim();
+  const managedBy = String(resource.managedBy ?? status.managedBy ?? "").trim();
+  const management = String(resource.management ?? status.management ?? "").trim();
+  const parts = [
+    owner ? `owner ${owner}` : "",
+    managedBy ? `managed-by ${managedBy}` : "",
+    management ? management : "",
+  ].filter(Boolean);
+  if (parts.length === 0) return null;
+  return <Text size={200} className={styles.muted}>{parts.join(" / ")}</Text>;
 }
 
 function SearchControl({
@@ -3885,6 +3991,11 @@ function ConnectionDPI({ entry, dnsLabels }: { entry: ConnectionEntry; dnsLabels
         >
           {formatConnectionApp(classification.app)}
         </Badge>
+        {classification.confidence ? (
+          <Badge appearance="outline" color={classification.source === "port-fallback" || classification.confidence < 50 ? "subtle" : "success"}>
+            {classification.confidence}% {classification.source === "port-fallback" ? "guess" : "confidence"}
+          </Badge>
+        ) : null}
       </div>
       {classification.detail ? <code className={`${styles.wrapCode} ${classification.source === "port-fallback" ? styles.guessText : ""}`}>{classification.detail}</code> : null}
       {classification.category && classification.category !== "port-fallback" ? <Text size={200} className={styles.muted}>{classification.category}</Text> : null}
@@ -4665,8 +4776,8 @@ function FirewallTimeline({
         <div className={styles.firewallTimelineRow} role="row" key={log.id ?? `${log.ts}-${log.srcAddress}-${log.dstAddress}-${index}`}>
           <FirewallCell label="Time"><RelativeTime value={log.ts} /></FirewallCell>
           <FirewallCell label="Action"><Badge appearance="tint" color={firewallActionColor(log.action)}>{log.action || "-"}</Badge></FirewallCell>
-          <FirewallCell label="Source"><EndpointDetail address={log.srcAddress} port={log.srcPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
-          <FirewallCell label="Destination"><EndpointDetail address={log.dstAddress} port={log.dstPort} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
+          <FirewallCell label="Source"><EndpointDetail address={log.srcAddress} port={log.srcPort} hostname={log.srcHostname} service={log.srcService} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
+          <FirewallCell label="Destination"><EndpointDetail address={log.dstAddress} port={log.dstPort} hostname={log.dstHostname} service={log.dstService} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
           <FirewallCell label="Proto">{[log.l3Proto, log.protocol].filter(Boolean).join("/") || "-"}</FirewallCell>
           <FirewallCell label="Flags"><code className={styles.wrapCode}>{firewallTCPFlags(log) || "-"}</code></FirewallCell>
           <FirewallCell label="Traffic"><FirewallTrafficClassBadge value={firewallTrafficClass(log)} /></FirewallCell>
@@ -4707,7 +4818,10 @@ function FirewallDPI({ log, dnsLabels }: { log?: FirewallLog; dnsLabels: Record<
   if (classification.source === "port-fallback") {
     return (
       <div className={styles.connectionFlow}>
-        <Badge appearance="outline" color="subtle">Port guess</Badge>
+        <div className={styles.badges}>
+          <Badge appearance="outline" color="subtle">Port guess</Badge>
+          <Badge appearance="outline" color="subtle">{classification.confidence || 30}% guess</Badge>
+        </div>
         <code className={`${styles.wrapCode} ${styles.guessText}`}>{classification.detail}</code>
       </div>
     );
@@ -4717,7 +4831,7 @@ function FirewallDPI({ log, dnsLabels }: { log?: FirewallLog; dnsLabels: Record<
     <div className={styles.connectionFlow}>
       <div className={styles.badges}>
         <Badge appearance="outline" color="success">{classification.cacheHit ? "DPI cache" : "DPI"}</Badge>
-        {classification.confidence ? <Badge appearance="outline">{classification.confidence}%</Badge> : null}
+        {classification.confidence ? <Badge appearance="outline" color={classification.confidence < 50 ? "warning" : "success"}>{classification.confidence}% confidence</Badge> : null}
       </div>
       <code className={styles.wrapCode}>{classification.detail}</code>
     </div>
@@ -4727,24 +4841,29 @@ function FirewallDPI({ log, dnsLabels }: { log?: FirewallLog; dnsLabels: Record<
 function EndpointDetail({
   address,
   port,
+  hostname,
+  service,
   dnsLabels,
   leases,
 }: {
   address?: string;
   port?: number;
+  hostname?: string;
+  service?: string;
   dnsLabels: Record<string, string>;
   leases: Record<string, DHCPLease>;
 }) {
   const styles = useStyles();
   const lease = address ? leases[address] : undefined;
-  const label = lease?.hostname || (address ? dnsLabels[address] : "");
+  const label = lease?.hostname || hostname || (address ? dnsLabels[address] : "");
   const vendor = lease?.vendor || "";
+  const serviceLabel = service || serviceNameForPort(port ? String(port) : undefined);
   return (
     <div className={styles.connectionFlow}>
       <code className={styles.wrapCode}>{firewallEndpoint(address, port)}</code>
-      {label || lease?.mac || vendor ? (
+      {label || serviceLabel || lease?.mac || vendor ? (
         <Text size={200} className={styles.muted}>
-          {[label, lease?.mac, vendor].filter(Boolean).join(" / ")}
+          {[label, serviceLabel ? `service ${serviceLabel}` : "", lease?.mac, vendor].filter(Boolean).join(" / ")}
         </Text>
       ) : null}
     </div>
@@ -5140,6 +5259,9 @@ function resourceSearchText(resource: ResourceStatus) {
     resource.apiVersion,
     resource.kind,
     resource.name,
+    resource.owner,
+    resource.managedBy,
+    resource.management,
     resource.status?.phase,
     resourceDetail(resource.status ?? {}),
     JSON.stringify(resource.status ?? {}),
@@ -5625,6 +5747,7 @@ function serviceNameForPort(port?: string) {
     465: "submissions",
     500: "isakmp",
     587: "submission",
+    853: "domain-s",
     993: "imaps",
     995: "pop3s",
     1900: "ssdp",
@@ -6699,14 +6822,17 @@ function firewallQueryLabel(app?: string) {
 function firewallPortFallback(log: FirewallLog, dnsLabels: Record<string, string>, allowKnown = false): ConnectionPortFallback | undefined {
   if (!allowKnown && firewallDPIText(log)) return undefined;
   const protocol = normalizeFacet(log.protocol || log.l3Proto, "");
-  const labels = [log.dstAddress ? dnsLabels[log.dstAddress] : "", log.srcAddress ? dnsLabels[log.srcAddress] : ""];
+  const labels = [
+    log.dstHostname || (log.dstAddress ? dnsLabels[log.dstAddress] : ""),
+    log.srcHostname || (log.srcAddress ? dnsLabels[log.srcAddress] : ""),
+  ];
   const ports = [
-    { port: log.dstPort ? String(log.dstPort) : "", peerLabel: labels[0] ?? "" },
-    { port: log.srcPort ? String(log.srcPort) : "", peerLabel: labels[1] ?? "" },
+    { port: log.dstPort ? String(log.dstPort) : "", peerLabel: labels[0] ?? "", service: log.dstService ?? "" },
+    { port: log.srcPort ? String(log.srcPort) : "", peerLabel: labels[1] ?? "", service: log.srcService ?? "" },
   ].filter(item => item.port);
   for (const item of ports) {
     const app = portProtocolFallback(protocol, item.port, item.peerLabel);
-    if (app) return { app, port: item.port, label: formatPortGuessLabel(app, item.port, item.peerLabel, serviceNameForPort(item.port)) };
+    if (app) return { app, port: item.port, label: formatPortGuessLabel(app, item.port, item.peerLabel, item.service || serviceNameForPort(item.port)) };
   }
   return undefined;
 }

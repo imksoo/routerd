@@ -60,6 +60,7 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 	if s.Store == nil {
 		return nil
 	}
+	status = statusWithOwnership(apiVersion, kind, status)
 	current := s.Store.ObjectStatus(apiVersion, kind, name)
 	if newerStatus(current, status) {
 		return nil
@@ -79,6 +80,88 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 		return s.Bus.Publish(context.Background(), event)
 	}
 	return nil
+}
+
+func statusWithOwnership(_ string, kind string, status map[string]any) map[string]any {
+	out := make(map[string]any, len(status)+3)
+	for key, value := range status {
+		out[key] = value
+	}
+	if _, ok := out["owner"]; !ok {
+		if owner := resourceOwnerController(kind); owner != "" {
+			out["owner"] = owner
+		}
+	}
+	if _, ok := out["managedBy"]; !ok {
+		if managed, ok := statusBool(out["managed"]); ok && !managed {
+			out["managedBy"] = "external"
+		} else {
+			out["managedBy"] = "routerd"
+		}
+	}
+	if _, ok := out["management"]; !ok {
+		switch strings.ToLower(strings.TrimSpace(fmt.Sprint(out["managedBy"]))) {
+		case "", "routerd":
+			out["management"] = "managed"
+		case "external":
+			out["management"] = "adopted"
+		default:
+			if managed, ok := statusBool(out["managed"]); ok && !managed {
+				out["management"] = "adopted"
+			} else {
+				out["management"] = "managed"
+			}
+		}
+	}
+	return out
+}
+
+func statusBool(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "yes", "1":
+			return true, true
+		case "false", "no", "0":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func resourceOwnerController(kind string) string {
+	switch kind {
+	case "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress", "Interface", "Link":
+		return "address"
+	case "DHCPv4Lease":
+		return "dhcpv4lease"
+	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Scope", "DHCPv6Information", "IPv6RouterAdvertisement":
+		return "dhcpv6"
+	case "DNSResolver", "DNSZone":
+		return "dns-resolver"
+	case "DSLiteTunnel":
+		return "dslite"
+	case "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":
+		return "firewall"
+	case "NAT44Rule", "IPv4SourceNAT":
+		return "nat"
+	case "NetworkAdoption":
+		return "network-adoption"
+	case "Package":
+		return "package"
+	case "PPPoEInterface", "PPPoESession":
+		return "pppoesession"
+	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy", "PathMTUPolicy":
+		return "route"
+	case "SystemdUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
+		return "systemd-unit"
+	case "ConntrackObserver", "TrafficFlowLog":
+		return "conntrack"
+	default:
+		return ""
+	}
 }
 
 func (s eventedStore) ObjectStatus(apiVersion, kind, name string) map[string]any {

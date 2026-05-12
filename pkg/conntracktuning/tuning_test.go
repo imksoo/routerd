@@ -62,3 +62,36 @@ func TestRecommendationForEventUsesDPIAndGuard(t *testing.T) {
 		t.Fatalf("unexpected event recommendation: %+v", row)
 	}
 }
+
+func TestAnalyzeAttributesExpiredFlowsToMatchedDPIApplication(t *testing.T) {
+	now := time.Unix(2000, 0).UTC()
+	summary := Analyze(Inputs{
+		Now:    now,
+		Window: time.Hour,
+		DPIFlows: []logstore.DPIFlowEntry{{
+			Protocol:   "udp",
+			SrcAddress: "192.0.2.10",
+			SrcPort:    55123,
+			DstAddress: "198.51.100.20",
+			DstPort:    41641,
+			AppName:    "tailscale",
+		}},
+		ExpiredFlows: []logstore.ExpiredFlowEntry{{
+			Timestamp:   now.Add(-time.Minute),
+			Protocol:    "udp",
+			OrigSrc:     "192.0.2.10",
+			OrigSrcPort: 55123,
+			OrigDst:     "198.51.100.20",
+			OrigDstPort: 41641,
+		}},
+	})
+	for _, row := range summary.Suggestions {
+		if row.Application == "tailscale" {
+			if row.ExpiredFlows != 1 || row.SysctlKey != "net.netfilter.nf_conntrack_udp_timeout_stream" {
+				t.Fatalf("unexpected tailscale suggestion: %+v", row)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing tailscale suggestion: %+v", summary.Suggestions)
+}

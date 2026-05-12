@@ -115,6 +115,9 @@ type ObjectStatus struct {
 	APIVersion string         `json:"apiVersion" yaml:"apiVersion"`
 	Kind       string         `json:"kind" yaml:"kind"`
 	Name       string         `json:"name" yaml:"name"`
+	Owner      string         `json:"owner,omitempty" yaml:"owner,omitempty"`
+	ManagedBy  string         `json:"managedBy,omitempty" yaml:"managedBy,omitempty"`
+	Management string         `json:"management,omitempty" yaml:"management,omitempty"`
 	Status     map[string]any `json:"status" yaml:"status"`
 }
 

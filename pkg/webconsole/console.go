@@ -352,6 +352,9 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		} else {
 			applyConnectionTablePortFallback(connections)
 		}
+		if err := h.enrichConnectionsWithRemoteIdentity(context.Background(), connections); err != nil {
+			errors = append(errors, err.Error())
+		}
 	}
 	var dnsQueries []logstore.DNSQuery
 	if opts.DNSQueryLimit >= 0 {
@@ -389,6 +392,9 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 	if opts.FirewallLimit >= 0 {
 		firewallLogs, err = h.firewallLogList(logstore.FirewallLogFilter{Since: time.Now().Add(-24 * time.Hour), Action: "drop", Limit: opts.FirewallLimit})
 		if err != nil {
+			errors = append(errors, err.Error())
+		}
+		if err := h.enrichFirewallLogsWithRemoteIdentity(context.Background(), firewallLogs); err != nil {
 			errors = append(errors, err.Error())
 		}
 	}
@@ -707,6 +713,10 @@ func (h Handler) firewallLogs(w http.ResponseWriter, r *http.Request) {
 		Limit:  intQuery(r, "limit", 100),
 	})
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.enrichFirewallLogsWithRemoteIdentity(r.Context(), rows); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1165,9 +1175,124 @@ func (h Handler) generationDiff(w http.ResponseWriter, r *http.Request, fromText
 
 func (h Handler) resourceStatuses() ([]routerstate.ObjectStatus, error) {
 	if lister, ok := h.opts.Store.(routerstate.ObjectStatusLister); ok {
-		return lister.ListObjectStatuses()
+		resources, err := lister.ListObjectStatuses()
+		if err != nil {
+			return nil, err
+		}
+		return annotateResourceOwnership(resources, h.opts.ControllerModes), nil
 	}
 	return nil, nil
+}
+
+func annotateResourceOwnership(resources []routerstate.ObjectStatus, controllers []controlapi.ControllerStatus) []routerstate.ObjectStatus {
+	ownerByKind := map[string]string{}
+	for _, controller := range controllers {
+		for _, kind := range controller.ResourceKinds {
+			if _, exists := ownerByKind[kind]; !exists {
+				ownerByKind[kind] = controller.Name
+			}
+		}
+	}
+	for i := range resources {
+		status := resources[i].Status
+		if status == nil {
+			status = map[string]any{}
+			resources[i].Status = status
+		}
+		if resources[i].Owner == "" {
+			resources[i].Owner = statusText(status, "owner")
+		}
+		if resources[i].Owner == "" {
+			resources[i].Owner = ownerByKind[resources[i].Kind]
+		}
+		if resources[i].Owner == "" {
+			resources[i].Owner = defaultResourceOwnerController(resources[i].Kind)
+		}
+		if resources[i].Owner != "" {
+			status["owner"] = resources[i].Owner
+		}
+		if resources[i].ManagedBy == "" {
+			resources[i].ManagedBy = statusText(status, "managedBy")
+		}
+		if resources[i].ManagedBy == "" {
+			if managed, ok := statusBoolValue(status["managed"]); ok && !managed {
+				resources[i].ManagedBy = "external"
+			} else {
+				resources[i].ManagedBy = "routerd"
+			}
+		}
+		status["managedBy"] = resources[i].ManagedBy
+		if resources[i].Management == "" {
+			resources[i].Management = statusText(status, "management")
+		}
+		if resources[i].Management == "" {
+			if managed, ok := statusBoolValue(status["managed"]); ok && !managed {
+				resources[i].Management = "adopted"
+			} else if strings.EqualFold(resources[i].ManagedBy, "external") {
+				resources[i].Management = "adopted"
+			} else {
+				resources[i].Management = "managed"
+			}
+		}
+		status["management"] = resources[i].Management
+	}
+	return resources
+}
+
+func defaultResourceOwnerController(kind string) string {
+	switch kind {
+	case "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress", "Interface", "Link":
+		return "address"
+	case "DHCPv4Lease":
+		return "dhcpv4lease"
+	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Scope", "DHCPv6Information", "IPv6RouterAdvertisement":
+		return "dhcpv6"
+	case "DNSResolver", "DNSZone":
+		return "dns-resolver"
+	case "DSLiteTunnel":
+		return "dslite"
+	case "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":
+		return "firewall"
+	case "NAT44Rule", "IPv4SourceNAT":
+		return "nat"
+	case "NetworkAdoption":
+		return "network-adoption"
+	case "Package":
+		return "package"
+	case "PPPoEInterface", "PPPoESession":
+		return "pppoesession"
+	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy", "PathMTUPolicy":
+		return "route"
+	case "SystemdUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
+		return "systemd-unit"
+	case "ConntrackObserver", "TrafficFlowLog":
+		return "conntrack"
+	default:
+		return ""
+	}
+}
+
+func statusText(status map[string]any, key string) string {
+	value, ok := status[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func statusBoolValue(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "yes", "1":
+			return true, true
+		case "false", "no", "0":
+			return false, true
+		}
+	}
+	return false, false
 }
 
 func (h Handler) eventList(limit int) ([]routerstate.StoredEvent, error) {
@@ -1528,6 +1653,46 @@ func (h Handler) enrichConnectionsWithRemoteIdentity(ctx context.Context, table 
 		entry := &table.Entries[i]
 		annotateTupleHostnames(&entry.Original, labels)
 		annotateTupleHostnames(&entry.Reply, labels)
+		applyConnectionPortFallback(entry)
+	}
+	return nil
+}
+
+func (h Handler) enrichFirewallLogsWithRemoteIdentity(ctx context.Context, logs []logstore.FirewallLogEntry) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	addresses := make([]string, 0, len(logs)*2)
+	seen := map[string]bool{}
+	for i := range logs {
+		entry := &logs[i]
+		if entry.SrcService == "" {
+			entry.SrcService = serviceNameForPort(entry.Protocol, entry.SrcPort)
+		}
+		if entry.DstService == "" {
+			entry.DstService = serviceNameForPort(entry.Protocol, entry.DstPort)
+		}
+		for _, address := range []string{entry.SrcAddress, entry.DstAddress} {
+			if !shouldReverseLookup(address) || seen[address] {
+				continue
+			}
+			seen[address] = true
+			addresses = append(addresses, address)
+		}
+	}
+	if len(addresses) == 0 || h.reverseDNS == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	labels := h.reverseDNS.lookupMany(ctx, addresses, h.opts.ReverseLookup)
+	for i := range logs {
+		if logs[i].SrcHostname == "" {
+			logs[i].SrcHostname = labels[logs[i].SrcAddress]
+		}
+		if logs[i].DstHostname == "" {
+			logs[i].DstHostname = labels[logs[i].DstAddress]
+		}
 	}
 	return nil
 }
@@ -1666,9 +1831,9 @@ func applyTrafficFlowPortFallback(flow *logstore.TrafficFlow) {
 	if flow == nil {
 		return
 	}
-	if fallback, ok := portProtocolFallbackFor(flow.Protocol, flow.PeerPort, flow.ClientPort); ok {
+	if fallback, ok := portProtocolFallbackFor(flow.Protocol, flow.PeerPort, flow.ClientPort, flow.ResolvedHostname, ""); ok {
 		override := knownAppName(flow.AppName) && preferPortFallbackOverApp(flow.AppName, fallback.app)
-		if knownAppName(flow.AppName) && !override {
+		if knownAppName(flow.AppName) && !override && !preferMoreSpecificPortFallback(flow.AppCategory, flow.AppName, flow.AppConfidence, fallback) {
 			return
 		}
 		flow.AppName = fallback.app
@@ -1690,9 +1855,9 @@ func applyConnectionPortFallback(entry *observe.ConnectionEntry) {
 	if entry == nil {
 		return
 	}
-	if fallback, ok := portProtocolFallbackFor(entry.Protocol, atoiDefault(entry.Original.DestinationPort, 0), atoiDefault(entry.Original.SourcePort, 0)); ok {
+	if fallback, ok := portProtocolFallbackFor(entry.Protocol, atoiDefault(entry.Original.DestinationPort, 0), atoiDefault(entry.Original.SourcePort, 0), entry.Original.DestinationHostname, entry.Original.SourceHostname); ok {
 		override := knownAppName(entry.AppName) && preferPortFallbackOverApp(entry.AppName, fallback.app)
-		if knownAppName(entry.AppName) && !override {
+		if knownAppName(entry.AppName) && !override && !preferMoreSpecificPortFallback(entry.AppCategory, entry.AppName, entry.AppConfidence, fallback) {
 			return
 		}
 		entry.AppName = fallback.app
@@ -1702,6 +1867,20 @@ func applyConnectionPortFallback(entry *observe.ConnectionEntry) {
 			entry.DNSQuery = ""
 		}
 	}
+}
+
+func preferMoreSpecificPortFallback(category, current string, confidence int, fallback portProtocolFallback) bool {
+	if !strings.EqualFold(strings.TrimSpace(category), "port-fallback") {
+		return false
+	}
+	current = strings.ToLower(strings.TrimSpace(current))
+	if current == "" || current == "unknown" || current == "unidentified" {
+		return true
+	}
+	if fallback.confidence > confidence {
+		return true
+	}
+	return current == "stun" && fallback.app == "tailscale"
 }
 
 func applyConnectionTablePortFallback(table *observe.ConnectionTable) {
@@ -1732,22 +1911,40 @@ func preferPortFallbackOverApp(current, fallback string) bool {
 	}
 }
 
-func portProtocolFallbackFor(protocol string, primaryPort, secondaryPort int) (portProtocolFallback, bool) {
+func portProtocolFallbackFor(protocol string, primaryPort, secondaryPort int, primaryHost, secondaryHost string) (portProtocolFallback, bool) {
 	transport := strings.ToLower(strings.TrimSpace(protocol))
-	for _, port := range []int{primaryPort, secondaryPort} {
-		if fallback, ok := portProtocolFallbackByPort(transport, port); ok {
+	for _, item := range []struct {
+		port int
+		host string
+	}{{primaryPort, primaryHost}, {secondaryPort, secondaryHost}} {
+		if fallback, ok := portProtocolFallbackByPort(transport, item.port, item.host); ok {
 			return fallback, true
 		}
 	}
 	return portProtocolFallback{}, false
 }
 
-func portProtocolFallbackByPort(protocol string, port int) (portProtocolFallback, bool) {
+func portProtocolFallbackByPort(protocol string, port int, host string) (portProtocolFallback, bool) {
 	if port <= 0 {
 		return portProtocolFallback{}, false
 	}
 	confidence := 40
 	category := "port-fallback"
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if (port == 443 || port == 8443) && protocol == "tcp" {
+		if tailscaleHostLabel(host) {
+			return portProtocolFallback{app: "tailscale", category: category, confidence: 60}, true
+		}
+		if provider := providerHTTPSGuess(host); provider != "" {
+			return portProtocolFallback{app: provider, category: category, confidence: 45}, true
+		}
+	}
+	if protocol == "udp" && tailscaleHostLabel(host) {
+		switch port {
+		case 3478, 5349, 41641:
+			return portProtocolFallback{app: "tailscale", category: category, confidence: 60}, true
+		}
+	}
 	switch port {
 	case 20, 21:
 		return portProtocolFallback{app: "ftp", category: category, confidence: confidence}, true
@@ -1822,6 +2019,37 @@ func portProtocolFallbackByPort(protocol string, port int) (portProtocolFallback
 	return portProtocolFallback{}, false
 }
 
+func tailscaleHostLabel(host string) bool {
+	if host == "" {
+		return false
+	}
+	return host == "stun.l.google.com" ||
+		host == "login.tailscale.com" ||
+		host == "controlplane.tailscale.com" ||
+		strings.HasSuffix(host, ".tailscale.com") ||
+		strings.HasSuffix(host, ".ts.net")
+}
+
+func providerHTTPSGuess(host string) string {
+	if host == "" {
+		return ""
+	}
+	switch {
+	case strings.Contains(host, ".amazonaws.com") || strings.Contains(host, ".cloudfront.net") || strings.Contains(host, ".awsdns"):
+		return "aws-https"
+	case strings.Contains(host, ".googleusercontent.com") || strings.Contains(host, ".googleapis.com") || strings.Contains(host, ".gvt1.com") || strings.Contains(host, ".google.com"):
+		return "google-https"
+	case strings.Contains(host, ".microsoft.com") || strings.Contains(host, ".windowsupdate.com") || strings.Contains(host, ".office.com") || strings.Contains(host, ".azure.com"):
+		return "microsoft-https"
+	case strings.Contains(host, ".icloud.com") || strings.Contains(host, ".apple.com") || strings.Contains(host, ".cdn-apple.com"):
+		return "apple-https"
+	case strings.Contains(host, ".cloudflare.com") || strings.Contains(host, ".cloudflare.net"):
+		return "cloudflare-https"
+	default:
+		return ""
+	}
+}
+
 func serviceNameForPort(protocol string, port int) string {
 	if port <= 0 {
 		return ""
@@ -1858,6 +2086,7 @@ var ianaServiceNames = map[int]string{
 	465:   "submissions",
 	500:   "isakmp",
 	587:   "submission",
+	853:   "domain-s",
 	993:   "imaps",
 	995:   "pop3s",
 	1900:  "ssdp",
@@ -1881,6 +2110,7 @@ var ianaUDPServiceNames = map[int]string{
 	138:   "netbios-dgm",
 	443:   "quic",
 	500:   "isakmp",
+	853:   "domain-s",
 	1900:  "ssdp",
 	3478:  "stun",
 	4500:  "ipsec-nat-t",

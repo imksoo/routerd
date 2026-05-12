@@ -666,12 +666,26 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 		if err := json.Unmarshal([]byte(raw), &item.Status); err != nil {
 			item.Status = map[string]any{"error": err.Error()}
 		}
+		item.Owner = statusString(item.Status, "owner")
+		item.ManagedBy = statusString(item.Status, "managedBy")
+		item.Management = statusString(item.Status, "management")
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func statusString(status map[string]any, key string) string {
+	if status == nil {
+		return ""
+	}
+	value, ok := status[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func (s *SQLiteStore) DeleteObject(apiVersion, kind, name string) error {

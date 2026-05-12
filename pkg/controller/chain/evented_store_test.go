@@ -4,6 +4,30 @@ package chain
 
 import "testing"
 
+func TestStatusWithOwnershipAddsControllerMetadata(t *testing.T) {
+	status := statusWithOwnership("net.routerd.net/v1alpha1", "PathMTUPolicy", map[string]any{"phase": "Applied"})
+	if status["owner"] != "route" {
+		t.Fatalf("owner = %v, want route", status["owner"])
+	}
+	if status["managedBy"] != "routerd" || status["management"] != "managed" {
+		t.Fatalf("management metadata = managedBy:%v management:%v, want routerd/managed", status["managedBy"], status["management"])
+	}
+}
+
+func TestStatusWithOwnershipPreservesAdoptedManagedBy(t *testing.T) {
+	status := statusWithOwnership("system.routerd.net/v1alpha1", "NetworkAdoption", map[string]any{
+		"phase":     "Observed",
+		"managed":   false,
+		"managedBy": "systemd-networkd",
+	})
+	if status["owner"] != "network-adoption" {
+		t.Fatalf("owner = %v, want network-adoption", status["owner"])
+	}
+	if status["managedBy"] != "systemd-networkd" || status["management"] != "adopted" {
+		t.Fatalf("management metadata = managedBy:%v management:%v, want systemd-networkd/adopted", status["managedBy"], status["management"])
+	}
+}
+
 func TestStatusChangedIgnoresObservedTrafficCounters(t *testing.T) {
 	current := map[string]any{
 		"phase":       "Observed",

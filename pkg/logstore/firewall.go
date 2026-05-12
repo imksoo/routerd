@@ -24,6 +24,10 @@ type FirewallLogEntry struct {
 	SrcPort           int       `json:"srcPort,omitempty"`
 	DstAddress        string    `json:"dstAddress"`
 	DstPort           int       `json:"dstPort,omitempty"`
+	SrcHostname       string    `json:"srcHostname,omitempty"`
+	DstHostname       string    `json:"dstHostname,omitempty"`
+	SrcService        string    `json:"srcService,omitempty"`
+	DstService        string    `json:"dstService,omitempty"`
 	Protocol          string    `json:"protocol"`
 	TCPFlags          string    `json:"tcpFlags,omitempty"`
 	L3Proto           string    `json:"l3Proto"`

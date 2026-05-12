@@ -720,8 +720,14 @@
                 "dstAddress": {
                   "type": "string"
                 },
+                "dstHostname": {
+                  "type": "string"
+                },
                 "dstPort": {
                   "type": "integer"
+                },
+                "dstService": {
+                  "type": "string"
                 },
                 "expiredAgeSeconds": {
                   "type": "integer"
@@ -756,8 +762,14 @@
                 "srcAddress": {
                   "type": "string"
                 },
+                "srcHostname": {
+                  "type": "string"
+                },
                 "srcPort": {
                   "type": "integer"
+                },
+                "srcService": {
+                  "type": "string"
                 },
                 "tcpFlags": {
                   "type": "string"

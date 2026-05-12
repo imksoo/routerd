@@ -18,6 +18,7 @@ import (
 
 	"routerd/pkg/apply"
 	"routerd/pkg/bus"
+	"routerd/pkg/controlapi"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
@@ -28,6 +29,28 @@ type fakeStore struct {
 	resources []routerstate.ObjectStatus
 	events    []routerstate.StoredEvent
 	latest    int64
+}
+
+func TestAnnotateResourceOwnershipFromControllerModes(t *testing.T) {
+	resources := annotateResourceOwnership([]routerstate.ObjectStatus{{
+		APIVersion: "net.routerd.net/v1alpha1",
+		Kind:       "PathMTUPolicy",
+		Name:       "wan-mtu",
+		Status:     map[string]any{"phase": "Applied"},
+	}}, []controlapi.ControllerStatus{{
+		Name:          "route",
+		Mode:          "live",
+		ResourceKinds: []string{"PathMTUPolicy"},
+	}})
+	if len(resources) != 1 {
+		t.Fatalf("resources = %d", len(resources))
+	}
+	if resources[0].Owner != "route" || resources[0].Status["owner"] != "route" {
+		t.Fatalf("owner metadata not annotated: %+v status=%+v", resources[0], resources[0].Status)
+	}
+	if resources[0].ManagedBy != "routerd" || resources[0].Management != "managed" {
+		t.Fatalf("management metadata = %q/%q", resources[0].ManagedBy, resources[0].Management)
+	}
 }
 
 func (s fakeStore) Get(string) routerstate.Value                            { return routerstate.Value{} }
@@ -354,6 +377,61 @@ func TestTrafficFlowPortFallbackOverridesDNSOnTailscalePort(t *testing.T) {
 	applyTrafficFlowPortFallback(&flow)
 	if flow.AppName != "tailscale" || flow.AppCategory != "port-fallback" || flow.ResolvedHostname != "" {
 		t.Fatalf("flow fallback = %#v", flow)
+	}
+}
+
+func TestTrafficFlowPortFallbackUsesReverseDNSProvider(t *testing.T) {
+	flow := logstore.TrafficFlow{
+		Protocol:         "tcp",
+		ClientAddress:    "172.18.0.2",
+		ClientPort:       53122,
+		PeerAddress:      "203.0.113.10",
+		PeerPort:         443,
+		ResolvedHostname: "edge.googleusercontent.com",
+	}
+	applyTrafficFlowPortFallback(&flow)
+	if flow.AppName != "google-https" || flow.AppConfidence < 45 {
+		t.Fatalf("flow fallback = %#v", flow)
+	}
+}
+
+func TestConnectionPortFallbackPromotesTailscaleDERPStun(t *testing.T) {
+	entry := observe.ConnectionEntry{
+		Protocol:      "udp",
+		AppName:       "stun",
+		AppCategory:   "port-fallback",
+		AppConfidence: 40,
+		Original: observe.ConntrackTuple{
+			Source:              "192.0.2.10",
+			SourcePort:          "55123",
+			Destination:         "205.147.105.30",
+			DestinationPort:     "3478",
+			DestinationHostname: "derp20c.tailscale.com",
+		},
+	}
+	applyConnectionPortFallback(&entry)
+	if entry.AppName != "tailscale" || entry.AppConfidence < 60 {
+		t.Fatalf("connection fallback = %#v", entry)
+	}
+}
+
+func TestConnectionPortFallbackUsesTailscaleHostnameOnHTTPS(t *testing.T) {
+	entry := observe.ConnectionEntry{
+		Protocol:      "tcp",
+		AppName:       "tls",
+		AppCategory:   "port-fallback",
+		AppConfidence: 40,
+		Original: observe.ConntrackTuple{
+			Source:              "192.0.2.10",
+			SourcePort:          "55123",
+			Destination:         "203.0.113.10",
+			DestinationPort:     "443",
+			DestinationHostname: "lb.fra.tailscale.com",
+		},
+	}
+	applyConnectionPortFallback(&entry)
+	if entry.AppName != "tailscale" || entry.AppConfidence < 60 {
+		t.Fatalf("connection fallback = %#v", entry)
 	}
 }
 

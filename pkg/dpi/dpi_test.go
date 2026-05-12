@@ -74,6 +74,11 @@ func TestClassifySTUNBeforeDNS(t *testing.T) {
 	if got.AppName != "tailscale" || got.DNSQuery != "" || got.Reason != "tailscale_stun_magic_cookie" {
 		t.Fatalf("classification = %+v", got)
 	}
+
+	got = Classify(ClassifyRequest{L4Payload: payload, TransportProtocol: "udp", DstPort: 49152})
+	if got.AppName != "stun" || got.DNSQuery != "" || got.Reason != "stun_magic_cookie" {
+		t.Fatalf("classification on ephemeral port = %+v", got)
+	}
 }
 
 func TestClassifyWireGuardAndTailscalePorts(t *testing.T) {

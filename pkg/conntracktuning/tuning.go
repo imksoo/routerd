@@ -6,6 +6,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,8 +98,9 @@ func Analyze(inputs Inputs) Summary {
 			stat.orphans++
 		}
 	}
+	dpiByTuple := dpiFlowIndex(inputs.DPIFlows)
 	for _, flow := range inputs.ExpiredFlows {
-		stat := group("", flow.Protocol)
+		stat := group(expiredFlowApp(flow, dpiByTuple), flow.Protocol)
 		stat.expired++
 	}
 	suggestions := make([]Suggestion, 0, len(groups))
@@ -177,7 +179,7 @@ func recommendedSeconds(app, protocol string, avg int, orphanRate float64) int {
 			base = 30
 		case "mdns", "ssdp", "netbios", "llmnr":
 			base = 120
-		case "wireguard", "ipsec", "stun", "sip", "rtp":
+		case "wireguard", "tailscale", "ipsec", "stun", "sip", "rtp":
 			base = 300
 		}
 		if orphanRate >= 0.20 {
@@ -269,12 +271,55 @@ func firewallApp(entry logstore.FirewallLogEntry) string {
 	}
 }
 
+func expiredFlowApp(flow logstore.ExpiredFlowEntry, dpiByTuple map[string]string) string {
+	for _, key := range []string{
+		flowTupleKey(flow.Protocol, flow.OrigSrc, flow.OrigSrcPort, flow.OrigDst, flow.OrigDstPort),
+		flowTupleKey(flow.Protocol, flow.OrigDst, flow.OrigDstPort, flow.OrigSrc, flow.OrigSrcPort),
+		flowTupleKey(flow.Protocol, flow.ReplySrc, flow.ReplySrcPort, flow.ReplyDst, flow.ReplyDstPort),
+		flowTupleKey(flow.Protocol, flow.ReplyDst, flow.ReplyDstPort, flow.ReplySrc, flow.ReplySrcPort),
+	} {
+		if app := dpiByTuple[key]; app != "" {
+			return app
+		}
+	}
+	return ""
+}
+
+func dpiFlowIndex(flows []logstore.DPIFlowEntry) map[string]string {
+	out := map[string]string{}
+	for _, flow := range flows {
+		app := normalizeApp(flow.AppName, flow.Protocol)
+		if app == "" || app == "unknown" || app == normalizeProtocol(flow.Protocol) {
+			continue
+		}
+		for _, key := range []string{
+			flowTupleKey(flow.Protocol, flow.SrcAddress, flow.SrcPort, flow.DstAddress, flow.DstPort),
+			flowTupleKey(flow.Protocol, flow.DstAddress, flow.DstPort, flow.SrcAddress, flow.SrcPort),
+		} {
+			if key != "" {
+				out[key] = app
+			}
+		}
+	}
+	return out
+}
+
+func flowTupleKey(protocol, src string, srcPort int, dst string, dstPort int) string {
+	protocol = normalizeProtocol(protocol)
+	src = strings.TrimSpace(src)
+	dst = strings.TrimSpace(dst)
+	if protocol == "" || src == "" || dst == "" {
+		return ""
+	}
+	return protocol + "|" + src + "|" + intString(srcPort) + "|" + dst + "|" + intString(dstPort)
+}
+
 func sysctlKey(protocol, app string) string {
 	protocol = normalizeProtocol(protocol)
 	app = normalizeApp(app, protocol)
 	if protocol == "udp" {
 		switch app {
-		case "wireguard", "ipsec", "stun", "sip", "rtp":
+		case "wireguard", "tailscale", "ipsec", "stun", "sip", "rtp":
 			return "net.netfilter.nf_conntrack_udp_timeout_stream"
 		default:
 			return "net.netfilter.nf_conntrack_udp_timeout"
@@ -321,4 +366,11 @@ func boolInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func intString(value int) string {
+	if value == 0 {
+		return ""
+	}
+	return strconv.Itoa(value)
 }
