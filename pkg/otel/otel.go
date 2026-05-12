@@ -109,9 +109,11 @@ func resourceAttributes(serviceName string, attrs ...attribute.KeyValue) []attri
 		semconv.OSTypeKey.String(runtime.GOOS),
 		attribute.String("routerd.service.name", serviceName),
 		attribute.String("routerd.version", version.Version),
+		attribute.String("routerd.os", runtime.GOOS),
 	}
 	if hostName != "" {
 		values = append(values, semconv.HostName(hostName))
+		values = append(values, attribute.String("routerd.host.role", hostName))
 	}
 	if namespace := strings.TrimSpace(os.Getenv("OTEL_SERVICE_NAMESPACE")); namespace != "" {
 		values = append(values, semconv.ServiceNamespace(namespace))

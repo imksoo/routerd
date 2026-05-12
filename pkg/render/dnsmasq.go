@@ -18,8 +18,17 @@ type DnsmasqRuntime struct {
 	DHCPv6DNSServersByInterface map[string][]string
 	IPv6AddressesByInterface    map[string][]string
 	IPv6PrefixesByInterface     map[string][]string
+	StickyHosts                 []DHCPStickyHost
 	RuntimeDir                  string
 	LeaseFile                   string
+}
+
+type DHCPStickyHost struct {
+	MACAddress string
+	IPAddress  string
+	Hostname   string
+	Family     string
+	LeaseTime  string
 }
 
 func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string, error) {
@@ -209,6 +218,9 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 			}
 			buf.WriteString("dhcp-host=" + dnsmasqHostReservation(reservationSpec, leaseTime) + "\n")
 		}
+		for _, host := range stickyHostsForIPv4Scope(runtime.StickyHosts, spec.RangeStart, spec.RangeEnd, leaseTime) {
+			buf.WriteString("dhcp-host=" + dnsmasqStickyHost(host) + "\n")
+		}
 		_ = ifname
 	}
 	for _, res := range v6Scopes {
@@ -244,6 +256,9 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server\n", tag))
 		} else {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server,%s\n", tag, strings.Join(wrapIPv6Servers(dnsServers), ",")))
+		}
+		for _, host := range stickyHostsForFamily(runtime.StickyHosts, "ipv6", leaseTime) {
+			buf.WriteString("dhcp-host=" + dnsmasqStickyHost(host) + "\n")
 		}
 	}
 
@@ -382,6 +397,9 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 				buf.WriteString("dhcp-option=tag:" + reservationTag + "," + dnsmasqDHCPv4Option(option) + "\n")
 			}
 		}
+		for _, host := range stickyHostsForIPv4Scope(runtime.StickyHosts, spec.AddressPool.Start, spec.AddressPool.End, leaseTime) {
+			buf.WriteString("dhcp-host=" + dnsmasqStickyHost(host) + "\n")
+		}
 	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "DHCPv6Server" {
@@ -421,6 +439,9 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		}
 		for _, server := range sntpServers {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:sntp-server,[%s]\n", tag, strings.Trim(server, "[]")))
+		}
+		for _, host := range stickyHostsForFamily(runtime.StickyHosts, "ipv6", leaseTime) {
+			buf.WriteString("dhcp-host=" + dnsmasqStickyHost(host) + "\n")
 		}
 	}
 	for _, res := range router.Spec.Resources {
@@ -866,6 +887,88 @@ func dnsmasqHostReservation(spec api.DHCPv4ReservationSpec, scopeLeaseTime strin
 		parts = append(parts, leaseTime)
 	}
 	return strings.Join(parts, ",")
+}
+
+func dnsmasqStickyHost(host DHCPStickyHost) string {
+	parts := []string{strings.ToLower(strings.TrimSpace(host.MACAddress)), strings.TrimSpace(host.IPAddress)}
+	if hostname := strings.TrimSpace(host.Hostname); hostname != "" {
+		parts = append(parts, hostname)
+	}
+	if leaseTime := strings.TrimSpace(host.LeaseTime); leaseTime != "" {
+		parts = append(parts, leaseTime)
+	}
+	return strings.Join(parts, ",")
+}
+
+func stickyHostsForFamily(hosts []DHCPStickyHost, family, leaseTime string) []DHCPStickyHost {
+	var out []DHCPStickyHost
+	for _, host := range hosts {
+		if strings.TrimSpace(host.MACAddress) == "" || strings.TrimSpace(host.IPAddress) == "" {
+			continue
+		}
+		hostFamily := strings.ToLower(strings.TrimSpace(host.Family))
+		if hostFamily == "" {
+			if strings.Contains(host.IPAddress, ":") {
+				hostFamily = "ipv6"
+			} else {
+				hostFamily = "ipv4"
+			}
+		}
+		if hostFamily != family {
+			continue
+		}
+		if strings.TrimSpace(host.LeaseTime) == "" {
+			host.LeaseTime = leaseTime
+		}
+		out = append(out, host)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IPAddress != out[j].IPAddress {
+			return out[i].IPAddress < out[j].IPAddress
+		}
+		return out[i].MACAddress < out[j].MACAddress
+	})
+	return out
+}
+
+func stickyHostsForIPv4Scope(hosts []DHCPStickyHost, start, end, leaseTime string) []DHCPStickyHost {
+	var out []DHCPStickyHost
+	startAddr, startErr := netip.ParseAddr(strings.TrimSpace(start))
+	endAddr, endErr := netip.ParseAddr(strings.TrimSpace(end))
+	for _, host := range stickyHostsForFamily(hosts, "ipv4", leaseTime) {
+		addr, err := netip.ParseAddr(strings.TrimSpace(host.IPAddress))
+		if err != nil || !addr.Is4() {
+			continue
+		}
+		if startErr == nil && endErr == nil && startAddr.Is4() && endAddr.Is4() && !addrInRange(addr, startAddr, endAddr) {
+			continue
+		}
+		out = append(out, host)
+	}
+	return out
+}
+
+func addrInRange(addr, start, end netip.Addr) bool {
+	a := addr.As4()
+	s := start.As4()
+	e := end.As4()
+	for i := 0; i < len(a); i++ {
+		if a[i] < s[i] {
+			return false
+		}
+		if a[i] > s[i] {
+			break
+		}
+	}
+	for i := 0; i < len(a); i++ {
+		if a[i] > e[i] {
+			return false
+		}
+		if a[i] < e[i] {
+			break
+		}
+	}
+	return true
 }
 
 func dnsmasqIPv4Reservation(spec api.DHCPv4ReservationSpec, tag string) string {

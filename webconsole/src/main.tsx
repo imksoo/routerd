@@ -31,6 +31,7 @@ import {
   DatabaseRegular,
   DesktopRegular,
   DocumentTextRegular,
+  FilterRegular,
   GamesRegular,
   HomeRegular,
   LaptopRegular,
@@ -73,6 +74,7 @@ type Summary = {
   trafficFlows?: TrafficFlow[];
   firewallLogs?: FirewallLog[];
   conntrackTuning?: ConntrackTuningSummary;
+  dhcpFingerprints?: DHCPFingerprint[];
   dhcpLeases?: DHCPLease[];
   neighbors?: NeighborEntry[];
   clients?: ClientEntry[];
@@ -255,6 +257,19 @@ type DHCPLease = {
   vendor?: string;
   family?: string;
   source?: string;
+  stickyUntil?: string;
+  stickyState?: string;
+};
+
+type DHCPFingerprint = {
+  mac?: string;
+  hostname?: string;
+  osFamily?: string;
+  deviceClass?: string;
+  confidence?: number;
+  signal?: string;
+  observedAt?: string;
+  source?: string;
 };
 
 type NeighborEntry = {
@@ -285,6 +300,8 @@ type ClientEntry = {
   inferredDeviceClass?: string;
   fingerprintConfidence?: number;
   fingerprintSignals?: string[];
+  stickyUntil?: string;
+  stickyState?: string;
 };
 
 type ClientIdentity = {
@@ -435,6 +452,8 @@ type ClientRow = {
   inferredDeviceClass: string;
   fingerprintConfidence?: number;
   fingerprintSignals: Set<string>;
+  stickyUntil: string;
+  stickyState: string;
 };
 
 type ViewKey = "overview" | "resources" | "controllers" | "clients" | "connections" | "vpn" | "events" | "firewall" | "config" | "generations";
@@ -488,6 +507,9 @@ const useStyles = makeStyles({
     borderBottom: "1px solid #243041",
     backgroundColor: "#111827",
     boxShadow: "0 1px 0 rgba(255,255,255,0.04)",
+    "@media print": {
+      display: "none",
+    },
   },
   productArea: {
     display: "flex",
@@ -548,6 +570,9 @@ const useStyles = makeStyles({
     borderRight: "1px solid #243041",
     backgroundColor: "#0f1722",
     padding: "12px 8px",
+    "@media print": {
+      display: "none",
+    },
     "@media (max-width: 860px)": {
       position: "static",
       height: "auto",
@@ -578,7 +603,7 @@ const useStyles = makeStyles({
   navButton: {
     width: "100%",
     justifyContent: "flex-start",
-    borderRadius: "4px",
+    borderRadius: tokens.borderRadiusMedium,
     padding: "9px 10px",
     color: tokens.colorNeutralForeground2,
     backgroundColor: "transparent",
@@ -651,7 +676,7 @@ const useStyles = makeStyles({
   navSubButton: {
     width: "100%",
     justifyContent: "space-between",
-    borderRadius: "4px",
+    borderRadius: tokens.borderRadiusMedium,
     padding: "5px 8px",
     color: tokens.colorNeutralForeground3,
     backgroundColor: "transparent",
@@ -679,7 +704,7 @@ const useStyles = makeStyles({
     },
   },
   sectionButton: {
-    borderRadius: "4px",
+    borderRadius: tokens.borderRadiusMedium,
     "@media (max-width: 640px)": {
       minWidth: "max-content",
       minHeight: "44px",
@@ -697,6 +722,63 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: "6px",
     marginBottom: "12px",
+    "@media (max-width: 860px)": {
+      display: "none",
+    },
+  },
+  connectionJumpBar: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "8px",
+    marginBottom: "12px",
+  },
+  connectionCardList: {
+    display: "grid",
+    gap: "6px",
+  },
+  connectionCard: {
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    overflow: "hidden",
+  },
+  connectionCardExpanded: {
+    backgroundColor: tokens.colorNeutralBackground3,
+    border: `1px solid ${tokens.colorBrandStroke2}`,
+  },
+  connectionCardToggle: {
+    width: "100%",
+    background: "transparent",
+    border: "none",
+    color: "inherit",
+    textAlign: "left",
+    padding: "8px 12px",
+    cursor: "pointer",
+    display: "grid",
+    gap: "4px",
+    "&:hover": {
+      backgroundColor: tokens.colorNeutralBackground3Hover,
+    },
+  },
+  connectionCardLine: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "8px",
+  },
+  connectionCardEndpoint: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    maxWidth: "30ch",
+    "@media (max-width: 860px)": {
+      maxWidth: "18ch",
+    },
+  },
+  connectionCardDetail: {
+    padding: "10px 12px 12px",
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   anchorDot: {
     minWidth: "16px",
@@ -740,7 +822,7 @@ const useStyles = makeStyles({
     placeItems: "center",
     width: "32px",
     height: "32px",
-    borderRadius: "4px",
+    borderRadius: tokens.borderRadiusMedium,
     backgroundColor: "#12395b",
     color: "#60cdff",
     fontSize: "19px",
@@ -779,6 +861,10 @@ const useStyles = makeStyles({
       padding: "12px 10px 20px",
       gap: "12px",
     },
+    "@media print": {
+      padding: "0",
+      gap: "12px",
+    },
   },
   dryRunBanner: {
     display: "flex",
@@ -788,7 +874,7 @@ const useStyles = makeStyles({
     gap: "10px",
     padding: "12px",
     border: "1px solid #8a5a00",
-    borderRadius: "4px",
+    borderRadius: tokens.borderRadiusMedium,
     backgroundColor: "#332300",
   },
   grid: {
@@ -798,7 +884,7 @@ const useStyles = makeStyles({
   },
   metric: {
     minWidth: 0,
-    borderRadius: "4px",
+    borderRadius: tokens.borderRadiusMedium,
     border: "1px solid #243041",
     backgroundColor: "#101a28",
   },
@@ -814,7 +900,7 @@ const useStyles = makeStyles({
     display: "grid",
     gridTemplateColumns: "minmax(0, 1.4fr) minmax(min-content, 0.8fr)",
     gap: "16px",
-    "@media (max-width: 900px)": {
+    "@media (max-width: 860px)": {
       gridTemplateColumns: "1fr",
     },
   },
@@ -846,7 +932,7 @@ const useStyles = makeStyles({
     minHeight: "124px",
     display: "grid",
     gap: "8px",
-    borderRadius: "4px",
+    borderRadius: tokens.borderRadiusMedium,
     border: "1px solid #243041",
     backgroundColor: "#101a28",
     padding: "10px",
@@ -957,7 +1043,7 @@ const useStyles = makeStyles({
     gridTemplateColumns: "minmax(0, 1.25fr) minmax(min-content, 0.75fr)",
     gap: "16px",
     alignItems: "start",
-    "@media (max-width: 900px)": {
+    "@media (max-width: 860px)": {
       gridTemplateColumns: "1fr",
     },
   },
@@ -967,13 +1053,43 @@ const useStyles = makeStyles({
     gap: "8px",
     alignItems: "end",
     marginBottom: "12px",
-    "@media (max-width: 900px)": {
+    "@media (max-width: 860px)": {
       gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr))",
     },
   },
   firewallStack: {
     display: "grid",
     gap: "16px",
+  },
+  resourceDesktopTable: {
+    "@media (max-width: 860px)": {
+      display: "none",
+    },
+  },
+  resourceMobileList: {
+    display: "none",
+    "@media (max-width: 860px)": {
+      display: "grid",
+      gap: "10px",
+    },
+  },
+  resourceMobileCard: {
+    display: "grid",
+    gap: "6px",
+    padding: "10px 12px",
+    border: "1px solid #243041",
+    borderRadius: "6px",
+    backgroundColor: "#101a28",
+  },
+  resourceMobileHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+  },
+  resourceMobileMeta: {
+    display: "grid",
+    gap: "4px",
   },
   clientsGrid: {
     display: "grid",
@@ -1306,6 +1422,18 @@ const useStyles = makeStyles({
     padding: "8px 2px 0",
     textAlign: "center",
   },
+  navTextHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+  },
+  consoleLegalLink: {
+    color: tokens.colorBrandForegroundLink,
+    textDecoration: "none",
+    "&:hover": {
+      textDecoration: "underline",
+    },
+  },
   chips: {
     display: "flex",
     flexWrap: "wrap",
@@ -1328,7 +1456,7 @@ const useStyles = makeStyles({
     gap: "8px",
     alignItems: "end",
     marginBottom: "12px",
-    "@media (max-width: 900px)": {
+    "@media (max-width: 860px)": {
       gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr))",
     },
   },
@@ -1339,7 +1467,7 @@ const useStyles = makeStyles({
     alignItems: "end",
     marginTop: "12px",
     marginBottom: "8px",
-    "@media (max-width: 900px)": {
+    "@media (max-width: 860px)": {
       gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr))",
     },
   },
@@ -1506,7 +1634,7 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     fontSize: "12px",
     fontWeight: 600,
-    "@media (max-width: 760px)": {
+    "@media (max-width: 860px)": {
       display: "none",
     },
   },
@@ -1520,7 +1648,7 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     fontSize: "12px",
     fontWeight: 600,
-    "@media (max-width: 760px)": {
+    "@media (max-width: 860px)": {
       display: "none",
     },
   },
@@ -1535,7 +1663,7 @@ const useStyles = makeStyles({
     padding: "8px 10px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     transition: "none",
-    "@media (max-width: 760px)": {
+    "@media (max-width: 860px)": {
       gridTemplateColumns: "1fr",
       gap: "8px",
       minHeight: "128px",
@@ -1556,7 +1684,7 @@ const useStyles = makeStyles({
     padding: "8px 10px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     transition: "none",
-    "@media (max-width: 760px)": {
+    "@media (max-width: 860px)": {
       gridTemplateColumns: "1fr",
       gap: "8px",
       minHeight: "148px",
@@ -1569,7 +1697,7 @@ const useStyles = makeStyles({
   firewallCell: {
     minWidth: 0,
     overflow: "hidden",
-    "@media (max-width: 760px)": {
+    "@media (max-width: 860px)": {
       display: "grid",
       gridTemplateColumns: "92px minmax(0, 1fr)",
       gap: "8px",
@@ -1580,7 +1708,7 @@ const useStyles = makeStyles({
     display: "none",
     color: tokens.colorNeutralForeground3,
     fontSize: "12px",
-    "@media (max-width: 760px)": {
+    "@media (max-width: 860px)": {
       display: "block",
     },
   },
@@ -1599,7 +1727,7 @@ const useStyles = makeStyles({
     fontSize: "12px",
     fontWeight: 600,
     padding: "0 10px 6px",
-    "@media (max-width: 760px)": {
+    "@media (max-width: 860px)": {
       display: "none",
     },
   },
@@ -1612,7 +1740,7 @@ const useStyles = makeStyles({
     padding: "8px 10px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     transition: "none",
-    "@media (max-width: 760px)": {
+    "@media (max-width: 860px)": {
       gridTemplateColumns: "1fr",
       gap: "8px",
       minHeight: "148px",
@@ -1648,7 +1776,7 @@ const useStyles = makeStyles({
     top: "78px",
     display: "grid",
     gap: "12px",
-    "@media (max-width: 900px)": {
+    "@media (max-width: 860px)": {
       position: "static",
     },
   },
@@ -1869,7 +1997,18 @@ function App() {
   const [generationQuery, setGenerationQuery] = useState("");
   const [selected, setSelected] = useState<ViewKey>(initialLocation.view);
   const [selectedTargetID, setSelectedTargetID] = useState<string | undefined>(initialLocation.targetID);
-  const [navCollapsed, setNavCollapsed] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    try {
+      return window.localStorage?.getItem("routerd:nav:collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage?.setItem("routerd:nav:collapsed", navCollapsed ? "1" : "0");
+    } catch {}
+  }, [navCollapsed]);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => readStoredRecord(collapsedStorageKey));
   const [connectionPages, setConnectionPages] = useState<Record<string, number>>(() => readStoredRecord(connectionPagesStorageKey));
   const [connectionPageSizes, setConnectionPageSizes] = useState<Record<string, number>>(() => readStoredRecord(connectionPageSizesStorageKey));
@@ -1909,6 +2048,7 @@ function App() {
   const pendingScrollSnapshot = useRef<ScrollSnapshot | null>(null);
   const connectionOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
   const connectionGroupOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
+  const detailRefreshMounted = useRef(false);
 
   async function refresh() {
     if (refreshInFlight.current) {
@@ -1917,16 +2057,40 @@ function App() {
     }
     refreshInFlight.current = true;
     const scrollSnapshot = captureScrollSnapshot();
+    const eventLimit = selected === "events" ? 200 : 50;
+    const connectionLimit = selected === "connections" ? 600 : -1;
+    const firewallLogLimit = selected === "firewall" ? 200 : -1;
+    const generationLimit = selected === "generations" ? 200 : 50;
+    const includeClients = selected === "clients";
+    const includeTuning = selected === "firewall";
+    const includeVPN = selected === "vpn";
+    const includeDPI = selected === "connections" || selected === "clients" || selected === "firewall";
+    const trafficFlowLimit = selected === "clients" ? 200 : -1;
+    const summaryQuery = new URLSearchParams({
+      events: String(eventLimit),
+      connections: String(connectionLimit),
+      firewallLogs: String(firewallLogLimit),
+      dnsQueries: includeClients ? "200" : "-1",
+      trafficFlows: String(trafficFlowLimit),
+      fingerprintQueries: includeClients ? "1000" : "50",
+      dhcpFingerprints: includeClients ? "1000" : "200",
+      clients: includeClients ? "1" : "0",
+      dpi: includeDPI ? "1" : "0",
+      tuning: includeTuning ? "1" : "0",
+      vpn: includeVPN ? "1" : "0",
+    });
     try {
       const [summaryResponse, configResponse, generationResponse, denyTimelineResponse] = await Promise.all([
-        fetchJSON<Summary>("api/v1/summary?events=200&connections=240"),
+        fetchJSON<Summary>(`api/v1/summary?${summaryQuery.toString()}`),
         configRef.current ? Promise.resolve(configRef.current) : fetchJSON<ConfigSnapshot>("api/v1/config"),
-        fetchJSON<GenerationRecord[]>("api/v1/generations?limit=200"),
-        fetchJSON<FirewallDenyTimelineBucket[]>("api/v1/firewall/deny-timeline?range=24h&bucket=5min"),
+        fetchJSON<GenerationRecord[]>(`api/v1/generations?limit=${generationLimit}`),
+        selected === "firewall" ? fetchJSON<FirewallDenyTimelineBucket[]>("api/v1/firewall/deny-timeline?range=24h&bucket=5min") : Promise.resolve(null),
       ]);
       pendingScrollSnapshot.current = scrollSnapshot;
       setSummary(current => reconcileSummary(current, summaryResponse));
-      setFirewallDenyTimeline(Array.isArray(denyTimelineResponse) ? denyTimelineResponse : []);
+      if (Array.isArray(denyTimelineResponse)) {
+        setFirewallDenyTimeline(denyTimelineResponse);
+      }
       setMetricSamples(current => appendMetricSample(current, summaryResponse));
       if (!configRef.current) {
         configRef.current = configResponse as ConfigSnapshot;
@@ -1999,6 +2163,14 @@ function App() {
       source?.close();
     };
   }, []);
+
+  useEffect(() => {
+    if (!detailRefreshMounted.current) {
+      detailRefreshMounted.current = true;
+      return;
+    }
+    scheduleRefresh(0);
+  }, [selected]);
 
   useLayoutEffect(() => {
     const snapshot = pendingScrollSnapshot.current;
@@ -2199,6 +2371,10 @@ function App() {
 
   const selectedNav = navItems.find(item => item.key === selected) ?? navItems[0];
   const activeClientTargetID = clientSectionID(selectedTargetID);
+  useEffect(() => {
+    const base = cfg.title || "routerd";
+    document.title = selectedNav.label ? `${selectedNav.label} - ${base}` : base;
+  }, [selectedNav.label, cfg.title]);
 
   return (
     <FluentProvider theme={webDarkTheme} className={styles.shell}>
@@ -2234,7 +2410,11 @@ function App() {
                   <span className={styles.navButtonInner}>
                     <span className={styles.navIcon}>{item.icon}</span>
                     <span className={`${styles.navText} ${navCollapsed ? styles.navTextCollapsed : ""}`}>
-                      <Text weight={selected === item.key ? "semibold" : "regular"}>{item.label}</Text>
+                      <span className={styles.navTextHeader}>
+                        <Text weight={selected === item.key ? "semibold" : "regular"}>{item.label}</Text>
+                        {item.key === "resources" && dryRunControllers.length > 0 ? <Badge size="small" appearance="tint" color="warning">{dryRunControllers.length}</Badge> : null}
+                        {item.key === "resources" && resources.filter(r => ["danger","warning"].includes(phaseColor(r.status?.phase))).length > 0 ? <Badge size="small" appearance="tint" color="danger">{resources.filter(r => ["danger","warning"].includes(phaseColor(r.status?.phase))).length}</Badge> : null}
+                      </span>
                       <Text size={200} className={styles.navDescription}>{item.description}</Text>
                     </span>
                   </span>
@@ -2278,19 +2458,17 @@ function App() {
               <Button appearance="primary" icon={<ArrowClockwiseRegular />} onClick={refresh}>Refresh</Button>
             </div>
           </div>
-          {navSubItems.length > 0 ? (
+          {navSubItems.length > 0 && selected !== "connections" ? (
             <div className={styles.sectionBar} aria-label={`${selectedNav.label} sections`}>
               {navSubItems.map(sub => (
                 <Button
                   key={sub.key}
                   size="small"
                   appearance={sectionActive(sub) ? "primary" : "secondary"}
-                  className={selected === "connections" ? `${styles.anchorDot} ${sectionActive(sub) ? styles.anchorDotActive : ""}` : styles.sectionButton}
+                  className={styles.sectionButton}
                   onClick={() => showSection(sub)}
-                  title={selected === "connections" ? sub.label : undefined}
-                  aria-label={selected === "connections" ? sub.label : undefined}
                 >
-                  {selected === "connections" ? "" : `${sub.label}${sub.count !== undefined ? ` ${sub.count}` : ""}`}
+                  {`${sub.label}${sub.count !== undefined ? ` ${sub.count}` : ""}`}
                 </Button>
               ))}
             </div>
@@ -2337,7 +2515,14 @@ function App() {
                   header={<Text weight="semibold">Resources</Text>}
                   description={<Text className={styles.muted}>Resource phase, controller mode, and status detail</Text>}
                 />
-                <ResourceTable resources={resources} controllers={controllers} />
+                <div className={styles.grid}>
+                  <Metric label="total" value={String(resources.length)} />
+                  <Metric label="healthy" value={String(resources.filter(r => phaseColor(r.status?.phase) === "success").length)} />
+                  <Metric label="warning" value={String(resources.filter(r => phaseColor(r.status?.phase) === "warning").length)} />
+                  <Metric label="danger" value={String(resources.filter(r => phaseColor(r.status?.phase) === "danger").length)} />
+                  <Metric label="dry-run kinds" value={String(controllers.filter(c => c.mode === "dry-run").length)} />
+                </div>
+                <ResourceTable resources={resources} controllers={controllers} navigateTo={navigateTo} />
               </Card>
             ) : null}
             {selected === "controllers" ? (
@@ -2346,6 +2531,12 @@ function App() {
                   header={<Text weight="semibold">Controllers</Text>}
                   description={<Text className={styles.muted}>Controller mode, reason, and resource ownership surface</Text>}
                 />
+                <div className={styles.grid}>
+                  <Metric label="total" value={String(controllers.length)} />
+                  <Metric label="live" value={String(controllers.filter(c => c.mode === "live").length)} />
+                  <Metric label="dry-run" value={String(controllers.filter(c => c.mode === "dry-run").length)} />
+                  <Metric label="other modes" value={String(controllers.filter(c => c.mode !== "live" && c.mode !== "dry-run").length)} />
+                </div>
                 <ControllerTable controllers={controllers} />
               </Card>
             ) : null}
@@ -2388,28 +2579,39 @@ function App() {
               <Card>
             <CardHeader
               header={<Text weight="semibold">Connections</Text>}
-              description={<Text className={styles.muted}>{connectionFamilyCounts(summary?.connections)} / Showing {filteredConnections.length}</Text>}
+              description={<Text className={styles.muted}>conntrack flows grouped by family and protocol</Text>}
             />
-            <div className={styles.anchorDotBar} aria-label="Connection group anchors">
+            <div className={styles.grid}>
+              <Metric label="IPv4" value={String(connectionFamilyCount(summary?.connections, "ipv4"))} />
+              <Metric label="IPv6" value={String(connectionFamilyCount(summary?.connections, "ipv6"))} />
+              <Metric label="Showing" value={`${filteredConnections.length} / ${(summary?.connections?.entries ?? []).length}`} />
+              <Metric label="Groups" value={String(connectionGroupsList.length)} />
+            </div>
+            <div className={styles.connectionJumpBar}>
               <Button size="small" appearance="secondary" icon={<ArrowUpRegular />} onClick={scrollToTop}>Top</Button>
-              {connectionGroupsList.map(group => {
-                const label = connectionGroupLabel(group.key);
-                const title = `${formatConnectionGroupTitle(label)} ${group.rows.length}`;
-                return (
-                  <Button
-                    key={group.key}
-                    size="small"
-                    appearance="secondary"
-                    className={styles.anchorDot}
-                    title={title}
-                    aria-label={title}
-                    onClick={() => showConnectionsGroup(group.key)}
-                  />
-                );
-              })}
+              {connectionGroupsList.length > 0 ? (
+                <Select
+                  size="small"
+                  value=""
+                  aria-label="Jump to connection group"
+                  onChange={event => {
+                    const key = event.target.value;
+                    if (key) showConnectionsGroup(key);
+                  }}
+                >
+                  <option value="">Jump to group...</option>
+                  {connectionGroupsList.map(group => {
+                    const label = connectionGroupLabel(group.key);
+                    return (
+                      <option key={group.key} value={group.key}>
+                        {formatConnectionGroupTitle(label)} ({group.rows.length})
+                      </option>
+                    );
+                  })}
+                </Select>
+              ) : null}
             </div>
             <ConnectionClassificationSummary entries={filteredConnections} />
-            <ConnectionSummaryCharts groups={connectionGroupsList} />
             <div className={styles.connectionFilters}>
               <SearchControl label="Filter" value={connectionFilters.query} placeholder="address, port, state, label" onChange={value => updateConnectionFilter("query", value)} />
               <div className={styles.filterControl}>
@@ -2510,7 +2712,13 @@ function App() {
             {selected === "events" ? (
               <div className={styles.eventsGrid}>
                 <Card id="events-list" className={styles.connectionAnchor}>
-                  <CardHeader header={<Text weight="semibold">Events</Text>} description={<Text className={styles.muted}>Showing {filteredEvents.length} of {events.length} bus events</Text>} />
+                  <CardHeader header={<Text weight="semibold">Events</Text>} description={<Text className={styles.muted}>Bus events from routerd controllers and daemons</Text>} />
+                  <div className={styles.grid}>
+                    <Metric label="total" value={String(events.length)} />
+                    <Metric label="filter matched" value={String(filteredEvents.length)} />
+                    <Metric label="severities" value={String(eventFacets.severities.length)} />
+                    <Metric label="kinds" value={String(eventFacets.kinds.length)} />
+                  </div>
                   <div className={styles.eventFilters}>
                     <SearchControl label="Search" value={eventFilters.query} placeholder="topic, reason, message, resource" onChange={value => setEventFilters(current => ({ ...current, query: value }))} />
                     <div className={styles.filterControl}>
@@ -2555,6 +2763,14 @@ function App() {
                     header={<Text weight="semibold">Deny activity</Text>}
                     description={<Text className={styles.muted}>Drop/reject rate over the last 24 hours. Filters below narrow the ranking and timeline.</Text>}
                   />
+                  <div className={styles.grid}>
+                    <Metric label="total denies (24h)" value={String(denyTimelineTotal(firewallDenyTimeline))} />
+                    <Metric label="peak / bucket" value={String(denyTimelinePeak(firewallDenyTimeline))} />
+                    <Metric label="unique sources" value={String(new Set(firewallLogs.map(l => l.srcAddress).filter(Boolean)).size)} />
+                    <Metric label="DPI identified" value={`${firewallLogs.filter(l => l.dpiApp).length} / ${firewallLogs.length}`} />
+                    <Metric label="orphan returns" value={String(firewallLogs.filter(l => l.correlation === "orphan_return").length)} />
+                    <Metric label="filter matched" value={`${filteredFirewallLogs.length} / ${firewallLogs.length}`} />
+                  </div>
                   <DenyRateChart timeline={firewallDenyTimeline} />
                   <div className={styles.firewallFilters}>
                     <SearchControl label="Search" value={firewallFilters.query} placeholder="rule, interface, address, protocol, DPI, orphan" onChange={value => setFirewallFilters(current => ({ ...current, query: value }))} />
@@ -2582,7 +2798,7 @@ function App() {
                 </Card>
                 <Card>
                   <CardHeader header={<Text weight="semibold">Source IP top-N</Text>} description={<Text className={styles.muted}>Top denied sources in the filtered view</Text>} />
-                  <FirewallSourceTopN logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} />
+                  <FirewallSourceTopN logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} onSourceClick={ip => setFirewallFilters(current => ({ ...current, source: ip }))} />
                 </Card>
                 <Card id="firewall-tuning" className={styles.connectionAnchor}>
                   <CardHeader
@@ -2625,7 +2841,8 @@ function App() {
               />
             ) : null}
             <Text size={200} className={styles.consoleLegal}>
-              Powered by routerd.
+              Powered by{" "}
+              <a href="https://github.com/imksoo/routerd" target="_blank" rel="noopener noreferrer" className={styles.consoleLegalLink}>routerd</a>.
             </Text>
           </main>
         </section>
@@ -2647,7 +2864,15 @@ function ConfigView({
 }) {
   const styles = useStyles();
   const [mode, setMode] = useState<"tree" | "raw">("tree");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => {
+    try {
+      const stored = window.localStorage?.getItem("routerd:config:initialQuery") ?? "";
+      if (stored) window.localStorage.removeItem("routerd:config:initialQuery");
+      return stored;
+    } catch {
+      return "";
+    }
+  });
   const [copied, setCopied] = useState(false);
   const parsed = useMemo(() => parseConfig(config?.text), [config?.text]);
   const kindTargets = useMemo(() => configKindTargets(parsed.value), [parsed.value]);
@@ -2742,8 +2967,14 @@ function GenerationsView({
       <Card id="generations-table" className={styles.connectionAnchor}>
         <CardHeader
           header={<Text weight="semibold">Generations</Text>}
-          description={<Text className={styles.muted}>Applied router YAML snapshots. Showing {generations.length} of {totalGenerations}. Older rows without YAML cannot be diffed.</Text>}
+          description={<Text className={styles.muted}>Applied router YAML snapshots. Older rows without YAML cannot be diffed.</Text>}
         />
+        <div className={styles.grid}>
+          <Metric label="total" value={String(totalGenerations)} />
+          <Metric label="showing" value={String(generations.length)} />
+          <Metric label="diffable" value={String(generations.filter(g => g.hasYaml).length)} />
+          <Metric label="latest phase" value={String(generations[0]?.phase || "-")} />
+        </div>
         <div className={styles.singleSearchRow}>
           <SearchControl label="Search generations" value={query} placeholder="generation, phase, hash, time" onChange={setQuery} />
         </div>
@@ -2770,7 +3001,7 @@ function GenerationsView({
             <div className={styles.diffPanel} data-routerd-scroll-key={`generation-${config.generation}-yaml`}><pre className={styles.pre}>{config.text}</pre></div>
           </Card>
         ) : null}
-        <div className={styles.tableWrap} data-routerd-scroll-key="generations-table">
+        <div className={`${styles.tableWrap} ${styles.resourceDesktopTable}`} data-routerd-scroll-key="generations-table">
           <Table size="small" className={styles.generationTable}>
             <colgroup>
               <col style={{ width: "92px" }} />
@@ -2815,6 +3046,29 @@ function GenerationsView({
               })}
             </TableBody>
           </Table>
+        </div>
+        <div className={styles.resourceMobileList}>
+          {generations.map((row, index) => {
+            const previous = generations[index + 1];
+            const canDiffPrevious = !!previous?.hasYaml && !!row.hasYaml;
+            return (
+              <div className={styles.resourceMobileCard} key={`mg-${row.generation}`}>
+                <div className={styles.resourceMobileHeader}>
+                  <Text weight="semibold"><code className={styles.code}>#{row.generation}</code></Text>
+                  <Badge appearance="tint" color={phaseColor(row.phase)}>{row.phase || "Unknown"}</Badge>
+                </div>
+                <div className={styles.resourceMobileMeta}>
+                  <Text size={200} className={styles.muted}>started <RelativeTime value={row.startedAt} /> · finished <RelativeTime value={row.finishedAt} /></Text>
+                  <code className={styles.wrapCode}>{shortHash(row.configHash)}</code>
+                  <div className={styles.generationRowActions}>
+                    {row.hasYaml ? <Badge appearance="tint" color="success">stored</Badge> : <Badge appearance="outline">unavailable</Badge>}
+                    <Button size="small" appearance="subtle" disabled={!row.hasYaml} onClick={() => loadConfig(row.generation)}>View</Button>
+                    <Button size="small" appearance="subtle" disabled={!canDiffPrevious} onClick={() => previous && loadAdjacentDiff(previous.generation, row.generation)}>Diff prev</Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </Card>
     </>
@@ -3097,13 +3351,13 @@ function ConnectionClassificationSummary({ entries }: { entries: ConnectionEntry
       </div>
       <div className={styles.connectionSummaryCard}>
         <Text weight="semibold">Identified</Text>
-        <div className={styles.badges}>
-          <Badge appearance="tint" color="success">DPI {stats.dpi}</Badge>
-          <Badge appearance="outline" color="subtle">Port guess {stats.guessed}</Badge>
-          <Badge appearance="outline" color="subtle">Identifying {stats.identifying}</Badge>
-          <Badge appearance="outline" color="subtle">Unclassified {stats.unclassified}</Badge>
+        <div className={styles.grid}>
+          <Metric label="DPI" value={String(stats.dpi)} />
+          <Metric label="Port guess" value={String(stats.guessed)} />
+          <Metric label="Identifying" value={String(stats.identifying)} />
+          <Metric label="Unclassified" value={String(stats.unclassified)} />
         </div>
-        <Text size={200} className={styles.muted}>{stats.classified} of {stats.total} active rows carry a protocol label; guesses are lower confidence</Text>
+        <Text size={200} className={styles.muted}>{stats.classified} of {stats.total} active rows carry a protocol label; port guesses are lower confidence</Text>
       </div>
     </div>
   );
@@ -3235,19 +3489,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
 }
 
-function ResourceTable({ resources, controllers }: { resources: ResourceStatus[]; controllers: ControllerStatus[] }) {
+function ResourceTable({ resources, controllers, navigateTo }: { resources: ResourceStatus[]; controllers: ControllerStatus[]; navigateTo?: (view: ViewKey, targetID?: string) => void }) {
   const styles = useStyles();
   const dryRunByKind = useMemo(() => dryRunControllerByKind(controllers), [controllers]);
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState("all");
+  const [kind, setKind] = useState("all");
   const phases = useMemo(() => {
     const values = new Set<string>();
     for (const resource of resources) values.add(String(resource.status?.phase ?? "Unknown"));
     return Array.from(values).sort(facetSort);
   }, [resources]);
+  const kinds = useMemo(() => {
+    const values = new Set<string>();
+    for (const resource of resources) values.add(String(resource.kind ?? "Unknown"));
+    return Array.from(values).sort(facetSort);
+  }, [resources]);
   const filtered = resources.filter(resource => {
     const resourcePhase = String(resource.status?.phase ?? "Unknown");
     if (phase !== "all" && resourcePhase !== phase) return false;
+    const resourceKind = String(resource.kind ?? "Unknown");
+    if (kind !== "all" && resourceKind !== kind) return false;
     if (!query.trim()) return true;
     return resourceSearchText(resource).includes(query.trim().toLowerCase());
   });
@@ -3255,6 +3517,13 @@ function ResourceTable({ resources, controllers }: { resources: ResourceStatus[]
     <>
       <div className={styles.resourceFilters}>
         <SearchControl label="Search resources" value={query} placeholder="kind, name, phase, status detail" onChange={setQuery} />
+        <div className={styles.filterControl}>
+          <Text size={200} className={styles.muted}>Kind</Text>
+          <Select size="small" value={kind} onChange={event => setKind(event.target.value)}>
+            <option value="all">All kinds</option>
+            {kinds.map(value => <option key={value} value={value}>{value}</option>)}
+          </Select>
+        </div>
         <div className={styles.filterControl}>
           <Text size={200} className={styles.muted}>Phase</Text>
           <Select size="small" value={phase} onChange={event => setPhase(event.target.value)}>
@@ -3264,7 +3533,7 @@ function ResourceTable({ resources, controllers }: { resources: ResourceStatus[]
         </div>
       </div>
       <Text size={200} className={styles.muted}>Showing {Math.min(filtered.length, 120)} of {filtered.length} matched resources / {resources.length} total</Text>
-      <div className={styles.tableWrap} data-routerd-scroll-key="resources-table">
+      <div className={`${styles.tableWrap} ${styles.resourceDesktopTable}`} data-routerd-scroll-key="resources-table">
         <Table size="small" className={styles.resourceTable}>
           <colgroup>
             <col style={{ width: "170px" }} />
@@ -3292,12 +3561,37 @@ function ResourceTable({ resources, controllers }: { resources: ResourceStatus[]
                   <TableCell><code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code></TableCell>
                   <TableCell><Badge appearance="tint" color={phaseColor(status.phase)}><Highlighted text={String(status.phase ?? "Unknown")} query={query} /></Badge></TableCell>
                   <TableCell>{dryRunController ? <Badge appearance="tint" color="warning">dry-run</Badge> : <Text size={200} className={styles.muted}>live</Text>}</TableCell>
-                  <TableCell><code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code></TableCell>
+                  <TableCell>
+                    <div className={styles.connectionFlow}>
+                      <code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code>
+                      {navigateTo ? <Button size="small" appearance="outline" icon={<DocumentTextRegular />} onClick={() => { try { window.localStorage?.setItem("routerd:config:initialQuery", String(resource.name ?? "")); } catch {} navigateTo("config"); }}>YAML</Button> : null}
+                    </div>
+                  </TableCell>
                 </TableRow>
               );
             })}
           </TableBody>
         </Table>
+      </div>
+      <div className={styles.resourceMobileList}>
+        {filtered.slice(0, 120).map(resource => {
+          const status = resource.status ?? {};
+          const dryRunController = dryRunByKind.get(String(resource.kind ?? ""));
+          return (
+            <div className={styles.resourceMobileCard} key={`m-${resource.apiVersion}/${resource.kind}/${resource.name}`}>
+              <div className={styles.resourceMobileHeader}>
+                <Text weight="semibold"><Highlighted text={resource.kind ?? ""} query={query} /></Text>
+                <Badge appearance="tint" color={phaseColor(status.phase)}>{String(status.phase ?? "Unknown")}</Badge>
+              </div>
+              <code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code>
+              <div className={styles.resourceMobileMeta}>
+                {dryRunController ? <Badge appearance="tint" color="warning">dry-run</Badge> : <Text size={200} className={styles.muted}>live</Text>}
+                <code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code>
+                {navigateTo ? <Button size="small" appearance="subtle" onClick={() => navigateTo("config")}>View YAML</Button> : null}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </>
   );
@@ -3349,9 +3643,7 @@ function ControllerTable({ controllers }: { controllers: ControllerStatus[] }) {
               <TableCell><code className={styles.code}>{controller.name}</code></TableCell>
               <TableCell><Badge appearance="tint" color={controller.mode === "dry-run" ? "warning" : "success"}>{controller.mode ?? "unknown"}</Badge></TableCell>
               <TableCell>
-                <div className={styles.badges}>
-                  {(controller.resourceKinds ?? []).map(kind => <Badge key={kind} appearance="outline">{kind}</Badge>)}
-                </div>
+                <Text size={200} className={styles.muted}>{(controller.resourceKinds ?? []).join(", ") || "-"}</Text>
               </TableCell>
               <TableCell>
                 <div className={styles.connectionFlow}>
@@ -3513,51 +3805,64 @@ function ConnectionGroup({
               <Button size="small" appearance="subtle" disabled={currentPage >= totalPages - 1} onClick={() => setPage(currentPage + 1)}>Next</Button>
             </div>
           </div>
-          <div className={styles.tableWrap} data-routerd-scroll-key={`connections-${group.key}`}>
-            <Table size="small" className={styles.connectionTable}>
-              <colgroup>
-                <col style={{ width: "132px" }} />
-                <col style={{ width: "30%" }} />
-                <col style={{ width: "24%" }} />
-                <col style={{ width: "22%" }} />
-                <col style={{ width: "80px" }} />
-              </colgroup>
-              <TableHeader>
-                <TableRow>
-                  <TableHeaderCell>State</TableHeaderCell>
-                  <TableHeaderCell>Flow</TableHeaderCell>
-                  <TableHeaderCell>DPI</TableHeaderCell>
-                  <TableHeaderCell>Destination label</TableHeaderCell>
-                  <TableHeaderCell>Timeout</TableHeaderCell>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visibleRows.map(entry => (
-                  <TableRow key={flowKey(entry)} className={styles.stableTallTableRow}>
-                    <TableCell>
-                      <div className={styles.badges}>
-                        <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
-                        {entry.assured ? <Badge appearance="outline" color="success">assured</Badge> : null}
-                        <Badge appearance="outline" color={connectionClassColor(entry)}>{connectionClass(entry)}</Badge>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className={styles.connectionFlow}>
-                        <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
-                        <ConnectionRemoteIdentity entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} />
-                      </div>
-                    </TableCell>
-                    <TableCell><ConnectionDPI entry={entry} dnsLabels={dnsLabels} /></TableCell>
-                    <TableCell><RemoteIdentityLabel entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} /></TableCell>
-                    <TableCell>{entry.timeout ?? 0}s</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <div className={styles.connectionCardList} data-routerd-scroll-key={`connections-${group.key}`}>
+            {visibleRows.map(entry => (
+              <ConnectionCard key={flowKey(entry)} entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} />
+            ))}
           </div>
         </>
       ) : null}
     </Card>
+  );
+}
+
+function ConnectionCard({ entry, dnsLabels, clientIdentities }: { entry: ConnectionEntry; dnsLabels: Record<string, string>; clientIdentities: Map<string, ClientIdentity> }) {
+  const styles = useStyles();
+  const [expanded, setExpanded] = useState(false);
+  const classification = connectionClassification(entry, dnsLabels);
+  const proto = (entry.protocol || "?").toUpperCase();
+  const family = entry.family || "";
+  const orig = entry.original ?? {};
+  const sourceLabel = orig.sourceHostname || clientIdentities.get(normalizeAddressKey(orig.source))?.label || (orig.source ? `${orig.source}${orig.sourcePort ? ":" + orig.sourcePort : ""}` : "-");
+  const destLabel = orig.destinationHostname || (orig.destination ? `${orig.destination}${orig.destinationPort ? ":" + orig.destinationPort : ""}` : "-");
+  const destService = orig.destinationService || "";
+  return (
+    <div className={`${styles.connectionCard} ${expanded ? styles.connectionCardExpanded : ""}`}>
+      <button type="button" className={styles.connectionCardToggle} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+        <div className={styles.connectionCardLine}>
+          <Badge appearance="outline" color={family === "ipv6" ? "brand" : "informative"}>{family.toUpperCase() || "L3"}/{proto}</Badge>
+          <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
+          {classification.app ? <Badge appearance={classification.source === "port-fallback" ? "outline" : "tint"} color={connectionAppColor(classification.app)} title={classification.source === "port-fallback" ? "Port-based guess" : classification.cacheHit ? "DPI cache hit" : "DPI"}>{formatConnectionApp(classification.app)}</Badge> : null}
+          <Text className={styles.connectionCardEndpoint}>{sourceLabel}</Text>
+          <Text>→</Text>
+          <Text className={styles.connectionCardEndpoint}>{destLabel}</Text>
+          {destService ? <Text size={200} className={styles.muted}>{destService}</Text> : null}
+          <Text size={200} className={styles.muted}>{entry.timeout ?? 0}s</Text>
+        </div>
+      </button>
+      {expanded ? (
+        <div className={styles.connectionCardDetail}>
+          <div className={styles.detailList}>
+            <Text className={styles.detailKey}>state</Text>
+            <Text>{entry.state || "stateless"}{entry.assured ? " (assured)" : ""} · class {connectionClass(entry)}</Text>
+            <Text className={styles.detailKey}>source</Text>
+            <div className={styles.connectionFlow}>
+              <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
+              <ConnectionRemoteIdentity entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} />
+            </div>
+            <Text className={styles.detailKey}>destination</Text>
+            <div className={styles.connectionFlow}>
+              <RemoteIdentityLabel entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} />
+              {orig.destinationService ? <Text size={200} className={styles.muted}>service {orig.destinationService}</Text> : null}
+            </div>
+            <Text className={styles.detailKey}>DPI</Text>
+            <ConnectionDPI entry={entry} dnsLabels={dnsLabels} />
+            <Text className={styles.detailKey}>flow</Text>
+            <Text size={200} className={styles.muted}>protocol {family.toUpperCase() || "?"}/{proto} · timeout {entry.timeout ?? 0}s{entry.mark ? ` · mark ${entry.mark}` : ""}</Text>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -3573,10 +3878,13 @@ function ConnectionDPI({ entry, dnsLabels }: { entry: ConnectionEntry; dnsLabels
   return (
     <div className={styles.connectionFlow}>
       <div className={styles.badges}>
-        <Badge appearance={classification.source === "port-fallback" ? "outline" : "tint"} color={connectionAppColor(classification.app)}>{formatConnectionApp(classification.app)}</Badge>
-        {classification.source === "dpi" ? <Badge appearance="outline" color="success">{classification.cacheHit ? "DPI cache" : "DPI"}</Badge> : null}
-        {classification.source === "port-fallback" ? <Badge appearance="outline" color="subtle">Port guess</Badge> : null}
-        {classification.confidence ? <Badge appearance="outline">{classification.confidence}%</Badge> : null}
+        <Badge
+          appearance={classification.source === "port-fallback" ? "outline" : "tint"}
+          color={connectionAppColor(classification.app)}
+          title={classification.source === "dpi" ? (classification.cacheHit ? "DPI cache hit" : "DPI") : classification.source === "port-fallback" ? "Port-based guess" : undefined}
+        >
+          {formatConnectionApp(classification.app)}
+        </Badge>
       </div>
       {classification.detail ? <code className={`${styles.wrapCode} ${classification.source === "port-fallback" ? styles.guessText : ""}`}>{classification.detail}</code> : null}
       {classification.category && classification.category !== "port-fallback" ? <Text size={200} className={styles.muted}>{classification.category}</Text> : null}
@@ -3633,7 +3941,7 @@ function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
           <div className={styles.interfaceLine}>
             {item.hardwareAddress ? <Text size={200} className={styles.muted}>{item.hardwareAddress}</Text> : null}
             {item.owner ? <Text size={200} className={styles.muted}>owner {item.owner}</Text> : null}
-            {item.managed ? <Badge appearance="outline" color="success">managed</Badge> : <Badge appearance="outline">adopted</Badge>}
+            <Text size={200} className={styles.muted}>{item.managed ? "managed by routerd" : "adopted (external)"}</Text>
           </div>
         </div>
       ))}
@@ -3661,7 +3969,7 @@ function OverviewActivity({
         <CardHeader
           header={<Text weight="semibold">Active alerts</Text>}
           description={<Text className={styles.muted}>Resources that are not currently in a healthy applied phase</Text>}
-          action={<Button size="small" appearance="secondary" onClick={() => navigateTo("clients")}>Clients</Button>}
+          action={<Button size="small" appearance="secondary" onClick={() => navigateTo("resources")}>Resources</Button>}
         />
         {alerts.length === 0 ? (
           <Text className={styles.muted}>No active resource alerts</Text>
@@ -3890,10 +4198,11 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                     <span>{section.label}</span>
                     <span className={styles.muted}>({section.rows.length} devices, {sectionOnline} online)</span>
                   </span>
-                  <span className={`${styles.badges} ${styles.clientDesktopOnly}`}>
-                    <Badge appearance="tint" color={clientOSBadgeColor(section.label)}>{section.label}</Badge>
-                    <Badge appearance="outline">{section.rows.length} devices</Badge>
-                    <Badge appearance="outline">{sectionOnline} online</Badge>
+                  <span className={`${styles.clientSectionTitle} ${styles.clientDesktopOnly}`}>
+                    {isSectionCollapsed ? <ChevronRightRegular /> : <ChevronDownRegular />}
+                    <ClientSectionIcon family={section.label} />
+                    <Text weight="semibold">{section.label}</Text>
+                    <Text size={200} className={styles.muted}>{section.rows.length} devices · {sectionOnline} online</Text>
                   </span>
                 </button>
                 <Text size={200} className={styles.muted}>{section.addressCount} addresses</Text>
@@ -3970,6 +4279,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                               {row.lastProtocol ? <Text size={200} className={styles.muted}>last protocol {formatConnectionApp(row.lastProtocol)}{row.lastProtocolDetail ? ` ${row.lastProtocolDetail}` : ""}</Text> : null}
                               {row.protocolMix.size > 0 ? <Text size={200} className={styles.muted}>protocol mix {Array.from(row.protocolMix).map(formatConnectionApp).join(", ")}</Text> : null}
                               <Text size={200} className={styles.muted}>out {formatBytes(row.bytesOut)} / in {formatBytes(row.bytesIn)}</Text>
+                              {row.stickyUntil ? <Text size={200} className={styles.muted}>sticky until <RelativeTime value={row.stickyUntil} /></Text> : null}
                               {row.sources.size > 0 ? <Text size={200} className={styles.muted}>sources {Array.from(row.sources).join(", ")}</Text> : null}
                               {row.fingerprintSignals.size > 0 ? <Text size={200} className={styles.muted}>signals {Array.from(row.fingerprintSignals).slice(0, 5).join(", ")}</Text> : null}
                               {row.peers.size > 0 ? <Text size={200} className={styles.muted}>peers {Array.from(row.peers).slice(0, 5).join(", ")}</Text> : null}
@@ -4020,14 +4330,35 @@ function ClientOSBadge({ row }: { row: ClientRow }) {
 
 function ClientSectionIcon({ family }: { family: string }) {
   const normalized = family.trim().toLowerCase();
-  if (normalized === "nintendo" || normalized === "playstation" || normalized === "xbox" || normalized === "steamos") return <GamesRegular />;
-  if (normalized === "printer") return <PrintRegular />;
-  if (normalized === "nas") return <DatabaseRegular />;
-  if (normalized === "voip") return <PhoneRegular />;
-  if (normalized === "iot" || normalized === "embedded") return <HomeRegular />;
-  if (normalized === "android" || normalized === "apple") return <PhoneRegular />;
-  if (normalized === "windows" || normalized === "linux") return <DesktopRegular />;
-  return <ServerRegular />;
+  let icon: React.ReactNode = <ServerRegular />;
+  if (normalized === "nintendo" || normalized === "playstation" || normalized === "xbox" || normalized === "steamos") icon = <GamesRegular />;
+  else if (normalized === "printer") icon = <PrintRegular />;
+  else if (normalized === "nas") icon = <DatabaseRegular />;
+  else if (normalized === "voip") icon = <PhoneRegular />;
+  else if (normalized === "iot" || normalized === "embedded") icon = <HomeRegular />;
+  else if (normalized === "android" || normalized === "apple") icon = <PhoneRegular />;
+  else if (normalized === "windows" || normalized === "linux") icon = <DesktopRegular />;
+  return <span style={{ color: clientOSIconColor(normalized), display: "inline-flex" }} aria-hidden="true">{icon}</span>;
+}
+
+function clientOSIconColor(family: string): string {
+  switch (family) {
+    case "apple": return tokens.colorBrandForeground1;
+    case "windows": return tokens.colorPaletteTealForeground2;
+    case "linux": return tokens.colorPaletteYellowForeground1;
+    case "android": return tokens.colorPaletteLightGreenForeground1;
+    case "nintendo": return tokens.colorPaletteRedForeground1;
+    case "playstation": return tokens.colorPaletteBlueForeground2;
+    case "xbox": return tokens.colorPaletteGreenForeground1;
+    case "steamos":
+    case "steam-os": return tokens.colorPaletteDarkOrangeForeground1;
+    case "iot":
+    case "embedded": return tokens.colorPaletteLightGreenForeground1;
+    case "printer":
+    case "nas":
+    case "voip": return tokens.colorPalettePurpleForeground2;
+    default: return tokens.colorNeutralForeground3;
+  }
 }
 
 function ClientDeviceIcon({ row }: { row: ClientRow }) {
@@ -4147,6 +4478,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
           <col style={{ width: "150px" }} />
           <col style={{ width: "170px" }} />
           <col style={{ width: "112px" }} />
+          <col style={{ width: "132px" }} />
         </colgroup>
         <TableHeader>
           <TableRow>
@@ -4156,6 +4488,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
             <TableHeaderCell>MAC</TableHeaderCell>
             <TableHeaderCell>Vendor</TableHeaderCell>
             <TableHeaderCell>Expires</TableHeaderCell>
+            <TableHeaderCell>Sticky</TableHeaderCell>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -4167,6 +4500,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
               <TableCell><code className={styles.wrapCode}>{lease.mac || "-"}</code></TableCell>
               <TableCell>{lease.vendor || "-"}</TableCell>
               <TableCell><RelativeTime value={lease.expiresAt} /></TableCell>
+              <TableCell>{lease.stickyUntil ? <Text size={200} className={styles.muted}>until <RelativeTime value={lease.stickyUntil} /></Text> : "-"}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -4275,10 +4609,12 @@ function FirewallSourceTopN({
   logs,
   dnsLabels,
   leases,
+  onSourceClick,
 }: {
   logs: FirewallLog[];
   dnsLabels: Record<string, string>;
   leases: Record<string, DHCPLease>;
+  onSourceClick?: (ip: string) => void;
 }) {
   const styles = useStyles();
   const rows = useFrozenRowOrder(sourceTopRows(logs), row => row.source);
@@ -4294,6 +4630,7 @@ function FirewallSourceTopN({
             <div className={styles.firewallBar} style={{ width: `${Math.max(3, (row.count / max) * 100)}%` }} />
           </div>
           <Text>{row.count}</Text>
+          {onSourceClick ? <Button size="small" appearance="subtle" icon={<FilterRegular />} aria-label={`Filter to source ${row.source}`} onClick={() => onSourceClick(row.source)}>Filter</Button> : null}
         </div>
       ))}
     </div>
@@ -4440,9 +4777,10 @@ function reconcileSummary(current: Summary | null, next: Summary): Summary {
     firewallLogs: reconcileRecords(current.firewallLogs, next.firewallLogs, row => String(row.id ?? `${row.ts ?? ""}/${row.srcAddress ?? ""}/${row.dstAddress ?? ""}/${row.protocol ?? ""}`)),
     conntrackTuning: next.conntrackTuning ?? current.conntrackTuning,
     dhcpLeases: reconcileRecords(current.dhcpLeases, next.dhcpLeases, row => `${row.family ?? ""}/${row.ip ?? ""}/${row.mac ?? ""}`),
-    neighbors: reconcileRecords(current.neighbors, next.neighbors, row => `${row.ip ?? ""}/${row.mac ?? ""}/${row.ifname ?? ""}`),
-    clients: reconcileRecords(current.clients, next.clients, row => row.id ?? row.mac ?? row.hostname ?? (row.addresses ?? []).join(",")),
-    vpn: reconcileVPNStatus(current.vpn, next.vpn),
+    dhcpFingerprints: next.dhcpFingerprints === undefined ? current.dhcpFingerprints : reconcileRecords(current.dhcpFingerprints, next.dhcpFingerprints, row => `${row.mac ?? ""}/${row.observedAt ?? ""}`),
+    neighbors: next.neighbors === undefined ? current.neighbors : reconcileRecords(current.neighbors, next.neighbors, row => `${row.ip ?? ""}/${row.mac ?? ""}/${row.ifname ?? ""}`),
+    clients: next.clients === undefined ? current.clients : reconcileRecords(current.clients, next.clients, row => row.id ?? row.mac ?? row.hostname ?? (row.addresses ?? []).join(",")),
+    vpn: next.vpn === undefined ? current.vpn : reconcileVPNStatus(current.vpn, next.vpn),
   };
 }
 
@@ -4558,6 +4896,19 @@ function conntrackLabel(table?: ConnectionTable) {
   if (!table) return "-";
   if (table.max) return `${table.count ?? 0}/${table.max}`;
   return String(table.count ?? "-");
+}
+
+function connectionFamilyCount(table: ConnectionTable | undefined, family: string): number {
+  if (!table) return 0;
+  const want = family.toLowerCase();
+  if (table.byFamily && Object.keys(table.byFamily).length > 0) {
+    let total = 0;
+    for (const [key, value] of Object.entries(table.byFamily)) {
+      if (key.toLowerCase() === want) total += Number(value || 0);
+    }
+    return total;
+  }
+  return (table.entries ?? []).filter(entry => String(entry.family ?? "").toLowerCase() === want).length;
 }
 
 function connectionFamilyCounts(table?: ConnectionTable) {
@@ -4707,6 +5058,14 @@ function firewallSearchText(log: FirewallLog, dnsLabels: Record<string, string>)
 
 function denyTimelineSamples(timeline: FirewallDenyTimelineBucket[]) {
   return timeline.map(bucket => Math.max(0, Math.trunc(Number(bucket.count ?? 0)) || 0));
+}
+
+function denyTimelineTotal(timeline: FirewallDenyTimelineBucket[]) {
+  return denyTimelineSamples(timeline).reduce((sum, value) => sum + value, 0);
+}
+
+function denyTimelinePeak(timeline: FirewallDenyTimelineBucket[]) {
+  return Math.max(0, ...denyTimelineSamples(timeline));
 }
 
 function sourceTopRows(logs: FirewallLog[]) {
@@ -5889,6 +6248,8 @@ function clientEntryToRow(entry: ClientEntry): ClientRow {
     inferredDeviceClass: entry.inferredDeviceClass ?? "",
     fingerprintConfidence: entry.fingerprintConfidence,
     fingerprintSignals: new Set(entry.fingerprintSignals ?? []),
+    stickyUntil: entry.stickyUntil ?? "",
+    stickyState: entry.stickyState ?? "",
   };
 }
 
@@ -5974,6 +6335,8 @@ function clientSearchText(client: ClientEntry) {
     client.inferredOSFamily,
     client.inferredDeviceClass,
     client.fingerprintConfidence,
+    client.stickyUntil,
+    client.stickyState,
     ...(client.addresses ?? []),
     ...(client.sources ?? []),
     ...(client.peers ?? []),

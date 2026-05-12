@@ -32,6 +32,10 @@ import (
 	"routerd/pkg/observe"
 	"routerd/pkg/platform"
 	routerstate "routerd/pkg/state"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type Options struct {
@@ -47,6 +51,7 @@ type Options struct {
 	TrafficFlowLogPath     string
 	FirewallLogPath        string
 	DHCPFingerprintLogPath string
+	DHCPStickyLogPath      string
 	DHCPLeasePaths         []string
 	ConfigPath             string
 	ControllerModes        []controlapi.ControllerStatus
@@ -71,13 +76,27 @@ type Snapshot struct {
 	DNSQueries       []logstore.DNSQuery           `json:"dnsQueries,omitempty"`
 	TrafficFlows     []logstore.TrafficFlow        `json:"trafficFlows,omitempty"`
 	FirewallLogs     []logstore.FirewallLogEntry   `json:"firewallLogs,omitempty"`
-	ConntrackTuning  conntracktuning.Summary       `json:"conntrackTuning,omitempty"`
+	ConntrackTuning  *conntracktuning.Summary      `json:"conntrackTuning,omitempty"`
 	DHCPFingerprints []logstore.DHCPFingerprint    `json:"dhcpFingerprints,omitempty"`
 	DHCPLeases       []DHCPLease                   `json:"dhcpLeases,omitempty"`
 	Neighbors        []NeighborEntry               `json:"neighbors,omitempty"`
 	Clients          []ClientEntry                 `json:"clients,omitempty"`
 	VPN              VPNStatus                     `json:"vpn,omitempty"`
 	Errors           []string                      `json:"errors,omitempty"`
+}
+
+type SnapshotOptions struct {
+	EventLimit             int
+	ConnectionsLimit       int
+	FirewallLimit          int
+	DNSQueryLimit          int
+	TrafficFlowLimit       int
+	FingerprintQueryLimit  int
+	DHCPFingerprintLimit   int
+	IncludeDPIEnrichment   bool
+	IncludeClients         bool
+	IncludeConntrackTuning bool
+	IncludeVPN             bool
 }
 
 type ConfigSnapshot struct {
@@ -92,14 +111,16 @@ type GenerationDiff struct {
 }
 
 type DHCPLease struct {
-	ExpiresAt time.Time `json:"expiresAt,omitempty"`
-	MAC       string    `json:"mac"`
-	IP        string    `json:"ip"`
-	Hostname  string    `json:"hostname,omitempty"`
-	ClientID  string    `json:"clientId,omitempty"`
-	Vendor    string    `json:"vendor,omitempty"`
-	Family    string    `json:"family,omitempty"`
-	Source    string    `json:"source,omitempty"`
+	ExpiresAt   time.Time `json:"expiresAt,omitempty"`
+	MAC         string    `json:"mac"`
+	IP          string    `json:"ip"`
+	Hostname    string    `json:"hostname,omitempty"`
+	ClientID    string    `json:"clientId,omitempty"`
+	Vendor      string    `json:"vendor,omitempty"`
+	Family      string    `json:"family,omitempty"`
+	Source      string    `json:"source,omitempty"`
+	StickyUntil time.Time `json:"stickyUntil,omitempty"`
+	StickyState string    `json:"stickyState,omitempty"`
 }
 
 type NeighborEntry struct {
@@ -130,6 +151,8 @@ type ClientEntry struct {
 	InferredDeviceClass   string   `json:"inferredDeviceClass,omitempty"`
 	FingerprintConfidence int      `json:"fingerprintConfidence,omitempty"`
 	FingerprintSignals    []string `json:"fingerprintSignals,omitempty"`
+	StickyUntil           string   `json:"stickyUntil,omitempty"`
+	StickyState           string   `json:"stickyState,omitempty"`
 }
 
 type InterfaceSummary struct {
@@ -226,6 +249,10 @@ func New(opts Options) Handler {
 		defaults, _ := platform.Current()
 		opts.DHCPFingerprintLogPath = strings.TrimRight(defaults.StateDir, "/") + "/dhcp-fingerprints.db"
 	}
+	if opts.DHCPStickyLogPath == "" {
+		defaults, _ := platform.Current()
+		opts.DHCPStickyLogPath = strings.TrimRight(defaults.StateDir, "/") + "/dhcp-sticky.db"
+	}
 	if opts.ReverseLookup == nil {
 		opts.ReverseLookup = net.DefaultResolver.LookupAddr
 	}
@@ -285,77 +312,132 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
+func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
+	if opts.EventLimit <= 0 {
+		opts.EventLimit = 50
+	}
+	if opts.FirewallLimit == 0 {
+		opts.FirewallLimit = 50
+	}
+	if opts.DNSQueryLimit == 0 {
+		opts.DNSQueryLimit = 50
+	}
+	if opts.TrafficFlowLimit == 0 {
+		opts.TrafficFlowLimit = -1
+	}
+	if opts.FingerprintQueryLimit <= 0 {
+		opts.FingerprintQueryLimit = opts.DNSQueryLimit
+	}
+	if opts.DHCPFingerprintLimit <= 0 {
+		opts.DHCPFingerprintLimit = 200
+	}
 	var errors []string
 	resources, err := h.resourceStatuses()
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
-	events, err := h.eventList(limit)
+	events, err := h.eventList(opts.EventLimit)
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
 	var connections *observe.ConnectionTable
-	if h.opts.Connections != nil && connectionsLimit >= 0 {
-		connections, err = h.opts.Connections(connectionsLimit)
+	if h.opts.Connections != nil && opts.ConnectionsLimit >= 0 {
+		connections, err = h.opts.Connections(opts.ConnectionsLimit)
 		if err != nil {
 			errors = append(errors, err.Error())
-		} else if err := h.enrichConnectionsWithDPI(connections, time.Now().UTC(), time.Hour); err != nil {
-			errors = append(errors, err.Error())
-		} else if err := h.enrichConnectionsWithRemoteIdentity(context.Background(), connections); err != nil {
+		} else if opts.IncludeDPIEnrichment {
+			if err := h.enrichConnectionsWithDPI(connections, time.Now().UTC(), time.Hour); err != nil {
+				errors = append(errors, err.Error())
+			}
+		} else {
+			applyConnectionTablePortFallback(connections)
+		}
+	}
+	var dnsQueries []logstore.DNSQuery
+	if opts.DNSQueryLimit >= 0 {
+		dnsQueries, err = h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-time.Hour), Limit: opts.DNSQueryLimit})
+		if err != nil {
 			errors = append(errors, err.Error())
 		}
 	}
-	dnsQueries, err := h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-time.Hour), Limit: 200})
-	if err != nil {
-		errors = append(errors, err.Error())
-	}
 	fingerprintDNSQueries := dnsQueries
-	if queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-24 * time.Hour), Limit: 1000}); err == nil {
-		fingerprintDNSQueries = queries
-	} else {
-		errors = append(errors, err.Error())
+	if opts.IncludeClients && opts.FingerprintQueryLimit > opts.DNSQueryLimit {
+		if queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-24 * time.Hour), Limit: opts.FingerprintQueryLimit}); err == nil {
+			fingerprintDNSQueries = queries
+		} else {
+			errors = append(errors, err.Error())
+		}
 	}
-	trafficFlows, err := h.trafficFlowList(logstore.TrafficFlowFilter{Since: time.Now().Add(-time.Hour), Limit: 200})
-	if err != nil {
-		errors = append(errors, err.Error())
+	var trafficFlows []logstore.TrafficFlow
+	if opts.TrafficFlowLimit >= 0 {
+		trafficFlows, err = h.trafficFlowList(logstore.TrafficFlowFilter{Since: time.Now().Add(-time.Hour), Limit: opts.TrafficFlowLimit})
+		if err != nil {
+			errors = append(errors, err.Error())
+		}
+		trafficFlows = enrichTrafficFlowsWithDNS(trafficFlows, dnsQueries)
+		if opts.IncludeDPIEnrichment {
+			if enriched, err := h.enrichTrafficFlowsWithDPI(trafficFlows, time.Now().UTC(), time.Hour); err == nil {
+				trafficFlows = enriched
+			} else {
+				errors = append(errors, err.Error())
+			}
+		} else {
+			applyTrafficFlowListPortFallback(trafficFlows)
+		}
 	}
-	trafficFlows = enrichTrafficFlowsWithDNS(trafficFlows, dnsQueries)
-	if enriched, err := h.enrichTrafficFlowsWithDPI(trafficFlows, time.Now().UTC(), time.Hour); err == nil {
-		trafficFlows = enriched
-	} else {
-		errors = append(errors, err.Error())
+	var firewallLogs []logstore.FirewallLogEntry
+	if opts.FirewallLimit >= 0 {
+		firewallLogs, err = h.firewallLogList(logstore.FirewallLogFilter{Since: time.Now().Add(-24 * time.Hour), Action: "drop", Limit: opts.FirewallLimit})
+		if err != nil {
+			errors = append(errors, err.Error())
+		}
 	}
-	firewallLogs, err := h.firewallLogList(logstore.FirewallLogFilter{Since: time.Now().Add(-24 * time.Hour), Action: "drop", Limit: 200})
-	if err != nil {
-		errors = append(errors, err.Error())
-	}
-	conntrackTuning, err := h.conntrackTuningSummary(time.Now().UTC(), 24*time.Hour, h.opts.Router != nil && h.opts.Router.Spec.Apply.AutoTuneConntrack)
-	if err != nil {
-		errors = append(errors, err.Error())
+	var conntrackTuning *conntracktuning.Summary
+	if opts.IncludeConntrackTuning {
+		tuning, err := h.conntrackTuningSummary(time.Now().UTC(), 24*time.Hour, h.opts.Router != nil && h.opts.Router.Spec.Apply.AutoTuneConntrack)
+		if err != nil {
+			errors = append(errors, err.Error())
+		} else {
+			conntrackTuning = &tuning
+		}
 	}
 	dhcpLeases, err := h.dhcpLeaseList()
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
-	dhcpFingerprints, err := h.dhcpFingerprintList(logstore.DHCPFingerprintFilter{Since: time.Now().Add(-24 * time.Hour), Limit: 1000})
+	stickyLeases, err := h.dhcpStickyLeaseList(logstore.DHCPStickyFilter{Limit: 10000})
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
-	neighbors, err := neighborList()
-	if err != nil {
-		errors = append(errors, err.Error())
+	dhcpLeases = annotateDHCPLeasesWithSticky(dhcpLeases, stickyLeases, time.Now().UTC())
+	var dhcpFingerprints []logstore.DHCPFingerprint
+	var neighbors []NeighborEntry
+	var clients []ClientEntry
+	if opts.IncludeClients {
+		dhcpFingerprints, err = h.dhcpFingerprintList(logstore.DHCPFingerprintFilter{Since: time.Now().Add(-24 * time.Hour), Limit: opts.DHCPFingerprintLimit})
+		if err != nil {
+			errors = append(errors, err.Error())
+		}
+		neighbors, err = neighborList()
+		if err != nil {
+			errors = append(errors, err.Error())
+		}
+		clients = correlateClients(dhcpLeases, neighbors, trafficFlows, fingerprintDNSQueries, firewallLogs, dhcpFingerprints)
 	}
-	vpn, err := h.vpnStatus()
-	if err != nil {
-		errors = append(errors, err.Error())
+	var vpn VPNStatus
+	if opts.IncludeVPN {
+		vpn, err = h.vpnStatus()
+		if err != nil {
+			errors = append(errors, err.Error())
+		}
+		errors = append(errors, vpn.Errors...)
 	}
-	errors = append(errors, vpn.Errors...)
 	result := (*apply.Result)(nil)
 	if h.opts.Result != nil {
 		result = h.opts.Result()
 	}
 	result = resultWithLatestGeneration(result, h.opts.Store)
+	recordConsoleMetrics(context.Background(), resources, h.opts.ControllerModes, dhcpLeases, clients, stickyLeases, time.Now().UTC())
 	return Snapshot{
 		GeneratedAt:      time.Now().UTC(),
 		Status:           statusWithControllers(result, h.opts.ControllerModes),
@@ -372,7 +454,7 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		DHCPFingerprints: dhcpFingerprints,
 		DHCPLeases:       dhcpLeases,
 		Neighbors:        neighbors,
-		Clients:          correlateClients(dhcpLeases, neighbors, trafficFlows, fingerprintDNSQueries, firewallLogs, dhcpFingerprints),
+		Clients:          clients,
 		VPN:              vpn,
 		Errors:           errors,
 	}
@@ -434,7 +516,19 @@ func (h Handler) asset(w http.ResponseWriter, r *http.Request, path string) {
 }
 
 func (h Handler) summary(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, h.Snapshot(intQuery(r, "events", 25), intQuery(r, "connections", h.opts.ConnectionsLimit)))
+	writeJSON(w, h.Snapshot(SnapshotOptions{
+		EventLimit:             intQuery(r, "events", 50),
+		ConnectionsLimit:       signedIntQuery(r, "connections", h.opts.ConnectionsLimit),
+		FirewallLimit:          signedIntQuery(r, "firewallLogs", 50),
+		DNSQueryLimit:          signedIntQuery(r, "dnsQueries", 50),
+		TrafficFlowLimit:       signedIntQuery(r, "trafficFlows", 50),
+		FingerprintQueryLimit:  intQuery(r, "fingerprintQueries", 1000),
+		DHCPFingerprintLimit:   intQuery(r, "dhcpFingerprints", 1000),
+		IncludeDPIEnrichment:   boolQuery(r, "dpi", false),
+		IncludeClients:         boolQuery(r, "clients", false),
+		IncludeConntrackTuning: boolQuery(r, "tuning", false),
+		IncludeVPN:             boolQuery(r, "vpn", true),
+	}))
 }
 
 func (h Handler) resources(w http.ResponseWriter) {
@@ -662,6 +756,12 @@ func (h Handler) clients(w http.ResponseWriter) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	stickyLeases, err := h.dhcpStickyLeaseList(logstore.DHCPStickyFilter{Limit: 10000})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	leases = annotateDHCPLeasesWithSticky(leases, stickyLeases, time.Now().UTC())
 	neighbors, err := neighborList()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1081,36 +1181,42 @@ func (h Handler) queryLogList(filter logstore.DNSQueryFilter) ([]logstore.DNSQue
 	if strings.TrimSpace(h.opts.DNSQueryLogPath) == "" {
 		return nil, nil
 	}
-	store, err := logstore.OpenDNSQueryLog(h.opts.DNSQueryLogPath)
+	store, err := logstore.OpenDNSQueryLogReadOnly(h.opts.DNSQueryLogPath)
 	if err != nil {
 		return nil, err
 	}
 	defer store.Close()
-	return store.List(context.Background(), filter)
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	return store.List(ctx, filter)
 }
 
 func (h Handler) trafficFlowList(filter logstore.TrafficFlowFilter) ([]logstore.TrafficFlow, error) {
 	if strings.TrimSpace(h.opts.TrafficFlowLogPath) == "" {
 		return nil, nil
 	}
-	store, err := logstore.OpenTrafficFlowLog(h.opts.TrafficFlowLogPath)
+	store, err := logstore.OpenTrafficFlowLogReadOnly(h.opts.TrafficFlowLogPath)
 	if err != nil {
 		return nil, err
 	}
 	defer store.Close()
-	return store.List(context.Background(), filter)
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	return store.List(ctx, filter)
 }
 
 func (h Handler) firewallLogList(filter logstore.FirewallLogFilter) ([]logstore.FirewallLogEntry, error) {
 	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
 		return nil, nil
 	}
-	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
+	store, err := logstore.OpenFirewallLogReadOnly(h.opts.FirewallLogPath)
 	if err != nil {
 		return nil, err
 	}
 	defer store.Close()
-	return store.List(context.Background(), filter)
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	return store.List(ctx, filter)
 }
 
 func (h Handler) firewallDenyTimelineList(since time.Time, until time.Time, bucket time.Duration) ([]logstore.FirewallDenyTimelineBucket, error) {
@@ -1167,6 +1273,138 @@ func (h Handler) dhcpFingerprintList(filter logstore.DHCPFingerprintFilter) ([]l
 	}
 	defer store.Close()
 	return store.List(context.Background(), filter)
+}
+
+func (h Handler) dhcpStickyLeaseList(filter logstore.DHCPStickyFilter) ([]logstore.DHCPStickyLease, error) {
+	if strings.TrimSpace(h.opts.DHCPStickyLogPath) == "" {
+		return nil, nil
+	}
+	if _, err := os.Stat(h.opts.DHCPStickyLogPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	store, err := logstore.OpenDHCPStickyLogReadOnly(h.opts.DHCPStickyLogPath)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	return store.List(context.Background(), filter)
+}
+
+func annotateDHCPLeasesWithSticky(leases []DHCPLease, sticky []logstore.DHCPStickyLease, now time.Time) []DHCPLease {
+	if len(sticky) == 0 {
+		return leases
+	}
+	byIP := map[string]logstore.DHCPStickyLease{}
+	byMAC := map[string]logstore.DHCPStickyLease{}
+	for _, row := range sticky {
+		if row.StickyUntil.IsZero() || !row.StickyUntil.After(now) {
+			continue
+		}
+		if row.IP != "" {
+			byIP[row.IP] = row
+		}
+		if row.MAC != "" {
+			byMAC[strings.ToLower(row.MAC)] = row
+		}
+	}
+	seen := map[string]bool{}
+	for i := range leases {
+		seen[leases[i].IP+"|"+strings.ToLower(leases[i].MAC)] = true
+		row, ok := byIP[leases[i].IP]
+		if !ok {
+			row, ok = byMAC[strings.ToLower(leases[i].MAC)]
+		}
+		if !ok {
+			continue
+		}
+		leases[i].StickyUntil = row.StickyUntil
+		leases[i].StickyState = "held"
+	}
+	for _, row := range byIP {
+		key := row.IP + "|" + strings.ToLower(row.MAC)
+		if seen[key] {
+			continue
+		}
+		leases = append(leases, DHCPLease{
+			MAC:         row.MAC,
+			IP:          row.IP,
+			Hostname:    row.Hostname,
+			Family:      row.Family,
+			Source:      "sticky-history",
+			StickyUntil: row.StickyUntil,
+			StickyState: "held",
+		})
+	}
+	return leases
+}
+
+func recordConsoleMetrics(ctx context.Context, resources []routerstate.ObjectStatus, controllers []controlapi.ControllerStatus, leases []DHCPLease, clients []ClientEntry, sticky []logstore.DHCPStickyLease, now time.Time) {
+	meter := otel.Meter("routerd")
+	dryRunGauge, _ := meter.Int64Gauge("routerd.controller.dry_run.count")
+	phaseGauge, _ := meter.Int64Gauge("routerd.resource.phase.count")
+	leaseGauge, _ := meter.Int64Gauge("routerd.dhcp.lease.active")
+	stickyGauge, _ := meter.Int64Gauge("routerd.dhcp.sticky.held")
+	clientGauge, _ := meter.Int64Gauge("routerd.client.active.count")
+	var dryRun int64
+	for _, controller := range controllers {
+		if strings.EqualFold(strings.TrimSpace(controller.Mode), "dry-run") {
+			dryRun++
+		}
+	}
+	dryRunGauge.Record(ctx, dryRun)
+	phaseCounts := map[string]int64{}
+	for _, resource := range resources {
+		phase := "Unknown"
+		if resource.Status != nil {
+			if value := strings.TrimSpace(fmt.Sprint(resource.Status["phase"])); value != "" && value != "<nil>" {
+				phase = value
+			}
+		}
+		phaseCounts[phase]++
+	}
+	for phase, count := range phaseCounts {
+		phaseGauge.Record(ctx, count, metric.WithAttributes(attribute.String("routerd.resource.phase", phase)))
+	}
+	activeLeases := map[string]int64{}
+	for _, lease := range leases {
+		if lease.Source == "sticky-history" {
+			continue
+		}
+		family := strings.ToLower(strings.TrimSpace(lease.Family))
+		if family == "" {
+			family = "ipv4"
+			if strings.Contains(lease.IP, ":") {
+				family = "ipv6"
+			}
+		}
+		activeLeases[family]++
+	}
+	for family, count := range activeLeases {
+		leaseGauge.Record(ctx, count, metric.WithAttributes(attribute.String("network.address.family", family)))
+	}
+	stickyHeld := map[string]int64{}
+	for _, lease := range sticky {
+		if lease.StickyUntil.IsZero() || !lease.StickyUntil.After(now) {
+			continue
+		}
+		family := strings.ToLower(strings.TrimSpace(lease.Family))
+		if family == "" {
+			family = "ipv4"
+			if strings.Contains(lease.IP, ":") {
+				family = "ipv6"
+			}
+		}
+		stickyHeld[family]++
+	}
+	for family, count := range stickyHeld {
+		stickyGauge.Record(ctx, count, metric.WithAttributes(attribute.String("network.address.family", family)))
+	}
+	if clients != nil {
+		clientGauge.Record(ctx, int64(len(clients)))
+	}
 }
 
 func (h Handler) enrichTrafficFlowsWithDPI(flows []logstore.TrafficFlow, now time.Time, ttl time.Duration) ([]logstore.TrafficFlow, error) {
@@ -1442,6 +1680,12 @@ func applyTrafficFlowPortFallback(flow *logstore.TrafficFlow) {
 	}
 }
 
+func applyTrafficFlowListPortFallback(flows []logstore.TrafficFlow) {
+	for i := range flows {
+		applyTrafficFlowPortFallback(&flows[i])
+	}
+}
+
 func applyConnectionPortFallback(entry *observe.ConnectionEntry) {
 	if entry == nil {
 		return
@@ -1457,6 +1701,15 @@ func applyConnectionPortFallback(entry *observe.ConnectionEntry) {
 		if override {
 			entry.DNSQuery = ""
 		}
+	}
+}
+
+func applyConnectionTablePortFallback(table *observe.ConnectionTable) {
+	if table == nil {
+		return
+	}
+	for i := range table.Entries {
+		applyConnectionPortFallback(&table.Entries[i])
 	}
 }
 
@@ -1899,6 +2152,10 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		if row.Vendor == "" {
 			row.Vendor = lease.Vendor
 		}
+		if !lease.StickyUntil.IsZero() {
+			row.StickyUntil = lease.StickyUntil.Format(time.RFC3339Nano)
+			row.StickyState = firstNonEmptyString(lease.StickyState, "held")
+		}
 		row.sources["dhcpv4"] = true
 	}
 	for _, neighbor := range neighbors {
@@ -1929,7 +2186,7 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		if ip == "" || ipToKey[ip] != "" {
 			continue
 		}
-		if key := matchFingerprintToClient(rows, fingerprint); key != "" {
+		if key := matchFingerprintToClient(rows, ip, fingerprint); key != "" {
 			ipToKey[ip] = key
 			rows[key].addresses[ip] = true
 		}
@@ -2420,7 +2677,7 @@ func applyDomainFingerprint(item *fingerprintAccumulator, name string) {
 	case domainMatchesAny(name, "tesla.com", "teslamotors.com"):
 		addUniqueFingerprintSignal(item, "iot", "ev", 120, "dns/tesla:"+shortFingerprintSignal(name))
 	case containsAny(name, "bravia.dtv") || strings.Contains(name, "_androidtvremote."):
-		addFingerprintSignal(item, "iot", "smart-tv", 80, "mdns/smart-tv")
+		addFingerprintSignal(item, "iot", "smart-tv", 100, "mdns/smart-tv")
 	case domainMatchesAny(name, "nintendo.net", "npln.jp", "ndas.srv.nintendo.net", "gs.nintendo.net", "accounts.nintendo.com"):
 		addUniqueFingerprintSignal(item, "nintendo", "gaming-console", 120, "dns/nintendo:"+shortFingerprintSignal(name))
 	case domainMatchesAny(name, "playstation.net", "sonyentertainmentnetwork.com", "scea.com"):
@@ -2435,10 +2692,10 @@ func applyDomainFingerprint(item *fingerprintAccumulator, name string) {
 		addFingerprintSignal(item, "Windows", "computer", 35, "dns/windows:"+shortFingerprintSignal(name))
 	case strings.Contains(name, "connectivitycheck.gstatic.com") || strings.Contains(name, "android.clients.google.com") || strings.Contains(name, "gms.") || strings.Contains(name, "googleapis.com"):
 		addUniqueFingerprintSignal(item, "Android", "", 20, "dns/android:"+shortFingerprintSignal(name))
-	case strings.Contains(name, "_airplay.") || strings.Contains(name, "_raop.") || strings.Contains(name, "_companion-link."):
-		addFingerprintSignal(item, "Apple", "", 45, "mdns/apple")
+	case strings.Contains(name, "_airplay.") || strings.Contains(name, "_raop.") || strings.Contains(name, "_companion-link.") || strings.Contains(name, "_homekit."):
+		addFingerprintSignal(item, "Apple", "", 80, "mdns/apple")
 	case strings.Contains(name, "_googlecast.") || strings.Contains(name, "_androidtvremote."):
-		addFingerprintSignal(item, "iot", "smart-tv", 45, "mdns/googlecast")
+		addFingerprintSignal(item, "iot", "smart-tv", 80, "mdns/googlecast")
 	case strings.Contains(name, "_smb.") || strings.Contains(name, "_workstation.") || strings.Contains(name, "wpad."):
 		addFingerprintSignal(item, "Windows", "computer", 35, "dns/windows-service")
 	case domainMatchesAny(name, "amazonaws.com"):
@@ -2478,13 +2735,13 @@ func applyTransportFingerprint(item *fingerprintAccumulator, proto, peer string,
 	switch {
 	case port == 5353 || peer == "224.0.0.251" || peer == "ff02::fb":
 		item.hasMulticast = true
-		addFingerprintSignal(item, "", "", 5, "multicast/mdns")
+		addFingerprintSignal(item, "", "", 20, "multicast/mdns")
 	case port == 1900 || peer == "239.255.255.250" || peer == "ff02::c":
 		item.hasMulticast = true
-		addFingerprintSignal(item, "iot", "iot", 15, "multicast/ssdp")
+		addFingerprintSignal(item, "iot", "iot", 55, "multicast/ssdp")
 	case port == 137 || port == 138 || port == 139:
 		item.hasMulticast = true
-		addFingerprintSignal(item, "Windows", "computer", 35, "multicast/netbios")
+		addFingerprintSignal(item, "Windows", "computer", 60, "multicast/netbios")
 	}
 }
 
@@ -2493,17 +2750,17 @@ func applyAppFingerprint(item *fingerprintAccumulator, app, category string, con
 	if text == "" {
 		return
 	}
-	weight := 10
+	weight := 35
 	if confidence >= 80 {
-		weight = 20
+		weight = 70
 	}
 	switch {
 	case strings.Contains(text, "mdns"):
-		addFingerprintSignal(item, "", "", weight, "dpi/mdns")
+		addFingerprintSignal(item, "", "", maxInt(weight, 80), "dpi/mdns")
 	case strings.Contains(text, "ssdp"):
-		addFingerprintSignal(item, "iot", "iot", weight, "dpi/ssdp")
+		addFingerprintSignal(item, "iot", "iot", maxInt(weight, 55), "dpi/ssdp")
 	case strings.Contains(text, "netbios") || strings.Contains(text, "smb"):
-		addFingerprintSignal(item, "Windows", "computer", weight+10, "dpi/netbios")
+		addFingerprintSignal(item, "Windows", "computer", maxInt(weight, 60), "dpi/netbios")
 	}
 }
 
@@ -2618,7 +2875,7 @@ func latestDHCPFingerprintByMAC(groups ...[]logstore.DHCPFingerprint) map[string
 	return out
 }
 
-func matchFingerprintToClient(rows map[string]*clientMutableEntry, fingerprint *fingerprintAccumulator) string {
+func matchFingerprintToClient(rows map[string]*clientMutableEntry, ip string, fingerprint *fingerprintAccumulator) string {
 	if fingerprint == nil {
 		return ""
 	}
@@ -2627,6 +2884,7 @@ func matchFingerprintToClient(rows map[string]*clientMutableEntry, fingerprint *
 		return ""
 	}
 	var matched string
+	var samePrefixMatched string
 	for key, row := range rows {
 		if row.MAC == "" {
 			continue
@@ -2638,12 +2896,39 @@ func matchFingerprintToClient(rows map[string]*clientMutableEntry, fingerprint *
 		if fp.DeviceClass != "" && rowFP.DeviceClass != "" && fp.DeviceClass != rowFP.DeviceClass {
 			continue
 		}
+		if clientHasSameIPv6Prefix(row.addresses, ip, 64) {
+			if samePrefixMatched != "" {
+				return ""
+			}
+			samePrefixMatched = key
+			continue
+		}
 		if matched != "" {
 			return ""
 		}
 		matched = key
 	}
+	if samePrefixMatched != "" {
+		return samePrefixMatched
+	}
 	return matched
+}
+
+func clientHasSameIPv6Prefix(addresses map[string]bool, ip string, bits int) bool {
+	addrText, _, _ := strings.Cut(strings.TrimSpace(ip), "/")
+	addr, err := netip.ParseAddr(addrText)
+	if err != nil || !addr.Is6() || addr.Is4In6() {
+		return false
+	}
+	prefix := netip.PrefixFrom(addr, bits).Masked()
+	for candidate := range addresses {
+		candidateText, _, _ := strings.Cut(strings.TrimSpace(candidate), "/")
+		other, err := netip.ParseAddr(candidateText)
+		if err == nil && other.Is6() && !other.Is4In6() && prefix.Contains(other) {
+			return true
+		}
+	}
+	return false
 }
 
 func passiveCorrelationKey(fingerprint *fingerprintAccumulator, ip string) string {
@@ -2764,6 +3049,13 @@ func (f *fingerprintAccumulator) bestDeviceClassForOS(osFamily string) (string, 
 
 func osClassScoreKey(osFamily, deviceClass string) string {
 	return osFamily + "|" + deviceClass
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func bestFingerprintScore(scores map[string]int) (string, int) {
@@ -3148,6 +3440,39 @@ func intQuery(r *http.Request, key string, fallback int) int {
 		return 1000
 	}
 	return value
+}
+
+func signedIntQuery(r *http.Request, key string, fallback int) int {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	if value < -1 {
+		return fallback
+	}
+	if value > 1000 {
+		return 1000
+	}
+	return value
+}
+
+func boolQuery(r *http.Request, key string, fallback bool) bool {
+	raw := strings.TrimSpace(strings.ToLower(r.URL.Query().Get(key)))
+	if raw == "" {
+		return fallback
+	}
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func atoiDefault(raw string, fallback int) int {

@@ -96,7 +96,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		FirewallLogPath:    firewallLogPath,
 	})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/summary?tuning=1", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())

@@ -37,6 +37,7 @@ import (
 	"routerd/pkg/egressroute"
 	"routerd/pkg/eventrule"
 	"routerd/pkg/healthcheck"
+	"routerd/pkg/logstore"
 	"routerd/pkg/platform"
 	"routerd/pkg/resourcequery"
 	daemonsource "routerd/pkg/source/daemon"
@@ -483,7 +484,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Link"), PeriodicFunc: policyRoute.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy"), PeriodicFunc: route.reconcile},
 		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "Link"), PeriodicFunc: pathMTU.Reconcile},
-		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: statusSubscriptions("IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement"), PeriodicFunc: dhcpv6.reconcile},
+		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, PeriodicFunc: dhcpv6.reconcile},
 		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			return dhcp4Lease.ReconcileAll(ctx)
 		}, PeriodicFunc: dhcp4Lease.ReconcileAll},
@@ -1483,6 +1484,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 				lines = append(lines, "dhcp-option=tag:"+reservationTag+","+dnsmasqDHCPv4Option(option))
 			}
 		}
+		lines = append(lines, dnsmasqStickyHostLines("ipv4", leaseTime)...)
 	}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DHCPv6Server" {
@@ -1519,6 +1521,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if spec.RapidCommit {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:rapid-commit", tag))
 		}
+		lines = append(lines, dnsmasqStickyHostLines("ipv6", leaseTime)...)
 	}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "IPv6RouterAdvertisement" {
@@ -1612,6 +1615,47 @@ func dnsmasqIPv4Reservation(spec api.DHCPv4ReservationSpec, tag string) string {
 	}
 	parts = append(parts, spec.IPAddress)
 	return strings.Join(parts, ",")
+}
+
+func dnsmasqStickyHostLines(family, leaseTime string) []string {
+	defaults, _ := platform.Current()
+	path := strings.TrimRight(defaults.StateDir, "/") + "/dhcp-sticky.db"
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	log, err := logstore.OpenDHCPStickyLogReadOnly(path)
+	if err != nil {
+		return nil
+	}
+	defer log.Close()
+	rows, err := log.List(context.Background(), logstore.DHCPStickyFilter{HeldOnly: true, Limit: 10000})
+	if err != nil {
+		return nil
+	}
+	var lines []string
+	for _, row := range rows {
+		rowFamily := strings.ToLower(strings.TrimSpace(row.Family))
+		if rowFamily == "" {
+			if strings.Contains(row.IP, ":") {
+				rowFamily = "ipv6"
+			} else {
+				rowFamily = "ipv4"
+			}
+		}
+		if rowFamily != family || row.MAC == "" || row.IP == "" {
+			continue
+		}
+		parts := []string{strings.ToLower(row.MAC), row.IP}
+		if row.Hostname != "" {
+			parts = append(parts, row.Hostname)
+		}
+		if leaseTime != "" {
+			parts = append(parts, leaseTime)
+		}
+		lines = append(lines, "dhcp-host="+strings.Join(parts, ","))
+	}
+	sort.Strings(lines)
+	return lines
 }
 
 func expandIPv4DHCPServers(values []string) []string {

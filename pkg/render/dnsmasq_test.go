@@ -126,6 +126,31 @@ func TestDnsmasqConfigRendersLogDHCPWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigRendersStickyHostsInScope(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "dhcpv4"}, Spec: api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv4"}, Spec: api.DHCPv4ScopeSpec{Server: "dhcpv4", Interface: "lan", RangeStart: "192.168.10.130", RangeEnd: "192.168.10.139", LeaseTime: "12h", RouterSource: "none", DNSSource: "none"}},
+		}},
+	}
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{StickyHosts: []DHCPStickyHost{
+		{MACAddress: "AA:BB:CC:DD:EE:FF", IPAddress: "192.168.10.135", Hostname: "phone", Family: "ipv4"},
+		{MACAddress: "AA:BB:CC:DD:EE:00", IPAddress: "192.168.10.220", Hostname: "outside", Family: "ipv4"},
+	}})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "dhcp-host=aa:bb:cc:dd:ee:ff,192.168.10.135,phone,12h") {
+		t.Fatalf("dnsmasq output missing sticky host:\n%s", got)
+	}
+	if strings.Contains(got, "192.168.10.220") {
+		t.Fatalf("dnsmasq output rendered out-of-scope sticky host:\n%s", got)
+	}
+}
+
 func TestDnsmasqConfigRendersLogDHCPForDirectServer(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

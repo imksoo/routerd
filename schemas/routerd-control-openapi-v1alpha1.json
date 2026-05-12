@@ -308,7 +308,13 @@
                     "destination": {
                       "type": "string"
                     },
+                    "destinationHostname": {
+                      "type": "string"
+                    },
                     "destinationPort": {
+                      "type": "string"
+                    },
+                    "destinationService": {
                       "type": "string"
                     },
                     "packets": {
@@ -317,7 +323,13 @@
                     "source": {
                       "type": "string"
                     },
+                    "sourceHostname": {
+                      "type": "string"
+                    },
                     "sourcePort": {
+                      "type": "string"
+                    },
+                    "sourceService": {
                       "type": "string"
                     }
                   },
@@ -344,7 +356,13 @@
                     "destination": {
                       "type": "string"
                     },
+                    "destinationHostname": {
+                      "type": "string"
+                    },
                     "destinationPort": {
+                      "type": "string"
+                    },
+                    "destinationService": {
                       "type": "string"
                     },
                     "packets": {
@@ -353,7 +371,13 @@
                     "source": {
                       "type": "string"
                     },
+                    "sourceHostname": {
+                      "type": "string"
+                    },
                     "sourcePort": {
+                      "type": "string"
+                    },
+                    "sourceService": {
                       "type": "string"
                     }
                   },

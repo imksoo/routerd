@@ -399,6 +399,7 @@ type DHCPv4ServerSpec struct {
 	Role             string                  `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
 	ListenInterfaces []string                `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
 	LogDHCP          bool                    `yaml:"logDHCP,omitempty" json:"logDHCP,omitempty"`
+	StickyHoldDays   int                     `yaml:"stickyHoldDays,omitempty" json:"stickyHoldDays,omitempty" jsonschema:"minimum=0"`
 	DNS              DHCPv4ServerDNSSpec     `yaml:"dns,omitempty" json:"dns,omitempty"`
 	Interface        string                  `yaml:"interface,omitempty" json:"interface,omitempty"`
 	AddressPool      DHCPAddressPoolSpec     `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
@@ -693,6 +694,7 @@ type DHCPv6ServerSpec struct {
 	Role             string                   `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
 	ListenInterfaces []string                 `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
 	LogDHCP          bool                     `yaml:"logDHCP,omitempty" json:"logDHCP,omitempty"`
+	StickyHoldDays   int                      `yaml:"stickyHoldDays,omitempty" json:"stickyHoldDays,omitempty" jsonschema:"minimum=0"`
 	Interface        string                   `yaml:"interface,omitempty" json:"interface,omitempty"`
 	Mode             string                   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=stateful,enum=both"`
 	AddressPool      DHCPAddressPoolSpec      `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`

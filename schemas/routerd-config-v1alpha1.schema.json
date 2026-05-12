@@ -2497,6 +2497,10 @@
                           "dhcpd"
                         ],
                         "type": "string"
+                      },
+                      "stickyHoldDays": {
+                        "minimum": 0,
+                        "type": "integer"
                       }
                     },
                     "type": "object"
@@ -3493,6 +3497,10 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "stickyHoldDays": {
+                        "minimum": 0,
+                        "type": "integer"
                       }
                     },
                     "type": "object"

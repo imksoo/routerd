@@ -55,9 +55,11 @@ Keeping DHCP next to dnsmasq avoids reimplementing a battle-tested DHCP server. 
       - resource: IPv4StaticAddress/lan-base
         field: address
     domain: lan.example.org
+    stickyHoldDays: 3
 ```
 
 Use a separate range for automatic clients and reserve a smaller block for fixed-address devices if it makes operations clearer.
+`stickyHoldDays` is optional. When it is greater than zero, routerd keeps a short DHCP lease history and renders temporary dnsmasq `dhcp-host` holds after a lease is released or expires, so the same MAC can reclaim the same address during the hold window and the address is not handed to another client immediately.
 
 ## Static DHCPv4 reservation
 

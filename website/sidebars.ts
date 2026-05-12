@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
         'concepts/state-and-ownership',
         'concepts/path-mtu',
         'concepts/web-console',
+        'concepts/web-console-design-rules',
       ],
     },
     {

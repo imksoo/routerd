@@ -1075,6 +1075,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 				DHCPv6DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
 				IPv6AddressesByInterface:    observedIPv6AddressesByInterface(effectiveRouter),
 				IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(effectiveRouter),
+				StickyHosts:                 dhcpStickyHostsFromLog(effectiveRouter, time.Now().UTC()),
 				RuntimeDir:                  platformDefaults.RuntimeDir,
 				LeaseFile:                   dnsmasqLeaseFileForPlatform(),
 			})
@@ -1423,6 +1424,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 			DHCPv6DNSServersByInterface: observedDNSServersByInterface(router),
 			IPv6AddressesByInterface:    observedIPv6AddressesByInterface(router),
 			IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(router),
+			StickyHosts:                 dhcpStickyHostsFromLog(router, time.Now().UTC()),
 			RuntimeDir:                  platformDefaults.RuntimeDir,
 			LeaseFile:                   dnsmasqLeaseFileForPlatform(),
 		})
@@ -3338,6 +3340,16 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			if req.Action == "" || req.IP == "" {
 				return nil, controlapi.ErrBadRequest
 			}
+			if holdDays := dhcpStickyHoldDays(router, req.IP); holdDays > 0 {
+				stickyLog, err := logstore.OpenDHCPStickyLog(dhcpStickyLogPath())
+				if err != nil {
+					return nil, err
+				}
+				defer stickyLog.Close()
+				if err := stickyLog.RecordLeaseEvent(r.Context(), req.Action, req.MAC, req.IP, req.Hostname, holdDays, time.Now().UTC()); err != nil {
+					return nil, err
+				}
+			}
 			if controllerBus != nil {
 				topic := "routerd.dhcp.lease." + req.Action
 				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd-dhcp-event-relay", Kind: "routerd-dhcp-event-relay"}, topic, daemonapi.SeverityInfo)
@@ -3614,6 +3626,7 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		TrafficFlowLogPath:     platformDefaults.StateDir + "/traffic-flows.db",
 		FirewallLogPath:        platformDefaults.StateDir + "/firewall-logs.db",
 		DHCPFingerprintLogPath: platformDefaults.StateDir + "/dhcp-fingerprints.db",
+		DHCPStickyLogPath:      dhcpStickyLogPath(),
 		ConfigPath:             configPath,
 		ControllerModes:        controllerStatuses,
 		Bus:                    eventBus,
@@ -6893,6 +6906,68 @@ func dnsmasqLeaseFileForPlatform() string {
 		return strings.TrimRight(platformDefaults.StateDir, "/") + "/dnsmasq/dnsmasq.leases"
 	}
 	return ""
+}
+
+func dhcpStickyLogPath() string {
+	return strings.TrimRight(platformDefaults.StateDir, "/") + "/dhcp-sticky.db"
+}
+
+func dhcpStickyHoldDays(router *api.Router, ip string) int {
+	if router == nil {
+		return 0
+	}
+	wantV6 := strings.Contains(strings.TrimSpace(ip), ":")
+	holdDays := 0
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "DHCPv4Server":
+			if wantV6 {
+				continue
+			}
+			spec, err := res.DHCPv4ServerSpec()
+			if err == nil && defaultString(spec.Server, "dnsmasq") == "dnsmasq" && spec.StickyHoldDays > holdDays {
+				holdDays = spec.StickyHoldDays
+			}
+		case "DHCPv6Server":
+			if !wantV6 {
+				continue
+			}
+			spec, err := res.DHCPv6ServerSpec()
+			if err == nil && defaultString(spec.Server, "dnsmasq") == "dnsmasq" && spec.StickyHoldDays > holdDays {
+				holdDays = spec.StickyHoldDays
+			}
+		}
+	}
+	return holdDays
+}
+
+func dhcpStickyHostsFromLog(router *api.Router, now time.Time) []render.DHCPStickyHost {
+	if dhcpStickyHoldDays(router, "192.0.2.1") == 0 && dhcpStickyHoldDays(router, "2001:db8::1") == 0 {
+		return nil
+	}
+	path := dhcpStickyLogPath()
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	stickyLog, err := logstore.OpenDHCPStickyLogReadOnly(path)
+	if err != nil {
+		return nil
+	}
+	defer stickyLog.Close()
+	rows, err := stickyLog.List(context.Background(), logstore.DHCPStickyFilter{HeldOnly: true, Now: now, Limit: 10000})
+	if err != nil {
+		return nil
+	}
+	out := make([]render.DHCPStickyHost, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, render.DHCPStickyHost{
+			MACAddress: row.MAC,
+			IPAddress:  row.IP,
+			Hostname:   row.Hostname,
+			Family:     row.Family,
+		})
+	}
+	return out
 }
 
 func applyFreeBSDIPv6DefaultRoutes(router *api.Router) ([]string, error) {

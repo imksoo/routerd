@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -29,6 +30,7 @@ type SQLiteStore struct {
 	db         *sql.DB
 	now        func() time.Time
 	generation int64
+	mu         sync.RWMutex
 }
 
 type objectRef struct {
@@ -362,6 +364,8 @@ func (s *SQLiteStore) migrateLegacyJSON() error {
 func (s *SQLiteStore) Save(path string) error { return nil }
 
 func (s *SQLiteStore) Get(name string) Value {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
 	if err != nil {
@@ -376,18 +380,29 @@ func (s *SQLiteStore) Get(name string) Value {
 }
 
 func (s *SQLiteStore) Set(name, value, reason string) Value {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if value == "" {
-		return s.Unset(name, reason)
+		return s.setLocked(name, StatusUnset, "", reason)
 	}
-	return s.set(name, StatusSet, value, reason)
+	return s.setLocked(name, StatusSet, value, reason)
 }
 
-func (s *SQLiteStore) Unset(name, reason string) Value { return s.set(name, StatusUnset, "", reason) }
+func (s *SQLiteStore) Unset(name, reason string) Value {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.setLocked(name, StatusUnset, "", reason)
+}
+
 func (s *SQLiteStore) Forget(name, reason string) Value {
-	return s.set(name, StatusUnknown, "", reason)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.setLocked(name, StatusUnknown, "", reason)
 }
 
 func (s *SQLiteStore) Delete(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
 	if err != nil {
@@ -401,9 +416,9 @@ func (s *SQLiteStore) Delete(name string) {
 	_ = s.saveStatus(ref, status)
 }
 
-func (s *SQLiteStore) set(name, status, value, reason string) Value {
+func (s *SQLiteStore) setLocked(name, status, value, reason string) Value {
 	now := s.now().UTC()
-	current := s.Get(name)
+	current := s.getLocked(name)
 	since := current.Since
 	if current.Status != status || current.Value != value || since.IsZero() {
 		since = now
@@ -411,6 +426,20 @@ func (s *SQLiteStore) set(name, status, value, reason string) Value {
 	next := Value{Status: status, Value: value, Reason: reason, Since: since, UpdatedAt: now}
 	_ = s.put(name, next)
 	return next
+}
+
+func (s *SQLiteStore) getLocked(name string) Value {
+	ref := objectRefForKey(name)
+	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
+	if err != nil {
+		now := s.now().UTC()
+		return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
+	}
+	if value, ok := valueFromStatus(status, ref.Field); ok {
+		return value
+	}
+	now := s.now().UTC()
+	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
 }
 
 func (s *SQLiteStore) put(name string, value Value) error {
@@ -465,6 +494,8 @@ func (s *SQLiteStore) Age(name string) time.Duration { return s.now().UTC().Sub(
 func (s *SQLiteStore) Now() time.Time                { return s.now().UTC() }
 
 func (s *SQLiteStore) Variables() map[string]Value {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}') FROM objects ORDER BY api_version,kind,name`)
 	if err != nil {
 		return map[string]Value{}
@@ -486,6 +517,8 @@ func (s *SQLiteStore) Variables() map[string]Value {
 }
 
 func (s *SQLiteStore) BeginGeneration(configHash string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(`INSERT INTO generations(started_at,warnings,config_hash) VALUES(?,'[]',?)`, now, configHash)
 	if err != nil {
@@ -500,6 +533,8 @@ func (s *SQLiteStore) BeginGeneration(configHash string) (int64, error) {
 }
 
 func (s *SQLiteStore) RecordGenerationConfig(generation int64, configYAML string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if generation == 0 {
 		generation = s.generation
 	}
@@ -511,6 +546,8 @@ func (s *SQLiteStore) RecordGenerationConfig(generation int64, configYAML string
 }
 
 func (s *SQLiteStore) FinishGeneration(generation int64, phase string, warnings []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if generation == 0 {
 		generation = s.generation
 	}
@@ -522,6 +559,8 @@ func (s *SQLiteStore) FinishGeneration(generation int64, phase string, warnings 
 func (s *SQLiteStore) CurrentGeneration() int64 { return s.generation }
 
 func (s *SQLiteStore) LatestGeneration() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var generation sql.NullInt64
 	err := s.db.QueryRow(`SELECT max(generation) FROM generations`).Scan(&generation)
 	if err != nil || !generation.Valid {
@@ -531,6 +570,8 @@ func (s *SQLiteStore) LatestGeneration() int64 {
 }
 
 func (s *SQLiteStore) ListGenerations(limit int) ([]GenerationRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if limit <= 0 {
 		limit = 100
 	}
@@ -560,6 +601,8 @@ func (s *SQLiteStore) ListGenerations(limit int) ([]GenerationRecord, error) {
 }
 
 func (s *SQLiteStore) GenerationConfig(generation int64) (string, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var value sql.NullString
 	err := s.db.QueryRow(`SELECT config_yaml FROM generations WHERE generation = ?`, generation).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -575,6 +618,8 @@ func (s *SQLiteStore) GenerationConfig(generation int64) (string, bool, error) {
 }
 
 func (s *SQLiteStore) ObjectGeneration(apiVersion, kind, name string) int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var generation sql.NullInt64
 	err := s.db.QueryRow(`SELECT observed_generation FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&generation)
 	if err != nil || !generation.Valid {
@@ -584,10 +629,14 @@ func (s *SQLiteStore) ObjectGeneration(apiVersion, kind, name string) int64 {
 }
 
 func (s *SQLiteStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.saveStatus(objectRef{APIVersion: apiVersion, Kind: kind, Name: name}, objectStatus(status))
 }
 
 func (s *SQLiteStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	status, _, err := s.loadStatus(apiVersion, kind, name)
 	if err != nil {
 		return nil
@@ -600,6 +649,8 @@ func (s *SQLiteStore) ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
 func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}') FROM objects ORDER BY api_version,kind,name`)
 	if err != nil {
 		return nil, err
@@ -624,11 +675,15 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 }
 
 func (s *SQLiteStore) DeleteObject(apiVersion, kind, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, err := s.db.Exec(`DELETE FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name)
 	return err
 }
 
 func (s *SQLiteStore) SaveObjectApplySource(apiVersion, kind, name, path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	uid := apiVersion + "/" + kind + "/" + name
 	_, err := s.db.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,last_applied_path,status,created_at,modified_at)
@@ -639,6 +694,8 @@ ON CONFLICT(api_version,kind,name) DO UPDATE SET last_applied_path=excluded.last
 }
 
 func (s *SQLiteStore) ObjectApplySource(apiVersion, kind, name string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var path sql.NullString
 	err := s.db.QueryRow(`SELECT last_applied_path FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&path)
 	if err != nil || !path.Valid {
@@ -648,12 +705,16 @@ func (s *SQLiteStore) ObjectApplySource(apiVersion, kind, name string) string {
 }
 
 func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, message string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, eventType, reason, message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano))
 	return err
 }
 
 func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEvent) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	apiVersion := event.APIVersion
 	kind := event.Kind
 	name := event.Daemon.Name
@@ -684,6 +745,8 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 }
 
 func (s *SQLiteStore) Events(apiVersion, kind, name string, limit int) []Event {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if limit <= 0 {
 		limit = 20
 	}
@@ -706,6 +769,8 @@ func (s *SQLiteStore) Events(apiVersion, kind, name string, limit int) []Event {
 }
 
 func (s *SQLiteStore) ListEvents(query EventQuery) ([]StoredEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	limit := query.Limit
 	if limit <= 0 {
 		limit = 50

@@ -23,7 +23,7 @@ func openReadOnlySQLite(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`PRAGMA busy_timeout = 5000;`); err != nil {
+	if _, err := db.Exec(`PRAGMA busy_timeout = 250;`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

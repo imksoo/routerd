@@ -1184,6 +1184,7 @@ spec:
         name: lan-dhcpv4
       spec:
         logDHCP: true
+        stickyHoldDays: 3
         interface: lan
         addressPool:
           start: 172.18.1.64
@@ -1249,6 +1250,7 @@ spec:
             name: lan-base
       spec:
         logDHCP: true
+        stickyHoldDays: 3
         interface: lan
         mode: stateless
         dnsServerFrom:
