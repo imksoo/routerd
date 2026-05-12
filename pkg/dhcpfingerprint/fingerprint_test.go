@@ -21,6 +21,11 @@ func TestParseDnsmasqLogDHCPLine(t *testing.T) {
 	if !ok || len(event.RequestedOptions) != 11 || event.RequestedOptions[0] != 1 || event.RequestedOptions[9] != 249 {
 		t.Fatalf("unexpected options event: %+v", event)
 	}
+
+	event, ok = ParseDnsmasqLine(`1946195393 requested options: 1:netmask, 3:router, 28:broadcast, 6:dns-server`, now)
+	if !ok || len(event.RequestedOptions) != 4 || event.RequestedOptions[0] != 1 || event.RequestedOptions[3] != 6 {
+		t.Fatalf("unexpected named options event: %+v", event)
+	}
 }
 
 func TestInferDHCPFingerprintPrefersStrongSignals(t *testing.T) {

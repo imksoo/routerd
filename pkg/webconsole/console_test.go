@@ -935,6 +935,51 @@ func TestCorrelateClientsGoogleMediaBeatsGenericAndroidUsage(t *testing.T) {
 	}
 }
 
+func TestCorrelateClientsExpandedOUIAndIOTSignals(t *testing.T) {
+	tests := []struct {
+		name   string
+		mac    string
+		host   string
+		query  string
+		family string
+		class  string
+	}{
+		{name: "nintendo oui", mac: "04:03:d6:12:34:56", query: "gateway.icloud.com", family: "nintendo", class: "gaming-console"},
+		{name: "ecoflow oui", mac: "64:e8:33:12:34:56", family: "iot", class: "iot"},
+		{name: "atom tech oui", mac: "7c:dd:e9:12:34:56", family: "iot", class: "iot"},
+		{name: "tuya dns", mac: "aa:bb:cc:12:34:56", query: "a1.tuyaus.com", family: "iot", class: "iot"},
+		{name: "tplink dns", mac: "aa:bb:cc:12:34:57", query: "use1-wap.tplinkcloud.com", family: "iot", class: "iot"},
+		{name: "bravia hostname", mac: "00:01:4a:12:34:56", host: "BRAVIA-4K", query: "auth.api.sonyentertainmentnetwork.com", family: "iot", class: "smart-tv"},
+		{name: "nest doorbell", mac: "d8:eb:46:12:34:56", host: "Nest-Doorbell-Battery", query: "www.googleapis.com", family: "iot", class: "camera"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var queries []logstore.DNSQuery
+			if tt.query != "" {
+				queries = append(queries, logstore.DNSQuery{ClientAddress: "172.18.1.190", QuestionName: tt.query, QuestionType: "A"})
+			}
+			rows := correlateClients(
+				[]DHCPLease{{
+					MAC:      tt.mac,
+					IP:       "172.18.1.190",
+					Hostname: tt.host,
+					Vendor:   macVendor(tt.mac),
+				}},
+				nil,
+				nil,
+				queries,
+				nil,
+			)
+			if len(rows) != 1 {
+				t.Fatalf("rows = %d: %+v", len(rows), rows)
+			}
+			if rows[0].InferredOSFamily != tt.family || rows[0].InferredDeviceClass != tt.class {
+				t.Fatalf("fingerprint = %+v, want family=%s class=%s", rows[0], tt.family, tt.class)
+			}
+		})
+	}
+}
+
 func TestHandlerServesConfigReadOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "router.yaml")
 	if err := os.WriteFile(path, []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\n"), 0644); err != nil {

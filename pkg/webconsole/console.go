@@ -1873,6 +1873,10 @@ func buildPassiveFingerprints(_ []DHCPLease, flows []logstore.TrafficFlow, queri
 func applyHostVendorFingerprint(item *fingerprintAccumulator, hostname, vendor, clientID string) {
 	hostText := strings.ToLower(strings.Join([]string{hostname, clientID}, " "))
 	switch {
+	case containsAny(hostText, "doorbell", "nest-cam", "nest cam", "nest-doorbell"):
+		addFingerprintSignal(item, "iot", "camera", 150, "hostname/camera")
+	case containsAny(hostText, "bravia", "android-tv", "androidtv", "google-tv"):
+		addFingerprintSignal(item, "iot", "smart-tv", 150, "hostname/smart-tv")
 	case containsAny(hostText, "echo", "alexa"):
 		addFingerprintSignal(item, "iot", "smart-speaker", 130, "hostname/amazon-echo")
 	case containsAny(hostText, "google-nest", "google home", "google-home", "nest-mini", "nest hub"):
@@ -1889,10 +1893,14 @@ func applyHostVendorFingerprint(item *fingerprintAccumulator, hostname, vendor, 
 		addFingerprintSignal(item, "iot", "lighting", 130, "hostname/hue")
 	case strings.Contains(hostText, "ring"):
 		addFingerprintSignal(item, "iot", "camera", 130, "hostname/ring")
+	case containsAny(hostText, "eufy", "wyze"):
+		addFingerprintSignal(item, "iot", "camera", 130, "hostname/camera")
 	case containsAny(hostText, "roomba", "irobot", "roborock"):
 		addFingerprintSignal(item, "iot", "vacuum", 130, "hostname/vacuum")
 	case strings.Contains(hostText, "sonos"):
 		addFingerprintSignal(item, "iot", "smart-speaker", 130, "hostname/sonos")
+	case containsAny(hostText, "kasa", "tapo", "tp-link", "tplink", "aqara", "tuya", "smartlife", "shelly", "nature-remo", "broadlink", "aiseg", "ecoflow", "atom", "espressif"):
+		addFingerprintSignal(item, "iot", "iot", 125, "hostname/iot")
 	case strings.Contains(hostText, "synology"):
 		addFingerprintSignal(item, "nas", "nas", 140, "hostname/synology")
 	case strings.Contains(hostText, "qnap"):
@@ -1938,6 +1946,14 @@ func applyHostVendorFingerprint(item *fingerprintAccumulator, hostname, vendor, 
 	}
 	vendorText := strings.ToLower(strings.TrimSpace(vendor))
 	switch {
+	case containsAny(vendorText, "nintendo"):
+		addFingerprintSignal(item, "nintendo", "gaming-console", 80, "vendor/nintendo")
+	case containsAny(vendorText, "playstation", "sony computer entertainment", "sce"):
+		addFingerprintSignal(item, "playstation", "gaming-console", 80, "vendor/playstation")
+	case containsAny(vendorText, "xbox", "microsoft"):
+		addFingerprintSignal(item, "xbox", "gaming-console", 70, "vendor/xbox")
+	case containsAny(vendorText, "bravia", "sony visual", "sony tv"):
+		addFingerprintSignal(item, "iot", "smart-tv", 80, "vendor/bravia")
 	case containsAny(vendorText, "synology"):
 		addFingerprintSignal(item, "nas", "nas", 70, "vendor/synology")
 	case containsAny(vendorText, "qnap"):
@@ -1948,18 +1964,16 @@ func applyHostVendorFingerprint(item *fingerprintAccumulator, hostname, vendor, 
 		addFingerprintSignal(item, "voip", "voip", 70, "vendor/voip")
 	case containsAny(vendorText, "amazon"):
 		addFingerprintSignal(item, "iot", "smart-speaker", 55, "vendor/amazon")
+	case containsAny(vendorText, "google"):
+		addFingerprintSignal(item, "Android", "", 20, "vendor/google")
 	case containsAny(vendorText, "roku"):
 		addFingerprintSignal(item, "iot", "smart-tv", 55, "vendor/roku")
-	case containsAny(vendorText, "ring", "irobot", "roborock", "sonos", "philips"):
+	case containsAny(vendorText, "ring", "irobot", "roborock", "sonos", "philips", "eufy", "wyze", "tuya", "shelly", "aqara", "tp-link", "tplink", "panasonic", "espressif", "ecoflow", "atom tech"):
 		addFingerprintSignal(item, "iot", "iot", 55, "vendor/iot")
 	case strings.Contains(vendorText, "apple") && !strings.Contains(vendorText, "private"):
 		addFingerprintSignal(item, "Apple", "", 35, "vendor/apple")
-	case strings.Contains(vendorText, "google"):
-		addFingerprintSignal(item, "Android", "", 20, "vendor/google")
 	case containsAny(vendorText, "samsung", "xiaomi", "huawei", "oppo"):
 		addFingerprintSignal(item, "Android", "phone", 55, "vendor/android-oem")
-	case strings.Contains(vendorText, "panasonic") || strings.Contains(vendorText, "amazon") || strings.Contains(vendorText, "espressif") || strings.Contains(vendorText, "ecoflow"):
-		addFingerprintSignal(item, "iot", "iot", 45, "vendor/iot")
 	}
 }
 
@@ -1981,11 +1995,25 @@ func applyDomainFingerprint(item *fingerprintAccumulator, name string) {
 		addUniqueFingerprintSignal(item, "iot", "smart-tv", 120, "dns/roku:"+shortFingerprintSignal(name))
 	case domainMatchesAny(name, "switchbot.com"):
 		addUniqueFingerprintSignal(item, "iot", "iot", 120, "dns/switchbot:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "kasa-smart.com", "tplinkcloud.com", "tapo.com"):
+		addUniqueFingerprintSignal(item, "iot", "iot", 120, "dns/tplink-iot:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "aqara.com", "lumiunited.com"):
+		addUniqueFingerprintSignal(item, "iot", "iot", 120, "dns/aqara:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "tuyaus.com", "tuyaeu.com", "tuya.com", "smartlife.com"):
+		addUniqueFingerprintSignal(item, "iot", "iot", 120, "dns/tuya:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "shelly.cloud", "shelly.com"):
+		addUniqueFingerprintSignal(item, "iot", "iot", 120, "dns/shelly:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "nature.global", "nature.global.edgekey.net"):
+		addUniqueFingerprintSignal(item, "iot", "iot", 120, "dns/nature-remo:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "broadlink.com.cn"):
+		addUniqueFingerprintSignal(item, "iot", "iot", 120, "dns/broadlink:"+shortFingerprintSignal(name))
+	case domainMatchesAny(name, "ecoflow.com"):
+		addUniqueFingerprintSignal(item, "iot", "iot", 120, "dns/ecoflow:"+shortFingerprintSignal(name))
 	case domainMatchesAny(name, "meethue.com"):
 		addUniqueFingerprintSignal(item, "iot", "lighting", 120, "dns/hue:"+shortFingerprintSignal(name))
 	case domainMatchesAny(name, "ring.com"):
 		addUniqueFingerprintSignal(item, "iot", "camera", 120, "dns/ring:"+shortFingerprintSignal(name))
-	case domainMatchesAny(name, "eufylife.com"):
+	case domainMatchesAny(name, "eufylife.com", "eufy.com", "anker.com", "wyze.com"):
 		addUniqueFingerprintSignal(item, "iot", "camera", 120, "dns/eufy:"+shortFingerprintSignal(name))
 	case domainMatchesAny(name, "irobotapi.com", "iadc.irobot.com", "roborock.com"):
 		addUniqueFingerprintSignal(item, "iot", "vacuum", 120, "dns/vacuum:"+shortFingerprintSignal(name))
@@ -2019,6 +2047,8 @@ func applyDomainFingerprint(item *fingerprintAccumulator, name string) {
 		addUniqueFingerprintSignal(item, "Android", "phone", 90, "dns/oppo:"+shortFingerprintSignal(name))
 	case domainMatchesAny(name, "tesla.com", "teslamotors.com"):
 		addUniqueFingerprintSignal(item, "iot", "ev", 120, "dns/tesla:"+shortFingerprintSignal(name))
+	case containsAny(name, "bravia.dtv") || strings.Contains(name, "_androidtvremote."):
+		addFingerprintSignal(item, "iot", "smart-tv", 80, "mdns/smart-tv")
 	case domainMatchesAny(name, "nintendo.net", "npln.jp", "ndas.srv.nintendo.net", "gs.nintendo.net", "accounts.nintendo.com"):
 		addUniqueFingerprintSignal(item, "nintendo", "gaming-console", 120, "dns/nintendo:"+shortFingerprintSignal(name))
 	case domainMatchesAny(name, "playstation.net", "sonyentertainmentnetwork.com", "scea.com"):
@@ -2463,16 +2493,69 @@ func macVendor(mac string) string {
 	}
 	oui = strings.Join(parts[:3], ":")
 	vendors := map[string]string{
+		"00:01:4A": "Sony",
+		"00:13:A9": "Sony",
+		"00:16:B8": "Sony",
+		"00:19:C5": "Sony",
+		"00:1A:80": "Sony",
+		"00:1D:0D": "Sony",
+		"00:24:BE": "Sony",
+		"00:50:F2": "Microsoft Xbox",
 		"00:F6:20": "Google",
+		"04:03:D6": "Nintendo",
+		"04:5D:4B": "Sony",
+		"0C:56:5C": "Nintendo",
+		"18:2A:7B": "Nintendo",
+		"18:74:2E": "Amazon",
 		"18:EC:E7": "Panasonic",
+		"20:16:D8": "Microsoft Xbox",
+		"28:18:78": "Microsoft Xbox",
+		"30:24:32": "Nintendo",
+		"30:59:B7": "Microsoft Xbox",
+		"30:75:12": "Sony",
+		"34:AF:2C": "Nintendo",
 		"3C:A9:AB": "Apple",
+		"40:F4:07": "Nintendo",
+		"44:65:0D": "Amazon",
+		"48:A5:E7": "Nintendo",
 		"48:D6:D5": "Google",
 		"4E:20:15": "Apple private address",
+		"50:1A:C5": "Microsoft Xbox",
+		"50:F5:DA": "Amazon",
+		"54:42:49": "Sony",
+		"58:BD:A3": "Nintendo",
+		"5C:BA:37": "Microsoft Xbox",
+		"60:45:BD": "Microsoft Xbox",
+		"60:6B:BD": "Sony",
 		"64:E8:33": "EcoFlow",
+		"68:54:FD": "Amazon",
+		"70:48:F7": "Nintendo",
+		"70:77:81": "Sony",
+		"74:C2:46": "Amazon",
+		"7C:1E:52": "Microsoft Xbox",
+		"7C:BB:8A": "Nintendo",
 		"7C:DD:E9": "ATOM tech Inc.",
+		"80:81:9F": "Nintendo",
+		"84:C7:EA": "Sony",
+		"84:D6:D0": "Amazon",
+		"88:71:E5": "Amazon",
+		"8C:CD:E8": "Nintendo",
+		"98:41:5C": "Nintendo",
+		"98:5F:D3": "Microsoft Xbox",
+		"A4:C0:E1": "Nintendo",
+		"AC:63:BE": "Amazon",
+		"AC:9B:0A": "Sony",
+		"B4:52:7D": "Sony",
 		"B8:68:70": "Apple",
+		"B8:78:2E": "Nintendo",
+		"CC:9E:00": "Nintendo",
 		"D8:10:68": "Amazon",
+		"D8:9D:67": "Microsoft Xbox",
+		"E0:E7:51": "Nintendo",
+		"E8:4E:CE": "Nintendo",
 		"EC:FA:BC": "Espressif",
+		"F0:BF:97": "Sony",
+		"FC:A1:83": "Amazon",
 	}
 	if vendor, ok := vendors[oui]; ok {
 		return vendor

@@ -135,6 +135,9 @@ func parseRequestedOptions(value string) []int {
 		if token == "" {
 			continue
 		}
+		if before, _, ok := strings.Cut(token, ":"); ok {
+			token = before
+		}
 		n, err := strconv.Atoi(token)
 		if err != nil || n <= 0 {
 			continue
