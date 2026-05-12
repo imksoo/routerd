@@ -136,6 +136,7 @@ spec:
         persistent: true
         overrides:
           net.netfilter.nf_conntrack_acct: "1"
+          net.netfilter.nf_conntrack_udp_timeout: "60"
     - apiVersion: system.routerd.net/v1alpha1
       kind: Sysctl
       metadata:
