@@ -126,8 +126,10 @@ type StreamEvent = {
 };
 
 type ScrollSnapshot = {
+  capturedAt: number;
   windowX: number;
   windowY: number;
+  anchor?: { id: string; top: number };
   elements: { key: string; top: number; left: number }[];
 };
 
@@ -425,7 +427,7 @@ type ClientRow = {
   fingerprintSignals: Set<string>;
 };
 
-type ViewKey = "overview" | "controllers" | "clients" | "connections" | "vpn" | "events" | "firewall" | "config" | "generations";
+type ViewKey = "overview" | "resources" | "controllers" | "clients" | "connections" | "vpn" | "events" | "firewall" | "config" | "generations";
 type NavSubItem = { key: string; label: string; count?: number; view: ViewKey; targetID: string };
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
@@ -433,10 +435,12 @@ const basePath = normalizeBasePath(cfg.basePath);
 const defaultConnectionPageSize = 25;
 const connectionPageSizeOptions = [25, 50, 100];
 const collapsedStorageKey = "routerd.webconsole.collapsed";
+const clientSectionsCollapsedStorageKey = "routerd.webconsole.clientSectionsCollapsed";
 const connectionPagesStorageKey = "routerd.webconsole.connectionPages";
 const connectionPageSizesStorageKey = "routerd.webconsole.connectionPageSizes";
 const navItems: { key: ViewKey; label: string; description: string; icon: React.ReactNode }[] = [
   { key: "overview", label: "Overview", description: "Status and interfaces", icon: <HomeRegular /> },
+  { key: "resources", label: "Resources", description: "Resource phases and status detail", icon: <ServerRegular /> },
   { key: "controllers", label: "Controllers", description: "Live and dry-run controller modes", icon: <ServerRegular /> },
   { key: "clients", label: "Clients", description: "Leases and endpoint traffic", icon: <PeopleRegular /> },
   { key: "connections", label: "Connections", description: "conntrack and live flows", icon: <PlugConnectedRegular /> },
@@ -796,10 +800,13 @@ const useStyles = makeStyles({
     gridTemplateColumns: "110px minmax(0, 1fr)",
     gap: "10px",
     alignItems: "start",
+    minHeight: "46px",
     padding: "8px 0",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    transition: "none",
     "@media (max-width: 640px)": {
       gridTemplateColumns: "1fr",
+      minHeight: "58px",
     },
   },
   chartGrid: {
@@ -809,6 +816,7 @@ const useStyles = makeStyles({
   },
   chartCard: {
     minWidth: 0,
+    minHeight: "124px",
     display: "grid",
     gap: "8px",
     borderRadius: "4px",
@@ -829,6 +837,8 @@ const useStyles = makeStyles({
     display: "grid",
     gap: "4px",
     minWidth: 0,
+    minHeight: "36px",
+    transition: "none",
   },
   rankLine: {
     display: "grid",
@@ -1004,12 +1014,14 @@ const useStyles = makeStyles({
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
     backgroundColor: tokens.colorNeutralBackground2,
-    transition: "background-color 180ms ease, border-color 180ms ease, opacity 180ms ease",
+    minHeight: "74px",
+    transition: "none",
     "@media (max-width: 860px)": {
       gridTemplateColumns: "minmax(0, 1fr)",
       gap: 0,
       padding: 0,
       overflow: "hidden",
+      minHeight: "68px",
       transition: "none",
     },
   },
@@ -1138,6 +1150,8 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
     backgroundColor: tokens.colorNeutralBackground2,
     minWidth: 0,
+    minHeight: "148px",
+    transition: "none",
   },
   interfaceHeader: {
     display: "flex",
@@ -1165,6 +1179,7 @@ const useStyles = makeStyles({
   tableWrap: {
     overflowX: "auto",
     overscrollBehaviorX: "contain",
+    overscrollBehaviorY: "contain",
     maxWidth: "100%",
     WebkitOverflowScrolling: "touch",
     "@media (max-width: 640px)": {
@@ -1325,6 +1340,7 @@ const useStyles = makeStyles({
   },
   connectionSummaryCard: {
     minWidth: 0,
+    minHeight: "104px",
     display: "grid",
     gap: "8px",
     padding: "10px",
@@ -1415,8 +1431,10 @@ const useStyles = makeStyles({
     gridTemplateColumns: "4rem minmax(0, 1fr) max-content",
     gap: "10px",
     alignItems: "center",
+    minHeight: "56px",
     padding: "8px 10px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    transition: "none",
     "@media (max-width: 640px)": {
       gridTemplateColumns: "3rem minmax(0, 1fr)",
     },
@@ -1462,11 +1480,14 @@ const useStyles = makeStyles({
     width: "max-content",
     minWidth: "100%",
     alignItems: "start",
+    minHeight: "54px",
     padding: "8px 10px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    transition: "none",
     "@media (max-width: 760px)": {
       gridTemplateColumns: "1fr",
       gap: "8px",
+      minHeight: "128px",
       padding: "10px",
       border: `1px solid ${tokens.colorNeutralStroke2}`,
       borderRadius: tokens.borderRadiusMedium,
@@ -1480,11 +1501,14 @@ const useStyles = makeStyles({
     width: "max-content",
     minWidth: "100%",
     alignItems: "start",
+    minHeight: "54px",
     padding: "8px 10px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    transition: "none",
     "@media (max-width: 760px)": {
       gridTemplateColumns: "1fr",
       gap: "8px",
+      minHeight: "148px",
       padding: "10px",
       border: `1px solid ${tokens.colorNeutralStroke2}`,
       borderRadius: tokens.borderRadiusMedium,
@@ -1533,11 +1557,14 @@ const useStyles = makeStyles({
     gridTemplateColumns: "minmax(8rem, 0.9fr) max-content max-content max-content max-content minmax(12rem, 1fr)",
     gap: "10px",
     alignItems: "start",
+    minHeight: "54px",
     padding: "8px 10px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    transition: "none",
     "@media (max-width: 760px)": {
       gridTemplateColumns: "1fr",
       gap: "8px",
+      minHeight: "148px",
       padding: "10px",
       border: `1px solid ${tokens.colorNeutralStroke2}`,
       borderRadius: tokens.borderRadiusMedium,
@@ -1591,6 +1618,24 @@ const useStyles = makeStyles({
   },
   eventRowSelected: {
     backgroundColor: tokens.colorNeutralBackground2Selected,
+  },
+  stableTableRow: {
+    height: "44px",
+    minHeight: "44px",
+    transition: "none",
+    "@media (max-width: 640px)": {
+      height: "52px",
+      minHeight: "52px",
+    },
+  },
+  stableTallTableRow: {
+    height: "64px",
+    minHeight: "64px",
+    transition: "none",
+    "@media (max-width: 640px)": {
+      height: "72px",
+      minHeight: "72px",
+    },
   },
   config: {
     maxHeight: "66vh",
@@ -1812,6 +1857,7 @@ function App() {
   const configRef = useRef<ConfigSnapshot | null>(null);
   const pendingScrollSnapshot = useRef<ScrollSnapshot | null>(null);
   const connectionOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
+  const connectionGroupOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
 
   async function refresh() {
     if (refreshInFlight.current) {
@@ -1858,6 +1904,16 @@ function App() {
       refresh();
     }, delay);
   }
+
+  useEffect(() => {
+    const onScroll = () => {
+      const now = performance.now();
+      if (now < programmaticScrollUntil) return;
+      lastUserWindowScrollAt = now;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -1932,7 +1988,13 @@ function App() {
     }
     return applyFrozenConnectionOrder(connectionCandidates, connectionOrderRef.current.keys);
   }, [connectionCandidates, connectionFilters, connectionSortSignature, dnsLabels]);
-  const connectionGroupsList = useMemo(() => connectionGroups(filteredConnections), [filteredConnections]);
+  const connectionGroupsList = useMemo(() => {
+    const groups = connectionGroups(filteredConnections);
+    if (connectionGroupOrderRef.current.signature !== connectionSortSignature) {
+      connectionGroupOrderRef.current = { signature: connectionSortSignature, keys: groups.map(group => group.key) };
+    }
+    return applyFrozenGroupOrder(groups, connectionGroupOrderRef.current.keys);
+  }, [filteredConnections, connectionSortSignature]);
   const connectionFacets = useMemo(() => connectionFilterFacets(connections), [connections]);
   const navSubItems = useMemo(() => navigationSubItems(selected, connectionGroupsList, summary), [selected, connectionGroupsList, summary]);
   const resources = useMemo(() => importantResources(summary?.resources ?? []), [summary?.resources]);
@@ -2213,6 +2275,15 @@ function App() {
                 <OverviewActivity resources={summary?.resources ?? []} events={events} navigateTo={navigateTo} />
               </>
             ) : null}
+            {selected === "resources" ? (
+              <Card id="resources-table" className={styles.connectionAnchor}>
+                <CardHeader
+                  header={<Text weight="semibold">Resources</Text>}
+                  description={<Text className={styles.muted}>Resource phase, controller mode, and status detail</Text>}
+                />
+                <ResourceTable resources={resources} controllers={controllers} />
+              </Card>
+            ) : null}
             {selected === "controllers" ? (
               <Card id="controllers-table" className={styles.connectionAnchor}>
                 <CardHeader
@@ -2467,7 +2538,7 @@ function App() {
               </div>
             ) : null}
             {selected === "config" ? (
-              <Card>
+              <Card id="config-view" className={styles.connectionAnchor}>
                 <CardHeader header={<Text weight="semibold">Config</Text>} description={<Text className={styles.muted}>{config?.path ?? ""}</Text>} />
                 <ConfigView config={config} latestGeneration={generations.find(row => row.hasYaml)} planDiff={configPlanDiff} loadPlanDiff={loadConfigPlanDiff} />
               </Card>
@@ -2604,7 +2675,7 @@ function GenerationsView({
   const diffable = generations.filter(row => row.hasYaml);
   return (
     <>
-      <Card>
+      <Card id="generations-table" className={styles.connectionAnchor}>
         <CardHeader
           header={<Text weight="semibold">Generations</Text>}
           description={<Text className={styles.muted}>Applied router YAML snapshots. Showing {generations.length} of {totalGenerations}. Older rows without YAML cannot be diffed.</Text>}
@@ -2662,7 +2733,7 @@ function GenerationsView({
                 const previous = generations[index + 1];
                 const canDiffPrevious = !!previous?.hasYaml && !!row.hasYaml;
                 return (
-                <TableRow key={row.generation}>
+                <TableRow key={row.generation} className={styles.stableTableRow}>
                   <TableCell><code className={styles.code}>#{row.generation}</code></TableCell>
                   <TableCell><RelativeTime value={row.startedAt} /></TableCell>
                   <TableCell><RelativeTime value={row.finishedAt} /></TableCell>
@@ -2866,11 +2937,12 @@ function RankList({
   formatValue?: (value: number) => string;
 }) {
   const styles = useStyles();
-  const max = Math.max(1, ...rows.map(row => row.value));
-  if (rows.length === 0) return <Text className={styles.muted}>{empty}</Text>;
+  const stableRows = useFrozenRowOrder(rows, row => row.label);
+  const max = Math.max(1, ...stableRows.map(row => row.value));
+  if (stableRows.length === 0) return <Text className={styles.muted}>{empty}</Text>;
   return (
     <div className={styles.rankList}>
-      {rows.map(row => (
+      {stableRows.map(row => (
         <div className={styles.rankRow} key={row.label}>
           <div className={styles.rankLine}>
             <Text><code className={styles.wrapCode}>{formatLabel(row.label)}</code></Text>
@@ -3150,7 +3222,7 @@ function ResourceTable({ resources, controllers }: { resources: ResourceStatus[]
               const status = resource.status ?? {};
               const dryRunController = dryRunByKind.get(String(resource.kind ?? ""));
               return (
-                <TableRow key={`${resource.apiVersion}/${resource.kind}/${resource.name}`}>
+                <TableRow key={`${resource.apiVersion}/${resource.kind}/${resource.name}`} className={styles.stableTableRow}>
                   <TableCell><Highlighted text={resource.kind ?? ""} query={query} /></TableCell>
                   <TableCell><code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code></TableCell>
                   <TableCell><Badge appearance="tint" color={phaseColor(status.phase)}><Highlighted text={String(status.phase ?? "Unknown")} query={query} /></Badge></TableCell>
@@ -3188,7 +3260,7 @@ function SearchControl({
 
 function ControllerTable({ controllers }: { controllers: ControllerStatus[] }) {
   const styles = useStyles();
-  const rows = [...controllers].sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? "")));
+  const rows = controllers;
   return (
     <div className={styles.tableWrap} data-routerd-scroll-key="controllers-table">
       <Table size="small" className={styles.controllerTable}>
@@ -3208,7 +3280,7 @@ function ControllerTable({ controllers }: { controllers: ControllerStatus[] }) {
         </TableHeader>
         <TableBody>
           {rows.map(controller => (
-            <TableRow key={controller.name}>
+            <TableRow key={controller.name} className={styles.stableTallTableRow}>
               <TableCell><code className={styles.code}>{controller.name}</code></TableCell>
               <TableCell><Badge appearance="tint" color={controller.mode === "dry-run" ? "warning" : "success"}>{controller.mode ?? "unknown"}</Badge></TableCell>
               <TableCell>
@@ -3275,7 +3347,7 @@ function EventTable({ events, selectedKey, onSelect, query }: { events: RouterEv
           {events.slice(0, 100).map(event => {
             const key = eventKey(event);
             return (
-              <TableRow key={key} className={key === selectedKey ? styles.eventRowSelected : undefined} onClick={() => onSelect(event)}>
+              <TableRow key={key} className={`${styles.stableTableRow} ${key === selectedKey ? styles.eventRowSelected : ""}`} onClick={() => onSelect(event)}>
                 <TableCell><RelativeTime value={event.createdAt} /></TableCell>
                 <TableCell><Highlighted text={event.severity ?? ""} query={query ?? ""} /></TableCell>
                 <TableCell><code className={styles.wrapCode}><Highlighted text={event.topic ?? event.type ?? ""} query={query ?? ""} /></code></TableCell>
@@ -3394,7 +3466,7 @@ function ConnectionGroup({
               </TableHeader>
               <TableBody>
                 {visibleRows.map(entry => (
-                  <TableRow key={flowKey(entry)}>
+                  <TableRow key={flowKey(entry)} className={styles.stableTallTableRow}>
                     <TableCell>
                       <div className={styles.badges}>
                         <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
@@ -3595,7 +3667,7 @@ function TailscalePanel({ status, errors }: { status?: TailscaleStatus; errors: 
           </TableHeader>
           <TableBody>
             {peers.map(peer => (
-              <TableRow key={peer.id || peer.dnsName || peer.hostName}>
+              <TableRow key={peer.id || peer.dnsName || peer.hostName} className={styles.stableTallTableRow}>
                 <TableCell>
                   <div className={styles.connectionFlow}>
                     <Text>{peer.hostName || "-"}</Text>
@@ -3671,7 +3743,7 @@ function WireGuardPanel({ interfaces, errors }: { interfaces: WireGuardInterface
               </TableHeader>
               <TableBody>
                 {(item.peers ?? []).map(peer => (
-                  <TableRow key={peer.publicKey}>
+                  <TableRow key={peer.publicKey} className={styles.stableTableRow}>
                     <TableCell><code className={styles.wrapCode}>{shortHash(peer.publicKey)}</code></TableCell>
                     <TableCell><code className={styles.wrapCode}>{peer.endpoint || "-"}</code></TableCell>
                     <TableCell><code className={styles.wrapCode}>{(peer.allowedIPs ?? []).join(", ") || "-"}</code></TableCell>
@@ -3697,7 +3769,10 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
   const activeActivities = new Set(rows.map(row => row.primaryActivity).filter(Boolean));
   const sections = clientSections(rows);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>(() => readStoredRecord(clientSectionsCollapsedStorageKey));
+  useEffect(() => {
+    writeStoredRecord(clientSectionsCollapsedStorageKey, collapsedSections);
+  }, [collapsedSections]);
   const toggleExpanded = (key: string) => setExpanded(current => ({ ...current, [key]: !current[key] }));
   const toggleSection = (key: string) => setCollapsedSections(current => ({ ...current, [key]: !current[key] }));
   return (
@@ -3950,7 +4025,7 @@ function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
         </TableHeader>
         <TableBody>
           {clientTrafficRows(flows).map(row => (
-            <TableRow key={row.client}>
+            <TableRow key={row.client} className={styles.stableTableRow}>
               <TableCell><code className={styles.code}>{row.client}</code></TableCell>
               <TableCell>{formatBytes(row.bytesOut)}</TableCell>
               <TableCell>{formatBytes(row.bytesIn)}</TableCell>
@@ -3997,7 +4072,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
         </TableHeader>
         <TableBody>
           {rows.map(lease => (
-            <TableRow key={`${lease.ip}-${lease.mac}`}>
+            <TableRow key={`${lease.ip}-${lease.mac}`} className={styles.stableTableRow}>
               <TableCell><Badge appearance="tint" color={lease.family === "ipv6" ? "brand" : "success"}>{lease.family || "-"}</Badge></TableCell>
               <TableCell><code className={styles.wrapCode}>{lease.ip || "-"}</code></TableCell>
               <TableCell>{lease.hostname || "-"}</TableCell>
@@ -4066,6 +4141,7 @@ function RecentDeny({
   leases: Record<string, DHCPLease>;
 }) {
   const styles = useStyles();
+  const rows = useFrozenRowOrder(denyRows(logs), row => row.key);
   return (
     <div className={styles.firewallTable} role="table" aria-label="Deny ranking" data-routerd-scroll-key="firewall-ranking-table">
       <div className={styles.firewallRankHeader} role="row">
@@ -4078,7 +4154,7 @@ function RecentDeny({
         <span>Class</span>
         <span>DPI</span>
       </div>
-      {denyRows(logs).map(row => (
+      {rows.map(row => (
         <div className={styles.firewallRankRow} role="row" key={`${row.key}-${row.dpi}`}>
           <FirewallCell label="Count">{row.count}</FirewallCell>
           <FirewallCell label="Source"><EndpointDetail address={row.src} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
@@ -4117,7 +4193,7 @@ function FirewallSourceTopN({
   leases: Record<string, DHCPLease>;
 }) {
   const styles = useStyles();
-  const rows = sourceTopRows(logs);
+  const rows = useFrozenRowOrder(sourceTopRows(logs), row => row.source);
   const max = Math.max(1, ...rows.map(row => row.count));
   if (rows.length === 0) return <Text className={styles.muted}>No deny rows match the current filters</Text>;
   return (
@@ -4363,9 +4439,7 @@ function roleColor(role: unknown): "success" | "warning" | "danger" | "informati
 }
 
 function importantResources(resources: ResourceStatus[]) {
-  return resources
-    .filter(resource => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(resource.kind ?? ""))
-    .sort((a, b) => `${a.kind}/${a.name}`.localeCompare(`${b.kind}/${b.name}`));
+  return resources.filter(resource => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(resource.kind ?? ""));
 }
 
 function conntrackLabel(table?: ConnectionTable) {
@@ -4638,6 +4712,43 @@ function applyFrozenConnectionOrder(entries: ConnectionEntry[], keys: string[]) 
   }
   const remaining = Array.from(byKey.values()).flat().sort(compareConnectionStable);
   return [...ordered, ...remaining];
+}
+
+function applyFrozenGroupOrder<T extends { key: string }>(groups: T[], keys: string[]) {
+  const byKey = new Map(groups.map(group => [group.key, group]));
+  const ordered: T[] = [];
+  for (const key of keys) {
+    const group = byKey.get(key);
+    if (!group) continue;
+    ordered.push(group);
+    byKey.delete(key);
+  }
+  return [...ordered, ...Array.from(byKey.values())];
+}
+
+function useFrozenRowOrder<T>(rows: T[], keyFn: (row: T) => string): T[] {
+  const orderRef = useRef<string[]>([]);
+  const keys = rows.map(keyFn);
+  const known = new Set(keys);
+  const nextOrder = orderRef.current.filter(key => known.has(key));
+  for (const key of keys) {
+    if (!nextOrder.includes(key)) nextOrder.push(key);
+  }
+  orderRef.current = nextOrder;
+
+  const byKey = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = keyFn(row);
+    byKey.set(key, [...(byKey.get(key) ?? []), row]);
+  }
+  const ordered: T[] = [];
+  for (const key of nextOrder) {
+    const candidates = byKey.get(key);
+    if (!candidates || candidates.length === 0) continue;
+    ordered.push(candidates.shift() as T);
+    if (candidates.length === 0) byKey.delete(key);
+  }
+  return [...ordered, ...Array.from(byKey.values()).flat()];
 }
 
 function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, string>) {
@@ -5032,6 +5143,12 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
       { key: "controllers", label: "Controllers", count: controllers.length, view: "controllers", targetID: "controllers-table" },
     ];
   }
+  if (selected === "resources") {
+    const resources = importantResources(summary?.resources ?? []);
+    return [
+      { key: "resources", label: "Resources", count: resources.length, view: "resources", targetID: "resources-table" },
+    ];
+  }
   if (selected === "connections") {
     return groups.map(group => {
       const label = connectionGroupLabel(group.key);
@@ -5141,6 +5258,9 @@ function scrollToGenerationResult() {
   });
 }
 
+let lastUserWindowScrollAt = 0;
+let programmaticScrollUntil = 0;
+
 function captureScrollSnapshot(): ScrollSnapshot {
   const elements = Array.from(document.querySelectorAll<HTMLElement>("[data-routerd-scroll-key]")).map(element => ({
     key: element.dataset.routerdScrollKey ?? "",
@@ -5148,14 +5268,23 @@ function captureScrollSnapshot(): ScrollSnapshot {
     left: element.scrollLeft,
   })).filter(item => item.key);
   return {
+    capturedAt: performance.now(),
     windowX: window.scrollX,
     windowY: window.scrollY,
+    anchor: captureScrollAnchor(),
     elements,
   };
 }
 
 function restoreScrollSnapshot(snapshot: ScrollSnapshot) {
-  window.scrollTo(snapshot.windowX, snapshot.windowY);
+  if (lastUserWindowScrollAt > snapshot.capturedAt + 50) return;
+  if (!restoreScrollAnchor(snapshot)) {
+    markProgrammaticScroll();
+    window.scrollTo(snapshot.windowX, snapshot.windowY);
+  } else if (Math.abs(window.scrollX - snapshot.windowX) > 1) {
+    markProgrammaticScroll();
+    window.scrollTo(snapshot.windowX, window.scrollY);
+  }
   const elements = new Map<string, HTMLElement>();
   document.querySelectorAll<HTMLElement>("[data-routerd-scroll-key]").forEach(element => {
     const key = element.dataset.routerdScrollKey;
@@ -5175,6 +5304,46 @@ function restoreScrollAfterRender(snapshot: ScrollSnapshot) {
     window.requestAnimationFrame(() => restoreScrollSnapshot(snapshot));
   });
   window.setTimeout(() => restoreScrollSnapshot(snapshot), 120);
+}
+
+function captureScrollAnchor() {
+  const anchors = Array.from(document.querySelectorAll<HTMLElement>("main [id]"))
+    .filter(element => element.id && isVisibleScrollAnchor(element));
+  if (!anchors.length) return undefined;
+  const topEdge = 96;
+  let selected = anchors[0];
+  for (const anchor of anchors) {
+    const rect = anchor.getBoundingClientRect();
+    if (rect.top <= topEdge) {
+      selected = anchor;
+      continue;
+    }
+    break;
+  }
+  const rect = selected.getBoundingClientRect();
+  return { id: selected.id, top: rect.top };
+}
+
+function restoreScrollAnchor(snapshot: ScrollSnapshot) {
+  if (!snapshot.anchor?.id) return false;
+  const target = document.getElementById(snapshot.anchor.id);
+  if (!target) return false;
+  const rect = target.getBoundingClientRect();
+  const delta = rect.top - snapshot.anchor.top;
+  if (Math.abs(delta) > 1) {
+    markProgrammaticScroll();
+    window.scrollBy(0, delta);
+  }
+  return true;
+}
+
+function isVisibleScrollAnchor(element: HTMLElement) {
+  const rect = element.getBoundingClientRect();
+  return rect.height > 0 && rect.width > 0 && rect.bottom >= 0;
+}
+
+function markProgrammaticScroll() {
+  programmaticScrollUntil = performance.now() + 250;
 }
 
 function endpoint(tuple?: ConnTuple) {
@@ -5287,7 +5456,7 @@ function clientTrafficRows(flows: TrafficFlow[]) {
     if (protocol) row.protocols.add(protocol);
     totals.set(key, row);
   }
-  return Array.from(totals.values()).sort((a, b) => a.client.localeCompare(b.client)).slice(0, 10);
+  return Array.from(totals.values()).slice(0, 10);
 }
 
 function clientEntryToRow(entry: ClientEntry): ClientRow {
@@ -5326,7 +5495,6 @@ function clientRowKey(row: ClientRow) {
 }
 
 function clientSections(rows: ClientRow[]) {
-  const order = ["Nintendo", "PlayStation", "Xbox", "SteamOS", "Apple", "Android", "Windows", "Linux", "IoT", "Printer", "NAS", "VoIP", "Embedded", "Other"];
   const sections = new Map<string, { key: string; label: string; rows: ClientRow[]; addressCount: number }>();
   for (const row of rows) {
     const label = clientSectionLabel(clientOSFamily(row));
@@ -5335,26 +5503,7 @@ function clientSections(rows: ClientRow[]) {
     section.addressCount += row.addresses.size;
     sections.set(label, section);
   }
-  return Array.from(sections.values())
-    .sort((a, b) => {
-      const ai = order.indexOf(a.label);
-      const bi = order.indexOf(b.label);
-      const ao = ai === -1 ? order.length : ai;
-      const bo = bi === -1 ? order.length : bi;
-      return ao - bo || a.label.localeCompare(b.label);
-    })
-    .map(section => ({
-      ...section,
-      rows: [...section.rows].sort(clientRowSort),
-    }));
-}
-
-function clientRowSort(a: ClientRow, b: ClientRow) {
-  return stringSort(clientRowLabel(a), clientRowLabel(b)) || stringSort(clientRowKey(a), clientRowKey(b));
-}
-
-function clientRowLabel(row: ClientRow) {
-  return `${row.hostname || row.vendor || row.mac || primaryClientAddress(row) || row.id || ""}`.toLowerCase();
+  return Array.from(sections.values());
 }
 
 function clientSectionLabel(family: string) {
