@@ -287,6 +287,12 @@ type ClientEntry = {
   fingerprintSignals?: string[];
 };
 
+type ClientIdentity = {
+  label: string;
+  compactLabel: string;
+  searchText: string;
+};
+
 type InterfaceSummary = {
   name?: string;
   ifname?: string;
@@ -1364,6 +1370,23 @@ const useStyles = makeStyles({
     gap: "2px",
     minWidth: 0,
   },
+  connectionPeerIdentity: {
+    color: tokens.colorNeutralForeground3,
+    display: "block",
+    maxWidth: "min(100%, 54rem)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  connectionInlineIdentity: {
+    color: tokens.colorNeutralForeground3,
+    display: "inline-block",
+    maxWidth: "min(100%, 22rem)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    verticalAlign: "bottom",
+    whiteSpace: "nowrap",
+  },
   clientDetailStack: {
     display: "grid",
     gap: "7px",
@@ -1978,9 +2001,10 @@ function App() {
   const connections = summary?.connections?.entries ?? [];
   const dnsLabels = useMemo(() => dnsLabelMap(summary?.dnsQueries ?? []), [summary?.dnsQueries]);
   const leaseMap = useMemo(() => dhcpLeaseMap(summary?.dhcpLeases ?? []), [summary?.dhcpLeases]);
+  const clientIdentities = useMemo(() => clientIdentityMap(summary?.clients ?? []), [summary?.clients]);
   const connectionCandidates = useMemo(
-    () => filterConnections(connections, dnsLabels, connectionFilters),
-    [connections, dnsLabels, connectionFilters],
+    () => filterConnections(connections, dnsLabels, clientIdentities, connectionFilters),
+    [connections, dnsLabels, clientIdentities, connectionFilters],
   );
   const connectionSortSignature = [
     connectionFilters.query,
@@ -2423,6 +2447,7 @@ function App() {
                   key={group.key}
                   group={group}
                   dnsLabels={dnsLabels}
+                  clientIdentities={clientIdentities}
                   collapsed={collapsed[group.key] ?? false}
                   toggle={() => setCollapsed(current => ({ ...current, [group.key]: !(current[group.key] ?? false) }))}
                   page={connectionPages[group.key] ?? 0}
@@ -3412,6 +3437,7 @@ function EventDetail({ event, id }: { event?: RouterEvent; id?: string }) {
 function ConnectionGroup({
   group,
   dnsLabels,
+  clientIdentities,
   collapsed,
   toggle,
   page,
@@ -3421,6 +3447,7 @@ function ConnectionGroup({
 }: {
   group: { key: string; rows: ConnectionEntry[] };
   dnsLabels: Record<string, string>;
+  clientIdentities: Map<string, ClientIdentity>;
   collapsed: boolean;
   toggle: () => void;
   page: number;
@@ -3491,11 +3518,11 @@ function ConnectionGroup({
                     <TableCell>
                       <div className={styles.connectionFlow}>
                         <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
-                        <ConnectionRemoteIdentity entry={entry} dnsLabels={dnsLabels} />
+                        <ConnectionRemoteIdentity entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} />
                       </div>
                     </TableCell>
                     <TableCell><ConnectionDPI entry={entry} dnsLabels={dnsLabels} /></TableCell>
-                    <TableCell><RemoteIdentityLabel entry={entry} dnsLabels={dnsLabels} /></TableCell>
+                    <TableCell><RemoteIdentityLabel entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} /></TableCell>
                     <TableCell>{entry.timeout ?? 0}s</TableCell>
                   </TableRow>
                 ))}
@@ -3531,22 +3558,23 @@ function ConnectionDPI({ entry, dnsLabels }: { entry: ConnectionEntry; dnsLabels
   );
 }
 
-function ConnectionRemoteIdentity({ entry, dnsLabels }: { entry: ConnectionEntry; dnsLabels: Record<string, string> }) {
+function ConnectionRemoteIdentity({ entry, dnsLabels, clientIdentities }: { entry: ConnectionEntry; dnsLabels: Record<string, string>; clientIdentities: Map<string, ClientIdentity> }) {
   const styles = useStyles();
-  const identity = remoteIdentity(entry, dnsLabels);
+  const identity = connectionInlineIdentity(entry, dnsLabels, clientIdentities);
   if (!identity) return null;
   return (
-    <Text size={200} className={styles.muted}>
+    <Text size={200} className={styles.connectionPeerIdentity} title={identity}>
       {identity}
     </Text>
   );
 }
 
-function RemoteIdentityLabel({ entry, dnsLabels }: { entry: ConnectionEntry; dnsLabels: Record<string, string> }) {
+function RemoteIdentityLabel({ entry, dnsLabels, clientIdentities }: { entry: ConnectionEntry; dnsLabels: Record<string, string>; clientIdentities: Map<string, ClientIdentity> }) {
   const styles = useStyles();
-  const identity = remoteIdentity(entry, dnsLabels);
+  const identity = destinationIdentity(entry, dnsLabels, clientIdentities);
   if (!identity) return <Text className={styles.muted}>-</Text>;
-  return <code className={`${styles.wrapCode} ${styles.guessText}`}>{identity}</code>;
+  const isClientIdentity = Boolean(clientIdentities.get(normalizeAddressKey(entry.original?.destination)));
+  return <code className={`${styles.wrapCode} ${styles.connectionInlineIdentity} ${isClientIdentity ? "" : styles.guessText}`} title={identity}>{identity}</code>;
 }
 
 function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
@@ -4733,7 +4761,7 @@ function resourceSearchText(resource: ResourceStatus) {
   ].filter(Boolean).join(" ").toLowerCase();
 }
 
-function filterConnections(entries: ConnectionEntry[], dnsLabels: Record<string, string>, filters: ConnectionFilters) {
+function filterConnections(entries: ConnectionEntry[], dnsLabels: Record<string, string>, clientIdentities: Map<string, ClientIdentity>, filters: ConnectionFilters) {
   const query = filters.query.trim().toLowerCase();
   return entries.filter(entry => {
     if (filters.family !== "all" && normalizeFacet(entry.family, "other") !== filters.family) return false;
@@ -4741,7 +4769,7 @@ function filterConnections(entries: ConnectionEntry[], dnsLabels: Record<string,
     if (filters.app !== "all" && connectionApp(entry) !== filters.app) return false;
     if (filters.state !== "all" && normalizeFacet(entry.state, "stateless") !== filters.state) return false;
     if (!query) return true;
-    return connectionSearchText(entry, dnsLabels).includes(query);
+    return connectionSearchText(entry, dnsLabels, clientIdentities).includes(query);
   });
 }
 
@@ -4811,7 +4839,7 @@ function useFrozenRowOrder<T>(rows: T[], keyFn: (row: T) => string): T[] {
   return [...ordered, ...Array.from(byKey.values()).flat()];
 }
 
-function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, string>) {
+function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, string>, clientIdentities?: Map<string, ClientIdentity>) {
   const addresses = [
     entry.original?.source,
     entry.original?.destination,
@@ -4819,6 +4847,7 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
     entry.reply?.destination,
   ].filter(Boolean) as string[];
   const labels = addresses.map(address => dnsLabels[address] ?? "").filter(Boolean);
+  const clientLabels = clientIdentities ? addresses.map(address => clientIdentities.get(normalizeAddressKey(address))?.searchText ?? "").filter(Boolean) : [];
   return [
     entry.family,
     entry.protocol,
@@ -4829,7 +4858,8 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
     connectionApp(entry, dnsLabels),
     connectionDPIDetail(entry, dnsLabels),
     connectionAppSource(entry),
-    remoteIdentity(entry, dnsLabels),
+    destinationIdentity(entry, dnsLabels, clientIdentities),
+    connectionInlineIdentity(entry, dnsLabels, clientIdentities),
     entry.original?.sourceHostname,
     entry.original?.destinationHostname,
     entry.original?.sourceService,
@@ -4843,6 +4873,7 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
     endpoint(entry.original),
     endpoint(entry.reply),
     ...labels,
+    ...clientLabels,
   ].join(" ").toLowerCase();
 }
 
@@ -5133,8 +5164,29 @@ function formatPortGuessLabel(app: string, port: string, peerLabel = "", service
   return `${formatted}:${port}${suffix}`;
 }
 
-function remoteIdentity(entry: ConnectionEntry, dnsLabels?: Record<string, string>) {
-  const tuple = entry.original;
+function connectionInlineIdentity(entry: ConnectionEntry, dnsLabels?: Record<string, string>, clientIdentities?: Map<string, ClientIdentity>) {
+  const source = peerIdentity(entry.original, "source", dnsLabels, clientIdentities);
+  const destination = destinationIdentity(entry, dnsLabels, clientIdentities);
+  const parts = [];
+  if (source) parts.push(`src ${source}`);
+  if (destination) parts.push(`dst ${destination}`);
+  return parts.join(" / ");
+}
+
+function destinationIdentity(entry: ConnectionEntry, dnsLabels?: Record<string, string>, clientIdentities?: Map<string, ClientIdentity>) {
+  return peerIdentity(entry.original, "destination", dnsLabels, clientIdentities);
+}
+
+function peerIdentity(tuple: ConnTuple | undefined, side: "source" | "destination", dnsLabels?: Record<string, string>, clientIdentities?: Map<string, ClientIdentity>) {
+  if (!tuple) return "";
+  const address = side === "source" ? tuple.source : tuple.destination;
+  const client = address ? clientIdentities?.get(normalizeAddressKey(address)) : undefined;
+  if (address && client) return `${address} [${client.compactLabel}]`;
+  if (side === "source") return "";
+  return remoteIdentity(tuple, dnsLabels);
+}
+
+function remoteIdentity(tuple: ConnTuple | undefined, dnsLabels?: Record<string, string>) {
   const host = remoteHostname(tuple, "destination", dnsLabels);
   const service = tuple?.destinationService || serviceNameForPort(tuple?.destinationPort);
   const parts = [];
@@ -5885,6 +5937,75 @@ function clientSearchText(client: ClientEntry) {
     ...(client.protocolMix ?? []),
     ...(client.fingerprintSignals ?? []),
   ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function clientIdentityMap(clients: ClientEntry[]) {
+  const identities = new Map<string, ClientIdentity>();
+  for (const client of clients) {
+    const identity = clientIdentity(client);
+    if (!identity) continue;
+    for (const address of clientIdentityAddresses(client)) {
+      if (!identities.has(address)) identities.set(address, identity);
+    }
+  }
+  return identities;
+}
+
+function clientIdentity(client: ClientEntry): ClientIdentity | undefined {
+  const hostname = cleanIdentityPart(client.hostname);
+  const vendor = cleanIdentityPart(client.vendor);
+  const osFamily = cleanIdentityPart(client.inferredOSFamily);
+  const deviceClass = cleanIdentityPart(client.inferredDeviceClass);
+  const mac = cleanIdentityPart(client.mac);
+  const id = cleanIdentityPart(client.id);
+  const primary = hostname || vendor || mac || (id && !isLikelyIPAddress(id) ? id : "");
+  const kind = [osFamily, deviceClass].filter(Boolean).join("/");
+  if (!primary && !kind) return undefined;
+  const details = [kind, vendor && vendor !== primary ? vendor : ""].filter(Boolean);
+  const label = details.length ? `${primary} [${details.join(", ")}]` : primary;
+  return {
+    label,
+    compactLabel: details.length ? `${primary} - ${details.join(" - ")}` : primary,
+    searchText: [
+      label,
+      primary,
+      hostname,
+      vendor,
+      osFamily,
+      deviceClass,
+      client.mac,
+      client.id,
+      ...(client.addresses ?? []),
+    ].filter(Boolean).join(" ").toLowerCase(),
+  };
+}
+
+function clientIdentityAddresses(client: ClientEntry) {
+  const values = new Set<string>();
+  for (const address of client.addresses ?? []) {
+    const normalized = normalizeAddressKey(address);
+    if (normalized) values.add(normalized);
+  }
+  const id = normalizeAddressKey(client.id);
+  if (id && isLikelyIPAddress(id)) values.add(id);
+  return Array.from(values);
+}
+
+function normalizeAddressKey(address?: string) {
+  const value = String(address ?? "").trim();
+  if (!value) return "";
+  const withoutCIDR = value.split("/")[0] ?? "";
+  return withoutCIDR.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+}
+
+function cleanIdentityPart(value?: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed || trimmed === "-" || trimmed.toLowerCase() === "unknown") return "";
+  return trimmed;
+}
+
+function isLikelyIPAddress(value: string) {
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value) || value.includes(":");
 }
 
 function formatClientActivity(value: string) {
