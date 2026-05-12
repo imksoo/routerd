@@ -1187,7 +1187,6 @@ const useStyles = makeStyles({
   tableWrap: {
     overflowX: "auto",
     overscrollBehaviorX: "contain",
-    overscrollBehaviorY: "contain",
     maxWidth: "100%",
     WebkitOverflowScrolling: "touch",
     "@media (max-width: 640px)": {
@@ -1922,6 +1921,8 @@ function App() {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  useEffect(() => installHorizontalScrollTouchCoordinator(), []);
 
   useEffect(() => {
     refresh();
@@ -5407,6 +5408,85 @@ function scrollToGenerationResult() {
 
 let lastUserWindowScrollAt = 0;
 let programmaticScrollUntil = 0;
+let horizontalTouchState: {
+  scroller: HTMLElement;
+  startX: number;
+  startY: number;
+  lastY: number;
+  axis: "horizontal" | "vertical" | "";
+} | null = null;
+
+function installHorizontalScrollTouchCoordinator() {
+  const onStart = (event: TouchEvent) => {
+    if (window.innerWidth > 860 || event.touches.length !== 1) {
+      horizontalTouchState = null;
+      return;
+    }
+    const scroller = horizontalScrollerFromTarget(event.target);
+    if (!scroller) {
+      horizontalTouchState = null;
+      return;
+    }
+    const touch = event.touches[0];
+    horizontalTouchState = {
+      scroller,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastY: touch.clientY,
+      axis: "",
+    };
+  };
+  const onMove = (event: TouchEvent) => {
+    if (!horizontalTouchState || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    const deltaX = touch.clientX - horizontalTouchState.startX;
+    const deltaY = touch.clientY - horizontalTouchState.startY;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+    if (!horizontalTouchState.axis && Math.max(absX, absY) > 8) {
+      horizontalTouchState.axis = absY > absX * 1.2 ? "vertical" : absX > absY * 1.2 ? "horizontal" : "";
+    }
+    if (horizontalTouchState.axis !== "vertical") return;
+    if (event.cancelable) event.preventDefault();
+    const scrollDelta = horizontalTouchState.lastY - touch.clientY;
+    if (Math.abs(scrollDelta) > 0.5) {
+      markProgrammaticScroll();
+      window.scrollBy(0, scrollDelta);
+      horizontalTouchState.lastY = touch.clientY;
+    }
+  };
+  const onEnd = () => {
+    horizontalTouchState = null;
+  };
+  document.addEventListener("touchstart", onStart, { passive: true, capture: true });
+  document.addEventListener("touchmove", onMove, { passive: false, capture: true });
+  document.addEventListener("touchend", onEnd, { passive: true, capture: true });
+  document.addEventListener("touchcancel", onEnd, { passive: true, capture: true });
+  return () => {
+    document.removeEventListener("touchstart", onStart, { capture: true });
+    document.removeEventListener("touchmove", onMove, { capture: true });
+    document.removeEventListener("touchend", onEnd, { capture: true });
+    document.removeEventListener("touchcancel", onEnd, { capture: true });
+  };
+}
+
+function horizontalScrollerFromTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) return null;
+  let element: HTMLElement | null = target.closest("[data-routerd-scroll-key], [role='table']");
+  while (element) {
+    if (isHorizontalOnlyScroller(element)) return element;
+    element = element.parentElement?.closest("[data-routerd-scroll-key], [role='table']") ?? null;
+  }
+  return null;
+}
+
+function isHorizontalOnlyScroller(element: HTMLElement) {
+  const style = window.getComputedStyle(element);
+  const canScrollX = /(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth + 2;
+  if (!canScrollX) return false;
+  const canScrollY = /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 2;
+  return !canScrollY;
+}
 
 function captureScrollSnapshot(): ScrollSnapshot {
   const elements = Array.from(document.querySelectorAll<HTMLElement>("[data-routerd-scroll-key]")).map(element => ({
