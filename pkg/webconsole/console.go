@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"routerd/internal/hostcmd"
@@ -50,10 +51,12 @@ type Options struct {
 	ConfigPath             string
 	ControllerModes        []controlapi.ControllerStatus
 	Bus                    *bus.Bus
+	ReverseLookup          func(ctx context.Context, address string) ([]string, error)
 }
 
 type Handler struct {
-	opts Options
+	opts       Options
+	reverseDNS *reverseDNSCache
 }
 
 type Snapshot struct {
@@ -223,7 +226,10 @@ func New(opts Options) Handler {
 		defaults, _ := platform.Current()
 		opts.DHCPFingerprintLogPath = strings.TrimRight(defaults.StateDir, "/") + "/dhcp-fingerprints.db"
 	}
-	return Handler{opts: opts}
+	if opts.ReverseLookup == nil {
+		opts.ReverseLookup = net.DefaultResolver.LookupAddr
+	}
+	return Handler{opts: opts, reverseDNS: newReverseDNSCache(time.Hour)}
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -295,6 +301,8 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		if err != nil {
 			errors = append(errors, err.Error())
 		} else if err := h.enrichConnectionsWithDPI(connections, time.Now().UTC(), time.Hour); err != nil {
+			errors = append(errors, err.Error())
+		} else if err := h.enrichConnectionsWithRemoteIdentity(context.Background(), connections); err != nil {
 			errors = append(errors, err.Error())
 		}
 	}
@@ -534,6 +542,10 @@ func (h Handler) connections(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.enrichConnectionsWithDPI(table, time.Now().UTC(), time.Hour); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.enrichConnectionsWithRemoteIdentity(r.Context(), table); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1250,6 +1262,162 @@ func (h Handler) enrichConnectionsWithDPI(table *observe.ConnectionTable, now ti
 	return nil
 }
 
+func (h Handler) enrichConnectionsWithRemoteIdentity(ctx context.Context, table *observe.ConnectionTable) error {
+	if table == nil || len(table.Entries) == 0 {
+		return nil
+	}
+	addresses := make([]string, 0, len(table.Entries))
+	seen := map[string]bool{}
+	for i := range table.Entries {
+		entry := &table.Entries[i]
+		annotateTupleServices(&entry.Original, entry.Protocol)
+		annotateTupleServices(&entry.Reply, entry.Protocol)
+		for _, address := range []string{entry.Original.Source, entry.Original.Destination, entry.Reply.Source, entry.Reply.Destination} {
+			if !shouldReverseLookup(address) || seen[address] {
+				continue
+			}
+			seen[address] = true
+			addresses = append(addresses, address)
+		}
+	}
+	if len(addresses) == 0 || h.reverseDNS == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	labels := h.reverseDNS.lookupMany(ctx, addresses, h.opts.ReverseLookup)
+	for i := range table.Entries {
+		entry := &table.Entries[i]
+		annotateTupleHostnames(&entry.Original, labels)
+		annotateTupleHostnames(&entry.Reply, labels)
+	}
+	return nil
+}
+
+func annotateTupleServices(tuple *observe.ConntrackTuple, protocol string) {
+	if tuple == nil {
+		return
+	}
+	if tuple.SourceService == "" {
+		tuple.SourceService = serviceNameForPort(protocol, atoiDefault(tuple.SourcePort, 0))
+	}
+	if tuple.DestinationService == "" {
+		tuple.DestinationService = serviceNameForPort(protocol, atoiDefault(tuple.DestinationPort, 0))
+	}
+}
+
+func annotateTupleHostnames(tuple *observe.ConntrackTuple, labels map[string]string) {
+	if tuple == nil {
+		return
+	}
+	if tuple.SourceHostname == "" {
+		tuple.SourceHostname = labels[tuple.Source]
+	}
+	if tuple.DestinationHostname == "" {
+		tuple.DestinationHostname = labels[tuple.Destination]
+	}
+}
+
+func shouldReverseLookup(address string) bool {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return false
+	}
+	addr, err := netip.ParseAddr(address)
+	if err != nil {
+		return false
+	}
+	return addr.IsValid() && !addr.IsUnspecified() && !addr.IsMulticast()
+}
+
+type reverseDNSCache struct {
+	mu      sync.Mutex
+	ttl     time.Duration
+	entries map[string]reverseDNSEntry
+}
+
+type reverseDNSEntry struct {
+	name    string
+	expires time.Time
+}
+
+func newReverseDNSCache(ttl time.Duration) *reverseDNSCache {
+	return &reverseDNSCache{ttl: ttl, entries: map[string]reverseDNSEntry{}}
+}
+
+func (c *reverseDNSCache) lookupMany(ctx context.Context, addresses []string, lookup func(context.Context, string) ([]string, error)) map[string]string {
+	now := time.Now()
+	out := map[string]string{}
+	var pending []string
+	c.mu.Lock()
+	for _, address := range addresses {
+		if entry, ok := c.entries[address]; ok && now.Before(entry.expires) {
+			if entry.name != "" {
+				out[address] = entry.name
+			}
+			continue
+		}
+		pending = append(pending, address)
+	}
+	c.mu.Unlock()
+	if len(pending) == 0 || lookup == nil {
+		return out
+	}
+	type result struct {
+		address string
+		name    string
+	}
+	sem := make(chan struct{}, 8)
+	results := make(chan result, len(pending))
+	var wg sync.WaitGroup
+	for _, address := range pending {
+		address := address
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
+			names, err := lookup(ctx, address)
+			if err != nil {
+				results <- result{address: address}
+				return
+			}
+			results <- result{address: address, name: normalizeReverseDNSName(names)}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	for item := range results {
+		c.store(item.address, item.name, now.Add(c.ttl))
+		if item.name != "" {
+			out[item.address] = item.name
+		}
+	}
+	return out
+}
+
+func (c *reverseDNSCache) store(address string, name string, expires time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[address] = reverseDNSEntry{name: name, expires: expires}
+}
+
+func normalizeReverseDNSName(names []string) string {
+	for _, name := range names {
+		name = strings.TrimSuffix(strings.TrimSpace(name), ".")
+		if name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
 type portProtocolFallback struct {
 	app        string
 	category   string
@@ -1362,6 +1530,71 @@ func portProtocolFallbackByPort(protocol string, port int) (portProtocolFallback
 		}
 	}
 	return portProtocolFallback{}, false
+}
+
+func serviceNameForPort(protocol string, port int) string {
+	if port <= 0 {
+		return ""
+	}
+	protocol = strings.ToLower(strings.TrimSpace(protocol))
+	if name, ok := ianaServiceNames[port]; ok {
+		if protocol == "udp" {
+			if udp, ok := ianaUDPServiceNames[port]; ok {
+				return udp
+			}
+		}
+		return name
+	}
+	return ""
+}
+
+var ianaServiceNames = map[int]string{
+	20:    "ftp-data",
+	21:    "ftp",
+	22:    "ssh",
+	25:    "smtp",
+	53:    "dns",
+	67:    "dhcp-server",
+	68:    "dhcp-client",
+	80:    "http",
+	110:   "pop3",
+	123:   "ntp",
+	137:   "netbios-ns",
+	138:   "netbios-dgm",
+	139:   "netbios-ssn",
+	143:   "imap",
+	443:   "https",
+	445:   "microsoft-ds",
+	465:   "submissions",
+	500:   "isakmp",
+	587:   "submission",
+	993:   "imaps",
+	995:   "pop3s",
+	1900:  "ssdp",
+	3306:  "mysql",
+	3389:  "ms-wbt-server",
+	3478:  "stun",
+	4500:  "ipsec-nat-t",
+	5432:  "postgresql",
+	5353:  "mdns",
+	5355:  "llmnr",
+	51820: "wireguard",
+}
+
+var ianaUDPServiceNames = map[int]string{
+	53:    "dns",
+	67:    "dhcp-server",
+	68:    "dhcp-client",
+	123:   "ntp",
+	137:   "netbios-ns",
+	138:   "netbios-dgm",
+	500:   "isakmp",
+	1900:  "ssdp",
+	3478:  "stun",
+	4500:  "ipsec-nat-t",
+	5353:  "mdns",
+	5355:  "llmnr",
+	51820: "wireguard",
 }
 
 func (h Handler) dhcpLeaseList() ([]DHCPLease, error) {

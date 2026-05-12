@@ -42,13 +42,17 @@ type ConnectionEntry struct {
 }
 
 type ConntrackTuple struct {
-	Source          string `json:"source,omitempty" yaml:"source,omitempty"`
-	Destination     string `json:"destination,omitempty" yaml:"destination,omitempty"`
-	SourcePort      string `json:"sourcePort,omitempty" yaml:"sourcePort,omitempty"`
-	DestinationPort string `json:"destinationPort,omitempty" yaml:"destinationPort,omitempty"`
-	Packets         int64  `json:"packets,omitempty" yaml:"packets,omitempty"`
-	Bytes           int64  `json:"bytes,omitempty" yaml:"bytes,omitempty"`
-	Accounting      bool   `json:"accounting,omitempty" yaml:"accounting,omitempty"`
+	Source              string `json:"source,omitempty" yaml:"source,omitempty"`
+	Destination         string `json:"destination,omitempty" yaml:"destination,omitempty"`
+	SourcePort          string `json:"sourcePort,omitempty" yaml:"sourcePort,omitempty"`
+	DestinationPort     string `json:"destinationPort,omitempty" yaml:"destinationPort,omitempty"`
+	SourceHostname      string `json:"sourceHostname,omitempty" yaml:"sourceHostname,omitempty"`
+	DestinationHostname string `json:"destinationHostname,omitempty" yaml:"destinationHostname,omitempty"`
+	SourceService       string `json:"sourceService,omitempty" yaml:"sourceService,omitempty"`
+	DestinationService  string `json:"destinationService,omitempty" yaml:"destinationService,omitempty"`
+	Packets             int64  `json:"packets,omitempty" yaml:"packets,omitempty"`
+	Bytes               int64  `json:"bytes,omitempty" yaml:"bytes,omitempty"`
+	Accounting          bool   `json:"accounting,omitempty" yaml:"accounting,omitempty"`
 }
 
 type ConntrackCPUStats struct {

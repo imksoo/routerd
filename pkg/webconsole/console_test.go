@@ -467,6 +467,12 @@ func TestHandlerEnrichesConnectionsWithDPI(t *testing.T) {
 
 func TestHandlerFallsBackConnectionAppFromPort(t *testing.T) {
 	handler := New(Options{
+		ReverseLookup: func(ctx context.Context, address string) ([]string, error) {
+			if address == "198.51.100.10" {
+				return []string{"edge.example."}, nil
+			}
+			return nil, nil
+		},
 		Connections: func(limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Family:   "ipv4",
@@ -486,7 +492,7 @@ func TestHandlerFallsBackConnectionAppFromPort(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"appName": "tls"`, `"appCategory": "port-fallback"`, `"appConfidence": 40`} {
+	for _, want := range []string{`"appName": "tls"`, `"appCategory": "port-fallback"`, `"appConfidence": 40`, `"destinationHostname": "edge.example"`, `"destinationService": "https"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("connections missing %q:\n%s", want, rec.Body.String())
 		}

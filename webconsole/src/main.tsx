@@ -145,6 +145,10 @@ type ConnTuple = {
   sourcePort?: string;
   destination?: string;
   destinationPort?: string;
+  sourceHostname?: string;
+  destinationHostname?: string;
+  sourceService?: string;
+  destinationService?: string;
 };
 
 type ConnectionEntry = {
@@ -3487,10 +3491,11 @@ function ConnectionGroup({
                     <TableCell>
                       <div className={styles.connectionFlow}>
                         <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
+                        <ConnectionRemoteIdentity entry={entry} dnsLabels={dnsLabels} />
                       </div>
                     </TableCell>
                     <TableCell><ConnectionDPI entry={entry} dnsLabels={dnsLabels} /></TableCell>
-                    <TableCell><code className={styles.wrapCode}>{dnsLabels[entry.original?.destination ?? ""] ?? "-"}</code></TableCell>
+                    <TableCell><RemoteIdentityLabel entry={entry} dnsLabels={dnsLabels} /></TableCell>
                     <TableCell>{entry.timeout ?? 0}s</TableCell>
                   </TableRow>
                 ))}
@@ -3524,6 +3529,24 @@ function ConnectionDPI({ entry, dnsLabels }: { entry: ConnectionEntry; dnsLabels
       {classification.category && classification.category !== "port-fallback" ? <Text size={200} className={styles.muted}>{classification.category}</Text> : null}
     </div>
   );
+}
+
+function ConnectionRemoteIdentity({ entry, dnsLabels }: { entry: ConnectionEntry; dnsLabels: Record<string, string> }) {
+  const styles = useStyles();
+  const identity = remoteIdentity(entry, dnsLabels);
+  if (!identity) return null;
+  return (
+    <Text size={200} className={styles.muted}>
+      {identity}
+    </Text>
+  );
+}
+
+function RemoteIdentityLabel({ entry, dnsLabels }: { entry: ConnectionEntry; dnsLabels: Record<string, string> }) {
+  const styles = useStyles();
+  const identity = remoteIdentity(entry, dnsLabels);
+  if (!identity) return <Text className={styles.muted}>-</Text>;
+  return <code className={`${styles.wrapCode} ${styles.guessText}`}>{identity}</code>;
 }
 
 function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
@@ -4806,6 +4829,15 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
     connectionApp(entry, dnsLabels),
     connectionDPIDetail(entry, dnsLabels),
     connectionAppSource(entry),
+    remoteIdentity(entry, dnsLabels),
+    entry.original?.sourceHostname,
+    entry.original?.destinationHostname,
+    entry.original?.sourceService,
+    entry.original?.destinationService,
+    entry.reply?.sourceHostname,
+    entry.reply?.destinationHostname,
+    entry.reply?.sourceService,
+    entry.reply?.destinationService,
     entry.appCategory,
     entry.appConfidence,
     endpoint(entry.original),
@@ -4995,16 +5027,16 @@ function connectionPortFallback(entry: ConnectionEntry, dnsLabels?: Record<strin
   if (raw && raw !== "unknown" && raw !== "unidentified" && category !== "port-fallback") return undefined;
   const protocol = normalizeFacet(entry.protocol, "");
   const labels = [
-    entry.original?.destination ? dnsLabels?.[entry.original.destination] : "",
-    entry.reply?.source ? dnsLabels?.[entry.reply.source] : "",
+    remoteHostname(entry.original, "destination", dnsLabels),
+    remoteHostname(entry.reply, "source", dnsLabels),
   ].filter(Boolean) as string[];
   const ports = [
-    { port: entry.original?.destinationPort, peerLabel: labels[0] ?? "" },
-    { port: entry.original?.sourcePort, peerLabel: labels[1] ?? "" },
-  ].filter(item => item.port) as { port: string; peerLabel: string }[];
+    { port: entry.original?.destinationPort, peerLabel: labels[0] ?? "", service: entry.original?.destinationService },
+    { port: entry.original?.sourcePort, peerLabel: labels[1] ?? "", service: entry.original?.sourceService },
+  ].filter(item => item.port) as { port: string; peerLabel: string; service?: string }[];
   for (const port of ports) {
     const app = portProtocolFallback(protocol, port.port, port.peerLabel) || (category === "port-fallback" ? raw : "");
-    if (app) return { app, port: port.port, label: formatPortGuessLabel(app, port.port, port.peerLabel) };
+    if (app) return { app, port: port.port, label: formatPortGuessLabel(app, port.port, port.peerLabel, port.service) };
   }
   return undefined;
 }
@@ -5095,10 +5127,64 @@ function providerHTTPSGuess(label = "") {
   return "";
 }
 
-function formatPortGuessLabel(app: string, port: string, peerLabel = "") {
-  const formatted = formatConnectionApp(app);
+function formatPortGuessLabel(app: string, port: string, peerLabel = "", service = "") {
+  const formatted = service ? service.toUpperCase() : formatConnectionApp(app);
   const suffix = peerLabel ? ` via ${peerLabel}` : "";
   return `${formatted}:${port}${suffix}`;
+}
+
+function remoteIdentity(entry: ConnectionEntry, dnsLabels?: Record<string, string>) {
+  const tuple = entry.original;
+  const host = remoteHostname(tuple, "destination", dnsLabels);
+  const service = tuple?.destinationService || serviceNameForPort(tuple?.destinationPort);
+  const parts = [];
+  if (host) parts.push(`${tuple?.destination ?? ""} (${host})`);
+  if (service) parts.push(`service ${service}`);
+  return parts.join(" / ");
+}
+
+function remoteHostname(tuple: ConnTuple | undefined, side: "source" | "destination", dnsLabels?: Record<string, string>) {
+  if (!tuple) return "";
+  if (side === "source") return tuple.sourceHostname || (tuple.source ? dnsLabels?.[tuple.source] : "") || "";
+  return tuple.destinationHostname || (tuple.destination ? dnsLabels?.[tuple.destination] : "") || "";
+}
+
+function serviceNameForPort(port?: string) {
+  const numeric = Number(port);
+  if (!Number.isFinite(numeric)) return "";
+  const names: Record<number, string> = {
+    20: "ftp-data",
+    21: "ftp",
+    22: "ssh",
+    25: "smtp",
+    53: "dns",
+    67: "dhcp-server",
+    68: "dhcp-client",
+    80: "http",
+    110: "pop3",
+    123: "ntp",
+    137: "netbios-ns",
+    138: "netbios-dgm",
+    139: "netbios-ssn",
+    143: "imap",
+    443: "https",
+    445: "microsoft-ds",
+    465: "submissions",
+    500: "isakmp",
+    587: "submission",
+    993: "imaps",
+    995: "pop3s",
+    1900: "ssdp",
+    3306: "mysql",
+    3389: "ms-wbt-server",
+    3478: "stun",
+    4500: "ipsec-nat-t",
+    5353: "mdns",
+    5355: "llmnr",
+    5432: "postgresql",
+    51820: "wireguard",
+  };
+  return names[numeric] ?? "";
 }
 
 function connectionClassificationStats(entries: ConnectionEntry[]): ConnectionClassificationStats {
@@ -6082,7 +6168,7 @@ function firewallPortFallback(log: FirewallLog, dnsLabels: Record<string, string
   ].filter(item => item.port);
   for (const item of ports) {
     const app = portProtocolFallback(protocol, item.port, item.peerLabel);
-    if (app) return { app, port: item.port, label: formatPortGuessLabel(app, item.port, item.peerLabel) };
+    if (app) return { app, port: item.port, label: formatPortGuessLabel(app, item.port, item.peerLabel, serviceNameForPort(item.port)) };
   }
   return undefined;
 }
