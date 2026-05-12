@@ -691,6 +691,23 @@ const useStyles = makeStyles({
     gap: "6px",
     marginBottom: "12px",
   },
+  anchorDotBar: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "6px",
+    marginBottom: "12px",
+  },
+  anchorDot: {
+    minWidth: "16px",
+    width: "16px",
+    height: "16px",
+    padding: 0,
+    borderRadius: "50%",
+  },
+  anchorDotActive: {
+    boxShadow: `0 0 0 2px ${tokens.colorBrandStroke1}`,
+  },
   content: {
     minWidth: 0,
     backgroundColor: "#0b1118",
@@ -2222,7 +2239,7 @@ function App() {
                     </span>
                   </span>
                 </Button>
-                {!navCollapsed && item.key === selected && navSubItems.length > 0 ? (
+                {!navCollapsed && item.key === selected && navSubItems.length > 0 && selected !== "connections" ? (
                   <div className={styles.navSubMenu}>
                     {navSubItems.map(sub => (
                       <Button
@@ -2268,10 +2285,12 @@ function App() {
                   key={sub.key}
                   size="small"
                   appearance={sectionActive(sub) ? "primary" : "secondary"}
-                  className={styles.sectionButton}
+                  className={selected === "connections" ? `${styles.anchorDot} ${sectionActive(sub) ? styles.anchorDotActive : ""}` : styles.sectionButton}
                   onClick={() => showSection(sub)}
+                  title={selected === "connections" ? sub.label : undefined}
+                  aria-label={selected === "connections" ? sub.label : undefined}
                 >
-                  {sub.label}{sub.count !== undefined ? ` ${sub.count}` : ""}
+                  {selected === "connections" ? "" : `${sub.label}${sub.count !== undefined ? ` ${sub.count}` : ""}`}
                 </Button>
               ))}
             </div>
@@ -2371,14 +2390,21 @@ function App() {
               header={<Text weight="semibold">Connections</Text>}
               description={<Text className={styles.muted}>{connectionFamilyCounts(summary?.connections)} / Showing {filteredConnections.length}</Text>}
             />
-            <div className={styles.jumpBar}>
+            <div className={styles.anchorDotBar} aria-label="Connection group anchors">
               <Button size="small" appearance="secondary" icon={<ArrowUpRegular />} onClick={scrollToTop}>Top</Button>
               {connectionGroupsList.map(group => {
                 const label = connectionGroupLabel(group.key);
+                const title = `${formatConnectionGroupTitle(label)} ${group.rows.length}`;
                 return (
-                  <Button key={group.key} size="small" appearance="secondary" onClick={() => showConnectionsGroup(group.key)}>
-                    {formatConnectionGroupTitle(label)} {group.rows.length}
-                  </Button>
+                  <Button
+                    key={group.key}
+                    size="small"
+                    appearance="secondary"
+                    className={styles.anchorDot}
+                    title={title}
+                    aria-label={title}
+                    onClick={() => showConnectionsGroup(group.key)}
+                  />
                 );
               })}
             </div>
