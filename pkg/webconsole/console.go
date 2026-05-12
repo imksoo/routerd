@@ -1425,30 +1425,58 @@ type portProtocolFallback struct {
 }
 
 func applyTrafficFlowPortFallback(flow *logstore.TrafficFlow) {
-	if flow == nil || knownAppName(flow.AppName) {
+	if flow == nil {
 		return
 	}
 	if fallback, ok := portProtocolFallbackFor(flow.Protocol, flow.PeerPort, flow.ClientPort); ok {
+		override := knownAppName(flow.AppName) && preferPortFallbackOverApp(flow.AppName, fallback.app)
+		if knownAppName(flow.AppName) && !override {
+			return
+		}
 		flow.AppName = fallback.app
 		flow.AppCategory = fallback.category
 		flow.AppConfidence = fallback.confidence
+		if override {
+			flow.ResolvedHostname = ""
+		}
 	}
 }
 
 func applyConnectionPortFallback(entry *observe.ConnectionEntry) {
-	if entry == nil || knownAppName(entry.AppName) {
+	if entry == nil {
 		return
 	}
 	if fallback, ok := portProtocolFallbackFor(entry.Protocol, atoiDefault(entry.Original.DestinationPort, 0), atoiDefault(entry.Original.SourcePort, 0)); ok {
+		override := knownAppName(entry.AppName) && preferPortFallbackOverApp(entry.AppName, fallback.app)
+		if knownAppName(entry.AppName) && !override {
+			return
+		}
 		entry.AppName = fallback.app
 		entry.AppCategory = fallback.category
 		entry.AppConfidence = fallback.confidence
+		if override {
+			entry.DNSQuery = ""
+		}
 	}
 }
 
 func knownAppName(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
 	return value != "" && value != "unknown" && value != "unidentified"
+}
+
+func preferPortFallbackOverApp(current, fallback string) bool {
+	current = strings.ToLower(strings.TrimSpace(current))
+	fallback = strings.ToLower(strings.TrimSpace(fallback))
+	if current != "dns" {
+		return false
+	}
+	switch fallback {
+	case "tailscale", "stun", "wireguard", "quic":
+		return true
+	default:
+		return false
+	}
 }
 
 func portProtocolFallbackFor(protocol string, primaryPort, secondaryPort int) (portProtocolFallback, bool) {
@@ -1497,6 +1525,9 @@ func portProtocolFallbackByPort(protocol string, port int) (portProtocolFallback
 	case 143, 993:
 		return portProtocolFallback{app: "imap", category: category, confidence: confidence}, true
 	case 443, 8443:
+		if protocol == "udp" {
+			return portProtocolFallback{app: "quic", category: category, confidence: 35}, true
+		}
 		return portProtocolFallback{app: "tls", category: category, confidence: confidence}, true
 	case 500, 4500:
 		if protocol == "udp" {
@@ -1513,7 +1544,9 @@ func portProtocolFallbackByPort(protocol string, port int) (portProtocolFallback
 	case 3389:
 		return portProtocolFallback{app: "rdp", category: category, confidence: confidence}, true
 	case 3478, 5349:
-		return portProtocolFallback{app: "stun", category: category, confidence: confidence}, true
+		if protocol == "udp" {
+			return portProtocolFallback{app: "stun", category: category, confidence: confidence}, true
+		}
 	case 5353:
 		if protocol == "udp" {
 			return portProtocolFallback{app: "mdns", category: category, confidence: confidence}, true
@@ -1527,6 +1560,10 @@ func portProtocolFallbackByPort(protocol string, port int) (portProtocolFallback
 	case 51820:
 		if protocol == "udp" {
 			return portProtocolFallback{app: "wireguard", category: category, confidence: confidence}, true
+		}
+	case 41641:
+		if protocol == "udp" {
+			return portProtocolFallback{app: "tailscale", category: category, confidence: 55}, true
 		}
 	}
 	return portProtocolFallback{}, false
@@ -1579,6 +1616,7 @@ var ianaServiceNames = map[int]string{
 	5353:  "mdns",
 	5355:  "llmnr",
 	51820: "wireguard",
+	41641: "tailscale",
 }
 
 var ianaUDPServiceNames = map[int]string{
@@ -1588,6 +1626,7 @@ var ianaUDPServiceNames = map[int]string{
 	123:   "ntp",
 	137:   "netbios-ns",
 	138:   "netbios-dgm",
+	443:   "quic",
 	500:   "isakmp",
 	1900:  "ssdp",
 	3478:  "stun",
@@ -1595,6 +1634,7 @@ var ianaUDPServiceNames = map[int]string{
 	5353:  "mdns",
 	5355:  "llmnr",
 	51820: "wireguard",
+	41641: "tailscale",
 }
 
 func (h Handler) dhcpLeaseList() ([]DHCPLease, error) {
@@ -2073,7 +2113,16 @@ func flowActivityProtocol(flow logstore.TrafficFlow) string {
 		return "dns"
 	case 80:
 		return "http"
+	case 3478, 5349:
+		return "stun"
+	case 41641:
+		return "tailscale"
+	case 51820:
+		return "wireguard"
 	case 443:
+		if strings.EqualFold(flow.Protocol, "udp") {
+			return "quic"
+		}
 		return "tls"
 	}
 	return strings.ToLower(strings.TrimSpace(flow.Protocol))

@@ -2,7 +2,10 @@
 
 package dpi
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestClassifyTLSSNIFromPayload(t *testing.T) {
 	payload := MinimalTLSClientHello("routerd.example")
@@ -49,6 +52,52 @@ func TestClassifyDNSQuery(t *testing.T) {
 	}
 }
 
+func TestClassifyRejectsBinaryDNSLikeUDP(t *testing.T) {
+	payload := []byte{
+		0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0,
+		0x08, 0x9a, 0xfe, 0x00, 0x10, 'n', 'o', 'i', 's', 'e',
+		0x00, 0x99, 0x99, 0x00, 0x01,
+	}
+	got := Classify(ClassifyRequest{L4Payload: payload, TransportProtocol: "udp", DstPort: 3479})
+	if got.AppName == "dns" || got.DNSQuery != "" {
+		t.Fatalf("binary payload misclassified as DNS: %+v", got)
+	}
+}
+
+func TestClassifySTUNBeforeDNS(t *testing.T) {
+	payload := []byte{
+		0x00, 0x01, 0x00, 0x00,
+		0x21, 0x12, 0xa4, 0x42,
+		0x63, 0x21, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+	}
+	got := Classify(ClassifyRequest{L4Payload: payload, TransportProtocol: "udp", DstPort: 41641})
+	if got.AppName != "tailscale" || got.DNSQuery != "" || got.Reason != "tailscale_stun_magic_cookie" {
+		t.Fatalf("classification = %+v", got)
+	}
+}
+
+func TestClassifyWireGuardAndTailscalePorts(t *testing.T) {
+	wireguard := make([]byte, 148)
+	wireguard[0] = 0x01
+	got := Classify(ClassifyRequest{L4Payload: wireguard, TransportProtocol: "udp", DstPort: 41641})
+	if got.AppName != "tailscale" || got.AppCategory != "vpn" || got.Reason != "tailscale_wireguard_message" {
+		t.Fatalf("tailscale classification = %+v", got)
+	}
+
+	got = Classify(ClassifyRequest{L4Payload: wireguard, TransportProtocol: "udp", DstPort: 51820})
+	if got.AppName != "wireguard" || got.AppCategory != "vpn" || got.Reason != "wireguard_message_type" {
+		t.Fatalf("wireguard classification = %+v", got)
+	}
+}
+
+func TestClassifyTailscaleDNSQuery(t *testing.T) {
+	payload := dnsQueryPayload("derp10.tailscale.com")
+	got := Classify(ClassifyRequest{L4Payload: payload, TransportProtocol: "udp", DstPort: 53})
+	if got.AppName != "tailscale" || got.DNSQuery != "derp10.tailscale.com" || got.Reason != "tailscale_dns_query" {
+		t.Fatalf("classification = %+v", got)
+	}
+}
+
 func TestClassifyNBNSQuery(t *testing.T) {
 	payload := []byte{
 		0x12, 0x34, 0x01, 0x10, 0x00, 0x01, 0, 0, 0, 0, 0, 0,
@@ -64,4 +113,14 @@ func TestClassifyNBNSQuery(t *testing.T) {
 	if got.AppName != "netbios" || got.DNSQuery != "LAIN<0x01>" || got.Reason != "nbns_query" {
 		t.Fatalf("classification = %+v", got)
 	}
+}
+
+func dnsQueryPayload(name string) []byte {
+	payload := []byte{0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
+	for _, label := range strings.Split(name, ".") {
+		payload = append(payload, byte(len(label)))
+		payload = append(payload, []byte(label)...)
+	}
+	payload = append(payload, 0x00, 0x00, 0x01, 0x00, 0x01)
+	return payload
 }

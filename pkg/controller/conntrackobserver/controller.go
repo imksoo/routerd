@@ -301,7 +301,16 @@ func trafficMetricProtocol(flow logstore.TrafficFlow) string {
 		return "dns"
 	case 80:
 		return "http"
+	case 3478, 5349:
+		return "stun"
+	case 41641:
+		return "tailscale"
+	case 51820:
+		return "wireguard"
 	case 443:
+		if strings.EqualFold(flow.Protocol, "udp") {
+			return "quic"
+		}
 		return "tls"
 	}
 	if protocol := strings.ToLower(strings.TrimSpace(flow.Protocol)); protocol != "" {

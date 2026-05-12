@@ -95,6 +95,13 @@ func TestTrafficFlowFromConnectionKeepsDPIFields(t *testing.T) {
 	}
 }
 
+func TestTrafficMetricProtocolRecognizesTailscalePort(t *testing.T) {
+	flow := logstore.TrafficFlow{Protocol: "udp", PeerPort: 41641}
+	if protocol := trafficMetricProtocol(flow); protocol != "tailscale" {
+		t.Fatalf("metric protocol = %q", protocol)
+	}
+}
+
 func TestPositiveDeltaHandlesReset(t *testing.T) {
 	if got := positiveDelta(1200, 1000); got != 200 {
 		t.Fatalf("delta = %d", got)

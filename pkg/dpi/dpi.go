@@ -76,6 +76,13 @@ func Classify(req ClassifyRequest) ClassifyResult {
 			}
 		}
 	}
+	if vpn, ok := classifyVPNDatagram(result.TransportProtocol, result.SrcPort, result.DstPort, payload); ok {
+		result.AppName = vpn.app
+		result.AppCategory = vpn.category
+		result.AppConfidence = vpn.confidence
+		result.Reason = vpn.reason
+		return result
+	}
 	if host, ok := ExtractTLSSNI(payload); ok {
 		result.AppName = "tls"
 		result.AppCategory = "web"
@@ -101,6 +108,14 @@ func Classify(req ClassifyRequest) ClassifyResult {
 		return result
 	}
 	if qname, ok := ExtractDNSQuery(payload); ok {
+		if tailscaleDNSName(qname) {
+			result.AppName = "tailscale"
+			result.AppCategory = "vpn"
+			result.AppConfidence = 80
+			result.DNSQuery = qname
+			result.Reason = "tailscale_dns_query"
+			return result
+		}
 		result.AppName = "dns"
 		result.AppCategory = "network"
 		result.AppConfidence = 75
@@ -108,10 +123,110 @@ func Classify(req ClassifyRequest) ClassifyResult {
 		result.Reason = "dns_query"
 		return result
 	}
+	if vpn, ok := classifyVPNPortFallback(result.TransportProtocol, result.SrcPort, result.DstPort); ok {
+		result.AppName = vpn.app
+		result.AppCategory = vpn.category
+		result.AppConfidence = vpn.confidence
+		result.Reason = vpn.reason
+		return result
+	}
 	result.AppName = "unknown"
 	result.AppConfidence = 0
 	result.Reason = "no_application_signal"
 	return result
+}
+
+type vpnClassification struct {
+	app        string
+	category   string
+	confidence int
+	reason     string
+}
+
+func classifyVPNDatagram(protocol string, srcPort, dstPort int, payload []byte) (vpnClassification, bool) {
+	if strings.ToLower(strings.TrimSpace(protocol)) != "udp" {
+		return vpnClassification{}, false
+	}
+	if IsSTUNPacket(payload) {
+		if srcPort == 41641 || dstPort == 41641 {
+			return vpnClassification{app: "tailscale", category: "vpn", confidence: 95, reason: "tailscale_stun_magic_cookie"}, true
+		}
+		return vpnClassification{app: "stun", category: "nat-traversal", confidence: 95, reason: "stun_magic_cookie"}, true
+	}
+	if wireGuardMessageType(payload) != 0 {
+		if srcPort == 41641 || dstPort == 41641 {
+			return vpnClassification{app: "tailscale", category: "vpn", confidence: 90, reason: "tailscale_wireguard_message"}, true
+		}
+		return vpnClassification{app: "wireguard", category: "vpn", confidence: 85, reason: "wireguard_message_type"}, true
+	}
+	return vpnClassification{}, false
+}
+
+func classifyVPNPortFallback(protocol string, srcPort, dstPort int) (vpnClassification, bool) {
+	if strings.ToLower(strings.TrimSpace(protocol)) != "udp" {
+		return vpnClassification{}, false
+	}
+	switch {
+	case srcPort == 41641 || dstPort == 41641:
+		return vpnClassification{app: "tailscale", category: "port-fallback", confidence: 55, reason: "tailscale_default_port"}, true
+	case srcPort == 3478 || dstPort == 3478 || srcPort == 5349 || dstPort == 5349:
+		return vpnClassification{app: "stun", category: "port-fallback", confidence: 50, reason: "stun_well_known_port"}, true
+	case srcPort == 443 || dstPort == 443:
+		return vpnClassification{app: "quic", category: "port-fallback", confidence: 35, reason: "udp_443_quic_http3"}, true
+	}
+	return vpnClassification{}, false
+}
+
+func IsSTUNPacket(payload []byte) bool {
+	if len(payload) < 20 {
+		return false
+	}
+	if payload[0]&0xc0 != 0 {
+		return false
+	}
+	if binary.BigEndian.Uint32(payload[4:8]) != 0x2112a442 {
+		return false
+	}
+	msgLen := int(binary.BigEndian.Uint16(payload[2:4]))
+	return msgLen%4 == 0 && msgLen <= len(payload)-20
+}
+
+func wireGuardMessageType(payload []byte) uint32 {
+	if len(payload) < 4 {
+		return 0
+	}
+	msgType := binary.LittleEndian.Uint32(payload[:4])
+	switch msgType {
+	case 1:
+		if len(payload) >= 148 {
+			return msgType
+		}
+	case 2:
+		if len(payload) >= 92 {
+			return msgType
+		}
+	case 3:
+		if len(payload) >= 64 {
+			return msgType
+		}
+	case 4:
+		if len(payload) >= 32 {
+			return msgType
+		}
+	}
+	return 0
+}
+
+func tailscaleDNSName(name string) bool {
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	if name == "" {
+		return false
+	}
+	return name == "stun.l.google.com" ||
+		name == "login.tailscale.com" ||
+		name == "controlplane.tailscale.com" ||
+		strings.HasSuffix(name, ".tailscale.com") ||
+		strings.HasSuffix(name, ".ts.net")
 }
 
 type packetMeta struct {
@@ -348,13 +463,56 @@ func ExtractDNSQuery(payload []byte) (string, bool) {
 		if length&0xc0 != 0 || length > 63 || pos+length > len(payload) {
 			return "", false
 		}
+		if !validDNSLabel(payload[pos : pos+length]) {
+			return "", false
+		}
 		labels = append(labels, string(payload[pos:pos+length]))
 		pos += length
 	}
 	if len(labels) == 0 || pos+4 > len(payload) {
 		return "", false
 	}
+	qtype := binary.BigEndian.Uint16(payload[pos : pos+2])
+	qclass := binary.BigEndian.Uint16(payload[pos+2 : pos+4])
+	if !validDNSQuestionType(qtype) || !validDNSQuestionClass(qclass) {
+		return "", false
+	}
 	return strings.Join(labels, "."), true
+}
+
+func validDNSLabel(label []byte) bool {
+	if len(label) == 0 || len(label) > 63 {
+		return false
+	}
+	for _, ch := range label {
+		switch {
+		case ch >= 'a' && ch <= 'z':
+		case ch >= 'A' && ch <= 'Z':
+		case ch >= '0' && ch <= '9':
+		case ch == '-' || ch == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func validDNSQuestionType(qtype uint16) bool {
+	switch qtype {
+	case 1, 2, 5, 6, 12, 15, 16, 28, 33, 43, 46, 47, 48, 52, 64, 65, 255:
+		return true
+	default:
+		return false
+	}
+}
+
+func validDNSQuestionClass(qclass uint16) bool {
+	switch qclass {
+	case 1, 3, 4, 255, 0x8001:
+		return true
+	default:
+		return false
+	}
 }
 
 func ExtractNBNSQuery(payload []byte) (string, bool) {

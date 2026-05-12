@@ -4909,14 +4909,20 @@ function formatFacet(value: string) {
 
 function connectionApp(entry: ConnectionEntry, dnsLabels?: Record<string, string>) {
   const app = normalizeFacet(entry.appName, "");
+  const fallback = connectionPortFallback(entry, dnsLabels);
+  if (fallback && (!app || app === "unknown" || app === "unidentified" || preferPortFallbackOverApp(app, fallback.app))) return fallback.app;
   if (app && app !== "unknown" && app !== "unidentified") return app;
-  return connectionPortFallback(entry, dnsLabels)?.app ?? "unidentified";
+  return fallback?.app ?? "unidentified";
 }
 
 function connectionDPIDetail(entry: ConnectionEntry, dnsLabels?: Record<string, string>) {
   if (entry.tlsSNI) return `tls-sni:${entry.tlsSNI}`;
   if (entry.httpHost) return `http-host:${entry.httpHost}`;
-  if (entry.dnsQuery) return `${connectionApp(entry, dnsLabels) === "netbios" ? "nbns-query" : "dns-query"}:${entry.dnsQuery}`;
+  if (entry.dnsQuery) {
+    const app = connectionApp(entry, dnsLabels);
+    const prefix = app === "netbios" ? "nbns-query" : app === "tailscale" ? "tailscale-dns" : "dns-query";
+    return `${prefix}:${entry.dnsQuery}`;
+  }
   const fallback = connectionPortFallback(entry, dnsLabels);
   if (fallback) return `port-guess:${fallback.label}`;
   return "";
@@ -4937,7 +4943,9 @@ function formatConnectionApp(value: string) {
   if (value === "ssdp") return "SSDP";
   if (value === "ipsec") return "IPsec";
   if (value === "wireguard") return "WireGuard";
+  if (value === "tailscale") return "Tailscale";
   if (value === "stun") return "STUN";
+  if (value === "quic") return "QUIC/HTTP3";
   if (value === "rdp") return "RDP";
   if (value === "aws-https") return "AWS HTTPS";
   if (value === "google-https") return "Google HTTPS";
@@ -4952,7 +4960,7 @@ function connectionAppColor(value: string): "brand" | "danger" | "informative" |
   if (value === "dns") return "success";
   if (value === "netbios") return "warning";
   if (value === "ssh" || value === "rdp") return "danger";
-  if (value === "smb" || value === "ipsec" || value === "wireguard") return "informative";
+  if (value === "smb" || value === "ipsec" || value === "wireguard" || value === "tailscale" || value === "stun" || value === "quic") return "informative";
   if (value === "unidentified") return "subtle";
   if (value.endsWith("-https")) return "subtle";
   return "informative";
@@ -5055,7 +5063,6 @@ function connectionAppSource(entry: ConnectionEntry) {
 function connectionPortFallback(entry: ConnectionEntry, dnsLabels?: Record<string, string>): ConnectionPortFallback | undefined {
   const raw = normalizeFacet(entry.appName, "");
   const category = normalizeFacet(entry.appCategory, "");
-  if (raw && raw !== "unknown" && raw !== "unidentified" && category !== "port-fallback") return undefined;
   const protocol = normalizeFacet(entry.protocol, "");
   const labels = [
     remoteHostname(entry.original, "destination", dnsLabels),
@@ -5067,6 +5074,7 @@ function connectionPortFallback(entry: ConnectionEntry, dnsLabels?: Record<strin
   ].filter(item => item.port) as { port: string; peerLabel: string; service?: string }[];
   for (const port of ports) {
     const app = portProtocolFallback(protocol, port.port, port.peerLabel) || (category === "port-fallback" ? raw : "");
+    if (app && raw && raw !== "unknown" && raw !== "unidentified" && category !== "port-fallback" && !preferPortFallbackOverApp(raw, app)) return undefined;
     if (app) return { app, port: port.port, label: formatPortGuessLabel(app, port.port, port.peerLabel, port.service) };
   }
   return undefined;
@@ -5114,6 +5122,7 @@ function portProtocolFallback(protocol: string, port: string, peerLabel = "") {
       return "imap";
     case 443:
     case 8443:
+      if (protocol === "udp") return "quic";
       return "tls";
     case 500:
     case 4500:
@@ -5126,7 +5135,7 @@ function portProtocolFallback(protocol: string, port: string, peerLabel = "") {
       return "rdp";
     case 3478:
     case 5349:
-      return "stun";
+      return protocol === "udp" ? "stun" : "";
     case 5353:
       return protocol === "udp" ? "mdns" : "";
     case 5355:
@@ -5135,9 +5144,16 @@ function portProtocolFallback(protocol: string, port: string, peerLabel = "") {
       return "postgresql";
     case 51820:
       return protocol === "udp" ? "wireguard" : "";
+    case 41641:
+      return protocol === "udp" ? "tailscale" : "";
     default:
       return "";
   }
+}
+
+function preferPortFallbackOverApp(current: string, fallback: string) {
+  if (normalizeFacet(current, "") !== "dns") return false;
+  return ["tailscale", "stun", "wireguard", "quic"].includes(normalizeFacet(fallback, ""));
 }
 
 function connectionNeedsIdentification(entry: ConnectionEntry) {
@@ -5235,6 +5251,7 @@ function serviceNameForPort(port?: string) {
     5355: "llmnr",
     5432: "postgresql",
     51820: "wireguard",
+    41641: "tailscale",
   };
   return names[numeric] ?? "";
 }
@@ -6242,6 +6259,15 @@ function firewallDPIText(log: FirewallLog) {
 
 function firewallDPIClassification(log: FirewallLog, dnsLabels: Record<string, string>) {
   const detail = firewallDPIText(log);
+  const fallback = firewallPortFallback(log, dnsLabels, Boolean(detail));
+  if (detail && fallback && preferPortFallbackOverApp(log?.dpiApp || "dns", fallback.app)) {
+    return {
+      source: "port-fallback" as const,
+      detail: `port-guess:${fallback.label}`,
+      confidence: 30,
+      cacheHit: false,
+    };
+  }
   if (detail) {
     return {
       source: "dpi" as const,
@@ -6250,7 +6276,6 @@ function firewallDPIClassification(log: FirewallLog, dnsLabels: Record<string, s
       cacheHit: String(log.hint ?? "").includes("dpi flow cache hit") || String(log.correlationDetail ?? "").includes("expired"),
     };
   }
-  const fallback = firewallPortFallback(log, dnsLabels);
   if (fallback) {
     return {
       source: "port-fallback" as const,
@@ -6276,11 +6301,14 @@ function firewallDPITextFromHint(hint?: string) {
 }
 
 function firewallQueryLabel(app?: string) {
-  return String(app ?? "").toLowerCase() === "netbios" ? "nbns-query" : "dns-query";
+  const normalized = String(app ?? "").toLowerCase();
+  if (normalized === "netbios") return "nbns-query";
+  if (normalized === "tailscale") return "tailscale-dns";
+  return "dns-query";
 }
 
-function firewallPortFallback(log: FirewallLog, dnsLabels: Record<string, string>): ConnectionPortFallback | undefined {
-  if (firewallDPIText(log)) return undefined;
+function firewallPortFallback(log: FirewallLog, dnsLabels: Record<string, string>, allowKnown = false): ConnectionPortFallback | undefined {
+  if (!allowKnown && firewallDPIText(log)) return undefined;
   const protocol = normalizeFacet(log.protocol || log.l3Proto, "");
   const labels = [log.dstAddress ? dnsLabels[log.dstAddress] : "", log.srcAddress ? dnsLabels[log.srcAddress] : ""];
   const ports = [

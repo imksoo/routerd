@@ -339,6 +339,24 @@ func TestHandlerServesTrafficFlows(t *testing.T) {
 	}
 }
 
+func TestTrafficFlowPortFallbackOverridesDNSOnTailscalePort(t *testing.T) {
+	flow := logstore.TrafficFlow{
+		Protocol:         "udp",
+		ClientAddress:    "172.18.0.2",
+		ClientPort:       53122,
+		PeerAddress:      "198.51.100.10",
+		PeerPort:         41641,
+		AppName:          "dns",
+		AppCategory:      "network",
+		AppConfidence:    75,
+		ResolvedHostname: "binary-noise",
+	}
+	applyTrafficFlowPortFallback(&flow)
+	if flow.AppName != "tailscale" || flow.AppCategory != "port-fallback" || flow.ResolvedHostname != "" {
+		t.Fatalf("flow fallback = %#v", flow)
+	}
+}
+
 func TestHandlerServesFirewallLogs(t *testing.T) {
 	path := t.TempDir() + "/firewall-logs.db"
 	firewallLog, err := logstore.OpenFirewallLog(path)
