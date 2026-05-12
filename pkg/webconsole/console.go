@@ -25,6 +25,7 @@ import (
 	"routerd/pkg/apply"
 	"routerd/pkg/bus"
 	"routerd/pkg/controlapi"
+	"routerd/pkg/dhcpfingerprint"
 	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
 	"routerd/pkg/platform"
@@ -32,21 +33,22 @@ import (
 )
 
 type Options struct {
-	Router             *api.Router
-	Store              routerstate.Store
-	Result             func() *apply.Result
-	Connections        func(limit int) (*observe.ConnectionTable, error)
-	VPNStatus          func() (VPNStatus, error)
-	Title              string
-	BasePath           string
-	ConnectionsLimit   int
-	DNSQueryLogPath    string
-	TrafficFlowLogPath string
-	FirewallLogPath    string
-	DHCPLeasePaths     []string
-	ConfigPath         string
-	ControllerModes    []controlapi.ControllerStatus
-	Bus                *bus.Bus
+	Router                 *api.Router
+	Store                  routerstate.Store
+	Result                 func() *apply.Result
+	Connections            func(limit int) (*observe.ConnectionTable, error)
+	VPNStatus              func() (VPNStatus, error)
+	Title                  string
+	BasePath               string
+	ConnectionsLimit       int
+	DNSQueryLogPath        string
+	TrafficFlowLogPath     string
+	FirewallLogPath        string
+	DHCPFingerprintLogPath string
+	DHCPLeasePaths         []string
+	ConfigPath             string
+	ControllerModes        []controlapi.ControllerStatus
+	Bus                    *bus.Bus
 }
 
 type Handler struct {
@@ -54,22 +56,23 @@ type Handler struct {
 }
 
 type Snapshot struct {
-	GeneratedAt  time.Time                     `json:"generatedAt"`
-	Status       controlapi.Status             `json:"status"`
-	Controllers  []controlapi.ControllerStatus `json:"controllers,omitempty"`
-	Phases       map[string]int                `json:"phases"`
-	Resources    []routerstate.ObjectStatus    `json:"resources"`
-	Interfaces   []InterfaceSummary            `json:"interfaces,omitempty"`
-	Events       []routerstate.StoredEvent     `json:"events"`
-	Connections  *observe.ConnectionTable      `json:"connections,omitempty"`
-	DNSQueries   []logstore.DNSQuery           `json:"dnsQueries,omitempty"`
-	TrafficFlows []logstore.TrafficFlow        `json:"trafficFlows,omitempty"`
-	FirewallLogs []logstore.FirewallLogEntry   `json:"firewallLogs,omitempty"`
-	DHCPLeases   []DHCPLease                   `json:"dhcpLeases,omitempty"`
-	Neighbors    []NeighborEntry               `json:"neighbors,omitempty"`
-	Clients      []ClientEntry                 `json:"clients,omitempty"`
-	VPN          VPNStatus                     `json:"vpn,omitempty"`
-	Errors       []string                      `json:"errors,omitempty"`
+	GeneratedAt      time.Time                     `json:"generatedAt"`
+	Status           controlapi.Status             `json:"status"`
+	Controllers      []controlapi.ControllerStatus `json:"controllers,omitempty"`
+	Phases           map[string]int                `json:"phases"`
+	Resources        []routerstate.ObjectStatus    `json:"resources"`
+	Interfaces       []InterfaceSummary            `json:"interfaces,omitempty"`
+	Events           []routerstate.StoredEvent     `json:"events"`
+	Connections      *observe.ConnectionTable      `json:"connections,omitempty"`
+	DNSQueries       []logstore.DNSQuery           `json:"dnsQueries,omitempty"`
+	TrafficFlows     []logstore.TrafficFlow        `json:"trafficFlows,omitempty"`
+	FirewallLogs     []logstore.FirewallLogEntry   `json:"firewallLogs,omitempty"`
+	DHCPFingerprints []logstore.DHCPFingerprint    `json:"dhcpFingerprints,omitempty"`
+	DHCPLeases       []DHCPLease                   `json:"dhcpLeases,omitempty"`
+	Neighbors        []NeighborEntry               `json:"neighbors,omitempty"`
+	Clients          []ClientEntry                 `json:"clients,omitempty"`
+	VPN              VPNStatus                     `json:"vpn,omitempty"`
+	Errors           []string                      `json:"errors,omitempty"`
 }
 
 type ConfigSnapshot struct {
@@ -214,6 +217,10 @@ func New(opts Options) Handler {
 	if len(opts.DHCPLeasePaths) == 0 {
 		opts.DHCPLeasePaths = []string{"/run/routerd/dnsmasq.leases", "/var/lib/misc/dnsmasq.leases"}
 	}
+	if opts.DHCPFingerprintLogPath == "" {
+		defaults, _ := platform.Current()
+		opts.DHCPFingerprintLogPath = strings.TrimRight(defaults.StateDir, "/") + "/dhcp-fingerprints.db"
+	}
 	return Handler{opts: opts}
 }
 
@@ -315,6 +322,10 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
+	dhcpFingerprints, err := h.dhcpFingerprintList(logstore.DHCPFingerprintFilter{Since: time.Now().Add(-24 * time.Hour), Limit: 1000})
+	if err != nil {
+		errors = append(errors, err.Error())
+	}
 	neighbors, err := neighborList()
 	if err != nil {
 		errors = append(errors, err.Error())
@@ -330,22 +341,23 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	}
 	result = resultWithLatestGeneration(result, h.opts.Store)
 	return Snapshot{
-		GeneratedAt:  time.Now().UTC(),
-		Status:       statusWithControllers(result, h.opts.ControllerModes),
-		Controllers:  h.opts.ControllerModes,
-		Phases:       phaseCounts(resources),
-		Resources:    resources,
-		Interfaces:   h.interfaceSummaries(resources),
-		Events:       events,
-		Connections:  connections,
-		DNSQueries:   dnsQueries,
-		TrafficFlows: trafficFlows,
-		FirewallLogs: firewallLogs,
-		DHCPLeases:   dhcpLeases,
-		Neighbors:    neighbors,
-		Clients:      correlateClients(dhcpLeases, neighbors, trafficFlows, fingerprintDNSQueries, firewallLogs),
-		VPN:          vpn,
-		Errors:       errors,
+		GeneratedAt:      time.Now().UTC(),
+		Status:           statusWithControllers(result, h.opts.ControllerModes),
+		Controllers:      h.opts.ControllerModes,
+		Phases:           phaseCounts(resources),
+		Resources:        resources,
+		Interfaces:       h.interfaceSummaries(resources),
+		Events:           events,
+		Connections:      connections,
+		DNSQueries:       dnsQueries,
+		TrafficFlows:     trafficFlows,
+		FirewallLogs:     firewallLogs,
+		DHCPFingerprints: dhcpFingerprints,
+		DHCPLeases:       dhcpLeases,
+		Neighbors:        neighbors,
+		Clients:          correlateClients(dhcpLeases, neighbors, trafficFlows, fingerprintDNSQueries, firewallLogs, dhcpFingerprints),
+		VPN:              vpn,
+		Errors:           errors,
 	}
 }
 
@@ -616,7 +628,12 @@ func (h Handler) clients(w http.ResponseWriter) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, correlateClients(leases, neighbors, flows, queries, firewallLogs))
+	dhcpFingerprints, err := h.dhcpFingerprintList(logstore.DHCPFingerprintFilter{Since: time.Now().Add(-24 * time.Hour), Limit: 1000})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, correlateClients(leases, neighbors, flows, queries, firewallLogs, dhcpFingerprints))
 }
 
 func (h Handler) vpn(w http.ResponseWriter) {
@@ -1031,6 +1048,18 @@ func (h Handler) firewallLogList(filter logstore.FirewallLogFilter) ([]logstore.
 		return nil, nil
 	}
 	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	return store.List(context.Background(), filter)
+}
+
+func (h Handler) dhcpFingerprintList(filter logstore.DHCPFingerprintFilter) ([]logstore.DHCPFingerprint, error) {
+	if strings.TrimSpace(h.opts.DHCPFingerprintLogPath) == "" {
+		return nil, nil
+	}
+	store, err := logstore.OpenDHCPFingerprintLog(h.opts.DHCPFingerprintLogPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1462,10 +1491,11 @@ func parseNeighborState(raw json.RawMessage) string {
 	return ""
 }
 
-func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []logstore.TrafficFlow, queries []logstore.DNSQuery, firewallLogs []logstore.FirewallLogEntry) []ClientEntry {
+func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []logstore.TrafficFlow, queries []logstore.DNSQuery, firewallLogs []logstore.FirewallLogEntry, dhcpFingerprints ...[]logstore.DHCPFingerprint) []ClientEntry {
 	rows := map[string]*clientMutableEntry{}
 	ipToKey := map[string]string{}
 	passive := buildPassiveFingerprints(leases, flows, queries, firewallLogs)
+	dhcpFingerprintByMAC := latestDHCPFingerprintByMAC(dhcpFingerprints...)
 	upsert := func(key, address string) *clientMutableEntry {
 		key = strings.TrimSpace(key)
 		if key == "" {
@@ -1583,7 +1613,7 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		row.Sources = sortedSet(row.sources)
 		row.Peers = sortedSet(row.peers)
 		row.applyActivitySummary()
-		fingerprint := inferClientFingerprint(row.ClientEntry, passive)
+		fingerprint := inferClientFingerprint(row.ClientEntry, passive, dhcpFingerprintByMAC[normalizeClientMAC(row.MAC)])
 		row.InferredOSFamily = fingerprint.OSFamily
 		row.InferredDeviceClass = fingerprint.DeviceClass
 		row.FingerprintConfidence = fingerprint.Confidence
@@ -2124,6 +2154,68 @@ func addUniqueFingerprintSignal(item *fingerprintAccumulator, osFamily, deviceCl
 	addFingerprintSignal(item, osFamily, deviceClass, score, signal)
 }
 
+func applyDHCPFingerprint(item *fingerprintAccumulator, fp *logstore.DHCPFingerprint) {
+	if item == nil || fp == nil {
+		return
+	}
+	applyHostVendorFingerprint(item, fp.Hostname, fp.VendorClass, "")
+	if fp.Hostname != "" {
+		item.hostname = fp.Hostname
+	}
+	if fp.VendorClass != "" {
+		item.vendor = fp.VendorClass
+	}
+	osFamily := fp.OSFamily
+	deviceClass := fp.DeviceClass
+	confidence := fp.Confidence
+	signal := fp.Signal
+	if osFamily == "" && deviceClass == "" && len(fp.RequestedOptions) > 0 {
+		match := dhcpfingerprint.Infer(dhcpfingerprint.Fingerprint{
+			MAC:              fp.MAC,
+			Hostname:         fp.Hostname,
+			VendorClass:      fp.VendorClass,
+			RequestedOptions: fp.RequestedOptions,
+			ObservedAt:       fp.ObservedAt,
+			Source:           fp.Source,
+		})
+		osFamily = match.OSFamily
+		deviceClass = match.DeviceClass
+		confidence = match.Confidence
+		signal = match.Signal
+	}
+	if osFamily == "" && deviceClass == "" {
+		return
+	}
+	if confidence <= 0 {
+		confidence = 75
+	}
+	if signal == "" {
+		signal = "dhcp-fingerprint"
+	}
+	if fp.DeviceName != "" {
+		signal += ":" + strings.ToLower(strings.ReplaceAll(fp.DeviceName, " ", "-"))
+	}
+	addFingerprintSignal(item, osFamily, deviceClass, confidence, signal)
+}
+
+func latestDHCPFingerprintByMAC(groups ...[]logstore.DHCPFingerprint) map[string]*logstore.DHCPFingerprint {
+	out := map[string]*logstore.DHCPFingerprint{}
+	for _, group := range groups {
+		for _, fp := range group {
+			mac := normalizeClientMAC(fp.MAC)
+			if mac == "" {
+				continue
+			}
+			current := out[mac]
+			next := fp
+			if current == nil || next.ObservedAt.After(current.ObservedAt) {
+				out[mac] = &next
+			}
+		}
+	}
+	return out
+}
+
 func matchFingerprintToClient(rows map[string]*clientMutableEntry, fingerprint *fingerprintAccumulator) string {
 	if fingerprint == nil {
 		return ""
@@ -2137,7 +2229,7 @@ func matchFingerprintToClient(rows map[string]*clientMutableEntry, fingerprint *
 		if row.MAC == "" {
 			continue
 		}
-		rowFP := inferClientFingerprint(row.ClientEntry, nil)
+		rowFP := inferClientFingerprint(row.ClientEntry, nil, nil)
 		if rowFP.OSFamily != fp.OSFamily {
 			continue
 		}
@@ -2163,9 +2255,10 @@ func passiveCorrelationKey(fingerprint *fingerprintAccumulator, ip string) strin
 	return ip
 }
 
-func inferClientFingerprint(entry ClientEntry, passive map[string]*fingerprintAccumulator) clientFingerprint {
+func inferClientFingerprint(entry ClientEntry, passive map[string]*fingerprintAccumulator, dhcpFingerprint *logstore.DHCPFingerprint) clientFingerprint {
 	acc := &fingerprintAccumulator{osScores: map[string]int{}, classScores: map[string]int{}, osClassScores: map[string]int{}, signals: map[string]bool{}, signalScores: map[string]fingerprintSignalScore{}}
 	applyHostVendorFingerprint(acc, entry.Hostname, entry.Vendor, "")
+	applyDHCPFingerprint(acc, dhcpFingerprint)
 	for _, peer := range entry.Peers {
 		applyDomainFingerprint(acc, peer)
 	}

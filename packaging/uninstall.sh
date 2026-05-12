@@ -147,6 +147,7 @@ for binary in \
     routerd-dhcpv4-client \
     routerd-dhcpv6-client \
     routerd-dhcp-event-relay \
+    routerd-dhcp-fingerprint-watcher \
     routerd-healthcheck \
     routerd-dns-resolver \
     routerd-firewall-logger \

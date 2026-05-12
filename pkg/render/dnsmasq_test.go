@@ -87,6 +87,74 @@ func TestDnsmasqConfigUsesSelfDNSWithDHCPv4Upstream(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigRendersLogDHCPWhenEnabled(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-ipv4"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+				Metadata: api.ObjectMeta{Name: "dhcpv4"},
+				Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}, LogDHCP: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
+				Spec: api.DHCPv4ScopeSpec{
+					Server:     "dhcpv4",
+					Interface:  "lan",
+					RangeStart: "192.168.10.130",
+					RangeEnd:   "192.168.10.139",
+				},
+			},
+		}},
+	}
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	if got := string(data); !strings.Contains(got, "\nlog-dhcp\n") {
+		t.Fatalf("dnsmasq output missing log-dhcp:\n%s", got)
+	}
+}
+
+func TestDnsmasqConfigRendersLogDHCPForDirectServer(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
+				Spec: api.DHCPv4ServerSpec{
+					Server:      "dnsmasq",
+					LogDHCP:     true,
+					Interface:   "lan",
+					AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.130", End: "192.168.10.139"},
+				},
+			},
+		}},
+	}
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	if got := string(data); !strings.Contains(got, "\nlog-dhcp\n") {
+		t.Fatalf("direct dnsmasq output missing log-dhcp:\n%s", got)
+	}
+}
+
 func TestDnsmasqConfigRendersDHCPv4Reservation(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

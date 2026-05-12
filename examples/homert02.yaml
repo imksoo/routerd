@@ -1183,6 +1183,7 @@ spec:
       metadata:
         name: lan-dhcpv4
       spec:
+        logDHCP: true
         interface: lan
         addressPool:
           start: 172.18.1.64
@@ -1247,6 +1248,7 @@ spec:
           - kind: IPv6DelegatedAddress
             name: lan-base
       spec:
+        logDHCP: true
         interface: lan
         mode: stateless
         dnsServerFrom:

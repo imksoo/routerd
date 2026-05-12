@@ -877,6 +877,43 @@ func TestCorrelateClientsWeakGenericCloudSignalDoesNotForceIdentity(t *testing.T
 	}
 }
 
+func TestCorrelateClientsDHCPFingerprintBeatsGenericDNS(t *testing.T) {
+	rows := correlateClients(
+		[]DHCPLease{{
+			MAC:      "aa:bb:cc:dd:ee:ff",
+			IP:       "172.18.1.180",
+			Hostname: "desktop",
+		}},
+		nil,
+		nil,
+		[]logstore.DNSQuery{
+			{ClientAddress: "172.18.1.180", QuestionName: "gateway.icloud.com", QuestionType: "A"},
+			{ClientAddress: "172.18.1.180", QuestionName: "www.googleapis.com", QuestionType: "A"},
+		},
+		nil,
+		[]logstore.DHCPFingerprint{{
+			MAC:              "aa:bb:cc:dd:ee:ff",
+			Hostname:         "desktop",
+			VendorClass:      "MSFT 5.0",
+			RequestedOptions: []int{1, 15, 3, 6, 44, 46, 47, 31, 33, 249, 43},
+			OSFamily:         "Windows",
+			DeviceClass:      "computer",
+			Confidence:       90,
+			Signal:           "dhcp-fingerprint/windows-vendor",
+			ObservedAt:       time.Now().UTC(),
+		}},
+	)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	if rows[0].InferredOSFamily != "Windows" || rows[0].InferredDeviceClass != "computer" {
+		t.Fatalf("DHCP fingerprint should beat generic DNS: %+v", rows[0])
+	}
+	if !containsString(rows[0].FingerprintSignals, "dhcp-fingerprint/windows-vendor") {
+		t.Fatalf("DHCP signal missing: %+v", rows[0].FingerprintSignals)
+	}
+}
+
 func TestCorrelateClientsGoogleMediaBeatsGenericAndroidUsage(t *testing.T) {
 	rows := correlateClients(
 		nil,

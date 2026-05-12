@@ -3604,18 +3604,19 @@ func statusAddressValue(value string) string {
 func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, logger *eventlog.Logger, configPath string, controllerStatuses []controlapi.ControllerStatus) error {
 	addr := net.JoinHostPort(spec.ListenAddress, fmt.Sprintf("%d", spec.Port))
 	handler := webconsole.New(webconsole.Options{
-		Router:             router,
-		Store:              store,
-		Result:             cache.Load,
-		Connections:        observe.Connections,
-		Title:              spec.Title,
-		BasePath:           spec.BasePath,
-		DNSQueryLogPath:    platformDefaults.StateDir + "/dns-queries.db",
-		TrafficFlowLogPath: platformDefaults.StateDir + "/traffic-flows.db",
-		FirewallLogPath:    platformDefaults.StateDir + "/firewall-logs.db",
-		ConfigPath:         configPath,
-		ControllerModes:    controllerStatuses,
-		Bus:                eventBus,
+		Router:                 router,
+		Store:                  store,
+		Result:                 cache.Load,
+		Connections:            observe.Connections,
+		Title:                  spec.Title,
+		BasePath:               spec.BasePath,
+		DNSQueryLogPath:        platformDefaults.StateDir + "/dns-queries.db",
+		TrafficFlowLogPath:     platformDefaults.StateDir + "/traffic-flows.db",
+		FirewallLogPath:        platformDefaults.StateDir + "/firewall-logs.db",
+		DHCPFingerprintLogPath: platformDefaults.StateDir + "/dhcp-fingerprints.db",
+		ConfigPath:             configPath,
+		ControllerModes:        controllerStatuses,
+		Bus:                    eventBus,
 	})
 	server := &http.Server{Addr: addr, Handler: handler}
 	listener, err := net.Listen("tcp", addr)

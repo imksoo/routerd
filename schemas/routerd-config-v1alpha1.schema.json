@@ -2424,6 +2424,9 @@
                         },
                         "type": "array"
                       },
+                      "logDHCP": {
+                        "type": "boolean"
+                      },
                       "managed": {
                         "type": "boolean"
                       },
@@ -3424,6 +3427,9 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "logDHCP": {
+                        "type": "boolean"
                       },
                       "managed": {
                         "type": "boolean"

@@ -396,6 +396,7 @@ type DHCPv4ServerSpec struct {
 	Managed          bool                    `yaml:"managed,omitempty" json:"managed,omitempty"`
 	Role             string                  `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
 	ListenInterfaces []string                `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
+	LogDHCP          bool                    `yaml:"logDHCP,omitempty" json:"logDHCP,omitempty"`
 	DNS              DHCPv4ServerDNSSpec     `yaml:"dns,omitempty" json:"dns,omitempty"`
 	Interface        string                  `yaml:"interface,omitempty" json:"interface,omitempty"`
 	AddressPool      DHCPAddressPoolSpec     `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
@@ -689,6 +690,7 @@ type DHCPv6ServerSpec struct {
 	Managed          bool                     `yaml:"managed,omitempty" json:"managed,omitempty"`
 	Role             string                   `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
 	ListenInterfaces []string                 `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
+	LogDHCP          bool                     `yaml:"logDHCP,omitempty" json:"logDHCP,omitempty"`
 	Interface        string                   `yaml:"interface,omitempty" json:"interface,omitempty"`
 	Mode             string                   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=stateless,enum=stateful,enum=both"`
 	AddressPool      DHCPAddressPoolSpec      `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
