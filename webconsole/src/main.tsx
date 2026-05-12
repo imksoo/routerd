@@ -872,10 +872,18 @@ const useStyles = makeStyles({
     backgroundColor: "#54b054",
   },
   classificationSegmentGuess: {
-    backgroundColor: "#60cdff",
+    backgroundColor: "#9aa4b2",
   },
   classificationSegmentUnknown: {
     backgroundColor: "#6b7280",
+  },
+  guessText: {
+    color: tokens.colorNeutralForeground3,
+    fontStyle: "italic",
+  },
+  identifyingText: {
+    color: tokens.colorNeutralForeground3,
+    fontStyle: "italic",
   },
   chartSvg: {
     width: "100%",
@@ -2004,7 +2012,7 @@ function App() {
   const filteredEvents = useMemo(() => filterEvents(events, eventFilters), [events, eventFilters]);
   const eventFacets = useMemo(() => eventFilterFacets(events), [events]);
   const firewallLogs = summary?.firewallLogs ?? [];
-  const filteredFirewallLogs = useMemo(() => filterFirewallLogs(firewallLogs, firewallFilters), [firewallLogs, firewallFilters]);
+  const filteredFirewallLogs = useMemo(() => filterFirewallLogs(firewallLogs, firewallFilters, dnsLabels), [firewallLogs, firewallFilters, dnsLabels]);
   const firewallProtocols = useMemo(() => firewallProtocolFacets(firewallLogs), [firewallLogs]);
   const selectedEvent = useMemo(() => {
     if (filteredEvents.length === 0) return undefined;
@@ -2906,8 +2914,8 @@ function OverviewDPIInsights({ flows, clients, connections }: { flows: TrafficFl
         <ConnectionClassificationMeter stats={classification} />
       </Card>
       <Card className={styles.chartCard}>
-        <CardHeader header={<Text weight="semibold">Top protocols</Text>} description={<Text className={styles.muted}>DPI protocol mix from recent observed flows</Text>} />
-        <RankList rows={protocols} empty="No DPI protocol data" formatLabel={formatConnectionApp} formatValue={formatBytes} />
+        <CardHeader header={<Text weight="semibold">Top protocols</Text>} description={<Text className={styles.muted}>DPI protocols and weak port guesses from recent observed flows</Text>} />
+        <RankList rows={protocols} empty="No protocol data" formatLabel={formatProtocolRankLabel} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top talkers</Text>} description={<Text className={styles.muted}>Clients with DPI-classified traffic volume</Text>} />
@@ -3035,10 +3043,11 @@ function ConnectionClassificationSummary({ entries }: { entries: ConnectionEntry
         <Text weight="semibold">Identified</Text>
         <div className={styles.badges}>
           <Badge appearance="tint" color="success">DPI {stats.dpi}</Badge>
-          <Badge appearance="tint" color="brand">Port guess {stats.guessed}</Badge>
+          <Badge appearance="outline" color="subtle">Port guess {stats.guessed}</Badge>
+          <Badge appearance="outline" color="subtle">Identifying {stats.identifying}</Badge>
           <Badge appearance="outline" color="subtle">Unclassified {stats.unclassified}</Badge>
         </div>
-        <Text size={200} className={styles.muted}>{stats.classified} of {stats.total} active rows carry a protocol label</Text>
+        <Text size={200} className={styles.muted}>{stats.classified} of {stats.total} active rows carry a protocol label; guesses are lower confidence</Text>
       </div>
     </div>
   );
@@ -3058,7 +3067,7 @@ function ConnectionClassificationMeter({ stats }: { stats: ConnectionClassificat
         <div className={styles.classificationSegmentUnknown} style={{ width: `${unknownWidth}%` }} />
       </div>
       <Text size={200} className={styles.muted}>
-        Classified {stats.classified}/{stats.total} / DPI {stats.dpi} / Port guess {stats.guessed} / Unclassified {stats.unclassified}
+        Classified {stats.classified}/{stats.total} / DPI {stats.dpi} / Port guess {stats.guessed} / Identifying {stats.identifying} / Unclassified {stats.unclassified}
       </Text>
     </div>
   );
@@ -3479,7 +3488,7 @@ function ConnectionGroup({
                         <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
                       </div>
                     </TableCell>
-                    <TableCell><ConnectionDPI entry={entry} /></TableCell>
+                    <TableCell><ConnectionDPI entry={entry} dnsLabels={dnsLabels} /></TableCell>
                     <TableCell><code className={styles.wrapCode}>{dnsLabels[entry.original?.destination ?? ""] ?? "-"}</code></TableCell>
                     <TableCell>{entry.timeout ?? 0}s</TableCell>
                   </TableRow>
@@ -3493,24 +3502,25 @@ function ConnectionGroup({
   );
 }
 
-function ConnectionDPI({ entry }: { entry: ConnectionEntry }) {
+function ConnectionDPI({ entry, dnsLabels }: { entry: ConnectionEntry; dnsLabels: Record<string, string> }) {
   const styles = useStyles();
-  const app = connectionApp(entry);
-  const detail = connectionDPIDetail(entry);
-  const source = connectionAppSource(entry);
-  if (app === "unidentified" && !detail) {
+  const classification = connectionClassification(entry, dnsLabels);
+  if (classification.source === "identifying") {
+    return <Text className={styles.identifyingText}>Identifying...</Text>;
+  }
+  if (classification.source === "none") {
     return <Text className={styles.muted}>-</Text>;
   }
   return (
     <div className={styles.connectionFlow}>
       <div className={styles.badges}>
-        <Badge appearance="tint" color={connectionAppColor(app)}>{formatConnectionApp(app)}</Badge>
-        {source === "dpi" ? <Badge appearance="outline" color="success">DPI</Badge> : null}
-        {source === "port-fallback" ? <Badge appearance="outline" color="brand">Port guess</Badge> : null}
-        {entry.appConfidence ? <Badge appearance="outline">{entry.appConfidence}%</Badge> : null}
+        <Badge appearance={classification.source === "port-fallback" ? "outline" : "tint"} color={connectionAppColor(classification.app)}>{formatConnectionApp(classification.app)}</Badge>
+        {classification.source === "dpi" ? <Badge appearance="outline" color="success">{classification.cacheHit ? "DPI cache" : "DPI"}</Badge> : null}
+        {classification.source === "port-fallback" ? <Badge appearance="outline" color="subtle">Port guess</Badge> : null}
+        {classification.confidence ? <Badge appearance="outline">{classification.confidence}%</Badge> : null}
       </div>
-      {detail ? <code className={styles.wrapCode}>{detail}</code> : null}
-      {entry.appCategory && entry.appCategory !== "port-fallback" ? <Text size={200} className={styles.muted}>{entry.appCategory}</Text> : null}
+      {classification.detail ? <code className={`${styles.wrapCode} ${classification.source === "port-fallback" ? styles.guessText : ""}`}>{classification.detail}</code> : null}
+      {classification.category && classification.category !== "port-fallback" ? <Text size={200} className={styles.muted}>{classification.category}</Text> : null}
     </div>
   );
 }
@@ -4163,7 +4173,7 @@ function RecentDeny({
           <FirewallCell label="Flags"><code className={styles.wrapCode}>{row.tcpFlags || "-"}</code></FirewallCell>
           <FirewallCell label="Traffic"><FirewallTrafficClassBadge value={row.trafficClass} /></FirewallCell>
           <FirewallCell label="Class"><FirewallCorrelationBadge correlation={row.correlation} /></FirewallCell>
-          <FirewallCell label="DPI"><code className={styles.wrapCode}>{row.dpi || "-"}</code></FirewallCell>
+          <FirewallCell label="DPI"><FirewallDPI log={row.example} dnsLabels={dnsLabels} /></FirewallCell>
         </div>
       ))}
     </div>
@@ -4246,7 +4256,7 @@ function FirewallTimeline({
           <FirewallCell label="Flags"><code className={styles.wrapCode}>{firewallTCPFlags(log) || "-"}</code></FirewallCell>
           <FirewallCell label="Traffic"><FirewallTrafficClassBadge value={firewallTrafficClass(log)} /></FirewallCell>
           <FirewallCell label="Class"><FirewallCorrelationBadge correlation={firewallCorrelation(log)} /></FirewallCell>
-          <FirewallCell label="DPI"><code className={styles.wrapCode}>{firewallDPIText(log) || "-"}</code></FirewallCell>
+          <FirewallCell label="DPI"><FirewallDPI log={log} dnsLabels={dnsLabels} /></FirewallCell>
           <FirewallCell label="Rule"><code className={styles.wrapCode}>{log.ruleName || "-"}</code></FirewallCell>
         </div>
       ))}
@@ -4273,6 +4283,30 @@ function FirewallCorrelationBadge({ correlation }: { correlation?: string }) {
 
 function FirewallTrafficClassBadge({ value }: { value: string }) {
   return <Badge appearance="tint" color={firewallTrafficClassColor(value)}>{value || "unclassified"}</Badge>;
+}
+
+function FirewallDPI({ log, dnsLabels }: { log?: FirewallLog; dnsLabels: Record<string, string> }) {
+  const styles = useStyles();
+  if (!log) return <Text className={styles.muted}>-</Text>;
+  const classification = firewallDPIClassification(log, dnsLabels);
+  if (classification.source === "port-fallback") {
+    return (
+      <div className={styles.connectionFlow}>
+        <Badge appearance="outline" color="subtle">Port guess</Badge>
+        <code className={`${styles.wrapCode} ${styles.guessText}`}>{classification.detail}</code>
+      </div>
+    );
+  }
+  if (!classification.detail) return <Text className={styles.muted}>-</Text>;
+  return (
+    <div className={styles.connectionFlow}>
+      <div className={styles.badges}>
+        <Badge appearance="outline" color="success">{classification.cacheHit ? "DPI cache" : "DPI"}</Badge>
+        {classification.confidence ? <Badge appearance="outline">{classification.confidence}%</Badge> : null}
+      </div>
+      <code className={styles.wrapCode}>{classification.detail}</code>
+    </div>
+  );
 }
 
 function EndpointDetail({
@@ -4545,7 +4579,7 @@ function firewallProtocolFacets(logs: FirewallLog[]) {
   return Array.from(values).sort(facetSort);
 }
 
-function filterFirewallLogs(logs: FirewallLog[], filters: FirewallFilters) {
+function filterFirewallLogs(logs: FirewallLog[], filters: FirewallFilters, dnsLabels: Record<string, string>) {
   const query = filters.query.trim().toLowerCase();
   const source = filters.source.trim().toLowerCase();
   const destination = filters.destination.trim().toLowerCase();
@@ -4557,11 +4591,11 @@ function filterFirewallLogs(logs: FirewallLog[], filters: FirewallFilters) {
     if (port && !String(log.srcPort ?? "").includes(port) && !String(log.dstPort ?? "").includes(port)) return false;
     if (protocol && protocol !== "all" && normalizeFacet(log.protocol || log.l3Proto, "") !== protocol) return false;
     if (!query) return true;
-    return firewallSearchText(log).includes(query);
+    return firewallSearchText(log, dnsLabels).includes(query);
   });
 }
 
-function firewallSearchText(log: FirewallLog) {
+function firewallSearchText(log: FirewallLog, dnsLabels: Record<string, string>) {
   return [
     log.action,
     log.srcAddress,
@@ -4582,6 +4616,8 @@ function firewallSearchText(log: FirewallLog) {
     log.dpiDnsQuery,
     log.dpiConfidence,
     firewallDPIText(log),
+    firewallDPIClassification(log, dnsLabels).detail,
+    firewallDPIClassification(log, dnsLabels).source,
     firewallTCPFlags(log),
     firewallTrafficClass(log),
     firewallCorrelation(log),
@@ -4766,8 +4802,8 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
     entry.assured ? "assured" : "",
     entry.timeout,
     entry.mark,
-    connectionApp(entry),
-    connectionDPIDetail(entry),
+    connectionApp(entry, dnsLabels),
+    connectionDPIDetail(entry, dnsLabels),
     connectionAppSource(entry),
     entry.appCategory,
     entry.appConfidence,
@@ -4788,7 +4824,7 @@ function connectionSortValue(entry: ConnectionEntry, sort: string, dnsLabels: Re
   if (sort === "source") return hostPort(entry.original?.source, entry.original?.sourcePort);
   if (sort === "destination") return hostPort(entry.original?.destination, entry.original?.destinationPort);
   if (sort === "label") return dnsLabels[entry.original?.destination ?? ""] ?? entry.original?.destination ?? "";
-  if (sort === "app") return `${connectionApp(entry)} ${connectionDPIDetail(entry)}`;
+  if (sort === "app") return `${connectionApp(entry, dnsLabels)} ${connectionDPIDetail(entry, dnsLabels)}`;
   return "";
 }
 
@@ -4807,18 +4843,18 @@ function formatFacet(value: string) {
   return value.toUpperCase();
 }
 
-function connectionApp(entry: ConnectionEntry) {
+function connectionApp(entry: ConnectionEntry, dnsLabels?: Record<string, string>) {
   const app = normalizeFacet(entry.appName, "");
   if (app && app !== "unknown" && app !== "unidentified") return app;
-  return connectionPortFallback(entry)?.app ?? "unidentified";
+  return connectionPortFallback(entry, dnsLabels)?.app ?? "unidentified";
 }
 
-function connectionDPIDetail(entry: ConnectionEntry) {
-  if (entry.tlsSNI) return `TLS-SNI=${entry.tlsSNI}`;
-  if (entry.httpHost) return `HTTP-Host=${entry.httpHost}`;
-  if (entry.dnsQuery) return `${connectionApp(entry) === "netbios" ? "NBNS-query" : "DNS-query"}=${entry.dnsQuery}`;
-  const fallback = connectionPortFallback(entry);
-  if (fallback) return `port ${fallback.port}/${normalizeFacet(entry.protocol, "other")} guess`;
+function connectionDPIDetail(entry: ConnectionEntry, dnsLabels?: Record<string, string>) {
+  if (entry.tlsSNI) return `tls-sni:${entry.tlsSNI}`;
+  if (entry.httpHost) return `http-host:${entry.httpHost}`;
+  if (entry.dnsQuery) return `${connectionApp(entry, dnsLabels) === "netbios" ? "nbns-query" : "dns-query"}:${entry.dnsQuery}`;
+  const fallback = connectionPortFallback(entry, dnsLabels);
+  if (fallback) return `port-guess:${fallback.label}`;
   return "";
 }
 
@@ -4839,6 +4875,11 @@ function formatConnectionApp(value: string) {
   if (value === "wireguard") return "WireGuard";
   if (value === "stun") return "STUN";
   if (value === "rdp") return "RDP";
+  if (value === "aws-https") return "AWS HTTPS";
+  if (value === "google-https") return "Google HTTPS";
+  if (value === "microsoft-https") return "Microsoft HTTPS";
+  if (value === "apple-https") return "Apple HTTPS";
+  if (value === "cloudflare-https") return "Cloudflare HTTPS";
   return value.toUpperCase();
 }
 
@@ -4849,11 +4890,14 @@ function connectionAppColor(value: string): "brand" | "danger" | "informative" |
   if (value === "ssh" || value === "rdp") return "danger";
   if (value === "smb" || value === "ipsec" || value === "wireguard") return "informative";
   if (value === "unidentified") return "subtle";
+  if (value.endsWith("-https")) return "subtle";
   return "informative";
 }
 
 function connectionClass(entry: ConnectionEntry) {
-  if (connectionApp(entry) !== "unidentified") return connectionAppSource(entry) === "port-fallback" ? "port guess" : "dpi identified";
+  const source = connectionAppSource(entry);
+  if (connectionApp(entry) !== "unidentified") return source === "port-fallback" ? "port guess" : "dpi identified";
+  if (source === "identifying") return "identifying";
   const state = normalizeFacet(entry.state, "stateless");
   if (entry.assured || state.includes("established")) return "established";
   if (state.includes("syn") || state.includes("unreplied")) return "probe";
@@ -4864,6 +4908,7 @@ function connectionClassColor(entry: ConnectionEntry): "brand" | "danger" | "inf
   const cls = connectionClass(entry);
   if (cls === "dpi identified") return "success";
   if (cls === "port guess") return "informative";
+  if (cls === "identifying") return "subtle";
   if (cls === "probe") return "warning";
   if (cls === "established") return "brand";
   return "subtle";
@@ -4872,6 +4917,7 @@ function connectionClassColor(entry: ConnectionEntry): "brand" | "danger" | "inf
 type ConnectionPortFallback = {
   app: string;
   port: string;
+  label: string;
 };
 
 type ConnectionClassificationStats = {
@@ -4879,32 +4925,94 @@ type ConnectionClassificationStats = {
   classified: number;
   dpi: number;
   guessed: number;
+  identifying: number;
   unclassified: number;
   classifiedRatio: number;
 };
+
+type ConnectionClassification = {
+  app: string;
+  source: "dpi" | "port-fallback" | "identifying" | "none";
+  detail: string;
+  category?: string;
+  confidence?: number;
+  cacheHit?: boolean;
+};
+
+function connectionClassification(entry: ConnectionEntry, dnsLabels?: Record<string, string>): ConnectionClassification {
+  const category = normalizeFacet(entry.appCategory, "");
+  if (category === "port-fallback") {
+    const fallback = connectionPortFallback(entry, dnsLabels);
+    const app = fallback?.app || normalizeFacet(entry.appName, "unidentified");
+    return {
+      app,
+      source: "port-fallback",
+      detail: fallback ? `port-guess:${fallback.label}` : `port-guess:${formatConnectionApp(app)}`,
+      category: "port-fallback",
+      confidence: entry.appConfidence || 30,
+    };
+  }
+  const raw = normalizeFacet(entry.appName, "");
+  if (raw && raw !== "unknown" && raw !== "unidentified") {
+    return {
+      app: raw,
+      source: "dpi",
+      detail: connectionDPIDetail(entry, dnsLabels),
+      category: entry.appCategory,
+      confidence: entry.appConfidence,
+      cacheHit: normalizeFacet(entry.appCategory, "").includes("cache"),
+    };
+  }
+  const fallback = connectionPortFallback(entry, dnsLabels);
+  if (fallback) {
+    return {
+      app: fallback.app,
+      source: "port-fallback",
+      detail: `port-guess:${fallback.label}`,
+      category: "port-fallback",
+      confidence: 30,
+    };
+  }
+  return {
+    app: "unidentified",
+    source: connectionNeedsIdentification(entry) ? "identifying" : "none",
+    detail: "",
+  };
+}
 
 function connectionAppSource(entry: ConnectionEntry) {
   if (normalizeFacet(entry.appCategory, "") === "port-fallback") return "port-fallback";
   const raw = normalizeFacet(entry.appName, "");
   if (raw && raw !== "unknown" && raw !== "unidentified") return "dpi";
-  return connectionPortFallback(entry) ? "port-fallback" : "none";
+  if (connectionPortFallback(entry)) return "port-fallback";
+  return connectionNeedsIdentification(entry) ? "identifying" : "none";
 }
 
-function connectionPortFallback(entry: ConnectionEntry): ConnectionPortFallback | undefined {
+function connectionPortFallback(entry: ConnectionEntry, dnsLabels?: Record<string, string>): ConnectionPortFallback | undefined {
   const raw = normalizeFacet(entry.appName, "");
-  if (raw && raw !== "unknown" && raw !== "unidentified") return undefined;
+  const category = normalizeFacet(entry.appCategory, "");
+  if (raw && raw !== "unknown" && raw !== "unidentified" && category !== "port-fallback") return undefined;
   const protocol = normalizeFacet(entry.protocol, "");
-  const ports = [entry.original?.destinationPort, entry.original?.sourcePort].filter(Boolean) as string[];
+  const labels = [
+    entry.original?.destination ? dnsLabels?.[entry.original.destination] : "",
+    entry.reply?.source ? dnsLabels?.[entry.reply.source] : "",
+  ].filter(Boolean) as string[];
+  const ports = [
+    { port: entry.original?.destinationPort, peerLabel: labels[0] ?? "" },
+    { port: entry.original?.sourcePort, peerLabel: labels[1] ?? "" },
+  ].filter(item => item.port) as { port: string; peerLabel: string }[];
   for (const port of ports) {
-    const app = portProtocolFallback(protocol, port);
-    if (app) return { app, port };
+    const app = portProtocolFallback(protocol, port.port, port.peerLabel) || (category === "port-fallback" ? raw : "");
+    if (app) return { app, port: port.port, label: formatPortGuessLabel(app, port.port, port.peerLabel) };
   }
   return undefined;
 }
 
-function portProtocolFallback(protocol: string, port: string) {
+function portProtocolFallback(protocol: string, port: string, peerLabel = "") {
   const numeric = Number(port);
   if (!Number.isFinite(numeric) || numeric <= 0) return "";
+  const provider = providerHTTPSGuess(peerLabel);
+  if ((numeric === 443 || numeric === 8443) && provider) return provider;
   switch (numeric) {
     case 20:
     case 21:
@@ -4968,19 +5076,45 @@ function portProtocolFallback(protocol: string, port: string) {
   }
 }
 
+function connectionNeedsIdentification(entry: ConnectionEntry) {
+  const protocol = normalizeFacet(entry.protocol, "");
+  const state = normalizeFacet(entry.state, "");
+  if (protocol === "tcp") return !state || state.includes("established") || state.includes("unreplied") || state.includes("syn");
+  return protocol === "udp";
+}
+
+function providerHTTPSGuess(label = "") {
+  const value = label.toLowerCase();
+  if (!value) return "";
+  if (/(^|\.)(amazonaws\.com|awsdns|cloudfront\.net)$/.test(value) || value.includes(".amazonaws.com") || value.includes(".cloudfront.net")) return "aws-https";
+  if (value.includes(".googleusercontent.com") || value.includes(".googleapis.com") || value.includes(".gvt1.com") || value.includes(".google.com")) return "google-https";
+  if (value.includes(".microsoft.com") || value.includes(".windowsupdate.com") || value.includes(".office.com") || value.includes(".azure.com")) return "microsoft-https";
+  if (value.includes(".icloud.com") || value.includes(".apple.com") || value.includes(".cdn-apple.com")) return "apple-https";
+  if (value.includes(".cloudflare.com") || value.includes(".cloudflare.net")) return "cloudflare-https";
+  return "";
+}
+
+function formatPortGuessLabel(app: string, port: string, peerLabel = "") {
+  const formatted = formatConnectionApp(app);
+  const suffix = peerLabel ? ` via ${peerLabel}` : "";
+  return `${formatted}:${port}${suffix}`;
+}
+
 function connectionClassificationStats(entries: ConnectionEntry[]): ConnectionClassificationStats {
   const stats: ConnectionClassificationStats = {
     total: entries.length,
     classified: 0,
     dpi: 0,
     guessed: 0,
+    identifying: 0,
     unclassified: 0,
     classifiedRatio: 0,
   };
   for (const entry of entries) {
     const app = connectionApp(entry);
     if (app === "unidentified") {
-      stats.unclassified++;
+      if (connectionAppSource(entry) === "identifying") stats.identifying++;
+      else stats.unclassified++;
       continue;
     }
     stats.classified++;
@@ -4994,8 +5128,8 @@ function connectionClassificationStats(entries: ConnectionEntry[]): ConnectionCl
 function topTrafficProtocols(flows: TrafficFlow[]) {
   const totals = new Map<string, number>();
   for (const flow of flows) {
-    const app = trafficFlowApp(flow);
-    totals.set(app, (totals.get(app) ?? 0) + trafficFlowBytes(flow));
+    const classification = trafficFlowClassification(flow);
+    totals.set(classification.rankLabel, (totals.get(classification.rankLabel) ?? 0) + trafficFlowBytes(flow));
   }
   return topRows(totals, 5);
 }
@@ -5039,13 +5173,26 @@ function connectionClassSummary(entries: ConnectionEntry[]) {
 }
 
 function trafficFlowApp(flow: TrafficFlow) {
+  return trafficFlowClassification(flow).app;
+}
+
+function trafficFlowClassification(flow: TrafficFlow) {
   const app = normalizeFacet(flow.appName, "");
-  if (app && app !== "unknown") return app;
-  if (flow.tlsSNI) return "tls";
-  if (flow.peerPort === 53) return "dns";
-  if (flow.peerPort === 80) return "http";
-  if (flow.peerPort === 443) return "tls";
-  return normalizeFacet(flow.protocol, "unidentified");
+  if (app && app !== "unknown") return { app, source: "dpi", rankLabel: `dpi:${app}` };
+  if (flow.tlsSNI) return { app: "tls", source: "dpi", rankLabel: "dpi:tls" };
+  const port = flow.peerPort ? String(flow.peerPort) : "";
+  const fallback = port ? portProtocolFallback(normalizeFacet(flow.protocol, ""), port, flow.resolvedHostname) : "";
+  if (fallback) return { app: fallback, source: "port-fallback", rankLabel: `port-guess:${fallback}` };
+  const protocol = normalizeFacet(flow.protocol, "unidentified");
+  return { app: protocol, source: "none", rankLabel: `unidentified:${protocol}` };
+}
+
+function formatProtocolRankLabel(value: string) {
+  const [source, app = value] = value.split(":", 2);
+  if (source === "dpi") return `DPI ${formatConnectionApp(app)}`;
+  if (source === "port-guess") return `port-guess:${formatConnectionApp(app)}`;
+  if (source === "unidentified") return `Identifying ${formatConnectionApp(app)}`;
+  return formatConnectionApp(value);
 }
 
 function trafficFlowDomain(flow: TrafficFlow) {
@@ -5729,7 +5876,7 @@ function formatPercent(value?: number) {
 }
 
 function denyRows(logs: FirewallLog[]) {
-  const totals = new Map<string, { key: string; src: string; dst: string; proto: string; tcpFlags: string; trafficClass: string; correlation: string; dpi: string; count: number }>();
+  const totals = new Map<string, { key: string; src: string; dst: string; proto: string; tcpFlags: string; trafficClass: string; correlation: string; dpi: string; count: number; example?: FirewallLog }>();
   for (const log of logs) {
     const key = firewallLogKey(log);
     const row = totals.get(key) ?? {
@@ -5742,10 +5889,14 @@ function denyRows(logs: FirewallLog[]) {
       correlation: firewallCorrelation(log),
       dpi: firewallDPIText(log),
       count: 0,
+      example: log,
     };
     if (!row.tcpFlags) row.tcpFlags = firewallTCPFlags(log);
     if (!row.trafficClass || row.trafficClass === "unclassified") row.trafficClass = firewallTrafficClass(log);
-    if (!row.dpi) row.dpi = firewallDPIText(log);
+    if (!row.dpi) {
+      row.dpi = firewallDPIText(log);
+      row.example = log;
+    }
     row.count++;
     totals.set(key, row);
   }
@@ -5792,14 +5943,36 @@ function firewallTrafficClassColor(value: string): "brand" | "danger" | "informa
 }
 
 function firewallDPIText(log: FirewallLog) {
-  if (log.dpiTlsSNI) return `TLS-SNI=${log.dpiTlsSNI}`;
-  if (log.dpiHttpHost) return `HTTP-Host=${log.dpiHttpHost}`;
-  if (log.dpiDnsQuery) return `${firewallQueryLabel(log.dpiApp)}=${log.dpiDnsQuery}`;
+  if (log.dpiTlsSNI) return `tls-sni:${log.dpiTlsSNI}`;
+  if (log.dpiHttpHost) return `http-host:${log.dpiHttpHost}`;
+  if (log.dpiDnsQuery) return `${firewallQueryLabel(log.dpiApp)}:${log.dpiDnsQuery}`;
   const parts = [log.dpiApp, log.dpiCategory].filter(Boolean);
   if (log.dpiConfidence) parts.push(`${log.dpiConfidence}%`);
   const structured = parts.join(" ");
   if (structured) return structured;
   return firewallDPITextFromHint(log.hint);
+}
+
+function firewallDPIClassification(log: FirewallLog, dnsLabels: Record<string, string>) {
+  const detail = firewallDPIText(log);
+  if (detail) {
+    return {
+      source: "dpi" as const,
+      detail,
+      confidence: log.dpiConfidence,
+      cacheHit: String(log.hint ?? "").includes("dpi flow cache hit") || String(log.correlationDetail ?? "").includes("expired"),
+    };
+  }
+  const fallback = firewallPortFallback(log, dnsLabels);
+  if (fallback) {
+    return {
+      source: "port-fallback" as const,
+      detail: `port-guess:${fallback.label}`,
+      confidence: 30,
+      cacheHit: false,
+    };
+  }
+  return { source: "none" as const, detail: "", confidence: 0, cacheHit: false };
 }
 
 function firewallDPITextFromHint(hint?: string) {
@@ -5809,14 +5982,29 @@ function firewallDPITextFromHint(hint?: string) {
     const [key, value] = part.split("=", 2);
     if (key?.startsWith("dpi.") && value) values.set(key, value);
   }
-  if (values.has("dpi.tls_sni")) return `TLS-SNI=${values.get("dpi.tls_sni")}`;
-  if (values.has("dpi.http_host")) return `HTTP-Host=${values.get("dpi.http_host")}`;
-  if (values.has("dpi.dns_query")) return `${firewallQueryLabel(values.get("dpi.app"))}=${values.get("dpi.dns_query")}`;
+  if (values.has("dpi.tls_sni")) return `tls-sni:${values.get("dpi.tls_sni")}`;
+  if (values.has("dpi.http_host")) return `http-host:${values.get("dpi.http_host")}`;
+  if (values.has("dpi.dns_query")) return `${firewallQueryLabel(values.get("dpi.app"))}:${values.get("dpi.dns_query")}`;
   return [values.get("dpi.app"), values.get("dpi.category"), values.get("dpi.confidence") ? `${values.get("dpi.confidence")}%` : ""].filter(Boolean).join(" ");
 }
 
 function firewallQueryLabel(app?: string) {
-  return String(app ?? "").toLowerCase() === "netbios" ? "NBNS-query" : "DNS-query";
+  return String(app ?? "").toLowerCase() === "netbios" ? "nbns-query" : "dns-query";
+}
+
+function firewallPortFallback(log: FirewallLog, dnsLabels: Record<string, string>): ConnectionPortFallback | undefined {
+  if (firewallDPIText(log)) return undefined;
+  const protocol = normalizeFacet(log.protocol || log.l3Proto, "");
+  const labels = [log.dstAddress ? dnsLabels[log.dstAddress] : "", log.srcAddress ? dnsLabels[log.srcAddress] : ""];
+  const ports = [
+    { port: log.dstPort ? String(log.dstPort) : "", peerLabel: labels[0] ?? "" },
+    { port: log.srcPort ? String(log.srcPort) : "", peerLabel: labels[1] ?? "" },
+  ].filter(item => item.port);
+  for (const item of ports) {
+    const app = portProtocolFallback(protocol, item.port, item.peerLabel);
+    if (app) return { app, port: item.port, label: formatPortGuessLabel(app, item.port, item.peerLabel) };
+  }
+  return undefined;
 }
 
 function firewallTupleKey(source?: string, sourcePort?: string | number, destination?: string, destinationPort?: string | number, protocol?: string) {
