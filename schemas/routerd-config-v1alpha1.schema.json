@@ -1813,6 +1813,9 @@
                       "presharedKey": {
                         "type": "string"
                       },
+                      "presharedKeyFile": {
+                        "type": "string"
+                      },
                       "publicKey": {
                         "type": "string"
                       }

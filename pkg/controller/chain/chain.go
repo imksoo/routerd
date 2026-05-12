@@ -143,6 +143,8 @@ func resourceOwnerController(kind string) string {
 		return "dns-resolver"
 	case "DSLiteTunnel":
 		return "dslite"
+	case "WireGuardInterface", "WireGuardPeer":
+		return "wireguard"
 	case "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":
 		return "firewall"
 	case "NAT44Rule", "IPv4SourceNAT":
@@ -508,6 +510,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	ntpServer := NTPServerController{Router: r.Router, Bus: r.Bus, Store: store}
 	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	link := LinkController{Router: r.Router, Store: store, Logger: logger}
+	wireGuard := WireGuardController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	ipv4Static := IPv4StaticAddressController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
 	lan := LANAddressController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
 	dslite := DSLiteTunnelController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
@@ -541,7 +544,8 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "ntp-client", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Lease", "DHCPv6Information"), PeriodicFunc: ntpClient.Reconcile},
 		framework.FuncController{ControllerName: "ntp-server", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Lease", "DHCPv6Information", "IPv4StaticAddress", "IPv6DelegatedAddress"), PeriodicFunc: ntpServer.Reconcile},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
-		framework.FuncController{ControllerName: "ipv4-static-address", PeriodicFunc: ipv4Static.Reconcile},
+		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "WireGuardPeer"), PeriodicFunc: wireGuard.Reconcile},
+		framework.FuncController{ControllerName: "ipv4-static-address", Subs: statusSubscriptions("WireGuardInterface"), PeriodicFunc: ipv4Static.Reconcile},
 		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			request := event.Type == "routerd.controller.bootstrap" || becamePhase(event, daemonapi.ResourcePhaseBound)
 			for _, resource := range r.Router.Spec.Resources {

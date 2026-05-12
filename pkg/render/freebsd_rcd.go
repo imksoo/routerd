@@ -351,6 +351,15 @@ func FreeBSDWireGuardRCDScript(ifname string, spec api.WireGuardInterfaceSpec, p
 		if peer.PersistentKeepalive != 0 {
 			buf.WriteString(" persistent-keepalive " + shellSingleQuote(fmt.Sprintf("%d", peer.PersistentKeepalive)))
 		}
+		if strings.TrimSpace(peer.PresharedKeyFile) != "" {
+			buf.WriteString(" preshared-key " + shellSingleQuote(peer.PresharedKeyFile))
+		} else if strings.TrimSpace(peer.PresharedKey) != "" {
+			keyFile := "/var/run/routerd/wireguard-" + ifname + "-" + safeWireGuardKeyFilePart(peer.PublicKey[:min(8, len(peer.PublicKey))]) + ".psk"
+			buf.WriteString("\n")
+			buf.WriteString("  install -d -m 0700 /var/run/routerd\n")
+			buf.WriteString("  umask 077; printf '%s\\n' " + shellSingleQuote(peer.PresharedKey) + " > " + shellSingleQuote(keyFile) + "\n")
+			buf.WriteString("  wg set " + shellSingleQuote(ifname) + " peer " + shellSingleQuote(peer.PublicKey) + " preshared-key " + shellSingleQuote(keyFile))
+		}
 		buf.WriteString("\n")
 	}
 	for _, address := range addresses {
@@ -368,6 +377,14 @@ func FreeBSDWireGuardRCDScript(ifname string, spec api.WireGuardInterfaceSpec, p
 	buf.WriteString(": ${" + name + "_enable:=\"YES\"}\n")
 	buf.WriteString("run_rc_command \"$1\"\n")
 	return buf.Bytes(), nil
+}
+
+func safeWireGuardKeyFilePart(value string) string {
+	value = regexp.MustCompile(`[^A-Za-z0-9_.-]+`).ReplaceAllString(value, "_")
+	if value == "" {
+		return "peer"
+	}
+	return value
 }
 
 func freeBSDDHCPv6ClientSystemdSpec(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, telemetryEnv []string) api.SystemdUnitSpec {

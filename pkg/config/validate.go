@@ -1255,6 +1255,9 @@ func validateResource(res api.Resource) error {
 		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
 			return fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
 		}
+		if strings.ContainsAny(spec.PrivateKeyFile, "\n\r") {
+			return fmt.Errorf("%s spec.privateKeyFile is invalid", res.ID())
+		}
 	case "WireGuardPeer":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -1279,6 +1282,9 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.PersistentKeepalive < 0 || spec.PersistentKeepalive > 65535 {
 			return fmt.Errorf("%s spec.persistentKeepalive must be within 0-65535", res.ID())
+		}
+		if strings.ContainsAny(spec.PresharedKeyFile, "\n\r") {
+			return fmt.Errorf("%s spec.presharedKeyFile is invalid", res.ID())
 		}
 	case "TailscaleNode":
 		if res.APIVersion != api.NetAPIVersion {

@@ -19,6 +19,23 @@ spec:
           facility: local6
           tag: routerd-homert02
 
+    - apiVersion: observability.routerd.net/v1alpha1
+      kind: Telemetry
+      metadata:
+        name: otlp
+      spec:
+        otlp:
+          endpoint: http://192.168.123.119:4317
+          insecure: true
+        serviceNamespace: routerd
+        attributes:
+          deployment.environment: production
+          routerd.node: homert02
+        signals:
+          - logs
+          - metrics
+          - traces
+
     - apiVersion: system.routerd.net/v1alpha1
       kind: NTPClient
       metadata:
@@ -161,15 +178,6 @@ spec:
         name: rp-filter-ds-lite-c
       spec:
         key: net.ipv4.conf.ds-lite-c.rp_filter
-        value: "0"
-        runtime: true
-        optional: true
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Sysctl
-      metadata:
-        name: rp-filter-ds-routerd
-      spec:
-        key: net.ipv4.conf.ds-routerd.rp_filter
         value: "0"
         runtime: true
         optional: true
@@ -449,6 +457,38 @@ spec:
       spec:
         ifname: lo
         managed: false
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: ds-lite-a
+      spec:
+        ifname: ds-lite-a
+        role: untrust
+        managed: false
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: ds-lite-b
+      spec:
+        ifname: ds-lite-b
+        role: untrust
+        managed: false
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: ds-lite-c
+      spec:
+        ifname: ds-lite-c
+        role: untrust
+        managed: false
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: ds-lite-ra
+      spec:
+        ifname: ds-lite-ra
+        role: untrust
+        managed: false
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Link
@@ -518,6 +558,22 @@ spec:
         address: 192.168.1.249/24
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: PPPoEInterface
+      metadata:
+        name: pppoe-flets
+      spec:
+        interface: wan
+        ifname: ppp-flets
+        disabled: true
+        username: open@open.ad.jp
+        password: open
+        managed: true
+        defaultRoute: false
+        usePeerDNS: false
+        mtu: 1454
+        mru: 1454
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
         name: lan-base
@@ -532,6 +588,46 @@ spec:
       spec:
         interface: lan
         address: 172.17.0.2/16
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: ds-lite-a-source
+      spec:
+        interface: ds-lite-a
+        address: 192.0.0.2/29
+        allowOverlap: true
+        allowOverlapReason: RFC 6333 B4-AFTR link prefix is shared by parallel DS-Lite tunnels.
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: ds-lite-b-source
+      spec:
+        interface: ds-lite-b
+        address: 192.0.0.3/29
+        allowOverlap: true
+        allowOverlapReason: RFC 6333 B4-AFTR link prefix is shared by parallel DS-Lite tunnels.
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: ds-lite-c-source
+      spec:
+        interface: ds-lite-c
+        address: 192.0.0.4/29
+        allowOverlap: true
+        allowOverlapReason: RFC 6333 B4-AFTR link prefix is shared by parallel DS-Lite tunnels.
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: ds-lite-ra-source
+      spec:
+        interface: ds-lite-ra
+        address: 192.0.0.5/29
+        allowOverlap: true
+        allowOverlapReason: RFC 6333 B4-AFTR link prefix is shared by parallel DS-Lite tunnels.
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
@@ -554,7 +650,7 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
       metadata:
-        name: ds-lite-a-source
+        name: ds-lite-a-source-v6
       spec:
         interface: lan
         prefixDelegation: wan-pd
@@ -568,7 +664,7 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
       metadata:
-        name: ds-lite-b-source
+        name: ds-lite-b-source-v6
       spec:
         interface: lan
         prefixDelegation: wan-pd
@@ -582,7 +678,7 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6DelegatedAddress
       metadata:
-        name: ds-lite-c-source
+        name: ds-lite-c-source-v6
       spec:
         interface: lan
         prefixDelegation: wan-pd
@@ -597,26 +693,6 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel
       metadata:
-        name: ds-lite
-        ownerRefs:
-          - kind: DHCPv6Information
-            name: wan-info
-      spec:
-        interface: wan
-        tunnelName: ds-routerd
-        localAddressSource: interface
-        aftrFrom:
-          resource: DHCPv6Information/wan-info
-          field: aftrName
-          optional: true
-        aftrFQDN: gw.transix.jp
-        mtu: 1454
-        dependsOn:
-          - resource: DNSResolver/lan-resolver
-            phase: Applied
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DSLiteTunnel
-      metadata:
         name: ds-lite-a
         ownerRefs:
           - kind: DHCPv6Information
@@ -625,12 +701,15 @@ spec:
         interface: wan
         tunnelName: ds-lite-a
         localAddressSource: delegatedAddress
-        localDelegatedAddress: ds-lite-a-source
+        localDelegatedAddress: ds-lite-a-source-v6
         localAddressSuffix: ::11
+        localAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-a-source
+          field: address
         aftrIPv6: 2404:8e00::feed:100
         mtu: 1454
         dependsOn:
-          - resource: IPv6DelegatedAddress/ds-lite-a-source
+          - resource: IPv6DelegatedAddress/ds-lite-a-source-v6
             phase: Applied
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel
@@ -643,12 +722,15 @@ spec:
         interface: wan
         tunnelName: ds-lite-b
         localAddressSource: delegatedAddress
-        localDelegatedAddress: ds-lite-b-source
+        localDelegatedAddress: ds-lite-b-source-v6
         localAddressSuffix: ::12
+        localAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-b-source
+          field: address
         aftrIPv6: 2404:8e00::feed:101
         mtu: 1454
         dependsOn:
-          - resource: IPv6DelegatedAddress/ds-lite-b-source
+          - resource: IPv6DelegatedAddress/ds-lite-b-source-v6
             phase: Applied
     - apiVersion: net.routerd.net/v1alpha1
       kind: DSLiteTunnel
@@ -661,13 +743,30 @@ spec:
         interface: wan
         tunnelName: ds-lite-c
         localAddressSource: delegatedAddress
-        localDelegatedAddress: ds-lite-c-source
+        localDelegatedAddress: ds-lite-c-source-v6
         localAddressSuffix: ::13
+        localAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-c-source
+          field: address
         aftrIPv6: 2404:8e00::feed:102
         mtu: 1454
         dependsOn:
-          - resource: IPv6DelegatedAddress/ds-lite-c-source
+          - resource: IPv6DelegatedAddress/ds-lite-c-source-v6
             phase: Applied
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata:
+        name: ds-lite-ra
+      spec:
+        interface: wan
+        tunnelName: ds-lite-ra
+        localAddressSource: interface
+        localAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-ra-source
+          field: address
+        aftrIPv6: 2404:8e00::feed:100
+        mtu: 1454
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: EgressRoutePolicy
@@ -680,17 +779,57 @@ spec:
         destinationCIDRs:
           - 0.0.0.0/0
         candidates:
-          - name: ds-lite
-            source: DSLiteTunnel/ds-lite
+          - name: ds-lite-a
+            source: DSLiteTunnel/ds-lite-a
             deviceFrom:
-              resource: DSLiteTunnel/ds-lite
+              resource: DSLiteTunnel/ds-lite-a
               field: device
             gatewaySource: none
-            weight: 110
-            healthCheck: internet-via-dslite
+            weight: 120
+            healthCheck: internet-via-dslite-a
             dependsOn:
-              - resource: DSLiteTunnel/ds-lite
+              - resource: DSLiteTunnel/ds-lite-a
                 phase: Up
+          - name: ds-lite-b
+            source: DSLiteTunnel/ds-lite-b
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite-b
+              field: device
+            gatewaySource: none
+            weight: 120
+            healthCheck: internet-via-dslite-b
+            dependsOn:
+              - resource: DSLiteTunnel/ds-lite-b
+                phase: Up
+          - name: ds-lite-c
+            source: DSLiteTunnel/ds-lite-c
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite-c
+              field: device
+            gatewaySource: none
+            weight: 120
+            healthCheck: internet-via-dslite-c
+            dependsOn:
+              - resource: DSLiteTunnel/ds-lite-c
+                phase: Up
+          - name: ds-lite-ra
+            source: DSLiteTunnel/ds-lite-ra
+            deviceFrom:
+              resource: DSLiteTunnel/ds-lite-ra
+              field: device
+            gatewaySource: none
+            weight: 80
+            healthCheck: internet-via-dslite-ra
+            dependsOn:
+              - resource: DSLiteTunnel/ds-lite-ra
+                phase: Up
+          - name: pppoe-flets
+            disabled: true
+            source: PPPoEInterface/pppoe-flets
+            device: ppp-flets
+            gatewaySource: none
+            weight: 70
+            healthCheck: internet-via-pppoe
           - name: ix2215-fallback
             source: Interface/lan
             deviceFrom:
@@ -705,6 +844,15 @@ spec:
                 phase: Up
               - resource: IPv4StaticAddress/lan-legacy-bridge
                 phase: Applied
+          - name: hgw-direct
+            source: IPv4StaticAddress/wan-hgw
+            deviceFrom:
+              resource: Interface/wan
+              field: ifname
+            gateway: 192.168.1.1
+            gatewaySource: static
+            weight: 40
+            healthCheck: internet-via-hgw-direct
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4PolicyRouteSet
@@ -760,14 +908,21 @@ spec:
           - name: dslite-pd-balanced
             routeSet: dslite-pd-balanced
             priority: 10
-            healthCheck: internet-via-dslite-a
-          - name: ds-lite
-            interface: ds-lite
-            gatewaySource: none
+          - name: ds-lite-ra
+            interface: ds-lite-ra
             priority: 20
             table: 113
             mark: 0x113
-            healthCheck: internet-via-dslite
+            healthCheck: internet-via-dslite-ra
+          - name: pppoe-flets
+            interface: pppoe-flets
+            priority: 25
+            table: 115
+            mark: 0x115
+            healthCheck: internet-via-pppoe
+            dependsOn:
+              - resource: PPPoEInterface/pppoe-flets
+                phase: Connected
           - name: ix2215-fallback
             interface: lan
             gatewaySource: static
@@ -776,6 +931,14 @@ spec:
             table: 114
             mark: 0x114
             healthCheck: internet-via-ix2215
+          - name: hgw-direct
+            interface: wan
+            gatewaySource: static
+            gateway: 192.168.1.1
+            priority: 40
+            table: 116
+            mark: 0x116
+            healthCheck: internet-via-hgw-direct
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
@@ -808,6 +971,47 @@ spec:
         metric: 10
         dependsOn:
           - resource: IPv4StaticAddress/lan-legacy-bridge
+            phase: Applied
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: dslite-ra-healthcheck
+      spec:
+        destination: 149.112.112.112/32
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite-ra
+          field: device
+        metric: 10
+        dependsOn:
+          - resource: DSLiteTunnel/ds-lite-ra
+            phase: Up
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: pppoe-healthcheck
+      spec:
+        destination: 208.67.222.222/32
+        device: ppp-flets
+        metric: 10
+        dependsOn:
+          - resource: PPPoEInterface/pppoe-flets
+            phase: Connected
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: hgw-direct-healthcheck
+      spec:
+        destination: 94.140.14.14/32
+        deviceFrom:
+          resource: Interface/wan
+          field: ifname
+        gateway: 192.168.1.1
+        metric: 10
+        dependsOn:
+          - resource: IPv4StaticAddress/wan-hgw
             phase: Applied
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -851,24 +1055,16 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: NAT44Rule
       metadata:
-        name: lan-to-egress
-        ownerRefs:
-          - kind: EgressRoutePolicy
-            name: ipv4-default
-      spec:
-        type: masquerade
-        egressPolicyRef: ipv4-default
-        sourceRanges:
-          - 172.18.0.0/16
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: NAT44Rule
-      metadata:
         name: lan-to-dslite-a
       spec:
         type: masquerade
         egressInterface: ds-lite-a
         sourceRanges:
           - 172.18.0.0/16
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
     - apiVersion: net.routerd.net/v1alpha1
       kind: NAT44Rule
       metadata:
@@ -878,6 +1074,10 @@ spec:
         egressInterface: ds-lite-b
         sourceRanges:
           - 172.18.0.0/16
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
     - apiVersion: net.routerd.net/v1alpha1
       kind: NAT44Rule
       metadata:
@@ -887,6 +1087,36 @@ spec:
         egressInterface: ds-lite-c
         sourceRanges:
           - 172.18.0.0/16
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-dslite-ra
+      spec:
+        type: masquerade
+        egressInterface: ds-lite-ra
+        sourceRanges:
+          - 172.18.0.0/16
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-pppoe-flets
+      spec:
+        type: masquerade
+        egressInterface: pppoe-flets
+        sourceRanges:
+          - 172.18.0.0/16
+        excludeDestinationCIDRs:
+          - 192.168.0.0/16
+          - 172.16.0.0/12
+          - 10.0.0.0/8
     - apiVersion: net.routerd.net/v1alpha1
       kind: NAT44Rule
       metadata:
@@ -908,10 +1138,10 @@ spec:
       spec:
         fromInterface: lan
         toInterfaces:
-          - ds-lite
           - ds-lite-a
           - ds-lite-b
           - ds-lite-c
+          - ds-lite-ra
         mtu:
           source: probe
           value: 1454
@@ -927,30 +1157,14 @@ spec:
             timeout: 1s
         interfaceMTU:
           enabled: true
+        ipv6RA:
+          enabled: true
+          scope: lan-ra
         tcpMSSClamp:
           enabled: true
           families:
             - ipv4
 
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: HealthCheck
-      metadata:
-        name: internet-via-dslite
-      spec:
-        daemon: routerd-healthcheck
-        socketSource: /run/routerd/healthcheck/internet-via-dslite.sock
-        targetSource: static
-        target: 1.1.1.1
-        protocol: tcp
-        port: 443
-        sourceInterface: ds-lite
-        sourceAddressFrom:
-          resource: IPv4StaticAddress/lan-base
-          field: address
-        interval: 30s
-        timeout: 3s
-        healthyThreshold: 1
-        unhealthyThreshold: 3
     - apiVersion: net.routerd.net/v1alpha1
       kind: HealthCheck
       metadata:
@@ -964,7 +1178,7 @@ spec:
         port: 443
         sourceInterface: ds-lite-a
         sourceAddressFrom:
-          resource: IPv4StaticAddress/lan-base
+          resource: IPv4StaticAddress/ds-lite-a-source
           field: address
         interval: 30s
         timeout: 3s
@@ -983,7 +1197,7 @@ spec:
         port: 443
         sourceInterface: ds-lite-b
         sourceAddressFrom:
-          resource: IPv4StaticAddress/lan-base
+          resource: IPv4StaticAddress/ds-lite-b-source
           field: address
         interval: 30s
         timeout: 3s
@@ -1002,8 +1216,52 @@ spec:
         port: 443
         sourceInterface: ds-lite-c
         sourceAddressFrom:
-          resource: IPv4StaticAddress/lan-base
+          resource: IPv4StaticAddress/ds-lite-c-source
           field: address
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-dslite-ra
+        ownerRefs:
+          - kind: DSLiteTunnel
+            name: ds-lite-ra
+      spec:
+        daemon: routerd-healthcheck
+        socketSource: /run/routerd/healthcheck/internet-via-dslite-ra.sock
+        targetSource: static
+        target: 149.112.112.112
+        protocol: tcp
+        port: 443
+        sourceInterface: ds-lite-ra
+        sourceAddressFrom:
+          resource: IPv4StaticAddress/ds-lite-ra-source
+          field: address
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-pppoe
+        ownerRefs:
+          - kind: PPPoEInterface
+            name: pppoe-flets
+      spec:
+        disabled: true
+        daemon: routerd-healthcheck
+        socketSource: /run/routerd/healthcheck/internet-via-pppoe.sock
+        targetSource: static
+        target: 208.67.222.222
+        protocol: tcp
+        port: 443
+        sourceInterface: pppoe-flets
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -1025,6 +1283,27 @@ spec:
         port: 443
         sourceInterface: lan
         sourceAddress: 172.17.0.2
+        interval: 30s
+        timeout: 3s
+        healthyThreshold: 1
+        unhealthyThreshold: 3
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet-via-hgw-direct
+        ownerRefs:
+          - kind: IPv4StaticAddress
+            name: wan-hgw
+      spec:
+        daemon: routerd-healthcheck
+        socketSource: /run/routerd/healthcheck/internet-via-hgw-direct.sock
+        targetSource: static
+        target: 94.140.14.14
+        protocol: tcp
+        port: 443
+        sourceInterface: wan
+        sourceAddress: 192.168.1.249
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -1133,8 +1412,9 @@ spec:
             match:
               - "."
             upstreams:
-              - udp://1.1.1.1:53
-              - udp://8.8.8.8:53
+              - https://dns.nextdns.io/6ef786/homert02
+              - udp://[2a07:a8c0::6e:f786]:53
+              - udp://[2a07:a8c1::6e:f786]:53
             healthcheck:
               interval: 15s
               timeout: 3s
@@ -1185,7 +1465,6 @@ spec:
         name: lan-dhcpv4
       spec:
         logDHCP: true
-        stickyHoldDays: 3
         interface: lan
         addressPool:
           start: 172.18.1.64
@@ -1251,7 +1530,6 @@ spec:
             name: lan-base
       spec:
         logDHCP: true
-        stickyHoldDays: 3
         interface: lan
         mode: stateless
         dnsServerFrom:
@@ -1275,10 +1553,11 @@ spec:
         role: untrust
         interfaces:
           - Interface/wan
-          - DSLiteTunnel/ds-lite
           - DSLiteTunnel/ds-lite-a
           - DSLiteTunnel/ds-lite-b
           - DSLiteTunnel/ds-lite-c
+          - DSLiteTunnel/ds-lite-ra
+          - PPPoEInterface/pppoe-flets
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
@@ -1289,6 +1568,7 @@ spec:
         interfaces:
           - Interface/lan
           - Interface/tailscale
+          - WireGuardInterface/wg-mesh
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
@@ -1321,6 +1601,50 @@ spec:
         action: accept
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-mesh
+      spec:
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-mesh.key
+        listenPort: 51821
+        mtu: 1420
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: wg-mesh-router02
+      spec:
+        interface: wg-mesh
+        publicKey: ZVExXc9FbAZfN4TNQ3p7HdIDPaz0rGhdQINioWRqY2M=
+        allowedIPs:
+          - 10.99.0.2/32
+        endpoint: 192.168.123.124:51820
+        persistentKeepalive: 25
+        presharedKeyFile: /usr/local/etc/routerd/secrets/wg-mesh-router02.psk
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: wg-mesh-router04
+      spec:
+        interface: wg-mesh
+        publicKey: F2Id52gYvUI11m2qzQiFXXz/GeIH7jv1GEGeVcxKtkE=
+        allowedIPs:
+          - 10.99.0.4/32
+        endpoint: 192.168.123.126:51820
+        persistentKeepalive: 25
+        presharedKeyFile: /usr/local/etc/routerd/secrets/wg-mesh-router04.psk
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: wg-mesh-ipv4
+      spec:
+        interface: wg-mesh
+        address: 10.99.0.10/24
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: TrafficFlowLog
       metadata:
         name: default
@@ -1342,6 +1666,6 @@ spec:
         retention: 90d
         nflogGroup: 1
         log:
-          acceptSampleRate: 0
+          acceptSampleRate: 1
           dropSampleRate: 1
           reject: true

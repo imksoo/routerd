@@ -1048,6 +1048,7 @@ spec:
         role: trust
         interfaces:
           - Interface/lan
+          - WireGuardInterface/wg-mesh
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone
@@ -1101,4 +1102,48 @@ spec:
       spec:
         interface: br-vxlan-test
         address: 10.99.100.2/24
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg-mesh
+      spec:
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-mesh.key
+        listenPort: 51820
+        mtu: 1420
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: wg-mesh-router04
+      spec:
+        interface: wg-mesh
+        publicKey: F2Id52gYvUI11m2qzQiFXXz/GeIH7jv1GEGeVcxKtkE=
+        allowedIPs:
+          - 10.99.0.4/32
+        endpoint: 192.168.123.126:51820
+        persistentKeepalive: 25
+        presharedKeyFile: /usr/local/etc/routerd/secrets/wg-mesh-router04.psk
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata:
+        name: wg-mesh-homert02
+      spec:
+        interface: wg-mesh
+        publicKey: 7qoin/He5RBrRHLbA8Fl0/qx0fWZKPK2GXoZ+aLCXys=
+        allowedIPs:
+          - 10.99.0.10/32
+        endpoint: 192.168.123.129:51821
+        persistentKeepalive: 25
+        presharedKeyFile: /usr/local/etc/routerd/secrets/wg-mesh-homert02.psk
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: wg-mesh-ipv4
+      spec:
+        interface: wg-mesh
+        address: 10.99.0.2/24
         exclusive: false

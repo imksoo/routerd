@@ -84,6 +84,8 @@ WireGuard の待ち受けポートには別の番号を使ってください。
 
 `WireGuardInterface` は `privateKeyFile` を受け取れます。
 秘密鍵を router YAML の外に置くためです。
+`WireGuardPeer` も任意の PSK 用に `presharedKeyFile` を受け取れます。
+インライン鍵フィールドは主に例とテスト向けです。
 FreeBSD では、routerd が rc.d サービスを生成します。
 そのサービスは `wg` インターフェースを作成し、ファイルから秘密鍵を読み込み、
 ピアと静的アドレスを適用します。

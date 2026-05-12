@@ -92,7 +92,9 @@ present, so WireGuard listen ports must use a different value. The Tailscale
 how-to covers the full setup flow.
 
 `WireGuardInterface` accepts `privateKeyFile` so the private key can stay out of
-the router YAML. On FreeBSD, routerd renders an rc.d service that creates the
+the router YAML. `WireGuardPeer` also accepts `presharedKeyFile` for optional
+peer PSKs; inline key fields are intended for examples and tests. On FreeBSD,
+routerd renders an rc.d service that creates the
 `wg` interface, loads the key from that file, applies peers, and then assigns
 declared static addresses for the WireGuard interface.
 

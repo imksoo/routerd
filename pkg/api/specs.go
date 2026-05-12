@@ -2,7 +2,10 @@
 
 package api
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 type LogSinkSpec struct {
 	Type     string            `yaml:"type" json:"type" jsonschema:"enum=syslog,enum=plugin"`
@@ -274,6 +277,7 @@ type WireGuardPeerSpec struct {
 	Endpoint            string   `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
 	PersistentKeepalive int      `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
 	PresharedKey        string   `yaml:"presharedKey,omitempty" json:"presharedKey,omitempty"`
+	PresharedKeyFile    string   `yaml:"presharedKeyFile,omitempty" json:"presharedKeyFile,omitempty"`
 }
 
 type TailscaleNodeSpec struct {
@@ -1377,8 +1381,21 @@ func (r Resource) HostnameSpec() (HostnameSpec, error) {
 func specAs[T any](r Resource) (T, error) {
 	spec, ok := r.Spec.(T)
 	if !ok {
+		if ptr, ok := r.Spec.(*T); ok && ptr != nil {
+			return *ptr, nil
+		}
 		var zero T
-		return zero, fmt.Errorf("%s has unexpected spec type %T", r.ID(), r.Spec)
+		if r.Spec == nil {
+			return zero, fmt.Errorf("%s has unexpected spec type <nil>", r.ID())
+		}
+		data, err := json.Marshal(r.Spec)
+		if err != nil {
+			return zero, fmt.Errorf("%s has unexpected spec type %T", r.ID(), r.Spec)
+		}
+		if err := json.Unmarshal(data, &zero); err != nil {
+			return zero, fmt.Errorf("%s has unexpected spec type %T: %w", r.ID(), r.Spec, err)
+		}
+		return zero, nil
 	}
 	return spec, nil
 }
