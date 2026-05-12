@@ -39,6 +39,7 @@ type ApplyPolicySpec struct {
 	Mode                string   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=strict,enum=progressive"`
 	ProtectedInterfaces []string `yaml:"protectedInterfaces,omitempty" json:"protectedInterfaces,omitempty"`
 	ProtectedZones      []string `yaml:"protectedZones,omitempty" json:"protectedZones,omitempty"`
+	AutoTuneConntrack   bool     `yaml:"autoTuneConntrack,omitempty" json:"autoTuneConntrack,omitempty"`
 }
 
 type LogSinkSyslogSpec struct {

@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"routerd/pkg/api"
+	"routerd/pkg/conntracktuning"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/logstore"
 	"routerd/pkg/sysctlprofile"
 )
 
@@ -90,6 +92,11 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 					return err
 				}
 			}
+		}
+	}
+	if c.Router != nil && c.Router.Spec.Apply.AutoTuneConntrack {
+		if err := c.applyConntrackTuning(ctx); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -224,6 +231,99 @@ func (c SysctlController) publishApplied(ctx context.Context, kind, name, key, v
 	event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: kind, Name: name}
 	event.Attributes = map[string]string{"key": key, "value": value}
 	return c.Bus.Publish(ctx, event)
+}
+
+func (c SysctlController) applyConntrackTuning(ctx context.Context) error {
+	path := conntrackTuningFirewallLogPath(c.Router)
+	if path == "" {
+		if c.Store != nil {
+			return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
+				"phase":     "Skipped",
+				"reason":    "FirewallLogUnavailable",
+				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			})
+		}
+		return nil
+	}
+	log, err := logstore.OpenFirewallLogReadOnly(path)
+	if err != nil {
+		if c.Store != nil {
+			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
+				"phase":     "Degraded",
+				"reason":    "FirewallLogOpenFailed",
+				"error":     err.Error(),
+				"path":      path,
+				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			})
+		}
+		return nil
+	}
+	defer log.Close()
+	now := time.Now().UTC()
+	since := now.Add(-24 * time.Hour)
+	firewallLogs, err := log.List(ctx, logstore.FirewallLogFilter{Since: since, Limit: 1000})
+	if err != nil {
+		return err
+	}
+	dpiFlows, err := log.ListDPIFlows(ctx, logstore.DPIFlowFilter{Since: since, Limit: 5000})
+	if err != nil {
+		return err
+	}
+	expiredFlows, err := log.ListExpiredFlows(ctx, logstore.ExpiredFlowFilter{Since: since, Limit: 5000})
+	if err != nil {
+		return err
+	}
+	summary := conntracktuning.Analyze(conntracktuning.Inputs{DPIFlows: dpiFlows, FirewallLogs: firewallLogs, ExpiredFlows: expiredFlows, Now: now, Window: 24 * time.Hour, AutoApply: true})
+	var applied, changed []string
+	for _, row := range summary.Suggestions {
+		if row.SysctlKey == "" || row.RecommendedSeconds <= 0 {
+			continue
+		}
+		name := "conntrack-tuning-" + safeSysctlName(row.Protocol+"-"+row.Application)
+		value := strconv.Itoa(row.RecommendedSeconds)
+		result, err := c.applyOne(ctx, name, "ConntrackTuning", sysctlSetting{Key: row.SysctlKey, Value: value, Optional: true})
+		if err != nil {
+			return err
+		}
+		if result.skipped {
+			continue
+		}
+		applied = append(applied, row.SysctlKey+"="+value)
+		if result.changed {
+			changed = append(changed, row.SysctlKey+"="+value)
+		}
+	}
+	if c.Store != nil {
+		return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
+			"phase":       "Applied",
+			"applyMode":   summary.ApplyMode,
+			"autoApply":   summary.AutoApply,
+			"suggestions": len(summary.Suggestions),
+			"applied":     applied,
+			"changed":     changed,
+			"updatedAt":   now.Format(time.RFC3339Nano),
+		})
+	}
+	return nil
+}
+
+func conntrackTuningFirewallLogPath(router *api.Router) string {
+	if router == nil {
+		return ""
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.FirewallAPIVersion || resource.Kind != "FirewallLog" {
+			continue
+		}
+		spec, err := resource.FirewallLogSpec()
+		if err != nil || !spec.Enabled {
+			continue
+		}
+		if strings.TrimSpace(spec.Path) != "" {
+			return strings.TrimSpace(spec.Path)
+		}
+	}
+	return ""
 }
 
 func sysctlProfileSettings(spec api.SysctlProfileSpec) ([]sysctlSetting, error) {

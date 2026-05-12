@@ -187,6 +187,14 @@ func (r *Runtime) Gauge(name string) otelmetric.Int64Gauge {
 	return gauge
 }
 
+func (r *Runtime) Float64Gauge(name string) otelmetric.Float64Gauge {
+	if r.Meter == nil {
+		r.Meter = otel.Meter(r.ServiceName)
+	}
+	gauge, _ := r.Meter.Float64Gauge(name)
+	return gauge
+}
+
 func (r *Runtime) Ensure() {
 	if r.Logger == nil {
 		r.Logger = slog.Default()

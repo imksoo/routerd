@@ -72,6 +72,7 @@ type Summary = {
   dnsQueries?: DNSQuery[];
   trafficFlows?: TrafficFlow[];
   firewallLogs?: FirewallLog[];
+  conntrackTuning?: ConntrackTuningSummary;
   dhcpLeases?: DHCPLease[];
   neighbors?: NeighborEntry[];
   clients?: ClientEntry[];
@@ -207,6 +208,30 @@ type FirewallLog = {
   correlationDetail?: string;
   expiredAgeSeconds?: number;
   expiredBytes?: number;
+};
+
+type ConntrackTuningSummary = {
+  generatedAt?: string;
+  window?: string;
+  applyMode?: string;
+  autoApply?: boolean;
+  suggestions?: ConntrackTuningSuggestion[];
+};
+
+type ConntrackTuningSuggestion = {
+  application?: string;
+  protocol?: string;
+  sysctlKey?: string;
+  recommendedSeconds?: number;
+  baselineSeconds?: number;
+  observedFlows?: number;
+  expiredFlows?: number;
+  orphanReturns?: number;
+  denyEvents?: number;
+  averageDurationSeconds?: number;
+  orphanRate?: number;
+  rationale?: string;
+  productionApplyGuard?: string;
 };
 
 type DHCPLease = {
@@ -1469,6 +1494,38 @@ const useStyles = makeStyles({
   firewallCellValue: {
     minWidth: 0,
   },
+  tuningGrid: {
+    display: "grid",
+    gap: "8px",
+  },
+  tuningHeader: {
+    display: "grid",
+    gridTemplateColumns: "minmax(8rem, 0.9fr) max-content max-content max-content max-content minmax(12rem, 1fr)",
+    gap: "10px",
+    color: tokens.colorNeutralForeground3,
+    fontSize: "12px",
+    fontWeight: 600,
+    padding: "0 10px 6px",
+    "@media (max-width: 760px)": {
+      display: "none",
+    },
+  },
+  tuningRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(8rem, 0.9fr) max-content max-content max-content max-content minmax(12rem, 1fr)",
+    gap: "10px",
+    alignItems: "start",
+    padding: "8px 10px",
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    "@media (max-width: 760px)": {
+      gridTemplateColumns: "1fr",
+      gap: "8px",
+      padding: "10px",
+      border: `1px solid ${tokens.colorNeutralStroke2}`,
+      borderRadius: tokens.borderRadiusMedium,
+      backgroundColor: tokens.colorNeutralBackground2,
+    },
+  },
   pager: {
     display: "flex",
     flexWrap: "wrap",
@@ -2342,6 +2399,13 @@ function App() {
                 <Card>
                   <CardHeader header={<Text weight="semibold">Source IP top-N</Text>} description={<Text className={styles.muted}>Top denied sources in the filtered view</Text>} />
                   <FirewallSourceTopN logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} />
+                </Card>
+                <Card id="firewall-tuning" className={styles.connectionAnchor}>
+                  <CardHeader
+                    header={<Text weight="semibold">Tuning Suggestions</Text>}
+                    description={<Text className={styles.muted}>Read-only conntrack timeout recommendations from DPI flows and expired-return observations</Text>}
+                  />
+                  <ConntrackTuningView tuning={summary?.conntrackTuning} />
                 </Card>
                 <Card id="firewall-ranking" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Deny ranking</Text>} description={<Text className={styles.muted}>Grouped by source, destination, and protocol</Text>} />
@@ -3899,6 +3963,50 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
   );
 }
 
+function ConntrackTuningView({ tuning }: { tuning?: ConntrackTuningSummary }) {
+  const styles = useStyles();
+  const suggestions = tuning?.suggestions ?? [];
+  if (suggestions.length === 0) {
+    return <Text className={styles.muted}>No tuning suggestions from the current observation window</Text>;
+  }
+  return (
+    <div className={styles.tuningGrid} data-routerd-scroll-key="firewall-tuning-table">
+      <div className={styles.badges}>
+        <Badge appearance="tint" color={tuning?.autoApply ? "warning" : "success"}>{tuning?.applyMode === "auto" ? "auto apply enabled" : "manual apply only"}</Badge>
+        <Badge appearance="outline">window {tuning?.window || "24h"}</Badge>
+      </div>
+      <div className={styles.tuningHeader}>
+        <span>Application</span>
+        <span>Recommended</span>
+        <span>Baseline</span>
+        <span>Orphan</span>
+        <span>Flows</span>
+        <span>Reason</span>
+      </div>
+      {suggestions.map(row => (
+        <div className={styles.tuningRow} key={`${row.protocol}-${row.application}-${row.sysctlKey}`}>
+          <FirewallCell label="Application">
+            <div className={styles.connectionFlow}>
+              <Badge appearance="tint" color={connectionAppColor(row.application || "unidentified")}>{formatConnectionApp(row.application || "unidentified")}</Badge>
+              <code className={styles.wrapCode}>{row.sysctlKey || "-"}</code>
+            </div>
+          </FirewallCell>
+          <FirewallCell label="Recommended">{formatSeconds(row.recommendedSeconds)}</FirewallCell>
+          <FirewallCell label="Baseline">{formatSeconds(row.baselineSeconds)}</FirewallCell>
+          <FirewallCell label="Orphan">{formatPercent(row.orphanRate)} / {row.orphanReturns ?? 0}</FirewallCell>
+          <FirewallCell label="Flows">{row.observedFlows ?? 0} seen / {row.expiredFlows ?? 0} expired</FirewallCell>
+          <FirewallCell label="Reason">
+            <div className={styles.connectionFlow}>
+              <Text>{row.rationale || "-"}</Text>
+              <Text size={200} className={styles.muted}>{row.productionApplyGuard || "manual approval required before sysctl apply"}</Text>
+            </div>
+          </FirewallCell>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RecentDeny({
   logs,
   dnsLabels,
@@ -4092,6 +4200,7 @@ function reconcileSummary(current: Summary | null, next: Summary): Summary {
     dnsQueries: reconcileRecords(current.dnsQueries, next.dnsQueries, row => `${row.questionName ?? ""}/${(row.answers ?? []).join(",")}`),
     trafficFlows: reconcileRecords(current.trafficFlows, next.trafficFlows, row => `${row.clientAddress ?? ""}/${row.peerAddress ?? ""}/${row.resolvedHostname ?? ""}/${row.tlsSNI ?? ""}`),
     firewallLogs: reconcileRecords(current.firewallLogs, next.firewallLogs, row => String(row.id ?? `${row.ts ?? ""}/${row.srcAddress ?? ""}/${row.dstAddress ?? ""}/${row.protocol ?? ""}`)),
+    conntrackTuning: next.conntrackTuning ?? current.conntrackTuning,
     dhcpLeases: reconcileRecords(current.dhcpLeases, next.dhcpLeases, row => `${row.family ?? ""}/${row.ip ?? ""}/${row.mac ?? ""}`),
     neighbors: reconcileRecords(current.neighbors, next.neighbors, row => `${row.ip ?? ""}/${row.mac ?? ""}/${row.ifname ?? ""}`),
     clients: reconcileRecords(current.clients, next.clients, row => row.id ?? row.mac ?? row.hostname ?? (row.addresses ?? []).join(",")),
@@ -4859,7 +4968,9 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
   }
   if (selected === "firewall") {
     const logs = summary?.firewallLogs ?? [];
+    const tuning = summary?.conntrackTuning?.suggestions ?? [];
     return [
+      { key: "tuning", label: "Tuning", count: tuning.length, view: "firewall", targetID: "firewall-tuning" },
       { key: "ranking", label: "Deny ranking", count: denyRows(logs).length, view: "firewall", targetID: "firewall-ranking" },
       { key: "timeline", label: "Deny timeline", count: logs.length, view: "firewall", targetID: "firewall-timeline" },
     ];
@@ -5363,6 +5474,19 @@ function formatBytes(value?: number) {
   }
   const digits = current >= 100 || unit === 0 ? 0 : current >= 10 ? 1 : 2;
   return `${current.toFixed(digits)} ${units[unit]}`;
+}
+
+function formatSeconds(value?: number) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "-";
+  if (value < 60) return `${Math.round(value)}s`;
+  if (value < 3600) return `${Math.round(value / 60)}m`;
+  if (value < 86400) return `${Math.round(value / 3600)}h`;
+  return `${Math.round(value / 86400)}d`;
+}
+
+function formatPercent(value?: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return `${Math.round(value * 100)}%`;
 }
 
 function denyRows(logs: FirewallLog[]) {

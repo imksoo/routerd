@@ -30,6 +30,9 @@
         "reconcile": {
           "additionalProperties": false,
           "properties": {
+            "autoTuneConntrack": {
+              "type": "boolean"
+            },
             "mode": {
               "enum": [
                 "",

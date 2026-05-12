@@ -152,4 +152,41 @@ func TestFirewallLogDPIFlowLookupDirectAndReverse(t *testing.T) {
 	if !ok || flow.TLSSNI != "cached.example" || flow.AppName != "tls" {
 		t.Fatalf("flow ok=%v flow=%+v", ok, flow)
 	}
+	flows, err := log.ListDPIFlows(context.Background(), DPIFlowFilter{Since: now.Add(-time.Hour), Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flows) != 1 || flows[0].AppName != "tls" {
+		t.Fatalf("dpi flows = %+v", flows)
+	}
+}
+
+func TestFirewallLogListExpiredFlows(t *testing.T) {
+	log, err := OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	now := time.Now().UTC()
+	if err := log.RecordExpiredFlow(context.Background(), ExpiredFlowEntry{
+		Timestamp:    now.Add(-time.Minute),
+		Protocol:     "udp",
+		OrigSrc:      "172.18.0.10",
+		OrigSrcPort:  53000,
+		OrigDst:      "198.51.100.10",
+		OrigDstPort:  3478,
+		ReplySrc:     "198.51.100.10",
+		ReplySrcPort: 3478,
+		ReplyDst:     "172.18.0.10",
+		ReplyDstPort: 53000,
+	}, time.Hour, 100000); err != nil {
+		t.Fatal(err)
+	}
+	flows, err := log.ListExpiredFlows(context.Background(), ExpiredFlowFilter{Since: now.Add(-time.Hour), Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flows) != 1 || flows[0].Protocol != "udp" {
+		t.Fatalf("expired flows = %+v", flows)
+	}
 }

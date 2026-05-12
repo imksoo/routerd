@@ -4,11 +4,14 @@ package chain
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/logstore"
 )
 
 func TestSysctlControllerAppliesRuntimeValue(t *testing.T) {
@@ -121,6 +124,68 @@ func TestSysctlControllerAppliesRouterProfileAndSkipsOptional(t *testing.T) {
 	}
 	status := store.ObjectStatus(api.SystemAPIVersion, "SysctlProfile", "router-runtime")
 	if status["phase"] != "Degraded" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestSysctlControllerAutoTunesConntrackOnlyWhenOptIn(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "firewall-logs.db")
+	log, err := logstore.OpenFirewallLog(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := log.RecordDPIFlow(context.Background(), logstore.DPIFlowEntry{
+		FirstSeen:     now.Add(-2 * time.Minute),
+		LastSeen:      now.Add(-30 * time.Second),
+		Protocol:      "tcp",
+		SrcAddress:    "172.18.0.10",
+		SrcPort:       53000,
+		DstAddress:    "198.51.100.10",
+		DstPort:       443,
+		AppName:       "tls",
+		AppConfidence: 90,
+	}, time.Hour, 100000); err != nil {
+		t.Fatal(err)
+	}
+	_ = log.Close()
+	router := &api.Router{Spec: api.RouterSpec{
+		Apply: api.ApplyPolicySpec{AutoTuneConntrack: true},
+		Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.FirewallLogSpec{Enabled: true, Path: logPath},
+		}},
+	}}
+	store := mapStore{}
+	values := map[string]string{"net.netfilter.nf_conntrack_tcp_timeout_established": "86400"}
+	var commands []string
+	controller := SysctlController{
+		Router: router,
+		Store:  store,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "sysctl" && len(args) == 2 && args[0] == "-n" {
+				return []byte(values[args[1]] + "\n"), nil
+			}
+			if name == "sysctl" && len(args) == 2 && args[0] == "-w" {
+				parts := strings.SplitN(args[1], "=", 2)
+				values[parts[0]] = parts[1]
+				return []byte(args[1] + "\n"), nil
+			}
+			t.Fatalf("unexpected command %s %v", name, args)
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(commands, "\n"); !strings.Contains(got, "sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=") {
+		t.Fatalf("commands = %q", got)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "ConntrackTuning", "default")
+	if status["phase"] != "Applied" || status["autoApply"] != true {
 		t.Fatalf("status = %#v", status)
 	}
 }

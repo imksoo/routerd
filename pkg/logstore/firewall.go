@@ -88,6 +88,16 @@ type FirewallLogFilter struct {
 	Limit  int
 }
 
+type DPIFlowFilter struct {
+	Since time.Time
+	Limit int
+}
+
+type ExpiredFlowFilter struct {
+	Since time.Time
+	Limit int
+}
+
 type FirewallLog struct {
 	db *sql.DB
 }
@@ -430,6 +440,92 @@ func (l *FirewallLog) PruneDPIFlows(ctx context.Context, now time.Time, ttl time
 SELECT flow_id FROM dpi_flow ORDER BY ts_last DESC LIMIT -1 OFFSET ?
 )`, limit)
 	return err
+}
+
+func (l *FirewallLog) ListDPIFlows(ctx context.Context, filter DPIFlowFilter) ([]DPIFlowEntry, error) {
+	if l == nil || l.db == nil {
+		return nil, nil
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+	var clauses []string
+	var args []any
+	if !filter.Since.IsZero() {
+		clauses = append(clauses, "ts_last >= ?")
+		args = append(args, filter.Since.UnixNano())
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	args = append(args, limit)
+	rows, err := l.db.QueryContext(ctx, `SELECT flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
+FROM dpi_flow`+where+` ORDER BY ts_last DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DPIFlowEntry
+	for rows.Next() {
+		var flow DPIFlowEntry
+		var first, last, classified int64
+		if err := rows.Scan(&flow.FlowID, &first, &last, &flow.L3Proto, &flow.Protocol, &flow.SrcAddress, &flow.SrcPort, &flow.DstAddress, &flow.DstPort, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &classified, &flow.PacketCount); err != nil {
+			return nil, err
+		}
+		flow.FirstSeen = time.Unix(0, first).UTC()
+		flow.LastSeen = time.Unix(0, last).UTC()
+		if classified > 0 {
+			flow.ClassifiedAt = time.Unix(0, classified).UTC()
+		}
+		out = append(out, flow)
+	}
+	return out, rows.Err()
+}
+
+func (l *FirewallLog) ListExpiredFlows(ctx context.Context, filter ExpiredFlowFilter) ([]ExpiredFlowEntry, error) {
+	if l == nil || l.db == nil {
+		return nil, nil
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+	var clauses []string
+	var args []any
+	if !filter.Since.IsZero() {
+		clauses = append(clauses, "ts >= ?")
+		args = append(args, filter.Since.UnixNano())
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	args = append(args, limit)
+	rows, err := l.db.QueryContext(ctx, `SELECT id,ts,coalesce(l3_proto,''),protocol,orig_src,coalesce(orig_src_port,0),orig_dst,coalesce(orig_dst_port,0),coalesce(reply_src,''),coalesce(reply_src_port,0),coalesce(reply_dst,''),coalesce(reply_dst_port,0),coalesce(packets,0),coalesce(bytes,0),coalesce(raw,'')
+FROM expired_flows`+where+` ORDER BY ts DESC, id DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ExpiredFlowEntry
+	for rows.Next() {
+		var flow ExpiredFlowEntry
+		var ts int64
+		if err := rows.Scan(&flow.ID, &ts, &flow.L3Proto, &flow.Protocol, &flow.OrigSrc, &flow.OrigSrcPort, &flow.OrigDst, &flow.OrigDstPort, &flow.ReplySrc, &flow.ReplySrcPort, &flow.ReplyDst, &flow.ReplyDstPort, &flow.Packets, &flow.Bytes, &flow.Raw); err != nil {
+			return nil, err
+		}
+		flow.Timestamp = time.Unix(0, ts).UTC()
+		out = append(out, flow)
+	}
+	return out, rows.Err()
 }
 
 func (l *FirewallLog) FindDPIFlowForFirewallEntry(ctx context.Context, entry FirewallLogEntry, now time.Time, ttl time.Duration) (DPIFlowEntry, bool, error) {

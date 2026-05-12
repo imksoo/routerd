@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"routerd/internal/hostcmd"
+	"routerd/pkg/conntracktuning"
 	"routerd/pkg/dpi"
 	"routerd/pkg/logstore"
 	"routerd/pkg/nflog"
@@ -487,6 +488,7 @@ func recordDenyMetric(ctx context.Context, telemetry *routerotel.Runtime, entry 
 		attribute.String("network.type", entry.L3Proto),
 		attribute.String("routerd.firewall.correlation", firewallCorrelation(entry)),
 	))
+	recordConntrackTuningMetrics(ctx, telemetry, entry)
 }
 
 func recordDPIForwardMetric(ctx context.Context, telemetry *routerotel.Runtime, entry logstore.FirewallLogEntry) {
@@ -502,6 +504,14 @@ func recordDPIForwardMetric(ctx context.Context, telemetry *routerotel.Runtime, 
 		attribute.String("network.transport", entry.Protocol),
 		attribute.String("network.type", entry.L3Proto),
 	))
+}
+
+func recordConntrackTuningMetrics(ctx context.Context, telemetry *routerotel.Runtime, entry logstore.FirewallLogEntry) {
+	suggestion := conntracktuning.RecommendationForEvent(entry)
+	if suggestion.Application == "" || suggestion.Protocol == "" {
+		return
+	}
+	conntracktuning.RecordMetrics(ctx, telemetry, conntracktuning.Summary{Suggestions: []conntracktuning.Suggestion{suggestion}})
 }
 
 func isDenyAction(action string) bool {

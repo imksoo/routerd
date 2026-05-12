@@ -71,6 +71,9 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if err := firewallLog.Record(context.Background(), logstore.FirewallLogEntry{Timestamp: time.Now(), Action: "drop", SrcAddress: "172.18.0.2", DstAddress: "198.51.100.1", Protocol: "tcp", TCPFlags: "SYN", L3Proto: "ipv4"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := firewallLog.RecordDPIFlow(context.Background(), logstore.DPIFlowEntry{FirstSeen: time.Now().Add(-90 * time.Second), LastSeen: time.Now().Add(-30 * time.Second), Protocol: "tcp", L3Proto: "ipv4", SrcAddress: "172.18.0.2", SrcPort: 53000, DstAddress: "93.184.216.34", DstPort: 443, AppName: "tls", AppCategory: "web", AppConfidence: 90}, time.Hour, 100000); err != nil {
+		t.Fatal(err)
+	}
 	_ = firewallLog.Close()
 	handler := New(Options{
 		Store: fakeStore{
@@ -97,7 +100,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, `"tcpFlags": "SYN"`, `"tailscale"`, `"homert02"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, `"conntrackTuning"`, `"application": "tls"`, `"applyMode": "manual"`, `"tcpFlags": "SYN"`, `"tailscale"`, `"homert02"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}

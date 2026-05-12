@@ -24,6 +24,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
 	"routerd/pkg/bus"
+	"routerd/pkg/conntracktuning"
 	"routerd/pkg/controlapi"
 	"routerd/pkg/dhcpfingerprint"
 	"routerd/pkg/logstore"
@@ -67,6 +68,7 @@ type Snapshot struct {
 	DNSQueries       []logstore.DNSQuery           `json:"dnsQueries,omitempty"`
 	TrafficFlows     []logstore.TrafficFlow        `json:"trafficFlows,omitempty"`
 	FirewallLogs     []logstore.FirewallLogEntry   `json:"firewallLogs,omitempty"`
+	ConntrackTuning  conntracktuning.Summary       `json:"conntrackTuning,omitempty"`
 	DHCPFingerprints []logstore.DHCPFingerprint    `json:"dhcpFingerprints,omitempty"`
 	DHCPLeases       []DHCPLease                   `json:"dhcpLeases,omitempty"`
 	Neighbors        []NeighborEntry               `json:"neighbors,omitempty"`
@@ -318,6 +320,10 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 	if err != nil {
 		errors = append(errors, err.Error())
 	}
+	conntrackTuning, err := h.conntrackTuningSummary(time.Now().UTC(), 24*time.Hour, h.opts.Router != nil && h.opts.Router.Spec.Apply.AutoTuneConntrack)
+	if err != nil {
+		errors = append(errors, err.Error())
+	}
 	dhcpLeases, err := h.dhcpLeaseList()
 	if err != nil {
 		errors = append(errors, err.Error())
@@ -352,6 +358,7 @@ func (h Handler) Snapshot(limit int, connectionsLimit int) Snapshot {
 		DNSQueries:       dnsQueries,
 		TrafficFlows:     trafficFlows,
 		FirewallLogs:     firewallLogs,
+		ConntrackTuning:  conntrackTuning,
 		DHCPFingerprints: dhcpFingerprints,
 		DHCPLeases:       dhcpLeases,
 		Neighbors:        neighbors,
@@ -1053,6 +1060,38 @@ func (h Handler) firewallLogList(filter logstore.FirewallLogFilter) ([]logstore.
 	}
 	defer store.Close()
 	return store.List(context.Background(), filter)
+}
+
+func (h Handler) conntrackTuningSummary(now time.Time, window time.Duration, autoApply bool) (conntracktuning.Summary, error) {
+	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+		return conntracktuning.Analyze(conntracktuning.Inputs{Now: now, Window: window, AutoApply: autoApply}), nil
+	}
+	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
+	if err != nil {
+		return conntracktuning.Summary{}, err
+	}
+	defer store.Close()
+	since := now.Add(-window)
+	firewallLogs, err := store.List(context.Background(), logstore.FirewallLogFilter{Since: since, Limit: 1000})
+	if err != nil {
+		return conntracktuning.Summary{}, err
+	}
+	dpiFlows, err := store.ListDPIFlows(context.Background(), logstore.DPIFlowFilter{Since: since, Limit: 5000})
+	if err != nil {
+		return conntracktuning.Summary{}, err
+	}
+	expiredFlows, err := store.ListExpiredFlows(context.Background(), logstore.ExpiredFlowFilter{Since: since, Limit: 5000})
+	if err != nil {
+		return conntracktuning.Summary{}, err
+	}
+	return conntracktuning.Analyze(conntracktuning.Inputs{
+		DPIFlows:     dpiFlows,
+		FirewallLogs: firewallLogs,
+		ExpiredFlows: expiredFlows,
+		Now:          now,
+		Window:       window,
+		AutoApply:    autoApply,
+	}), nil
 }
 
 func (h Handler) dhcpFingerprintList(filter logstore.DHCPFingerprintFilter) ([]logstore.DHCPFingerprint, error) {
