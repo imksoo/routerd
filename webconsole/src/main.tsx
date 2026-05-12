@@ -730,9 +730,15 @@ const useStyles = makeStyles({
   },
   streamBadge: {
     transition: "background-color 160ms ease, color 160ms ease, border-color 160ms ease",
+    "@media (max-width: 860px)": {
+      transition: "none",
+    },
   },
   softUpdate: {
     transition: "background-color 180ms ease, opacity 180ms ease, color 180ms ease",
+    "@media (max-width: 860px)": {
+      transition: "none",
+    },
   },
   main: {
     padding: "16px 20px 24px",
@@ -1004,6 +1010,7 @@ const useStyles = makeStyles({
       gap: 0,
       padding: 0,
       overflow: "hidden",
+      transition: "none",
     },
   },
   clientDeviceRowOffline: {
@@ -1034,7 +1041,9 @@ const useStyles = makeStyles({
     "@media (max-width: 860px)": {
       display: "grid",
       gap: "5px",
-      minHeight: "62px",
+      height: "68px",
+      minHeight: "68px",
+      transition: "none",
     },
   },
   clientMobileMainLine: {
@@ -1064,6 +1073,7 @@ const useStyles = makeStyles({
     gap: "4px",
     color: tokens.colorNeutralForeground3,
     whiteSpace: "nowrap",
+    transition: "none",
   },
   clientOnlineDot: {
     width: "8px",
@@ -1071,6 +1081,7 @@ const useStyles = makeStyles({
     borderRadius: "999px",
     backgroundColor: tokens.colorPaletteGreenForeground1,
     flex: "0 0 auto",
+    transition: "none",
   },
   clientOfflineDot: {
     width: "8px",
@@ -1078,6 +1089,7 @@ const useStyles = makeStyles({
     borderRadius: "999px",
     backgroundColor: tokens.colorNeutralForegroundDisabled,
     flex: "0 0 auto",
+    transition: "none",
   },
   clientMobileSubLine: {
     display: "flex",
@@ -1263,7 +1275,7 @@ const useStyles = makeStyles({
   },
   connectionFilters: {
     display: "grid",
-    gridTemplateColumns: "minmax(min(100%, 14rem), 1.4fr) repeat(6, minmax(min-content, 1fr))",
+    gridTemplateColumns: "minmax(min(100%, 14rem), 1.4fr) repeat(7, minmax(min-content, 1fr))",
     gap: "8px",
     alignItems: "end",
     marginBottom: "12px",
@@ -1765,13 +1777,14 @@ function App() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => readStoredRecord(collapsedStorageKey));
   const [connectionPages, setConnectionPages] = useState<Record<string, number>>(() => readStoredRecord(connectionPagesStorageKey));
   const [connectionPageSizes, setConnectionPageSizes] = useState<Record<string, number>>(() => readStoredRecord(connectionPageSizesStorageKey));
+  const [connectionSortRevision, setConnectionSortRevision] = useState(0);
   const [connectionFilters, setConnectionFilters] = useState<ConnectionFilters>({
     query: "",
     family: "all",
     protocol: "all",
     app: "all",
     state: "all",
-    sort: "observed",
+    sort: "stable",
     direction: "asc",
   });
   const [firewallFilters, setFirewallFilters] = useState<FirewallFilters>({
@@ -1798,6 +1811,7 @@ function App() {
   const refreshTimer = useRef<number | null>(null);
   const configRef = useRef<ConfigSnapshot | null>(null);
   const pendingScrollSnapshot = useRef<ScrollSnapshot | null>(null);
+  const connectionOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
 
   async function refresh() {
     if (refreshInFlight.current) {
@@ -1895,10 +1909,29 @@ function App() {
   const connections = summary?.connections?.entries ?? [];
   const dnsLabels = useMemo(() => dnsLabelMap(summary?.dnsQueries ?? []), [summary?.dnsQueries]);
   const leaseMap = useMemo(() => dhcpLeaseMap(summary?.dhcpLeases ?? []), [summary?.dhcpLeases]);
-  const filteredConnections = useMemo(
-    () => filterAndSortConnections(connections, dnsLabels, connectionFilters),
+  const connectionCandidates = useMemo(
+    () => filterConnections(connections, dnsLabels, connectionFilters),
     [connections, dnsLabels, connectionFilters],
   );
+  const connectionSortSignature = [
+    connectionFilters.query,
+    connectionFilters.family,
+    connectionFilters.protocol,
+    connectionFilters.app,
+    connectionFilters.state,
+    connectionFilters.sort,
+    connectionFilters.direction,
+    connectionSortRevision,
+  ].join("\u0001");
+  const filteredConnections = useMemo(() => {
+    if (connectionOrderRef.current.signature !== connectionSortSignature) {
+      connectionOrderRef.current = {
+        signature: connectionSortSignature,
+        keys: sortConnectionEntries(connectionCandidates, dnsLabels, connectionFilters).map(connectionStableKey),
+      };
+    }
+    return applyFrozenConnectionOrder(connectionCandidates, connectionOrderRef.current.keys);
+  }, [connectionCandidates, connectionFilters, connectionSortSignature, dnsLabels]);
   const connectionGroupsList = useMemo(() => connectionGroups(filteredConnections), [filteredConnections]);
   const connectionFacets = useMemo(() => connectionFilterFacets(connections), [connections]);
   const navSubItems = useMemo(() => navigationSubItems(selected, connectionGroupsList, summary), [selected, connectionGroupsList, summary]);
@@ -2276,7 +2309,8 @@ function App() {
               <div className={styles.filterControl}>
                 <Text size={200} className={styles.muted}>Sort</Text>
                 <Select size="small" value={connectionFilters.sort} onChange={event => updateConnectionFilter("sort", event.target.value)}>
-                  <option value="observed">Observed</option>
+                  <option value="stable">Stable key</option>
+                  <option value="observed">Observed order</option>
                   <option value="state">State</option>
                   <option value="source">Source</option>
                   <option value="destination">Destination</option>
@@ -2291,6 +2325,12 @@ function App() {
                   <option value="asc">Ascending</option>
                   <option value="desc">Descending</option>
                 </Select>
+              </div>
+              <div className={styles.filterControl}>
+                <Text size={200} className={styles.muted}>Apply</Text>
+                <Button size="small" appearance="secondary" icon={<ArrowClockwiseRegular />} onClick={() => setConnectionSortRevision(value => value + 1)}>
+                  Re-sort
+                </Button>
               </div>
             </div>
             <div className={styles.connectionGroup}>
@@ -4244,15 +4284,30 @@ function reconcileRecords<T>(current: T[] | undefined, next: T[] | undefined, ke
   if (!next) return [];
   if (!current || current.length === 0) return next;
   const previous = new Map<string, T>();
+  const incoming = new Map<string, T>();
+  const used = new Set<string>();
   for (const row of current) {
     const key = keyFn(row);
     if (key) previous.set(key, row);
   }
-  return next.map(row => {
+  for (const row of next) {
     const key = keyFn(row);
-    const old = key ? previous.get(key) : undefined;
-    return old && stableJSON(old) === stableJSON(row) ? old : row;
-  });
+    if (key) incoming.set(key, row);
+  }
+  const rows: T[] = [];
+  for (const oldRow of current) {
+    const key = keyFn(oldRow);
+    const row = key ? incoming.get(key) : undefined;
+    if (!key || !row) continue;
+    used.add(key);
+    rows.push(stableJSON(oldRow) === stableJSON(row) ? oldRow : row);
+  }
+  for (const row of next) {
+    const key = keyFn(row);
+    if (key && used.has(key)) continue;
+    rows.push(row);
+  }
+  return rows;
 }
 
 function stableJSON(value: unknown): string {
@@ -4538,10 +4593,9 @@ function resourceSearchText(resource: ResourceStatus) {
   ].filter(Boolean).join(" ").toLowerCase();
 }
 
-function filterAndSortConnections(entries: ConnectionEntry[], dnsLabels: Record<string, string>, filters: ConnectionFilters) {
+function filterConnections(entries: ConnectionEntry[], dnsLabels: Record<string, string>, filters: ConnectionFilters) {
   const query = filters.query.trim().toLowerCase();
-  const indexed = entries.map((entry, index) => ({ entry, index }));
-  const filtered = indexed.filter(({ entry }) => {
+  return entries.filter(entry => {
     if (filters.family !== "all" && normalizeFacet(entry.family, "other") !== filters.family) return false;
     if (filters.protocol !== "all" && normalizeFacet(entry.protocol, "other") !== filters.protocol) return false;
     if (filters.app !== "all" && connectionApp(entry) !== filters.app) return false;
@@ -4549,14 +4603,35 @@ function filterAndSortConnections(entries: ConnectionEntry[], dnsLabels: Record<
     if (!query) return true;
     return connectionSearchText(entry, dnsLabels).includes(query);
   });
+}
+
+function sortConnectionEntries(entries: ConnectionEntry[], dnsLabels: Record<string, string>, filters: ConnectionFilters) {
+  const indexed = entries.map((entry, index) => ({ entry, index }));
   const multiplier = filters.direction === "desc" ? -1 : 1;
-  return filtered
+  return indexed
     .sort((a, b) => {
       if (filters.sort === "observed") return (a.index - b.index) * multiplier;
       const primary = compareConnectionSortValue(a.entry, b.entry, filters.sort, dnsLabels) * multiplier;
       return primary || a.index - b.index;
     })
     .map(row => row.entry);
+}
+
+function applyFrozenConnectionOrder(entries: ConnectionEntry[], keys: string[]) {
+  const byKey = new Map<string, ConnectionEntry[]>();
+  for (const entry of entries) {
+    const key = connectionStableKey(entry);
+    byKey.set(key, [...(byKey.get(key) ?? []), entry]);
+  }
+  const ordered: ConnectionEntry[] = [];
+  for (const key of keys) {
+    const rows = byKey.get(key);
+    if (!rows || rows.length === 0) continue;
+    ordered.push(rows.shift() as ConnectionEntry);
+    if (rows.length === 0) byKey.delete(key);
+  }
+  const remaining = Array.from(byKey.values()).flat().sort(compareConnectionStable);
+  return [...ordered, ...remaining];
 }
 
 function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, string>) {
@@ -4586,6 +4661,7 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
 }
 
 function compareConnectionSortValue(a: ConnectionEntry, b: ConnectionEntry, sort: string, dnsLabels: Record<string, string>) {
+  if (sort === "stable") return compareConnectionStable(a, b);
   if (sort === "timeout") return Number(a.timeout ?? 0) - Number(b.timeout ?? 0);
   return stringSort(connectionSortValue(a, sort, dnsLabels), connectionSortValue(b, sort, dnsLabels));
 }
@@ -4597,6 +4673,10 @@ function connectionSortValue(entry: ConnectionEntry, sort: string, dnsLabels: Re
   if (sort === "label") return dnsLabels[entry.original?.destination ?? ""] ?? entry.original?.destination ?? "";
   if (sort === "app") return `${connectionApp(entry)} ${connectionDPIDetail(entry)}`;
   return "";
+}
+
+function compareConnectionStable(a: ConnectionEntry, b: ConnectionEntry) {
+  return stringSort(connectionStableKey(a), connectionStableKey(b));
 }
 
 function normalizeFacet(value: unknown, fallback: string) {
@@ -5105,7 +5185,11 @@ function firewallEndpoint(host?: string, port?: number) {
 }
 
 function flowKey(entry: ConnectionEntry) {
-  return [entry.family, entry.protocol, entry.state, endpoint(entry.original), endpoint(entry.reply), entry.mark, connectionApp(entry), connectionDPIDetail(entry)].join("|");
+  return connectionStableKey(entry);
+}
+
+function connectionStableKey(entry: ConnectionEntry) {
+  return [entry.family, entry.protocol, endpoint(entry.original), endpoint(entry.reply), entry.mark].join("|");
 }
 
 function eventKey(event?: RouterEvent) {
@@ -5260,9 +5344,7 @@ function clientSections(rows: ClientRow[]) {
 }
 
 function clientRowSort(a: ClientRow, b: ClientRow) {
-  const onlineDiff = Number(clientOnline(b)) - Number(clientOnline(a));
-  if (onlineDiff !== 0) return onlineDiff;
-  return clientRowLabel(a).localeCompare(clientRowLabel(b));
+  return stringSort(clientRowLabel(a), clientRowLabel(b)) || stringSort(clientRowKey(a), clientRowKey(b));
 }
 
 function clientRowLabel(row: ClientRow) {
