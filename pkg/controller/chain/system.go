@@ -419,7 +419,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if c.DryRun && changed {
 				phase = "Rendered"
 			}
-			if spec.Disabled {
+			if healthCheckDisabled(spec) {
 				phase = "Disabled"
 				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", resource.Metadata.Name, map[string]any{
 					"phase":     phase,
@@ -451,6 +451,9 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				}
 			}
 		}
+	}
+	if err := c.reconcileDisabledPPPoEInterfaces(); err != nil {
+		return err
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "SystemdUnit" {
@@ -510,6 +513,32 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if err := c.Bus.Publish(ctx, event); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func (c SystemdUnitController) reconcileDisabledPPPoEInterfaces() error {
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "PPPoEInterface" {
+			continue
+		}
+		spec, err := resource.PPPoEInterfaceSpec()
+		if err != nil {
+			return err
+		}
+		if !pppoeInterfaceDisabled(spec) {
+			continue
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "PPPoEInterface", resource.Metadata.Name, map[string]any{
+			"phase":     PhaseDisabled,
+			"reason":    "Disabled",
+			"interface": spec.Interface,
+			"ifname":    firstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name),
+			"dryRun":    c.DryRun,
+			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		}); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -823,7 +852,7 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	if err != nil {
 		return changed, err
 	}
-	if spec.Disabled {
+	if healthCheckDisabled(spec) {
 		if c.DryRun {
 			return changed, nil
 		}

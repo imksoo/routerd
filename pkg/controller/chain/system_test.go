@@ -450,9 +450,10 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 
 func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
 	dir := t.TempDir()
+	enabled := false
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-pppoe"}, Spec: api.HealthCheckSpec{
-			Disabled:        true,
+			Enabled:         &enabled,
 			Daemon:          "routerd-healthcheck",
 			Target:          "208.67.222.222",
 			Protocol:        "tcp",
@@ -495,5 +496,25 @@ func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
 	healthStatus := store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet-via-pppoe")
 	if healthStatus["phase"] != "Disabled" {
 		t.Fatalf("health status = %#v", healthStatus)
+	}
+}
+
+func TestSystemdUnitControllerMarksDisabledPPPoEInterface(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoEInterfaceSpec{
+			Interface: "wan",
+			IfName:    "ppp-flets",
+			Disabled:  true,
+			Username:  "user",
+		}},
+	}}}
+	store := mapStore{}
+	controller := SystemdUnitController{Router: router, Store: store}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "PPPoEInterface", "pppoe-flets")
+	if status["phase"] != PhaseDisabled {
+		t.Fatalf("pppoe status = %#v", status)
 	}
 }

@@ -317,7 +317,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			continue
 		}
 		spec, err := resource.HealthCheckSpec()
-		if err != nil || spec.SocketSource == "embedded" || (spec.Daemon == "" && spec.SocketSource == "") {
+		if err != nil || healthCheckDisabled(spec) || spec.SocketSource == "embedded" || (spec.Daemon == "" && spec.SocketSource == "") {
 			continue
 		}
 		name := resource.Metadata.Name
@@ -913,7 +913,7 @@ func (c DaemonStatusController) daemonSockets() []string {
 			add(socket)
 		case "HealthCheck":
 			spec, err := resource.HealthCheckSpec()
-			if err != nil || spec.Disabled || spec.SocketSource == "embedded" || (spec.Daemon == "" && spec.SocketSource == "") {
+			if err != nil || healthCheckDisabled(spec) || spec.SocketSource == "embedded" || (spec.Daemon == "" && spec.SocketSource == "") {
 				continue
 			}
 			socket := spec.SocketSource

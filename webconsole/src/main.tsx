@@ -4325,12 +4325,17 @@ function normalizeBasePath(value: string) {
   return base;
 }
 
-function phaseColor(phase: unknown): "success" | "warning" | "danger" | "informative" {
+function phaseColor(phase: unknown): "success" | "warning" | "danger" | "informative" | "subtle" {
   const text = String(phase ?? "");
+  if (/Disabled|Standby|NotApplicable/.test(text)) return "subtle";
   if (/Healthy|Applied|Active|Bound|Installed|Ready|Running|Up|Observed/.test(text)) return "success";
   if (/Pending|Drifted|Unknown/.test(text)) return "warning";
   if (/Error|Failed|Down|Unhealthy/.test(text)) return "danger";
   return "informative";
+}
+
+function neutralPhase(phase: unknown) {
+  return /Disabled|Standby|NotApplicable/.test(String(phase ?? ""));
 }
 
 function stateColor(state: unknown): "success" | "warning" | "informative" | "subtle" {
@@ -4543,6 +4548,7 @@ function metricSample(summary: Summary): MetricSample {
   let healthUnhealthy = 0;
   for (const resource of summary.resources ?? []) {
     const phase = resource.status?.phase;
+    if (neutralPhase(phase)) continue;
     const color = phaseColor(phase);
     if (color === "success") healthy++;
     else if (color === "danger") danger++;

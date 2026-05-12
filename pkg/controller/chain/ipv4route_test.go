@@ -47,6 +47,66 @@ func TestIPv4RouteControllerInstallsBlackholeRouteInDryRun(t *testing.T) {
 	}
 }
 
+func TestIPv4RouteControllerMarksDisabledDependencyNotApplicable(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoEInterfaceSpec{
+			Interface: "wan",
+			IfName:    "ppp-flets",
+			Disabled:  true,
+			Username:  "user",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"}, Metadata: api.ObjectMeta{Name: "pppoe-dependent"}, Spec: api.IPv4RouteSpec{
+			Destination: "203.0.113.10/32",
+			Device:      "ppp-flets",
+			DependsOn: []api.ResourceDependencySpec{{
+				Resource: "PPPoEInterface/pppoe-flets",
+				Phase:    "Connected",
+			}},
+		}},
+	}}}
+	store := mapStore{}
+	controller := IPv4RouteController{Router: router, Store: store, DryRun: true}
+
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", "pppoe-dependent")
+	if status["phase"] != PhaseNotApplicable {
+		t.Fatalf("phase = %v, want %s: %#v", status["phase"], PhaseNotApplicable, status)
+	}
+}
+
+func TestIPv4RouteControllerMarksDisabledHealthcheckRouteStandby(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoEInterfaceSpec{
+			Interface: "wan",
+			IfName:    "ppp-flets",
+			Disabled:  true,
+			Username:  "user",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"}, Metadata: api.ObjectMeta{Name: "pppoe-healthcheck"}, Spec: api.IPv4RouteSpec{
+			Destination: "208.67.222.222/32",
+			Device:      "ppp-flets",
+			DependsOn: []api.ResourceDependencySpec{{
+				Resource: "PPPoEInterface/pppoe-flets",
+				Phase:    "Connected",
+			}},
+		}},
+	}}}
+	store := mapStore{}
+	controller := IPv4RouteController{Router: router, Store: store, DryRun: true}
+
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", "pppoe-healthcheck")
+	if status["phase"] != PhaseStandby {
+		t.Fatalf("phase = %v, want %s: %#v", status["phase"], PhaseStandby, status)
+	}
+}
+
 func TestIPv4RouteControllerDoesNotRefreshInstalledAtWhenUnchanged(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

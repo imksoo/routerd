@@ -365,7 +365,11 @@ func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
 		return true
 	}
 	status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)
-	if fmt.Sprint(status["phase"]) != "Healthy" {
+	switch fmt.Sprint(status["phase"]) {
+	case "Healthy":
+	case PhaseDisabled, PhaseStandby, PhaseNotApplicable:
+		return false
+	default:
 		return false
 	}
 	checkedAt, ok := parseStatusTimestamp(status["lastCheckedAt"])

@@ -1526,6 +1526,9 @@
                       "disabled": {
                         "type": "boolean"
                       },
+                      "enabled": {
+                        "type": "boolean"
+                      },
                       "ifname": {
                         "type": "string"
                       },
@@ -4737,6 +4740,9 @@
                         "type": "string"
                       },
                       "disabled": {
+                        "type": "boolean"
+                      },
+                      "enabled": {
                         "type": "boolean"
                       },
                       "healthyThreshold": {

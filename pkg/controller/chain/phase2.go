@@ -326,7 +326,8 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			continue
 		}
 		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
+			phase := dependencyUnavailablePhase(c.Router, c.Store, spec.DependsOn, standbyHealthcheckRoute(resource.Metadata.Name, spec))
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": phase, "reason": "DependsOnFalse", "dependencies": dependencyStatusSnapshot(c.Store, spec.DependsOn)})
 			continue
 		}
 		routeType := firstNonEmpty(strings.TrimSpace(spec.Type), "unicast")

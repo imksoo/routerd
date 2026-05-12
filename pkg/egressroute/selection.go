@@ -248,7 +248,7 @@ func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateS
 		if name == "" {
 			name = "candidate-" + strconv.Itoa(i)
 		}
-		disabled := candidate.Disabled || c.sourceDisabled(candidate.Source)
+		disabled := candidate.Disabled || c.sourceDisabled(candidate.Source) || c.healthCheckDisabled(candidate.HealthCheck)
 		out = append(out, CandidateState{
 			Name:          name,
 			Source:        candidate.Source,
@@ -301,6 +301,25 @@ func (c Controller) sourceDisabled(source string) bool {
 		}
 		spec, err := resource.PPPoEInterfaceSpec()
 		return err == nil && spec.Disabled
+	}
+	return false
+}
+
+func (c Controller) healthCheckDisabled(name string) bool {
+	if c.Router == nil || strings.TrimSpace(name) == "" {
+		return false
+	}
+	status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)
+	switch fmt.Sprint(status["phase"]) {
+	case "Disabled", "Standby", "NotApplicable":
+		return true
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.HealthCheckSpec()
+		return err == nil && (spec.Disabled || (spec.Enabled != nil && !*spec.Enabled))
 	}
 	return false
 }

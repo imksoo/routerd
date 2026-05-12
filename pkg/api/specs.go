@@ -326,6 +326,7 @@ type VXLANTunnelSpec struct {
 type PPPoEInterfaceSpec struct {
 	Interface      string `yaml:"interface" json:"interface"`
 	IfName         string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	Enabled        *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Disabled       bool   `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	Username       string `yaml:"username" json:"username"`
 	Password       string `yaml:"password,omitempty" json:"password,omitempty"`
@@ -835,6 +836,7 @@ type StateDNSResolveCondition struct {
 }
 
 type HealthCheckSpec struct {
+	Enabled            *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Disabled           bool                  `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	Type               string                `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=ping"`
 	Daemon             string                `yaml:"daemon,omitempty" json:"daemon,omitempty" jsonschema:"enum=,enum=routerd-healthcheck"`
