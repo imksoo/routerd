@@ -8,6 +8,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## v20260514.0037
+
+### 修正
+
+- DHCPv4 LAN domain rendering 現在會在未明確設定 domain-search option 時，從 `domain` / `domainFrom` 同時產生 domain-name 與 domain-search。
+
 ## v20260514.0025
 
 ### 新增

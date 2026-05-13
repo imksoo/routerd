@@ -8,6 +8,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260514.0037
+
+### 修正
+
+- DHCPv4 の LAN domain rendering で、明示的な domain-search option がない場合は `domain` / `domainFrom` から domain-name と domain-search の両方を生成するようにしました。
+
 ## v20260514.0025
 
 ### 追加

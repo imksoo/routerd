@@ -42,6 +42,9 @@ func RenderDnsmasqLines(cfg Config) []string {
 	}
 	if cfg.Domain != "" {
 		lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s", tag, cfg.Domain))
+		if !hasOption(cfg.Options, "domain-search", 119) {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:domain-search,%s", tag, cfg.Domain))
+		}
 	}
 	for _, option := range cfg.Options {
 		lines = append(lines, "dhcp-option=tag:"+tag+","+optionKey(option)+","+option.Value)
@@ -57,6 +60,15 @@ func optionKey(option api.DHCPv4OptionSpec) string {
 		return "option:" + option.Name
 	}
 	return fmt.Sprintf("%d", option.Code)
+}
+
+func hasOption(options []api.DHCPv4OptionSpec, name string, code int) bool {
+	for _, option := range options {
+		if option.Code == code || strings.EqualFold(strings.TrimSpace(option.Name), name) {
+			return true
+		}
+	}
+	return false
 }
 
 func reservationLine(spec api.DHCPv4ReservationSpec) string {

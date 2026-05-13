@@ -1572,6 +1572,9 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		domains := expandDomainValues(router, store, []string{spec.Domain}, []api.StatusValueSourceSpec{spec.DomainFrom})
 		if len(domains) > 0 {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s", tag, domains[0]))
+			if !hasDHCPv4Option(spec.Options, "domain-search", 119) {
+				lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:domain-search,%s", tag, domains[0]))
+			}
 		}
 		for _, option := range spec.Options {
 			lines = append(lines, "dhcp-option=tag:"+tag+","+dnsmasqDHCPv4Option(option))
@@ -1714,6 +1717,15 @@ func dnsmasqDHCPv4Option(option api.DHCPv4OptionSpec) string {
 		key = "option:" + key
 	}
 	return key + "," + option.Value
+}
+
+func hasDHCPv4Option(options []api.DHCPv4OptionSpec, name string, code int) bool {
+	for _, option := range options {
+		if option.Code == code || strings.EqualFold(strings.TrimSpace(option.Name), name) {
+			return true
+		}
+	}
+	return false
 }
 
 func dnsmasqIPv4Reservation(spec api.DHCPv4ReservationSpec, tag string) string {

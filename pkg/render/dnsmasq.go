@@ -381,6 +381,9 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		domains := dnsmasqExpandDomainValues(router, []string{spec.Domain}, []api.StatusValueSourceSpec{spec.DomainFrom})
 		if len(domains) > 0 {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s\n", tag, domains[0]))
+			if !dnsmasqHasDHCPv4Option(spec.Options, "domain-search", 119) {
+				buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:domain-search,%s\n", tag, domains[0]))
+			}
 		}
 		for _, option := range spec.Options {
 			buf.WriteString("dhcp-option=tag:" + tag + "," + dnsmasqDHCPv4Option(option) + "\n")
@@ -520,6 +523,15 @@ func dnsmasqExpandDomainValues(router *api.Router, base []string, sources []api.
 		out = append(out, resourcequery.ValuesFromRouter(router, source)...)
 	}
 	return uniqueStrings(out)
+}
+
+func dnsmasqHasDHCPv4Option(options []api.DHCPv4OptionSpec, name string, code int) bool {
+	for _, option := range options {
+		if option.Code == code || strings.EqualFold(strings.TrimSpace(option.Name), name) {
+			return true
+		}
+	}
+	return false
 }
 
 func dnsmasqExpandIPv4Servers(base []string, sources []api.StatusValueSourceSpec, aliases map[string]string, staticIPv4 map[string]netip.Prefix, delegatedIPv6 map[string]delegatedIPv6Address, runtime DnsmasqRuntime) ([]string, error) {
