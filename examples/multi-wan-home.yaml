@@ -302,8 +302,13 @@ spec:
             weight: 60
             healthCheck: internet-via-pppoe
           - name: hgw-direct
-            device: wan
+            deviceFrom:
+              resource: Interface/wan
+              field: ifname
             gatewaySource: dhcpv4
+            gatewayFrom:
+              resource: DHCPv4Lease/wan-dhcpv4
+              field: gateway
             weight: 40
             healthCheck: internet-via-hgw-direct
 

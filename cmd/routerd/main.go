@@ -3010,7 +3010,7 @@ func controllerResourceKinds(name string) []string {
 	case "dhcpv4lease":
 		return []string{"DHCPv4Lease"}
 	case "dhcpv6":
-		return []string{"IPv6DHCPv6Server", "DHCPv6Scope", "IPv6RouterAdvertisement"}
+		return []string{"DHCPv6Server", "DHCPv6Scope", "IPv6RouterAdvertisement"}
 	case "dns-resolver":
 		return []string{"DNSResolver", "DNSZone"}
 	case "dslite":
@@ -7157,6 +7157,9 @@ func applySystemdUnitResources(router *api.Router) ([]string, error) {
 			if err := runLogged("systemctl", "disable", unitName); err != nil {
 				return nil, err
 			}
+		}
+		if unitName == "routerd.service" {
+			continue
 		}
 		if api.BoolDefault(spec.Started, true) {
 			if containsString(changedUnits, unitName) {

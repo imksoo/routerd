@@ -443,6 +443,45 @@ func TestValidateIPv4DefaultRoutePolicyRouteSetCandidateRejectsDirectFields(t *t
 	}
 }
 
+func TestValidateEgressRoutePolicyDynamicGatewayRequiresGatewayFrom(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+				Metadata: api.ObjectMeta{Name: "wan-check"},
+				Spec:     api.HealthCheckSpec{TargetSource: "static", Target: "1.1.1.1"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
+				Metadata: api.ObjectMeta{Name: "default"},
+				Spec: api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{{
+					Name:          "wan",
+					DeviceFrom:    api.StatusValueSourceSpec{Resource: "Interface/wan", Field: "ifname"},
+					GatewaySource: "dhcpv4",
+					HealthCheck:   "wan-check",
+				}}},
+			},
+		}},
+	}
+
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "gatewayFrom") {
+		t.Fatalf("Validate error = %v, want gatewayFrom requirement", err)
+	}
+
+	policy := &router.Spec.Resources[1]
+	spec, err := policy.EgressRoutePolicySpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Candidates[0].GatewayFrom = api.StatusValueSourceSpec{Resource: "DHCPv4Lease/wan", Field: "gateway"}
+	policy.Spec = spec
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate with gatewayFrom: %v", err)
+	}
+}
+
 func TestValidateDHCPv4ScopeRange(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

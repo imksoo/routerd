@@ -274,29 +274,41 @@ func (c Controller) ready(candidate api.EgressRoutePolicyCandidate) bool {
 		}
 		healthChecked = true
 	}
+	if !resourcequery.DependenciesReady(c.Store, candidate.DependsOn) {
+		return false
+	}
 	if len(candidate.DependsOn) == 0 {
 		if candidate.Source == "" {
-			return true
+			return c.hasResolvedOutput(candidate)
 		}
 		if resourcequery.SourceReady(c.Store, candidate.Source) {
-			return true
+			return c.hasResolvedOutput(candidate)
 		}
 		return healthChecked && c.hasResolvedOutput(candidate)
 	}
-	return resourcequery.DependenciesReady(c.Store, candidate.DependsOn)
+	if candidate.Source != "" && !resourcequery.SourceReady(c.Store, candidate.Source) {
+		return healthChecked && c.hasResolvedOutput(candidate)
+	}
+	return c.hasResolvedOutput(candidate)
 }
 
 func (c Controller) healthCheckReady(name string) bool {
 	status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)
 	switch fmt.Sprint(status["phase"]) {
 	case "Healthy":
-		return true
 	case "Failing":
 		failed := statusInt(status["consecutiveFailed"])
-		return failed > 0 && failed < c.healthCheckUnhealthyThreshold(name)
+		if failed <= 0 || failed >= c.healthCheckUnhealthyThreshold(name) {
+			return false
+		}
 	default:
 		return false
 	}
+	checkedAt := parseTime(fmt.Sprint(status["lastCheckedAt"]))
+	if checkedAt.IsZero() {
+		return false
+	}
+	return !c.now().After(checkedAt.Add(c.healthCheckFreshness(name)))
 }
 
 func (c Controller) healthCheckUnhealthyThreshold(name string) int {
@@ -317,6 +329,30 @@ func (c Controller) healthCheckUnhealthyThreshold(name string) int {
 		return 3
 	}
 	return 3
+}
+
+func (c Controller) healthCheckFreshness(name string) time.Duration {
+	freshness := 2 * time.Minute
+	if c.Router == nil {
+		return freshness
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.HealthCheckSpec()
+		if err != nil {
+			return freshness
+		}
+		interval := parseDurationOrDefault(spec.Interval, 30*time.Second)
+		timeout := parseDurationOrDefault(spec.Timeout, 3*time.Second)
+		candidate := interval*3 + timeout
+		if candidate > freshness {
+			return candidate
+		}
+		return freshness
+	}
+	return freshness
 }
 
 func (c Controller) sourceDisabled(source string) bool {

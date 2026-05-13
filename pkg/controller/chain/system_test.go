@@ -194,10 +194,13 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		}
 	}
 	gotCommands := strings.Join(commands, "\n")
-	for _, want := range []string{"systemctl daemon-reload", "systemctl enable routerd.service", "systemctl restart routerd.service"} {
+	for _, want := range []string{"systemctl daemon-reload", "systemctl enable routerd.service"} {
 		if !strings.Contains(gotCommands, want) {
 			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
 		}
+	}
+	if strings.Contains(gotCommands, "restart routerd.service") {
+		t.Fatalf("routerd.service must not be restarted by its own controller:\n%s", gotCommands)
 	}
 	status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", "routerd.service")
 	if status["phase"] != "Applied" || status["changed"] != true {
@@ -240,6 +243,34 @@ func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 	}
 	if !strings.Contains(gotCommands, "systemctl is-active --quiet routerd-firewall-logger.service") {
 		t.Fatalf("active check missing:\n%s", gotCommands)
+	}
+}
+
+func TestSystemdUnitControllerDoesNotRestartOwnUnit(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd.service"}, Spec: api.SystemdUnitSpec{
+			Description: "routerd test",
+			ExecStart:   []string{"/usr/local/sbin/routerd", "serve", "--config", "/usr/local/etc/routerd/router.yaml"},
+		}},
+	}}}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            mapStore{},
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	if strings.Contains(gotCommands, "restart routerd.service") {
+		t.Fatalf("self unit was restarted:\n%s", gotCommands)
 	}
 }
 

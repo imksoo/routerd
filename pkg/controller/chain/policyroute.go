@@ -195,12 +195,18 @@ func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases
 		metric = 50
 	}
 	if !c.DryRun {
+		resolvedGateway, err := c.routeGateway(ctx, ifname, gatewaySource, gateway)
+		if err != nil {
+			*failures = append(*failures, fmt.Sprintf("%s route gateway: %v", owner, err))
+			return
+		}
+		gateway = resolvedGateway
 		if !c.defaultRouteMatches(ctx, ifname, table, metric, gatewaySource, gateway) {
 			args := []string{"-4", "route", "replace", "default"}
 			switch gatewaySource {
 			case "", "none":
 				args = append(args, "dev", ifname)
-			case "static":
+			case "static", "dhcpv4":
 				args = append(args, "via", gateway, "dev", ifname)
 			default:
 				*failures = append(*failures, fmt.Sprintf("%s unsupported gatewaySource %q", owner, gatewaySource))
@@ -231,6 +237,39 @@ func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases
 	})
 }
 
+func (c IPv4PolicyRouteController) routeGateway(ctx context.Context, ifname, gatewaySource, gateway string) (string, error) {
+	switch gatewaySource {
+	case "", "none":
+		return "", nil
+	case "static":
+		if strings.TrimSpace(gateway) == "" {
+			return "", fmt.Errorf("static gateway is empty for %s", ifname)
+		}
+		return gateway, nil
+	case "dhcpv4":
+		if strings.TrimSpace(gateway) != "" {
+			return gateway, nil
+		}
+		return currentIPv4DefaultGatewayForInterface(ctx, ifname)
+	default:
+		return "", fmt.Errorf("unsupported gatewaySource %q", gatewaySource)
+	}
+}
+
+func currentIPv4DefaultGatewayForInterface(ctx context.Context, ifname string) (string, error) {
+	out, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "default", "dev", ifname).CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(string(out))
+	for i, field := range fields {
+		if field == "via" && i+1 < len(fields) {
+			return fields[i+1], nil
+		}
+	}
+	return "", fmt.Errorf("no gateway found for %s", ifname)
+}
+
 func (c IPv4PolicyRouteController) defaultRouteMatches(ctx context.Context, ifname string, table, metric int, gatewaySource, gateway string) bool {
 	out, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "default", "table", fmt.Sprintf("%d", table)).CombinedOutput()
 	if err != nil {
@@ -256,7 +295,7 @@ func (c IPv4PolicyRouteController) defaultRouteMatches(ctx context.Context, ifna
 			if hasField(fields, "via") {
 				continue
 			}
-		case "static":
+		case "static", "dhcpv4":
 			if !fieldValueMatches(fields, "via", gateway) {
 				continue
 			}

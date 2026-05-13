@@ -136,6 +136,18 @@ func TestControllerStatusesFromDryRunModes(t *testing.T) {
 	}
 }
 
+func TestControllerResourceKindsUseCanonicalNames(t *testing.T) {
+	kinds := controllerResourceKinds("dhcpv6")
+	for _, kind := range kinds {
+		if kind == "IPv6DHCPv6Server" {
+			t.Fatalf("controllerResourceKinds returned legacy kind %q in %v", kind, kinds)
+		}
+	}
+	if !reflect.DeepEqual(kinds, []string{"DHCPv6Server", "DHCPv6Scope", "IPv6RouterAdvertisement"}) {
+		t.Fatalf("dhcpv6 resource kinds = %v", kinds)
+	}
+}
+
 func TestHasNewNetdevFiles(t *testing.T) {
 	if !hasNewNetdevFiles([]string{"/etc/systemd/network/10-vxlan.netdev"}) {
 		t.Fatal("expected new .netdev to be detected")

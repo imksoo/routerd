@@ -2418,6 +2418,12 @@ func validateResource(res api.Resource) error {
 			if strings.Contains(candidate.Gateway, "${") {
 				return fmt.Errorf("%s spec.candidates[%d].gateway status expressions were removed; use gatewayFrom", res.ID(), i)
 			}
+			if candidate.DeviceFrom.Resource != "" && candidate.DeviceFrom.Field == "" {
+				return fmt.Errorf("%s spec.candidates[%d].deviceFrom.field is required", res.ID(), i)
+			}
+			if candidate.GatewayFrom.Resource != "" && candidate.GatewayFrom.Field == "" {
+				return fmt.Errorf("%s spec.candidates[%d].gatewayFrom.field is required", res.ID(), i)
+			}
 			if len(candidate.ReadyWhen) > 0 {
 				return fmt.Errorf("%s spec.candidates[%d].ready_when was removed; use dependsOn", res.ID(), i)
 			}
@@ -2427,24 +2433,39 @@ func validateResource(res api.Resource) error {
 			source := defaultString(candidate.GatewaySource, "none")
 			switch source {
 			case "none":
-				if candidate.Gateway != "" {
-					return fmt.Errorf("%s spec.candidates[%d].gateway is only valid when gatewaySource is static", res.ID(), i)
+				if candidate.Gateway != "" || candidate.GatewayFrom.Resource != "" {
+					return fmt.Errorf("%s spec.candidates[%d].gateway and gatewayFrom are only valid when gatewaySource is static, dhcpv4, or dhcpv6", res.ID(), i)
 				}
 			case "static":
-				if candidate.Gateway == "" {
-					return fmt.Errorf("%s spec.candidates[%d].gateway is required when gatewaySource is static", res.ID(), i)
+				if (candidate.Gateway == "") == (candidate.GatewayFrom.Resource == "") {
+					return fmt.Errorf("%s spec.candidates[%d] must set exactly one of gateway or gatewayFrom when gatewaySource is static", res.ID(), i)
 				}
-				addr, err := netip.ParseAddr(candidate.Gateway)
-				if err != nil {
-					return fmt.Errorf("%s spec.candidates[%d].gateway must be an IP address", res.ID(), i)
+				if candidate.Gateway != "" {
+					addr, err := netip.ParseAddr(candidate.Gateway)
+					if err != nil {
+						return fmt.Errorf("%s spec.candidates[%d].gateway must be an IP address", res.ID(), i)
+					}
+					if defaultString(spec.Family, "ipv4") == "ipv4" && !addr.Is4() {
+						return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv4 address when family is ipv4", res.ID(), i)
+					}
+					if defaultString(spec.Family, "ipv4") == "ipv6" && !addr.Is6() {
+						return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv6 address when family is ipv6", res.ID(), i)
+					}
 				}
-				if defaultString(spec.Family, "ipv4") == "ipv4" && !addr.Is4() {
-					return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv4 address when family is ipv4", res.ID(), i)
+			case "dhcpv4":
+				if defaultString(spec.Family, "ipv4") != "ipv4" {
+					return fmt.Errorf("%s spec.candidates[%d].gatewaySource dhcpv4 requires family ipv4", res.ID(), i)
 				}
-				if defaultString(spec.Family, "ipv4") == "ipv6" && !addr.Is6() {
-					return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv6 address when family is ipv6", res.ID(), i)
+				if candidate.Gateway != "" || candidate.GatewayFrom.Resource == "" {
+					return fmt.Errorf("%s spec.candidates[%d] must set gatewayFrom and must not set gateway when gatewaySource is dhcpv4", res.ID(), i)
 				}
-			case "dhcpv4", "dhcpv6":
+			case "dhcpv6":
+				if defaultString(spec.Family, "ipv4") != "ipv6" {
+					return fmt.Errorf("%s spec.candidates[%d].gatewaySource dhcpv6 requires family ipv6", res.ID(), i)
+				}
+				if candidate.Gateway != "" || candidate.GatewayFrom.Resource == "" {
+					return fmt.Errorf("%s spec.candidates[%d] must set gatewayFrom and must not set gateway when gatewaySource is dhcpv6", res.ID(), i)
+				}
 			default:
 				return fmt.Errorf("%s spec.candidates[%d].gatewaySource must be static, dhcpv4, dhcpv6, or none", res.ID(), i)
 			}

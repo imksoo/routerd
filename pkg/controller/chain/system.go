@@ -941,6 +941,9 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 		}
 	}
 	if api.BoolDefault(spec.Started, true) {
+		if selfSystemdUnit(ctx, unitName, command) {
+			return changed, nil
+		}
 		active := true
 		if !fileChanged {
 			if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
@@ -955,6 +958,11 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 		}
 	}
 	return changed, nil
+}
+
+func selfSystemdUnit(ctx context.Context, unitName string, command outputCommandFunc) bool {
+	_, _ = ctx, command
+	return unitName == "routerd.service"
 }
 
 func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec) []byte {
