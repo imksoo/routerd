@@ -1052,6 +1052,92 @@ func TestCorrelateClientsNintendoDNSBeatsGenericAppleUsage(t *testing.T) {
 	}
 }
 
+func TestHandlerClientSnapshotIgnoresStaleIPBasedFingerprints(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	leasePath := filepath.Join(dir, "dnsmasq.leases")
+	if err := os.WriteFile(leasePath, []byte(fmt.Sprintf("%d 3c:a9:ab:0b:40:07 172.18.1.150 * *\n", now.Add(12*time.Hour).Unix())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	queryLog := filepath.Join(dir, "dns-queries.db")
+	dnsLog, err := logstore.OpenDNSQueryLog(queryLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dnsLog.Record(reqContext(), logstore.DNSQuery{Timestamp: now.Add(-90 * time.Minute), ClientAddress: "172.18.1.150", QuestionName: "app.lp1.five.nintendo.net", QuestionType: "A"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = dnsLog.Close()
+
+	trafficLog := filepath.Join(dir, "traffic-flows.db")
+	traffic, err := logstore.OpenTrafficFlowLog(trafficLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := traffic.UpsertActive(context.Background(), logstore.TrafficFlow{StartedAt: now.Add(-90 * time.Minute), ClientAddress: "172.18.1.150", PeerAddress: "203.0.113.10", Protocol: "tcp", TLSSNI: "receive.p01.lp1.dg.srv.nintendo.net"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = traffic.Close()
+
+	firewallLogPath := filepath.Join(dir, "firewall-logs.db")
+	firewallLog, err := logstore.OpenFirewallLog(firewallLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firewallLog.Record(context.Background(), logstore.FirewallLogEntry{Timestamp: now.Add(-90 * time.Minute), Action: "drop", SrcAddress: "172.18.1.150", DstAddress: "203.0.113.10", Protocol: "tcp", L3Proto: "ipv4", DPITLSSNI: "receive.p01.lp1.dg.srv.nintendo.net", DPIApp: "tls", DPICategory: "web", DPIConfidence: 90}); err != nil {
+		t.Fatal(err)
+	}
+	_ = firewallLog.Close()
+
+	fingerprintLogPath := filepath.Join(dir, "dhcp-fingerprints.db")
+	fingerprintLog, err := logstore.OpenDHCPFingerprintLog(fingerprintLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fingerprintLog.Upsert(context.Background(), logstore.DHCPFingerprint{MAC: "3c:a9:ab:0b:40:07", Hostname: "NintendoSwitch", OSFamily: "nintendo", DeviceClass: "gaming-console", Confidence: 95, Signal: "dhcp-fingerprint/nintendo", ObservedAt: now.Add(-90 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	_ = fingerprintLog.Close()
+
+	handler := New(Options{
+		DNSQueryLogPath:        queryLog,
+		TrafficFlowLogPath:     trafficLog,
+		FirewallLogPath:        firewallLogPath,
+		DHCPFingerprintLogPath: fingerprintLogPath,
+		DHCPLeasePaths:         []string{leasePath},
+	})
+	snapshot := handler.Snapshot(SnapshotOptions{
+		EventLimit:            -1,
+		ConnectionsLimit:      -1,
+		FirewallLimit:         -1,
+		DNSQueryLimit:         -1,
+		TrafficFlowLimit:      200,
+		FingerprintQueryLimit: 1000,
+		DHCPFingerprintLimit:  1000,
+		IncludeDPIEnrichment:  true,
+		IncludeClients:        true,
+		IncludeVPN:            false,
+		SkipResources:         true,
+	})
+	var row *ClientEntry
+	for i := range snapshot.Clients {
+		if strings.EqualFold(snapshot.Clients[i].MAC, "3c:a9:ab:0b:40:07") {
+			row = &snapshot.Clients[i]
+			break
+		}
+	}
+	if row == nil {
+		t.Fatalf("client not found: %+v", snapshot.Clients)
+	}
+	if row.InferredOSFamily == "nintendo" || containsString(row.FingerprintSignals, "dns/nintendo:nintendo.net") || containsString(row.FingerprintSignals, "dhcp-fingerprint/nintendo") {
+		t.Fatalf("stale IP-based fingerprint leaked into current client: %+v", row)
+	}
+	if row.Vendor != "Apple" {
+		t.Fatalf("current lease vendor = %q, want Apple", row.Vendor)
+	}
+}
+
 func TestCorrelateClientsStrongHostnameBeatsRepeatedGamingDNS(t *testing.T) {
 	rows := correlateClients(
 		[]DHCPLease{{

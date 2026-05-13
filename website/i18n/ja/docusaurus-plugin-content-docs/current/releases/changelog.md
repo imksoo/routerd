@@ -8,6 +8,16 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260514.0813
+
+### 修正
+
+- Web Console の Clients で、IP address ベースの DNS、traffic、firewall、DPI、
+  DHCP fingerprint 情報を、現在の DHCP lease と突き合わせる前に直近 1 時間の
+  observation window に揃えるようにしました。
+- client inventory では sticky DHCP lease annotation に active hold だけを使うようにし、
+  古い lease history が現在の endpoint identity 判定に混ざらないようにしました。
+
 ## v20260514.0743
 
 ### 修正

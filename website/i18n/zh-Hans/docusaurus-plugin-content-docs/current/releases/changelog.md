@@ -8,6 +8,16 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## v20260514.0813
+
+### 修复
+
+- 修复 Web Console Clients，在与当前 DHCP lease 关联之前，将基于 IP address 的
+  DNS、traffic、firewall、DPI 和 DHCP fingerprint 证据限制在同一个最近一小时
+  observation window 内。
+- client inventory 的 sticky DHCP lease annotation 现在只使用 active hold，
+  避免旧 lease history 混入当前的 endpoint identity 判断。
+
 ## v20260514.0743
 
 ### 修复

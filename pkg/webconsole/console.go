@@ -102,6 +102,8 @@ type SnapshotOptions struct {
 	SkipDHCPLeases         bool
 }
 
+const clientObservationWindow = time.Hour
+
 type ConfigSnapshot struct {
 	Path string `json:"path"`
 	Text string `json:"text"`
@@ -337,6 +339,8 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 	if opts.DHCPFingerprintLimit <= 0 {
 		opts.DHCPFingerprintLimit = 200
 	}
+	now := time.Now().UTC()
+	clientSince := now.Add(-clientObservationWindow)
 	var errors []string
 	var err error
 	var resources []routerstate.ObjectStatus
@@ -359,7 +363,7 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		if err != nil {
 			errors = append(errors, err.Error())
 		} else if opts.IncludeDPIEnrichment {
-			if err := h.enrichConnectionsWithDPI(connections, time.Now().UTC(), time.Hour); err != nil {
+			if err := h.enrichConnectionsWithDPI(connections, now, clientObservationWindow); err != nil {
 				errors = append(errors, err.Error())
 			}
 		} else {
@@ -371,14 +375,14 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 	}
 	var dnsQueries []logstore.DNSQuery
 	if opts.DNSQueryLimit >= 0 {
-		dnsQueries, err = h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-time.Hour), Limit: opts.DNSQueryLimit})
+		dnsQueries, err = h.queryLogList(logstore.DNSQueryFilter{Since: clientSince, Limit: opts.DNSQueryLimit})
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
 	}
 	fingerprintDNSQueries := dnsQueries
 	if opts.IncludeClients && opts.FingerprintQueryLimit > opts.DNSQueryLimit {
-		if queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-24 * time.Hour), Limit: opts.FingerprintQueryLimit}); err == nil {
+		if queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: clientSince, Limit: opts.FingerprintQueryLimit}); err == nil {
 			fingerprintDNSQueries = queries
 		} else {
 			errors = append(errors, err.Error())
@@ -386,13 +390,13 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 	}
 	var trafficFlows []logstore.TrafficFlow
 	if opts.TrafficFlowLimit >= 0 {
-		trafficFlows, err = h.trafficFlowList(logstore.TrafficFlowFilter{Since: time.Now().Add(-time.Hour), Limit: opts.TrafficFlowLimit})
+		trafficFlows, err = h.trafficFlowList(logstore.TrafficFlowFilter{Since: clientSince, Limit: opts.TrafficFlowLimit})
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
 		trafficFlows = enrichTrafficFlowsWithDNS(trafficFlows, dnsQueries)
 		if opts.IncludeDPIEnrichment {
-			if enriched, err := h.enrichTrafficFlowsWithDPI(trafficFlows, time.Now().UTC(), time.Hour); err == nil {
+			if enriched, err := h.enrichTrafficFlowsWithDPI(trafficFlows, now, clientObservationWindow); err == nil {
 				trafficFlows = enriched
 			} else {
 				errors = append(errors, err.Error())
@@ -403,7 +407,11 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 	}
 	var firewallLogs []logstore.FirewallLogEntry
 	if opts.FirewallLimit >= 0 {
-		firewallLogs, err = h.firewallLogList(logstore.FirewallLogFilter{Since: time.Now().Add(-24 * time.Hour), Action: "drop", Limit: opts.FirewallLimit})
+		firewallSince := now.Add(-24 * time.Hour)
+		if opts.IncludeClients {
+			firewallSince = clientSince
+		}
+		firewallLogs, err = h.firewallLogList(logstore.FirewallLogFilter{Since: firewallSince, Action: "drop", Limit: opts.FirewallLimit})
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
@@ -427,25 +435,34 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
-		stickyLeases, err = h.dhcpStickyLeaseList(logstore.DHCPStickyFilter{Limit: 10000})
+		stickyLeases, err = h.dhcpStickyLeaseList(logstore.DHCPStickyFilter{HeldOnly: true, Now: now, Limit: 10000})
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
-		dhcpLeases = annotateDHCPLeasesWithSticky(dhcpLeases, stickyLeases, time.Now().UTC())
+		dhcpLeases = annotateDHCPLeasesWithSticky(dhcpLeases, stickyLeases, now)
 	}
 	var dhcpFingerprints []logstore.DHCPFingerprint
 	var neighbors []NeighborEntry
+	var clientFirewallLogs []logstore.FirewallLogEntry
 	var clients []ClientEntry
 	if opts.IncludeClients {
-		dhcpFingerprints, err = h.dhcpFingerprintList(logstore.DHCPFingerprintFilter{Since: time.Now().Add(-24 * time.Hour), Limit: opts.DHCPFingerprintLimit})
+		dhcpFingerprints, err = h.dhcpFingerprintList(logstore.DHCPFingerprintFilter{Since: clientSince, Limit: opts.DHCPFingerprintLimit})
 		if err != nil {
 			errors = append(errors, err.Error())
+		}
+		if opts.FirewallLimit < 0 {
+			clientFirewallLogs, err = h.firewallLogList(logstore.FirewallLogFilter{Since: clientSince, Action: "drop", Limit: 1000})
+			if err != nil {
+				errors = append(errors, err.Error())
+			}
+		} else {
+			clientFirewallLogs = firewallLogs
 		}
 		neighbors, err = neighborList()
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
-		clients = h.annotateClientsWithPolicy(correlateClients(dhcpLeases, neighbors, trafficFlows, fingerprintDNSQueries, firewallLogs, dhcpFingerprints))
+		clients = h.annotateClientsWithPolicy(correlateClients(dhcpLeases, neighbors, trafficFlows, fingerprintDNSQueries, clientFirewallLogs, dhcpFingerprints))
 	}
 	var vpn VPNStatus
 	if opts.IncludeVPN {
@@ -460,9 +477,9 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		result = h.opts.Result()
 	}
 	result = resultWithLatestGeneration(result, h.opts.Store)
-	recordConsoleMetrics(context.Background(), resources, h.opts.ControllerModes, dhcpLeases, clients, stickyLeases, time.Now().UTC())
+	recordConsoleMetrics(context.Background(), resources, h.opts.ControllerModes, dhcpLeases, clients, stickyLeases, now)
 	return Snapshot{
-		GeneratedAt:      time.Now().UTC(),
+		GeneratedAt:      now,
 		Status:           statusWithControllers(result, h.opts.ControllerModes),
 		Controllers:      h.opts.ControllerModes,
 		Phases:           phaseCounts(resources),
@@ -780,42 +797,44 @@ func (h Handler) firewallDenyTimeline(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) clients(w http.ResponseWriter) {
+	now := time.Now().UTC()
+	clientSince := now.Add(-clientObservationWindow)
 	leases, err := h.dhcpLeaseList()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	stickyLeases, err := h.dhcpStickyLeaseList(logstore.DHCPStickyFilter{Limit: 10000})
+	stickyLeases, err := h.dhcpStickyLeaseList(logstore.DHCPStickyFilter{HeldOnly: true, Now: now, Limit: 10000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	leases = annotateDHCPLeasesWithSticky(leases, stickyLeases, time.Now().UTC())
+	leases = annotateDHCPLeasesWithSticky(leases, stickyLeases, now)
 	neighbors, err := neighborList()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	flows, err := h.trafficFlowList(logstore.TrafficFlowFilter{Since: time.Now().Add(-time.Hour), Limit: 200})
+	flows, err := h.trafficFlowList(logstore.TrafficFlowFilter{Since: clientSince, Limit: 200})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: time.Now().Add(-24 * time.Hour), Limit: 1000})
+	queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: clientSince, Limit: 1000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	flows = enrichTrafficFlowsWithDNS(flows, queries)
-	if enriched, err := h.enrichTrafficFlowsWithDPI(flows, time.Now().UTC(), time.Hour); err == nil {
+	if enriched, err := h.enrichTrafficFlowsWithDPI(flows, now, clientObservationWindow); err == nil {
 		flows = enriched
 	}
-	firewallLogs, err := h.firewallLogList(logstore.FirewallLogFilter{Since: time.Now().Add(-24 * time.Hour), Action: "drop", Limit: 1000})
+	firewallLogs, err := h.firewallLogList(logstore.FirewallLogFilter{Since: clientSince, Action: "drop", Limit: 1000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	dhcpFingerprints, err := h.dhcpFingerprintList(logstore.DHCPFingerprintFilter{Since: time.Now().Add(-24 * time.Hour), Limit: 1000})
+	dhcpFingerprints, err := h.dhcpFingerprintList(logstore.DHCPFingerprintFilter{Since: clientSince, Limit: 1000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

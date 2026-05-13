@@ -8,6 +8,17 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260514.0813
+
+### Fixed
+
+- Fixed Web Console Clients so IP-address-based DNS, traffic, firewall, DPI, and
+  DHCP fingerprint evidence is limited to the same recent one-hour observation
+  window before being correlated with current DHCP leases.
+- Sticky DHCP lease annotations now load only active holds for the client
+  inventory path, avoiding stale lease history in current endpoint identity
+  decisions.
+
 ## v20260514.0743
 
 ### Fixed
