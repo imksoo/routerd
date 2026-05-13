@@ -373,7 +373,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	if err != nil {
 		return err
 	}
-	clientPolicies, err := nftClientPolicies(aliases, clientPolicyResources)
+	clientPolicies, err := nftClientPolicies(aliases, zoneMap, clientPolicyResources)
 	if err != nil {
 		return err
 	}
@@ -466,47 +466,48 @@ type firewallZone struct {
 }
 
 type clientPolicy struct {
-	Name          string
-	Mode          string
-	IfNames       []string
-	MACs          []string
-	SetName       string
-	GuestServices []string
-	EgressDeny    []string
-	EgressAllow   []string
+	Name           string
+	Mode           string
+	IfNames        []string
+	MACs           []string
+	SetName        string
+	GuestServices  []string
+	EgressDeny     []string
+	EgressAllow    []string
+	BlockDiscovery bool
 }
 
-func nftClientPolicies(aliases map[string]string, resources []api.Resource) ([]clientPolicy, error) {
+func nftClientPolicies(aliases map[string]string, zoneMap map[string]firewallZone, resources []api.Resource) ([]clientPolicy, error) {
 	var out []clientPolicy
 	for _, res := range resources {
 		spec, err := res.ClientPolicySpec()
 		if err != nil {
 			return nil, err
 		}
-		var ifnames []string
-		for _, iface := range spec.Interfaces {
-			ref := iface
-			if kind, name, ok := strings.Cut(iface, "/"); ok {
-				if kind != "Interface" {
-					return nil, fmt.Errorf("%s references unsupported client policy interface %q", res.ID(), iface)
-				}
-				ref = name
-			}
-			ifname := aliases[ref]
-			if ifname == "" {
-				return nil, fmt.Errorf("%s references interface with empty ifname %q", res.ID(), iface)
-			}
-			ifnames = append(ifnames, ifname)
+		ifnames, err := clientPolicyIfNames(res, spec, aliases, zoneMap)
+		if err != nil {
+			return nil, err
 		}
 		sort.Strings(ifnames)
 		policy := clientPolicy{
-			Name:          res.Metadata.Name,
-			Mode:          spec.Mode,
-			IfNames:       compactStrings(ifnames),
-			SetName:       nftSetName("client_policy_" + res.Metadata.Name),
-			GuestServices: clientPolicyGuestServices(spec.GuestServices),
-			EgressDeny:    clientPolicyEgressCIDRs(spec.GuestEgressDeny, []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"}),
-			EgressAllow:   clientPolicyEgressCIDRs(spec.GuestEgressAllow, nil),
+			Name:           res.Metadata.Name,
+			Mode:           spec.Mode,
+			IfNames:        compactStrings(ifnames),
+			SetName:        nftSetName("client_policy_" + res.Metadata.Name),
+			GuestServices:  clientPolicyGuestServices(spec.GuestServices),
+			EgressDeny:     clientPolicyEgressCIDRs(spec.GuestEgressDeny, clientPolicyDefaultEgressDeny(spec.Isolation)),
+			EgressAllow:    clientPolicyEgressCIDRs(spec.GuestEgressAllow, nil),
+			BlockDiscovery: spec.Isolation.MDNSBroadcast == "deny",
+		}
+		if spec.Isolation.LANInternet == "deny" && len(spec.GuestEgressDeny) == 0 {
+			policy.EgressDeny = clientPolicyEgressCIDRs([]string{"0.0.0.0/0", "::/0"}, nil)
+		}
+		for _, value := range spec.MACs {
+			parsedMAC, err := net.ParseMAC(value)
+			if err != nil {
+				return nil, fmt.Errorf("%s has invalid client MAC %q: %w", res.ID(), value, err)
+			}
+			policy.MACs = append(policy.MACs, strings.ToLower(parsedMAC.String()))
 		}
 		for _, entry := range spec.Classification {
 			parsedMAC, err := net.ParseMAC(entry.MACAddress)
@@ -530,6 +531,43 @@ func nftClientPolicies(aliases map[string]string, resources []api.Resource) ([]c
 		out = append(out, policy)
 	}
 	return out, nil
+}
+
+func clientPolicyIfNames(res api.Resource, spec api.ClientPolicySpec, aliases map[string]string, zoneMap map[string]firewallZone) ([]string, error) {
+	var ifnames []string
+	if len(spec.Interfaces) == 0 {
+		for _, zone := range zoneMap {
+			if zone.Role == "trust" {
+				ifnames = append(ifnames, zone.IfNames...)
+			}
+		}
+		if len(ifnames) == 0 {
+			return nil, fmt.Errorf("%s spec.interfaces is required when no trust FirewallZone interfaces are available", res.ID())
+		}
+		return ifnames, nil
+	}
+	for _, iface := range spec.Interfaces {
+		ref := iface
+		if kind, name, ok := strings.Cut(iface, "/"); ok {
+			if kind != "Interface" {
+				return nil, fmt.Errorf("%s references unsupported client policy interface %q", res.ID(), iface)
+			}
+			ref = name
+		}
+		ifname := aliases[ref]
+		if ifname == "" {
+			return nil, fmt.Errorf("%s references interface with empty ifname %q", res.ID(), iface)
+		}
+		ifnames = append(ifnames, ifname)
+	}
+	return ifnames, nil
+}
+
+func clientPolicyDefaultEgressDeny(isolation api.ClientPolicyIsolationSpec) []string {
+	if isolation.LANLAN == "allow" && isolation.LANMgmt == "allow" {
+		return nil
+	}
+	return []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"}
 }
 
 func clientPolicyGuestServices(values []string) []string {
@@ -586,6 +624,13 @@ func writeClientPolicyForwardRules(buf *bytes.Buffer, policies []clientPolicy, l
 			if dst := nftClientPolicyDestinationMatch(cidr); dst != "" {
 				buf.WriteString("    " + match + " " + dst + " counter accept comment " + nftQuote("routerd client policy "+policy.Name+" guest allow") + "\n")
 			}
+		}
+		if policy.BlockDiscovery {
+			buf.WriteString("    " + match + " ip daddr 224.0.0.251 udp dport 5353 counter " + nftLogExpr("routerd client-policy "+policy.Name+" discovery deny ", logging) + " drop\n")
+			buf.WriteString("    " + match + " ip6 daddr ff02::fb udp dport 5353 counter " + nftLogExpr("routerd client-policy "+policy.Name+" discovery deny ", logging) + " drop\n")
+			buf.WriteString("    " + match + " ip daddr 239.255.255.250 udp dport 1900 counter " + nftLogExpr("routerd client-policy "+policy.Name+" discovery deny ", logging) + " drop\n")
+			buf.WriteString("    " + match + " ip6 daddr ff02::c udp dport 1900 counter " + nftLogExpr("routerd client-policy "+policy.Name+" discovery deny ", logging) + " drop\n")
+			buf.WriteString("    " + match + " udp dport { 137, 138 } counter " + nftLogExpr("routerd client-policy "+policy.Name+" netbios deny ", logging) + " drop\n")
 		}
 		for _, cidr := range policy.EgressDeny {
 			if dst := nftClientPolicyDestinationMatch(cidr); dst != "" {

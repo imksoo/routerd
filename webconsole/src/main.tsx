@@ -313,6 +313,9 @@ type ClientEntry = {
   fingerprintSignals?: string[];
   stickyUntil?: string;
   stickyState?: string;
+  clientPolicy?: string;
+  clientPolicyMode?: string;
+  isolationPolicy?: string[];
 };
 
 type ClientIdentity = {
@@ -465,6 +468,9 @@ type ClientRow = {
   fingerprintSignals: Set<string>;
   stickyUntil: string;
   stickyState: string;
+  clientPolicy: string;
+  clientPolicyMode: string;
+  isolationPolicy: Set<string>;
 };
 
 type ViewKey = "overview" | "resources" | "controllers" | "clients" | "connections" | "vpn" | "events" | "firewall" | "config" | "generations";
@@ -3654,6 +3660,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
                     <div className={styles.connectionFlow}>
                       <OwnershipLine resource={resource} />
                       <code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code>
+                      <ResourceStatusExtra resource={resource} />
                       {navigateTo ? <Button size="small" appearance="outline" icon={<DocumentTextRegular />} onClick={() => { try { window.localStorage?.setItem("routerd:config:initialQuery", String(resource.name ?? "")); } catch {} navigateTo("config"); }}>YAML</Button> : null}
                     </div>
                   </TableCell>
@@ -3678,6 +3685,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
                 {dryRunController ? <Badge appearance="tint" color="warning">dry-run</Badge> : <Text size={200} className={styles.muted}>live</Text>}
                 <OwnershipLine resource={resource} />
                 <code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code>
+                <ResourceStatusExtra resource={resource} />
                 {navigateTo ? <Button size="small" appearance="subtle" onClick={() => navigateTo("config")}>View YAML</Button> : null}
               </div>
             </div>
@@ -3686,6 +3694,27 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
       </div>
     </>
   );
+}
+
+function ResourceStatusExtra({ resource }: { resource: ResourceStatus }) {
+  const styles = useStyles();
+  if (resource.kind !== "TailscaleNode") return null;
+  const peers = arrayValue(resource.status?.peers).slice(0, 8);
+  if (peers.length === 0) return null;
+  return (
+    <div className={styles.badges}>
+      {peers.map((peer, index) => {
+        const row = isRecord(peer) ? peer : {};
+        const label = stringValue(row.hostName) || stringValue(row.dnsName) || stringValue(row.id) || `peer-${index + 1}`;
+        const online = Boolean(row.online);
+        return <Badge key={`${label}-${index}`} appearance="outline" color={online ? "success" : "subtle"}>{label}</Badge>;
+      })}
+    </div>
+  );
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
 }
 
 function OwnershipLine({ resource }: { resource: ResourceStatus }) {
@@ -4353,6 +4382,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                           <code className={styles.clientMobileIP} title={primaryAddress}>{formatPrimaryClientAddress(primaryAddress)}</code>
                           <span>·</span>
                           <span className={styles.clientMobileMeta}>{formatClientOSFamily(clientOSFamily(row))}</span>
+                          {row.clientPolicy ? <><span>·</span><span>{formatClientPolicyMode(row.clientPolicyMode)}</span></> : null}
                           <span>·</span>
                           <span>{row.addresses.size} IPs</span>
                         </span>
@@ -4363,6 +4393,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                         <div className={styles.badges}>
                           <Badge appearance="tint" color={clientOnline(row) ? "success" : "subtle"}>{clientOnline(row) ? "online" : "offline"}</Badge>
                           {row.state ? <Badge appearance="outline">{row.state}</Badge> : null}
+                          {row.clientPolicy ? <Badge appearance="tint" color={row.clientPolicyMode === "trusted" ? "success" : "warning"}>{formatClientPolicyMode(row.clientPolicyMode)}</Badge> : null}
                         </div>
                       </div>
                       <div className={`${styles.clientPrimaryIPCell} ${styles.clientDesktopOnly}`}>
@@ -4391,6 +4422,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                               {row.protocolMix.size > 0 ? <Text size={200} className={styles.muted}>protocol mix {Array.from(row.protocolMix).map(formatConnectionApp).join(", ")}</Text> : null}
                               <Text size={200} className={styles.muted}>out {formatBytes(row.bytesOut)} / in {formatBytes(row.bytesIn)}</Text>
                               {row.stickyUntil ? <Text size={200} className={styles.muted}>sticky until <RelativeTime value={row.stickyUntil} /></Text> : null}
+                              {row.clientPolicy ? <Text size={200} className={styles.muted}>policy {row.clientPolicy}: {Array.from(row.isolationPolicy).join(", ")}</Text> : null}
                               {row.sources.size > 0 ? <Text size={200} className={styles.muted}>sources {Array.from(row.sources).join(", ")}</Text> : null}
                               {row.fingerprintSignals.size > 0 ? <Text size={200} className={styles.muted}>signals {Array.from(row.fingerprintSignals).slice(0, 5).join(", ")}</Text> : null}
                               {row.peers.size > 0 ? <Text size={200} className={styles.muted}>peers {Array.from(row.peers).slice(0, 5).join(", ")}</Text> : null}
@@ -6373,6 +6405,9 @@ function clientEntryToRow(entry: ClientEntry): ClientRow {
     fingerprintSignals: new Set(entry.fingerprintSignals ?? []),
     stickyUntil: entry.stickyUntil ?? "",
     stickyState: entry.stickyState ?? "",
+    clientPolicy: entry.clientPolicy ?? "",
+    clientPolicyMode: entry.clientPolicyMode ?? "",
+    isolationPolicy: new Set(entry.isolationPolicy ?? []),
   };
 }
 
@@ -6460,12 +6495,22 @@ function clientSearchText(client: ClientEntry) {
     client.fingerprintConfidence,
     client.stickyUntil,
     client.stickyState,
+    client.clientPolicy,
+    client.clientPolicyMode,
     ...(client.addresses ?? []),
     ...(client.sources ?? []),
     ...(client.peers ?? []),
     ...(client.protocolMix ?? []),
     ...(client.fingerprintSignals ?? []),
+    ...(client.isolationPolicy ?? []),
   ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function formatClientPolicyMode(value?: string) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "trusted") return "trusted";
+  if (normalized === "exclude") return "guest by default";
+  return "guest";
 }
 
 function clientIdentityMap(clients: ClientEntry[]) {

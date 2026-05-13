@@ -59,19 +59,21 @@ MAC 照合は Ethernet 送信元アドレスを直接見ます。
     name: guest-devices
   spec:
     mode: include
-    interfaces:
-      - Interface/lan
-    classification:
-      - macAddress: "18:ec:e7:33:12:6c"
-        as: guest
-        name: aiseg2
-        ipv4Reservation: aiseg2
+    macs:
+      - "18:ec:e7:33:12:6c"
+    isolation:
+      lanInternet: allow
+      lanLAN: deny
+      lanMgmt: deny
+      mDNSBroadcast: deny
 ```
 
 | フィールド | 必須 | 意味 |
 | --- | --- | --- |
 | `mode` | はい | `include` または `exclude` です。 |
-| `interfaces` | はい | 方針を適用する LAN 側 `Interface` 参照です。`Interface/lan` と `lan` は同じインターフェースを指します。 |
+| `interfaces` | いいえ | 方針を適用する LAN 側 `Interface` 参照です。`Interface/lan` と `lan` は同じインターフェースを指します。省略時は `trust` `FirewallZone` の全 interface に適用します。 |
+| `macs` | いいえ | 短縮形の MAC 一覧です。include mode では guest、exclude mode では trusted として扱います。 |
+| `isolation` | いいえ | guest intent です。`lanInternet`、`lanLAN`、`lanMgmt`、`mDNSBroadcast` に `allow` または `deny` を指定できます。 |
 | `classification` | いいえ | MAC アドレスの分類一覧です。意味は `mode` によって変わります。 |
 | `classification[].macAddress` | はい | 端末の MAC アドレスです。routerd は生成前に正規化します。 |
 | `classification[].as` | いいえ | `guest` または `trusted` です。空の場合、include mode では `guest`、exclude mode では `trusted` として扱います。 |
@@ -87,6 +89,8 @@ MAC 照合は Ethernet 送信元アドレスを直接見ます。
 - `172.16.0.0/12`
 - `192.168.0.0/16`
 - `fc00::/7`
+
+`isolation.mDNSBroadcast: deny` を指定すると、guest からの mDNS、SSDP、NetBIOS discovery 転送も拒否します。guest 端末が multicast / broadcast discovery で LAN 内の端末を見つける挙動を抑えます。
 
 許可規則は拒否規則より先に生成されます。
 プリンターや captive portal 補助サーバーなど、狭い例外を作るときに使えます。

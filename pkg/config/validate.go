@@ -781,6 +781,36 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.overrides[%s] must not be empty", res.ID(), key)
 			}
 		}
+	case "KernelModule":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.KernelModuleSpec()
+		if err != nil {
+			return err
+		}
+		switch defaultString(spec.State, "present") {
+		case "present":
+		default:
+			return fmt.Errorf("%s spec.state must be present", res.ID())
+		}
+		if len(spec.Modules) == 0 {
+			return fmt.Errorf("%s spec.modules is required", res.ID())
+		}
+		seen := map[string]bool{}
+		for i, module := range spec.Modules {
+			module = strings.TrimSpace(module)
+			if module == "" {
+				return fmt.Errorf("%s spec.modules[%d] is required", res.ID(), i)
+			}
+			if strings.ContainsAny(module, "/ \t\n") {
+				return fmt.Errorf("%s spec.modules[%d] must be a module name, not a path or command", res.ID(), i)
+			}
+			if seen[module] {
+				return fmt.Errorf("%s spec.modules[%d] duplicates %q", res.ID(), i, module)
+			}
+			seen[module] = true
+		}
 	case "Package":
 		if res.APIVersion != api.SystemAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
@@ -2955,9 +2985,6 @@ func validateResource(res api.Resource) error {
 		default:
 			return fmt.Errorf("%s spec.mode must be include or exclude", res.ID())
 		}
-		if len(spec.Interfaces) == 0 {
-			return fmt.Errorf("%s spec.interfaces is required", res.ID())
-		}
 		seenInterfaces := map[string]bool{}
 		for i, name := range spec.Interfaces {
 			if strings.TrimSpace(name) == "" {
@@ -2969,6 +2996,17 @@ func validateResource(res api.Resource) error {
 			seenInterfaces[name] = true
 		}
 		seenMACs := map[string]bool{}
+		for i, value := range spec.MACs {
+			mac, err := net.ParseMAC(value)
+			if err != nil {
+				return fmt.Errorf("%s spec.macs[%d] is invalid: %w", res.ID(), i, err)
+			}
+			normalizedMAC := strings.ToLower(mac.String())
+			if seenMACs[normalizedMAC] {
+				return fmt.Errorf("%s spec.macs[%d] duplicates %q", res.ID(), i, normalizedMAC)
+			}
+			seenMACs[normalizedMAC] = true
+		}
 		for i, entry := range spec.Classification {
 			mac, err := net.ParseMAC(entry.MACAddress)
 			if err != nil {
@@ -2993,6 +3031,18 @@ func validateResource(res api.Resource) error {
 			case "dns", "dhcp", "ntp", "mdns", "ssdp":
 			default:
 				return fmt.Errorf("%s spec.guestServices[%d] must be dns, dhcp, ntp, mdns, or ssdp", res.ID(), i)
+			}
+		}
+		for key, value := range map[string]string{
+			"lanInternet":   spec.Isolation.LANInternet,
+			"lanLAN":        spec.Isolation.LANLAN,
+			"lanMgmt":       spec.Isolation.LANMgmt,
+			"mDNSBroadcast": spec.Isolation.MDNSBroadcast,
+		} {
+			switch value {
+			case "", "allow", "deny":
+			default:
+				return fmt.Errorf("%s spec.isolation.%s must be allow or deny", res.ID(), key)
 			}
 		}
 		for i, cidr := range append(append([]string{}, spec.GuestEgressDeny...), spec.GuestEgressAllow...) {

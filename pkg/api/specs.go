@@ -74,6 +74,14 @@ type SysctlProfileSpec struct {
 	Overrides  map[string]string `yaml:"overrides,omitempty" json:"overrides,omitempty"`
 }
 
+type KernelModuleSpec struct {
+	State      string   `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present"`
+	Modules    []string `yaml:"modules" json:"modules"`
+	Runtime    *bool    `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Persistent bool     `yaml:"persistent,omitempty" json:"persistent,omitempty"`
+	Optional   bool     `yaml:"optional,omitempty" json:"optional,omitempty"`
+}
+
 type PackageSpec struct {
 	State    string             `yaml:"state,omitempty" json:"state,omitempty" jsonschema:"enum=,enum=present"`
 	Packages []OSPackageSetSpec `yaml:"packages" json:"packages"`
@@ -1081,12 +1089,21 @@ type FirewallLogPolicySpec struct {
 }
 
 type ClientPolicySpec struct {
-	Mode             string                  `yaml:"mode" json:"mode" jsonschema:"enum=include,enum=exclude"`
-	Interfaces       []string                `yaml:"interfaces" json:"interfaces"`
-	Classification   []ClientPolicyClassSpec `yaml:"classification,omitempty" json:"classification,omitempty"`
-	GuestServices    []string                `yaml:"guestServices,omitempty" json:"guestServices,omitempty"`
-	GuestEgressDeny  []string                `yaml:"guestEgressDeny,omitempty" json:"guestEgressDeny,omitempty"`
-	GuestEgressAllow []string                `yaml:"guestEgressAllow,omitempty" json:"guestEgressAllow,omitempty"`
+	Mode             string                    `yaml:"mode" json:"mode" jsonschema:"enum=include,enum=exclude"`
+	Interfaces       []string                  `yaml:"interfaces,omitempty" json:"interfaces,omitempty"`
+	MACs             []string                  `yaml:"macs,omitempty" json:"macs,omitempty"`
+	Classification   []ClientPolicyClassSpec   `yaml:"classification,omitempty" json:"classification,omitempty"`
+	Isolation        ClientPolicyIsolationSpec `yaml:"isolation,omitempty" json:"isolation,omitempty"`
+	GuestServices    []string                  `yaml:"guestServices,omitempty" json:"guestServices,omitempty"`
+	GuestEgressDeny  []string                  `yaml:"guestEgressDeny,omitempty" json:"guestEgressDeny,omitempty"`
+	GuestEgressAllow []string                  `yaml:"guestEgressAllow,omitempty" json:"guestEgressAllow,omitempty"`
+}
+
+type ClientPolicyIsolationSpec struct {
+	LANInternet   string `yaml:"lanInternet,omitempty" json:"lanInternet,omitempty" jsonschema:"enum=,enum=allow,enum=deny"`
+	LANLAN        string `yaml:"lanLAN,omitempty" json:"lanLAN,omitempty" jsonschema:"enum=,enum=allow,enum=deny"`
+	LANMgmt       string `yaml:"lanMgmt,omitempty" json:"lanMgmt,omitempty" jsonschema:"enum=,enum=allow,enum=deny"`
+	MDNSBroadcast string `yaml:"mDNSBroadcast,omitempty" json:"mDNSBroadcast,omitempty" jsonschema:"enum=,enum=allow,enum=deny"`
 }
 
 type ClientPolicyClassSpec struct {
@@ -1124,6 +1141,10 @@ func (r Resource) SysctlSpec() (SysctlSpec, error) {
 
 func (r Resource) SysctlProfileSpec() (SysctlProfileSpec, error) {
 	return specAs[SysctlProfileSpec](r)
+}
+
+func (r Resource) KernelModuleSpec() (KernelModuleSpec, error) {
+	return specAs[KernelModuleSpec](r)
 }
 
 func (r Resource) PackageSpec() (PackageSpec, error) {

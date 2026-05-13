@@ -1,0 +1,71 @@
+---
+title: ルーターホストを宣言的に bootstrap する
+---
+
+# ルーターホストを宣言的に bootstrap する
+
+routerd は、初回構築時に手作業になりがちなホスト準備を YAML に寄せられます。インストーラーの代替ではなく、ルーター固有の差分を shell 履歴ではなく設定として残すための機能です。
+
+## パッケージ
+
+`Package` で、routerd の controller や managed daemon が必要とする OS パッケージを宣言します。
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: Package
+metadata:
+  name: router-service-dependencies
+spec:
+  packages:
+    - os: ubuntu
+      manager: apt
+      names:
+        - dnsmasq
+        - nftables
+        - conntrack
+        - kmod
+        - wireguard-tools
+        - tailscale
+```
+
+## Kernel module
+
+Linux で conntrack、NFLOG、WireGuard などの module を明示したい場合は `KernelModule` を使います。
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: KernelModule
+metadata:
+  name: router-kernel-modules
+spec:
+  modules:
+    - nf_conntrack
+    - nfnetlink_log
+    - wireguard
+  runtime: true
+  persistent: true
+  optional: true
+```
+
+Ubuntu / Debian では `runtime: true` が `modprobe` を実行し、`persistent: true` が `/etc/modules-load.d/90-routerd-<name>.conf` を書きます。NixOS では NixOS 設定側で所有すべきものとして宣言的状態を記録します。FreeBSD では未対応として表示します。
+
+## Sysctl
+
+`SysctlProfile` は forwarding、conntrack accounting、ルーター用途向け kernel default をまとめます。差分だけ `overrides` で指定します。
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: SysctlProfile
+metadata:
+  name: router-runtime
+spec:
+  profile: router-linux
+  runtime: true
+  persistent: true
+  overrides:
+    net.netfilter.nf_conntrack_udp_timeout: "60"
+```
+
+## 既存ホスト設定の引き継ぎ
+
+`NetworkAdoption` は、systemd-networkd や systemd-resolved の既存設定が routerd と競合する場合に使います。`SystemdUnit` は明示的なローカル unit を routerd から配置・有効化したい場合に使います。DHCP、DNS、PPPoE、healthcheck、Tailscale などの routerd managed unit は、それぞれの resource kind から生成されるので重複定義しないでください。

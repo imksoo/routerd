@@ -181,7 +181,10 @@ routerd 側の状態を確認します。
 ```sh
 routerctl status --json
 routerctl get TailscaleNode/edge -o yaml
+routerctl tailscale peers
 ```
+
+`routerctl tailscale peers -o json` は `tailscale status --json` を読み、peer 一覧を routerd の CLI 形式で表示します。Web Console の Resources でも `TailscaleNode` に peer の online 状態、relay、last seen、allowed route を表示します。
 
 Web Console を Tailscale 経由で見たい場合は、ルーターの Tailscale アドレス、または承認済みの経路上のアドレスで確認します。
 
@@ -194,9 +197,10 @@ curl -f http://100.64.0.1:8080/
 
 ## 補足
 
-- `acceptDNS: false` にすると、Tailscale がルーター自身の DNS 設定を置き換えません。
+- `acceptDNS: false` にすると、Tailscale がルーター自身の DNS 設定を置き換えません。routerd の基本方針は LAN DNS first です。`DNSResolver`、local zone、DHCP 由来レコード、conditional forwarding を LAN 側の権威として維持し、MagicDNS にホスト resolver を乗っ取らせません。
 - `acceptRoutes: false` にすると、ルーターは他ノードの広告経路を取り込みません。
   経路を外へ広告するルーターでは、この設定が自然です。
+- routerd は Tailscale peer の metric として `routerd.tailscale.peer.count` と `routerd.tailscale.last_handshake.seconds` を出します。Tailscale status の `LastSeen` を運用上の handshake age として使います。
 - exit node と subnet route の承認は Tailscale 側で行います。
 - auth key は examples や Git 履歴に残さないでください。
   実機では `authKeyFile` を使います。

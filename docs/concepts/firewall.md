@@ -40,6 +40,12 @@ The policy has two modes:
 | `include` | Listed MAC addresses are guests. All other clients remain trusted. |
 | `exclude` | Listed MAC addresses are trusted. All other clients on the target interfaces are guests. |
 
+`ClientPolicy.spec.macs` is the short form for the common case. `interfaces`
+can be omitted when the policy should target every interface in a `trust`
+`FirewallZone`. `spec.isolation` provides readable intent for guest mode:
+internet, LAN, management, and local discovery can be allowed or denied without
+hand-writing CIDR lists.
+
 Guest clients can use the router's local DNS, DHCP, and NTP services. By
 default they cannot forward traffic to `10.0.0.0/8`, `172.16.0.0/12`,
 `192.168.0.0/16`, or `fc00::/7`. Global internet egress still follows the

@@ -69,19 +69,21 @@ Web Console.
     name: guest-devices
   spec:
     mode: include
-    interfaces:
-      - Interface/lan
-    classification:
-      - macAddress: "18:ec:e7:33:12:6c"
-        as: guest
-        name: aiseg2
-        ipv4Reservation: aiseg2
+    macs:
+      - "18:ec:e7:33:12:6c"
+    isolation:
+      lanInternet: allow
+      lanLAN: deny
+      lanMgmt: deny
+      mDNSBroadcast: deny
 ```
 
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `mode` | yes | `include` or `exclude`. |
-| `interfaces` | yes | LAN-side `Interface` references where the policy applies. `Interface/lan` and `lan` both resolve to the same interface. |
+| `interfaces` | no | LAN-side `Interface` references where the policy applies. `Interface/lan` and `lan` both resolve to the same interface. When omitted, routerd targets every `trust` `FirewallZone` interface. |
+| `macs` | no | Short-form MAC list. In `include` mode these are guests. In `exclude` mode these are trusted. |
+| `isolation` | no | High-level guest intent. `lanInternet`, `lanLAN`, `lanMgmt`, and `mDNSBroadcast` accept `allow` or `deny`. |
 | `classification` | no | MAC address entries. Their meaning depends on `mode`. |
 | `classification[].macAddress` | yes | Client MAC address. routerd normalizes the address before rendering. |
 | `classification[].as` | no | `guest` or `trusted`. Empty means `guest` in include mode and `trusted` in exclude mode. |
@@ -97,6 +99,10 @@ Default `guestEgressDeny`:
 - `172.16.0.0/12`
 - `192.168.0.0/16`
 - `fc00::/7`
+
+When `isolation.mDNSBroadcast: deny` is set, routerd drops guest mDNS, SSDP,
+and NetBIOS discovery forwarding so a guest device does not browse LAN peers by
+local multicast or broadcast discovery.
 
 Allow rules are rendered before deny rules. This lets you create narrow
 exceptions, such as a single printer or captive-portal helper, without opening

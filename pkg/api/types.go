@@ -101,6 +101,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "KernelModule":
+		var spec KernelModuleSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "Package":
 		var spec PackageSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

@@ -38,6 +38,8 @@ NAT44 は別の `ip routerd_nat` テーブルを使います。
 | `include` | 一覧に書いた MAC アドレスだけを guest として扱います。残りは trusted です。 |
 | `exclude` | 一覧に書いた MAC アドレスだけを trusted として扱います。対象インターフェース上の残りは guest です。 |
 
+`ClientPolicy.spec.macs` はよく使う場合の短縮形です。`interfaces` を省略すると、`trust` `FirewallZone` の全 interface が対象になります。`spec.isolation` では internet、LAN、management、local discovery の allow / deny を読みやすく表現できます。
+
 ゲスト端末は、既定で DNS、DHCP、NTP を利用できます。
 転送先が `10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`fc00::/7` の通信は拒否します。
 グローバルインターネット向け通信は、通常のゾーンマトリクスと経路方針に従います。

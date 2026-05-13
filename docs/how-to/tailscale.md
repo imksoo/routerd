@@ -188,7 +188,13 @@ Check routerd state:
 ```sh
 routerctl status --json
 routerctl get TailscaleNode/edge -o yaml
+routerctl tailscale peers
 ```
+
+`routerctl tailscale peers -o json` reads `tailscale status --json` and formats
+the peer list through routerd's CLI. The Web Console also shows the current
+peer list on the `TailscaleNode` resource, including online state, relay, last
+seen time, and allowed routes.
 
 If the Web Console should be reachable over Tailscale, test it through the
 router's Tailscale address or through an approved routed address:
@@ -202,9 +208,16 @@ Replace the address with the actual Tailscale IP of the router.
 ## Notes
 
 - `acceptDNS: false` keeps Tailscale from replacing the router's local DNS
-  resolver configuration.
+  resolver configuration. routerd's default model is "LAN DNS first":
+  `DNSResolver`, local zones, DHCP-derived records, and conditional forwarding
+  stay authoritative for LAN clients. Tailscale MagicDNS remains useful from
+  tailnet clients, but it should not take over the router's host resolver.
 - `acceptRoutes: false` keeps the router from importing other peers' advertised
   routes. This is common for a router that advertises routes outward.
+- routerd exports Tailscale peer gauges as `routerd.tailscale.peer.count` and
+  `routerd.tailscale.last_handshake.seconds`. Tailscale status exposes peer
+  `LastSeen`, so routerd uses that timestamp as the operational handshake-age
+  signal.
 - Exit-node and subnet-route approval happens in Tailscale, not in routerd.
 - Keep auth keys out of examples and Git history. Use `authKeyFile` for local
   deployments.

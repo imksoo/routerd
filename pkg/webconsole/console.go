@@ -32,6 +32,7 @@ import (
 	"routerd/pkg/observe"
 	"routerd/pkg/platform"
 	routerstate "routerd/pkg/state"
+	"routerd/pkg/tailscale"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -153,6 +154,9 @@ type ClientEntry struct {
 	FingerprintSignals    []string `json:"fingerprintSignals,omitempty"`
 	StickyUntil           string   `json:"stickyUntil,omitempty"`
 	StickyState           string   `json:"stickyState,omitempty"`
+	ClientPolicy          string   `json:"clientPolicy,omitempty"`
+	ClientPolicyMode      string   `json:"clientPolicyMode,omitempty"`
+	IsolationPolicy       []string `json:"isolationPolicy,omitempty"`
 }
 
 type InterfaceSummary struct {
@@ -428,7 +432,7 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
-		clients = correlateClients(dhcpLeases, neighbors, trafficFlows, fingerprintDNSQueries, firewallLogs, dhcpFingerprints)
+		clients = h.annotateClientsWithPolicy(correlateClients(dhcpLeases, neighbors, trafficFlows, fingerprintDNSQueries, firewallLogs, dhcpFingerprints))
 	}
 	var vpn VPNStatus
 	if opts.IncludeVPN {
@@ -801,7 +805,7 @@ func (h Handler) clients(w http.ResponseWriter) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, correlateClients(leases, neighbors, flows, queries, firewallLogs, dhcpFingerprints))
+	writeJSON(w, h.annotateClientsWithPolicy(correlateClients(leases, neighbors, flows, queries, firewallLogs, dhcpFingerprints)))
 }
 
 func (h Handler) vpn(w http.ResponseWriter) {
@@ -971,41 +975,31 @@ func parseWireGuardHandshake(value string) time.Time {
 }
 
 func parseTailscaleStatusJSON(data []byte) (*TailscaleStatus, error) {
-	if strings.TrimSpace(string(data)) == "" {
-		return nil, nil
-	}
-	var raw struct {
-		BackendState   string `json:"BackendState"`
-		CurrentTailnet struct {
-			Name            string `json:"Name"`
-			MagicDNSSuffix  string `json:"MagicDNSSuffix"`
-			MagicDNSEnabled bool   `json:"MagicDNSEnabled"`
-		} `json:"CurrentTailnet"`
-		CertDomains []string                           `json:"CertDomains"`
-		Self        tailscalePeerStatusJSON            `json:"Self"`
-		Peer        map[string]tailscalePeerStatusJSON `json:"Peer"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	status, err := tailscale.ParseStatusJSON(data)
+	if err != nil {
 		return nil, err
 	}
-	status := &TailscaleStatus{
-		BackendState:    raw.BackendState,
-		TailnetName:     raw.CurrentTailnet.Name,
-		MagicDNSSuffix:  raw.CurrentTailnet.MagicDNSSuffix,
-		MagicDNSEnabled: raw.CurrentTailnet.MagicDNSEnabled,
-		CertDomains:     raw.CertDomains,
-		HostName:        raw.Self.HostName,
-		DNSName:         raw.Self.DNSName,
-		TailscaleIPs:    raw.Self.TailscaleIPs,
-		AllowedIPs:      raw.Self.AllowedIPs,
-		Online:          raw.Self.Online,
-		Active:          raw.Self.Active,
-		ExitNode:        raw.Self.ExitNode,
-		ExitNodeOption:  raw.Self.ExitNodeOption,
+	if status.BackendState == "" && status.DNSName == "" && len(status.Peers) == 0 {
+		return nil, nil
 	}
-	for id, peer := range raw.Peer {
-		status.Peers = append(status.Peers, TailscalePeerStatus{
-			ID:             id,
+	out := &TailscaleStatus{
+		BackendState:    status.BackendState,
+		TailnetName:     status.TailnetName,
+		MagicDNSSuffix:  status.MagicDNSSuffix,
+		MagicDNSEnabled: status.MagicDNSEnabled,
+		CertDomains:     status.CertDomains,
+		HostName:        status.HostName,
+		DNSName:         status.DNSName,
+		TailscaleIPs:    status.TailscaleIPs,
+		AllowedIPs:      status.AllowedIPs,
+		Online:          status.Online,
+		Active:          status.Active,
+		ExitNode:        status.ExitNode,
+		ExitNodeOption:  status.ExitNodeOption,
+	}
+	for _, peer := range status.Peers {
+		out.Peers = append(out.Peers, TailscalePeerStatus{
+			ID:             peer.ID,
 			HostName:       peer.HostName,
 			DNSName:        peer.DNSName,
 			TailscaleIPs:   peer.TailscaleIPs,
@@ -1020,47 +1014,7 @@ func parseTailscaleStatusJSON(data []byte) (*TailscaleStatus, error) {
 			TxBytes:        peer.TxBytes,
 		})
 	}
-	sort.Slice(status.Peers, func(i, j int) bool {
-		left, right := status.Peers[i], status.Peers[j]
-		if left.Online != right.Online {
-			return left.Online
-		}
-		if left.Active != right.Active {
-			return left.Active
-		}
-		if lastSeenAfter(left.LastSeen, right.LastSeen) {
-			return true
-		}
-		if lastSeenAfter(right.LastSeen, left.LastSeen) {
-			return false
-		}
-		return strings.ToLower(left.HostName) < strings.ToLower(right.HostName)
-	})
-	return status, nil
-}
-
-type tailscalePeerStatusJSON struct {
-	HostName       string   `json:"HostName"`
-	DNSName        string   `json:"DNSName"`
-	TailscaleIPs   []string `json:"TailscaleIPs"`
-	AllowedIPs     []string `json:"AllowedIPs"`
-	Online         bool     `json:"Online"`
-	Active         bool     `json:"Active"`
-	ExitNode       bool     `json:"ExitNode"`
-	ExitNodeOption bool     `json:"ExitNodeOption"`
-	Relay          string   `json:"Relay"`
-	LastSeen       string   `json:"LastSeen"`
-	RxBytes        int64    `json:"RxBytes"`
-	TxBytes        int64    `json:"TxBytes"`
-}
-
-func lastSeenAfter(left, right string) bool {
-	leftTime, leftErr := time.Parse(time.RFC3339Nano, left)
-	rightTime, rightErr := time.Parse(time.RFC3339Nano, right)
-	if leftErr != nil || rightErr != nil {
-		return left != "" && right == ""
-	}
-	return leftTime.After(rightTime)
+	return out, nil
 }
 
 func (h Handler) config(w http.ResponseWriter) {
@@ -1257,7 +1211,7 @@ func defaultResourceOwnerController(kind string) string {
 		return "nat"
 	case "NetworkAdoption":
 		return "network-adoption"
-	case "Package":
+	case "Package", "KernelModule":
 		return "package"
 	case "PPPoEInterface", "PPPoESession":
 		return "pppoesession"
@@ -2479,6 +2433,78 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		return out[i].ID < out[j].ID
 	})
 	return out
+}
+
+type clientPolicyAssignment struct {
+	Name      string
+	Mode      string
+	Isolation []string
+}
+
+func (h Handler) annotateClientsWithPolicy(clients []ClientEntry) []ClientEntry {
+	if h.opts.Router == nil || len(clients) == 0 {
+		return clients
+	}
+	byMAC := map[string]clientPolicyAssignment{}
+	for _, res := range h.opts.Router.Spec.Resources {
+		if res.APIVersion != api.FirewallAPIVersion || res.Kind != "ClientPolicy" {
+			continue
+		}
+		spec, err := res.ClientPolicySpec()
+		if err != nil {
+			continue
+		}
+		assignment := clientPolicyAssignment{Name: res.Metadata.Name, Mode: spec.Mode, Isolation: clientPolicyIsolationLabels(spec)}
+		for _, mac := range spec.MACs {
+			if normalized := normalizeClientMAC(mac); normalized != "" {
+				byMAC[normalized] = assignment
+			}
+		}
+		for _, entry := range spec.Classification {
+			if normalized := normalizeClientMAC(entry.MACAddress); normalized != "" {
+				switch spec.Mode {
+				case "include":
+					if entry.As == "" || entry.As == "guest" {
+						byMAC[normalized] = assignment
+					}
+				case "exclude":
+					if entry.As == "" || entry.As == "trusted" {
+						byMAC[normalized] = clientPolicyAssignment{Name: res.Metadata.Name, Mode: "trusted", Isolation: []string{"trusted exception"}}
+					}
+				}
+			}
+		}
+	}
+	for i := range clients {
+		assignment, ok := byMAC[normalizeClientMAC(clients[i].MAC)]
+		if !ok {
+			continue
+		}
+		clients[i].ClientPolicy = assignment.Name
+		clients[i].ClientPolicyMode = assignment.Mode
+		clients[i].IsolationPolicy = assignment.Isolation
+	}
+	return clients
+}
+
+func clientPolicyIsolationLabels(spec api.ClientPolicySpec) []string {
+	var labels []string
+	if spec.Isolation.LANInternet != "" {
+		labels = append(labels, "internet "+spec.Isolation.LANInternet)
+	}
+	if spec.Isolation.LANLAN != "" {
+		labels = append(labels, "LAN "+spec.Isolation.LANLAN)
+	}
+	if spec.Isolation.LANMgmt != "" {
+		labels = append(labels, "mgmt "+spec.Isolation.LANMgmt)
+	}
+	if spec.Isolation.MDNSBroadcast != "" {
+		labels = append(labels, "discovery "+spec.Isolation.MDNSBroadcast)
+	}
+	if len(labels) == 0 {
+		labels = append(labels, "private LAN deny")
+	}
+	return labels
 }
 
 func neighborStateFailed(state string) bool {

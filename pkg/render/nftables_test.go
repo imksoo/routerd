@@ -894,6 +894,51 @@ func TestNftablesClientPolicyIncludeGuestMACs(t *testing.T) {
 	}
 }
 
+func TestNftablesClientPolicyShortFormUsesTrustZonesAndDiscoveryDeny(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+			Metadata: api.ObjectMeta{Name: "guest-short"},
+			Spec: api.ClientPolicySpec{
+				Mode: "include",
+				MACs: []string{"18:ec:e7:33:12:6c"},
+				Isolation: api.ClientPolicyIsolationSpec{
+					LANInternet:   "allow",
+					LANLAN:        "deny",
+					LANMgmt:       "deny",
+					MDNSBroadcast: "deny",
+				},
+			},
+		},
+	}}}
+	data, err := NftablesFirewall(router, nil)
+	if err != nil {
+		t.Fatalf("render nftables firewall: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`set client_policy_guest_short { type ether_addr; elements = { 18:ec:e7:33:12:6c } }`,
+		`iifname "ens19" ether saddr @client_policy_guest_short ip daddr 224.0.0.251 udp dport 5353 counter log prefix "routerd client-policy guest-short discovery deny " drop`,
+		`iifname "ens19" ether saddr @client_policy_guest_short ip daddr 239.255.255.250 udp dport 1900 counter log prefix "routerd client-policy guest-short discovery deny " drop`,
+		`iifname "ens19" ether saddr @client_policy_guest_short udp dport { 137, 138 } counter log prefix "routerd client-policy guest-short netbios deny " drop`,
+		`iifname "ens19" ether saddr @client_policy_guest_short ip daddr 192.168.0.0/16 counter log prefix "routerd client-policy guest-short deny " drop`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNftablesClientPolicyExcludeTrustedMACs(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

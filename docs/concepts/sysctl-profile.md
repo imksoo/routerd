@@ -83,6 +83,38 @@ spec:
 `net.ipv4.route.max_size` is no longer effective on some recent Linux kernels and is *not* set by the default profile.
 If you need it, add it as a discrete `Sysctl` (not via `overrides`) and verify on the target host first.
 
+`30` seconds is the Linux conntrack default for unreplied UDP flows and is also
+routerd's profile default. On busy home routers, `60` seconds can be a better
+operational override when short UDP flows are being correlated with firewall
+denies or DPI observations:
+
+```yaml
+spec:
+  profile: router-linux
+  overrides:
+    net.netfilter.nf_conntrack_udp_timeout: "60"
+```
+
+## Kernel modules
+
+`SysctlProfile` expects the relevant kernel subsystems to exist. Use
+`KernelModule` when the router should also declare module loading, for example
+conntrack accounting, NFLOG, or WireGuard:
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: KernelModule
+metadata:
+  name: router-kernel-modules
+spec:
+  modules:
+    - nf_conntrack
+    - nfnetlink_log
+    - wireguard
+  runtime: true
+  persistent: true
+```
+
 ## When to use a discrete `Sysctl`
 
 `SysctlProfile` covers the recommended bundle.

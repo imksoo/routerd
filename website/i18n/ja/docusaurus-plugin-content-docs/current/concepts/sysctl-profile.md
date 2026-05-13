@@ -85,6 +85,31 @@ spec:
 routerd の既定プロファイルでは設定しません。
 必要な環境では `overrides` ではなく個別の `Sysctl` として追加し、実機で存在確認してください。
 
+`net.netfilter.nf_conntrack_udp_timeout` の既定値は Linux conntrack の unreplied UDP default に合わせて `30` 秒です。Firewall deny や DPI 観測との相関を少し長く持ちたい運用では、`60` 秒に上書きできます。
+
+```yaml
+spec:
+  profile: router-linux
+  overrides:
+    net.netfilter.nf_conntrack_udp_timeout: "60"
+```
+
+conntrack、NFLOG、WireGuard などの module loading も YAML に寄せたい場合は `KernelModule` を使います。
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: KernelModule
+metadata:
+  name: router-kernel-modules
+spec:
+  modules:
+    - nf_conntrack
+    - nfnetlink_log
+    - wireguard
+  runtime: true
+  persistent: true
+```
+
 ## 個別 Sysctl との使い分け
 
 `SysctlProfile` は推奨値のまとまりです。

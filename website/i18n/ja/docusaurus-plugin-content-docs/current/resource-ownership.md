@@ -38,6 +38,7 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `Package` | apt、dnf、pkg、Nix のパッケージ導入状態 |
 | `Sysctl` | sysctl 値 |
 | `SysctlProfile` | 複数の sysctl 値 |
+| `KernelModule` | Linux の runtime module load 状態と `/etc/modules-load.d/90-routerd-<name>.conf` |
 | `NetworkAdoption` | systemd-networkd と systemd-resolved の drop-in |
 | `SystemdUnit` | systemd ユニットファイルと enable 状態 |
 | `NTPClient` | NTP クライアント設定 |

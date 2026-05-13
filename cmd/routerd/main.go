@@ -694,6 +694,9 @@ func canonicalResourceKind(kind string) string {
 		"host":                   "Hostname",
 		"sysctlprofile":          "SysctlProfile",
 		"sysctlprofiles":         "SysctlProfile",
+		"kernelmodule":           "KernelModule",
+		"kernelmodules":          "KernelModule",
+		"kmod":                   "KernelModule",
 		"package":                "Package",
 		"packages":               "Package",
 		"telemetry":              "Telemetry",
@@ -714,7 +717,7 @@ func apiVersionForKind(kind string) string {
 	switch kind {
 	case "FirewallZone", "FirewallPolicy", "FirewallRule":
 		return api.FirewallAPIVersion
-	case "Hostname", "Sysctl", "SysctlProfile", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "NTPServer", "LogSink", "NixOSHost":
+	case "Hostname", "Sysctl", "SysctlProfile", "KernelModule", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "NTPServer", "LogSink", "NixOSHost":
 		return api.SystemAPIVersion
 	case "Telemetry":
 		return api.ObservabilityAPIVersion
@@ -3019,7 +3022,9 @@ func controllerResourceKinds(name string) []string {
 	case "network-adoption":
 		return []string{"NetworkAdoption"}
 	case "package":
-		return []string{"Package"}
+		return []string{"Package", "KernelModule"}
+	case "kernel-module":
+		return []string{"KernelModule"}
 	case "pppoesession":
 		return []string{"PPPoEInterface", "PPPoESession"}
 	case "route":

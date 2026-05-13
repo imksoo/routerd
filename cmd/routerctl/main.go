@@ -32,6 +32,7 @@ import (
 	"routerd/pkg/render"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
+	"routerd/pkg/tailscale"
 	routerversion "routerd/pkg/version"
 	"routerd/pkg/wireguard"
 )
@@ -76,6 +77,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return firewallCommand(args[1:], stdout, stderr)
 	case "wireguard", "wg":
 		return wireGuardCommand(args[1:], stdout, stderr)
+	case "tailscale", "ts":
+		return tailscaleCommand(args[1:], stdout, stderr)
 	case "diagnose":
 		return diagnoseCommand(args[1:], stdout, stderr)
 	case "show":
@@ -93,6 +96,81 @@ func run(args []string, stdout, stderr io.Writer) error {
 		usage(stderr)
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func tailscaleCommand(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		args = []string{"peers"}
+	}
+	switch args[0] {
+	case "peers", "peer", "status":
+		return tailscalePeersCommand(args[1:], stdout)
+	case "help", "-h", "--help":
+		fmt.Fprintln(stderr, "usage: routerctl tailscale peers [-o table|json|yaml] [--binary tailscale]")
+		return nil
+	default:
+		return fmt.Errorf("unknown tailscale command %q", args[0])
+	}
+}
+
+func tailscalePeersCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("tailscale peers", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
+	binary := fs.String("binary", "tailscale", "tailscale binary path")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, hostcmd.Resolve(*binary), "status", "--json").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s status --json: %w: %s", *binary, err, strings.TrimSpace(string(out)))
+	}
+	status, err := tailscale.ParseStatusJSON(out)
+	if err != nil {
+		return err
+	}
+	switch output {
+	case "", "table":
+		return writeTailscalePeersTable(stdout, status)
+	case "json":
+		return writeJSON(stdout, status)
+	case "yaml":
+		return writeYAML(stdout, status)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeTailscalePeersTable(stdout io.Writer, status tailscale.Status) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "PEER\tSTATUS\tTAILSCALE IP\tALLOWED ROUTES\tRELAY\tLAST SEEN")
+	for _, peer := range status.Peers {
+		state := "offline"
+		if peer.Online {
+			state = "online"
+		}
+		if peer.Active {
+			state += ",active"
+		}
+		lastSeen := "-"
+		if seen, err := time.Parse(time.RFC3339Nano, peer.LastSeen); err == nil && !seen.IsZero() {
+			lastSeen = time.Since(seen).Round(time.Second).String() + " ago"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			displayCell(firstNonEmpty(peer.HostName, peer.DNSName, peer.ID)),
+			state,
+			displayCell(strings.Join(peer.TailscaleIPs, ",")),
+			displayCell(strings.Join(peer.AllowedIPs, ",")),
+			displayCell(peer.Relay),
+			lastSeen,
+		)
+	}
+	return w.Flush()
 }
 
 func statusCommand(args []string, stdout io.Writer) error {
@@ -1353,6 +1431,9 @@ func canonicalShowKind(kind string) string {
 		"zones":                  "FirewallZone",
 		"hostname":               "Hostname",
 		"host":                   "Hostname",
+		"kernelmodule":           "KernelModule",
+		"kernelmodules":          "KernelModule",
+		"kmod":                   "KernelModule",
 		"inventory":              "Inventory",
 		"inv":                    "Inventory",
 		"orphan":                 "Orphan",
@@ -2227,6 +2308,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  firewall test from=<zone> to=<zone|self> proto=<tcp|udp> dport=<port> [--config <path>]")
 	fmt.Fprintln(w, "  wireguard list [-o table|json|yaml]")
 	fmt.Fprintln(w, "  wireguard show <interface> [-o table|json|yaml]")
+	fmt.Fprintln(w, "  tailscale peers [-o table|json|yaml] [--binary tailscale]")
 	fmt.Fprintln(w, "  diagnose egress [policy] [--config <path>] [--state-file <path>] [--no-host] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  diagnose dns [resolver] [--server <addr>] [--name <fqdn>] [--no-host] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  diagnose lan-client <ip> [--no-host] [-o table|json|yaml]")

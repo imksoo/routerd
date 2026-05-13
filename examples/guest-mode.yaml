@@ -94,14 +94,10 @@ spec:
         name: guest-devices
       spec:
         mode: include
-        interfaces:
-          - Interface/lan
-        guestServices:
-          - dns
-          - dhcp
-          - ntp
-        classification:
-          - macAddress: 18:ec:e7:33:12:6c
-            as: guest
-            name: aiseg2
-            ipv4Reservation: aiseg2
+        macs:
+          - 18:ec:e7:33:12:6c
+        isolation:
+          lanInternet: allow
+          lanLAN: deny
+          lanMgmt: deny
+          mDNSBroadcast: deny

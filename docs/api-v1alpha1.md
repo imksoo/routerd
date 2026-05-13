@@ -38,7 +38,7 @@ spec:
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | interfaces, DHCP, DNS, routes, tunnels, events, traffic flow logs |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy` |
-| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
+| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `KernelModule`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
 
@@ -49,6 +49,7 @@ spec:
 | `Package` | Declares OS-specific packages and installs missing packages where the platform supports it. |
 | `Sysctl` | Sets one sysctl value. Readback comparison can be `exact` or `atLeast`. |
 | `SysctlProfile` | Applies router-oriented sysctl defaults. |
+| `KernelModule` | Loads Linux kernel modules with `modprobe` and can persist them under `/etc/modules-load.d`. |
 | `NetworkAdoption` | Adjusts OS DHCP clients and systemd-resolved listeners so routerd can own the interface role. |
 | `SystemdUnit` | Generates, installs, and enables systemd units used by routerd. |
 | `Hostname` | Sets the host name. |
@@ -97,6 +98,11 @@ peer PSKs; inline key fields are intended for examples and tests. On FreeBSD,
 routerd renders an rc.d service that creates the
 `wg` interface, loads the key from that file, applies peers, and then assigns
 declared static addresses for the WireGuard interface.
+
+`KernelModule` is a Linux bootstrap resource. `runtime: true` loads declared
+modules immediately, and `persistent: true` writes a modules-load.d file. NixOS
+is treated as declarative-only, and FreeBSD reports the resource as unsupported
+instead of pretending parity with Linux module loading.
 
 ## WAN Addressing and Delegation
 
@@ -209,11 +215,12 @@ managed resources.
 
 `ClientPolicy` supports `mode: include` for "listed MAC addresses are guests"
 and `mode: exclude` for "listed MAC addresses are trusted, everything else on
-the interface is guest." Guest clients can use DNS, DHCP, and NTP by default,
-but cannot reach RFC 1918 or ULA destinations unless `guestEgressAllow`
-contains an explicit exception. The FreeBSD pf renderer reports this resource
-as unsupported because pf does not provide the same MAC-based routed filtering
-model.
+the interface is guest." `spec.macs` is the short form for guest/trusted MAC
+lists, while `classification[]` can keep names and reservation references.
+`spec.isolation` can express the common guest shape: internet allowed, LAN and
+management denied, and mDNS/SSDP/NetBIOS discovery blocked. The FreeBSD pf
+renderer reports this resource as unsupported because pf does not provide the
+same MAC-based routed filtering model.
 
 ## Renamed Kinds
 

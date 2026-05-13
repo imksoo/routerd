@@ -274,6 +274,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.SystemAPIVersion, "LogRetention", api.LogRetentionSpec{}),
 			resourceSchema(api.SystemAPIVersion, "Sysctl", api.SysctlSpec{}),
 			resourceSchema(api.SystemAPIVersion, "SysctlProfile", api.SysctlProfileSpec{}),
+			resourceSchema(api.SystemAPIVersion, "KernelModule", api.KernelModuleSpec{}),
 			resourceSchema(api.SystemAPIVersion, "Package", api.PackageSpec{}),
 			resourceSchema(api.SystemAPIVersion, "NetworkAdoption", api.NetworkAdoptionSpec{}),
 			resourceSchema(api.SystemAPIVersion, "SystemdUnit", api.SystemdUnitSpec{}),

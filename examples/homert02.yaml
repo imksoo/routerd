@@ -155,6 +155,18 @@ spec:
           net.netfilter.nf_conntrack_acct: "1"
           net.netfilter.nf_conntrack_udp_timeout: "60"
     - apiVersion: system.routerd.net/v1alpha1
+      kind: KernelModule
+      metadata:
+        name: router-kernel-modules
+      spec:
+        modules:
+          - nf_conntrack
+          - nfnetlink_log
+          - wireguard
+        runtime: true
+        persistent: true
+        optional: true
+    - apiVersion: system.routerd.net/v1alpha1
       kind: Sysctl
       metadata:
         name: rp-filter-ds-lite-a

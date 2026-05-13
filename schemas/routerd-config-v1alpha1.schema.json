@@ -486,6 +486,74 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "KernelModule",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "modules": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "optional": {
+                        "type": "boolean"
+                      },
+                      "persistent": {
+                        "type": "boolean"
+                      },
+                      "runtime": {
+                        "type": "boolean"
+                      },
+                      "state": {
+                        "enum": [
+                          "",
+                          "present"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "modules"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "system.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "Package",
                     "type": "string"
                   },
@@ -6467,6 +6535,50 @@
                         },
                         "type": "array"
                       },
+                      "isolation": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "lanInternet": {
+                            "enum": [
+                              "",
+                              "allow",
+                              "deny"
+                            ],
+                            "type": "string"
+                          },
+                          "lanLAN": {
+                            "enum": [
+                              "",
+                              "allow",
+                              "deny"
+                            ],
+                            "type": "string"
+                          },
+                          "lanMgmt": {
+                            "enum": [
+                              "",
+                              "allow",
+                              "deny"
+                            ],
+                            "type": "string"
+                          },
+                          "mDNSBroadcast": {
+                            "enum": [
+                              "",
+                              "allow",
+                              "deny"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "macs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "mode": {
                         "enum": [
                           "include",
@@ -6476,8 +6588,7 @@
                       }
                     },
                     "required": [
-                      "mode",
-                      "interfaces"
+                      "mode"
                     ],
                     "type": "object"
                   },

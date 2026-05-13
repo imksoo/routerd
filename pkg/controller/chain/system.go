@@ -5,7 +5,6 @@ package chain
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +18,7 @@ import (
 	"routerd/pkg/healthcheck"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
+	"routerd/pkg/tailscale"
 )
 
 type NetworkAdoptionController struct {
@@ -367,9 +367,12 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 					status["active"] = runtimeStatus.Active
 					status["exitNodeOption"] = runtimeStatus.ExitNodeOption
 					status["peerCount"] = runtimeStatus.PeerCount
+					status["onlinePeerCount"] = runtimeStatus.OnlinePeerCount
+					status["peers"] = tailscalePeerStatusMaps(runtimeStatus.Peers)
 					if runtimeStatus.BackendState == "Running" {
 						status["phase"] = "Running"
 					}
+					tailscale.RecordMetrics(ctx, resource.Metadata.Name, runtimeStatus.Status, time.Now().UTC())
 				}
 			}
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", resource.Metadata.Name, status); err != nil {
@@ -545,6 +548,7 @@ func (c SystemdUnitController) reconcileDisabledPPPoEInterfaces() error {
 }
 
 type tailscaleRuntimeStatus struct {
+	tailscale.Status
 	BackendState    string
 	TailnetName     string
 	MagicDNSSuffix  string
@@ -556,47 +560,54 @@ type tailscaleRuntimeStatus struct {
 	Active          bool
 	ExitNodeOption  bool
 	PeerCount       int
+	OnlinePeerCount int
+	Peers           []tailscale.PeerStatus
 }
 
 func observeTailscaleRuntime(ctx context.Context, command outputCommandFunc, spec api.TailscaleNodeSpec) (tailscaleRuntimeStatus, error) {
 	binary := firstNonEmpty(spec.BinaryPath, "tailscale")
-	out, err := command(ctx, binary, "status", "--json")
+	status, err := tailscale.Fetch(ctx, binary, tailscale.CommandFunc(command))
 	if err != nil {
 		return tailscaleRuntimeStatus{}, err
 	}
-	var raw struct {
-		BackendState   string `json:"BackendState"`
-		CurrentTailnet struct {
-			Name            string `json:"Name"`
-			MagicDNSSuffix  string `json:"MagicDNSSuffix"`
-			MagicDNSEnabled bool   `json:"MagicDNSEnabled"`
-		} `json:"CurrentTailnet"`
-		Self struct {
-			DNSName        string   `json:"DNSName"`
-			TailscaleIPs   []string `json:"TailscaleIPs"`
-			AllowedIPs     []string `json:"AllowedIPs"`
-			Online         bool     `json:"Online"`
-			Active         bool     `json:"Active"`
-			ExitNodeOption bool     `json:"ExitNodeOption"`
-		} `json:"Self"`
-		Peer map[string]any `json:"Peer"`
-	}
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return tailscaleRuntimeStatus{}, err
-	}
 	return tailscaleRuntimeStatus{
-		BackendState:    raw.BackendState,
-		TailnetName:     raw.CurrentTailnet.Name,
-		MagicDNSSuffix:  raw.CurrentTailnet.MagicDNSSuffix,
-		MagicDNSEnabled: raw.CurrentTailnet.MagicDNSEnabled,
-		DNSName:         raw.Self.DNSName,
-		TailscaleIPs:    raw.Self.TailscaleIPs,
-		AllowedIPs:      raw.Self.AllowedIPs,
-		Online:          raw.Self.Online,
-		Active:          raw.Self.Active,
-		ExitNodeOption:  raw.Self.ExitNodeOption,
-		PeerCount:       len(raw.Peer),
+		Status:          status,
+		BackendState:    status.BackendState,
+		TailnetName:     status.TailnetName,
+		MagicDNSSuffix:  status.MagicDNSSuffix,
+		MagicDNSEnabled: status.MagicDNSEnabled,
+		DNSName:         status.DNSName,
+		TailscaleIPs:    status.TailscaleIPs,
+		AllowedIPs:      status.AllowedIPs,
+		Online:          status.Online,
+		Active:          status.Active,
+		ExitNodeOption:  status.ExitNodeOption,
+		PeerCount:       len(status.Peers),
+		OnlinePeerCount: tailscale.OnlinePeerCount(status),
+		Peers:           status.Peers,
 	}, nil
+}
+
+func tailscalePeerStatusMaps(peers []tailscale.PeerStatus) []map[string]any {
+	out := make([]map[string]any, 0, len(peers))
+	for _, peer := range peers {
+		out = append(out, map[string]any{
+			"id":             peer.ID,
+			"hostName":       peer.HostName,
+			"dnsName":        peer.DNSName,
+			"tailscaleIPs":   peer.TailscaleIPs,
+			"allowedIPs":     peer.AllowedIPs,
+			"online":         peer.Online,
+			"active":         peer.Active,
+			"exitNode":       peer.ExitNode,
+			"exitNodeOption": peer.ExitNodeOption,
+			"relay":          peer.Relay,
+			"lastSeen":       peer.LastSeen,
+			"rxBytes":        peer.RxBytes,
+			"txBytes":        peer.TxBytes,
+		})
+	}
+	return out
 }
 
 func boolPointerStatus(value *bool) any {

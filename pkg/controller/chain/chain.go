@@ -151,7 +151,7 @@ func resourceOwnerController(kind string) string {
 		return "nat"
 	case "NetworkAdoption":
 		return "network-adoption"
-	case "Package":
+	case "Package", "KernelModule":
 		return "package"
 	case "PPPoEInterface", "PPPoESession":
 		return "pppoesession"
@@ -503,6 +503,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	store := eventedStore{Store: r.Store, Bus: r.Bus}
 	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
+	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNetworkAdoption}
 	systemdUnits := SystemdUnitController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunSystemdUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons}
 	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
@@ -537,6 +538,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	controllers := []framework.Controller{
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
 		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: packages.Reconcile},
+		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, PeriodicFunc: kernelModules.Reconcile},
 		framework.FuncController{ControllerName: "sysctl", Every: 30 * time.Second, PeriodicFunc: sysctl.Reconcile},
 		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, PeriodicFunc: adoption.Reconcile},
 		framework.FuncController{ControllerName: "systemd-unit", Every: 5 * time.Minute, PeriodicFunc: systemdUnits.Reconcile},
