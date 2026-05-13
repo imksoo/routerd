@@ -8,6 +8,26 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260513.2358
+
+### Changed
+
+- Hardened long-running event processing. `EventRule` and `DerivedEvent`
+  timers now clean up their map entries after firing, ignore stale timer
+  callbacks, and protect shared state with controller locks.
+- Bounded retained `EventRule` correlation state so high-cardinality event
+  streams cannot grow memory usage indefinitely.
+- Rotated daemon `events.jsonl` files at a fixed size instead of appending
+  forever.
+- Added request and response size limits to local control, daemon-event, DNS
+  resolver, DoH, and classifier paths, and added HTTP header timeouts to local
+  daemon servers and the Web Console.
+
+### Fixed
+
+- Removed a race in `DerivedEvent` hysteresis handling that could update
+  pending transition state from a timer callback while reconcile was running.
+
 ## v20260513.2317
 
 ### Changed

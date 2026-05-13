@@ -107,6 +107,7 @@ func (c *Controller) reconcileLogged(ctx context.Context, emitInitial bool) {
 
 func (c *Controller) Reconcile(ctx context.Context, emitInitial bool) error {
 	c.init()
+	c.pruneRemovedResources()
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DerivedEvent" {
 			continue
@@ -124,7 +125,9 @@ func (c *Controller) reconcileResource(ctx context.Context, resource api.Resourc
 		return err
 	}
 	target := c.target(spec)
-	state := c.resourceState(resource.Metadata.Name)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	state := c.resourceStateLocked(resource.Metadata.Name)
 	if !state.initialized {
 		state.initialized = true
 		state.asserted = target
@@ -166,18 +169,25 @@ func (c *Controller) schedule(ctx context.Context, resource api.Resource, spec a
 		state.pendingTransition = PendingNone
 		return c.publish(context.Background(), resource, spec, state, target)
 	}
-	state.timer = time.AfterFunc(delay, func() {
-		if c.target(spec) != target {
-			c.mu.Lock()
+	var timer *time.Timer
+	timer = time.AfterFunc(delay, func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if state.timer != timer {
+			return
+		}
+		stillTarget := c.target(spec) == target
+		if !stillTarget {
 			c.cancelPending(state)
-			c.mu.Unlock()
 			_ = c.saveStatus(resource, state)
 			return
 		}
+		state.timer = nil
 		state.asserted = target
 		state.pendingTransition = PendingNone
 		_ = c.publish(context.Background(), resource, spec, state, target)
 	})
+	state.timer = timer
 	return c.saveStatus(resource, state)
 }
 
@@ -332,9 +342,15 @@ func (c *Controller) saveStatusWithPhase(resource api.Resource, state *derivedSt
 }
 
 func (c *Controller) resourceState(name string) *derivedState {
-	c.init()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.resourceStateLocked(name)
+}
+
+func (c *Controller) resourceStateLocked(name string) *derivedState {
+	if c.state == nil {
+		c.state = map[string]*derivedState{}
+	}
 	state := c.state[name]
 	if state == nil {
 		state = &derivedState{pendingTransition: PendingNone}
@@ -348,6 +364,27 @@ func (c *Controller) init() {
 	defer c.mu.Unlock()
 	if c.state == nil {
 		c.state = map[string]*derivedState{}
+	}
+}
+
+func (c *Controller) pruneRemovedResources() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.state) == 0 || c.Router == nil {
+		return
+	}
+	present := map[string]struct{}{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind == "DerivedEvent" {
+			present[resource.Metadata.Name] = struct{}{}
+		}
+	}
+	for name, state := range c.state {
+		if _, ok := present[name]; ok {
+			continue
+		}
+		c.cancelPending(state)
+		delete(c.state, name)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -183,10 +184,10 @@ func (c *Client) do(req *http.Request, value any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var apiErr Error
-		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err == nil && apiErr.Error.Message != "" {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&apiErr); err == nil && apiErr.Error.Message != "" {
 			return fmt.Errorf("%s", apiErr.Error.Message)
 		}
 		return fmt.Errorf("routerd API returned HTTP %d", resp.StatusCode)
 	}
-	return json.NewDecoder(resp.Body).Decode(value)
+	return json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(value)
 }

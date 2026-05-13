@@ -4,6 +4,7 @@ package eventrule
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -70,6 +71,9 @@ func TestAbsence(t *testing.T) {
 	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorAbsence, Trigger: "routerd.trigger", Expected: "routerd.expected", Duration: "20ms"})
 	mustReconcile(t, controller, testEvent("routerd.trigger"))
 	waitForRecent(t, b, "routerd.out", 1)
+	if got := timerCount(controller, "absence"); got != 0 {
+		t.Fatalf("absence timers = %d", got)
+	}
 	controller.StopTimers()
 }
 
@@ -89,6 +93,9 @@ func TestDebounce(t *testing.T) {
 	mustReconcile(t, controller, testEvent("routerd.a"))
 	mustReconcile(t, controller, testEvent("routerd.a"))
 	waitForRecent(t, b, "routerd.out", 1)
+	if got := timerCount(controller, "debounce"); got != 0 {
+		t.Fatalf("debounce timers = %d", got)
+	}
 	controller.StopTimers()
 }
 
@@ -98,6 +105,23 @@ func TestCount(t *testing.T) {
 	mustReconcile(t, controller, testEvent("routerd.a"))
 	if got := b.Recent("routerd.out"); len(got) != 1 || got[0].Attributes["count"] != "2" {
 		t.Fatalf("events = %#v", got)
+	}
+}
+
+func TestCorrelationStateIsBounded(t *testing.T) {
+	controller, _ := testController(api.EventRulePatternSpec{Operator: OperatorThrottle, Topic: "routerd.a", CorrelateBy: "attributes.interface", Interval: "1h"})
+	for i := 0; i < maxRuleCorrelationKeys+1; i++ {
+		event := testEventAt("routerd.a", time.Unix(int64(i), 0).UTC())
+		event.Attributes["interface"] = "if" + strconv.Itoa(i)
+		mustReconcile(t, controller, event)
+	}
+	controller.mu.Lock()
+	state := controller.state["rule"]
+	gotLastSeen := len(state.lastSeen)
+	gotLastEmit := len(state.lastEmit)
+	controller.mu.Unlock()
+	if gotLastSeen != maxRuleCorrelationKeys || gotLastEmit != maxRuleCorrelationKeys {
+		t.Fatalf("state sizes lastSeen=%d lastEmit=%d", gotLastSeen, gotLastEmit)
 	}
 }
 
@@ -138,6 +162,23 @@ func waitForRecent(t *testing.T, b *bus.Bus, topic string, want int) {
 			t.Fatalf("events = %d", len(b.Recent(topic)))
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func timerCount(controller *Controller, kind string) int {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	state := controller.state["rule"]
+	if state == nil {
+		return 0
+	}
+	switch kind {
+	case "absence":
+		return len(state.absence)
+	case "debounce":
+		return len(state.debounce)
+	default:
+		return 0
 	}
 }
 

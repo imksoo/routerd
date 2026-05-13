@@ -25,6 +25,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/eventfile"
 	routerotel "routerd/pkg/otel"
 	"routerd/pkg/platform"
 	"routerd/pkg/pppoeclient"
@@ -400,7 +401,7 @@ func (d *daemon) httpServer() (*http.Server, net.Listener, error) {
 	})
 	mux.HandleFunc("/v1/events", d.handleEvents)
 	mux.HandleFunc("/v1/commands/", d.handleCommand)
-	return &http.Server{Handler: mux}, listener, nil
+	return &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}, listener, nil
 }
 
 func (d *daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -546,12 +547,7 @@ func (d *daemon) publishLocked(topic, severity, reason, message string, attrs ma
 	if len(d.events) > 1000 {
 		d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-1000:]...)
 	}
-	_ = os.MkdirAll(filepath.Dir(d.opts.eventFile), 0755)
-	file, err := os.OpenFile(d.opts.eventFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err == nil {
-		_ = json.NewEncoder(file).Encode(event)
-		_ = file.Close()
-	}
+	_ = eventfile.AppendJSONLine(d.opts.eventFile, event)
 }
 
 func (d *daemon) eventsSinceLocked(since, topic string) ([]daemonapi.DaemonEvent, string) {

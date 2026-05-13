@@ -8,6 +8,19 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## v20260513.2358
+
+### 變更
+
+- 強化長期運行的事件處理。`EventRule` 與 `DerivedEvent` 的 timer 觸發後會清理 map entry，忽略過期的 timer callback，並以 controller lock 保護共享狀態。
+- 為 `EventRule` 的 correlation state 設定上限，避免高基數事件流讓記憶體用量無限制成長。
+- daemon 的 `events.jsonl` 不再無限追加，而是在固定大小後輪替。
+- 為 local control、daemon event、DNS resolver、DoH 與 classifier 路徑加入 request / response 大小限制，並為 local daemon server 與 Web Console 加入 HTTP header timeout。
+
+### 修正
+
+- 修正 `DerivedEvent` hysteresis 處理中 timer callback 與 reconcile 可能同時更新 pending transition state 的 race。
+
 ## v20260513.2317
 
 ### 變更

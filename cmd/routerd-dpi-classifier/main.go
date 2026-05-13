@@ -113,7 +113,7 @@ func runDaemon(args []string, stdout io.Writer) error {
 	if err := os.Chmod(opts.socket, 0o660); err != nil {
 		return err
 	}
-	server := &http.Server{Handler: newHandler(opts)}
+	server := &http.Server{Handler: newHandler(opts), ReadHeaderTimeout: 5 * time.Second}
 	fmt.Fprintf(stdout, "routerd-dpi-classifier listening on %s\n", opts.socket)
 	err = server.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {

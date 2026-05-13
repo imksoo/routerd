@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -104,7 +105,7 @@ func (s DaemonSource) fastForward(ctx context.Context, client *http.Client) (str
 		return "", fmt.Errorf("daemon events returned HTTP %d", resp.StatusCode)
 	}
 	var decoded EventsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&decoded); err != nil {
 		return "", err
 	}
 	if decoded.Cursor != "" {
@@ -138,7 +139,7 @@ func (s DaemonSource) poll(ctx context.Context, client *http.Client, cursor stri
 		return "", fmt.Errorf("daemon events returned HTTP %d", resp.StatusCode)
 	}
 	var decoded EventsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&decoded); err != nil {
 		return "", err
 	}
 	next := decoded.Cursor

@@ -3365,7 +3365,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			return &result, nil
 		},
 	}
-	server := &http.Server{Handler: handler}
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
 	return server.Serve(listener)
 }
@@ -3636,7 +3636,7 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		ControllerModes:        controllerStatuses,
 		Bus:                    eventBus,
 	})
-	server := &http.Server{Addr: addr, Handler: handler}
+	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 2 * time.Minute}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err

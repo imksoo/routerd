@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -140,7 +141,7 @@ func daemonStatus(ctx context.Context, socketPath string) (daemonapi.DaemonStatu
 	}
 	defer resp.Body.Close()
 	var status daemonapi.DaemonStatus
-	return status, json.NewDecoder(resp.Body).Decode(&status)
+	return status, json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&status)
 }
 
 func parseJSONStringList(raw string) []string {

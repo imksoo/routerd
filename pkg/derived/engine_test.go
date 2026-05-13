@@ -72,6 +72,36 @@ func TestHysteresisFlipBackCancels(t *testing.T) {
 	controller.StopTimers()
 }
 
+func TestHysteresisClearsTimerAfterFire(t *testing.T) {
+	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Pending"}}
+	controller := testController(store, "20ms", false)
+	if err := controller.Reconcile(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	store[api.NetAPIVersion+"/DSLiteTunnel/ds-lite"]["phase"] = "Up"
+	if err := controller.Reconcile(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		controller.mu.Lock()
+		state := controller.state["dslite-active"]
+		timerCleared := state != nil && state.timer == nil && state.pendingTransition == PendingNone
+		controller.mu.Unlock()
+		if timerCleared {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timer was not cleared")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := controller.Bus.Recent("routerd.virtual.dslite.asserted"); len(got) != 1 {
+		t.Fatalf("asserted events = %d", len(got))
+	}
+	controller.StopTimers()
+}
+
 func TestEmitInitialFalse(t *testing.T) {
 	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Up"}}
 	controller := testController(store, "0s", false)

@@ -30,6 +30,8 @@ const (
 	upstreamFailing = "Failing"
 	upstreamDown    = "Down"
 	upstreamProbing = "Probing"
+
+	maxDNSMessageSize = 65535
 )
 
 type upstreamPoolConfig struct {
@@ -224,7 +226,14 @@ func (p *upstreamPool) exchangeDoH(ctx context.Context, upstream *dnsUpstream, q
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("DoH upstream returned %s", resp.Status)
 	}
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDNSMessageSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxDNSMessageSize {
+		return nil, fmt.Errorf("DoH upstream response too large")
+	}
+	return body, nil
 }
 
 func (p *upstreamPool) exchangeDoT(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
@@ -346,7 +355,7 @@ func exchangeLengthPrefixed(ctx context.Context, conn deadlineConn, query []byte
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
-	if len(query) > 65535 {
+	if len(query) > maxDNSMessageSize {
 		return nil, fmt.Errorf("DNS query too large")
 	}
 	if err := binary.Write(conn, binary.BigEndian, uint16(len(query))); err != nil {

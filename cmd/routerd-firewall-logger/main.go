@@ -759,7 +759,7 @@ func classifyPacket(ctx context.Context, socket string, timeout time.Duration, p
 		return dpi.ClassifyResult{}, fmt.Errorf("dpi classifier status %s", resp.Status)
 	}
 	var result dpi.ClassifyResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
 		return dpi.ClassifyResult{}, err
 	}
 	return result, nil

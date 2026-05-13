@@ -9,7 +9,11 @@ import (
 	"strconv"
 )
 
-const Prefix = "/api/control.routerd.net/v1alpha1"
+const (
+	Prefix              = "/api/control.routerd.net/v1alpha1"
+	maxRequestBodyBytes = 1 << 20
+	maxConnectionRows   = 5000
+)
 
 type Handler struct {
 	Status         func(*http.Request) (*Status, error)
@@ -62,7 +66,7 @@ func (h Handler) handleDHCPLeaseEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req DHCPLeaseEventRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -123,6 +127,9 @@ func (h Handler) handleConnections(w http.ResponseWriter, r *http.Request) {
 		if err != nil || parsed < 0 {
 			writeError(w, http.StatusBadRequest, "limit must be a non-negative integer")
 			return
+		}
+		if parsed > maxConnectionRows {
+			parsed = maxConnectionRows
 		}
 		limit = parsed
 	}
@@ -217,7 +224,7 @@ func (h Handler) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req ApplyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -248,7 +255,7 @@ func (h Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req DeleteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -279,7 +286,7 @@ func (h Handler) handleDHCPv6Event(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req DHCPv6EventRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

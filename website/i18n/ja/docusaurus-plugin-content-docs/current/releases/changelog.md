@@ -8,6 +8,26 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260513.2358
+
+### 変更
+
+- 長時間動き続けるイベント処理を堅牢化しました。
+  `EventRule` と `DerivedEvent` の timer は発火後に map から取り除かれ、
+  古い timer callback を無視し、共有状態を controller の lock で保護します。
+- `EventRule` の相関状態に上限を設けました。
+  高カーディナリティのイベント列でも、メモリ使用量が無制限に増え続けません。
+- daemon の `events.jsonl` は追記し続けるのではなく、一定サイズで
+  ローテーションするようにしました。
+- local control、daemon event、DNS resolver、DoH、classifier の経路に
+  request / response サイズ上限を追加しました。
+  local daemon server と Web Console には HTTP header timeout も追加しています。
+
+### 修正
+
+- `DerivedEvent` の hysteresis 中に、timer callback と reconcile が
+  pending transition state を同時に更新し得る race を修正しました。
+
 ## v20260513.2317
 
 ### 変更

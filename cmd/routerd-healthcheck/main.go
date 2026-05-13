@@ -25,6 +25,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/eventfile"
 	"routerd/pkg/healthcheck"
 	routerotel "routerd/pkg/otel"
 	"routerd/pkg/platform"
@@ -366,7 +367,7 @@ func (d *daemon) httpServer() (*http.Server, net.Listener, error) {
 	mux.HandleFunc("/v1/healthz", d.handleHealthz)
 	mux.HandleFunc("/v1/events", d.handleEvents)
 	mux.HandleFunc("/v1/commands/", d.handleCommand)
-	return &http.Server{Handler: mux}, listener, nil
+	return &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}, listener, nil
 }
 
 func (d *daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -390,7 +391,7 @@ func (d *daemon) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 func (d *daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	topic := r.URL.Query().Get("topic")
 	since := r.URL.Query().Get("since")
-	wait, _ := time.ParseDuration(r.URL.Query().Get("wait"))
+	wait := eventWait(r)
 	deadline := time.Now().Add(wait)
 	if wait > 0 {
 		timer := time.AfterFunc(wait, func() {
@@ -416,6 +417,18 @@ func (d *daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 		d.cond.Wait()
 		d.mu.Unlock()
 	}
+}
+
+func eventWait(r *http.Request) time.Duration {
+	const maxWait = 30 * time.Second
+	wait, _ := time.ParseDuration(r.URL.Query().Get("wait"))
+	if wait < 0 {
+		return 0
+	}
+	if wait > maxWait {
+		return maxWait
+	}
+	return wait
 }
 
 func (d *daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
@@ -551,15 +564,7 @@ func (d *daemon) publishEvent(event daemonapi.DaemonEvent) {
 }
 
 func (d *daemon) appendEventFileLocked(event daemonapi.DaemonEvent) {
-	if err := os.MkdirAll(filepath.Dir(d.opts.eventFile), 0755); err != nil {
-		return
-	}
-	file, err := os.OpenFile(d.opts.eventFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-	_ = json.NewEncoder(file).Encode(event)
+	_ = eventfile.AppendJSONLine(d.opts.eventFile, event)
 }
 
 func (d *daemon) daemonRef() daemonapi.DaemonRef {

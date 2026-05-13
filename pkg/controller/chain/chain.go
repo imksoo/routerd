@@ -1475,7 +1475,7 @@ func daemonStatus(ctx context.Context, socketPath string) (daemonapi.DaemonStatu
 	}
 	defer resp.Body.Close()
 	var status daemonapi.DaemonStatus
-	return status, json.NewDecoder(resp.Body).Decode(&status)
+	return status, json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&status)
 }
 
 func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, port int, listenAddresses []string) (bool, error) {

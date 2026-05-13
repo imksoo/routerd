@@ -24,6 +24,7 @@ import (
 
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/dhcpv4client"
+	"routerd/pkg/eventfile"
 	routerotel "routerd/pkg/otel"
 	"routerd/pkg/platform"
 )
@@ -430,7 +431,7 @@ func (d *dhcpv4Daemon) httpServer() (*http.Server, net.Listener, error) {
 	})
 	mux.HandleFunc("/v1/events", d.handleEvents)
 	mux.HandleFunc("/v1/commands/", d.handleCommand)
-	return &http.Server{Handler: mux}, listener, nil
+	return &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}, listener, nil
 }
 
 func (d *dhcpv4Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -474,7 +475,7 @@ func (d *dhcpv4Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 func (d *dhcpv4Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	topic := r.URL.Query().Get("topic")
 	since := r.URL.Query().Get("since")
-	wait, _ := time.ParseDuration(r.URL.Query().Get("wait"))
+	wait := eventWait(r)
 	deadline := time.Now().Add(wait)
 	if wait > 0 {
 		timer := time.AfterFunc(wait, func() {
@@ -495,6 +496,18 @@ func (d *dhcpv4Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 		d.cond.Wait()
 		d.mu.Unlock()
 	}
+}
+
+func eventWait(r *http.Request) time.Duration {
+	const maxWait = 30 * time.Second
+	wait, _ := time.ParseDuration(r.URL.Query().Get("wait"))
+	if wait < 0 {
+		return 0
+	}
+	if wait > maxWait {
+		return maxWait
+	}
+	return wait
 }
 
 func (d *dhcpv4Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
@@ -549,16 +562,7 @@ func (d *dhcpv4Daemon) publish(eventType, severity, reason, message string, attr
 }
 
 func (d *dhcpv4Daemon) appendEventFileLocked(event daemonapi.DaemonEvent) {
-	if d.opts.eventFile == "" {
-		return
-	}
-	_ = os.MkdirAll(filepath.Dir(d.opts.eventFile), 0755)
-	file, err := os.OpenFile(d.opts.eventFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-	_ = json.NewEncoder(file).Encode(event)
+	_ = eventfile.AppendJSONLine(d.opts.eventFile, event)
 }
 
 func (d *dhcpv4Daemon) restoreEvents() error {

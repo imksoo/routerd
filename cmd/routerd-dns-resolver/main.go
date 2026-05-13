@@ -21,6 +21,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/dnsresolver"
+	"routerd/pkg/eventfile"
 	"routerd/pkg/logstore"
 )
 
@@ -226,7 +227,7 @@ func (d *daemon) Run(ctx context.Context) error {
 		return err
 	}
 	defer listener.Close()
-	apiServer := &http.Server{Handler: d.routes()}
+	apiServer := &http.Server{Handler: d.routes(), ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = apiServer.Serve(listener) }()
 	defer apiServer.Close()
 
@@ -515,7 +516,7 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var lease dhcpLeaseEvent
-	if err := json.NewDecoder(r.Body).Decode(&lease); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&lease); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -591,7 +592,7 @@ func (d *daemon) publish(eventType, severity, reason, message string, attrs map[
 		d.events = d.events[len(d.events)-1000:]
 	}
 	d.cond.Broadcast()
-	_ = appendJSONLine(d.opts.eventFile, event)
+	_ = eventfile.AppendJSONLine(d.opts.eventFile, event)
 }
 
 func (d *daemon) setState(phase, health string) {
@@ -608,15 +609,6 @@ func (d *daemon) currentHealth() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.health
-}
-
-func appendJSONLine(path string, value any) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	return json.NewEncoder(file).Encode(value)
 }
 
 func conditionStatus(ok bool) string {

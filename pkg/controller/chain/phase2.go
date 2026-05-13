@@ -755,7 +755,7 @@ func postDaemonCommand(ctx context.Context, socketPath, command string) (daemona
 	}
 	defer resp.Body.Close()
 	var result daemonapi.CommandResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil && err != io.EOF {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil && err != io.EOF {
 		return result, err
 	}
 	if resp.StatusCode >= 400 {

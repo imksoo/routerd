@@ -26,6 +26,8 @@ const (
 	OperatorCount    = "count"
 
 	PhaseActive = "Active"
+
+	maxRuleCorrelationKeys = 4096
 )
 
 type Store interface {
@@ -52,6 +54,7 @@ type ruleState struct {
 	counts       map[string]int
 	absence      map[string]*time.Timer
 	debounce     map[string]*time.Timer
+	lastSeen     map[string]time.Time
 	fireCount    int
 	lastFiredAt  time.Time
 	warningCount int
@@ -59,6 +62,11 @@ type ruleState struct {
 
 type Engine interface {
 	Reconcile(ctx context.Context, rule api.Resource, event daemonapi.DaemonEvent) ([]daemonapi.DaemonEvent, error)
+}
+
+type pendingEvent struct {
+	resource api.Resource
+	event    daemonapi.DaemonEvent
 }
 
 func (c *Controller) Start(ctx context.Context) {
@@ -89,6 +97,8 @@ func (c *Controller) Start(ctx context.Context) {
 
 func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent) error {
 	c.init()
+	c.pruneRemovedRules()
+	var pending []pendingEvent
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "EventRule" {
 			continue
@@ -98,9 +108,12 @@ func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent)
 			return err
 		}
 		for _, emitted := range events {
-			if err := c.publish(ctx, resource, emitted); err != nil {
-				return err
-			}
+			pending = append(pending, pendingEvent{resource: resource, event: emitted})
+		}
+	}
+	for _, item := range pending {
+		if err := c.publish(ctx, item.resource, item.event); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -117,8 +130,11 @@ func (c *Controller) reconcileRule(ctx context.Context, resource api.Resource, e
 		c.warn(resource.Metadata.Name)
 		return nil, nil
 	}
-	state := c.ruleState(resource.Metadata.Name)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	state := c.ruleStateLocked(resource.Metadata.Name)
 	now := c.eventTime(event)
+	c.noteCorrelationLocked(state, key, now)
 	var out []daemonapi.DaemonEvent
 	switch spec.Pattern.Operator {
 	case OperatorAllOf:
@@ -200,7 +216,7 @@ func (c *Controller) evalWindow(resource api.Resource, spec api.EventRuleSpec, s
 	if len(kept) < threshold {
 		return nil
 	}
-	state.windows[key] = nil
+	delete(state.windows, key)
 	return []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, len(kept))}
 }
 
@@ -223,10 +239,20 @@ func (c *Controller) evalAbsence(resource api.Resource, spec api.EventRuleSpec, 
 		timer.Stop()
 	}
 	delay := durationOr(spec.Pattern.Duration, time.Minute)
-	state.absence[key] = time.AfterFunc(delay, func() {
+	var timer *time.Timer
+	timer = time.AfterFunc(delay, func() {
+		c.mu.Lock()
+		current := c.ruleStateLocked(resource.Metadata.Name)
+		if current.absence[key] != timer {
+			c.mu.Unlock()
+			return
+		}
+		delete(current.absence, key)
+		c.mu.Unlock()
 		emitted := c.emitEvent(resource, spec, event, key, 0)
 		_ = c.publish(context.Background(), resource, emitted)
 	})
+	state.absence[key] = timer
 }
 
 func (c *Controller) evalThrottle(resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent, now time.Time) []daemonapi.DaemonEvent {
@@ -250,10 +276,20 @@ func (c *Controller) evalDebounce(resource api.Resource, spec api.EventRuleSpec,
 		timer.Stop()
 	}
 	quiet := durationOr(spec.Pattern.Quiet, durationOr(spec.Pattern.Duration, time.Second))
-	state.debounce[key] = time.AfterFunc(quiet, func() {
+	var timer *time.Timer
+	timer = time.AfterFunc(quiet, func() {
+		c.mu.Lock()
+		current := c.ruleStateLocked(resource.Metadata.Name)
+		if current.debounce[key] != timer {
+			c.mu.Unlock()
+			return
+		}
+		delete(current.debounce, key)
+		c.mu.Unlock()
 		emitted := c.emitEvent(resource, spec, event, key, 0)
 		_ = c.publish(context.Background(), resource, emitted)
 	})
+	state.debounce[key] = timer
 }
 
 func (c *Controller) evalCount(resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) []daemonapi.DaemonEvent {
@@ -269,7 +305,7 @@ func (c *Controller) evalCount(resource api.Resource, spec api.EventRuleSpec, st
 		return nil
 	}
 	count := state.counts[key]
-	state.counts[key] = 0
+	delete(state.counts, key)
 	return []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, count)}
 }
 
@@ -286,7 +322,8 @@ func (c *Controller) emitEvent(resource api.Resource, spec api.EventRuleSpec, in
 }
 
 func (c *Controller) publish(ctx context.Context, resource api.Resource, event daemonapi.DaemonEvent) error {
-	state := c.ruleState(resource.Metadata.Name)
+	c.mu.Lock()
+	state := c.ruleStateLocked(resource.Metadata.Name)
 	state.fireCount++
 	state.lastFiredAt = c.eventTime(event)
 	status := map[string]any{
@@ -297,6 +334,7 @@ func (c *Controller) publish(ctx context.Context, resource api.Resource, event d
 	if state.warningCount > 0 {
 		status["warningCount"] = state.warningCount
 	}
+	c.mu.Unlock()
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EventRule", resource.Metadata.Name, status); err != nil {
 		return err
 	}
@@ -304,15 +342,24 @@ func (c *Controller) publish(ctx context.Context, resource api.Resource, event d
 }
 
 func (c *Controller) warn(name string) {
-	state := c.ruleState(name)
+	c.mu.Lock()
+	state := c.ruleStateLocked(name)
 	state.warningCount++
-	_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EventRule", name, map[string]any{"phase": PhaseActive, "warningCount": state.warningCount})
+	status := map[string]any{"phase": PhaseActive, "warningCount": state.warningCount}
+	c.mu.Unlock()
+	_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EventRule", name, status)
 }
 
 func (c *Controller) ruleState(name string) *ruleState {
-	c.init()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.ruleStateLocked(name)
+}
+
+func (c *Controller) ruleStateLocked(name string) *ruleState {
+	if c.state == nil {
+		c.state = map[string]*ruleState{}
+	}
 	state := c.state[name]
 	if state == nil {
 		state = &ruleState{
@@ -323,6 +370,7 @@ func (c *Controller) ruleState(name string) *ruleState {
 			counts:   map[string]int{},
 			absence:  map[string]*time.Timer{},
 			debounce: map[string]*time.Timer{},
+			lastSeen: map[string]time.Time{},
 		}
 		c.state[name] = state
 	}
@@ -334,6 +382,27 @@ func (c *Controller) init() {
 	defer c.mu.Unlock()
 	if c.state == nil {
 		c.state = map[string]*ruleState{}
+	}
+}
+
+func (c *Controller) pruneRemovedRules() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.state) == 0 || c.Router == nil {
+		return
+	}
+	present := map[string]struct{}{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind == "EventRule" {
+			present[resource.Metadata.Name] = struct{}{}
+		}
+	}
+	for name, state := range c.state {
+		if _, ok := present[name]; ok {
+			continue
+		}
+		stopRuleTimers(state)
+		delete(c.state, name)
 	}
 }
 
@@ -466,11 +535,60 @@ func (c *Controller) StopTimers() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, state := range c.state {
-		for _, timer := range state.absence {
-			timer.Stop()
+		stopRuleTimers(state)
+	}
+}
+
+func stopRuleTimers(state *ruleState) {
+	for _, timer := range state.absence {
+		timer.Stop()
+	}
+	clear(state.absence)
+	for _, timer := range state.debounce {
+		timer.Stop()
+	}
+	clear(state.debounce)
+}
+
+func (c *Controller) noteCorrelationLocked(state *ruleState, key string, seen time.Time) {
+	if state.lastSeen == nil {
+		state.lastSeen = map[string]time.Time{}
+	}
+	state.lastSeen[key] = seen
+	for len(state.lastSeen) > maxRuleCorrelationKeys {
+		oldestKey := ""
+		var oldest time.Time
+		for candidate, at := range state.lastSeen {
+			if oldestKey == "" || at.Before(oldest) {
+				oldestKey = candidate
+				oldest = at
+			}
 		}
-		for _, timer := range state.debounce {
-			timer.Stop()
+		if oldestKey == "" {
+			return
+		}
+		removeCorrelationLocked(state, oldestKey)
+	}
+}
+
+func removeCorrelationLocked(state *ruleState, key string) {
+	delete(state.sequence, key)
+	delete(state.windows, key)
+	delete(state.lastEmit, key)
+	delete(state.counts, key)
+	if timer := state.absence[key]; timer != nil {
+		timer.Stop()
+		delete(state.absence, key)
+	}
+	if timer := state.debounce[key]; timer != nil {
+		timer.Stop()
+		delete(state.debounce, key)
+	}
+	delete(state.lastSeen, key)
+	prefix := key + "\x00"
+	for slot := range state.latest {
+		if strings.HasPrefix(slot, prefix) {
+			delete(state.latest, slot)
 		}
 	}
 }
