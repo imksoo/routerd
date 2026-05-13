@@ -1569,8 +1569,9 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if len(ntpServers) > 0 {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:ntp-server,%s", tag, strings.Join(ntpServers, ",")))
 		}
-		if spec.Domain != "" {
-			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s", tag, spec.Domain))
+		domains := expandDomainValues(router, store, []string{spec.Domain}, []api.StatusValueSourceSpec{spec.DomainFrom})
+		if len(domains) > 0 {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s", tag, domains[0]))
 		}
 		for _, option := range spec.Options {
 			lines = append(lines, "dhcp-option=tag:"+tag+","+dnsmasqDHCPv4Option(option))
@@ -1620,8 +1621,9 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		for _, server := range append(expandServers(store, spec.DNSServers), expandServerSources(store, spec.DNSServerFrom)...) {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server,[%s]", tag, dnsmasqIPv6Address(server)))
 		}
-		if len(spec.DomainSearch) > 0 {
-			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:domain-search,%s", tag, strings.Join(spec.DomainSearch, ",")))
+		searchDomains := expandDomainValues(router, store, spec.DomainSearch, spec.DomainSearchFrom)
+		if len(searchDomains) > 0 {
+			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:domain-search,%s", tag, strings.Join(searchDomains, ",")))
 		}
 		for _, server := range append(expandServers(store, spec.SNTPServers), expandServerSources(store, spec.SNTPServerFrom)...) {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:sntp-server,[%s]", tag, dnsmasqIPv6Address(server)))
@@ -1664,8 +1666,9 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		for _, server := range append(expandServers(store, spec.RDNSS), expandServerSources(store, spec.RDNSSFrom)...) {
 			lines = append(lines, fmt.Sprintf("dhcp-option=option6:dns-server,[%s]", dnsmasqIPv6Address(server)))
 		}
-		if len(spec.DNSSL) > 0 {
-			lines = append(lines, "dhcp-option=option6:domain-search,"+strings.Join(spec.DNSSL, ","))
+		dnssl := expandDomainValues(router, store, spec.DNSSL, spec.DNSSLFrom)
+		if len(dnssl) > 0 {
+			lines = append(lines, "dhcp-option=option6:domain-search,"+strings.Join(dnssl, ","))
 		}
 	}
 	for _, resource := range router.Spec.Resources {
@@ -1832,6 +1835,37 @@ func expandServerSources(store Store, sources []api.StatusValueSourceSpec) []str
 	var out []string
 	for _, source := range sources {
 		out = append(out, resourcequery.Values(store, source)...)
+	}
+	return out
+}
+
+func expandDomainValues(router *api.Router, store Store, values []string, sources []api.StatusValueSourceSpec) []string {
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	for _, source := range sources {
+		if strings.TrimSpace(source.Resource) == "" {
+			continue
+		}
+		out = append(out, resourcequery.ValuesFromStoreOrRouter(store, router, source)...)
+	}
+	return compactNonEmptyStrings(out)
+}
+
+func compactNonEmptyStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
 	}
 	return out
 }

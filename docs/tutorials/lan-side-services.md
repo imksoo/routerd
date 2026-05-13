@@ -54,7 +54,9 @@ Keeping DHCP next to dnsmasq avoids reimplementing a battle-tested DHCP server. 
     ntpServerFrom:
       - resource: IPv4StaticAddress/lan-base
         field: address
-    domain: lan.example.org
+    domainFrom:
+      resource: DNSZone/lan
+      field: zone
     stickyHoldDays: 3
 ```
 
@@ -100,8 +102,9 @@ Router Advertisement does not carry a standard NTP server option. Use DHCPv4 opt
     rdnssFrom:
       - resource: IPv6DelegatedAddress/lan-base
         field: address
-    dnssl:
-      - lan.example.org
+    dnsslFrom:
+      - resource: DNSZone/lan
+        field: zone
     mtu: 1454
 
 - apiVersion: net.routerd.net/v1alpha1
@@ -117,11 +120,13 @@ Router Advertisement does not carry a standard NTP server option. Use DHCPv4 opt
     sntpServerFrom:
       - resource: IPv6DelegatedAddress/lan-base
         field: address
-    domainSearch:
-      - lan.example.org
+    domainSearchFrom:
+      - resource: DNSZone/lan
+        field: zone
 ```
 
 Use `mode: stateful` or `mode: both` only when DHCPv6 address assignment (in addition to SLAAC) is required.
+Use `domainFrom`, `dnsslFrom`, and `domainSearchFrom` when the LAN DNS suffix should follow a `DNSZone` resource. This keeps the DHCPv4 domain-name option, RA DNSSL option, and DHCPv6 domain-search option tied to the same local zone without repeating the domain string.
 
 ## Local DNS zone
 
@@ -145,12 +150,12 @@ Use `mode: stateful` or `mode: both` only when DHCPv6 address assignment (in add
       sources:
         - DHCPv4Server/lan-dhcpv4
         - DHCPv6Server/lan-dhcpv6
-      hostnameSuffix: lan.example.org
       ddns: true
       ttl: 60
 ```
 
 Manual records are placed under `records:`. Records derived from DHCP leases come from `dhcpDerived.sources`. The two are merged at lookup time.
+When DHCP-derived hostnames are relative names, they are published under the zone itself, so `hostnameSuffix` is usually not needed.
 
 ## DNS resolver listener
 

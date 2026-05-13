@@ -305,18 +305,21 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 				Gateway:     "192.168.10.1",
 				DNSServers:  []string{"192.168.10.1"},
 				NTPServers:  []string{"192.168.10.1"},
+				DomainFrom:  api.StatusValueSourceSpec{Resource: "DNSZone/local", Field: "zone"},
 				Options:     []api.DHCPv4OptionSpec{{Name: "domain-search", Value: "lan"}},
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{Server: "lan-v4", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.168.10.150"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.DHCPv6ServerSpec{
-				Interface:    "lan",
-				Mode:         "both",
-				AddressPool:  api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "6h"},
-				DNSServers:   []string{"2001:db8::53"},
-				SNTPServers:  []string{"2001:db8::123"},
-				DomainSearch: []string{"lan"},
+				Interface:   "lan",
+				Mode:        "both",
+				AddressPool: api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "6h"},
+				DNSServers:  []string{"2001:db8::53"},
+				SNTPServers: []string{"2001:db8::123"},
+				DomainSearchFrom: []api.StatusValueSourceSpec{
+					{Resource: "DNSZone/local", Field: "zone"},
+				},
 			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PrefixFrom: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan", Field: "prefix"}, RDNSS: []string{"2001:db8::53"}, DNSSL: []string{"lan"}, MTU: 1500, PRFPreference: "high"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PrefixFrom: api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan", Field: "prefix"}, RDNSS: []string{"2001:db8::53"}, DNSSLFrom: []api.StatusValueSourceSpec{{Resource: "DNSZone/local", Field: "zone"}}, MTU: 1500, PRFPreference: "high"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DNSZoneSpec{
 				Zone: "lan",
 				Records: []api.DNSZoneRecordSpec{

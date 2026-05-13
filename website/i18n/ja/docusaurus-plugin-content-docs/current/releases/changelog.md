@@ -8,6 +8,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260514.0025
+
+### 追加
+
+- `domainFrom`、`dnsslFrom`、`domainSearchFrom` を追加しました。
+  DHCPv4、IPv6 RA、DHCPv6 で LAN の suffix を広告するとき、
+  ローカルドメイン文字列を重複して書かず `DNSZone/<name>.zone` を参照できます。
+
 ## v20260513.2358
 
 ### 変更

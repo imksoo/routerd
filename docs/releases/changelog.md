@@ -8,6 +8,14 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260514.0025
+
+### Added
+
+- Added `domainFrom`, `dnsslFrom`, and `domainSearchFrom` so DHCPv4,
+  IPv6 RA, and DHCPv6 LAN suffix advertisement can reference
+  `DNSZone/<name>.zone` instead of repeating the local domain string.
+
 ## v20260513.2358
 
 ### Changed

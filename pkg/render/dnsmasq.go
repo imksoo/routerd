@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	"routerd/pkg/resourcequery"
 )
 
 type DnsmasqRuntime struct {
@@ -377,8 +378,9 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		if len(ntpServers) > 0 {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:ntp-server,%s\n", tag, strings.Join(ntpServers, ",")))
 		}
-		if spec.Domain != "" {
-			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s\n", tag, spec.Domain))
+		domains := dnsmasqExpandDomainValues(router, []string{spec.Domain}, []api.StatusValueSourceSpec{spec.DomainFrom})
+		if len(domains) > 0 {
+			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:domain-name,%s\n", tag, domains[0]))
 		}
 		for _, option := range spec.Options {
 			buf.WriteString("dhcp-option=tag:" + tag + "," + dnsmasqDHCPv4Option(option) + "\n")
@@ -430,8 +432,9 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		for _, server := range dnsServers {
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server,[%s]\n", tag, strings.Trim(server, "[]")))
 		}
-		if len(spec.DomainSearch) > 0 {
-			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:domain-search,%s\n", tag, strings.Join(spec.DomainSearch, ",")))
+		searchDomains := dnsmasqExpandDomainValues(router, spec.DomainSearch, spec.DomainSearchFrom)
+		if len(searchDomains) > 0 {
+			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option6:domain-search,%s\n", tag, strings.Join(searchDomains, ",")))
 		}
 		sntpServers, err := dnsmasqExpandIPv6Servers(append([]string(nil), spec.SNTPServers...), spec.SNTPServerFrom, aliases, delegatedIPv6, runtime)
 		if err != nil {
@@ -482,8 +485,9 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		for _, server := range rdnss {
 			buf.WriteString(fmt.Sprintf("dhcp-option=option6:dns-server,[%s]\n", strings.Trim(server, "[]")))
 		}
-		if len(spec.DNSSL) > 0 {
-			buf.WriteString("dhcp-option=option6:domain-search," + strings.Join(spec.DNSSL, ",") + "\n")
+		dnssl := dnsmasqExpandDomainValues(router, spec.DNSSL, spec.DNSSLFrom)
+		if len(dnssl) > 0 {
+			buf.WriteString("dhcp-option=option6:domain-search," + strings.Join(dnssl, ",") + "\n")
 		}
 	}
 	for _, res := range router.Spec.Resources {
@@ -499,6 +503,23 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		}
 	}
 	return nil
+}
+
+func dnsmasqExpandDomainValues(router *api.Router, base []string, sources []api.StatusValueSourceSpec) []string {
+	var out []string
+	for _, value := range base {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	for _, source := range sources {
+		if strings.TrimSpace(source.Resource) == "" {
+			continue
+		}
+		out = append(out, resourcequery.ValuesFromRouter(router, source)...)
+	}
+	return uniqueStrings(out)
 }
 
 func dnsmasqExpandIPv4Servers(base []string, sources []api.StatusValueSourceSpec, aliases map[string]string, staticIPv4 map[string]netip.Prefix, delegatedIPv6 map[string]delegatedIPv6Address, runtime DnsmasqRuntime) ([]string, error) {

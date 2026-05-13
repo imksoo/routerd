@@ -237,6 +237,7 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.DNSZoneSpec{Zone: "lan"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
 				Managed:     true,
 				Interface:   "lan",
@@ -244,7 +245,7 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 				Gateway:     "192.168.10.1",
 				DNSServers:  []string{"192.168.10.1"},
 				NTPServers:  []string{"192.168.10.1"},
-				Domain:      "lan",
+				DomainFrom:  api.StatusValueSourceSpec{Resource: "DNSZone/lan-zone", Field: "zone"},
 				Options:     []api.DHCPv4OptionSpec{{Name: "domain-search", Value: "lan"}},
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{
@@ -254,18 +255,20 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 				IPAddress:  "192.168.10.150",
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.DHCPv6ServerSpec{
-				Interface:    "lan",
-				Mode:         "both",
-				AddressPool:  api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "6h"},
-				DNSServers:   []string{"2001:db8::53"},
-				SNTPServers:  []string{"2001:db8::123"},
-				DomainSearch: []string{"lan"},
+				Interface:   "lan",
+				Mode:        "both",
+				AddressPool: api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "6h"},
+				DNSServers:  []string{"2001:db8::53"},
+				SNTPServers: []string{"2001:db8::123"},
+				DomainSearchFrom: []api.StatusValueSourceSpec{
+					{Resource: "DNSZone/lan-zone", Field: "zone"},
+				},
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{
 				Interface:         "lan",
 				PrefixSource:      "${IPv6DelegatedAddress/lan.status.address}",
 				RDNSS:             []string{"2001:db8::53"},
-				DNSSL:             []string{"lan"},
+				DNSSLFrom:         []api.StatusValueSourceSpec{{Resource: "DNSZone/lan-zone", Field: "zone"}},
 				MTU:               1500,
 				PRFPreference:     "high",
 				ValidLifetime:     "7200",

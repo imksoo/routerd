@@ -8,6 +8,14 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## v20260514.0025
+
+### 新增
+
+- 新增 `domainFrom`、`dnsslFrom` 和 `domainSearchFrom`，让 DHCPv4、
+  IPv6 RA 与 DHCPv6 的 LAN suffix 通告可引用 `DNSZone/<name>.zone`，
+  不必重复写入本地域名字符串。
+
 ## v20260513.2358
 
 ### 变更

@@ -30,13 +30,14 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 func TestDnsmasqLANServiceLines(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.DNSZoneSpec{Zone: "lan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
 			Interface:     "lan",
 			AddressPool:   api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
 			GatewayFrom:   api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/lan-base", Field: "address"},
 			DNSServerFrom: []api.StatusValueSourceSpec{{Resource: "IPv4StaticAddress/lan-base", Field: "address"}},
 			NTPServerFrom: []api.StatusValueSourceSpec{{Resource: "IPv4StaticAddress/lan-base", Field: "address"}},
-			Domain:        "lan",
+			DomainFrom:    api.StatusValueSourceSpec{Resource: "DNSZone/lan-zone", Field: "zone"},
 			Options:       []api.DHCPv4OptionSpec{{Name: "domain-search", Value: "lan"}},
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{
@@ -52,14 +53,16 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 			AddressPool:   api.DHCPAddressPoolSpec{Start: "::100", End: "::1ff", LeaseTime: "6h"},
 			DNSServerFrom: []api.StatusValueSourceSpec{{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}},
 			SNTPServers:   []string{"2001:db8::123"},
-			DomainSearch:  []string{"lan"},
-			RapidCommit:   true,
+			DomainSearchFrom: []api.StatusValueSourceSpec{
+				{Resource: "DNSZone/lan-zone", Field: "zone"},
+			},
+			RapidCommit: true,
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{
 			Interface:     "lan",
 			PrefixFrom:    api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan", Field: "address"},
 			RDNSSFrom:     []api.StatusValueSourceSpec{{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}},
-			DNSSL:         []string{"lan"},
+			DNSSLFrom:     []api.StatusValueSourceSpec{{Resource: "DNSZone/lan-zone", Field: "zone"}},
 			MTU:           1500,
 			PRFPreference: "high",
 			ValidLifetime: "7200",

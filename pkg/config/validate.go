@@ -1722,6 +1722,19 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.rdnss entries must be IPv6 addresses or status references", res.ID())
 			}
 		}
+		if len(spec.DNSSL) > 0 && len(spec.DNSSLFrom) > 0 {
+			return fmt.Errorf("%s spec.dnssl and spec.dnsslFrom cannot both be set", res.ID())
+		}
+		for i, domain := range spec.DNSSL {
+			if err := validateDomainValue(domain); err != nil {
+				return fmt.Errorf("%s spec.dnssl[%d]: %w", res.ID(), i, err)
+			}
+		}
+		for i, source := range spec.DNSSLFrom {
+			if err := validateDNSZoneDomainSource(source); err != nil {
+				return fmt.Errorf("%s spec.dnsslFrom[%d]: %w", res.ID(), i, err)
+			}
+		}
 	case "DHCPv6Server":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -1748,7 +1761,7 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.listenInterfaces[%d] must not be empty", res.ID(), i)
 			}
 		}
-		rendersLANService := spec.Interface != "" || spec.Mode != "" || spec.AddressPool.Start != "" || spec.AddressPool.End != "" || len(spec.DNSServers) > 0 || len(spec.SNTPServers) > 0 || len(spec.DomainSearch) > 0
+		rendersLANService := spec.Interface != "" || spec.Mode != "" || spec.AddressPool.Start != "" || spec.AddressPool.End != "" || len(spec.DNSServers) > 0 || len(spec.SNTPServers) > 0 || len(spec.DomainSearch) > 0 || len(spec.DomainSearchFrom) > 0
 		if rendersLANService && spec.Interface == "" {
 			return fmt.Errorf("%s spec.interface is required when rendering DHCPv6 LAN service", res.ID())
 		}
@@ -1775,6 +1788,19 @@ func validateResource(res api.Resource) error {
 			addr, err := netip.ParseAddr(server)
 			if err != nil || !addr.Is6() {
 				return fmt.Errorf("%s DNS/SNTP server entry %q must be IPv6 or a status reference", res.ID(), server)
+			}
+		}
+		if len(spec.DomainSearch) > 0 && len(spec.DomainSearchFrom) > 0 {
+			return fmt.Errorf("%s spec.domainSearch and spec.domainSearchFrom cannot both be set", res.ID())
+		}
+		for i, domain := range spec.DomainSearch {
+			if err := validateDomainValue(domain); err != nil {
+				return fmt.Errorf("%s spec.domainSearch[%d]: %w", res.ID(), i, err)
+			}
+		}
+		for i, source := range spec.DomainSearchFrom {
+			if err := validateDNSZoneDomainSource(source); err != nil {
+				return fmt.Errorf("%s spec.domainSearchFrom[%d]: %w", res.ID(), i, err)
 			}
 		}
 	case "DNSZone":
@@ -1930,6 +1956,19 @@ func validateResource(res api.Resource) error {
 			for i, source := range spec.NTPServerFrom {
 				if source.Resource == "" || source.Field == "" {
 					return fmt.Errorf("%s spec.ntpServerFrom[%d].resource and field are required", res.ID(), i)
+				}
+			}
+			if spec.Domain != "" && spec.DomainFrom.Resource != "" {
+				return fmt.Errorf("%s spec.domain and spec.domainFrom cannot both be set", res.ID())
+			}
+			if spec.Domain != "" {
+				if err := validateDomainValue(spec.Domain); err != nil {
+					return fmt.Errorf("%s spec.domain: %w", res.ID(), err)
+				}
+			}
+			if spec.DomainFrom.Resource != "" || spec.DomainFrom.Field != "" {
+				if err := validateDNSZoneDomainSource(spec.DomainFrom); err != nil {
+					return fmt.Errorf("%s spec.domainFrom: %w", res.ID(), err)
 				}
 			}
 			for i, option := range spec.Options {
@@ -3269,6 +3308,33 @@ func validateDHCPv4Option(option api.DHCPv4OptionSpec) error {
 	}
 	if strings.ContainsAny(option.Name, " \t\n,") || strings.ContainsAny(option.Value, "\n\r") {
 		return fmt.Errorf("contains invalid whitespace or newline")
+	}
+	return nil
+}
+
+func validateDomainValue(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if strings.ContainsAny(value, " \t\n\r/,") {
+		return fmt.Errorf("must be a single DNS domain")
+	}
+	return nil
+}
+
+func validateDNSZoneDomainSource(source api.StatusValueSourceSpec) error {
+	resource := strings.TrimSpace(source.Resource)
+	field := strings.TrimSpace(source.Field)
+	if resource == "" || field == "" {
+		return fmt.Errorf("resource and field are required")
+	}
+	kind, name, ok := strings.Cut(resource, "/")
+	if !ok || kind != "DNSZone" || name == "" {
+		return fmt.Errorf("resource must reference DNSZone/<name>")
+	}
+	if field != "zone" {
+		return fmt.Errorf("field must be zone")
 	}
 	return nil
 }

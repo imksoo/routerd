@@ -422,6 +422,7 @@ type DHCPv4ServerSpec struct {
 	NTPServers       []string                `yaml:"ntpServers,omitempty" json:"ntpServers,omitempty"`
 	NTPServerFrom    []StatusValueSourceSpec `yaml:"ntpServerFrom,omitempty" json:"ntpServerFrom,omitempty"`
 	Domain           string                  `yaml:"domain,omitempty" json:"domain,omitempty"`
+	DomainFrom       StatusValueSourceSpec   `yaml:"domainFrom,omitempty" json:"domainFrom,omitempty"`
 	Options          []DHCPv4OptionSpec      `yaml:"options,omitempty" json:"options,omitempty"`
 }
 
@@ -688,6 +689,7 @@ type IPv6RouterAdvertisementSpec struct {
 	RDNSS             []string                 `yaml:"rdnss,omitempty" json:"rdnss,omitempty"`
 	RDNSSFrom         []StatusValueSourceSpec  `yaml:"rdnssFrom,omitempty" json:"rdnssFrom,omitempty"`
 	DNSSL             []string                 `yaml:"dnssl,omitempty" json:"dnssl,omitempty"`
+	DNSSLFrom         []StatusValueSourceSpec  `yaml:"dnsslFrom,omitempty" json:"dnsslFrom,omitempty"`
 	MFlag             bool                     `yaml:"mFlag,omitempty" json:"mFlag,omitempty"`
 	OFlag             bool                     `yaml:"oFlag,omitempty" json:"oFlag,omitempty"`
 	MTU               int                      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=1280,maximum=65535"`
@@ -715,6 +717,7 @@ type DHCPv6ServerSpec struct {
 	SNTPServers      []string                 `yaml:"sntpServers,omitempty" json:"sntpServers,omitempty"`
 	SNTPServerFrom   []StatusValueSourceSpec  `yaml:"sntpServerFrom,omitempty" json:"sntpServerFrom,omitempty"`
 	DomainSearch     []string                 `yaml:"domainSearch,omitempty" json:"domainSearch,omitempty"`
+	DomainSearchFrom []StatusValueSourceSpec  `yaml:"domainSearchFrom,omitempty" json:"domainSearchFrom,omitempty"`
 	LeaseTime        string                   `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
 	RapidCommit      bool                     `yaml:"rapidCommit,omitempty" json:"rapidCommit,omitempty"`
 	ConfigPath       string                   `yaml:"configPath,omitempty" json:"configPath,omitempty"`

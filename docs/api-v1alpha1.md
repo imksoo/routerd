@@ -138,6 +138,10 @@ RDNSS through `IPv6RouterAdvertisement.spec.rdnss`.
 
 dnsmasq is limited to DHCPv4, DHCPv6, relay, and RA. DNS answering and
 forwarding belongs to `DNSResolver`.
+LAN DNS suffixes can be tied to a local zone by referencing
+`DNSZone/<name>.zone` from `DHCPv4Server.spec.domainFrom`,
+`IPv6RouterAdvertisement.spec.dnsslFrom`, and
+`DHCPv6Server.spec.domainSearchFrom`.
 
 `DNSResolver.spec.sources` lists local zones, conditional forwarding sources,
 and default upstreams in priority order. `https://` is DoH, `tls://` is DoT,

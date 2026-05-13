@@ -1465,7 +1465,6 @@ spec:
           sources:
             - DHCPv4Server/lan-dhcpv4
             - DHCPv6Server/lan-dhcpv6
-          hostnameSuffix: home.internal
           ddns: true
           ttl: 60
         reverseZones:
@@ -1491,10 +1490,9 @@ spec:
         ntpServerFrom:
           - resource: IPv4StaticAddress/lan-base
             field: address
-        domain: home.internal
-        options:
-          - name: domain-search
-            value: home.internal
+        domainFrom:
+          resource: DNSZone/home
+          field: zone
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Reservation
@@ -1521,8 +1519,9 @@ spec:
         rdnssFrom:
           - resource: IPv6DelegatedAddress/lan-base
             field: address
-        dnssl:
-          - home.internal
+        dnsslFrom:
+          - resource: DNSZone/home
+            field: zone
         mFlag: false
         oFlag: true
         mtu: 1500
@@ -1550,8 +1549,9 @@ spec:
         sntpServerFrom:
           - resource: IPv6DelegatedAddress/lan-base
             field: address
-        domainSearch:
-          - home.internal
+        domainSearchFrom:
+          - resource: DNSZone/home
+            field: zone
         leaseTime: 12h
         dependsOn:
           - resource: IPv6DelegatedAddress/lan-base

@@ -40,6 +40,44 @@ func Values(store Store, source api.StatusValueSourceSpec) []string {
 	return normalizeValues(value)
 }
 
+func ValuesFromStoreOrRouter(store Store, router *api.Router, source api.StatusValueSourceSpec) []string {
+	values := ValuesFromRouter(router, source)
+	if len(values) > 0 {
+		return values
+	}
+	return Values(store, source)
+}
+
+func ValuesFromRouter(router *api.Router, source api.StatusValueSourceSpec) []string {
+	if router == nil || strings.TrimSpace(source.Resource) == "" {
+		return nil
+	}
+	kind, name, ok := SplitResource(source.Resource)
+	if !ok {
+		return nil
+	}
+	field := strings.TrimSpace(source.Field)
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != kind || resource.Metadata.Name != name {
+			continue
+		}
+		switch kind {
+		case "DNSZone":
+			if field != "zone" {
+				return nil
+			}
+			spec, err := resource.DNSZoneSpec()
+			if err != nil {
+				return nil
+			}
+			return compact([]string{spec.Zone})
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
 func DependencyReady(store Store, dependency api.ResourceDependencySpec) bool {
 	if store == nil || strings.TrimSpace(dependency.Resource) == "" {
 		return dependency.Optional

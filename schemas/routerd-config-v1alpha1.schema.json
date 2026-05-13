@@ -2471,6 +2471,24 @@
                       "domain": {
                         "type": "string"
                       },
+                      "domainFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
                       "gateway": {
                         "type": "string"
                       },
@@ -3290,6 +3308,27 @@
                         },
                         "type": "array"
                       },
+                      "dnsslFrom": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "field": {
+                              "type": "string"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "interface": {
                         "type": "string"
                       },
@@ -3494,6 +3533,27 @@
                       "domainSearch": {
                         "items": {
                           "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "domainSearchFrom": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "field": {
+                              "type": "string"
+                            },
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
                         },
                         "type": "array"
                       },
