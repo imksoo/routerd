@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -330,11 +331,8 @@ func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(spec api.IPv4
 	var out []api.IPv4DefaultRoutePolicyCandidate
 	aliases := c.aliases()
 	for _, candidate := range spec.Candidates {
-		if candidate.HealthCheck != "" {
-			status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", candidate.HealthCheck)
-			if fmt.Sprint(status["phase"]) != "Healthy" {
-				continue
-			}
+		if !c.targetHealthy(candidate.HealthCheck) {
+			continue
 		}
 		if candidate.RouteSet != "" {
 			routeSet, ok := routeSets[candidate.RouteSet]
@@ -424,6 +422,11 @@ func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
 	status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)
 	switch fmt.Sprint(status["phase"]) {
 	case "Healthy":
+	case "Failing":
+		failed, ok := statusInt(status["consecutiveFailed"])
+		if !ok || failed <= 0 || failed >= c.healthCheckUnhealthyThreshold(name) {
+			return false
+		}
 	case PhaseDisabled, PhaseStandby, PhaseNotApplicable:
 		return false
 	default:
@@ -439,6 +442,9 @@ func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
 
 func (c IPv4PolicyRouteController) healthCheckFreshness(name string) time.Duration {
 	freshness := 2 * time.Minute
+	if c.Router == nil {
+		return freshness
+	}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "HealthCheck" || res.Metadata.Name != name {
 			continue
@@ -456,6 +462,58 @@ func (c IPv4PolicyRouteController) healthCheckFreshness(name string) time.Durati
 		return freshness
 	}
 	return freshness
+}
+
+func (c IPv4PolicyRouteController) healthCheckUnhealthyThreshold(name string) int {
+	if c.Router == nil {
+		return 3
+	}
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind != "HealthCheck" || res.Metadata.Name != name {
+			continue
+		}
+		spec, err := res.HealthCheckSpec()
+		if err != nil {
+			return 3
+		}
+		if spec.UnhealthyThreshold > 0 {
+			return spec.UnhealthyThreshold
+		}
+		return 3
+	}
+	return 3
+}
+
+func statusInt(value any) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int8:
+		return int(typed), true
+	case int16:
+		return int(typed), true
+	case int32:
+		return int(typed), true
+	case int64:
+		return int(typed), true
+	case uint:
+		return int(typed), true
+	case uint8:
+		return int(typed), true
+	case uint16:
+		return int(typed), true
+	case uint32:
+		return int(typed), true
+	case uint64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(typed))
+		return n, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func parseDurationDefault(value string, fallback time.Duration) time.Duration {

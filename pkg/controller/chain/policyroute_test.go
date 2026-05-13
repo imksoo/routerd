@@ -29,7 +29,7 @@ func TestIPv4PolicyRouteSetFiltersUnhealthyTargets(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/HealthCheck/hc-a": {"phase": "Healthy", "lastCheckedAt": now},
 		api.NetAPIVersion + "/HealthCheck/hc-b": {"phase": "Unhealthy", "lastCheckedAt": now},
-		api.NetAPIVersion + "/HealthCheck/hc-c": {"phase": "Failing", "lastCheckedAt": now},
+		api.NetAPIVersion + "/HealthCheck/hc-c": {"phase": "Unhealthy", "lastCheckedAt": now},
 	}
 	controller := IPv4PolicyRouteController{Router: router, Store: store}
 	data, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(map[string]bool{}))
@@ -46,6 +46,41 @@ func TestIPv4PolicyRouteSetFiltersUnhealthyTargets(t *testing.T) {
 		if strings.Contains(got, notWant) {
 			t.Fatalf("nftables output contains unhealthy mark %q:\n%s", notWant, got)
 		}
+	}
+}
+
+func TestIPv4PolicyRouteKeepsCandidateDuringTransientFailing(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.HealthCheckSpec{Interval: "30s", Timeout: "3s", UnhealthyThreshold: 3}},
+	}}}
+	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet": {
+			"phase":             "Failing",
+			"consecutiveFailed": 1,
+			"lastCheckedAt":     time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}}
+	if !controller.targetHealthy("internet") {
+		t.Fatal("single transient failing probe should not remove a policy route candidate")
+	}
+	controller.Store = mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet": {
+			"phase":             "Failing",
+			"consecutiveFailed": 3,
+			"lastCheckedAt":     time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}
+	if controller.targetHealthy("internet") {
+		t.Fatal("failing probe at unhealthy threshold should remove a policy route candidate")
+	}
+	controller.Store = mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet": {
+			"phase":         "Unhealthy",
+			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}
+	if controller.targetHealthy("internet") {
+		t.Fatal("unhealthy healthcheck should remove a policy route candidate")
 	}
 }
 
