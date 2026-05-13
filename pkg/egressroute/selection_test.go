@@ -176,6 +176,55 @@ func TestControllerRequiresHealthyHealthCheck(t *testing.T) {
 	}
 }
 
+func TestControllerKeepsCandidateReadyDuringHealthCheckGraceFailures(t *testing.T) {
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+	store := mapStore{
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":        {"phase": "Up", "interface": "ds-routerd-test"},
+		api.NetAPIVersion + "/Link/fallback":               {"phase": "Up", "ifname": "wan0"},
+		api.NetAPIVersion + "/HealthCheck/internet-tcp443": {"phase": "Failing", "consecutiveFailed": 1},
+	}
+	controller := Controller{
+		Router: routerWithResources(
+			api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+				Metadata: api.ObjectMeta{Name: "internet-tcp443"},
+				Spec:     api.HealthCheckSpec{UnhealthyThreshold: 3},
+			},
+			api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
+				Metadata: api.ObjectMeta{Name: "ipv4-default"},
+				Spec: api.EgressRoutePolicySpec{
+					Selection: SelectionHighestWeightReady,
+					Candidates: []api.EgressRoutePolicyCandidate{
+						{Name: "fallback", Source: "Link/fallback", DeviceFrom: api.StatusValueSourceSpec{Resource: "Link/fallback", Field: "ifname"}, Weight: 50},
+						{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", DeviceFrom: api.StatusValueSourceSpec{Resource: "DSLiteTunnel/ds-lite", Field: "interface"}, Weight: 80, HealthCheck: "internet-tcp443"},
+					},
+				},
+			},
+		),
+		Bus:   bus.New(),
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["phase"] != PhaseApplied || status["selectedCandidate"] != "ds-lite" {
+		t.Fatalf("status = %#v", status)
+	}
+
+	store[api.NetAPIVersion+"/HealthCheck/internet-tcp443"]["consecutiveFailed"] = 3
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["phase"] != PhaseApplied || status["selectedCandidate"] != "fallback" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestControllerUsesHealthyOutputWhenSourceHasNoStatus(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
@@ -322,11 +371,13 @@ func TestControllerRepublishesWhenSelectedOutputChanges(t *testing.T) {
 }
 
 func routerWithPolicy(spec api.EgressRoutePolicySpec) *api.Router {
-	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
-			Metadata: api.ObjectMeta{Name: "ipv4-default"},
-			Spec:     spec,
-		},
-	}}}
+	return routerWithResources(api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
+		Metadata: api.ObjectMeta{Name: "ipv4-default"},
+		Spec:     spec,
+	})
+}
+
+func routerWithResources(resources ...api.Resource) *api.Router {
+	return &api.Router{Spec: api.RouterSpec{Resources: resources}}
 }

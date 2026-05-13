@@ -238,6 +238,10 @@ func statusChanged(current, next map[string]any) bool {
 	return !reflect.DeepEqual(stableStatus(current), stableStatus(next))
 }
 
+func objectStatusChanged(kind string, current, next map[string]any) bool {
+	return statusChanged(current, statusWithOwnership("", kind, next))
+}
+
 func statusChangedFields(current, next map[string]any) []string {
 	currentStable := stableStatus(current)
 	nextStable := stableStatus(next)
@@ -266,6 +270,8 @@ func stableStatus(status map[string]any) map[string]any {
 	for key, value := range status {
 		switch key {
 		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions", "mtuObservedAt":
+			continue
+		case "handshakeAgeSeconds", "latestHandshake", "transferRxBytes", "transferTxBytes", "peers", "internalHoles":
 			continue
 		case "activeFlows", "count", "max", "usageRatio":
 			if fmt.Sprint(status["phase"]) == "Observed" {
@@ -305,9 +311,21 @@ func stableStatusValue(value any) any {
 	case float64:
 		return stableFloat64(typed)
 	case []any:
+		if typed == nil {
+			return nil
+		}
 		out := make([]any, 0, len(typed))
 		for _, item := range typed {
 			out = append(out, stableStatusValue(item))
+		}
+		return out
+	case []string:
+		if typed == nil {
+			return nil
+		}
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, item)
 		}
 		return out
 	case map[string]any:
@@ -1127,7 +1145,7 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name), status)
+		changed := objectStatusChanged("IPv4StaticAddress", c.Store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name), status)
 		addressPresent := true
 		if !c.DryRun {
 			addressPresentFn := c.AddressPresent
@@ -1330,7 +1348,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			"prefixSource": pdName,
 			"dryRun":       c.DryRun,
 		}
-		changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name), status)
+		changed := objectStatusChanged("IPv6DelegatedAddress", c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name), status)
 		ifname := interfaceIfName(c.Router, spec.Interface)
 		if ifname == "" {
 			ifname = spec.Interface

@@ -2122,6 +2122,7 @@ function App() {
   const connectionOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
   const connectionGroupOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
   const detailRefreshMounted = useRef(false);
+  const overviewDetailsLoaded = useRef(false);
 
   async function refresh() {
     if (refreshInFlight.current) {
@@ -2134,13 +2135,18 @@ function App() {
     const connectionLimit = selected === "connections" ? 600 : -1;
     const firewallLogLimit = selected === "firewall" ? 200 : -1;
     const generationLimit = selected === "generations" ? 200 : 50;
+    const shouldFetchConfig = selected === "config";
+    const shouldFetchGenerations = selected === "config" || selected === "generations";
     const includeClients = selected === "clients";
     const includeTuning = selected === "firewall";
     const includeVPN = selected === "vpn";
     const includeDPI = selected === "connections" || selected === "clients" || selected === "firewall";
     const trafficFlowLimit = selected === "clients" ? 200 : -1;
+    const includeResources = selected === "resources";
+    const includeEvents = selected === "events";
+    const includeDHCPLeases = selected === "clients";
     const summaryQuery = new URLSearchParams({
-      events: String(eventLimit),
+      events: includeEvents ? String(eventLimit) : "-1",
       connections: String(connectionLimit),
       firewallLogs: String(firewallLogLimit),
       dnsQueries: includeClients ? "200" : "-1",
@@ -2151,25 +2157,33 @@ function App() {
       dpi: includeDPI ? "1" : "0",
       tuning: includeTuning ? "1" : "0",
       vpn: includeVPN ? "1" : "0",
+      resources: includeResources ? "1" : "0",
+      dhcpLeases: includeDHCPLeases ? "1" : "0",
     });
     try {
       const [summaryResponse, configResponse, generationResponse, denyTimelineResponse] = await Promise.all([
         fetchJSON<Summary>(`api/v1/summary?${summaryQuery.toString()}`),
-        configRef.current ? Promise.resolve(configRef.current) : fetchJSON<ConfigSnapshot>("api/v1/config"),
-        fetchJSON<GenerationRecord[]>(`api/v1/generations?limit=${generationLimit}`),
+        shouldFetchConfig ? (configRef.current ? Promise.resolve(configRef.current) : fetchJSON<ConfigSnapshot>("api/v1/config")) : Promise.resolve(null),
+        shouldFetchGenerations ? fetchJSON<GenerationRecord[]>(`api/v1/generations?limit=${generationLimit}`) : Promise.resolve(null),
         selected === "firewall" ? fetchJSON<FirewallDenyTimelineBucket[]>("api/v1/firewall/deny-timeline?range=24h&bucket=5min") : Promise.resolve(null),
       ]);
       pendingScrollSnapshot.current = scrollSnapshot;
       setSummary(current => reconcileSummary(current, summaryResponse));
+      if (selected === "overview" && !overviewDetailsLoaded.current) {
+        overviewDetailsLoaded.current = true;
+        window.setTimeout(loadOverviewDetails, 250);
+      }
       if (Array.isArray(denyTimelineResponse)) {
         setFirewallDenyTimeline(denyTimelineResponse);
       }
       setMetricSamples(current => appendMetricSample(current, summaryResponse));
-      if (!configRef.current) {
+      if (configResponse && !configRef.current) {
         configRef.current = configResponse as ConfigSnapshot;
         setConfig(configResponse as ConfigSnapshot);
       }
-      setGenerations(current => reconcileRecords(current, generationResponse, row => String(row.generation)));
+      if (Array.isArray(generationResponse)) {
+        setGenerations(current => reconcileRecords(current, generationResponse, row => String(row.generation)));
+      }
       setError("");
     } catch (err) {
       setError(String(err));
@@ -2180,6 +2194,30 @@ function App() {
         queuedRefresh.current = false;
         scheduleRefresh(150);
       }
+    }
+  }
+
+  async function loadOverviewDetails() {
+    const query = new URLSearchParams({
+      events: "50",
+      connections: "-1",
+      firewallLogs: "-1",
+      dnsQueries: "-1",
+      trafficFlows: "-1",
+      clients: "0",
+      dpi: "0",
+      tuning: "0",
+      vpn: "0",
+      resources: "1",
+      dhcpLeases: "0",
+    });
+    try {
+      const response = await fetchJSON<Summary>(`api/v1/summary?${query.toString()}`);
+      setSummary(current => reconcileSummary(current, response));
+      setError("");
+    } catch (err) {
+      overviewDetailsLoaded.current = false;
+      setError(String(err));
     }
   }
 
@@ -4919,15 +4957,15 @@ function reconcileSummary(current: Summary | null, next: Summary): Summary {
   return {
     ...next,
     controllers: reconcileRecords(current.controllers, next.controllers, row => row.name ?? ""),
-    resources: reconcileRecords(current.resources, next.resources, row => `${row.apiVersion ?? ""}/${row.kind ?? ""}/${row.name ?? ""}`),
-    interfaces: reconcileRecords(current.interfaces, next.interfaces, row => row.ifname ?? row.name ?? ""),
-    events: reconcileRecords(current.events, next.events, row => eventKey(row)),
-    connections: reconcileConnectionTable(current.connections, next.connections),
-    dnsQueries: reconcileRecords(current.dnsQueries, next.dnsQueries, row => `${row.questionName ?? ""}/${(row.answers ?? []).join(",")}`),
-    trafficFlows: reconcileRecords(current.trafficFlows, next.trafficFlows, row => `${row.clientAddress ?? ""}/${row.peerAddress ?? ""}/${row.resolvedHostname ?? ""}/${row.tlsSNI ?? ""}`),
-    firewallLogs: reconcileRecords(current.firewallLogs, next.firewallLogs, row => String(row.id ?? `${row.ts ?? ""}/${row.srcAddress ?? ""}/${row.dstAddress ?? ""}/${row.protocol ?? ""}`)),
+    resources: next.resources === undefined ? current.resources : reconcileRecords(current.resources, next.resources, row => `${row.apiVersion ?? ""}/${row.kind ?? ""}/${row.name ?? ""}`),
+    interfaces: next.interfaces === undefined ? current.interfaces : reconcileRecords(current.interfaces, next.interfaces, row => row.ifname ?? row.name ?? ""),
+    events: next.events === undefined ? current.events : reconcileRecords(current.events, next.events, row => eventKey(row)),
+    connections: next.connections === undefined ? current.connections : reconcileConnectionTable(current.connections, next.connections),
+    dnsQueries: next.dnsQueries === undefined ? current.dnsQueries : reconcileRecords(current.dnsQueries, next.dnsQueries, row => `${row.questionName ?? ""}/${(row.answers ?? []).join(",")}`),
+    trafficFlows: next.trafficFlows === undefined ? current.trafficFlows : reconcileRecords(current.trafficFlows, next.trafficFlows, row => `${row.clientAddress ?? ""}/${row.peerAddress ?? ""}/${row.resolvedHostname ?? ""}/${row.tlsSNI ?? ""}`),
+    firewallLogs: next.firewallLogs === undefined ? current.firewallLogs : reconcileRecords(current.firewallLogs, next.firewallLogs, row => String(row.id ?? `${row.ts ?? ""}/${row.srcAddress ?? ""}/${row.dstAddress ?? ""}/${row.protocol ?? ""}`)),
     conntrackTuning: next.conntrackTuning ?? current.conntrackTuning,
-    dhcpLeases: reconcileRecords(current.dhcpLeases, next.dhcpLeases, row => `${row.family ?? ""}/${row.ip ?? ""}/${row.mac ?? ""}`),
+    dhcpLeases: next.dhcpLeases === undefined ? current.dhcpLeases : reconcileRecords(current.dhcpLeases, next.dhcpLeases, row => `${row.family ?? ""}/${row.ip ?? ""}/${row.mac ?? ""}`),
     dhcpFingerprints: next.dhcpFingerprints === undefined ? current.dhcpFingerprints : reconcileRecords(current.dhcpFingerprints, next.dhcpFingerprints, row => `${row.mac ?? ""}/${row.observedAt ?? ""}`),
     neighbors: next.neighbors === undefined ? current.neighbors : reconcileRecords(current.neighbors, next.neighbors, row => `${row.ip ?? ""}/${row.mac ?? ""}/${row.ifname ?? ""}`),
     clients: next.clients === undefined ? current.clients : reconcileRecords(current.clients, next.clients, row => row.id ?? row.mac ?? row.hostname ?? (row.addresses ?? []).join(",")),

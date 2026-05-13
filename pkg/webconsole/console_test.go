@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"routerd/pkg/api"
 	"routerd/pkg/apply"
 	"routerd/pkg/bus"
 	"routerd/pkg/controlapi"
@@ -128,6 +129,61 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}
+	}
+}
+
+func TestHandlerServesMinimalSummary(t *testing.T) {
+	handler := New(Options{
+		Store: fakeStore{
+			resources: []routerstate.ObjectStatus{{APIVersion: "net.routerd.net/v1alpha1", Kind: "HealthCheck", Name: "internet", Status: map[string]any{"phase": "Healthy"}}},
+			events:    []routerstate.StoredEvent{{ID: 1, Topic: "routerd.resource.status.changed"}},
+			latest:    11,
+		},
+		Result: func() *apply.Result {
+			return &apply.Result{Phase: "Healthy", Generation: 7, Resources: []apply.ResourceResult{{ID: "x", Phase: "Healthy"}}}
+		},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/summary?resources=0&events=-1&dhcpLeases=0&connections=-1&dnsQueries=-1&trafficFlows=-1&firewallLogs=-1&vpn=0", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("minimal summary missing %q:\n%s", want, body)
+		}
+	}
+	for _, notWant := range []string{`"resources"`, `"events"`, `"dhcpLeases"`, `"HealthCheck"`, `"routerd.resource.status.changed"`} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("minimal summary unexpectedly contains %q:\n%s", notWant, body)
+		}
+	}
+}
+
+func TestHandlerHidesStaleWireGuardPeerStatus(t *testing.T) {
+	handler := New(Options{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+			Metadata: api.ObjectMeta{Name: "wg-mesh-ipv4"},
+		}}}},
+		Store: fakeStore{resources: []routerstate.ObjectStatus{
+			{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: "wg-mesh-ipv4", Status: map[string]any{"phase": "Applied"}},
+			{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer", Name: "wg-mesh-ipv4", Status: map[string]any{"phase": "Pending", "reason": "InterfaceError"}},
+		}},
+	})
+	resources, err := handler.resourceStatuses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range resources {
+		if resource.Kind == "WireGuardPeer" && resource.Name == "wg-mesh-ipv4" {
+			t.Fatalf("stale WireGuardPeer status was not filtered: %+v", resource)
+		}
+	}
+	if len(resources) != 1 || resources[0].Kind != "IPv4StaticAddress" {
+		t.Fatalf("resources = %+v, want only IPv4StaticAddress/wg-mesh-ipv4", resources)
 	}
 }
 

@@ -80,6 +80,106 @@ func TestStatusChangedIgnoresPathMTUObservationTimestamp(t *testing.T) {
 	}
 }
 
+func TestStatusChangedIgnoresRuntimeTelemetry(t *testing.T) {
+	current := map[string]any{
+		"phase":               "Connected",
+		"publicKey":           "peer-key",
+		"allowedIPs":          []any{"10.99.0.2/32"},
+		"latestHandshake":     "2026-05-13T06:30:00Z",
+		"handshakeAgeSeconds": float64(12),
+		"transferRxBytes":     float64(1000),
+		"transferTxBytes":     float64(2000),
+	}
+	next := map[string]any{
+		"phase":               "Connected",
+		"publicKey":           "peer-key",
+		"allowedIPs":          []string{"10.99.0.2/32"},
+		"latestHandshake":     "2026-05-13T06:31:00Z",
+		"handshakeAgeSeconds": 1,
+		"transferRxBytes":     uint64(3000),
+		"transferTxBytes":     uint64(4000),
+	}
+	if statusChanged(current, next) {
+		t.Fatalf("runtime telemetry-only update should not be a resource status change")
+	}
+	if fields := statusChangedFields(current, next); len(fields) != 0 {
+		t.Fatalf("changed fields = %v, want none", fields)
+	}
+}
+
+func TestStatusChangedTreatsNilStringSlicesAsNull(t *testing.T) {
+	current := map[string]any{
+		"phase":            "Active",
+		"destinationCIDRs": nil,
+		"skipped":          nil,
+	}
+	next := map[string]any{
+		"phase":            "Active",
+		"destinationCIDRs": []string(nil),
+		"skipped":          []string(nil),
+	}
+	if statusChanged(current, next) {
+		t.Fatalf("nil string slice should be stable against stored null")
+	}
+	if fields := statusChangedFields(current, next); len(fields) != 0 {
+		t.Fatalf("changed fields = %v, want none", fields)
+	}
+}
+
+func TestStatusChangedIgnoresRenderDiagnostics(t *testing.T) {
+	current := map[string]any{
+		"phase":         "Applied",
+		"backend":       "nftables",
+		"internalHoles": float64(10),
+	}
+	next := map[string]any{
+		"phase":         "Applied",
+		"backend":       "nftables",
+		"internalHoles": 11,
+	}
+	if statusChanged(current, next) {
+		t.Fatalf("render diagnostic-only update should not be a resource status change")
+	}
+	if fields := statusChangedFields(current, next); len(fields) != 0 {
+		t.Fatalf("changed fields = %v, want none", fields)
+	}
+}
+
+func TestStatusChangedIgnoresPeerDetailTelemetry(t *testing.T) {
+	current := map[string]any{
+		"phase":           "Running",
+		"backendState":    "Running",
+		"onlinePeerCount": 2,
+		"peers": []map[string]any{{
+			"id":       "peer-a",
+			"online":   true,
+			"lastSeen": "2026-05-13T06:30:00Z",
+			"rxBytes":  100,
+			"txBytes":  200,
+		}},
+	}
+	next := map[string]any{
+		"phase":           "Running",
+		"backendState":    "Running",
+		"onlinePeerCount": 2,
+		"peers": []map[string]any{{
+			"id":       "peer-a",
+			"online":   true,
+			"lastSeen": "2026-05-13T06:31:00Z",
+			"rxBytes":  300,
+			"txBytes":  400,
+		}},
+	}
+	if statusChanged(current, next) {
+		t.Fatalf("peer detail telemetry-only update should not be a resource status change")
+	}
+	next["onlinePeerCount"] = 1
+	fields := statusChangedFields(current, next)
+	if len(fields) != 1 || fields[0] != "onlinePeerCount" {
+		t.Fatalf("changed fields = %v, want [onlinePeerCount]", fields)
+	}
+}
+
 func TestStatusChangedFieldsReportsMeaningfulChanges(t *testing.T) {
 	current := map[string]any{
 		"phase":             "Applied",

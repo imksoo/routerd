@@ -269,8 +269,7 @@ func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateS
 func (c Controller) ready(candidate api.EgressRoutePolicyCandidate) bool {
 	healthChecked := false
 	if candidate.HealthCheck != "" {
-		status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", candidate.HealthCheck)
-		if fmt.Sprint(status["phase"]) != "Healthy" {
+		if !c.healthCheckReady(candidate.HealthCheck) {
 			return false
 		}
 		healthChecked = true
@@ -285,6 +284,39 @@ func (c Controller) ready(candidate api.EgressRoutePolicyCandidate) bool {
 		return healthChecked && c.hasResolvedOutput(candidate)
 	}
 	return resourcequery.DependenciesReady(c.Store, candidate.DependsOn)
+}
+
+func (c Controller) healthCheckReady(name string) bool {
+	status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)
+	switch fmt.Sprint(status["phase"]) {
+	case "Healthy":
+		return true
+	case "Failing":
+		failed := statusInt(status["consecutiveFailed"])
+		return failed > 0 && failed < c.healthCheckUnhealthyThreshold(name)
+	default:
+		return false
+	}
+}
+
+func (c Controller) healthCheckUnhealthyThreshold(name string) int {
+	if c.Router == nil {
+		return 3
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.HealthCheckSpec()
+		if err != nil {
+			return 3
+		}
+		if spec.UnhealthyThreshold > 0 {
+			return spec.UnhealthyThreshold
+		}
+		return 3
+	}
+	return 3
 }
 
 func (c Controller) sourceDisabled(source string) bool {

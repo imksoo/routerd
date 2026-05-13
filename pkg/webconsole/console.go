@@ -69,10 +69,10 @@ type Snapshot struct {
 	GeneratedAt      time.Time                     `json:"generatedAt"`
 	Status           controlapi.Status             `json:"status"`
 	Controllers      []controlapi.ControllerStatus `json:"controllers,omitempty"`
-	Phases           map[string]int                `json:"phases"`
-	Resources        []routerstate.ObjectStatus    `json:"resources"`
+	Phases           map[string]int                `json:"phases,omitempty"`
+	Resources        []routerstate.ObjectStatus    `json:"resources,omitempty"`
 	Interfaces       []InterfaceSummary            `json:"interfaces,omitempty"`
-	Events           []routerstate.StoredEvent     `json:"events"`
+	Events           []routerstate.StoredEvent     `json:"events,omitempty"`
 	Connections      *observe.ConnectionTable      `json:"connections,omitempty"`
 	DNSQueries       []logstore.DNSQuery           `json:"dnsQueries,omitempty"`
 	TrafficFlows     []logstore.TrafficFlow        `json:"trafficFlows,omitempty"`
@@ -98,6 +98,8 @@ type SnapshotOptions struct {
 	IncludeClients         bool
 	IncludeConntrackTuning bool
 	IncludeVPN             bool
+	SkipResources          bool
+	SkipDHCPLeases         bool
 }
 
 type ConfigSnapshot struct {
@@ -317,7 +319,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
-	if opts.EventLimit <= 0 {
+	if opts.EventLimit == 0 {
 		opts.EventLimit = 50
 	}
 	if opts.FirewallLimit == 0 {
@@ -336,13 +338,20 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		opts.DHCPFingerprintLimit = 200
 	}
 	var errors []string
-	resources, err := h.resourceStatuses()
-	if err != nil {
-		errors = append(errors, err.Error())
+	var err error
+	var resources []routerstate.ObjectStatus
+	if !opts.SkipResources {
+		resources, err = h.resourceStatuses()
+		if err != nil {
+			errors = append(errors, err.Error())
+		}
 	}
-	events, err := h.eventList(opts.EventLimit)
-	if err != nil {
-		errors = append(errors, err.Error())
+	var events []routerstate.StoredEvent
+	if opts.EventLimit >= 0 {
+		events, err = h.eventList(opts.EventLimit)
+		if err != nil {
+			errors = append(errors, err.Error())
+		}
 	}
 	var connections *observe.ConnectionTable
 	if h.opts.Connections != nil && opts.ConnectionsLimit >= 0 {
@@ -411,15 +420,19 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 			conntrackTuning = &tuning
 		}
 	}
-	dhcpLeases, err := h.dhcpLeaseList()
-	if err != nil {
-		errors = append(errors, err.Error())
+	var dhcpLeases []DHCPLease
+	var stickyLeases []logstore.DHCPStickyLease
+	if !opts.SkipDHCPLeases || opts.IncludeClients {
+		dhcpLeases, err = h.dhcpLeaseList()
+		if err != nil {
+			errors = append(errors, err.Error())
+		}
+		stickyLeases, err = h.dhcpStickyLeaseList(logstore.DHCPStickyFilter{Limit: 10000})
+		if err != nil {
+			errors = append(errors, err.Error())
+		}
+		dhcpLeases = annotateDHCPLeasesWithSticky(dhcpLeases, stickyLeases, time.Now().UTC())
 	}
-	stickyLeases, err := h.dhcpStickyLeaseList(logstore.DHCPStickyFilter{Limit: 10000})
-	if err != nil {
-		errors = append(errors, err.Error())
-	}
-	dhcpLeases = annotateDHCPLeasesWithSticky(dhcpLeases, stickyLeases, time.Now().UTC())
 	var dhcpFingerprints []logstore.DHCPFingerprint
 	var neighbors []NeighborEntry
 	var clients []ClientEntry
@@ -527,7 +540,7 @@ func (h Handler) asset(w http.ResponseWriter, r *http.Request, path string) {
 
 func (h Handler) summary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, h.Snapshot(SnapshotOptions{
-		EventLimit:             intQuery(r, "events", 50),
+		EventLimit:             signedIntQuery(r, "events", 50),
 		ConnectionsLimit:       signedIntQuery(r, "connections", h.opts.ConnectionsLimit),
 		FirewallLimit:          signedIntQuery(r, "firewallLogs", 50),
 		DNSQueryLimit:          signedIntQuery(r, "dnsQueries", 50),
@@ -538,6 +551,8 @@ func (h Handler) summary(w http.ResponseWriter, r *http.Request) {
 		IncludeClients:         boolQuery(r, "clients", false),
 		IncludeConntrackTuning: boolQuery(r, "tuning", false),
 		IncludeVPN:             boolQuery(r, "vpn", true),
+		SkipResources:          !boolQuery(r, "resources", true),
+		SkipDHCPLeases:         !boolQuery(r, "dhcpLeases", true),
 	}))
 }
 
@@ -1133,9 +1148,31 @@ func (h Handler) resourceStatuses() ([]routerstate.ObjectStatus, error) {
 		if err != nil {
 			return nil, err
 		}
+		resources = h.filterStaleObjectStatuses(resources)
 		return annotateResourceOwnership(resources, h.opts.ControllerModes), nil
 	}
 	return nil, nil
+}
+
+func (h Handler) filterStaleObjectStatuses(resources []routerstate.ObjectStatus) []routerstate.ObjectStatus {
+	if h.opts.Router == nil {
+		return resources
+	}
+	declared := map[string]struct{}{}
+	for _, resource := range h.opts.Router.Spec.Resources {
+		declared[resource.APIVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = struct{}{}
+	}
+	out := resources[:0]
+	for _, resource := range resources {
+		if resource.Kind == "WireGuardPeer" {
+			key := resource.APIVersion + "/" + resource.Kind + "/" + resource.Name
+			if _, ok := declared[key]; !ok {
+				continue
+			}
+		}
+		out = append(out, resource)
+	}
+	return out
 }
 
 func annotateResourceOwnership(resources []routerstate.ObjectStatus, controllers []controlapi.ControllerStatus) []routerstate.ObjectStatus {
