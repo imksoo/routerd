@@ -221,9 +221,16 @@ sudo ./install.sh
 古い `routerd --version` と新しい `routerd --version` を表示します。
 実行ファイルとサービステンプレートを置き換え、設定と状態を保持します。
 routerd サービスが起動中であれば再起動します。
+`/etc/systemd/system/routerd.service` が routerd の設定で管理されている場合は、
+アーカイブに含まれるテンプレートで上書きせず、その unit を保持します。
 
 置き換えるファイルは `*.backup.YYYYMMDDHHMMSS` に退避します。
 途中で失敗した場合は、一時バックアップから復元します。
+
+routerd 自身が `routerd.service` を `SystemdUnit` リソースとして管理している場合、
+unit file の変更は慎重に扱います。
+apply の途中で自分自身を直接再起動するのではなく、`systemd-run` で少し遅らせた
+self-restart を予約します。
 
 よく使うオプション:
 

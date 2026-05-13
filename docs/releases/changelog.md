@@ -8,6 +8,46 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260513.2317
+
+### Changed
+
+- Refreshed the production reconciliation documentation after the
+  `v20260513.2252` hardening work. The operations, upgrade, state ownership,
+  and localized changelog pages now describe host-state drift checks, managed
+  cleanup, nftables named-set updates, and config-managed `routerd.service`
+  upgrade behavior.
+
+## v20260513.2252
+
+### Changed
+
+- Hardened production reconciliation so controllers compare the status database
+  with the host state before skipping work. This covers systemd units, dnsmasq,
+  DHCPv4 lease addresses, route-policy nftables tables, NAT44, and related
+  managed artifacts.
+- Health checks now carry `fwmark` through the rendered systemd units, socket
+  setup, status observations, and OpenTelemetry attributes. This lets probes use
+  the same policy-route marks as the paths they are testing.
+- Linux firewall rendering now clears routerd-managed named sets before
+  redefining them. Removed zone interfaces or client-policy MAC addresses no
+  longer remain in nftables, while the managed filter table is still reloaded
+  without destroying the whole table.
+- The release installer preserves a config-managed `routerd.service` instead of
+  overwriting it with the archive template. When routerd manages its own unit,
+  unit-file changes schedule a delayed self-restart through `systemd-run`.
+
+### Fixed
+
+- Removed stale `routerd-healthcheck@*.service` units when their `HealthCheck`
+  resources disappear from YAML.
+- Cleared the managed NAT44 table or pf anchor when the last NAT rule is
+  removed.
+- Re-applied a DHCPv4 lease address when status said it was present but the
+  address was missing from the interface.
+- Marked empty `WireGuardPeer` resources as `NotConfigured` instead of leaving
+  them in a misleading pending state.
+
 ## v20260513.1931
 
 ## v20260513.1153

@@ -219,10 +219,18 @@ mode.
 It prints the old and new `routerd --version` output.
 It replaces binaries and service templates, keeps configuration and state, and
 restarts the routerd service if it was already active.
+When `/etc/systemd/system/routerd.service` is already managed by routerd
+configuration, the installer preserves that unit instead of overwriting it with
+the archive template.
 
 Every replaced file is copied to `*.backup.YYYYMMDDHHMMSS` before replacement.
 If the install fails partway through, the script restores files from the
 temporary rollback backup.
+
+If routerd itself manages `routerd.service` as a `SystemdUnit` resource, a unit
+file change is applied carefully: routerd schedules a delayed self-restart
+through `systemd-run` instead of directly restarting itself in the middle of the
+apply pass.
 
 Useful options:
 

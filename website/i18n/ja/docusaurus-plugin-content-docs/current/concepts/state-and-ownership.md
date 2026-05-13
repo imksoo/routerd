@@ -69,6 +69,9 @@ YAML 保存を導入する前の行は履歴として残りますが、差分表
 Linux では、routerd は nftables の管理テーブルを 1 回の `nft -f` トランザクションで更新します。
 生成したルールセットは、必要なら管理テーブルを作成します。
 その後、同じ nftables バッチ内でテーブルを空にして、新しいチェーンを読み込みます。
+firewall zone の interface set や client-policy の MAC set のように
+routerd が所有する named set は、再定義の前に管理対象 set だけを destroy します。
+これにより、削除した set 要素が reload 後に残ることを防ぎます。
 稼働中の NAT やフィルターテーブルを削除してから作り直す処理はしません。
 そのため、routerd の再起動や通常の設定変更でも、既存の conntrack エントリーはカーネルの状態テーブルに残ります。
 

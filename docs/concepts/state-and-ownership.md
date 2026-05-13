@@ -67,6 +67,9 @@ Rows created before YAML snapshot storage was introduced remain valid history, b
 
 On Linux, routerd updates managed nftables tables with a single `nft -f` transaction.
 Generated rulesets create the managed table if needed, flush that table, and then load the replacement chains in the same nftables batch.
+For named sets owned by routerd, such as firewall zone interface sets and
+client-policy MAC sets, the generated ruleset destroys the managed set before
+defining it again. That prevents removed set elements from surviving a reload.
 routerd does not delete a live NAT or filter table before adding the replacement table.
 Existing conntrack entries therefore remain attached to the kernel state table during routerd restarts and normal configuration changes.
 

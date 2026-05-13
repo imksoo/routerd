@@ -8,6 +8,47 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260513.2317
+
+### 変更
+
+- `v20260513.2252` の堅牢化に合わせて、本番環境での reconcile に関する
+  ドキュメントを更新しました。
+  operations、upgrade、state ownership、各言語の changelog で、実機状態の
+  drift 確認、管理対象構成物の掃除、nftables named set の更新、
+  設定で管理される `routerd.service` の upgrade 時の扱いを説明しています。
+
+## v20260513.2252
+
+### 変更
+
+- 本番環境での reconcile を堅牢化しました。
+  controller は処理を省略する前に、状態データベースだけでなく実機状態も確認します。
+  対象には systemd unit、dnsmasq、DHCPv4 lease アドレス、
+  route-policy の nftables table、NAT44、関連する管理対象構成物が含まれます。
+- health check の `fwmark` を、生成する systemd unit、socket 設定、status の観測値、
+  OpenTelemetry 属性まで通すようにしました。
+  probe が、検査対象の経路と同じ policy-route mark を使えます。
+- Linux firewall の rendering で、routerd が管理する named set を再定義前に
+  消すようにしました。
+  zone interface や client-policy の MAC アドレスを削除したときに nftables 上へ残らず、
+  filter table 全体を destroy せずに再読み込みします。
+- release installer は、設定で管理されている `routerd.service` を
+  archive の template で上書きせず保持します。
+  routerd が自分自身の unit を管理している場合、unit file の変更時は
+  `systemd-run` で少し遅らせた self-restart を予約します。
+
+### 修正
+
+- YAML から消えた `HealthCheck` に対応する古い `routerd-healthcheck@*.service` を
+  削除するようにしました。
+- NAT rule が 0 件になったとき、管理対象の NAT44 table または pf anchor を
+  空にするようにしました。
+- status では DHCPv4 lease アドレスが存在すると見えていても、実際の
+  インターフェースから消えている場合は再適用するようにしました。
+- 設定内容が空の `WireGuardPeer` は、誤解を招く Pending ではなく
+  `NotConfigured` として表示するようにしました。
+
 ## v20260513.1931
 
 ## v20260513.1153

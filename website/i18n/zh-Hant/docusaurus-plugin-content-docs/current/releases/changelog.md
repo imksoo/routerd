@@ -8,6 +8,28 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## v20260513.2317
+
+### 變更
+
+- 配合 `v20260513.2252` 的穩健化工作，更新 production reconcile 文件。operations、upgrade、state ownership 與各語言 changelog 現在說明主機狀態 drift 檢查、受管理 artifact 清理、nftables named set 更新，以及由設定管理的 `routerd.service` 在 upgrade 時的處理方式。
+
+## v20260513.2252
+
+### 變更
+
+- 強化 production reconcile。controller 在略過工作前，會同時檢查 status database 與實際主機狀態；範圍包含 systemd unit、dnsmasq、DHCPv4 lease 位址、route-policy nftables table、NAT44，以及相關的受管理 artifact。
+- Health check 的 `fwmark` 現在會傳遞到產生的 systemd unit、socket 設定、status 觀測值與 OpenTelemetry attributes。probe 可以使用與被檢查路徑相同的 policy-route mark。
+- Linux firewall rendering 會在重新定義 routerd-managed named set 前先清除它們。已移除的 zone interface 或 client-policy MAC 位址不會殘留在 nftables 中，同時仍會保留整個 managed filter table，不會 destroy/recreate table。
+- release installer 會保留由設定管理的 `routerd.service`，不再以 archive template 覆寫。當 routerd 管理自己的 unit 時，unit file 變更會透過 `systemd-run` 排程延遲 self-restart。
+
+### 修正
+
+- 當 `HealthCheck` resource 從 YAML 消失時，會移除對應的舊 `routerd-healthcheck@*.service` unit。
+- 移除最後一條 NAT rule 後，會清空受管理的 NAT44 table 或 pf anchor。
+- status 顯示 DHCPv4 lease 位址存在，但介面上實際缺少該位址時，會重新套用位址。
+- 空的 `WireGuardPeer` resource 現在標示為 `NotConfigured`，避免停留在容易誤解的 Pending 狀態。
+
 ## v20260513.1931
 
 ## v20260513.1153

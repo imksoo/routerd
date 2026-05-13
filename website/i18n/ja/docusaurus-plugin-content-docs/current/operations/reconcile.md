@@ -27,6 +27,38 @@ routerd serve --config router.yaml
 serve モードでは、bus 上のイベントに反応して影響範囲のリソースだけを再評価します。
 入力は DHCPv6-PD renewal、health check 結果、derived event、inotify による設定変更検知などです。
 
+## drift の確認
+
+routerd は、状態データベースだけを唯一の正として扱いません。
+状態ストアには前回の apply で観測した内容を記録しますが、各 controller は
+処理を省略する前に、自分が管理する実機状態も確認します。
+たとえば systemd unit の enabled/active 状態、dnsmasq が期待した設定ファイルで
+動いているか、DHCPv4 lease のアドレスがインターフェース上に残っているか、
+管理対象の nftables table が実機に存在するかを見ます。
+
+これは再起動後、手作業の変更に失敗した後、upgrade が途中で止まった後に重要です。
+状態データベース上は Applied のままでも、OS 側の状態がずれていることがあります。
+controller は前回の status 行をそのまま信じるのではなく、宣言された YAML へ
+OS 状態を収束させます。
+
+## 管理対象の掃除
+
+YAML からリソースが消えた場合、所有元の controller は自分が所有する構成物だけを
+削除または無効化します。
+対応する `HealthCheck` がなくなった `routerd-healthcheck@*.service` は
+disable して削除します。
+NAT44 rule が 0 件になった場合は、管理対象の `routerd_nat` table または
+pf anchor を空にします。
+`state: absent` の `SystemdUnit` は、render 済み unit を削除し、unit が存在するか
+まだ enabled/active の場合だけ停止します。
+
+firewall の rendering では、管理対象の nftables table は維持したまま、1 回の
+`nft -f` batch で再読み込みします。
+firewall zone の interface set や client-policy の MAC set のような named set は、
+再定義の前に routerd が管理対象 set だけを destroy します。
+これにより削除済みの要素が残らず、通常の apply で filter table 全体を
+destroy/recreate することもありません。
+
 ## 削除
 
 routerd は所有を確認できる artefact (routerd が以前作成、または明示的に adopt したもの) のみ削除します。
