@@ -8,6 +8,18 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260514.0743
+
+### Fixed
+
+- Fixed Web Console Clients so expired dnsmasq leases are ignored instead of
+  keeping old hosts visible indefinitely.
+- Web Console DHCP lease merging now prefers the newest valid lease, using the
+  configured lease-file order only as a tie-breaker.
+- routerd now passes the controller-chain dnsmasq lease file to the Web Console
+  first, so the console follows the lease file that the managed dnsmasq instance
+  actually uses.
+
 ## v20260514.0654
 
 ### Fixed

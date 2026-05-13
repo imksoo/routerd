@@ -2113,10 +2113,15 @@ var ianaUDPServiceNames = map[int]string{
 
 func (h Handler) dhcpLeaseList() ([]DHCPLease, error) {
 	seen := map[string]DHCPLease{}
-	for _, path := range h.opts.DHCPLeasePaths {
+	now := time.Now().UTC()
+	pathPriority := map[string]int{}
+	for priority, path := range h.opts.DHCPLeasePaths {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
+		}
+		if _, ok := pathPriority[path]; !ok {
+			pathPriority[path] = priority
 		}
 		leases, err := readDnsmasqLeases(path)
 		if err != nil {
@@ -2126,6 +2131,9 @@ func (h Handler) dhcpLeaseList() ([]DHCPLease, error) {
 			return nil, err
 		}
 		for _, lease := range leases {
+			if leaseExpired(lease, now) {
+				continue
+			}
 			key := lease.IP
 			if key == "" {
 				key = lease.MAC
@@ -2133,7 +2141,9 @@ func (h Handler) dhcpLeaseList() ([]DHCPLease, error) {
 			if key == "" {
 				continue
 			}
-			seen[key] = lease
+			if existing, ok := seen[key]; !ok || preferDHCPLease(lease, existing, pathPriority[path], pathPriorityValue(pathPriority, existing.Source)) {
+				seen[key] = lease
+			}
 		}
 	}
 	out := make([]DHCPLease, 0, len(seen))
@@ -2144,6 +2154,24 @@ func (h Handler) dhcpLeaseList() ([]DHCPLease, error) {
 		return out[i].IP < out[j].IP
 	})
 	return out, nil
+}
+
+func leaseExpired(lease DHCPLease, now time.Time) bool {
+	return !lease.ExpiresAt.IsZero() && !lease.ExpiresAt.After(now)
+}
+
+func preferDHCPLease(candidate, existing DHCPLease, candidatePriority, existingPriority int) bool {
+	if !candidate.ExpiresAt.IsZero() && !existing.ExpiresAt.IsZero() && !candidate.ExpiresAt.Equal(existing.ExpiresAt) {
+		return candidate.ExpiresAt.After(existing.ExpiresAt)
+	}
+	return candidatePriority < existingPriority
+}
+
+func pathPriorityValue(priorities map[string]int, path string) int {
+	if priority, ok := priorities[path]; ok {
+		return priority
+	}
+	return len(priorities)
 }
 
 func readDnsmasqLeases(path string) ([]DHCPLease, error) {

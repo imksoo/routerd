@@ -3241,7 +3241,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			return webErr
 		}
 		if ok {
-			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerStatuses); err != nil {
+			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerStatuses, configuredDHCPLeasePaths(*controllerDnsmasqConfig)); err != nil {
 				return err
 			}
 		}
@@ -3458,6 +3458,48 @@ func configuredTrafficFlowLogPath(router *api.Router) string {
 	return fallback
 }
 
+func configuredDHCPLeasePaths(controllerDnsmasqConfig string) []string {
+	var paths []string
+	if leaseFile := dnsmasqLeaseFileForPlatform(); strings.TrimSpace(leaseFile) != "" {
+		paths = append(paths, leaseFile)
+	}
+	if leaseFile := dnsmasqLeaseFileForConfig(controllerDnsmasqConfig); strings.TrimSpace(leaseFile) != "" {
+		paths = append(paths, leaseFile)
+	}
+	paths = append(paths,
+		strings.TrimRight(platformDefaults.RuntimeDir, "/")+"/dnsmasq.leases",
+		"/run/routerd/dnsmasq.leases",
+		"/var/lib/misc/dnsmasq.leases",
+	)
+	return dedupeStrings(paths)
+}
+
+func dnsmasqLeaseFileForConfig(configPath string) string {
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" {
+		return ""
+	}
+	leaseDir := filepath.Dir(configPath)
+	if strings.TrimSpace(leaseDir) == "" || leaseDir == "." {
+		return ""
+	}
+	return filepath.Join(leaseDir, "dnsmasq.leases")
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
 func configuredFirewallLogPath(router *api.Router) string {
 	fallback := platformDefaults.StateDir + "/firewall-logs.db"
 	if router == nil {
@@ -3618,7 +3660,7 @@ func statusAddressValue(value string) string {
 	return ""
 }
 
-func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, logger *eventlog.Logger, configPath string, controllerStatuses []controlapi.ControllerStatus) error {
+func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, logger *eventlog.Logger, configPath string, controllerStatuses []controlapi.ControllerStatus, dhcpLeasePaths []string) error {
 	addr := net.JoinHostPort(spec.ListenAddress, fmt.Sprintf("%d", spec.Port))
 	handler := webconsole.New(webconsole.Options{
 		Router:                 router,
@@ -3632,6 +3674,7 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		FirewallLogPath:        platformDefaults.StateDir + "/firewall-logs.db",
 		DHCPFingerprintLogPath: platformDefaults.StateDir + "/dhcp-fingerprints.db",
 		DHCPStickyLogPath:      dhcpStickyLogPath(),
+		DHCPLeasePaths:         dhcpLeasePaths,
 		ConfigPath:             configPath,
 		ControllerModes:        controllerStatuses,
 		Bus:                    eventBus,

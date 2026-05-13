@@ -653,7 +653,8 @@ func TestHandlerFallsBackConnectionAppFromPort(t *testing.T) {
 
 func TestHandlerIncludesDHCPLeases(t *testing.T) {
 	leasePath := filepath.Join(t.TempDir(), "dnsmasq.leases")
-	if err := os.WriteFile(leasePath, []byte("1778014867 7c:dd:e9:01:40:15 172.18.1.78 ATOM 01:7c:dd:e9:01:40:15\n"), 0o644); err != nil {
+	expires := time.Now().Add(time.Hour).Unix()
+	if err := os.WriteFile(leasePath, []byte(fmt.Sprintf("%d 7c:dd:e9:01:40:15 172.18.1.78 ATOM 01:7c:dd:e9:01:40:15\n", expires)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	handler := New(Options{DHCPLeasePaths: []string{leasePath}})
@@ -667,6 +668,70 @@ func TestHandlerIncludesDHCPLeases(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}
+	}
+}
+
+func TestHandlerFiltersExpiredDHCPLeasesAndPrefersConfiguredLeaseOrder(t *testing.T) {
+	dir := t.TempDir()
+	primaryPath := filepath.Join(dir, "primary", "dnsmasq.leases")
+	fallbackPath := filepath.Join(dir, "fallback", "dnsmasq.leases")
+	if err := os.MkdirAll(filepath.Dir(primaryPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(fallbackPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	primaryLease := fmt.Sprintf("%d 8c:aa:b5:48:e0:9c 172.18.1.109 SwitchBot-HubMini-48E09C *\n", now.Add(2*time.Hour).Unix())
+	expiredFallbackLease := fmt.Sprintf("%d bc:24:11:26:7b:ab 172.18.1.109 exitnode ff:ca:53:09:5a\n", now.Add(-time.Hour).Unix())
+	if err := os.WriteFile(primaryPath, []byte(primaryLease), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fallbackPath, []byte(expiredFallbackLease), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(Options{DHCPLeasePaths: []string{primaryPath, fallbackPath}})
+	leases, err := handler.dhcpLeaseList()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("leases = %+v", leases)
+	}
+	if leases[0].Hostname != "SwitchBot-HubMini-48E09C" || leases[0].MAC != "8c:aa:b5:48:e0:9c" {
+		t.Fatalf("lease = %+v, want primary lease", leases[0])
+	}
+}
+
+func TestHandlerDHCPLeaseOrderIsOnlyTieBreakerAfterExpiry(t *testing.T) {
+	dir := t.TempDir()
+	primaryPath := filepath.Join(dir, "primary", "dnsmasq.leases")
+	fallbackPath := filepath.Join(dir, "fallback", "dnsmasq.leases")
+	if err := os.MkdirAll(filepath.Dir(primaryPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(fallbackPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	primaryLease := fmt.Sprintf("%d 8c:aa:b5:48:e0:9c 172.18.1.109 old-primary *\n", now.Add(time.Hour).Unix())
+	newerFallbackLease := fmt.Sprintf("%d bc:24:11:26:7b:ab 172.18.1.109 newer-fallback ff:ca:53:09:5a\n", now.Add(2*time.Hour).Unix())
+	if err := os.WriteFile(primaryPath, []byte(primaryLease), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fallbackPath, []byte(newerFallbackLease), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(Options{DHCPLeasePaths: []string{primaryPath, fallbackPath}})
+	leases, err := handler.dhcpLeaseList()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("leases = %+v", leases)
+	}
+	if leases[0].Hostname != "newer-fallback" || leases[0].MAC != "bc:24:11:26:7b:ab" {
+		t.Fatalf("lease = %+v, want newer fallback lease", leases[0])
 	}
 }
 

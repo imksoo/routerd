@@ -8,6 +8,15 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## v20260514.0743
+
+### 修正
+
+- 修正 Web Console Clients，忽略已過期的 dnsmasq lease，避免舊 host 無限期留在清單中。
+- DHCP lease 合併現在會優先採用最新的有效 lease，只有在條件相同時才以 lease file 設定順序作為 tie-breaker。
+- routerd 現在會把 controller-chain dnsmasq lease file 作為第一候選傳給 Web Console，
+  讓 console 依照受管理 dnsmasq 實際使用的 lease file 顯示。
+
 ## v20260514.0654
 
 ### 修正

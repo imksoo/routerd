@@ -8,6 +8,17 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260514.0743
+
+### 修正
+
+- Web Console の Clients で、期限切れの dnsmasq lease を無視するようにしました。
+  古い host が無期限に残り続けません。
+- DHCP lease の統合では、まず有効期限が新しい lease を優先し、lease file の
+  設定順は同条件の場合の tie-breaker としてだけ使います。
+- routerd は controller-chain の dnsmasq lease file を Web Console に先頭候補として渡します。
+  これにより、管理対象 dnsmasq が実際に使う lease file に沿って表示します。
+
 ## v20260514.0654
 
 ### 修正

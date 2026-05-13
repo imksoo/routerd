@@ -2100,3 +2100,20 @@ func TestWebConsoleResolvesListenAddressFromResourceStatus(t *testing.T) {
 		t.Fatalf("listen address = %q", spec.ListenAddress)
 	}
 }
+
+func TestConfiguredDHCPLeasePathsPreferControllerDnsmasqConfig(t *testing.T) {
+	paths := configuredDHCPLeasePaths("/tmp/routerd/dnsmasq.conf")
+	if len(paths) == 0 {
+		t.Fatal("no lease paths")
+	}
+	if paths[0] != "/tmp/routerd/dnsmasq.leases" {
+		t.Fatalf("first lease path = %q, want controller dnsmasq lease file; paths=%v", paths[0], paths)
+	}
+	seen := map[string]bool{}
+	for _, path := range paths {
+		if seen[path] {
+			t.Fatalf("duplicate lease path %q in %v", path, paths)
+		}
+		seen[path] = true
+	}
+}
