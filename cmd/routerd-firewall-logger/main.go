@@ -744,6 +744,7 @@ func classifyPacket(ctx context.Context, socket string, timeout time.Duration, p
 			return dialer.DialContext(ctx, "unix", socket)
 		}},
 	}
+	defer client.CloseIdleConnections()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/classify", bytes.NewReader(request))
 	if err != nil {
 		return dpi.ClassifyResult{}, err

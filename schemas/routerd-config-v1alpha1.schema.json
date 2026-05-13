@@ -4824,6 +4824,11 @@
                       "enabled": {
                         "type": "boolean"
                       },
+                      "fwmark": {
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
                       "healthyThreshold": {
                         "minimum": 1,
                         "type": "integer"

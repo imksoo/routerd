@@ -38,6 +38,7 @@ type options struct {
 	protocol           string
 	addressFamily      string
 	via                string
+	fwmark             int
 	sourceInterface    string
 	sourceAddress      string
 	port               int
@@ -105,6 +106,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.protocol, "protocol", healthcheck.ProtocolTCP, "probe protocol: icmp, tcp, dns, http")
 	fs.StringVar(&opts.addressFamily, "address-family", "", "address family: ipv4 or ipv6")
 	fs.StringVar(&opts.via, "via", "", "gateway IP used by the selected path")
+	fs.IntVar(&opts.fwmark, "fwmark", 0, "Linux socket mark used for policy routing")
 	fs.StringVar(&opts.sourceInterface, "source-interface", "", "source interface for probes")
 	fs.StringVar(&opts.sourceAddress, "source-address", "", "source IP address for probes")
 	fs.IntVar(&opts.port, "port", 0, "probe port")
@@ -157,6 +159,7 @@ func newDaemon(opts options, telemetry *routerotel.Runtime) *daemon {
 		Protocol:           opts.protocol,
 		AddressFamily:      opts.addressFamily,
 		Via:                opts.via,
+		FwMark:             opts.fwmark,
 		SourceInterface:    opts.sourceInterface,
 		SourceAddress:      opts.sourceAddress,
 		Port:               opts.port,
@@ -458,6 +461,22 @@ func (d *daemon) statusLocked() daemonapi.DaemonStatus {
 	if d.state.Phase == healthcheck.PhaseFailing || d.state.Phase == healthcheck.PhaseUnknown {
 		health = daemonapi.HealthDegraded
 	}
+	observed := map[string]string{
+		"target":            d.spec.Target,
+		"protocol":          d.spec.Protocol,
+		"port":              strconv.Itoa(d.spec.Port),
+		"lastResult":        d.state.LastResult,
+		"lastCheckedAt":     d.state.LastCheckedAt.UTC().Format(time.RFC3339Nano),
+		"lastTransitionAt":  d.state.LastTransitionAt.UTC().Format(time.RFC3339Nano),
+		"consecutivePassed": strconv.Itoa(d.state.ConsecutivePassed),
+		"consecutiveFailed": strconv.Itoa(d.state.ConsecutiveFailed),
+		"via":               d.spec.Via,
+		"sourceInterface":   d.spec.SourceInterface,
+		"sourceAddress":     d.spec.SourceAddress,
+	}
+	if d.spec.FwMark != 0 {
+		observed["fwmark"] = fmt.Sprintf("0x%x", d.spec.FwMark)
+	}
 	resourceStatus := daemonapi.ResourceStatus{
 		Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: d.opts.resource},
 		Phase:    d.state.Phase,
@@ -470,19 +489,7 @@ func (d *daemon) statusLocked() daemonapi.DaemonStatus {
 			Message:            d.state.LastMessage,
 			LastTransitionTime: d.state.LastTransitionAt,
 		}},
-		Observed: map[string]string{
-			"target":            d.spec.Target,
-			"protocol":          d.spec.Protocol,
-			"port":              strconv.Itoa(d.spec.Port),
-			"lastResult":        d.state.LastResult,
-			"lastCheckedAt":     d.state.LastCheckedAt.UTC().Format(time.RFC3339Nano),
-			"lastTransitionAt":  d.state.LastTransitionAt.UTC().Format(time.RFC3339Nano),
-			"consecutivePassed": strconv.Itoa(d.state.ConsecutivePassed),
-			"consecutiveFailed": strconv.Itoa(d.state.ConsecutiveFailed),
-			"via":               d.spec.Via,
-			"sourceInterface":   d.spec.SourceInterface,
-			"sourceAddress":     d.spec.SourceAddress,
-		},
+		Observed: observed,
 	}
 	return daemonapi.DaemonStatus{
 		TypeMeta:  daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindDaemonStatus},

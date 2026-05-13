@@ -122,3 +122,48 @@ func TestControllerResolvesPPPoEEgressInterface(t *testing.T) {
 		t.Fatalf("status = %#v", status)
 	}
 }
+
+func TestControllerClearsNAT44TableWhenRuleHasNoActiveEgress(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "nft.log")
+	nftPath := filepath.Join(dir, "nft")
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + testShellQuote(logPath) + "\n" +
+		"exit 0\n"
+	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-missing"}, Spec: api.NAT44RuleSpec{
+			Type:            "masquerade",
+			EgressPolicyRef: "missing-policy",
+			SourceRanges:    []string{"192.168.0.0/16"},
+		}},
+	}}}
+	store := &testStore{}
+	controller := Controller{Router: router, Store: store, NftCommand: nftPath}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(logData)
+	for _, want := range []string{
+		"list table ip routerd_nat",
+		"delete table ip routerd_nat",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nft command log missing %q:\n%s", want, got)
+		}
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "NAT44Rule", "lan-to-missing")
+	if status["phase"] != "Pending" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func testShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}

@@ -603,6 +603,10 @@ func dnsmasqResolveStatusSource(source api.StatusValueSourceSpec, aliases map[st
 var errObservedDataNotReady = errors.New("observed runtime data not yet available")
 
 func DnsmasqServiceUnit(configPath, dnsmasqPath string) []byte {
+	return DnsmasqServiceUnitWithPID(configPath, "/run/routerd/dnsmasq.pid", dnsmasqPath)
+}
+
+func DnsmasqServiceUnitWithPID(configPath, pidFile, dnsmasqPath string) []byte {
 	return []byte(`[Unit]
 Description=routerd managed dnsmasq DHCP service
 After=network-online.target
@@ -610,7 +614,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=` + dnsmasqPath + ` --keep-in-foreground --conf-file=` + configPath + ` --pid-file=/run/routerd/dnsmasq.pid
+ExecStart=` + dnsmasqPath + ` --keep-in-foreground --conf-file=` + configPath + ` --pid-file=` + pidFile + `
 Restart=on-failure
 RestartSec=2s
 

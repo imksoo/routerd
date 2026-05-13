@@ -9,11 +9,29 @@ import (
 	"syscall"
 )
 
-func bindDialerToDevice(dialer *net.Dialer, ifname, _, _, _ string, _ bool) error {
+func configureDialerSocket(dialer *net.Dialer, ifname string, fwmark int, _, _, _ string, _ bool) error {
 	dialer.Control = func(_, _ string, conn syscall.RawConn) error {
-		return bindToDevice(conn, ifname)
+		if fwmark != 0 {
+			if err := setSocketMark(conn, fwmark); err != nil {
+				return err
+			}
+		}
+		if ifname != "" {
+			return bindToDevice(conn, ifname)
+		}
+		return nil
 	}
 	return nil
+}
+
+func setSocketMark(conn syscall.RawConn, mark int) error {
+	var markErr error
+	if err := conn.Control(func(fd uintptr) {
+		markErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_MARK, mark)
+	}); err != nil {
+		return err
+	}
+	return markErr
 }
 
 func bindToDevice(conn syscall.RawConn, ifname string) error {

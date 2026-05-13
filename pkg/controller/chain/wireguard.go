@@ -48,6 +48,9 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 	if err != nil {
 		return err
 	}
+	if err := c.saveUnconfiguredPeerStatuses(resource.Metadata.Name); err != nil {
+		return err
+	}
 	status := map[string]any{
 		"phase":      "Pending",
 		"interface":  cfg.Name,
@@ -123,6 +126,30 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 			"dryRun":    fmt.Sprintf("%t", c.DryRun),
 		}
 		return c.Bus.Publish(ctx, event)
+	}
+	return nil
+}
+
+func (c WireGuardController) saveUnconfiguredPeerStatuses(iface string) error {
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "WireGuardPeer" {
+			continue
+		}
+		spec, err := resource.WireGuardPeerSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Interface != iface || wireguard.PeerSpecConfigured(spec) {
+			continue
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "WireGuardPeer", resource.Metadata.Name, map[string]any{
+			"phase":     "NotConfigured",
+			"reason":    "PeerSpecEmpty",
+			"interface": iface,
+			"dryRun":    c.DryRun,
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

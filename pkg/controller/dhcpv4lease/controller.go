@@ -193,10 +193,13 @@ func (c Controller) applyLease(ctx context.Context, name string, current, next m
 	if previousAddress != "" && previousAddress != wantedAddress {
 		_ = removeIPv4Address(ctx, platform.CurrentOS(), command, ifname, previousAddress)
 	}
-	if previousAddress != wantedAddress {
+	addressPresent := dhcpv4LeaseAddressPresent(ctx, platform.CurrentOS(), command, ifname, wantedAddress)
+	next["addressPresent"] = addressPresent
+	if previousAddress != wantedAddress || !addressPresent {
 		if err := replaceIPv4Address(ctx, platform.CurrentOS(), command, ifname, wantedAddress); err != nil {
 			return err
 		}
+		next["addressPresent"] = true
 	}
 	if api.BoolDefault(spec.UseRoutes, true) {
 		gateway := strings.TrimSpace(fmt.Sprint(next["defaultGateway"]))
@@ -356,6 +359,33 @@ func replaceIPv4Address(ctx context.Context, osName platform.OS, command outputC
 	}
 	_, err := command(ctx, "ip", "-4", "addr", "replace", address, "dev", ifname)
 	return err
+}
+
+func dhcpv4LeaseAddressPresent(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) bool {
+	if strings.TrimSpace(address) == "" {
+		return false
+	}
+	if osName == platform.OSFreeBSD {
+		out, err := command(ctx, "ifconfig", ifname)
+		if err != nil {
+			return false
+		}
+		addr := strings.TrimSpace(strings.Split(address, "/")[0])
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			for i, field := range fields {
+				if field == "inet" && i+1 < len(fields) && fields[i+1] == addr {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	out, err := command(ctx, "ip", "-4", "addr", "show", "dev", ifname)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "inet "+address+" ")
 }
 
 func removeIPv4Address(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) error {

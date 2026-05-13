@@ -51,3 +51,16 @@ func TestParseResourceAttributesIgnoresMalformedFields(t *testing.T) {
 		t.Fatalf("malformed field was not ignored: %v", attrs)
 	}
 }
+
+func TestRuntimeCachesMetricInstruments(t *testing.T) {
+	r := &Runtime{ServiceName: "routerd-test"}
+	if r.Counter("events") != r.Counter("events") {
+		t.Fatal("counter was not cached")
+	}
+	if r.Gauge("state") != r.Gauge("state") {
+		t.Fatal("gauge was not cached")
+	}
+	if r.Float64Gauge("ratio") != r.Float64Gauge("ratio") {
+		t.Fatal("float64 gauge was not cached")
+	}
+}

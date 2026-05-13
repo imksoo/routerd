@@ -39,6 +39,7 @@ import (
 	"routerd/pkg/healthcheck"
 	"routerd/pkg/logstore"
 	"routerd/pkg/platform"
+	"routerd/pkg/render"
 	"routerd/pkg/resourcequery"
 	daemonsource "routerd/pkg/source/daemon"
 	routerstate "routerd/pkg/state"
@@ -1846,6 +1847,10 @@ func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, cha
 	if platform.IsNixOSHost() {
 		return ensureNixOSDnsmasqService(ctx, changed)
 	}
+	defaults, features := platform.Current()
+	if features.HasSystemd {
+		return ensureSystemdDnsmasqService(ctx, defaults.SystemdSystemDir, command, configPath, pidFile, changed)
+	}
 	proc, alive := dnsmasqProcess(pidFile)
 	if alive && changed {
 		return proc.Signal(syscall.SIGHUP)
@@ -1854,6 +1859,37 @@ func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, cha
 		return nil
 	}
 	return startDnsmasq(ctx, command, configPath, pidFile)
+}
+
+func ensureSystemdDnsmasqService(ctx context.Context, systemdDir, command, configPath, pidFile string, changed bool) error {
+	const service = "routerd-dnsmasq.service"
+	if systemdDir == "" {
+		systemdDir = "/etc/systemd/system"
+	}
+	command = dnsmasqCommandPath(command)
+	servicePath := filepath.Join(systemdDir, service)
+	unitChanged, err := writeFileIfChanged(servicePath, render.DnsmasqServiceUnitWithPID(configPath, pidFile, command), 0644, false)
+	if err != nil {
+		return err
+	}
+	if unitChanged {
+		if err := runSystemctl(ctx, "daemon-reload"); err != nil {
+			return err
+		}
+	}
+	if exec.CommandContext(ctx, "systemctl", "is-enabled", "--quiet", service).Run() != nil {
+		if err := runSystemctl(ctx, "enable", service); err != nil {
+			return err
+		}
+	}
+	active := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", service).Run() == nil
+	if changed || unitChanged || !active || !dnsmasqProcessUsesConfig(pidFile, configPath) {
+		_ = exec.CommandContext(ctx, "systemctl", "reset-failed", service).Run()
+		if err := runSystemctl(ctx, "restart", service); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureNixOSDnsmasqService(ctx context.Context, changed bool) error {
@@ -1922,6 +1958,53 @@ func dnsmasqProcess(pidFile string) (*os.Process, bool) {
 		return nil, false
 	}
 	return proc, true
+}
+
+func dnsmasqProcessUsesConfig(pidFile, configPath string) bool {
+	pidData, err := os.ReadFile(pidFile)
+	if err != nil {
+		return false
+	}
+	pid := strings.TrimSpace(string(pidData))
+	if pid == "" {
+		return false
+	}
+	cmdline, err := os.ReadFile(filepath.Join("/proc", pid, "cmdline"))
+	if err != nil {
+		return false
+	}
+	return dnsmasqCmdlineUsesConfig(strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00"), configPath)
+}
+
+func dnsmasqCmdlineUsesConfig(fields []string, configPath string) bool {
+	for i, field := range fields {
+		if field == "--conf-file="+configPath {
+			return true
+		}
+		if field == "--conf-file" && i+1 < len(fields) && fields[i+1] == configPath {
+			return true
+		}
+	}
+	return false
+}
+
+func dnsmasqCommandPath(command string) string {
+	command = strings.TrimSpace(firstNonEmpty(command, "dnsmasq"))
+	if strings.ContainsRune(command, os.PathSeparator) {
+		return command
+	}
+	if path, err := exec.LookPath(command); err == nil {
+		return path
+	}
+	return command
+}
+
+func runSystemctl(ctx context.Context, args ...string) error {
+	out, err := exec.CommandContext(ctx, "systemctl", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("systemctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func startDnsmasq(ctx context.Context, command, configPath, pidFile string) error {

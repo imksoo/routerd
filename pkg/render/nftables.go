@@ -202,6 +202,10 @@ func writeNftTablePreamble(buf *bytes.Buffer, family, name string) {
 	buf.WriteString("flush table " + family + " " + name + "\n")
 }
 
+func writeNftSetReset(buf *bytes.Buffer, family, table, name string) {
+	buf.WriteString("destroy set " + family + " " + table + " " + name + "\n")
+}
+
 func NftablesNAT44Rules(rules []NAT44RenderRule) ([]byte, error) {
 	if len(rules) == 0 {
 		return nil, nil
@@ -379,9 +383,20 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	}
 	policy := firewallPolicyOptions(policies)
 	logging := firewallLogOptions(logs)
+	sortedZones := sortedFirewallZones(zoneMap)
 	writeNftTablePreamble(buf, "inet", "routerd_filter")
+	for _, zone := range sortedZones {
+		if len(zone.IfNames) > 0 {
+			writeNftSetReset(buf, "inet", "routerd_filter", nftSetName("if_"+zone.Name))
+		}
+	}
+	for _, policy := range clientPolicies {
+		if len(policy.MACs) > 0 {
+			writeNftSetReset(buf, "inet", "routerd_filter", policy.SetName)
+		}
+	}
 	buf.WriteString("table inet routerd_filter {\n")
-	for _, zone := range sortedFirewallZones(zoneMap) {
+	for _, zone := range sortedZones {
 		if len(zone.IfNames) > 0 {
 			buf.WriteString("  set " + nftSetName("if_"+zone.Name) + " { type ifname; elements = { " + nftQuotedList(zone.IfNames) + " } }\n")
 		}
@@ -398,7 +413,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	buf.WriteString("    iifname \"lo\" counter accept\n")
 	buf.WriteString("    meta l4proto ipv6-icmp counter accept\n")
 	writeClientPolicyInputRules(buf, clientPolicies)
-	for _, zone := range sortedFirewallZones(zoneMap) {
+	for _, zone := range sortedZones {
 		if len(zone.IfNames) == 0 {
 			continue
 		}
@@ -419,8 +434,8 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	buf.WriteString("    ct state { established, related } counter accept\n")
 	buf.WriteString("    meta l4proto ipv6-icmp counter accept\n")
 	writeClientPolicyForwardRules(buf, clientPolicies, logging)
-	for _, from := range sortedFirewallZones(zoneMap) {
-		for _, to := range sortedFirewallZones(zoneMap) {
+	for _, from := range sortedZones {
+		for _, to := range sortedZones {
 			if len(from.IfNames) == 0 || len(to.IfNames) == 0 {
 				continue
 			}
@@ -433,11 +448,11 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 		buf.WriteString("    counter drop\n")
 	}
 	buf.WriteString("  }\n")
-	for _, from := range sortedFirewallZones(zoneMap) {
+	for _, from := range sortedZones {
 		if err := writeFirewallPairChain(buf, from, firewallZone{Name: "self", Role: "self"}, rules, holes, policy, logging); err != nil {
 			return err
 		}
-		for _, to := range sortedFirewallZones(zoneMap) {
+		for _, to := range sortedZones {
 			if err := writeFirewallPairChain(buf, from, to, rules, holes, policy, logging); err != nil {
 				return err
 			}

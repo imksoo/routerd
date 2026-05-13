@@ -234,7 +234,9 @@ func (c NTPClientController) applyNTPService(ctx context.Context, provider, conf
 			}
 			return nil
 		}
-		_, _ = command(ctx, "systemctl", "disable", "--now", "systemd-timesyncd.service")
+		if systemdUnitEnabledOrActive(ctx, command, "systemd-timesyncd.service") {
+			_, _ = command(ctx, "systemctl", "disable", "--now", "systemd-timesyncd.service")
+		}
 		if changed {
 			_, err := command(ctx, "systemctl", "restart", "chrony.service")
 			return err
@@ -530,7 +532,9 @@ func (c NTPServerController) applyNTPServer(ctx context.Context, provider, confi
 			}
 			return nil
 		}
-		_, _ = command(ctx, "systemctl", "disable", "--now", "systemd-timesyncd.service")
+		if systemdUnitEnabledOrActive(ctx, command, "systemd-timesyncd.service") {
+			_, _ = command(ctx, "systemctl", "disable", "--now", "systemd-timesyncd.service")
+		}
 		if changed {
 			_, err := command(ctx, "systemctl", "restart", "chrony.service")
 			return err

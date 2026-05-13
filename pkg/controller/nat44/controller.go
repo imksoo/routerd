@@ -125,7 +125,13 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		})
 	}
 	if len(rules) == 0 {
-		return nil
+		if c.DryRun {
+			return nil
+		}
+		if platform.CurrentOS() == platform.OSFreeBSD {
+			return c.clearPF(ctx)
+		}
+		return c.clearNftables(ctx)
 	}
 	if platform.CurrentOS() == platform.OSFreeBSD {
 		return c.reconcilePF(ctx, rules)
@@ -165,6 +171,18 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	return c.saveRuleStatuses(ctx, rules, path, changed, missing)
 }
 
+func (c Controller) clearNftables(ctx context.Context) error {
+	nft := firstNonEmpty(c.NftCommand, "nft")
+	if !nat44TableExists(ctx, nft) {
+		return nil
+	}
+	out, err := exec.CommandContext(ctx, nft, "delete", "table", "ip", "routerd_nat").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nft delete table ip routerd_nat: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func (c Controller) reconcilePF(ctx context.Context, rules []render.NAT44RenderRule) error {
 	data, err := render.PFNAT44Rules(rules)
 	if err != nil {
@@ -200,6 +218,18 @@ func (c Controller) reconcilePF(ctx context.Context, rules []render.NAT44RenderR
 		return fmt.Errorf("%s -a routerd_nat -f %s: %w: %s", pfctl, path, err, strings.TrimSpace(string(out)))
 	}
 	return c.saveRuleStatuses(ctx, rules, path, changed, false)
+}
+
+func (c Controller) clearPF(ctx context.Context) error {
+	pfctl := firstNonEmpty(c.NftCommand, "pfctl")
+	if c.NftCommand == "" || c.NftCommand == "nft" {
+		pfctl = "pfctl"
+	}
+	out, err := exec.CommandContext(ctx, pfctl, "-a", "routerd_nat", "-F", "rules").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s -a routerd_nat -F rules: %w: %s", pfctl, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (c Controller) saveRuleStatuses(ctx context.Context, rules []render.NAT44RenderRule, path string, changed, missing bool) error {

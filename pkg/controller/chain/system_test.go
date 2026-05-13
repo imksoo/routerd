@@ -47,6 +47,9 @@ func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T)
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "systemctl" && len(args) >= 2 && (args[0] == "is-active" || args[0] == "is-enabled") {
+				return nil, errors.New("inactive")
+			}
 			return []byte("ok"), nil
 		},
 	}
@@ -58,8 +61,11 @@ func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T)
 	if err != nil {
 		t.Fatalf("read networkd drop-in: %v", err)
 	}
-	if !strings.Contains(string(data), "DHCP=no") {
-		t.Fatalf("networkd drop-in = %s", data)
+	gotNetworkd := string(data)
+	for _, want := range []string{"DHCP=no", "[IPv6AcceptRA]", "DHCPv6Client=no"} {
+		if !strings.Contains(gotNetworkd, want) {
+			t.Fatalf("networkd drop-in missing %q:\n%s", want, gotNetworkd)
+		}
 	}
 	resolvedPath := filepath.Join(dir, "resolved.conf.d", "90-routerd-adoption.conf")
 	resolved, err := os.ReadFile(resolvedPath)
@@ -119,7 +125,7 @@ func TestNetworkAdoptionControllerCanKeepDHCPv4ClientWithoutRoutes(t *testing.T)
 		t.Fatalf("read networkd drop-in: %v", err)
 	}
 	got := string(data)
-	for _, want := range []string{"DHCP=ipv4", "[DHCPv4]", "UseRoutes=no", "UseDNS=no", "RouteMetric=900"} {
+	for _, want := range []string{"DHCP=ipv4", "[IPv6AcceptRA]", "DHCPv6Client=no", "[DHCPv4]", "UseRoutes=no", "UseDNS=no", "RouteMetric=900"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("drop-in missing %q:\n%s", want, got)
 		}
@@ -176,6 +182,9 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "systemctl" && len(args) >= 2 && (args[0] == "is-active" || args[0] == "is-enabled") {
+				return nil, errors.New("inactive")
+			}
 			return []byte("ok"), nil
 		},
 	}
@@ -199,8 +208,12 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
 		}
 	}
-	if strings.Contains(gotCommands, "restart routerd.service") {
-		t.Fatalf("routerd.service must not be restarted by its own controller:\n%s", gotCommands)
+	if commandLineContains(commands, "systemctl restart routerd.service") {
+		t.Fatalf("routerd.service must not be directly restarted by its own controller:\n%s", gotCommands)
+	}
+	if !strings.Contains(gotCommands, "systemd-run --unit routerd-self-restart-") ||
+		!strings.Contains(gotCommands, "--on-active=10s --collect systemctl restart routerd.service") {
+		t.Fatalf("routerd.service restart was not scheduled through systemd-run:\n%s", gotCommands)
 	}
 	status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", "routerd.service")
 	if status["phase"] != "Applied" || status["changed"] != true {
@@ -246,7 +259,45 @@ func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 	}
 }
 
-func TestSystemdUnitControllerDoesNotRestartOwnUnit(t *testing.T) {
+func TestSystemdUnitControllerDoesNotReloadForAlreadyAbsentUnit(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd-dhcpv6-client@wan-pd.service"}, Spec: api.SystemdUnitSpec{
+			State: "absent",
+		}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            store,
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "systemctl" && len(args) >= 2 && (args[0] == "is-active" || args[0] == "is-enabled") {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	if strings.Contains(gotCommands, "systemctl daemon-reload") {
+		t.Fatalf("already absent unit must not reload systemd:\n%s", gotCommands)
+	}
+	if strings.Contains(gotCommands, "systemctl disable --now routerd-dhcpv6-client@wan-pd.service") {
+		t.Fatalf("already absent disabled unit must not call disable:\n%s", gotCommands)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", "routerd-dhcpv6-client@wan-pd.service")
+	if status["phase"] != "Absent" || status["changed"] != false {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestSystemdUnitControllerSchedulesOwnUnitRestart(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd.service"}, Spec: api.SystemdUnitSpec{
@@ -269,8 +320,12 @@ func TestSystemdUnitControllerDoesNotRestartOwnUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	gotCommands := strings.Join(commands, "\n")
-	if strings.Contains(gotCommands, "restart routerd.service") {
-		t.Fatalf("self unit was restarted:\n%s", gotCommands)
+	if commandLineContains(commands, "systemctl restart routerd.service") {
+		t.Fatalf("self unit was directly restarted:\n%s", gotCommands)
+	}
+	if !strings.Contains(gotCommands, "systemd-run --unit routerd-self-restart-") ||
+		!strings.Contains(gotCommands, "--on-active=10s --collect systemctl restart routerd.service") {
+		t.Fatalf("self unit restart was not scheduled:\n%s", gotCommands)
 	}
 }
 
@@ -331,6 +386,15 @@ func systemBoolPtr(v bool) *bool {
 	return &v
 }
 
+func commandLineContains(commands []string, want string) bool {
+	for _, command := range commands {
+		if command == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -340,6 +404,7 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 			SocketSource:       "/run/routerd/healthcheck/internet-via-dslite-a.sock",
 			Target:             "1.1.1.1",
 			TargetSource:       "static",
+			FwMark:             0x110,
 			SourceInterface:    "ds-lite-a",
 			SourceAddressFrom:  api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/lan-base", Field: "address"},
 			Protocol:           "tcp",
@@ -376,10 +441,11 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 	}
 	unit := string(data)
 	for _, want := range []string{
-		`ExecStart=/usr/local/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --source-interface "ds-lite-a" --source-address "172.18.0.1" --port 443`,
+		`ExecStart=/usr/local/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --fwmark 0x110 --source-interface "ds-lite-a" --source-address "172.18.0.1" --port 443`,
 		`--socket "/run/routerd/healthcheck/internet-via-dslite-a.sock"`,
 		"RuntimeDirectory=routerd/healthcheck",
 		"RuntimeDirectoryPreserve=yes",
+		"CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW",
 	} {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, unit)
@@ -399,6 +465,54 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 	status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName)
 	if status["phase"] != "Applied" || status["changed"] != true {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestSystemdUnitControllerRemovesStaleHealthCheckDaemonUnits(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, "routerd-healthcheck@stale.service")
+	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-healthcheck\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "current"}, Spec: api.HealthCheckSpec{
+			Daemon:       "routerd-healthcheck",
+			Target:       "1.1.1.1",
+			TargetSource: "static",
+		}},
+	}}}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            mapStore{},
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "systemctl" && len(args) >= 2 && args[0] == "is-active" {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale unit still exists: %v", err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"systemctl disable --now routerd-healthcheck@stale.service",
+		"systemctl reset-failed routerd-healthcheck@stale.service",
+		"systemctl daemon-reload",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "routerd-healthcheck@current.service")); err != nil {
+		t.Fatalf("current unit missing: %v", err)
 	}
 }
 
@@ -527,6 +641,24 @@ func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
 	healthStatus := store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet-via-pppoe")
 	if healthStatus["phase"] != "Disabled" {
 		t.Fatalf("health status = %#v", healthStatus)
+	}
+
+	commands = nil
+	controller.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		_ = ctx
+		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+		if name == "systemctl" && len(args) >= 2 && (args[0] == "is-active" || args[0] == "is-enabled") {
+			return nil, errors.New("inactive")
+		}
+		return []byte("ok"), nil
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	gotCommands = strings.Join(commands, "\n")
+	if strings.Contains(gotCommands, "systemctl daemon-reload") ||
+		strings.Contains(gotCommands, "systemctl disable --now routerd-healthcheck@internet-via-pppoe.service") {
+		t.Fatalf("unchanged disabled healthcheck must not reload or disable again:\n%s", gotCommands)
 	}
 }
 

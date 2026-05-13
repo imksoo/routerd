@@ -104,6 +104,46 @@ spec:
 	}
 }
 
+func TestWireGuardControllerMarksEmptyPeerNotConfigured(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        privateKey: priv
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata: {name: pending-peer}
+      spec:
+        interface: wg0
+`)
+	store := mapStore{}
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		DryRun: true,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			return nil, errors.New("not available in test")
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	peer := store.ObjectStatus(api.NetAPIVersion, "WireGuardPeer", "pending-peer")
+	if peer["phase"] != "NotConfigured" || peer["reason"] != "PeerSpecEmpty" {
+		t.Fatalf("peer status = %+v", peer)
+	}
+	iface := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
+	if iface["peerCount"] != 0 {
+		t.Fatalf("interface peerCount = %v, want 0", iface["peerCount"])
+	}
+}
+
 func TestWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T) {
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1

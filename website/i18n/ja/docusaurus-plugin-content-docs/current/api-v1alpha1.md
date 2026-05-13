@@ -159,7 +159,7 @@ DS-Lite、IPv4 既定経路、NAT44 は実 lab で動作確認済みです。
 
 | Kind | 役割 |
 | --- | --- |
-| `HealthCheck` | `routerd-healthcheck` または開発用の組み込み実行器で到達性を測ります。`sourceInterface` はネットワークリソース名を受け取り、実行時に OS のインターフェース名へ解決します。`via`、`sourceAddress`、`sourceAddressFrom` も指定できます。 |
+| `HealthCheck` | `routerd-healthcheck` または開発用の組み込み実行器で到達性を測ります。`sourceInterface` はネットワークリソース名を受け取り、実行時に OS のインターフェース名へ解決します。`via`、`fwmark`、`sourceAddress`、`sourceAddressFrom` も指定できます。 |
 | `EgressRoutePolicy` | 準備完了の候補から重みの高い外向き経路を選びます。`destinationCIDRs` と candidate の `gatewaySource`、`gateway` を持ちます。 |
 | `EventRule` | イベント列に対して all_of、any_of、sequence、window、absence、throttle、debounce、count を評価します。 |
 | `DerivedEvent` | 複数リソースの状態から仮想イベントを発行します。 |
@@ -171,7 +171,8 @@ DS-Lite、IPv4 既定経路、NAT44 は実 lab で動作確認済みです。
 無効化した候補は、最後の観測状態が Healthy のままでも選択されません。
 
 `HealthCheck.spec.sourceInterface` は実行時に OS のインターフェース名へ解決されます。
-Linux では `SO_BINDTODEVICE` を使います。
+Linux では `SO_BINDTODEVICE` を使います。`fwmark` を指定した場合は
+`SO_MARK` も設定します。
 FreeBSD では、指定したインターフェースから送信元アドレスを選びます。
 FreeBSD には Linux と同じ socket option がないためです。
 

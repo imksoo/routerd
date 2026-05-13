@@ -861,6 +861,7 @@ type HealthCheckSpec struct {
 	TargetSource       string                `yaml:"targetSource,omitempty" json:"targetSource,omitempty" jsonschema:"enum=auto,enum=static,enum=defaultGateway,enum=dsliteRemote"`
 	Interface          string                `yaml:"interface,omitempty" json:"interface,omitempty"`
 	Via                string                `yaml:"via,omitempty" json:"via,omitempty"`
+	FwMark             int                   `yaml:"fwmark,omitempty" json:"fwmark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
 	SourceInterface    string                `yaml:"sourceInterface,omitempty" json:"sourceInterface,omitempty"`
 	SourceAddress      string                `yaml:"sourceAddress,omitempty" json:"sourceAddress,omitempty"`
 	SourceAddressFrom  StatusValueSourceSpec `yaml:"sourceAddressFrom,omitempty" json:"sourceAddressFrom,omitempty"`

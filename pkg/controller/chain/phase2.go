@@ -203,7 +203,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		}
 		status := map[string]any{"phase": "Up", "interface": ifname, "tunnelName": ifname, "device": ifname, "localIPv6": local, "innerLocalIPv4": innerLocal, "innerRemoteIPv4": dsliteInnerRemoteIPv4, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
 		changed := objectStatusChanged("DSLiteTunnel", c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name), status)
-		if !c.DryRun && changed {
+		if !c.DryRun {
 			if localIfName != "" {
 				if err := ensureIPv6LocalEndpoint(ctx, localIfName, local); err != nil {
 					failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))

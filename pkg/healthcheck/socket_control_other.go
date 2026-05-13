@@ -9,6 +9,9 @@ import (
 	"net"
 )
 
-func bindDialerToDevice(_ *net.Dialer, ifname, _, _, _ string, _ bool) error {
+func configureDialerSocket(_ *net.Dialer, ifname string, fwmark int, _, _, _ string, _ bool) error {
+	if fwmark != 0 {
+		return fmt.Errorf("fwmark is not supported on this platform")
+	}
 	return fmt.Errorf("sourceInterface %q is only supported on Linux and FreeBSD", ifname)
 }

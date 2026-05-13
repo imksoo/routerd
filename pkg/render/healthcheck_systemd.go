@@ -16,6 +16,7 @@ type HealthCheckSystemdOptions struct {
 	Target          string
 	Protocol        string
 	Via             string
+	FwMark          int
 	SourceInterface string
 	SourceAddress   string
 	Port            int
@@ -68,6 +69,9 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 	appendFlag("--protocol", spec.Protocol)
 	appendFlag("--address-family", spec.AddressFamily)
 	appendFlag("--via", spec.Via)
+	if spec.FwMark != 0 {
+		execStart = append(execStart, "--fwmark", fmt.Sprintf("0x%x", spec.FwMark))
+	}
 	appendFlag("--source-interface", sourceInterface)
 	appendFlag("--source-address", sourceAddress)
 	if spec.Port != 0 {
@@ -88,6 +92,7 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 	)
 	noNewPrivileges := true
 	privateTmp := true
+	capabilities := healthCheckCapabilities(spec.FwMark)
 	return api.SystemdUnitSpec{
 		Description:              "routerd healthcheck " + resource,
 		ExecStart:                execStart,
@@ -104,8 +109,8 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 		LogsDirectory:            []string{"routerd"},
 		ReadWritePaths:           []string{runtimeRoot + "/routerd", stateRoot + "/routerd", logRoot + "/routerd"},
 		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6"},
-		CapabilityBoundingSet:    []string{"CAP_NET_RAW"},
-		AmbientCapabilities:      []string{"CAP_NET_RAW"},
+		CapabilityBoundingSet:    capabilities,
+		AmbientCapabilities:      capabilities,
 		ProtectSystem:            "strict",
 		ProtectHome:              "yes",
 		NoNewPrivileges:          &noNewPrivileges,
@@ -115,6 +120,13 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 
 func boolValuePtr(value bool) *bool {
 	return &value
+}
+
+func healthCheckCapabilities(fwmark int) []string {
+	if fwmark != 0 {
+		return []string{"CAP_NET_ADMIN", "CAP_NET_RAW"}
+	}
+	return []string{"CAP_NET_RAW"}
 }
 
 func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
@@ -135,6 +147,9 @@ func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
 	}
 	if options.Via != "" {
 		args += " --via " + strconv.Quote(options.Via)
+	}
+	if options.FwMark != 0 {
+		args += fmt.Sprintf(" --fwmark 0x%x", options.FwMark)
 	}
 	if options.SourceInterface != "" {
 		args += " --source-interface " + strconv.Quote(options.SourceInterface)
@@ -161,6 +176,7 @@ func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
 		args += " --event-file " + strconv.Quote(options.EventFile)
 	}
 
+	capabilities := strings.Join(healthCheckCapabilities(options.FwMark), " ")
 	return []byte(fmt.Sprintf(`[Unit]
 Description=routerd healthcheck %s
 After=network-online.target
@@ -182,12 +198,12 @@ ProtectHome=yes
 ProtectSystem=strict
 ReadWritePaths=/run/routerd /var/lib/routerd /var/log/routerd
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-CapabilityBoundingSet=CAP_NET_RAW
-AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=%s
+AmbientCapabilities=%s
 
 [Install]
 WantedBy=multi-user.target
-`, resource, systemdEnvironmentLines(options.Environment), binaryPath, args))
+`, resource, systemdEnvironmentLines(options.Environment), binaryPath, args, capabilities, capabilities))
 }
 
 func systemdEnvironmentLines(values []string) string {

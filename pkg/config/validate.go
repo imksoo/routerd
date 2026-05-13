@@ -2306,6 +2306,9 @@ func validateResource(res api.Resource) error {
 		if spec.Port < 0 || spec.Port > 65535 {
 			return fmt.Errorf("%s spec.port must be within 0-65535", res.ID())
 		}
+		if spec.FwMark < 0 {
+			return fmt.Errorf("%s spec.fwmark must be non-negative", res.ID())
+		}
 		switch defaultString(spec.Role, "next-hop") {
 		case "link", "next-hop", "internet", "service", "policy":
 		default:

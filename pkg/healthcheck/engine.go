@@ -424,8 +424,8 @@ func dialerForSpec(spec api.HealthCheckSpec, network, address string) (net.Diale
 		}
 		hasSourceAddress = true
 	}
-	if spec.SourceInterface != "" {
-		if err := bindDialerToDevice(&dialer, spec.SourceInterface, network, address, spec.AddressFamily, hasSourceAddress); err != nil {
+	if spec.SourceInterface != "" || spec.FwMark != 0 {
+		if err := configureDialerSocket(&dialer, spec.SourceInterface, spec.FwMark, network, address, spec.AddressFamily, hasSourceAddress); err != nil {
 			return net.Dialer{}, err
 		}
 	}
@@ -543,6 +543,7 @@ func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, r
 	}
 	for key, value := range map[string]string{
 		"network.via":            spec.Via,
+		"network.fwmark":         formatFwMark(spec.FwMark),
 		"network.interface.name": spec.SourceInterface,
 		"network.local.address":  spec.SourceAddress,
 	} {
@@ -552,6 +553,13 @@ func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, r
 		}
 	}
 	return Evaluation{State: state, Result: nextResult, Event: event, Status: status}
+}
+
+func formatFwMark(mark int) string {
+	if mark == 0 {
+		return ""
+	}
+	return fmt.Sprintf("0x%x", mark)
 }
 
 func StatusMap(state State) map[string]any {

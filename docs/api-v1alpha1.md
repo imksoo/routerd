@@ -188,11 +188,12 @@ candidates are not selected even if their last observed health status is still
 Healthy.
 
 `HealthCheck.spec.sourceInterface` accepts a network resource name and resolves
-it to the OS interface name at runtime. `via` and `sourceAddress` can also be
-specified. `sourceAddressFrom` derives the probe source address from another
-resource status. On Linux, `routerd-healthcheck` uses `SO_BINDTODEVICE`. On
-FreeBSD, it selects a source address from the named interface because FreeBSD
-does not provide the Linux socket option.
+it to the OS interface name at runtime. `via`, `fwmark`, and `sourceAddress`
+can also be specified. `sourceAddressFrom` derives the probe source address
+from another resource status. On Linux, `routerd-healthcheck` uses
+`SO_BINDTODEVICE` and can set `SO_MARK` when `fwmark` is configured. On FreeBSD,
+it selects a source address from the named interface because FreeBSD does not
+provide the Linux socket options.
 
 `WebConsole.spec.listenAddressFrom` derives the HTTP listener address from
 another resource status, for example `Interface/mgmt.status.ipv4Addresses`.

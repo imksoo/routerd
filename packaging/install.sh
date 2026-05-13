@@ -167,6 +167,13 @@ atomic_install()
     mv -f "${tmp}" "${target}"
 }
 
+routerd_service_managed_by_config()
+{
+    service_path=/etc/systemd/system/routerd.service
+    [ -f "${service_path}" ] || return 1
+    grep -Eq '(^# Managed by routerd\.|--controller-chain)' "${service_path}"
+}
+
 detect_package_manager()
 {
     case "${os}" in
@@ -1386,7 +1393,12 @@ case "${os}" in
             fi
             for unit in systemd/*.service; do
                 [ -f "${unit}" ] || continue
-                atomic_install 0644 "${unit}" "/etc/systemd/system/$(basename "${unit}")"
+                unit_name=$(basename "${unit}")
+                if [ "${unit_name}" = "routerd.service" ] && routerd_service_managed_by_config; then
+                    echo "existing config-managed routerd.service preserved: /etc/systemd/system/routerd.service"
+                    continue
+                fi
+                atomic_install 0644 "${unit}" "/etc/systemd/system/${unit_name}"
             done
             if command -v systemctl >/dev/null 2>&1; then
                 if [ "${dry_run}" -eq 1 ]; then

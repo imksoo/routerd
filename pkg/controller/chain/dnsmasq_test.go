@@ -169,6 +169,25 @@ func TestWriteDnsmasqConfigDisablesDNSPort(t *testing.T) {
 	}
 }
 
+func TestDnsmasqCmdlineUsesConfig(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		cmdline  []string
+		expected bool
+	}{
+		{name: "equals form", cmdline: []string{"dnsmasq", "--conf-file=/run/routerd/dnsmasq.conf"}, expected: true},
+		{name: "separate arg form", cmdline: []string{"dnsmasq", "--conf-file", "/run/routerd/dnsmasq.conf"}, expected: true},
+		{name: "different config", cmdline: []string{"dnsmasq", "--conf-file=/usr/local/etc/routerd/dnsmasq.conf"}, expected: false},
+		{name: "missing config", cmdline: []string{"dnsmasq", "--keep-in-foreground"}, expected: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := dnsmasqCmdlineUsesConfig(tt.cmdline, "/run/routerd/dnsmasq.conf"); got != tt.expected {
+				t.Fatalf("dnsmasqCmdlineUsesConfig() = %t, want %t", got, tt.expected)
+			}
+		})
+	}
+}
+
 func containsLine(lines []string, want string) bool {
 	for _, line := range lines {
 		if line == want {

@@ -329,6 +329,7 @@ func TestNftablesVXLANUnderlayUDPAcceptInputChain(t *testing.T) {
 	for _, want := range []string{
 		"add table inet routerd_filter",
 		"flush table inet routerd_filter",
+		"destroy set inet routerd_filter if_wan",
 		"table inet routerd_filter",
 		`udp dport 4789 counter accept comment "net.routerd.net/v1alpha1/VXLANSegment/home-vxlan"`,
 	} {
@@ -619,6 +620,8 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 	for _, want := range []string{
 		"add table inet routerd_filter",
 		"flush table inet routerd_filter",
+		"destroy set inet routerd_filter if_lan",
+		"destroy set inet routerd_filter if_wan",
 		"table inet routerd_filter",
 		"type filter hook input priority filter; policy drop;",
 		"ct state invalid counter drop",
@@ -880,6 +883,7 @@ func TestNftablesClientPolicyIncludeGuestMACs(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
+		`destroy set inet routerd_filter client_policy_guest_devices`,
 		`set client_policy_guest_devices { type ether_addr; elements = { 18:ec:e7:33:12:6c } }`,
 		`iifname "ens19" ether saddr @client_policy_guest_devices udp dport 53 counter accept`,
 		`iifname "ens19" ether saddr @client_policy_guest_devices udp dport { 67, 547 } counter accept`,

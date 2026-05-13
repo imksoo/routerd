@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-func bindDialerToDevice(dialer *net.Dialer, ifname, network, address, addressFamily string, hasSourceAddress bool) error {
+func configureDialerSocket(dialer *net.Dialer, ifname string, fwmark int, network, address, addressFamily string, hasSourceAddress bool) error {
+	if fwmark != 0 {
+		return fmt.Errorf("fwmark is not supported on FreeBSD")
+	}
 	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
 		return err

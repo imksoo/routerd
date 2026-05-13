@@ -687,6 +687,62 @@ exit 0
 	}
 }
 
+func TestApplySystemdUnitResourcesSchedulesRouterdRestart(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	commandLog := filepath.Join(dir, "commands.log")
+	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
+echo "systemctl $@" >> %q
+exit 0
+`, commandLog))
+	writeExecutable(t, filepath.Join(binDir, "systemd-run"), fmt.Sprintf(`#!/bin/sh
+echo "systemd-run $@" >> %q
+exit 0
+`, commandLog))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	oldDefaults := platformDefaults
+	oldFeatures := platformFeatures
+	platformDefaults = platform.Defaults{
+		OS:               platform.OSLinux,
+		SystemdSystemDir: filepath.Join(dir, "systemd"),
+	}
+	platformFeatures = platform.Features{HasSystemd: true}
+	t.Cleanup(func() {
+		platformDefaults = oldDefaults
+		platformFeatures = oldFeatures
+	})
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd.service"}, Spec: api.SystemdUnitSpec{
+			Description: "routerd test",
+			ExecStart:   []string{"/usr/local/sbin/routerd", "serve", "--config", "/usr/local/etc/routerd/router.yaml"},
+		}},
+	}}}
+	changed, err := applySystemdUnitResources(router)
+	if err != nil {
+		t.Fatalf("apply systemd unit resources: %v", err)
+	}
+	if !stringSliceContains(changed, filepath.Join(platformDefaults.SystemdSystemDir, "routerd.service")) {
+		t.Fatalf("changed = %v, want routerd.service unit path", changed)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	gotCommands := string(commands)
+	if strings.Contains(gotCommands, "\nsystemctl restart routerd.service\n") || strings.HasPrefix(gotCommands, "systemctl restart routerd.service\n") {
+		t.Fatalf("routerd.service must not be directly restarted:\n%s", gotCommands)
+	}
+	if !strings.Contains(gotCommands, "systemd-run --unit routerd-self-restart-") ||
+		!strings.Contains(gotCommands, "--on-active=10s --collect systemctl restart routerd.service") {
+		t.Fatalf("routerd.service restart was not scheduled through systemd-run:\n%s", gotCommands)
+	}
+}
+
 func TestApplyFreeBSDConfigContinuesAfterPackageFailure(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
@@ -1091,6 +1147,8 @@ func TestRenderIPv4DefaultRoutePolicyMarks(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
+		"add table ip routerd_default_route",
+		"flush table ip routerd_default_route",
 		"table ip routerd_default_route",
 		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark { 0x110, 0x111 } meta mark set ct mark",
 		"ct mark != 0x0 ct mark != { 0x110, 0x111 } meta mark set 0x111 ct mark set meta mark",

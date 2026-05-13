@@ -1279,11 +1279,29 @@ func (e *Engine) observeHealthCheck(res api.Resource, aliases map[string]string,
 	if spec.Target != "" {
 		rr.Observed["target"] = spec.Target
 	}
+	if spec.Protocol != "" {
+		rr.Observed["protocol"] = spec.Protocol
+	}
+	if spec.Port != 0 {
+		rr.Observed["port"] = fmt.Sprintf("%d", spec.Port)
+	}
+	if spec.FwMark != 0 {
+		rr.Observed["fwmark"] = fmt.Sprintf("0x%x", spec.FwMark)
+	}
 	rr.Observed["interval"] = interval
 	rr.Observed["timeout"] = timeout
 	if spec.Interface != "" {
 		rr.Observed["interface"] = spec.Interface
 		rr.Observed["ifname"] = aliases[spec.Interface]
+	}
+	if spec.SourceInterface != "" {
+		rr.Observed["sourceInterface"] = spec.SourceInterface
+		if ifname := aliases[spec.SourceInterface]; ifname != "" {
+			rr.Observed["sourceIfname"] = ifname
+		}
+	}
+	if spec.SourceAddress != "" {
+		rr.Observed["sourceAddress"] = spec.SourceAddress
 	}
 	if includePlan {
 		if spec.Disabled {

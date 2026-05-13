@@ -4,6 +4,8 @@ package chain
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +87,56 @@ func TestIPv4PolicyRouteKeepsCandidateDuringTransientFailing(t *testing.T) {
 	}
 }
 
+func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet-via-hgw": {
+			"phase":         "Unhealthy",
+			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-hgw"}, Spec: api.HealthCheckSpec{
+			Target: "1.1.1.1",
+			FwMark: 0x116,
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.IPv4DefaultRoutePolicySpec{
+			Candidates: []api.IPv4DefaultRoutePolicyCandidate{{
+				Name:          "hgw",
+				Interface:     "wan",
+				GatewaySource: "static",
+				Gateway:       "192.168.1.1",
+				Table:         116,
+				Priority:      40,
+				Mark:          0x116,
+				HealthCheck:   "internet-via-hgw",
+			}},
+		}},
+	}}}
+	controller := IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
+	if err := controller.applyRouteTables(t.Context(), map[string]string{"wan": "lo"}); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4PolicyRoute", "hgw")
+	if status["phase"] != "Installed" || status["mark"] != "0x116" {
+		t.Fatalf("bootstrap route status = %#v", status)
+	}
+
+	router.Spec.Resources[0].Spec = api.HealthCheckSpec{Target: "1.1.1.1", FwMark: 0x116, Disabled: true}
+	store = mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet-via-hgw": {
+			"phase":         "Disabled",
+			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}
+	controller = IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
+	if err := controller.applyRouteTables(t.Context(), map[string]string{"wan": "lo"}); err != nil {
+		t.Fatal(err)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "IPv4PolicyRoute", "hgw"); len(status) != 0 {
+		t.Fatalf("disabled healthcheck should not bootstrap route: %#v", status)
+	}
+}
+
 func TestIPv4PolicyRouteSetReferencedByDefaultPolicyRendersOnlyWhenActive(t *testing.T) {
 	routeSet := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "dslite"}, Spec: api.IPv4PolicyRouteSetSpec{
 		Mode:             "hash",
@@ -145,6 +197,45 @@ func TestIPv4PolicyRouteHealthCheckRequiresFreshStatus(t *testing.T) {
 	if !controller.targetHealthy("internet") {
 		t.Fatal("fresh healthy status should be treated as healthy")
 	}
+}
+
+func TestIPv4PolicyRouteApplyNftTableReappliesExistingTable(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "nft.log")
+	nftPath := filepath.Join(dir, "nft")
+	tablePath := filepath.Join(dir, "policy.nft")
+	data := []byte("table ip routerd_policy {}\n")
+	if err := os.WriteFile(tablePath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + testShellQuote(logPath) + "\n" +
+		"exit 0\n"
+	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	controller := IPv4PolicyRouteController{}
+	if err := controller.applyNftTable(context.Background(), nftPath, tablePath, "ip", "routerd_policy", data); err != nil {
+		t.Fatal(err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(logData)
+	for _, want := range []string{
+		"list table ip routerd_policy",
+		"-c -f " + tablePath,
+		"-f " + tablePath,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nft command log missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func testShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func TestIPv4PolicyRouteGatewayResolution(t *testing.T) {

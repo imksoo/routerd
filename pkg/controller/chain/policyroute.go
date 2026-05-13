@@ -125,13 +125,13 @@ func (c IPv4PolicyRouteController) activeRouteSets(routeSets map[string]api.IPv4
 func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases map[string]string) error {
 	var failures []string
 	applyTarget := func(owner string, target api.IPv4PolicyRouteTarget, skipMissing bool) {
-		if !c.targetHealthy(target.HealthCheck) {
+		if !c.shouldInstallPolicyRouteForHealthCheck(target.HealthCheck, target.Mark) {
 			return
 		}
 		c.applyRouteTarget(ctx, aliases, owner, target.Name, target.OutboundInterface, target.Table, target.Priority, target.Mark, target.RouteMetric, "none", "", skipMissing, &failures)
 	}
 	applyCandidate := func(owner string, candidate api.IPv4DefaultRoutePolicyCandidate) {
-		if !c.targetHealthy(candidate.HealthCheck) {
+		if !c.shouldInstallPolicyRouteForHealthCheck(candidate.HealthCheck, candidate.Mark) {
 			return
 		}
 		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.Interface), candidate.Interface, candidate.Table, candidate.Priority, candidate.Mark, candidate.RouteMetric, firstNonEmpty(candidate.GatewaySource, "none"), candidate.Gateway, false, &failures)
@@ -175,6 +175,27 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func (c IPv4PolicyRouteController) shouldInstallPolicyRouteForHealthCheck(name string, mark int) bool {
+	if c.targetHealthy(name) {
+		return true
+	}
+	return c.healthCheckUsesFwMark(name, mark)
+}
+
+func (c IPv4PolicyRouteController) healthCheckUsesFwMark(name string, mark int) bool {
+	if name == "" || mark == 0 || c.Router == nil {
+		return false
+	}
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind != "HealthCheck" || res.Metadata.Name != name {
+			continue
+		}
+		spec, err := res.HealthCheckSpec()
+		return err == nil && !healthCheckDisabled(spec) && spec.FwMark == mark
+	}
+	return false
 }
 
 func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases map[string]string, owner, name, outboundInterface string, table, priority, mark, routeMetric int, gatewaySource, gateway string, skipMissing bool, failures *[]string) {
@@ -596,9 +617,6 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 		return err
 	}
 	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
-	if !changed && !missing {
-		return nil
-	}
 	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}

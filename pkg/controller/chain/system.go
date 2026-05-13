@@ -454,6 +454,9 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				}
 			}
 		}
+		if err := c.cleanupStaleHealthCheckUnits(ctx, explicitUnits, command); err != nil {
+			return err
+		}
 	}
 	if err := c.reconcileDisabledPPPoEInterfaces(); err != nil {
 		return err
@@ -496,6 +499,9 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		phase := "Applied"
+		if firstNonEmpty(spec.State, "present") == "absent" {
+			phase = "Absent"
+		}
 		if c.DryRun && changed {
 			phase = "Rendered"
 		}
@@ -849,6 +855,7 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 		Target:          resolved.Target,
 		Protocol:        resolved.Protocol,
 		Via:             resolved.Via,
+		FwMark:          resolved.FwMark,
 		SourceInterface: resolved.SourceInterface,
 		SourceAddress:   resolved.SourceAddress,
 		Port:            resolved.Port,
@@ -872,8 +879,10 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 				return changed, err
 			}
 		}
-		_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
-		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+		if changed || systemdUnitEnabledOrActive(ctx, command, unitName) {
+			_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
+			_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+		}
 		return changed, nil
 	}
 	if c.DryRun {
@@ -900,6 +909,51 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	return changed, nil
 }
 
+func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context, explicitUnits map[string]bool, command outputCommandFunc) error {
+	if c.DryRun {
+		return nil
+	}
+	desired := map[string]bool{}
+	for unitName := range explicitUnits {
+		desired[unitName] = true
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "HealthCheck" {
+			continue
+		}
+		spec, err := resource.HealthCheckSpec()
+		if err != nil {
+			return err
+		}
+		if spec.Daemon == healthcheck.DaemonKind {
+			desired[healthCheckUnitName(resource.Metadata.Name)] = true
+		}
+	}
+	matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, "routerd-healthcheck@*.service"))
+	if err != nil {
+		return err
+	}
+	var removed bool
+	for _, path := range matches {
+		unitName := filepath.Base(path)
+		if desired[unitName] {
+			continue
+		}
+		_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
+		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		removed = true
+	}
+	if removed {
+		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) (bool, error) {
 	state := firstNonEmpty(spec.State, "present")
 	var changed bool
@@ -912,10 +966,14 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 		if c.DryRun {
 			return changed, nil
 		}
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
-			return changed, err
+		if removed {
+			if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+				return changed, err
+			}
 		}
-		_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
+		if removed || systemdUnitEnabledOrActive(ctx, command, unitName) {
+			_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
+		}
 		return changed, nil
 	}
 	data := render.SystemdUnit(name, spec)
@@ -932,17 +990,26 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 			return changed, err
 		}
 	}
-	if _, err := command(ctx, "systemctl", "unmask", unitName); err != nil {
-		return changed, err
-	}
 	if api.BoolDefault(spec.Enabled, true) {
-		if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {
+		if fileChanged || !systemdUnitEnabled(ctx, command, unitName) {
+			if _, err := command(ctx, "systemctl", "unmask", unitName); err != nil {
+				return changed, err
+			}
+			if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {
+				return changed, err
+			}
+		}
+	} else if systemdUnitEnabledOrActive(ctx, command, unitName) {
+		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
 			return changed, err
 		}
 	}
 	if api.BoolDefault(spec.Started, true) {
-		if selfSystemdUnit(ctx, unitName, command) {
-			return changed, nil
+		if unitName == "routerd.service" && fileChanged {
+			if err := scheduleRouterdServiceRestart(ctx, command); err != nil {
+				return changed, err
+			}
+			return true, nil
 		}
 		active := true
 		if !fileChanged {
@@ -960,9 +1027,32 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 	return changed, nil
 }
 
-func selfSystemdUnit(ctx context.Context, unitName string, command outputCommandFunc) bool {
-	_, _ = ctx, command
-	return unitName == "routerd.service"
+func systemdUnitEnabledOrActive(ctx context.Context, command outputCommandFunc, unitName string) bool {
+	if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err == nil {
+		return true
+	}
+	return systemdUnitEnabled(ctx, command, unitName)
+}
+
+func systemdUnitEnabled(ctx context.Context, command outputCommandFunc, unitName string) bool {
+	_, err := command(ctx, "systemctl", "is-enabled", "--quiet", unitName)
+	return err == nil
+}
+
+func scheduleRouterdServiceRestart(ctx context.Context, command outputCommandFunc) error {
+	unitName := fmt.Sprintf("routerd-self-restart-%d-%d.service", os.Getpid(), time.Now().UnixNano())
+	_, err := command(ctx,
+		"systemd-run",
+		"--unit", unitName,
+		"--description", "Restart routerd after managed unit update",
+		"--on-active=10s",
+		"--collect",
+		"systemctl", "restart", "routerd.service",
+	)
+	if err != nil {
+		return fmt.Errorf("schedule routerd.service restart through systemd-run: %w", err)
+	}
+	return nil
 }
 
 func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec) []byte {
@@ -977,6 +1067,9 @@ func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec) []byte {
 	}
 	if spec.DisableIPv6RA {
 		b.WriteString("IPv6AcceptRA=no\n")
+	}
+	if spec.DisableDHCPv6 && !spec.DisableIPv6RA {
+		b.WriteString("\n[IPv6AcceptRA]\nDHCPv6Client=no\n")
 	}
 	if spec.DHCPv4UseRoutes != nil || spec.DHCPv4UseDNS != nil || spec.DHCPv4RouteMetric != 0 {
 		b.WriteString("\n[DHCPv4]\n")

@@ -107,6 +107,7 @@ spec:
   target: 1.1.1.1
   protocol: tcp
   port: 443
+  fwmark: 0x110
   sourceInterface: ds-routerd-test
 ```
 
@@ -119,5 +120,7 @@ running the probe. Standalone
 `routerd-healthcheck` flags still take the OS interface name directly. It also
 binds to `sourceAddress` when that field is set. Use `sourceAddressFrom` when
 the probe source should follow a managed address resource such as
-`IPv4StaticAddress/lan-base.status.address`. `via` records the intended gateway
-for the probe path. Route installation still belongs to route policy resources.
+`IPv4StaticAddress/lan-base.status.address`. On Linux, `fwmark` sets the socket
+mark before connecting, allowing the probe to use an existing policy-route table
+for gateway-based paths. `via` records the intended gateway for the probe path.
+Route installation still belongs to route policy resources.

@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"routerd/pkg/version"
@@ -35,7 +36,11 @@ type Runtime struct {
 	Meter       otelmetric.Meter
 	Tracer      trace.Tracer
 
-	shutdown []func(context.Context) error
+	mu            sync.Mutex
+	counters      map[string]otelmetric.Int64Counter
+	gauges        map[string]otelmetric.Int64Gauge
+	float64Gauges map[string]otelmetric.Float64Gauge
+	shutdown      []func(context.Context) error
 }
 
 func Setup(ctx context.Context, serviceName string, attrs ...attribute.KeyValue) (*Runtime, error) {
@@ -177,7 +182,16 @@ func (r *Runtime) Counter(name string) otelmetric.Int64Counter {
 	if r.Meter == nil {
 		r.Meter = otel.Meter(r.ServiceName)
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.counters == nil {
+		r.counters = map[string]otelmetric.Int64Counter{}
+	}
+	if counter, ok := r.counters[name]; ok {
+		return counter
+	}
 	counter, _ := r.Meter.Int64Counter(name)
+	r.counters[name] = counter
 	return counter
 }
 
@@ -185,7 +199,16 @@ func (r *Runtime) Gauge(name string) otelmetric.Int64Gauge {
 	if r.Meter == nil {
 		r.Meter = otel.Meter(r.ServiceName)
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.gauges == nil {
+		r.gauges = map[string]otelmetric.Int64Gauge{}
+	}
+	if gauge, ok := r.gauges[name]; ok {
+		return gauge
+	}
 	gauge, _ := r.Meter.Int64Gauge(name)
+	r.gauges[name] = gauge
 	return gauge
 }
 
@@ -193,7 +216,16 @@ func (r *Runtime) Float64Gauge(name string) otelmetric.Float64Gauge {
 	if r.Meter == nil {
 		r.Meter = otel.Meter(r.ServiceName)
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.float64Gauges == nil {
+		r.float64Gauges = map[string]otelmetric.Float64Gauge{}
+	}
+	if gauge, ok := r.float64Gauges[name]; ok {
+		return gauge
+	}
 	gauge, _ := r.Meter.Float64Gauge(name)
+	r.float64Gauges[name] = gauge
 	return gauge
 }
 

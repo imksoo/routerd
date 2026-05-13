@@ -95,6 +95,9 @@ func BuildInterface(resource api.Resource, peers []api.Resource) (InterfaceConfi
 		if peerSpec.Interface != resource.Metadata.Name {
 			continue
 		}
+		if !PeerSpecConfigured(peerSpec) {
+			continue
+		}
 		cfg.Peers = append(cfg.Peers, PeerConfig{
 			Name:                peer.Metadata.Name,
 			PublicKey:           peerSpec.PublicKey,
@@ -107,6 +110,15 @@ func BuildInterface(resource api.Resource, peers []api.Resource) (InterfaceConfi
 	}
 	sort.SliceStable(cfg.Peers, func(i, j int) bool { return cfg.Peers[i].Name < cfg.Peers[j].Name })
 	return cfg, nil
+}
+
+func PeerSpecConfigured(spec api.WireGuardPeerSpec) bool {
+	return strings.TrimSpace(spec.PublicKey) != "" ||
+		len(spec.AllowedIPs) > 0 ||
+		strings.TrimSpace(spec.Endpoint) != "" ||
+		spec.PersistentKeepalive != 0 ||
+		strings.TrimSpace(spec.PresharedKey) != "" ||
+		strings.TrimSpace(spec.PresharedKeyFile) != ""
 }
 
 func RenderSetConf(cfg InterfaceConfig) ([]byte, error) {
