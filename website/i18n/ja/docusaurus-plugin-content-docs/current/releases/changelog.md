@@ -8,6 +8,18 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260514.0654
+
+### 修正
+
+- Web Console の Overview で、初回の軽量 snapshot を 0 値の metric sample として
+  記録しないようにしました。
+- Overview の遅延 refresh は、必要な resource、event、conntrack、DNS、最近の
+  traffic flow を取得します。一方で、重い firewall、VPN、client inventory の処理は
+  引き続き避けます。
+- Overview card は、まだ取得していない flow / connection data を 0 と見せず、
+  loading state として表示します。
+
 ## v20260514.0037
 
 ### 修正

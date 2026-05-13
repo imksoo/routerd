@@ -8,6 +8,18 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260514.0654
+
+### Fixed
+
+- Fixed the Web Console Overview so lightweight first-load snapshots are not
+  recorded as zero-valued metric samples.
+- The Overview delayed refresh now loads the resource, event, conntrack, DNS,
+  and recent traffic-flow data it needs while still avoiding heavier firewall,
+  VPN, and client inventory work.
+- Overview cards now show a loading state for omitted flow and connection data
+  instead of presenting unavailable values as zero.
+
 ## v20260514.0037
 
 ### Fixed

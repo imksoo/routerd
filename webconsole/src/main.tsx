@@ -2176,7 +2176,9 @@ function App() {
       if (Array.isArray(denyTimelineResponse)) {
         setFirewallDenyTimeline(denyTimelineResponse);
       }
-      setMetricSamples(current => appendMetricSample(current, summaryResponse));
+      if (summaryResponse.resources !== undefined) {
+        setMetricSamples(current => appendMetricSample(current, summaryResponse));
+      }
       if (configResponse && !configRef.current) {
         configRef.current = configResponse as ConfigSnapshot;
         setConfig(configResponse as ConfigSnapshot);
@@ -2200,10 +2202,10 @@ function App() {
   async function loadOverviewDetails() {
     const query = new URLSearchParams({
       events: "50",
-      connections: "-1",
+      connections: "200",
       firewallLogs: "-1",
-      dnsQueries: "-1",
-      trafficFlows: "-1",
+      dnsQueries: "200",
+      trafficFlows: "200",
       clients: "0",
       dpi: "0",
       tuning: "0",
@@ -2214,6 +2216,9 @@ function App() {
     try {
       const response = await fetchJSON<Summary>(`api/v1/summary?${query.toString()}`);
       setSummary(current => reconcileSummary(current, response));
+      if (response.resources !== undefined) {
+        setMetricSamples(current => appendMetricSample(current, response));
+      }
       setError("");
     } catch (err) {
       overviewDetailsLoaded.current = false;
@@ -2631,8 +2636,8 @@ function App() {
                 </div>
                 <MetricCharts samples={metricSamples} />
                 <OverviewDPIInsights
-                  flows={summary?.trafficFlows ?? []}
-                  clients={summary?.clients ?? []}
+                  flows={summary?.trafficFlows}
+                  clients={summary?.clients}
                   connections={summary?.connections}
                 />
                 <Card id="overview-interfaces" className={styles.connectionAnchor}>
@@ -3343,13 +3348,18 @@ function MetricCharts({ samples }: { samples: MetricSample[] }) {
   );
 }
 
-function OverviewDPIInsights({ flows, clients, connections }: { flows: TrafficFlow[]; clients: ClientEntry[]; connections?: ConnectionTable }) {
+function OverviewDPIInsights({ flows, clients, connections }: { flows?: TrafficFlow[]; clients?: ClientEntry[]; connections?: ConnectionTable }) {
   const styles = useStyles();
-  const protocols = topTrafficProtocols(flows);
-  const talkers = topTalkers(clients, flows);
-  const domains = topDomains(flows);
-  const classes = connectionClassSummary(connections?.entries ?? []);
-  const classification = connectionClassificationStats(connections?.entries ?? []);
+  const flowRows = flows ?? [];
+  const clientRows = clients ?? [];
+  const connectionRows = connections?.entries ?? [];
+  const flowEmpty = flows === undefined ? "Loading observed flow data" : "No observed flow data";
+  const connectionEmpty = connections === undefined ? "Loading connection data" : "No active connection classes";
+  const protocols = topTrafficProtocols(flowRows);
+  const talkers = topTalkers(clientRows, flowRows);
+  const domains = topDomains(flowRows);
+  const classes = connectionClassSummary(connectionRows);
+  const classification = connectionClassificationStats(connectionRows);
   return (
     <div id="overview-dpi" className={`${styles.dpiInsightGrid} ${styles.connectionAnchor}`}>
       <Card className={styles.chartCard}>
@@ -3358,19 +3368,19 @@ function OverviewDPIInsights({ flows, clients, connections }: { flows: TrafficFl
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top protocols</Text>} description={<Text className={styles.muted}>DPI protocols and weak port guesses from recent observed flows</Text>} />
-        <RankList rows={protocols} empty="No protocol data" formatLabel={formatProtocolRankLabel} formatValue={formatBytes} />
+        <RankList rows={protocols} empty={flowEmpty} formatLabel={formatProtocolRankLabel} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top talkers</Text>} description={<Text className={styles.muted}>Clients with DPI-classified traffic volume</Text>} />
-        <RankList rows={talkers} empty="No client traffic observed" formatValue={formatBytes} />
+        <RankList rows={talkers} empty={flowEmpty} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top SNI / domains</Text>} description={<Text className={styles.muted}>Recent TLS SNI, HTTP host, DNS, or reverse DNS labels</Text>} />
-        <RankList rows={domains} empty="No domain labels observed" formatValue={formatBytes} />
+        <RankList rows={domains} empty={flowEmpty} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Traffic classes</Text>} description={<Text className={styles.muted}>Active connection visibility from conntrack and DPI enrichment</Text>} />
-        <RankList rows={classes} empty="No active connection classes" />
+        <RankList rows={classes} empty={connectionEmpty} />
       </Card>
     </div>
   );
@@ -5101,6 +5111,7 @@ function connectionFamilyCount(table: ConnectionTable | undefined, family: strin
 }
 
 function connectionFamilyCounts(table?: ConnectionTable) {
+  if (!table) return "-";
   const counts = { ipv4: 0, ipv6: 0, other: 0 };
   if (table?.byFamily && Object.keys(table.byFamily).length > 0) {
     for (const [family, value] of Object.entries(table.byFamily)) {

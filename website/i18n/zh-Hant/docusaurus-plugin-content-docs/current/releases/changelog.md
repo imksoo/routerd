@@ -8,6 +8,16 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## v20260514.0654
+
+### 修正
+
+- 修正 Web Console Overview，避免把首次輕量 snapshot 記錄成數值為 0 的 metric sample。
+- Overview 的延遲 refresh 現在會載入所需的 resource、event、conntrack、DNS
+  與近期 traffic flow 資料，同時仍避開較重的 firewall、VPN 與 client inventory 工作。
+- Overview card 會將尚未取得的 flow / connection data 顯示為 loading state，
+  不再把不可用的值呈現為 0。
+
 ## v20260514.0037
 
 ### 修正
