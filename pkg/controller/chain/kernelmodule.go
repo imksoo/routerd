@@ -21,11 +21,12 @@ type KernelModuleController struct {
 	Bus    interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
-	Store   Store
-	Command outputCommandFunc
-	DryRun  bool
-	OSName  string
-	BaseDir string
+	Store           Store
+	Command         outputCommandFunc
+	DryRun          bool
+	OSName          string
+	BaseDir         string
+	ProcModulesPath string
 }
 
 func (c KernelModuleController) Reconcile(ctx context.Context) error {
@@ -127,7 +128,12 @@ func (c KernelModuleController) applyKernelModules(ctx context.Context, name str
 		command = runOutputCommandContext
 	}
 	if api.BoolDefault(spec.Runtime, true) {
+		loadedModules := c.loadedKernelModules()
 		for _, module := range modules {
+			if loadedModules[module] {
+				loaded = append(loaded, module)
+				continue
+			}
 			if c.DryRun {
 				changed = true
 				continue
@@ -162,6 +168,25 @@ func (c KernelModuleController) applyKernelModules(ctx context.Context, name str
 		changed = changed || fileChanged
 	}
 	return changed, loaded, skipped, nil
+}
+
+func (c KernelModuleController) loadedKernelModules() map[string]bool {
+	path := c.ProcModulesPath
+	if path == "" {
+		path = "/proc/modules"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			out[fields[0]] = true
+		}
+	}
+	return out
 }
 
 func removeKernelModuleFile(path string, dryRun bool) (bool, error) {

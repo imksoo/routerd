@@ -4,8 +4,12 @@ package chain
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +58,10 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		"peerCount":  len(cfg.Peers),
 		"dryRun":     c.DryRun,
 	}
+	configHash := wireGuardConfigHash(cfg, c.DryRun)
+	if configHash != "" {
+		status["configHash"] = configHash
+	}
 	if cfg.PrivateKey == "" && cfg.PrivateKeyFile == "" {
 		status["reason"] = "PrivateKeyMissing"
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name, status); err != nil {
@@ -63,7 +71,12 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		return nil
 	}
 	controller := wireguard.Controller{Command: c.Command, DryRun: c.DryRun}
-	if _, err := controller.Apply(ctx, cfg); err != nil {
+	observed, statusErr := c.interfaceStatus(ctx, cfg.Name)
+	applied := false
+	current := c.Store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name)
+	if !c.DryRun && statusErr == nil && configHash != "" && fmt.Sprint(current["configHash"]) == configHash && c.interfaceMatchesDesired(ctx, cfg, observed) {
+		status["reason"] = "AlreadyConfigured"
+	} else if _, err := controller.Apply(ctx, cfg); err != nil {
 		status["phase"] = "Error"
 		status["reason"] = "ApplyFailed"
 		status["error"] = err.Error()
@@ -72,13 +85,15 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		}
 		c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "InterfaceError")
 		return nil
+	} else {
+		applied = true
+		observed, statusErr = c.interfaceStatus(ctx, cfg.Name)
 	}
 	status["phase"] = "Up"
 	if c.DryRun {
 		status["phase"] = "Planned"
 	}
-	observed, err := c.interfaceStatus(ctx, cfg.Name)
-	if err == nil {
+	if statusErr == nil {
 		if observed.PublicKey != "" {
 			status["publicKey"] = observed.PublicKey
 		}
@@ -91,16 +106,15 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		status["peerCount"] = len(observed.Peers)
 		c.savePeerObservedStatuses(resource.Metadata.Name, cfg.Peers, observed.Peers)
 	} else if !c.DryRun {
-		status["statusError"] = err.Error()
+		status["statusError"] = statusErr.Error()
 		c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "StatusUnavailable")
 	} else {
 		c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "DryRun")
 	}
-	changed := statusChanged(c.Store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name), status)
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name, status); err != nil {
 		return err
 	}
-	if changed && c.Bus != nil {
+	if applied && c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.wireguard.interface.applied", daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface", Name: resource.Metadata.Name}
 		event.Attributes = map[string]string{
@@ -111,6 +125,108 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		return c.Bus.Publish(ctx, event)
 	}
 	return nil
+}
+
+func wireGuardConfigHash(cfg wireguard.InterfaceConfig, dryRun bool) string {
+	resolved, err := wireguard.ResolveKeyFiles(cfg)
+	if err != nil {
+		if !dryRun {
+			return ""
+		}
+		resolved = cfg
+		if resolved.PrivateKey == "" && resolved.PrivateKeyFile != "" {
+			resolved.PrivateKey = "REDACTED_FROM_FILE"
+		}
+		for i := range resolved.Peers {
+			if resolved.Peers[i].PresharedKey == "" && resolved.Peers[i].PresharedKeyFile != "" {
+				resolved.Peers[i].PresharedKey = "REDACTED_FROM_FILE"
+			}
+		}
+	}
+	conf, err := wireguard.RenderSetConf(resolved)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(conf)
+	return hex.EncodeToString(sum[:])
+}
+
+func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wireguard.InterfaceConfig, observed wireguard.InterfaceStatus) bool {
+	if cfg.ListenPort != 0 && observed.ListenPort != cfg.ListenPort {
+		return false
+	}
+	if cfg.FwMark != 0 && !fwmarkMatches(observed.FwMark, cfg.FwMark) {
+		return false
+	}
+	if cfg.MTU != 0 && !c.linkMTUMatches(ctx, cfg.Name, cfg.MTU) {
+		return false
+	}
+	byKey := map[string]wireguard.PeerStatus{}
+	for _, peer := range observed.Peers {
+		byKey[peer.PublicKey] = peer
+	}
+	if len(byKey) != len(cfg.Peers) {
+		return false
+	}
+	for _, desired := range cfg.Peers {
+		current, ok := byKey[desired.PublicKey]
+		if !ok {
+			return false
+		}
+		if !stringSetEqual(desired.AllowedIPs, current.AllowedIPs) {
+			return false
+		}
+		if strings.TrimSpace(desired.Endpoint) != "" && strings.TrimSpace(desired.Endpoint) != strings.TrimSpace(current.LatestEndpoint) {
+			return false
+		}
+		if desired.PersistentKeepalive != current.PersistentKeepalive {
+			return false
+		}
+	}
+	return true
+}
+
+func (c WireGuardController) linkMTUMatches(ctx context.Context, ifname string, mtu int) bool {
+	run := c.Command
+	if run == nil {
+		run = wireguard.DefaultCommandRunner
+	}
+	out, err := run(ctx, "ip", "-o", "link", "show", "dev", ifname)
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(out))
+	for i, field := range fields {
+		if field == "mtu" && i+1 < len(fields) {
+			got, _ := strconv.Atoi(fields[i+1])
+			return got == mtu
+		}
+	}
+	return false
+}
+
+func fwmarkMatches(current string, desired int) bool {
+	current = strings.TrimSpace(strings.ToLower(current))
+	if current == "" {
+		return desired == 0
+	}
+	return current == fmt.Sprintf("0x%x", desired) || current == fmt.Sprintf("%d", desired)
+}
+
+func stringSetEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	left := append([]string(nil), a...)
+	right := append([]string(nil), b...)
+	sort.Strings(left)
+	sort.Strings(right)
+	for i := range left {
+		if strings.TrimSpace(left[i]) != strings.TrimSpace(right[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c WireGuardController) interfaceStatus(ctx context.Context, ifname string) (wireguard.InterfaceStatus, error) {

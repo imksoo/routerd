@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"routerd/pkg/api"
+	"routerd/pkg/wireguard"
 )
 
 func mustWireGuardRouter(t *testing.T, body string) *api.Router {
@@ -47,6 +48,20 @@ spec:
         persistentKeepalive: 25
 `)
 	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0", map[string]any{
+		"configHash": wireGuardConfigHash(wireguard.InterfaceConfig{
+			Name:       "wg0",
+			PrivateKey: "priv",
+			ListenPort: 51820,
+			Peers: []wireguard.PeerConfig{{
+				Name:                "peer-a",
+				PublicKey:           "peerpub",
+				AllowedIPs:          []string{"10.99.0.2/32"},
+				Endpoint:            "198.51.100.2:51820",
+				PersistentKeepalive: 25,
+			}},
+		}, false),
+	})
 	var calls []string
 	controller := WireGuardController{
 		Router: router,
@@ -86,6 +101,76 @@ spec:
 		if !found {
 			t.Fatalf("missing command prefix %q in %#v", want, calls)
 		}
+	}
+}
+
+func TestWireGuardControllerSkipsApplyWhenInterfaceMatches(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: test}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        privateKey: priv
+        listenPort: 51820
+        mtu: 1420
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata: {name: peer-a}
+      spec:
+        interface: wg0
+        publicKey: peerpub
+        allowedIPs: [10.99.0.2/32]
+        endpoint: 198.51.100.2:51820
+        persistentKeepalive: 25
+`)
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0", map[string]any{
+		"configHash": wireGuardConfigHash(wireguard.InterfaceConfig{
+			Name:       "wg0",
+			PrivateKey: "priv",
+			ListenPort: 51820,
+			Peers: []wireguard.PeerConfig{{
+				Name:                "peer-a",
+				PublicKey:           "peerpub",
+				AllowedIPs:          []string{"10.99.0.2/32"},
+				Endpoint:            "198.51.100.2:51820",
+				PersistentKeepalive: 25,
+			}},
+		}, false),
+	})
+	var calls []string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			calls = append(calls, call)
+			switch call {
+			case "wg show wg0 dump":
+				return []byte("priv\tifacepub\t51820\toff\npeerpub\tpsk\t198.51.100.2:51820\t10.99.0.2/32\t1710000000\t100\t200\t25\n"), nil
+			case "ip -o link show dev wg0":
+				return []byte("7: wg0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1420 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range calls {
+		if strings.HasPrefix(call, "wg setconf wg0") || strings.HasPrefix(call, "ip link set") {
+			t.Fatalf("matching interface should not be reapplied, calls = %#v", calls)
+		}
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
+	if status["phase"] != "Up" || status["reason"] != "AlreadyConfigured" {
+		t.Fatalf("status = %+v", status)
 	}
 }
 

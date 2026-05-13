@@ -22,12 +22,17 @@ func TestKernelModuleControllerLoadsAndPersistsModules(t *testing.T) {
 	}}}
 	store := mapStore{}
 	dir := t.TempDir()
+	procModules := filepath.Join(dir, "modules")
+	if err := os.WriteFile(procModules, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
 	var commands []string
 	controller := KernelModuleController{
-		Router:  router,
-		Store:   store,
-		OSName:  "ubuntu",
-		BaseDir: dir,
+		Router:          router,
+		Store:           store,
+		OSName:          "ubuntu",
+		BaseDir:         dir,
+		ProcModulesPath: procModules,
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -53,6 +58,43 @@ func TestKernelModuleControllerLoadsAndPersistsModules(t *testing.T) {
 	}
 	status := store.ObjectStatus(api.SystemAPIVersion, "KernelModule", "router-kernel")
 	if status["phase"] != "Applied" || status["changed"] != true {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestKernelModuleControllerSkipsLoadedModules(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "KernelModule"}, Metadata: api.ObjectMeta{Name: "router-kernel"}, Spec: api.KernelModuleSpec{
+			Modules: []string{"nf_conntrack", "wireguard"},
+			Runtime: boolPtr(true),
+		}},
+	}}}
+	store := mapStore{}
+	dir := t.TempDir()
+	procModules := filepath.Join(dir, "modules")
+	if err := os.WriteFile(procModules, []byte("nf_conntrack 200704 2 - Live 0x0\nwireguard 94208 0 - Live 0x0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	controller := KernelModuleController{
+		Router:          router,
+		Store:           store,
+		OSName:          "ubuntu",
+		ProcModulesPath: procModules,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("loaded modules should not be modprobed, commands = %#v", commands)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "KernelModule", "router-kernel")
+	if status["phase"] != "Applied" || status["changed"] != false {
 		t.Fatalf("status = %#v", status)
 	}
 }

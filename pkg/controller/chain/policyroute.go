@@ -194,20 +194,22 @@ func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases
 		metric = 50
 	}
 	if !c.DryRun {
-		args := []string{"-4", "route", "replace", "default"}
-		switch gatewaySource {
-		case "", "none":
-			args = append(args, "dev", ifname)
-		case "static":
-			args = append(args, "via", gateway, "dev", ifname)
-		default:
-			*failures = append(*failures, fmt.Sprintf("%s unsupported gatewaySource %q", owner, gatewaySource))
-			return
-		}
-		args = append(args, "table", fmt.Sprintf("%d", table), "metric", fmt.Sprintf("%d", metric))
-		if out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput(); err != nil {
-			*failures = append(*failures, fmt.Sprintf("%s route table %d: %v: %s", owner, table, err, strings.TrimSpace(string(out))))
-			return
+		if !c.defaultRouteMatches(ctx, ifname, table, metric, gatewaySource, gateway) {
+			args := []string{"-4", "route", "replace", "default"}
+			switch gatewaySource {
+			case "", "none":
+				args = append(args, "dev", ifname)
+			case "static":
+				args = append(args, "via", gateway, "dev", ifname)
+			default:
+				*failures = append(*failures, fmt.Sprintf("%s unsupported gatewaySource %q", owner, gatewaySource))
+				return
+			}
+			args = append(args, "table", fmt.Sprintf("%d", table), "metric", fmt.Sprintf("%d", metric))
+			if out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput(); err != nil {
+				*failures = append(*failures, fmt.Sprintf("%s route table %d: %v: %s", owner, table, err, strings.TrimSpace(string(out))))
+				return
+			}
 		}
 		if err := c.ensureFwmarkRule(ctx, priority, mark, table); err != nil {
 			*failures = append(*failures, fmt.Sprintf("%s fwmark rule: %v", owner, err))
@@ -226,6 +228,61 @@ func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases
 		"dryRun":    c.DryRun,
 		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	})
+}
+
+func (c IPv4PolicyRouteController) defaultRouteMatches(ctx context.Context, ifname string, table, metric int, gatewaySource, gateway string) bool {
+	out, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "default", "table", fmt.Sprintf("%d", table)).CombinedOutput()
+	if err != nil {
+		return false
+	}
+	line := strings.TrimSpace(string(out))
+	if line == "" {
+		return false
+	}
+	for _, candidate := range strings.Split(line, "\n") {
+		fields := strings.Fields(candidate)
+		if len(fields) == 0 || fields[0] != "default" {
+			continue
+		}
+		if !fieldValueMatches(fields, "dev", ifname) {
+			continue
+		}
+		if !fieldValueMatches(fields, "metric", fmt.Sprintf("%d", metric)) {
+			continue
+		}
+		switch gatewaySource {
+		case "", "none":
+			if hasField(fields, "via") {
+				continue
+			}
+		case "static":
+			if !fieldValueMatches(fields, "via", gateway) {
+				continue
+			}
+		default:
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func fieldValueMatches(fields []string, key, value string) bool {
+	for i, field := range fields {
+		if field == key && i+1 < len(fields) {
+			return fields[i+1] == value
+		}
+	}
+	return false
+}
+
+func hasField(fields []string, key string) bool {
+	for _, field := range fields {
+		if field == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (c IPv4PolicyRouteController) applyPolicyNft(ctx context.Context, nft, path string, activeRouteSets map[string]bool) error {
@@ -426,7 +483,9 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 		if c.DryRun {
 			return nil
 		}
-		_ = exec.CommandContext(ctx, nft, "delete", "table", family, table).Run()
+		if exec.CommandContext(ctx, nft, "list", "table", family, table).Run() == nil {
+			_ = exec.CommandContext(ctx, nft, "delete", "table", family, table).Run()
+		}
 		return nil
 	}
 	if c.DryRun {
@@ -439,10 +498,13 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 	if err != nil {
 		return err
 	}
+	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
+	if !changed && !missing {
+		return nil
+	}
 	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
 	if out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}

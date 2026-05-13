@@ -45,11 +45,13 @@ type PeerConfig struct {
 }
 
 type PeerStatus struct {
-	PublicKey       string
-	LatestHandshake time.Time
-	TransferRxBytes int64
-	TransferTxBytes int64
-	LatestEndpoint  string
+	PublicKey           string
+	AllowedIPs          []string
+	LatestHandshake     time.Time
+	TransferRxBytes     int64
+	TransferTxBytes     int64
+	LatestEndpoint      string
+	PersistentKeepalive int
 }
 
 type InterfaceStatus struct {
@@ -317,11 +319,13 @@ func ParseInterfaceDump(name string, data []byte) (InterfaceStatus, error) {
 			handshake = time.Unix(handshakeUnix, 0).UTC()
 		}
 		peers = append(peers, PeerStatus{
-			PublicKey:       wireGuardDumpValue(fields[0]),
-			LatestEndpoint:  wireGuardDumpValue(fields[2]),
-			LatestHandshake: handshake,
-			TransferRxBytes: rx,
-			TransferTxBytes: tx,
+			PublicKey:           wireGuardDumpValue(fields[0]),
+			AllowedIPs:          parseDumpAllowedIPs(fields[3]),
+			LatestEndpoint:      wireGuardDumpValue(fields[2]),
+			LatestHandshake:     handshake,
+			TransferRxBytes:     rx,
+			TransferTxBytes:     tx,
+			PersistentKeepalive: parseInt(fields[7]),
 		})
 	}
 	status.Peers = peers
@@ -360,11 +364,13 @@ func ParseAllDump(data []byte) ([]InterfaceStatus, error) {
 				handshake = time.Unix(handshakeUnix, 0).UTC()
 			}
 			status.Peers = append(status.Peers, PeerStatus{
-				PublicKey:       wireGuardDumpValue(fields[1]),
-				LatestEndpoint:  wireGuardDumpValue(fields[3]),
-				LatestHandshake: handshake,
-				TransferRxBytes: rx,
-				TransferTxBytes: tx,
+				PublicKey:           wireGuardDumpValue(fields[1]),
+				AllowedIPs:          parseDumpAllowedIPs(fields[4]),
+				LatestEndpoint:      wireGuardDumpValue(fields[3]),
+				LatestHandshake:     handshake,
+				TransferRxBytes:     rx,
+				TransferTxBytes:     tx,
+				PersistentKeepalive: parseInt(fields[8]),
 			})
 		default:
 			return nil, fmt.Errorf("wg dump line %d has %d fields", lineNo+1, len(fields))
@@ -390,6 +396,23 @@ func wireGuardDumpValue(value string) string {
 func parseInt(value string) int {
 	n, _ := strconv.Atoi(strings.TrimSpace(value))
 	return n
+}
+
+func parseDumpAllowedIPs(value string) []string {
+	value = wireGuardDumpValue(value)
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func RecordPeerMetrics(ctx context.Context, iface string, peers []PeerStatus) {
