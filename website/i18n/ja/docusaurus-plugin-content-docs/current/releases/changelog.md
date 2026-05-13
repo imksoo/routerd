@@ -51,61 +51,177 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## v20260513.1931
 
+### 修正
+
+- health check による経路切替の挙動を安定化しました。
+
 ## v20260513.1153
+
+### 修正
+
+- controller reconcile の冪等性を安定化しました。
 
 ## v20260513.0836
 
+### 追加
+
+- WireGuard mesh controller を追加しました。
+
 ## v20260513.0727
+
+### 変更
+
+- homert02 の UDP conntrack timeout 設定を引き上げました。
 
 ## v20260512.0037
 
+### 追加
+
+- conntrack observer から DPI flow metrics を出力するようにしました。
+
 ## v20260512.0032
+
+### 追加
+
+- Web Console Overview に DPI summary card を追加しました。
 
 ## v20260512.0027
 
+### 追加
+
+- Web Console Clients ページに DPI activity summary を追加しました。
+
 ## v20260512.0008
+
+### 追加
+
+- Web Console Connections ページに DPI classification を表示するようにしました。
 
 ## v20260511.2357
 
+### 変更
+
+- forward flow へ DPI enrichment を広げました。
+
 ## v20260511.2307
+
+### 修正
+
+- Web Console の横方向 overscroll を抑制しました。
 
 ## v20260511.2300
 
+### 修正
+
+- Firewall timeline の横スクロールを修正しました。
+
 ## v20260511.2253
+
+### 変更
+
+- Web Console を content-driven な layout section へ整理しました。
 
 ## v20260511.2217
 
+### 検証
+
+- mobile Web Console layout を検証しました。
+
 ## v20260511.2211
+
+### 変更
+
+- Web Console の page state を画面遷移後も保持するようにしました。
 
 ## v20260511.2154
 
+### 変更
+
+- Clients inventory view を整理しました。
+
 ## v20260511.2145
+
+### 追加
+
+- Web Console SSE reconciliation を追加しました。
 
 ## v20260511.2130
 
+### 追加
+
+- client fingerprint inference を追加しました。
+
 ## v20260511.2106
+
+### 変更
+
+- 期限切れ conntrack return flow の相関を取るようにしました。
 
 ## v20260511.2045
 
+### 変更
+
+- firewall deny event に DPI context を付与するようにしました。
+
 ## v20260511.2018
+
+### 検証
+
+- DPI classifier の OS parity を検証しました。
 
 ## v20260511.1846
 
+### 修正
+
+- Web Console の時刻 locale を英語に固定しました。
+
 ## v20260511.1840
+
+### 追加
+
+- 分離した DPI classifier proof of concept を追加しました。
 
 ## v20260511.1820
 
+### 追加
+
+- Connections protocol summary を追加しました。
+
 ## v20260511.1709
+
+### 修正
+
+- release artifact の checksum を修正しました。
 
 ## v20260511.1428
 
+### 変更
+
+- Web Console の navigation section を改善しました。
+
 ## v20260511.1240
+
+### 変更
+
+- controller mode reason の表現を調整しました。
 
 ## v20260511.1041
 
+### 追加
+
+- dry-run controller の可視性を高めました。
+
 ## v20260511.1017
 
+### 変更
+
+- controller の dry-run mode を明示的に表示するようにしました。
+
 ## v20260510.1956
+
+### 変更
+
+- `NetworkAdoption` が resolved DNS を管理できるようにしました。
 
 ## v20260510.1811
 
@@ -195,29 +311,81 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## v20260510.1534
 
+### 追加
+
+- ディスクレス mini PC walkthrough の図、tutorial index、field-note blog post を追加しました。
+
 ## v20260510.1508
+
+### 追加
+
+- USB persistence の運用ドキュメントと live ISO の USB persistence support を追加しました。
 
 ## v20260510.1451
 
+### 追加
+
+- contribution、security、license、positioning、hardware compatibility、diskless mini PC の各ドキュメントを追加しました。
+
 ## v20260510.1429
+
+### 追加
+
+- Alpine live ISO build と install documentation を追加しました。
 
 ## v20260510.1412
 
+### 追加
+
+- live ISO validation note と、live ISO 経路の installer documentation を追加しました。
+
 ## v20260510.1354
+
+### 修正
+
+- Alpine 上の live ISO runtime apply を修正しました。
 
 ## v20260510.1310
 
+### 追加
+
+- live ISO の serial console support を有効にしました。
+
 ## v20260510.1301
+
+### 変更
+
+- release tag を JST timestamp 形式へ切り替えました。
 
 ## 20260510.4
 
+### 修正
+
+- live ISO overlay archive path を修正しました。
+
 ## 20260510.3
+
+### 修正
+
+- Alpine live ISO の release discovery を修正しました。
 
 ## 20260510.2
 
+### 追加
+
+- Alpine ベースの live ISO packaging を追加しました。
+
 ## 20260510.1
 
+### 追加
+
+- installer configuration wizard を追加しました。
+
 ## 20260510.0
+
+### 変更
+
+- fixed-download-asset release の後続として、20260510 release series を開始しました。
 
 ## 20260509.16
 

@@ -32,61 +32,177 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## v20260513.1931
 
+### 修正
+
+- 穩定 health check 路徑切換行為。
+
 ## v20260513.1153
+
+### 修正
+
+- 穩定 controller reconcile 的冪等性。
 
 ## v20260513.0836
 
+### 新增
+
+- 新增 WireGuard mesh controller。
+
 ## v20260513.0727
+
+### 變更
+
+- 提高 homert02 的 UDP conntrack timeout 設定。
 
 ## v20260512.0037
 
+### 新增
+
+- 從 conntrack observer 匯出 DPI flow metrics。
+
 ## v20260512.0032
+
+### 新增
+
+- 在 Web Console Overview 頁面新增 DPI summary card。
 
 ## v20260512.0027
 
+### 新增
+
+- 在 Web Console Clients 頁面新增 DPI activity summary。
+
 ## v20260512.0008
+
+### 新增
+
+- 在 Web Console Connections 頁面顯示 DPI classification。
 
 ## v20260511.2357
 
+### 變更
+
+- 將 DPI enrichment 擴展到 forward flow。
+
 ## v20260511.2307
+
+### 修正
+
+- 抑制 Web Console 的水平 overscroll。
 
 ## v20260511.2300
 
+### 修正
+
+- 修正 Firewall timeline 的水平捲動。
+
 ## v20260511.2253
+
+### 變更
+
+- 將 Web Console 整理為 content-driven layout section。
 
 ## v20260511.2217
 
+### 驗證
+
+- 驗證 mobile Web Console layout。
+
 ## v20260511.2211
+
+### 變更
+
+- Web Console 在頁面切換後會保留 page state。
 
 ## v20260511.2154
 
+### 變更
+
+- 整理 Clients inventory view。
+
 ## v20260511.2145
+
+### 新增
+
+- 新增 Web Console SSE reconciliation。
 
 ## v20260511.2130
 
+### 新增
+
+- 新增 client fingerprint inference。
+
 ## v20260511.2106
+
+### 變更
+
+- 關聯 expired conntrack return flow。
 
 ## v20260511.2045
 
+### 變更
+
+- 為 firewall deny event 加上 DPI context。
+
 ## v20260511.2018
+
+### 驗證
+
+- 驗證 DPI classifier OS parity。
 
 ## v20260511.1846
 
+### 修正
+
+- 將 Web Console time locale 固定為 English。
+
 ## v20260511.1840
+
+### 新增
+
+- 新增 isolated DPI classifier proof of concept。
 
 ## v20260511.1820
 
+### 新增
+
+- 新增 Connections protocol summary。
+
 ## v20260511.1709
+
+### 修正
+
+- 修正 release artifact checksum。
 
 ## v20260511.1428
 
+### 變更
+
+- 改善 Web Console navigation section。
+
 ## v20260511.1240
+
+### 變更
+
+- 調整 controller mode reason 的呈現。
 
 ## v20260511.1041
 
+### 新增
+
+- 提高 dry-run controller 的可見度。
+
 ## v20260511.1017
 
+### 變更
+
+- 明確顯示 controller dry-run mode。
+
 ## v20260510.1956
+
+### 變更
+
+- 讓 `NetworkAdoption` 管理 resolved DNS。
 
 ## v20260510.1811
 
@@ -159,29 +275,81 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## v20260510.1534
 
+### 新增
+
+- 新增 diskless mini PC walkthrough 圖、tutorial index 更新與 field-note blog post。
+
 ## v20260510.1508
+
+### 新增
+
+- 新增 USB persistence 操作文件與 live ISO USB persistence 支援。
 
 ## v20260510.1451
 
+### 新增
+
+- 新增 contribution、security、license、positioning、hardware compatibility 與 diskless mini PC 文件。
+
 ## v20260510.1429
+
+### 新增
+
+- 新增 Alpine live ISO build 與 install documentation。
 
 ## v20260510.1412
 
+### 新增
+
+- 新增 live ISO validation note 與 live ISO 路徑的 installer documentation。
+
 ## v20260510.1354
+
+### 修正
+
+- 修正 Alpine 上的 live ISO runtime apply。
 
 ## v20260510.1310
 
+### 新增
+
+- 啟用 live ISO serial console support。
+
 ## v20260510.1301
+
+### 變更
+
+- 將 release tag 切換為 JST timestamp 格式。
 
 ## 20260510.4
 
+### 修正
+
+- 修正 live ISO overlay archive path。
+
 ## 20260510.3
+
+### 修正
+
+- 修正 Alpine live ISO release discovery。
 
 ## 20260510.2
 
+### 新增
+
+- 新增 Alpine-based live ISO packaging。
+
 ## 20260510.1
 
+### 新增
+
+- 新增 installer configuration wizard。
+
 ## 20260510.0
+
+### 變更
+
+- 在 fixed-download-asset release 之後，開始 20260510 release series。
 
 ## 20260509.16
 

@@ -50,61 +50,177 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## v20260513.1931
 
+### Fixed
+
+- Stabilized health-check route failover behavior.
+
 ## v20260513.1153
+
+### Fixed
+
+- Stabilized idempotent controller reconciliation.
 
 ## v20260513.0836
 
+### Added
+
+- Added the WireGuard mesh controller.
+
 ## v20260513.0727
+
+### Changed
+
+- Raised the homert02 UDP conntrack timeout configuration.
 
 ## v20260512.0037
 
+### Added
+
+- Exported DPI flow metrics from the conntrack observer.
+
 ## v20260512.0032
+
+### Added
+
+- Added DPI summary cards to the Web Console Overview page.
 
 ## v20260512.0027
 
+### Added
+
+- Added DPI activity summaries to the Web Console Clients page.
+
 ## v20260512.0008
+
+### Added
+
+- Added DPI classifications to the Web Console Connections page.
 
 ## v20260511.2357
 
+### Changed
+
+- Extended DPI enrichment to forwarded flows.
+
 ## v20260511.2307
+
+### Fixed
+
+- Contained horizontal overscroll in the Web Console.
 
 ## v20260511.2300
 
+### Fixed
+
+- Fixed horizontal scrolling in the Firewall timeline.
+
 ## v20260511.2253
+
+### Changed
+
+- Reworked the Web Console around content-driven layout sections.
 
 ## v20260511.2217
 
+### Validated
+
+- Validated the mobile Web Console layout.
+
 ## v20260511.2211
+
+### Changed
+
+- Preserved Web Console page state across navigation.
 
 ## v20260511.2154
 
+### Changed
+
+- Structured the Clients inventory view.
+
 ## v20260511.2145
+
+### Added
+
+- Added Web Console SSE reconciliation.
 
 ## v20260511.2130
 
+### Added
+
+- Added client fingerprint inference.
+
 ## v20260511.2106
+
+### Changed
+
+- Correlated expired conntrack return flows.
 
 ## v20260511.2045
 
+### Changed
+
+- Enriched firewall deny events with DPI context.
+
 ## v20260511.2018
+
+### Validated
+
+- Validated DPI classifier OS parity.
 
 ## v20260511.1846
 
+### Fixed
+
+- Fixed the Web Console time locale to English.
+
 ## v20260511.1840
+
+### Added
+
+- Added an isolated DPI classifier proof of concept.
 
 ## v20260511.1820
 
+### Added
+
+- Added Connections protocol summaries.
+
 ## v20260511.1709
+
+### Fixed
+
+- Fixed release artifact checksums.
 
 ## v20260511.1428
 
+### Changed
+
+- Improved Web Console navigation sections.
+
 ## v20260511.1240
+
+### Changed
+
+- Refined controller mode reasons.
 
 ## v20260511.1041
 
+### Added
+
+- Exposed dry-run controller visibility.
+
 ## v20260511.1017
 
+### Changed
+
+- Made controller dry-run modes explicit.
+
 ## v20260510.1956
+
+### Changed
+
+- Let `NetworkAdoption` manage resolved DNS.
 
 ## v20260510.1811
 
@@ -177,29 +293,81 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## v20260510.1534
 
+### Added
+
+- Added diskless mini PC walkthrough diagrams, tutorial index updates, and a field-note blog post.
+
 ## v20260510.1508
+
+### Added
+
+- Added USB persistence operations documentation and live ISO USB persistence support.
 
 ## v20260510.1451
 
+### Added
+
+- Added project contribution, security, license, positioning, hardware compatibility, and diskless mini PC documentation.
+
 ## v20260510.1429
+
+### Added
+
+- Added Alpine live ISO build and install documentation.
 
 ## v20260510.1412
 
+### Added
+
+- Added live ISO validation notes and installer documentation for the live ISO path.
+
 ## v20260510.1354
+
+### Fixed
+
+- Fixed live ISO runtime apply on Alpine.
 
 ## v20260510.1310
 
+### Added
+
+- Enabled serial console support for the live ISO.
+
 ## v20260510.1301
+
+### Changed
+
+- Switched release tags to JST timestamp format.
 
 ## 20260510.4
 
+### Fixed
+
+- Fixed the live ISO overlay archive path.
+
 ## 20260510.3
+
+### Fixed
+
+- Fixed Alpine live ISO release discovery.
 
 ## 20260510.2
 
+### Added
+
+- Added Alpine-based live ISO packaging.
+
 ## 20260510.1
 
+### Added
+
+- Added the installer configuration wizard.
+
 ## 20260510.0
+
+### Changed
+
+- Started the 20260510 release series after the fixed-download-asset release.
 
 ## 20260509.16
 
