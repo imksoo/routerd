@@ -37,6 +37,47 @@ func TestValidateSysctl(t *testing.T) {
 	}
 }
 
+func TestValidatePackageSupportsAlpineAPK(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"},
+				Metadata: api.ObjectMeta{Name: "router-deps"},
+				Spec: api.PackageSpec{Packages: []api.OSPackageSetSpec{
+					{OS: "alpine", Manager: "apk", Names: []string{"dnsmasq", "nftables"}},
+				}},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate alpine package resource: %v", err)
+	}
+}
+
+func TestValidatePackageRejectsWrongManagerForOS(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"},
+				Metadata: api.ObjectMeta{Name: "router-deps"},
+				Spec: api.PackageSpec{Packages: []api.OSPackageSetSpec{
+					{OS: "freebsd", Manager: "apt", Names: []string{"dnsmasq"}},
+				}},
+			},
+		}},
+	}
+
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "manager must be pkg for os freebsd") {
+		t.Fatalf("expected manager compatibility error, got %v", err)
+	}
+}
+
 func TestValidateRejectsNetworkAdoptionOnProtectedInterface(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

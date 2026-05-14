@@ -829,14 +829,18 @@ func validateResource(res api.Resource) error {
 		}
 		for i, set := range spec.Packages {
 			switch set.OS {
-			case "ubuntu", "debian", "fedora", "rhel", "rocky", "almalinux", "nixos", "freebsd":
+			case "ubuntu", "debian", "alpine", "fedora", "rhel", "rocky", "almalinux", "nixos", "freebsd":
 			default:
-				return fmt.Errorf("%s spec.packages[%d].os must be ubuntu, debian, fedora, rhel, rocky, almalinux, nixos, or freebsd", res.ID(), i)
+				return fmt.Errorf("%s spec.packages[%d].os must be ubuntu, debian, alpine, fedora, rhel, rocky, almalinux, nixos, or freebsd", res.ID(), i)
 			}
-			switch defaultString(set.Manager, defaultPackageManager(set.OS)) {
-			case "apt", "dnf", "nix", "pkg":
+			manager := defaultString(set.Manager, defaultPackageManager(set.OS))
+			switch manager {
+			case "apt", "apk", "dnf", "nix", "pkg":
 			default:
-				return fmt.Errorf("%s spec.packages[%d].manager must be apt, dnf, nix, or pkg", res.ID(), i)
+				return fmt.Errorf("%s spec.packages[%d].manager must be apt, apk, dnf, nix, or pkg", res.ID(), i)
+			}
+			if expected := defaultPackageManager(set.OS); expected != "" && manager != expected {
+				return fmt.Errorf("%s spec.packages[%d].manager must be %s for os %s", res.ID(), i, expected, set.OS)
 			}
 			if len(set.Names) == 0 {
 				return fmt.Errorf("%s spec.packages[%d].names is required", res.ID(), i)
@@ -3416,6 +3420,8 @@ func defaultPackageManager(osName string) string {
 	switch osName {
 	case "ubuntu", "debian":
 		return "apt"
+	case "alpine":
+		return "apk"
 	case "fedora", "rhel", "rocky", "almalinux":
 		return "dnf"
 	case "nixos":

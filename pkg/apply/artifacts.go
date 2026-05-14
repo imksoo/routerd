@@ -191,7 +191,9 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil),
 		}
 		_, features := platform.Current()
-		if features.HasRCD {
+		if features.HasOpenRC {
+			intents = append(intents, artifact("openrc.service", "routerd_dnsmasq", resource.ActionEnsure, "rc-service", nil))
+		} else if features.HasRCD {
 			intents = append(intents, artifact("rc.d.service", "routerd_dnsmasq", resource.ActionEnsure, "service", nil))
 		} else {
 			intents = append(intents, artifact("systemd.service", "routerd-dnsmasq.service", resource.ActionEnsure, "systemctl", nil))
@@ -223,6 +225,9 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 		return []resource.Intent{artifact("net.ipv6.ra.client", aliases[spec.Interface], resource.ActionEnsure, "platform-network", nil)}
 	case "DHCPv6PrefixDelegation":
 		_, features := platform.Current()
+		if features.HasOpenRC {
+			return []resource.Intent{artifact("openrc.service", render.OpenRCServiceName("routerd-dhcpv6-client@"+res.Metadata.Name+".service"), resource.ActionEnsure, "rc-service", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
+		}
 		if features.HasRCD {
 			return []resource.Intent{artifact("rc.d.service", render.FreeBSDServiceName("routerd-dhcpv6-client@"+res.Metadata.Name+".service"), resource.ActionEnsure, "service", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
 		}

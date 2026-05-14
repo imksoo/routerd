@@ -59,7 +59,7 @@ the live ISO.
 The project focuses on a few independent strengths:
 
 - **Cross-OS declarative resources** for Ubuntu, NixOS, and FreeBSD host
-  integration.
+  integration, with Alpine Linux groundwork for the live ISO and minimal hosts.
 - **Live ISO plus USB persistence** for diskless mini PC routers.
 - **Observable routing decisions** through events, generation diffs,
   health checks, Web Console, and OpenTelemetry.
@@ -278,7 +278,9 @@ Managed daemons expose the same local contract:
 ## Platform Notes
 
 Ubuntu Server is the most exercised deployment target. NixOS and FreeBSD use
-the same resource model through their native activation paths. See
+the same resource model through their native activation paths. Alpine supports
+the live ISO and `apk` package bootstrap, while OpenRC service parity is still
+tracked as groundwork. See
 `docs/platforms.md` for the current OS surface matrix.
 
 The implementation is pre-release. v1alpha1 names and fields may still change

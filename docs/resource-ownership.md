@@ -31,15 +31,15 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `IPv4Route` | Kernel route |
 | `NAT44Rule` | nftables `routerd_nat` table |
 | `WireGuardInterface` / `WireGuardPeer` | WireGuard configuration |
-| `TailscaleNode` | `routerd-tailscale-<name>.service` systemd unit and `tailscale up` arguments |
+| `TailscaleNode` | `routerd-tailscale-<name>` service unit/script and `tailscale up` arguments |
 | `VRF` | Linux VRF device and routing table |
 | `VXLANTunnel` | VXLAN device |
-| `Package` | apt / dnf / pkg / Nix install state |
+| `Package` | apt / apk / dnf / pkg / Nix install state |
 | `Sysctl` | One sysctl value |
 | `SysctlProfile` | A set of sysctl values |
 | `KernelModule` | Runtime module load state and `/etc/modules-load.d/90-routerd-<name>.conf` on Linux |
 | `NetworkAdoption` | systemd-networkd / systemd-resolved drop-ins |
-| `SystemdUnit` | systemd unit file and enabled state |
+| `SystemdUnit` | systemd unit, FreeBSD rc.d script, or OpenRC init script and enabled state |
 | `NTPClient` | NTP client configuration |
 
 ## How removal works

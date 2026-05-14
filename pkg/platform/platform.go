@@ -42,6 +42,9 @@ type Defaults struct {
 	// RCScriptDir is where the FreeBSD rc.d script is installed.
 	// Empty on platforms that do not use rc.d.
 	RCScriptDir string
+	// OpenRCScriptDir is where OpenRC init scripts are installed.
+	// Empty on platforms that do not use OpenRC.
+	OpenRCScriptDir string
 
 	// NetplanFile is the routerd-managed netplan drop-in path.
 	// Empty on platforms that do not use netplan.
@@ -58,8 +61,8 @@ type Defaults struct {
 
 	// DnsmasqConfigFile is the routerd-managed dnsmasq config.
 	DnsmasqConfigFile string
-	// DnsmasqServiceFile is the routerd-managed dnsmasq service unit
-	// (systemd) or rc.d script (FreeBSD).
+	// DnsmasqServiceFile is the routerd-managed dnsmasq service unit,
+	// rc.d script, or OpenRC init script.
 	DnsmasqServiceFile string
 	// FreeBSDDHClientConfigFile is the dhclient.conf path on FreeBSD.
 	FreeBSDDHClientConfigFile string

@@ -148,8 +148,8 @@ type SystemdUnitSpec struct {
 }
 
 type OSPackageSetSpec struct {
-	OS       string   `yaml:"os" json:"os" jsonschema:"enum=ubuntu,enum=debian,enum=fedora,enum=rhel,enum=rocky,enum=almalinux,enum=nixos,enum=freebsd"`
-	Manager  string   `yaml:"manager,omitempty" json:"manager,omitempty" jsonschema:"enum=,enum=apt,enum=dnf,enum=nix,enum=pkg"`
+	OS       string   `yaml:"os" json:"os" jsonschema:"enum=ubuntu,enum=debian,enum=alpine,enum=fedora,enum=rhel,enum=rocky,enum=almalinux,enum=nixos,enum=freebsd"`
+	Manager  string   `yaml:"manager,omitempty" json:"manager,omitempty" jsonschema:"enum=,enum=apt,enum=apk,enum=dnf,enum=nix,enum=pkg"`
 	Names    []string `yaml:"names" json:"names"`
 	Optional bool     `yaml:"optional,omitempty" json:"optional,omitempty"`
 }

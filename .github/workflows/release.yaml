@@ -66,7 +66,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck packaging/install.sh packaging/uninstall.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh
+          shellcheck packaging/install.sh packaging/uninstall.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/alpine-vm-smoke.sh
 
       - name: Build release archive
         run: |

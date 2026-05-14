@@ -52,6 +52,9 @@ jobs:
       - name: Check generated schemas
         run: make check-schema
 
+      - name: Smoke installer dependency plans
+        run: make check-install-deps
+
       - name: Validate examples
         run: make validate-example
 

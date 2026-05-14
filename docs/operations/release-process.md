@@ -171,6 +171,12 @@ On Arch-like systems, the installer uses `pacman` and installs:
 ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables
 ```
 
+On Alpine, the installer uses `apk` and installs:
+
+```text
+alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux e2fsprogs dosfstools exfatprogs
+```
+
 On FreeBSD, the installer uses `pkg` and installs:
 
 ```text

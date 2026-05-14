@@ -3,7 +3,6 @@
 package render
 
 import (
-	"strconv"
 	"strings"
 
 	"routerd/pkg/api"
@@ -11,6 +10,10 @@ import (
 )
 
 func DNSResolverSystemdUnit(name string, spec api.DNSResolverSpec, binaryPath, configPath string) []byte {
+	return SystemdUnit("routerd-dns-resolver@"+name+".service", DNSResolverSystemdSpec(name, spec, binaryPath, configPath))
+}
+
+func DNSResolverSystemdSpec(name string, spec api.DNSResolverSpec, binaryPath, configPath string) api.SystemdUnitSpec {
 	_ = dnsresolver.NormalizeSpec(spec)
 	if strings.TrimSpace(binaryPath) == "" {
 		binaryPath = "/usr/local/sbin/routerd-dns-resolver"
@@ -18,35 +21,32 @@ func DNSResolverSystemdUnit(name string, spec api.DNSResolverSpec, binaryPath, c
 	if strings.TrimSpace(configPath) == "" {
 		configPath = "/var/lib/routerd/dns-resolver/" + name + "/config.json"
 	}
-	var args []string
-	args = append(args,
+	exec := []string{
+		binaryPath,
 		"daemon",
-		"--resource", strconv.Quote(name),
-		"--config-file", strconv.Quote(configPath),
-	)
-	return []byte(`[Unit]
-Description=routerd DNS resolver ` + name + `
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=` + binaryPath + ` ` + strings.Join(args, " ") + `
-Restart=always
-RestartSec=5s
-RuntimeDirectory=routerd/dns-resolver
-StateDirectory=routerd/dns-resolver
-LogsDirectory=routerd
-NoNewPrivileges=yes
-ProtectHome=yes
-ProtectSystem=strict
-PrivateTmp=yes
-ReadWritePaths=/run/routerd /var/lib/routerd /var/log/routerd
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-
-[Install]
-WantedBy=multi-user.target
-`)
+		"--resource", name,
+		"--config-file", configPath,
+	}
+	noNewPrivileges := true
+	privateTmp := true
+	return api.SystemdUnitSpec{
+		Description:             "routerd DNS resolver " + name,
+		ExecStart:               exec,
+		Wants:                   []string{"network-online.target"},
+		After:                   []string{"network-online.target"},
+		WantedBy:                []string{"multi-user.target"},
+		Restart:                 "always",
+		RestartSec:              "5s",
+		RuntimeDirectory:        []string{"routerd/dns-resolver"},
+		StateDirectory:          []string{"routerd/dns-resolver", "routerd/dns-resolver/" + name},
+		LogsDirectory:           []string{"routerd"},
+		ReadWritePaths:          []string{"/run/routerd", "/var/lib/routerd", "/var/log/routerd"},
+		RestrictAddressFamilies: []string{"AF_UNIX", "AF_INET", "AF_INET6"},
+		CapabilityBoundingSet:   []string{"CAP_NET_BIND_SERVICE"},
+		AmbientCapabilities:     []string{"CAP_NET_BIND_SERVICE"},
+		ProtectSystem:           "strict",
+		ProtectHome:             "yes",
+		NoNewPrivileges:         &noNewPrivileges,
+		PrivateTmp:              &privateTmp,
+	}
 }

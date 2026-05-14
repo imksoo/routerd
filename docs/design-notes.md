@@ -57,7 +57,40 @@ WireGuard, Tailscale, IPsec, VRF, and VXLAN are the building blocks for the Tier
 
 There is no abstract `VPNTunnel` resource. WireGuard, Tailscale, IPsec, and future SoftEther integrations are added as their own kinds. The motivation is that each of these has materially different state machines; collapsing them into one polymorphic kind would lose semantics.
 
-## 7. Open work
+## 7. OpenRC service rendering
+
+Alpine uses OpenRC rather than systemd. The OpenRC renderer intentionally starts
+as a renderer, not an applier: `routerd render alpine --out-dir` writes reviewable
+init scripts and related config so installed-host behavior can be tested before
+routerd starts mutating OpenRC state.
+
+The first supported OpenRC surface is narrow:
+
+- explicit `SystemdUnit` resources mapped to OpenRC scripts
+- synthesized `routerd-healthcheck` scripts
+- synthesized managed dnsmasq scripts when DHCP or RA resources require dnsmasq
+- synthesized scripts for DHCPv4/DHCPv6 clients, firewall logger, PPPoE, and
+  Tailscale
+- DNS resolver scripts, with enable/start deferred until routerd can materialize
+  the resolver runtime config outside the controller loop
+
+This keeps the code out of a compatibility trap. `SystemdUnit` remains the API
+shape for now, but OpenRC only maps fields that have clear init-script meaning:
+`ExecStart`, `ExecStartPre`, environment, working directory, user/group, and
+runtime/state/log directories. systemd sandboxing, `NetworkAdoption`, networkd,
+resolved, and timesyncd semantics are not emulated on OpenRC.
+
+Apply-time activation is gated by `HasOpenRC`. It writes scripts only when
+content or mode changes, checks `rc-update show default` before adding or
+removing a service, and checks `rc-service <name> status` before start,
+restart, or stop. This keeps OpenRC behavior aligned with the systemd
+idempotency rule: no repeated service-manager commands when desired state and
+files are unchanged.
+
+The next implementation step is promoting the Alpine installed-host smoke
+harness into a regular VM job.
+
+## 8. Open work
 
 - Stateful firewall in production: applied today, but still wants richer rule expressions, ICMP type matching, multiple ports per rule, and rate limiting.
 - DoH proxying for clients on the LAN.

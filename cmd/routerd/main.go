@@ -141,16 +141,88 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 func renderCommand(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("render requires a target: nixos or freebsd")
+		return errors.New("render requires a target: nixos, freebsd, or alpine")
 	}
 	switch args[0] {
 	case "nixos":
 		return renderNixOSCommand(args[1:], stdout)
 	case "freebsd":
 		return renderFreeBSDCommand(args[1:], stdout)
+	case "alpine":
+		return renderAlpineCommand(args[1:], stdout)
 	default:
 		return fmt.Errorf("unknown render target %q", args[0])
 	}
+}
+
+func renderAlpineCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("render alpine", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", defaultConfigPath, "config path")
+	outDir := fs.String("out-dir", "", "output directory for Alpine generated files; writes OpenRC scripts to stdout when empty")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	if err := config.Validate(router); err != nil {
+		return err
+	}
+	data, err := render.OpenRC(router)
+	if err != nil {
+		return err
+	}
+	files := map[string][]byte{}
+	dnsmasqConfig, dnsmasqWarnings, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
+		RuntimeDir: "/run/routerd",
+		LeaseFile:  "/var/lib/routerd/dnsmasq/dnsmasq.leases",
+	})
+	if err != nil {
+		return err
+	}
+	for _, warning := range dnsmasqWarnings {
+		fmt.Fprintf(stdout, "warning: %s\n", warning)
+	}
+	if len(dnsmasqConfig) > 0 {
+		files["dnsmasq.conf"] = dnsmasqConfig
+	}
+	for name, content := range data.InitScripts {
+		files["openrc-"+name] = content
+	}
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if *outDir == "" {
+		for _, name := range names {
+			fmt.Fprintf(stdout, "### %s\n", name)
+			if _, err := stdout.Write(files[name]); err != nil {
+				return err
+			}
+			if len(files[name]) == 0 || files[name][len(files[name])-1] != '\n' {
+				fmt.Fprintln(stdout)
+			}
+		}
+		return nil
+	}
+	if err := os.MkdirAll(*outDir, 0755); err != nil {
+		return err
+	}
+	for _, name := range names {
+		path := strings.TrimRight(*outDir, "/") + "/" + name
+		perm := os.FileMode(0644)
+		if strings.HasPrefix(name, "openrc-") {
+			perm = 0755
+		}
+		if err := os.WriteFile(path, files[name], perm); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "wrote %s\n", path)
+	}
+	return nil
 }
 
 func renderFreeBSDCommand(args []string, stdout io.Writer) error {
@@ -1016,9 +1088,13 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 
 		var systemdUnitChangedFiles []string
 		if !opts.SkipServiceManager {
-			if err := recordStageError("systemd-units", func() error {
+			if err := recordStageError("service-manager", func() error {
 				var err error
-				systemdUnitChangedFiles, err = applySystemdUnitResources(effectiveRouter)
+				if platformFeatures.HasOpenRC {
+					systemdUnitChangedFiles, err = applyOpenRCServiceResources(effectiveRouter)
+				} else {
+					systemdUnitChangedFiles, err = applySystemdUnitResources(effectiveRouter)
+				}
 				return err
 			}()); err != nil {
 				return nil, err
@@ -4495,8 +4571,8 @@ func applyLinuxPackages(router *api.Router) ([]string, error) {
 		if !ok {
 			continue
 		}
-		manager := defaultString(set.Manager, "apt")
-		if manager != "apt" {
+		manager := defaultString(set.Manager, defaultLinuxPackageManager(osName))
+		if manager != "apt" && manager != "apk" {
 			continue
 		}
 		for _, name := range set.Names {
@@ -4505,22 +4581,40 @@ func applyLinuxPackages(router *api.Router) ([]string, error) {
 				continue
 			}
 			seen[name] = true
-			out, err := exec.Command("dpkg-query", "-W", "-f=${Status}", name).CombinedOutput()
-			if err != nil || strings.TrimSpace(string(out)) != "install ok installed" {
-				missing = append(missing, name)
+			switch manager {
+			case "apt":
+				out, err := exec.Command("dpkg-query", "-W", "-f=${Status}", name).CombinedOutput()
+				if err != nil || strings.TrimSpace(string(out)) != "install ok installed" {
+					missing = append(missing, name)
+				}
+			case "apk":
+				if _, err := exec.Command("apk", "info", "-e", name).CombinedOutput(); err != nil {
+					missing = append(missing, name)
+				}
 			}
 		}
 	}
 	if len(missing) == 0 {
 		return nil, nil
 	}
-	args := append([]string{"install", "-y"}, missing...)
-	if err := runLogged("apt-get", args...); err != nil {
-		return nil, err
+	manager := defaultLinuxPackageManager(osName)
+	switch manager {
+	case "apt":
+		args := append([]string{"install", "-y"}, missing...)
+		if err := runLogged("apt-get", args...); err != nil {
+			return nil, err
+		}
+	case "apk":
+		args := append([]string{"add", "--no-cache"}, missing...)
+		if err := runLogged("apk", args...); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, nil
 	}
 	out := make([]string, 0, len(missing))
 	for _, name := range missing {
-		out = append(out, "apt:"+name)
+		out = append(out, manager+":"+name)
 	}
 	return out, nil
 }
@@ -4530,7 +4624,10 @@ func linuxPackageOSName() string {
 	if err != nil {
 		return "ubuntu"
 	}
-	text := string(data)
+	return linuxPackageOSNameFrom(string(data))
+}
+
+func linuxPackageOSNameFrom(text string) string {
 	for _, line := range strings.Split(text, "\n") {
 		key, value, ok := strings.Cut(line, "=")
 		if !ok || key != "ID" {
@@ -4538,7 +4635,7 @@ func linuxPackageOSName() string {
 		}
 		value = strings.Trim(value, "\"'")
 		switch value {
-		case "ubuntu", "debian":
+		case "ubuntu", "debian", "alpine":
 			return value
 		}
 	}
@@ -4546,6 +4643,17 @@ func linuxPackageOSName() string {
 		return "ubuntu"
 	}
 	return ""
+}
+
+func defaultLinuxPackageManager(osName string) string {
+	switch osName {
+	case "ubuntu", "debian":
+		return "apt"
+	case "alpine":
+		return "apk"
+	default:
+		return ""
+	}
 }
 
 func packageSetForOSMain(spec api.PackageSpec, osName string) (api.OSPackageSetSpec, bool) {
@@ -6685,6 +6793,9 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	if isNixOSHost() {
 		return applyNixOSDnsmasqConfig(configPath, configData, dnsmasqPath)
 	}
+	if platformFeatures.HasOpenRC {
+		return applyOpenRCDnsmasqConfig(configPath, servicePath, configData, dnsmasqPath)
+	}
 	if !platformFeatures.HasSystemd {
 		return applyDirectDnsmasqConfig(configPath, configData, dnsmasqPath)
 	}
@@ -6784,6 +6895,75 @@ func applyDirectDnsmasqConfig(configPath string, configData []byte, dnsmasqPath 
 	return changedFiles, nil
 }
 
+func applyOpenRCDnsmasqConfig(configPath, servicePath string, configData []byte, dnsmasqPath string) ([]string, error) {
+	if servicePath == "" {
+		if platformDefaults.OpenRCScriptDir == "" {
+			return nil, errors.New("OpenRC script directory is not configured")
+		}
+		servicePath = filepath.Join(platformDefaults.OpenRCScriptDir, "routerd_dnsmasq")
+	}
+	var changedFiles []string
+	if err := os.MkdirAll(filepathDir(configPath), 0755); err != nil {
+		return nil, fmt.Errorf("create directory for %s: %w", configPath, err)
+	}
+	if err := os.MkdirAll(platformDefaults.RuntimeDir, 0755); err != nil {
+		return nil, fmt.Errorf("create runtime directory %s: %w", platformDefaults.RuntimeDir, err)
+	}
+	leaseFile := dnsmasqLeaseFileForPlatform()
+	if leaseFile == "" {
+		leaseFile = strings.TrimRight(platformDefaults.StateDir, "/") + "/dnsmasq/dnsmasq.leases"
+	}
+	if err := os.MkdirAll(filepathDir(leaseFile), 0755); err != nil {
+		return nil, fmt.Errorf("create dnsmasq lease directory %s: %w", filepathDir(leaseFile), err)
+	}
+	changed, err := writeFileIfChanged(configPath, configData, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("write dnsmasq config %s: %w", configPath, err)
+	}
+	if changed {
+		changedFiles = append(changedFiles, configPath)
+	}
+	out, err := exec.Command(dnsmasqPath, "--test", "--conf-file="+configPath).CombinedOutput()
+	if err != nil {
+		return changedFiles, fmt.Errorf("%s --test --conf-file=%s: %w: %s", dnsmasqPath, configPath, err, strings.TrimSpace(string(out)))
+	}
+	if err := os.MkdirAll(filepathDir(servicePath), 0755); err != nil {
+		return changedFiles, fmt.Errorf("create directory for %s: %w", servicePath, err)
+	}
+	script, err := render.DnsmasqOpenRCScript(configPath, dnsmasqPath)
+	if err != nil {
+		return changedFiles, err
+	}
+	serviceChanged, err := writeFileIfChanged(servicePath, script, 0755)
+	if err != nil {
+		return changedFiles, fmt.Errorf("write OpenRC dnsmasq script %s: %w", servicePath, err)
+	}
+	if serviceChanged {
+		changedFiles = append(changedFiles, servicePath)
+	}
+	enabledServices := openRCEnabledServices()
+	if !enabledServices["routerd_dnsmasq"] {
+		if err := runLogged("rc-update", "add", "routerd_dnsmasq", "default"); err != nil {
+			return changedFiles, err
+		}
+	}
+	active := openRCServiceActive("routerd_dnsmasq")
+	if len(changedFiles) > 0 && active {
+		if err := runLogged("rc-service", "routerd_dnsmasq", "restart"); err != nil {
+			return changedFiles, err
+		}
+		changedFiles = append(changedFiles, "service:routerd_dnsmasq")
+		return changedFiles, nil
+	}
+	if !active {
+		if err := runLogged("rc-service", "routerd_dnsmasq", "start"); err != nil {
+			return changedFiles, err
+		}
+		changedFiles = append(changedFiles, "service:routerd_dnsmasq")
+	}
+	return changedFiles, nil
+}
+
 func processRunningFromPIDFile(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -6877,6 +7057,10 @@ func applyNixOSDnsmasqConfig(configPath string, configData []byte, dnsmasqPath s
 }
 
 func removeStaleNixOSRuntimeDnsmasqUnit(changedFiles *[]string) error {
+	// Temporary migration cleanup for hosts that received the old imperative
+	// runtime unit before dnsmasq moved into the generated NixOS module.
+	// Remove after the first release containing generated routerd-dnsmasq
+	// NixOS service ownership has completed one deployment cycle.
 	path := "/run/systemd/system/" + routerdDnsmasqService
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
@@ -6953,6 +7137,9 @@ func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte
 
 func dnsmasqLeaseFileForPlatform() string {
 	if platformDefaults.OS == platform.OSFreeBSD {
+		return strings.TrimRight(platformDefaults.StateDir, "/") + "/dnsmasq/dnsmasq.leases"
+	}
+	if platformFeatures.HasOpenRC {
 		return strings.TrimRight(platformDefaults.StateDir, "/") + "/dnsmasq/dnsmasq.leases"
 	}
 	return ""
@@ -7231,6 +7418,136 @@ func applySystemdUnitResources(router *api.Router) ([]string, error) {
 		}
 	}
 	return changedFiles, nil
+}
+
+func applyOpenRCServiceResources(router *api.Router) ([]string, error) {
+	if !platformFeatures.HasOpenRC {
+		return nil, nil
+	}
+	if platformDefaults.OpenRCScriptDir == "" {
+		return nil, errors.New("OpenRC script directory is not configured")
+	}
+	cfg, err := render.OpenRCWithOptions(router, render.OpenRCOptions{IncludeDnsmasq: false})
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(platformDefaults.OpenRCScriptDir, 0755); err != nil {
+		return nil, fmt.Errorf("create OpenRC script directory %s: %w", platformDefaults.OpenRCScriptDir, err)
+	}
+	var changedFiles []string
+	changedServices := map[string]bool{}
+	enabledServices := openRCEnabledServices()
+	for _, name := range sortedByteMapKeysMain(cfg.InitScripts) {
+		path := filepath.Join(platformDefaults.OpenRCScriptDir, name)
+		changed, err := writeFileIfChanged(path, cfg.InitScripts[name], 0755)
+		if err != nil {
+			return nil, fmt.Errorf("write OpenRC script %s: %w", path, err)
+		}
+		if changed {
+			changedFiles = append(changedFiles, path)
+			changedServices[name] = true
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "SystemdUnit" {
+			continue
+		}
+		spec, err := res.SystemdUnitSpec()
+		if err != nil {
+			return nil, err
+		}
+		if defaultString(spec.State, "present") != "absent" {
+			continue
+		}
+		name := render.OpenRCServiceName(firstNonEmptyString(spec.UnitName, res.Metadata.Name))
+		path := filepath.Join(platformDefaults.OpenRCScriptDir, name)
+		if openRCServiceActive(name) {
+			if err := runLogged("rc-service", name, "stop"); err != nil {
+				return nil, err
+			}
+		}
+		if enabledServices[name] {
+			if err := runLogged("rc-update", "del", name, "default"); err != nil {
+				return nil, err
+			}
+			delete(enabledServices, name)
+		}
+		if err := os.Remove(path); err == nil {
+			changedFiles = append(changedFiles, path)
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("remove OpenRC script %s: %w", path, err)
+		}
+	}
+	for _, service := range cfg.Services {
+		if service.Enabled {
+			if !enabledServices[service.Name] {
+				if err := runLogged("rc-update", "add", service.Name, "default"); err != nil {
+					return nil, err
+				}
+				enabledServices[service.Name] = true
+			}
+		} else if enabledServices[service.Name] {
+			if err := runLogged("rc-update", "del", service.Name, "default"); err != nil {
+				return nil, err
+			}
+			delete(enabledServices, service.Name)
+		}
+		active := openRCServiceActive(service.Name)
+		if service.Started {
+			if service.Name == "routerd" && changedServices[service.Name] && active {
+				continue
+			}
+			if changedServices[service.Name] && active {
+				if err := runLogged("rc-service", service.Name, "restart"); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if !active {
+				if err := runLogged("rc-service", service.Name, "start"); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		if service.Name == "routerd" {
+			continue
+		}
+		if active {
+			if err := runLogged("rc-service", service.Name, "stop"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return changedFiles, nil
+}
+
+func openRCEnabledServices() map[string]bool {
+	enabled := map[string]bool{}
+	out, err := exec.Command("rc-update", "show", "default").CombinedOutput()
+	if err != nil {
+		return enabled
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			enabled[fields[0]] = true
+		}
+	}
+	return enabled
+}
+
+func openRCServiceActive(name string) bool {
+	return exec.Command("rc-service", name, "status").Run() == nil
+}
+
+func sortedByteMapKeysMain(values map[string][]byte) []string {
+	out := make([]string, 0, len(values))
+	for key := range values {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func scheduleRouterdServiceRestartLogged() error {
@@ -7741,6 +8058,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  adopt --config <path> --apply")
 	fmt.Fprintln(w, "  render nixos --config <path> [--out <path>]")
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <path>]")
+	fmt.Fprintln(w, "  render alpine --config <path> [--out-dir <path>]")
 	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--override-client <client>] [--override-profile <profile>]")
 	fmt.Fprintln(w, "  delete <kind>/<name> [--dry-run]")
 	fmt.Fprintln(w, "  delete -f <path> [--dry-run]")

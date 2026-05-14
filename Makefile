@@ -38,7 +38,7 @@ PLAYWRIGHT_INSTALL_FLAGS ?= --with-deps
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test build build-daemons build-daemons-freebsd check-linux-static webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema website-deps website-build third-party-licenses check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test build build-daemons build-daemons-freebsd check-linux-static check-install-deps alpine-vm-smoke webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema website-deps website-build third-party-licenses check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -78,6 +78,12 @@ check-linux-static:
 			*) echo "Linux binary is not statically linked: $$bin" >&2; echo "$$info" >&2; exit 1 ;; \
 		esac; \
 	done
+
+check-install-deps:
+	./scripts/install-deps-smoke.sh
+
+alpine-vm-smoke:
+	./scripts/alpine-vm-smoke.sh
 
 webconsole-build:
 	cd webconsole && npm ci && npm run build

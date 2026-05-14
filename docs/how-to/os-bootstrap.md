@@ -29,6 +29,21 @@ spec:
         - kmod
         - wireguard-tools
         - tailscale
+    - os: alpine
+      manager: apk
+      names:
+        - dnsmasq
+        - nftables
+        - conntrack-tools
+        - iproute2
+        - wireguard-tools
+        - tailscale
+    - os: freebsd
+      manager: pkg
+      names:
+        - dnsmasq
+        - wireguard-tools
+        - mpd5
 ```
 
 ## Kernel modules
@@ -84,6 +99,17 @@ Use `SystemdUnit` for explicit local units that should be installed and enabled
 by routerd. routerd-managed DHCP, DNS, PPPoE, healthcheck, Tailscale, and helper
 daemon units are generated from their own resource kinds; do not duplicate
 those units manually unless you are intentionally adopting a local service.
+
+On Alpine/OpenRC, `routerd render alpine --out-dir <dir>` can render OpenRC
+scripts for explicit `SystemdUnit`, managed dnsmasq, `routerd-healthcheck`,
+DHCP clients, DNS resolver, firewall logger, PPPoE, and Tailscale. During
+apply, routerd installs those scripts under `/etc/init.d` and uses `rc-update`
+and `rc-service` only when the current OpenRC state needs a change.
+Synthesized DNS resolver scripts are rendered but not enabled or started until
+runtime config materialization is available outside the controller loop.
+It does not emulate systemd-only concepts. `NetworkAdoption` drop-ins for
+systemd-networkd/resolved, systemd sandboxing fields, and timesyncd ownership
+remain unsupported on OpenRC until they have native Alpine semantics.
 
 ## Apply order
 

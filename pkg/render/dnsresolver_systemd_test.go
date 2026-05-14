@@ -17,7 +17,7 @@ func TestDNSResolverSystemdUnit(t *testing.T) {
 	for _, want := range []string{
 		"Description=routerd DNS resolver cloudflare",
 		"ExecStart=/usr/local/sbin/routerd-dns-resolver daemon",
-		"--config-file \"/var/lib/routerd/dns-resolver/cloudflare/config.json\"",
+		"--config-file /var/lib/routerd/dns-resolver/cloudflare/config.json",
 		"Restart=always",
 	} {
 		if !strings.Contains(unit, want) {

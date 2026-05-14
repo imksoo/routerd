@@ -132,6 +132,27 @@ spec:
               - ndpi
               - tailscale
             optional: true
+          - os: alpine
+            manager: apk
+            names:
+              - dnsmasq
+              - nftables
+              - conntrack-tools
+              - iproute2
+              - iputils
+              - iputils-tracepath
+              - bind-tools
+              - tcpdump
+              - ppp
+              - ppp-pppoe
+              - wireguard-tools
+              - strongswan
+              - chrony
+              - kmod
+              - radvd
+              - ndpi
+              - tailscale
+            optional: true
           - os: freebsd
             manager: pkg
             names:

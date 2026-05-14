@@ -20,6 +20,10 @@ spec:
             manager: nix
             names:
               - tailscale
+          - os: alpine
+            manager: apk
+            names:
+              - tailscale
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: TailscaleNode

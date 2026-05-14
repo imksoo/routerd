@@ -70,7 +70,31 @@ WireGuard、Tailscale、IPsec、将来の SoftEther 統合は、それぞれ別 
 各々の状態機械は大きく異なります。
 多態的な 1 Kind にまとめると意味を失うためです。
 
-## 7. 残課題
+## 7. OpenRC service rendering
+
+Alpine は systemd ではなく OpenRC を使います。
+OpenRC 対応は、まず applier ではなく renderer として始めます。
+`routerd render alpine --out-dir` は review 可能な init script と関連設定を書き出し、routerd が OpenRC 状態を変更する前に installed host の挙動を確認できるようにします。
+
+最初に対応する OpenRC surface は狭く保ちます：
+
+- 明示的な `SystemdUnit` resource から OpenRC script への変換
+- `routerd-healthcheck` script の自動生成
+- DHCP または RA resource が dnsmasq を必要とする場合の managed dnsmasq script 自動生成
+- DHCPv4 / DHCPv6 client、firewall logger、PPPoE、Tailscale の script 自動生成
+- DNS resolver script。resolver runtime config を controller loop 外で materialize できるまでは enable / start しません
+
+これは互換性の袋小路を避けるためです。
+API shape は当面 `SystemdUnit` のままですが、OpenRC に写すのは明確に init script の意味を持つ field に限ります：`ExecStart`、`ExecStartPre`、environment、working directory、user/group、runtime/state/log directory。
+systemd sandboxing、`NetworkAdoption`、networkd、resolved、timesyncd の意味は OpenRC 上で模倣しません。
+
+apply-time activation は `HasOpenRC` で分岐します。
+script は内容または mode が変わる場合だけ書き込み、`rc-update show default` で登録状態を確認してから add / del し、`rc-service <name> status` を見てから start / restart / stop します。
+systemd 側と同じく、望む状態と file が変わらない場合は service-manager command を重複実行しません。
+
+次の実装段階は Alpine installed-host smoke harness の通常 VM job 化です。
+
+## 8. 残課題
 
 - 状態を持つ firewall の本番運用：適用は始まったが、ルール表現力 / ICMP type 一致 / 複数 port / rate limit を拡張する必要がある。
 - LAN 向け DoH 代理。

@@ -8,9 +8,9 @@ routerd is designed to be cross-OS, but each platform uses a different host inte
 
 ## Linux (Ubuntu / Debian)
 
-Linux is the primary platform. Release installs land under `/usr/local` by default.
+Linux with systemd is the primary platform. Release installs land under `/usr/local` by default.
 Install from the Linux release archive and run `sudo ./install.sh`.
-The installer can install runtime packages with `apt-get`, `dnf`, or `pacman`.
+The installer can install runtime packages with `apt-get`, `dnf`, `apk`, or `pacman`.
 
 routerd uses the following OS surfaces on Linux:
 
@@ -35,6 +35,46 @@ The reference list:
 | OS control | `procps`, `systemd`, `kmod` |
 
 `routerd-dhcpv6-client`, `routerd-dhcpv4-client`, `routerd-pppoe-client`, and `routerd-healthcheck` run as systemd services on Linux.
+
+## Alpine Linux
+
+Alpine is a Linux target for the live ISO and minimal installed hosts. It does
+not have Ubuntu feature parity yet: routerd uses the Linux data plane tools
+where available, but service activation is OpenRC-oriented instead of systemd.
+
+Implemented:
+
+- live ISO boot and USB persistence flow on Alpine
+- dependency bootstrap through `install.sh` with `apk`
+- platform detection through `pkg/platform` with `HasOpenRC`
+- `Package` resources with `os: alpine` and `manager: apk`
+- CI smoke coverage for Alpine `install.sh --list-deps` and a minimal
+  `Package` validate/dry-run apply path
+- `routerd render alpine --out-dir` for OpenRC scripts and dnsmasq config
+- OpenRC script rendering for explicit `SystemdUnit`, managed dnsmasq,
+  `routerd-healthcheck`, DHCPv4/DHCPv6 clients, DNS resolver, firewall logger,
+  PPPoE, and Tailscale
+- apply-time OpenRC activation through `rc-update` / `rc-service`, with
+  idempotency checks before enable/start/restart operations
+- `make alpine-vm-smoke` harness for installed Alpine guests
+- Linux nftables, conntrack, iproute2, dnsmasq, PPP, WireGuard, strongSwan,
+  radvd, and diagnostic package names documented for Alpine
+
+Backlog before calling Alpine equivalent to Ubuntu:
+
+- materialize DNS resolver runtime config before activating synthesized OpenRC
+  DNS resolver services; the script is rendered but not enabled or started
+  immediately
+- persistent installed-host networking ownership outside the live ISO bootstrap
+- promote the Alpine installed-host smoke harness into a regular VM CI job
+  that exercises OpenRC activation and real package-manager command paths
+- richer docs for systemd-only resources that stay unsupported on OpenRC
+
+| Category | Packages |
+| --- | --- |
+| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `ppp`, `ppp-pppoe`, `wireguard-tools`, `strongswan`, `radvd` |
+| Diagnostics | `bind-tools`, `iputils`, `iputils-tracepath`, `tcpdump` |
+| OS control | `alpine-conf`, `kmod`, `util-linux`, `e2fsprogs`, `dosfstools`, `exfatprogs` |
 
 ## NixOS
 
@@ -70,6 +110,16 @@ On NixOS, populate `systemd.services.routerd.path` with the commands routerd nee
 `install.sh` warns instead of calling `nix-env`, because NixOS package state should remain declarative.
 When `Package` resources have `os: nixos`, routerd does **not** install packages imperatively at runtime.
 It writes them to `environment.systemPackages` in `/etc/nixos/routerd-generated.nix`, then lets `nixos-rebuild` activate the system profile.
+
+NixOS post-activation inventory:
+
+| Area | Current owner | Notes |
+| --- | --- | --- |
+| Packages and routerd service path | Generated NixOS module | `Package` resources become `environment.systemPackages`; routerd does not call `nix-env`. |
+| Helper daemon service definitions | Generated NixOS module | DHCPv4, DHCPv6, PPPoE, HealthCheck, firewall logger, Tailscale, and dnsmasq are expressed as systemd services in Nix. |
+| nftables enablement | Generated NixOS module | NAT, firewall, policy routing, and Path MTU resources set `networking.nftables.enable = true` when needed. |
+| Runtime-only network mutations | `routerd.service` after activation | Dynamic DS-Lite, transient route decisions, and other status-derived mutations still need runtime reconciliation. |
+| Legacy runtime dnsmasq unit cleanup | `routerd.service` after activation | Kept temporarily to remove older `/run/systemd/system/routerd-dnsmasq.service` artifacts during migration. Remove after deployed hosts have passed one release cycle. |
 
 | Category | Packages |
 | --- | --- |
@@ -141,6 +191,19 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 - `rc.d-*`
 
 `routerd apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, validates dnsmasq with `dnsmasq --test`, starts generated rc.d scripts with `service <name> onestart`, and applies dynamic DS-Lite tunnels with `ifconfig gif` when static `rc.conf` rendering is not enough. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
+
+## Platform parity backlog
+
+These are the current known level differences to track when comparing Ubuntu,
+NixOS, FreeBSD, and Alpine:
+
+| Area | Current gap | Backlog |
+| --- | --- | --- |
+| CI/runtime coverage | CI runs unit tests and Linux static checks on Ubuntu. Alpine now has a host-independent installer dependency smoke plus minimal `Package` validate/dry-run coverage and an installed-host smoke harness, but Alpine activation is not yet a regular VM job. FreeBSD is cross-built in release, and NixOS activation is not yet a regular VM job. | Add FreeBSD VM, NixOS VM, and Alpine VM smoke jobs that run validate, plan, dry-run apply, real package-manager checks, service activation, and renderer syntax checks. |
+| Alpine service manager | Alpine now has OpenRC rendering for explicit `SystemdUnit`, managed dnsmasq, `routerd-healthcheck`, DHCP clients, DNS resolver, firewall logger, PPPoE, and Tailscale. Apply-time activation uses `rc-update` / `rc-service` and avoids duplicate enable/start/restart work when state is unchanged. DNS resolver scripts are rendered but not enabled or started until runtime config materialization is in place. | Materialize DNS resolver runtime config for OpenRC, broaden installed-host networking ownership, and promote the Alpine smoke harness to CI. |
+| NixOS imperative leftovers | NixOS renders the module and lets `nixos-rebuild` activate it. Runtime-only network mutations and legacy dnsmasq unit cleanup still run from `routerd.service` after activation. The cleanup is intentionally kept for the first release that contains generated NixOS dnsmasq service ownership. | Remove legacy dnsmasq cleanup after that release cycle, reduce post-activation reconciliation where NixOS has native declarations, and keep tests around remaining runtime-only resources. |
+| FreeBSD feature exceptions | `ClientPolicy` remains Linux-only because it depends on nftables Ethernet source address sets. | Keep rejecting it explicitly, and only add pf support after a design that preserves the same isolation semantics. |
+| Package bootstrap | Ubuntu, Alpine, and FreeBSD can install packages imperatively; NixOS intentionally renders package declarations instead. Schema, validation, examples, installer dependency lists, and CI smoke coverage now include `apk`. | Keep schema, validation, installer package lists, examples, and generated docs in sync for `apt`, `apk`, `pkg`, and Nix declarations. |
 
 ## Implementation guideline for OS abstraction
 

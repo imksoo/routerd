@@ -125,4 +125,10 @@ func TestSystemdPathsRequireSystemd(t *testing.T) {
 	if !features.HasRCD && defaults.RCScriptDir != "" {
 		t.Errorf("RCScriptDir set on non-rc.d platform: %q", defaults.RCScriptDir)
 	}
+	if !features.HasOpenRC && defaults.OpenRCScriptDir != "" {
+		t.Errorf("OpenRCScriptDir set on non-OpenRC platform: %q", defaults.OpenRCScriptDir)
+	}
+	if features.HasOpenRC && defaults.OpenRCScriptDir == "" {
+		t.Error("OpenRCScriptDir is empty on OpenRC platform")
+	}
 }
