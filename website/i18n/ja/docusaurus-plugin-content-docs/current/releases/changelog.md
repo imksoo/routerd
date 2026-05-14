@@ -8,6 +8,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260514.1433
+
 ## v20260514.0813
 
 ### 修正
