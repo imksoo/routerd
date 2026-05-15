@@ -8,6 +8,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260516.0804
+
+### 変更
+
+- Web Console の Connections は、DPI application ごとに表を分けるのではなく、
+  IP family と transport protocol の固定 bucket で active flow をまとめるようにしました。
+  TLS、DNS、QUIC などの app label は各 group 内の表示として残ります。
+
 ## v20260514.1433
 
 ## v20260514.0813

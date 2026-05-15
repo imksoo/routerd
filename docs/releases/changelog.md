@@ -8,6 +8,14 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260516.0804
+
+### Changed
+
+- Web Console Connections now groups active flows by fixed IP family and
+  transport protocol buckets instead of splitting tables by DPI application.
+  App labels such as TLS, DNS, and QUIC remain visible inside each group.
+
 ## v20260514.1433
 
 ## v20260514.0813

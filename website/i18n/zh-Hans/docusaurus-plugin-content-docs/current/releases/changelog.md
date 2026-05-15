@@ -8,6 +8,14 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## v20260516.0804
+
+### 变更
+
+- Web Console Connections 现在按固定的 IP family 和 transport protocol
+  bucket 汇总 active flow，不再按 DPI application 拆成多个表格。
+  TLS、DNS、QUIC 等 app label 仍会显示在各 group 内。
+
 ## v20260514.1433
 
 ## v20260514.0813

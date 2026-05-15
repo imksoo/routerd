@@ -5968,17 +5968,33 @@ function stringSort(a: string, b: string) {
 function connectionGroups(entries: ConnectionEntry[]) {
   const groups = new Map<string, ConnectionEntry[]>();
   for (const entry of entries) {
-    const key = `${String(entry.family || "other").toLowerCase()}/${String(entry.protocol || "other").toLowerCase()}/${connectionApp(entry)}`;
+    const key = connectionGroupKey(entry);
     groups.set(key, [...(groups.get(key) ?? []), entry]);
   }
-  const order: Record<string, number> = { ipv4: 0, ipv6: 1, other: 9, tcp: 0, udp: 1, icmp: 2, icmpv6: 3, ipv6_icmp: 3, tls: 0, http: 1, dns: 2, netbios: 3, unidentified: 99 };
+  const order: Record<string, number> = { ipv4: 0, ipv6: 1, other: 9, tcp: 0, udp: 1, icmp: 2 };
   return Array.from(groups.entries())
     .sort((a, b) => {
-      const [af, ap, aa] = a[0].split("/");
-      const [bf, bp, ba] = b[0].split("/");
-      return (order[af] ?? 9) - (order[bf] ?? 9) || (order[ap] ?? 9) - (order[bp] ?? 9) || (order[aa] ?? 50) - (order[ba] ?? 50) || a[0].localeCompare(b[0]);
+      const [af, ap] = a[0].split("/");
+      const [bf, bp] = b[0].split("/");
+      return (order[af] ?? 9) - (order[bf] ?? 9) || (order[ap] ?? 9) - (order[bp] ?? 9) || a[0].localeCompare(b[0]);
     })
     .map(([key, rows]) => ({ key, rows }));
+}
+
+function connectionGroupKey(entry: ConnectionEntry) {
+  const family = normalizeFacet(entry.family, "other");
+  const protocol = normalizeConnectionGroupProtocol(entry.protocol);
+  if ((family === "ipv4" || family === "ipv6") && (protocol === "tcp" || protocol === "udp" || protocol === "icmp")) {
+    return `${family}/${protocol}`;
+  }
+  return "other/other";
+}
+
+function normalizeConnectionGroupProtocol(protocol: string | undefined) {
+  const normalized = normalizeFacet(protocol, "other");
+  if (normalized === "icmp" || normalized === "icmpv6" || normalized === "ipv6-icmp" || normalized === "ipv6_icmp") return "icmp";
+  if (normalized === "tcp" || normalized === "udp") return normalized;
+  return "other";
 }
 
 function connectionStateSummary(entries: ConnectionEntry[]) {
@@ -6005,16 +6021,16 @@ function connectionAppSummary(entries: ConnectionEntry[]) {
 }
 
 function connectionGroupLabel(key: string) {
-  const [family, protocol, app] = key.split("/");
+  const [family, protocol] = key.split("/");
   return {
     family: family === "ipv4" ? "IPv4" : family === "ipv6" ? "IPv6" : "Other",
     protocol: protocol || "other",
-    app: app || "unidentified",
   };
 }
 
-function formatConnectionGroupTitle(label: { family: string; protocol: string; app: string }) {
-  return `${label.family}/${label.protocol.toUpperCase()} ${formatConnectionApp(label.app)}`;
+function formatConnectionGroupTitle(label: { family: string; protocol: string }) {
+  if (label.family === "Other") return "Other";
+  return `${label.family}/${label.protocol.toUpperCase()}`;
 }
 
 function connectionGroupID(key: string) {
