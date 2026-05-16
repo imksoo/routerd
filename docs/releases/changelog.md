@@ -8,6 +8,14 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260516.1413
+
+### Fixed
+
+- Fixed `routerd apply --dry-run` and related planning paths so a missing
+  SQLite ownership ledger is treated as an empty in-memory ledger instead of
+  trying to create `/var/lib/routerd` on unprivileged CI runners.
+
 ## v20260516.1405
 
 ### Added

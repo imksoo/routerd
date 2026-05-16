@@ -1023,7 +1023,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	result.Warnings = append(result.Warnings, optionWarnings...)
 	appendStatePolicyResults(result, router, stateStore, stateChanges)
 	appendPrefixDelegationStateWarnings(result, router, stateStore)
-	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath); err != nil {
+	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
 	if !opts.DryRun {
@@ -1398,7 +1398,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		if len(applyErrors) > 0 {
 			result.Phase = "Degraded"
 		}
-		if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath); err != nil {
+		if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, false); err != nil {
 			return nil, err
 		}
 		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
@@ -1630,7 +1630,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	if len(applyErrors) > 0 {
 		next.Phase = "Degraded"
 	}
-	if err := appendLedgerOwnedOrphans(next, router, opts.LedgerPath); err != nil {
+	if err := appendLedgerOwnedOrphans(next, router, opts.LedgerPath, false); err != nil {
 		return nil, err
 	}
 	if err := writeResult(stdout, opts.StatusFile, next); err != nil {
@@ -2515,11 +2515,11 @@ func stringIn(value string, values []string) bool {
 	return false
 }
 
-func appendLedgerOwnedOrphans(result *apply.Result, router *api.Router, ledgerPath string) error {
+func appendLedgerOwnedOrphans(result *apply.Result, router *api.Router, ledgerPath string, transient bool) error {
 	if ledgerPath == "" {
 		return nil
 	}
-	ledger, err := resource.LoadLedger(ledgerPath)
+	ledger, err := loadPlanLedger(ledgerPath, transient)
 	if err != nil {
 		return err
 	}
@@ -2537,6 +2537,22 @@ func appendLedgerOwnedOrphans(result *apply.Result, router *api.Router, ledgerPa
 		result.Phase = "Drifted"
 	}
 	return nil
+}
+
+func loadPlanLedger(path string, transient bool) (resource.Ledger, error) {
+	if !transient {
+		return resource.LoadLedger(path)
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return resource.NewLedger(), nil
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return resource.NewLedger(), nil
+	} else if err != nil {
+		return nil, err
+	}
+	return resource.LoadLedger(path)
 }
 
 func appendUniqueOrphans(existing, additions []apply.OrphanedArtifact) []apply.OrphanedArtifact {

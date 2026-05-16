@@ -8,6 +8,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260516.1413
+
+### 修正
+
+- `routerd apply --dry-run` と関連する planning path で、存在しない SQLite ownership
+  ledger を空の in-memory ledger として扱うようにしました。
+  権限のない CI runner 上で `/var/lib/routerd` を作成しようとして失敗しません。
+
 ## v20260516.1405
 
 ### 追加

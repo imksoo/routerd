@@ -8,6 +8,14 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## v20260516.1413
+
+### 修正
+
+- 修正 `routerd apply --dry-run` 與相關 planning path，當 SQLite ownership ledger
+  不存在時會視為空的 in-memory ledger，不再嘗試於無權限的 CI runner 上建立
+  `/var/lib/routerd`。
+
 ## v20260516.1405
 
 ### 新增
