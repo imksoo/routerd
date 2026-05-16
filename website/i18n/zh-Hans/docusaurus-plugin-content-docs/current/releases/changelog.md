@@ -8,6 +8,17 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## v20260516.2155
+
+### 变更
+
+- Web Console Connections 现在默认按观测到的传输 byte 数降序排序。
+  Connections 的 sort menu 新增 `Traffic` 选项，connection card 会显示总 byte 数，
+  展开详情时会在 conntrack accounting 可用时显示 outbound、inbound 和 total counter。
+- 应用 Web Console connection 数量上限时，conntrack observer 现在会在每个
+  family/protocol group 内优先保留 byte 数较大的 entry。
+  这会降低大型 active flow 被低 traffic entry 挤出列表的概率。
+
 ## v20260516.1413
 
 ### 修复

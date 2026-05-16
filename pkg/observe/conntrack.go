@@ -110,6 +110,11 @@ func selectConnectionEntries(entries []ConnectionEntry, limit int) []ConnectionE
 		key := connectionSelectionGroupKey(entry)
 		groups[key] = append(groups[key], entry)
 	}
+	for key := range groups {
+		sort.SliceStable(groups[key], func(i, j int) bool {
+			return connectionTrafficBytes(groups[key][i]) > connectionTrafficBytes(groups[key][j])
+		})
+	}
 	groupKeys := sortedConnectionGroupKeys(groups)
 	quota := map[string]int{}
 	base := limit / len(groupKeys)
@@ -149,6 +154,10 @@ func selectConnectionEntries(entries []ConnectionEntry, limit int) []ConnectionE
 		selected = append(selected, groups[key][:quota[key]]...)
 	}
 	return selected
+}
+
+func connectionTrafficBytes(entry ConnectionEntry) int64 {
+	return entry.Original.Bytes + entry.Reply.Bytes
 }
 
 func connectionSelectionGroupKey(entry ConnectionEntry) string {

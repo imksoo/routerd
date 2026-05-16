@@ -8,6 +8,17 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260516.2155
+
+### 変更
+
+- Web Console の Connections は、観測された転送 byte 数の降順を既定の並び順にしました。
+  Connections の sort menu に `Traffic` を追加し、connection card には合計 byte 数を、
+  詳細表示には conntrack accounting が使える場合の outbound、inbound、total counter を表示します。
+- Web Console の connection 件数上限を適用するとき、conntrack observer は
+  family/protocol group ごとに byte 数の大きい entry を優先します。
+  低 traffic の entry に押し出されて、大きな active flow が隠れにくくなります。
+
 ## v20260516.1413
 
 ### 修正

@@ -8,6 +8,18 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260516.2155
+
+### Changed
+
+- Web Console Connections now sorts active flows by observed transfer bytes by
+  default. The Connections sort menu includes a `Traffic` option, connection
+  cards show total bytes, and expanded details show outbound, inbound, and total
+  counters when conntrack accounting is available.
+- The conntrack observer now prefers higher-byte entries within each
+  family/protocol group when applying the Web Console connection limit, so large
+  active flows are less likely to be hidden by low-traffic entries.
+
 ## v20260516.1413
 
 ### Fixed

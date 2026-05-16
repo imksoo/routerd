@@ -158,6 +158,9 @@ type ConnTuple = {
   destinationHostname?: string;
   sourceService?: string;
   destinationService?: string;
+  packets?: number;
+  bytes?: number;
+  accounting?: boolean;
 };
 
 type ConnectionEntry = {
@@ -2092,8 +2095,8 @@ function App() {
     protocol: "all",
     app: "all",
     state: "all",
-    sort: "stable",
-    direction: "asc",
+    sort: "traffic",
+    direction: "desc",
   });
   const [firewallFilters, setFirewallFilters] = useState<FirewallFilters>({
     query: "",
@@ -2785,6 +2788,7 @@ function App() {
                 <Select size="small" value={connectionFilters.sort} onChange={event => updateConnectionFilter("sort", event.target.value)}>
                   <option value="stable">Stable key</option>
                   <option value="observed">Observed order</option>
+                  <option value="traffic">Traffic</option>
                   <option value="state">State</option>
                   <option value="source">Source</option>
                   <option value="destination">Destination</option>
@@ -4009,6 +4013,7 @@ function ConnectionCard({ entry, dnsLabels, clientIdentities }: { entry: Connect
   const sourceLabel = orig.sourceHostname || clientIdentities.get(normalizeAddressKey(orig.source))?.label || (orig.source ? `${orig.source}${orig.sourcePort ? ":" + orig.sourcePort : ""}` : "-");
   const destLabel = orig.destinationHostname || (orig.destination ? `${orig.destination}${orig.destinationPort ? ":" + orig.destinationPort : ""}` : "-");
   const destService = orig.destinationService || "";
+  const traffic = connectionTrafficBytes(entry);
   return (
     <div className={`${styles.connectionCard} ${expanded ? styles.connectionCardExpanded : ""}`}>
       <button type="button" className={styles.connectionCardToggle} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
@@ -4020,6 +4025,7 @@ function ConnectionCard({ entry, dnsLabels, clientIdentities }: { entry: Connect
           <Text>→</Text>
           <Text className={styles.connectionCardEndpoint}>{destLabel}</Text>
           {destService ? <Text size={200} className={styles.muted}>{destService}</Text> : null}
+          {hasConnectionAccounting(entry) ? <Text size={200} className={styles.muted}>{formatBytes(traffic)}</Text> : null}
           <Text size={200} className={styles.muted}>{entry.timeout ?? 0}s</Text>
         </div>
       </button>
@@ -4040,6 +4046,12 @@ function ConnectionCard({ entry, dnsLabels, clientIdentities }: { entry: Connect
             </div>
             <Text className={styles.detailKey}>DPI</Text>
             <ConnectionDPI entry={entry} dnsLabels={dnsLabels} />
+            <Text className={styles.detailKey}>traffic</Text>
+            <Text size={200} className={styles.muted}>
+              {hasConnectionAccounting(entry)
+                ? `${formatBytes(entry.original?.bytes)} out / ${formatBytes(entry.reply?.bytes)} in / ${formatBytes(traffic)} total`
+                : "not accounted"}
+            </Text>
             <Text className={styles.detailKey}>flow</Text>
             <Text size={200} className={styles.muted}>protocol {family.toUpperCase() || "?"}/{proto} · timeout {entry.timeout ?? 0}s{entry.mark ? ` · mark ${entry.mark}` : ""}</Text>
           </div>
@@ -5468,6 +5480,7 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
 function compareConnectionSortValue(a: ConnectionEntry, b: ConnectionEntry, sort: string, dnsLabels: Record<string, string>) {
   if (sort === "stable") return compareConnectionStable(a, b);
   if (sort === "timeout") return Number(a.timeout ?? 0) - Number(b.timeout ?? 0);
+  if (sort === "traffic") return connectionTrafficBytes(a) - connectionTrafficBytes(b);
   return stringSort(connectionSortValue(a, sort, dnsLabels), connectionSortValue(b, sort, dnsLabels));
 }
 
@@ -5482,6 +5495,14 @@ function connectionSortValue(entry: ConnectionEntry, sort: string, dnsLabels: Re
 
 function compareConnectionStable(a: ConnectionEntry, b: ConnectionEntry) {
   return stringSort(connectionStableKey(a), connectionStableKey(b));
+}
+
+function connectionTrafficBytes(entry: ConnectionEntry) {
+  return Math.max(0, Number(entry.original?.bytes ?? 0)) + Math.max(0, Number(entry.reply?.bytes ?? 0));
+}
+
+function hasConnectionAccounting(entry: ConnectionEntry) {
+  return Boolean(entry.original?.accounting || entry.reply?.accounting || entry.original?.bytes || entry.reply?.bytes);
 }
 
 function normalizeFacet(value: unknown, fallback: string) {
