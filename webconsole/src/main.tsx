@@ -1613,6 +1613,14 @@ const useStyles = makeStyles({
     verticalAlign: "bottom",
     whiteSpace: "nowrap",
   },
+  connectionDetailIdentity: {
+    color: tokens.colorNeutralForeground3,
+    display: "block",
+    maxWidth: "100%",
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+  },
   clientDetailStack: {
     display: "grid",
     gap: "7px",
@@ -2755,7 +2763,7 @@ function App() {
             <div className={styles.grid}>
               <Metric label="IPv4" value={String(connectionFamilyCount(summary?.connections, "ipv4"))} />
               <Metric label="IPv6" value={String(connectionFamilyCount(summary?.connections, "ipv6"))} />
-              <Metric label="Showing" value={`${filteredConnections.length} / ${(summary?.connections?.entries ?? []).length}`} />
+              <Metric label="Showing" value={connectionShowingValue(summary?.connections, filteredConnections.length)} />
               <Metric label="Groups" value={String(connectionGroupsList.length)} />
             </div>
             <div className={styles.connectionJumpBar}>
@@ -4080,8 +4088,12 @@ function ConnectionCard({ entry, dnsLabels, clientIdentities }: { entry: Connect
             <Text className={styles.detailKey}>destination</Text>
             <div className={styles.connectionFlow}>
               <RemoteIdentityLabel entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} />
-              {destServiceApp ? <ServiceBadge service={destService} app={destServiceApp} prefix="service" /> : null}
-              {provider ? <Badge appearance="outline" color="subtle">provider {formatProviderLabel(provider)}</Badge> : null}
+              {destServiceApp || provider ? (
+                <div className={styles.badges}>
+                  {destServiceApp ? <ServiceBadge service={destService} app={destServiceApp} prefix="service" /> : null}
+                  {provider ? <Badge appearance="outline" color="subtle">provider {formatProviderLabel(provider)}</Badge> : null}
+                </div>
+              ) : null}
             </div>
             <Text className={styles.detailKey}>DPI</Text>
             <ConnectionDPI entry={entry} dnsLabels={dnsLabels} />
@@ -4141,7 +4153,7 @@ function ConnectionRemoteIdentity({ entry, dnsLabels, clientIdentities }: { entr
   const identity = connectionInlineIdentity(entry, dnsLabels, clientIdentities);
   if (!identity) return null;
   return (
-    <Text size={200} className={styles.connectionPeerIdentity} title={identity}>
+    <Text size={200} className={styles.connectionDetailIdentity} title={identity}>
       {identity}
     </Text>
   );
@@ -4152,7 +4164,7 @@ function RemoteIdentityLabel({ entry, dnsLabels, clientIdentities }: { entry: Co
   const identity = destinationIdentity(entry, dnsLabels, clientIdentities);
   if (!identity) return <Text className={styles.muted}>-</Text>;
   const isClientIdentity = Boolean(clientIdentities.get(normalizeAddressKey(entry.original?.destination)));
-  return <code className={`${styles.wrapCode} ${styles.connectionInlineIdentity} ${isClientIdentity ? "" : styles.guessText}`} title={identity}>{identity}</code>;
+  return <code className={`${styles.wrapCode} ${styles.connectionDetailIdentity} ${isClientIdentity ? "" : styles.guessText}`} title={identity}>{identity}</code>;
 }
 
 function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
@@ -5185,6 +5197,16 @@ function connectionFamilyCounts(table?: ConnectionTable) {
     }
   }
   return `IPv4 ${counts.ipv4} / IPv6 ${counts.ipv6}${counts.other ? ` / Other ${counts.other}` : ""}`;
+}
+
+function connectionShowingValue(table: ConnectionTable | undefined, filtered: number) {
+  if (!table) return "0 / 0";
+  const loaded = table.entries?.length ?? 0;
+  const observedTotal = Math.max(Number(table.count ?? 0), loaded);
+  if (observedTotal > loaded) {
+    return `${filtered} / ${loaded} loaded (${observedTotal} total)`;
+  }
+  return `${filtered} / ${loaded}`;
 }
 
 function dnsLabelMap(rows: DNSQuery[]) {
