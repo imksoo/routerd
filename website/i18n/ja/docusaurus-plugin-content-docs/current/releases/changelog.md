@@ -8,7 +8,7 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
-## v20260516.2155
+## v20260516.2302
 
 ### 変更
 
@@ -22,6 +22,20 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   として表示します。
 - `https` などの destination service 名は、connection row に追加情報を与える場合、
   protocol badge として表示するようにしました。
+
+### 修正
+
+- 展開した connection detail で、destination service と provider の badge が
+  detail column 全体に伸びず、内容幅のまま表示されるようにしました。
+- 展開した connection detail で、source と destination の identity text が
+  compact row 用の幅で省略されず、利用可能な幅を使って折り返すようにしました。
+- Connections の `Showing` metric で、API の取得上限により row が打ち切られた場合に、
+  filtered rows、loaded rows、総 conntrack count を区別して表示するようにしました。
+
+## v20260516.2155
+
+### 変更
+
 - Web Console の Connections は、観測された転送 byte 数の降順を既定の並び順にしました。
   Connections の sort menu に `Traffic` を追加し、connection card には合計 byte 数を、
   詳細表示には conntrack accounting が使える場合の outbound、inbound、total counter を表示します。

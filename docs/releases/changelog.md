@@ -8,7 +8,7 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
-## v20260516.2155
+## v20260516.2302
 
 ### Changed
 
@@ -21,6 +21,22 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   Cloudflare appear as separate destination provider badges.
 - Destination service names such as `https` are now rendered as protocol badges
   when they add information to the connection row.
+
+### Fixed
+
+- Fixed expanded connection details so destination service and provider badges
+  keep their content width instead of stretching across the full detail column.
+- Fixed expanded connection details so source and destination identity text uses
+  the available width and wraps instead of being ellipsized at the compact row
+  width.
+- Fixed the Connections `Showing` metric so it distinguishes filtered rows,
+  loaded rows, and the total conntrack count when the API result is truncated by
+  the requested row limit.
+
+## v20260516.2155
+
+### Changed
+
 - Web Console Connections now sorts active flows by observed transfer bytes by
   default. The Connections sort menu includes a `Traffic` option, connection
   cards show total bytes, and expanded details show outbound, inbound, and total

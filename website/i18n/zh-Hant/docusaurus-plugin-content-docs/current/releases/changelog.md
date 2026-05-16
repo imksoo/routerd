@@ -8,7 +8,7 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
-## v20260516.2155
+## v20260516.2302
 
 ### 變更
 
@@ -21,6 +21,20 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
   destination provider badge 顯示。
 - `https` 等 destination service 名稱現在會在能補充 connection row 資訊時，
   以 protocol badge 顯示。
+
+### 修正
+
+- 修正展開後的 connection detail，destination service 與 provider badge 會維持
+  內容寬度，不再撐滿整個 detail column。
+- 修正展開後的 connection detail，source 與 destination identity text 會使用可用寬度
+  並在需要時換行，不再套用 compact row 的寬度後以省略號截斷。
+- 修正 Connections 的 `Showing` metric，當 API 結果因要求的 row limit 被截斷時，
+  會分開顯示 filtered rows、loaded rows 與總 conntrack count。
+
+## v20260516.2155
+
+### 變更
+
 - Web Console Connections 現在預設依觀測到的傳輸 byte 數降冪排序。
   Connections 的 sort menu 新增 `Traffic` 選項，connection card 會顯示總 byte 數，
   展開詳細資訊時會在 conntrack accounting 可用時顯示 outbound、inbound 與 total counter。
