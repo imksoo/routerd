@@ -436,7 +436,7 @@ func TestTrafficFlowPortFallbackOverridesDNSOnTailscalePort(t *testing.T) {
 	}
 }
 
-func TestTrafficFlowPortFallbackUsesReverseDNSProvider(t *testing.T) {
+func TestTrafficFlowPortFallbackKeepsProviderSeparateFromProtocol(t *testing.T) {
 	flow := logstore.TrafficFlow{
 		Protocol:         "tcp",
 		ClientAddress:    "172.18.0.2",
@@ -446,7 +446,25 @@ func TestTrafficFlowPortFallbackUsesReverseDNSProvider(t *testing.T) {
 		ResolvedHostname: "edge.googleusercontent.com",
 	}
 	applyTrafficFlowPortFallback(&flow)
-	if flow.AppName != "google-https" || flow.AppConfidence < 45 {
+	if flow.AppName != "tls" || flow.AppConfidence != 40 {
+		t.Fatalf("flow fallback = %#v", flow)
+	}
+}
+
+func TestTrafficFlowPortFallbackCanonicalizesLegacyProviderHTTPS(t *testing.T) {
+	flow := logstore.TrafficFlow{
+		Protocol:         "tcp",
+		ClientAddress:    "172.18.0.2",
+		ClientPort:       53122,
+		PeerAddress:      "203.0.113.10",
+		PeerPort:         443,
+		AppName:          "google-https",
+		AppCategory:      "port-fallback",
+		AppConfidence:    45,
+		ResolvedHostname: "edge.googleusercontent.com",
+	}
+	applyTrafficFlowPortFallback(&flow)
+	if flow.AppName != "tls" {
 		t.Fatalf("flow fallback = %#v", flow)
 	}
 }

@@ -12,6 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Changed
 
+- Web Console Connections now keeps the source-to-destination route aligned in
+  a fixed route column and moves state, protocol, provider, traffic, and timeout
+  metadata into a separate badge area.
+- Web Console connection labels now separate transport/application identity from
+  destination providers. Legacy provider-specific labels such as `google-https`
+  are canonicalized to `TLS`, while Google, AWS, Microsoft, Apple, and
+  Cloudflare appear as separate destination provider badges.
+- Destination service names such as `https` are now rendered as protocol badges
+  when they add information to the connection row.
 - Web Console Connections now sorts active flows by observed transfer bytes by
   default. The Connections sort menu includes a `Traffic` option, connection
   cards show total bytes, and expanded details show outbound, inbound, and total

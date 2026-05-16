@@ -796,18 +796,48 @@ const useStyles = makeStyles({
     },
   },
   connectionCardLine: {
-    display: "flex",
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) max-content",
     alignItems: "center",
-    flexWrap: "wrap",
-    gap: "8px",
+    gap: "10px",
+    minWidth: 0,
+    "@media (max-width: 860px)": {
+      gridTemplateColumns: "1fr",
+      alignItems: "start",
+    },
+  },
+  connectionCardRoute: {
+    display: "grid",
+    gridTemplateColumns: "minmax(10rem, 18rem) 16px minmax(12rem, 1fr)",
+    alignItems: "center",
+    gap: "6px",
+    minWidth: 0,
+    "@media (max-width: 640px)": {
+      gridTemplateColumns: "minmax(0, 1fr) 16px minmax(0, 1fr)",
+    },
   },
   connectionCardEndpoint: {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    maxWidth: "30ch",
+    minWidth: 0,
     "@media (max-width: 860px)": {
-      maxWidth: "18ch",
+      maxWidth: "none",
+    },
+  },
+  connectionCardArrow: {
+    color: tokens.colorNeutralForeground3,
+    textAlign: "center",
+  },
+  connectionCardMeta: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: "4px",
+    minWidth: 0,
+    "@media (max-width: 860px)": {
+      justifyContent: "flex-start",
     },
   },
   connectionCardDetail: {
@@ -4013,20 +4043,28 @@ function ConnectionCard({ entry, dnsLabels, clientIdentities }: { entry: Connect
   const sourceLabel = orig.sourceHostname || clientIdentities.get(normalizeAddressKey(orig.source))?.label || (orig.source ? `${orig.source}${orig.sourcePort ? ":" + orig.sourcePort : ""}` : "-");
   const destLabel = orig.destinationHostname || (orig.destination ? `${orig.destination}${orig.destinationPort ? ":" + orig.destinationPort : ""}` : "-");
   const destService = orig.destinationService || "";
+  const destServiceApp = connectionServiceApp(destService);
   const traffic = connectionTrafficBytes(entry);
+  const provider = connectionDestinationProvider(entry, dnsLabels);
   return (
     <div className={`${styles.connectionCard} ${expanded ? styles.connectionCardExpanded : ""}`}>
       <button type="button" className={styles.connectionCardToggle} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
         <div className={styles.connectionCardLine}>
-          <Badge appearance="outline" color={family === "ipv6" ? "brand" : "informative"}>{family.toUpperCase() || "L3"}/{proto}</Badge>
-          <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
-          {classification.app ? <Badge appearance={classification.source === "port-fallback" ? "outline" : "tint"} color={connectionAppColor(classification.app)} title={classification.source === "port-fallback" ? "Port-based guess" : classification.cacheHit ? "DPI cache hit" : "DPI"}>{formatConnectionApp(classification.app)}</Badge> : null}
-          <Text className={styles.connectionCardEndpoint}>{sourceLabel}</Text>
-          <Text>→</Text>
-          <Text className={styles.connectionCardEndpoint}>{destLabel}</Text>
-          {destService ? <Text size={200} className={styles.muted}>{destService}</Text> : null}
-          {hasConnectionAccounting(entry) ? <Text size={200} className={styles.muted}>{formatBytes(traffic)}</Text> : null}
-          <Text size={200} className={styles.muted}>{entry.timeout ?? 0}s</Text>
+          <div className={styles.connectionCardRoute}>
+            <Text className={styles.connectionCardEndpoint} title={sourceLabel}>{sourceLabel}</Text>
+            <Text className={styles.connectionCardArrow}>→</Text>
+            <Text className={styles.connectionCardEndpoint} title={destLabel}>{destLabel}</Text>
+          </div>
+          <div className={styles.connectionCardMeta}>
+            <Badge appearance="outline" color={family === "ipv6" ? "brand" : "informative"}>{family.toUpperCase() || "L3"}/{proto}</Badge>
+            <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
+            {classification.app ? <Badge appearance={classification.source === "port-fallback" ? "outline" : "tint"} color={connectionAppColor(classification.app)} title={classification.source === "port-fallback" ? "Port-based guess" : classification.cacheHit ? "DPI cache hit" : "DPI"}>{formatConnectionApp(classification.app)}</Badge> : null}
+            {provider ? <Badge appearance="outline" color="subtle" title="Destination provider">{formatProviderLabel(provider)}</Badge> : null}
+            {destServiceApp && destServiceApp !== classification.app ? <ServiceBadge service={destService} app={destServiceApp} /> : null}
+            <Text size={200} className={styles.muted}>
+              {hasConnectionAccounting(entry) ? `${formatBytes(traffic)}, ${entry.timeout ?? 0}s` : `${entry.timeout ?? 0}s`}
+            </Text>
+          </div>
         </div>
       </button>
       {expanded ? (
@@ -4042,7 +4080,8 @@ function ConnectionCard({ entry, dnsLabels, clientIdentities }: { entry: Connect
             <Text className={styles.detailKey}>destination</Text>
             <div className={styles.connectionFlow}>
               <RemoteIdentityLabel entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} />
-              {orig.destinationService ? <Text size={200} className={styles.muted}>service {orig.destinationService}</Text> : null}
+              {destServiceApp ? <ServiceBadge service={destService} app={destServiceApp} prefix="service" /> : null}
+              {provider ? <Badge appearance="outline" color="subtle">provider {formatProviderLabel(provider)}</Badge> : null}
             </div>
             <Text className={styles.detailKey}>DPI</Text>
             <ConnectionDPI entry={entry} dnsLabels={dnsLabels} />
@@ -4090,6 +4129,11 @@ function ConnectionDPI({ entry, dnsLabels }: { entry: ConnectionEntry; dnsLabels
       {classification.category && classification.category !== "port-fallback" ? <Text size={200} className={styles.muted}>{classification.category}</Text> : null}
     </div>
   );
+}
+
+function ServiceBadge({ service, app, prefix = "" }: { service: string; app: string; prefix?: string }) {
+  const label = formatConnectionService(service, app);
+  return <Badge appearance="outline" color={connectionAppColor(app)}>{prefix ? `${prefix} ${label}` : label}</Badge>;
 }
 
 function ConnectionRemoteIdentity({ entry, dnsLabels, clientIdentities }: { entry: ConnectionEntry; dnsLabels: Record<string, string>; clientIdentities: Map<string, ClientIdentity> }) {
@@ -5517,11 +5561,16 @@ function formatFacet(value: string) {
 }
 
 function connectionApp(entry: ConnectionEntry, dnsLabels?: Record<string, string>) {
-  const app = normalizeFacet(entry.appName, "");
+  const app = canonicalConnectionApp(entry.appName);
   const fallback = connectionPortFallback(entry, dnsLabels);
   if (fallback && (!app || app === "unknown" || app === "unidentified" || preferPortFallbackOverApp(app, fallback.app))) return fallback.app;
   if (app && app !== "unknown" && app !== "unidentified") return app;
   return fallback?.app ?? "unidentified";
+}
+
+function canonicalConnectionApp(value: unknown) {
+  const app = normalizeFacet(value, "");
+  return providerFromApp(app) ? "tls" : app;
 }
 
 function connectionDPIDetail(entry: ConnectionEntry, dnsLabels?: Record<string, string>) {
@@ -5556,12 +5605,21 @@ function formatConnectionApp(value: string) {
   if (value === "stun") return "STUN";
   if (value === "quic") return "QUIC/HTTP3";
   if (value === "rdp") return "RDP";
-  if (value === "aws-https") return "AWS HTTPS";
-  if (value === "google-https") return "Google HTTPS";
-  if (value === "microsoft-https") return "Microsoft HTTPS";
-  if (value === "apple-https") return "Apple HTTPS";
-  if (value === "cloudflare-https") return "Cloudflare HTTPS";
   return value.toUpperCase();
+}
+
+function formatConnectionService(service: string, app: string) {
+  const normalized = normalizeFacet(service, "");
+  if (normalized === "https") return "HTTPS";
+  if (normalized === "domain-s") return "DNS/TLS";
+  if (normalized === "ms-wbt-server") return "RDP";
+  if (normalized === "microsoft-ds") return "SMB";
+  if (normalized === "isakmp") return "IPsec";
+  if (normalized === "ipsec-nat-t") return "IPsec/NAT-T";
+  if (normalized === "netbios-ns") return "NetBIOS-NS";
+  if (normalized === "netbios-dgm") return "NetBIOS-DGM";
+  if (normalized === "netbios-ssn") return "NetBIOS-SSN";
+  return formatConnectionApp(app || normalized);
 }
 
 function connectionAppColor(value: string): "brand" | "danger" | "informative" | "severe" | "subtle" | "success" | "warning" {
@@ -5571,8 +5629,47 @@ function connectionAppColor(value: string): "brand" | "danger" | "informative" |
   if (value === "ssh" || value === "rdp") return "danger";
   if (value === "smb" || value === "ipsec" || value === "wireguard" || value === "tailscale" || value === "stun" || value === "quic") return "informative";
   if (value === "unidentified") return "subtle";
-  if (value.endsWith("-https")) return "subtle";
   return "informative";
+}
+
+function connectionServiceApp(value: string) {
+  switch (normalizeFacet(value, "")) {
+    case "https":
+    case "imaps":
+    case "pop3s":
+    case "submissions":
+      return "tls";
+    case "http":
+      return "http";
+    case "domain-s":
+      return "dns";
+    case "ssh":
+      return "ssh";
+    case "dns":
+      return "dns";
+    case "ntp":
+      return "ntp";
+    case "dhcp-server":
+    case "dhcp-client":
+      return "dhcp";
+    case "netbios-ns":
+    case "netbios-dgm":
+    case "netbios-ssn":
+      return "netbios";
+    case "microsoft-ds":
+      return "smb";
+    case "isakmp":
+    case "ipsec-nat-t":
+      return "ipsec";
+    case "ssdp":
+      return "ssdp";
+    case "ms-wbt-server":
+      return "rdp";
+    case "stun":
+      return "stun";
+    default:
+      return normalizeFacet(value, "");
+  }
 }
 
 function connectionClass(entry: ConnectionEntry) {
@@ -5624,7 +5721,7 @@ function connectionClassification(entry: ConnectionEntry, dnsLabels?: Record<str
   const category = normalizeFacet(entry.appCategory, "");
   if (category === "port-fallback") {
     const fallback = connectionPortFallback(entry, dnsLabels);
-    const app = fallback?.app || normalizeFacet(entry.appName, "unidentified");
+    const app = fallback?.app || canonicalConnectionApp(entry.appName) || "unidentified";
     return {
       app,
       source: "port-fallback",
@@ -5633,7 +5730,7 @@ function connectionClassification(entry: ConnectionEntry, dnsLabels?: Record<str
       confidence: entry.appConfidence || 30,
     };
   }
-  const raw = normalizeFacet(entry.appName, "");
+  const raw = canonicalConnectionApp(entry.appName);
   if (raw && raw !== "unknown" && raw !== "unidentified") {
     return {
       app: raw,
@@ -5663,14 +5760,14 @@ function connectionClassification(entry: ConnectionEntry, dnsLabels?: Record<str
 
 function connectionAppSource(entry: ConnectionEntry) {
   if (normalizeFacet(entry.appCategory, "") === "port-fallback") return "port-fallback";
-  const raw = normalizeFacet(entry.appName, "");
+  const raw = canonicalConnectionApp(entry.appName);
   if (raw && raw !== "unknown" && raw !== "unidentified") return "dpi";
   if (connectionPortFallback(entry)) return "port-fallback";
   return connectionNeedsIdentification(entry) ? "identifying" : "none";
 }
 
 function connectionPortFallback(entry: ConnectionEntry, dnsLabels?: Record<string, string>): ConnectionPortFallback | undefined {
-  const raw = normalizeFacet(entry.appName, "");
+  const raw = canonicalConnectionApp(entry.appName);
   const category = normalizeFacet(entry.appCategory, "");
   const protocol = normalizeFacet(entry.protocol, "");
   const labels = [
@@ -5692,8 +5789,6 @@ function connectionPortFallback(entry: ConnectionEntry, dnsLabels?: Record<strin
 function portProtocolFallback(protocol: string, port: string, peerLabel = "") {
   const numeric = Number(port);
   if (!Number.isFinite(numeric) || numeric <= 0) return "";
-  const provider = providerHTTPSGuess(peerLabel);
-  if ((numeric === 443 || numeric === 8443) && provider) return provider;
   switch (numeric) {
     case 20:
     case 21:
@@ -5772,15 +5867,61 @@ function connectionNeedsIdentification(entry: ConnectionEntry) {
   return protocol === "udp";
 }
 
-function providerHTTPSGuess(label = "") {
+function providerFromHost(label = "") {
   const value = label.toLowerCase();
   if (!value) return "";
-  if (/(^|\.)(amazonaws\.com|awsdns|cloudfront\.net)$/.test(value) || value.includes(".amazonaws.com") || value.includes(".cloudfront.net")) return "aws-https";
-  if (value.includes(".googleusercontent.com") || value.includes(".googleapis.com") || value.includes(".gvt1.com") || value.includes(".google.com")) return "google-https";
-  if (value.includes(".microsoft.com") || value.includes(".windowsupdate.com") || value.includes(".office.com") || value.includes(".azure.com")) return "microsoft-https";
-  if (value.includes(".icloud.com") || value.includes(".apple.com") || value.includes(".cdn-apple.com")) return "apple-https";
-  if (value.includes(".cloudflare.com") || value.includes(".cloudflare.net")) return "cloudflare-https";
+  if (/(^|\.)(amazonaws\.com|awsdns|cloudfront\.net)$/.test(value) || value.includes(".amazonaws.com") || value.includes(".cloudfront.net")) return "aws";
+  if (value.includes(".googleusercontent.com") || value.includes(".googleapis.com") || value.includes(".gvt1.com") || value.includes(".google.com")) return "google";
+  if (value.includes(".microsoft.com") || value.includes(".windowsupdate.com") || value.includes(".office.com") || value.includes(".azure.com")) return "microsoft";
+  if (value.includes(".icloud.com") || value.includes(".apple.com") || value.includes(".cdn-apple.com")) return "apple";
+  if (value.includes(".cloudflare.com") || value.includes(".cloudflare.net")) return "cloudflare";
   return "";
+}
+
+function providerFromApp(app = "") {
+  switch (normalizeFacet(app, "")) {
+    case "aws-https":
+      return "aws";
+    case "google-https":
+      return "google";
+    case "microsoft-https":
+      return "microsoft";
+    case "apple-https":
+      return "apple";
+    case "cloudflare-https":
+      return "cloudflare";
+    default:
+      return "";
+  }
+}
+
+function formatProviderLabel(provider: string) {
+  switch (provider) {
+    case "aws":
+      return "AWS";
+    case "google":
+      return "Google";
+    case "microsoft":
+      return "Microsoft";
+    case "apple":
+      return "Apple";
+    case "cloudflare":
+      return "Cloudflare";
+    default:
+      return provider.toUpperCase();
+  }
+}
+
+function connectionDestinationProvider(entry: ConnectionEntry, dnsLabels?: Record<string, string>) {
+  const labels = [
+    remoteHostname(entry.original, "destination", dnsLabels),
+    remoteHostname(entry.reply, "source", dnsLabels),
+  ];
+  for (const label of labels) {
+    const provider = providerFromHost(label);
+    if (provider) return provider;
+  }
+  return providerFromApp(entry.appName);
 }
 
 function formatPortGuessLabel(app: string, port: string, peerLabel = "", service = "") {
@@ -5943,7 +6084,7 @@ function trafficFlowApp(flow: TrafficFlow) {
 }
 
 function trafficFlowClassification(flow: TrafficFlow) {
-  const app = normalizeFacet(flow.appName, "");
+  const app = canonicalConnectionApp(flow.appName);
   if (app && app !== "unknown") return { app, source: "dpi", rankLabel: `dpi:${app}` };
   if (flow.tlsSNI) return { app: "tls", source: "dpi", rankLabel: "dpi:tls" };
   const port = flow.peerPort ? String(flow.peerPort) : "";

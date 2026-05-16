@@ -1841,6 +1841,7 @@ func applyTrafficFlowPortFallback(flow *logstore.TrafficFlow) {
 	if flow == nil {
 		return
 	}
+	flow.AppName = canonicalProtocolAppName(flow.AppName)
 	if fallback, ok := portProtocolFallbackFor(flow.Protocol, flow.PeerPort, flow.ClientPort, flow.ResolvedHostname, ""); ok {
 		override := knownAppName(flow.AppName) && preferPortFallbackOverApp(flow.AppName, fallback.app)
 		if knownAppName(flow.AppName) && !override && !preferMoreSpecificPortFallback(flow.AppCategory, flow.AppName, flow.AppConfidence, fallback) {
@@ -1865,6 +1866,7 @@ func applyConnectionPortFallback(entry *observe.ConnectionEntry) {
 	if entry == nil {
 		return
 	}
+	entry.AppName = canonicalProtocolAppName(entry.AppName)
 	if fallback, ok := portProtocolFallbackFor(entry.Protocol, atoiDefault(entry.Original.DestinationPort, 0), atoiDefault(entry.Original.SourcePort, 0), entry.Original.DestinationHostname, entry.Original.SourceHostname); ok {
 		override := knownAppName(entry.AppName) && preferPortFallbackOverApp(entry.AppName, fallback.app)
 		if knownAppName(entry.AppName) && !override && !preferMoreSpecificPortFallback(entry.AppCategory, entry.AppName, entry.AppConfidence, fallback) {
@@ -1903,8 +1905,18 @@ func applyConnectionTablePortFallback(table *observe.ConnectionTable) {
 }
 
 func knownAppName(value string) bool {
-	value = strings.ToLower(strings.TrimSpace(value))
+	value = canonicalProtocolAppName(value)
 	return value != "" && value != "unknown" && value != "unidentified"
+}
+
+func canonicalProtocolAppName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "aws-https", "google-https", "microsoft-https", "apple-https", "cloudflare-https":
+		return "tls"
+	default:
+		return value
+	}
 }
 
 func preferPortFallbackOverApp(current, fallback string) bool {
@@ -1944,9 +1956,6 @@ func portProtocolFallbackByPort(protocol string, port int, host string) (portPro
 	if (port == 443 || port == 8443) && protocol == "tcp" {
 		if tailscaleHostLabel(host) {
 			return portProtocolFallback{app: "tailscale", category: category, confidence: 60}, true
-		}
-		if provider := providerHTTPSGuess(host); provider != "" {
-			return portProtocolFallback{app: provider, category: category, confidence: 45}, true
 		}
 	}
 	if protocol == "udp" && tailscaleHostLabel(host) {
@@ -2038,26 +2047,6 @@ func tailscaleHostLabel(host string) bool {
 		host == "controlplane.tailscale.com" ||
 		strings.HasSuffix(host, ".tailscale.com") ||
 		strings.HasSuffix(host, ".ts.net")
-}
-
-func providerHTTPSGuess(host string) string {
-	if host == "" {
-		return ""
-	}
-	switch {
-	case strings.Contains(host, ".amazonaws.com") || strings.Contains(host, ".cloudfront.net") || strings.Contains(host, ".awsdns"):
-		return "aws-https"
-	case strings.Contains(host, ".googleusercontent.com") || strings.Contains(host, ".googleapis.com") || strings.Contains(host, ".gvt1.com") || strings.Contains(host, ".google.com"):
-		return "google-https"
-	case strings.Contains(host, ".microsoft.com") || strings.Contains(host, ".windowsupdate.com") || strings.Contains(host, ".office.com") || strings.Contains(host, ".azure.com"):
-		return "microsoft-https"
-	case strings.Contains(host, ".icloud.com") || strings.Contains(host, ".apple.com") || strings.Contains(host, ".cdn-apple.com"):
-		return "apple-https"
-	case strings.Contains(host, ".cloudflare.com") || strings.Contains(host, ".cloudflare.net"):
-		return "cloudflare-https"
-	default:
-		return ""
-	}
 }
 
 func serviceNameForPort(protocol string, port int) string {
@@ -2699,7 +2688,7 @@ func flowActivityDetail(flow logstore.TrafficFlow) string {
 }
 
 func flowActivityProtocol(flow logstore.TrafficFlow) string {
-	if name := strings.ToLower(strings.TrimSpace(flow.AppName)); name != "" && name != "unknown" {
+	if name := canonicalProtocolAppName(flow.AppName); name != "" && name != "unknown" {
 		return name
 	}
 	if strings.TrimSpace(flow.TLSSNI) != "" {

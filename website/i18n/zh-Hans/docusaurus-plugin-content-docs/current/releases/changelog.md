@@ -12,6 +12,15 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ### 变更
 
+- Web Console Connections 现在会将 source 到 destination 的路径对齐在固定的
+  route column，并把 state、protocol、provider、traffic 和 timeout 等 metadata
+  移到独立的 badge 区域。
+- Web Console 的 connection label 现在会分开显示 transport/application identity
+  和 destination provider。像 `google-https` 这类旧的 provider-specific label
+  会规范化为 `TLS`，而 Google、AWS、Microsoft、Apple 和 Cloudflare 会以独立的
+  destination provider badge 显示。
+- `https` 等 destination service 名称现在会在能补充 connection row 信息时，
+  以 protocol badge 显示。
 - Web Console Connections 现在默认按观测到的传输 byte 数降序排序。
   Connections 的 sort menu 新增 `Traffic` 选项，connection card 会显示总 byte 数，
   展开详情时会在 conntrack accounting 可用时显示 outbound、inbound 和 total counter。

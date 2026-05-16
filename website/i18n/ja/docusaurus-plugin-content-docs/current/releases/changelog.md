@@ -12,6 +12,16 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ### 変更
 
+- Web Console の Connections で、source から destination への経路を固定幅の
+  route column に揃え、state、protocol、provider、traffic、timeout などの
+  metadata を別の badge 領域に分けました。
+- Web Console の connection label は、transport/application identity と
+  destination provider を分けて表示するようにしました。
+  `google-https` のような旧 provider 固有 label は `TLS` に正規化し、
+  Google、AWS、Microsoft、Apple、Cloudflare は別の destination provider badge
+  として表示します。
+- `https` などの destination service 名は、connection row に追加情報を与える場合、
+  protocol badge として表示するようにしました。
 - Web Console の Connections は、観測された転送 byte 数の降順を既定の並び順にしました。
   Connections の sort menu に `Traffic` を追加し、connection card には合計 byte 数を、
   詳細表示には conntrack accounting が使える場合の outbound、inbound、total counter を表示します。
