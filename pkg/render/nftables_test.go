@@ -639,6 +639,98 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 	}
 }
 
+func TestNftablesPortForwardRendersDNATAndFirewallAccept(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "PortForward"},
+				Metadata: api.ObjectMeta{Name: "web-admin"},
+				Spec: api.PortForwardSpec{
+					Listen: api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 8443},
+					Target: api.IngressTargetSpec{Address: "172.18.1.88", Port: 443},
+					Hairpin: api.IngressHairpinSpec{
+						Enabled:    true,
+						Interfaces: []string{"lan"},
+					},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`type nat hook prerouting priority dstnat; policy accept;`,
+		`iifname "ens18" ip daddr 203.0.113.10 tcp dport 8443 counter dnat to 172.18.1.88:443 comment "routerd PortForward web-admin"`,
+		`iifname "ens19" ip daddr 203.0.113.10 tcp dport 8443 counter dnat to 172.18.1.88:443 comment "routerd PortForward web-admin hairpin"`,
+		`iifname "ens19" ip daddr 172.18.1.88 tcp dport 443 ct original ip daddr 203.0.113.10 ct original proto-dst 8443 counter masquerade comment "routerd PortForward web-admin hairpin"`,
+		`iifname "ens18" ip daddr 172.18.1.88 tcp dport 443 counter accept comment "routerd PortForward web-admin"`,
+		`iifname "ens19" ip daddr 172.18.1.88 tcp dport 443 counter accept comment "routerd PortForward web-admin hairpin"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesIngressServiceResolvesListenAddressFromStaticAddress(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+				Metadata: api.ObjectMeta{Name: "wan-ip"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "wan", Address: "203.0.113.10/32"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"},
+				Metadata: api.ObjectMeta{Name: "app"},
+				Spec: api.IngressServiceSpec{
+					Listen:   api.IngressListenSpec{Interface: "wan", AddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/wan-ip", Field: "address"}, Protocol: "udp", Port: 5353},
+					Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 5353}},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	want := `iifname "ens18" ip daddr 203.0.113.10 udp dport 5353 counter dnat to 172.18.1.89:5353 comment "routerd IngressService app"`
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables output missing %q:\n%s", want, got)
+	}
+}
+
 func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{

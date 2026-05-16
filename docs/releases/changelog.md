@@ -8,6 +8,18 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## v20260516.1405
+
+### Added
+
+- Added `PortForward` and single-backend `IngressService` resources under
+  `firewall.routerd.net/v1alpha1` for WAN-side IPv4 TCP/UDP ingress DNAT.
+- Linux nftables and FreeBSD pf rendering now publish those ingress services
+  and can optionally render hairpin NAT so LAN clients can use the WAN address
+  for the same port-forwarded service.
+- Added generated JSON Schema, CLI aliases, API documentation, and resource
+  ownership documentation for the new ingress NAT resources.
+
 ## v20260516.0804
 
 ### Changed

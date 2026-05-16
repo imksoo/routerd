@@ -748,6 +748,11 @@ func canonicalResourceKind(kind string) string {
 		"ipv4sourcenat":          "IPv4SourceNAT",
 		"nat44":                  "NAT44Rule",
 		"nat44rule":              "NAT44Rule",
+		"portforward":            "PortForward",
+		"portforwards":           "PortForward",
+		"portnat":                "PortForward",
+		"ingress":                "IngressService",
+		"ingressservice":         "IngressService",
 		"dslite":                 "DSLiteTunnel",
 		"dslitetunnel":           "DSLiteTunnel",
 		"dns":                    "DNSResolver",
@@ -787,7 +792,7 @@ func canonicalResourceKind(kind string) string {
 
 func apiVersionForKind(kind string) string {
 	switch kind {
-	case "FirewallZone", "FirewallPolicy", "FirewallRule":
+	case "FirewallZone", "FirewallPolicy", "FirewallRule", "PortForward", "IngressService":
 		return api.FirewallAPIVersion
 	case "Hostname", "Sysctl", "SysctlProfile", "KernelModule", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "NTPServer", "LogSink", "NixOSHost":
 		return api.SystemAPIVersion
@@ -3121,9 +3126,9 @@ func controllerResourceKinds(name string) []string {
 	case "dslite":
 		return []string{"DSLiteTunnel"}
 	case "firewall":
-		return []string{"FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy"}
+		return []string{"FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "PortForward", "IngressService"}
 	case "nat":
-		return []string{"NAT44Rule", "IPv4SourceNAT"}
+		return []string{"NAT44Rule", "IPv4SourceNAT", "PortForward", "IngressService"}
 	case "network-adoption":
 		return []string{"NetworkAdoption"}
 	case "package":

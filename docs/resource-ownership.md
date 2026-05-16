@@ -30,6 +30,7 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `DSLiteTunnel` | Linux `ip6tnl` interface |
 | `IPv4Route` | Kernel route |
 | `NAT44Rule` | nftables `routerd_nat` table |
+| `PortForward` / `IngressService` | Linux nftables `routerd_nat` / `routerd_filter` DNAT, optional hairpin SNAT, or FreeBSD `pf.conf` `rdr pass` / optional NAT reflection rules |
 | `WireGuardInterface` / `WireGuardPeer` | WireGuard configuration |
 | `TailscaleNode` | `routerd-tailscale-<name>` service unit/script and `tailscale up` arguments |
 | `VRF` | Linux VRF device and routing table |

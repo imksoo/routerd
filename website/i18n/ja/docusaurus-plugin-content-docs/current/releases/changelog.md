@@ -8,6 +8,18 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## v20260516.1405
+
+### 追加
+
+- `firewall.routerd.net/v1alpha1` に `PortForward` と単一 backend の
+  `IngressService` を追加しました。WAN 側 IPv4 TCP/UDP ingress DNAT を表せます。
+- Linux nftables と FreeBSD pf の rendering で、これらの ingress service を公開できるようにしました。
+  任意の hairpin NAT も生成でき、LAN クライアントが WAN アドレス経由で同じ port forward
+  service へ到達できます。
+- 新しい ingress NAT resource 向けに、生成 JSON Schema、CLI alias、API documentation、
+  resource ownership documentation を追加しました。
+
 ## v20260516.0804
 
 ### 変更

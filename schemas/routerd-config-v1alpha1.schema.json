@@ -5878,6 +5878,428 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "firewall.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "PortForward",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "hairpin": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interfaces": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "listen": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "addressFrom": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "field": {
+                                "type": "string"
+                              },
+                              "optional": {
+                                "type": "boolean"
+                              },
+                              "resource": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "resource"
+                            ],
+                            "type": "object"
+                          },
+                          "interface": {
+                            "type": "string"
+                          },
+                          "port": {
+                            "maximum": 65535,
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "protocol": {
+                            "enum": [
+                              "tcp",
+                              "udp"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "interface",
+                          "protocol",
+                          "port"
+                        ],
+                        "type": "object"
+                      },
+                      "target": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "addressFrom": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "field": {
+                                "type": "string"
+                              },
+                              "optional": {
+                                "type": "boolean"
+                              },
+                              "resource": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "resource"
+                            ],
+                            "type": "object"
+                          },
+                          "port": {
+                            "maximum": 65535,
+                            "minimum": 1,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "port"
+                        ],
+                        "type": "object"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "listen",
+                      "target"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "firewall.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "IngressService",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "backends": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "address": {
+                              "type": "string"
+                            },
+                            "addressFrom": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "field": {
+                                  "type": "string"
+                                },
+                                "optional": {
+                                  "type": "boolean"
+                                },
+                                "resource": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "resource"
+                              ],
+                              "type": "object"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "port": {
+                              "maximum": 65535,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "weight": {
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "port"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "hairpin": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interfaces": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "healthCheck": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "interval": {
+                            "type": "string"
+                          },
+                          "protocol": {
+                            "enum": [
+                              "",
+                              "tcp"
+                            ],
+                            "type": "string"
+                          },
+                          "timeout": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "listen": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "addressFrom": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "field": {
+                                "type": "string"
+                              },
+                              "optional": {
+                                "type": "boolean"
+                              },
+                              "resource": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "resource"
+                            ],
+                            "type": "object"
+                          },
+                          "interface": {
+                            "type": "string"
+                          },
+                          "port": {
+                            "maximum": 65535,
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "protocol": {
+                            "enum": [
+                              "tcp",
+                              "udp"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "interface",
+                          "protocol",
+                          "port"
+                        ],
+                        "type": "object"
+                      },
+                      "policy": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "onNoHealthyBackends": {
+                            "enum": [
+                              "",
+                              "drop",
+                              "reject"
+                            ],
+                            "type": "string"
+                          },
+                          "selection": {
+                            "enum": [
+                              "",
+                              "sourceHash",
+                              "random",
+                              "failover"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "listen",
+                      "backends"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "net.routerd.net/v1alpha1",
                     "type": "string"
                   },

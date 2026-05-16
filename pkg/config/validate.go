@@ -610,6 +610,24 @@ func Validate(router *api.Router) error {
 				}
 			}
 		}
+		if res.Kind == "PortForward" {
+			spec, err := res.PortForwardSpec()
+			if err != nil {
+				return err
+			}
+			if err := validateIngressInterfaceRefs(res.ID(), spec.Listen, spec.Hairpin, interfaces); err != nil {
+				return err
+			}
+		}
+		if res.Kind == "IngressService" {
+			spec, err := res.IngressServiceSpec()
+			if err != nil {
+				return err
+			}
+			if err := validateIngressInterfaceRefs(res.ID(), spec.Listen, spec.Hairpin, interfaces); err != nil {
+				return err
+			}
+		}
 		if res.Kind == "FirewallRule" {
 			spec, err := res.FirewallRuleSpec()
 			if err != nil {
@@ -2776,6 +2794,57 @@ func validateResource(res api.Resource) error {
 		if spec.Type == "masquerade" && (spec.SNATAddress != "" || spec.SNATAddressFrom.Resource != "") {
 			return fmt.Errorf("%s spec.snatAddress and spec.snatAddressFrom are only valid when type is snat", res.ID())
 		}
+	case "PortForward":
+		if res.APIVersion != api.FirewallAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
+		}
+		spec, err := res.PortForwardSpec()
+		if err != nil {
+			return err
+		}
+		if err := validateIngressListen(res.ID(), "spec.listen", spec.Listen); err != nil {
+			return err
+		}
+		if err := validateIngressTarget(res.ID(), "spec.target", spec.Target.Address, spec.Target.AddressFrom, spec.Target.Port); err != nil {
+			return err
+		}
+		if err := validateIngressHairpin(res.ID(), "spec.hairpin", spec.Listen, spec.Hairpin); err != nil {
+			return err
+		}
+	case "IngressService":
+		if res.APIVersion != api.FirewallAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
+		}
+		spec, err := res.IngressServiceSpec()
+		if err != nil {
+			return err
+		}
+		if err := validateIngressListen(res.ID(), "spec.listen", spec.Listen); err != nil {
+			return err
+		}
+		if err := validateIngressHairpin(res.ID(), "spec.hairpin", spec.Listen, spec.Hairpin); err != nil {
+			return err
+		}
+		if len(spec.Backends) == 0 {
+			return fmt.Errorf("%s spec.backends is required", res.ID())
+		}
+		if len(spec.Backends) > 1 {
+			return fmt.Errorf("%s backend pools are not implemented yet; use one backend", res.ID())
+		}
+		if spec.HealthCheck.Protocol != "" || spec.HealthCheck.Interval != "" || spec.HealthCheck.Timeout != "" {
+			return fmt.Errorf("%s spec.healthCheck requires backend pool support, which is not implemented yet", res.ID())
+		}
+		if spec.Policy.Selection != "" || spec.Policy.OnNoHealthyBackends != "" {
+			return fmt.Errorf("%s spec.policy requires backend pool support, which is not implemented yet", res.ID())
+		}
+		for i, backend := range spec.Backends {
+			if err := validateIngressTarget(res.ID(), fmt.Sprintf("spec.backends[%d]", i), backend.Address, backend.AddressFrom, backend.Port); err != nil {
+				return err
+			}
+			if backend.Weight < 0 {
+				return fmt.Errorf("%s spec.backends[%d].weight must be non-negative", res.ID(), i)
+			}
+		}
 	case "IPv4PolicyRoute":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -3395,6 +3464,112 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func validateIngressListen(resourceID, path string, listen api.IngressListenSpec) error {
+	if strings.TrimSpace(listen.Interface) == "" {
+		return fmt.Errorf("%s %s.interface is required", resourceID, path)
+	}
+	if strings.TrimSpace(listen.Address) != "" && strings.TrimSpace(listen.AddressFrom.Resource) != "" {
+		return fmt.Errorf("%s %s.address and %s.addressFrom are mutually exclusive", resourceID, path, path)
+	}
+	if strings.TrimSpace(listen.Address) != "" {
+		addr, err := netip.ParseAddr(listen.Address)
+		if err != nil || !addr.Is4() {
+			return fmt.Errorf("%s %s.address must be an IPv4 address", resourceID, path)
+		}
+	}
+	if err := validateIngressAddressSource(resourceID, path+".addressFrom", listen.AddressFrom); err != nil {
+		return err
+	}
+	switch listen.Protocol {
+	case "tcp", "udp":
+	default:
+		return fmt.Errorf("%s %s.protocol must be tcp or udp", resourceID, path)
+	}
+	if listen.Port < 1 || listen.Port > 65535 {
+		return fmt.Errorf("%s %s.port must be within 1-65535", resourceID, path)
+	}
+	return nil
+}
+
+func validateIngressTarget(resourceID, path, address string, addressFrom api.StatusValueSourceSpec, port int) error {
+	if strings.TrimSpace(address) == "" && strings.TrimSpace(addressFrom.Resource) == "" {
+		return fmt.Errorf("%s %s.address or %s.addressFrom is required", resourceID, path, path)
+	}
+	if strings.TrimSpace(address) != "" && strings.TrimSpace(addressFrom.Resource) != "" {
+		return fmt.Errorf("%s %s.address and %s.addressFrom are mutually exclusive", resourceID, path, path)
+	}
+	if strings.TrimSpace(address) != "" {
+		addr, err := netip.ParseAddr(address)
+		if err != nil || !addr.Is4() {
+			return fmt.Errorf("%s %s.address must be an IPv4 address", resourceID, path)
+		}
+	}
+	if err := validateIngressAddressSource(resourceID, path+".addressFrom", addressFrom); err != nil {
+		return err
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("%s %s.port must be within 1-65535", resourceID, path)
+	}
+	return nil
+}
+
+func validateIngressHairpin(resourceID, path string, listen api.IngressListenSpec, hairpin api.IngressHairpinSpec) error {
+	if !hairpin.Enabled {
+		if len(hairpin.Interfaces) > 0 {
+			return fmt.Errorf("%s %s.enabled must be true when interfaces are set", resourceID, path)
+		}
+		return nil
+	}
+	if strings.TrimSpace(listen.Address) == "" && strings.TrimSpace(listen.AddressFrom.Resource) == "" {
+		return fmt.Errorf("%s %s requires spec.listen.address or spec.listen.addressFrom", resourceID, path)
+	}
+	if len(hairpin.Interfaces) == 0 {
+		return fmt.Errorf("%s %s.interfaces is required when enabled is true", resourceID, path)
+	}
+	for i, name := range hairpin.Interfaces {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s %s.interfaces[%d] must not be empty", resourceID, path, i)
+		}
+		if strings.TrimSpace(name) == listen.Interface {
+			return fmt.Errorf("%s %s.interfaces[%d] must not be the listen interface", resourceID, path, i)
+		}
+	}
+	return nil
+}
+
+func validateIngressInterfaceRefs(resourceID string, listen api.IngressListenSpec, hairpin api.IngressHairpinSpec, interfaces map[string]bool) error {
+	if !interfaces[listen.Interface] {
+		return fmt.Errorf("%s spec.listen.interface references missing Interface %q", resourceID, listen.Interface)
+	}
+	if !hairpin.Enabled {
+		return nil
+	}
+	seen := map[string]bool{}
+	for i, name := range hairpin.Interfaces {
+		if !interfaces[name] {
+			return fmt.Errorf("%s spec.hairpin.interfaces[%d] references missing Interface %q", resourceID, i, name)
+		}
+		if seen[name] {
+			return fmt.Errorf("%s spec.hairpin.interfaces[%d] duplicates Interface %q", resourceID, i, name)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+func validateIngressAddressSource(resourceID, path string, source api.StatusValueSourceSpec) error {
+	if strings.TrimSpace(source.Resource) == "" {
+		if strings.TrimSpace(source.Field) != "" {
+			return fmt.Errorf("%s %s.resource is required when field is set", resourceID, path)
+		}
+		return nil
+	}
+	if strings.TrimSpace(source.Field) == "" {
+		return fmt.Errorf("%s %s.field is required", resourceID, path)
+	}
+	return nil
 }
 
 func validateDSLiteInnerLocalAddress(value string) error {

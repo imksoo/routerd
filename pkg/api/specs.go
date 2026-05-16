@@ -978,6 +978,60 @@ type NAT44RuleSpec struct {
 	SNATAddressFrom         StatusValueSourceSpec `yaml:"snatAddressFrom,omitempty" json:"snatAddressFrom,omitempty"`
 }
 
+type IngressListenSpec struct {
+	Interface   string                `yaml:"interface" json:"interface"`
+	Address     string                `yaml:"address,omitempty" json:"address,omitempty"`
+	AddressFrom StatusValueSourceSpec `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
+	Protocol    string                `yaml:"protocol" json:"protocol" jsonschema:"enum=tcp,enum=udp"`
+	Port        int                   `yaml:"port" json:"port" jsonschema:"minimum=1,maximum=65535"`
+}
+
+type PortForwardSpec struct {
+	Listen  IngressListenSpec  `yaml:"listen" json:"listen"`
+	Target  IngressTargetSpec  `yaml:"target" json:"target"`
+	Hairpin IngressHairpinSpec `yaml:"hairpin,omitempty" json:"hairpin,omitempty"`
+	When    ResourceWhenSpec   `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type IngressTargetSpec struct {
+	Address     string                `yaml:"address,omitempty" json:"address,omitempty"`
+	AddressFrom StatusValueSourceSpec `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
+	Port        int                   `yaml:"port" json:"port" jsonschema:"minimum=1,maximum=65535"`
+}
+
+type IngressServiceSpec struct {
+	Listen      IngressListenSpec        `yaml:"listen" json:"listen"`
+	Backends    []IngressBackendSpec     `yaml:"backends" json:"backends"`
+	Hairpin     IngressHairpinSpec       `yaml:"hairpin,omitempty" json:"hairpin,omitempty"`
+	HealthCheck IngressHealthCheckSpec   `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
+	Policy      IngressServicePolicySpec `yaml:"policy,omitempty" json:"policy,omitempty"`
+	When        ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type IngressBackendSpec struct {
+	Name        string                `yaml:"name,omitempty" json:"name,omitempty"`
+	Address     string                `yaml:"address,omitempty" json:"address,omitempty"`
+	AddressFrom StatusValueSourceSpec `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
+	Port        int                   `yaml:"port" json:"port" jsonschema:"minimum=1,maximum=65535"`
+	Weight      int                   `yaml:"weight,omitempty" json:"weight,omitempty" jsonschema:"minimum=0"`
+}
+
+type IngressHairpinSpec struct {
+	Enabled    bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Interfaces []string `yaml:"interfaces,omitempty" json:"interfaces,omitempty"`
+}
+
+type IngressHealthCheckSpec struct {
+	Protocol string `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=,enum=tcp"`
+	Interval string `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Timeout  string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+}
+
+type IngressServicePolicySpec struct {
+	Selection           string `yaml:"selection,omitempty" json:"selection,omitempty" jsonschema:"enum=,enum=sourceHash,enum=random,enum=failover"`
+	OnNoHealthyBackends string `yaml:"onNoHealthyBackends,omitempty" json:"onNoHealthyBackends,omitempty" jsonschema:"enum=,enum=drop,enum=reject"`
+}
+
 type IPv4PolicyRouteSpec struct {
 	OutboundInterface       string   `yaml:"outboundInterface" json:"outboundInterface"`
 	Table                   int      `yaml:"table" json:"table" jsonschema:"minimum=1,maximum=4294967295"`
@@ -1353,6 +1407,14 @@ func (r Resource) IPv4SourceNATSpec() (IPv4SourceNATSpec, error) {
 
 func (r Resource) NAT44RuleSpec() (NAT44RuleSpec, error) {
 	return specAs[NAT44RuleSpec](r)
+}
+
+func (r Resource) PortForwardSpec() (PortForwardSpec, error) {
+	return specAs[PortForwardSpec](r)
+}
+
+func (r Resource) IngressServiceSpec() (IngressServiceSpec, error) {
+	return specAs[IngressServiceSpec](r)
 }
 
 func (r Resource) IPv4PolicyRouteSpec() (IPv4PolicyRouteSpec, error) {

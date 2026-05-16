@@ -37,7 +37,7 @@ spec:
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | interfaces, DHCP, DNS, routes, tunnels, events, traffic flow logs |
-| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy` |
+| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy`, `PortForward`, `IngressService` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `KernelModule`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
@@ -161,6 +161,8 @@ endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
 | `IPv4Route` | Adds IPv4 routes, including DS-Lite defaults and explicit drop routes. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
 | `IPv4SourceNAT` | Older IPv4 source NAT resource. Prefer `NAT44Rule` for new configs. |
+| `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
+| `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. The first implementation supports one backend; backend pools and health checks are reserved for a later controller. |
 | `IPv4PolicyRoute` | Represents IPv4 policy routing. |
 | `IPv4PolicyRouteSet` | Groups multiple policy routes. |
 | `IPv4DefaultRoutePolicy` | Represents default-route policy. |
@@ -174,6 +176,39 @@ endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
 `NAT44Rule` supports `destinationCIDRs` and `excludeDestinationCIDRs`. This
 allows internet traffic to be masqueraded while private routed destinations
 stay un-NATed.
+
+`PortForward` and `IngressService` render DNAT on Linux nftables and FreeBSD pf.
+Set `spec.hairpin.enabled: true` with `spec.hairpin.interfaces` to also allow
+LAN clients to reach the service through the WAN address. Hairpin mode requires
+`listen.address` or `listen.addressFrom`; routerd renders the LAN-side DNAT plus
+the return-path masquerade/NAT reflection rule. `listen.addressFrom` and backend
+`addressFrom` can reference statically rendered address resources such as
+`IPv4StaticAddress/<name>.address`; dynamic status sources are reserved for a
+later runtime controller.
+
+Example:
+
+```yaml
+apiVersion: firewall.routerd.net/v1alpha1
+kind: PortForward
+metadata:
+  name: web-admin
+spec:
+  listen:
+    interface: wan
+    addressFrom:
+      resource: IPv4StaticAddress/wan-ip
+      field: address
+    protocol: tcp
+    port: 8443
+  target:
+    address: 172.18.1.88
+    port: 443
+  hairpin:
+    enabled: true
+    interfaces:
+      - lan
+```
 
 ## Coordination
 
@@ -212,6 +247,8 @@ from DHCP, IPAM, or another declarative resource.
 | `FirewallPolicy` | Represents global firewall behavior such as deny logging. |
 | `FirewallRule` | Represents exceptions that cannot be expressed by the role matrix. Supports source and destination CIDR narrowing. |
 | `ClientPolicy` | Classifies clients by MAC address for guest isolation on Linux nftables. |
+| `PortForward` | Adds a single-target ingress DNAT rule and, when routerd manages the firewall table, an internal forward accept rule. Optional hairpin mode adds LAN-side DNAT and return-path SNAT. |
+| `IngressService` | Adds the same single-backend ingress DNAT path as `PortForward`; multiple backends, selection policy, and health checks are not enabled yet. Optional hairpin mode matches `PortForward`. |
 
 Stateful filtering renders into the nftables `inet routerd_filter` table.
 Established traffic, loopback, and required ICMPv6 are always accepted.

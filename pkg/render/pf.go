@@ -25,6 +25,7 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	var logs []api.Resource
 	var rules []api.Resource
 	var clientPolicies []api.Resource
+	var ingressRules []ingressNATRule
 	mssPolicies, err := pathMTUMSSPolicies(router)
 	if err != nil {
 		return nil, err
@@ -57,7 +58,11 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 			}
 		}
 	}
-	if len(nats) == 0 && len(nat44Rules) == 0 && len(zones) == 0 && len(rules) == 0 && len(holes) == 0 && len(mssPolicies) == 0 {
+	ingressRules, err = ingressNATRules(router, aliases)
+	if err != nil {
+		return nil, err
+	}
+	if len(nats) == 0 && len(nat44Rules) == 0 && len(ingressRules) == 0 && len(zones) == 0 && len(rules) == 0 && len(holes) == 0 && len(mssPolicies) == 0 {
 		return nil, nil
 	}
 	sort.Slice(nats, func(i, j int) bool { return nats[i].Metadata.Name < nats[j].Metadata.Name })
@@ -94,6 +99,9 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	if hasRuntimeResolvedNAT44(nat44Rules) {
 		buf.WriteString("nat-anchor \"routerd_nat\"\n")
 	}
+	if err := writePFIngress(&buf, ingressRules); err != nil {
+		return nil, err
+	}
 	if err := writePFNAT(&buf, router, aliases, nats, nat44Rules); err != nil {
 		return nil, err
 	}
@@ -116,6 +124,24 @@ func hasRuntimeResolvedNAT44(resources []api.Resource) bool {
 		}
 	}
 	return false
+}
+
+func writePFIngress(buf *bytes.Buffer, rules []ingressNATRule) error {
+	for _, rule := range rules {
+		if rule.ListenInterface == "" {
+			return fmt.Errorf("%s references listen interface with empty ifname", rule.ResourceID)
+		}
+		destination := "any"
+		if rule.ListenAddress != "" {
+			destination = rule.ListenAddress
+		}
+		buf.WriteString("rdr pass on " + rule.ListenInterface + " inet proto " + rule.Protocol + " from any to " + destination + " port " + strconv.Itoa(rule.ListenPort) + " -> " + rule.TargetAddress + " port " + strconv.Itoa(rule.TargetPort) + "\n")
+		for _, ifname := range rule.HairpinInterfaces {
+			buf.WriteString("rdr pass on " + ifname + " inet proto " + rule.Protocol + " from any to " + rule.ListenAddress + " port " + strconv.Itoa(rule.ListenPort) + " -> " + rule.TargetAddress + " port " + strconv.Itoa(rule.TargetPort) + "\n")
+			buf.WriteString("nat on " + ifname + " inet proto " + rule.Protocol + " from (" + ifname + ":network) to " + rule.TargetAddress + " port " + strconv.Itoa(rule.TargetPort) + " -> (" + ifname + ")\n")
+		}
+	}
+	return nil
 }
 
 func writePFMSSClamp(buf *bytes.Buffer, aliases map[string]string, policies []pathMTUPolicy) error {

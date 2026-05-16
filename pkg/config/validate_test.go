@@ -800,6 +800,65 @@ func TestValidateNAT44Rule(t *testing.T) {
 	}
 }
 
+func TestValidatePortForwardAndIngressService(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "PortForward"},
+				Metadata: api.ObjectMeta{Name: "web-admin"},
+				Spec: api.PortForwardSpec{
+					Listen: api.IngressListenSpec{Interface: "wan", AddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/wan-ip", Field: "address"}, Protocol: "tcp", Port: 8443},
+					Target: api.IngressTargetSpec{Address: "172.18.1.88", Port: 443},
+					Hairpin: api.IngressHairpinSpec{
+						Enabled:    true,
+						Interfaces: []string{"lan"},
+					},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"},
+				Metadata: api.ObjectMeta{Name: "app"},
+				Spec: api.IngressServiceSpec{
+					Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
+					Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
+				},
+			},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate ingress resources: %v", err)
+	}
+
+	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
+		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}, {Address: "172.18.1.90", Port: 8443}},
+	}
+	if err := Validate(router); err == nil {
+		t.Fatal("expected backend pool to be rejected until pool support is implemented")
+	}
+
+	router.Spec.Resources[2].Spec = api.PortForwardSpec{
+		Listen:  api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 8443},
+		Target:  api.IngressTargetSpec{Address: "172.18.1.88", Port: 443},
+		Hairpin: api.IngressHairpinSpec{Enabled: true, Interfaces: []string{"lan"}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "requires spec.listen.address") {
+		t.Fatalf("expected hairpin without listen address to be rejected, got %v", err)
+	}
+}
+
 func TestValidateIPv4SourceNATRejectsInvalidPortRange(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

@@ -36,7 +36,7 @@ spec:
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | インターフェース、DHCP、DNS、経路、トンネル、イベント、通信フローログ |
-| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy` |
+| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy`, `PortForward`, `IngressService` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `KernelModule`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
 
@@ -145,6 +145,8 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 | `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路や、明示的な破棄経路にも使います。 |
 | `NAT44Rule` | nftables の `routerd_nat` テーブルで IPv4 NAPT を行います。 |
 | `IPv4SourceNAT` | 旧来の IPv4 送信元 NAT リソースです。新しい設定では `NAT44Rule` を優先します。 |
+| `PortForward` | WAN 側の IPv4 TCP/UDP ポートを 1 つの内部 IPv4 宛先へ DNAT します。 |
+| `IngressService` | WAN 側の IPv4 TCP/UDP サービスを公開します。最初の実装では backend は 1 つだけ対応し、backend pool と health check は後続 controller 向けに予約しています。 |
 | `IPv4PolicyRoute` | IPv4 ポリシールーティングを表します。 |
 | `IPv4PolicyRouteSet` | 複数のポリシールートをまとめます。 |
 | `IPv4DefaultRoutePolicy` | 既定経路の方針を表します。 |
@@ -155,6 +157,39 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 
 `NAT44Rule` は `destinationCIDRs` と `excludeDestinationCIDRs` を持ちます。
 これにより、インターネット向け通信だけをマスカレードし、静的経路を持つプライベート宛先は NAT しない構成にできます。
+
+`PortForward` と `IngressService` は Linux nftables と FreeBSD pf に DNAT を生成します。
+`spec.hairpin.enabled: true` と `spec.hairpin.interfaces` を指定すると、LAN
+クライアントから WAN アドレス経由で同じサービスへ到達する hairpin NAT も生成します。
+hairpin は `listen.address` または `listen.addressFrom` が必須で、routerd は LAN 側
+DNAT と戻り経路用の masquerade/NAT reflection を生成します。
+`listen.addressFrom` と backend の `addressFrom` は `IPv4StaticAddress/<name>.address`
+のような静的に描画できるアドレスリソースを参照できます。
+動的な status source は後続の runtime controller 向けに残しています。
+
+例:
+
+```yaml
+apiVersion: firewall.routerd.net/v1alpha1
+kind: PortForward
+metadata:
+  name: web-admin
+spec:
+  listen:
+    interface: wan
+    addressFrom:
+      resource: IPv4StaticAddress/wan-ip
+      field: address
+    protocol: tcp
+    port: 8443
+  target:
+    address: 172.18.1.88
+    port: 443
+  hairpin:
+    enabled: true
+    interfaces:
+      - lan
+```
 
 DS-Lite、IPv4 既定経路、NAT44 は実 lab で動作確認済みです。
 
@@ -202,6 +237,8 @@ FreeBSD には Linux と同じ socket option がないためです。
 | `FirewallPolicy` | 拒否ログなど、全体の設定を表します。 |
 | `FirewallRule` | 役割の組み合わせでは表せない例外を表します。送信元と宛先の CIDR で範囲を絞れます。 |
 | `ClientPolicy` | MAC アドレスでクライアントを分類し、Linux nftables でゲスト隔離を行います。 |
+| `PortForward` | 単一宛先の ingress DNAT ルールを追加します。routerd が firewall table も管理している場合は内部の forward accept も生成します。任意の hairpin mode では LAN 側 DNAT と戻り経路 SNAT も生成します。 |
+| `IngressService` | `PortForward` と同じ単一 backend の ingress DNAT を追加します。複数 backend、選択方針、health check はまだ有効化していません。任意の hairpin mode も `PortForward` と同じです。 |
 
 状態を持つフィルタは nftables の `inet routerd_filter` テーブルに生成します。
 確立済み通信、loopback、必要な ICMPv6 は常に許可します。

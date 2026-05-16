@@ -31,6 +31,7 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `DSLiteTunnel` | Linux `ip6tnl` インターフェース |
 | `IPv4Route` | カーネル経路 |
 | `NAT44Rule` | nftables `routerd_nat` テーブル |
+| `PortForward` / `IngressService` | Linux nftables の `routerd_nat` / `routerd_filter` DNAT、任意の hairpin SNAT、または FreeBSD `pf.conf` の `rdr pass` / 任意の NAT reflection ルール |
 | `WireGuardInterface` / `WireGuardPeer` | WireGuard 設定 |
 | `TailscaleNode` | `routerd-tailscale-<name>` service unit / script と `tailscale up` 引数 |
 | `VRF` | Linux VRF デバイスと経路表 |

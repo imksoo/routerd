@@ -93,6 +93,47 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 	}
 }
 
+func TestPFPortForwardRendersRDRPass(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "em0"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "em1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "PortForward"},
+			Metadata: api.ObjectMeta{Name: "web-admin"},
+			Spec: api.PortForwardSpec{
+				Listen: api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 8443},
+				Target: api.IngressTargetSpec{Address: "172.18.1.88", Port: 443},
+				Hairpin: api.IngressHairpinSpec{
+					Enabled:    true,
+					Interfaces: []string{"lan"},
+				},
+			},
+		},
+	}}}
+	data, err := PF(router, nil)
+	if err != nil {
+		t.Fatalf("render pf: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`rdr pass on em0 inet proto tcp from any to 203.0.113.10 port 8443 -> 172.18.1.88 port 443`,
+		`rdr pass on em1 inet proto tcp from any to 203.0.113.10 port 8443 -> 172.18.1.88 port 443`,
+		`nat on em1 inet proto tcp from (em1:network) to 172.18.1.88 port 443 -> (em1)`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("pf output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestPFSkipsRedundantSelfHolesWhenZoneAlreadyAcceptsSelf(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

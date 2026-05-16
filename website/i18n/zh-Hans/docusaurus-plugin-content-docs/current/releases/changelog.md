@@ -8,6 +8,18 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
+## v20260516.1405
+
+### 新增
+
+- 在 `firewall.routerd.net/v1alpha1` 新增 `PortForward` 和单一 backend 的
+  `IngressService`，用于描述 WAN 侧 IPv4 TCP/UDP ingress DNAT。
+- Linux nftables 和 FreeBSD pf rendering 现在可以发布这些 ingress service。
+  也可以选择生成 hairpin NAT，让 LAN client 通过 WAN address 访问同一个
+  port-forwarded service。
+- 为新的 ingress NAT resource 新增 generated JSON Schema、CLI alias、API
+  documentation 和 resource ownership documentation。
+
 ## v20260516.0804
 
 ### 变更
