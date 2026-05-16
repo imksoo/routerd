@@ -375,7 +375,7 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 	defer closeLogger(logger, name, &err)
 	logger.Emit(eventlog.LevelInfo, name, "routerd command started", map[string]string{"config": *configPath})
 	engine := apply.New()
-	stateStore, err := routerstate.Load(*statePath)
+	stateStore, err := loadTransientStateStore(*statePath)
 	if err != nil {
 		return err
 	}
@@ -968,7 +968,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	}
 	router = effectiveConfig
 	optionWarnings = append(optionWarnings, warnings...)
-	stateStore, err := routerstate.Load(defaultString(opts.StatePath, defaultStatePath))
+	stateStore, err := loadApplyStateStore(defaultString(opts.StatePath, defaultStatePath), opts.DryRun)
 	if err != nil {
 		return nil, err
 	}
@@ -1645,6 +1645,35 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 		"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 	})
 	return next, nil
+}
+
+func loadApplyStateStore(path string, dryRun bool) (routerstate.Store, error) {
+	if dryRun {
+		return loadTransientStateStore(path)
+	}
+	return routerstate.Load(path)
+}
+
+func loadTransientStateStore(path string) (routerstate.Store, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return routerstate.New(), nil
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return routerstate.New(), nil
+	} else if err != nil {
+		return nil, err
+	}
+	store, err := routerstate.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	if closer, ok := store.(interface{ Close() error }); ok {
+		defer func() { _ = closer.Close() }()
+	}
+	snapshot := routerstate.NewJSON()
+	snapshot.Values = store.Variables()
+	return snapshot, nil
 }
 
 func cleanupLegacyFreeBSDStateDir() ([]string, error) {

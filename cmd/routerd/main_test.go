@@ -66,9 +66,10 @@ func TestApplyFilesReportsCreatedAndChanged(t *testing.T) {
 	}
 }
 
-func TestRunApplyOnceDryRunDoesNotCreateGeneration(t *testing.T) {
+func TestRunApplyOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	dir := t.TempDir()
-	statePath := filepath.Join(dir, "routerd.db")
+	stateDir := filepath.Join(dir, "state")
+	statePath := filepath.Join(stateDir, "routerd.db")
 	statusPath := filepath.Join(dir, "status.json")
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -88,11 +89,71 @@ func TestRunApplyOnceDryRunDoesNotCreateGeneration(t *testing.T) {
 	if result.Generation != 0 {
 		t.Fatalf("dry-run generation = %d, want 0", result.Generation)
 	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run state db stat error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(stateDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run state dir stat error = %v, want not exist", err)
+	}
+}
+
+func TestRunApplyOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	statusPath := filepath.Join(dir, "status.json")
 	store, err := routerstate.OpenSQLite(statePath)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
+	store.Set("manual.mode", "keep", "seed")
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	available := false
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{
+			Name: "test-router",
+		},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "StatePolicy"},
+			Metadata: api.ObjectMeta{Name: "mode"},
+			Spec: api.StatePolicySpec{
+				Variable: "wan.mode",
+				Values: []api.StateValueSpec{{
+					Value: "fallback",
+					When: api.StateConditionSpec{
+						DHCPv6PrefixDelegation: api.StateDHCPv6PrefixDelegationCondition{Available: &available},
+					},
+				}},
+			},
+		}}},
+	}
+	result, err := runApplyOnce(router, applyOptions{
+		DryRun:     true,
+		StatePath:  statePath,
+		StatusFile: statusPath,
+		ConfigPath: filepath.Join(dir, "router.yaml"),
+	}, io.Discard, &eventlog.Logger{})
+	if err != nil {
+		t.Fatalf("dry-run apply: %v", err)
+	}
+	if result.Generation != 0 {
+		t.Fatalf("dry-run generation = %d, want 0", result.Generation)
+	}
+
+	store, err = routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("reopen sqlite: %v", err)
+	}
 	defer func() { _ = store.Close() }()
+	if got := store.Get("manual.mode"); got.Status != routerstate.StatusSet || got.Value != "keep" {
+		t.Fatalf("seed state = %+v, want keep", got)
+	}
+	if got := store.Get("wan.mode"); got.Status != routerstate.StatusUnknown {
+		t.Fatalf("dry-run wrote wan.mode = %+v, want unknown", got)
+	}
 	if got := store.LatestGeneration(); got != 0 {
 		t.Fatalf("latest generation after dry-run = %d, want 0", got)
 	}
