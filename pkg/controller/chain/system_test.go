@@ -459,7 +459,6 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 			SocketSource:       "/run/routerd/healthcheck/internet-via-dslite-a.sock",
 			Target:             "1.1.1.1",
 			TargetSource:       "static",
-			FwMark:             0x110,
 			SourceInterface:    "ds-lite-a",
 			SourceAddressFrom:  api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/lan-base", Field: "address"},
 			Protocol:           "tcp",
@@ -468,6 +467,9 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 			Timeout:            "3s",
 			HealthyThreshold:   1,
 			UnhealthyThreshold: 3,
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.IPv4PolicyRouteSetSpec{
+			Targets: []api.IPv4PolicyRouteTarget{{Name: "ds-lite-a", Mark: 0x110, HealthCheck: "internet-via-dslite-a"}},
 		}},
 	}}}
 	store := mapStore{api.NetAPIVersion + "/IPv4StaticAddress/lan-base": {"address": "172.18.0.1/16"}}

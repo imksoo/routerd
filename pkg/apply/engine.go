@@ -14,6 +14,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/config"
+	"routerd/pkg/healthcheck"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/sysctlprofile"
@@ -135,7 +136,7 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		case "DSLiteTunnel":
 			e.observeDSLiteTunnel(res, aliases, includePlan, &rr)
 		case "HealthCheck":
-			e.observeHealthCheck(res, aliases, kinds, includePlan, &rr)
+			e.observeHealthCheck(router, res, aliases, kinds, includePlan, &rr)
 		case "IPv4DefaultRoutePolicy":
 			e.observeIPv4DefaultRoutePolicy(res, aliases, includePlan, &rr)
 		case "IPv4SourceNAT":
@@ -1248,13 +1249,14 @@ func (e *Engine) observePathMTUPolicy(res api.Resource, aliases map[string]strin
 	}
 }
 
-func (e *Engine) observeHealthCheck(res api.Resource, aliases map[string]string, kinds map[string]string, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeHealthCheck(router *api.Router, res api.Resource, aliases map[string]string, kinds map[string]string, includePlan bool, rr *ResourceResult) {
 	spec, err := res.HealthCheckSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
 		return
 	}
+	spec = healthcheck.ResolveSpecForResource(router, res.Metadata.Name, spec)
 	checkType := defaultString(spec.Type, "ping")
 	role := defaultString(spec.Role, "next-hop")
 	targetSource := defaultString(spec.TargetSource, "auto")

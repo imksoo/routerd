@@ -147,7 +147,7 @@ func (c *Controller) runResource(ctx context.Context, resource api.Resource) {
 }
 
 func (c *Controller) ProbeOnce(ctx context.Context, resource api.Resource, spec api.HealthCheckSpec) error {
-	spec = ResolveSpecWithStore(c.Router, c.Store, spec)
+	spec = ResolveSpecWithStoreForResource(c.Router, c.Store, resource.Metadata.Name, spec)
 	timeout := durationOr(spec.Timeout, 3*time.Second)
 	if timeout <= 0 {
 		timeout = 3 * time.Second
@@ -224,6 +224,14 @@ func parseStatusTime(value any) (time.Time, bool) {
 	return parsed, true
 }
 
+// FwMarkRef describes a routing resource that can supply a socket mark for a
+// HealthCheck probe.
+type FwMarkRef struct {
+	Resource string
+	Name     string
+	Mark     int
+}
+
 // ResolveSpec converts routerd resource names to the OS interface names used
 // by probe runtime calls. Standalone daemon flags still accept raw OS names.
 func ResolveSpec(router *api.Router, spec api.HealthCheckSpec) api.HealthCheckSpec {
@@ -233,12 +241,93 @@ func ResolveSpec(router *api.Router, spec api.HealthCheckSpec) api.HealthCheckSp
 	return spec
 }
 
+func ResolveSpecForResource(router *api.Router, resourceName string, spec api.HealthCheckSpec) api.HealthCheckSpec {
+	if spec.FwMark == 0 {
+		if mark, ok := DerivedFwMark(router, resourceName); ok {
+			spec.FwMark = mark
+		}
+	}
+	return ResolveSpec(router, spec)
+}
+
 func ResolveSpecWithStore(router *api.Router, store Store, spec api.HealthCheckSpec) api.HealthCheckSpec {
 	spec = ResolveSpec(router, spec)
 	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" && store != nil {
 		spec.SourceAddress = statusAddressValue(resourcequery.Value(store, spec.SourceAddressFrom))
 	}
 	return spec
+}
+
+func ResolveSpecWithStoreForResource(router *api.Router, store Store, resourceName string, spec api.HealthCheckSpec) api.HealthCheckSpec {
+	spec = ResolveSpecForResource(router, resourceName, spec)
+	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" && store != nil {
+		spec.SourceAddress = statusAddressValue(resourcequery.Value(store, spec.SourceAddressFrom))
+	}
+	return spec
+}
+
+func DerivedFwMark(router *api.Router, healthCheckName string) (int, bool) {
+	refs := DerivedFwMarkRefs(router, healthCheckName)
+	var mark int
+	for _, ref := range refs {
+		if ref.Mark == 0 {
+			continue
+		}
+		if mark == 0 {
+			mark = ref.Mark
+			continue
+		}
+		if mark != ref.Mark {
+			return 0, false
+		}
+	}
+	return mark, mark != 0
+}
+
+func DerivedFwMarkRefs(router *api.Router, healthCheckName string) []FwMarkRef {
+	healthCheckName = strings.TrimSpace(healthCheckName)
+	if router == nil || healthCheckName == "" {
+		return nil
+	}
+	var refs []FwMarkRef
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion {
+			continue
+		}
+		switch resource.Kind {
+		case "IPv4DefaultRoutePolicy":
+			spec, err := resource.IPv4DefaultRoutePolicySpec()
+			if err != nil {
+				continue
+			}
+			for _, candidate := range spec.Candidates {
+				if strings.TrimSpace(candidate.HealthCheck) != healthCheckName {
+					continue
+				}
+				refs = append(refs, FwMarkRef{
+					Resource: resource.ID(),
+					Name:     strings.TrimSpace(candidate.Name),
+					Mark:     candidate.Mark,
+				})
+			}
+		case "IPv4PolicyRouteSet":
+			spec, err := resource.IPv4PolicyRouteSetSpec()
+			if err != nil {
+				continue
+			}
+			for _, target := range spec.Targets {
+				if strings.TrimSpace(target.HealthCheck) != healthCheckName {
+					continue
+				}
+				refs = append(refs, FwMarkRef{
+					Resource: resource.ID(),
+					Name:     strings.TrimSpace(target.Name),
+					Mark:     target.Mark,
+				})
+			}
+		}
+	}
+	return refs
 }
 
 func statusAddressValue(value string) string {

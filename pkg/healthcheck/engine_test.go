@@ -108,6 +108,34 @@ func TestResolveSpecSourceInterfaceResourceNames(t *testing.T) {
 	}
 }
 
+func TestResolveSpecDerivesFwMarkFromRoutingHealthCheckReferences(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"},
+			Metadata: api.ObjectMeta{Name: "balanced"},
+			Spec: api.IPv4PolicyRouteSetSpec{Targets: []api.IPv4PolicyRouteTarget{
+				{Name: "a", Mark: 0x110, HealthCheck: "internet-a"},
+			}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
+				{Name: "hgw", Mark: 0x116, HealthCheck: "internet-hgw"},
+			}},
+		},
+	}}}
+	if got := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{}).FwMark; got != 0x110 {
+		t.Fatalf("route set target fwmark = 0x%x, want 0x110", got)
+	}
+	if got := ResolveSpecForResource(router, "internet-hgw", api.HealthCheckSpec{}).FwMark; got != 0x116 {
+		t.Fatalf("default route candidate fwmark = 0x%x, want 0x116", got)
+	}
+	if got := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{FwMark: 0x999}).FwMark; got != 0x999 {
+		t.Fatalf("explicit fwmark = 0x%x, want 0x999", got)
+	}
+}
+
 func TestControllerProbeUsesResolvedSourceInterface(t *testing.T) {
 	store := mapStore{}
 	seen := make(chan api.HealthCheckSpec, 1)

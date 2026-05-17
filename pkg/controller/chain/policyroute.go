@@ -18,6 +18,7 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/healthcheck"
 	"routerd/pkg/render"
 )
 
@@ -193,7 +194,10 @@ func (c IPv4PolicyRouteController) healthCheckUsesFwMark(name string, mark int) 
 			continue
 		}
 		spec, err := res.HealthCheckSpec()
-		return err == nil && !healthCheckDisabled(spec) && spec.FwMark == mark
+		if err != nil || healthCheckDisabled(spec) {
+			return false
+		}
+		return healthcheck.ResolveSpecForResource(c.Router, name, spec).FwMark == mark
 	}
 	return false
 }

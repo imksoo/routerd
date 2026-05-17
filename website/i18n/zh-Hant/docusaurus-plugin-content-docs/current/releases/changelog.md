@@ -16,6 +16,30 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
   對應註解、安全注意事項，以及基本 IPv4 NAT、LAN DHCP/DNS、DS-Lite、PPPoE、
   port forwarding、guest isolation、multi-WAN failover、local DNS redirect、
   Tailscale、WireGuard、telemetry export 等已驗證 sample YAML。
+- IPv4 route policy resource 參照的 health check 現在會從參照來源的 route
+  candidate 或 target 推導 socket mark。單獨 probe 仍可使用 `spec.fwmark`，
+  validation 會拒絕明確 mark 與推導 mark 衝突的設定。
+
+### 變更
+
+- Linux upgrade 現在只會在 routerd helper systemd service 仍執行已刪除的舊 binary，
+  或 unit file 在 helper process 啟動後重新產生時，才重新啟動該 helper。installer
+  會先等待 `routerd.service` 與 routerd 管理的 unit file 穩定後再判斷。
+- release installer 現在會在 NixOS 上略過 host service manager 變更，因此
+  `/etc/systemd/system` 為唯讀且 service unit 由宣告式設定管理的 host，也能用 archive
+  更新 binary。
+- 當 host 沒有 conntrack procfs file 時，conntrack observation 會記錄 `Unavailable`
+  status，而不是每個 interval 都寫出 warning。
+- FreeBSD `--skip-service-manager` apply 現在會抑制 generated helper、managed dnsmasq、
+  以及 pf/pflog service activation 的 rc.d/service 操作，同時仍允許寫入 rc.conf-backed
+  network state 並直接透過 `pfctl` 載入 rule。這可避免 recovery 與 bootstrapping path
+  和 base rc boot sequence 競爭。
+- FreeBSD upgrade 現在會保留 config-managed `routerd` rc.d script，不再用 generic
+  bootstrap template 覆蓋；這與 Linux 保留 config-managed `routerd.service` 的行為一致。
+- `routerd serve` 現在會在收到 SIGTERM/SIGINT 時 cleanly shutdown control 與 status
+  socket，讓 FreeBSD rc.d 在 `daemon(8)` 下 restart 時能正常停止，不會落到 forced KILL。
+- routerd state SQLite database 現在搭配既有 busy timeout 使用 WAL mode，減少 status
+  reader 與 controller 重疊時短暫發生的 `SQLITE_BUSY`。
 
 ## v20260517.1808
 

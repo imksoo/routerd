@@ -12,6 +12,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/dnsresolver"
+	"routerd/pkg/healthcheck"
 )
 
 func Validate(router *api.Router) error {
@@ -543,6 +544,9 @@ func Validate(router *api.Router) error {
 			}
 			if spec.SourceInterface != "" && !interfaces[spec.SourceInterface] && !dsliteTunnels[spec.SourceInterface] {
 				return fmt.Errorf("%s references missing source Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.SourceInterface)
+			}
+			if err := validateHealthCheckDerivedFwMark(router, res, spec); err != nil {
+				return err
 			}
 		}
 		if res.Kind == "IPv4DefaultRoutePolicy" {
@@ -3848,6 +3852,35 @@ func dnsSourceExists(sources []api.DNSResolverSourceSpec, name string) bool {
 		}
 	}
 	return false
+}
+
+func validateHealthCheckDerivedFwMark(router *api.Router, res api.Resource, spec api.HealthCheckSpec) error {
+	refs := healthcheck.DerivedFwMarkRefs(router, res.Metadata.Name)
+	if len(refs) == 0 {
+		return nil
+	}
+	var mark int
+	var first healthcheck.FwMarkRef
+	for _, ref := range refs {
+		if ref.Mark == 0 {
+			continue
+		}
+		if mark == 0 {
+			mark = ref.Mark
+			first = ref
+			continue
+		}
+		if mark != ref.Mark {
+			return fmt.Errorf("%s is referenced by routing targets with conflicting marks: %s/%s=0x%x and %s/%s=0x%x", res.ID(), first.Resource, first.Name, mark, ref.Resource, ref.Name, ref.Mark)
+		}
+	}
+	if mark == 0 {
+		return nil
+	}
+	if spec.FwMark != 0 && spec.FwMark != mark {
+		return fmt.Errorf("%s spec.fwmark 0x%x conflicts with routing target mark 0x%x; omit spec.fwmark to derive it from the referenced route target", res.ID(), spec.FwMark, mark)
+	}
+	return nil
 }
 
 func isStatusExpression(value string) bool {

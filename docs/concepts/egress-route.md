@@ -107,7 +107,6 @@ spec:
   target: 1.1.1.1
   protocol: tcp
   port: 443
-  fwmark: 0x110
   sourceInterface: ds-routerd-test
 ```
 
@@ -122,5 +121,9 @@ binds to `sourceAddress` when that field is set. Use `sourceAddressFrom` when
 the probe source should follow a managed address resource such as
 `IPv4StaticAddress/lan-base.status.address`. On Linux, `fwmark` sets the socket
 mark before connecting, allowing the probe to use an existing policy-route table
-for gateway-based paths. `via` records the intended gateway for the probe path.
-Route installation still belongs to route policy resources.
+for gateway-based paths. When a `HealthCheck` is referenced by an
+`IPv4DefaultRoutePolicy` candidate or an `IPv4PolicyRouteSet` target, routerd
+derives the socket mark from that route target automatically. Set `fwmark`
+directly only for low-level probes that are not attached to a route target.
+`via` records the intended gateway for the probe path. Route installation still
+belongs to route policy resources.

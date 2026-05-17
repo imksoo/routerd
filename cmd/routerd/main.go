@@ -19,6 +19,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -1472,7 +1473,9 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 		if opts.SkipServiceManager {
 			rcScriptDir = ""
 		}
-		changedFreeBSD, fbWarnings, err = applyFreeBSDConfig(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDMPD5Path, defaultFreeBSDPFPath, rcScriptDir)
+		changedFreeBSD, fbWarnings, err = applyFreeBSDConfigWithOptions(router, stateStore, defaultFreeBSDDHClientPath, defaultFreeBSDMPD5Path, defaultFreeBSDPFPath, rcScriptDir, freeBSDConfigApplyOptions{
+			ManageServices: !opts.SkipServiceManager,
+		})
 		for _, w := range fbWarnings {
 			result.Warnings = append(result.Warnings, w)
 			logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "freebsd-network"})
@@ -1523,7 +1526,11 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 			result.Warnings = append(result.Warnings, w)
 			logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "dnsmasq"})
 		}
-		dnsmasqChangedFiles, err = applyDnsmasqConfig(opts.DnsmasqConfigPath, opts.DnsmasqServicePath, dnsmasqConfig)
+		dnsmasqServicePath := opts.DnsmasqServicePath
+		if opts.SkipServiceManager {
+			dnsmasqServicePath = ""
+		}
+		dnsmasqChangedFiles, err = applyDnsmasqConfig(opts.DnsmasqConfigPath, dnsmasqServicePath, dnsmasqConfig)
 		return err
 	}()); err != nil {
 		return nil, err
@@ -3285,9 +3292,19 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		logger.Emit(eventlog.LevelWarning, "serve", "initial observe failed", map[string]string{"error": observeErr.Error()})
 	}
 
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	stop := make(chan struct{})
-	defer close(stop)
-	ctx, cancelControllers := context.WithCancel(context.Background())
+	var stopOnce sync.Once
+	closeStop := func() {
+		stopOnce.Do(func() { close(stop) })
+	}
+	defer closeStop()
+	go func() {
+		<-signalCtx.Done()
+		closeStop()
+	}()
+	ctx, cancelControllers := context.WithCancel(signalCtx)
 	defer cancelControllers()
 	go func() {
 		<-stop
@@ -3512,9 +3529,19 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		}
 	}()
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		<-signalCtx.Done()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		_ = statusServer.Shutdown(shutdownCtx)
+		_ = server.Shutdown(shutdownCtx)
+	}()
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
 	fmt.Fprintf(stdout, "routerd serving read-only status API on unix://%s\n", *statusSocketPath)
-	return server.Serve(listener)
+	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }
 
 func listenUnixSocket(path string, perm os.FileMode) (net.Listener, error) {
@@ -4483,7 +4510,15 @@ func linuxIPv4AddressPresent(ifname, address string) bool {
 	return false
 }
 
+type freeBSDConfigApplyOptions struct {
+	ManageServices bool
+}
+
 func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, mpd5Path, pfPath, rcScriptDir string) ([]string, []string, error) {
+	return applyFreeBSDConfigWithOptions(router, stateStore, dhclientPath, mpd5Path, pfPath, rcScriptDir, freeBSDConfigApplyOptions{ManageServices: true})
+}
+
+func applyFreeBSDConfigWithOptions(router *api.Router, stateStore routerstate.Store, dhclientPath, mpd5Path, pfPath, rcScriptDir string, opts freeBSDConfigApplyOptions) ([]string, []string, error) {
 	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
 		return nil, nil, err
@@ -4541,7 +4576,7 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 		if fileChanged {
 			changed = append(changed, ntpPath)
 		}
-		if (fileChanged || freeBSDRCValuesChanged(changed, "ntpd_") || !freeBSDServiceRunning("ntpd")) && rcValues["ntpd_enable"] == "YES" && freeBSDServiceExists("ntpd") {
+		if opts.ManageServices && (fileChanged || freeBSDRCValuesChanged(changed, "ntpd_") || !freeBSDServiceRunning("ntpd")) && rcValues["ntpd_enable"] == "YES" && freeBSDServiceExists("ntpd") {
 			action := "restart"
 			if !freeBSDServiceRunning("ntpd") {
 				action = "start"
@@ -4554,13 +4589,13 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 		}
 	}
 	if len(data.PF) > 0 && pfPath != "" {
-		applied, err := applyFreeBSDPFConfig(data.PF, pfPath)
+		applied, err := applyFreeBSDPFConfigWithOptions(data.PF, pfPath, freeBSDPFApplyOptions{ManageServices: opts.ManageServices})
 		if err != nil {
 			return changed, warnings, err
 		}
 		changed = append(changed, applied...)
 	}
-	if len(data.RCDScripts) > 0 && rcScriptDir != "" {
+	if opts.ManageServices && len(data.RCDScripts) > 0 && rcScriptDir != "" {
 		applied, err := applyFreeBSDRCDScripts(data.RCDScripts, rcScriptDir)
 		if err != nil {
 			return changed, warnings, err
@@ -4578,14 +4613,14 @@ func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclie
 		if fileChanged {
 			changed = append(changed, mpd5Path)
 		}
-		if (fileChanged || freeBSDRCValuesChanged(changed, "mpd_") || !freeBSDServiceRunning("mpd5")) && rcValues["mpd_enable"] == "YES" && freeBSDServiceExists("mpd5") {
+		if opts.ManageServices && (fileChanged || freeBSDRCValuesChanged(changed, "mpd_") || !freeBSDServiceRunning("mpd5")) && rcValues["mpd_enable"] == "YES" && freeBSDServiceExists("mpd5") {
 			if err := runLogged("service", "mpd5", "restart"); err != nil {
 				return changed, warnings, err
 			}
 			changed = append(changed, "service:mpd5")
 		}
 	}
-	if rcValues["tailscaled_enable"] == "YES" && freeBSDServiceExists("tailscaled") && !freeBSDServiceRunning("tailscaled") {
+	if opts.ManageServices && rcValues["tailscaled_enable"] == "YES" && freeBSDServiceExists("tailscaled") && !freeBSDServiceRunning("tailscaled") {
 		if err := runLogged("service", "tailscaled", "onestart"); err != nil {
 			return changed, warnings, err
 		}
@@ -4756,7 +4791,15 @@ func packageSetForOSMain(spec api.PackageSpec, osName string) (api.OSPackageSetS
 	return api.OSPackageSetSpec{}, false
 }
 
+type freeBSDPFApplyOptions struct {
+	ManageServices bool
+}
+
 func applyFreeBSDPFConfig(data []byte, pfPath string) ([]string, error) {
+	return applyFreeBSDPFConfigWithOptions(data, pfPath, freeBSDPFApplyOptions{ManageServices: true})
+}
+
+func applyFreeBSDPFConfigWithOptions(data []byte, pfPath string, opts freeBSDPFApplyOptions) ([]string, error) {
 	if len(data) == 0 || pfPath == "" {
 		return nil, nil
 	}
@@ -4787,6 +4830,9 @@ func applyFreeBSDPFConfig(data []byte, pfPath string) ([]string, error) {
 			return changed, err
 		}
 		changed = append(changed, "pfctl:-e")
+	}
+	if !opts.ManageServices {
+		return changed, nil
 	}
 	if !freeBSDServiceRunning("pf") {
 		if err := runLogged("service", "pf", "onestart"); err != nil {
@@ -7199,6 +7245,9 @@ func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte
 	}
 	if err := os.MkdirAll(platformDefaults.RuntimeDir, 0755); err != nil {
 		return changedFiles, fmt.Errorf("create runtime directory %s: %w", platformDefaults.RuntimeDir, err)
+	}
+	if servicePath == "" {
+		return changedFiles, nil
 	}
 	if err := os.MkdirAll(filepathDir(servicePath), 0755); err != nil {
 		return changedFiles, fmt.Errorf("create directory for %s: %w", servicePath, err)

@@ -17,6 +17,35 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   LAN DHCP/DNS、DS-Lite、PPPoE、port forwarding、guest 分離、multi-WAN
   failover、local DNS redirect、Tailscale、WireGuard、telemetry export の
   パターンを用意しました。
+- IPv4 route policy resource から参照される health check は、参照元の route
+  candidate または target から socket mark を導出するようにしました。単体 probe
+  用の `spec.fwmark` は引き続き利用でき、明示 mark と導出 mark が衝突する設定は
+  validation で拒否します。
+
+### 変更
+
+- Linux upgrade では、routerd helper systemd service が削除済みの旧 binary を
+  実行している場合、または unit file が helper process の起動後に再生成された場合に
+  限って helper を更新するようにしました。installer はその判定前に
+  `routerd.service` と routerd 管理 unit file の反映が落ち着くのを待ちます。
+- release installer は NixOS で host service manager の変更を行わないようにしました。
+  これにより、`/etc/systemd/system` が読み取り専用で service unit を宣言的に管理する
+  host でも archive からの binary 更新が失敗しません。
+- conntrack procfs file が host に存在しない場合、conntrack observation は interval
+  ごとに warning を出す代わりに `Unavailable` status を記録するようにしました。
+- FreeBSD の `--skip-service-manager` apply は、生成 helper、管理対象 dnsmasq、
+  pf/pflog service activation の rc.d/service 操作を抑止するようにしました。
+  その一方で、rc.conf による network state と直接の `pfctl` rule loading は継続します。
+  recovery や bootstrapping の経路が base rc boot sequence と競合することを避けます。
+- FreeBSD upgrade では、config 管理の `routerd` rc.d script を generic bootstrap
+  template で置き換えず保持するようにしました。Linux で config 管理の
+  `routerd.service` を保持する挙動と揃えています。
+- `routerd serve` は SIGTERM/SIGINT を受けたときに control socket と status socket を
+  clean shutdown するようにしました。FreeBSD の `daemon(8)` 配下で rc.d restart する際、
+  強制 KILL に進まず停止できます。
+- routerd state SQLite database は、既存の busy timeout と併せて WAL mode を使うように
+  しました。status reader と controller が重なったときの一時的な `SQLITE_BUSY` を
+  減らします。
 
 ## v20260517.1808
 

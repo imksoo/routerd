@@ -409,6 +409,36 @@ func TestValidateIPv4DefaultRoutePolicyStaticRequiresGateway(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsHealthCheckFwMarkMismatchWithRouteTarget(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+				Metadata: api.ObjectMeta{Name: "internet-via-wan"},
+				Spec:     api.HealthCheckSpec{Target: "1.1.1.1", Protocol: "tcp", Port: 443, FwMark: 0x999},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
+				Metadata: api.ObjectMeta{Name: "default-v4"},
+				Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
+					{Name: "wan", Interface: "wan", GatewaySource: "none", Priority: 10, Table: 100, Mark: 0x100, HealthCheck: "internet-via-wan"},
+				}},
+			},
+		}},
+	}
+
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "conflicts with routing target mark") {
+		t.Fatalf("expected fwmark mismatch error, got %v", err)
+	}
+}
+
 func TestValidateIPv4DefaultRoutePolicyRouteSetCandidate(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

@@ -672,6 +672,58 @@ exit 0
 	}
 }
 
+func TestApplyFreeBSDPFConfigSkipServiceManagerDoesNotStartServices(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	serviceLog := filepath.Join(dir, "service.log")
+	pfctlLog := filepath.Join(dir, "pfctl.log")
+	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+exit 1
+`, serviceLog))
+	writeExecutable(t, filepath.Join(binDir, "pfctl"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+exit 0
+`, pfctlLog))
+	writeExecutable(t, filepath.Join(binDir, "kldstat"), `#!/bin/sh
+exit 1
+`)
+	writeExecutable(t, filepath.Join(binDir, "kldload"), `#!/bin/sh
+exit 0
+`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	pfPath := filepath.Join(dir, "etc", "pf.conf")
+	changed, err := applyFreeBSDPFConfigWithOptions([]byte("pass\n"), pfPath, freeBSDPFApplyOptions{ManageServices: false})
+	if err != nil {
+		t.Fatalf("apply FreeBSD pf config: %v", err)
+	}
+	pfctlCalls, err := os.ReadFile(pfctlLog)
+	if err != nil {
+		t.Fatalf("read pfctl log: %v", err)
+	}
+	for _, want := range []string{"-nf " + pfPath, "-f " + pfPath, "-e"} {
+		if !strings.Contains(string(pfctlCalls), want) {
+			t.Fatalf("pfctl calls missing %q:\n%s", want, pfctlCalls)
+		}
+	}
+	if serviceCalls, err := os.ReadFile(serviceLog); err == nil && len(serviceCalls) > 0 {
+		t.Fatalf("service must not be called when service management is skipped:\n%s", serviceCalls)
+	}
+	gotChanged := strings.Join(changed, "\n")
+	for _, want := range []string{pfPath, "pfctl:-e"} {
+		if !strings.Contains(gotChanged, want) {
+			t.Fatalf("changed missing %q:\n%v", want, changed)
+		}
+	}
+	if strings.Contains(gotChanged, "service:") {
+		t.Fatalf("changed contains service operation despite skipped service manager:\n%v", changed)
+	}
+}
+
 func TestApplyFreeBSDConfigContinuesAfterNTPStartFailure(t *testing.T) {
 	dir := t.TempDir()
 	oldDefaults := platformDefaults
@@ -740,6 +792,74 @@ exit 0
 	}
 	if !stringSliceContains(changed, filepath.Join(rcDir, "routerd_healthcheck_internet")) {
 		t.Fatalf("changed = %v, want rc.d script path", changed)
+	}
+}
+
+func TestApplyFreeBSDConfigSkipServiceManagerDoesNotStartServices(t *testing.T) {
+	dir := t.TempDir()
+	oldDefaults := platformDefaults
+	platformDefaults.SysconfDir = filepath.Join(dir, "usr", "local", "etc", "routerd")
+	t.Cleanup(func() { platformDefaults = oldDefaults })
+
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	serviceLog := filepath.Join(dir, "service.log")
+	writeExecutable(t, filepath.Join(binDir, "sysrc"), `#!/bin/sh
+case "$1" in
+  -x) exit 0 ;;
+  *) echo "$1: NO"; exit 0 ;;
+esac
+`)
+	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "-l" ]; then
+  printf 'ntpd\nrouterd_healthcheck_internet\n'
+  exit 0
+fi
+exit 1
+`, serviceLog))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"},
+			Metadata: api.ObjectMeta{Name: "time"},
+			Spec: api.NTPClientSpec{
+				Provider: "ntpd",
+				Managed:  true,
+				Source:   "static",
+				Servers:  []string{"ntp.example.net"},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "routerd-healthcheck@internet.service"},
+			Spec: api.SystemdUnitSpec{
+				ExecStart:        []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", "internet"},
+				RuntimeDirectory: []string{"routerd/healthcheck"},
+				StateDirectory:   []string{"routerd/healthcheck"},
+			},
+		},
+	}}}
+
+	rcDir := filepath.Join(dir, "rc.d")
+	changed, warnings, err := applyFreeBSDConfigWithOptions(router, routerstate.New(), "", "", "", rcDir, freeBSDConfigApplyOptions{ManageServices: false})
+	if err != nil {
+		t.Fatalf("apply FreeBSD config: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	if _, err := os.Stat(filepath.Join(rcDir, "routerd_healthcheck_internet")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rc.d script should not be written when service management is skipped: %v", err)
+	}
+	if serviceCalls, err := os.ReadFile(serviceLog); err == nil && len(serviceCalls) > 0 {
+		t.Fatalf("service must not be called when service management is skipped:\n%s", serviceCalls)
+	}
+	if !stringSliceContainsPrefix(changed, "sysrc:ntpd_") {
+		t.Fatalf("changed = %v, want ntpd sysrc keys to remain persisted", changed)
 	}
 }
 
@@ -1141,6 +1261,55 @@ exit 0
 		if !strings.Contains(string(serviceData), want) {
 			t.Fatalf("rc.d script missing %q:\n%s", want, serviceData)
 		}
+	}
+}
+
+func TestApplyFreeBSDDnsmasqConfigWithoutServicePathDoesNotManageService(t *testing.T) {
+	dir := t.TempDir()
+	oldDefaults := platformDefaults
+	platformDefaults = platform.Defaults{
+		OS:         platform.OSFreeBSD,
+		RuntimeDir: filepath.Join(dir, "var", "run", "routerd"),
+		StateDir:   filepath.Join(dir, "var", "db", "routerd"),
+	}
+	t.Cleanup(func() { platformDefaults = oldDefaults })
+
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	dnsmasqLog := filepath.Join(dir, "dnsmasq.log")
+	serviceLog := filepath.Join(dir, "service.log")
+	writeExecutable(t, filepath.Join(binDir, "dnsmasq"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+exit 0
+`, dnsmasqLog))
+	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+exit 1
+`, serviceLog))
+	writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+exit 1
+`, serviceLog))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	configPath := filepath.Join(dir, "usr", "local", "etc", "routerd", "dnsmasq.conf")
+	changed, err := applyFreeBSDDnsmasqConfig(configPath, "", []byte("port=0\ndhcp-leasefile="+dnsmasqLeaseFileForPlatform()+"\n"), filepath.Join(binDir, "dnsmasq"))
+	if err != nil {
+		t.Fatalf("apply FreeBSD dnsmasq: %v", err)
+	}
+	if !containsString(changed, configPath) {
+		t.Fatalf("changed = %v, want config path", changed)
+	}
+	if _, err := os.Stat(platformDefaults.RuntimeDir); err != nil {
+		t.Fatalf("expected runtime dir to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(platformDefaults.StateDir, "dnsmasq")); err != nil {
+		t.Fatalf("expected lease dir to exist: %v", err)
+	}
+	if serviceCalls, err := os.ReadFile(serviceLog); err == nil && len(serviceCalls) > 0 {
+		t.Fatalf("service/sysrc must not be called without a service path:\n%s", serviceCalls)
 	}
 }
 

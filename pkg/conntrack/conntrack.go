@@ -5,6 +5,8 @@ package conntrack
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -23,6 +25,26 @@ type Paths struct {
 type Snapshot struct {
 	Count int
 	Max   int
+}
+
+type UnavailableError struct {
+	CountPath   string
+	EntriesPath string
+	CountErr    error
+	EntriesErr  error
+}
+
+func (e UnavailableError) Error() string {
+	return fmt.Sprintf("conntrack snapshot unavailable: count %s: %v; entries %s: %v", e.CountPath, e.CountErr, e.EntriesPath, e.EntriesErr)
+}
+
+func (e UnavailableError) Unwrap() error {
+	return e.EntriesErr
+}
+
+func IsUnavailable(err error) bool {
+	var unavailable UnavailableError
+	return errors.As(err, &unavailable)
 }
 
 func DefaultPaths() Paths {
@@ -48,7 +70,12 @@ func ReadSnapshot(paths Paths) (Snapshot, error) {
 		var err error
 		count, err = countEntries(paths.Entries)
 		if err != nil {
-			return Snapshot{}, err
+			return Snapshot{}, UnavailableError{
+				CountPath:   paths.Count,
+				EntriesPath: paths.Entries,
+				CountErr:    countErr,
+				EntriesErr:  err,
+			}
 		}
 	}
 	max, _ := readInt(paths.Max)

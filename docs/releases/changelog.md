@@ -17,6 +17,37 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   YAML for basic IPv4 NAT, LAN DHCP/DNS, DS-Lite, PPPoE, port forwarding,
   guest isolation, multi-WAN failover, local DNS redirect, Tailscale,
   WireGuard, and telemetry export patterns.
+- Health checks referenced by IPv4 route policy resources now derive their
+  socket mark from the referencing route candidate or target. Direct
+  `spec.fwmark` remains available for standalone probes, and validation rejects
+  conflicting explicit marks.
+
+### Changed
+
+- Linux upgrades now refresh routerd helper systemd services only when a helper
+  is still running a deleted pre-upgrade binary or its unit file was regenerated
+  after the helper process started. The installer waits for `routerd.service`
+  and routerd-managed unit files to settle before making that decision.
+- The release installer now skips host service-manager changes on NixOS, so
+  archive-based binary updates do not fail when `/etc/systemd/system` is
+  read-only and service units are managed declaratively.
+- Conntrack observation now records an `Unavailable` status instead of logging a
+  warning every interval when conntrack procfs files are not present on the
+  host.
+- FreeBSD `--skip-service-manager` apply now suppresses rc.d/service operations
+  for generated helpers, managed dnsmasq, and pf/pflog service activation while
+  still allowing rc.conf-backed network state and direct `pfctl` rule loading to
+  proceed. This keeps recovery and bootstrapping paths from racing the base rc
+  boot sequence.
+- FreeBSD upgrades now preserve a config-managed `routerd` rc.d script instead
+  of replacing it with the generic bootstrap template, matching the existing
+  Linux behavior for config-managed `routerd.service`.
+- `routerd serve` now handles SIGTERM/SIGINT by shutting down its control and
+  status sockets cleanly, allowing FreeBSD rc.d restarts under `daemon(8)` to
+  stop without falling through to forced KILL.
+- The routerd state SQLite database now uses WAL mode with the existing busy
+  timeout, reducing transient `SQLITE_BUSY` failures when status readers and the
+  controller overlap.
 
 ## v20260517.1808
 

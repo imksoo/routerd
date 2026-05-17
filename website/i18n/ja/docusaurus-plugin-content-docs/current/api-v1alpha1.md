@@ -238,7 +238,10 @@ DS-Lite、IPv4 既定経路、NAT44 は実 lab で動作確認済みです。
 
 `HealthCheck.spec.sourceInterface` は実行時に OS のインターフェース名へ解決されます。
 Linux では `SO_BINDTODEVICE` を使います。`fwmark` を指定した場合は
-`SO_MARK` も設定します。
+`SO_MARK` も設定します。`HealthCheck` が `IPv4DefaultRoutePolicy` の
+candidate や `IPv4PolicyRouteSet` の target から参照されている場合は、
+routerd がその route target の mark から `SO_MARK` を自動導出します。
+直接の `fwmark` 指定は、route target に紐づかない低レベルな probe 向けです。
 FreeBSD では、指定したインターフェースから送信元アドレスを選びます。
 FreeBSD には Linux と同じ socket option がないためです。
 

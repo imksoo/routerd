@@ -204,6 +204,9 @@ NixOS should keep package state in the NixOS configuration.
 When `install.sh` detects NixOS-style tooling, it prints a warning instead of
 calling `nix-env`.
 Declare packages through the NixOS configuration or routerd `Package` resources.
+The release installer can still place `/usr/local/sbin/routerd` binaries, but it
+does not install, enable, or restart systemd units on NixOS. Manage the routerd
+service declaratively through the NixOS module.
 
 ## Upgrade
 
@@ -219,8 +222,11 @@ mode.
 It prints the old and new `routerd --version` output.
 It replaces binaries and service templates, keeps configuration and state, and
 restarts the routerd service if it was already active.
-On systemd hosts, it also restarts active routerd helper services that are still
-running a deleted binary from before the upgrade.
+On systemd hosts, it waits for the restarted `routerd.service` to expose its
+status socket, lets routerd-managed unit files settle, and then restarts only
+active routerd helper services that still need refresh. A helper needs refresh
+when it is still running a deleted pre-upgrade binary or when its unit file was
+updated after the helper process started.
 When `/etc/systemd/system/routerd.service` is already managed by routerd
 configuration, the installer preserves that unit instead of overwriting it with
 the archive template.

@@ -206,6 +206,9 @@ FreeBSD の `pf`、`ifconfig`、`route`、`sysctl`、`service`、`sysrc`、`cron
 NixOS では、パッケージ状態を NixOS 設定に残すべきです。
 `install.sh` は NixOS を検出した場合、`nix-env` は実行せず警告を出します。
 NixOS 設定、または routerd の `Package` リソースで宣言してください。
+リリースインストーラーで `/usr/local/sbin/routerd` の実行ファイルを配置することは
+できますが、NixOS では systemd unit の導入、有効化、再起動は行いません。
+routerd サービスは NixOS module で宣言的に管理してください。
 
 ## アップグレード
 
@@ -221,6 +224,11 @@ sudo ./install.sh
 古い `routerd --version` と新しい `routerd --version` を表示します。
 実行ファイルとサービステンプレートを置き換え、設定と状態を保持します。
 routerd サービスが起動中であれば再起動します。
+systemd ホストでは、再起動した `routerd.service` の status socket を待ち、
+routerd が管理する unit ファイルの更新が落ち着いた後で、更新が必要な
+routerd ヘルパーサービスだけを再起動します。
+削除済みのアップグレード前バイナリを実行している場合、またはヘルパーの
+プロセス起動後に unit ファイルが更新されている場合にだけ再起動します。
 `/etc/systemd/system/routerd.service` が routerd の設定で管理されている場合は、
 アーカイブに含まれるテンプレートで上書きせず、その unit を保持します。
 

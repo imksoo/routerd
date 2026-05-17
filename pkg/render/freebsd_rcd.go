@@ -316,6 +316,8 @@ func FreeBSDWireGuardRCDScript(ifname string, spec api.WireGuardInterfaceSpec, p
 	var buf bytes.Buffer
 	buf.WriteString("#!/bin/sh\n")
 	buf.WriteString("#\n")
+	buf.WriteString("# Managed by routerd.\n")
+	buf.WriteString("#\n")
 	buf.WriteString("# PROVIDE: " + name + "\n")
 	buf.WriteString("# REQUIRE: NETWORKING\n")
 	buf.WriteString("# KEYWORD: shutdown\n\n")
@@ -522,15 +524,16 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 	name = freeBSDServiceName(name)
 	execStartPre := spec.ExecStartPre
 	if name == "routerd" && containsFreeBSDArg(spec.ExecStart, "serve") && containsFreeBSDArg(spec.ExecStart, "--controller-chain") {
-		// Running routerd apply from routerd's own rc.d prestart path can
-		// start managed child daemons before the supervisor is up and can
-		// leave rc boot ordering sensitive to stale pid files. The service
-		// itself reconciles after startup, so keep prestart to directory
-		// creation only for the control-plane daemon.
+		// Running a full apply from routerd's own rc.d prestart path races
+		// with the base rc boot sequence and may start services such as ntpd
+		// or dnsmasq twice. Boot-time interface state must be persisted in
+		// rc.conf by a normal apply before reboot.
 		execStartPre = nil
 	}
 	var buf bytes.Buffer
 	buf.WriteString("#!/bin/sh\n")
+	buf.WriteString("#\n")
+	buf.WriteString("# Managed by routerd.\n")
 	buf.WriteString("#\n")
 	buf.WriteString("# PROVIDE: " + name + "\n")
 	buf.WriteString("# REQUIRE: " + strings.Join(freeBSDRCDRequires(spec), " ") + "\n")

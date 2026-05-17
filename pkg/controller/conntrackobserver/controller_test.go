@@ -208,3 +208,27 @@ func TestControllerRecordsStatusWithoutSnapshotEvent(t *testing.T) {
 		t.Fatalf("snapshot events = %#v", events)
 	}
 }
+
+func TestControllerRecordsUnavailableWhenConntrackProcfsMissing(t *testing.T) {
+	dir := t.TempDir()
+	store := &testStore{}
+	controller := &Controller{
+		Bus:   bus.New(),
+		Store: store,
+		Paths: conntrack.Paths{
+			Entries: filepath.Join(dir, "missing-entries"),
+			Count:   filepath.Join(dir, "missing-count"),
+			Max:     filepath.Join(dir, "missing-max"),
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default")
+	if status["phase"] != "Unavailable" || status["reason"] != "ConntrackUnavailable" {
+		t.Fatalf("status = %#v", status)
+	}
+	if status["message"] == "" {
+		t.Fatalf("missing unavailable message: %#v", status)
+	}
+}

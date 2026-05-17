@@ -96,6 +96,16 @@ os_id()
     esac
 }
 
+is_nixos_host()
+{
+    [ "${os}" = "Linux" ] || return 1
+    [ -e /etc/NIXOS ] && return 0
+    if [ -r /etc/os-release ] && grep -Eq '(^ID=nixos$|^ID="nixos"$)' /etc/os-release; then
+        return 0
+    fi
+    [ -d /nix/store ] && [ -e /run/current-system ]
+}
+
 safe_name()
 {
     printf '%s\n' "$1" | sed 's#[^A-Za-z0-9._-]#_#g'
@@ -174,38 +184,150 @@ routerd_service_managed_by_config()
     grep -Eq '(^# Managed by routerd\.|--controller-chain)' "${service_path}"
 }
 
-restart_deleted_routerd_systemd_units()
+routerd_rcd_managed_by_config()
 {
+    service_path="${prefix}/etc/rc.d/routerd"
+    [ -f "${service_path}" ] || return 1
+    grep -Eq '(^# Managed by routerd\.|--controller-chain)' "${service_path}"
+}
+
+wait_for_routerd_status_socket()
+{
+    socket=$1
+    i=0
+    while [ "${i}" -lt 30 ]; do
+        if [ -S "${socket}" ]; then
+            return 0
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+    return 1
+}
+
+wait_for_routerd_status_apply()
+{
+    socket=$1
+    [ -x "${bindir}/routerctl" ] || return 1
+    i=0
+    while [ "${i}" -lt 30 ]; do
+        if [ -S "${socket}" ]; then
+            status=$("${bindir}/routerctl" status --socket "${socket}" 2>/dev/null || true)
+            if printf '%s\n' "${status}" | grep -q '"lastApplyTime"'; then
+                return 0
+            fi
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+    return 1
+}
+
+routerd_helper_unit_file_state()
+{
+    for path in /etc/systemd/system/routerd*.service; do
+        [ -f "${path}" ] || continue
+        [ "$(basename "${path}")" = "routerd.service" ] && continue
+        stat -c '%Y:%n' "${path}" 2>/dev/null || true
+    done | sort
+}
+
+wait_for_routerd_helper_unit_files_to_settle()
+{
+    previous=
+    stable=0
+    i=0
+    while [ "${i}" -lt 10 ]; do
+        current=$(routerd_helper_unit_file_state)
+        if [ "${current}" = "${previous}" ]; then
+            stable=$((stable + 1))
+            if [ "${stable}" -ge 2 ]; then
+                return 0
+            fi
+        else
+            stable=0
+            previous=${current}
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+    return 0
+}
+
+routerd_helper_unit_restart_reason()
+{
+    unit=$1
+    main_pid=$(systemctl show -p MainPID --value "${unit}" 2>/dev/null || true)
+    case "${main_pid}" in
+        ""|0|*[!0-9]*)
+            return 1
+            ;;
+    esac
+
+    exe=$(readlink "/proc/${main_pid}/exe" 2>/dev/null || true)
+    case "${exe}" in
+        *" (deleted)")
+            deleted_target=${exe% (deleted)}
+            case "${deleted_target}" in
+                "${bindir}"/routerd*)
+                    echo "running deleted binary ${deleted_target}"
+                    return 0
+                    ;;
+            esac
+            ;;
+    esac
+
+    fragment=$(systemctl show -p FragmentPath --value "${unit}" 2>/dev/null || true)
+    [ -n "${fragment}" ] || return 1
+    [ -f "${fragment}" ] || return 1
+    [ -d "/proc/${main_pid}" ] || return 1
+    unit_mtime=$(stat -c %Y "${fragment}" 2>/dev/null || true)
+    proc_mtime=$(stat -c %Y "/proc/${main_pid}" 2>/dev/null || true)
+    case "${unit_mtime}" in
+        ""|*[!0-9]*)
+            return 1
+            ;;
+    esac
+    case "${proc_mtime}" in
+        ""|*[!0-9]*)
+            return 1
+            ;;
+    esac
+    if [ "${unit_mtime}" -gt "${proc_mtime}" ]; then
+        echo "unit file changed after process started (${fragment})"
+        return 0
+    fi
+    return 1
+}
+
+restart_stale_routerd_helper_systemd_units_after_upgrade()
+{
+    [ "${mode}" = "upgrade" ] || return 0
     [ "${restart_service}" -eq 1 ] || return 0
     [ "${manage_host_service}" -eq 1 ] || return 0
     command -v systemctl >/dev/null 2>&1 || return 0
     [ -d /proc ] || return 0
 
+    if [ "${service_touched}" -eq 1 ]; then
+        if ! wait_for_routerd_status_socket /run/routerd/routerd-status.sock; then
+            echo "warning: routerd status socket did not appear; checking helper units anyway" >&2
+        elif ! wait_for_routerd_status_apply /run/routerd/routerd-status.sock; then
+            echo "warning: routerd apply status was not observed; checking helper units anyway" >&2
+        fi
+        wait_for_routerd_helper_unit_files_to_settle
+    fi
+
+    systemctl daemon-reload
     units=$(systemctl list-units --type=service --state=running --plain --no-legend 'routerd*.service' 2>/dev/null | awk '{print $1}' || true)
     for unit in ${units}; do
         [ "${unit}" = "routerd.service" ] && continue
-        main_pid=$(systemctl show -p MainPID --value "${unit}" 2>/dev/null || true)
-        case "${main_pid}" in
-            ""|0|*[!0-9]*)
-                continue
-                ;;
-        esac
-        exe=$(readlink "/proc/${main_pid}/exe" 2>/dev/null || true)
-        case "${exe}" in
-            *" (deleted)")
-                deleted_target=${exe% (deleted)}
-                ;;
-            *)
-                continue
-                ;;
-        esac
-        case "${deleted_target}" in
-            "${bindir}"/routerd*)
-                echo "restarting ${unit}: running deleted binary ${deleted_target}"
-                systemctl restart "${unit}"
-                service_touched=1
-                ;;
-        esac
+        reason=$(routerd_helper_unit_restart_reason "${unit}") || continue
+        echo "restarting ${unit}: ${reason}"
+        if systemctl restart "${unit}"; then
+            service_touched=1
+        else
+            echo "warning: failed to restart ${unit}" >&2
+        fi
     done
 }
 
@@ -1329,6 +1451,10 @@ if [ "${prefix}" != "/usr/local" ]; then
     manage_host_service=0
     echo "non-default prefix ${prefix}; skipping host service manager"
 fi
+if is_nixos_host; then
+    manage_host_service=0
+    echo "NixOS detected; skipping host service manager"
+fi
 if [ -n "${target_archive}" ] && [ "${target_archive}" != "${target_expected}" ]; then
     if [ "${manage_host_service}" -eq 1 ]; then
         echo "archive target ${target_archive} does not match host ${target_expected}" >&2
@@ -1463,7 +1589,7 @@ case "${os}" in
                     fi
                 fi
                 if [ "${dry_run}" -eq 0 ]; then
-                    restart_deleted_routerd_systemd_units
+                    restart_stale_routerd_helper_systemd_units_after_upgrade
                 fi
             fi
         fi
@@ -1477,7 +1603,12 @@ case "${os}" in
             fi
             for script in rc.d/*; do
                 [ -f "${script}" ] || continue
-                atomic_install 0555 "${script}" "${prefix}/etc/rc.d/$(basename "${script}")"
+                script_name=$(basename "${script}")
+                if [ "${script_name}" = "routerd" ] && routerd_rcd_managed_by_config; then
+                    echo "existing config-managed routerd rc.d script preserved: ${prefix}/etc/rc.d/routerd"
+                    continue
+                fi
+                atomic_install 0555 "${script}" "${prefix}/etc/rc.d/${script_name}"
             done
             if [ "${enable_service}" -eq 1 ] && command -v sysrc >/dev/null 2>&1; then
                 if [ "${dry_run}" -eq 1 ]; then

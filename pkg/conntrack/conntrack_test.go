@@ -3,6 +3,7 @@
 package conntrack
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,5 +44,24 @@ func TestReadSnapshotFallsBackToEntryCount(t *testing.T) {
 	}
 	if snapshot.Count != 2 {
 		t.Fatalf("count = %d, want 2", snapshot.Count)
+	}
+}
+
+func TestReadSnapshotUnavailableWhenCountAndEntriesMissing(t *testing.T) {
+	dir := t.TempDir()
+	_, err := ReadSnapshot(Paths{
+		Entries: filepath.Join(dir, "missing-entries"),
+		Count:   filepath.Join(dir, "missing-count"),
+		Max:     filepath.Join(dir, "missing-max"),
+	})
+	if err == nil {
+		t.Fatal("expected unavailable error")
+	}
+	if !IsUnavailable(err) {
+		t.Fatalf("IsUnavailable = false for %T: %v", err, err)
+	}
+	var pathErr *os.PathError
+	if !errors.As(err, &pathErr) {
+		t.Fatalf("error does not unwrap to path error: %T: %v", err, err)
 	}
 }

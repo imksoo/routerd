@@ -24,6 +24,7 @@ func TestFreeBSDRCDScript(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
+		`# Managed by routerd.`,
 		`# PROVIDE: routerd_dns_resolver`,
 		`daemon_command="/usr/sbin/daemon"`,
 		`daemon_pidfile="/var/run/${name}/${name}.daemon.pid"`,
@@ -147,14 +148,17 @@ func TestFreeBSDRenderSkipsDHCPClientRCDWhenRouterdSupervisesClients(t *testing.
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
 			Metadata: api.ObjectMeta{Name: "routerd.service"},
-			Spec: api.SystemdUnitSpec{ExecStart: []string{
-				"/usr/local/sbin/routerd",
-				"serve",
-				"--config",
-				"/usr/local/etc/routerd/router.yaml",
-				"--controller-chain",
-				"--controller-chain-dry-run-dhcpv4lease=false",
-			}},
+			Spec: api.SystemdUnitSpec{
+				ExecStartPre: []string{"/usr/local/sbin/routerd", "apply", "--config", "/usr/local/etc/routerd/router.yaml", "--once", "--skip-service-manager"},
+				ExecStart: []string{
+					"/usr/local/sbin/routerd",
+					"serve",
+					"--config",
+					"/usr/local/etc/routerd/router.yaml",
+					"--controller-chain",
+					"--controller-chain-dry-run-dhcpv4lease=false",
+				},
+			},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},

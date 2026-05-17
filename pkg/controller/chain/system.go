@@ -898,7 +898,7 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	if socket == "" {
 		socket = filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
 	}
-	resolved := healthcheck.ResolveSpecWithStore(c.Router, c.Store, spec)
+	resolved := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, resourceName, spec)
 	data := render.HealthCheckSystemdUnit(render.HealthCheckSystemdOptions{
 		Resource:        resourceName,
 		Target:          resolved.Target,

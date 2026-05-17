@@ -74,6 +74,9 @@ func (c *Controller) reconcileLogged(ctx context.Context) {
 func (c *Controller) Reconcile(ctx context.Context) error {
 	snapshot, err := conntrack.ReadSnapshot(c.Paths)
 	if err != nil {
+		if conntrack.IsUnavailable(err) {
+			return c.recordUnavailable(err)
+		}
 		return err
 	}
 	var created int64
@@ -117,6 +120,16 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.aboveThreshold = false
 	}
 	return nil
+}
+
+func (c *Controller) recordUnavailable(snapshotErr error) error {
+	status := map[string]any{
+		"phase":      "Unavailable",
+		"reason":     "ConntrackUnavailable",
+		"message":    snapshotErr.Error(),
+		"observedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	return c.Store.SaveObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default", status)
 }
 
 func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {

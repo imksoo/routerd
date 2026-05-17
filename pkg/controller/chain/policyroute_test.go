@@ -97,7 +97,6 @@ func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-hgw"}, Spec: api.HealthCheckSpec{
 			Target: "1.1.1.1",
-			FwMark: 0x116,
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.IPv4DefaultRoutePolicySpec{
 			Candidates: []api.IPv4DefaultRoutePolicyCandidate{{
@@ -121,7 +120,7 @@ func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T)
 		t.Fatalf("bootstrap route status = %#v", status)
 	}
 
-	router.Spec.Resources[0].Spec = api.HealthCheckSpec{Target: "1.1.1.1", FwMark: 0x116, Disabled: true}
+	router.Spec.Resources[0].Spec = api.HealthCheckSpec{Target: "1.1.1.1", Disabled: true}
 	store = mapStore{
 		api.NetAPIVersion + "/HealthCheck/internet-via-hgw": {
 			"phase":         "Disabled",
