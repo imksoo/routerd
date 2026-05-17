@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260517.1353
+
 ### 修正
 
 - release helper 現在會拒絕第一個 release section 不是 `Unreleased` 的
