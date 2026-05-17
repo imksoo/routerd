@@ -19,6 +19,7 @@
 # routerd_enable="YES"
 # routerd_config="/usr/local/etc/routerd/router.yaml"   # optional
 # routerd_socket="/var/run/routerd/routerd.sock"        # optional
+# routerd_status_socket="/var/run/routerd/routerd-status.sock" # optional
 # routerd_log="/var/log/routerd.log"                    # optional
 # routerd_flags=""                                       # extra flags
 #
@@ -34,6 +35,7 @@ load_rc_config "$name"
 : ${routerd_enable:="NO"}
 : ${routerd_config:="/usr/local/etc/routerd/router.yaml"}
 : ${routerd_socket:="/var/run/routerd/routerd.sock"}
+: ${routerd_status_socket:="/var/run/routerd/routerd-status.sock"}
 : ${routerd_apply_interval:="60s"}
 : ${routerd_log:="/var/log/routerd.log"}
 : ${routerd_user:="root"}
@@ -45,6 +47,7 @@ procname="/usr/local/sbin/routerd"
 command_args="-P ${supervisor_pidfile} -p ${pidfile} -r -t ${name} -o ${routerd_log} -- ${procname} serve \
     --config ${routerd_config} \
     --socket ${routerd_socket} \
+    --status-socket ${routerd_status_socket} \
     --apply-interval ${routerd_apply_interval} \
     ${routerd_flags} >/dev/null 2>&1"
 

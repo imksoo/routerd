@@ -10,6 +10,15 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 修正
+
+- release helper 現在會在 schema check 前重新產生受管理的 config schema 與
+  control API schema。API type 變更會包含在 release commit 中，而不是到 release
+  後段才失敗。
+- `routerctl` 現在只會針對唯讀 control API request，retry daemon 啟動期間暫時性的
+  Unix socket 連線失敗。`routerctl status` 預設會使用獨立的唯讀 status socket，
+  而 apply 與 delete 仍只使用具權限的 control socket，且不會 retry。
+
 ## v20260517.1510
 
 ### 新增

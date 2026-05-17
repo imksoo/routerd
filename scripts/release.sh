@@ -161,6 +161,8 @@ promote_changelog website/i18n/ja/docusaurus-plugin-content-docs/current/release
 promote_changelog website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/releases/changelog.md
 promote_changelog website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/releases/changelog.md
 
+make generate-schema
+
 if [ "$skip_checks" -ne 1 ]; then
 	go test ./...
 	make check-schema

@@ -14,9 +14,15 @@ routerd と管理対象 daemon は、ローカル Unix domain socket 上に HTTP
 
 ```text
 /run/routerd/routerd.sock
+/run/routerd/routerd-status.sock
 ```
 
-読み取り endpoint で状態、event、resource state を返します。代表例：
+主 control socket は権限付きローカル client 向けで、apply や delete などの変更系
+endpoint も公開します。読み取り専用 status socket は status 系 endpoint だけを
+公開し、一般ユーザーが状態確認に使えます。
+
+主 control socket の読み取り endpoint で状態、event、resource state を返します。
+代表例：
 
 | Method + Path | 用途 |
 | --- | --- |

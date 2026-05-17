@@ -206,6 +206,23 @@ func TestControllerStatusesFromDryRunModes(t *testing.T) {
 	}
 }
 
+func TestListenUnixSocketSetsMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd-status.sock")
+	listener, err := listenUnixSocket(path, 0o666)
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+	defer listener.Close()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat socket: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o666); got != want {
+		t.Fatalf("socket mode = %v, want %v", got, want)
+	}
+}
+
 func TestControllerResourceKindsUseCanonicalNames(t *testing.T) {
 	kinds := controllerResourceKinds("dhcpv6")
 	for _, kind := range kinds {

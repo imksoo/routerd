@@ -54,6 +54,9 @@ func TestDerivedPaths(t *testing.T) {
 	if got, want := defaults.SocketFile(), defaults.RuntimeDir+"/routerd.sock"; got != want {
 		t.Errorf("SocketFile = %q, want %q", got, want)
 	}
+	if got, want := defaults.StatusSocketFile(), defaults.RuntimeDir+"/routerd-status.sock"; got != want {
+		t.Errorf("StatusSocketFile = %q, want %q", got, want)
+	}
 	if got, want := defaults.LockFile(), defaults.RuntimeDir+"/routerd.lock"; got != want {
 		t.Errorf("LockFile = %q, want %q", got, want)
 	}

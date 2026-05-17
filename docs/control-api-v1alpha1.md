@@ -13,9 +13,15 @@ routerd and its managed daemons expose a local HTTP+JSON API over Unix domain so
 
 ```text
 /run/routerd/routerd.sock
+/run/routerd/routerd-status.sock
 ```
 
-Read endpoints expose status, events, and resource state. Highlights:
+The main control socket is intended for privileged local clients and exposes
+mutating endpoints such as apply and delete. The read-only status socket exposes
+only status-style endpoints and is safe for regular users to query.
+
+Read endpoints on the main control socket expose status, events, and resource
+state. Highlights:
 
 | Method and path | Purpose |
 | --- | --- |

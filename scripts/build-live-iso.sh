@@ -481,6 +481,7 @@ marker=/run/routerd/live-autostart.done
 routerd=/usr/local/sbin/routerd
 routerctl=/usr/local/sbin/routerctl
 socket=/run/routerd/routerd.sock
+status_socket=/run/routerd/routerd-status.sock
 log_dir=/run/routerd/logs
 
 mkdir -p /run/routerd "${log_dir}" /var/lib/routerd
@@ -503,6 +504,7 @@ if [ ! -S "${socket}" ]; then
     nohup "${routerd}" serve \
         --config "${config}" \
         --socket "${socket}" \
+        --status-socket "${status_socket}" \
         --controller-chain \
         --controller-chain-dry-run-dns-resolver=false \
         > "${log_dir}/routerd-live.log" 2>&1 &

@@ -10,6 +10,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- The release helper now regenerates checked-in config and control API schemas
+  before running schema checks, so API type changes are included in the release
+  commit instead of failing late during release.
+- `routerctl` now retries transient Unix-socket connection failures for
+  read-only control API requests during daemon startup. `routerctl status` now
+  uses a separate read-only status socket by default, while apply and delete
+  continue to use the privileged control socket and are not retried.
+
 ## v20260517.1510
 
 ### Added

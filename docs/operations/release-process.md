@@ -19,8 +19,9 @@ make release
 
 The helper uses the current date and start time in `Asia/Tokyo`, updates the
 executable version strings, promotes the current `Unreleased` changelog entries
-to the new release tag while leaving a fresh empty `Unreleased` heading, commits
-the change, creates the tag, and pushes both `main` and the tag.
+to the new release tag while leaving a fresh empty `Unreleased` heading,
+regenerates the checked-in schemas, commits the change, creates the tag, and
+pushes both `main` and the tag.
 
 For example, a release started at 15:30 JST uses the `.1530` suffix.
 
@@ -97,7 +98,8 @@ make dist ROUTERD_OS=linux GOARCH=amd64 VERSION="$(git describe --tags --abbrev=
 ```
 
 Deployment smoke checks use `install.sh`.
-After installation, `install.sh` calls `routerctl status` when the routerd control socket exists.
+After installation, `install.sh` calls `routerctl status` when the routerd
+read-only status socket exists.
 The GitHub release workflow also extracts each archive and runs `install.sh` with a temporary non-system prefix.
 That smoke test verifies that the archive can install and uninstall without using a Makefile.
 The CI smoke test passes `--no-install-deps` because dependency installation belongs to the target router host.
@@ -125,7 +127,8 @@ Pass `--list-deps` to print the package and command list without changing the ho
 Pass `--deps-only` to install packages and then exit before copying routerd files.
 Pass `--with-tailscale` to include the optional Tailscale package and command check.
 Pass `--enable-service` or `--start-service` when you want a fresh install to call the host service manager.
-After installation, the script runs `routerctl status` when the routerd control socket exists.
+After installation, the script runs `routerctl status` when the routerd
+read-only status socket exists.
 
 The installer never modifies these runtime or state locations:
 

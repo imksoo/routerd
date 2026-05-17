@@ -1042,6 +1042,7 @@ maybe_start_live_routerd()
     routerd_bin=$1
     final_config=$2
     socket_path=/run/routerd/routerd.sock
+    status_socket_path=/run/routerd/routerd-status.sock
     if [ -S "${socket_path}" ]; then
         return 0
     fi
@@ -1056,6 +1057,7 @@ maybe_start_live_routerd()
     nohup "${routerd_bin}" serve \
         --config "${final_config}" \
         --socket "${socket_path}" \
+        --status-socket "${status_socket_path}" \
         --controller-chain \
         --controller-chain-dry-run-dns-resolver=false \
         > /var/log/routerd-live.log 2>&1 &
@@ -1513,8 +1515,8 @@ esac
 
 if [ "${dry_run}" -eq 0 ] && [ -x "${bindir}/routerctl" ]; then
     case "${os}" in
-        Linux) status_socket=/run/routerd/routerd.sock ;;
-        FreeBSD) status_socket=/var/run/routerd/routerd.sock ;;
+        Linux) status_socket=/run/routerd/routerd-status.sock ;;
+        FreeBSD) status_socket=/var/run/routerd/routerd-status.sock ;;
         *) status_socket= ;;
     esac
     if [ -n "${status_socket}" ] && [ -S "${status_socket}" ]; then

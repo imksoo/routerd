@@ -164,6 +164,11 @@ func (d Defaults) SocketFile() string {
 	return d.RuntimeDir + "/routerd.sock"
 }
 
+// StatusSocketFile returns the default read-only status Unix socket path.
+func (d Defaults) StatusSocketFile() string {
+	return d.RuntimeDir + "/routerd-status.sock"
+}
+
 // LockFile returns the default apply lock file path.
 func (d Defaults) LockFile() string {
 	return d.RuntimeDir + "/routerd.lock"

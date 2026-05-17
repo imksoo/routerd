@@ -6,17 +6,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"syscall"
+	"time"
 )
 
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
+	httpClient    *http.Client
+	baseURL       string
+	retryAttempts int
+	retryDelay    time.Duration
 }
 
 func NewUnixClient(socketPath string) *Client {
@@ -27,8 +32,10 @@ func NewUnixClient(socketPath string) *Client {
 		},
 	}
 	return &Client{
-		httpClient: &http.Client{Transport: transport},
-		baseURL:    "http://routerd",
+		httpClient:    &http.Client{Transport: transport},
+		baseURL:       "http://routerd",
+		retryAttempts: 10,
+		retryDelay:    300 * time.Millisecond,
 	}
 }
 
@@ -177,7 +184,7 @@ func logQueryValues(since string, limit int, filters map[string]string) url.Valu
 }
 
 func (c *Client) do(req *http.Request, value any) error {
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doWithRetry(req)
 	if err != nil {
 		return err
 	}
@@ -190,4 +197,68 @@ func (c *Client) do(req *http.Request, value any) error {
 		return fmt.Errorf("routerd API returned HTTP %d", resp.StatusCode)
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(value)
+}
+
+func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
+	attempts := c.retryAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	if !isRetryableControlMethod(req.Method) {
+		attempts = 1
+	}
+	delay := c.retryDelay
+	if delay <= 0 {
+		delay = 300 * time.Millisecond
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		nextReq, err := cloneRequestForAttempt(req, attempt)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.httpClient.Do(nextReq)
+		if err == nil || !isTransientControlConnectError(err) || attempt == attempts-1 {
+			return resp, err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-req.Context().Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, req.Context().Err()
+		case <-timer.C:
+		}
+	}
+	return nil, nil
+}
+
+func cloneRequestForAttempt(req *http.Request, attempt int) (*http.Request, error) {
+	if attempt == 0 {
+		return req, nil
+	}
+	next := req.Clone(req.Context())
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		next.Body = body
+		return next, nil
+	}
+	if req.Body != nil {
+		return nil, errors.New("cannot retry request without reusable body")
+	}
+	return next, nil
+}
+
+func isTransientControlConnectError(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ENOENT) ||
+		errors.Is(err, syscall.ENOTSOCK) ||
+		errors.Is(err, syscall.ECONNRESET)
+}
+
+func isRetryableControlMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
 }

@@ -10,6 +10,16 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 修正
+
+- release helper は、schema check の前に管理対象の config schema と control API
+  schema を再生成するようにしました。API type の変更が release の終盤で失敗する
+  代わりに、release commit に含まれます。
+- `routerctl` は daemon 起動直後の一時的な Unix socket 接続失敗を、読み取り専用
+  control API request に限って retry するようにしました。`routerctl status` は
+  既定で別の読み取り専用 status socket を使い、apply と delete は引き続き権限付き
+  control socket だけを使い、retry しません。
+
 ## v20260517.1510
 
 ### 追加

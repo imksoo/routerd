@@ -35,6 +35,12 @@ in {
       description = "Control API Unix socket path.";
     };
 
+    statusSocket = lib.mkOption {
+      type = lib.types.str;
+      default = "/run/routerd/routerd-status.sock";
+      description = "Read-only status API Unix socket path.";
+    };
+
     applyInterval = lib.mkOption {
       type = lib.types.str;
       default = "60s";
@@ -95,6 +101,7 @@ in {
           "serve"
           "--config" "${configFile}"
           "--socket" cfg.socket
+          "--status-socket" cfg.statusSocket
           "--apply-interval" cfg.applyInterval
         ] ++ cfg.extraFlags);
         Restart = "always";

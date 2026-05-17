@@ -3194,6 +3194,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	configPath := fs.String("config", defaultConfigPath, "config path")
 	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
 	socketPath := fs.String("socket", defaultSocketPath(), "Unix domain socket path")
+	statusSocketPath := fs.String("status-socket", defaultStatusSocketPath(), "read-only status Unix domain socket path")
 	observeInterval := fs.Duration("observe-interval", 30*time.Second, "periodic observe interval; 0 disables scheduled observe")
 	applyInterval := fs.Duration("apply-interval", 0, "periodic apply interval; 0 disables scheduled apply")
 	netplanPath := fs.String("netplan-file", defaultNetplanPath, "routerd-managed netplan file")
@@ -3229,6 +3230,9 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *statusSocketPath == *socketPath {
+		return errors.New("--status-socket must differ from --socket")
+	}
 	controllerDryRunModes := map[string]bool{
 		"address":          *controllerDryRunAddress,
 		"dslite":           *controllerDryRunDSLite,
@@ -3259,6 +3263,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon starting", map[string]string{
 		"config":          *configPath,
 		"socket":          *socketPath,
+		"statusSocket":    *statusSocketPath,
 		"observeInterval": observeInterval.String(),
 		"applyInterval":   applyInterval.String(),
 	})
@@ -3377,18 +3382,11 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		}
 	}
 
-	if err := os.MkdirAll(filepathDir(*socketPath), 0755); err != nil {
-		return err
-	}
-	_ = os.Remove(*socketPath)
-	listener, err := net.Listen("unix", *socketPath)
+	listener, err := listenUnixSocket(*socketPath, 0o660)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
-	if err := os.Chmod(*socketPath, 0660); err != nil {
-		return err
-	}
 
 	handler := controlapi.Handler{
 		Status: func(r *http.Request) (*controlapi.Status, error) {
@@ -3495,9 +3493,48 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			return &result, nil
 		},
 	}
+	statusListener, err := listenUnixSocket(*statusSocketPath, 0o666)
+	if err != nil {
+		return err
+	}
+	defer statusListener.Close()
+	statusServer := &http.Server{
+		Handler: controlapi.Handler{
+			Status:      handler.Status,
+			Controllers: handler.Controllers,
+		},
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	defer statusServer.Close()
+	go func() {
+		if serveErr := statusServer.Serve(statusListener); serveErr != nil && serveErr != http.ErrServerClosed {
+			logger.Emit(eventlog.LevelError, "serve", "read-only status API stopped", map[string]string{"error": serveErr.Error()})
+		}
+	}()
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
+	fmt.Fprintf(stdout, "routerd serving read-only status API on unix://%s\n", *statusSocketPath)
 	return server.Serve(listener)
+}
+
+func listenUnixSocket(path string, perm os.FileMode) (net.Listener, error) {
+	dir := filepathDir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		return nil, err
+	}
+	_ = os.Remove(path)
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, perm); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	return listener, nil
 }
 
 func logQuerySince(value string) (time.Time, error) {
@@ -8089,6 +8126,10 @@ func defaultSocketPath() string {
 	return platformDefaults.SocketFile()
 }
 
+func defaultStatusSocketPath() string {
+	return platformDefaults.StatusSocketFile()
+}
+
 func writeResult(stdout io.Writer, statusFile string, result *apply.Result) error {
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -8118,7 +8159,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  apply --config <path> --once [--dry-run] [--override-client <client>] [--override-profile <profile>]")
 	fmt.Fprintln(w, "  delete <kind>/<name> [--dry-run]")
 	fmt.Fprintln(w, "  delete -f <path> [--dry-run]")
-	fmt.Fprintln(w, "  serve --config <path> [--socket <path>]")
+	fmt.Fprintln(w, "  serve --config <path> [--socket <path>] [--status-socket <path>]")
 	fmt.Fprintln(w, "  run --config <path>")
 	fmt.Fprintln(w, "  status [--status-file <path>]")
 	fmt.Fprintln(w, "  plugin list --plugin-dir <path>")

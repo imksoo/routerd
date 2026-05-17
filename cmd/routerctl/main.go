@@ -176,7 +176,7 @@ func writeTailscalePeersTable(stdout io.Writer, status tailscale.Status) error {
 func statusCommand(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	socketPath := fs.String("socket", defaultSocketPath(), "routerd Unix domain socket path")
+	socketPath := fs.String("socket", defaultStatusSocketPath(), "routerd read-only status Unix domain socket path")
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")
 	output := "json"
 	jsonOutput := fs.Bool("json", false, "output JSON")
@@ -2301,6 +2301,10 @@ func defaultFirewallLogsPath() string {
 
 func defaultSocketPath() string {
 	return platformDefaults.SocketFile()
+}
+
+func defaultStatusSocketPath() string {
+	return platformDefaults.StatusSocketFile()
 }
 
 func usage(w io.Writer) {
