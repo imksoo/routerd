@@ -15,37 +15,45 @@ import (
 )
 
 type FirewallLogEntry struct {
-	ID                int64     `json:"id,omitempty"`
-	Timestamp         time.Time `json:"ts"`
-	ZoneFrom          string    `json:"zoneFrom,omitempty"`
-	ZoneTo            string    `json:"zoneTo,omitempty"`
-	RuleName          string    `json:"ruleName,omitempty"`
-	Action            string    `json:"action"`
-	SrcAddress        string    `json:"srcAddress"`
-	SrcPort           int       `json:"srcPort,omitempty"`
-	DstAddress        string    `json:"dstAddress"`
-	DstPort           int       `json:"dstPort,omitempty"`
-	SrcHostname       string    `json:"srcHostname,omitempty"`
-	DstHostname       string    `json:"dstHostname,omitempty"`
-	SrcService        string    `json:"srcService,omitempty"`
-	DstService        string    `json:"dstService,omitempty"`
-	Protocol          string    `json:"protocol"`
-	TCPFlags          string    `json:"tcpFlags,omitempty"`
-	L3Proto           string    `json:"l3Proto"`
-	InIface           string    `json:"inIface,omitempty"`
-	OutIface          string    `json:"outIface,omitempty"`
-	PacketBytes       int       `json:"packetBytes,omitempty"`
-	Hint              string    `json:"hint,omitempty"`
-	DPIApp            string    `json:"dpiApp,omitempty"`
-	DPICategory       string    `json:"dpiCategory,omitempty"`
-	DPITLSSNI         string    `json:"dpiTlsSNI,omitempty"`
-	DPIHTTPHost       string    `json:"dpiHttpHost,omitempty"`
-	DPIDNSQuery       string    `json:"dpiDnsQuery,omitempty"`
-	DPIConfidence     int       `json:"dpiConfidence,omitempty"`
-	Correlation       string    `json:"correlation,omitempty"`
-	CorrelationDetail string    `json:"correlationDetail,omitempty"`
-	ExpiredAgeSeconds int       `json:"expiredAgeSeconds,omitempty"`
-	ExpiredBytes      int64     `json:"expiredBytes,omitempty"`
+	ID                int64             `json:"id,omitempty"`
+	Timestamp         time.Time         `json:"ts"`
+	ZoneFrom          string            `json:"zoneFrom,omitempty"`
+	ZoneTo            string            `json:"zoneTo,omitempty"`
+	RuleName          string            `json:"ruleName,omitempty"`
+	Action            string            `json:"action"`
+	SrcAddress        string            `json:"srcAddress"`
+	SrcPort           int               `json:"srcPort,omitempty"`
+	DstAddress        string            `json:"dstAddress"`
+	DstPort           int               `json:"dstPort,omitempty"`
+	SrcHostname       string            `json:"srcHostname,omitempty"`
+	DstHostname       string            `json:"dstHostname,omitempty"`
+	SrcService        string            `json:"srcService,omitempty"`
+	DstService        string            `json:"dstService,omitempty"`
+	Protocol          string            `json:"protocol"`
+	TCPFlags          string            `json:"tcpFlags,omitempty"`
+	L3Proto           string            `json:"l3Proto"`
+	InIface           string            `json:"inIface,omitempty"`
+	OutIface          string            `json:"outIface,omitempty"`
+	PacketBytes       int               `json:"packetBytes,omitempty"`
+	Hint              string            `json:"hint,omitempty"`
+	DPIApp            string            `json:"dpiApp,omitempty"`
+	DPICategory       string            `json:"dpiCategory,omitempty"`
+	DPITLSSNI         string            `json:"dpiTlsSNI,omitempty"`
+	DPIHTTPHost       string            `json:"dpiHttpHost,omitempty"`
+	DPIDNSQuery       string            `json:"dpiDnsQuery,omitempty"`
+	DPIConfidence     int               `json:"dpiConfidence,omitempty"`
+	Correlation       string            `json:"correlation,omitempty"`
+	CorrelationDetail string            `json:"correlationDetail,omitempty"`
+	ExpiredAgeSeconds int               `json:"expiredAgeSeconds,omitempty"`
+	ExpiredBytes      int64             `json:"expiredBytes,omitempty"`
+	DestinationSets   []AddressSetMatch `json:"destinationSetMatches,omitempty"`
+}
+
+type AddressSetMatch struct {
+	ResourceName string `json:"resourceName,omitempty"`
+	SetName      string `json:"setName,omitempty"`
+	Source       string `json:"source,omitempty"`
+	Current      bool   `json:"current,omitempty"`
 }
 
 type ExpiredFlowEntry struct {

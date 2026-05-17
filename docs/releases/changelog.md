@@ -10,6 +10,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Web Console Connections now marks flows that were handled by
+  `LocalServiceRedirect`, including the redirect rule and destination
+  `IPAddressSet` when the live conntrack tuple and resolved set status identify
+  the match.
+- Web Console Firewall now shows destination `IPAddressSet` matches on deny-log
+  rows, distinguishing explicit `FirewallRule.destinationSetRefs` matches from
+  destinations that are currently present in a configured set.
+
 ## v20260517.1401
 
 ### Fixed

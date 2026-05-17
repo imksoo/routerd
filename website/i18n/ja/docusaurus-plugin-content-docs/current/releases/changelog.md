@@ -10,6 +10,15 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 追加
+
+- Web Console の Connections で、`LocalServiceRedirect` により処理された flow
+  に印を付けるようにしました。live conntrack tuple と解決済み set status から
+  判定できる場合は、redirect rule と宛先 `IPAddressSet` も表示します。
+- Web Console の Firewall で、deny log row の宛先 `IPAddressSet` match を表示する
+  ようにしました。明示的な `FirewallRule.destinationSetRefs` による match と、
+  現在設定済み set に含まれている宛先を区別して表示します。
+
 ## v20260517.1401
 
 ### 修正

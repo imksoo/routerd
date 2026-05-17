@@ -32,6 +32,7 @@ type ConnectionEntry struct {
 	Reply         ConntrackTuple    `json:"reply" yaml:"reply"`
 	Mark          string            `json:"mark,omitempty" yaml:"mark,omitempty"`
 	Assured       bool              `json:"assured,omitempty" yaml:"assured,omitempty"`
+	LocalRedirect *LocalRedirect    `json:"localRedirect,omitempty" yaml:"localRedirect,omitempty"`
 	AppName       string            `json:"appName,omitempty" yaml:"appName,omitempty"`
 	AppCategory   string            `json:"appCategory,omitempty" yaml:"appCategory,omitempty"`
 	AppConfidence int               `json:"appConfidence,omitempty" yaml:"appConfidence,omitempty"`
@@ -39,6 +40,16 @@ type ConnectionEntry struct {
 	HTTPHost      string            `json:"httpHost,omitempty" yaml:"httpHost,omitempty"`
 	DNSQuery      string            `json:"dnsQuery,omitempty" yaml:"dnsQuery,omitempty"`
 	RawAttributes map[string]string `json:"rawAttributes,omitempty" yaml:"rawAttributes,omitempty"`
+}
+
+type LocalRedirect struct {
+	ResourceName      string `json:"resourceName,omitempty" yaml:"resourceName,omitempty"`
+	RuleName          string `json:"ruleName,omitempty" yaml:"ruleName,omitempty"`
+	DestinationSetRef string `json:"destinationSetRef,omitempty" yaml:"destinationSetRef,omitempty"`
+	OriginalAddress   string `json:"originalAddress,omitempty" yaml:"originalAddress,omitempty"`
+	RedirectAddress   string `json:"redirectAddress,omitempty" yaml:"redirectAddress,omitempty"`
+	RedirectPort      int    `json:"redirectPort,omitempty" yaml:"redirectPort,omitempty"`
+	Match             string `json:"match,omitempty" yaml:"match,omitempty"`
 }
 
 type ConntrackTuple struct {

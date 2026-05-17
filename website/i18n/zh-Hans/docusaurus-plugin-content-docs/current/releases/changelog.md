@@ -10,6 +10,15 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 新增
+
+- Web Console Connections 现在会标记由 `LocalServiceRedirect` 处理的 flow。
+  当 live conntrack tuple 与已解析的 set status 能识别 match 时，也会显示
+  redirect rule 和目的地 `IPAddressSet`。
+- Web Console Firewall 现在会在 deny log row 显示目的地 `IPAddressSet` match，
+  并区分明确的 `FirewallRule.destinationSetRefs` match，以及当前存在于已配置
+  set 内的目的地。
+
 ## v20260517.1401
 
 ### 修复

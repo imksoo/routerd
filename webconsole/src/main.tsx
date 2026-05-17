@@ -208,12 +208,23 @@ type ConnectionEntry = {
   mark?: string;
   original?: ConnTuple;
   reply?: ConnTuple;
+  localRedirect?: LocalRedirect;
   appName?: string;
   appCategory?: string;
   appConfidence?: number;
   tlsSNI?: string;
   httpHost?: string;
   dnsQuery?: string;
+};
+
+type LocalRedirect = {
+  resourceName?: string;
+  ruleName?: string;
+  destinationSetRef?: string;
+  originalAddress?: string;
+  redirectAddress?: string;
+  redirectPort?: number;
+  match?: string;
 };
 
 type DNSQuery = {
@@ -277,6 +288,14 @@ type FirewallLog = {
   correlationDetail?: string;
   expiredAgeSeconds?: number;
   expiredBytes?: number;
+  destinationSetMatches?: AddressSetMatch[];
+};
+
+type AddressSetMatch = {
+  resourceName?: string;
+  setName?: string;
+  source?: string;
+  current?: boolean;
 };
 
 type FirewallDenyTimelineBucket = {
@@ -4242,6 +4261,7 @@ function ConnectionCard({
           <div className={styles.connectionCardMeta}>
             <Badge appearance="outline" color={family === "ipv6" ? "brand" : "informative"}>{family.toUpperCase() || "L3"}/{proto}</Badge>
             <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
+            {entry.localRedirect ? <Badge appearance="tint" color="warning" title={localRedirectTitle(entry.localRedirect)}>Local redirect</Badge> : null}
             {classification.app ? <Badge appearance={classification.source === "port-fallback" ? "outline" : "tint"} color={connectionAppColor(classification.app)} title={classification.source === "port-fallback" ? "Port-based guess" : classification.cacheHit ? "DPI cache hit" : "DPI"}>{formatConnectionApp(classification.app)}</Badge> : null}
             {provider ? <Badge appearance="outline" color="subtle" title="Destination provider">{formatProviderLabel(provider)}</Badge> : null}
             {destServiceApp && destServiceApp !== classification.app ? <ServiceBadge service={destService} app={destServiceApp} /> : null}
@@ -4273,6 +4293,12 @@ function ConnectionCard({
                 </div>
               ) : null}
             </div>
+            {entry.localRedirect ? (
+              <>
+                <Text className={styles.detailKey}>local redirect</Text>
+                <LocalRedirectDetail redirect={entry.localRedirect} />
+              </>
+            ) : null}
             <Text className={styles.detailKey}>DPI</Text>
             <ConnectionDPI entry={entry} dnsLabels={dnsLabels} />
             <Text className={styles.detailKey}>traffic</Text>
@@ -4314,6 +4340,32 @@ function ConnectionClientAction({
       <Text size={200} className={styles.muted}>{identity?.compactLabel ?? normalized}</Text>
     </div>
   );
+}
+
+function LocalRedirectDetail({ redirect }: { redirect: LocalRedirect }) {
+  const styles = useStyles();
+  return (
+    <div className={styles.connectionFlow}>
+      <div className={styles.badges}>
+        <Badge appearance="tint" color="warning">Local redirect</Badge>
+        {redirect.destinationSetRef ? <Badge appearance="outline">set {redirect.destinationSetRef}</Badge> : null}
+        {redirect.ruleName ? <Badge appearance="outline">rule {redirect.ruleName}</Badge> : null}
+      </div>
+      <Text size={200} className={styles.muted}>
+        {[redirect.originalAddress, redirect.redirectAddress ? `router ${redirect.redirectAddress}${redirect.redirectPort ? `:${redirect.redirectPort}` : ""}` : ""].filter(Boolean).join(" -> ")}
+      </Text>
+    </div>
+  );
+}
+
+function localRedirectTitle(redirect: LocalRedirect) {
+  return [
+    "LocalServiceRedirect",
+    redirect.resourceName,
+    redirect.ruleName,
+    redirect.destinationSetRef ? `set ${redirect.destinationSetRef}` : "",
+    redirect.match ? `match ${redirect.match}` : "",
+  ].filter(Boolean).join(" / ");
 }
 
 function ConnectionDPI({ entry, dnsLabels }: { entry: ConnectionEntry; dnsLabels: Record<string, string> }) {
@@ -5071,7 +5123,10 @@ function RecentDeny({
         <div className={styles.firewallRankRow} role="row" key={`${row.key}-${row.dpi}`}>
           <FirewallCell label="Count">{row.count}</FirewallCell>
           <FirewallCell label="Source"><EndpointDetail address={row.src} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
-          <FirewallCell label="Destination"><EndpointDetail address={row.dst} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
+          <FirewallCell label="Destination">
+            <EndpointDetail address={row.dst} dnsLabels={dnsLabels} leases={leases} />
+            <FirewallDestinationSetBadges matches={row.example?.destinationSetMatches} />
+          </FirewallCell>
           <FirewallCell label="Proto">{row.proto}</FirewallCell>
           <FirewallCell label="Flags"><code className={styles.wrapCode}>{row.tcpFlags || "-"}</code></FirewallCell>
           <FirewallCell label="Traffic"><FirewallTrafficClassBadge value={row.trafficClass} /></FirewallCell>
@@ -5157,7 +5212,10 @@ function FirewallTimeline({
           <FirewallCell label="Time"><RelativeTime value={log.ts} /></FirewallCell>
           <FirewallCell label="Action"><Badge appearance="tint" color={firewallActionColor(log.action)}>{log.action || "-"}</Badge></FirewallCell>
           <FirewallCell label="Source"><EndpointDetail address={log.srcAddress} port={log.srcPort} hostname={log.srcHostname} service={log.srcService} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
-          <FirewallCell label="Destination"><EndpointDetail address={log.dstAddress} port={log.dstPort} hostname={log.dstHostname} service={log.dstService} dnsLabels={dnsLabels} leases={leases} /></FirewallCell>
+          <FirewallCell label="Destination">
+            <EndpointDetail address={log.dstAddress} port={log.dstPort} hostname={log.dstHostname} service={log.dstService} dnsLabels={dnsLabels} leases={leases} />
+            <FirewallDestinationSetBadges matches={log.destinationSetMatches} />
+          </FirewallCell>
           <FirewallCell label="Proto">{[log.l3Proto, log.protocol].filter(Boolean).join("/") || "-"}</FirewallCell>
           <FirewallCell label="Flags"><code className={styles.wrapCode}>{firewallTCPFlags(log) || "-"}</code></FirewallCell>
           <FirewallCell label="Traffic"><FirewallTrafficClassBadge value={firewallTrafficClass(log)} /></FirewallCell>
@@ -5178,6 +5236,35 @@ function FirewallCell({ label, children }: { label: string; children: React.Reac
       <div className={styles.firewallCellValue}>{children}</div>
     </div>
   );
+}
+
+function FirewallDestinationSetBadges({ matches }: { matches?: AddressSetMatch[] }) {
+  const styles = useStyles();
+  const visible = (matches ?? []).filter(match => match.resourceName || match.setName).slice(0, 3);
+  if (visible.length === 0) return null;
+  return (
+    <div className={styles.badges}>
+      {visible.map((match, index) => (
+        <Badge
+          key={`${match.setName ?? match.resourceName ?? "set"}-${index}`}
+          appearance={match.source === "firewall-rule" ? "tint" : "outline"}
+          color={match.source === "firewall-rule" ? "brand" : "subtle"}
+          title={firewallDestinationSetTitle(match)}
+        >
+          FQDN set {match.resourceName || match.setName}
+        </Badge>
+      ))}
+      {(matches ?? []).length > visible.length ? <Badge appearance="outline">+{(matches ?? []).length - visible.length}</Badge> : null}
+    </div>
+  );
+}
+
+function firewallDestinationSetTitle(match: AddressSetMatch) {
+  return [
+    match.source === "firewall-rule" ? "Firewall rule destinationSetRefs" : "Destination currently in IPAddressSet",
+    match.resourceName || match.setName,
+    match.current ? "current address match" : "",
+  ].filter(Boolean).join(" / ");
 }
 
 function FirewallCorrelationBadge({ correlation }: { correlation?: string }) {
@@ -5554,6 +5641,13 @@ function firewallSearchText(log: FirewallLog, dnsLabels: Record<string, string>)
     log.dpiHttpHost,
     log.dpiDnsQuery,
     log.dpiConfidence,
+    ...(log.destinationSetMatches ?? []).flatMap(match => [
+      "fqdn set",
+      match.resourceName,
+      match.setName,
+      match.source,
+      match.current ? "current" : "",
+    ]),
     firewallDPIText(log),
     firewallDPIClassification(log, dnsLabels).detail,
     firewallDPIClassification(log, dnsLabels).source,
@@ -5796,6 +5890,12 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
     connectionApp(entry, dnsLabels),
     connectionDPIDetail(entry, dnsLabels),
     connectionAppSource(entry),
+    entry.localRedirect ? "local redirect" : "",
+    entry.localRedirect?.resourceName,
+    entry.localRedirect?.ruleName,
+    entry.localRedirect?.destinationSetRef,
+    entry.localRedirect?.originalAddress,
+    entry.localRedirect?.redirectAddress,
     destinationIdentity(entry, dnsLabels, clientIdentities),
     connectionInlineIdentity(entry, dnsLabels, clientIdentities),
     entry.original?.sourceHostname,

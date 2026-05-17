@@ -536,6 +536,57 @@ func TestHandlerServesFirewallLogs(t *testing.T) {
 	}
 }
 
+func TestHandlerAnnotatesFirewallDestinationSets(t *testing.T) {
+	path := t.TempDir() + "/firewall-logs.db"
+	firewallLog, err := logstore.OpenFirewallLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firewallLog.Record(context.Background(), logstore.FirewallLogEntry{
+		Timestamp:  time.Now(),
+		RuleName:   "block-cloud",
+		Action:     "drop",
+		SrcAddress: "172.18.0.2",
+		DstAddress: "203.0.113.10",
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = firewallLog.Close()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"},
+			Metadata: api.ObjectMeta{Name: "cloud-service"},
+			Spec:     api.IPAddressSetSpec{Addresses: []string{"203.0.113.10"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"},
+			Metadata: api.ObjectMeta{Name: "block-cloud"},
+			Spec: api.FirewallRuleSpec{
+				FromZone:           "lan",
+				ToZone:             "wan",
+				DestinationSetRefs: []string{"cloud-service"},
+				Protocol:           "tcp",
+				Action:             "drop",
+				Log:                true,
+			},
+		},
+	}}}
+	handler := New(Options{FirewallLogPath: path, Router: router})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/firewall-logs?since=1h&action=drop", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{`"destinationSetMatches"`, `"resourceName": "cloud-service"`, `"source": "firewall-rule"`, `"current": true`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("firewall logs missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+}
+
 func TestHandlerServesFirewallDenyTimeline(t *testing.T) {
 	path := t.TempDir() + "/firewall-logs.db"
 	firewallLog, err := logstore.OpenFirewallLog(path)
@@ -696,6 +747,59 @@ func TestHandlerLabelsOTLPConnectionsFromPort(t *testing.T) {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
 	for _, want := range []string{`"appName": "otlp"`, `"appCategory": "port-fallback"`, `"appConfidence": 40`, `"destinationService": "otlp"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("connections missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+}
+
+func TestHandlerAnnotatesLocalServiceRedirectConnections(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"},
+			Metadata: api.ObjectMeta{Name: "dns-google"},
+			Spec:     api.IPAddressSetSpec{Addresses: []string{"8.8.8.8"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "LocalServiceRedirect"},
+			Metadata: api.ObjectMeta{Name: "lan-local-services"},
+			Spec: api.LocalServiceRedirectSpec{Interface: "lan", Rules: []api.LocalServiceRedirectRuleSpec{{
+				Name:              "dns-google",
+				Protocols:         []string{"udp"},
+				DestinationSetRef: "dns-google",
+				DestinationPort:   53,
+				RedirectPort:      53,
+			}}},
+		},
+	}}}
+	handler := New(Options{
+		Router: router,
+		Connections: func(limit int) (*observe.ConnectionTable, error) {
+			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
+				Family:   "ipv4",
+				Protocol: "udp",
+				Original: observe.ConntrackTuple{
+					Source:          "172.18.1.100",
+					SourcePort:      "45301",
+					Destination:     "8.8.8.8",
+					DestinationPort: "53",
+				},
+				Reply: observe.ConntrackTuple{
+					Source:          "172.18.0.1",
+					SourcePort:      "53",
+					Destination:     "172.18.1.100",
+					DestinationPort: "45301",
+				},
+			}}}, nil
+		},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{`"localRedirect"`, `"resourceName": "lan-local-services"`, `"ruleName": "dns-google"`, `"destinationSetRef": "dns-google"`, `"match": "destination-set"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("connections missing %q:\n%s", want, rec.Body.String())
 		}
