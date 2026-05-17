@@ -107,6 +107,10 @@ spec:
       spec:
         interface: lan
         rules:
+          # This matches LAN-client prerouting traffic to port 53 only. Router-origin
+          # probes such as TCP/443 HealthCheck traffic are not redirected, so health
+          # checks can safely use the same public target address when policy routing
+          # selects the path explicitly.
           - name: public-dns
             protocols:
               - tcp

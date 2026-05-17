@@ -60,6 +60,9 @@ flowchart LR
     refreshInterval: 10m
 
 # [2] -> [3] Redirect only plaintext DNS port 53 to the local resolver.
+# This matches LAN-client prerouting traffic only. Router-origin TCP/443
+# HealthCheck probes are not redirected, so they can use the same public target
+# address when policy routing selects the path explicitly.
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: LocalServiceRedirect
   metadata:
