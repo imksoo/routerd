@@ -28,6 +28,7 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `DNSZone` | `routerd-dns-resolver` local authoritative zone |
 | `DNSResolver` | `routerd-dns-resolver` socket, state, events, listener configuration |
 | `DSLiteTunnel` | Linux `ip6tnl` interface |
+| `IPAddressSet` | nftables IPv4/IPv6 named sets when referenced by a Linux renderer |
 | `IPv4Route` | Kernel route |
 | `NAT44Rule` | nftables `routerd_nat` table |
 | `PortForward` / `IngressService` | Linux nftables `routerd_nat` / `routerd_filter` DNAT, optional hairpin SNAT, or FreeBSD `pf.conf` `rdr pass` / optional NAT reflection rules |

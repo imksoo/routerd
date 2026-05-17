@@ -18,8 +18,9 @@ make release
 ```
 
 The helper uses the current date and start time in `Asia/Tokyo`, updates the
-executable version strings, adds a changelog stub, commits the change, creates
-the tag, and pushes both `main` and the tag.
+executable version strings, promotes the current `Unreleased` changelog entries
+to the new release tag while leaving a fresh empty `Unreleased` heading, commits
+the change, creates the tag, and pushes both `main` and the tag.
 
 For example, a release started at 15:30 JST uses the `.1530` suffix.
 
@@ -30,11 +31,10 @@ scripts/release.sh --dry-run
 scripts/release.sh --date 20260510
 scripts/release.sh --timezone UTC
 scripts/release.sh --no-push
-scripts/release.sh --allow-dirty
 ```
 
-Use `--allow-dirty` only when the current working tree is the intended release
-change set.
+The working tree must be clean before running the helper. Commit feature and
+changelog changes first; the helper should only create the release commit.
 
 Pushing the release tag starts the GitHub Actions workflow.
 The `Release` workflow builds these targets:

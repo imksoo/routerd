@@ -859,6 +859,90 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 	}
 }
 
+func TestValidateLocalServiceRedirect(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"},
+				Metadata: api.ObjectMeta{Name: "public-dns"},
+				Spec: api.IPAddressSetSpec{
+					Addresses: []string{"8.8.8.8"},
+					Names:     []string{"time.google.com"},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "LocalServiceRedirect"},
+				Metadata: api.ObjectMeta{Name: "lan-local-services"},
+				Spec: api.LocalServiceRedirectSpec{
+					Interface: "lan",
+					Rules: []api.LocalServiceRedirectRuleSpec{{
+						Name:              "plain-dns",
+						Protocols:         []string{"udp", "tcp"},
+						DestinationSetRef: "public-dns",
+						DestinationPort:   53,
+						RedirectPort:      53,
+					}},
+				},
+			},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate LocalServiceRedirect: %v", err)
+	}
+	router.Spec.Resources[2].Spec = api.LocalServiceRedirectSpec{
+		Interface: "lan",
+		Rules: []api.LocalServiceRedirectRuleSpec{{
+			Protocols:       []string{"udp"},
+			DestinationPort: 123,
+			RedirectPort:    123,
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "destinationSetRef") {
+		t.Fatalf("expected destination requirement error, got %v", err)
+	}
+}
+
+func TestValidateFirewallRuleAddressSetRef(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "cloud-service"}, Spec: api.IPAddressSetSpec{Names: []string{"service.example.test"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "lan-to-cloud"}, Spec: api.FirewallRuleSpec{
+				FromZone:           "lan",
+				ToZone:             "wan",
+				Protocol:           "tcp",
+				Port:               443,
+				DestinationSetRefs: []string{"IPAddressSet/cloud-service"},
+				Action:             "accept",
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate FirewallRule IPAddressSet ref: %v", err)
+	}
+	router.Spec.Resources[5].Spec = api.FirewallRuleSpec{
+		FromZone:           "lan",
+		ToZone:             "wan",
+		DestinationSetRefs: []string{"IPAddressSet/missing"},
+		Action:             "accept",
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing IPAddressSet") {
+		t.Fatalf("expected missing IPAddressSet error, got %v", err)
+	}
+}
+
 func TestValidateIPv4SourceNATRejectsInvalidPortRange(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

@@ -4,6 +4,7 @@ package render
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"routerd/pkg/api"
@@ -54,6 +55,19 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 				for _, zone := range zones.byListenAddress(listen.Addresses) {
 					add(resource.Metadata.Name+"-dns-udp-"+zone, zone, "self", "udp", listen.Port, resource.ID())
 					add(resource.Metadata.Name+"-dns-tcp-"+zone, zone, "self", "tcp", listen.Port, resource.ID())
+				}
+			}
+		case "LocalServiceRedirect":
+			spec, _ := resource.LocalServiceRedirectSpec()
+			fromZone := zones.byResource(spec.Interface)
+			ifname := zones.ifNameByResource(spec.Interface)
+			for i, rule := range spec.Rules {
+				name := strings.TrimSpace(rule.Name)
+				if name == "" {
+					name = strconv.Itoa(i)
+				}
+				for _, proto := range rule.Protocols {
+					add(resource.Metadata.Name+"-"+name+"-"+proto, fromZone, "self", proto, rule.RedirectPort, resource.ID(), ifname)
 				}
 			}
 		case "IPv6RouterAdvertisement":

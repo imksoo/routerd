@@ -731,6 +731,150 @@ func TestNftablesIngressServiceResolvesListenAddressFromStaticAddress(t *testing
 	}
 }
 
+func TestNftablesLocalServiceRedirectUsesDestinationAddressSets(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"},
+				Metadata: api.ObjectMeta{Name: "public-dns"},
+				Spec:     api.IPAddressSetSpec{Addresses: []string{"8.8.8.8", "1.1.1.1", "2001:4860:4860::8888"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"},
+				Metadata: api.ObjectMeta{Name: "public-ntp"},
+				Spec:     api.IPAddressSetSpec{Names: []string{"ntp.example.test"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "LocalServiceRedirect"},
+				Metadata: api.ObjectMeta{Name: "lan-local-services"},
+				Spec: api.LocalServiceRedirectSpec{
+					Interface: "lan",
+					Rules: []api.LocalServiceRedirectRuleSpec{
+						{
+							Name:              "public-dns",
+							Protocols:         []string{"udp", "tcp"},
+							DestinationSetRef: "IPAddressSet/public-dns",
+							DestinationPort:   53,
+							RedirectPort:      53,
+						},
+						{
+							Name:              "public-ntp",
+							Protocols:         []string{"udp"},
+							DestinationSetRef: "public-ntp",
+							DestinationPort:   123,
+							RedirectPort:      123,
+						},
+					},
+				},
+			},
+		}},
+	}
+
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`set ip_address_set_public_dns { type ipv4_addr; elements = { 1.1.1.1, 8.8.8.8 }; }`,
+		`set ip_address_set_public_ntp { type ipv4_addr; }`,
+		`table ip6 routerd_nat`,
+		`set ip_address_set_public_dns { type ipv6_addr; elements = { 2001:4860:4860::8888 }; }`,
+		`set ip_address_set_public_ntp { type ipv6_addr; }`,
+		`iifname "ens19" ip daddr @ip_address_set_public_dns tcp dport 53 counter redirect to :53 comment "routerd LocalServiceRedirect lan-local-services public-dns"`,
+		`iifname "ens19" ip daddr @ip_address_set_public_dns udp dport 53 counter redirect to :53 comment "routerd LocalServiceRedirect lan-local-services public-dns"`,
+		`iifname "ens19" ip daddr @ip_address_set_public_ntp udp dport 123 counter redirect to :123 comment "routerd LocalServiceRedirect lan-local-services public-ntp"`,
+		`iifname "ens19" ip6 daddr @ip_address_set_public_dns tcp dport 53 counter redirect to :53 comment "routerd LocalServiceRedirect lan-local-services public-dns"`,
+		`iifname "ens19" ip6 daddr @ip_address_set_public_dns udp dport 53 counter redirect to :53 comment "routerd LocalServiceRedirect lan-local-services public-dns"`,
+		`iifname "ens19" ip6 daddr @ip_address_set_public_ntp udp dport 123 counter redirect to :123 comment "routerd LocalServiceRedirect lan-local-services public-ntp"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "dport 443") || strings.Contains(got, "dport 853") {
+		t.Fatalf("local redirect must not touch DoH or DoT ports:\n%s", got)
+	}
+}
+
+func TestNftablesIPv4PolicyRouteUsesDestinationAddressSet(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"},
+			Metadata: api.ObjectMeta{Name: "cloud-service"},
+			Spec: api.IPAddressSetSpec{
+				Names: []string{"service.example.test"},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRoute"},
+			Metadata: api.ObjectMeta{Name: "cloud-via-alt"},
+			Spec: api.IPv4PolicyRouteSpec{
+				OutboundInterface:       "wan-alt",
+				Table:                   200,
+				Priority:                1200,
+				Mark:                    0x120,
+				DestinationSetRefs:      []string{"IPAddressSet/cloud-service"},
+				ExcludeDestinationCIDRs: []string{"10.0.0.0/8"},
+			},
+		},
+	}}}
+	data, err := NftablesIPv4PolicyRoutes(router)
+	if err != nil {
+		t.Fatalf("render policy route: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`table ip routerd_policy`,
+		`set ip_address_set_cloud_service { type ipv4_addr; }`,
+		`ip daddr @ip_address_set_cloud_service ip daddr !=10.0.0.0/8 meta mark set 0x120`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("policy route output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesFirewallRuleUsesDestinationAddressSet(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "cloud-service"}, Spec: api.IPAddressSetSpec{
+			Names: []string{"service.example.test"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "lan-to-cloud"}, Spec: api.FirewallRuleSpec{
+			FromZone:           "lan",
+			ToZone:             "wan",
+			Protocol:           "tcp",
+			Port:               443,
+			DestinationSetRefs: []string{"IPAddressSet/cloud-service"},
+			Action:             "accept",
+		}},
+	}}}
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`set ip_address_set_cloud_service_v4 { type ipv4_addr; }`,
+		`set ip_address_set_cloud_service_v6 { type ipv6_addr; }`,
+		`ip daddr @ip_address_set_cloud_service_v4 tcp dport 443 counter accept`,
+		`ip6 daddr @ip_address_set_cloud_service_v6 tcp dport 443 counter accept`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("firewall output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{

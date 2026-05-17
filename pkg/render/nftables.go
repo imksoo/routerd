@@ -30,6 +30,9 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 	var firewallRules []api.Resource
 	var clientPolicies []api.Resource
 	var ingressRules []ingressNATRule
+	var redirectRules []localServiceRedirectRule
+	var addressSets map[string]nftIPAddressSet
+	var referencedAddressSets []nftIPAddressSet
 	var mssPolicies []pathMTUPolicy
 	var l2FilterVXLANS []vxlanConfig
 	for _, res := range router.Spec.Resources {
@@ -65,6 +68,18 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	addressSets, err = nftIPAddressSets(router)
+	if err != nil {
+		return nil, err
+	}
+	redirectRules, err = localServiceRedirectRules(router, aliases, addressSets)
+	if err != nil {
+		return nil, err
+	}
+	referencedAddressSets = mergeIPAddressSets(
+		referencedIPAddressSets(redirectRules, addressSets),
+		referencedNAT44ResourceIPAddressSets(nat44Rules, addressSets),
+	)
 	mssPolicies, err = pathMTUMSSPolicies(router)
 	if err != nil {
 		return nil, err
@@ -78,7 +93,7 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 			l2FilterVXLANS = append(l2FilterVXLANS, vxlan)
 		}
 	}
-	if len(nats) == 0 && len(nat44Rules) == 0 && len(ingressRules) == 0 && len(policies) == 0 && len(policySets) == 0 && len(zones) == 0 && len(firewallPolicies) == 0 && len(firewallLogs) == 0 && len(firewallRules) == 0 && len(clientPolicies) == 0 && len(mssPolicies) == 0 && len(l2FilterVXLANS) == 0 {
+	if len(nats) == 0 && len(nat44Rules) == 0 && len(ingressRules) == 0 && len(redirectRules) == 0 && len(policies) == 0 && len(policySets) == 0 && len(zones) == 0 && len(firewallPolicies) == 0 && len(firewallLogs) == 0 && len(firewallRules) == 0 && len(clientPolicies) == 0 && len(mssPolicies) == 0 && len(l2FilterVXLANS) == 0 {
 		return nil, nil
 	}
 	sort.Slice(nats, func(i, j int) bool { return nats[i].Metadata.Name < nats[j].Metadata.Name })
@@ -97,7 +112,7 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 		writeBridgeL2FilterTable(&buf, l2FilterVXLANS)
 	}
 	if len(zones) > 0 || len(firewallPolicies) > 0 || len(firewallLogs) > 0 || len(firewallRules) > 0 || len(clientPolicies) > 0 {
-		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, firewallLogs, firewallRules, clientPolicies, InternalFirewallHoles(router), ingressRules); err != nil {
+		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, firewallLogs, firewallRules, clientPolicies, InternalFirewallHoles(router), ingressRules, addressSets); err != nil {
 			return nil, err
 		}
 	}
@@ -107,14 +122,17 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 		}
 	}
 	if len(policies) > 0 || len(policySets) > 0 {
-		if err := writeIPv4PolicyRouteTable(&buf, policies, policySets); err != nil {
+		if err := writeIPv4PolicyRouteTable(&buf, policies, policySets, addressSets); err != nil {
 			return nil, err
 		}
 	}
-	if len(nats) > 0 || len(nat44Rules) > 0 || len(ingressRules) > 0 {
-		if err := writeIPv4SourceNATTable(&buf, router, aliases, nats, nat44Rules, ingressRules); err != nil {
+	if len(nats) > 0 || len(nat44Rules) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
+		if err := writeIPv4SourceNATTable(&buf, router, aliases, nats, nat44Rules, ingressRules, redirectRules, referencedAddressSets, addressSets); err != nil {
 			return nil, err
 		}
+	}
+	if hasIPv6LocalServiceRedirectRules(redirectRules) {
+		writeIPv6LocalServiceRedirectTable(&buf, redirectRules, referencedAddressSets)
 	}
 	return buf.Bytes(), nil
 }
@@ -122,6 +140,10 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 func NftablesIPv4PolicyRoutes(router *api.Router) ([]byte, error) {
 	var policies []api.Resource
 	var policySets []api.Resource
+	addressSets, err := nftIPAddressSets(router)
+	if err != nil {
+		return nil, err
+	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind == "IPv4PolicyRoute" {
 			policies = append(policies, res)
@@ -136,7 +158,7 @@ func NftablesIPv4PolicyRoutes(router *api.Router) ([]byte, error) {
 	sort.Slice(policies, func(i, j int) bool { return policies[i].Metadata.Name < policies[j].Metadata.Name })
 	sort.Slice(policySets, func(i, j int) bool { return policySets[i].Metadata.Name < policySets[j].Metadata.Name })
 	var buf bytes.Buffer
-	if err := writeIPv4PolicyRouteTable(&buf, policies, policySets); err != nil {
+	if err := writeIPv4PolicyRouteTable(&buf, policies, policySets, addressSets); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -193,13 +215,15 @@ func NftablesIPv4DefaultRoutePolicy(resourceID string, spec api.IPv4DefaultRoute
 }
 
 type NAT44RenderRule struct {
-	Name                    string
-	Type                    string
-	EgressInterface         string
-	SourceRanges            []string
-	DestinationCIDRs        []string
-	ExcludeDestinationCIDRs []string
-	SNATAddress             string
+	Name                      string
+	Type                      string
+	EgressInterface           string
+	SourceRanges              []string
+	DestinationCIDRs          []string
+	DestinationSetRefs        []string
+	ExcludeDestinationCIDRs   []string
+	ExcludeDestinationSetRefs []string
+	SNATAddress               string
 }
 
 func writeNftTablePreamble(buf *bytes.Buffer, family, name string) {
@@ -212,25 +236,82 @@ func writeNftSetReset(buf *bytes.Buffer, family, table, name string) {
 }
 
 func NftablesNAT44Rules(rules []NAT44RenderRule) ([]byte, error) {
-	if len(rules) == 0 {
+	return NftablesNAT44RulesForRouter(nil, rules)
+}
+
+func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([]byte, error) {
+	var ingressRules []ingressNATRule
+	var redirectRules []localServiceRedirectRule
+	var addressSets []nftIPAddressSet
+	var sets map[string]nftIPAddressSet
+	if router != nil {
+		aliases, err := nftOutboundAliases(router)
+		if err != nil {
+			return nil, err
+		}
+		sets, err = nftIPAddressSets(router)
+		if err != nil {
+			return nil, err
+		}
+		redirectRules, err = localServiceRedirectRules(router, aliases, sets)
+		if err != nil {
+			return nil, err
+		}
+		addressSets = mergeIPAddressSets(referencedIPAddressSets(redirectRules, sets), referencedNAT44IPAddressSets(rules, sets))
+		ingressRules, err = ingressNATRules(router, aliases)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(rules) == 0 && len(ingressRules) == 0 && !hasIPv4LocalServiceRedirectRules(redirectRules) && !hasIPv6LocalServiceRedirectRules(redirectRules) {
 		return nil, nil
 	}
 	rules = append([]NAT44RenderRule(nil), rules...)
 	sort.Slice(rules, func(i, j int) bool { return rules[i].Name < rules[j].Name })
 	var buf bytes.Buffer
 	buf.WriteString("# Generated by routerd. Do not edit by hand.\n")
-	writeNftTablePreamble(&buf, "ip", "routerd_nat")
-	buf.WriteString("table ip routerd_nat {\n")
-	buf.WriteString("  chain postrouting {\n")
-	buf.WriteString("    type nat hook postrouting priority srcnat; policy accept;\n")
-	for _, rule := range rules {
-		if err := writeNAT44RenderRule(&buf, rule); err != nil {
-			return nil, err
+	if len(rules) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
+		writeNftTablePreamble(&buf, "ip", "routerd_nat")
+		buf.WriteString("table ip routerd_nat {\n")
+		writeIPv4AddressSets(&buf, addressSets)
+		if len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
+			buf.WriteString("  chain prerouting {\n")
+			buf.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
+			writeLocalServiceRedirectRules(&buf, redirectRules, "ip")
+			for _, rule := range ingressRules {
+				writeIngressDNATRule(&buf, rule, rule.ListenInterface, "")
+				for _, ifname := range rule.HairpinInterfaces {
+					writeIngressDNATRule(&buf, rule, ifname, " hairpin")
+				}
+			}
+			buf.WriteString("  }\n")
 		}
+		buf.WriteString("  chain postrouting {\n")
+		buf.WriteString("    type nat hook postrouting priority srcnat; policy accept;\n")
+		writeIngressHairpinSNATRules(&buf, ingressRules)
+		for _, rule := range rules {
+			if err := writeNAT44RenderRule(&buf, rule, sets); err != nil {
+				return nil, err
+			}
+		}
+		buf.WriteString("  }\n")
+		buf.WriteString("}\n")
 	}
+	if hasIPv6LocalServiceRedirectRules(redirectRules) {
+		writeIPv6LocalServiceRedirectTable(&buf, redirectRules, addressSets)
+	}
+	return buf.Bytes(), nil
+}
+
+func writeIPv6LocalServiceRedirectTable(buf *bytes.Buffer, redirectRules []localServiceRedirectRule, addressSets []nftIPAddressSet) {
+	writeNftTablePreamble(buf, "ip6", "routerd_nat")
+	buf.WriteString("table ip6 routerd_nat {\n")
+	writeIPv6AddressSets(buf, addressSets)
+	buf.WriteString("  chain prerouting {\n")
+	buf.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
+	writeLocalServiceRedirectRules(buf, redirectRules, "ip6")
 	buf.WriteString("  }\n")
 	buf.WriteString("}\n")
-	return buf.Bytes(), nil
 }
 
 func nftOutboundAliases(router *api.Router) (map[string]string, error) {
@@ -365,6 +446,10 @@ func NftablesFirewall(router *api.Router, holes []FirewallHole) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
+	addressSets, err := nftIPAddressSets(router)
+	if err != nil {
+		return nil, err
+	}
 	if len(zones) == 0 && len(rules) == 0 && len(clientPolicies) == 0 && len(holes) == 0 {
 		return nil, nil
 	}
@@ -375,13 +460,13 @@ func NftablesFirewall(router *api.Router, holes []FirewallHole) ([]byte, error) 
 	sort.Slice(clientPolicies, func(i, j int) bool { return clientPolicies[i].Metadata.Name < clientPolicies[j].Metadata.Name })
 	var buf bytes.Buffer
 	buf.WriteString("# Generated by routerd. Do not edit by hand.\n")
-	if err := writeFirewallFilterTable(&buf, aliases, zones, policies, logs, rules, clientPolicies, holes, ingressRules); err != nil {
+	if err := writeFirewallFilterTable(&buf, aliases, zones, policies, logs, rules, clientPolicies, holes, ingressRules, addressSets); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
-func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zones []api.Resource, policies []api.Resource, logs []api.Resource, rules []api.Resource, clientPolicyResources []api.Resource, holes []FirewallHole, ingressRules []ingressNATRule) error {
+func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zones []api.Resource, policies []api.Resource, logs []api.Resource, rules []api.Resource, clientPolicyResources []api.Resource, holes []FirewallHole, ingressRules []ingressNATRule, addressSetMap map[string]nftIPAddressSet) error {
 	zoneMap, err := nftFirewallZones(aliases, zones)
 	if err != nil {
 		return err
@@ -393,12 +478,14 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	policy := firewallPolicyOptions(policies)
 	logging := firewallLogOptions(logs)
 	sortedZones := sortedFirewallZones(zoneMap)
+	firewallAddressSets := referencedFirewallIPAddressSets(rules, addressSetMap)
 	writeNftTablePreamble(buf, "inet", "routerd_filter")
 	for _, zone := range sortedZones {
 		if len(zone.IfNames) > 0 {
 			writeNftSetReset(buf, "inet", "routerd_filter", nftSetName("if_"+zone.Name))
 		}
 	}
+	writeFirewallAddressSetResets(buf, firewallAddressSets)
 	for _, policy := range clientPolicies {
 		if len(policy.MACs) > 0 {
 			writeNftSetReset(buf, "inet", "routerd_filter", policy.SetName)
@@ -415,6 +502,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 			buf.WriteString("  set " + policy.SetName + " { type ether_addr; elements = { " + strings.Join(policy.MACs, ", ") + " } }\n")
 		}
 	}
+	writeFirewallAddressSets(buf, firewallAddressSets)
 	buf.WriteString("  chain input {\n")
 	buf.WriteString("    type filter hook input priority filter; policy drop;\n")
 	buf.WriteString("    ct state invalid counter drop\n")
@@ -459,11 +547,11 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	}
 	buf.WriteString("  }\n")
 	for _, from := range sortedZones {
-		if err := writeFirewallPairChain(buf, from, firewallZone{Name: "self", Role: "self"}, rules, holes, policy, logging); err != nil {
+		if err := writeFirewallPairChain(buf, from, firewallZone{Name: "self", Role: "self"}, rules, holes, policy, logging, addressSetMap); err != nil {
 			return err
 		}
 		for _, to := range sortedZones {
-			if err := writeFirewallPairChain(buf, from, to, rules, holes, policy, logging); err != nil {
+			if err := writeFirewallPairChain(buf, from, to, rules, holes, policy, logging, addressSetMap); err != nil {
 				return err
 			}
 		}
@@ -746,7 +834,7 @@ func nftSampledLogExpr(prefix string, sampleRate int, logging firewallLogging) s
 	return "numgen random mod " + strconv.Itoa(sampleRate) + " == 0 " + nftLogExpr(prefix, logging)
 }
 
-func writeFirewallPairChain(buf *bytes.Buffer, from firewallZone, to firewallZone, rules []api.Resource, holes []FirewallHole, policy firewallPolicy, logging firewallLogging) error {
+func writeFirewallPairChain(buf *bytes.Buffer, from firewallZone, to firewallZone, rules []api.Resource, holes []FirewallHole, policy firewallPolicy, logging firewallLogging, addressSetMap map[string]nftIPAddressSet) error {
 	chain := nftChainName(from.Name + "-to-" + to.Name)
 	buf.WriteString("  chain " + chain + " {\n")
 	for _, hole := range holes {
@@ -765,11 +853,13 @@ func writeFirewallPairChain(buf *bytes.Buffer, from firewallZone, to firewallZon
 		if spec.FromZone != from.Name || spec.ToZone != to.Name {
 			continue
 		}
-		expr, err := nftFirewallRuleExpr(res.Metadata.Name, spec, logging)
+		exprs, err := nftFirewallRuleExprs(res.Metadata.Name, spec, logging, addressSetMap)
 		if err != nil {
 			return err
 		}
-		buf.WriteString("    " + expr + "\n")
+		for _, expr := range exprs {
+			buf.WriteString("    " + expr + "\n")
+		}
 	}
 	action := implicitFirewallAction(from.Role, to.Role, policy)
 	if policy.LogDeny && (action == "drop" || action == "reject") {
@@ -810,32 +900,37 @@ func implicitFirewallAction(fromRole, toRole string, policy firewallPolicy) stri
 }
 
 func nftFirewallRuleExpr(name string, spec api.FirewallRuleSpec, logging firewallLogging) (string, error) {
-	var parts []string
-	if len(spec.SourceCIDRs) > 0 {
-		match, err := nftFirewallCIDRMatch(name, "saddr", spec.SourceCIDRs)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, match)
+	exprs, err := nftFirewallRuleExprs(name, spec, logging, nil)
+	if err != nil {
+		return "", err
 	}
-	if len(spec.DestinationCIDRs) > 0 {
-		match, err := nftFirewallCIDRMatch(name, "daddr", spec.DestinationCIDRs)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, match)
+	if len(exprs) == 0 {
+		return "", nil
 	}
+	return exprs[0], nil
+}
+
+func nftFirewallRuleExprs(name string, spec api.FirewallRuleSpec, logging firewallLogging, addressSets map[string]nftIPAddressSet) ([]string, error) {
+	matches, err := nftFirewallMatches(name, spec, addressSets)
+	if err != nil {
+		return nil, err
+	}
+	var suffix []string
 	if proto := nftFirewallProtocol(spec.Protocol); proto != "" {
-		parts = append(parts, proto)
+		suffix = append(suffix, proto)
 	}
 	if spec.Port != 0 {
-		parts = append(parts, "dport "+strconv.Itoa(spec.Port))
+		suffix = append(suffix, "dport "+strconv.Itoa(spec.Port))
 	}
 	if spec.Log {
-		parts = append(parts, nftLogExpr("routerd firewall "+name+" ", logging))
+		suffix = append(suffix, nftLogExpr("routerd firewall "+name+" ", logging))
 	}
-	parts = append(parts, "counter", spec.Action)
-	return strings.Join(parts, " "), nil
+	suffix = append(suffix, "counter", spec.Action)
+	var out []string
+	for _, match := range matches {
+		out = append(out, strings.Join(strings.Fields(strings.Join([]string{match, strings.Join(suffix, " ")}, " ")), " "))
+	}
+	return out, nil
 }
 
 func nftFirewallHoleExpr(hole FirewallHole) string {
@@ -933,6 +1028,116 @@ func nftFirewallCIDRMatch(resourceID, direction string, cidrs []string) (string,
 	return strings.Join(out, " "), nil
 }
 
+type nftFirewallMatch struct {
+	Family string
+	Expr   string
+}
+
+func nftFirewallMatches(resourceID string, spec api.FirewallRuleSpec, addressSets map[string]nftIPAddressSet) ([]string, error) {
+	sources, err := nftFirewallCIDRMatchAlternatives(resourceID, "saddr", spec.SourceCIDRs)
+	if err != nil {
+		return nil, err
+	}
+	destinations, err := nftFirewallDestinationAlternatives(resourceID, spec, addressSets)
+	if err != nil {
+		return nil, err
+	}
+	excludes, err := nftFirewallExcludedDestinationMatches(resourceID, spec.ExcludeDestinationSetRefs, addressSets)
+	if err != nil {
+		return nil, err
+	}
+	if len(sources) == 0 {
+		sources = []nftFirewallMatch{{}}
+	}
+	if len(destinations) == 0 {
+		destinations = []nftFirewallMatch{{}}
+	}
+	var out []string
+	for _, source := range sources {
+		for _, destination := range destinations {
+			family, ok := mergeNftMatchFamilies(source.Family, destination.Family)
+			if !ok {
+				continue
+			}
+			parts := []string{source.Expr, destination.Expr}
+			for _, exclude := range excludes {
+				if exclude.Family == "" || family == "" || exclude.Family == family {
+					parts = append(parts, exclude.Expr)
+				}
+			}
+			out = append(out, strings.Join(strings.Fields(strings.Join(parts, " ")), " "))
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s has no compatible firewall match alternatives", resourceID)
+	}
+	return out, nil
+}
+
+func nftFirewallCIDRMatchAlternatives(resourceID, direction string, cidrs []string) ([]nftFirewallMatch, error) {
+	var out []nftFirewallMatch
+	for _, cidr := range cidrs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("%s has invalid %s CIDR %q", resourceID, direction, cidr)
+		}
+		prefix = prefix.Masked()
+		if prefix.Addr().Is4() {
+			out = append(out, nftFirewallMatch{Family: "ip", Expr: "ip " + direction + " " + prefix.String()})
+		} else {
+			out = append(out, nftFirewallMatch{Family: "ip6", Expr: "ip6 " + direction + " " + prefix.String()})
+		}
+	}
+	return out, nil
+}
+
+func nftFirewallDestinationAlternatives(resourceID string, spec api.FirewallRuleSpec, addressSets map[string]nftIPAddressSet) ([]nftFirewallMatch, error) {
+	out, err := nftFirewallCIDRMatchAlternatives(resourceID, "daddr", spec.DestinationCIDRs)
+	if err != nil {
+		return nil, err
+	}
+	for _, ref := range spec.DestinationSetRefs {
+		set, err := nftIPAddressSetRef(resourceID, ref, addressSets)
+		if err != nil {
+			return nil, err
+		}
+		if set.IPv4Enabled {
+			out = append(out, nftFirewallMatch{Family: "ip", Expr: "ip daddr @" + NftFirewallIPAddressSetName(set.Name, "ip")})
+		}
+		if set.IPv6Enabled {
+			out = append(out, nftFirewallMatch{Family: "ip6", Expr: "ip6 daddr @" + NftFirewallIPAddressSetName(set.Name, "ip6")})
+		}
+	}
+	return out, nil
+}
+
+func nftFirewallExcludedDestinationMatches(resourceID string, refs []string, addressSets map[string]nftIPAddressSet) ([]nftFirewallMatch, error) {
+	var out []nftFirewallMatch
+	for _, ref := range refs {
+		set, err := nftIPAddressSetRef(resourceID, ref, addressSets)
+		if err != nil {
+			return nil, err
+		}
+		if set.IPv4Enabled {
+			out = append(out, nftFirewallMatch{Family: "ip", Expr: "ip daddr != @" + NftFirewallIPAddressSetName(set.Name, "ip")})
+		}
+		if set.IPv6Enabled {
+			out = append(out, nftFirewallMatch{Family: "ip6", Expr: "ip6 daddr != @" + NftFirewallIPAddressSetName(set.Name, "ip6")})
+		}
+	}
+	return out, nil
+}
+
+func mergeNftMatchFamilies(a, b string) (string, bool) {
+	if a == "" {
+		return b, true
+	}
+	if b == "" || a == b {
+		return a, true
+	}
+	return "", false
+}
+
 func nftFirewallZones(aliases map[string]string, zones []api.Resource) (map[string]firewallZone, error) {
 	result := map[string]firewallZone{}
 	for _, res := range zones {
@@ -1007,12 +1212,14 @@ func nftIPv4SourcesMatch(resourceID string, sources []string) (string, error) {
 	return " ip saddr { " + strings.Join(values, ", ") + " }", nil
 }
 
-func writeIPv4SourceNATTable(buf *bytes.Buffer, router *api.Router, aliases map[string]string, nats []api.Resource, nat44Rules []api.Resource, ingressRules []ingressNATRule) error {
+func writeIPv4SourceNATTable(buf *bytes.Buffer, router *api.Router, aliases map[string]string, nats []api.Resource, nat44Rules []api.Resource, ingressRules []ingressNATRule, redirectRules []localServiceRedirectRule, addressSets []nftIPAddressSet, addressSetMap map[string]nftIPAddressSet) error {
 	writeNftTablePreamble(buf, "ip", "routerd_nat")
 	buf.WriteString("table ip routerd_nat {\n")
-	if len(ingressRules) > 0 {
+	writeIPv4AddressSets(buf, addressSets)
+	if len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
 		buf.WriteString("  chain prerouting {\n")
 		buf.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
+		writeLocalServiceRedirectRules(buf, redirectRules, "ip")
 		for _, rule := range ingressRules {
 			writeIngressDNATRule(buf, rule, rule.ListenInterface, "")
 			for _, ifname := range rule.HairpinInterfaces {
@@ -1072,14 +1279,16 @@ func writeIPv4SourceNATTable(buf *bytes.Buffer, router *api.Router, aliases map[
 			}
 		}
 		if err := writeNAT44RenderRule(buf, NAT44RenderRule{
-			Name:                    res.Metadata.Name,
-			Type:                    spec.Type,
-			EgressInterface:         ifname,
-			SourceRanges:            spec.SourceRanges,
-			DestinationCIDRs:        spec.DestinationCIDRs,
-			ExcludeDestinationCIDRs: spec.ExcludeDestinationCIDRs,
-			SNATAddress:             snatAddress,
-		}); err != nil {
+			Name:                      res.Metadata.Name,
+			Type:                      spec.Type,
+			EgressInterface:           ifname,
+			SourceRanges:              spec.SourceRanges,
+			DestinationCIDRs:          spec.DestinationCIDRs,
+			DestinationSetRefs:        spec.DestinationSetRefs,
+			ExcludeDestinationCIDRs:   spec.ExcludeDestinationCIDRs,
+			ExcludeDestinationSetRefs: spec.ExcludeDestinationSetRefs,
+			SNATAddress:               snatAddress,
+		}, addressSetMap); err != nil {
 			return err
 		}
 	}
@@ -1121,11 +1330,17 @@ func writeIngressHairpinSNATRules(buf *bytes.Buffer, rules []ingressNATRule) {
 	}
 }
 
-func writeNAT44RenderRule(buf *bytes.Buffer, rule NAT44RenderRule) error {
+func writeNAT44RenderRule(buf *bytes.Buffer, rule NAT44RenderRule, addressSets map[string]nftIPAddressSet) error {
 	if rule.EgressInterface == "" {
 		return fmt.Errorf("nat44 rule %q has empty egress interface", rule.Name)
 	}
-	matches, err := nftIPv4CIDRMatches("nat44 rule "+rule.Name, rule.SourceRanges, rule.DestinationCIDRs, rule.ExcludeDestinationCIDRs)
+	matches, err := nftIPv4Matches("nat44 rule "+rule.Name, nftIPv4MatchSpec{
+		SourceCIDRs:               rule.SourceRanges,
+		DestinationCIDRs:          rule.DestinationCIDRs,
+		DestinationSetRefs:        rule.DestinationSetRefs,
+		ExcludeDestinationCIDRs:   rule.ExcludeDestinationCIDRs,
+		ExcludeDestinationSetRefs: rule.ExcludeDestinationSetRefs,
+	}, addressSets)
 	if err != nil {
 		return err
 	}
@@ -1187,9 +1402,10 @@ func writeTCPMSSClampTable(buf *bytes.Buffer, aliases map[string]string, policie
 	return nil
 }
 
-func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, policySets []api.Resource) error {
+func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, policySets []api.Resource, addressSets map[string]nftIPAddressSet) error {
 	writeNftTablePreamble(buf, "ip", "routerd_policy")
 	buf.WriteString("table ip routerd_policy {\n")
+	writeIPv4AddressSets(buf, referencedIPv4PolicyIPAddressSets(policies, policySets, addressSets))
 	buf.WriteString("  chain prerouting {\n")
 	buf.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")
 	for _, res := range policies {
@@ -1197,7 +1413,7 @@ func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, polic
 		if err != nil {
 			return err
 		}
-		matches, err := nftIPv4PolicyRouteMatches(res.ID(), spec)
+		matches, err := nftIPv4PolicyRouteMatches(res.ID(), spec, addressSets)
 		if err != nil {
 			return err
 		}
@@ -1210,7 +1426,7 @@ func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, polic
 		if err != nil {
 			return err
 		}
-		matches, err := nftIPv4PolicyRouteSetMatches(res.ID(), spec)
+		matches, err := nftIPv4PolicyRouteSetMatches(res.ID(), spec, addressSets)
 		if err != nil {
 			return err
 		}
@@ -1231,20 +1447,48 @@ func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, polic
 	return nil
 }
 
-func nftIPv4PolicyRouteMatches(resourceID string, spec api.IPv4PolicyRouteSpec) ([]string, error) {
-	return nftIPv4CIDRMatches(resourceID, spec.SourceCIDRs, spec.DestinationCIDRs, spec.ExcludeDestinationCIDRs)
+func nftIPv4PolicyRouteMatches(resourceID string, spec api.IPv4PolicyRouteSpec, addressSets map[string]nftIPAddressSet) ([]string, error) {
+	return nftIPv4Matches(resourceID, nftIPv4MatchSpec{
+		SourceCIDRs:               spec.SourceCIDRs,
+		DestinationCIDRs:          spec.DestinationCIDRs,
+		DestinationSetRefs:        spec.DestinationSetRefs,
+		ExcludeDestinationCIDRs:   spec.ExcludeDestinationCIDRs,
+		ExcludeDestinationSetRefs: spec.ExcludeDestinationSetRefs,
+	}, addressSets)
 }
 
-func nftIPv4PolicyRouteSetMatches(resourceID string, spec api.IPv4PolicyRouteSetSpec) ([]string, error) {
-	return nftIPv4CIDRMatches(resourceID, spec.SourceCIDRs, spec.DestinationCIDRs, spec.ExcludeDestinationCIDRs)
+func nftIPv4PolicyRouteSetMatches(resourceID string, spec api.IPv4PolicyRouteSetSpec, addressSets map[string]nftIPAddressSet) ([]string, error) {
+	return nftIPv4Matches(resourceID, nftIPv4MatchSpec{
+		SourceCIDRs:               spec.SourceCIDRs,
+		DestinationCIDRs:          spec.DestinationCIDRs,
+		DestinationSetRefs:        spec.DestinationSetRefs,
+		ExcludeDestinationCIDRs:   spec.ExcludeDestinationCIDRs,
+		ExcludeDestinationSetRefs: spec.ExcludeDestinationSetRefs,
+	}, addressSets)
 }
 
 func nftIPv4CIDRMatches(resourceID string, sourceCIDRs, destinationCIDRs, excludeDestinationCIDRs []string) ([]string, error) {
+	return nftIPv4Matches(resourceID, nftIPv4MatchSpec{
+		SourceCIDRs:             sourceCIDRs,
+		DestinationCIDRs:        destinationCIDRs,
+		ExcludeDestinationCIDRs: excludeDestinationCIDRs,
+	}, nil)
+}
+
+type nftIPv4MatchSpec struct {
+	SourceCIDRs               []string
+	DestinationCIDRs          []string
+	DestinationSetRefs        []string
+	ExcludeDestinationCIDRs   []string
+	ExcludeDestinationSetRefs []string
+}
+
+func nftIPv4Matches(resourceID string, spec nftIPv4MatchSpec, addressSets map[string]nftIPAddressSet) ([]string, error) {
 	var sources []string
-	if len(sourceCIDRs) == 0 {
+	if len(spec.SourceCIDRs) == 0 {
 		sources = []string{""}
 	} else {
-		for _, cidr := range sourceCIDRs {
+		for _, cidr := range spec.SourceCIDRs {
 			prefix, err := netip.ParsePrefix(cidr)
 			if err != nil || !prefix.Addr().Is4() {
 				return nil, fmt.Errorf("%s has invalid IPv4 source CIDR %q", resourceID, cidr)
@@ -1253,18 +1497,25 @@ func nftIPv4CIDRMatches(resourceID string, sourceCIDRs, destinationCIDRs, exclud
 		}
 	}
 	var destinations []string
-	if len(destinationCIDRs) == 0 {
+	if len(spec.DestinationCIDRs) == 0 && len(spec.DestinationSetRefs) == 0 {
 		destinations = []string{""}
 	} else {
-		for _, cidr := range destinationCIDRs {
+		for _, cidr := range spec.DestinationCIDRs {
 			prefix, err := netip.ParsePrefix(cidr)
 			if err != nil || !prefix.Addr().Is4() {
 				return nil, fmt.Errorf("%s has invalid IPv4 destination CIDR %q", resourceID, cidr)
 			}
 			destinations = append(destinations, "ip daddr "+prefix.Masked().String())
 		}
+		for _, ref := range spec.DestinationSetRefs {
+			setName, err := nftIPAddressSetRefName(resourceID, ref, addressSets)
+			if err != nil {
+				return nil, err
+			}
+			destinations = append(destinations, "ip daddr @"+setName)
+		}
 	}
-	excludes, err := nftIPv4ExcludedDestinationMatch(resourceID, excludeDestinationCIDRs)
+	excludes, err := nftIPv4ExcludedDestinationMatch(resourceID, spec.ExcludeDestinationCIDRs, spec.ExcludeDestinationSetRefs, addressSets)
 	if err != nil {
 		return nil, err
 	}
@@ -1277,7 +1528,7 @@ func nftIPv4CIDRMatches(resourceID string, sourceCIDRs, destinationCIDRs, exclud
 	return matches, nil
 }
 
-func nftIPv4ExcludedDestinationMatch(resourceID string, cidrs []string) (string, error) {
+func nftIPv4ExcludedDestinationMatch(resourceID string, cidrs, setRefs []string, addressSets map[string]nftIPAddressSet) (string, error) {
 	var out []string
 	for _, cidr := range cidrs {
 		prefix, err := netip.ParsePrefix(cidr)
@@ -1286,7 +1537,37 @@ func nftIPv4ExcludedDestinationMatch(resourceID string, cidrs []string) (string,
 		}
 		out = append(out, "ip daddr !="+prefix.Masked().String())
 	}
+	for _, ref := range setRefs {
+		setName, err := nftIPAddressSetRefName(resourceID, ref, addressSets)
+		if err != nil {
+			return "", err
+		}
+		out = append(out, "ip daddr != @"+setName)
+	}
 	return strings.Join(out, " "), nil
+}
+
+func nftIPAddressSetRefName(resourceID, ref string, sets map[string]nftIPAddressSet) (string, error) {
+	set, err := nftIPAddressSetRef(resourceID, ref, sets)
+	if err != nil {
+		return "", err
+	}
+	return set.SetName, nil
+}
+
+func nftIPAddressSetRef(resourceID, ref string, sets map[string]nftIPAddressSet) (nftIPAddressSet, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nftIPAddressSet{}, fmt.Errorf("%s has empty IPAddressSet reference", resourceID)
+	}
+	if sets == nil {
+		return nftIPAddressSet{}, fmt.Errorf("%s cannot resolve IPAddressSet reference %q without router context", resourceID, ref)
+	}
+	set, ok := sets[ref]
+	if !ok {
+		return nftIPAddressSet{}, fmt.Errorf("%s references missing IPAddressSet %q", resourceID, ref)
+	}
+	return set, nil
 }
 
 func nftIPv4PolicyRouteSetHash(resourceID string, spec api.IPv4PolicyRouteSetSpec) (string, error) {

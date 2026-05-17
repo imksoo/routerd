@@ -33,9 +33,25 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   action even when the address has not yet been merged into a known identity.
 - Web Console search inputs now show an inline clear button when they contain
   text.
+- The release helper now requires a clean working tree and promotes the current
+  `Unreleased` changelog entries into the release tag instead of creating empty
+  tag headings.
 
 ### Added
 
+- Added `IPAddressSet` and `LocalServiceRedirect`. `IPAddressSet` can resolve
+  literal IPv4/IPv6 addresses and FQDN `A`/`AAAA` records into reusable nftables named sets,
+  and `LocalServiceRedirect` can redirect LAN-origin plaintext DNS/NTP traffic
+  for those sets to local router services without touching DoH/DoT or
+  router-originated health checks.
+- `FirewallRule`, `NAT44Rule`, `IPv4PolicyRoute`, and `IPv4PolicyRouteSet` can
+  now consume `IPAddressSet` resources through `destinationSetRefs` and
+  `excludeDestinationSetRefs`, allowing FQDN-backed address sets to be reused for
+  firewall filtering, NAT scoping, and IPv4 policy routing.
+- Added a runtime `IPAddressSet` refresh controller. Referenced nftables sets are
+  refreshed in place from DNS TTLs, using half of the minimum observed TTL with a
+  60 second floor and an optional `refreshInterval` cap, so FQDN-backed sets stay
+  current without reloading the full firewall, NAT, or policy table.
 - Added the initial `routerd-ndpi-agent` service boundary as an optional
   command. Default builds report that the libndpi backend is unavailable,
   while `-tags libndpi` builds link the native library behind the same IPC

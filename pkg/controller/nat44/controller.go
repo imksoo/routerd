@@ -115,30 +115,35 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			continue
 		}
 		rules = append(rules, render.NAT44RenderRule{
-			Name:                    resource.Metadata.Name,
-			Type:                    spec.Type,
-			EgressInterface:         ifname,
-			SourceRanges:            spec.SourceRanges,
-			DestinationCIDRs:        spec.DestinationCIDRs,
-			ExcludeDestinationCIDRs: spec.ExcludeDestinationCIDRs,
-			SNATAddress:             snatAddress,
+			Name:                      resource.Metadata.Name,
+			Type:                      spec.Type,
+			EgressInterface:           ifname,
+			SourceRanges:              spec.SourceRanges,
+			DestinationCIDRs:          spec.DestinationCIDRs,
+			DestinationSetRefs:        spec.DestinationSetRefs,
+			ExcludeDestinationCIDRs:   spec.ExcludeDestinationCIDRs,
+			ExcludeDestinationSetRefs: spec.ExcludeDestinationSetRefs,
+			SNATAddress:               snatAddress,
 		})
 	}
-	if len(rules) == 0 {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		if len(rules) == 0 {
+			if c.DryRun {
+				return nil
+			}
+			return c.clearPF(ctx)
+		}
+		return c.reconcilePF(ctx, rules)
+	}
+	data, err := render.NftablesNAT44RulesForRouter(c.Router, rules)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
 		if c.DryRun {
 			return nil
 		}
-		if platform.CurrentOS() == platform.OSFreeBSD {
-			return c.clearPF(ctx)
-		}
 		return c.clearNftables(ctx)
-	}
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		return c.reconcilePF(ctx, rules)
-	}
-	data, err := render.NftablesNAT44Rules(rules)
-	if err != nil {
-		return err
 	}
 	path := firstNonEmpty(c.NftablesPath, "/run/routerd/nat44.nft")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -159,10 +164,14 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return c.saveRuleStatuses(ctx, rules, path, changed, false)
 	}
 	nft := firstNonEmpty(c.NftCommand, "nft")
+	missing := (strings.Contains(string(data), "table ip routerd_nat") && !nftTableExists(ctx, nft, "ip", "routerd_nat")) ||
+		(strings.Contains(string(data), "table ip6 routerd_nat") && !nftTableExists(ctx, nft, "ip6", "routerd_nat"))
+	if !changed && !missing {
+		return c.saveRuleStatuses(ctx, rules, path, false, false)
+	}
 	if err := checkNftablesRuleset(ctx, nft, path); err != nil {
 		return err
 	}
-	missing := !nat44TableExists(ctx, nft)
 	cmd := exec.CommandContext(ctx, nft, "-f", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -173,12 +182,14 @@ func (c Controller) Reconcile(ctx context.Context) error {
 
 func (c Controller) clearNftables(ctx context.Context) error {
 	nft := firstNonEmpty(c.NftCommand, "nft")
-	if !nat44TableExists(ctx, nft) {
-		return nil
-	}
-	out, err := exec.CommandContext(ctx, nft, "delete", "table", "ip", "routerd_nat").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("nft delete table ip routerd_nat: %w: %s", err, strings.TrimSpace(string(out)))
+	for _, family := range []string{"ip", "ip6"} {
+		if !nftTableExists(ctx, nft, family, "routerd_nat") {
+			continue
+		}
+		out, err := exec.CommandContext(ctx, nft, "delete", "table", family, "routerd_nat").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("nft delete table %s routerd_nat: %w: %s", family, err, strings.TrimSpace(string(out)))
+		}
 	}
 	return nil
 }
@@ -261,7 +272,11 @@ func (c Controller) saveRuleStatuses(ctx context.Context, rules []render.NAT44Re
 }
 
 func nat44TableExists(ctx context.Context, nft string) bool {
-	return exec.CommandContext(ctx, nft, "list", "table", "ip", "routerd_nat").Run() == nil
+	return nftTableExists(ctx, nft, "ip", "routerd_nat")
+}
+
+func nftTableExists(ctx context.Context, nft, family, name string) bool {
+	return exec.CommandContext(ctx, nft, "list", "table", family, name).Run() == nil
 }
 
 func checkNftablesRuleset(ctx context.Context, nft, path string) error {

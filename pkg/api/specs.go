@@ -968,14 +968,16 @@ type IPv4SourceNATSpec struct {
 }
 
 type NAT44RuleSpec struct {
-	Type                    string                `yaml:"type" json:"type" jsonschema:"enum=masquerade,enum=snat"`
-	EgressInterface         string                `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
-	EgressPolicyRef         string                `yaml:"egressPolicyRef,omitempty" json:"egressPolicyRef,omitempty"`
-	SourceRanges            []string              `yaml:"sourceRanges" json:"sourceRanges"`
-	DestinationCIDRs        []string              `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	ExcludeDestinationCIDRs []string              `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
-	SNATAddress             string                `yaml:"snatAddress,omitempty" json:"snatAddress,omitempty"`
-	SNATAddressFrom         StatusValueSourceSpec `yaml:"snatAddressFrom,omitempty" json:"snatAddressFrom,omitempty"`
+	Type                      string                `yaml:"type" json:"type" jsonschema:"enum=masquerade,enum=snat"`
+	EgressInterface           string                `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
+	EgressPolicyRef           string                `yaml:"egressPolicyRef,omitempty" json:"egressPolicyRef,omitempty"`
+	SourceRanges              []string              `yaml:"sourceRanges" json:"sourceRanges"`
+	DestinationCIDRs          []string              `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	DestinationSetRefs        []string              `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
+	ExcludeDestinationCIDRs   []string              `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
+	ExcludeDestinationSetRefs []string              `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
+	SNATAddress               string                `yaml:"snatAddress,omitempty" json:"snatAddress,omitempty"`
+	SNATAddressFrom           StatusValueSourceSpec `yaml:"snatAddressFrom,omitempty" json:"snatAddressFrom,omitempty"`
 }
 
 type IngressListenSpec struct {
@@ -1032,26 +1034,51 @@ type IngressServicePolicySpec struct {
 	OnNoHealthyBackends string `yaml:"onNoHealthyBackends,omitempty" json:"onNoHealthyBackends,omitempty" jsonschema:"enum=,enum=drop,enum=reject"`
 }
 
+type IPAddressSetSpec struct {
+	Addresses       []string         `yaml:"addresses,omitempty" json:"addresses,omitempty"`
+	Names           []string         `yaml:"names,omitempty" json:"names,omitempty"`
+	RefreshInterval string           `yaml:"refreshInterval,omitempty" json:"refreshInterval,omitempty"`
+	When            ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type LocalServiceRedirectSpec struct {
+	Interface string                         `yaml:"interface" json:"interface"`
+	Rules     []LocalServiceRedirectRuleSpec `yaml:"rules" json:"rules"`
+	When      ResourceWhenSpec               `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type LocalServiceRedirectRuleSpec struct {
+	Name              string   `yaml:"name,omitempty" json:"name,omitempty"`
+	Protocols         []string `yaml:"protocols" json:"protocols"`
+	DestinationSetRef string   `yaml:"destinationSetRef" json:"destinationSetRef"`
+	DestinationPort   int      `yaml:"destinationPort" json:"destinationPort" jsonschema:"minimum=1,maximum=65535"`
+	RedirectPort      int      `yaml:"redirectPort" json:"redirectPort" jsonschema:"minimum=1,maximum=65535"`
+}
+
 type IPv4PolicyRouteSpec struct {
-	OutboundInterface       string   `yaml:"outboundInterface" json:"outboundInterface"`
-	Table                   int      `yaml:"table" json:"table" jsonschema:"minimum=1,maximum=4294967295"`
-	Priority                int      `yaml:"priority" json:"priority" jsonschema:"minimum=1,maximum=32765"`
-	Mark                    int      `yaml:"mark" json:"mark" jsonschema:"minimum=1,maximum=4294967295"`
-	SourceCIDRs             []string `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
-	DestinationCIDRs        []string `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	ExcludeDestinationCIDRs []string `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
-	RouteMetric             int      `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-	AllowLocalSourceNAT     bool     `yaml:"allowLocalSourceNAT,omitempty" json:"allowLocalSourceNAT,omitempty"`
+	OutboundInterface         string   `yaml:"outboundInterface" json:"outboundInterface"`
+	Table                     int      `yaml:"table" json:"table" jsonschema:"minimum=1,maximum=4294967295"`
+	Priority                  int      `yaml:"priority" json:"priority" jsonschema:"minimum=1,maximum=32765"`
+	Mark                      int      `yaml:"mark" json:"mark" jsonschema:"minimum=1,maximum=4294967295"`
+	SourceCIDRs               []string `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	DestinationCIDRs          []string `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	DestinationSetRefs        []string `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
+	ExcludeDestinationCIDRs   []string `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
+	ExcludeDestinationSetRefs []string `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
+	RouteMetric               int      `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	AllowLocalSourceNAT       bool     `yaml:"allowLocalSourceNAT,omitempty" json:"allowLocalSourceNAT,omitempty"`
 }
 
 type IPv4PolicyRouteSetSpec struct {
-	Mode                    string                  `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=hash"`
-	HashFields              []string                `yaml:"hashFields,omitempty" json:"hashFields,omitempty"`
-	SourceCIDRs             []string                `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
-	DestinationCIDRs        []string                `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	ExcludeDestinationCIDRs []string                `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
-	Targets                 []IPv4PolicyRouteTarget `yaml:"targets" json:"targets"`
-	When                    ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
+	Mode                      string                  `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=hash"`
+	HashFields                []string                `yaml:"hashFields,omitempty" json:"hashFields,omitempty"`
+	SourceCIDRs               []string                `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	DestinationCIDRs          []string                `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	DestinationSetRefs        []string                `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
+	ExcludeDestinationCIDRs   []string                `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
+	ExcludeDestinationSetRefs []string                `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
+	Targets                   []IPv4PolicyRouteTarget `yaml:"targets" json:"targets"`
+	When                      ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type IPv4PolicyRouteTarget struct {
@@ -1173,15 +1200,17 @@ type ClientPolicyClassSpec struct {
 }
 
 type FirewallRuleSpec struct {
-	FromZone         string                `yaml:"fromZone" json:"fromZone"`
-	ToZone           string                `yaml:"toZone" json:"toZone"`
-	SourceCIDRs      []string              `yaml:"srcCIDRs,omitempty" json:"srcCIDRs,omitempty"`
-	DestinationCIDRs []string              `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	Protocol         string                `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=,enum=tcp,enum=udp,enum=icmp,enum=icmpv6,enum=ipv6-icmp,enum=ipip"`
-	Port             int                   `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=0,maximum=65535"`
-	Action           string                `yaml:"action" json:"action" jsonschema:"enum=accept,enum=drop,enum=reject"`
-	Log              bool                  `yaml:"log,omitempty" json:"log,omitempty"`
-	RateLimit        FirewallRateLimitSpec `yaml:"rateLimit,omitempty" json:"rateLimit,omitempty"`
+	FromZone                  string                `yaml:"fromZone" json:"fromZone"`
+	ToZone                    string                `yaml:"toZone" json:"toZone"`
+	SourceCIDRs               []string              `yaml:"srcCIDRs,omitempty" json:"srcCIDRs,omitempty"`
+	DestinationCIDRs          []string              `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	DestinationSetRefs        []string              `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
+	ExcludeDestinationSetRefs []string              `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
+	Protocol                  string                `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=,enum=tcp,enum=udp,enum=icmp,enum=icmpv6,enum=ipv6-icmp,enum=ipip"`
+	Port                      int                   `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=0,maximum=65535"`
+	Action                    string                `yaml:"action" json:"action" jsonschema:"enum=accept,enum=drop,enum=reject"`
+	Log                       bool                  `yaml:"log,omitempty" json:"log,omitempty"`
+	RateLimit                 FirewallRateLimitSpec `yaml:"rateLimit,omitempty" json:"rateLimit,omitempty"`
 }
 
 type FirewallRateLimitSpec struct {
@@ -1416,6 +1445,14 @@ func (r Resource) PortForwardSpec() (PortForwardSpec, error) {
 
 func (r Resource) IngressServiceSpec() (IngressServiceSpec, error) {
 	return specAs[IngressServiceSpec](r)
+}
+
+func (r Resource) IPAddressSetSpec() (IPAddressSetSpec, error) {
+	return specAs[IPAddressSetSpec](r)
+}
+
+func (r Resource) LocalServiceRedirectSpec() (LocalServiceRedirectSpec, error) {
+	return specAs[LocalServiceRedirectSpec](r)
 }
 
 func (r Resource) IPv4PolicyRouteSpec() (IPv4PolicyRouteSpec, error) {

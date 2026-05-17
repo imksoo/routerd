@@ -1418,6 +1418,10 @@ func canonicalShowKind(kind string) string {
 		"portnat":                "PortForward",
 		"ingress":                "IngressService",
 		"ingressservice":         "IngressService",
+		"addressset":             "IPAddressSet",
+		"ipset":                  "IPAddressSet",
+		"localserviceredirect":   "LocalServiceRedirect",
+		"serviceredirect":        "LocalServiceRedirect",
 		"dslite":                 "DSLiteTunnel",
 		"dslitetunnel":           "DSLiteTunnel",
 		"dnszone":                "DNSZone",
@@ -1796,16 +1800,18 @@ func stateForResource(res api.Resource, store routerstate.Store) map[string]any 
 
 func statePrefixForKind(kind, name string) string {
 	prefixes := map[string]string{
-		"Interface":         "interface.",
-		"IPv4StaticAddress": "ipv4StaticAddress.",
-		"DHCPv4Lease":       "dhcpv4Lease.",
-		"IPv4SourceNAT":     "ipv4SourceNAT.",
-		"DSLiteTunnel":      "dsLiteTunnel.",
-		"PPPoEInterface":    "pppoeInterface.",
-		"PPPoESession":      "pppoeSession.",
-		"FirewallPolicy":    "firewallPolicy.",
-		"FirewallZone":      "firewallZone.",
-		"FirewallRule":      "firewallRule.",
+		"Interface":            "interface.",
+		"IPv4StaticAddress":    "ipv4StaticAddress.",
+		"DHCPv4Lease":          "dhcpv4Lease.",
+		"IPv4SourceNAT":        "ipv4SourceNAT.",
+		"DSLiteTunnel":         "dsLiteTunnel.",
+		"PPPoEInterface":       "pppoeInterface.",
+		"PPPoESession":         "pppoeSession.",
+		"FirewallPolicy":       "firewallPolicy.",
+		"FirewallZone":         "firewallZone.",
+		"FirewallRule":         "firewallRule.",
+		"IPAddressSet":         "ipAddressSet.",
+		"LocalServiceRedirect": "localServiceRedirect.",
 	}
 	if prefix := prefixes[kind]; prefix != "" {
 		return prefix + name + "."

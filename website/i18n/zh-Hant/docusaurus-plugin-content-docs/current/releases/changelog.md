@@ -31,9 +31,22 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
   traffic-flow observation，讓近期的 IPv6 privacy address 更有機會對應回 client。
   source endpoint 即使尚未合併到已知 identity，也會提供前往 Clients 搜尋的動作。
 - Web Console 的搜尋輸入框現在會在有文字時顯示內嵌清除按鈕。
+- release helper 現在要求 working tree 處於 clean 狀態，並會把目前
+  `Unreleased` 的內容提升到 release tag，而不是建立空的 tag 標題。
 
 ### 新增
 
+- 新增 `IPAddressSet` 與 `LocalServiceRedirect`。`IPAddressSet` 可以把直接指定的
+  IPv4/IPv6 address 與 FQDN 的 `A`/`AAAA` record 解決成可重用的 nftables named
+  set；`LocalServiceRedirect` 可以把 LAN client 送往這些 set 的明文 DNS/NTP
+  通信 redirect 到 router 的 local service，且不會碰 DoH/DoT 或 router 自身發出的
+  health check。
+- `FirewallRule`、`NAT44Rule`、`IPv4PolicyRoute` 與 `IPv4PolicyRouteSet` 現在可以透過
+  `destinationSetRefs` 與 `excludeDestinationSetRefs` 使用 `IPAddressSet`，讓
+  FQDN-backed address set 可重用於 firewall filtering、NAT 範圍與 IPv4 policy routing 條件。
+- 新增 runtime `IPAddressSet` refresh controller。被參照的 nftables set 會根據 DNS
+  TTL 原地更新，使用觀測到的最小 TTL 的一半、60 秒 floor，以及可選的
+  `refreshInterval` cap，讓 FQDN-backed set 不必 reload 整個 firewall、NAT 或 policy table 也能保持新狀態。
 - 新增初始版 `routerd-ndpi-agent` service boundary 作為 optional command。預設
   build 會回報 libndpi backend 不可用，而 `-tags libndpi` build 會在同一個
   IPC surface 後方連結 native library。

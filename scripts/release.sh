@@ -11,7 +11,6 @@ Create a date-and-time-based routerd release.
 Options:
   --date YYYYMMDD       Override the release date. Defaults to Asia/Tokyo today.
   --timezone TZ         Override the timezone used for date/time calculation.
-  --allow-dirty         Include existing working tree changes in the release commit.
   --skip-checks         Skip local test/schema/example/website checks.
   --no-push             Create the commit and tag locally but do not push.
   --dry-run             Print the computed release tag and exit.
@@ -25,7 +24,6 @@ EOF
 
 timezone=${ROUTERD_RELEASE_TZ:-Asia/Tokyo}
 release_date=${ROUTERD_RELEASE_DATE:-}
-allow_dirty=0
 skip_checks=0
 no_push=0
 dry_run=0
@@ -41,9 +39,6 @@ while [ "$#" -gt 0 ]; do
 			shift
 			[ "$#" -gt 0 ] || { echo "--timezone requires TZ" >&2; exit 2; }
 			timezone=$1
-			;;
-		--allow-dirty)
-			allow_dirty=1
 			;;
 		--skip-checks)
 			skip_checks=1
@@ -95,8 +90,8 @@ if git rev-parse -q --verify "refs/tags/${release_tag}" >/dev/null; then
 	exit 1
 fi
 
-if [ "$allow_dirty" -ne 1 ] && [ -n "$(git status --short)" ]; then
-	echo "working tree is not clean; commit or stash changes, or pass --allow-dirty" >&2
+if [ -n "$(git status --short)" ]; then
+	echo "working tree is not clean; commit or stash changes before releasing" >&2
 	git status --short >&2
 	exit 1
 fi
@@ -118,36 +113,47 @@ replace_version pkg/version/version.go
 replace_version docs/install-and-upgrade.md
 replace_version website/i18n/ja/docusaurus-plugin-content-docs/current/install-and-upgrade.md
 
-insert_changelog_stub() {
+promote_changelog() {
 	file=$1
 	[ -f "$file" ] || return 0
 	if grep -q "^## ${release_tag}$" "$file"; then
 		return 0
 	fi
 	tmp=$(mktemp)
-	awk -v tag="$release_tag" '
-		BEGIN { inserted = 0 }
-		/^## / && inserted == 0 {
-			print "## " tag
-			print ""
-			inserted = 1
+	if ! ROUTERD_RELEASE_TAG=$release_tag perl -0e '
+		use strict;
+		use warnings;
+
+		my $tag = $ENV{ROUTERD_RELEASE_TAG} // die "missing release tag\n";
+		my $file = $ARGV[0];
+		my $text = do { local $/; <> };
+
+		if ($text =~ /^## \Q$tag\E$/m) {
+			print $text;
+			exit 0;
 		}
-		{ print }
-		END {
-			if (inserted == 0) {
-				print ""
-				print "## " tag
-				print ""
-			}
+		if ($text !~ /^## Unreleased\n(.*?)(?=^## |\z)/ms) {
+			die "$file: missing ## Unreleased section\n";
 		}
-	' "$file" > "$tmp"
+		my $body = $1;
+		(my $content = $body) =~ s/\s+//g;
+		if ($content eq "") {
+			die "$file: ## Unreleased section is empty\n";
+		}
+		$text =~ s/^## Unreleased\n(.*?)(?=^## |\z)/## Unreleased\n\n## $tag\n$1/ms
+			or die "$file: failed to promote ## Unreleased\n";
+		print $text;
+	' "$file" > "$tmp"; then
+		rm -f "$tmp"
+		exit 1
+	fi
 	mv "$tmp" "$file"
 }
 
-insert_changelog_stub docs/releases/changelog.md
-insert_changelog_stub website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md
-insert_changelog_stub website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/releases/changelog.md
-insert_changelog_stub website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/releases/changelog.md
+promote_changelog docs/releases/changelog.md
+promote_changelog website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md
+promote_changelog website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/releases/changelog.md
+promote_changelog website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/releases/changelog.md
 
 if [ "$skip_checks" -ne 1 ]; then
 	go test ./...

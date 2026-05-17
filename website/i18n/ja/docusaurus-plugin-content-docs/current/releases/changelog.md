@@ -34,9 +34,25 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   統合されていないアドレスでも Clients 検索に移動できます。
 - Web Console の検索入力に、文字が入っているときだけ表示されるクリアボタンを
   追加しました。
+- release helper は clean な working tree からだけ実行するようにし、空の tag
+  見出しを作る代わりに、現在の `Unreleased` の内容を release tag へ昇格するように
+  しました。
 
 ### 追加
 
+- `IPAddressSet` と `LocalServiceRedirect` を追加しました。`IPAddressSet` は
+  直接指定した IPv4/IPv6 address と FQDN の `A`/`AAAA` record を、再利用可能な nftables
+  named set に解決できます。`LocalServiceRedirect` は、その set 宛てに LAN
+  client から出る平文 DNS/NTP 通信を router の local service へ redirect できます。
+  DoH/DoT や router 自身が発信する health check は対象にしません。
+- `FirewallRule`、`NAT44Rule`、`IPv4PolicyRoute`、`IPv4PolicyRouteSet` が
+  `destinationSetRefs` と `excludeDestinationSetRefs` で `IPAddressSet` を参照できる
+  ようになりました。FQDN-backed な address set を firewall filtering、NAT の適用範囲、
+  IPv4 policy routing の条件として再利用できます。
+- runtime の `IPAddressSet` refresh controller を追加しました。参照されている
+  nftables set は DNS TTL に基づいてその場で更新します。観測した最小 TTL の半分を
+  基本にし、60 秒より短くせず、必要に応じて `refreshInterval` で上限を指定できます。
+  firewall、NAT、policy table 全体を reload せず、FQDN-backed set を新しい状態に保てます。
 - optional command として、初期版の `routerd-ndpi-agent` service boundary を追加しました。
   既定の build は libndpi backend が利用不可であることを報告し、`-tags libndpi`
   build では同じ IPC surface の背後で native library に link します。

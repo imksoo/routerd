@@ -199,7 +199,7 @@ func TestIPv4PolicyRouteHealthCheckRequiresFreshStatus(t *testing.T) {
 	}
 }
 
-func TestIPv4PolicyRouteApplyNftTableReappliesExistingTable(t *testing.T) {
+func TestIPv4PolicyRouteApplyNftTableSkipsUnchangedExistingTable(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "nft.log")
 	nftPath := filepath.Join(dir, "nft")
@@ -225,11 +225,17 @@ func TestIPv4PolicyRouteApplyNftTableReappliesExistingTable(t *testing.T) {
 	got := string(logData)
 	for _, want := range []string{
 		"list table ip routerd_policy",
-		"-c -f " + tablePath,
-		"-f " + tablePath,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nft command log missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{
+		"-c -f " + tablePath,
+		"-f " + tablePath,
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("unchanged existing table should not run %q:\n%s", unwanted, got)
 		}
 	}
 }

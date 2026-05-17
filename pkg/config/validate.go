@@ -49,6 +49,7 @@ func Validate(router *api.Router) error {
 	routeSets := map[string]bool{}
 	healthChecks := map[string]bool{}
 	zones := map[string]bool{}
+	ipAddressSets := map[string]bool{}
 	udpListenPorts := map[int]string{}
 	staticByInterfaceAddress := map[string]string{}
 	protectedInterfaces := map[string]bool{}
@@ -202,6 +203,9 @@ func Validate(router *api.Router) error {
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "HealthCheck" {
 			healthChecks[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPAddressSet" {
+			ipAddressSets[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv4StaticAddress" {
 			spec, err := res.IPv4StaticAddressSpec()
@@ -628,9 +632,69 @@ func Validate(router *api.Router) error {
 				return err
 			}
 		}
+		if res.Kind == "LocalServiceRedirect" {
+			spec, err := res.LocalServiceRedirectSpec()
+			if err != nil {
+				return err
+			}
+			if !interfaces[spec.Interface] {
+				return fmt.Errorf("%s spec.interface references missing Interface %q", res.ID(), spec.Interface)
+			}
+			for i, rule := range spec.Rules {
+				kind, name := splitResourceRef(rule.DestinationSetRef)
+				if kind != "IPAddressSet" {
+					return fmt.Errorf("%s spec.rules[%d].destinationSetRef must reference IPAddressSet, got %q", res.ID(), i, rule.DestinationSetRef)
+				}
+				if !ipAddressSets[name] {
+					return fmt.Errorf("%s spec.rules[%d].destinationSetRef references missing IPAddressSet %q", res.ID(), i, rule.DestinationSetRef)
+				}
+			}
+		}
+		if res.Kind == "NAT44Rule" {
+			spec, err := res.NAT44RuleSpec()
+			if err != nil {
+				return err
+			}
+			if err := validateIPAddressSetRefsExist(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs, ipAddressSets); err != nil {
+				return err
+			}
+			if err := validateIPAddressSetRefsExist(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs, ipAddressSets); err != nil {
+				return err
+			}
+		}
+		if res.Kind == "IPv4PolicyRoute" {
+			spec, err := res.IPv4PolicyRouteSpec()
+			if err != nil {
+				return err
+			}
+			if err := validateIPAddressSetRefsExist(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs, ipAddressSets); err != nil {
+				return err
+			}
+			if err := validateIPAddressSetRefsExist(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs, ipAddressSets); err != nil {
+				return err
+			}
+		}
+		if res.Kind == "IPv4PolicyRouteSet" {
+			spec, err := res.IPv4PolicyRouteSetSpec()
+			if err != nil {
+				return err
+			}
+			if err := validateIPAddressSetRefsExist(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs, ipAddressSets); err != nil {
+				return err
+			}
+			if err := validateIPAddressSetRefsExist(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs, ipAddressSets); err != nil {
+				return err
+			}
+		}
 		if res.Kind == "FirewallRule" {
 			spec, err := res.FirewallRuleSpec()
 			if err != nil {
+				return err
+			}
+			if err := validateIPAddressSetRefsExist(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs, ipAddressSets); err != nil {
+				return err
+			}
+			if err := validateIPAddressSetRefsExist(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs, ipAddressSets); err != nil {
 				return err
 			}
 			if spec.FromZone != "self" && !zones[spec.FromZone] {
@@ -2776,6 +2840,24 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.sourceRanges entries must be IPv4 prefixes", res.ID())
 			}
 		}
+		for _, cidr := range spec.DestinationCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv4 prefixes", res.ID())
+			}
+		}
+		if err := validateIPAddressSetRefs(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs); err != nil {
+			return err
+		}
+		for _, cidr := range spec.ExcludeDestinationCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return fmt.Errorf("%s spec.excludeDestinationCIDRs entries must be IPv4 prefixes", res.ID())
+			}
+		}
+		if err := validateIPAddressSetRefs(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs); err != nil {
+			return err
+		}
 		if spec.Type == "snat" {
 			if spec.SNATAddress == "" && spec.SNATAddressFrom.Resource == "" {
 				return fmt.Errorf("%s spec.snatAddress or spec.snatAddressFrom is required when type is snat", res.ID())
@@ -2845,6 +2927,88 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.backends[%d].weight must be non-negative", res.ID(), i)
 			}
 		}
+	case "IPAddressSet":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.IPAddressSetSpec()
+		if err != nil {
+			return err
+		}
+		if len(spec.Addresses) == 0 && len(spec.Names) == 0 {
+			return fmt.Errorf("%s spec.addresses or spec.names is required", res.ID())
+		}
+		seenAddresses := map[string]bool{}
+		for i, value := range spec.Addresses {
+			addr, err := netip.ParseAddr(value)
+			if err != nil {
+				return fmt.Errorf("%s spec.addresses[%d] must be an IP address", res.ID(), i)
+			}
+			addr = addr.Unmap()
+			if seenAddresses[addr.String()] {
+				return fmt.Errorf("%s spec.addresses[%d] duplicates address %q", res.ID(), i, addr.String())
+			}
+			seenAddresses[addr.String()] = true
+		}
+		seenNames := map[string]bool{}
+		for i, value := range spec.Names {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				return fmt.Errorf("%s spec.names[%d] must not be empty", res.ID(), i)
+			}
+			if err := validateDomainValue(value); err != nil {
+				return fmt.Errorf("%s spec.names[%d] is invalid: %w", res.ID(), i, err)
+			}
+			if seenNames[value] {
+				return fmt.Errorf("%s spec.names[%d] duplicates name %q", res.ID(), i, value)
+			}
+			seenNames[value] = true
+		}
+		if spec.RefreshInterval != "" {
+			if _, err := time.ParseDuration(spec.RefreshInterval); err != nil {
+				return fmt.Errorf("%s spec.refreshInterval is invalid: %w", res.ID(), err)
+			}
+		}
+	case "LocalServiceRedirect":
+		if res.APIVersion != api.FirewallAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
+		}
+		spec, err := res.LocalServiceRedirectSpec()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(spec.Interface) == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		if len(spec.Rules) == 0 {
+			return fmt.Errorf("%s spec.rules is required", res.ID())
+		}
+		for i, rule := range spec.Rules {
+			if len(rule.Protocols) == 0 {
+				return fmt.Errorf("%s spec.rules[%d].protocols is required", res.ID(), i)
+			}
+			seenProtocols := map[string]bool{}
+			for j, proto := range rule.Protocols {
+				switch proto {
+				case "tcp", "udp":
+				default:
+					return fmt.Errorf("%s spec.rules[%d].protocols[%d] must be tcp or udp", res.ID(), i, j)
+				}
+				if seenProtocols[proto] {
+					return fmt.Errorf("%s spec.rules[%d].protocols[%d] duplicates protocol %q", res.ID(), i, j, proto)
+				}
+				seenProtocols[proto] = true
+			}
+			if strings.TrimSpace(rule.DestinationSetRef) == "" {
+				return fmt.Errorf("%s spec.rules[%d].destinationSetRef is required", res.ID(), i)
+			}
+			if rule.DestinationPort < 1 || rule.DestinationPort > 65535 {
+				return fmt.Errorf("%s spec.rules[%d].destinationPort must be within 1-65535", res.ID(), i)
+			}
+			if rule.RedirectPort < 1 || rule.RedirectPort > 65535 {
+				return fmt.Errorf("%s spec.rules[%d].redirectPort must be within 1-65535", res.ID(), i)
+			}
+		}
 	case "IPv4PolicyRoute":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -2865,8 +3029,8 @@ func validateResource(res api.Resource) error {
 		if spec.Mark < 1 {
 			return fmt.Errorf("%s spec.mark must be greater than 0", res.ID())
 		}
-		if len(spec.SourceCIDRs) == 0 && len(spec.DestinationCIDRs) == 0 {
-			return fmt.Errorf("%s spec.sourceCIDRs or spec.destinationCIDRs is required", res.ID())
+		if len(spec.SourceCIDRs) == 0 && len(spec.DestinationCIDRs) == 0 && len(spec.DestinationSetRefs) == 0 {
+			return fmt.Errorf("%s spec.sourceCIDRs, spec.destinationCIDRs, or spec.destinationSetRefs is required", res.ID())
 		}
 		for _, cidr := range spec.SourceCIDRs {
 			prefix, err := netip.ParsePrefix(cidr)
@@ -2880,11 +3044,17 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv4 prefixes", res.ID())
 			}
 		}
+		if err := validateIPAddressSetRefs(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs); err != nil {
+			return err
+		}
 		for _, cidr := range spec.ExcludeDestinationCIDRs {
 			prefix, err := netip.ParsePrefix(cidr)
 			if err != nil || !prefix.Addr().Is4() {
 				return fmt.Errorf("%s spec.excludeDestinationCIDRs entries must be IPv4 prefixes", res.ID())
 			}
+		}
+		if err := validateIPAddressSetRefs(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs); err != nil {
+			return err
 		}
 	case "IPv4PolicyRouteSet":
 		if res.APIVersion != api.NetAPIVersion {
@@ -2909,8 +3079,8 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.hashFields entries must be sourceAddress or destinationAddress", res.ID())
 			}
 		}
-		if len(spec.SourceCIDRs) == 0 && len(spec.DestinationCIDRs) == 0 {
-			return fmt.Errorf("%s spec.sourceCIDRs or spec.destinationCIDRs is required", res.ID())
+		if len(spec.SourceCIDRs) == 0 && len(spec.DestinationCIDRs) == 0 && len(spec.DestinationSetRefs) == 0 {
+			return fmt.Errorf("%s spec.sourceCIDRs, spec.destinationCIDRs, or spec.destinationSetRefs is required", res.ID())
 		}
 		for _, cidr := range spec.SourceCIDRs {
 			prefix, err := netip.ParsePrefix(cidr)
@@ -2924,11 +3094,17 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv4 prefixes", res.ID())
 			}
 		}
+		if err := validateIPAddressSetRefs(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs); err != nil {
+			return err
+		}
 		for _, cidr := range spec.ExcludeDestinationCIDRs {
 			prefix, err := netip.ParsePrefix(cidr)
 			if err != nil || !prefix.Addr().Is4() {
 				return fmt.Errorf("%s spec.excludeDestinationCIDRs entries must be IPv4 prefixes", res.ID())
 			}
+		}
+		if err := validateIPAddressSetRefs(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs); err != nil {
+			return err
 		}
 		if len(spec.Targets) < 2 {
 			return fmt.Errorf("%s spec.targets must contain at least two targets", res.ID())
@@ -3242,6 +3418,12 @@ func validateResource(res api.Resource) error {
 			if _, err := netip.ParsePrefix(cidr); err != nil {
 				return fmt.Errorf("%s spec.destinationCIDRs[%d] is invalid: %w", res.ID(), i, err)
 			}
+		}
+		if err := validateIPAddressSetRefs(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs); err != nil {
+			return err
+		}
+		if err := validateIPAddressSetRefs(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs); err != nil {
+			return err
 		}
 	case "Hostname":
 		if res.APIVersion != api.NetAPIVersion {
@@ -3558,6 +3740,43 @@ func validateIngressInterfaceRefs(resourceID string, listen api.IngressListenSpe
 			return fmt.Errorf("%s spec.hairpin.interfaces[%d] duplicates Interface %q", resourceID, i, name)
 		}
 		seen[name] = true
+	}
+	return nil
+}
+
+func splitResourceRef(ref string) (string, string) {
+	ref = strings.TrimSpace(ref)
+	if kind, name, ok := strings.Cut(ref, "/"); ok {
+		return kind, name
+	}
+	return "IPAddressSet", ref
+}
+
+func validateIPAddressSetRefs(resourceID, path string, refs []string) error {
+	seen := map[string]bool{}
+	for i, ref := range refs {
+		kind, name := splitResourceRef(ref)
+		if kind != "IPAddressSet" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s %s[%d] must reference IPAddressSet", resourceID, path, i)
+		}
+		key := kind + "/" + name
+		if seen[key] {
+			return fmt.Errorf("%s %s[%d] duplicates IPAddressSet reference %q", resourceID, path, i, ref)
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
+func validateIPAddressSetRefsExist(resourceID, path string, refs []string, known map[string]bool) error {
+	if err := validateIPAddressSetRefs(resourceID, path, refs); err != nil {
+		return err
+	}
+	for i, ref := range refs {
+		_, name := splitResourceRef(ref)
+		if !known[name] {
+			return fmt.Errorf("%s %s[%d] references missing IPAddressSet %q", resourceID, path, i, ref)
+		}
 	}
 	return nil
 }

@@ -617,6 +617,9 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 		return err
 	}
 	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
+	if !changed && !missing {
+		return nil
+	}
 	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}

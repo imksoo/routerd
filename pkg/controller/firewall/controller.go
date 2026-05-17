@@ -193,7 +193,7 @@ func hasFirewall(router *api.Router) bool {
 		return false
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion == api.FirewallAPIVersion && (resource.Kind == "FirewallZone" || resource.Kind == "FirewallPolicy" || resource.Kind == "FirewallRule" || resource.Kind == "ClientPolicy") {
+		if resource.APIVersion == api.FirewallAPIVersion && (resource.Kind == "FirewallZone" || resource.Kind == "FirewallPolicy" || resource.Kind == "FirewallRule" || resource.Kind == "ClientPolicy" || resource.Kind == "LocalServiceRedirect") {
 			return true
 		}
 	}

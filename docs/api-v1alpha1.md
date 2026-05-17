@@ -36,8 +36,8 @@ spec:
 | API group | Main kinds |
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
-| `net.routerd.net/v1alpha1` | interfaces, DHCP, DNS, routes, tunnels, events, traffic flow logs |
-| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy`, `PortForward`, `IngressService` |
+| `net.routerd.net/v1alpha1` | interfaces, reusable `IPAddressSet` resources, DHCP, DNS, routes, tunnels, events, traffic flow logs |
+| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `KernelModule`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
@@ -158,24 +158,37 @@ endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
 | Kind | Role |
 | --- | --- |
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
+| `IPAddressSet` | Defines reusable IP address sets from literal addresses and FQDNs. Linux nftables renderers materialize these as named sets for firewall, redirect, NAT, and policy-routing consumers. |
 | `IPv4Route` | Adds IPv4 routes, including DS-Lite defaults and explicit drop routes. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
 | `IPv4SourceNAT` | Older IPv4 source NAT resource. Prefer `NAT44Rule` for new configs. |
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
 | `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. The first implementation supports one backend; backend pools and health checks are reserved for a later controller. |
+| `LocalServiceRedirect` | Redirects LAN-origin IPv4/IPv6 traffic for `IPAddressSet` destinations to a local router port. This is intended for plaintext DNS/NTP interception without touching DoH or DoT ports. |
 | `IPv4PolicyRoute` | Represents IPv4 policy routing. |
 | `IPv4PolicyRouteSet` | Groups multiple policy routes. |
 | `IPv4DefaultRoutePolicy` | Represents default-route policy. |
 | `IPv4ReversePathFilter` | Manages reverse path filter settings. |
 | `PathMTUPolicy` | Controls MTU and TCP MSS adjustment. `mtu.source: probe` can measure path MTU with DF probes. |
 
+`IPv4PolicyRoute` and `IPv4PolicyRouteSet` support `destinationSetRefs` and
+`excludeDestinationSetRefs` in addition to CIDR fields. Use them to steer or
+exclude FQDN-backed destination sets without expanding addresses directly into
+the policy resource.
+
 `IPv4PolicyRoute`, `IPv4PolicyRouteSet`, and `IPv4DefaultRoutePolicy` support
 `excludeDestinationCIDRs`. Use it to keep LAN, management, HGW LAN, and RFC
 1918 destinations out of policy routing.
 
-`NAT44Rule` supports `destinationCIDRs` and `excludeDestinationCIDRs`. This
-allows internet traffic to be masqueraded while private routed destinations
-stay un-NATed.
+`FirewallRule` supports `destinationSetRefs` and `excludeDestinationSetRefs`
+in addition to destination CIDR narrowing. Use these fields to accept, drop, or
+reject traffic for reusable FQDN-backed sets without expanding addresses into
+each rule.
+
+`NAT44Rule` supports `destinationCIDRs`, `destinationSetRefs`,
+`excludeDestinationCIDRs`, and `excludeDestinationSetRefs`. This allows internet
+traffic to be masqueraded while private routed destinations or reusable address
+sets stay un-NATed.
 
 `PortForward` and `IngressService` render DNAT on Linux nftables and FreeBSD pf.
 Set `spec.hairpin.enabled: true` with `spec.hairpin.interfaces` to also allow
@@ -185,6 +198,24 @@ the return-path masquerade/NAT reflection rule. `listen.addressFrom` and backend
 `addressFrom` can reference statically rendered address resources such as
 `IPv4StaticAddress/<name>.address`; dynamic status sources are reserved for a
 later runtime controller.
+
+`IPAddressSet` writes literal IPv4/IPv6 addresses into nftables named sets when
+the ruleset is rendered. FQDN `A`/`AAAA` records are resolved by the runtime
+controller, which refreshes referenced nftables sets in place without reloading
+the whole firewall, NAT, or policy table. The next refresh is scheduled at half of the
+observed minimum DNS TTL, but never sooner than 60 seconds. `refreshInterval`
+can cap that delay when a set should be refreshed more aggressively.
+
+Entries in `IPAddressSet.spec.names` are exact DNS names only. `microsoft.com`
+means the `A`/`AAAA` records for `microsoft.com` itself; it does not include
+`www.microsoft.com`, `login.microsoft.com`, `*.microsoft.com`, or deeper
+subdomains. Wildcard and suffix-style service matching needs a DNS-observation
+or provider endpoint-feed resource rather than plain FQDN resolution.
+
+`LocalServiceRedirect` renders Linux nftables `redirect` rules in `prerouting`
+only. It matches packets arriving from one declared interface and an
+`IPAddressSet` destination. Router-originated traffic and health checks do not
+traverse this hook.
 
 Example:
 
@@ -245,10 +276,11 @@ from DHCP, IPAM, or another declarative resource.
 | --- | --- |
 | `FirewallZone` | Assigns interfaces to zones with `untrust`, `trust`, and `mgmt` roles. |
 | `FirewallPolicy` | Represents global firewall behavior such as deny logging. |
-| `FirewallRule` | Represents exceptions that cannot be expressed by the role matrix. Supports source and destination CIDR narrowing. |
+| `FirewallRule` | Represents exceptions that cannot be expressed by the role matrix. Supports source CIDRs, destination CIDRs, and `IPAddressSet` destination refs. |
 | `ClientPolicy` | Classifies clients by MAC address for guest isolation on Linux nftables. |
 | `PortForward` | Adds a single-target ingress DNAT rule and, when routerd manages the firewall table, an internal forward accept rule. Optional hairpin mode adds LAN-side DNAT and return-path SNAT. |
 | `IngressService` | Adds the same single-backend ingress DNAT path as `PortForward`; multiple backends, selection policy, and health checks are not enabled yet. Optional hairpin mode matches `PortForward`. |
+| `LocalServiceRedirect` | Adds local service redirect rules for `IPAddressSet` destinations. The firewall renderer opens the matching local input ports for the source zone. |
 
 Stateful filtering renders into the nftables `inet routerd_filter` table.
 Established traffic, loopback, and required ICMPv6 are always accepted.

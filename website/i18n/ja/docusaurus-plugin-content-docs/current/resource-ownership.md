@@ -29,6 +29,7 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `DNSZone` | `routerd-dns-resolver` のローカル権威ゾーン |
 | `DNSResolver` | `routerd-dns-resolver` の socket、state、events、待ち受け設定 |
 | `DSLiteTunnel` | Linux `ip6tnl` インターフェース |
+| `IPAddressSet` | Linux renderer から参照される nftables IPv4/IPv6 named set |
 | `IPv4Route` | カーネル経路 |
 | `NAT44Rule` | nftables `routerd_nat` テーブル |
 | `PortForward` / `IngressService` | Linux nftables の `routerd_nat` / `routerd_filter` DNAT、任意の hairpin SNAT、または FreeBSD `pf.conf` の `rdr pass` / 任意の NAT reflection ルール |

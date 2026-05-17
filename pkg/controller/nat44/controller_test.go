@@ -95,6 +95,166 @@ func TestControllerResolvesSNATAddressFromStaticAddress(t *testing.T) {
 	}
 }
 
+func TestControllerRendersLocalServiceRedirectWithoutNAT44(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "dns-google"}, Spec: api.IPAddressSetSpec{
+			Addresses: []string{"8.8.8.8", "8.8.4.4"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "LocalServiceRedirect"}, Metadata: api.ObjectMeta{Name: "lan-local-services"}, Spec: api.LocalServiceRedirectSpec{
+			Interface: "lan",
+			Rules: []api.LocalServiceRedirectRuleSpec{{
+				Name:              "dns-google",
+				Protocols:         []string{"udp", "tcp"},
+				DestinationSetRef: "IPAddressSet/dns-google",
+				DestinationPort:   53,
+				RedirectPort:      53,
+			}},
+		}},
+	}}}
+	store := &testStore{}
+	path := filepath.Join(t.TempDir(), "nat44.nft")
+	controller := Controller{Router: router, Bus: bus.New(), Store: store, DryRun: true, NftablesPath: path, NftCommand: "true"}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ruleset: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`set ip_address_set_dns_google { type ipv4_addr; elements = { 8.8.4.4, 8.8.8.8 }; }`,
+		`type nat hook prerouting priority dstnat; policy accept;`,
+		`iifname "ens19" ip daddr @ip_address_set_dns_google tcp dport 53 counter redirect to :53 comment "routerd LocalServiceRedirect lan-local-services dns-google"`,
+		`iifname "ens19" ip daddr @ip_address_set_dns_google udp dport 53 counter redirect to :53 comment "routerd LocalServiceRedirect lan-local-services dns-google"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ruleset missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestControllerRendersFQDNAddressSetsWithoutResolvingNames(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "dns-google"}, Spec: api.IPAddressSetSpec{
+			Names: []string{"dns.google"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "LocalServiceRedirect"}, Metadata: api.ObjectMeta{Name: "lan-local-services"}, Spec: api.LocalServiceRedirectSpec{
+			Interface: "lan",
+			Rules: []api.LocalServiceRedirectRuleSpec{{
+				Name:              "dns-google",
+				Protocols:         []string{"udp", "tcp"},
+				DestinationSetRef: "IPAddressSet/dns-google",
+				DestinationPort:   53,
+				RedirectPort:      53,
+			}},
+		}},
+	}}}
+	store := &testStore{}
+	path := filepath.Join(t.TempDir(), "nat44.nft")
+	controller := Controller{Router: router, Bus: bus.New(), Store: store, DryRun: true, NftablesPath: path, NftCommand: "true"}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ruleset: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`table ip routerd_nat`,
+		`set ip_address_set_dns_google { type ipv4_addr; }`,
+		`iifname "ens19" ip daddr @ip_address_set_dns_google tcp dport 53 counter redirect to :53 comment "routerd LocalServiceRedirect lan-local-services dns-google"`,
+		`table ip6 routerd_nat`,
+		`set ip_address_set_dns_google { type ipv6_addr; }`,
+		`iifname "ens19" ip6 daddr @ip_address_set_dns_google tcp dport 53 counter redirect to :53 comment "routerd LocalServiceRedirect lan-local-services dns-google"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ruleset missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "dns.google") {
+		t.Fatalf("runtime ruleset should not embed resolved FQDN names:\n%s", got)
+	}
+}
+
+func TestControllerRendersNAT44DestinationAddressSet(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "cloud-service"}, Spec: api.IPAddressSetSpec{
+			Names: []string{"service.example.test"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-cloud"}, Spec: api.NAT44RuleSpec{
+			Type:               "masquerade",
+			EgressInterface:    "wan",
+			SourceRanges:       []string{"172.18.0.0/16"},
+			DestinationSetRefs: []string{"IPAddressSet/cloud-service"},
+		}},
+	}}}
+	store := &testStore{}
+	path := filepath.Join(t.TempDir(), "nat44.nft")
+	controller := Controller{Router: router, Bus: bus.New(), Store: store, DryRun: true, NftablesPath: path, NftCommand: "true"}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ruleset: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`set ip_address_set_cloud_service { type ipv4_addr; }`,
+		`oifname "wan" ip saddr 172.18.0.0/16 ip daddr @ip_address_set_cloud_service masquerade`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ruleset missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestControllerSkipsUnchangedExistingNftablesTable(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "nft.log")
+	nftPath := filepath.Join(dir, "nft")
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + testShellQuote(logPath) + "\n" +
+		"exit 0\n"
+	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-wan"}, Spec: api.NAT44RuleSpec{
+			Type:            "masquerade",
+			EgressInterface: "wan",
+			SourceRanges:    []string{"192.168.0.0/16"},
+		}},
+	}}}
+	store := &testStore{}
+	path := filepath.Join(dir, "nat44.nft")
+	controller := Controller{Router: router, Bus: bus.New(), Store: store, NftablesPath: path, NftCommand: nftPath}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if err := os.WriteFile(logPath, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(logData)
+	if !strings.Contains(got, "list table ip routerd_nat") {
+		t.Fatalf("nft command log missing table check:\n%s", got)
+	}
+	if strings.Contains(got, "-f "+path) {
+		t.Fatalf("unchanged existing table should not be reapplied:\n%s", got)
+	}
+}
+
 func TestControllerResolvesPPPoEEgressInterface(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp-flets", Username: "open@open.ad.jp"}},

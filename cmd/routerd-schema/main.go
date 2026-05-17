@@ -321,6 +321,8 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "NAT44Rule", api.NAT44RuleSpec{}),
 			resourceSchema(api.FirewallAPIVersion, "PortForward", api.PortForwardSpec{}),
 			resourceSchema(api.FirewallAPIVersion, "IngressService", api.IngressServiceSpec{}),
+			resourceSchema(api.NetAPIVersion, "IPAddressSet", api.IPAddressSetSpec{}),
+			resourceSchema(api.FirewallAPIVersion, "LocalServiceRedirect", api.LocalServiceRedirectSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4PolicyRoute", api.IPv4PolicyRouteSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4PolicyRouteSet", api.IPv4PolicyRouteSetSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4ReversePathFilter", api.IPv4ReversePathFilterSpec{}),

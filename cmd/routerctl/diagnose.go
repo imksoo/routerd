@@ -124,6 +124,7 @@ func diagnoseEgressCommand(args []string, stdout, stderr io.Writer) error {
 		report.Commands = append(report.Commands,
 			runDiagnosticCommand(ctx, "ip route show default", "ip", "-4", "route", "show", "default"),
 			runDiagnosticCommand(ctx, "nft list table ip routerd_nat", "nft", "list", "table", "ip", "routerd_nat"),
+			runDiagnosticCommand(ctx, "nft list table ip6 routerd_nat", "nft", "list", "table", "ip6", "routerd_nat"),
 			runDiagnosticCommand(ctx, "conntrack summary", "conntrack", "-S"),
 		)
 	}

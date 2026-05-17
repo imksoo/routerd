@@ -753,6 +753,10 @@ func canonicalResourceKind(kind string) string {
 		"portnat":                "PortForward",
 		"ingress":                "IngressService",
 		"ingressservice":         "IngressService",
+		"addressset":             "IPAddressSet",
+		"ipset":                  "IPAddressSet",
+		"localserviceredirect":   "LocalServiceRedirect",
+		"serviceredirect":        "LocalServiceRedirect",
 		"dslite":                 "DSLiteTunnel",
 		"dslitetunnel":           "DSLiteTunnel",
 		"dns":                    "DNSResolver",
@@ -792,7 +796,7 @@ func canonicalResourceKind(kind string) string {
 
 func apiVersionForKind(kind string) string {
 	switch kind {
-	case "FirewallZone", "FirewallPolicy", "FirewallRule", "PortForward", "IngressService":
+	case "FirewallZone", "FirewallPolicy", "FirewallRule", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
 	case "Hostname", "Sysctl", "SysctlProfile", "KernelModule", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "NTPServer", "LogSink", "NixOSHost":
 		return api.SystemAPIVersion
@@ -800,7 +804,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -3142,9 +3146,9 @@ func controllerResourceKinds(name string) []string {
 	case "dslite":
 		return []string{"DSLiteTunnel"}
 	case "firewall":
-		return []string{"FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "PortForward", "IngressService"}
+		return []string{"FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
 	case "nat":
-		return []string{"NAT44Rule", "IPv4SourceNAT", "PortForward", "IngressService"}
+		return []string{"NAT44Rule", "IPv4SourceNAT", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
 	case "network-adoption":
 		return []string{"NetworkAdoption"}
 	case "package":
@@ -5033,6 +5037,7 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 		{family: "bridge", name: "routerd_l2_filter", header: "table bridge routerd_l2_filter"},
 		{family: "ip", name: "routerd_dnat", header: "table ip routerd_dnat"},
 		{family: "ip", name: "routerd_nat", header: "table ip routerd_nat"},
+		{family: "ip6", name: "routerd_nat", header: "table ip6 routerd_nat"},
 		{family: "ip", name: "routerd_policy", header: "table ip routerd_policy"},
 	}
 	if len(data) == 0 {
@@ -5060,7 +5065,7 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 	existingTables := map[string]bool{}
 	for _, table := range managedTables {
 		if exec.Command("nft", "list", "table", table.family, table.name).Run() == nil {
-			existingTables[table.name] = true
+			existingTables[table.family+"/"+table.name] = true
 		}
 	}
 	if err := os.MkdirAll(filepathDir(path), 0755); err != nil {
@@ -5074,6 +5079,7 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 		return nil, fmt.Errorf("validate nftables config %s: %w", path, err)
 	}
 	natMissing := bytes.Contains(data, []byte("table ip routerd_nat")) && exec.Command("nft", "list", "table", "ip", "routerd_nat").Run() != nil
+	nat6Missing := bytes.Contains(data, []byte("table ip6 routerd_nat")) && exec.Command("nft", "list", "table", "ip6", "routerd_nat").Run() != nil
 	policyMissing := bytes.Contains(data, []byte("table ip routerd_policy")) && exec.Command("nft", "list", "table", "ip", "routerd_policy").Run() != nil
 	filterMissing := bytes.Contains(data, []byte("table inet routerd_filter")) && exec.Command("nft", "list", "table", "inet", "routerd_filter").Run() != nil
 	mssMissing := bytes.Contains(data, []byte("table inet routerd_mss")) && exec.Command("nft", "list", "table", "inet", "routerd_mss").Run() != nil
@@ -5081,12 +5087,12 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 	dnatMissing := bytes.Contains(data, []byte("table ip routerd_dnat")) && exec.Command("nft", "list", "table", "ip", "routerd_dnat").Run() != nil
 	staleManaged := false
 	for _, table := range managedTables {
-		if existingTables[table.name] && !bytes.Contains(data, []byte(table.header)) {
+		if existingTables[table.family+"/"+table.name] && !bytes.Contains(data, []byte(table.header)) {
 			staleManaged = true
 			break
 		}
 	}
-	if !changed && !natMissing && !policyMissing && !filterMissing && !mssMissing && !l2FilterMissing && !dnatMissing && !staleManaged {
+	if !changed && !natMissing && !nat6Missing && !policyMissing && !filterMissing && !mssMissing && !l2FilterMissing && !dnatMissing && !staleManaged {
 		return nil, nil
 	}
 	applyPath := path
@@ -5094,7 +5100,7 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 	if staleManaged {
 		var staged bytes.Buffer
 		for _, table := range managedTables {
-			if existingTables[table.name] && !bytes.Contains(data, []byte(table.header)) {
+			if existingTables[table.family+"/"+table.name] && !bytes.Contains(data, []byte(table.header)) {
 				staged.WriteString("delete table " + table.family + " " + table.name + "\n")
 			}
 		}
