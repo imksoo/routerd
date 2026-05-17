@@ -45,4 +45,4 @@ routerd はホストの OS、利用可能なコマンド、ネットワーク機
 ## 関連項目
 
 - [対応プラットフォーム](../platforms.md)
-- [Reconcile と削除](./reconcile.md)
+- [Reconcile と削除](./reconcile)

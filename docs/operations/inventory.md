@@ -44,4 +44,4 @@ If a configuration depends on a feature the host does not provide, routerd repor
 ## See also
 
 - [Supported platforms](/docs/platforms)
-- [Reconcile and removal](./reconcile.md)
+- [Reconcile and removal](./reconcile)

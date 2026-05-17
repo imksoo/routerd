@@ -40,4 +40,4 @@ forensic 用途で操作イベントの履歴を残したい場合は、`events.
 ## 関連項目
 
 - [ログストレージ](../concepts/log-storage.md)
-- [Reconcile と削除](./reconcile.md)
+- [Reconcile と削除](./reconcile)

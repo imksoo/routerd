@@ -37,4 +37,4 @@ If you want history of operational events for forensic purposes, take periodic s
 ## See also
 
 - [Log storage](../concepts/log-storage.md)
-- [Reconcile and removal](./reconcile.md)
+- [Reconcile and removal](./reconcile)

@@ -183,7 +183,7 @@ The `eventedStore` wrapper guarantees that every persisted state change emits `r
 Long-running OS processes (DHCPv6 client, DNS resolver, healthcheck, etc.) live as **daemons** rather than as controllers.
 Each daemon talks to the controller chain over a Unix domain socket using JSON, and persists its own state under files such as `lease.json`.
 
-For details, see [reconcile loop behaviour](./operations/reconcile.md).
+For details, see [reconcile loop behaviour](./operations/reconcile).
 
 ---
 
@@ -236,7 +236,7 @@ SDK path sends logs, metrics, and traces to that endpoint.
 - [Design philosophy](./concepts/design-philosophy.md)
 - [Apply and render](./concepts/apply-and-render.md)
 - [State and ownership](./concepts/state-and-ownership.md)
-- [Reconcile loop](./operations/reconcile.md)
+- [Reconcile loop](./operations/reconcile)
 - [State database operations](./operations/state-database.md)
 - [API reference v1alpha1](./api-v1alpha1.md)
 - [Plugin protocol](./plugin-protocol.md)

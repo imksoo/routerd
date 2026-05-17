@@ -20,7 +20,7 @@ routerd は型付き YAML リソースから、Linux / NixOS / FreeBSD 上で動
 | ディスクレス mini PC をルーター化する | [チュートリアル → ディスクレス mini PC](./tutorials/diskless-minipc-walkthrough.md) |
 | 特定の配置課題を解く | [How-to ガイド](./how-to/multi-wan.md) |
 | リソース種別やフィールドを引く | [リファレンス → リソース API](/docs/reference/api-v1alpha1) |
-| 稼働中のルーターを運用する | [運用 → Reconcile](./operations/reconcile.md) |
+| 稼働中のルーターを運用する | [運用 → Reconcile](/docs/operations/reconcile) |
 | 難しい事例の背景メモを読む | [ナレッジベース](./knowledge-base/dhcpv6-pd-clients.md) |
 | 何が変わったか追う | [リリース → 変更履歴](./releases/changelog.md) |
 
