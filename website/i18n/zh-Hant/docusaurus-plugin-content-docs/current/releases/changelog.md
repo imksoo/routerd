@@ -10,6 +10,14 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260517.1808
+
+### 修正
+
+- Debian/Ubuntu release installer 現在會安裝 `dnsmasq-base`，而不是完整的
+  `dnsmasq` package，避免 distro 的 `dnsmasq.service` 被啟用並與 routerd 管理的
+  dnsmasq instance 競爭。
+
 ## v20260517.1800
 
 ### 修正
@@ -18,9 +26,6 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
   keep-alive，並明確關閉 idle transport。這可避免週期性的 status polling 在
   `routerd`、health check helper、DHCP client、DNS/DPI helper service 中留下大量
   已建立的 Unix socket。
-- Debian/Ubuntu release installer 現在會安裝 `dnsmasq-base`，而不是完整的
-  `dnsmasq` package，避免 distro 的 `dnsmasq.service` 被啟用並與 routerd 管理的
-  dnsmasq instance 競爭。
 
 ## v20260517.1533
 

@@ -10,6 +10,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260517.1808
+
+### Fixed
+
+- The Debian/Ubuntu release installer now installs `dnsmasq-base` instead of
+  the full `dnsmasq` package, avoiding an enabled distro `dnsmasq.service`
+  racing with routerd-managed dnsmasq instances.
+
 ## v20260517.1800
 
 ### Fixed
@@ -18,9 +26,6 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   keep-alive and close idle transports explicitly. This prevents periodic
   status polling from leaving large numbers of established Unix sockets open in
   `routerd`, health check helpers, DHCP clients, and DNS/DPI helper services.
-- The Debian/Ubuntu release installer now installs `dnsmasq-base` instead of
-  the full `dnsmasq` package, avoiding an enabled distro `dnsmasq.service`
-  racing with routerd-managed dnsmasq instances.
 
 ## v20260517.1533
 
