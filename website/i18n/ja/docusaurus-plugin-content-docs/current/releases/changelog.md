@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260517.2339
+
 ### 追加
 
 - 番号付きの構成図、図と YAML の対応 comment、安全上の注意、検証済み sample

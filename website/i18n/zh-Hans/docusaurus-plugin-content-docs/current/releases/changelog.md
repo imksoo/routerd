@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260517.2339
+
 ### 新增
 
 - 新增 Configuration examples 文档区段，包含编号 topology diagrams、diagram-to-YAML
