@@ -10,6 +10,11 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 修正
+
+- `syscall.Statfs_t` の block counter が signed integer type になる FreeBSD でも
+  Web Console の disk usage collection が compile できるようにしました。
+
 ## v20260517.1353
 
 ### 修正

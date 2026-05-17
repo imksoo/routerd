@@ -10,6 +10,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Fixed Web Console disk usage collection so it compiles on FreeBSD, where
+  `syscall.Statfs_t` block counters use signed integer types.
+
 ## v20260517.1353
 
 ### Fixed

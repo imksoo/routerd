@@ -10,6 +10,11 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 修正
+
+- 修正 Web Console disk usage collection，使其在 `syscall.Statfs_t` block counter
+  使用 signed integer type 的 FreeBSD 上也能編譯。
+
 ## v20260517.1353
 
 ### 修正

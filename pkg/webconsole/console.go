@@ -1575,8 +1575,18 @@ func diskUsage(path string) (DiskUsage, bool) {
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return DiskUsage{}, false
 	}
-	total := stat.Blocks * uint64(stat.Bsize)
-	free := stat.Bavail * uint64(stat.Bsize)
+	if stat.Bsize <= 0 || stat.Blocks <= 0 || stat.Bavail < 0 {
+		return DiskUsage{}, false
+	}
+	blockSize := uint64(stat.Bsize)
+	blocks := uint64(stat.Blocks)
+	available := uint64(stat.Bavail)
+	maxUint := ^uint64(0)
+	if blocks > maxUint/blockSize || available > maxUint/blockSize {
+		return DiskUsage{}, false
+	}
+	total := blocks * blockSize
+	free := available * blockSize
 	if total == 0 || free > total {
 		return DiskUsage{}, false
 	}
