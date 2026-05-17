@@ -14,6 +14,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260517.1351
+
 ### 変更
 
 - `routerd-dpi-classifier` に明示的な classifier engine facade を追加しました。

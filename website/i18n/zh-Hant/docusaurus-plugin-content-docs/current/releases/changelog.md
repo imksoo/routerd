@@ -14,6 +14,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260517.1351
+
 ### 變更
 
 - `routerd-dpi-classifier` 現在有明確的 classifier engine facade。預設 engine 是
