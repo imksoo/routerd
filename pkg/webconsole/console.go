@@ -83,6 +83,7 @@ type Snapshot struct {
 	Neighbors        []NeighborEntry               `json:"neighbors,omitempty"`
 	Clients          []ClientEntry                 `json:"clients,omitempty"`
 	VPN              VPNStatus                     `json:"vpn,omitempty"`
+	DPI              *DPIStatus                    `json:"dpi,omitempty"`
 	Errors           []string                      `json:"errors,omitempty"`
 }
 
@@ -103,6 +104,23 @@ type SnapshotOptions struct {
 }
 
 const clientObservationWindow = time.Hour
+
+type DPIStatus struct {
+	Classifier *DPIServiceStatus `json:"classifier,omitempty"`
+	Agent      *DPIServiceStatus `json:"agent,omitempty"`
+}
+
+type DPIServiceStatus struct {
+	Available      bool           `json:"available"`
+	Socket         string         `json:"socket,omitempty"`
+	Engine         string         `json:"engine,omitempty"`
+	ActiveEngine   string         `json:"activeEngine,omitempty"`
+	LibNDPILoaded  bool           `json:"libndpiLoaded,omitempty"`
+	LibNDPIVersion string         `json:"libndpiVersion,omitempty"`
+	Reason         string         `json:"reason,omitempty"`
+	Error          string         `json:"error,omitempty"`
+	Stats          map[string]any `json:"stats,omitempty"`
+}
 
 type ConfigSnapshot struct {
 	Path string `json:"path"`
@@ -476,6 +494,7 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 	if h.opts.Result != nil {
 		result = h.opts.Result()
 	}
+	dpiStatus := h.dpiStatus(context.Background())
 	result = resultWithLatestGeneration(result, h.opts.Store)
 	recordConsoleMetrics(context.Background(), resources, h.opts.ControllerModes, dhcpLeases, clients, stickyLeases, now)
 	return Snapshot{
@@ -496,6 +515,7 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		Neighbors:        neighbors,
 		Clients:          clients,
 		VPN:              vpn,
+		DPI:              dpiStatus,
 		Errors:           errors,
 	}
 }
@@ -1398,6 +1418,82 @@ func (h Handler) conntrackTuningSummary(now time.Time, window time.Duration, aut
 	}), nil
 }
 
+func (h Handler) dpiStatus(ctx context.Context) *DPIStatus {
+	classifier := probeDPIService(ctx, "/run/routerd/dpi-classifier/default.sock", "/v1/status")
+	agent := probeDPIService(ctx, "/run/routerd/ndpi-agent/default.sock", "/v1/status")
+	if classifier == nil && agent == nil {
+		return nil
+	}
+	return &DPIStatus{Classifier: classifier, Agent: agent}
+}
+
+func probeDPIService(ctx context.Context, socket, path string) *DPIServiceStatus {
+	if _, err := os.Stat(socket); err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
+	defer cancel()
+	client := &http.Client{
+		Timeout: 150 * time.Millisecond,
+		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socket)
+		}},
+	}
+	defer client.CloseIdleConnections()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
+	if err != nil {
+		return &DPIServiceStatus{Socket: socket, Error: err.Error()}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return &DPIServiceStatus{Socket: socket, Error: err.Error()}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return &DPIServiceStatus{Socket: socket, Error: resp.Status}
+	}
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return &DPIServiceStatus{Socket: socket, Error: err.Error()}
+	}
+	return dpiServiceStatusFromMap(socket, raw)
+}
+
+func dpiServiceStatusFromMap(socket string, raw map[string]any) *DPIServiceStatus {
+	status := &DPIServiceStatus{
+		Available:      true,
+		Socket:         socket,
+		Engine:         stringMapValue(raw, "engine"),
+		ActiveEngine:   stringMapValue(raw, "activeEngine"),
+		LibNDPILoaded:  boolMapValue(raw, "libndpiLoaded"),
+		LibNDPIVersion: stringMapValue(raw, "libndpiVersion"),
+		Reason:         stringMapValue(raw, "reason"),
+	}
+	if stats, ok := raw["stats"].(map[string]any); ok {
+		status.Stats = stats
+	}
+	if agent, ok := raw["agent"].(map[string]any); ok {
+		if status.ActiveEngine == "" && boolMapValue(agent, "available") {
+			status.ActiveEngine = "ndpi-agent"
+		}
+		if !boolMapValue(agent, "available") && status.Reason == "" {
+			status.Reason = stringMapValue(agent, "error")
+		}
+	}
+	return status
+}
+
+func stringMapValue(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return value
+}
+
+func boolMapValue(values map[string]any, key string) bool {
+	value, _ := values[key].(bool)
+	return value
+}
+
 func (h Handler) dhcpFingerprintList(filter logstore.DHCPFingerprintFilter) ([]logstore.DHCPFingerprint, error) {
 	if strings.TrimSpace(h.opts.DHCPFingerprintLogPath) == "" {
 		return nil, nil
@@ -1582,11 +1678,47 @@ func (h Handler) enrichTrafficFlowsWithDPI(flows []logstore.TrafficFlow, now tim
 		if flows[i].AppConfidence == 0 {
 			flows[i].AppConfidence = dpiFlow.AppConfidence
 		}
+		if flows[i].DetectedProtocol == "" {
+			flows[i].DetectedProtocol = dpiFlow.DetectedProtocol
+		}
+		if flows[i].MasterProtocol == "" {
+			flows[i].MasterProtocol = dpiFlow.MasterProtocol
+		}
+		if flows[i].ApplicationProtocol == "" {
+			flows[i].ApplicationProtocol = dpiFlow.ApplicationProtocol
+		}
+		if flows[i].Category == "" {
+			flows[i].Category = dpiFlow.Category
+		}
+		if len(flows[i].Risk) == 0 {
+			flows[i].Risk = append([]string(nil), dpiFlow.Risk...)
+		}
+		if flows[i].Confidence == 0 {
+			flows[i].Confidence = dpiFlow.Confidence
+		}
+		if len(flows[i].Metadata) == 0 && len(dpiFlow.Metadata) > 0 {
+			flows[i].Metadata = map[string]string{}
+			for key, value := range dpiFlow.Metadata {
+				flows[i].Metadata[key] = value
+			}
+		}
+		if flows[i].Engine == "" {
+			flows[i].Engine = dpiFlow.Engine
+		}
+		if flows[i].Source == "" {
+			flows[i].Source = dpiFlow.Source
+		}
 		if flows[i].TLSSNI == "" {
 			flows[i].TLSSNI = dpiFlow.TLSSNI
 		}
+		if flows[i].HTTPHost == "" {
+			flows[i].HTTPHost = dpiFlow.HTTPHost
+		}
+		if flows[i].DNSQuery == "" {
+			flows[i].DNSQuery = dpiFlow.DNSQuery
+		}
 		if flows[i].ResolvedHostname == "" {
-			flows[i].ResolvedHostname = firstNonEmpty(dpiFlow.HTTPHost, dpiFlow.DNSQuery)
+			flows[i].ResolvedHostname = firstNonEmpty(dpiFlow.TLSSNI, dpiFlow.HTTPHost, dpiFlow.DNSQuery)
 		}
 		applyTrafficFlowPortFallback(&flows[i])
 	}
@@ -1850,6 +1982,7 @@ func applyTrafficFlowPortFallback(flow *logstore.TrafficFlow) {
 		flow.AppName = fallback.app
 		flow.AppCategory = fallback.category
 		flow.AppConfidence = fallback.confidence
+		flow.Source = "port-fallback"
 		if override {
 			flow.ResolvedHostname = ""
 		}
@@ -2012,9 +2145,17 @@ func portProtocolFallbackByPort(protocol string, port int, host string) (portPro
 		return portProtocolFallback{app: "mysql", category: category, confidence: confidence}, true
 	case 3389:
 		return portProtocolFallback{app: "rdp", category: category, confidence: confidence}, true
+	case 4317:
+		if protocol == "tcp" {
+			return portProtocolFallback{app: "otlp", category: category, confidence: confidence}, true
+		}
 	case 3478, 5349:
 		if protocol == "udp" {
 			return portProtocolFallback{app: "stun", category: category, confidence: confidence}, true
+		}
+	case 4318:
+		if protocol == "tcp" {
+			return portProtocolFallback{app: "otlp-http", category: category, confidence: confidence}, true
 		}
 	case 5353:
 		if protocol == "udp" {
@@ -2092,6 +2233,8 @@ var ianaServiceNames = map[int]string{
 	3306:  "mysql",
 	3389:  "ms-wbt-server",
 	3478:  "stun",
+	4317:  "otlp",
+	4318:  "otlp-http",
 	4500:  "ipsec-nat-t",
 	5432:  "postgresql",
 	5353:  "mdns",
@@ -2477,7 +2620,7 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 			row.BytesOut += flow.BytesOut
 			row.BytesIn += flow.BytesIn
 		}
-		peer := firstNonEmptyString(flow.ResolvedHostname, flow.TLSSNI, flow.PeerAddress)
+		peer := firstNonEmptyString(flow.TLSSNI, flow.HTTPHost, flow.DNSQuery, flow.ResolvedHostname, flow.PeerAddress)
 		if peer != "" {
 			row.peers[peer] = true
 		}
@@ -2669,6 +2812,13 @@ func flowActivityDetail(flow logstore.TrafficFlow) string {
 	switch {
 	case strings.TrimSpace(flow.TLSSNI) != "":
 		return "TLS-SNI=" + strings.TrimSpace(flow.TLSSNI)
+	case strings.TrimSpace(flow.HTTPHost) != "":
+		return "HTTP-Host=" + strings.TrimSpace(flow.HTTPHost)
+	case strings.TrimSpace(flow.DNSQuery) != "":
+		if app == "netbios" {
+			return "NBNS-query=" + strings.TrimSpace(flow.DNSQuery)
+		}
+		return "DNS-query=" + strings.TrimSpace(flow.DNSQuery)
 	case strings.TrimSpace(flow.ResolvedHostname) != "":
 		if app == "netbios" {
 			return "NBNS-query=" + strings.TrimSpace(flow.ResolvedHostname)
@@ -2689,6 +2839,9 @@ func flowActivityDetail(flow logstore.TrafficFlow) string {
 
 func flowActivityProtocol(flow logstore.TrafficFlow) string {
 	if name := canonicalProtocolAppName(flow.AppName); name != "" && name != "unknown" {
+		if protocol := providerActivityProtocol(name, flow); protocol != "" {
+			return protocol
+		}
 		return name
 	}
 	if strings.TrimSpace(flow.TLSSNI) != "" {
@@ -2712,6 +2865,18 @@ func flowActivityProtocol(flow logstore.TrafficFlow) string {
 		return "tls"
 	}
 	return strings.ToLower(strings.TrimSpace(flow.Protocol))
+}
+
+func providerActivityProtocol(app string, flow logstore.TrafficFlow) string {
+	switch strings.ToLower(strings.TrimSpace(app)) {
+	case "google", "googleservices", "amazonaws", "microsoft", "microsoft365", "azure", "apple", "appleicloud", "applepush", "cloudflare", "nintendo":
+		if strings.EqualFold(flow.Protocol, "udp") && flow.PeerPort == 443 {
+			return "quic"
+		}
+		return "tls"
+	default:
+		return ""
+	}
 }
 
 func classifyClientActivity(stats []*clientActivityStat) string {
@@ -2810,6 +2975,8 @@ func buildPassiveFingerprints(_ []DHCPLease, flows []logstore.TrafficFlow, queri
 		}
 		applyDomainFingerprint(item, flow.ResolvedHostname)
 		applyDomainFingerprint(item, flow.TLSSNI)
+		applyDomainFingerprint(item, flow.HTTPHost)
+		applyDomainFingerprint(item, flow.DNSQuery)
 		applyTransportFingerprint(item, flow.Protocol, flow.PeerAddress, flow.PeerPort)
 		applyAppFingerprint(item, flow.AppName, flow.AppCategory, flow.AppConfidence)
 	}

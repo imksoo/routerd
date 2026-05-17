@@ -162,3 +162,27 @@ func TestOpenRCRenderSynthesizesHelperDaemons(t *testing.T) {
 		t.Fatalf("DNS resolver OpenRC service should render without activation until runtime config exists")
 	}
 }
+
+func TestOpenRCRenderSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"},
+			Spec: api.SystemdUnitSpec{
+				ExecStart: []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--engine", "auto"},
+			},
+		},
+	}}}
+	got, err := OpenRCWithOptions(router, OpenRCOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := string(got.InitScripts["routerd_ndpi_agent"])
+	if !strings.Contains(agent, "'/usr/local/sbin/routerd-ndpi-agent'") || !strings.Contains(agent, "'--socket' '/run/routerd/ndpi-agent/default.sock'") {
+		t.Fatalf("ndpi agent script =\n%s", agent)
+	}
+	classifier := string(got.InitScripts["routerd_dpi_classifier"])
+	if !strings.Contains(classifier, "after routerd_ndpi_agent") {
+		t.Fatalf("classifier script missing ndpi dependency:\n%s", classifier)
+	}
+}

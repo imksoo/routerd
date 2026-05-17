@@ -926,11 +926,17 @@
                 "appName": {
                   "type": "string"
                 },
+                "applicationProtocol": {
+                  "type": "string"
+                },
                 "bytesIn": {
                   "type": "integer"
                 },
                 "bytesOut": {
                   "type": "integer"
+                },
+                "category": {
+                  "type": "string"
                 },
                 "clientAddress": {
                   "type": "string"
@@ -938,8 +944,32 @@
                 "clientPort": {
                   "type": "integer"
                 },
+                "confidence": {
+                  "type": "integer"
+                },
+                "detectedProtocol": {
+                  "type": "string"
+                },
+                "dnsQuery": {
+                  "type": "string"
+                },
+                "engine": {
+                  "type": "string"
+                },
                 "flowKey": {
                   "type": "string"
+                },
+                "httpHost": {
+                  "type": "string"
+                },
+                "masterProtocol": {
+                  "type": "string"
+                },
+                "metadata": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
                 },
                 "natTranslatedAddress": {
                   "type": "string"
@@ -960,6 +990,15 @@
                   "type": "string"
                 },
                 "resolvedHostname": {
+                  "type": "string"
+                },
+                "risk": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "source": {
                   "type": "string"
                 },
                 "tlsSNI": {

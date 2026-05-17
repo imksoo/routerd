@@ -17,25 +17,36 @@ import (
 )
 
 type TrafficFlow struct {
-	FlowKey              string    `json:"flowKey"`
-	StartedAt            time.Time `json:"tsStarted"`
-	EndedAt              time.Time `json:"tsEnded,omitempty"`
-	ClientAddress        string    `json:"clientAddress,omitempty"`
-	ClientPort           int       `json:"clientPort,omitempty"`
-	PeerAddress          string    `json:"peerAddress,omitempty"`
-	PeerPort             int       `json:"peerPort,omitempty"`
-	Protocol             string    `json:"protocol"`
-	NATTranslatedAddress string    `json:"natTranslatedAddress,omitempty"`
-	Accounting           bool      `json:"accounting,omitempty"`
-	BytesOut             int64     `json:"bytesOut,omitempty"`
-	BytesIn              int64     `json:"bytesIn,omitempty"`
-	PacketsOut           int64     `json:"packetsOut,omitempty"`
-	PacketsIn            int64     `json:"packetsIn,omitempty"`
-	AppName              string    `json:"appName,omitempty"`
-	AppCategory          string    `json:"appCategory,omitempty"`
-	AppConfidence        int       `json:"appConfidence,omitempty"`
-	TLSSNI               string    `json:"tlsSNI,omitempty"`
-	ResolvedHostname     string    `json:"resolvedHostname,omitempty"`
+	FlowKey              string            `json:"flowKey"`
+	StartedAt            time.Time         `json:"tsStarted"`
+	EndedAt              time.Time         `json:"tsEnded,omitempty"`
+	ClientAddress        string            `json:"clientAddress,omitempty"`
+	ClientPort           int               `json:"clientPort,omitempty"`
+	PeerAddress          string            `json:"peerAddress,omitempty"`
+	PeerPort             int               `json:"peerPort,omitempty"`
+	Protocol             string            `json:"protocol"`
+	NATTranslatedAddress string            `json:"natTranslatedAddress,omitempty"`
+	Accounting           bool              `json:"accounting,omitempty"`
+	BytesOut             int64             `json:"bytesOut,omitempty"`
+	BytesIn              int64             `json:"bytesIn,omitempty"`
+	PacketsOut           int64             `json:"packetsOut,omitempty"`
+	PacketsIn            int64             `json:"packetsIn,omitempty"`
+	AppName              string            `json:"appName,omitempty"`
+	AppCategory          string            `json:"appCategory,omitempty"`
+	AppConfidence        int               `json:"appConfidence,omitempty"`
+	DetectedProtocol     string            `json:"detectedProtocol,omitempty"`
+	MasterProtocol       string            `json:"masterProtocol,omitempty"`
+	ApplicationProtocol  string            `json:"applicationProtocol,omitempty"`
+	Category             string            `json:"category,omitempty"`
+	Risk                 []string          `json:"risk,omitempty"`
+	Confidence           int               `json:"confidence,omitempty"`
+	Metadata             map[string]string `json:"metadata,omitempty"`
+	Engine               string            `json:"engine,omitempty"`
+	Source               string            `json:"source,omitempty"`
+	TLSSNI               string            `json:"tlsSNI,omitempty"`
+	HTTPHost             string            `json:"httpHost,omitempty"`
+	DNSQuery             string            `json:"dnsQuery,omitempty"`
+	ResolvedHostname     string            `json:"resolvedHostname,omitempty"`
 }
 
 type TrafficFlowFilter struct {
@@ -99,7 +110,18 @@ CREATE TABLE IF NOT EXISTS flows (
   app_name TEXT,
   app_category TEXT,
   app_confidence INTEGER,
+  detected_protocol TEXT,
+  master_protocol TEXT,
+  application_protocol TEXT,
+  category TEXT,
+  risk TEXT,
+  confidence INTEGER,
+  metadata_json TEXT,
+  engine TEXT,
+  source TEXT,
   tls_sni TEXT,
+  http_host TEXT,
+  dns_query TEXT,
   resolved_hostname TEXT
 );
 CREATE INDEX IF NOT EXISTS flows_client_ts ON flows(client_address, ts_started);
@@ -111,6 +133,39 @@ CREATE INDEX IF NOT EXISTS flows_peer_ts ON flows(peer_address, ts_started);
 	_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN accounting INTEGER`)
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 		return err
+	}
+	_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN http_host TEXT`)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return err
+	}
+	_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN dns_query TEXT`)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return err
+	}
+	_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN engine TEXT`)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return err
+	}
+	_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN source TEXT`)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return err
+	}
+	for _, column := range []struct {
+		name string
+		typ  string
+	}{
+		{"detected_protocol", "TEXT"},
+		{"master_protocol", "TEXT"},
+		{"application_protocol", "TEXT"},
+		{"category", "TEXT"},
+		{"risk", "TEXT"},
+		{"confidence", "INTEGER"},
+		{"metadata_json", "TEXT"},
+	} {
+		_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN `+column.name+` `+column.typ)
+		if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return err
+		}
 	}
 	return nil
 }
@@ -132,8 +187,16 @@ func (l *TrafficFlowLog) UpsertActive(ctx context.Context, flow TrafficFlow) err
 	if flow.FlowKey == "" {
 		flow.FlowKey = FlowKey(flow.Protocol, flow.ClientAddress, flow.ClientPort, flow.PeerAddress, flow.PeerPort)
 	}
-	_, err := l.db.ExecContext(ctx, `INSERT INTO flows(flow_key,ts_started,client_address,client_port,peer_address,peer_port,protocol,nat_translated_address,accounting,bytes_out,bytes_in,packets_out,packets_in,app_name,app_category,app_confidence,tls_sni,resolved_hostname)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	flow.Engine = strings.ToLower(strings.TrimSpace(flow.Engine))
+	flow.Source = strings.ToLower(strings.TrimSpace(flow.Source))
+	flow.DetectedProtocol = strings.ToLower(strings.TrimSpace(flow.DetectedProtocol))
+	flow.MasterProtocol = strings.ToLower(strings.TrimSpace(flow.MasterProtocol))
+	flow.ApplicationProtocol = strings.ToLower(strings.TrimSpace(flow.ApplicationProtocol))
+	flow.Category = strings.ToLower(strings.TrimSpace(flow.Category))
+	riskJSON := jsonString(flow.Risk)
+	metadataJSON := jsonString(flow.Metadata)
+	_, err := l.db.ExecContext(ctx, `INSERT INTO flows(flow_key,ts_started,client_address,client_port,peer_address,peer_port,protocol,nat_translated_address,accounting,bytes_out,bytes_in,packets_out,packets_in,app_name,app_category,app_confidence,detected_protocol,master_protocol,application_protocol,category,risk,confidence,metadata_json,engine,source,tls_sni,http_host,dns_query,resolved_hostname)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(flow_key) DO UPDATE SET
   ts_ended = NULL,
   client_address = excluded.client_address,
@@ -147,11 +210,22 @@ ON CONFLICT(flow_key) DO UPDATE SET
   bytes_in = excluded.bytes_in,
   packets_out = excluded.packets_out,
   packets_in = excluded.packets_in,
-  app_name = excluded.app_name,
-  app_category = excluded.app_category,
-  app_confidence = excluded.app_confidence,
-  tls_sni = excluded.tls_sni,
-  resolved_hostname = excluded.resolved_hostname`,
+  app_name = CASE WHEN excluded.app_name != '' THEN excluded.app_name ELSE app_name END,
+  app_category = CASE WHEN excluded.app_category != '' THEN excluded.app_category ELSE app_category END,
+  app_confidence = CASE WHEN excluded.app_confidence != 0 THEN excluded.app_confidence ELSE app_confidence END,
+  detected_protocol = CASE WHEN excluded.detected_protocol != '' THEN excluded.detected_protocol ELSE detected_protocol END,
+  master_protocol = CASE WHEN excluded.master_protocol != '' THEN excluded.master_protocol ELSE master_protocol END,
+  application_protocol = CASE WHEN excluded.application_protocol != '' THEN excluded.application_protocol ELSE application_protocol END,
+  category = CASE WHEN excluded.category != '' THEN excluded.category ELSE category END,
+  risk = CASE WHEN excluded.risk != '' THEN excluded.risk ELSE risk END,
+  confidence = CASE WHEN excluded.confidence != 0 THEN excluded.confidence ELSE confidence END,
+  metadata_json = CASE WHEN excluded.metadata_json != '' THEN excluded.metadata_json ELSE metadata_json END,
+  engine = CASE WHEN excluded.engine != '' THEN excluded.engine ELSE engine END,
+  source = CASE WHEN excluded.source != '' THEN excluded.source ELSE source END,
+  tls_sni = CASE WHEN excluded.tls_sni != '' THEN excluded.tls_sni ELSE tls_sni END,
+  http_host = CASE WHEN excluded.http_host != '' THEN excluded.http_host ELSE http_host END,
+  dns_query = CASE WHEN excluded.dns_query != '' THEN excluded.dns_query ELSE dns_query END,
+  resolved_hostname = CASE WHEN excluded.resolved_hostname != '' THEN excluded.resolved_hostname ELSE resolved_hostname END`,
 		flow.FlowKey,
 		flow.StartedAt.UnixNano(),
 		flow.ClientAddress,
@@ -168,7 +242,18 @@ ON CONFLICT(flow_key) DO UPDATE SET
 		flow.AppName,
 		flow.AppCategory,
 		flow.AppConfidence,
+		flow.DetectedProtocol,
+		flow.MasterProtocol,
+		flow.ApplicationProtocol,
+		flow.Category,
+		riskJSON,
+		flow.Confidence,
+		metadataJSON,
+		flow.Engine,
+		flow.Source,
 		flow.TLSSNI,
+		flow.HTTPHost,
+		flow.DNSQuery,
 		flow.ResolvedHostname,
 	)
 	return err
@@ -199,6 +284,10 @@ func (l *TrafficFlowLog) List(ctx context.Context, filter TrafficFlowFilter) ([]
 	if l == nil || l.db == nil {
 		return nil, nil
 	}
+	columns, err := tableColumns(ctx, l.db, "flows")
+	if err != nil {
+		return nil, err
+	}
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 50
@@ -225,7 +314,7 @@ func (l *TrafficFlowLog) List(ctx context.Context, filter TrafficFlowFilter) ([]
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	args = append(args, limit)
-	rows, err := l.db.QueryContext(ctx, `SELECT flow_key,ts_started,coalesce(ts_ended,0),coalesce(client_address,''),coalesce(client_port,0),coalesce(peer_address,''),coalesce(peer_port,0),protocol,coalesce(nat_translated_address,''),coalesce(accounting,0),coalesce(bytes_out,0),coalesce(bytes_in,0),coalesce(packets_out,0),coalesce(packets_in,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(tls_sni,''),coalesce(resolved_hostname,'')
+	rows, err := l.db.QueryContext(ctx, `SELECT flow_key,ts_started,coalesce(ts_ended,0),coalesce(client_address,''),coalesce(client_port,0),coalesce(peer_address,''),coalesce(peer_port,0),protocol,coalesce(nat_translated_address,''),`+optionalIntColumn(columns, "accounting")+`,coalesce(bytes_out,0),coalesce(bytes_in,0),coalesce(packets_out,0),coalesce(packets_in,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),`+optionalTextColumn(columns, "detected_protocol")+`,`+optionalTextColumn(columns, "master_protocol")+`,`+optionalTextColumn(columns, "application_protocol")+`,`+optionalTextColumn(columns, "category")+`,`+optionalTextColumn(columns, "risk")+`,`+optionalIntColumn(columns, "confidence")+`,`+optionalTextColumn(columns, "metadata_json")+`,`+optionalTextColumn(columns, "engine")+`,`+optionalTextColumn(columns, "source")+`,coalesce(tls_sni,''),`+optionalTextColumn(columns, "http_host")+`,`+optionalTextColumn(columns, "dns_query")+`,coalesce(resolved_hostname,'')
 FROM flows`+where+` ORDER BY ts_started DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -235,9 +324,12 @@ FROM flows`+where+` ORDER BY ts_started DESC LIMIT ?`, args...)
 	for rows.Next() {
 		var flow TrafficFlow
 		var started, ended int64
-		if err := rows.Scan(&flow.FlowKey, &started, &ended, &flow.ClientAddress, &flow.ClientPort, &flow.PeerAddress, &flow.PeerPort, &flow.Protocol, &flow.NATTranslatedAddress, &flow.Accounting, &flow.BytesOut, &flow.BytesIn, &flow.PacketsOut, &flow.PacketsIn, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.TLSSNI, &flow.ResolvedHostname); err != nil {
+		var riskJSON, metadataJSON string
+		if err := rows.Scan(&flow.FlowKey, &started, &ended, &flow.ClientAddress, &flow.ClientPort, &flow.PeerAddress, &flow.PeerPort, &flow.Protocol, &flow.NATTranslatedAddress, &flow.Accounting, &flow.BytesOut, &flow.BytesIn, &flow.PacketsOut, &flow.PacketsIn, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.DetectedProtocol, &flow.MasterProtocol, &flow.ApplicationProtocol, &flow.Category, &riskJSON, &flow.Confidence, &metadataJSON, &flow.Engine, &flow.Source, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &flow.ResolvedHostname); err != nil {
 			return nil, err
 		}
+		flow.Risk = jsonStringSlice(riskJSON)
+		flow.Metadata = jsonStringMap(metadataJSON)
 		flow.StartedAt = time.Unix(0, started).UTC()
 		if ended > 0 {
 			flow.EndedAt = time.Unix(0, ended).UTC()

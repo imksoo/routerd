@@ -141,12 +141,24 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 		return err
 	}
 	defer log.Close()
+	var dpiStore *logstore.FirewallLog
+	if dpiPath := firewallLogPath(c.Router); dpiPath != "" {
+		if store, err := logstore.OpenFirewallLogReadOnly(dpiPath); err == nil {
+			dpiStore = store
+			defer dpiStore.Close()
+		} else if c.Logger != nil {
+			c.Logger.Debug("traffic flow DPI cache unavailable", "error", err)
+		}
+	}
 	now := time.Now().UTC()
 	var active []string
 	for _, entry := range table.Entries {
 		flow := trafficFlowFromConnection(entry, now)
 		if flow.FlowKey == "" {
 			continue
+		}
+		if dpiStore != nil {
+			enrichTrafficFlowFromDPIStore(ctx, dpiStore, &flow, now, time.Hour)
 		}
 		active = append(active, flow.FlowKey)
 		if err := log.UpsertActive(ctx, flow); err != nil {
@@ -191,6 +203,100 @@ func trafficFlowLogSpec(router *api.Router) (api.Resource, api.TrafficFlowLogSpe
 	return api.Resource{}, api.TrafficFlowLogSpec{}, false
 }
 
+func firewallLogPath(router *api.Router) string {
+	if router == nil {
+		return ""
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "FirewallLog" {
+			continue
+		}
+		spec, err := resource.FirewallLogSpec()
+		if err != nil || !spec.Enabled {
+			continue
+		}
+		if strings.TrimSpace(spec.Path) != "" {
+			return spec.Path
+		}
+		return "/var/lib/routerd/firewall-logs.db"
+	}
+	return ""
+}
+
+func enrichTrafficFlowFromDPIStore(ctx context.Context, store *logstore.FirewallLog, flow *logstore.TrafficFlow, now time.Time, ttl time.Duration) {
+	if store == nil || flow == nil {
+		return
+	}
+	dpiFlow, ok, err := store.FindDPIFlowForFirewallEntry(ctx, logstore.FirewallLogEntry{
+		Protocol:   flow.Protocol,
+		SrcAddress: flow.ClientAddress,
+		SrcPort:    flow.ClientPort,
+		DstAddress: flow.PeerAddress,
+		DstPort:    flow.PeerPort,
+	}, now, ttl)
+	if err != nil || !ok {
+		return
+	}
+	applyDPIFlow(flow, dpiFlow)
+}
+
+func applyDPIFlow(flow *logstore.TrafficFlow, dpiFlow logstore.DPIFlowEntry) {
+	if flow == nil {
+		return
+	}
+	if flow.AppName == "" {
+		flow.AppName = dpiFlow.AppName
+	}
+	if flow.AppCategory == "" {
+		flow.AppCategory = dpiFlow.AppCategory
+	}
+	if flow.AppConfidence == 0 {
+		flow.AppConfidence = dpiFlow.AppConfidence
+	}
+	if flow.DetectedProtocol == "" {
+		flow.DetectedProtocol = dpiFlow.DetectedProtocol
+	}
+	if flow.MasterProtocol == "" {
+		flow.MasterProtocol = dpiFlow.MasterProtocol
+	}
+	if flow.ApplicationProtocol == "" {
+		flow.ApplicationProtocol = dpiFlow.ApplicationProtocol
+	}
+	if flow.Category == "" {
+		flow.Category = dpiFlow.Category
+	}
+	if len(flow.Risk) == 0 {
+		flow.Risk = append([]string(nil), dpiFlow.Risk...)
+	}
+	if flow.Confidence == 0 {
+		flow.Confidence = dpiFlow.Confidence
+	}
+	if len(flow.Metadata) == 0 && len(dpiFlow.Metadata) > 0 {
+		flow.Metadata = map[string]string{}
+		for key, value := range dpiFlow.Metadata {
+			flow.Metadata[key] = value
+		}
+	}
+	if flow.Engine == "" {
+		flow.Engine = dpiFlow.Engine
+	}
+	if flow.Source == "" {
+		flow.Source = dpiFlow.Source
+	}
+	if flow.TLSSNI == "" {
+		flow.TLSSNI = dpiFlow.TLSSNI
+	}
+	if flow.HTTPHost == "" {
+		flow.HTTPHost = dpiFlow.HTTPHost
+	}
+	if flow.DNSQuery == "" {
+		flow.DNSQuery = dpiFlow.DNSQuery
+	}
+	if flow.ResolvedHostname == "" {
+		flow.ResolvedHostname = firstNonEmpty(dpiFlow.TLSSNI, dpiFlow.HTTPHost, dpiFlow.DNSQuery)
+	}
+}
+
 func trafficFlowFromConnection(entry observe.ConnectionEntry, now time.Time) logstore.TrafficFlow {
 	client := entry.Original.Source
 	peer := entry.Original.Destination
@@ -217,7 +323,9 @@ func trafficFlowFromConnection(entry observe.ConnectionEntry, now time.Time) log
 		AppCategory:          entry.AppCategory,
 		AppConfidence:        entry.AppConfidence,
 		TLSSNI:               entry.TLSSNI,
-		ResolvedHostname:     firstNonEmpty(entry.HTTPHost, entry.DNSQuery),
+		HTTPHost:             entry.HTTPHost,
+		DNSQuery:             entry.DNSQuery,
+		ResolvedHostname:     firstNonEmpty(entry.TLSSNI, entry.HTTPHost, entry.DNSQuery),
 	}
 	flow.FlowKey = logstore.FlowKey(flow.Protocol, flow.ClientAddress, flow.ClientPort, flow.PeerAddress, flow.PeerPort)
 	return flow
@@ -291,6 +399,9 @@ func positiveDelta(current, previous int64) int64 {
 
 func trafficMetricProtocol(flow logstore.TrafficFlow) string {
 	if app := strings.ToLower(strings.TrimSpace(flow.AppName)); app != "" && app != "unknown" {
+		if protocol := providerTrafficProtocol(app, flow); protocol != "" {
+			return protocol
+		}
 		return app
 	}
 	if strings.TrimSpace(flow.TLSSNI) != "" {
@@ -317,6 +428,18 @@ func trafficMetricProtocol(flow logstore.TrafficFlow) string {
 		return protocol
 	}
 	return "unidentified"
+}
+
+func providerTrafficProtocol(app string, flow logstore.TrafficFlow) string {
+	switch strings.ToLower(strings.TrimSpace(app)) {
+	case "google", "googleservices", "amazonaws", "microsoft", "microsoft365", "azure", "apple", "appleicloud", "cloudflare", "nintendo":
+		if strings.EqualFold(flow.Protocol, "udp") && flow.PeerPort == 443 {
+			return "quic"
+		}
+		return "tls"
+	default:
+		return ""
+	}
 }
 
 func atoi(value string) int {

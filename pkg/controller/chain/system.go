@@ -457,6 +457,11 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		if err := c.cleanupStaleHealthCheckUnits(ctx, explicitUnits, command); err != nil {
 			return err
 		}
+		if render.RouterWantsNDPIAgent(c.Router) && !explicitUnits[render.NDPIAgentUnitName] {
+			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "SystemdUnit/"+render.DPIClassifierUnitName, render.NDPIAgentSystemdSpec("/run"), command); err != nil {
+				return err
+			}
+		}
 	}
 	if err := c.reconcileDisabledPPPoEInterfaces(); err != nil {
 		return err
@@ -482,6 +487,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		path := filepath.Join(c.SystemdSystemDir, unitName)
+		spec = render.MaybeAugmentDPIClassifierSpec(unitName, spec, render.NDPIAgentUnitName)
 		spec.Environment = mergeStringEnvs(spec.Environment, telemetryEnv)
 		changed, err := c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, spec, command)
 		if err != nil {
@@ -711,6 +717,49 @@ func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.systemd_unit.applied", daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit", Name: unitName}
 		event.Attributes = map[string]string{"unitName": unitName, "path": path, "source": kind + "/" + resourceName}
+		return c.Bus.Publish(ctx, event)
+	}
+	return nil
+}
+
+func (c SystemdUnitController) reconcileSyntheticSystemdHelperUnit(ctx context.Context, unitName, source string, spec api.SystemdUnitSpec, command outputCommandFunc) error {
+	path := filepath.Join(c.SystemdSystemDir, unitName)
+	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, spec, command)
+	if err != nil {
+		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, map[string]any{
+			"phase":     "Error",
+			"reason":    "ApplyFailed",
+			"unitName":  unitName,
+			"path":      path,
+			"source":    source,
+			"error":     err.Error(),
+			"dryRun":    c.DryRun,
+			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		}); saveErr != nil {
+			return saveErr
+		}
+		return err
+	}
+	phase := "Applied"
+	if c.DryRun && changed {
+		phase = "Rendered"
+	}
+	status := map[string]any{
+		"phase":     phase,
+		"unitName":  unitName,
+		"path":      path,
+		"source":    source,
+		"changed":   changed,
+		"dryRun":    c.DryRun,
+		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, status); err != nil {
+		return err
+	}
+	if changed && !c.DryRun && c.Bus != nil {
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.systemd_unit.applied", daemonapi.SeverityInfo)
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit", Name: unitName}
+		event.Attributes = map[string]string{"unitName": unitName, "path": path, "source": source}
 		return c.Bus.Publish(ctx, event)
 	}
 	return nil

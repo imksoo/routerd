@@ -601,6 +601,34 @@ func TestNixOSModuleSynthesizesFirewallLoggerUnit(t *testing.T) {
 	}
 }
 
+func TestNixOSModuleSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"},
+			Spec: api.SystemdUnitSpec{
+				ExecStart: []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--engine=auto"},
+			},
+		},
+	}}}
+	data, err := NixOSModule(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`systemd.services."routerd-ndpi-agent"`,
+		`"/usr/local/sbin/routerd-ndpi-agent"`,
+		`"/run/routerd/ndpi-agent/default.sock"`,
+		`systemd.services."routerd-dpi-classifier"`,
+		`"routerd-ndpi-agent.service"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("NixOS module missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNixOSModuleSynthesizesDHCPv4ClientDaemonUnit(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

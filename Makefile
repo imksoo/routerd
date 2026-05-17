@@ -26,6 +26,7 @@ ROUTERD_HEALTHCHECK_BIN := $(BUILDDIR)/routerd-healthcheck
 ROUTERD_DNS_RESOLVER_BIN := $(BUILDDIR)/routerd-dns-resolver
 ROUTERD_FIREWALL_LOGGER_BIN := $(BUILDDIR)/routerd-firewall-logger
 ROUTERD_DPI_CLASSIFIER_BIN := $(BUILDDIR)/routerd-dpi-classifier
+ROUTERD_NDPI_AGENT_BIN := $(BUILDDIR)/routerd-ndpi-agent
 ROUTERD_PPPOE_CLIENT_BIN := $(BUILDDIR)/routerd-pppoe-client
 ROUTERD_RELEASE_BINS := $(ROUTERD_BIN) $(ROUTERCTL_BIN) $(ROUTERD_DHCPv4_CLIENT_BIN) $(ROUTERD_DHCPv6_CLIENT_BIN) $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN) $(ROUTERD_HEALTHCHECK_BIN) $(ROUTERD_DNS_RESOLVER_BIN) $(ROUTERD_FIREWALL_LOGGER_BIN) $(ROUTERD_DPI_CLASSIFIER_BIN) $(ROUTERD_PPPOE_CLIENT_BIN)
 GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
@@ -38,7 +39,7 @@ PLAYWRIGHT_INSTALL_FLAGS ?= --with-deps
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test build build-daemons build-daemons-freebsd check-linux-static check-install-deps alpine-vm-smoke webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema website-deps website-build third-party-licenses check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test build build-daemons build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-install-deps alpine-vm-smoke webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema website-deps website-build third-party-licenses check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -59,6 +60,14 @@ build-daemons:
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_FIREWALL_LOGGER_BIN) ./cmd/routerd-firewall-logger
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_DPI_CLASSIFIER_BIN) ./cmd/routerd-dpi-classifier
 	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_PPPOE_CLIENT_BIN) ./cmd/routerd-pppoe-client
+
+build-ndpi-agent:
+	install -d $(BUILDDIR)
+	$(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(ROUTERD_NDPI_AGENT_BIN) ./cmd/routerd-ndpi-agent
+
+build-ndpi-agent-libndpi:
+	install -d $(BUILDDIR)
+	CGO_ENABLED=1 GOOS=$(ROUTERD_OS) $(if $(GOARCH),GOARCH=$(GOARCH),) go build $(GO_BUILD_FLAGS) -tags libndpi -o $(ROUTERD_NDPI_AGENT_BIN) ./cmd/routerd-ndpi-agent
 
 build-daemons-freebsd:
 	$(MAKE) build-daemons ROUTERD_OS=freebsd GOARCH=amd64

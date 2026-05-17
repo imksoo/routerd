@@ -1701,4 +1701,5 @@ spec:
         log:
           acceptSampleRate: 1
           dropSampleRate: 1
+          copyRange: 2048
           reject: true

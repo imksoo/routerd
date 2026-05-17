@@ -8,6 +8,46 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 本軟體仍在 v1alpha1 階段，版本之間可能含有破壞性異動。
 
+## Unreleased
+
+### 變更
+
+- `routerd-dpi-classifier` 現在有明確的 classifier engine facade。預設 engine 是
+  built-in parser，`auto` / `ndpi-agent` mode 可以查詢未來的
+  `routerd-ndpi-agent` Unix socket service，失敗時會 fallback 到 built-in parser。
+- Web Console Connections 現在會在 DPI 尚未識別 flow 時，將 TCP port 4317
+  標示為 OTLP，將 TCP port 4318 標示為 OTLP/HTTP。
+
+### 新增
+
+- 新增初始版 `routerd-ndpi-agent` service boundary 作為 optional command。預設
+  build 會回報 libndpi backend 不可用，而 `-tags libndpi` build 會在同一個
+  IPC surface 後方連結 native library。
+- `routerd-ndpi-agent` 現在會持有 per-flow observation state，包括 flow TTL、flow
+  數量上限、起始 payload packet 數量上限，以及 observed、classified、unknown、
+  skipped、error、pruned packet 的 status counter。
+- 新增 `routerd-ndpi-agent` 的初始 libndpi backend。它透過 `libndpi` build tag
+  opt-in，將 native flow state 保留在 agent 內，並可分類 firewall logger 傳來的
+  full packet observation。
+- 新增 `make build-ndpi-agent-libndpi` target，可在已安裝 libndpi development files
+  的環境中建置 optional native backend。
+- 當 `routerd-dpi-classifier` 設定為 `--engine auto` 或 `--engine ndpi-agent`
+  時，systemd、OpenRC、FreeBSD rc.d 與 NixOS 現在會 render `routerd-ndpi-agent`。
+- DPI flow 與 traffic flow record 現在除了既有 app label 欄位外，也會保存 typed
+  classifier fields，例如 detected protocol、application protocol、category、
+  confidence、risk 與 metadata。
+
+### 修正
+
+- Linux 升級時，如果有 routerd helper 的 systemd service 仍在執行升級前已刪除的
+  binary，`install.sh` 現在會重新啟動該 service。
+- 當 nDPI agent 結果已識別 application、但缺少 TLS SNI、HTTP Host 或 DNS query
+  等 detail 時，`routerd-dpi-classifier` 現在會保留 built-in parser 提供的有用 hint。
+- DPI helper daemon bind Unix socket 時，現在會拒絕 unlink 非 socket path；
+  `routerd-ndpi-agent` 也會明確 close native libndpi state。
+- Web Console 讀取 traffic-flow 時，現在可容忍 writer 尚未完成 schema migration、
+  因而缺少最新 DPI column 的 legacy SQLite file。
+
 ## v20260516.2302
 
 ### 變更

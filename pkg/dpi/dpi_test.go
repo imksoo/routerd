@@ -13,6 +13,9 @@ func TestClassifyTLSSNIFromPayload(t *testing.T) {
 	if got.TLSSNI != "routerd.example" || got.AppName != "tls" || got.AppConfidence < 80 {
 		t.Fatalf("classification = %+v", got)
 	}
+	if got.ApplicationProtocol != "tls" || got.DetectedProtocol != "tls" || got.Category != "web" || got.Confidence != got.AppConfidence || got.Metadata["tls.sni"] != "routerd.example" {
+		t.Fatalf("typed classification = %+v metadata=%+v", got, got.Metadata)
+	}
 }
 
 func TestClassifyTLSSNIFromIPv4Packet(t *testing.T) {

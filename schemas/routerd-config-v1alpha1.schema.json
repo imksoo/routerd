@@ -7239,6 +7239,10 @@
                             "minimum": 0,
                             "type": "integer"
                           },
+                          "copyRange": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "dropSampleRate": {
                             "minimum": 0,
                             "type": "integer"

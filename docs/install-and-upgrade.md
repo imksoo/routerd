@@ -219,6 +219,8 @@ mode.
 It prints the old and new `routerd --version` output.
 It replaces binaries and service templates, keeps configuration and state, and
 restarts the routerd service if it was already active.
+On systemd hosts, it also restarts active routerd helper services that are still
+running a deleted binary from before the upgrade.
 When `/etc/systemd/system/routerd.service` is already managed by routerd
 configuration, the installer preserves that unit instead of overwriting it with
 the archive template.

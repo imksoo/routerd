@@ -259,6 +259,61 @@ func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitControllerSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"}, Spec: api.SystemdUnitSpec{
+			Description: "routerd DPI classifier",
+			ExecStart:   []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--engine", "auto"},
+			Enabled:     systemBoolPtr(true),
+			Started:     systemBoolPtr(true),
+		}},
+	}}}
+	store := mapStore{}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            store,
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "systemctl" && len(args) >= 2 && (args[0] == "is-active" || args[0] == "is-enabled") {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	agentData, err := os.ReadFile(filepath.Join(dir, "routerd-ndpi-agent.service"))
+	if err != nil {
+		t.Fatalf("read ndpi agent unit: %v", err)
+	}
+	if !strings.Contains(string(agentData), "ExecStart=/usr/local/sbin/routerd-ndpi-agent daemon --socket /run/routerd/ndpi-agent/default.sock") {
+		t.Fatalf("ndpi agent unit =\n%s", string(agentData))
+	}
+	classifierData, err := os.ReadFile(filepath.Join(dir, "routerd-dpi-classifier.service"))
+	if err != nil {
+		t.Fatalf("read classifier unit: %v", err)
+	}
+	classifier := string(classifierData)
+	for _, want := range []string{"After=routerd-ndpi-agent.service", "Wants=routerd-ndpi-agent.service"} {
+		if !strings.Contains(classifier, want) {
+			t.Fatalf("classifier unit missing %q:\n%s", want, classifier)
+		}
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", "routerd-ndpi-agent.service")
+	if status["phase"] != "Applied" || status["source"] != "SystemdUnit/routerd-dpi-classifier.service" {
+		t.Fatalf("status = %#v", status)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	if !strings.Contains(gotCommands, "systemctl restart routerd-ndpi-agent.service") {
+		t.Fatalf("commands missing ndpi agent restart:\n%s", gotCommands)
+	}
+}
+
 func TestSystemdUnitControllerDoesNotReloadForAlreadyAbsentUnit(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

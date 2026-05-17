@@ -3200,6 +3200,9 @@ func validateResource(res api.Resource) error {
 		if spec.NFLogGroup < 0 || spec.NFLogGroup > 65535 {
 			return fmt.Errorf("%s spec.nflogGroup must be between 0 and 65535", res.ID())
 		}
+		if spec.Log.CopyRange < 0 {
+			return fmt.Errorf("%s spec.log.copyRange must be greater than or equal to 0", res.ID())
+		}
 	case "FirewallRule":
 		if res.APIVersion != api.FirewallAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)

@@ -20,9 +20,10 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		return nil, err
 	}
 	dpiSocket := ""
-	if hasSystemdUnit(router, "routerd-dpi-classifier.service") {
+	if hasSystemdUnit(router, DPIClassifierUnitName) {
 		dpiSocket = "/var/run/routerd/dpi-classifier/default.sock"
 	}
+	wantsNDPIAgent := RouterWantsNDPIAgent(router)
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "SystemdUnit" {
 			continue
@@ -34,14 +35,26 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		if defaultString(spec.State, "present") == "absent" {
 			continue
 		}
-		name := freeBSDServiceName(defaultString(spec.UnitName, res.Metadata.Name))
+		unitName := defaultString(spec.UnitName, res.Metadata.Name)
+		name := freeBSDServiceName(unitName)
 		explicit[name] = true
+		spec = MaybeAugmentDPIClassifierSpec(unitName, spec, freeBSDServiceName(NDPIAgentUnitName))
 		spec.Environment = mergeEnvironment(spec.Environment, telemetryEnv)
 		data, err := FreeBSDRCDScript(name, spec)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", res.ID(), err)
 		}
 		out[name] = data
+	}
+	if wantsNDPIAgent {
+		name := freeBSDServiceName(NDPIAgentUnitName)
+		if !explicit[name] {
+			data, err := FreeBSDRCDScript(name, NDPIAgentSystemdSpec("/var/run"))
+			if err != nil {
+				return nil, err
+			}
+			out[name] = data
+		}
 	}
 	synthesizeClientDaemons := !freeBSDRouterdSupervisesClientDaemons(router)
 	aliases, err := nftOutboundAliases(router)
@@ -520,7 +533,7 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 	buf.WriteString("#!/bin/sh\n")
 	buf.WriteString("#\n")
 	buf.WriteString("# PROVIDE: " + name + "\n")
-	buf.WriteString("# REQUIRE: NETWORKING\n")
+	buf.WriteString("# REQUIRE: " + strings.Join(freeBSDRCDRequires(spec), " ") + "\n")
 	buf.WriteString("# KEYWORD: shutdown\n")
 	buf.WriteString("\n")
 	buf.WriteString(". /etc/rc.subr\n\n")
@@ -720,6 +733,24 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 	buf.WriteString("\"}\n")
 	buf.WriteString("run_rc_command \"$1\"\n")
 	return buf.Bytes(), nil
+}
+
+func freeBSDRCDRequires(spec api.SystemdUnitSpec) []string {
+	requires := []string{"NETWORKING"}
+	seen := map[string]bool{"NETWORKING": true}
+	for _, value := range append(append([]string{}, spec.After...), spec.Wants...) {
+		value = strings.TrimSpace(value)
+		if value == "" || value == "NETWORKING" || value == "network-online.target" || value == "network.target" {
+			continue
+		}
+		service := freeBSDServiceName(value)
+		if service == "" || seen[service] {
+			continue
+		}
+		seen[service] = true
+		requires = append(requires, service)
+	}
+	return requires
 }
 
 func freeBSDServiceDirs(root string, values []string) []string {

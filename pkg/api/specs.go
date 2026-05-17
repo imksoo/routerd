@@ -1143,6 +1143,7 @@ type FirewallLogSpec struct {
 type FirewallLogPolicySpec struct {
 	AcceptSampleRate int  `yaml:"acceptSampleRate,omitempty" json:"acceptSampleRate,omitempty" jsonschema:"minimum=0"`
 	DropSampleRate   int  `yaml:"dropSampleRate,omitempty" json:"dropSampleRate,omitempty" jsonschema:"minimum=0"`
+	CopyRange        int  `yaml:"copyRange,omitempty" json:"copyRange,omitempty" jsonschema:"minimum=0"`
 	Reject           bool `yaml:"reject,omitempty" json:"reject,omitempty"`
 }
 

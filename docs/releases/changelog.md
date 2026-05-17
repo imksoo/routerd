@@ -8,6 +8,51 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
+## Unreleased
+
+### Changed
+
+- `routerd-dpi-classifier` now has an explicit classifier engine facade. The
+  default engine is the built-in parser, and `auto` / `ndpi-agent` modes can
+  query a future `routerd-ndpi-agent` Unix-socket service with built-in fallback.
+- Web Console Connections now labels TCP port 4317 as OTLP and TCP port 4318 as
+  OTLP/HTTP when DPI has not identified the flow.
+
+### Added
+
+- Added the initial `routerd-ndpi-agent` service boundary as an optional
+  command. Default builds report that the libndpi backend is unavailable,
+  while `-tags libndpi` builds link the native library behind the same IPC
+  surface.
+- `routerd-ndpi-agent` now owns per-flow observation state, including flow TTL,
+  flow count limits, first-payload-packet limits, and status counters for
+  observed, classified, unknown, skipped, error, and pruned packets.
+- Added the initial libndpi backend for `routerd-ndpi-agent`. It is opt-in via
+  the `libndpi` build tag, keeps native flow state inside the agent, and can
+  classify full packet observations from the firewall logger.
+- Added a `make build-ndpi-agent-libndpi` target for building the optional
+  native backend when libndpi development files are installed.
+- Added systemd, OpenRC, FreeBSD rc.d, and NixOS rendering for
+  `routerd-ndpi-agent` when `routerd-dpi-classifier` is configured with
+  `--engine auto` or `--engine ndpi-agent`.
+- DPI flow and traffic-flow records now persist typed classifier fields such as
+  detected protocol, application protocol, category, confidence, risk, and
+  metadata in addition to the legacy app label fields.
+
+### Fixed
+
+- On Linux upgrades, `install.sh` now restarts active routerd helper systemd
+  services that are still running a deleted pre-upgrade binary after the
+  replacement.
+- `routerd-dpi-classifier` now preserves useful built-in packet hints such as
+  TLS SNI, HTTP Host, and DNS query when an nDPI agent result identifies the
+  application but lacks those details.
+- DPI helper daemons now refuse to unlink a non-socket path when binding their
+  Unix sockets, and `routerd-ndpi-agent` closes native libndpi state explicitly.
+- Web Console traffic-flow reads now tolerate legacy SQLite files that do not
+  yet have the newest DPI columns, so a read-only UI query can still succeed
+  before the writer performs schema migration.
+
 ## v20260516.2302
 
 ### Changed

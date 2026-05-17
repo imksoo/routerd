@@ -5,6 +5,7 @@ package logstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,23 +67,32 @@ type ExpiredFlowEntry struct {
 }
 
 type DPIFlowEntry struct {
-	FlowID        string    `json:"flowID,omitempty"`
-	FirstSeen     time.Time `json:"firstSeen,omitempty"`
-	LastSeen      time.Time `json:"lastSeen,omitempty"`
-	L3Proto       string    `json:"l3Proto,omitempty"`
-	Protocol      string    `json:"protocol"`
-	SrcAddress    string    `json:"srcAddress"`
-	SrcPort       int       `json:"srcPort,omitempty"`
-	DstAddress    string    `json:"dstAddress"`
-	DstPort       int       `json:"dstPort,omitempty"`
-	AppName       string    `json:"appName,omitempty"`
-	AppCategory   string    `json:"appCategory,omitempty"`
-	AppConfidence int       `json:"appConfidence,omitempty"`
-	TLSSNI        string    `json:"tlsSNI,omitempty"`
-	HTTPHost      string    `json:"httpHost,omitempty"`
-	DNSQuery      string    `json:"dnsQuery,omitempty"`
-	ClassifiedAt  time.Time `json:"classifiedAt,omitempty"`
-	PacketCount   int       `json:"packetCount,omitempty"`
+	FlowID              string            `json:"flowID,omitempty"`
+	FirstSeen           time.Time         `json:"firstSeen,omitempty"`
+	LastSeen            time.Time         `json:"lastSeen,omitempty"`
+	L3Proto             string            `json:"l3Proto,omitempty"`
+	Protocol            string            `json:"protocol"`
+	SrcAddress          string            `json:"srcAddress"`
+	SrcPort             int               `json:"srcPort,omitempty"`
+	DstAddress          string            `json:"dstAddress"`
+	DstPort             int               `json:"dstPort,omitempty"`
+	AppName             string            `json:"appName,omitempty"`
+	AppCategory         string            `json:"appCategory,omitempty"`
+	AppConfidence       int               `json:"appConfidence,omitempty"`
+	DetectedProtocol    string            `json:"detectedProtocol,omitempty"`
+	MasterProtocol      string            `json:"masterProtocol,omitempty"`
+	ApplicationProtocol string            `json:"applicationProtocol,omitempty"`
+	Category            string            `json:"category,omitempty"`
+	Risk                []string          `json:"risk,omitempty"`
+	Confidence          int               `json:"confidence,omitempty"`
+	Metadata            map[string]string `json:"metadata,omitempty"`
+	Engine              string            `json:"engine,omitempty"`
+	Source              string            `json:"source,omitempty"`
+	TLSSNI              string            `json:"tlsSNI,omitempty"`
+	HTTPHost            string            `json:"httpHost,omitempty"`
+	DNSQuery            string            `json:"dnsQuery,omitempty"`
+	ClassifiedAt        time.Time         `json:"classifiedAt,omitempty"`
+	PacketCount         int               `json:"packetCount,omitempty"`
 }
 
 type FirewallLogFilter struct {
@@ -202,6 +212,15 @@ CREATE TABLE IF NOT EXISTS dpi_flow (
   app_name TEXT,
   app_category TEXT,
   app_confidence INTEGER,
+  detected_protocol TEXT,
+  master_protocol TEXT,
+  application_protocol TEXT,
+  category TEXT,
+  risk TEXT,
+  confidence INTEGER,
+  metadata_json TEXT,
+  engine TEXT,
+  source TEXT,
   tls_sni TEXT,
   http_host TEXT,
   dns_query TEXT,
@@ -397,7 +416,55 @@ func (l *FirewallLog) ensureDPIColumns(ctx context.Context) error {
 		}
 	}
 	_, err = l.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS firewall_logs_dpi_app_ts ON firewall_logs(dpi_app, ts);`)
-	return err
+	if err != nil {
+		return err
+	}
+	return l.ensureDPIFlowColumns(ctx)
+}
+
+func (l *FirewallLog) ensureDPIFlowColumns(ctx context.Context) error {
+	rows, err := l.db.QueryContext(ctx, `PRAGMA table_info(dpi_flow)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	existing := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull int
+		var defaultValue any
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, column := range []struct {
+		name string
+		typ  string
+	}{
+		{"engine", "TEXT"},
+		{"source", "TEXT"},
+		{"detected_protocol", "TEXT"},
+		{"master_protocol", "TEXT"},
+		{"application_protocol", "TEXT"},
+		{"category", "TEXT"},
+		{"risk", "TEXT"},
+		{"confidence", "INTEGER"},
+		{"metadata_json", "TEXT"},
+	} {
+		if existing[column.name] {
+			continue
+		}
+		if _, err := l.db.ExecContext(ctx, `ALTER TABLE dpi_flow ADD COLUMN `+column.name+` `+column.typ); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (l *FirewallLog) RecordExpiredFlow(ctx context.Context, flow ExpiredFlowEntry, ttl time.Duration, limit int) error {
@@ -453,6 +520,12 @@ func (l *FirewallLog) RecordDPIFlow(ctx context.Context, flow DPIFlowEntry, ttl 
 	}
 	flow.Protocol = strings.ToLower(strings.TrimSpace(flow.Protocol))
 	flow.L3Proto = strings.ToLower(strings.TrimSpace(flow.L3Proto))
+	flow.Engine = strings.ToLower(strings.TrimSpace(flow.Engine))
+	flow.Source = strings.ToLower(strings.TrimSpace(flow.Source))
+	flow.DetectedProtocol = strings.ToLower(strings.TrimSpace(flow.DetectedProtocol))
+	flow.MasterProtocol = strings.ToLower(strings.TrimSpace(flow.MasterProtocol))
+	flow.ApplicationProtocol = strings.ToLower(strings.TrimSpace(flow.ApplicationProtocol))
+	flow.Category = strings.ToLower(strings.TrimSpace(flow.Category))
 	if flow.Protocol == "" || flow.SrcAddress == "" || flow.DstAddress == "" {
 		return nil
 	}
@@ -475,20 +548,31 @@ func (l *FirewallLog) RecordDPIFlow(ctx context.Context, flow DPIFlowEntry, ttl 
 	if flow.PacketCount <= 0 {
 		flow.PacketCount = 1
 	}
-	if _, err := l.db.ExecContext(ctx, `INSERT INTO dpi_flow(flow_id,ts_first,ts_last,l3_proto,protocol,src_address,src_port,dst_address,dst_port,app_name,app_category,app_confidence,tls_sni,http_host,dns_query,classified_at,packet_count)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	riskJSON := jsonString(flow.Risk)
+	metadataJSON := jsonString(flow.Metadata)
+	if _, err := l.db.ExecContext(ctx, `INSERT INTO dpi_flow(flow_id,ts_first,ts_last,l3_proto,protocol,src_address,src_port,dst_address,dst_port,app_name,app_category,app_confidence,detected_protocol,master_protocol,application_protocol,category,risk,confidence,metadata_json,engine,source,tls_sni,http_host,dns_query,classified_at,packet_count)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(flow_id) DO UPDATE SET
   ts_last = excluded.ts_last,
   l3_proto = excluded.l3_proto,
   app_name = excluded.app_name,
   app_category = excluded.app_category,
   app_confidence = excluded.app_confidence,
+  detected_protocol = CASE WHEN excluded.detected_protocol != '' THEN excluded.detected_protocol ELSE dpi_flow.detected_protocol END,
+  master_protocol = CASE WHEN excluded.master_protocol != '' THEN excluded.master_protocol ELSE dpi_flow.master_protocol END,
+  application_protocol = CASE WHEN excluded.application_protocol != '' THEN excluded.application_protocol ELSE dpi_flow.application_protocol END,
+  category = CASE WHEN excluded.category != '' THEN excluded.category ELSE dpi_flow.category END,
+  risk = CASE WHEN excluded.risk != '' THEN excluded.risk ELSE dpi_flow.risk END,
+  confidence = CASE WHEN excluded.confidence != 0 THEN excluded.confidence ELSE dpi_flow.confidence END,
+  metadata_json = CASE WHEN excluded.metadata_json != '' THEN excluded.metadata_json ELSE dpi_flow.metadata_json END,
+  engine = CASE WHEN excluded.engine != '' THEN excluded.engine ELSE dpi_flow.engine END,
+  source = CASE WHEN excluded.source != '' THEN excluded.source ELSE dpi_flow.source END,
   tls_sni = excluded.tls_sni,
   http_host = excluded.http_host,
   dns_query = excluded.dns_query,
   classified_at = excluded.classified_at,
   packet_count = coalesce(dpi_flow.packet_count, 0) + excluded.packet_count`,
-		flow.FlowID, flow.FirstSeen.UnixNano(), flow.LastSeen.UnixNano(), flow.L3Proto, flow.Protocol, flow.SrcAddress, flow.SrcPort, flow.DstAddress, flow.DstPort, flow.AppName, flow.AppCategory, flow.AppConfidence, flow.TLSSNI, flow.HTTPHost, flow.DNSQuery, flow.ClassifiedAt.UnixNano(), flow.PacketCount); err != nil {
+		flow.FlowID, flow.FirstSeen.UnixNano(), flow.LastSeen.UnixNano(), flow.L3Proto, flow.Protocol, flow.SrcAddress, flow.SrcPort, flow.DstAddress, flow.DstPort, flow.AppName, flow.AppCategory, flow.AppConfidence, flow.DetectedProtocol, flow.MasterProtocol, flow.ApplicationProtocol, flow.Category, riskJSON, flow.Confidence, metadataJSON, flow.Engine, flow.Source, flow.TLSSNI, flow.HTTPHost, flow.DNSQuery, flow.ClassifiedAt.UnixNano(), flow.PacketCount); err != nil {
 		return err
 	}
 	return l.PruneDPIFlows(ctx, now, ttl, limit)
@@ -517,6 +601,10 @@ func (l *FirewallLog) ListDPIFlows(ctx context.Context, filter DPIFlowFilter) ([
 	if l == nil || l.db == nil {
 		return nil, nil
 	}
+	columns, err := tableColumns(ctx, l.db, "dpi_flow")
+	if err != nil {
+		return nil, err
+	}
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 1000
@@ -535,7 +623,7 @@ func (l *FirewallLog) ListDPIFlows(ctx context.Context, filter DPIFlowFilter) ([
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	args = append(args, limit)
-	rows, err := l.db.QueryContext(ctx, `SELECT flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
+	rows, err := l.db.QueryContext(ctx, `SELECT flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),`+optionalTextColumn(columns, "detected_protocol")+`,`+optionalTextColumn(columns, "master_protocol")+`,`+optionalTextColumn(columns, "application_protocol")+`,`+optionalTextColumn(columns, "category")+`,`+optionalTextColumn(columns, "risk")+`,`+optionalIntColumn(columns, "confidence")+`,`+optionalTextColumn(columns, "metadata_json")+`,`+optionalTextColumn(columns, "engine")+`,`+optionalTextColumn(columns, "source")+`,coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
 FROM dpi_flow`+where+` ORDER BY ts_last DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -545,9 +633,12 @@ FROM dpi_flow`+where+` ORDER BY ts_last DESC LIMIT ?`, args...)
 	for rows.Next() {
 		var flow DPIFlowEntry
 		var first, last, classified int64
-		if err := rows.Scan(&flow.FlowID, &first, &last, &flow.L3Proto, &flow.Protocol, &flow.SrcAddress, &flow.SrcPort, &flow.DstAddress, &flow.DstPort, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &classified, &flow.PacketCount); err != nil {
+		var riskJSON, metadataJSON string
+		if err := rows.Scan(&flow.FlowID, &first, &last, &flow.L3Proto, &flow.Protocol, &flow.SrcAddress, &flow.SrcPort, &flow.DstAddress, &flow.DstPort, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.DetectedProtocol, &flow.MasterProtocol, &flow.ApplicationProtocol, &flow.Category, &riskJSON, &flow.Confidence, &metadataJSON, &flow.Engine, &flow.Source, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &classified, &flow.PacketCount); err != nil {
 			return nil, err
 		}
+		flow.Risk = jsonStringSlice(riskJSON)
+		flow.Metadata = jsonStringMap(metadataJSON)
 		flow.FirstSeen = time.Unix(0, first).UTC()
 		flow.LastSeen = time.Unix(0, last).UTC()
 		if classified > 0 {
@@ -644,6 +735,10 @@ func (l *FirewallLog) findDPIFlow(ctx context.Context, lookup dpiFlowLookup) (DP
 	if protocol == "" || lookup.SrcAddress == "" || lookup.DstAddress == "" {
 		return DPIFlowEntry{}, false, nil
 	}
+	columns, err := tableColumns(ctx, l.db, "dpi_flow")
+	if err != nil {
+		return DPIFlowEntry{}, false, err
+	}
 	now := lookup.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -652,7 +747,7 @@ func (l *FirewallLog) findDPIFlow(ctx context.Context, lookup dpiFlowLookup) (DP
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
-	rows, err := l.db.QueryContext(ctx, `SELECT flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
+	rows, err := l.db.QueryContext(ctx, `SELECT flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),`+optionalTextColumn(columns, "detected_protocol")+`,`+optionalTextColumn(columns, "master_protocol")+`,`+optionalTextColumn(columns, "application_protocol")+`,`+optionalTextColumn(columns, "category")+`,`+optionalTextColumn(columns, "risk")+`,`+optionalIntColumn(columns, "confidence")+`,`+optionalTextColumn(columns, "metadata_json")+`,`+optionalTextColumn(columns, "engine")+`,`+optionalTextColumn(columns, "source")+`,coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
 FROM dpi_flow
 WHERE ts_last >= ? AND protocol = ? AND (
   (src_address = ? AND dst_address = ? AND coalesce(src_port,0) = ? AND coalesce(dst_port,0) = ?)
@@ -672,9 +767,12 @@ ORDER BY ts_last DESC LIMIT 1`,
 	}
 	var flow DPIFlowEntry
 	var first, last, classified int64
-	if err := rows.Scan(&flow.FlowID, &first, &last, &flow.L3Proto, &flow.Protocol, &flow.SrcAddress, &flow.SrcPort, &flow.DstAddress, &flow.DstPort, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &classified, &flow.PacketCount); err != nil {
+	var riskJSON, metadataJSON string
+	if err := rows.Scan(&flow.FlowID, &first, &last, &flow.L3Proto, &flow.Protocol, &flow.SrcAddress, &flow.SrcPort, &flow.DstAddress, &flow.DstPort, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.DetectedProtocol, &flow.MasterProtocol, &flow.ApplicationProtocol, &flow.Category, &riskJSON, &flow.Confidence, &metadataJSON, &flow.Engine, &flow.Source, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &classified, &flow.PacketCount); err != nil {
 		return DPIFlowEntry{}, false, err
 	}
+	flow.Risk = jsonStringSlice(riskJSON)
+	flow.Metadata = jsonStringMap(metadataJSON)
 	flow.FirstSeen = time.Unix(0, first).UTC()
 	flow.LastSeen = time.Unix(0, last).UTC()
 	if classified > 0 {
@@ -725,4 +823,72 @@ func isFirewallDeny(action string) bool {
 	default:
 		return false
 	}
+}
+
+func jsonString(value any) string {
+	if value == nil {
+		return ""
+	}
+	data, err := json.Marshal(value)
+	if err != nil || string(data) == "null" || string(data) == "[]" || string(data) == "{}" {
+		return ""
+	}
+	return string(data)
+}
+
+func jsonStringSlice(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(value), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func jsonStringMap(value string) map[string]string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(value), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	columns := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull int
+		var defaultValue any
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return nil, err
+		}
+		columns[name] = true
+	}
+	return columns, rows.Err()
+}
+
+func optionalTextColumn(columns map[string]bool, name string) string {
+	if columns[name] {
+		return "coalesce(" + name + ",'')"
+	}
+	return "''"
+}
+
+func optionalIntColumn(columns map[string]bool, name string) string {
+	if columns[name] {
+		return "coalesce(" + name + ",0)"
+	}
+	return "0"
 }

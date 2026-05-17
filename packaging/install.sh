@@ -174,6 +174,41 @@ routerd_service_managed_by_config()
     grep -Eq '(^# Managed by routerd\.|--controller-chain)' "${service_path}"
 }
 
+restart_deleted_routerd_systemd_units()
+{
+    [ "${restart_service}" -eq 1 ] || return 0
+    [ "${manage_host_service}" -eq 1 ] || return 0
+    command -v systemctl >/dev/null 2>&1 || return 0
+    [ -d /proc ] || return 0
+
+    units=$(systemctl list-units --type=service --state=running --plain --no-legend 'routerd*.service' 2>/dev/null | awk '{print $1}' || true)
+    for unit in ${units}; do
+        [ "${unit}" = "routerd.service" ] && continue
+        main_pid=$(systemctl show -p MainPID --value "${unit}" 2>/dev/null || true)
+        case "${main_pid}" in
+            ""|0|*[!0-9]*)
+                continue
+                ;;
+        esac
+        exe=$(readlink "/proc/${main_pid}/exe" 2>/dev/null || true)
+        case "${exe}" in
+            *" (deleted)")
+                deleted_target=${exe% (deleted)}
+                ;;
+            *)
+                continue
+                ;;
+        esac
+        case "${deleted_target}" in
+            "${bindir}"/routerd*)
+                echo "restarting ${unit}: running deleted binary ${deleted_target}"
+                systemctl restart "${unit}"
+                service_touched=1
+                ;;
+        esac
+    done
+}
+
 detect_package_manager()
 {
     if [ -n "${ROUTERD_INSTALL_PACKAGE_MANAGER:-}" ]; then
@@ -1424,6 +1459,9 @@ case "${os}" in
                         systemctl restart routerd.service
                         service_touched=1
                     fi
+                fi
+                if [ "${dry_run}" -eq 0 ]; then
+                    restart_deleted_routerd_systemd_units
                 fi
             fi
         fi

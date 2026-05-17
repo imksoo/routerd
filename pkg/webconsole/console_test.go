@@ -402,7 +402,7 @@ func TestHandlerServesTrafficFlows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := flowLog.UpsertActive(context.Background(), logstore.TrafficFlow{StartedAt: time.Now(), ClientAddress: "172.18.0.2", PeerAddress: "1.1.1.1", PeerPort: 443, Protocol: "tcp"}); err != nil {
+	if err := flowLog.UpsertActive(context.Background(), logstore.TrafficFlow{StartedAt: time.Now(), ClientAddress: "172.18.0.2", PeerAddress: "1.1.1.1", PeerPort: 443, Protocol: "tcp", ApplicationProtocol: "tls", Category: "web", Confidence: 90, Metadata: map[string]string{"tls.sni": "one.one.one.one"}}); err != nil {
 		t.Fatal(err)
 	}
 	_ = flowLog.Close()
@@ -415,6 +415,11 @@ func TestHandlerServesTrafficFlows(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "one.one.one.one") {
 		t.Fatalf("traffic flows missing row:\n%s", rec.Body.String())
+	}
+	for _, want := range []string{`"applicationProtocol": "tls"`, `"category": "web"`, `"confidence": 90`, `"tls.sni": "one.one.one.one"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("traffic flows missing %q:\n%s", want, rec.Body.String())
+		}
 	}
 }
 
@@ -663,6 +668,34 @@ func TestHandlerFallsBackConnectionAppFromPort(t *testing.T) {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
 	for _, want := range []string{`"appName": "tls"`, `"appCategory": "port-fallback"`, `"appConfidence": 40`, `"destinationHostname": "edge.example"`, `"destinationService": "https"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("connections missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+}
+
+func TestHandlerLabelsOTLPConnectionsFromPort(t *testing.T) {
+	handler := New(Options{
+		Connections: func(limit int) (*observe.ConnectionTable, error) {
+			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
+				Family:   "ipv4",
+				Protocol: "tcp",
+				Original: observe.ConntrackTuple{
+					Source:          "192.168.123.129",
+					SourcePort:      "53168",
+					Destination:     "192.168.123.119",
+					DestinationPort: "4317",
+				},
+			}}}, nil
+		},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{`"appName": "otlp"`, `"appCategory": "port-fallback"`, `"appConfidence": 40`, `"destinationService": "otlp"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("connections missing %q:\n%s", want, rec.Body.String())
 		}

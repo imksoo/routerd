@@ -793,7 +793,7 @@ func TestNftablesSamplesAcceptedForwardFlows(t *testing.T) {
 			Spec: api.FirewallLogSpec{
 				Enabled:    true,
 				NFLogGroup: 7,
-				Log:        api.FirewallLogPolicySpec{AcceptSampleRate: 100},
+				Log:        api.FirewallLogPolicySpec{AcceptSampleRate: 100, CopyRange: 2048},
 			},
 		},
 	}}}
@@ -803,8 +803,8 @@ func TestNftablesSamplesAcceptedForwardFlows(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		`ct state { new, established } numgen random mod 100 == 0 log prefix "routerd firewall forward accept " group 7`,
-		`ct state new numgen random mod 100 == 0 log prefix "routerd firewall lan-to-wan accept " group 7 counter accept`,
+		`ct state { new, established } numgen random mod 100 == 0 log prefix "routerd firewall forward accept " group 7 snaplen 2048`,
+		`ct state new numgen random mod 100 == 0 log prefix "routerd firewall lan-to-wan accept " group 7 snaplen 2048 counter accept`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing sampled accept log %q:\n%s", want, got)

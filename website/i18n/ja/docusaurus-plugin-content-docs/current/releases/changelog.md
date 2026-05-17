@@ -8,6 +8,50 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
+## Unreleased
+
+### 変更
+
+- `routerd-dpi-classifier` に明示的な classifier engine facade を追加しました。
+  既定は built-in parser で、`auto` / `ndpi-agent` mode では将来の
+  `routerd-ndpi-agent` Unix socket service に問い合わせ、失敗時は built-in
+  parser に fallback できます。
+- Web Console の Connections で、DPI が flow を識別できない場合でも、
+  TCP port 4317 を OTLP、TCP port 4318 を OTLP/HTTP として表示するようにしました。
+
+### 追加
+
+- optional command として、初期版の `routerd-ndpi-agent` service boundary を追加しました。
+  既定の build は libndpi backend が利用不可であることを報告し、`-tags libndpi`
+  build では同じ IPC surface の背後で native library に link します。
+- `routerd-ndpi-agent` が flow ごとの観測 state を持つようにしました。
+  flow TTL、flow 数上限、先頭 payload packet 数上限と、observed、classified、
+  unknown、skipped、error、pruned packet の status counter を持ちます。
+- `routerd-ndpi-agent` 向けの初期 libndpi backend を追加しました。`libndpi`
+  build tag で opt-in し、native flow state を agent 内に閉じ込めたまま、
+  firewall logger から届く full packet observation を分類できます。
+- libndpi development files が入っている環境で optional native backend を build
+  するための `make build-ndpi-agent-libndpi` target を追加しました。
+- `routerd-dpi-classifier` が `--engine auto` または `--engine ndpi-agent`
+  で設定されている場合に、systemd、OpenRC、FreeBSD rc.d、NixOS で
+  `routerd-ndpi-agent` を render するようにしました。
+- DPI flow と traffic flow の record が、従来の app label に加えて、
+  detected protocol、application protocol、category、confidence、risk、
+  metadata などの typed classifier field を保存するようにしました。
+
+### 修正
+
+- Linux の upgrade 時に、差し替え前の削除済み binary を実行し続けている
+  routerd helper の systemd service があれば、`install.sh` が再起動するようにしました。
+- nDPI agent の結果が application を識別していても TLS SNI、HTTP Host、DNS query
+  などの detail を持っていない場合、`routerd-dpi-classifier` が built-in parser
+  の有用な hint を保持するようにしました。
+- DPI helper daemon が Unix socket を bind するとき、socket ではない path を
+  誤って unlink しないようにしました。また `routerd-ndpi-agent` は native
+  libndpi state を明示的に close します。
+- Web Console の traffic-flow 読み取りは、writer が schema migration を行う前の
+  legacy SQLite file に新しい DPI column がない場合でも成功するようにしました。
+
 ## v20260516.2302
 
 ### 変更

@@ -69,3 +69,8 @@ The Web Console Firewall tab and `routerctl firewall-logs` read from that
 database. The logger must be enabled as a managed `SystemdUnit`, for example
 with `routerd-firewall-logger daemon --path /var/lib/routerd/firewall-logs.db
 --nflog-group 1`.
+
+For accepted-flow DPI observation, set `FirewallLog.spec.log.copyRange` to cap
+the NFLOG payload copied from each packet. Values such as `1536` or `2048`
+bytes keep the first payload visible for TLS/HTTP/DNS classification without
+copying full packets into user space.

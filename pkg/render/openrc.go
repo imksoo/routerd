@@ -42,9 +42,10 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 		return OpenRCConfig{}, err
 	}
 	dpiSocket := ""
-	if hasSystemdUnit(router, "routerd-dpi-classifier.service") {
+	if hasSystemdUnit(router, DPIClassifierUnitName) {
 		dpiSocket = "/run/routerd/dpi-classifier/default.sock"
 	}
+	wantsNDPIAgent := RouterWantsNDPIAgent(router)
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "SystemdUnit" {
 			continue
@@ -58,6 +59,7 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 		}
 		name := openRCServiceName(defaultString(spec.UnitName, res.Metadata.Name))
 		explicit[name] = true
+		spec = MaybeAugmentDPIClassifierSpec(defaultString(spec.UnitName, res.Metadata.Name), spec, openRCServiceName(NDPIAgentUnitName))
 		spec.Environment = mergeEnvironment(spec.Environment, telemetryEnv)
 		data, err := OpenRCScript(name, spec)
 		if err != nil {
@@ -65,6 +67,17 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 		}
 		out[name] = data
 		services = append(services, OpenRCService{Name: name, Enabled: api.BoolDefault(spec.Enabled, true), Started: api.BoolDefault(spec.Started, true)})
+	}
+	if wantsNDPIAgent {
+		name := openRCServiceName(NDPIAgentUnitName)
+		if !explicit[name] {
+			data, err := OpenRCScript(name, NDPIAgentSystemdSpec("/run"))
+			if err != nil {
+				return OpenRCConfig{}, err
+			}
+			out[name] = data
+			services = append(services, OpenRCService{Name: name, Enabled: true, Started: true})
+		}
 	}
 	aliases := linkAliases(router)
 	if !openRCRouterdSupervisesClientDaemons(router) {

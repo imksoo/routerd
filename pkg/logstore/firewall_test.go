@@ -4,9 +4,12 @@ package logstore
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestFirewallLogRecordAndList(t *testing.T) {
@@ -178,18 +181,25 @@ func TestFirewallLogDPIFlowLookupDirectAndReverse(t *testing.T) {
 	defer log.Close()
 	now := time.Now().UTC()
 	if err := log.RecordDPIFlow(context.Background(), DPIFlowEntry{
-		FirstSeen:     now.Add(-2 * time.Minute),
-		LastSeen:      now.Add(-30 * time.Second),
-		L3Proto:       "ipv4",
-		Protocol:      "tcp",
-		SrcAddress:    "172.18.0.10",
-		SrcPort:       53168,
-		DstAddress:    "198.51.100.10",
-		DstPort:       443,
-		AppName:       "tls",
-		AppCategory:   "web",
-		AppConfidence: 90,
-		TLSSNI:        "cached.example",
+		FirstSeen:           now.Add(-2 * time.Minute),
+		LastSeen:            now.Add(-30 * time.Second),
+		L3Proto:             "ipv4",
+		Protocol:            "tcp",
+		SrcAddress:          "172.18.0.10",
+		SrcPort:             53168,
+		DstAddress:          "198.51.100.10",
+		DstPort:             443,
+		AppName:             "tls",
+		AppCategory:         "web",
+		AppConfidence:       90,
+		DetectedProtocol:    "tls",
+		ApplicationProtocol: "tls",
+		Category:            "web",
+		Confidence:          90,
+		Metadata:            map[string]string{"tls.sni": "cached.example"},
+		Engine:              "ndpi-agent",
+		Source:              "ndpi-agent",
+		TLSSNI:              "cached.example",
 	}, time.Hour, 100000); err != nil {
 		t.Fatal(err)
 	}
@@ -205,15 +215,137 @@ func TestFirewallLogDPIFlowLookupDirectAndReverse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || flow.TLSSNI != "cached.example" || flow.AppName != "tls" {
+	if !ok || flow.TLSSNI != "cached.example" || flow.AppName != "tls" || flow.ApplicationProtocol != "tls" || flow.Category != "web" || flow.Confidence != 90 || flow.Metadata["tls.sni"] != "cached.example" || flow.Engine != "ndpi-agent" || flow.Source != "ndpi-agent" {
 		t.Fatalf("flow ok=%v flow=%+v", ok, flow)
 	}
 	flows, err := log.ListDPIFlows(context.Background(), DPIFlowFilter{Since: now.Add(-time.Hour), Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(flows) != 1 || flows[0].AppName != "tls" {
+	if len(flows) != 1 || flows[0].AppName != "tls" || flows[0].Engine != "ndpi-agent" || flows[0].Source != "ndpi-agent" {
 		t.Fatalf("dpi flows = %+v", flows)
+	}
+}
+
+func TestFirewallLogMigratesDPIFlowSourceColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall-logs.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE firewall_logs (
+  id INTEGER PRIMARY KEY,
+  ts INTEGER NOT NULL,
+  zone_from TEXT,
+  zone_to TEXT,
+  action TEXT NOT NULL,
+  src_address TEXT NOT NULL,
+  dst_address TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  l3_proto TEXT NOT NULL
+);
+CREATE TABLE dpi_flow (
+  flow_id TEXT PRIMARY KEY,
+  ts_first INTEGER NOT NULL,
+  ts_last INTEGER NOT NULL,
+  l3_proto TEXT,
+  protocol TEXT NOT NULL,
+  src_address TEXT NOT NULL,
+  src_port INTEGER,
+  dst_address TEXT NOT NULL,
+  dst_port INTEGER,
+  app_name TEXT,
+  app_category TEXT,
+  app_confidence INTEGER,
+  tls_sni TEXT,
+  http_host TEXT,
+  dns_query TEXT,
+  classified_at INTEGER,
+  packet_count INTEGER
+)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	log, err := OpenFirewallLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	now := time.Now().UTC()
+	if err := log.RecordDPIFlow(context.Background(), DPIFlowEntry{
+		FirstSeen:     now,
+		LastSeen:      now,
+		Protocol:      "tcp",
+		SrcAddress:    "172.18.0.10",
+		SrcPort:       12345,
+		DstAddress:    "1.1.1.1",
+		DstPort:       443,
+		AppName:       "tls",
+		Engine:        "ndpi-agent",
+		Source:        "ndpi-agent",
+		ClassifiedAt:  now,
+		AppConfidence: 90,
+	}, time.Hour, 100000); err != nil {
+		t.Fatal(err)
+	}
+	flows, err := log.ListDPIFlows(context.Background(), DPIFlowFilter{Since: now.Add(-time.Minute), Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flows) != 1 || flows[0].Engine != "ndpi-agent" || flows[0].Source != "ndpi-agent" {
+		t.Fatalf("flows = %#v", flows)
+	}
+}
+
+func TestFirewallLogReadOnlyToleratesLegacyDPIFlowColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall-logs.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := db.Exec(`
+CREATE TABLE dpi_flow (
+  flow_id TEXT PRIMARY KEY,
+  ts_first INTEGER NOT NULL,
+  ts_last INTEGER NOT NULL,
+  l3_proto TEXT,
+  protocol TEXT NOT NULL,
+  src_address TEXT NOT NULL,
+  src_port INTEGER,
+  dst_address TEXT NOT NULL,
+  dst_port INTEGER,
+  app_name TEXT,
+  app_category TEXT,
+  app_confidence INTEGER,
+  tls_sni TEXT,
+  http_host TEXT,
+  dns_query TEXT,
+  classified_at INTEGER,
+  packet_count INTEGER
+);
+INSERT INTO dpi_flow(flow_id,ts_first,ts_last,l3_proto,protocol,src_address,src_port,dst_address,dst_port,app_name,app_category,app_confidence,tls_sni,classified_at,packet_count)
+VALUES('legacy',?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		now.Add(-time.Minute).UnixNano(), now.UnixNano(), "ipv4", "tcp", "172.18.0.10", 12345, "1.1.1.1", 443, "tls", "web", 90, "legacy.example", now.UnixNano(), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	log, err := OpenFirewallLogReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	flow, ok, err := log.FindDPIFlowForFirewallEntry(context.Background(), FirewallLogEntry{Protocol: "tcp", SrcAddress: "172.18.0.10", SrcPort: 12345, DstAddress: "1.1.1.1", DstPort: 443}, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || flow.AppName != "tls" || flow.TLSSNI != "legacy.example" || flow.Engine != "" || flow.ApplicationProtocol != "" {
+		t.Fatalf("flow ok=%v flow=%+v", ok, flow)
 	}
 }
 

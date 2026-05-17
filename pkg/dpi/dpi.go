@@ -22,32 +22,44 @@ type ClassifyRequest struct {
 }
 
 type ClassifyResult struct {
-	AppName           string `json:"appName,omitempty"`
-	AppCategory       string `json:"appCategory,omitempty"`
-	AppConfidence     int    `json:"appConfidence,omitempty"`
-	TLSSNI            string `json:"tlsSNI,omitempty"`
-	HTTPHost          string `json:"httpHost,omitempty"`
-	DNSQuery          string `json:"dnsQuery,omitempty"`
-	L3Proto           string `json:"l3Proto,omitempty"`
-	TransportProtocol string `json:"transportProtocol,omitempty"`
-	SrcAddress        string `json:"srcAddress,omitempty"`
-	SrcPort           int    `json:"srcPort,omitempty"`
-	DstAddress        string `json:"dstAddress,omitempty"`
-	DstPort           int    `json:"dstPort,omitempty"`
-	Engine            string `json:"engine"`
-	Reason            string `json:"reason,omitempty"`
+	AppName             string            `json:"appName,omitempty"`
+	AppCategory         string            `json:"appCategory,omitempty"`
+	AppConfidence       int               `json:"appConfidence,omitempty"`
+	DetectedProtocol    string            `json:"detectedProtocol,omitempty"`
+	MasterProtocol      string            `json:"masterProtocol,omitempty"`
+	ApplicationProtocol string            `json:"applicationProtocol,omitempty"`
+	Category            string            `json:"category,omitempty"`
+	Risk                []string          `json:"risk,omitempty"`
+	Confidence          int               `json:"confidence,omitempty"`
+	Metadata            map[string]string `json:"metadata,omitempty"`
+	Source              string            `json:"source,omitempty"`
+	TLSSNI              string            `json:"tlsSNI,omitempty"`
+	HTTPHost            string            `json:"httpHost,omitempty"`
+	DNSQuery            string            `json:"dnsQuery,omitempty"`
+	L3Proto             string            `json:"l3Proto,omitempty"`
+	TransportProtocol   string            `json:"transportProtocol,omitempty"`
+	SrcAddress          string            `json:"srcAddress,omitempty"`
+	SrcPort             int               `json:"srcPort,omitempty"`
+	DstAddress          string            `json:"dstAddress,omitempty"`
+	DstPort             int               `json:"dstPort,omitempty"`
+	Engine              string            `json:"engine"`
+	Reason              string            `json:"reason,omitempty"`
 }
 
-func Classify(req ClassifyRequest) ClassifyResult {
-	result := ClassifyResult{
+func Classify(req ClassifyRequest) (result ClassifyResult) {
+	result = ClassifyResult{
 		L3Proto:           req.L3Proto,
 		TransportProtocol: strings.ToLower(req.TransportProtocol),
 		SrcAddress:        req.SrcAddress,
 		SrcPort:           req.SrcPort,
 		DstAddress:        req.DstAddress,
 		DstPort:           req.DstPort,
-		Engine:            "routerd-dpi-parser",
+		Engine:            "builtin",
+		Source:            "builtin",
 	}
+	defer func() {
+		result = FinalizeResult(result)
+	}()
 	payload := req.L4Payload
 	if len(payload) == 0 {
 		payload = req.Payload
@@ -134,6 +146,58 @@ func Classify(req ClassifyRequest) ClassifyResult {
 	result.AppConfidence = 0
 	result.Reason = "no_application_signal"
 	return result
+}
+
+func FinalizeResult(result ClassifyResult) ClassifyResult {
+	result.AppName = strings.ToLower(strings.TrimSpace(result.AppName))
+	result.AppCategory = strings.ToLower(strings.TrimSpace(result.AppCategory))
+	result.DetectedProtocol = strings.ToLower(strings.TrimSpace(result.DetectedProtocol))
+	result.MasterProtocol = strings.ToLower(strings.TrimSpace(result.MasterProtocol))
+	result.ApplicationProtocol = strings.ToLower(strings.TrimSpace(result.ApplicationProtocol))
+	result.Category = strings.ToLower(strings.TrimSpace(result.Category))
+	result.Source = strings.ToLower(strings.TrimSpace(result.Source))
+	result.Engine = strings.ToLower(strings.TrimSpace(result.Engine))
+	result.TransportProtocol = strings.ToLower(strings.TrimSpace(result.TransportProtocol))
+	if result.ApplicationProtocol == "" && result.AppName != "" && result.AppName != "unknown" {
+		result.ApplicationProtocol = result.AppName
+	}
+	if result.DetectedProtocol == "" {
+		result.DetectedProtocol = firstNonEmpty(result.ApplicationProtocol, result.MasterProtocol, result.AppName, result.TransportProtocol)
+	}
+	if result.Category == "" {
+		result.Category = result.AppCategory
+	}
+	if result.Confidence == 0 {
+		result.Confidence = result.AppConfidence
+	}
+	if result.Metadata == nil {
+		result.Metadata = map[string]string{}
+	}
+	if result.Reason != "" {
+		result.Metadata["reason"] = result.Reason
+	}
+	if result.TLSSNI != "" {
+		result.Metadata["tls.sni"] = result.TLSSNI
+	}
+	if result.HTTPHost != "" {
+		result.Metadata["http.host"] = result.HTTPHost
+	}
+	if result.DNSQuery != "" {
+		result.Metadata["dns.query"] = result.DNSQuery
+	}
+	if len(result.Metadata) == 0 {
+		result.Metadata = nil
+	}
+	return result
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type vpnClassification struct {

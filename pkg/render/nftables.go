@@ -482,6 +482,7 @@ type firewallLogging struct {
 	Group            int
 	AcceptSampleRate int
 	DropSampleRate   int
+	CopyRange        int
 }
 
 type firewallZone struct {
@@ -722,7 +723,7 @@ func firewallLogOptions(resources []api.Resource) firewallLogging {
 		if group == 0 {
 			group = 1
 		}
-		return firewallLogging{Enabled: true, Group: group, AcceptSampleRate: spec.Log.AcceptSampleRate, DropSampleRate: spec.Log.DropSampleRate}
+		return firewallLogging{Enabled: true, Group: group, AcceptSampleRate: spec.Log.AcceptSampleRate, DropSampleRate: spec.Log.DropSampleRate, CopyRange: spec.Log.CopyRange}
 	}
 	return firewallLogging{}
 }
@@ -731,6 +732,9 @@ func nftLogExpr(prefix string, logging firewallLogging) string {
 	expr := "log prefix " + nftQuote(prefix)
 	if logging.Enabled {
 		expr += " group " + strconv.Itoa(logging.Group)
+		if logging.CopyRange > 0 {
+			expr += " snaplen " + strconv.Itoa(logging.CopyRange)
+		}
 	}
 	return expr
 }

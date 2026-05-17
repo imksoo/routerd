@@ -112,6 +112,7 @@ At the start of the run, it detects the OS package manager and installs known ru
 It does not overwrite an existing `/usr/local/etc/routerd/router.yaml`.
 When an existing `/usr/local/sbin/routerd` is found, the installer switches to upgrade mode automatically.
 It prints the old and new `routerd --version` output, replaces binaries and service templates, preserves configuration and state, and restarts `routerd.service` or the FreeBSD `routerd` rc.d service if it was already running.
+On systemd hosts, it also restarts active routerd helper services that are still running a deleted binary from before the upgrade.
 Replaced files are copied to `*.backup.YYYYMMDDHHMMSS` before replacement.
 Pass `--no-restart` to replace files without restarting the service.
 Pass `--dry-run` to print planned file and service-manager changes.

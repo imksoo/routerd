@@ -1050,9 +1050,10 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 		return nil, err
 	}
 	dpiSocket := ""
-	if hasSystemdUnit(router, "routerd-dpi-classifier.service") {
+	if hasSystemdUnit(router, DPIClassifierUnitName) {
 		dpiSocket = "/run/routerd/dpi-classifier/default.sock"
 	}
+	wantsNDPIAgent := RouterWantsNDPIAgent(router)
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "SystemdUnit" {
 			continue
@@ -1066,8 +1067,12 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 		}
 		name := defaultString(spec.UnitName, res.Metadata.Name)
 		explicit[name] = true
+		spec = MaybeAugmentDPIClassifierSpec(name, spec, NDPIAgentUnitName)
 		spec.Environment = mergeEnvironment(spec.Environment, telemetryEnv)
 		out = append(out, nixOSSystemdUnit{Name: name, Spec: spec})
+	}
+	if wantsNDPIAgent && !explicit[NDPIAgentUnitName] {
+		out = append(out, nixOSSystemdUnit{Name: NDPIAgentUnitName, Spec: NDPIAgentSystemdSpec("/run")})
 	}
 	aliases := linkAliases(router)
 	for _, res := range router.Spec.Resources {

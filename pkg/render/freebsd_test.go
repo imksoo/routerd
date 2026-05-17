@@ -257,6 +257,30 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 	}
 }
 
+func TestFreeBSDRenderSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"},
+			Spec: api.SystemdUnitSpec{
+				ExecStart: []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--engine", "ndpi-agent"},
+			},
+		},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	agent := string(got.RCDScripts["routerd_ndpi_agent"])
+	if !strings.Contains(agent, "/usr/local/sbin/routerd-ndpi-agent") || !strings.Contains(agent, "/var/run/routerd/ndpi-agent/default.sock") {
+		t.Fatalf("ndpi agent rc.d script =\n%s", agent)
+	}
+	classifier := string(got.RCDScripts["routerd_dpi_classifier"])
+	if !strings.Contains(classifier, "# REQUIRE: NETWORKING routerd_ndpi_agent") {
+		t.Fatalf("classifier rc.d script missing ndpi dependency:\n%s", classifier)
+	}
+}
+
 func TestFreeBSDRendersWireGuardRCDScript(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

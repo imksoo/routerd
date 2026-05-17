@@ -83,7 +83,25 @@ type Summary = {
   neighbors?: NeighborEntry[];
   clients?: ClientEntry[];
   vpn?: VPNStatus;
+  dpi?: DPIStatus;
   errors?: string[];
+};
+
+type DPIStatus = {
+  classifier?: DPIServiceStatus;
+  agent?: DPIServiceStatus;
+};
+
+type DPIServiceStatus = {
+  available?: boolean;
+  socket?: string;
+  engine?: string;
+  activeEngine?: string;
+  libndpiLoaded?: boolean;
+  libndpiVersion?: string;
+  reason?: string;
+  error?: string;
+  stats?: Record<string, unknown>;
 };
 
 type ResourceStatus = {
@@ -195,6 +213,17 @@ type TrafficFlow = {
   appName?: string;
   appCategory?: string;
   appConfidence?: number;
+  detectedProtocol?: string;
+  masterProtocol?: string;
+  applicationProtocol?: string;
+  category?: string;
+  risk?: string[];
+  confidence?: number;
+  metadata?: Record<string, string>;
+  engine?: string;
+  source?: string;
+  httpHost?: string;
+  dnsQuery?: string;
   accounting?: boolean;
   bytesOut?: number;
   bytesIn?: number;
@@ -427,6 +456,7 @@ type ConnectionFilters = {
   family: string;
   protocol: string;
   app: string;
+  source: string;
   state: string;
   sort: string;
   direction: string;
@@ -2132,6 +2162,7 @@ function App() {
     family: "all",
     protocol: "all",
     app: "all",
+    source: "all",
     state: "all",
     sort: "traffic",
     direction: "desc",
@@ -2357,6 +2388,7 @@ function App() {
     connectionFilters.family,
     connectionFilters.protocol,
     connectionFilters.app,
+    connectionFilters.source,
     connectionFilters.state,
     connectionFilters.sort,
     connectionFilters.direction,
@@ -2680,6 +2712,7 @@ function App() {
                   flows={summary?.trafficFlows}
                   clients={summary?.clients}
                   connections={summary?.connections}
+                  dpi={summary?.dpi}
                 />
                 <Card id="overview-interfaces" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Interfaces</Text>} description={<Text className={styles.muted}>Role, link state, MTU, and assigned addresses</Text>} />
@@ -2812,6 +2845,13 @@ function App() {
                 <Select size="small" value={connectionFilters.app} onChange={event => updateConnectionFilter("app", event.target.value)}>
                   <option value="all">All</option>
                   {connectionFacets.apps.map(value => <option key={value} value={value}>{formatConnectionApp(value)}</option>)}
+                </Select>
+              </div>
+              <div className={styles.filterControl}>
+                <Text size={200} className={styles.muted}>Source</Text>
+                <Select size="small" value={connectionFilters.source} onChange={event => updateConnectionFilter("source", event.target.value)}>
+                  <option value="all">All</option>
+                  {connectionFacets.sources.map(value => <option key={value} value={value}>{formatTrafficSourceLabel(value)}</option>)}
                 </Select>
               </div>
               <div className={styles.filterControl}>
@@ -3390,7 +3430,7 @@ function MetricCharts({ samples }: { samples: MetricSample[] }) {
   );
 }
 
-function OverviewDPIInsights({ flows, clients, connections }: { flows?: TrafficFlow[]; clients?: ClientEntry[]; connections?: ConnectionTable }) {
+function OverviewDPIInsights({ flows, clients, connections, dpi }: { flows?: TrafficFlow[]; clients?: ClientEntry[]; connections?: ConnectionTable; dpi?: DPIStatus }) {
   const styles = useStyles();
   const flowRows = flows ?? [];
   const clientRows = clients ?? [];
@@ -3398,6 +3438,7 @@ function OverviewDPIInsights({ flows, clients, connections }: { flows?: TrafficF
   const flowEmpty = flows === undefined ? "Loading observed flow data" : "No observed flow data";
   const connectionEmpty = connections === undefined ? "Loading connection data" : "No active connection classes";
   const protocols = topTrafficProtocols(flowRows);
+  const sources = topTrafficSources(flowRows);
   const talkers = topTalkers(clientRows, flowRows);
   const domains = topDomains(flowRows);
   const classes = connectionClassSummary(connectionRows);
@@ -3409,8 +3450,16 @@ function OverviewDPIInsights({ flows, clients, connections }: { flows?: TrafficF
         <ConnectionClassificationMeter stats={classification} />
       </Card>
       <Card className={styles.chartCard}>
+        <CardHeader header={<Text weight="semibold">DPI engine</Text>} description={<Text className={styles.muted}>Classifier and nDPI agent service status</Text>} />
+        <DPIServiceSummary dpi={dpi} />
+      </Card>
+      <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top protocols</Text>} description={<Text className={styles.muted}>DPI protocols and weak port guesses from recent observed flows</Text>} />
         <RankList rows={protocols} empty={flowEmpty} formatLabel={formatProtocolRankLabel} formatValue={formatBytes} />
+      </Card>
+      <Card className={styles.chartCard}>
+        <CardHeader header={<Text weight="semibold">DPI sources</Text>} description={<Text className={styles.muted}>Observed flow volume by classifier source</Text>} />
+        <RankList rows={sources} empty={flowEmpty} formatLabel={formatTrafficSourceLabel} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top talkers</Text>} description={<Text className={styles.muted}>Clients with DPI-classified traffic volume</Text>} />
@@ -3424,6 +3473,28 @@ function OverviewDPIInsights({ flows, clients, connections }: { flows?: TrafficF
         <CardHeader header={<Text weight="semibold">Traffic classes</Text>} description={<Text className={styles.muted}>Active connection visibility from conntrack and DPI enrichment</Text>} />
         <RankList rows={classes} empty={connectionEmpty} />
       </Card>
+    </div>
+  );
+}
+
+function DPIServiceSummary({ dpi }: { dpi?: DPIStatus }) {
+  const styles = useStyles();
+  if (!dpi?.classifier && !dpi?.agent) return <Text className={styles.muted}>No DPI service sockets found</Text>;
+  const classifier = dpi.classifier;
+  const agent = dpi.agent;
+  const classified = Number(classifier?.stats?.agentClassified ?? 0) + Number(classifier?.stats?.builtinClassified ?? 0) || Number(agent?.stats?.classifiedPackets ?? agent?.stats?.classified ?? 0);
+  const errors = Number(classifier?.stats?.agentErrors ?? 0) + Number(agent?.stats?.errorPackets ?? agent?.stats?.errors ?? 0);
+  const timeouts = Number(classifier?.stats?.timeoutErrors ?? 0);
+  return (
+    <div className={styles.grid}>
+      <Metric label="classifier" value={classifier?.activeEngine || classifier?.engine || (classifier?.error ? "error" : "-")} />
+      <Metric label="nDPI" value={agent?.libndpiLoaded ? "loaded" : agent?.error ? "error" : agent ? "unavailable" : "-"} />
+      <Metric label="classified" value={classified ? String(classified) : "-"} />
+      <Metric label="errors" value={errors ? String(errors) : "0"} />
+      <Metric label="timeouts" value={timeouts ? String(timeouts) : "0"} />
+      {classifier?.reason || classifier?.error || agent?.reason || agent?.error ? (
+        <Text size={200} className={styles.muted}>{classifier?.reason || classifier?.error || agent?.reason || agent?.error}</Text>
+      ) : null}
     </div>
   );
 }
@@ -4682,8 +4753,28 @@ function ClientAddressGroup({ label, addresses }: { label: string; addresses: st
 
 function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
   const styles = useStyles();
+  const [source, setSource] = useState("all");
+  const sourceOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const flow of flows) values.add(trafficFlowClassification(flow).source);
+    return Array.from(values).sort(facetSort);
+  }, [flows]);
+  const filtered = useMemo(() => {
+    if (source === "all") return flows;
+    return flows.filter(flow => trafficFlowClassification(flow).source === source);
+  }, [flows, source]);
   return (
-    <div className={styles.tableWrap} data-routerd-scroll-key="client-traffic">
+    <>
+      <div className={styles.clientFilters}>
+        <div className={styles.filterControl}>
+          <Text size={200} className={styles.muted}>Source</Text>
+          <Select size="small" value={source} onChange={event => setSource(event.target.value)}>
+            <option value="all">All</option>
+            {sourceOptions.map(value => <option key={value} value={value}>{formatTrafficSourceLabel(value)}</option>)}
+          </Select>
+        </div>
+      </div>
+      <div className={styles.tableWrap} data-routerd-scroll-key="client-traffic">
       <Table size="small" className={styles.clientTrafficTable}>
         <colgroup>
           <col style={{ width: "170px" }} />
@@ -4702,7 +4793,7 @@ function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {clientTrafficRows(flows).map(row => (
+          {clientTrafficRows(filtered).map(row => (
             <TableRow key={row.client} className={styles.stableTableRow}>
               <TableCell><code className={styles.code}>{row.client}</code></TableCell>
               <TableCell>{formatBytes(row.bytesOut)}</TableCell>
@@ -4721,6 +4812,7 @@ function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
         </TableBody>
       </Table>
     </div>
+    </>
   );
 }
 
@@ -5398,17 +5490,20 @@ function connectionFilterFacets(entries: ConnectionEntry[]) {
   const families = new Set<string>();
   const protocols = new Set<string>();
   const apps = new Set<string>();
+  const sources = new Set<string>();
   const states = new Set<string>();
   for (const entry of entries) {
     families.add(normalizeFacet(entry.family, "other"));
     protocols.add(normalizeFacet(entry.protocol, "other"));
     apps.add(connectionApp(entry));
+    sources.add(connectionAppSource(entry));
     states.add(normalizeFacet(entry.state, "stateless"));
   }
   return {
     families: Array.from(families).sort(facetSort),
     protocols: Array.from(protocols).sort(facetSort),
     apps: Array.from(apps).sort(facetSort),
+    sources: Array.from(sources).sort(facetSort),
     states: Array.from(states).sort(facetSort),
   };
 }
@@ -5433,6 +5528,7 @@ function filterConnections(entries: ConnectionEntry[], dnsLabels: Record<string,
     if (filters.family !== "all" && normalizeFacet(entry.family, "other") !== filters.family) return false;
     if (filters.protocol !== "all" && normalizeFacet(entry.protocol, "other") !== filters.protocol) return false;
     if (filters.app !== "all" && connectionApp(entry) !== filters.app) return false;
+    if (filters.source !== "all" && connectionAppSource(entry) !== filters.source) return false;
     if (filters.state !== "all" && normalizeFacet(entry.state, "stateless") !== filters.state) return false;
     if (!query) return true;
     return connectionSearchText(entry, dnsLabels, clientIdentities).includes(query);
@@ -5625,6 +5721,8 @@ function formatConnectionApp(value: string) {
   if (value === "wireguard") return "WireGuard";
   if (value === "tailscale") return "Tailscale";
   if (value === "stun") return "STUN";
+  if (value === "otlp") return "OTLP";
+  if (value === "otlp-http") return "OTLP/HTTP";
   if (value === "quic") return "QUIC/HTTP3";
   if (value === "rdp") return "RDP";
   return value.toUpperCase();
@@ -5641,6 +5739,8 @@ function formatConnectionService(service: string, app: string) {
   if (normalized === "netbios-ns") return "NetBIOS-NS";
   if (normalized === "netbios-dgm") return "NetBIOS-DGM";
   if (normalized === "netbios-ssn") return "NetBIOS-SSN";
+  if (normalized === "otlp") return "OTLP";
+  if (normalized === "otlp-http") return "OTLP/HTTP";
   return formatConnectionApp(app || normalized);
 }
 
@@ -5649,7 +5749,7 @@ function connectionAppColor(value: string): "brand" | "danger" | "informative" |
   if (value === "dns") return "success";
   if (value === "netbios") return "warning";
   if (value === "ssh" || value === "rdp") return "danger";
-  if (value === "smb" || value === "ipsec" || value === "wireguard" || value === "tailscale" || value === "stun" || value === "quic") return "informative";
+  if (value === "smb" || value === "ipsec" || value === "wireguard" || value === "tailscale" || value === "stun" || value === "otlp" || value === "otlp-http" || value === "quic") return "informative";
   if (value === "unidentified") return "subtle";
   return "informative";
 }
@@ -5859,9 +5959,13 @@ function portProtocolFallback(protocol: string, port: string, peerLabel = "") {
       return "mysql";
     case 3389:
       return "rdp";
+    case 4317:
+      return protocol === "tcp" ? "otlp" : "";
     case 3478:
     case 5349:
       return protocol === "udp" ? "stun" : "";
+    case 4318:
+      return protocol === "tcp" ? "otlp-http" : "";
     case 5353:
       return protocol === "udp" ? "mdns" : "";
     case 5355:
@@ -5902,16 +6006,28 @@ function providerFromHost(label = "") {
 
 function providerFromApp(app = "") {
   switch (normalizeFacet(app, "")) {
+    case "amazonaws":
     case "aws-https":
       return "aws";
+    case "google":
+    case "googleservices":
     case "google-https":
       return "google";
+    case "microsoft":
+    case "microsoft365":
+    case "azure":
     case "microsoft-https":
       return "microsoft";
+    case "apple":
+    case "appleicloud":
+    case "applepush":
     case "apple-https":
       return "apple";
+    case "cloudflare":
     case "cloudflare-https":
       return "cloudflare";
+    case "nintendo":
+      return "nintendo";
     default:
       return "";
   }
@@ -5929,6 +6045,8 @@ function formatProviderLabel(provider: string) {
       return "Apple";
     case "cloudflare":
       return "Cloudflare";
+    case "nintendo":
+      return "Nintendo";
     default:
       return provider.toUpperCase();
   }
@@ -6019,6 +6137,8 @@ function serviceNameForPort(port?: string) {
     3306: "mysql",
     3389: "ms-wbt-server",
     3478: "stun",
+    4317: "otlp",
+    4318: "otlp-http",
     4500: "ipsec-nat-t",
     5353: "mdns",
     5355: "llmnr",
@@ -6059,6 +6179,15 @@ function topTrafficProtocols(flows: TrafficFlow[]) {
   for (const flow of flows) {
     const classification = trafficFlowClassification(flow);
     totals.set(classification.rankLabel, (totals.get(classification.rankLabel) ?? 0) + trafficFlowBytes(flow));
+  }
+  return topRows(totals, 5);
+}
+
+function topTrafficSources(flows: TrafficFlow[]) {
+  const totals = new Map<string, number>();
+  for (const flow of flows) {
+    const classification = trafficFlowClassification(flow);
+    totals.set(classification.source, (totals.get(classification.source) ?? 0) + trafficFlowBytes(flow));
   }
   return topRows(totals, 5);
 }
@@ -6107,8 +6236,13 @@ function trafficFlowApp(flow: TrafficFlow) {
 
 function trafficFlowClassification(flow: TrafficFlow) {
   const app = canonicalConnectionApp(flow.appName);
-  if (app && app !== "unknown") return { app, source: "dpi", rankLabel: `dpi:${app}` };
-  if (flow.tlsSNI) return { app: "tls", source: "dpi", rankLabel: "dpi:tls" };
+  const typedApp = canonicalConnectionApp(flow.applicationProtocol || flow.detectedProtocol || flow.masterProtocol || "");
+  const source = trafficFlowSource(flow);
+  if (app && app !== "unknown") return { app, source, rankLabel: `${source}:${app}` };
+  if (typedApp && typedApp !== "unknown") return { app: typedApp, source, rankLabel: `${source}:${typedApp}` };
+  if (flow.tlsSNI) return { app: "tls", source, rankLabel: `${source}:tls` };
+  if (flow.httpHost) return { app: "http", source, rankLabel: `${source}:http` };
+  if (flow.dnsQuery) return { app: "dns", source, rankLabel: `${source}:dns` };
   const port = flow.peerPort ? String(flow.peerPort) : "";
   const fallback = port ? portProtocolFallback(normalizeFacet(flow.protocol, ""), port, flow.resolvedHostname) : "";
   if (fallback) return { app: fallback, source: "port-fallback", rankLabel: `port-guess:${fallback}` };
@@ -6116,16 +6250,37 @@ function trafficFlowClassification(flow: TrafficFlow) {
   return { app: protocol, source: "none", rankLabel: `unidentified:${protocol}` };
 }
 
+function trafficFlowSource(flow: TrafficFlow) {
+  const source = normalizeFacet(flow.source, "");
+  if (source === "ndpi-agent" || source === "builtin" || source === "port-fallback") return source;
+  const engine = normalizeFacet(flow.engine, "");
+  if (engine === "ndpi-agent" || engine === "builtin") return engine;
+  if (normalizeFacet(flow.appCategory, "") === "port-fallback") return "port-fallback";
+  return "dpi";
+}
+
 function formatProtocolRankLabel(value: string) {
   const [source, app = value] = value.split(":", 2);
   if (source === "dpi") return `DPI ${formatConnectionApp(app)}`;
+  if (source === "ndpi-agent") return `nDPI ${formatConnectionApp(app)}`;
+  if (source === "builtin") return `Built-in ${formatConnectionApp(app)}`;
   if (source === "port-guess") return `port-guess:${formatConnectionApp(app)}`;
+  if (source === "port-fallback") return `port-guess:${formatConnectionApp(app)}`;
   if (source === "unidentified") return `Identifying ${formatConnectionApp(app)}`;
   return formatConnectionApp(value);
 }
 
+function formatTrafficSourceLabel(value: string) {
+  if (value === "ndpi-agent") return "nDPI agent";
+  if (value === "builtin") return "Built-in parser";
+  if (value === "port-fallback") return "Port fallback";
+  if (value === "dpi") return "DPI";
+  if (value === "none") return "Unidentified";
+  return formatFacet(value);
+}
+
 function trafficFlowDomain(flow: TrafficFlow) {
-  return String(flow.tlsSNI || flow.resolvedHostname || "").trim();
+  return String(flow.tlsSNI || flow.httpHost || flow.dnsQuery || flow.resolvedHostname || "").trim();
 }
 
 function trafficFlowBytes(flow: TrafficFlow) {

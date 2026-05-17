@@ -381,22 +381,31 @@ func recordDPIFlowFromEntry(ctx context.Context, log *logstore.FirewallLog, entr
 		now = time.Now().UTC()
 	}
 	return log.RecordDPIFlow(ctx, logstore.DPIFlowEntry{
-		FirstSeen:     now,
-		LastSeen:      now,
-		L3Proto:       entry.L3Proto,
-		Protocol:      entry.Protocol,
-		SrcAddress:    entry.SrcAddress,
-		SrcPort:       entry.SrcPort,
-		DstAddress:    entry.DstAddress,
-		DstPort:       entry.DstPort,
-		AppName:       entry.DPIApp,
-		AppCategory:   entry.DPICategory,
-		AppConfidence: entry.DPIConfidence,
-		TLSSNI:        entry.DPITLSSNI,
-		HTTPHost:      entry.DPIHTTPHost,
-		DNSQuery:      entry.DPIDNSQuery,
-		ClassifiedAt:  now,
-		PacketCount:   1,
+		FirstSeen:           now,
+		LastSeen:            now,
+		L3Proto:             entry.L3Proto,
+		Protocol:            entry.Protocol,
+		SrcAddress:          entry.SrcAddress,
+		SrcPort:             entry.SrcPort,
+		DstAddress:          entry.DstAddress,
+		DstPort:             entry.DstPort,
+		AppName:             entry.DPIApp,
+		AppCategory:         entry.DPICategory,
+		AppConfidence:       entry.DPIConfidence,
+		DetectedProtocol:    dpiHintValue(entry.Hint, "dpi.detected_protocol"),
+		MasterProtocol:      dpiHintValue(entry.Hint, "dpi.master_protocol"),
+		ApplicationProtocol: dpiHintValue(entry.Hint, "dpi.application_protocol"),
+		Category:            dpiHintValue(entry.Hint, "dpi.classification_category"),
+		Risk:                splitHintList(dpiHintValue(entry.Hint, "dpi.risk")),
+		Confidence:          atoiDefault(dpiHintValue(entry.Hint, "dpi.classification_confidence"), 0),
+		Metadata:            dpiHintMetadata(entry.Hint),
+		Engine:              dpiHintValue(entry.Hint, "dpi.engine"),
+		Source:              dpiHintValue(entry.Hint, "dpi.source"),
+		TLSSNI:              entry.DPITLSSNI,
+		HTTPHost:            entry.DPIHTTPHost,
+		DNSQuery:            entry.DPIDNSQuery,
+		ClassifiedAt:        now,
+		PacketCount:         1,
 	}, opts.dpiFlowTTL, opts.dpiFlowLimit)
 }
 
@@ -420,14 +429,33 @@ func applyDPIFlow(entry logstore.FirewallLogEntry, flow logstore.DPIFlowEntry) l
 		entry.DPIDNSQuery = flow.DNSQuery
 	}
 	entry.Hint = appendDPIHintFields(entry.Hint, dpi.ClassifyResult{
-		AppName:       entry.DPIApp,
-		AppCategory:   entry.DPICategory,
-		AppConfidence: entry.DPIConfidence,
-		TLSSNI:        entry.DPITLSSNI,
-		HTTPHost:      entry.DPIHTTPHost,
-		DNSQuery:      entry.DPIDNSQuery,
+		AppName:             entry.DPIApp,
+		AppCategory:         entry.DPICategory,
+		AppConfidence:       entry.DPIConfidence,
+		DetectedProtocol:    flow.DetectedProtocol,
+		MasterProtocol:      flow.MasterProtocol,
+		ApplicationProtocol: flow.ApplicationProtocol,
+		Category:            flow.Category,
+		Risk:                flow.Risk,
+		Confidence:          flow.Confidence,
+		Metadata:            flow.Metadata,
+		Engine:              flow.Engine,
+		Source:              flow.Source,
+		TLSSNI:              entry.DPITLSSNI,
+		HTTPHost:            entry.DPIHTTPHost,
+		DNSQuery:            entry.DPIDNSQuery,
 	})
 	return entry
+}
+
+func dpiHintValue(hint, key string) string {
+	prefix := key + "="
+	for _, part := range strings.Fields(hint) {
+		if strings.HasPrefix(part, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(part, prefix))
+		}
+	}
+	return ""
 }
 
 func dpiFlowLabel(flow logstore.DPIFlowEntry) string {
@@ -454,8 +482,35 @@ func appendDPIHintFields(hint string, result dpi.ClassifyResult) string {
 		parts = append(parts, hint)
 	}
 	parts = append(parts, "dpi.app="+result.AppName)
+	if result.Engine != "" {
+		parts = append(parts, "dpi.engine="+result.Engine)
+	}
+	if result.Source != "" {
+		parts = append(parts, "dpi.source="+result.Source)
+	}
 	if result.AppCategory != "" {
 		parts = append(parts, "dpi.category="+result.AppCategory)
+	}
+	if result.DetectedProtocol != "" {
+		parts = append(parts, "dpi.detected_protocol="+result.DetectedProtocol)
+	}
+	if result.MasterProtocol != "" {
+		parts = append(parts, "dpi.master_protocol="+result.MasterProtocol)
+	}
+	if result.ApplicationProtocol != "" {
+		parts = append(parts, "dpi.application_protocol="+result.ApplicationProtocol)
+	}
+	if result.Category != "" {
+		parts = append(parts, "dpi.classification_category="+result.Category)
+	}
+	if result.Confidence > 0 {
+		parts = append(parts, "dpi.classification_confidence="+strconv.Itoa(result.Confidence))
+	}
+	if len(result.Risk) > 0 {
+		parts = append(parts, "dpi.risk="+strings.Join(result.Risk, ","))
+	}
+	if result.Reason != "" {
+		parts = append(parts, "dpi.reason="+result.Reason)
 	}
 	if result.TLSSNI != "" {
 		parts = append(parts, "dpi.tls_sni="+result.TLSSNI)
@@ -470,6 +525,53 @@ func appendDPIHintFields(hint string, result dpi.ClassifyResult) string {
 		parts = append(parts, "dpi.confidence="+strconv.Itoa(result.AppConfidence))
 	}
 	return strings.Join(parts, " ")
+}
+
+func splitHintList(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	raw := strings.Split(value, ",")
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func atoiDefault(raw string, fallback int) int {
+	if strings.TrimSpace(raw) == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func dpiHintMetadata(hint string) map[string]string {
+	metadata := map[string]string{}
+	for _, item := range []struct {
+		hintKey string
+		metaKey string
+	}{
+		{"dpi.reason", "reason"},
+		{"dpi.tls_sni", "tls.sni"},
+		{"dpi.http_host", "http.host"},
+		{"dpi.dns_query", "dns.query"},
+	} {
+		if value := dpiHintValue(hint, item.hintKey); value != "" {
+			metadata[item.metaKey] = value
+		}
+	}
+	if len(metadata) == 0 {
+		return nil
+	}
+	return metadata
 }
 
 func recordDenyMetric(ctx context.Context, telemetry *routerotel.Runtime, entry logstore.FirewallLogEntry) {

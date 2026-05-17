@@ -26,6 +26,7 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 	maxPath := filepath.Join(dir, "max")
 	entriesPath := filepath.Join(dir, "entries")
 	flowPath := filepath.Join(dir, "traffic-flows.db")
+	firewallPath := filepath.Join(dir, "firewall-logs.db")
 	if err := os.WriteFile(countPath, []byte("1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +42,10 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TrafficFlowLog"},
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec:     api.TrafficFlowLogSpec{Enabled: true, Path: flowPath, Source: "conntrack"},
+		}, {
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.FirewallLogSpec{Enabled: true, Path: firewallPath},
 		}}}},
 		Bus:   bus.New(),
 		Store: store,
@@ -52,6 +57,38 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 				Reply:    observe.ConntrackTuple{Source: "1.1.1.1", SourcePort: "443", Destination: "172.18.0.10", DestinationPort: "12345", Packets: 4, Bytes: 1200, Accounting: true},
 			}}}, nil
 		},
+	}
+	firewallLog, err := logstore.OpenFirewallLog(firewallPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firewallLog.RecordDPIFlow(context.Background(), logstore.DPIFlowEntry{
+		FirstSeen:           time.Now().UTC().Add(-time.Minute),
+		LastSeen:            time.Now().UTC(),
+		Protocol:            "tcp",
+		SrcAddress:          "172.18.0.10",
+		SrcPort:             12345,
+		DstAddress:          "1.1.1.1",
+		DstPort:             443,
+		AppName:             "google",
+		AppCategory:         "web",
+		AppConfidence:       95,
+		DetectedProtocol:    "google",
+		ApplicationProtocol: "tls",
+		Category:            "web",
+		Confidence:          95,
+		Metadata:            map[string]string{"tls.sni": "www.google.com"},
+		Engine:              "ndpi-agent",
+		Source:              "ndpi-agent",
+		TLSSNI:              "www.google.com",
+		DNSQuery:            "www.google.com",
+		ClassifiedAt:        time.Now().UTC(),
+		PacketCount:         1,
+	}, time.Hour, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := firewallLog.Close(); err != nil {
+		t.Fatal(err)
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -67,6 +104,12 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 	}
 	if len(flows) != 1 || flows[0].PeerAddress != "1.1.1.1" || flows[0].PeerPort != 443 || !flows[0].Accounting || flows[0].BytesOut != 300 || flows[0].BytesIn != 1200 {
 		t.Fatalf("flows = %#v", flows)
+	}
+	if flows[0].AppName != "google" || flows[0].Engine != "ndpi-agent" || flows[0].Source != "ndpi-agent" || flows[0].TLSSNI != "www.google.com" || flows[0].DNSQuery != "www.google.com" {
+		t.Fatalf("dpi flow fields missing: %#v", flows[0])
+	}
+	if flows[0].DetectedProtocol != "google" || flows[0].ApplicationProtocol != "tls" || flows[0].Category != "web" || flows[0].Confidence != 95 || flows[0].Metadata["tls.sni"] != "www.google.com" {
+		t.Fatalf("typed dpi flow fields missing: %#v", flows[0])
 	}
 	if protocol := trafficMetricProtocol(flows[0]); protocol != "tls" {
 		t.Fatalf("metric protocol = %q", protocol)
