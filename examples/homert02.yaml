@@ -1422,6 +1422,7 @@ spec:
           - name: ngn-aftr
             kind: forward
             match:
+              - gw.transix.jp
               - transix.jp
             upstreamFrom:
               - resource: DHCPv6Information/wan-info

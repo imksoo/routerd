@@ -644,6 +644,7 @@ func DnsmasqServiceUnitWithPID(configPath, pidFile, dnsmasqPath string) []byte {
 Description=routerd managed dnsmasq DHCP service
 After=network-online.target
 Wants=network-online.target
+ConditionPathExists=` + configPath + `
 
 [Service]
 Type=simple

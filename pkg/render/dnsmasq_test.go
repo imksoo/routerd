@@ -702,6 +702,9 @@ func TestDnsmasqServiceUnitDoesNotOwnRouterdRuntimeDirectory(t *testing.T) {
 	if strings.Contains(unit, "RuntimeDirectory=routerd") {
 		t.Fatalf("dnsmasq unit must not own /run/routerd because it can remove the routerd control socket:\n%s", unit)
 	}
+	if !strings.Contains(unit, "ConditionPathExists=/run/routerd/routerd-dnsmasq.conf") {
+		t.Fatalf("dnsmasq unit should skip cleanly before routerd materializes runtime config:\n%s", unit)
+	}
 	if !strings.Contains(unit, "--pid-file=/run/routerd/dnsmasq.pid") {
 		t.Fatalf("dnsmasq unit should keep the managed pid path:\n%s", unit)
 	}

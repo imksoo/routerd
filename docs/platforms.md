@@ -36,6 +36,47 @@ The reference list:
 
 `routerd-dhcpv6-client`, `routerd-dhcpv4-client`, `routerd-pppoe-client`, and `routerd-healthcheck` run as systemd services on Linux.
 
+Ubuntu 26.04 LTS (`resolute`) has been validated with the same Linux data-plane
+renderers used by Ubuntu 24.04 for managed dnsmasq, nftables, DHCPv6-PD,
+delegated LAN IPv6 address derivation, and the control API. The host bootstrap
+did need one OS-level networking adjustment: on interfaces that routerd owns for
+DHCPv6-PD or LAN RA/DHCPv6 service, configure installer netplan/systemd-networkd
+so the OS does not run its own DHCPv6 client. Otherwise systemd-networkd can
+bind UDP port 546 before `routerd-dhcpv6-client`.
+
+For Ubuntu 26.04 router lab hosts, keep only the management interface on OS
+DHCP and make routerd-owned WAN/LAN interfaces link-local-only at the OS layer:
+
+```yaml
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ens18:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    ens19:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    ens20:
+      dhcp4: true
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+```
+
+For WAN links that still need the RA-learned IPv6 default route, add a
+`NetworkAdoption` resource. routerd writes a systemd-networkd drop-in with
+`IPv6AcceptRA=yes` and `[IPv6AcceptRA] DHCPv6Client=no`, so RA is accepted while
+the OS DHCPv6 client stays disabled.
+
 ## Alpine Linux
 
 Alpine is a Linux target for the live ISO and minimal installed hosts. It does

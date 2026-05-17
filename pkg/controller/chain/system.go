@@ -1118,6 +1118,7 @@ func networkdAdoptionDropin(spec api.NetworkAdoptionNetworkdSpec) []byte {
 		b.WriteString("IPv6AcceptRA=no\n")
 	}
 	if spec.DisableDHCPv6 && !spec.DisableIPv6RA {
+		b.WriteString("IPv6AcceptRA=yes\n")
 		b.WriteString("\n[IPv6AcceptRA]\nDHCPv6Client=no\n")
 	}
 	if spec.DHCPv4UseRoutes != nil || spec.DHCPv4UseDNS != nil || spec.DHCPv4RouteMetric != 0 {

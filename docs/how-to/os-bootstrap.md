@@ -95,6 +95,44 @@ Use `NetworkAdoption` when the base OS already has DHCP or resolver behavior
 that conflicts with routerd's resource model. It is the documented place for
 networkd and resolved drop-ins instead of one-off edits under `/etc/systemd`.
 
+On Ubuntu 26.04 LTS, systemd-networkd may bind a DHCPv6 client socket on an
+interface even when the installer netplan sets `dhcp6: false`, depending on RA
+state. For routerd-owned WAN/LAN links, also set `accept-ra: false` during OS
+bootstrap and leave only IPv6 link-local addressing at the installer netplan
+layer. This keeps UDP port 546 available for `routerd-dhcpv6-client` and avoids
+the install-time network policy competing with routerd's DHCPv6-PD and
+RA/DHCPv6 renderers. Keep management DHCP on a separate management interface.
+
+```yaml
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    wan0:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    lan0:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    mgmt0:
+      dhcp4: true
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+```
+
+If the WAN needs an RA-learned IPv6 default route for provider DNS or AFTR
+resolution, use `NetworkAdoption` for that interface. routerd will write a
+systemd-networkd drop-in that accepts RA but keeps systemd-networkd's DHCPv6
+client disabled.
+
 Use `SystemdUnit` for explicit local units that should be installed and enabled
 by routerd. routerd-managed DHCP, DNS, PPPoE, healthcheck, Tailscale, and helper
 daemon units are generated from their own resource kinds; do not duplicate

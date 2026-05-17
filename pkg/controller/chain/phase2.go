@@ -278,12 +278,13 @@ func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLi
 }
 
 type IPv4RouteController struct {
-	Router  *api.Router
-	Bus     *bus.Bus
-	Store   Store
-	DryRun  bool
-	Logger  *slog.Logger
-	Command func(ctx context.Context, name string, args ...string) ([]byte, error)
+	Router        *api.Router
+	Bus           *bus.Bus
+	Store         Store
+	DryRun        bool
+	Logger        *slog.Logger
+	Command       func(ctx context.Context, name string, args ...string) ([]byte, error)
+	DevicePresent func(context.Context, string) bool
 }
 
 func (c IPv4RouteController) Start(ctx context.Context) {
@@ -338,6 +339,14 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			device = firstNonEmpty(resourcequery.Value(c.Store, spec.DeviceFrom), strings.TrimSpace(spec.Device))
 			if device == "" {
 				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceMissing"})
+				continue
+			}
+			devicePresent := c.DevicePresent
+			if devicePresent == nil {
+				devicePresent = interfaceDevicePresent
+			}
+			if !c.DryRun && !devicePresent(ctx, device) {
+				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceNotReady", "destination": destination, "device": device, "gateway": gateway, "metric": spec.Metric, "dryRun": c.DryRun})
 				continue
 			}
 		}

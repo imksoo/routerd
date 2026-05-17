@@ -85,6 +85,42 @@ spec:
 
 `NetworkAdoption` は、systemd-networkd や systemd-resolved の既存設定が routerd と競合する場合に使います。`SystemdUnit` は明示的なローカル unit を routerd から配置・有効化したい場合に使います。DHCP、DNS、PPPoE、healthcheck、Tailscale などの routerd managed unit は、それぞれの resource kind から生成されるので重複定義しないでください。
 
+Ubuntu 26.04 LTS では、RA の状態によっては、installer が書いた netplan で `dhcp6: false` にしていても
+systemd-networkd が interface 上で DHCPv6 client socket を開くことがあります。
+routerd が所有する WAN/LAN link では、OS bootstrap 時に `accept-ra: false` も明示し、
+installer netplan レイヤーでは IPv6 link-local のみにしてください。
+これにより UDP port 546 を `routerd-dhcpv6-client` が使える状態に保ち、OS の初期ネットワーク設定が routerd の DHCPv6-PD や RA/DHCPv6 renderer と競合するのを避けられます。
+management DHCP は別の management interface に残してください。
+
+```yaml
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    wan0:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    lan0:
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+    mgmt0:
+      dhcp4: true
+      dhcp6: false
+      accept-ra: false
+      link-local: [ipv6]
+      optional: true
+```
+
+provider DNS や AFTR 解決のために WAN link で RA 由来の IPv6 default route が必要な場合は、
+その interface に `NetworkAdoption` を使います。routerd は systemd-networkd drop-in として
+RA を受ける設定を書きつつ、systemd-networkd の DHCPv6 client は無効のままにします。
+
 Alpine / OpenRC では、`routerd render alpine --out-dir <dir>` が明示的な `SystemdUnit`、managed dnsmasq、`routerd-healthcheck`、DHCP client、DNS resolver、firewall logger、PPPoE、Tailscale の OpenRC script を生成できます。
 apply 時は `/etc/init.d` に script を配置し、現在の OpenRC 状態に差分がある場合だけ `rc-update` と `rc-service` を実行します。
 自動生成された DNS resolver script は、controller loop 外で runtime config を materialize できるまでは enable / start しません。

@@ -62,7 +62,7 @@ func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T)
 		t.Fatalf("read networkd drop-in: %v", err)
 	}
 	gotNetworkd := string(data)
-	for _, want := range []string{"DHCP=no", "[IPv6AcceptRA]", "DHCPv6Client=no"} {
+	for _, want := range []string{"DHCP=no", "IPv6AcceptRA=yes", "[IPv6AcceptRA]", "DHCPv6Client=no"} {
 		if !strings.Contains(gotNetworkd, want) {
 			t.Fatalf("networkd drop-in missing %q:\n%s", want, gotNetworkd)
 		}
@@ -125,7 +125,7 @@ func TestNetworkAdoptionControllerCanKeepDHCPv4ClientWithoutRoutes(t *testing.T)
 		t.Fatalf("read networkd drop-in: %v", err)
 	}
 	got := string(data)
-	for _, want := range []string{"DHCP=ipv4", "[IPv6AcceptRA]", "DHCPv6Client=no", "[DHCPv4]", "UseRoutes=no", "UseDNS=no", "RouteMetric=900"} {
+	for _, want := range []string{"DHCP=ipv4", "IPv6AcceptRA=yes", "[IPv6AcceptRA]", "DHCPv6Client=no", "[DHCPv4]", "UseRoutes=no", "UseDNS=no", "RouteMetric=900"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("drop-in missing %q:\n%s", want, got)
 		}

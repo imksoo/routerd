@@ -158,6 +158,9 @@ func TestIPv4RouteControllerReappliesUnchangedKernelRoute(t *testing.T) {
 	controller := IPv4RouteController{
 		Router: router,
 		Store:  store,
+		DevicePresent: func(context.Context, string) bool {
+			return true
+		},
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, append([]string{name}, args...))
 			return nil, nil
@@ -176,6 +179,45 @@ func TestIPv4RouteControllerReappliesUnchangedKernelRoute(t *testing.T) {
 	}
 	if changed := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", "default")["changed"]; changed != false {
 		t.Fatalf("second reconcile should preserve unchanged status, changed=%#v", changed)
+	}
+}
+
+func TestIPv4RouteControllerWaitsForDeviceBeforeApply(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+			Metadata: api.ObjectMeta{
+				Name: "default",
+			},
+			Spec: api.IPv4RouteSpec{
+				Destination: "0.0.0.0/0",
+				Device:      "ds-routerd-test",
+			},
+		},
+	}}}
+	store := mapStore{}
+	var called bool
+	controller := IPv4RouteController{
+		Router: router,
+		Store:  store,
+		DevicePresent: func(context.Context, string) bool {
+			return false
+		},
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			called = true
+			return nil, nil
+		},
+	}
+
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if called {
+		t.Fatal("route command should not run before the referenced device exists")
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", "default")
+	if status["phase"] != "Pending" || status["reason"] != "DeviceNotReady" {
+		t.Fatalf("status = %#v", status)
 	}
 }
 
