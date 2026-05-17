@@ -35,6 +35,8 @@ scripts/release.sh --no-push
 
 The working tree must be clean before running the helper. Commit feature and
 changelog changes first; the helper should only create the release commit.
+The changelog must keep `## Unreleased` as the first release section, and that
+section must contain entries before a release can be created.
 
 Pushing the release tag starts the GitHub Actions workflow.
 The `Release` workflow builds these targets:

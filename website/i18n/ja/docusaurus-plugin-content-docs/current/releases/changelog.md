@@ -8,11 +8,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
-## v20260517.1058
-
-## v20260517.1055
-
 ## Unreleased
+
+### 修正
+
+- release helper は、最初の release section が `Unreleased` ではない changelog を
+  拒否するようにしました。また、以前の helper 実行で残っていた空の release
+  見出しを、管理対象の changelog file から削除しました。
 
 ## v20260517.1351
 

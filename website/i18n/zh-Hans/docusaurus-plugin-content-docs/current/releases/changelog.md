@@ -8,11 +8,13 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 本软件仍处于 v1alpha1 阶段，版本之间可能含有破坏性改动。
 
-## v20260517.1058
-
-## v20260517.1055
-
 ## Unreleased
+
+### 修复
+
+- release helper 现在会拒绝第一个 release section 不是 `Unreleased` 的
+  changelog，并从维护中的 changelog 文件移除了旧 helper 运行留下的空 release
+  标题。
 
 ## v20260517.1351
 

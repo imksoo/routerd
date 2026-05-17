@@ -8,11 +8,13 @@ routerd release history. The format follows [Keep a Changelog](https://keepachan
 routerd uses date-and-time-based release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
-## v20260517.1058
-
-## v20260517.1055
-
 ## Unreleased
+
+### Fixed
+
+- The release helper now rejects changelogs whose first release section is not
+  `Unreleased`, and the stale empty release headings left by older helper runs
+  were removed from the maintained changelog files.
 
 ## v20260517.1351
 

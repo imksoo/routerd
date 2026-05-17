@@ -132,6 +132,12 @@ promote_changelog() {
 			print $text;
 			exit 0;
 		}
+		if ($text !~ /^(## .*)$/m) {
+			die "$file: missing changelog section heading\n";
+		}
+		if ($1 ne "## Unreleased") {
+			die "$file: first changelog section must be ## Unreleased\n";
+		}
 		if ($text !~ /^## Unreleased\n(.*?)(?=^## |\z)/ms) {
 			die "$file: missing ## Unreleased section\n";
 		}
