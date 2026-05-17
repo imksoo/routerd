@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260517.1401
+
 ### 修正
 
 - `syscall.Statfs_t` の block counter が signed integer type になる FreeBSD でも

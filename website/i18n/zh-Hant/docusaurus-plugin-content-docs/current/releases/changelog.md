@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260517.1401
+
 ### 修正
 
 - 修正 Web Console disk usage collection，使其在 `syscall.Statfs_t` block counter

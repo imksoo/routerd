@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260517.1401
+
 ### Fixed
 
 - Fixed Web Console disk usage collection so it compiles on FreeBSD, where
