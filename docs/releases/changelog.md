@@ -29,6 +29,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   Clients snapshot is built, so recent IPv6 privacy addresses are more likely
   to resolve back to a client. Source endpoints also expose a Clients search
   action even when the address has not yet been merged into a known identity.
+- Web Console search inputs now show an inline clear button when they contain
+  text.
 
 ### Added
 

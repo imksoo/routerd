@@ -30,6 +30,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   観測も読み込むようにしました。これにより、IPv6 privacy address でも client に
   戻せる可能性が上がります。また、source endpoint では既知の identity にまだ
   統合されていないアドレスでも Clients 検索に移動できます。
+- Web Console の検索入力に、文字が入っているときだけ表示されるクリアボタンを
+  追加しました。
 
 ### 追加
 

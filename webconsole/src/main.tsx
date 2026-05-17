@@ -34,6 +34,7 @@ import {
   ChevronRightRegular,
   DatabaseRegular,
   DesktopRegular,
+  DismissRegular,
   DocumentTextRegular,
   FilterRegular,
   GamesRegular,
@@ -1619,6 +1620,11 @@ const useStyles = makeStyles({
   },
   filterInput: {
     minWidth: 0,
+  },
+  filterClearButton: {
+    minWidth: "24px",
+    width: "24px",
+    height: "24px",
   },
   connectionGroup: {
     display: "grid",
@@ -3979,7 +3985,23 @@ function SearchControl({
   return (
     <div className={styles.filterControl}>
       <Text size={200} className={styles.muted}>{label}</Text>
-      <Input className={styles.filterInput} size="small" value={value} placeholder={placeholder} onChange={(_, data) => onChange(data.value)} />
+      <Input
+        className={styles.filterInput}
+        size="small"
+        value={value}
+        placeholder={placeholder}
+        onChange={(_, data) => onChange(data.value)}
+        contentAfter={value ? (
+          <Button
+            aria-label={`Clear ${label}`}
+            appearance="subtle"
+            className={styles.filterClearButton}
+            icon={<DismissRegular />}
+            size="small"
+            onClick={() => onChange("")}
+          />
+        ) : null}
+      />
     </div>
   );
 }

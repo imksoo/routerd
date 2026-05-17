@@ -28,6 +28,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - Web Console Connections 現在建立 Clients snapshot 時也會讀取近期
   traffic-flow observation，讓近期的 IPv6 privacy address 更有機會對應回 client。
   source endpoint 即使尚未合併到已知 identity，也會提供前往 Clients 搜尋的動作。
+- Web Console 的搜尋輸入框現在會在有文字時顯示內嵌清除按鈕。
 
 ### 新增
 
