@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260517.1800
+
 ### Fixed
 
 - One-shot HTTP-over-Unix calls from controllers and helper probes now disable

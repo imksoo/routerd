@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260517.1800
+
 ### 修正
 
 - controller と helper probe からの一回完結の HTTP-over-Unix 呼び出しは

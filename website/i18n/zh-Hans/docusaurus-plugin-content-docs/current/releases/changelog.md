@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260517.1800
+
 ### 修复
 
 - controller 与 helper probe 发出的单次 HTTP-over-Unix 调用现在会停用

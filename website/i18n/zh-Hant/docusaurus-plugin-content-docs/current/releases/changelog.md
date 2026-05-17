@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260517.1800
+
 ### 修正
 
 - controller 與 helper probe 發出的單次 HTTP-over-Unix 呼叫現在會停用
