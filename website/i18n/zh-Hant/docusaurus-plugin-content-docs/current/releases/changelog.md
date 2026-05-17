@@ -23,6 +23,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - Web Console Clients 與 Connections 現在可以互相跳轉。client row 可以開啟依該
   client 觀測位址篩選的 Connections，connection 詳細也可以回到對應的 local
   client identity。
+- Web Console Connections 現在建立 Clients snapshot 時也會讀取近期
+  traffic-flow observation，讓近期的 IPv6 privacy address 更有機會對應回 client。
+  source endpoint 即使尚未合併到已知 identity，也會提供前往 Clients 搜尋的動作。
 
 ### 新增
 

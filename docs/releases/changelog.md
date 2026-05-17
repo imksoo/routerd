@@ -23,6 +23,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Web Console Clients and Connections now link to each other. Client rows can
   open a Connections view filtered to that client's observed addresses, and
   connection details can jump back to the matching local client identity.
+- Web Console Connections now loads recent traffic-flow observations while the
+  Clients snapshot is built, so recent IPv6 privacy addresses are more likely
+  to resolve back to a client. Source endpoints also expose a Clients search
+  action even when the address has not yet been merged into a known identity.
 
 ### Added
 

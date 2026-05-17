@@ -24,6 +24,10 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - Web Console の Clients と Connections を相互に移動しやすくしました。
   client 行からその client の観測アドレスで絞り込んだ Connections を開け、
   connection 詳細から対応する local client identity に戻れます。
+- Web Console の Connections で Clients snapshot を作る際に、直近の traffic-flow
+  観測も読み込むようにしました。これにより、IPv6 privacy address でも client に
+  戻せる可能性が上がります。また、source endpoint では既知の identity にまだ
+  統合されていないアドレスでも Clients 検索に移動できます。
 
 ### 追加
 
