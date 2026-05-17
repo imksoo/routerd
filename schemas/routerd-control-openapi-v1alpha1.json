@@ -293,6 +293,33 @@
                 "httpHost": {
                   "type": "string"
                 },
+                "localRedirect": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "destinationSetRef": {
+                      "type": "string"
+                    },
+                    "match": {
+                      "type": "string"
+                    },
+                    "originalAddress": {
+                      "type": "string"
+                    },
+                    "redirectAddress": {
+                      "type": "string"
+                    },
+                    "redirectPort": {
+                      "type": "integer"
+                    },
+                    "resourceName": {
+                      "type": "string"
+                    },
+                    "ruleName": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
                 "mark": {
                   "type": "string"
                 },
@@ -698,6 +725,27 @@
                 },
                 "correlationDetail": {
                   "type": "string"
+                },
+                "destinationSetMatches": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "current": {
+                        "type": "boolean"
+                      },
+                      "resourceName": {
+                        "type": "string"
+                      },
+                      "setName": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array"
                 },
                 "dpiApp": {
                   "type": "string"

@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260517.1510
+
 ### 新增
 
 - Web Console Connections 现在会标记由 `LocalServiceRedirect` 处理的 flow。
