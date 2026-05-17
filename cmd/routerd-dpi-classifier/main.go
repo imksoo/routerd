@@ -60,15 +60,20 @@ type agentStatus struct {
 }
 
 type classifierStats struct {
-	Requests          int64 `json:"requests"`
-	BuiltinPackets    int64 `json:"builtinPackets"`
-	AgentPackets      int64 `json:"agentPackets"`
-	AgentClassified   int64 `json:"agentClassified"`
-	BuiltinClassified int64 `json:"builtinClassified"`
-	Fallbacks         int64 `json:"fallbacks"`
-	Unknown           int64 `json:"unknown"`
-	TimeoutErrors     int64 `json:"timeoutErrors"`
-	AgentErrors       int64 `json:"agentErrors"`
+	Requests          int64   `json:"requests"`
+	BuiltinPackets    int64   `json:"builtinPackets"`
+	AgentPackets      int64   `json:"agentPackets"`
+	AgentClassified   int64   `json:"agentClassified"`
+	BuiltinClassified int64   `json:"builtinClassified"`
+	Fallbacks         int64   `json:"fallbacks"`
+	Unknown           int64   `json:"unknown"`
+	TimeoutErrors     int64   `json:"timeoutErrors"`
+	AgentErrors       int64   `json:"agentErrors"`
+	LatencySamples    int64   `json:"latencySamples"`
+	AverageLatencyMs  float64 `json:"averageLatencyMs"`
+	MaxLatencyMs      float64 `json:"maxLatencyMs"`
+	totalLatencyNanos int64
+	maxLatencyNanos   int64
 }
 
 type classifierRuntime struct {
@@ -323,6 +328,20 @@ func classifyWithFallback(ctx context.Context, opts options, req dpi.ClassifyReq
 }
 
 func classifyWithRecorder(ctx context.Context, opts options, req dpi.ClassifyRequest, record func(func(*classifierStats))) classifyResponse {
+	start := time.Now()
+	defer func() {
+		elapsed := time.Since(start)
+		recordClassifierStats(record, func(stats *classifierStats) {
+			stats.LatencySamples++
+			nanos := elapsed.Nanoseconds()
+			stats.totalLatencyNanos += nanos
+			if nanos > stats.maxLatencyNanos {
+				stats.maxLatencyNanos = nanos
+			}
+			stats.AverageLatencyMs = float64(stats.totalLatencyNanos) / float64(stats.LatencySamples) / float64(time.Millisecond)
+			stats.MaxLatencyMs = float64(stats.maxLatencyNanos) / float64(time.Millisecond)
+		})
+	}()
 	recordClassifierStats(record, func(stats *classifierStats) {
 		stats.Requests++
 	})

@@ -17,6 +17,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
   `routerd-ndpi-agent` Unix socket service，失敗時會 fallback 到 built-in parser。
 - Web Console Connections 現在會在 DPI 尚未識別 flow 時，將 TCP port 4317
   標示為 OTLP，將 TCP port 4318 標示為 OTLP/HTTP。
+- Web Console Overview 現在會顯示 host CPU、memory、root filesystem 使用率，
+  以及 classifier 端的 DPI processing latency，方便把 router 本機負載惡化與
+  routing、DPI 健康狀態一起觀察。
 
 ### 新增
 
@@ -36,6 +39,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - DPI flow 與 traffic flow record 現在除了既有 app label 欄位外，也會保存 typed
   classifier fields，例如 detected protocol、application protocol、category、
   confidence、risk 與 metadata。
+- `routerd-dpi-classifier` status 現在會回報 daemon 處理 classify request 的
+  average latency 與 maximum latency。
 
 ### 修正
 

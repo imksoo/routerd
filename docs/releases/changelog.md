@@ -17,6 +17,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   query a future `routerd-ndpi-agent` Unix-socket service with built-in fallback.
 - Web Console Connections now labels TCP port 4317 as OTLP and TCP port 4318 as
   OTLP/HTTP when DPI has not identified the flow.
+- Web Console Overview now shows host CPU, memory, and root filesystem usage,
+  plus classifier-side DPI processing latency, so router-local load regressions
+  are visible next to routing and DPI health.
 
 ### Added
 
@@ -38,6 +41,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - DPI flow and traffic-flow records now persist typed classifier fields such as
   detected protocol, application protocol, category, confidence, risk, and
   metadata in addition to the legacy app label fields.
+- `routerd-dpi-classifier` status now reports average and maximum classify
+  latency for requests handled by the daemon.
 
 ### Fixed
 

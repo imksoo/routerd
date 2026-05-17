@@ -84,7 +84,24 @@ type Summary = {
   clients?: ClientEntry[];
   vpn?: VPNStatus;
   dpi?: DPIStatus;
+  systemUsage?: SystemUsage;
   errors?: string[];
+};
+
+type SystemUsage = {
+  cpuPercent?: number;
+  load1?: number;
+  memoryUsedBytes?: number;
+  memoryTotalBytes?: number;
+  memoryUsedPercent?: number;
+  disks?: DiskUsage[];
+};
+
+type DiskUsage = {
+  path?: string;
+  usedBytes?: number;
+  totalBytes?: number;
+  usedPercent?: number;
 };
 
 type DPIStatus = {
@@ -2705,6 +2722,10 @@ function App() {
                     <Metric label="resources" value={String(summary?.status?.status?.resourceCount ?? resources.length)} />
                     <Metric label="conntrack" value={conntrackLabel(summary?.connections)} />
                     <Metric label="families" value={connectionFamilyCounts(summary?.connections)} />
+                    <Metric label="CPU" value={systemCPULabel(summary?.systemUsage)} />
+                    <Metric label="memory" value={systemMemoryLabel(summary?.systemUsage)} />
+                    <Metric label="disk" value={systemDiskLabel(summary?.systemUsage)} />
+                    <Metric label="DPI latency" value={dpiLatencyLabel(summary?.dpi)} />
                   </div>
                 </div>
                 <MetricCharts samples={metricSamples} />
@@ -7135,9 +7156,41 @@ function formatSeconds(value?: number) {
   return `${Math.round(value / 86400)}d`;
 }
 
+function formatMilliseconds(value?: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  if (value < 1) return `${value.toFixed(2)} ms`;
+  if (value < 10) return `${value.toFixed(1)} ms`;
+  return `${Math.round(value)} ms`;
+}
+
 function formatPercent(value?: number) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "-";
   return `${Math.round(value * 100)}%`;
+}
+
+function systemCPULabel(usage?: SystemUsage) {
+  if (typeof usage?.cpuPercent === "number" && Number.isFinite(usage.cpuPercent)) return formatPercent(usage.cpuPercent);
+  if (typeof usage?.load1 === "number" && Number.isFinite(usage.load1)) return `load ${usage.load1.toFixed(2)}`;
+  return "-";
+}
+
+function systemMemoryLabel(usage?: SystemUsage) {
+  if (!usage?.memoryUsedPercent) return "-";
+  return `${formatPercent(usage.memoryUsedPercent)} / ${formatBytes(usage.memoryTotalBytes)}`;
+}
+
+function systemDiskLabel(usage?: SystemUsage) {
+  const disk = usage?.disks?.[0];
+  if (!disk?.usedPercent) return "-";
+  return `${formatPercent(disk.usedPercent)} / ${formatBytes(disk.totalBytes)}`;
+}
+
+function dpiLatencyLabel(dpi?: DPIStatus) {
+  const stats = dpi?.classifier?.stats;
+  const average = Number(stats?.averageLatencyMs);
+  const max = Number(stats?.maxLatencyMs);
+  if (!Number.isFinite(average) || average <= 0) return "-";
+  return `${formatMilliseconds(average)} avg / ${formatMilliseconds(max)} max`;
 }
 
 function denyRows(logs: FirewallLog[]) {

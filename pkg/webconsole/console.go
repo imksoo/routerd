@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"routerd/internal/hostcmd"
@@ -61,8 +62,9 @@ type Options struct {
 }
 
 type Handler struct {
-	opts       Options
-	reverseDNS *reverseDNSCache
+	opts        Options
+	reverseDNS  *reverseDNSCache
+	systemUsage *systemUsageSampler
 }
 
 type Snapshot struct {
@@ -84,7 +86,24 @@ type Snapshot struct {
 	Clients          []ClientEntry                 `json:"clients,omitempty"`
 	VPN              VPNStatus                     `json:"vpn,omitempty"`
 	DPI              *DPIStatus                    `json:"dpi,omitempty"`
+	SystemUsage      SystemUsage                   `json:"systemUsage,omitempty"`
 	Errors           []string                      `json:"errors,omitempty"`
+}
+
+type SystemUsage struct {
+	CPUPercent        *float64    `json:"cpuPercent,omitempty"`
+	Load1             *float64    `json:"load1,omitempty"`
+	MemoryUsedBytes   uint64      `json:"memoryUsedBytes,omitempty"`
+	MemoryTotalBytes  uint64      `json:"memoryTotalBytes,omitempty"`
+	MemoryUsedPercent *float64    `json:"memoryUsedPercent,omitempty"`
+	Disks             []DiskUsage `json:"disks,omitempty"`
+}
+
+type DiskUsage struct {
+	Path        string   `json:"path"`
+	UsedBytes   uint64   `json:"usedBytes"`
+	TotalBytes  uint64   `json:"totalBytes"`
+	UsedPercent *float64 `json:"usedPercent,omitempty"`
 }
 
 type SnapshotOptions struct {
@@ -282,7 +301,7 @@ func New(opts Options) Handler {
 	if opts.ReverseLookup == nil {
 		opts.ReverseLookup = net.DefaultResolver.LookupAddr
 	}
-	return Handler{opts: opts, reverseDNS: newReverseDNSCache(time.Hour)}
+	return Handler{opts: opts, reverseDNS: newReverseDNSCache(time.Hour), systemUsage: &systemUsageSampler{}}
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -495,6 +514,7 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		result = h.opts.Result()
 	}
 	dpiStatus := h.dpiStatus(context.Background())
+	systemUsage := h.readSystemUsage()
 	result = resultWithLatestGeneration(result, h.opts.Store)
 	recordConsoleMetrics(context.Background(), resources, h.opts.ControllerModes, dhcpLeases, clients, stickyLeases, now)
 	return Snapshot{
@@ -516,6 +536,7 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		Clients:          clients,
 		VPN:              vpn,
 		DPI:              dpiStatus,
+		SystemUsage:      systemUsage,
 		Errors:           errors,
 	}
 }
@@ -1425,6 +1446,143 @@ func (h Handler) dpiStatus(ctx context.Context) *DPIStatus {
 		return nil
 	}
 	return &DPIStatus{Classifier: classifier, Agent: agent}
+}
+
+type systemUsageSampler struct {
+	mu      sync.Mutex
+	prevCPU cpuTimes
+}
+
+type cpuTimes struct {
+	total uint64
+	idle  uint64
+}
+
+func (h Handler) readSystemUsage() SystemUsage {
+	if h.systemUsage == nil {
+		return SystemUsage{}
+	}
+	usage := h.systemUsage.sample()
+	if disk, ok := diskUsage("/"); ok {
+		usage.Disks = append(usage.Disks, disk)
+	}
+	return usage
+}
+
+func (s *systemUsageSampler) sample() SystemUsage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	usage := SystemUsage{}
+	if load, ok := readLoad1(); ok {
+		usage.Load1 = &load
+	}
+	if total, available, ok := readMemoryInfo(); ok && total > 0 {
+		used := total - available
+		usage.MemoryTotalBytes = total
+		usage.MemoryUsedBytes = used
+		percent := float64(used) / float64(total)
+		usage.MemoryUsedPercent = &percent
+	}
+	if current, ok := readCPUTimes(); ok {
+		if s.prevCPU.total > 0 && current.total > s.prevCPU.total {
+			totalDelta := current.total - s.prevCPU.total
+			idleDelta := current.idle - s.prevCPU.idle
+			if totalDelta > 0 && idleDelta <= totalDelta {
+				percent := float64(totalDelta-idleDelta) / float64(totalDelta)
+				usage.CPUPercent = &percent
+			}
+		}
+		s.prevCPU = current
+	}
+	return usage
+}
+
+func readCPUTimes() (cpuTimes, bool) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return cpuTimes{}, false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || fields[0] != "cpu" {
+			continue
+		}
+		values := make([]uint64, 0, len(fields)-1)
+		for _, field := range fields[1:] {
+			value, err := strconv.ParseUint(field, 10, 64)
+			if err != nil {
+				return cpuTimes{}, false
+			}
+			values = append(values, value)
+		}
+		total := uint64(0)
+		for _, value := range values {
+			total += value
+		}
+		idle := values[3]
+		if len(values) > 4 {
+			idle += values[4]
+		}
+		return cpuTimes{total: total, idle: idle}, true
+	}
+	return cpuTimes{}, false
+}
+
+func readLoad1() (float64, bool) {
+	data, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0, false
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func readMemoryInfo() (total uint64, available uint64, ok bool) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, 0, false
+	}
+	values := map[string]uint64{}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		key := strings.TrimSuffix(fields[0], ":")
+		value, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		values[key] = value * 1024
+	}
+	total = values["MemTotal"]
+	available = values["MemAvailable"]
+	if available == 0 {
+		available = values["MemFree"] + values["Buffers"] + values["Cached"]
+	}
+	return total, available, total > 0
+}
+
+func diskUsage(path string) (DiskUsage, bool) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return DiskUsage{}, false
+	}
+	total := stat.Blocks * uint64(stat.Bsize)
+	free := stat.Bavail * uint64(stat.Bsize)
+	if total == 0 || free > total {
+		return DiskUsage{}, false
+	}
+	used := total - free
+	percent := float64(used) / float64(total)
+	return DiskUsage{Path: path, UsedBytes: used, TotalBytes: total, UsedPercent: &percent}, true
 }
 
 func probeDPIService(ctx context.Context, socket, path string) *DPIServiceStatus {

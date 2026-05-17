@@ -18,6 +18,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   parser に fallback できます。
 - Web Console の Connections で、DPI が flow を識別できない場合でも、
   TCP port 4317 を OTLP、TCP port 4318 を OTLP/HTTP として表示するようにしました。
+- Web Console の Overview に host の CPU、memory、root filesystem 使用率と
+  classifier 側の DPI processing latency を表示し、router 内部の負荷悪化を
+  routing や DPI の状態と並べて確認できるようにしました。
 
 ### 追加
 
@@ -38,6 +41,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - DPI flow と traffic flow の record が、従来の app label に加えて、
   detected protocol、application protocol、category、confidence、risk、
   metadata などの typed classifier field を保存するようにしました。
+- `routerd-dpi-classifier` の status が、daemon で処理した classify request の
+  average latency と maximum latency を報告するようにしました。
 
 ### 修正
 

@@ -125,7 +125,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, `"conntrackTuning"`, `"application": "tls"`, `"applyMode": "manual"`, `"tcpFlags": "SYN"`, `"tailscale"`, `"homert02"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
+	for _, want := range []string{`"phase": "Healthy"`, `"generation": 11`, `"HealthCheck"`, `"connections"`, `"dnsQueries"`, `"trafficFlows"`, `"firewallLogs"`, `"conntrackTuning"`, `"systemUsage"`, `"application": "tls"`, `"applyMode": "manual"`, `"tcpFlags": "SYN"`, `"tailscale"`, `"homert02"`, "example.com", `"resolvedHostname": "example.com"`, `"topic": "routerd.dhcp.lease.renewed"`, `"mac": "18:ec:e7:33:12:6c"`, `"ip": "172.18.0.150"`, `"hostname": "aiseg2"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("summary missing %q:\n%s", want, rec.Body.String())
 		}

@@ -143,6 +143,9 @@ func TestDaemonStatusReportsClassifierStats(t *testing.T) {
 	if got.Stats.Requests != 1 || got.Stats.BuiltinPackets != 1 || got.Stats.BuiltinClassified != 1 {
 		t.Fatalf("status = %+v", got)
 	}
+	if got.Stats.LatencySamples != 1 || got.Stats.MaxLatencyMs <= 0 {
+		t.Fatalf("latency stats = %+v", got.Stats)
+	}
 }
 
 func TestAutoEngineFallsBackWhenAgentUnavailable(t *testing.T) {
@@ -212,6 +215,9 @@ func TestAutoEngineTimeoutUpdatesStats(t *testing.T) {
 	status := runtime.status()
 	if status.Stats.Requests != 1 || status.Stats.AgentPackets != 1 || status.Stats.Fallbacks != 1 || status.Stats.TimeoutErrors != 1 || status.Stats.AgentErrors != 1 {
 		t.Fatalf("stats = %+v", status.Stats)
+	}
+	if status.Stats.LatencySamples != 1 || status.Stats.AverageLatencyMs <= 0 {
+		t.Fatalf("latency stats = %+v", status.Stats)
 	}
 }
 
