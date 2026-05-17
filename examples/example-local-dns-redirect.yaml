@@ -1,0 +1,132 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: example-local-dns-redirect
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-base
+      spec:
+        interface: lan
+        address: 192.168.50.1/24
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSZone
+      metadata:
+        name: home
+      spec:
+        zone: home.example
+        ttl: 300
+        records:
+          - hostname: router
+            ipv4From:
+              resource: IPv4StaticAddress/lan-base
+              field: address
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSResolver
+      metadata:
+        name: lan-resolver
+      spec:
+        listen:
+          - name: lan
+            addressFrom:
+              - resource: IPv4StaticAddress/lan-base
+                field: address
+            port: 53
+            sources:
+              - local-zone
+              - default
+        sources:
+          - name: local-zone
+            kind: zone
+            match:
+              - home.example
+            zoneRef:
+              - DNSZone/home
+          - name: default
+            kind: upstream
+            match:
+              - "."
+            upstreams:
+              - udp://1.1.1.1:53
+              - udp://8.8.8.8:53
+        cache:
+          enabled: true
+          maxEntries: 10000
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-dhcpv4
+      spec:
+        interface: lan
+        addressPool:
+          start: 192.168.50.100
+          end: 192.168.50.199
+          leaseTime: 12h
+        gatewayFrom:
+          resource: IPv4StaticAddress/lan-base
+          field: address
+        dnsServerFrom:
+          - resource: IPv4StaticAddress/lan-base
+            field: address
+        domainFrom:
+          resource: DNSZone/home
+          field: zone
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPAddressSet
+      metadata:
+        name: public-dns
+      spec:
+        names:
+          - dns.google
+          - one.one.one.one
+        refreshInterval: 10m
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: LocalServiceRedirect
+      metadata:
+        name: lan-local-services
+      spec:
+        interface: lan
+        rules:
+          - name: public-dns
+            protocols:
+              - tcp
+              - udp
+            destinationSetRef: IPAddressSet/public-dns
+            destinationPort: 53
+            redirectPort: 53
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces:
+          - lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: local-services
+      spec:
+        logDeny: true

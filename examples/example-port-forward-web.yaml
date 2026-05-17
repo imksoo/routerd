@@ -1,0 +1,77 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: example-port-forward-web
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Lease
+      metadata:
+        name: wan-dhcpv4
+      spec:
+        interface: wan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: PortForward
+      metadata:
+        name: web-https
+      spec:
+        listen:
+          interface: wan
+          address: 203.0.113.10
+          protocol: tcp
+          port: 443
+        target:
+          address: 192.168.10.20
+          port: 443
+        hairpin:
+          enabled: true
+          interfaces:
+            - lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: wan
+      spec:
+        role: untrust
+        interfaces:
+          - wan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces:
+          - lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: home
+      spec:
+        logDeny: true

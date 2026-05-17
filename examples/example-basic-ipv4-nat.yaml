@@ -1,0 +1,111 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: example-basic-ipv4-nat
+
+spec:
+  resources:
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv4-forwarding
+      spec:
+        key: net.ipv4.ip_forward
+        value: "1"
+        runtime: true
+        persistent: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Lease
+      metadata:
+        name: wan-dhcpv4
+      spec:
+        interface: wan
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-base
+      spec:
+        interface: lan
+        address: 192.168.10.1/24
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-dhcpv4
+      spec:
+        interface: lan
+        addressPool:
+          start: 192.168.10.100
+          end: 192.168.10.199
+          leaseTime: 12h
+        gatewayFrom:
+          resource: IPv4StaticAddress/lan-base
+          field: address
+        dnsServerFrom:
+          - resource: IPv4StaticAddress/lan-base
+            field: address
+        domain: home.example
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata:
+        name: lan-to-wan
+      spec:
+        type: masquerade
+        egressInterface: wan
+        sourceRanges:
+          - 192.168.10.0/24
+        excludeDestinationCIDRs:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: wan
+      spec:
+        role: untrust
+        interfaces:
+          - wan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces:
+          - lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: home
+      spec:
+        logDeny: true
+        sameRoleAccept: true

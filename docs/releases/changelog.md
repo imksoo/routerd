@@ -10,6 +10,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Added a Configuration examples documentation section with numbered topology
+  diagrams, diagram-to-YAML mapping comments, safety notes, and validated sample
+  YAML for basic IPv4 NAT, LAN DHCP/DNS, DS-Lite, PPPoE, port forwarding,
+  guest isolation, multi-WAN failover, local DNS redirect, Tailscale,
+  WireGuard, and telemetry export patterns.
+
 ## v20260517.1808
 
 ### Fixed

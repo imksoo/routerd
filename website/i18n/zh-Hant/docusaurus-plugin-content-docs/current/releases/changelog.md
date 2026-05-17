@@ -10,6 +10,13 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 新增
+
+- 新增 Configuration examples 文件區段，包含編號 topology diagrams、diagram-to-YAML
+  對應註解、安全注意事項，以及基本 IPv4 NAT、LAN DHCP/DNS、DS-Lite、PPPoE、
+  port forwarding、guest isolation、multi-WAN failover、local DNS redirect、
+  Tailscale、WireGuard、telemetry export 等已驗證 sample YAML。
+
 ## v20260517.1808
 
 ### 修正

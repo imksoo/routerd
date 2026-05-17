@@ -102,6 +102,7 @@ const config: Config = {
             {to: '/docs/install-and-upgrade', label: 'Install'},
             {to: '/docs/concepts/what-is-routerd', label: 'Concepts'},
             {to: '/docs/tutorials/getting-started', label: 'Tutorials'},
+            {to: '/docs/config-examples/', label: 'Configuration examples'},
             {to: '/docs/how-to/multi-wan', label: 'How-to'},
             {to: '/docs/knowledge-base/dhcpv6-pd-clients', label: 'Knowledge base'},
             {to: '/docs/reference/api-v1alpha1', label: 'Reference'},
