@@ -741,14 +741,16 @@ func dependencyStatusSnapshot(store Store, dependencies []api.ResourceDependency
 }
 
 func postDaemonCommand(ctx context.Context, socketPath, command string) (daemonapi.CommandResult, error) {
-	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var dialer net.Dialer
 		return dialer.DialContext(ctx, "unix", socketPath)
 	}}}
+	defer client.CloseIdleConnections()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/commands/"+command, nil)
 	if err != nil {
 		return daemonapi.CommandResult{}, err
 	}
+	req.Close = true
 	resp, err := client.Do(req)
 	if err != nil {
 		return daemonapi.CommandResult{}, err

@@ -841,7 +841,7 @@ func classifyPacket(ctx context.Context, socket string, timeout time.Duration, p
 	}
 	client := &http.Client{
 		Timeout: timeout,
-		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var dialer net.Dialer
 			return dialer.DialContext(ctx, "unix", socket)
 		}},

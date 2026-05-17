@@ -1465,14 +1465,16 @@ func routerNeedsDnsmasq(router *api.Router) bool {
 }
 
 func daemonStatus(ctx context.Context, socketPath string) (daemonapi.DaemonStatus, error) {
-	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var dialer net.Dialer
 		return dialer.DialContext(ctx, "unix", socketPath)
 	}}}
+	defer client.CloseIdleConnections()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/v1/status", nil)
 	if err != nil {
 		return daemonapi.DaemonStatus{}, err
 	}
+	req.Close = true
 	resp, err := client.Do(req)
 	if err != nil {
 		return daemonapi.DaemonStatus{}, err

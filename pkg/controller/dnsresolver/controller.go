@@ -359,7 +359,7 @@ func (c Controller) forwardLeaseEvent(ctx context.Context, event daemonapi.Daemo
 			continue
 		}
 		socket := filepath.Join("/run/routerd/dns-resolver", resource.Metadata.Name+".sock")
-		client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			var dialer net.Dialer
 			return dialer.DialContext(ctx, "unix", socket)
 		}}}
@@ -367,12 +367,15 @@ func (c Controller) forwardLeaseEvent(ctx context.Context, event daemonapi.Daemo
 		if err != nil {
 			return err
 		}
+		req.Close = true
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
+			client.CloseIdleConnections()
 			continue
 		}
 		_ = resp.Body.Close()
+		client.CloseIdleConnections()
 	}
 	return nil
 }

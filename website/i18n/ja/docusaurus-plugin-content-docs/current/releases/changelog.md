@@ -10,6 +10,13 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 修正
+
+- controller と helper probe からの一回完結の HTTP-over-Unix 呼び出しは
+  keep-alive を無効化し、idle transport を明示的に閉じるようにしました。
+  定期的な status polling により、`routerd`、health check helper、DHCP client、
+  DNS/DPI helper service に多数の確立済み Unix socket が残り続けることを防ぎます。
+
 ## v20260517.1533
 
 ### 修正

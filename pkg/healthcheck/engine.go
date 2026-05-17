@@ -320,6 +320,7 @@ func ProbeHTTP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
 		return ProbeResult{Message: err.Error()}
 	}
 	transport := &http.Transport{
+		DisableKeepAlives: true,
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			return dialContext(ctx, spec, network, address)
 		},

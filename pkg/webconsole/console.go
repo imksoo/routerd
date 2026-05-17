@@ -1607,7 +1607,7 @@ func probeDPIService(ctx context.Context, socket, path string) *DPIServiceStatus
 	defer cancel()
 	client := &http.Client{
 		Timeout: 150 * time.Millisecond,
-		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var dialer net.Dialer
 			return dialer.DialContext(ctx, "unix", socket)
 		}},

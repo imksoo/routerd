@@ -10,6 +10,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- One-shot HTTP-over-Unix calls from controllers and helper probes now disable
+  keep-alive and close idle transports explicitly. This prevents periodic
+  status polling from leaving large numbers of established Unix sockets open in
+  `routerd`, health check helpers, DHCP clients, and DNS/DPI helper services.
+
 ## v20260517.1533
 
 ### Fixed
