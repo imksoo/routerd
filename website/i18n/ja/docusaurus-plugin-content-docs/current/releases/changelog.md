@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260517.1533
+
 ### 修正
 
 - release helper は、schema check の前に管理対象の config schema と control API

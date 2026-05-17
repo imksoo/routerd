@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260517.1533
+
 ### Fixed
 
 - The release helper now regenerates checked-in config and control API schemas

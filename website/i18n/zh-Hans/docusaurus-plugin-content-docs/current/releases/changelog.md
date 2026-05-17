@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260517.1533
+
 ### 修复
 
 - release helper 现在会在 schema check 前重新生成受管理的 config schema 与
