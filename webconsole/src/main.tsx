@@ -470,6 +470,7 @@ type MetricSample = {
 
 type ConnectionFilters = {
   query: string;
+  client: string;
   family: string;
   protocol: string;
   app: string;
@@ -813,6 +814,18 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: "8px",
     marginBottom: "12px",
+  },
+  activeFilterBanner: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "10px",
+    padding: "10px 12px",
+    marginBottom: "12px",
+    border: `1px solid ${tokens.colorBrandStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: "#102238",
   },
   connectionCardList: {
     display: "grid",
@@ -2176,6 +2189,7 @@ function App() {
   const [connectionSortRevision, setConnectionSortRevision] = useState(0);
   const [connectionFilters, setConnectionFilters] = useState<ConnectionFilters>({
     query: "",
+    client: "",
     family: "all",
     protocol: "all",
     app: "all",
@@ -2226,14 +2240,14 @@ function App() {
     const generationLimit = selected === "generations" ? 200 : 50;
     const shouldFetchConfig = selected === "config";
     const shouldFetchGenerations = selected === "config" || selected === "generations";
-    const includeClients = selected === "clients";
+    const includeClients = selected === "clients" || selected === "connections";
     const includeTuning = selected === "firewall";
     const includeVPN = selected === "vpn";
     const includeDPI = selected === "connections" || selected === "clients" || selected === "firewall";
     const trafficFlowLimit = selected === "clients" ? 200 : -1;
     const includeResources = selected === "resources";
     const includeEvents = selected === "events";
-    const includeDHCPLeases = selected === "clients";
+    const includeDHCPLeases = selected === "clients" || selected === "connections";
     const summaryQuery = new URLSearchParams({
       events: includeEvents ? String(eventLimit) : "-1",
       connections: String(connectionLimit),
@@ -2402,6 +2416,7 @@ function App() {
   );
   const connectionSortSignature = [
     connectionFilters.query,
+    connectionFilters.client,
     connectionFilters.family,
     connectionFilters.protocol,
     connectionFilters.app,
@@ -2496,6 +2511,28 @@ function App() {
   function showConnectionsGroup(key: string) {
     showSection({ key, label: key, view: "connections", targetID: connectionGroupID(key) });
     setCollapsed(current => ({ ...current, [key]: false }));
+  }
+
+  function showClientConnections(row: ClientRow) {
+    const addresses = clientConnectionAddresses(row);
+    if (addresses.length === 0) return;
+    setConnectionFilters(current => ({ ...current, query: "", client: addresses.join(",") }));
+    navigateTo("connections");
+  }
+
+  function showAddressConnections(address: string) {
+    const normalized = normalizeAddressKey(address);
+    if (!normalized) return;
+    setConnectionFilters(current => ({ ...current, query: "", client: normalized }));
+    navigateTo("connections");
+  }
+
+  function showClientForAddress(address?: string) {
+    const normalized = normalizeAddressKey(address);
+    if (!normalized) return;
+    setClientQuery(normalized);
+    setClientActivityFilter("all");
+    navigateTo("clients", "clients-inventory");
   }
 
   function showSection(item: NavSubItem) {
@@ -2791,13 +2828,13 @@ function App() {
                         </Select>
                       </div>
                     </div>
-                    <ClientInventory clients={filteredClients} />
+                    <ClientInventory clients={filteredClients} onShowConnections={showClientConnections} />
                   </Card>
                 ) : null}
                 {activeClientTargetID === "clients-traffic" ? (
                   <Card id="clients-traffic" className={styles.connectionAnchor}>
                     <CardHeader header={<Text weight="semibold">Client traffic</Text>} description={<Text className={styles.muted}>Traffic grouped by client address</Text>} />
-                    <ClientTraffic flows={summary?.trafficFlows ?? []} />
+                    <ClientTraffic flows={summary?.trafficFlows ?? []} onShowConnectionsForAddress={showAddressConnections} />
                   </Card>
                 ) : null}
                 {activeClientTargetID === "clients-leases" ? (
@@ -2845,6 +2882,18 @@ function App() {
               ) : null}
             </div>
             <ConnectionClassificationSummary entries={filteredConnections} />
+            {connectionFilters.client ? (
+              <div className={styles.activeFilterBanner}>
+                <div className={styles.connectionFlow}>
+                  <Text weight="semibold">Client connections</Text>
+                  <Text size={200} className={styles.muted}>{connectionClientFilterLabel(connectionFilters.client, clientIdentities)}</Text>
+                </div>
+                <div className={styles.badges}>
+                  <Button size="small" appearance="secondary" icon={<PeopleRegular />} onClick={() => showClientForAddress(splitConnectionClientFilter(connectionFilters.client)[0])}>Client</Button>
+                  <Button size="small" appearance="subtle" onClick={() => updateConnectionFilter("client", "")}>Clear</Button>
+                </div>
+              </div>
+            ) : null}
             <div className={styles.connectionFilters}>
               <SearchControl label="Filter" value={connectionFilters.query} placeholder="address, port, state, label" onChange={value => updateConnectionFilter("query", value)} />
               <div className={styles.filterControl}>
@@ -2926,6 +2975,7 @@ function App() {
                     setConnectionPageSizes(current => ({ ...current, [group.key]: size }));
                     setConnectionPages(current => ({ ...current, [group.key]: 0 }));
                   }}
+                  onShowClient={showClientForAddress}
                 />
               ))}
             </div>
@@ -4079,6 +4129,7 @@ function ConnectionGroup({
   pageSize,
   setPage,
   setPageSize,
+  onShowClient,
 }: {
   group: { key: string; rows: ConnectionEntry[] };
   dnsLabels: Record<string, string>;
@@ -4089,6 +4140,7 @@ function ConnectionGroup({
   pageSize: number;
   setPage: (page: number) => void;
   setPageSize: (size: number) => void;
+  onShowClient: (address?: string) => void;
 }) {
   const styles = useStyles();
   const label = connectionGroupLabel(group.key);
@@ -4124,7 +4176,7 @@ function ConnectionGroup({
           </div>
           <div className={styles.connectionCardList} data-routerd-scroll-key={`connections-${group.key}`}>
             {visibleRows.map(entry => (
-              <ConnectionCard key={flowKey(entry)} entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} />
+              <ConnectionCard key={flowKey(entry)} entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} onShowClient={onShowClient} />
             ))}
           </div>
         </>
@@ -4133,7 +4185,17 @@ function ConnectionGroup({
   );
 }
 
-function ConnectionCard({ entry, dnsLabels, clientIdentities }: { entry: ConnectionEntry; dnsLabels: Record<string, string>; clientIdentities: Map<string, ClientIdentity> }) {
+function ConnectionCard({
+  entry,
+  dnsLabels,
+  clientIdentities,
+  onShowClient,
+}: {
+  entry: ConnectionEntry;
+  dnsLabels: Record<string, string>;
+  clientIdentities: Map<string, ClientIdentity>;
+  onShowClient: (address?: string) => void;
+}) {
   const styles = useStyles();
   const [expanded, setExpanded] = useState(false);
   const classification = connectionClassification(entry, dnsLabels);
@@ -4176,10 +4238,12 @@ function ConnectionCard({ entry, dnsLabels, clientIdentities }: { entry: Connect
             <div className={styles.connectionFlow}>
               <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
               <ConnectionRemoteIdentity entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} />
+              <ConnectionClientAction address={entry.original?.source} clientIdentities={clientIdentities} onShowClient={onShowClient} />
             </div>
             <Text className={styles.detailKey}>destination</Text>
             <div className={styles.connectionFlow}>
               <RemoteIdentityLabel entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} />
+              <ConnectionClientAction address={entry.original?.destination} clientIdentities={clientIdentities} onShowClient={onShowClient} />
               {destServiceApp || provider ? (
                 <div className={styles.badges}>
                   {destServiceApp ? <ServiceBadge service={destService} app={destServiceApp} prefix="service" /> : null}
@@ -4200,6 +4264,21 @@ function ConnectionCard({ entry, dnsLabels, clientIdentities }: { entry: Connect
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ConnectionClientAction({ address, clientIdentities, onShowClient }: { address?: string; clientIdentities: Map<string, ClientIdentity>; onShowClient: (address?: string) => void }) {
+  const styles = useStyles();
+  const normalized = normalizeAddressKey(address);
+  const identity = normalized ? clientIdentities.get(normalized) : undefined;
+  if (!identity) return null;
+  return (
+    <div className={styles.badges}>
+      <Button size="small" appearance="secondary" icon={<PeopleRegular />} onClick={() => onShowClient(normalized)}>
+        Client
+      </Button>
+      <Text size={200} className={styles.muted}>{identity.compactLabel}</Text>
     </div>
   );
 }
@@ -4505,7 +4584,7 @@ function WireGuardPanel({ interfaces, errors }: { interfaces: WireGuardInterface
   );
 }
 
-function ClientInventory({ clients }: { clients: ClientEntry[] }) {
+function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[]; onShowConnections: (row: ClientRow) => void }) {
   const styles = useStyles();
   const rows = clients.map(clientEntryToRow);
   const online = rows.filter(row => clientOnline(row)).length;
@@ -4615,6 +4694,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                       <div className={`${styles.connectionFlow} ${styles.clientDesktopOnly}`}>
                         <Text size={200} className={styles.muted}>Addresses</Text>
                         <Text>{row.addresses.size}</Text>
+                        <Button size="small" appearance="subtle" icon={<PlugConnectedRegular />} onClick={() => onShowConnections(row)}>Connections</Button>
                       </div>
                       {isExpanded ? (
                         <div className={styles.clientDeviceDetails}>
@@ -4634,6 +4714,7 @@ function ClientInventory({ clients }: { clients: ClientEntry[] }) {
                               {row.sources.size > 0 ? <Text size={200} className={styles.muted}>sources {Array.from(row.sources).join(", ")}</Text> : null}
                               {row.fingerprintSignals.size > 0 ? <Text size={200} className={styles.muted}>signals {Array.from(row.fingerprintSignals).slice(0, 5).join(", ")}</Text> : null}
                               {row.peers.size > 0 ? <Text size={200} className={styles.muted}>peers {Array.from(row.peers).slice(0, 5).join(", ")}</Text> : null}
+                              <Button size="small" appearance="secondary" icon={<PlugConnectedRegular />} onClick={() => onShowConnections(row)}>Connections</Button>
                             </div>
                           </div>
                         </div>
@@ -4772,7 +4853,7 @@ function ClientAddressGroup({ label, addresses }: { label: string; addresses: st
   );
 }
 
-function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
+function ClientTraffic({ flows, onShowConnectionsForAddress }: { flows: TrafficFlow[]; onShowConnectionsForAddress: (address: string) => void }) {
   const styles = useStyles();
   const [source, setSource] = useState("all");
   const sourceOptions = useMemo(() => {
@@ -4816,7 +4897,12 @@ function ClientTraffic({ flows }: { flows: TrafficFlow[] }) {
         <TableBody>
           {clientTrafficRows(filtered).map(row => (
             <TableRow key={row.client} className={styles.stableTableRow}>
-              <TableCell><code className={styles.code}>{row.client}</code></TableCell>
+              <TableCell>
+                <div className={styles.connectionFlow}>
+                  <code className={styles.code}>{row.client}</code>
+                  <Button size="small" appearance="subtle" icon={<PlugConnectedRegular />} onClick={() => onShowConnectionsForAddress(row.client)}>Connections</Button>
+                </div>
+              </TableCell>
               <TableCell>{formatBytes(row.bytesOut)}</TableCell>
               <TableCell>{formatBytes(row.bytesIn)}</TableCell>
               <TableCell>
@@ -5545,7 +5631,9 @@ function resourceSearchText(resource: ResourceStatus) {
 
 function filterConnections(entries: ConnectionEntry[], dnsLabels: Record<string, string>, clientIdentities: Map<string, ClientIdentity>, filters: ConnectionFilters) {
   const query = filters.query.trim().toLowerCase();
+  const clientAddresses = splitConnectionClientFilter(filters.client);
   return entries.filter(entry => {
+    if (clientAddresses.length > 0 && !connectionTouchesAnyAddress(entry, clientAddresses)) return false;
     if (filters.family !== "all" && normalizeFacet(entry.family, "other") !== filters.family) return false;
     if (filters.protocol !== "all" && normalizeFacet(entry.protocol, "other") !== filters.protocol) return false;
     if (filters.app !== "all" && connectionApp(entry) !== filters.app) return false;
@@ -5554,6 +5642,40 @@ function filterConnections(entries: ConnectionEntry[], dnsLabels: Record<string,
     if (!query) return true;
     return connectionSearchText(entry, dnsLabels, clientIdentities).includes(query);
   });
+}
+
+function splitConnectionClientFilter(value: string) {
+  return Array.from(new Set(
+    String(value ?? "")
+      .split(",")
+      .map(part => normalizeAddressKey(part))
+      .filter(Boolean),
+  ));
+}
+
+function connectionTouchesAnyAddress(entry: ConnectionEntry, addresses: string[]) {
+  const wanted = new Set(addresses);
+  return connectionEndpointAddresses(entry).some(address => wanted.has(address));
+}
+
+function connectionEndpointAddresses(entry: ConnectionEntry) {
+  return [
+    entry.original?.source,
+    entry.original?.destination,
+    entry.reply?.source,
+    entry.reply?.destination,
+  ].map(address => normalizeAddressKey(address)).filter(Boolean);
+}
+
+function connectionClientFilterLabel(value: string, clientIdentities: Map<string, ClientIdentity>) {
+  const addresses = splitConnectionClientFilter(value);
+  const labels = Array.from(new Set(addresses.map(address => clientIdentities.get(address)?.compactLabel ?? "").filter(Boolean)));
+  const addressLabel = addresses.slice(0, 3).join(", ");
+  const addressSuffix = addresses.length > 3 ? `, +${addresses.length - 3}` : "";
+  if (labels.length > 0) {
+    return `${labels[0]} · ${addresses.length} address${addresses.length === 1 ? "" : "es"}${addressLabel ? ` (${addressLabel}${addressSuffix})` : ""}`;
+  }
+  return `${addressLabel}${addressSuffix}`;
 }
 
 function sortConnectionEntries(entries: ConnectionEntry[], dnsLabels: Record<string, string>, filters: ConnectionFilters) {
@@ -7058,6 +7180,19 @@ function primaryClientAddress(row: ClientRow) {
     ?? addresses[0]
     ?? row.ip
     ?? "";
+}
+
+function clientConnectionAddresses(row: ClientRow) {
+  const values = new Set<string>();
+  for (const address of row.addresses) {
+    const normalized = normalizeAddressKey(address);
+    if (normalized) values.add(normalized);
+  }
+  const id = normalizeAddressKey(row.id);
+  if (id && isLikelyIPAddress(id)) values.add(id);
+  const primary = normalizeAddressKey(row.ip);
+  if (primary && isLikelyIPAddress(primary)) values.add(primary);
+  return Array.from(values);
 }
 
 function formatPrimaryClientAddress(address: string) {

@@ -20,6 +20,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - Web Console Overview 现在会显示 host CPU、memory、root filesystem 使用率，
   以及 classifier 侧的 DPI processing latency，方便把 router 本机负载恶化与
   routing、DPI 健康状态一起观察。
+- Web Console Clients 与 Connections 现在可以互相跳转。client row 可以打开按该
+  client 观测地址筛选的 Connections，connection 详情也可以回到对应的 local
+  client identity。
 
 ### 新增
 

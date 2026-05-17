@@ -21,6 +21,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - Web Console の Overview に host の CPU、memory、root filesystem 使用率と
   classifier 側の DPI processing latency を表示し、router 内部の負荷悪化を
   routing や DPI の状態と並べて確認できるようにしました。
+- Web Console の Clients と Connections を相互に移動しやすくしました。
+  client 行からその client の観測アドレスで絞り込んだ Connections を開け、
+  connection 詳細から対応する local client identity に戻れます。
 
 ### 追加
 

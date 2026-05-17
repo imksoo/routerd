@@ -20,6 +20,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Web Console Overview now shows host CPU, memory, and root filesystem usage,
   plus classifier-side DPI processing latency, so router-local load regressions
   are visible next to routing and DPI health.
+- Web Console Clients and Connections now link to each other. Client rows can
+  open a Connections view filtered to that client's observed addresses, and
+  connection details can jump back to the matching local client identity.
 
 ### Added
 
