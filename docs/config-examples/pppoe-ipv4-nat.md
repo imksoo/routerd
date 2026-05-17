@@ -1,5 +1,6 @@
 ---
 title: PPPoE IPv4 NAT gateway
+sidebar_position: 40
 ---
 
 # PPPoE IPv4 NAT gateway

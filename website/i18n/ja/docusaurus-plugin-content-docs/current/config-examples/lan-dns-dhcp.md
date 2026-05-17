@@ -1,5 +1,6 @@
 ---
 title: LAN DHCP とローカル DNS
+sidebar_position: 20
 ---
 
 # LAN DHCP とローカル DNS

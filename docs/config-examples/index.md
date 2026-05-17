@@ -1,5 +1,6 @@
 ---
 title: Configuration examples
+sidebar_position: 0
 ---
 
 # Configuration examples

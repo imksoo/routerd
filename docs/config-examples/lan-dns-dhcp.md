@@ -1,5 +1,6 @@
 ---
 title: LAN DHCP and local DNS
+sidebar_position: 20
 ---
 
 # LAN DHCP and local DNS

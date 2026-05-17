@@ -1,5 +1,6 @@
 ---
 title: Tailscale subnet and exit node
+sidebar_position: 90
 ---
 
 # Tailscale subnet and exit node

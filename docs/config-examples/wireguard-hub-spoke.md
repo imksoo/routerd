@@ -1,5 +1,6 @@
 ---
 title: WireGuard hub and spoke template
+sidebar_position: 100
 ---
 
 # WireGuard hub and spoke template

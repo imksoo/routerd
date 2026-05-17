@@ -1,5 +1,6 @@
 ---
 title: DS-Lite ホームルーター
+sidebar_position: 30
 ---
 
 # DS-Lite ホームルーター

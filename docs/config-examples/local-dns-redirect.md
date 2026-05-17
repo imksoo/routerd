@@ -1,5 +1,6 @@
 ---
 title: Redirect public DNS to the local resolver
+sidebar_position: 80
 ---
 
 # Redirect public DNS to the local resolver

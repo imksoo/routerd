@@ -1,5 +1,6 @@
 ---
 title: Multi-WAN IPv4 failover
+sidebar_position: 70
 ---
 
 # Multi-WAN IPv4 failover

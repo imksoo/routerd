@@ -1,5 +1,6 @@
 ---
 title: Guest and IoT client isolation
+sidebar_position: 60
 ---
 
 # Guest and IoT client isolation

@@ -1,5 +1,6 @@
 ---
 title: Guest / IoT client の分離
+sidebar_position: 60
 ---
 
 # Guest / IoT client の分離

@@ -1,5 +1,6 @@
 ---
 title: Public DNS を local resolver に redirect
+sidebar_position: 80
 ---
 
 # Public DNS を local resolver に redirect

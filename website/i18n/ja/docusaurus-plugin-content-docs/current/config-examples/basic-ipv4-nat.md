@@ -1,5 +1,6 @@
 ---
 title: 基本的な IPv4 NAT ルーター
+sidebar_position: 10
 ---
 
 # 基本的な IPv4 NAT ルーター

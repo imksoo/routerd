@@ -1,5 +1,6 @@
 ---
 title: DS-Lite home gateway
+sidebar_position: 30
 ---
 
 # DS-Lite home gateway

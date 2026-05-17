@@ -1,5 +1,6 @@
 ---
 title: Basic IPv4 NAT gateway
+sidebar_position: 10
 ---
 
 # Basic IPv4 NAT gateway

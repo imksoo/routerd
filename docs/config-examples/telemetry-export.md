@@ -1,5 +1,6 @@
 ---
 title: Telemetry export to an OTLP collector
+sidebar_position: 110
 ---
 
 # Telemetry export to an OTLP collector
