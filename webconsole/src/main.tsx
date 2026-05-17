@@ -2244,7 +2244,7 @@ function App() {
     const includeTuning = selected === "firewall";
     const includeVPN = selected === "vpn";
     const includeDPI = selected === "connections" || selected === "clients" || selected === "firewall";
-    const trafficFlowLimit = selected === "clients" ? 200 : -1;
+    const trafficFlowLimit = selected === "clients" ? 200 : selected === "connections" ? 600 : -1;
     const includeResources = selected === "resources";
     const includeEvents = selected === "events";
     const includeDHCPLeases = selected === "clients" || selected === "connections";
@@ -4238,7 +4238,7 @@ function ConnectionCard({
             <div className={styles.connectionFlow}>
               <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
               <ConnectionRemoteIdentity entry={entry} dnsLabels={dnsLabels} clientIdentities={clientIdentities} />
-              <ConnectionClientAction address={entry.original?.source} clientIdentities={clientIdentities} onShowClient={onShowClient} />
+              <ConnectionClientAction address={entry.original?.source} clientIdentities={clientIdentities} assumeLocal={true} onShowClient={onShowClient} />
             </div>
             <Text className={styles.detailKey}>destination</Text>
             <div className={styles.connectionFlow}>
@@ -4268,17 +4268,28 @@ function ConnectionCard({
   );
 }
 
-function ConnectionClientAction({ address, clientIdentities, onShowClient }: { address?: string; clientIdentities: Map<string, ClientIdentity>; onShowClient: (address?: string) => void }) {
+function ConnectionClientAction({
+  address,
+  clientIdentities,
+  assumeLocal = false,
+  onShowClient,
+}: {
+  address?: string;
+  clientIdentities: Map<string, ClientIdentity>;
+  assumeLocal?: boolean;
+  onShowClient: (address?: string) => void;
+}) {
   const styles = useStyles();
   const normalized = normalizeAddressKey(address);
   const identity = normalized ? clientIdentities.get(normalized) : undefined;
-  if (!identity) return null;
+  const canSearch = normalized && (assumeLocal || isLikelyLocalClientAddress(normalized));
+  if (!identity && !canSearch) return null;
   return (
     <div className={styles.badges}>
-      <Button size="small" appearance="secondary" icon={<PeopleRegular />} onClick={() => onShowClient(normalized)}>
-        Client
+      <Button size="small" appearance={identity ? "secondary" : "subtle"} icon={<PeopleRegular />} onClick={() => onShowClient(normalized)}>
+        {identity ? "Client" : "Search clients"}
       </Button>
-      <Text size={200} className={styles.muted}>{identity.compactLabel}</Text>
+      <Text size={200} className={styles.muted}>{identity?.compactLabel ?? normalized}</Text>
     </div>
   );
 }
@@ -7079,7 +7090,8 @@ function clientIdentity(client: ClientEntry): ClientIdentity | undefined {
   const deviceClass = cleanIdentityPart(client.inferredDeviceClass);
   const mac = cleanIdentityPart(client.mac);
   const id = cleanIdentityPart(client.id);
-  const primary = hostname || vendor || mac || (id && !isLikelyIPAddress(id) ? id : "");
+  const primaryAddress = cleanIdentityPart((client.addresses ?? []).find(address => isLikelyIPAddress(normalizeAddressKey(address))));
+  const primary = hostname || vendor || mac || (id && !isLikelyIPAddress(id) ? id : "") || primaryAddress || (id && isLikelyIPAddress(id) ? id : "");
   const kind = [osFamily, deviceClass].filter(Boolean).join("/");
   if (!primary && !kind) return undefined;
   const details = [kind, vendor && vendor !== primary ? vendor : ""].filter(Boolean);
@@ -7127,6 +7139,22 @@ function cleanIdentityPart(value?: string) {
 
 function isLikelyIPAddress(value: string) {
   return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value) || value.includes(":");
+}
+
+function isLikelyLocalClientAddress(value: string) {
+  const address = normalizeAddressKey(value);
+  if (!address) return false;
+  const ipv4 = address.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const octets = ipv4.slice(1).map(Number);
+    if (octets.some(octet => !Number.isFinite(octet) || octet < 0 || octet > 255)) return false;
+    return octets[0] === 10
+      || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+      || (octets[0] === 192 && octets[1] === 168)
+      || (octets[0] === 169 && octets[1] === 254);
+  }
+  const lower = address.toLowerCase();
+  return lower.startsWith("fe80:") || lower.startsWith("fc") || lower.startsWith("fd");
 }
 
 function formatClientActivity(value: string) {
