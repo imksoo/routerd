@@ -18,6 +18,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
   keep-alive，并明确关闭 idle transport。这可避免周期性的 status polling 在
   `routerd`、health check helper、DHCP client、DNS/DPI helper service 中留下大量
   已建立的 Unix socket。
+- Debian/Ubuntu release installer 现在会安装 `dnsmasq-base`，而不是完整的
+  `dnsmasq` package，避免 distro 的 `dnsmasq.service` 被启用并与 routerd 管理的
+  dnsmasq instance 竞争。
 
 ## v20260517.1533
 

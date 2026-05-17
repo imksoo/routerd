@@ -18,6 +18,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   keep-alive を無効化し、idle transport を明示的に閉じるようにしました。
   定期的な status polling により、`routerd`、health check helper、DHCP client、
   DNS/DPI helper service に多数の確立済み Unix socket が残り続けることを防ぎます。
+- Debian/Ubuntu 用の release installer は、完全な `dnsmasq` package ではなく
+  `dnsmasq-base` を導入するようにしました。distro 側の `dnsmasq.service` が
+  有効化され、routerd 管理の dnsmasq instance と競合することを避けます。
 
 ## v20260517.1533
 

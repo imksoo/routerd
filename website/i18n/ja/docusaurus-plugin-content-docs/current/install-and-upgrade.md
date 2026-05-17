@@ -159,7 +159,7 @@ sudo ./install.sh --with-tailscale
 インストーラーは `apt-get` を使い、次を導入します。
 
 ```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables
+ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables
 ```
 
 ### Fedora 系
