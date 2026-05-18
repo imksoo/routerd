@@ -19,6 +19,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `routerctl show ingress` table views, derived DNS records from VIP/ingress
   `hostname` fields, and BGP/VRRP/Ingress OpenTelemetry metrics for transitions
   and backend health.
+- Added Web Console dedicated BGP, VRRP, and IngressService views and JSON
+  endpoints.
 
 ### Changed
 

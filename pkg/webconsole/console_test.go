@@ -223,6 +223,88 @@ func TestHandlerServesVPNStatus(t *testing.T) {
 	}
 }
 
+func TestHandlerServesOperationalViews(t *testing.T) {
+	store := fakeStore{resources: []routerstate.ObjectStatus{
+		{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "BGPRouter",
+			Name:       "lan",
+			Status: map[string]any{
+				"phase":            "Established",
+				"establishedPeers": 1,
+				"acceptedPrefixes": 2,
+				"peers": []map[string]any{{
+					"address":          "192.168.123.111",
+					"asn":              64513,
+					"state":            "Established",
+					"messagesReceived": 12,
+					"messagesSent":     11,
+					"prefixesReceived": 2,
+				}},
+			},
+		},
+		{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "VirtualIPv4Address",
+			Name:       "k8s-api-vip",
+			Status: map[string]any{
+				"address":         "192.168.123.250/32",
+				"hostname":        "k8s-api.lain.local",
+				"role":            "master",
+				"priority":        150,
+				"basePriority":    150,
+				"interface":       "lan",
+				"virtualRouterID": 66,
+			},
+		},
+		{
+			APIVersion: api.FirewallAPIVersion,
+			Kind:       "IngressService",
+			Name:       "kubernetes-api",
+			Status: map[string]any{
+				"phase":           "Active",
+				"hostname":        "k8s-api.lain.local",
+				"healthyBackends": 1,
+				"totalBackends":   1,
+				"selection":       "failover",
+				"activeBackend":   map[string]any{"name": "cp-01", "address": "192.168.123.11", "port": 6443},
+				"backends": []map[string]any{{
+					"name":            "cp-01",
+					"address":         "cp-01.lain.local",
+					"resolvedAddress": "192.168.123.11",
+					"port":            6443,
+					"healthy":         true,
+					"healthyCount":    7,
+				}},
+			},
+		},
+	}}
+	handler := New(Options{Store: store, Title: "routerd"})
+	for _, tt := range []struct {
+		path string
+		want []string
+	}{
+		{"/api/v1/bgp", []string{`"kind": "bgp"`, `"BGPRouter"`, `"192.168.123.111"`}},
+		{"/api/v1/vrrp", []string{`"kind": "vrrp"`, `"VirtualIPv4Address"`, `"k8s-api.lain.local"`}},
+		{"/api/v1/ingress", []string{`"kind": "ingress"`, `"IngressService"`, `"kubernetes-api"`}},
+		{"/bgp", []string{"<h1>BGP</h1>", "192.168.123.111", "12/11"}},
+		{"/vrrp", []string{"<h1>VRRP</h1>", "k8s-api.lain.local", "master"}},
+		{"/ingress", []string{"<h1>IngressService</h1>", "kubernetes-api", "cp-01 / 192.168.123.11:6443"}},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%s", tt.path, rec.Code, rec.Body.String())
+		}
+		got := rec.Body.String()
+		for _, want := range tt.want {
+			if !strings.Contains(got, want) {
+				t.Fatalf("%s body missing %q:\n%s", tt.path, want, got)
+			}
+		}
+	}
+}
+
 func TestHandlerStreamsBusEventsOverSSE(t *testing.T) {
 	eventBus := bus.New()
 	handler := New(Options{Bus: eventBus})

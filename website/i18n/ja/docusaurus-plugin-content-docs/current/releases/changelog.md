@@ -18,6 +18,7 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - `routerctl show bgp`、`routerctl show vrrp`、`routerctl show ingress` の
   table view、VIP/ingress の `hostname` field からの DNS record 自動派生、
   BGP/VRRP/Ingress の transition と backend health 用 OTel metrics を追加しました。
+- Web Console に BGP、VRRP、IngressService の dedicated view と JSON endpoint を追加しました。
 
 ### 変更
 

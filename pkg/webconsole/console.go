@@ -341,10 +341,22 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.clients(w)
 	case "api/v1/vpn":
 		h.vpn(w)
+	case "api/v1/bgp":
+		h.operationalStatus(w, "bgp")
+	case "api/v1/vrrp":
+		h.operationalStatus(w, "vrrp")
+	case "api/v1/ingress":
+		h.operationalStatus(w, "ingress")
 	case "api/v1/config":
 		h.config(w)
 	case "api/v1/generations":
 		h.generations(w, r)
+	case "bgp":
+		h.operationalPage(w, "bgp")
+	case "vrrp":
+		h.operationalPage(w, "vrrp")
+	case "ingress":
+		h.operationalPage(w, "ingress")
 	default:
 		if strings.HasPrefix(path, "api/v1/generations/") {
 			h.generationDetail(w, r, strings.TrimPrefix(path, "api/v1/generations/"))
@@ -625,6 +637,58 @@ func (h Handler) resources(w http.ResponseWriter) {
 		return
 	}
 	writeJSON(w, resources)
+}
+
+type OperationalStatus struct {
+	GeneratedAt time.Time                  `json:"generatedAt"`
+	Kind        string                     `json:"kind"`
+	Resources   []routerstate.ObjectStatus `json:"resources"`
+}
+
+func (h Handler) operationalStatus(w http.ResponseWriter, kind string) {
+	resources, err := h.operationalResources(kind)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, OperationalStatus{GeneratedAt: time.Now().UTC(), Kind: kind, Resources: resources})
+}
+
+func (h Handler) operationalPage(w http.ResponseWriter, kind string) {
+	resources, err := h.operationalResources(kind)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	page := operationalHTMLPage(h.opts.Title, kind, resources)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(page))
+}
+
+func (h Handler) operationalResources(kind string) ([]routerstate.ObjectStatus, error) {
+	resources, err := h.resourceStatuses()
+	if err != nil {
+		return nil, err
+	}
+	var out []routerstate.ObjectStatus
+	for _, resource := range resources {
+		switch kind {
+		case "bgp":
+			if resource.Kind == "BGPRouter" || resource.Kind == "BGPPeer" {
+				out = append(out, resource)
+			}
+		case "vrrp":
+			if resource.Kind == "VirtualIPv4Address" {
+				out = append(out, resource)
+			}
+		case "ingress":
+			if resource.Kind == "IngressService" {
+				out = append(out, resource)
+			}
+		}
+	}
+	return out, nil
 }
 
 func (h Handler) controllers(w http.ResponseWriter) {
@@ -1225,6 +1289,255 @@ func (h Handler) controllerStatuses() []controlapi.ControllerStatus {
 		return h.opts.ControllerStatuses()
 	}
 	return h.opts.ControllerModes
+}
+
+func operationalHTMLPage(title, kind string, resources []routerstate.ObjectStatus) string {
+	displayTitle := map[string]string{"bgp": "BGP", "vrrp": "VRRP", "ingress": "IngressService"}[kind]
+	var body strings.Builder
+	switch kind {
+	case "bgp":
+		writeBGPHTML(&body, resources)
+	case "vrrp":
+		writeVRRPHTML(&body, resources)
+	case "ingress":
+		writeIngressHTML(&body, resources)
+	default:
+		body.WriteString(`<p>Unknown view.</p>`)
+	}
+	return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>` + html.EscapeString(title+" "+displayTitle) + `</title>
+<style>
+:root{color-scheme:light dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{margin:0;background:#f7f8fa;color:#171b22}
+main{max-width:1180px;margin:0 auto;padding:24px}
+nav{display:flex;gap:12px;margin:0 0 20px}
+a{color:#0f5f9f;text-decoration:none}
+h1{font-size:24px;margin:0 0 18px}
+section{margin:0 0 28px}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dde2ea}
+th,td{padding:9px 10px;border-bottom:1px solid #e7ebf0;text-align:left;font-size:14px;vertical-align:top}
+th{background:#eef2f6;font-weight:650}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.muted{color:#5d6673}
+@media (prefers-color-scheme:dark){body{background:#11151b;color:#eef2f6}table{background:#171c23;border-color:#303744}th,td{border-color:#2a313c}th{background:#202733}a{color:#8bc7ff}.muted{color:#a7b0bd}}
+</style>
+</head>
+<body>
+<main>
+<nav><a href="./">Summary</a><a href="bgp">BGP</a><a href="vrrp">VRRP</a><a href="ingress">Ingress</a></nav>
+<h1>` + html.EscapeString(displayTitle) + `</h1>
+` + body.String() + `
+</main>
+</body>
+</html>`
+}
+
+func writeBGPHTML(body *strings.Builder, resources []routerstate.ObjectStatus) {
+	body.WriteString(`<section><table><thead><tr><th>Router</th><th>Phase</th><th>Peers</th><th>Prefixes</th><th>Observed</th></tr></thead><tbody>`)
+	for _, resource := range resources {
+		if resource.Kind != "BGPRouter" {
+			continue
+		}
+		peers := statusList(resource.Status["peers"])
+		writeHTMLRow(body, []string{
+			resource.Name,
+			statusText(resource.Status, "phase"),
+			fmt.Sprintf("%d/%d", statusIntValue(resource.Status["establishedPeers"]), len(peers)),
+			statusText(resource.Status, "acceptedPrefixes"),
+			statusText(resource.Status, "observedAt"),
+		})
+	}
+	body.WriteString(`</tbody></table></section>`)
+	body.WriteString(`<section><table><thead><tr><th>Peer</th><th>ASN</th><th>State</th><th>Messages</th><th>Prefixes</th><th>Last Error</th></tr></thead><tbody>`)
+	for _, resource := range resources {
+		if resource.Kind != "BGPRouter" {
+			continue
+		}
+		for _, peer := range statusList(resource.Status["peers"]) {
+			writeHTMLRow(body, []string{
+				statusAnyText(peer["address"]),
+				statusAnyText(peer["asn"]),
+				statusAnyText(peer["state"]),
+				fmt.Sprintf("%d/%d", statusIntValue(peer["messagesReceived"]), statusIntValue(peer["messagesSent"])),
+				statusAnyText(peer["prefixesReceived"]),
+				defaultConsoleText(statusAnyText(peer["lastErrorReason"]), "-"),
+			})
+		}
+	}
+	body.WriteString(`</tbody></table></section>`)
+}
+
+func writeVRRPHTML(body *strings.Builder, resources []routerstate.ObjectStatus) {
+	body.WriteString(`<section><table><thead><tr><th>VIP</th><th>Hostname</th><th>Role</th><th>Priority</th><th>Interface</th><th>VRID</th><th>Last Transition</th></tr></thead><tbody>`)
+	for _, resource := range resources {
+		if resource.Kind != "VirtualIPv4Address" {
+			continue
+		}
+		writeHTMLRow(body, []string{
+			statusText(resource.Status, "address"),
+			defaultConsoleText(statusText(resource.Status, "hostname"), "-"),
+			defaultConsoleText(statusText(resource.Status, "role"), "unknown"),
+			fmt.Sprintf("%d/%d", statusIntValue(resource.Status["priority"]), statusIntValue(resource.Status["basePriority"])),
+			statusText(resource.Status, "interface"),
+			statusText(resource.Status, "virtualRouterID"),
+			statusText(resource.Status, "lastRoleTransitionAt"),
+		})
+	}
+	body.WriteString(`</tbody></table></section>`)
+	body.WriteString(`<section><table><thead><tr><th>VIP</th><th>Track</th><th>State</th><th>Penalty</th><th>Unhealthy</th></tr></thead><tbody>`)
+	for _, resource := range resources {
+		if resource.Kind != "VirtualIPv4Address" {
+			continue
+		}
+		for _, track := range statusList(resource.Status["track"]) {
+			writeHTMLRow(body, []string{
+				resource.Name,
+				statusAnyText(track["resource"]),
+				statusAnyText(track["state"]),
+				statusAnyText(track["penalty"]),
+				statusAnyText(track["unhealthyConsecutive"]),
+			})
+		}
+	}
+	body.WriteString(`</tbody></table></section>`)
+}
+
+func writeIngressHTML(body *strings.Builder, resources []routerstate.ObjectStatus) {
+	body.WriteString(`<section><table><thead><tr><th>Service</th><th>Hostname</th><th>Phase</th><th>Active Backend</th><th>Health</th><th>Selection</th></tr></thead><tbody>`)
+	for _, resource := range resources {
+		if resource.Kind != "IngressService" {
+			continue
+		}
+		active := statusObject(resource.Status["activeBackend"])
+		writeHTMLRow(body, []string{
+			resource.Name,
+			defaultConsoleText(statusText(resource.Status, "hostname"), "-"),
+			statusText(resource.Status, "phase"),
+			activeBackendHTMLText(active),
+			fmt.Sprintf("%d/%d", statusIntValue(resource.Status["healthyBackends"]), statusIntValue(resource.Status["totalBackends"])),
+			statusText(resource.Status, "selection"),
+		})
+	}
+	body.WriteString(`</tbody></table></section>`)
+	body.WriteString(`<section><table><thead><tr><th>Service</th><th>Backend</th><th>Address</th><th>State</th><th>Counts</th><th>Last Healthy</th><th>Last Unhealthy</th></tr></thead><tbody>`)
+	for _, resource := range resources {
+		if resource.Kind != "IngressService" {
+			continue
+		}
+		for _, backend := range statusList(resource.Status["backends"]) {
+			state := "Unhealthy"
+			if healthy, ok := statusBoolValue(backend["healthy"]); ok && healthy {
+				state = "Healthy"
+			}
+			writeHTMLRow(body, []string{
+				resource.Name,
+				statusAnyText(backend["name"]),
+				backendHTMLAddress(backend),
+				state,
+				fmt.Sprintf("%d/%d", statusIntValue(backend["healthyCount"]), statusIntValue(backend["unhealthyCount"])),
+				statusAnyText(backend["lastHealthyAt"]),
+				statusAnyText(backend["lastUnhealthyAt"]),
+			})
+		}
+	}
+	body.WriteString(`</tbody></table></section>`)
+}
+
+func writeHTMLRow(body *strings.Builder, cells []string) {
+	body.WriteString("<tr>")
+	for _, cell := range cells {
+		if strings.TrimSpace(cell) == "" {
+			cell = "-"
+		}
+		body.WriteString("<td>")
+		body.WriteString(html.EscapeString(cell))
+		body.WriteString("</td>")
+	}
+	body.WriteString("</tr>")
+}
+
+func activeBackendHTMLText(active map[string]any) string {
+	name := statusAnyText(active["name"])
+	address := statusAnyText(active["address"])
+	port := statusIntValue(active["port"])
+	if name == "" && address == "" {
+		return "-"
+	}
+	if port > 0 {
+		return fmt.Sprintf("%s / %s:%d", defaultConsoleText(name, "-"), address, port)
+	}
+	return fmt.Sprintf("%s / %s", defaultConsoleText(name, "-"), address)
+}
+
+func backendHTMLAddress(backend map[string]any) string {
+	address := statusAnyText(backend["address"])
+	resolved := statusAnyText(backend["resolvedAddress"])
+	port := statusIntValue(backend["port"])
+	if resolved != "" && resolved != address {
+		return fmt.Sprintf("%s -> %s:%d", address, resolved, port)
+	}
+	if port > 0 {
+		return fmt.Sprintf("%s:%d", defaultConsoleText(resolved, address), port)
+	}
+	return defaultConsoleText(resolved, address)
+}
+
+func statusList(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if object, ok := item.(map[string]any); ok {
+				out = append(out, object)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func statusObject(value any) map[string]any {
+	if object, ok := value.(map[string]any); ok {
+		return object
+	}
+	return map[string]any{}
+}
+
+func statusAnyText(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func statusIntValue(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func defaultConsoleText(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func (h Handler) filterStaleObjectStatuses(resources []routerstate.ObjectStatus) []routerstate.ObjectStatus {
