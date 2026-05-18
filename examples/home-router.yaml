@@ -2,22 +2,22 @@
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
-  name: homert02
+  name: home-router
 spec:
   resources:
 
     - apiVersion: system.routerd.net/v1alpha1
       kind: LogSink
       metadata:
-        name: syslog-lain
+        name: syslog-home
       spec:
         type: syslog
         minLevel: info
         syslog:
           network: udp
-          address: syslog.lain.local:514
+          address: syslog.home.arpa:514
           facility: local6
-          tag: routerd-homert02
+          tag: routerd-home-router
 
     - apiVersion: observability.routerd.net/v1alpha1
       kind: Telemetry
@@ -25,12 +25,12 @@ spec:
         name: otlp
       spec:
         otlp:
-          endpoint: http://192.168.123.119:4317
+          endpoint: http://192.0.2.119:4317
           insecure: true
         serviceNamespace: routerd
         attributes:
           deployment.environment: production
-          routerd.node: homert02
+          routerd.node: home-router
         signals:
           - logs
           - metrics
@@ -76,7 +76,7 @@ spec:
             field: address
         allowCIDRs:
           - 172.18.0.0/16
-          - 2409:10:3d60:1271::/64
+          - 2001:db8:1271::/64
 
     - apiVersion: system.routerd.net/v1alpha1
       kind: Package
@@ -279,7 +279,7 @@ spec:
       metadata:
         name: routerd.service
       spec:
-        description: routerd controller chain for homert02
+        description: routerd controller chain for home-router
         execStart:
           - /usr/local/sbin/routerd
           - serve
@@ -453,7 +453,7 @@ spec:
           resource: Interface/mgmt
           field: ipv4Addresses
         port: 8080
-        title: homert02
+        title: home-router
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
@@ -545,9 +545,9 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: TailscaleNode
       metadata:
-        name: homert02
+        name: home-router
       spec:
-        hostname: homert02
+        hostname: home-router
         advertiseExitNode: true
         advertiseRoutes:
           - 10.0.0.0/8
@@ -1377,7 +1377,7 @@ spec:
               - resource: Interface/mgmt
                 field: ipv4Addresses
             port: 53
-            sources: [local-zone, home-wirednet-jp, lab-wirednet-jp, fab-wirednet-jp, lain-local, ngn-aftr, nextdns-bootstrap-ngn, nextdns-bootstrap-public, default]
+            sources: [local-zone, home-example, lab-example, fab-example, home-zone, ngn-aftr, nextdns-bootstrap-ngn, nextdns-bootstrap-public, default]
           - name: lan
             addressFrom:
               - resource: IPv4StaticAddress/lan-base
@@ -1385,7 +1385,7 @@ spec:
               - resource: IPv6DelegatedAddress/lan-base
                 field: address
             port: 53
-            sources: [local-zone, home-wirednet-jp, lab-wirednet-jp, fab-wirednet-jp, lain-local, ngn-aftr, nextdns-bootstrap-ngn, nextdns-bootstrap-public, default]
+            sources: [local-zone, home-example, lab-example, fab-example, home-zone, ngn-aftr, nextdns-bootstrap-ngn, nextdns-bootstrap-public, default]
         sources:
           - name: local-zone
             kind: zone
@@ -1394,28 +1394,28 @@ spec:
               - 18.172.in-addr.arpa
             zoneRef:
               - DNSZone/home
-          - name: home-wirednet-jp
+          - name: home-example
             kind: forward
             match:
-              - home.wirednet.jp
+              - home.example
             upstreams:
               - udp://192.168.1.252:53
-          - name: lab-wirednet-jp
+          - name: lab-example
             kind: forward
             match:
-              - lab.wirednet.jp
+              - lab.example
             upstreams:
               - udp://172.17.0.253:53
-          - name: fab-wirednet-jp
+          - name: fab-example
             kind: forward
             match:
-              - fab.wirednet.jp
+              - fab.example
             upstreams:
               - udp://192.168.1.26:53
-          - name: lain-local
+          - name: home-zone
             kind: forward
             match:
-              - lain.local
+              - home.arpa
             upstreams:
               - udp://192.168.1.66:53
               - udp://192.168.1.67:53
@@ -1446,9 +1446,9 @@ spec:
             match:
               - "."
             upstreams:
-              - https://dns.nextdns.io/6ef786/homert02
-              - udp://[2a07:a8c0::6e:f786]:53
-              - udp://[2a07:a8c1::6e:f786]:53
+              - https://dns.nextdns.io/example/home-router
+              - udp://[2001:db8::53]:53
+              - udp://[2001:db8::54]:53
             healthcheck:
               interval: 15s
               timeout: 3s
@@ -1624,12 +1624,12 @@ spec:
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallRule
       metadata:
-        name: allow-lan-to-router04-webconsole
+        name: allow-lan-to-admin-console
       spec:
         fromZone: lan
         toZone: management
         destinationCIDRs:
-          - 192.168.123.126/32
+          - 192.0.2.126/32
         protocol: tcp
         port: 8080
         action: accept
@@ -1646,28 +1646,28 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
       metadata:
-        name: wg-mesh-router02
+        name: wg-mesh-nixos-edge
       spec:
         interface: wg-mesh
         publicKey: ZVExXc9FbAZfN4TNQ3p7HdIDPaz0rGhdQINioWRqY2M=
         allowedIPs:
           - 10.99.0.2/32
-        endpoint: 192.168.123.124:51820
+        endpoint: 192.0.2.124:51820
         persistentKeepalive: 25
-        presharedKeyFile: /usr/local/etc/routerd/secrets/wg-mesh-router02.psk
+        presharedKeyFile: /usr/local/etc/routerd/secrets/wg-mesh-nixos-edge.psk
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
       metadata:
-        name: wg-mesh-router04
+        name: wg-mesh-freebsd-edge
       spec:
         interface: wg-mesh
         publicKey: F2Id52gYvUI11m2qzQiFXXz/GeIH7jv1GEGeVcxKtkE=
         allowedIPs:
           - 10.99.0.4/32
-        endpoint: 192.168.123.126:51820
+        endpoint: 192.0.2.126:51820
         persistentKeepalive: 25
-        presharedKeyFile: /usr/local/etc/routerd/secrets/wg-mesh-router04.psk
+        presharedKeyFile: /usr/local/etc/routerd/secrets/wg-mesh-freebsd-edge.psk
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress

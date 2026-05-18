@@ -34,7 +34,7 @@ spec:
         advertiseExitNode: true
         advertiseRoutes:
           - 172.18.0.0/16
-          - 192.168.123.0/24
+          - 192.168.20.0/24
         acceptDNS: false
         authKeyEnv: TS_AUTHKEY
         authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env

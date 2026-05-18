@@ -6,7 +6,7 @@ title: Kubernetes API VIP with BGP
 
 This example shows a routerd edge pair pattern for bootstrapping Kubernetes
 without putting the API endpoint inside the cluster. The router owns a VRRP
-VIP, forwards `k8s-api.lain.local:6443` to three control-plane backends, checks
+VIP, forwards `k8s-api.cluster.example:6443` to three control-plane backends, checks
 `/readyz` over HTTPS, and peers with Kubernetes BGP speakers for Service
 prefixes.
 
@@ -35,7 +35,7 @@ The important production-oriented settings are:
 | `VirtualIPv4Address/k8s-api-vip` | VRRP `advertInterval: 1s`, `preemptDelay: 30s`, and track entries for API health and BGP health. |
 | `IngressService/kubernetes-api` | HTTPS health check on `/readyz`, `tlsSkipVerify: true` for kubeadm self-signed bootstrap certs, failover selection, and reject on no healthy backend. |
 | `BGPRouter/lan` | BGP timers `3s/9s/5s`, graceful restart, and an import allow-list for Kubernetes Service prefixes only. |
-| `DNSResolver/lan-resolver` | Automatically serves `k8s-api.lain.local` from the VIP `hostname` field, plus static control-plane and worker records. |
+| `DNSResolver/lan-resolver` | Automatically serves `k8s-api.cluster.example` from the VIP `hostname` field, plus static control-plane and worker records. |
 
 Keep the DHCP pool away from the VIP, control-plane addresses, worker
 addresses, and LoadBalancer/Service advertisement ranges.

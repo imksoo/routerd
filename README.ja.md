@@ -109,7 +109,7 @@ routerd は NAT44、ゾーンポリシー、管理対象サービス用の許可
 
 本番に近い設定例で全体像を確認できます。
 
-- `examples/homert02.yaml`: Ubuntu の家庭用ルーター構成です。OS 準備、
+- `examples/home-router.yaml`: Ubuntu の家庭用ルーター構成です。OS 準備、
   DHCPv6-PD、DS-Lite、HGW LAN への静的経路、DNS リゾルバー、DHCP サーバー、
   RA、NAT44、ログ保存、Web Console を含みます。
 - `examples/router-lab.yaml`: 小さめの Linux ラボ構成です。
@@ -254,9 +254,9 @@ Makefile は開発用です。
 よく使う確認:
 
 ```sh
-routerd validate --config examples/homert02.yaml
-routerd plan --config examples/homert02.yaml
-routerd apply --config examples/homert02.yaml --once --dry-run
+routerd validate --config examples/home-router.yaml
+routerd plan --config examples/home-router.yaml
+routerd apply --config examples/home-router.yaml --once --dry-run
 routerctl status
 routerctl events --limit 20
 routerctl connections --limit 50

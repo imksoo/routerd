@@ -111,7 +111,7 @@ not a general-purpose firewall rule language.
 
 The production-style examples show how the pieces fit together:
 
-- `examples/homert02.yaml`: Ubuntu home-router style configuration with OS
+- `examples/home-router.yaml`: Ubuntu home-router style configuration with OS
   bootstrap, DHCPv6-PD, DS-Lite, routed HGW LAN, DNS resolver, DHCP server,
   RA, NAT44, log storage, and Web Console.
 - `examples/router-lab.yaml`: smaller Linux lab configuration.
@@ -250,9 +250,9 @@ Important binaries built by `make build` include:
 Useful direct commands:
 
 ```sh
-routerd validate --config examples/homert02.yaml
-routerd plan --config examples/homert02.yaml
-routerd apply --config examples/homert02.yaml --once --dry-run
+routerd validate --config examples/home-router.yaml
+routerd plan --config examples/home-router.yaml
+routerd apply --config examples/home-router.yaml --once --dry-run
 routerctl status
 routerctl events --limit 20
 routerctl connections --limit 50

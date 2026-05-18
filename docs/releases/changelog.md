@@ -10,6 +10,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Sanitized public documentation and example configuration names so internal
+  lab hostnames, domains, and management-network addresses stay in internal
+  notes instead of website or reusable examples.
+- Moved internal design and soak notes out of the public Docusaurus docs tree,
+  and documented the lab validation policy for native nDPI and RA/DHCPv6-PD
+  coverage under `internal/notes/`.
+
 ## v20260519.0713
 
 ### Fixed
@@ -437,7 +446,7 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Changed
 
-- Raised the homert02 UDP conntrack timeout configuration.
+- Raised the home-router UDP conntrack timeout configuration.
 
 ## v20260512.0037
 
@@ -761,7 +770,7 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Validated
 
-- Validated `ClientPolicy` guest mode on router05, an Ubuntu lab router.
+- Validated `ClientPolicy` guest mode on an Ubuntu lab router.
 - Confirmed Linux nftables renders include-mode guest MAC sets, guest DNS/DHCP/NTP access, self-isolation, and RFC 1918 / ULA deny rules.
 - Confirmed exclude-mode rendering with the focused nftables renderer test.
 

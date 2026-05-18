@@ -57,7 +57,7 @@ spec:
       spec:
         interface: lan
         address: 192.168.70.10/32
-        hostname: k8s-api.lain.local
+        hostname: k8s-api.cluster.example
         mode: vrrp
         vrrp:
           virtualRouterID: 70
@@ -80,9 +80,9 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSZone
       metadata:
-        name: lain-local
+        name: cluster-zone
       spec:
-        zone: lain.local
+        zone: cluster.example
         ttl: 60
         records:
           - hostname: k8s-cp-01
@@ -118,9 +118,9 @@ spec:
           - name: local-zone
             kind: zone
             match:
-              - lain.local
+              - cluster.example
             zoneRef:
-              - DNSZone/lain-local
+              - DNSZone/cluster-zone
           - name: default
             kind: upstream
             match:
@@ -146,7 +146,7 @@ spec:
           - resource: IPv4StaticAddress/lan-base
             field: address
         domainFrom:
-          resource: DNSZone/lain-local
+          resource: DNSZone/cluster-zone
           field: zone
 
     - apiVersion: firewall.routerd.net/v1alpha1
@@ -159,21 +159,21 @@ spec:
           address: 192.168.70.10
           protocol: tcp
           port: 6443
-        hostname: k8s-api.lain.local
+        hostname: k8s-api.cluster.example
         backends:
           - name: cp-01
-            address: k8s-cp-01.lain.local
+            address: k8s-cp-01.cluster.example
             port: 6443
           - name: cp-02
-            address: k8s-cp-02.lain.local
+            address: k8s-cp-02.cluster.example
             port: 6443
           - name: cp-03
-            address: k8s-cp-03.lain.local
+            address: k8s-cp-03.cluster.example
             port: 6443
         healthCheck:
           protocol: https
           path: /readyz
-          host: k8s-api.lain.local
+          host: k8s-api.cluster.example
           expectedStatus:
             - 200
           tlsSkipVerify: true

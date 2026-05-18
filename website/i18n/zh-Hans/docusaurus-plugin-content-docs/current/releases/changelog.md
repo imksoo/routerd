@@ -10,6 +10,15 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 变更
+
+- 整理公开 documentation 和 example configuration 的命名，避免内部 lab
+  hostname、domain、management network address 出现在 website 或可复用 example
+  中，而是保留在 internal notes。
+- 将 internal design / soak note 移出公开 Docusaurus docs tree，并在
+  `internal/notes/` 记录 native nDPI 与 RA/DHCPv6-PD coverage 的 lab
+  validation policy。
+
 ## v20260519.0713
 
 ### 修正
@@ -380,7 +389,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ### 变更
 
-- 提高 homert02 的 UDP conntrack timeout 设置。
+- 提高 home-router 的 UDP conntrack timeout 设置。
 
 ## v20260512.0037
 
@@ -704,7 +713,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ### 验证
 
-- 在 Ubuntu lab router router05 上验证 `ClientPolicy` guest mode。
+- 在 Ubuntu lab router 上验证 `ClientPolicy` guest mode。
 - 确认 Linux nftables 会生成 include mode guest MAC set、guest DNS/DHCP/NTP allow、自我隔离，以及 RFC 1918 / ULA deny 规则。
 - exclude mode 已通过 focused nftables renderer test 验证。
 

@@ -48,6 +48,13 @@ sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
 
 The response should include `"libndpiLoaded": true`.
 
+## Upgrade note
+
+The normal routerd archive installs the default `routerd-ndpi-agent`. On hosts
+that opt into native nDPI, reinstall the matching
+`routerd-ndpi-agent-libndpi` archive after each normal routerd upgrade and
+verify that the status JSON still includes `"libndpiLoaded": true`.
+
 ## Configure
 
 `routerd-dpi-classifier` must be configured with `--engine auto` or

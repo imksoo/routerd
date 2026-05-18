@@ -58,12 +58,12 @@ closed by the role matrix.
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallRule
   metadata:
-    name: allow-lan-to-router04-webconsole
+    name: allow-lan-to-admin-console
   spec:
     fromZone: lan
     toZone: management
     destinationCIDRs:
-      - 192.168.123.126/32
+      - 192.0.2.126/32
     protocol: tcp
     port: 8080
     action: accept

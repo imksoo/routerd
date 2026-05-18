@@ -10,6 +10,15 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 変更
+
+- 公開 documentation と example configuration の名前を整理し、内部 lab の
+  hostname、domain、management network address が website や再利用用 example
+  ではなく internal notes に残るようにしました。
+- internal design / soak note を公開 Docusaurus docs tree から外し、native nDPI
+  と RA/DHCPv6-PD coverage の lab validation policy を `internal/notes/` に
+  記録しました。
+
 ## v20260519.0713
 
 ### 修正
@@ -429,7 +438,7 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ### 変更
 
-- homert02 の UDP conntrack timeout 設定を引き上げました。
+- home-router の UDP conntrack timeout 設定を引き上げました。
 
 ## v20260512.0037
 
@@ -770,7 +779,7 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ### 検証
 
-- Ubuntu lab ルーターの router05 で、`ClientPolicy` ゲストモードを検証しました。
+- Ubuntu lab ルーターで `ClientPolicy` ゲストモードを検証しました。
 - Linux nftables で、include mode のゲスト MAC アドレス集合、ゲスト向け DNS/DHCP/NTP 許可、自己隔離、RFC 1918 / ULA 拒否規則が生成されることを確認しました。
 - exclude mode は、nftables 生成テストで確認しました。
 

@@ -17,7 +17,7 @@ flowchart LR
   tailnet["[1] Tailscale tailnet"]
   router["[2] routerd host<br/>edge-router"]
   lan["[3] LAN<br/>172.18.0.0/16"]
-  mgmt["[4] management<br/>192.168.123.0/24"]
+  mgmt["[4] management<br/>192.168.20.0/24"]
   internet((Internet))
 
   tailnet --- router
@@ -58,7 +58,7 @@ flowchart LR
     # [3] + [4] Prefixes advertised into the tailnet.
     advertiseRoutes:
       - 172.18.0.0/16
-      - 192.168.123.0/24
+      - 192.168.20.0/24
     acceptDNS: false
     authKeyEnv: TS_AUTHKEY
     authKeyFile: /usr/local/etc/routerd/secrets/tailscale.env

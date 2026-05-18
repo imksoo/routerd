@@ -68,7 +68,7 @@ const config: Config = {
           path: '../docs',
           routeBasePath: 'docs',
           sidebarPath: './sidebars.ts',
-          exclude: ['**/*.ja.md'],
+          exclude: ['**/*.ja.md', 'internal/**'],
           editUrl: 'https://github.com/imksoo/routerd/edit/main/docs/',
         },
         blog: {

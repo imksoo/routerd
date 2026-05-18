@@ -37,8 +37,8 @@ routerd plan --config examples/<name>.yaml
 | `dslite-lan-range-snat.yaml` | You need the optional DS-Lite inner-source form that uses an address carved from a LAN range. |
 | `multi-wan-home.yaml` | You want a template for DS-Lite A/B/C, RA-sourced DS-Lite, PPPoE, and DHCP WAN fallback. |
 | `router-lab.yaml` | You want a compact Linux lab router with common WAN and LAN services. |
-| `router05.yaml` | You want a lab-style DS-Lite and policy-routing example. |
-| `homert02.yaml` | You want a larger Ubuntu home-router reference configuration. Sanitize local addresses before reuse. |
+| `linux-dslite-policy.yaml` | You want a lab-style DS-Lite and policy-routing example. |
+| `home-router.yaml` | You want a larger Ubuntu home-router reference configuration. Sanitize local addresses before reuse. |
 
 ## OS-oriented examples
 

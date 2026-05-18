@@ -1,7 +1,7 @@
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
-  name: router05
+  name: linux-dslite-policy
 spec:
   resources:
   - apiVersion: net.routerd.net/v1alpha1
