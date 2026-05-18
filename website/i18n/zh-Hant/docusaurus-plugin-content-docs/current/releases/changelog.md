@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260519.0708
+
 ### 新增
 
 - 新增面向 Kubernetes edge 使用情境的 FRR backend `BGPRouter` / `BGPPeer`、
