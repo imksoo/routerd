@@ -1451,6 +1451,9 @@ func writeBGPShowTable(stdout io.Writer, router *api.Router, resources []routers
 				up = ageString(statusString(peer["lastEstablishedAt"]))
 			}
 			lastError := defaultShowString(statusString(peer["lastErrorReason"]), "-")
+			if strings.EqualFold(state, "Established") {
+				lastError = "-"
+			}
 			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%d\t%d\t%d\t%s\n",
 				statusString(peer["address"]),
 				statusInt(peer["asn"]),

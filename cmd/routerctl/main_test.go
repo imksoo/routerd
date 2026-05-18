@@ -392,6 +392,7 @@ spec:
 			"messagesReceived":  12,
 			"messagesSent":      11,
 			"prefixesReceived":  2,
+			"lastErrorReason":   "Idle",
 			"lastEstablishedAt": time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339Nano),
 		}},
 	}); err != nil {
@@ -437,7 +438,7 @@ spec:
 		target string
 		want   []string
 	}{
-		{"bgp", []string{"ROUTER", "lan", "192.168.123.111", "Established", "12", "11"}},
+		{"bgp", []string{"ROUTER", "lan", "192.168.123.111", "Established", "12", "11", "-"}},
 		{"vrrp", []string{"VIP", "k8s-api.lain.local", "master", "66"}},
 		{"ingress", []string{"SERVICE", "kubernetes-api", "cp-01/192.168.123.11:6443", "Healthy(7/0)"}},
 	} {

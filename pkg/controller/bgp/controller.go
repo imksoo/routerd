@@ -66,15 +66,27 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if changed {
+	if changed && !c.DryRun {
 		if err := os.WriteFile(path, data, 0644); err != nil {
 			return err
 		}
 	}
-	if !c.DryRun && changed {
+	reloadNeeded := changed
+	if !reloadNeeded && !c.DryRun && !c.observed {
+		matches, err := c.runningConfigMatches(ctx, data)
+		if err != nil {
+			if c.Logger != nil {
+				c.Logger.Warn("BGP running config comparison failed; reloading FRR", "error", err)
+			}
+			reloadNeeded = true
+		} else {
+			reloadNeeded = !matches
+		}
+	}
+	if !c.DryRun && reloadNeeded {
 		vtysh := firstNonEmpty(c.VTYSH, "vtysh")
 		if out, err := c.run(ctx, vtysh, "-C", "-f", path); err != nil {
-			saveErr := c.saveConfiguredStatuses("Error", path, changed, map[string]any{"reason": "FRRSyntaxInvalid", "error": strings.TrimSpace(string(out))})
+			saveErr := c.saveConfiguredStatuses("Error", path, reloadNeeded, map[string]any{"reason": "FRRSyntaxInvalid", "error": strings.TrimSpace(string(out))})
 			if saveErr != nil {
 				return saveErr
 			}
@@ -82,7 +94,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		}
 		reload := firstNonEmpty(c.FRRReload, defaultFRRReload())
 		if out, err := c.run(ctx, reload, "--reload", path); err != nil {
-			saveErr := c.saveConfiguredStatuses("Error", path, changed, map[string]any{"reason": "FRRReloadFailed", "error": strings.TrimSpace(string(out))})
+			saveErr := c.saveConfiguredStatuses("Error", path, reloadNeeded, map[string]any{"reason": "FRRReloadFailed", "error": strings.TrimSpace(string(out))})
 			if saveErr != nil {
 				return saveErr
 			}
@@ -90,8 +102,8 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		}
 	}
 	if !c.DryRun {
-		if changed {
-			if err := c.saveConfiguredStatuses("Applied", path, true, nil); err != nil {
+		if reloadNeeded {
+			if err := c.saveConfiguredStatuses("Applied", path, reloadNeeded, nil); err != nil {
 				return err
 			}
 		}
@@ -101,6 +113,47 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (c *Controller) runningConfigMatches(ctx context.Context, desired []byte) (bool, error) {
+	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
+	out, err := c.run(ctx, vtysh, "-c", "show running-config")
+	if err != nil {
+		return false, fmt.Errorf("%s -c show running-config: %w: %s", vtysh, err, strings.TrimSpace(string(out)))
+	}
+	running := string(out)
+	for _, line := range criticalFRRLines(desired) {
+		if !strings.Contains(running, line) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func criticalFRRLines(data []byte) []string {
+	var lines []string
+	seen := map[string]bool{}
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "!") || strings.HasPrefix(line, "frr ") || strings.HasPrefix(line, "hostname ") || strings.HasPrefix(line, "service ") {
+			continue
+		}
+		if line == "address-family ipv4 unicast" || line == "exit-address-family" {
+			continue
+		}
+		if line == "bgp graceful-restart restart-time 120" || line == "bgp graceful-restart stalepath-time 360" {
+			continue
+		}
+		if strings.HasSuffix(line, " activate") {
+			continue
+		}
+		if seen[line] {
+			continue
+		}
+		seen[line] = true
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func (c *Controller) observe(ctx context.Context) error {

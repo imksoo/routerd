@@ -4,6 +4,7 @@ package bgp
 
 import (
 	"context"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"routerd/pkg/api"
 	bgpstate "routerd/pkg/bgp"
 	"routerd/pkg/bus"
+	"routerd/pkg/render"
 )
 
 type mapStore map[string]map[string]any
@@ -108,6 +110,161 @@ func TestReconcileSkipsInitialBGPDiffEvents(t *testing.T) {
 	}
 	if got := eventBus.Recent("routerd.bgp.prefix.accepted"); len(got) != 0 {
 		t.Fatalf("initial observe emitted prefix events: %#v", got)
+	}
+}
+
+func TestReconcileDryRunDoesNotWriteFRRConfig(t *testing.T) {
+	path := t.TempDir() + "/routerd.conf"
+	if err := os.WriteFile(path, []byte("old config\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	controller := Controller{
+		Router:     bgpRouter(),
+		Store:      mapStore{},
+		DryRun:     true,
+		ConfigPath: path,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "old config\n" {
+		t.Fatalf("dry-run rewrote config: %q", string(data))
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	if status["changed"] != true || status["dryRun"] != true {
+		t.Fatalf("dry-run status = %#v", status)
+	}
+}
+
+func TestReconcileReloadsFRROnFirstLiveObserveWhenRunningConfigDiffers(t *testing.T) {
+	path := t.TempDir() + "/routerd.conf"
+	data, err := render.FRRConfig(bgpRouter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	controller := Controller{
+		Router:     bgpRouter(),
+		Store:      mapStore{},
+		ConfigPath: path,
+		VTYSH:      "vtysh",
+		FRRReload:  "frr-reload.py",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			switch {
+			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
+				return []byte("router bgp 64599\n neighbor 10.0.0.21 remote-as 64599\n"), nil
+			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
+				return []byte("ok"), nil
+			case name == "frr-reload.py":
+				return []byte("reloaded"), nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
+				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
+				return []byte(`{"routes":{}}`), nil
+			default:
+				t.Fatalf("unexpected command: %s %v", name, args)
+				return nil, nil
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	wantFirst := []string{
+		"vtysh -c show running-config",
+		"vtysh -C -f " + path,
+		"frr-reload.py --reload " + path,
+		"vtysh -c show bgp summary json",
+		"vtysh -c show bgp ipv4 unicast json",
+	}
+	if !reflect.DeepEqual(calls, wantFirst) {
+		t.Fatalf("first calls = %#v, want %#v", calls, wantFirst)
+	}
+	calls = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	wantSecond := []string{
+		"vtysh -c show bgp summary json",
+		"vtysh -c show bgp ipv4 unicast json",
+	}
+	if !reflect.DeepEqual(calls, wantSecond) {
+		t.Fatalf("second calls = %#v, want %#v", calls, wantSecond)
+	}
+}
+
+func TestReconcileSkipsInitialReloadWhenRunningConfigMatches(t *testing.T) {
+	path := t.TempDir() + "/routerd.conf"
+	data, err := render.FRRConfig(bgpRouter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	controller := Controller{
+		Router:     bgpRouter(),
+		Store:      mapStore{},
+		ConfigPath: path,
+		VTYSH:      "vtysh",
+		FRRReload:  "frr-reload.py",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			switch {
+			case name == "vtysh" && strings.Join(args, " ") == "-c show running-config":
+				return data, nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
+				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
+				return []byte(`{"routes":{}}`), nil
+			default:
+				t.Fatalf("unexpected command: %s %v", name, args)
+				return nil, nil
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []string{
+		"vtysh -c show running-config",
+		"vtysh -c show bgp summary json",
+		"vtysh -c show bgp ipv4 unicast json",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestCriticalFRRLinesIgnoresDefaultGracefulRestartTimers(t *testing.T) {
+	lines := criticalFRRLines([]byte(`
+! Generated by routerd. Do not edit by hand.
+router bgp 64512
+ bgp graceful-restart
+ bgp graceful-restart restart-time 120
+ bgp graceful-restart stalepath-time 360
+ neighbor 10.0.0.21 remote-as 64513
+`))
+	for _, line := range lines {
+		if strings.Contains(line, "restart-time 120") || strings.Contains(line, "stalepath-time 360") {
+			t.Fatalf("default graceful restart timer line was critical: %#v", lines)
+		}
+	}
+	if !reflect.DeepEqual(lines, []string{
+		"router bgp 64512",
+		"bgp graceful-restart",
+		"neighbor 10.0.0.21 remote-as 64513",
+	}) {
+		t.Fatalf("lines = %#v", lines)
 	}
 }
 

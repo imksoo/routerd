@@ -26,6 +26,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   差分適用します。VRRP は unicast peer と `nopreempt` を既定にし、
   track hysteresis と `preemptDelay` を扱います。BGP、VRRP、IngressService
   listen port の firewall hole も自動派生します。
+- BGP reconcile では dry-run の書き込みが後続の live apply を隠さないようにし、
+  初回 live 観測時は FRR running-config を比較してから reload するため、
+  既に一致している session を no-op reload で reset しません。
 
 ## v20260518.1810
 

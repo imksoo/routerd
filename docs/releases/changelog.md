@@ -28,6 +28,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `frr-reload.py --reload`. VRRP defaults to unicast peers with `nopreempt`,
   supports track hysteresis and `preemptDelay`, and Linux firewall holes are
   derived for BGP, VRRP, and IngressService listener ports.
+- BGP reconcile no longer lets dry-run writes mask a later live apply, and the
+  first live observation compares FRR running-config before deciding to reload
+  so an already-matching session is not reset by a no-op reload.
 
 ## v20260518.1810
 
