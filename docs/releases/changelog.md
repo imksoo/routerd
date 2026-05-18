@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260518.1301
+
 ### Changed
 
 - Removed dead compatibility helpers and obsolete raw systemd unit renderers

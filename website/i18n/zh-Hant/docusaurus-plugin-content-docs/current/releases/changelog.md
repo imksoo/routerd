@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260518.1301
+
 ### 變更
 
 - 移除了目前 controller-chain 設定路徑已不再使用的 dead compatibility helper
