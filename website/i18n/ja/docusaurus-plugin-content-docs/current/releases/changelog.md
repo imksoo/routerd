@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260518.1810
+
 ### 追加
 
 - native nDPI classification を有効化する host 向けに、別 archive

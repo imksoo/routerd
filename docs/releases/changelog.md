@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260518.1810
+
 ### Added
 
 - Added a separate `routerd-ndpi-agent-libndpi-linux-amd64` release archive for

@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260518.1810
+
 ### 新增
 
 - 新增单独的 `routerd-ndpi-agent-libndpi-linux-amd64` release archive，
