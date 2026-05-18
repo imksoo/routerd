@@ -15,6 +15,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - 為 `mode: vrrp` 的 `VirtualIPv4Address` 新增 FreeBSD CARP 後端，包括
   runtime controller、rc.d rendering、validation、tests，以及最小範例
   `examples/freebsd-vrrp.yaml`。
+- 新增 ingress/local router service 的 listen-port collision validation，
+  以及 Linux nftables 的 `IngressService` `sourceHash` / `random` backend
+  distribution。
 
 ## v20260519.0743
 

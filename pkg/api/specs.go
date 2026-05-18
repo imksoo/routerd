@@ -1107,7 +1107,7 @@ type IngressHealthCheckSpec struct {
 }
 
 type IngressServicePolicySpec struct {
-	Selection           string `yaml:"selection,omitempty" json:"selection,omitempty" jsonschema:"enum=,enum=failover"`
+	Selection           string `yaml:"selection,omitempty" json:"selection,omitempty" jsonschema:"enum=,enum=failover,enum=sourceHash,enum=random"`
 	OnNoHealthyBackends string `yaml:"onNoHealthyBackends,omitempty" json:"onNoHealthyBackends,omitempty" jsonschema:"enum=,enum=drop,enum=reject"`
 }
 

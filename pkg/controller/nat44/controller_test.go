@@ -94,6 +94,42 @@ func TestControllerRendersIngressServiceActiveBackendFromStatus(t *testing.T) {
 	}
 }
 
+func TestControllerRendersIngressServiceDistributedBackendsFromStatus(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "api"}, Spec: api.IngressServiceSpec{
+			Listen:   api.IngressListenSpec{Interface: "lan", Protocol: "tcp", Port: 6443},
+			Backends: []api.IngressBackendSpec{{Name: "cp-01", Address: "10.0.0.11", Port: 6443}, {Name: "cp-02", Address: "10.0.0.12", Port: 6443}},
+			Policy:   api.IngressServicePolicySpec{Selection: "sourceHash"},
+		}},
+	}}}
+	store := &testStore{}
+	if err := store.SaveObjectStatus(api.FirewallAPIVersion, "IngressService", "api", map[string]any{
+		"effectiveSelection": "sourceHash",
+		"activeBackends": []map[string]any{
+			{"name": "cp-01", "address": "10.0.0.11", "port": 6443},
+			{"name": "cp-02", "address": "10.0.0.12", "port": 6443},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "nat44.nft")
+	controller := Controller{Router: router, Store: store, DryRun: true, NftablesPath: path}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ruleset: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, `jhash ip saddr mod 2 vmap`) ||
+		!strings.Contains(got, `jump ingress_ingressservice_api_0`) ||
+		!strings.Contains(got, `dnat to 10.0.0.12:6443`) {
+		t.Fatalf("ruleset did not use distributed active backends:\n%s", got)
+	}
+}
+
 func TestControllerResolvesSNATAddressFromStaticAddress(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-source"}, Spec: api.IPv4StaticAddressSpec{Interface: "ds-lite", Address: "192.168.160.250/32"}},

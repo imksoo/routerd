@@ -894,7 +894,15 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}, {Address: "172.18.1.90", Port: 8443}},
 		Policy:   api.IngressServicePolicySpec{Selection: "random"},
 	}
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.policy.selection must be failover") {
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate random ingress selection: %v", err)
+	}
+	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
+		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}, {Address: "172.18.1.90", Port: 8443}},
+		Policy:   api.IngressServicePolicySpec{Selection: "sticky"},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.policy.selection must be failover, sourceHash, or random") {
 		t.Fatalf("expected unsupported ingress selection to be rejected, got %v", err)
 	}
 	router.Spec.Resources[3].Spec = api.IngressServiceSpec{

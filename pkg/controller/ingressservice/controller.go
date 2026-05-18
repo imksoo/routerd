@@ -117,7 +117,7 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 		status.applyCheckResult(checkOK, previous[status.Name], spec.HealthCheck, now)
 		backends = append(backends, status)
 	}
-	active, healthy := selectActiveBackend(backends, spec.Policy.Selection)
+	active, activeBackends, effectiveSelection, healthy := selectActiveBackends(backends, spec.Policy.Selection)
 	phase := "NoHealthyBackends"
 	if active.Name != "" {
 		phase = "Active"
@@ -130,16 +130,18 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 		listenAddress = statusAddressValue(resourcequery.Value(c.Store, spec.Listen.AddressFrom))
 	}
 	status := map[string]any{
-		"phase":           phase,
-		"hostname":        strings.TrimSpace(spec.Hostname),
-		"listenAddress":   listenAddress,
-		"activeBackend":   map[string]any{"name": active.Name, "address": active.ResolvedAddress, "port": active.Port},
-		"healthyBackends": healthy,
-		"totalBackends":   len(backends),
-		"backends":        backends,
-		"selection":       defaultString(spec.Policy.Selection, "failover"),
-		"dryRun":          c.DryRun,
-		"observedAt":      now,
+		"phase":              phase,
+		"hostname":           strings.TrimSpace(spec.Hostname),
+		"listenAddress":      listenAddress,
+		"activeBackend":      map[string]any{"name": active.Name, "address": active.ResolvedAddress, "port": active.Port},
+		"activeBackends":     activeBackendStatusMaps(activeBackends),
+		"healthyBackends":    healthy,
+		"totalBackends":      len(backends),
+		"backends":           backends,
+		"selection":          defaultString(spec.Policy.Selection, "failover"),
+		"effectiveSelection": effectiveSelection,
+		"dryRun":             c.DryRun,
+		"observedAt":         now,
 	}
 	if sameActiveBackend(previousStatus["activeBackend"], active) {
 		if previousTransition := statusString(previousStatus["lastActiveBackendTransitionAt"]); previousTransition != "" {
@@ -302,9 +304,10 @@ func expectedHTTPStatus(status int, expected []int) bool {
 	return false
 }
 
-func selectActiveBackend(backends []backendStatus, selection string) (backendStatus, int) {
+func selectActiveBackends(backends []backendStatus, selection string) (backendStatus, []backendStatus, string, int) {
 	healthy := 0
 	var first backendStatus
+	var selected []backendStatus
 	for _, backend := range backends {
 		if !backend.Healthy {
 			continue
@@ -313,11 +316,32 @@ func selectActiveBackend(backends []backendStatus, selection string) (backendSta
 		if first.Name == "" {
 			first = backend
 		}
+		selected = append(selected, backend)
 	}
 	if healthy == 0 {
-		return backendStatus{}, 0
+		return backendStatus{}, nil, defaultString(selection, "failover"), 0
 	}
-	return first, healthy
+	requested := defaultString(selection, "failover")
+	switch requested {
+	case "sourceHash", "random":
+		if len(selected) > 1 {
+			return first, selected, requested, healthy
+		}
+		return first, []backendStatus{first}, "failover", healthy
+	default:
+		return first, []backendStatus{first}, "failover", healthy
+	}
+}
+
+func activeBackendStatusMaps(backends []backendStatus) []map[string]any {
+	out := make([]map[string]any, 0, len(backends))
+	for _, backend := range backends {
+		if backend.Name == "" || backend.ResolvedAddress == "" || backend.Port == 0 {
+			continue
+		}
+		out = append(out, map[string]any{"name": backend.Name, "address": backend.ResolvedAddress, "port": backend.Port})
+	}
+	return out
 }
 
 func previousBackends(status map[string]any) map[string]previousBackendStatus {

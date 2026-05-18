@@ -275,6 +275,7 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 		buf.WriteString("table ip routerd_nat {\n")
 		writeIPv4AddressSets(&buf, addressSets)
 		if len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
+			writeIngressDNATChains(&buf, ingressRules)
 			buf.WriteString("  chain prerouting {\n")
 			buf.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
 			writeLocalServiceRedirectRules(&buf, redirectRules, "ip")
@@ -961,14 +962,16 @@ func writeIngressForwardAcceptRules(buf *bytes.Buffer, rules []ingressNATRule) {
 }
 
 func writeIngressForwardAcceptRule(buf *bytes.Buffer, rule ingressNATRule, ifname string, commentSuffix string) {
-	var parts []string
-	parts = append(parts, "iifname "+nftQuote(ifname))
-	parts = append(parts, "ip daddr "+rule.TargetAddress)
-	parts = append(parts, rule.Protocol)
-	parts = append(parts, "dport "+strconv.Itoa(rule.TargetPort))
-	parts = append(parts, "counter accept")
-	parts = append(parts, "comment "+nftQuote("routerd "+rule.ResourceKind+" "+rule.Name+commentSuffix))
-	buf.WriteString("    " + strings.Join(parts, " ") + "\n")
+	for _, target := range ingressRuleTargets(rule) {
+		var parts []string
+		parts = append(parts, "iifname "+nftQuote(ifname))
+		parts = append(parts, "ip daddr "+target.Address)
+		parts = append(parts, rule.Protocol)
+		parts = append(parts, "dport "+strconv.Itoa(target.Port))
+		parts = append(parts, "counter accept")
+		parts = append(parts, "comment "+nftQuote("routerd "+rule.ResourceKind+" "+rule.Name+commentSuffix))
+		buf.WriteString("    " + strings.Join(parts, " ") + "\n")
+	}
 }
 
 func nftIfNameMatch(key string, ifnames []string) string {
@@ -1219,6 +1222,7 @@ func writeIPv4SourceNATTable(buf *bytes.Buffer, router *api.Router, aliases map[
 	buf.WriteString("table ip routerd_nat {\n")
 	writeIPv4AddressSets(buf, addressSets)
 	if len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
+		writeIngressDNATChains(buf, ingressRules)
 		buf.WriteString("  chain prerouting {\n")
 		buf.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
 		writeLocalServiceRedirectRules(buf, redirectRules, "ip")
@@ -1299,6 +1303,19 @@ func writeIPv4SourceNATTable(buf *bytes.Buffer, router *api.Router, aliases map[
 	return nil
 }
 
+func writeIngressDNATChains(buf *bytes.Buffer, rules []ingressNATRule) {
+	for _, rule := range rules {
+		if !ingressUsesDistribution(rule) {
+			continue
+		}
+		for i, target := range rule.Targets {
+			buf.WriteString("  chain " + ingressDNATChainName(rule, i) + " {\n")
+			buf.WriteString("    " + rule.Protocol + " dport " + strconv.Itoa(rule.ListenPort) + " counter dnat to " + target.Address + ":" + strconv.Itoa(target.Port) + " comment " + nftQuote("routerd "+rule.ResourceKind+" "+rule.Name+" "+target.Name) + "\n")
+			buf.WriteString("  }\n")
+		}
+	}
+}
+
 func writeIngressDNATRule(buf *bytes.Buffer, rule ingressNATRule, ifname string, commentSuffix string) {
 	var parts []string
 	parts = append(parts, "iifname "+nftQuote(ifname))
@@ -1307,7 +1324,11 @@ func writeIngressDNATRule(buf *bytes.Buffer, rule ingressNATRule, ifname string,
 	}
 	parts = append(parts, rule.Protocol)
 	parts = append(parts, "dport "+strconv.Itoa(rule.ListenPort))
-	parts = append(parts, "counter dnat to "+rule.TargetAddress+":"+strconv.Itoa(rule.TargetPort))
+	if ingressUsesDistribution(rule) {
+		parts = append(parts, ingressSelectionExpression(rule)+" vmap { "+ingressDNATVerdictMap(rule)+" }")
+	} else {
+		parts = append(parts, "counter dnat to "+rule.TargetAddress+":"+strconv.Itoa(rule.TargetPort))
+	}
 	parts = append(parts, "comment "+nftQuote("routerd "+rule.ResourceKind+" "+rule.Name+commentSuffix))
 	buf.WriteString("    " + strings.Join(parts, " ") + "\n")
 }
@@ -1318,18 +1339,72 @@ func writeIngressHairpinSNATRules(buf *bytes.Buffer, rules []ingressNATRule) {
 			continue
 		}
 		for _, ifname := range rule.HairpinInterfaces {
-			var parts []string
-			parts = append(parts, "iifname "+nftQuote(ifname))
-			parts = append(parts, "ip daddr "+rule.TargetAddress)
-			parts = append(parts, rule.Protocol)
-			parts = append(parts, "dport "+strconv.Itoa(rule.TargetPort))
-			parts = append(parts, "ct original ip daddr "+rule.ListenAddress)
-			parts = append(parts, "ct original proto-dst "+strconv.Itoa(rule.ListenPort))
-			parts = append(parts, "counter masquerade")
-			parts = append(parts, "comment "+nftQuote("routerd "+rule.ResourceKind+" "+rule.Name+" hairpin"))
-			buf.WriteString("    " + strings.Join(parts, " ") + "\n")
+			for _, target := range ingressRuleTargets(rule) {
+				var parts []string
+				parts = append(parts, "iifname "+nftQuote(ifname))
+				parts = append(parts, "ip daddr "+target.Address)
+				parts = append(parts, rule.Protocol)
+				parts = append(parts, "dport "+strconv.Itoa(target.Port))
+				parts = append(parts, "ct original ip daddr "+rule.ListenAddress)
+				parts = append(parts, "ct original proto-dst "+strconv.Itoa(rule.ListenPort))
+				parts = append(parts, "counter masquerade")
+				parts = append(parts, "comment "+nftQuote("routerd "+rule.ResourceKind+" "+rule.Name+" hairpin"))
+				buf.WriteString("    " + strings.Join(parts, " ") + "\n")
+			}
 		}
 	}
+}
+
+func ingressUsesDistribution(rule ingressNATRule) bool {
+	return len(rule.Targets) > 1 && (rule.Selection == "sourceHash" || rule.Selection == "random")
+}
+
+func ingressSelectionExpression(rule ingressNATRule) string {
+	switch rule.Selection {
+	case "random":
+		return "numgen random mod " + strconv.Itoa(len(rule.Targets))
+	default:
+		return "jhash ip saddr mod " + strconv.Itoa(len(rule.Targets))
+	}
+}
+
+func ingressDNATVerdictMap(rule ingressNATRule) string {
+	parts := make([]string, 0, len(rule.Targets))
+	for i := range rule.Targets {
+		parts = append(parts, strconv.Itoa(i)+" : jump "+ingressDNATChainName(rule, i))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func ingressDNATChainName(rule ingressNATRule, index int) string {
+	return "ingress_" + sanitizeNftIdentifier(rule.ResourceKind) + "_" + sanitizeNftIdentifier(rule.Name) + "_" + strconv.Itoa(index)
+}
+
+func sanitizeNftIdentifier(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	out := strings.Trim(b.String(), "_")
+	if out == "" {
+		return "resource"
+	}
+	return out
+}
+
+func ingressRuleTargets(rule ingressNATRule) []ingressNATTarget {
+	if len(rule.Targets) > 0 {
+		return rule.Targets
+	}
+	return []ingressNATTarget{{Address: rule.TargetAddress, Port: rule.TargetPort}}
 }
 
 func writeNAT44RenderRule(buf *bytes.Buffer, rule NAT44RenderRule, addressSets map[string]nftIPAddressSet) error {

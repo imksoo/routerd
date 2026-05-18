@@ -61,6 +61,65 @@ func TestReconcileIngressServiceSelectsHealthyFailoverBackend(t *testing.T) {
 	}
 }
 
+func TestReconcileIngressServiceSourceHashDistributesHealthyBackends(t *testing.T) {
+	store := mapStore{}
+	router := ingressRouter()
+	spec := router.Spec.Resources[0].Spec.(api.IngressServiceSpec)
+	spec.Policy.Selection = "sourceHash"
+	router.Spec.Resources[0].Spec = spec
+	controller := Controller{
+		Router: router,
+		Store:  store,
+		Check: func(_ context.Context, _ string, _ int, _ time.Duration) error {
+			return nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.FirewallAPIVersion, "IngressService", "api")
+	if status["selection"] != "sourceHash" || status["effectiveSelection"] != "sourceHash" {
+		t.Fatalf("selection status = %#v", status)
+	}
+	activeBackends, ok := status["activeBackends"].([]map[string]any)
+	if !ok || len(activeBackends) != 2 {
+		t.Fatalf("activeBackends = %#v, status=%#v", status["activeBackends"], status)
+	}
+}
+
+func TestReconcileIngressServiceSourceHashFallsBackWhenOnlyOneBackendHealthy(t *testing.T) {
+	store := mapStore{}
+	router := ingressRouter()
+	spec := router.Spec.Resources[0].Spec.(api.IngressServiceSpec)
+	spec.Policy.Selection = "sourceHash"
+	router.Spec.Resources[0].Spec = spec
+	controller := Controller{
+		Router: router,
+		Store:  store,
+		Check: func(_ context.Context, address string, _ int, _ time.Duration) error {
+			if address == "10.0.0.11" {
+				return errors.New("down")
+			}
+			return nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.FirewallAPIVersion, "IngressService", "api")
+	if status["selection"] != "sourceHash" || status["effectiveSelection"] != "failover" {
+		t.Fatalf("selection status = %#v", status)
+	}
+	active, _ := status["activeBackend"].(map[string]any)
+	if active["name"] != "cp-02" || active["address"] != "10.0.0.12" {
+		t.Fatalf("active backend = %#v, status=%#v", active, status)
+	}
+	activeBackends, ok := status["activeBackends"].([]map[string]any)
+	if !ok || len(activeBackends) != 1 || activeBackends[0]["name"] != "cp-02" {
+		t.Fatalf("activeBackends = %#v, status=%#v", status["activeBackends"], status)
+	}
+}
+
 func TestReconcileIngressServiceResolvesBackendAddressFromStatus(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/IPv4StaticAddress/cp-01": {"address": "10.0.0.11/32"},

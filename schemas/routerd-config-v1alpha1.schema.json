@@ -6740,7 +6740,9 @@
                           "selection": {
                             "enum": [
                               "",
-                              "failover"
+                              "failover",
+                              "sourceHash",
+                              "random"
                             ],
                             "type": "string"
                           }

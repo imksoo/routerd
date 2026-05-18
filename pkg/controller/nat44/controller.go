@@ -349,15 +349,53 @@ func (c Controller) effectiveIngressRouter() *api.Router {
 		if err != nil {
 			continue
 		}
-		active := c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)["activeBackend"]
-		name, address, port := activeBackend(active)
+		status := c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)
+		if backends, selection := activeBackends(status); len(backends) > 0 {
+			spec.Backends = backends
+			spec.Policy.Selection = selection
+			next.Spec.Resources[i].Spec = spec
+			continue
+		}
+		name, address, port := activeBackend(status["activeBackend"])
 		if address == "" || port == 0 {
 			continue
 		}
 		spec.Backends = []api.IngressBackendSpec{{Name: name, Address: address, Port: port}}
+		spec.Policy.Selection = "failover"
 		next.Spec.Resources[i].Spec = spec
 	}
 	return &next
+}
+
+func activeBackends(status map[string]any) ([]api.IngressBackendSpec, string) {
+	selection := strings.TrimSpace(fmt.Sprint(status["effectiveSelection"]))
+	if selection != "sourceHash" && selection != "random" {
+		return nil, ""
+	}
+	var values []any
+	switch typed := status["activeBackends"].(type) {
+	case []any:
+		values = typed
+	case []map[string]any:
+		values = make([]any, 0, len(typed))
+		for _, item := range typed {
+			values = append(values, item)
+		}
+	default:
+		return nil, ""
+	}
+	var out []api.IngressBackendSpec
+	for _, value := range values {
+		name, address, port := activeBackend(value)
+		if address == "" || port == 0 {
+			continue
+		}
+		out = append(out, api.IngressBackendSpec{Name: name, Address: address, Port: port})
+	}
+	if len(out) < 2 {
+		return nil, ""
+	}
+	return out, selection
 }
 
 func activeBackend(value any) (string, string, int) {

@@ -166,7 +166,7 @@ endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
 | `IPv4SourceNAT` | Older IPv4 source NAT resource. Prefer `NAT44Rule` for new configs. |
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
-| `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP health-check intent, and failover selection are accepted; runtime failover is handled by the controller path. |
+| `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP/HTTP health checks, and `failover`, `sourceHash`, or `random` backend selection are accepted. |
 | `LocalServiceRedirect` | Redirects LAN-origin IPv4/IPv6 traffic for `IPAddressSet` destinations to a local router port. This is intended for plaintext DNS/NTP interception without touching DoH or DoT ports. |
 | `IPv4PolicyRoute` | Represents IPv4 policy routing. |
 | `IPv4PolicyRouteSet` | Groups multiple policy routes. |
@@ -245,15 +245,21 @@ LAN clients to reach the service through the WAN address. Hairpin mode requires
 the return-path masquerade/NAT reflection rule. `listen.addressFrom` and backend
 `addressFrom` can reference statically rendered address resources such as
 `IPv4StaticAddress/<name>.address` or `VirtualIPv4Address/<name>.address`.
-`IngressService` accepts multiple backends, TCP health checks, and failover
-selection. The runtime controller resolves backend FQDNs, falls back to the
-previous resolved IPv4 address when DNS temporarily fails, records backend
-health in status, and selects the active backend. Linux nftables rendering uses
-that active backend on the next NAT reconcile. Existing conntrack entries are
-not flushed, so established flows can stay on the old backend while new flows
-use the selected backend. `spec.hostname` can also publish the listen address
-into matching DNSResolver-served `DNSZone` records, and `routerctl show ingress`
-shows active backend and per-backend health.
+`IngressService` accepts multiple backends, TCP/HTTP health checks, and
+`failover`, `sourceHash`, or `random` backend selection. The runtime controller
+resolves backend FQDNs, falls back to the previous resolved IPv4 address when DNS
+temporarily fails, records backend health in status, and writes either one
+active backend or a healthy backend distribution. When only one backend remains
+healthy, `sourceHash` and `random` degrade to failover. Linux nftables rendering
+uses the status-selected backend set on the next NAT reconcile and emits
+`jhash ip saddr` for `sourceHash` or `numgen random` for `random`. Existing
+conntrack entries are not flushed, so established flows can stay on the old
+backend while new flows use the selected backend. Validator checks reject
+listen-port collisions between `IngressService`, `LocalServiceRedirect`, and
+routerd-managed local daemons on the same protocol/interface. `spec.hostname`
+can also publish the listen address into matching DNSResolver-served `DNSZone`
+records, and `routerctl show ingress` shows active backend and per-backend
+health.
 
 `IPAddressSet` writes literal IPv4/IPv6 addresses into nftables named sets when
 the ruleset is rendered. FQDN `A`/`AAAA` records are resolved by the runtime
@@ -338,7 +344,7 @@ from DHCP, IPAM, or another declarative resource.
 | `FirewallRule` | Represents exceptions that cannot be expressed by the role matrix. Supports source CIDRs, destination CIDRs, and `IPAddressSet` destination refs. |
 | `ClientPolicy` | Classifies clients by MAC address for guest isolation on Linux nftables. |
 | `PortForward` | Adds a single-target ingress DNAT rule and, when routerd manages the firewall table, an internal forward accept rule. Optional hairpin mode adds LAN-side DNAT and return-path SNAT. |
-| `IngressService` | Adds the same ingress DNAT path as `PortForward`; multiple backends, failover selection, and health-check intent are accepted, with runtime failover state handled by the controller path. Optional hairpin mode matches `PortForward`. |
+| `IngressService` | Adds the same ingress DNAT path as `PortForward`; multiple backends, `failover` / `sourceHash` / `random` selection, and health-check intent are accepted, with runtime backend state handled by the controller path. Optional hairpin mode matches `PortForward`. |
 | `LocalServiceRedirect` | Adds local service redirect rules for `IPAddressSet` destinations. The firewall renderer opens the matching local input ports for the source zone. |
 
 Stateful filtering renders into the nftables `inet routerd_filter` table.

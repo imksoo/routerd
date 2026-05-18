@@ -21,7 +21,15 @@ type ingressNATRule struct {
 	ListenPort        int
 	TargetAddress     string
 	TargetPort        int
+	Targets           []ingressNATTarget
+	Selection         string
 	HairpinInterfaces []string
+}
+
+type ingressNATTarget struct {
+	Name    string
+	Address string
+	Port    int
 }
 
 func ingressNATRules(router *api.Router, aliases map[string]string) ([]ingressNATRule, error) {
@@ -75,13 +83,14 @@ func ingressRuleFromService(router *api.Router, aliases map[string]string, res a
 	if len(spec.Backends) == 0 {
 		return ingressNATRule{}, false, fmt.Errorf("%s needs at least one backend", res.ID())
 	}
-	// Static nftables rendering uses the first backend as the initial active
-	// endpoint. The controller-owned runtime state can update the active
-	// endpoint as health checks change without regenerating the whole ruleset.
-	return ingressRuleFromEndpoint(router, aliases, res, spec.Listen, spec.Backends[0], spec.Hairpin)
+	return ingressRuleFromEndpoints(router, aliases, res, spec.Listen, spec.Backends, spec.Hairpin, defaultString(spec.Policy.Selection, "failover"))
 }
 
 func ingressRuleFromEndpoint(router *api.Router, aliases map[string]string, res api.Resource, listen api.IngressListenSpec, target api.IngressBackendSpec, hairpin api.IngressHairpinSpec) (ingressNATRule, bool, error) {
+	return ingressRuleFromEndpoints(router, aliases, res, listen, []api.IngressBackendSpec{target}, hairpin, "failover")
+}
+
+func ingressRuleFromEndpoints(router *api.Router, aliases map[string]string, res api.Resource, listen api.IngressListenSpec, backends []api.IngressBackendSpec, hairpin api.IngressHairpinSpec, selection string) (ingressNATRule, bool, error) {
 	ifname := aliases[listen.Interface]
 	if ifname == "" {
 		return ingressNATRule{}, false, fmt.Errorf("%s references listen interface with empty ifname %q", res.ID(), listen.Interface)
@@ -93,11 +102,21 @@ func ingressRuleFromEndpoint(router *api.Router, aliases map[string]string, res 
 	if !ok {
 		return ingressNATRule{}, false, nil
 	}
-	targetAddress, ok, err := ingressAddress(router, target.Address, target.AddressFrom, false)
-	if err != nil {
-		return ingressNATRule{}, false, fmt.Errorf("%s target address: %w", res.ID(), err)
+	var targets []ingressNATTarget
+	for i, backend := range backends {
+		targetAddress, ok, err := ingressAddress(router, backend.Address, backend.AddressFrom, false)
+		if err != nil {
+			return ingressNATRule{}, false, fmt.Errorf("%s backend %d address: %w", res.ID(), i, err)
+		}
+		if !ok {
+			return ingressNATRule{}, false, nil
+		}
+		targets = append(targets, ingressNATTarget{Name: defaultString(backend.Name, fmt.Sprintf("backend-%d", i)), Address: targetAddress, Port: backend.Port})
+		if selection == "failover" {
+			break
+		}
 	}
-	if !ok {
+	if len(targets) == 0 {
 		return ingressNATRule{}, false, nil
 	}
 	hairpinIfnames, err := ingressHairpinInterfaces(aliases, res, listen, hairpin, listenAddress)
@@ -112,8 +131,10 @@ func ingressRuleFromEndpoint(router *api.Router, aliases map[string]string, res 
 		ListenAddress:     listenAddress,
 		Protocol:          listen.Protocol,
 		ListenPort:        listen.Port,
-		TargetAddress:     targetAddress,
-		TargetPort:        target.Port,
+		TargetAddress:     targets[0].Address,
+		TargetPort:        targets[0].Port,
+		Targets:           targets,
+		Selection:         selection,
 		HairpinInterfaces: hairpinIfnames,
 	}, true, nil
 }

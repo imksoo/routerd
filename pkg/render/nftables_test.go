@@ -731,6 +731,65 @@ func TestNftablesIngressServiceResolvesListenAddressFromStaticAddress(t *testing
 	}
 }
 
+func TestNftablesIngressServiceSourceHashDistributesBackends(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"},
+				Metadata: api.ObjectMeta{Name: "api"},
+				Spec: api.IngressServiceSpec{
+					Listen: api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 6443},
+					Backends: []api.IngressBackendSpec{
+						{Name: "cp-01", Address: "10.0.0.11", Port: 6443},
+						{Name: "cp-02", Address: "10.0.0.12", Port: 6443},
+					},
+					Policy: api.IngressServicePolicySpec{Selection: "sourceHash"},
+				},
+			},
+		}},
+	}
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`chain ingress_ingressservice_api_0`,
+		`tcp dport 6443 counter dnat to 10.0.0.11:6443 comment "routerd IngressService api cp-01"`,
+		`tcp dport 6443 counter dnat to 10.0.0.12:6443 comment "routerd IngressService api cp-02"`,
+		`iifname "ens18" ip daddr 203.0.113.10 tcp dport 6443 jhash ip saddr mod 2 vmap { 0 : jump ingress_ingressservice_api_0, 1 : jump ingress_ingressservice_api_1 } comment "routerd IngressService api"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesIngressServiceRandomDistributesBackends(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "api"}, Spec: api.IngressServiceSpec{
+				Listen:   api.IngressListenSpec{Interface: "wan", Protocol: "udp", Port: 5353},
+				Backends: []api.IngressBackendSpec{{Name: "a", Address: "10.0.0.11", Port: 5353}, {Name: "b", Address: "10.0.0.12", Port: 5353}},
+				Policy:   api.IngressServicePolicySpec{Selection: "random"},
+			}},
+		}},
+	}
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	if got := string(data); !strings.Contains(got, `udp dport 5353 numgen random mod 2 vmap`) {
+		t.Fatalf("nftables output missing random distribution:\n%s", got)
+	}
+}
+
 func TestNftablesLocalServiceRedirectUsesDestinationAddressSets(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

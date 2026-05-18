@@ -289,6 +289,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			zones[res.Metadata.Name] = true
 		}
 	}
+	if err := validateListenPortCollisions(router); err != nil {
+		return err
+	}
 	for _, res := range router.Spec.Resources {
 		hostname := ""
 		switch {
@@ -3229,9 +3232,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		}
 		if spec.Policy.Selection != "" {
 			switch spec.Policy.Selection {
-			case "failover":
+			case "failover", "sourceHash", "random":
 			default:
-				return fmt.Errorf("%s spec.policy.selection must be failover", res.ID())
+				return fmt.Errorf("%s spec.policy.selection must be failover, sourceHash, or random", res.ID())
 			}
 		}
 		if spec.Policy.OnNoHealthyBackends != "" {
