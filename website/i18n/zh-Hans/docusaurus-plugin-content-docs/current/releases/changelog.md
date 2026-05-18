@@ -10,6 +10,25 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 新增
+
+- 新增面向 Kubernetes edge 使用场景的 FRR backend `BGPRouter` / `BGPPeer`、
+  keepalived backend `VirtualIPv4Address`，以及 `IngressService` backend
+  health/failover controller。
+- 新增 `routerctl show bgp`、`routerctl show vrrp`、`routerctl show ingress`
+  table view，从 VIP/ingress `hostname` field 自动推导 DNS record，并新增
+  BGP/VRRP/Ingress transition 与 backend health 的 OTel metrics。
+- Web Console 新增 BGP、VRRP、IngressService dedicated view 与 JSON endpoint。
+
+### 变更
+
+- FRR BGP 配置现在会先用 `vtysh -C -f` 验证，再通过 `frr-reload.py --reload`
+  差分应用。VRRP 默认使用 unicast peer 与 `nopreempt`，并支持 track hysteresis
+  和 `preemptDelay`。BGP、VRRP、IngressService listen port 的 firewall hole
+  也会自动推导。
+- BGP reconcile 不再让 dry-run 写入遮蔽后续 live apply；首次 live 观测时会先比较
+  FRR running-config，再决定是否 reload，避免已一致的 session 被 no-op reload reset。
+
 ## v20260518.1810
 
 ### 新增
