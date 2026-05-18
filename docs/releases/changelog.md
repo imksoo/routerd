@@ -10,6 +10,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Added controller reconcile runtime status to the control API, logs, OpenTelemetry
+  metrics/traces, and the Web Console controller view. Controller status now
+  reports interval, trigger, run/error counts, last/average/max duration, and the
+  latest error when present.
+
 ## v20260518.1301
 
 ### Changed

@@ -10,6 +10,13 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 新增
+
+- 在 control API、日志、OpenTelemetry metrics/traces，以及 Web Console 的
+  controller view 中新增 controller reconcile runtime status。controller status
+  现在会返回 interval、trigger、运行次数、错误次数、last/average/max duration，
+  以及最新错误。
+
 ## v20260518.1301
 
 ### 变更

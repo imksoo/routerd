@@ -10,6 +10,13 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 追加
+
+- controller reconcile の runtime status を control API、log、OpenTelemetry
+  metrics/traces、Web Console の controller view に追加しました。controller
+  status は interval、trigger、実行回数、error 回数、last/average/max duration、
+  最新 error を返します。
+
 ## v20260518.1301
 
 ### 変更

@@ -3241,6 +3241,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	if !*controllerChain {
 		controllerStatuses = nil
 	}
+	controllerRuntime := controlapi.NewControllerRuntimeStore(controllerStatuses)
 	router, err := config.Load(*configPath)
 	if err != nil {
 		return err
@@ -3333,6 +3334,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 				FirewallPath:           *controllerFirewallPath,
 				NftCommand:             *controllerNftCommand,
 				ConntrackInterval:      *controllerConntrackInterval,
+				ControllerObserver:     controllerRuntime,
 			},
 		}
 		if err := chainRunner.Start(ctx); err != nil {
@@ -3376,7 +3378,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			return webErr
 		}
 		if ok {
-			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerStatuses, configuredDHCPLeasePaths(*controllerDnsmasqConfig)); err != nil {
+			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths(*controllerDnsmasqConfig)); err != nil {
 				return err
 			}
 		}
@@ -3391,11 +3393,11 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	handler := controlapi.Handler{
 		Status: func(r *http.Request) (*controlapi.Status, error) {
 			status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore))
-			status.Status.Controllers = controllerStatuses
+			status.Status.Controllers = controllerRuntime.Snapshot()
 			return &status, nil
 		},
 		Controllers: func(r *http.Request) (*controlapi.Controllers, error) {
-			controllers := controlapi.NewControllers(controllerStatuses)
+			controllers := controlapi.NewControllers(controllerRuntime.Snapshot())
 			return &controllers, nil
 		},
 		Connections: func(r *http.Request, req controlapi.ConnectionsRequest) (*controlapi.ConnectionTable, error) {
@@ -3837,7 +3839,7 @@ func statusAddressValue(value string) string {
 	return ""
 }
 
-func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, logger *eventlog.Logger, configPath string, controllerStatuses []controlapi.ControllerStatus, dhcpLeasePaths []string) error {
+func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, logger *eventlog.Logger, configPath string, controllerStatuses func() []controlapi.ControllerStatus, dhcpLeasePaths []string) error {
 	addr := net.JoinHostPort(spec.ListenAddress, fmt.Sprintf("%d", spec.Port))
 	handler := webconsole.New(webconsole.Options{
 		Router:                 router,
@@ -3853,7 +3855,7 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		DHCPStickyLogPath:      dhcpStickyLogPath(),
 		DHCPLeasePaths:         dhcpLeasePaths,
 		ConfigPath:             configPath,
-		ControllerModes:        controllerStatuses,
+		ControllerStatuses:     controllerStatuses,
 		Bus:                    eventBus,
 	})
 	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 2 * time.Minute}

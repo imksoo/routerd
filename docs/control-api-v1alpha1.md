@@ -31,6 +31,15 @@ state. Highlights:
 | `GET /api/control.routerd.net/v1alpha1/traffic-flows` | traffic flow history |
 | `GET /api/control.routerd.net/v1alpha1/firewall-logs` | firewall log entries |
 
+## Controller status
+
+`Status.status.controllers` and the `Controllers` endpoint include both the
+configured controller mode and runtime reconcile state. Runtime fields include
+`interval`, `lastTrigger`, `lastReconcileTime`, `nextReconcileTime`,
+`reconcileCount`, `reconcileErrorCount`, `lastDuration`, `maxDuration`,
+`averageDuration`, and `lastError`. These fields are observational; clients
+should tolerate them being absent before a controller has run.
+
 ## Managed daemons
 
 Stateful daemons each have their own socket:

@@ -19,6 +19,8 @@ import (
 func RecordStatusMetrics(ctx context.Context, resources []routerstate.ObjectStatus, controllers []controlapi.ControllerStatus, leases []logstore.DHCPStickyLease) {
 	meter := otel.Meter("routerd")
 	dryRunGauge, _ := meter.Int64Gauge("routerd.controller.dry_run.count")
+	controllerErrorGauge, _ := meter.Int64Gauge("routerd.controller.reconcile.errors")
+	controllerLastDurationGauge, _ := meter.Float64Gauge("routerd.controller.reconcile.last_duration_ms")
 	phaseGauge, _ := meter.Int64Gauge("routerd.resource.phase.count")
 	dhcpActiveGauge, _ := meter.Int64Gauge("routerd.dhcp.lease.active")
 	dhcpStickyGauge, _ := meter.Int64Gauge("routerd.dhcp.sticky.held")
@@ -28,6 +30,11 @@ func RecordStatusMetrics(ctx context.Context, resources []routerstate.ObjectStat
 	for _, controller := range controllers {
 		if strings.EqualFold(strings.TrimSpace(controller.Mode), "dry-run") {
 			dryRun++
+		}
+		attrs := metric.WithAttributes(attribute.String("routerd.controller.name", controller.Name))
+		controllerErrorGauge.Record(ctx, controller.ReconcileErrorCount, attrs)
+		if controller.LastDurationMillis > 0 {
+			controllerLastDurationGauge.Record(ctx, controller.LastDurationMillis, attrs)
 		}
 	}
 	dryRunGauge.Record(ctx, dryRun)

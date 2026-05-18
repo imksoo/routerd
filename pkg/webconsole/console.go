@@ -57,6 +57,7 @@ type Options struct {
 	DHCPLeasePaths         []string
 	ConfigPath             string
 	ControllerModes        []controlapi.ControllerStatus
+	ControllerStatuses     func() []controlapi.ControllerStatus
 	Bus                    *bus.Bus
 	ReverseLookup          func(ctx context.Context, address string) ([]string, error)
 }
@@ -518,11 +519,12 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 	dpiStatus := h.dpiStatus(context.Background())
 	systemUsage := h.readSystemUsage()
 	result = resultWithLatestGeneration(result, h.opts.Store)
-	recordConsoleMetrics(context.Background(), resources, h.opts.ControllerModes, dhcpLeases, clients, stickyLeases, now)
+	controllers := h.controllerStatuses()
+	recordConsoleMetrics(context.Background(), resources, controllers, dhcpLeases, clients, stickyLeases, now)
 	return Snapshot{
 		GeneratedAt:      now,
-		Status:           statusWithControllers(result, h.opts.ControllerModes),
-		Controllers:      h.opts.ControllerModes,
+		Status:           statusWithControllers(result, controllers),
+		Controllers:      controllers,
 		Phases:           phaseCounts(resources),
 		Resources:        resources,
 		Interfaces:       h.interfaceSummaries(resources),
@@ -626,7 +628,7 @@ func (h Handler) resources(w http.ResponseWriter) {
 }
 
 func (h Handler) controllers(w http.ResponseWriter) {
-	controllers := controlapi.NewControllers(h.opts.ControllerModes)
+	controllers := controlapi.NewControllers(h.controllerStatuses())
 	writeJSON(w, controllers)
 }
 
@@ -1213,9 +1215,16 @@ func (h Handler) resourceStatuses() ([]routerstate.ObjectStatus, error) {
 			return nil, err
 		}
 		resources = h.filterStaleObjectStatuses(resources)
-		return annotateResourceOwnership(resources, h.opts.ControllerModes), nil
+		return annotateResourceOwnership(resources, h.controllerStatuses()), nil
 	}
 	return nil, nil
+}
+
+func (h Handler) controllerStatuses() []controlapi.ControllerStatus {
+	if h.opts.ControllerStatuses != nil {
+		return h.opts.ControllerStatuses()
+	}
+	return h.opts.ControllerModes
 }
 
 func (h Handler) filterStaleObjectStatuses(resources []routerstate.ObjectStatus) []routerstate.ObjectStatus {
@@ -1747,6 +1756,8 @@ func annotateDHCPLeasesWithSticky(leases []DHCPLease, sticky []logstore.DHCPStic
 func recordConsoleMetrics(ctx context.Context, resources []routerstate.ObjectStatus, controllers []controlapi.ControllerStatus, leases []DHCPLease, clients []ClientEntry, sticky []logstore.DHCPStickyLease, now time.Time) {
 	meter := otel.Meter("routerd")
 	dryRunGauge, _ := meter.Int64Gauge("routerd.controller.dry_run.count")
+	controllerErrorGauge, _ := meter.Int64Gauge("routerd.controller.reconcile.errors")
+	controllerLastDurationGauge, _ := meter.Float64Gauge("routerd.controller.reconcile.last_duration_ms")
 	phaseGauge, _ := meter.Int64Gauge("routerd.resource.phase.count")
 	leaseGauge, _ := meter.Int64Gauge("routerd.dhcp.lease.active")
 	stickyGauge, _ := meter.Int64Gauge("routerd.dhcp.sticky.held")
@@ -1755,6 +1766,11 @@ func recordConsoleMetrics(ctx context.Context, resources []routerstate.ObjectSta
 	for _, controller := range controllers {
 		if strings.EqualFold(strings.TrimSpace(controller.Mode), "dry-run") {
 			dryRun++
+		}
+		attrs := metric.WithAttributes(attribute.String("routerd.controller.name", controller.Name))
+		controllerErrorGauge.Record(ctx, controller.ReconcileErrorCount, attrs)
+		if controller.LastDurationMillis > 0 {
+			controllerLastDurationGauge.Record(ctx, controller.LastDurationMillis, attrs)
 		}
 	}
 	dryRunGauge.Record(ctx, dryRun)

@@ -36,11 +36,25 @@ type StatusStatus struct {
 }
 
 type ControllerStatus struct {
-	Name          string               `json:"name" yaml:"name"`
-	Mode          string               `json:"mode" yaml:"mode"`
-	Reason        ControllerModeReason `json:"reason,omitempty" yaml:"reason,omitempty"`
-	Message       string               `json:"message,omitempty" yaml:"message,omitempty"`
-	ResourceKinds []string             `json:"resourceKinds,omitempty" yaml:"resourceKinds,omitempty"`
+	Name                  string               `json:"name" yaml:"name"`
+	Mode                  string               `json:"mode" yaml:"mode"`
+	Reason                ControllerModeReason `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Message               string               `json:"message,omitempty" yaml:"message,omitempty"`
+	ResourceKinds         []string             `json:"resourceKinds,omitempty" yaml:"resourceKinds,omitempty"`
+	Interval              string               `json:"interval,omitempty" yaml:"interval,omitempty"`
+	LastTrigger           string               `json:"lastTrigger,omitempty" yaml:"lastTrigger,omitempty"`
+	LastReconcileTime     *time.Time           `json:"lastReconcileTime,omitempty" yaml:"lastReconcileTime,omitempty"`
+	LastSuccessTime       *time.Time           `json:"lastSuccessTime,omitempty" yaml:"lastSuccessTime,omitempty"`
+	NextReconcileTime     *time.Time           `json:"nextReconcileTime,omitempty" yaml:"nextReconcileTime,omitempty"`
+	ReconcileCount        int64                `json:"reconcileCount,omitempty" yaml:"reconcileCount,omitempty"`
+	ReconcileErrorCount   int64                `json:"reconcileErrorCount,omitempty" yaml:"reconcileErrorCount,omitempty"`
+	LastDuration          string               `json:"lastDuration,omitempty" yaml:"lastDuration,omitempty"`
+	MaxDuration           string               `json:"maxDuration,omitempty" yaml:"maxDuration,omitempty"`
+	AverageDuration       string               `json:"averageDuration,omitempty" yaml:"averageDuration,omitempty"`
+	LastDurationMillis    float64              `json:"lastDurationMillis,omitempty" yaml:"lastDurationMillis,omitempty"`
+	MaxDurationMillis     float64              `json:"maxDurationMillis,omitempty" yaml:"maxDurationMillis,omitempty"`
+	AverageDurationMillis float64              `json:"averageDurationMillis,omitempty" yaml:"averageDurationMillis,omitempty"`
+	LastError             string               `json:"lastError,omitempty" yaml:"lastError,omitempty"`
 }
 
 type ControllerModeReason string

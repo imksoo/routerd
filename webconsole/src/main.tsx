@@ -138,6 +138,20 @@ type ControllerStatus = {
   reason?: string;
   message?: string;
   resourceKinds?: string[];
+  interval?: string;
+  lastTrigger?: string;
+  lastReconcileTime?: string;
+  lastSuccessTime?: string;
+  nextReconcileTime?: string;
+  reconcileCount?: number;
+  reconcileErrorCount?: number;
+  lastDuration?: string;
+  maxDuration?: string;
+  averageDuration?: string;
+  lastDurationMillis?: number;
+  maxDurationMillis?: number;
+  averageDurationMillis?: number;
+  lastError?: string;
 };
 
 type RouterEvent = {
@@ -1513,7 +1527,7 @@ const useStyles = makeStyles({
   },
   controllerTable: {
     width: "max-content",
-    minWidth: "min(100%, 51rem)",
+    minWidth: "min(100%, 74rem)",
     tableLayout: "auto",
   },
   eventTable: {
@@ -2830,7 +2844,8 @@ function App() {
                   <Metric label="total" value={String(controllers.length)} />
                   <Metric label="live" value={String(controllers.filter(c => c.mode === "live").length)} />
                   <Metric label="dry-run" value={String(controllers.filter(c => c.mode === "dry-run").length)} />
-                  <Metric label="other modes" value={String(controllers.filter(c => c.mode !== "live" && c.mode !== "dry-run").length)} />
+                  <Metric label="errors" value={String(controllers.reduce((sum, c) => sum + Number(c.reconcileErrorCount ?? 0), 0))} />
+                  <Metric label="slowest" value={slowestControllerLabel(controllers)} />
                 </div>
                 <ControllerTable controllers={controllers} />
               </Card>
@@ -4034,13 +4049,17 @@ function ControllerTable({ controllers }: { controllers: ControllerStatus[] }) {
         <colgroup>
           <col style={{ width: "170px" }} />
           <col style={{ width: "110px" }} />
-          <col style={{ width: "260px" }} />
+          <col style={{ width: "150px" }} />
+          <col style={{ width: "240px" }} />
+          <col style={{ width: "180px" }} />
           <col />
         </colgroup>
         <TableHeader>
           <TableRow>
             <TableHeaderCell>Controller</TableHeaderCell>
             <TableHeaderCell>Mode</TableHeaderCell>
+            <TableHeaderCell>Reconcile</TableHeaderCell>
+            <TableHeaderCell>Timing</TableHeaderCell>
             <TableHeaderCell>Resource kinds</TableHeaderCell>
             <TableHeaderCell>Reason</TableHeaderCell>
           </TableRow>
@@ -4051,12 +4070,30 @@ function ControllerTable({ controllers }: { controllers: ControllerStatus[] }) {
               <TableCell><code className={styles.code}>{controller.name}</code></TableCell>
               <TableCell><Badge appearance="tint" color={controller.mode === "dry-run" ? "warning" : "success"}>{controller.mode ?? "unknown"}</Badge></TableCell>
               <TableCell>
+                <div className={styles.connectionFlow}>
+                  <Text>{controller.reconcileCount ?? 0} runs</Text>
+                  <Text size={200} className={controller.reconcileErrorCount ? "" : styles.muted}>
+                    {controller.reconcileErrorCount ?? 0} errors
+                  </Text>
+                  {controller.lastTrigger ? <Text size={200} className={styles.muted}>{controller.lastTrigger}</Text> : null}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className={styles.connectionFlow}>
+                  <Text>{controller.interval || "-"}</Text>
+                  <Text size={200} className={styles.muted}>last {durationLabel(controller.lastDuration, controller.lastDurationMillis)}</Text>
+                  <Text size={200} className={styles.muted}>avg {durationLabel(controller.averageDuration, controller.averageDurationMillis)}</Text>
+                  {controller.lastReconcileTime ? <Text size={200} className={styles.muted}>ran <RelativeTime value={controller.lastReconcileTime} /></Text> : null}
+                </div>
+              </TableCell>
+              <TableCell>
                 <Text size={200} className={styles.muted}>{(controller.resourceKinds ?? []).join(", ") || "-"}</Text>
               </TableCell>
               <TableCell>
                 <div className={styles.connectionFlow}>
                   <Text>{controller.reason || "-"}</Text>
                   {controller.message ? <Text size={200} className={styles.muted}>{controller.message}</Text> : null}
+                  {controller.lastError ? <Text size={200}>{controller.lastError}</Text> : null}
                 </div>
               </TableCell>
             </TableRow>
@@ -7448,6 +7485,11 @@ function formatMilliseconds(value?: number) {
   return `${Math.round(value)} ms`;
 }
 
+function durationLabel(value?: string, millis?: number) {
+  if (typeof millis === "number" && Number.isFinite(millis) && millis > 0) return formatMilliseconds(millis);
+  return value || "-";
+}
+
 function formatPercent(value?: number) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "-";
   return `${Math.round(value * 100)}%`;
@@ -7476,6 +7518,15 @@ function dpiLatencyLabel(dpi?: DPIStatus) {
   const max = Number(stats?.maxLatencyMs);
   if (!Number.isFinite(average) || average <= 0) return "-";
   return `${formatMilliseconds(average)} avg / ${formatMilliseconds(max)} max`;
+}
+
+function slowestControllerLabel(controllers: ControllerStatus[]) {
+  let slowest: ControllerStatus | undefined;
+  for (const controller of controllers) {
+    if ((controller.maxDurationMillis ?? 0) > (slowest?.maxDurationMillis ?? 0)) slowest = controller;
+  }
+  if (!slowest || !slowest.maxDurationMillis) return "-";
+  return `${slowest.name ?? "controller"} ${formatMilliseconds(slowest.maxDurationMillis)}`;
 }
 
 function denyRows(logs: FirewallLog[]) {

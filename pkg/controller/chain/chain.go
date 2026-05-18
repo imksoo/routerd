@@ -407,6 +407,7 @@ type Options struct {
 	NftCommand             string
 	ConntrackInterval      time.Duration
 	Logger                 *slog.Logger
+	ControllerObserver     framework.Observer
 }
 
 type Runner struct {
@@ -619,7 +620,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 	r.warmDaemonStatuses(ctx, daemonStatusSync, logger)
 	go func() {
-		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second}
+		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
 		if err := loop.Run(ctx, controllers...); err != nil && ctx.Err() == nil {
 			logger.Warn("controller event loop stopped", "error", err)
 		}

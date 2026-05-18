@@ -32,6 +32,15 @@ endpoint も公開します。読み取り専用 status socket は status 系 en
 | `GET /api/control.routerd.net/v1alpha1/traffic-flows` | トラフィックフロー履歴 |
 | `GET /api/control.routerd.net/v1alpha1/firewall-logs` | firewall ログ |
 
+## Controller status
+
+`Status.status.controllers` と `Controllers` endpoint は、controller の設定上の
+mode と runtime reconcile 状態を返します。runtime field には `interval`、
+`lastTrigger`、`lastReconcileTime`、`nextReconcileTime`、`reconcileCount`、
+`reconcileErrorCount`、`lastDuration`、`maxDuration`、`averageDuration`、
+`lastError` が含まれます。これらは観測値なので、controller がまだ一度も
+実行されていない場合は field が無いものとして扱ってください。
+
 ## 管理対象 daemon
 
 状態を持つ daemon は各々独自の socket を持ちます：

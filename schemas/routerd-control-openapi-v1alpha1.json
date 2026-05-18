@@ -897,6 +897,41 @@
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "averageDuration": {
+                      "type": "string"
+                    },
+                    "averageDurationMillis": {
+                      "type": "number"
+                    },
+                    "interval": {
+                      "type": "string"
+                    },
+                    "lastDuration": {
+                      "type": "string"
+                    },
+                    "lastDurationMillis": {
+                      "type": "number"
+                    },
+                    "lastError": {
+                      "type": "string"
+                    },
+                    "lastReconcileTime": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "lastSuccessTime": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "lastTrigger": {
+                      "type": "string"
+                    },
+                    "maxDuration": {
+                      "type": "string"
+                    },
+                    "maxDurationMillis": {
+                      "type": "number"
+                    },
                     "message": {
                       "type": "string"
                     },
@@ -906,8 +941,18 @@
                     "name": {
                       "type": "string"
                     },
+                    "nextReconcileTime": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
                     "reason": {
                       "type": "string"
+                    },
+                    "reconcileCount": {
+                      "type": "integer"
+                    },
+                    "reconcileErrorCount": {
+                      "type": "integer"
                     },
                     "resourceKinds": {
                       "items": {
