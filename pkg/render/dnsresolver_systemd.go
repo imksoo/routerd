@@ -9,10 +9,6 @@ import (
 	"routerd/pkg/dnsresolver"
 )
 
-func DNSResolverSystemdUnit(name string, spec api.DNSResolverSpec, binaryPath, configPath string) []byte {
-	return SystemdUnit("routerd-dns-resolver@"+name+".service", DNSResolverSystemdSpec(name, spec, binaryPath, configPath))
-}
-
 func DNSResolverSystemdSpec(name string, spec api.DNSResolverSpec, binaryPath, configPath string) api.SystemdUnitSpec {
 	_ = dnsresolver.NormalizeSpec(spec)
 	if strings.TrimSpace(binaryPath) == "" {

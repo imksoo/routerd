@@ -9,11 +9,12 @@ import (
 	"routerd/pkg/api"
 )
 
-func TestDNSResolverSystemdUnit(t *testing.T) {
-	unit := string(DNSResolverSystemdUnit("cloudflare", api.DNSResolverSpec{
+func TestDNSResolverSystemdSpec(t *testing.T) {
+	spec := DNSResolverSystemdSpec("cloudflare", api.DNSResolverSpec{
 		Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 5053}},
 		Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"https://1.1.1.1/dns-query"}}},
-	}, "/usr/local/sbin/routerd-dns-resolver", "/var/lib/routerd/dns-resolver/cloudflare/config.json"))
+	}, "/usr/local/sbin/routerd-dns-resolver", "/var/lib/routerd/dns-resolver/cloudflare/config.json")
+	unit := string(SystemdUnit("routerd-dns-resolver@cloudflare.service", spec))
 	for _, want := range []string{
 		"Description=routerd DNS resolver cloudflare",
 		"ExecStart=/usr/local/sbin/routerd-dns-resolver daemon",

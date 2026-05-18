@@ -169,15 +169,15 @@ func TestRunApplyOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
 }
 
 func TestActiveControllerDryRunModes(t *testing.T) {
-	got := activeControllerDryRunModes(map[string]bool{
+	got := activeControllerDryRunNames(controllerStatusesFromDryRunModes(map[string]bool{
 		"route": false,
 		"ra":    true,
 		"nat":   false,
 		"foo":   true,
-	})
+	}))
 	want := []string{"foo", "ra"}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("activeControllerDryRunModes = %v, want %v", got, want)
+		t.Fatalf("activeControllerDryRunNames = %v, want %v", got, want)
 	}
 }
 
@@ -554,7 +554,7 @@ exit 0
 	store := routerstate.New()
 	store.Set(freebsdSysrcStateKey, "ifconfig_vxlan102,ifconfig_vxlan103,gateway_enable", "test seed")
 
-	_, _, err := applyFreeBSDConfig(router, store, "", "", "", "")
+	_, _, err := applyFreeBSDConfigWithOptions(router, store, "", "", "", "", freeBSDConfigApplyOptions{ManageServices: true})
 	if err != nil {
 		t.Fatalf("apply FreeBSD config: %v", err)
 	}
@@ -631,7 +631,7 @@ exit 0
 
 	pfPath := filepath.Join(dir, "etc", "pf.conf")
 	rcDir := filepath.Join(dir, "rc.d")
-	changed, warnings, err := applyFreeBSDConfig(router, routerstate.New(), "", "", pfPath, rcDir)
+	changed, warnings, err := applyFreeBSDConfigWithOptions(router, routerstate.New(), "", "", pfPath, rcDir, freeBSDConfigApplyOptions{ManageServices: true})
 	if err != nil {
 		t.Fatalf("apply FreeBSD config: %v", err)
 	}
@@ -780,7 +780,7 @@ exit 0
 	}}}
 
 	rcDir := filepath.Join(dir, "rc.d")
-	changed, warnings, err := applyFreeBSDConfig(router, routerstate.New(), "", "", "", rcDir)
+	changed, warnings, err := applyFreeBSDConfigWithOptions(router, routerstate.New(), "", "", "", rcDir, freeBSDConfigApplyOptions{ManageServices: true})
 	if err != nil {
 		t.Fatalf("apply FreeBSD config should continue after ntpd failure: %v", err)
 	}
@@ -1095,7 +1095,7 @@ exit 0
 	}}}
 
 	rcDir := filepath.Join(dir, "rc.d")
-	changed, warnings, err := applyFreeBSDConfig(router, routerstate.New(), "", "", "", rcDir)
+	changed, warnings, err := applyFreeBSDConfigWithOptions(router, routerstate.New(), "", "", "", rcDir, freeBSDConfigApplyOptions{ManageServices: true})
 	if err != nil {
 		t.Fatalf("apply FreeBSD config should continue after package failure: %v", err)
 	}
@@ -2234,13 +2234,6 @@ dhcp6_ia_pd1_prefix1=2001:db8:3d60:1220::
 	}
 	if lease.T1 != "7200" || lease.T2 != "12600" || lease.PLTime != "14400" || lease.VLTime != "14400" {
 		t.Fatalf("lease = %#v", lease)
-	}
-}
-
-func TestLinuxPDClientUnitNameSanitizesResourceName(t *testing.T) {
-	got := linuxPDClientUnitName("wan.pd/default", "dhcpcd")
-	if got != "routerd-dhcpcd-wan-pd-default.service" {
-		t.Fatalf("unit = %q", got)
 	}
 }
 

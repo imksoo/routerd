@@ -1668,19 +1668,6 @@ func writeOrphans(stdout io.Writer, router *api.Router, ledger resource.Ledger) 
 	return w.Flush()
 }
 
-func orphanRemediation(artifact resource.Artifact) string {
-	switch artifact.Kind {
-	case "linux.ipip6.tunnel":
-		return "delete ipip6 tunnel " + artifact.Name
-	case "nft.table":
-		return "delete nft table " + artifact.Attributes["family"] + " " + artifact.Attributes["name"]
-	case "systemd.service":
-		return "disable and stop systemd service " + artifact.Name
-	default:
-		return "review before deleting"
-	}
-}
-
 func eventsForResource(store routerstate.Store, res api.Resource) []routerstate.Event {
 	return eventsForResourceLimit(store, res, 20)
 }
@@ -2271,10 +2258,6 @@ func writeYAML(stdout io.Writer, value any) error {
 	return err
 }
 
-func defaultRuntimeDir() string {
-	return platformDefaults.RuntimeDir
-}
-
 func defaultConfigPath() string {
 	return platformDefaults.ConfigFile()
 }
@@ -2285,18 +2268,6 @@ func defaultLedgerPath() string {
 
 func defaultStatePath() string {
 	return platformDefaults.DBFile()
-}
-
-func defaultDNSQueriesPath() string {
-	return platformDefaults.StateDir + "/dns-queries.db"
-}
-
-func defaultTrafficFlowsPath() string {
-	return platformDefaults.StateDir + "/traffic-flows.db"
-}
-
-func defaultFirewallLogsPath() string {
-	return platformDefaults.StateDir + "/firewall-logs.db"
 }
 
 func defaultSocketPath() string {

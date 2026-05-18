@@ -1967,19 +1967,6 @@ func mergePDLeaseSnapshot(lease routerstate.PDLease, snapshot pdclient.Snapshot)
 	return lease
 }
 
-func pdLeaseCurrentValue(lease routerstate.PDLease) routerstate.Value {
-	updatedAt := time.Time{}
-	if lease.LastObservedAt != "" {
-		if parsed, err := time.Parse(time.RFC3339, lease.LastObservedAt); err == nil {
-			updatedAt = parsed
-		}
-	}
-	if lease.CurrentPrefix == "" {
-		return routerstate.Value{Status: routerstate.StatusUnset, UpdatedAt: updatedAt}
-	}
-	return routerstate.Value{Status: routerstate.StatusSet, Value: lease.CurrentPrefix, UpdatedAt: updatedAt}
-}
-
 func observedPrefixDelegationIdentity(ifname, client, configuredIAID string) dhcpIdentity {
 	switch client {
 	case "networkd":
@@ -3084,10 +3071,6 @@ func parseCSV(raw string) []string {
 	return out
 }
 
-func activeControllerDryRunModes(modes map[string]bool) []string {
-	return activeControllerDryRunNames(controllerStatusesFromDryRunModes(modes))
-}
-
 func activeControllerDryRunNames(controllers []controlapi.ControllerStatus) []string {
 	var out []string
 	for _, controller := range controllers {
@@ -3952,20 +3935,6 @@ func runObserveSchedule(stop <-chan struct{}, interval time.Duration, router *ap
 	}
 }
 
-func ipv6PrefixDelegationNames(router *api.Router) []string {
-	if router == nil {
-		return nil
-	}
-	var out []string
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv6PrefixDelegation" {
-			out = append(out, res.Metadata.Name)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 func containsString(values []string, needle string) bool {
 	for _, value := range values {
 		if value == needle {
@@ -4090,15 +4059,6 @@ func freeBSDIPv6Prefixes(ifname string) []string {
 	}
 	prefixes, _ := parseFreeBSDIfconfigIPv6(string(out))
 	return prefixes
-}
-
-func freeBSDIPv6Addresses(ifname string) []string {
-	entries := freeBSDIPv6AddressEntries(ifname)
-	addrs := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		addrs = append(addrs, entry.Address)
-	}
-	return addrs
 }
 
 func freeBSDIPv6AddressEntries(ifname string) []ipv6AddressEntry {
@@ -4514,10 +4474,6 @@ type freeBSDConfigApplyOptions struct {
 	ManageServices bool
 }
 
-func applyFreeBSDConfig(router *api.Router, stateStore routerstate.Store, dhclientPath, mpd5Path, pfPath, rcScriptDir string) ([]string, []string, error) {
-	return applyFreeBSDConfigWithOptions(router, stateStore, dhclientPath, mpd5Path, pfPath, rcScriptDir, freeBSDConfigApplyOptions{ManageServices: true})
-}
-
 func applyFreeBSDConfigWithOptions(router *api.Router, stateStore routerstate.Store, dhclientPath, mpd5Path, pfPath, rcScriptDir string, opts freeBSDConfigApplyOptions) ([]string, []string, error) {
 	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
 	if err != nil {
@@ -4793,10 +4749,6 @@ func packageSetForOSMain(spec api.PackageSpec, osName string) (api.OSPackageSetS
 
 type freeBSDPFApplyOptions struct {
 	ManageServices bool
-}
-
-func applyFreeBSDPFConfig(data []byte, pfPath string) ([]string, error) {
-	return applyFreeBSDPFConfigWithOptions(data, pfPath, freeBSDPFApplyOptions{ManageServices: true})
 }
 
 func applyFreeBSDPFConfigWithOptions(data []byte, pfPath string, opts freeBSDPFApplyOptions) ([]string, error) {
@@ -5215,10 +5167,6 @@ func applyNftablesConfig(path string, data []byte) ([]string, error) {
 		return []string{path}, nil
 	}
 	return []string{"nftables:routerd"}, nil
-}
-
-func applyIPv6DelegatedAddresses(router *api.Router) ([]string, error) {
-	return applyIPv6DelegatedAddressesWithState(router, nil)
 }
 
 func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.Store) ([]string, error) {
@@ -6018,20 +5966,6 @@ func desiredIPv4FwmarkArtifacts(router *api.Router) ([]resource.Artifact, error)
 	return desired, nil
 }
 
-func desiredIPv4FwmarkRules(router *api.Router) (map[ipv4FwmarkRule]bool, error) {
-	artifacts, err := desiredIPv4FwmarkArtifacts(router)
-	if err != nil {
-		return nil, err
-	}
-	desired := map[ipv4FwmarkRule]bool{}
-	for _, artifact := range artifacts {
-		if rule, ok := ipv4FwmarkRuleFromArtifact(artifact); ok {
-			desired[rule] = true
-		}
-	}
-	return desired, nil
-}
-
 func currentIPv4FwmarkArtifacts() ([]resource.Artifact, error) {
 	out, err := exec.Command("ip", "-4", "rule", "show").CombinedOutput()
 	if err != nil {
@@ -6073,20 +6007,6 @@ func currentIPv4FwmarkArtifacts() ([]resource.Artifact, error) {
 		}
 		if rule.Mark != 0 && rule.Table != 0 {
 			rules = append(rules, ipv4FwmarkRuleArtifact("", rule))
-		}
-	}
-	return rules, nil
-}
-
-func currentIPv4FwmarkRules() ([]ipv4FwmarkRule, error) {
-	artifacts, err := currentIPv4FwmarkArtifacts()
-	if err != nil {
-		return nil, err
-	}
-	rules := make([]ipv4FwmarkRule, 0, len(artifacts))
-	for _, artifact := range artifacts {
-		if rule, ok := ipv4FwmarkRuleFromArtifact(artifact); ok {
-			rules = append(rules, rule)
 		}
 	}
 	return rules, nil
@@ -6333,10 +6253,6 @@ func ensureIPv4FwmarkRule(priority, mark, table int) error {
 		}
 	}
 	return runLogged("ip", "-4", "rule", "add", "priority", priorityText, "fwmark", markText, "table", tableText)
-}
-
-func applyDSLiteTunnels(router *api.Router) ([]string, error) {
-	return applyDSLiteTunnelsWithState(router, nil)
 }
 
 func applyDSLiteTunnelsWithState(router *api.Router, store routerstate.Store) ([]string, error) {
@@ -7836,42 +7752,6 @@ func applyPPPoEConfig(router *api.Router) ([]string, error) {
 	return changedFiles, nil
 }
 
-func prefixDelegationLeases(router *api.Router, store routerstate.Store) map[string]routerstate.PDLease {
-	if router == nil || store == nil {
-		return nil
-	}
-	leases := map[string]routerstate.PDLease{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "DHCPv6PrefixDelegation" {
-			continue
-		}
-		lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation."+res.Metadata.Name)
-		if ok {
-			leases[res.Metadata.Name] = lease
-		}
-	}
-	return leases
-}
-
-func linuxPDClientUnitName(resourceName, client string) string {
-	return "routerd-" + client + "-" + linuxPDClientSafeName(resourceName) + ".service"
-}
-
-func linuxPDClientSafeName(name string) string {
-	var b strings.Builder
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
-			b.WriteRune(r)
-			continue
-		}
-		b.WriteByte('-')
-	}
-	if b.Len() == 0 {
-		return "unnamed"
-	}
-	return b.String()
-}
-
 func pppdAvailable() bool {
 	if _, err := exec.LookPath("pppd"); err == nil {
 		return true
@@ -8157,14 +8037,6 @@ func requireExistingFile(path string) error {
 		return fmt.Errorf("%s is a directory", path)
 	}
 	return nil
-}
-
-func defaultRuntimeDir() string {
-	return platformDefaults.RuntimeDir
-}
-
-func defaultStateDir() string {
-	return platformDefaults.StateDir
 }
 
 func defaultStatusFile() string {

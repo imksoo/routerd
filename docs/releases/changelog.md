@@ -10,6 +10,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Removed dead compatibility helpers and obsolete raw systemd unit renderers
+  that are no longer used by the current controller-chain configuration path.
+
 ## v20260517.2339
 
 ### Added
