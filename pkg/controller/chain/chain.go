@@ -358,7 +358,7 @@ func stableStatusValue(value any) any {
 
 func volatileNestedStatusField(key string) bool {
 	switch key {
-	case "healthyCount", "unhealthyCount", "observedAt", "updatedAt", "lastCheckedAt":
+	case "healthyCount", "unhealthyCount", "observedAt", "updatedAt", "lastCheckedAt", "lastHealthyAt", "lastUnhealthyAt":
 		return true
 	default:
 		return false

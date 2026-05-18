@@ -1,0 +1,223 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: kubernetes-edge
+
+spec:
+  reconcile:
+    mode: progressive
+    protectedInterfaces:
+      - mgmt
+
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: mgmt
+      spec:
+        ifname: ens19
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens20
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-base
+      spec:
+        interface: lan
+        address: 192.168.70.1/24
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VirtualIPv4Address
+      metadata:
+        name: k8s-api-vip
+      spec:
+        interface: lan
+        address: 192.168.70.10/32
+        mode: vrrp
+        vrrp:
+          virtualRouterID: 70
+          priority: 150
+          preempt: true
+          preemptDelay: 30s
+          advertInterval: 1s
+          peers:
+            - 192.168.70.3
+        track:
+          - resource: IngressService/kubernetes-api
+            unhealthyPenalty: 60
+            confirmConsecutiveUnhealthy: 3
+            confirmConsecutiveHealthy: 2
+          - resource: BGPRouter/lan
+            unhealthyPenalty: 40
+            confirmConsecutiveUnhealthy: 3
+            confirmConsecutiveHealthy: 2
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSZone
+      metadata:
+        name: lain-local
+      spec:
+        zone: lain.local
+        ttl: 60
+        records:
+          - hostname: k8s-api
+            ipv4: 192.168.70.10
+          - hostname: k8s-cp-01
+            ipv4: 192.168.70.21
+          - hostname: k8s-cp-02
+            ipv4: 192.168.70.22
+          - hostname: k8s-cp-03
+            ipv4: 192.168.70.23
+          - hostname: k8s-wk-01
+            ipv4: 192.168.70.31
+          - hostname: k8s-wk-02
+            ipv4: 192.168.70.32
+          - hostname: k8s-wk-03
+            ipv4: 192.168.70.33
+          - hostname: k8s-wk-04
+            ipv4: 192.168.70.34
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSResolver
+      metadata:
+        name: lan-resolver
+      spec:
+        listen:
+          - name: lan
+            addressFrom:
+              - resource: IPv4StaticAddress/lan-base
+                field: address
+            port: 53
+            sources:
+              - local-zone
+              - default
+        sources:
+          - name: local-zone
+            kind: zone
+            match:
+              - lain.local
+            zoneRef:
+              - DNSZone/lain-local
+          - name: default
+            kind: upstream
+            match:
+              - "."
+            upstreams:
+              - udp://1.1.1.1:53
+              - udp://8.8.8.8:53
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-dhcpv4
+      spec:
+        interface: lan
+        addressPool:
+          start: 192.168.70.100
+          end: 192.168.70.199
+          leaseTime: 12h
+        gatewayFrom:
+          resource: IPv4StaticAddress/lan-base
+          field: address
+        dnsServerFrom:
+          - resource: IPv4StaticAddress/lan-base
+            field: address
+        domainFrom:
+          resource: DNSZone/lain-local
+          field: zone
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: IngressService
+      metadata:
+        name: kubernetes-api
+      spec:
+        listen:
+          interface: lan
+          address: 192.168.70.10
+          protocol: tcp
+          port: 6443
+        backends:
+          - name: cp-01
+            address: k8s-cp-01.lain.local
+            port: 6443
+          - name: cp-02
+            address: k8s-cp-02.lain.local
+            port: 6443
+          - name: cp-03
+            address: k8s-cp-03.lain.local
+            port: 6443
+        healthCheck:
+          protocol: https
+          path: /readyz
+          host: k8s-api.lain.local
+          expectedStatus:
+            - 200
+          tlsSkipVerify: true
+          interval: 5s
+          timeout: 1s
+          healthyThreshold: 2
+          unhealthyThreshold: 2
+        policy:
+          selection: failover
+          onNoHealthyBackends: reject
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata:
+        name: lan
+      spec:
+        asn: 64512
+        routerID: 192.168.70.2
+        importPolicy:
+          allowedPrefixes:
+            - 10.96.0.0/12
+            - 192.168.80.0/24
+        timers:
+          keepalive: 3s
+          holdTime: 9s
+          connectRetry: 5s
+        gracefulRestart:
+          enabled: true
+          restartTime: 120s
+          stalePathTime: 360s
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata:
+        name: k8s-workers
+      spec:
+        routerRef: BGPRouter/lan
+        peerASN: 64513
+        peers:
+          - 192.168.70.31
+          - 192.168.70.32
+          - 192.168.70.33
+          - 192.168.70.34
+        timers:
+          keepalive: 3s
+          holdTime: 9s
+          connectRetry: 5s

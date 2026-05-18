@@ -409,12 +409,14 @@ type ResourceTrackSpec struct {
 }
 
 type BGPRouterSpec struct {
-	ASN          uint32              `yaml:"asn" json:"asn" jsonschema:"minimum=1"`
-	RouterID     string              `yaml:"routerID" json:"routerID"`
-	Listen       BGPListenSpec       `yaml:"listen,omitempty" json:"listen,omitempty"`
-	ImportPolicy BGPImportPolicySpec `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
-	Backend      string              `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=frr"`
-	When         ResourceWhenSpec    `yaml:"when,omitempty" json:"when,omitempty"`
+	ASN             uint32                 `yaml:"asn" json:"asn" jsonschema:"minimum=1"`
+	RouterID        string                 `yaml:"routerID" json:"routerID"`
+	Listen          BGPListenSpec          `yaml:"listen,omitempty" json:"listen,omitempty"`
+	ImportPolicy    BGPImportPolicySpec    `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
+	Timers          BGPTimersSpec          `yaml:"timers,omitempty" json:"timers,omitempty"`
+	GracefulRestart BGPGracefulRestartSpec `yaml:"gracefulRestart,omitempty" json:"gracefulRestart,omitempty"`
+	Backend         string                 `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=frr"`
+	When            ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type BGPListenSpec struct {
@@ -425,11 +427,24 @@ type BGPImportPolicySpec struct {
 	AllowedPrefixes []string `yaml:"allowedPrefixes,omitempty" json:"allowedPrefixes,omitempty"`
 }
 
+type BGPTimersSpec struct {
+	Keepalive    string `yaml:"keepalive,omitempty" json:"keepalive,omitempty"`
+	HoldTime     string `yaml:"holdTime,omitempty" json:"holdTime,omitempty"`
+	ConnectRetry string `yaml:"connectRetry,omitempty" json:"connectRetry,omitempty"`
+}
+
+type BGPGracefulRestartSpec struct {
+	Enabled       *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	RestartTime   string `yaml:"restartTime,omitempty" json:"restartTime,omitempty"`
+	StalePathTime string `yaml:"stalePathTime,omitempty" json:"stalePathTime,omitempty"`
+}
+
 type BGPPeerSpec struct {
 	RouterRef string           `yaml:"routerRef" json:"routerRef"`
 	PeerASN   uint32           `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
 	Peers     []string         `yaml:"peers" json:"peers"`
 	Password  string           `yaml:"password,omitempty" json:"password,omitempty"`
+	Timers    BGPTimersSpec    `yaml:"timers,omitempty" json:"timers,omitempty"`
 	When      ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
@@ -1077,9 +1092,16 @@ type IngressHairpinSpec struct {
 }
 
 type IngressHealthCheckSpec struct {
-	Protocol string `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=,enum=tcp"`
-	Interval string `yaml:"interval,omitempty" json:"interval,omitempty"`
-	Timeout  string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Protocol           string `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=,enum=tcp,enum=http,enum=https"`
+	Interval           string `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Timeout            string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Path               string `yaml:"path,omitempty" json:"path,omitempty"`
+	Host               string `yaml:"host,omitempty" json:"host,omitempty"`
+	ExpectedStatus     []int  `yaml:"expectedStatus,omitempty" json:"expectedStatus,omitempty"`
+	TLSSkipVerify      bool   `yaml:"tlsSkipVerify,omitempty" json:"tlsSkipVerify,omitempty"`
+	ExpectedBody       string `yaml:"expectedBody,omitempty" json:"expectedBody,omitempty"`
+	HealthyThreshold   int    `yaml:"healthyThreshold,omitempty" json:"healthyThreshold,omitempty" jsonschema:"minimum=1"`
+	UnhealthyThreshold int    `yaml:"unhealthyThreshold,omitempty" json:"unhealthyThreshold,omitempty" jsonschema:"minimum=1"`
 }
 
 type IngressServicePolicySpec struct {

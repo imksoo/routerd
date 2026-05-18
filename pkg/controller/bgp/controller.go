@@ -116,6 +116,8 @@ func (c *Controller) observe(ctx context.Context) error {
 		return c.saveConfiguredStatuses("Pending", firstNonEmpty(c.ConfigPath, "/run/routerd/frr/routerd.conf"), false, map[string]any{"reason": "FRRStatusParseFailed", "error": err.Error()})
 	}
 	state, c.truncated = bgpstate.LimitPrefixes(state, defaultInt(c.MaxPrefixes, bgpstate.DefaultMaxPrefixes))
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	state.Peers = c.applyPeerHistory(state.Peers, now)
 	var events []bgpstate.Event
 	if c.observed {
 		events = bgpstate.Diff(c.lastState, state)
@@ -235,6 +237,90 @@ func (c *Controller) saveObservedStatuses(state bgpstate.State) error {
 	return nil
 }
 
+func (c *Controller) applyPeerHistory(peers []bgpstate.Peer, now string) []bgpstate.Peer {
+	previous := c.previousPeers()
+	out := append([]bgpstate.Peer(nil), peers...)
+	for i, peer := range out {
+		prev := previous[peer.Address]
+		if peer.Established {
+			if peer.LastEstablishedAt == "" {
+				if prev.Established && prev.LastEstablishedAt != "" {
+					peer.LastEstablishedAt = prev.LastEstablishedAt
+				} else {
+					peer.LastEstablishedAt = now
+				}
+			}
+			if peer.LastErrorAt == "" {
+				peer.LastErrorAt = prev.LastErrorAt
+			}
+			if peer.LastErrorReason == "" {
+				peer.LastErrorReason = prev.LastErrorReason
+			}
+		} else {
+			if peer.LastEstablishedAt == "" {
+				peer.LastEstablishedAt = prev.LastEstablishedAt
+			}
+			reason := firstNonEmpty(peer.LastErrorReason, peer.State, "NotEstablished")
+			peer.LastErrorReason = reason
+			if peer.LastErrorAt == "" {
+				if prev.LastErrorReason == reason && prev.LastErrorAt != "" {
+					peer.LastErrorAt = prev.LastErrorAt
+				} else {
+					peer.LastErrorAt = now
+				}
+			}
+		}
+		out[i] = peer
+	}
+	return out
+}
+
+func (c *Controller) previousPeers() map[string]bgpstate.Peer {
+	out := map[string]bgpstate.Peer{}
+	if c.Store == nil || c.Router == nil {
+		return out
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || (resource.Kind != "BGPRouter" && resource.Kind != "BGPPeer") {
+			continue
+		}
+		for _, peer := range peersFromStatus(c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)["peers"]) {
+			if peer.Address != "" {
+				out[peer.Address] = peer
+			}
+		}
+	}
+	return out
+}
+
+func peersFromStatus(value any) []bgpstate.Peer {
+	switch typed := value.(type) {
+	case []bgpstate.Peer:
+		return typed
+	case []any:
+		out := make([]bgpstate.Peer, 0, len(typed))
+		for _, raw := range typed {
+			item, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			out = append(out, bgpstate.Peer{
+				Address:           statusString(item["address"]),
+				ASN:               uint32(statusInt(item["asn"])),
+				State:             statusString(item["state"]),
+				Established:       statusBool(item["established"]),
+				PrefixesReceived:  statusInt(item["prefixesReceived"]),
+				LastEstablishedAt: statusString(item["lastEstablishedAt"]),
+				LastErrorAt:       statusString(item["lastErrorAt"]),
+				LastErrorReason:   statusString(item["lastErrorReason"]),
+			})
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 func (c *Controller) peersByResource(state bgpstate.State) map[string][]bgpstate.Peer {
 	byAddress := map[string]bgpstate.Peer{}
 	for _, peer := range state.Peers {
@@ -258,6 +344,41 @@ func (c *Controller) peersByResource(state bgpstate.State) map[string][]bgpstate
 		}
 	}
 	return out
+}
+
+func statusString(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func statusInt(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		var out int
+		_, _ = fmt.Sscanf(strings.TrimSpace(typed), "%d", &out)
+		return out
+	default:
+		return 0
+	}
+}
+
+func statusBool(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return false
+	}
 }
 
 func hasBGP(router *api.Router) bool {

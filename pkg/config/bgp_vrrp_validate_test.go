@@ -26,11 +26,17 @@ func TestValidateBGPRouterPeerAndVirtualIPv4Address(t *testing.T) {
 				ASN:          64512,
 				RouterID:     "10.240.70.2",
 				ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.240.70.200/29"}},
+				Timers:       api.BGPTimersSpec{Keepalive: "3s", HoldTime: "9s", ConnectRetry: "5s"},
+				GracefulRestart: api.BGPGracefulRestartSpec{
+					RestartTime:   "120s",
+					StalePathTime: "360s",
+				},
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "k8s"}, Spec: api.BGPPeerSpec{
 				RouterRef: "BGPRouter/lan",
 				PeerASN:   64513,
 				Peers:     []string{"10.240.70.21", "10.240.70.22"},
+				Timers:    api.BGPTimersSpec{Keepalive: "2s", HoldTime: "6s"},
 			}},
 		}},
 	}
@@ -40,6 +46,45 @@ func TestValidateBGPRouterPeerAndVirtualIPv4Address(t *testing.T) {
 	router.Spec.Resources[3].Spec = api.BGPPeerSpec{RouterRef: "BGPRouter/missing", PeerASN: 64513, Peers: []string{"10.240.70.21"}}
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing BGPRouter") {
 		t.Fatalf("expected missing routerRef error, got %v", err)
+	}
+}
+
+func TestValidateBGPTimersRejectsInvalidHoldTime(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64512,
+				RouterID: "10.240.70.2",
+				Timers:   api.BGPTimersSpec{Keepalive: "9s", HoldTime: "3s"},
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "holdTime must be greater") {
+		t.Fatalf("expected holdTime validation error, got %v", err)
+	}
+}
+
+func TestValidateVirtualIPv4AddressRejectsStaticAddressConflict(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv4StaticAddressSpec{
+				Interface: "lan",
+				Address:   "10.240.70.10/32",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+				Interface:   "lan",
+				AddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/lan-base", Field: "address"},
+				Mode:        "static",
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.addressFrom conflicts") {
+		t.Fatalf("expected addressFrom conflict validation error, got %v", err)
 	}
 }
 

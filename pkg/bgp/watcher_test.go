@@ -8,7 +8,7 @@ func TestParseFRRStateAndDiff(t *testing.T) {
 	summary := []byte(`{
 	  "ipv4Unicast": {
 	    "peers": {
-	      "10.0.0.21": {"remoteAs": 64513, "state": "Established", "pfxRcd": 1}
+	      "10.0.0.21": {"remoteAs": 64513, "state": "Established", "pfxRcd": 1, "lastConnectionEstablished": "2026-05-18T10:00:00Z"}
 	    }
 	  }
 	}`)
@@ -23,6 +23,9 @@ func TestParseFRRStateAndDiff(t *testing.T) {
 	}
 	if len(state.Peers) != 1 || !state.Peers[0].Established {
 		t.Fatalf("peers = %#v", state.Peers)
+	}
+	if state.Peers[0].LastEstablishedAt != "2026-05-18T10:00:00Z" {
+		t.Fatalf("lastEstablishedAt = %#v", state.Peers[0])
 	}
 	if len(state.Prefixes) != 1 || state.Prefixes[0].Prefix != "10.0.0.200/32" {
 		t.Fatalf("prefixes = %#v", state.Prefixes)

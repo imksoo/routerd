@@ -172,6 +172,17 @@ func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 	if status["role"] != "master" {
 		t.Fatalf("role = %#v, status=%#v", status["role"], status)
 	}
+	firstTransition := statusString(status, "lastRoleTransitionAt")
+	if firstTransition == "" {
+		t.Fatalf("lastRoleTransitionAt missing: %#v", status)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	if status["lastRoleTransitionAt"] != firstTransition {
+		t.Fatalf("lastRoleTransitionAt changed without role change: %#v", status)
+	}
 }
 
 func TestReconcileCleansRemovedStaticVirtualIPv4Address(t *testing.T) {

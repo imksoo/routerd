@@ -94,7 +94,12 @@ harness into a regular VM job.
 
 - Stateful firewall in production: applied today, but still wants richer rule expressions, ICMP type matching, multiple ports per rule, and rate limiting.
 - DoH proxying for clients on the LAN.
-- BGP / OSPF integration via FRR for the Tier C tier.
+- BFD for BGP peers that need sub-second failure detection.
+- Operator-controlled IngressService backend drain mode through `routerctl` without editing YAML.
+- More production examples for VRRP `advertInterval`, `preempt`, and `preemptDelay` tuning.
+- Validation for listen-port collisions between `IngressService`, local service redirects, and routerd-managed daemons.
+- IPv6 BGP and VRRPv3 for dual-stack Kubernetes clusters.
+- OSPF integration via FRR for the Tier C tier.
 - High availability (leader election, fault-tolerant control plane).
 - Production observability: OpenTelemetry collector and remote log sinks.
 - Long-running validation of routerd as the only WAN router on a residential link.

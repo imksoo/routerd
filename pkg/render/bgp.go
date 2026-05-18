@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
+	"time"
 
 	"routerd/pkg/api"
 )
@@ -18,6 +19,8 @@ type bgpRouterConfig struct {
 	RouterID        string
 	ListenPort      int
 	AllowedPrefixes []string
+	Timers          bgpTimers
+	GracefulRestart bgpGracefulRestart
 	Peers           []bgpPeerConfig
 }
 
@@ -26,6 +29,19 @@ type bgpPeerConfig struct {
 	Peer         string
 	ASN          uint32
 	Password     string
+	Timers       bgpTimers
+}
+
+type bgpTimers struct {
+	KeepaliveSeconds    int
+	HoldTimeSeconds     int
+	ConnectRetrySeconds int
+}
+
+type bgpGracefulRestart struct {
+	Enabled              bool
+	RestartTimeSeconds   int
+	StalePathTimeSeconds int
 }
 
 func FRRConfig(router *api.Router) ([]byte, error) {
@@ -75,6 +91,8 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 			RouterID:        strings.TrimSpace(spec.RouterID),
 			ListenPort:      listenPort,
 			AllowedPrefixes: compactStrings(spec.ImportPolicy.AllowedPrefixes),
+			Timers:          renderBGPTimers(spec.Timers, bgpTimers{}),
+			GracefulRestart: renderBGPGracefulRestart(spec.GracefulRestart),
 		}
 		sort.Strings(cfg.AllowedPrefixes)
 		byName[res.Metadata.Name] = &cfg
@@ -102,6 +120,7 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 				Peer:         peer,
 				ASN:          spec.PeerASN,
 				Password:     spec.Password,
+				Timers:       renderBGPTimers(spec.Timers, cfg.Timers),
 			})
 		}
 	}
@@ -143,10 +162,33 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 	if cfg.ListenPort != 179 {
 		buf.WriteString(fmt.Sprintf(" bgp listen port %d\n", cfg.ListenPort))
 	}
+	if cfg.GracefulRestart.Enabled {
+		buf.WriteString(" bgp graceful-restart\n")
+		if cfg.GracefulRestart.RestartTimeSeconds > 0 {
+			buf.WriteString(fmt.Sprintf(" bgp graceful-restart restart-time %d\n", cfg.GracefulRestart.RestartTimeSeconds))
+		}
+		if cfg.GracefulRestart.StalePathTimeSeconds > 0 {
+			buf.WriteString(fmt.Sprintf(" bgp graceful-restart stalepath-time %d\n", cfg.GracefulRestart.StalePathTimeSeconds))
+		}
+	}
 	for _, peer := range cfg.Peers {
 		buf.WriteString(fmt.Sprintf(" neighbor %s remote-as %d\n", peer.Peer, peer.ASN))
 		if peer.Password != "" {
 			buf.WriteString(fmt.Sprintf(" neighbor %s password %s\n", peer.Peer, peer.Password))
+		}
+		if peer.Timers.KeepaliveSeconds > 0 || peer.Timers.HoldTimeSeconds > 0 {
+			keepalive := peer.Timers.KeepaliveSeconds
+			if keepalive == 0 {
+				keepalive = 60
+			}
+			holdTime := peer.Timers.HoldTimeSeconds
+			if holdTime == 0 {
+				holdTime = 180
+			}
+			buf.WriteString(fmt.Sprintf(" neighbor %s timers %d %d\n", peer.Peer, keepalive, holdTime))
+		}
+		if peer.Timers.ConnectRetrySeconds > 0 {
+			buf.WriteString(fmt.Sprintf(" neighbor %s timers connect %d\n", peer.Peer, peer.Timers.ConnectRetrySeconds))
 		}
 		buf.WriteString(fmt.Sprintf(" neighbor %s route-map %s in\n", peer.Peer, routeMapInName))
 		buf.WriteString(fmt.Sprintf(" neighbor %s route-map %s out\n", peer.Peer, routeMapOutName))
@@ -157,6 +199,47 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 	}
 	buf.WriteString(" exit-address-family\n")
 	buf.WriteString("!\n")
+}
+
+func renderBGPTimers(spec api.BGPTimersSpec, fallback bgpTimers) bgpTimers {
+	out := fallback
+	if seconds := durationSeconds(spec.Keepalive); seconds > 0 {
+		out.KeepaliveSeconds = seconds
+	}
+	if seconds := durationSeconds(spec.HoldTime); seconds > 0 {
+		out.HoldTimeSeconds = seconds
+	}
+	if seconds := durationSeconds(spec.ConnectRetry); seconds > 0 {
+		out.ConnectRetrySeconds = seconds
+	}
+	return out
+}
+
+func renderBGPGracefulRestart(spec api.BGPGracefulRestartSpec) bgpGracefulRestart {
+	out := bgpGracefulRestart{Enabled: api.BoolDefault(spec.Enabled, true)}
+	if seconds := durationSeconds(spec.RestartTime); seconds > 0 {
+		out.RestartTimeSeconds = seconds
+	}
+	if seconds := durationSeconds(spec.StalePathTime); seconds > 0 {
+		out.StalePathTimeSeconds = seconds
+	}
+	return out
+}
+
+func durationSeconds(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return 0
+	}
+	seconds := int(duration.Round(time.Second) / time.Second)
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }
 
 func canonicalPrefix(value string) string {

@@ -874,11 +874,19 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
 		Listen:      api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
 		Backends:    []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}, {Address: "172.18.1.90", Port: 8443}},
-		HealthCheck: api.IngressHealthCheckSpec{Protocol: "tcp", Interval: "5s", Timeout: "1s"},
+		HealthCheck: api.IngressHealthCheckSpec{Protocol: "https", Interval: "5s", Timeout: "1s", Path: "/readyz", Host: "k8s-api.example", ExpectedStatus: []int{200, 204}, HealthyThreshold: 2, UnhealthyThreshold: 2},
 		Policy:      api.IngressServicePolicySpec{Selection: "failover", OnNoHealthyBackends: "reject"},
 	}
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate ingress backend pool: %v", err)
+	}
+	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+		Listen:      api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
+		Backends:    []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
+		HealthCheck: api.IngressHealthCheckSpec{Protocol: "https", Path: "readyz"},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.healthCheck.path") {
+		t.Fatalf("expected invalid healthCheck path to be rejected, got %v", err)
 	}
 
 	router.Spec.Resources[3].Spec = api.IngressServiceSpec{

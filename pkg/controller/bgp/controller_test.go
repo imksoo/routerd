@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"routerd/pkg/api"
+	bgpstate "routerd/pkg/bgp"
 	"routerd/pkg/bus"
 )
 
@@ -43,7 +44,7 @@ func TestReconcileValidatesAndReloadsFRR(t *testing.T) {
 			case name == "frr-reload.py":
 				return []byte("reloaded"), nil
 			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
-				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
+				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1,"lastConnectionEstablished":"2026-05-18T10:00:00Z"}}}}`), nil
 			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
 				return []byte(`{"routes":{"10.0.0.200/32":[{"valid":true,"bestpath":true}]}}`), nil
 			default:
@@ -67,6 +68,10 @@ func TestReconcileValidatesAndReloadsFRR(t *testing.T) {
 	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
 	if status["phase"] != "Established" {
 		t.Fatalf("status = %#v", status)
+	}
+	peers, ok := status["peers"].([]bgpstate.Peer)
+	if !ok || len(peers) != 1 || peers[0].LastEstablishedAt != "2026-05-18T10:00:00Z" {
+		t.Fatalf("peer history = %#v", status["peers"])
 	}
 }
 

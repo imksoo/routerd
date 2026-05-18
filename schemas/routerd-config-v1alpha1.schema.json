@@ -2530,6 +2530,21 @@
                         ],
                         "type": "string"
                       },
+                      "gracefulRestart": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "restartTime": {
+                            "type": "string"
+                          },
+                          "stalePathTime": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "importPolicy": {
                         "additionalProperties": false,
                         "properties": {
@@ -2555,6 +2570,21 @@
                       },
                       "routerID": {
                         "type": "string"
+                      },
+                      "timers": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "connectRetry": {
+                            "type": "string"
+                          },
+                          "holdTime": {
+                            "type": "string"
+                          },
+                          "keepalive": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
                       },
                       "when": {
                         "additionalProperties": false,
@@ -2659,6 +2689,21 @@
                       },
                       "routerRef": {
                         "type": "string"
+                      },
+                      "timers": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "connectRetry": {
+                            "type": "string"
+                          },
+                          "holdTime": {
+                            "type": "string"
+                          },
+                          "keepalive": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
                       },
                       "when": {
                         "additionalProperties": false,
@@ -6584,18 +6629,46 @@
                       "healthCheck": {
                         "additionalProperties": false,
                         "properties": {
+                          "expectedBody": {
+                            "type": "string"
+                          },
+                          "expectedStatus": {
+                            "items": {
+                              "type": "integer"
+                            },
+                            "type": "array"
+                          },
+                          "healthyThreshold": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "host": {
+                            "type": "string"
+                          },
                           "interval": {
+                            "type": "string"
+                          },
+                          "path": {
                             "type": "string"
                           },
                           "protocol": {
                             "enum": [
                               "",
-                              "tcp"
+                              "tcp",
+                              "http",
+                              "https"
                             ],
                             "type": "string"
                           },
                           "timeout": {
                             "type": "string"
+                          },
+                          "tlsSkipVerify": {
+                            "type": "boolean"
+                          },
+                          "unhealthyThreshold": {
+                            "minimum": 1,
+                            "type": "integer"
                           }
                         },
                         "type": "object"

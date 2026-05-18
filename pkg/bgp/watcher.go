@@ -23,11 +23,14 @@ type State struct {
 }
 
 type Peer struct {
-	Address          string `json:"address"`
-	ASN              uint32 `json:"asn,omitempty"`
-	State            string `json:"state,omitempty"`
-	Established      bool   `json:"established"`
-	PrefixesReceived int    `json:"prefixesReceived,omitempty"`
+	Address           string `json:"address"`
+	ASN               uint32 `json:"asn,omitempty"`
+	State             string `json:"state,omitempty"`
+	Established       bool   `json:"established"`
+	PrefixesReceived  int    `json:"prefixesReceived,omitempty"`
+	LastEstablishedAt string `json:"lastEstablishedAt,omitempty"`
+	LastErrorAt       string `json:"lastErrorAt,omitempty"`
+	LastErrorReason   string `json:"lastErrorReason,omitempty"`
 }
 
 type Prefix struct {
@@ -72,12 +75,16 @@ func ParseFRRSummaryJSON(data []byte) ([]Peer, error) {
 			continue
 		}
 		state := firstString(item, "state", "bgpState", "peerState")
+		lastErrorReason := firstString(item, "lastErrorReason", "lastResetDueTo", "lastNotificationReason", "lastErrorCode")
 		peers = append(peers, Peer{
-			Address:          address,
-			ASN:              uint32(firstNumber(item, "remoteAs", "remoteAS", "remote_as")),
-			State:            state,
-			Established:      strings.EqualFold(state, "Established"),
-			PrefixesReceived: int(firstNumber(item, "pfxRcd", "prefixReceivedCount", "prefixesReceived")),
+			Address:           address,
+			ASN:               uint32(firstNumber(item, "remoteAs", "remoteAS", "remote_as")),
+			State:             state,
+			Established:       strings.EqualFold(state, "Established"),
+			PrefixesReceived:  int(firstNumber(item, "pfxRcd", "prefixReceivedCount", "prefixesReceived")),
+			LastEstablishedAt: firstStringOrNumber(item, "lastEstablishedAt", "lastConnectionEstablished", "peerUptimeEstablishedEpoch"),
+			LastErrorAt:       firstStringOrNumber(item, "lastErrorAt", "lastResetTime", "lastNotificationTime"),
+			LastErrorReason:   lastErrorReason,
 		})
 	}
 	sort.Slice(peers, func(i, j int) bool { return peers[i].Address < peers[j].Address })
@@ -283,6 +290,24 @@ func firstString(values map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := values[key].(string); ok {
 			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func firstStringOrNumber(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		switch value := values[key].(type) {
+		case string:
+			return strings.TrimSpace(value)
+		case float64:
+			if value != 0 {
+				return fmt.Sprintf("%.0f", value)
+			}
+		case int:
+			if value != 0 {
+				return fmt.Sprint(value)
+			}
 		}
 	}
 	return ""

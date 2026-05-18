@@ -54,6 +54,11 @@ func Validate(router *api.Router) error {
 	ipAddressSets := map[string]bool{}
 	udpListenPorts := map[int]string{}
 	staticByInterfaceAddress := map[string]string{}
+	staticIPv4ByName := map[string]struct {
+		id      string
+		iface   string
+		address string
+	}{}
 	vrrpByInterfaceVRID := map[string]string{}
 	protectedInterfaces := map[string]bool{}
 	for _, name := range router.Spec.Apply.ProtectedInterfaces {
@@ -224,6 +229,11 @@ func Validate(router *api.Router) error {
 				return fmt.Errorf("%s duplicates IPv4 static address already declared by %s", res.ID(), existing)
 			}
 			staticByInterfaceAddress[key] = res.ID()
+			staticIPv4ByName[res.Metadata.Name] = struct {
+				id      string
+				iface   string
+				address string
+			}{id: res.ID(), iface: spec.Interface, address: prefix.Masked().String()}
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv4Address" {
 			spec, err := res.VirtualIPv4AddressSpec()
@@ -243,6 +253,27 @@ func Validate(router *api.Router) error {
 		}
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallZone" {
 			zones[res.Metadata.Name] = true
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "VirtualIPv4Address" {
+			continue
+		}
+		spec, err := res.VirtualIPv4AddressSpec()
+		if err != nil {
+			return err
+		}
+		if address := strings.TrimSpace(spec.Address); address != "" {
+			if prefix, err := netip.ParsePrefix(address); err == nil {
+				if existing := staticByInterfaceAddress[spec.Interface+"|"+prefix.Masked().String()]; existing != "" {
+					return fmt.Errorf("%s spec.address conflicts with IPv4StaticAddress %s on interface %q", res.ID(), existing, spec.Interface)
+				}
+			}
+		}
+		if kind, name, ok := strings.Cut(strings.TrimSpace(spec.AddressFrom.Resource), "/"); ok && kind == "IPv4StaticAddress" {
+			if source, ok := staticIPv4ByName[name]; ok && source.iface == spec.Interface {
+				return fmt.Errorf("%s spec.addressFrom conflicts with %s on interface %q; do not manage %s as both IPv4StaticAddress and VirtualIPv4Address", res.ID(), source.id, spec.Interface, source.address)
+			}
 		}
 	}
 	for i, name := range router.Spec.Apply.ProtectedInterfaces {
@@ -1770,6 +1801,12 @@ func validateResource(res api.Resource) error {
 		if spec.Listen.Port != 0 && (spec.Listen.Port < 1 || spec.Listen.Port > 65535) {
 			return fmt.Errorf("%s spec.listen.port must be within 1-65535", res.ID())
 		}
+		if err := validateBGPTimers(res.ID(), "spec.timers", spec.Timers); err != nil {
+			return err
+		}
+		if err := validateBGPGracefulRestart(res.ID(), spec.GracefulRestart); err != nil {
+			return err
+		}
 		switch defaultString(spec.Backend, "frr") {
 		case "frr":
 		default:
@@ -1809,6 +1846,9 @@ func validateResource(res api.Resource) error {
 				return fmt.Errorf("%s spec.peers[%d] duplicates %q", res.ID(), i, peer)
 			}
 			seenPeers[peer] = true
+		}
+		if err := validateBGPTimers(res.ID(), "spec.timers", spec.Timers); err != nil {
+			return err
 		}
 	case "DHCPv6Address", "IPv6RAAddress":
 		if res.APIVersion != api.NetAPIVersion {
@@ -3061,7 +3101,7 @@ func validateResource(res api.Resource) error {
 		if err := validateIngressListen(res.ID(), "spec.listen", spec.Listen); err != nil {
 			return err
 		}
-		if err := validateIngressTarget(res.ID(), "spec.target", spec.Target.Address, spec.Target.AddressFrom, spec.Target.Port); err != nil {
+		if err := validateIngressTarget(res.ID(), "spec.target", spec.Target.Address, spec.Target.AddressFrom, spec.Target.Port, false); err != nil {
 			return err
 		}
 		if err := validateIngressHairpin(res.ID(), "spec.hairpin", spec.Listen, spec.Hairpin); err != nil {
@@ -3086,9 +3126,9 @@ func validateResource(res api.Resource) error {
 		}
 		if spec.HealthCheck.Protocol != "" {
 			switch spec.HealthCheck.Protocol {
-			case "tcp":
+			case "tcp", "http", "https":
 			default:
-				return fmt.Errorf("%s spec.healthCheck.protocol must be tcp", res.ID())
+				return fmt.Errorf("%s spec.healthCheck.protocol must be tcp, http, or https", res.ID())
 			}
 		}
 		for field, value := range map[string]string{"interval": spec.HealthCheck.Interval, "timeout": spec.HealthCheck.Timeout} {
@@ -3098,6 +3138,23 @@ func validateResource(res api.Resource) error {
 			if _, err := time.ParseDuration(value); err != nil {
 				return fmt.Errorf("%s spec.healthCheck.%s is invalid: %w", res.ID(), field, err)
 			}
+		}
+		if spec.HealthCheck.Path != "" && !strings.HasPrefix(spec.HealthCheck.Path, "/") {
+			return fmt.Errorf("%s spec.healthCheck.path must be an absolute HTTP path", res.ID())
+		}
+		if strings.ContainsAny(spec.HealthCheck.Host, " \t\x00\n\r") {
+			return fmt.Errorf("%s spec.healthCheck.host contains invalid characters", res.ID())
+		}
+		for i, code := range spec.HealthCheck.ExpectedStatus {
+			if code < 100 || code > 599 {
+				return fmt.Errorf("%s spec.healthCheck.expectedStatus[%d] must be within 100-599", res.ID(), i)
+			}
+		}
+		if spec.HealthCheck.HealthyThreshold < 0 {
+			return fmt.Errorf("%s spec.healthCheck.healthyThreshold must be non-negative and at least 1 when set", res.ID())
+		}
+		if spec.HealthCheck.UnhealthyThreshold < 0 {
+			return fmt.Errorf("%s spec.healthCheck.unhealthyThreshold must be non-negative and at least 1 when set", res.ID())
 		}
 		if spec.Policy.Selection != "" {
 			switch spec.Policy.Selection {
@@ -3114,7 +3171,7 @@ func validateResource(res api.Resource) error {
 			}
 		}
 		for i, backend := range spec.Backends {
-			if err := validateIngressTarget(res.ID(), fmt.Sprintf("spec.backends[%d]", i), backend.Address, backend.AddressFrom, backend.Port); err != nil {
+			if err := validateIngressTarget(res.ID(), fmt.Sprintf("spec.backends[%d]", i), backend.Address, backend.AddressFrom, backend.Port, true); err != nil {
 				return err
 			}
 			if backend.Weight < 0 {
@@ -3875,7 +3932,7 @@ func validateIngressListen(resourceID, path string, listen api.IngressListenSpec
 	return nil
 }
 
-func validateIngressTarget(resourceID, path, address string, addressFrom api.StatusValueSourceSpec, port int) error {
+func validateIngressTarget(resourceID, path, address string, addressFrom api.StatusValueSourceSpec, port int, allowHostname bool) error {
 	if strings.TrimSpace(address) == "" && strings.TrimSpace(addressFrom.Resource) == "" {
 		return fmt.Errorf("%s %s.address or %s.addressFrom is required", resourceID, path, path)
 	}
@@ -3885,7 +3942,12 @@ func validateIngressTarget(resourceID, path, address string, addressFrom api.Sta
 	if strings.TrimSpace(address) != "" {
 		addr, err := netip.ParseAddr(address)
 		if err != nil || !addr.Is4() {
-			return fmt.Errorf("%s %s.address must be an IPv4 address", resourceID, path)
+			if !allowHostname {
+				return fmt.Errorf("%s %s.address must be an IPv4 address", resourceID, path)
+			}
+			if err := validateAddressOrHostname(address); err != nil {
+				return fmt.Errorf("%s %s.address %w", resourceID, path, err)
+			}
 		}
 	}
 	if err := validateIngressAddressSource(resourceID, path+".addressFrom", addressFrom); err != nil {
@@ -3989,6 +4051,48 @@ func validateIngressAddressSource(resourceID, path string, source api.StatusValu
 		return fmt.Errorf("%s %s.field is required", resourceID, path)
 	}
 	return nil
+}
+
+func validateBGPTimers(resourceID, path string, spec api.BGPTimersSpec) error {
+	keepalive, err := validateOptionalDuration(resourceID, path+".keepalive", spec.Keepalive)
+	if err != nil {
+		return err
+	}
+	holdTime, err := validateOptionalDuration(resourceID, path+".holdTime", spec.HoldTime)
+	if err != nil {
+		return err
+	}
+	if _, err := validateOptionalDuration(resourceID, path+".connectRetry", spec.ConnectRetry); err != nil {
+		return err
+	}
+	if keepalive > 0 && holdTime > 0 && holdTime <= keepalive {
+		return fmt.Errorf("%s %s.holdTime must be greater than keepalive", resourceID, path)
+	}
+	return nil
+}
+
+func validateBGPGracefulRestart(resourceID string, spec api.BGPGracefulRestartSpec) error {
+	if _, err := validateOptionalDuration(resourceID, "spec.gracefulRestart.restartTime", spec.RestartTime); err != nil {
+		return err
+	}
+	if _, err := validateOptionalDuration(resourceID, "spec.gracefulRestart.stalePathTime", spec.StalePathTime); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateOptionalDuration(resourceID, path, value string) (time.Duration, error) {
+	if strings.TrimSpace(value) == "" {
+		return 0, nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s %s is invalid: %w", resourceID, path, err)
+	}
+	if duration <= 0 {
+		return 0, fmt.Errorf("%s %s must be positive", resourceID, path)
+	}
+	return duration, nil
 }
 
 func validateDSLiteInnerLocalAddress(value string) error {
