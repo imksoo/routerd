@@ -10,6 +10,12 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 新增
+
+- 为 `mode: vrrp` 的 `VirtualIPv4Address` 新增 FreeBSD CARP 后端，包括
+  runtime controller、rc.d rendering、validation、tests，以及最小示例
+  `examples/freebsd-vrrp.yaml`。
+
 ## v20260519.0743
 
 ### 变更

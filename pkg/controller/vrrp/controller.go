@@ -3,19 +3,17 @@
 package vrrp
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
+	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resourcequery"
 	routerstate "routerd/pkg/state"
@@ -37,6 +35,10 @@ type Controller struct {
 	Systemctl       string
 	KeepalivedCheck string
 	IP              string
+	Ifconfig        string
+	Sysctl          string
+	Kldload         string
+	OperatingSystem platform.OS
 	Command         CommandFunc
 	Logger          *slog.Logger
 	trackState      map[string]trackDecision
@@ -59,41 +61,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	data, err := render.KeepalivedConfigWithOptions(c.Router, aliases, render.KeepalivedOptions{PriorityByResource: priorities})
+	backend := c.vrrpBackend()
+	result, err := backend.Apply(ctx, c, aliases, priorities)
 	if err != nil {
 		return err
 	}
-	if len(data) == 0 {
-		return c.saveStatuses("Applied", "", cleanupChanged || staticChanged, tracks, nil, nil)
-	}
-	path := firstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	changed := true
-	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, data) {
-		changed = false
-	} else if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if changed {
-		if err := os.WriteFile(path, data, 0644); err != nil {
-			return err
-		}
-	}
-	if !c.DryRun {
-		if checker := strings.TrimSpace(c.KeepalivedCheck); checker != "" {
-			if out, err := c.run(ctx, checker, "--config-test", "--use-file", path); err != nil {
-				return c.saveError(path, changed || staticChanged, tracks, "KeepalivedConfigInvalid", fmt.Errorf("%s: %w: %s", checker, err, strings.TrimSpace(string(out))))
-			}
-		}
-		systemctl := firstNonEmpty(c.Systemctl, "systemctl")
-		if out, err := c.run(ctx, systemctl, "reload-or-restart", "keepalived.service"); err != nil {
-			return c.saveError(path, changed || staticChanged, tracks, "KeepalivedRestartFailed", fmt.Errorf("%s reload-or-restart keepalived.service: %w: %s", systemctl, err, strings.TrimSpace(string(out))))
-		}
-	}
-	roles := c.observeVRRPRoles(ctx, aliases)
-	return c.saveStatuses("Applied", path, changed || cleanupChanged || staticChanged, tracks, roles, nil)
+	return c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, nil)
 }
 
 func (c *Controller) saveError(path string, changed bool, tracks map[string]trackSummary, reason string, err error) error {
@@ -121,7 +94,7 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 		}
 		status := map[string]any{
 			"phase":      phase,
-			"backend":    virtualIPv4Backend(spec),
+			"backend":    c.virtualIPv4Backend(spec),
 			"address":    address,
 			"hostname":   strings.TrimSpace(spec.Hostname),
 			"interface":  spec.Interface,
@@ -197,7 +170,8 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 	}
 	changed := false
 	for _, item := range statuses {
-		if item.APIVersion != api.NetAPIVersion || item.Kind != "VirtualIPv4Address" || strings.TrimSpace(statusString(item.Status, "backend")) != "iproute2" {
+		backend := strings.TrimSpace(statusString(item.Status, "backend"))
+		if item.APIVersion != api.NetAPIVersion || item.Kind != "VirtualIPv4Address" || (backend != "iproute2" && backend != "ifconfig") {
 			continue
 		}
 		previous := staticVIP{IfName: statusString(item.Status, "ifname"), Address: statusString(item.Status, "appliedAddress")}
@@ -212,15 +186,14 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 		}
 		changed = true
 		if !c.DryRun {
-			ip := firstNonEmpty(c.IP, "ip")
-			if out, err := c.run(ctx, ip, "addr", "del", previous.Address, "dev", previous.IfName); err != nil {
-				return changed, fmt.Errorf("%s addr del %s dev %s: %w: %s", ip, previous.Address, previous.IfName, err, strings.TrimSpace(string(out)))
+			if err := c.removeStaticAddress(ctx, previous.IfName, previous.Address); err != nil {
+				return changed, err
 			}
 		}
 		if !c.DryRun {
 			status := map[string]any{
 				"phase":          "Removed",
-				"backend":        "iproute2",
+				"backend":        backend,
 				"address":        previous.Address,
 				"appliedAddress": "",
 				"ifname":         previous.IfName,
@@ -234,45 +207,6 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 		}
 	}
 	return changed, nil
-}
-
-func (c *Controller) observeVRRPRoles(ctx context.Context, aliases map[string]string) map[string]string {
-	roles := map[string]string{}
-	if c.DryRun {
-		for _, resource := range c.Router.Spec.Resources {
-			if resource.APIVersion == api.NetAPIVersion && resource.Kind == "VirtualIPv4Address" {
-				roles[resource.Metadata.Name] = "dryrun"
-			}
-		}
-		return roles
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VirtualIPv4Address" {
-			continue
-		}
-		spec, err := resource.VirtualIPv4AddressSpec()
-		if err != nil || spec.Mode != "vrrp" {
-			continue
-		}
-		ifname := aliases[spec.Interface]
-		address, err := render.VirtualIPv4Address(c.Router, spec)
-		if err != nil || ifname == "" {
-			roles[resource.Metadata.Name] = "unknown"
-			continue
-		}
-		ip := firstNonEmpty(c.IP, "ip")
-		out, err := c.run(ctx, ip, "-4", "addr", "show", "dev", ifname)
-		if err != nil {
-			roles[resource.Metadata.Name] = "unknown"
-			continue
-		}
-		if ipv4AddressPresent(string(out), address) {
-			roles[resource.Metadata.Name] = "master"
-		} else {
-			roles[resource.Metadata.Name] = "backup"
-		}
-	}
-	return roles
 }
 
 func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[string]string) (bool, error) {
@@ -300,9 +234,8 @@ func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[strin
 		if c.DryRun {
 			continue
 		}
-		ip := firstNonEmpty(c.IP, "ip")
-		if out, err := c.run(ctx, ip, "addr", "replace", address, "dev", ifname); err != nil {
-			return changed, c.saveError("", changed, nil, "StaticVIPApplyFailed", fmt.Errorf("%s addr replace %s dev %s: %w: %s", ip, address, ifname, err, strings.TrimSpace(string(out))))
+		if err := c.replaceStaticAddress(ctx, ifname, address); err != nil {
+			return changed, c.saveError("", changed, nil, "StaticVIPApplyFailed", err)
 		}
 	}
 	return changed, nil
@@ -478,11 +411,21 @@ func trackedPhaseHealthy(kind, phase string) bool {
 	}
 }
 
-func virtualIPv4Backend(spec api.VirtualIPv4AddressSpec) string {
+func (c *Controller) virtualIPv4Backend(spec api.VirtualIPv4AddressSpec) string {
 	if strings.TrimSpace(spec.Mode) == "vrrp" {
-		return "keepalived"
+		return c.vrrpBackend().Name()
+	}
+	if c.currentOS() == platform.OSFreeBSD {
+		return "ifconfig"
 	}
 	return "iproute2"
+}
+
+func (c *Controller) currentOS() platform.OS {
+	if c.OperatingSystem != "" {
+		return c.OperatingSystem
+	}
+	return platform.CurrentOS()
 }
 
 func hasVirtualIPv4(router *api.Router) bool {
@@ -499,6 +442,36 @@ func (c *Controller) run(ctx context.Context, name string, args ...string) ([]by
 		return c.Command(ctx, name, args...)
 	}
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+func (c *Controller) replaceStaticAddress(ctx context.Context, ifname, address string) error {
+	if c.currentOS() == platform.OSFreeBSD {
+		ifconfig := firstNonEmpty(c.Ifconfig, "ifconfig")
+		if out, err := c.run(ctx, ifconfig, ifname, "inet", address, "alias"); err != nil {
+			return fmt.Errorf("%s %s inet %s alias: %w: %s", ifconfig, ifname, address, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	ip := firstNonEmpty(c.IP, "ip")
+	if out, err := c.run(ctx, ip, "addr", "replace", address, "dev", ifname); err != nil {
+		return fmt.Errorf("%s addr replace %s dev %s: %w: %s", ip, address, ifname, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c *Controller) removeStaticAddress(ctx context.Context, ifname, address string) error {
+	if c.currentOS() == platform.OSFreeBSD {
+		ifconfig := firstNonEmpty(c.Ifconfig, "ifconfig")
+		if out, err := c.run(ctx, ifconfig, ifname, "inet", address, "-alias"); err != nil {
+			return fmt.Errorf("%s %s inet %s -alias: %w: %s", ifconfig, ifname, address, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	ip := firstNonEmpty(c.IP, "ip")
+	if out, err := c.run(ctx, ip, "addr", "del", address, "dev", ifname); err != nil {
+		return fmt.Errorf("%s addr del %s dev %s: %w: %s", ip, address, ifname, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func ipv4AddressPresent(output, address string) bool {

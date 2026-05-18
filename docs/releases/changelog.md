@@ -10,6 +10,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Added a FreeBSD CARP backend for `VirtualIPv4Address` in `mode: vrrp`,
+  including runtime controller support, rc.d rendering, validation, tests, and
+  a minimal `examples/freebsd-vrrp.yaml`.
+
 ## v20260519.0743
 
 ### Changed

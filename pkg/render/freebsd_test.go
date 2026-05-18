@@ -110,6 +110,43 @@ func TestFreeBSDIgnoresPrefixDelegationClientRenderer(t *testing.T) {
 	}
 }
 
+func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "api-vip"}, Spec: api.VirtualIPv4AddressSpec{
+			Interface: "lan",
+			Address:   "10.240.70.10/32",
+			Mode:      "vrrp",
+			VRRP: api.VirtualIPv4VRRPSpec{
+				VirtualRouterID: 50,
+				Priority:        150,
+				AdvertInterval:  "2s",
+				Authentication:  "secret",
+			},
+		}},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	rc := string(got.RCConf)
+	if !strings.Contains(rc, `routerd_carp_enable="YES"`) {
+		t.Fatalf("rc.conf did not enable routerd_carp:\n%s", rc)
+	}
+	script := string(got.RCDScripts["routerd_carp"])
+	for _, want := range []string{
+		`kldload carp >/dev/null 2>&1 || true`,
+		`sysctl net.inet.carp.preempt='0'`,
+		`ifconfig 'vtnet1' 'inet' 'vhid' '50' 'advbase' '2' 'advskew' '104' 'pass' 'secret' 'alias' '10.240.70.10/32'`,
+		`ifconfig 'vtnet1' inet '10.240.70.10/32' -alias`,
+		`grep -q 'vhid 50'`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("routerd_carp script missing %q:\n%s", want, script)
+		}
+	}
+}
+
 func TestFreeBSDRendersNTPD(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

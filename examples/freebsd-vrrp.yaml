@@ -1,0 +1,74 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: freebsd-vrrp
+
+spec:
+  reconcile:
+    mode: progressive
+    protectedInterfaces:
+      - mgmt
+
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: mgmt
+      spec:
+        ifname: vtnet0
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: vtnet1
+        adminUp: true
+        managed: true
+        owner: routerd
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-base
+      spec:
+        interface: lan
+        address: 192.168.70.2/24
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VirtualIPv4Address
+      metadata:
+        name: lan-api-vip
+      spec:
+        interface: lan
+        address: 192.168.70.10/32
+        mode: vrrp
+        vrrp:
+          virtualRouterID: 70
+          priority: 150
+          advertInterval: 1s
+          authentication: change-me
+          peers:
+            - 192.168.70.3
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces:
+          - lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: default
+      spec:
+        defaultAction: deny
+        sameRoleAccept: true

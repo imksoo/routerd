@@ -109,7 +109,7 @@ instead of pretending parity with Linux module loading.
 | Kind | Role |
 | --- | --- |
 | `IPv4StaticAddress` | Assigns a static IPv4 address. |
-| `VirtualIPv4Address` | Declares an IPv4 `/32` VIP. `mode: vrrp` renders keepalived configuration on Linux/systemd targets. |
+| `VirtualIPv4Address` | Declares an IPv4 `/32` VIP. `mode: vrrp` uses keepalived on Linux and CARP on FreeBSD. |
 | `DHCPv4Lease` | DHCPv4 lease, IPv4 address, and optional default route managed by `routerd-dhcpv4-client`. |
 | `DHCPv6Address` | Represents DHCPv6 IA_NA intent for platform renderers. |
 | `DHCPv6PrefixDelegation` | DHCPv6-PD lease managed by `routerd-dhcpv6-client`. |
@@ -205,19 +205,22 @@ deny; add `spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer
 pools. Accepted imports set `ip next-hop peer-address` so Kubernetes-advertised
 `/32` routes remain reachable through the advertising speaker.
 
-`VirtualIPv4Address` currently targets Linux/systemd for VRRP mode through
-keepalived. VRRP uses explicit unicast peers and defaults to `nopreempt`; set
-`spec.vrrp.preempt: true` only when automatic failback is intended, and pair it
-with `spec.vrrp.preemptDelay` when failback should wait. The resource status
-records the rendered backend, VIP address, VRID, base priority, track-adjusted
-priority, and generated config path. `track` lowers priority when referenced
-resources such as `BGPRouter`, `BGPPeer`, or `IngressService` are not healthy.
-Track entries use hysteresis: by default three consecutive unhealthy observations
-are required to apply a penalty and two consecutive healthy observations are
-required to clear it. `spec.hostname` can publish the VIP into matching
-DNSResolver-served `DNSZone` records, and `routerctl show vrrp` shows role,
-priority, peers, and transition age. NixOS and FreeBSD remain groundwork until
-native renderers are implemented.
+`VirtualIPv4Address` uses keepalived on Linux and CARP on FreeBSD for
+`mode: vrrp`. Linux VRRP uses explicit unicast peers and defaults to
+`nopreempt`; FreeBSD CARP uses multicast advertisements on the parent interface,
+so `spec.vrrp.peers` is ignored there. Set `spec.vrrp.preempt: true` only when
+automatic failback is intended, and pair it with `spec.vrrp.preemptDelay` when
+Linux failback should wait. FreeBSD has no direct `preemptDelay` equivalent.
+The resource status records the rendered backend, VIP address, VRID, base
+priority, track-adjusted priority, and generated config path when a file-backed
+backend is used. `track` lowers priority when referenced resources such as
+`BGPRouter`, `BGPPeer`, or `IngressService` are not healthy. Track entries use
+hysteresis: by default three consecutive unhealthy observations are required to
+apply a penalty and two consecutive healthy observations are required to clear
+it. `spec.hostname` can publish the VIP into matching DNSResolver-served
+`DNSZone` records, and `routerctl show vrrp` shows role, priority, peers, and
+transition age. NixOS remains groundwork until a native service-manager module
+owns the same host artifacts.
 
 `BGPPeer.spec.password` is rendered into FRR as `neighbor ... password ...`.
 Treat routerd config files and rendered FRR config as secrets when this field is
@@ -228,11 +231,12 @@ host firewall zones and service-manager bgpd options aligned when BGP must be
 limited to a specific interface address.
 
 `VirtualIPv4Address.spec.vrrp.authentication` is rendered into keepalived as
-`auth_pass`. Treat routerd config files and `/etc/keepalived/keepalived.conf`
-as secrets when this field is used. VRRP authentication is deprecated in VRRPv3
-(RFC 5798); routerd assumes `unicast_peer` plus L2 isolation and recommends
-using authentication only when it is still required by the surrounding network
-policy or to guard against simple misconfiguration.
+`auth_pass` and into FreeBSD CARP as `pass`. Treat routerd config files,
+`/etc/keepalived/keepalived.conf`, and host interface state as secrets when
+this field is used. VRRP authentication is deprecated in VRRPv3 (RFC 5798);
+routerd assumes L2 isolation and recommends using authentication only when it is
+still required by the surrounding network policy or to guard against simple
+misconfiguration.
 
 `PortForward` and `IngressService` render DNAT on Linux nftables and FreeBSD pf.
 Set `spec.hairpin.enabled: true` with `spec.hairpin.interfaces` to also allow

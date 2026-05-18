@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"routerd/pkg/api"
+	"routerd/pkg/platform"
 )
 
 func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
@@ -80,6 +81,32 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestVirtualIPv4AddressArtifactIntentsUseFreeBSDCARP(t *testing.T) {
+	res := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+		Metadata: api.ObjectMeta{Name: "api-vip"},
+		Spec: api.VirtualIPv4AddressSpec{
+			Interface: "lan",
+			Address:   "192.168.10.10/32",
+			Mode:      "vrrp",
+			VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+		},
+	}
+	intents := resourceArtifactIntentsForOS(res, map[string]string{"lan": "vtnet1"}, platform.OSFreeBSD)
+	kinds := map[string]bool{}
+	for _, intent := range intents {
+		kinds[intent.Artifact.Kind] = true
+		if intent.ApplyWith == "keepalived" || intent.ApplyWith == "systemctl" {
+			t.Fatalf("FreeBSD CARP intent used Linux backend: %+v", intent)
+		}
+	}
+	for _, want := range []string{"freebsd.carp", "rc.d.service", "sysctl"} {
+		if !kinds[want] {
+			t.Fatalf("missing FreeBSD intent kind %q in %+v", want, intents)
+		}
 	}
 }
 

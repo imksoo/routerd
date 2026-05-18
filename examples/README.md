@@ -47,3 +47,4 @@ routerd plan --config examples/<name>.yaml
 | `nixos-edge.yaml` | You want a routerd configuration that exercises the NixOS render path. |
 | `nixos-edge-configuration.nix` | You want the companion NixOS system configuration shape. |
 | `freebsd-edge.yaml` | You want FreeBSD rc.d, pf, mpd5, dnsmasq, DS-Lite, WireGuard, and Tailscale examples. |
+| `freebsd-vrrp.yaml` | You want a minimal FreeBSD CARP-backed `VirtualIPv4Address` example. |

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"routerd/pkg/api"
+	"routerd/pkg/platform"
 )
 
 func TestValidateBGPRouterPeerAndVirtualIPv4Address(t *testing.T) {
@@ -143,6 +144,25 @@ func TestValidateVirtualIPv4AddressVRRPRequiresPeers(t *testing.T) {
 	}
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.vrrp.peers is required") {
 		t.Fatalf("expected vrrp peers error, got %v", err)
+	}
+}
+
+func TestValidateVirtualIPv4AddressCARPAllowsEmptyPeers(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "10.240.70.10/32",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Authentication: "secret"},
+			}},
+		}},
+	}
+	if err := ValidateForOS(router, platform.OSFreeBSD); err != nil {
+		t.Fatalf("FreeBSD CARP should allow multicast peers omitted: %v", err)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"routerd/pkg/api"
+	"routerd/pkg/platform"
 	routerstate "routerd/pkg/state"
 )
 
@@ -185,6 +186,42 @@ func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 	}
 }
 
+func TestReconcileAppliesFreeBSDCARPVirtualIPv4Address(t *testing.T) {
+	store := mapStore{}
+	var calls []string
+	controller := Controller{
+		Router:          vrrpRouter("vrrp"),
+		Store:           store,
+		OperatingSystem: platform.OSFreeBSD,
+		Ifconfig:        "ifconfig",
+		Sysctl:          "sysctl",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			if name == "ifconfig" && len(args) == 1 && args[0] == "ens18" {
+				return []byte("ens18: flags=...\n\tcarp: MASTER vhid 50 advbase 1 advskew 104\n"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	for _, want := range []string{
+		"kldload carp",
+		"sysctl net.inet.carp.preempt=0",
+		"ifconfig ens18 inet vhid 50 advbase 1 advskew 104 alias 10.240.70.10/32",
+		"ifconfig ens18",
+	} {
+		if !containsString(calls, want) {
+			t.Fatalf("calls missing %q: %#v", want, calls)
+		}
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	if status["backend"] != "carp" || status["role"] != "master" {
+		t.Fatalf("unexpected CARP status: %#v", status)
+	}
+}
+
 func TestReconcileCleansRemovedStaticVirtualIPv4Address(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/VirtualIPv4Address/old": {
@@ -253,4 +290,13 @@ func vrrpRouter(mode string) *api.Router {
 			},
 		},
 	}}}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

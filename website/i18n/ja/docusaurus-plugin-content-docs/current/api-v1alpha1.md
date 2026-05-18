@@ -98,7 +98,7 @@ FreeBSD では、routerd が rc.d サービスを生成します。
 | Kind | 役割 |
 | --- | --- |
 | `IPv4StaticAddress` | 静的 IPv4 アドレスを付与します。 |
-| `VirtualIPv4Address` | IPv4 `/32` VIP を宣言します。`mode: vrrp` は Linux/systemd target で keepalived 設定を生成します。 |
+| `VirtualIPv4Address` | IPv4 `/32` VIP を宣言します。`mode: vrrp` は Linux では keepalived、FreeBSD では CARP を使います。 |
 | `DHCPv4Lease` | `routerd-dhcpv4-client` が DHCPv4 リース、IPv4 アドレス、任意のデフォルト経路を管理します。 |
 | `DHCPv6Address` | DHCPv6 IA_NA の意図を表します。 |
 | `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` が管理する DHCPv6-PD リースです。 |
@@ -180,10 +180,11 @@ hairpin は `listen.address` または `listen.addressFrom` が必須で、route
 DNAT と戻り経路用の masquerade/NAT reflection を生成します。
 `listen.addressFrom` と backend の `addressFrom` は `IPv4StaticAddress/<name>.address`
 や `VirtualIPv4Address/<name>.address` のような静的に描画できるアドレスリソースを参照できます。
-`VirtualIPv4Address.spec.vrrp.authentication` は keepalived の `auth_pass` に平文で出力されます。
-この値を使う場合、routerd config と `/etc/keepalived/keepalived.conf` は secret として扱ってください。
-VRRP authentication は VRRPv3 (RFC 5798) では deprecated です。routerd は `unicast_peer` と
-L2 隔離を前提にするため、authentication は周辺ネットワーク方針で必要な場合や単純な誤設定対策に限って使ってください。
+`VirtualIPv4Address.spec.vrrp.authentication` は keepalived では `auth_pass`、
+FreeBSD CARP では `pass` として描画されます。この値を使う場合、routerd config、
+`/etc/keepalived/keepalived.conf`、host interface state は secret として扱ってください。
+VRRP authentication は VRRPv3 (RFC 5798) では deprecated です。routerd は L2 隔離を前提にするため、
+authentication は周辺ネットワーク方針で必要な場合や単純な誤設定対策に限って使ってください。
 `IngressService` は複数 backend、TCP health check intent、failover selection を受け付けます。
 静的 nftables renderer は最初の backend を初期 active endpoint として使い、runtime controller が
 ruleset 全体を再生成せずに active state を更新できる形にします。
@@ -208,11 +209,14 @@ metric に反映します。`routerctl show bgp` は router、peer、message cou
 import policy は default deny で、受け入れた経路には
 `set ip next-hop peer-address` を付けます。
 
-`VirtualIPv4Address` の VRRP mode は keepalived を使い、unicast peer を必須にします。
-既定は `nopreempt` です。`preempt: true` の場合は `preemptDelay` で取り戻しを
-遅らせられます。`track` で `BGPRouter`、`BGPPeer`、`IngressService` などの
-状態に応じて priority を下げられます。既定では unhealthy 3 回連続で penalty を
-適用し、healthy 2 回連続で解除します。`spec.hostname` は DNSResolver が配信する
+`VirtualIPv4Address` の `mode: vrrp` は Linux では keepalived、FreeBSD では CARP を
+使います。Linux VRRP は明示的な unicast peer を使い、既定は `nopreempt` です。
+FreeBSD CARP は親 interface 上の multicast advertisement を使うため、
+`spec.vrrp.peers` は FreeBSD では無視されます。`preempt: true` の場合、Linux では
+`preemptDelay` で取り戻しを遅らせられます。FreeBSD には直接対応する
+`preemptDelay` はありません。`track` で `BGPRouter`、`BGPPeer`、`IngressService`
+などの状態に応じて priority を下げられます。既定では unhealthy 3 回連続で penalty
+を適用し、healthy 2 回連続で解除します。`spec.hostname` は DNSResolver が配信する
 対応 `DNSZone` へ VIP の A record として自動派生できます。`routerctl show vrrp` は
 role、priority、peer、transition 経過時間を表示します。
 
@@ -221,6 +225,7 @@ role、priority、peer、transition 経過時間を表示します。
 FRR の listen address 制限は managed FRR config の通常 stanza ではなく、bgpd 起動時の
 `-l` / `--listenon` option です。特定 interface に限定したい場合は firewall zone と
 service-manager 側の bgpd option を合わせて管理してください。
+
 
 `IngressService` は複数 backend、TCP health check、failover policy を扱います。
 runtime controller が backend FQDN を解決し、DNS 失敗時は直前の解決済み IPv4 を

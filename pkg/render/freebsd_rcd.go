@@ -138,6 +138,16 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		}
 		out[name] = data
 	}
+	carpConfig, err := CARPConfig(router, aliases)
+	if err != nil {
+		return nil, err
+	}
+	if len(carpConfig.Interfaces) > 0 {
+		name := "routerd_carp"
+		if !explicit[name] {
+			out[name] = FreeBSDCARPRCDScript(carpConfig)
+		}
+	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "WireGuardInterface" {
 			continue
@@ -205,6 +215,54 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		out[name] = data
 	}
 	return out, nil
+}
+
+func FreeBSDCARPRCDScript(config CARPConfigData) []byte {
+	var buf bytes.Buffer
+	buf.WriteString("#!/bin/sh\n")
+	buf.WriteString("#\n")
+	buf.WriteString("# Managed by routerd.\n")
+	buf.WriteString("#\n")
+	buf.WriteString("# PROVIDE: routerd_carp\n")
+	buf.WriteString("# REQUIRE: NETWORKING\n")
+	buf.WriteString("# KEYWORD: shutdown\n\n")
+	buf.WriteString(". /etc/rc.subr\n\n")
+	buf.WriteString("name=\"routerd_carp\"\n")
+	buf.WriteString("rcvar=\"routerd_carp_enable\"\n")
+	buf.WriteString("start_cmd=\"routerd_carp_start\"\n")
+	buf.WriteString("stop_cmd=\"routerd_carp_stop\"\n")
+	buf.WriteString("status_cmd=\"routerd_carp_status\"\n\n")
+	buf.WriteString("routerd_carp_start() {\n")
+	buf.WriteString("  kldload carp >/dev/null 2>&1 || true\n")
+	buf.WriteString("  sysctl net.inet.carp.preempt=" + shellSingleQuote(config.PreemptSysctlValue()) + " >/dev/null\n")
+	for _, command := range config.IfconfigCommands() {
+		buf.WriteString("  ifconfig")
+		for _, arg := range command {
+			buf.WriteString(" " + shellSingleQuote(arg))
+		}
+		buf.WriteString("\n")
+	}
+	buf.WriteString("}\n\n")
+	buf.WriteString("routerd_carp_stop() {\n")
+	for _, iface := range config.Interfaces {
+		buf.WriteString("  ifconfig " + shellSingleQuote(iface.Interface) + " inet " + shellSingleQuote(iface.Address) + " -alias >/dev/null 2>&1 || true\n")
+	}
+	buf.WriteString("}\n\n")
+	buf.WriteString("routerd_carp_status() {\n")
+	if len(config.Interfaces) == 0 {
+		buf.WriteString("  return 1\n")
+	} else {
+		buf.WriteString("  true")
+		for _, iface := range config.Interfaces {
+			buf.WriteString(" && ifconfig " + shellSingleQuote(iface.Interface) + " | grep -q " + shellSingleQuote("vhid "+fmt.Sprintf("%d", iface.VirtualHostID)))
+		}
+		buf.WriteString("\n")
+	}
+	buf.WriteString("}\n\n")
+	buf.WriteString("load_rc_config $name\n")
+	buf.WriteString(": ${routerd_carp_enable:=\"YES\"}\n")
+	buf.WriteString("run_rc_command \"$1\"\n")
+	return buf.Bytes()
 }
 
 func freeBSDRouterdSupervisesClientDaemons(router *api.Router) bool {

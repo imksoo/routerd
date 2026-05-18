@@ -14,6 +14,10 @@ import (
 )
 
 func resourceArtifactIntents(res api.Resource, aliases map[string]string) []resource.Intent {
+	return resourceArtifactIntentsForOS(res, aliases, platform.CurrentOS())
+}
+
+func resourceArtifactIntentsForOS(res api.Resource, aliases map[string]string, targetOS platform.OS) []resource.Intent {
 	owner := res.ID()
 	artifact := func(kind, name, action, applyWith string, attrs map[string]string) resource.Intent {
 		if attrs == nil {
@@ -151,6 +155,13 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		if defaultString(spec.Mode, "static") == "vrrp" {
+			if targetOS == platform.OSFreeBSD {
+				return []resource.Intent{
+					artifact("freebsd.carp", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "ifconfig", map[string]string{"interface": aliases[spec.Interface]}),
+					artifact("rc.d.service", "routerd_carp", resource.ActionEnsure, "service", nil),
+					artifact("sysctl", "net.inet.carp.preempt", resource.ActionEnsure, "sysctl", nil),
+				}
+			}
 			return []resource.Intent{
 				artifact("keepalived.config", "/etc/keepalived/keepalived.conf", resource.ActionEnsure, "keepalived", map[string]string{"interface": aliases[spec.Interface]}),
 				artifact("systemd.service", "keepalived.service", resource.ActionEnsure, "systemctl", nil),

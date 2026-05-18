@@ -13,9 +13,17 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/dnsresolver"
 	"routerd/pkg/healthcheck"
+	"routerd/pkg/platform"
 )
 
 func Validate(router *api.Router) error {
+	return ValidateForOS(router, platform.CurrentOS())
+}
+
+func ValidateForOS(router *api.Router, targetOS platform.OS) error {
+	if router == nil {
+		return fmt.Errorf("router is nil")
+	}
 	if router.APIVersion != api.RouterAPIVersion {
 		return fmt.Errorf("router apiVersion must be %s", api.RouterAPIVersion)
 	}
@@ -75,7 +83,7 @@ func Validate(router *api.Router) error {
 		client string
 	}{}
 	for _, res := range router.Spec.Resources {
-		if err := validateResource(res); err != nil {
+		if err := validateResource(res, targetOS); err != nil {
 			return err
 		}
 		if seen[res.ID()] {
@@ -865,7 +873,7 @@ func validateApplyPolicy(spec api.ApplyPolicySpec) error {
 	return nil
 }
 
-func validateResource(res api.Resource) error {
+func validateResource(res api.Resource, targetOS platform.OS) error {
 	if res.APIVersion == "" {
 		return fmt.Errorf("resource apiVersion is required")
 	}
@@ -1800,7 +1808,7 @@ func validateResource(res api.Resource) error {
 			if spec.VRRP.VirtualRouterID < 1 || spec.VRRP.VirtualRouterID > 255 {
 				return fmt.Errorf("%s spec.vrrp.virtualRouterID must be within 1-255", res.ID())
 			}
-			if len(spec.VRRP.Peers) == 0 {
+			if targetOS != platform.OSFreeBSD && len(spec.VRRP.Peers) == 0 {
 				return fmt.Errorf("%s spec.vrrp.peers is required for unicast VRRP", res.ID())
 			}
 			if spec.VRRP.Priority != 0 && (spec.VRRP.Priority < 1 || spec.VRRP.Priority > 254) {

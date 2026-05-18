@@ -204,6 +204,7 @@ Implemented:
 - rc.d script generation for `routerd-healthcheck`
 - rc.d script generation for `routerd-firewall-logger` with direct `pflog0` input
 - rc.d script generation for `TailscaleNode`
+- CARP-backed `VirtualIPv4Address` in `mode: vrrp`, configured on the parent interface with `vhid`
 - dnsmasq rc.d ordering after `mpd5` for PPPoE coexistence
 - Static DS-Lite gif tunnel rendering
 - Dynamic DS-Lite apply from static AFTR IPv6, AFTR FQDN, or delegated-address local source

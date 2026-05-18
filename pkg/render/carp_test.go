@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+package render
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+
+	"routerd/pkg/api"
+)
+
+func TestCARPConfigRendersFreeBSDIfconfigCommands(t *testing.T) {
+	preempt := true
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			Metadata: api.ObjectMeta{Name: "k8s-api"},
+			Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "10.240.70.10/32",
+				Mode:      "vrrp",
+				VRRP: api.VirtualIPv4VRRPSpec{
+					VirtualRouterID: 50,
+					Priority:        150,
+					Preempt:         &preempt,
+					AdvertInterval:  "2s",
+					Authentication:  "secret",
+				},
+			},
+		},
+	}}}
+	config, err := CARPConfig(router, map[string]string{"lan": "vtnet1"})
+	if err != nil {
+		t.Fatalf("render CARP config: %v", err)
+	}
+	if !config.Preempt || config.PreemptSysctlValue() != "1" {
+		t.Fatalf("preempt not reflected in config: %#v", config)
+	}
+	wantCommands := [][]string{{
+		"vtnet1", "inet", "vhid", "50", "advbase", "2", "advskew", "104", "pass", "secret", "alias", "10.240.70.10/32",
+	}}
+	if !reflect.DeepEqual(config.IfconfigCommands(), wantCommands) {
+		t.Fatalf("commands = %#v, want %#v", config.IfconfigCommands(), wantCommands)
+	}
+	lines := strings.Join(config.RCConfLines(), "\n")
+	if !strings.Contains(lines, `ifconfig_vtnet1_alias0="inet vhid 50 advbase 2 advskew 104 pass secret alias 10.240.70.10/32"`) {
+		t.Fatalf("rc.conf lines missing CARP alias:\n%s", lines)
+	}
+}
+
+func TestCARPConfigOverridesPriority(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			Metadata: api.ObjectMeta{Name: "k8s-api"},
+			Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "10.240.70.10/32",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Priority: 150},
+			},
+		},
+	}}}
+	config, err := CARPConfigWithOptions(router, map[string]string{"lan": "vtnet1"}, CARPOptions{PriorityByResource: map[string]int{"k8s-api": 80}})
+	if err != nil {
+		t.Fatalf("render CARP config: %v", err)
+	}
+	if got := config.Interfaces[0].AdvSkew; got != 174 {
+		t.Fatalf("advskew = %d, want 174", got)
+	}
+}
