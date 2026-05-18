@@ -313,7 +313,7 @@ func OpenRCScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 		buf.WriteString("export " + key + "=" + shellQuote(value) + "\n")
 	}
 	buf.WriteString("\ndepend() {\n")
-	buf.WriteString("\tneed net\n")
+	buf.WriteString("\tuse net\n")
 	if len(spec.After) > 0 {
 		for _, service := range openRCAfterServices(spec.After) {
 			buf.WriteString("\tafter " + service + "\n")

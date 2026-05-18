@@ -31,7 +31,7 @@ func TestOpenRCScriptFromSystemdUnitSpec(t *testing.T) {
 		`command_args="'daemon' '--resource' 'internet'"`,
 		`command_background="yes"`,
 		`pidfile="/run/routerd/openrc/${RC_SVCNAME}.pid"`,
-		`need net`,
+		`use net`,
 		`after routerd`,
 		`checkpath -d -m 0755 '/run/routerd/healthcheck'`,
 		`checkpath -d -m 0755 '/var/lib/routerd/healthcheck'`,
@@ -42,6 +42,9 @@ func TestOpenRCScriptFromSystemdUnitSpec(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("OpenRC script missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "\tneed net\n") {
+		t.Fatalf("OpenRC script must not force-start Alpine networking:\n%s", got)
 	}
 }
 
