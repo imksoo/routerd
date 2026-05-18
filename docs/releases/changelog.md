@@ -10,6 +10,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Added a separate `routerd-ndpi-agent-libndpi-linux-amd64` release archive for
+  hosts that opt into native nDPI classification. The normal Linux release
+  archives remain fully static, while the optional nDPI agent override is built
+  with `CGO_ENABLED=1 -tags libndpi` and verified with a libndpi self-test.
+
 ## v20260518.1431
 
 ### Added

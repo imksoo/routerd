@@ -24,6 +24,10 @@ flow metadata in the Web Console, not application-aware blocking.
 - `routerd-ndpi-agent` is implemented as an optional CGO/libndpi service. The
   non-`libndpi` build reports an unavailable service boundary instead of
   silently pretending to classify.
+- Release archives keep the normal Linux binaries static. Native nDPI support
+  is distributed as a separate `routerd-ndpi-agent-libndpi` Linux override
+  archive so hosts that need libndpi can opt into the dynamic dependency without
+  changing the core install artifact.
 - `traffic-flows.db` remains conntrack-derived and payload-free. It is enriched
   from `dpi_flow`, DNS/SNI/HTTP host metadata, resolved hostnames, and port
   fallback while preserving existing DPI fields when later conntrack updates do
@@ -194,6 +198,8 @@ reaches routerd.
 - [x] Add a selftest/status path that reports whether `libndpi` is loaded.
 - [x] Add a `libndpi`-tagged test that classifies a synthetic TLS ClientHello
   with the native backend.
+- [x] Publish the native `libndpi` build as a separate Linux override archive
+  instead of putting a dynamically linked binary in the normal static release.
 
 ### Phase 4: Wire service management
 

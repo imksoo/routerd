@@ -10,6 +10,14 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 追加
+
+- native nDPI classification を有効化する host 向けに、別 archive
+  `routerd-ndpi-agent-libndpi-linux-amd64` を追加しました。通常の Linux
+  release archive は完全な静的 binary のまま維持し、optional な nDPI agent
+  override は `CGO_ENABLED=1 -tags libndpi` で build して libndpi self-test で
+  検証します。
+
 ## v20260518.1431
 
 ### 追加

@@ -29,6 +29,9 @@ ROUTERD_DPI_CLASSIFIER_BIN := $(BUILDDIR)/routerd-dpi-classifier
 ROUTERD_NDPI_AGENT_BIN := $(BUILDDIR)/routerd-ndpi-agent
 ROUTERD_PPPOE_CLIENT_BIN := $(BUILDDIR)/routerd-pppoe-client
 ROUTERD_RELEASE_BINS := $(ROUTERD_BIN) $(ROUTERCTL_BIN) $(ROUTERD_DHCPv4_CLIENT_BIN) $(ROUTERD_DHCPv6_CLIENT_BIN) $(ROUTERD_DHCP_EVENT_RELAY_BIN) $(ROUTERD_DHCP_FINGERPRINT_WATCHER_BIN) $(ROUTERD_HEALTHCHECK_BIN) $(ROUTERD_DNS_RESOLVER_BIN) $(ROUTERD_FIREWALL_LOGGER_BIN) $(ROUTERD_DPI_CLASSIFIER_BIN) $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_PPPOE_CLIENT_BIN)
+ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT := $(DISTDIR)/ndpi-agent-libndpi-package
+ROUTERD_NDPI_AGENT_LIBNDPI_TAR := $(DISTDIR)/routerd-ndpi-agent-libndpi-$(VERSION)-$(DISTPLATFORM).tar.gz
+ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS := $(DISTDIR)/routerd-ndpi-agent-libndpi-$(DISTPLATFORM).tar.gz
 GO_BUILD_ENV := CGO_ENABLED=0 GOOS=$(ROUTERD_OS)
 ifneq ($(GOARCH),)
 GO_BUILD_ENV += GOARCH=$(GOARCH)
@@ -39,7 +42,7 @@ PLAYWRIGHT_INSTALL_FLAGS ?= --with-deps
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test build build-daemons build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-install-deps alpine-vm-smoke webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema website-deps website-build third-party-licenses check-build-deps dist live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test build build-daemons build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -88,6 +91,24 @@ check-linux-static:
 			*) echo "Linux binary is not statically linked: $$bin" >&2; echo "$$info" >&2; exit 1 ;; \
 		esac; \
 	done
+
+check-ndpi-agent-libndpi:
+	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "libndpi agent archive is Linux-only" >&2; exit 2; fi
+	@if [ ! -x "$(ROUTERD_NDPI_AGENT_BIN)" ]; then echo "missing binary: $(ROUTERD_NDPI_AGENT_BIN)" >&2; exit 1; fi
+	@if ! command -v file >/dev/null 2>&1; then echo "missing file(1), cannot verify libndpi agent binary" >&2; exit 1; fi
+	@info=$$(file "$(ROUTERD_NDPI_AGENT_BIN)"); \
+	case "$$info" in \
+		*"dynamically linked"*|*"shared object"*) ;; \
+		*) echo "libndpi agent binary is expected to be dynamically linked: $(ROUTERD_NDPI_AGENT_BIN)" >&2; echo "$$info" >&2; exit 1 ;; \
+	esac
+	@if [ "$(DISTARCH)" = "$$(go env GOARCH)" ]; then \
+		if ! "$(ROUTERD_NDPI_AGENT_BIN)" selftest | grep -q '"libndpiLoaded":true'; then \
+			echo "libndpi agent selftest did not load libndpi" >&2; \
+			exit 1; \
+		fi; \
+	else \
+		echo "skipping libndpi agent selftest for non-native arch $(DISTARCH)" >&2; \
+	fi
 
 check-install-deps:
 	./scripts/install-deps-smoke.sh
@@ -176,6 +197,23 @@ dist:
 	cp $(DISTTAR) $(DISTTAR_ALIAS)
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(DISTTAR)) > $(notdir $(DISTTAR)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
 	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(DISTTAR_ALIAS)) > $(notdir $(DISTTAR_ALIAS)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
+
+dist-ndpi-agent-libndpi:
+	@if [ "$(ROUTERD_OS)" != "linux" ]; then echo "libndpi agent archive is Linux-only" >&2; exit 2; fi
+	rm -rf $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR).sha256 $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS) $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS).sha256
+	$(MAKE) build-ndpi-agent-libndpi
+	$(MAKE) check-ndpi-agent-libndpi
+	install -d $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/bin
+	install -m 0755 $(ROUTERD_NDPI_AGENT_BIN) $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/bin/routerd-ndpi-agent
+	install -d $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc
+	install -m 0644 docs/operations/ndpi-agent-libndpi.md $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/README.md
+	printf '%s\n' '$(VERSION)' > $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/VERSION
+	printf '%s\n' '$(DISTPLATFORM)' > $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT)/share/doc/TARGET
+	install -d $(DISTDIR)
+	tar -C $(ROUTERD_NDPI_AGENT_LIBNDPI_DISTROOT) -czf $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) .
+	cp $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR) $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)
+	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_TAR)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
+	if command -v sha256sum >/dev/null 2>&1; then (cd $(DISTDIR) && sha256sum $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); elif command -v shasum >/dev/null 2>&1; then (cd $(DISTDIR) && shasum -a 256 $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); elif command -v sha256 >/dev/null 2>&1; then (cd $(DISTDIR) && sha256 -r $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)) > $(notdir $(ROUTERD_NDPI_AGENT_LIBNDPI_ALIAS)).sha256); else echo "missing sha256 tool" >&2; exit 1; fi
 
 live-iso:
 	VERSION=$(VERSION) DISTBASE=$(DISTBASE) scripts/build-live-iso.sh

@@ -122,6 +122,80 @@ jobs:
           path: release/*
           if-no-files-found: error
 
+  build-ndpi-agent-libndpi:
+    name: Build native nDPI agent linux-amd64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install native nDPI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libndpi-dev pkg-config
+
+      - name: Build native nDPI agent archive
+        run: |
+          make dist-ndpi-agent-libndpi \
+            ROUTERD_OS=linux \
+            GOARCH=amd64 \
+            VERSION=${{ steps.release.outputs.tag }}
+
+      - name: Collect native nDPI agent archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release.outputs.tag }}"
+          platform="linux-amd64"
+          package="routerd-ndpi-agent-libndpi-${tag}-${platform}.tar.gz"
+          alias="routerd-ndpi-agent-libndpi-${platform}.tar.gz"
+          test -f "dist/${platform}/${package}"
+          test -f "dist/${platform}/${package}.sha256"
+          test -f "dist/${platform}/${alias}"
+          test -f "dist/${platform}/${alias}.sha256"
+          mkdir -p release
+          cp "dist/${platform}/${package}" "dist/${platform}/${package}.sha256" \
+            "dist/${platform}/${alias}" "dist/${platform}/${alias}.sha256" release/
+
+      - name: Smoke test native nDPI agent archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release.outputs.tag }}"
+          package="routerd-ndpi-agent-libndpi-${tag}-linux-amd64.tar.gz"
+          work="${RUNNER_TEMP}/routerd-ndpi-agent-libndpi"
+          rm -rf "${work}"
+          mkdir -p "${work}"
+          tar -C "${work}" -xzf "dist/linux-amd64/${package}"
+          "${work}/bin/routerd-ndpi-agent" selftest | grep -q '"libndpiLoaded":true'
+
+      - name: Upload native nDPI agent artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: routerd-ndpi-agent-libndpi-${{ steps.release.outputs.tag }}-linux-amd64
+          path: release/*
+          if-no-files-found: error
+
   build-iso:
     name: Build live ISO
     runs-on: ubuntu-latest
@@ -181,6 +255,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build
+      - build-ndpi-agent-libndpi
       - build-iso
     steps:
       - name: Checkout

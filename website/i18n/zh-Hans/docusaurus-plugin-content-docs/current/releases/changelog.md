@@ -10,6 +10,13 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+### 新增
+
+- 新增单独的 `routerd-ndpi-agent-libndpi-linux-amd64` release archive，
+  供需要启用 native nDPI classification 的主机使用。普通 Linux release
+  archive 仍保持完全静态链接，optional nDPI agent override 使用
+  `CGO_ENABLED=1 -tags libndpi` 构建，并通过 libndpi self-test 验证。
+
 ## v20260518.1431
 
 ### 新增

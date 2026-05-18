@@ -89,6 +89,7 @@ const sidebars: SidebarsConfig = {
         'operations/inventory',
         'operations/usb-persistence',
         'operations/development',
+        'operations/ndpi-agent-libndpi',
       ],
     },
     {

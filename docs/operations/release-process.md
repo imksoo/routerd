@@ -46,16 +46,23 @@ The `Release` workflow builds these targets:
 - `linux-arm64`
 - `freebsd-amd64`
 - `freebsd-arm64`
+- `routerd-ndpi-agent-libndpi-linux-amd64` as an optional native nDPI agent
+  override archive
 
 Each target archive is published with two names:
 
 - `routerd-<tag>-<os>-<arch>.tar.gz` for an exact release
 - `routerd-<os>-<arch>.tar.gz` for a fixed latest-download URL
+- `routerd-ndpi-agent-libndpi-<tag>-linux-amd64.tar.gz` and
+  `routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` for the optional native nDPI
+  agent override
 
 Linux archives are built with `CGO_ENABLED=0`, so the routerd binaries in those
 archives are statically linked and do not depend on the target host's glibc
 version. The workflow runs `make check-linux-static` before packaging Linux
-archives.
+archives. The optional native nDPI agent archive is intentionally separate:
+it is built with `CGO_ENABLED=1 -tags libndpi`, links to the host `libndpi`
+runtime, and is not included in the normal static Linux archive.
 
 Both names also have `.sha256` files.
 The archive contains:
@@ -66,6 +73,10 @@ The archive contains:
 - `etc/routerd/router.yaml.sample`: sanitized sample configuration
 - `systemd/` or `rc.d/`: service templates for the target OS
 - `share/doc/`: README, VERSION, LICENSE, and third-party license inventory
+
+The native nDPI agent override archive contains only `bin/routerd-ndpi-agent`
+and minimal documentation. Install it over a normal routerd installation on
+hosts that should run `routerd-ndpi-agent` with `libndpiLoaded=true`.
 
 The workflow uploads the versioned archive, the fixed-name archive, and their
 `.sha256` files to the GitHub Release page.
@@ -95,6 +106,7 @@ make test
 make check-schema
 make validate-example
 make dist ROUTERD_OS=linux GOARCH=amd64 VERSION="$(git describe --tags --abbrev=0)"
+make dist-ndpi-agent-libndpi ROUTERD_OS=linux GOARCH=amd64 VERSION="$(git describe --tags --abbrev=0)"
 ```
 
 Deployment smoke checks use `install.sh`.
@@ -241,6 +253,7 @@ If GitHub Actions is unavailable, build the same archives locally:
 tag=$(git describe --tags --abbrev=0)
 make dist ROUTERD_OS=linux GOARCH=amd64 VERSION="$tag"
 make dist ROUTERD_OS=freebsd GOARCH=amd64 VERSION="$tag"
+make dist-ndpi-agent-libndpi ROUTERD_OS=linux GOARCH=amd64 VERSION="$tag"
 ```
 
 Then create a release with the GitHub CLI:
@@ -256,6 +269,10 @@ gh release create "$tag" \
   "dist/freebsd-amd64/routerd-${tag}-freebsd-amd64.tar.gz.sha256" \
   dist/freebsd-amd64/routerd-freebsd-amd64.tar.gz \
   dist/freebsd-amd64/routerd-freebsd-amd64.tar.gz.sha256 \
+  "dist/linux-amd64/routerd-ndpi-agent-libndpi-${tag}-linux-amd64.tar.gz" \
+  "dist/linux-amd64/routerd-ndpi-agent-libndpi-${tag}-linux-amd64.tar.gz.sha256" \
+  dist/linux-amd64/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz \
+  dist/linux-amd64/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256 \
   --title "routerd ${tag}" \
   --generate-notes \
   --verify-tag
