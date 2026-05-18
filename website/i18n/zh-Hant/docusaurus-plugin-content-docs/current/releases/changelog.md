@@ -10,6 +10,12 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+### 修正
+
+- `routerctl show bgp`、`routerctl show vrrp`、`routerctl show ingress` 不再開啟
+  ownership ledger，因此在指定 status store 且 default ledger path 不可寫的環境中
+  也能正常執行。
+
 ## v20260519.0708
 
 ### 新增

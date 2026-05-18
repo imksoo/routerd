@@ -1202,10 +1202,6 @@ func showCommand(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	ledger, err := resource.LoadLedger(opts.LedgerPath)
-	if err != nil {
-		return err
-	}
 	if kind := dedicatedShowKind(opts.Target); kind != "" {
 		return writeDedicatedShow(stdout, router, store, opts, kind)
 	}
@@ -1228,6 +1224,10 @@ func showCommand(args []string, stdout, stderr io.Writer) error {
 		default:
 			return fmt.Errorf("unsupported output %q", opts.Output)
 		}
+	}
+	ledger, err := resource.LoadLedger(opts.LedgerPath)
+	if err != nil {
+		return err
 	}
 	resources := selectResources(router.Spec.Resources, kind, name)
 	if len(resources) == 0 {

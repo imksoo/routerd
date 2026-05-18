@@ -10,6 +10,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- `routerctl show bgp`, `routerctl show vrrp`, and `routerctl show ingress`
+  no longer open the ownership ledger, so they work with an explicit status
+  store even when the default ledger path is not writable.
+
 ## v20260519.0708
 
 ### Added

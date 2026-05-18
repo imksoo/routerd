@@ -10,6 +10,12 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 修正
+
+- `routerctl show bgp`、`routerctl show vrrp`、`routerctl show ingress` が
+  ownership ledger を開かないようにし、明示した status store を使う場合に
+  default ledger path が書き込めない環境でも動くようにしました。
+
 ## v20260519.0708
 
 ### 追加

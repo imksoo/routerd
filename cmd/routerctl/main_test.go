@@ -443,7 +443,7 @@ spec:
 		{"ingress", []string{"SERVICE", "kubernetes-api", "cp-01/192.168.123.11:6443", "Healthy(7/0)"}},
 	} {
 		var out bytes.Buffer
-		if err := run([]string{"show", tt.target, "--config", configPath, "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
+		if err := run([]string{"show", tt.target, "--config", configPath, "--state-file", statePath, "--ledger-file", filepath.Join(dir, "missing-ledger.db")}, &out, &bytes.Buffer{}); err != nil {
 			t.Fatalf("show %s: %v", tt.target, err)
 		}
 		got := out.String()
