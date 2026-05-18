@@ -36,6 +36,15 @@ func renderAddressFromResource(router *api.Router, source api.StatusValueSourceS
 				return "", err
 			}
 			return renderAddressValue(spec.Address), nil
+		case "VirtualIPv4Address":
+			if field != "address" {
+				return "", fmt.Errorf("unsupported VirtualIPv4Address field %q", field)
+			}
+			spec, err := res.VirtualIPv4AddressSpec()
+			if err != nil {
+				return "", err
+			}
+			return renderAddressValue(spec.Address), nil
 		default:
 			return "", fmt.Errorf("unsupported source resource kind %q in static render", kind)
 		}

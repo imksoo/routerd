@@ -990,6 +990,8 @@ func nftFirewallProtocol(protocol string) string {
 		return "meta l4proto ipv6-icmp"
 	case "ipip":
 		return "meta nfproto ipv6 meta l4proto 4"
+	case "vrrp":
+		return "ip protocol 112"
 	default:
 		return ""
 	}

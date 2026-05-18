@@ -156,7 +156,7 @@ sudo ./install.sh --with-tailscale
 The installer uses `apt-get` and installs:
 
 ```text
-ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables
+ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables frr keepalived
 ```
 
 ### Fedora-like systems
@@ -164,7 +164,7 @@ ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils
 The installer uses `dnf` and installs:
 
 ```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables frr keepalived
 ```
 
 ### Arch-like systems
@@ -172,7 +172,7 @@ ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump 
 The installer uses `pacman` and installs:
 
 ```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables
+ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables frr keepalived
 ```
 
 ### Alpine
@@ -180,7 +180,7 @@ ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie
 The installer uses `apk` and installs:
 
 ```text
-alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux e2fsprogs dosfstools exfatprogs
+alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables frr keepalived util-linux e2fsprogs dosfstools exfatprogs
 ```
 
 `alpine-conf` provides `lbu`, which routerd uses on the live ISO to preserve

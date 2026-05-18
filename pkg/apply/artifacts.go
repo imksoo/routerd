@@ -145,6 +145,34 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 			return nil
 		}
 		return []resource.Intent{artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "platform-network", nil)}
+	case "VirtualIPv4Address":
+		spec, err := res.VirtualIPv4AddressSpec()
+		if err != nil {
+			return nil
+		}
+		if defaultString(spec.Mode, "static") == "vrrp" {
+			return []resource.Intent{
+				artifact("keepalived.config", "/etc/keepalived/keepalived.conf", resource.ActionEnsure, "keepalived", map[string]string{"interface": aliases[spec.Interface]}),
+				artifact("systemd.service", "keepalived.service", resource.ActionEnsure, "systemctl", nil),
+				artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "keepalived", nil),
+			}
+		}
+		return []resource.Intent{artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "ip-addr", nil)}
+	case "BGPRouter":
+		return []resource.Intent{
+			artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil),
+			artifact("systemd.service", "frr.service", resource.ActionEnsure, "systemctl", nil),
+			artifact("frr.bgp.router", res.Metadata.Name, resource.ActionEnsure, "frr", nil),
+		}
+	case "BGPPeer":
+		spec, err := res.BGPPeerSpec()
+		if err != nil {
+			return nil
+		}
+		return []resource.Intent{
+			artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil),
+			artifact("frr.bgp.peer", spec.RouterRef+"/"+res.Metadata.Name, resource.ActionEnsure, "frr", nil),
+		}
 	case "DHCPv4Lease":
 		return []resource.Intent{artifact("routerd.dhcpv4.client", res.Metadata.Name, resource.ActionEnsure, "routerd-dhcpv4-client", nil)}
 	case "WireGuardInterface":

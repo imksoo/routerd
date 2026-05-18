@@ -10,6 +10,19 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 追加
+
+- Kubernetes edge 用に、FRR backend の `BGPRouter` / `BGPPeer`、
+  keepalived backend の `VirtualIPv4Address`、および `IngressService`
+  backend health/failover controller を追加しました。
+
+### 変更
+
+- FRR BGP 設定は `vtysh -C -f` で検証し、`frr-reload.py --reload` で
+  差分適用します。VRRP は unicast peer と `nopreempt` を既定にし、
+  track hysteresis と `preemptDelay` を扱います。BGP、VRRP、IngressService
+  listen port の firewall hole も自動派生します。
+
 ## v20260518.1810
 
 ### 追加

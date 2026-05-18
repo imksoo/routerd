@@ -14,6 +14,8 @@ Use these starter panels in Grafana, OpenObserve, or any OTLP metrics backend:
 | Active DHCP leases | `routerd.dhcp.lease.active` grouped by `network.address.family` |
 | Sticky DHCP holds | `routerd.dhcp.sticky.held` grouped by `network.address.family` |
 | Active clients | `routerd.client.active.count` |
+| BGP peers and prefixes | `routerd.bgp.peer.established` / `routerd.bgp.prefix.accepted` |
+| VIP and ingress failover | `routerd.vip.active` / `routerd.ingress.service.active` / `routerd.ingress.backend.healthy` |
 | Conntrack usage | `routerd.conntrack.count` / `routerd.conntrack.max` |
 | Firewall denies | `routerd.firewall.deny.total` grouped by `network.protocol.name` |
 

@@ -36,7 +36,7 @@ spec:
 | API group | Main kinds |
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
-| `net.routerd.net/v1alpha1` | interfaces, reusable `IPAddressSet` resources, DHCP, DNS, routes, tunnels, events, traffic flow logs |
+| `net.routerd.net/v1alpha1` | interfaces, reusable `IPAddressSet` resources, DHCP, DNS, routes, tunnels, VIP, BGP, events, traffic flow logs |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `KernelModule`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
@@ -109,6 +109,7 @@ instead of pretending parity with Linux module loading.
 | Kind | Role |
 | --- | --- |
 | `IPv4StaticAddress` | Assigns a static IPv4 address. |
+| `VirtualIPv4Address` | Declares an IPv4 `/32` VIP. `mode: vrrp` renders keepalived configuration on Linux/systemd targets. |
 | `DHCPv4Lease` | DHCPv4 lease, IPv4 address, and optional default route managed by `routerd-dhcpv4-client`. |
 | `DHCPv6Address` | Represents DHCPv6 IA_NA intent for platform renderers. |
 | `DHCPv6PrefixDelegation` | DHCPv6-PD lease managed by `routerd-dhcpv6-client`. |
@@ -160,10 +161,12 @@ endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
 | `IPAddressSet` | Defines reusable IP address sets from literal addresses and FQDNs. Linux nftables renderers materialize these as named sets for firewall, redirect, NAT, and policy-routing consumers. |
 | `IPv4Route` | Adds IPv4 routes, including DS-Lite defaults and explicit drop routes. |
+| `BGPRouter` | Declares a local BGP router. The initial backend is FRR with default-deny import policy. |
+| `BGPPeer` | Declares FRR-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
 | `IPv4SourceNAT` | Older IPv4 source NAT resource. Prefer `NAT44Rule` for new configs. |
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
-| `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. The first implementation supports one backend; backend pools and health checks are reserved for a later controller. |
+| `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP health-check intent, and failover selection are accepted; runtime failover is handled by the controller path. |
 | `LocalServiceRedirect` | Redirects LAN-origin IPv4/IPv6 traffic for `IPAddressSet` destinations to a local router port. This is intended for plaintext DNS/NTP interception without touching DoH or DoT ports. |
 | `IPv4PolicyRoute` | Represents IPv4 policy routing. |
 | `IPv4PolicyRouteSet` | Groups multiple policy routes. |
@@ -190,14 +193,51 @@ each rule.
 traffic to be masqueraded while private routed destinations or reusable address
 sets stay un-NATed.
 
+`BGPRouter` and `BGPPeer` currently target FRR. routerd renders FRR config,
+validates it with `vtysh -C -f`, applies deltas with
+`frr-reload.py --reload`, watches FRR JSON status through `BGPStateWatcher`,
+and stores peer/prefix status for `routerctl`, Web Console resources, events,
+and OTel metrics. The controller interval is 15 seconds and must not be lowered
+below 3 seconds by future tuning; observed prefix status is capped at 4096
+entries to avoid high-cardinality status churn. Import policy is default deny; add
+`spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer pools. Accepted
+imports set `ip next-hop peer-address` so Kubernetes-advertised `/32` routes
+remain reachable through the advertising speaker.
+
+`VirtualIPv4Address` currently targets Linux/systemd for VRRP mode through
+keepalived. VRRP uses explicit unicast peers and defaults to `nopreempt`; set
+`spec.vrrp.preempt: true` only when automatic failback is intended, and pair it
+with `spec.vrrp.preemptDelay` when failback should wait. The resource status
+records the rendered backend, VIP address, VRID, base priority, track-adjusted
+priority, and generated config path. `track` lowers priority when referenced
+resources such as `BGPRouter`, `BGPPeer`, or `IngressService` are not healthy.
+Track entries use hysteresis: by default three consecutive unhealthy observations
+are required to apply a penalty and two consecutive healthy observations are
+required to clear it. NixOS and FreeBSD remain groundwork until native renderers
+are implemented.
+
+`BGPPeer.spec.password` is rendered into FRR as `neighbor ... password ...`.
+Treat routerd config files and rendered FRR config as secrets when this field is
+used; external secret-source wiring is intentionally left for a separate design.
+FRR listen-address binding is a bgpd daemon invocation option (`-l` /
+`--listenon`), not a normal BGP config stanza in the managed FRR config. Keep
+host firewall zones and service-manager bgpd options aligned when BGP must be
+limited to a specific interface address.
+
 `PortForward` and `IngressService` render DNAT on Linux nftables and FreeBSD pf.
 Set `spec.hairpin.enabled: true` with `spec.hairpin.interfaces` to also allow
 LAN clients to reach the service through the WAN address. Hairpin mode requires
 `listen.address` or `listen.addressFrom`; routerd renders the LAN-side DNAT plus
 the return-path masquerade/NAT reflection rule. `listen.addressFrom` and backend
 `addressFrom` can reference statically rendered address resources such as
-`IPv4StaticAddress/<name>.address`; dynamic status sources are reserved for a
-later runtime controller.
+`IPv4StaticAddress/<name>.address` or `VirtualIPv4Address/<name>.address`.
+`IngressService` accepts multiple backends, TCP health checks, and failover
+selection. The runtime controller resolves backend FQDNs, falls back to the
+previous resolved IPv4 address when DNS temporarily fails, records backend
+health in status, and selects the active backend. Linux nftables rendering uses
+that active backend on the next NAT reconcile. Existing conntrack entries are
+not flushed, so established flows can stay on the old backend while new flows
+use the selected backend.
 
 `IPAddressSet` writes literal IPv4/IPv6 addresses into nftables named sets when
 the ruleset is rendered. FQDN `A`/`AAAA` records are resolved by the runtime
@@ -282,7 +322,7 @@ from DHCP, IPAM, or another declarative resource.
 | `FirewallRule` | Represents exceptions that cannot be expressed by the role matrix. Supports source CIDRs, destination CIDRs, and `IPAddressSet` destination refs. |
 | `ClientPolicy` | Classifies clients by MAC address for guest isolation on Linux nftables. |
 | `PortForward` | Adds a single-target ingress DNAT rule and, when routerd manages the firewall table, an internal forward accept rule. Optional hairpin mode adds LAN-side DNAT and return-path SNAT. |
-| `IngressService` | Adds the same single-backend ingress DNAT path as `PortForward`; multiple backends, selection policy, and health checks are not enabled yet. Optional hairpin mode matches `PortForward`. |
+| `IngressService` | Adds the same ingress DNAT path as `PortForward`; multiple backends, failover selection, and health-check intent are accepted, with runtime failover state handled by the controller path. Optional hairpin mode matches `PortForward`. |
 | `LocalServiceRedirect` | Adds local service redirect rules for `IPAddressSet` destinations. The firewall renderer opens the matching local input ports for the source zone. |
 
 Stateful filtering renders into the nftables `inet routerd_filter` table.

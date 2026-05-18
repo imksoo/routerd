@@ -380,6 +380,58 @@ type IPv4StaticAddressSpec struct {
 	AllowOverlapReason string `yaml:"allowOverlapReason,omitempty" json:"allowOverlapReason,omitempty"`
 }
 
+type VirtualIPv4AddressSpec struct {
+	Interface   string                `yaml:"interface" json:"interface"`
+	Address     string                `yaml:"address" json:"address"`
+	Mode        string                `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=static,enum=vrrp"`
+	VRRP        VirtualIPv4VRRPSpec   `yaml:"vrrp,omitempty" json:"vrrp,omitempty"`
+	Track       []ResourceTrackSpec   `yaml:"track,omitempty" json:"track,omitempty"`
+	When        ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
+	AddressFrom StatusValueSourceSpec `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
+}
+
+type VirtualIPv4VRRPSpec struct {
+	VirtualRouterID int      `yaml:"virtualRouterID" json:"virtualRouterID" jsonschema:"minimum=1,maximum=255"`
+	Priority        int      `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=1,maximum=254"`
+	Preempt         *bool    `yaml:"preempt,omitempty" json:"preempt,omitempty"`
+	PreemptDelay    string   `yaml:"preemptDelay,omitempty" json:"preemptDelay,omitempty"`
+	Peers           []string `yaml:"peers,omitempty" json:"peers,omitempty"`
+	AdvertInterval  string   `yaml:"advertInterval,omitempty" json:"advertInterval,omitempty"`
+	Authentication  string   `yaml:"authentication,omitempty" json:"authentication,omitempty"`
+}
+
+type ResourceTrackSpec struct {
+	Resource                    string `yaml:"resource" json:"resource"`
+	UnhealthyPenalty            int    `yaml:"unhealthyPenalty,omitempty" json:"unhealthyPenalty,omitempty" jsonschema:"minimum=0,maximum=254"`
+	ConfirmConsecutiveUnhealthy int    `yaml:"confirmConsecutiveUnhealthy,omitempty" json:"confirmConsecutiveUnhealthy,omitempty" jsonschema:"minimum=1,maximum=255"`
+	ConfirmConsecutiveHealthy   int    `yaml:"confirmConsecutiveHealthy,omitempty" json:"confirmConsecutiveHealthy,omitempty" jsonschema:"minimum=1,maximum=255"`
+}
+
+type BGPRouterSpec struct {
+	ASN          uint32              `yaml:"asn" json:"asn" jsonschema:"minimum=1"`
+	RouterID     string              `yaml:"routerID" json:"routerID"`
+	Listen       BGPListenSpec       `yaml:"listen,omitempty" json:"listen,omitempty"`
+	ImportPolicy BGPImportPolicySpec `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
+	Backend      string              `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=frr"`
+	When         ResourceWhenSpec    `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type BGPListenSpec struct {
+	Port int `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+}
+
+type BGPImportPolicySpec struct {
+	AllowedPrefixes []string `yaml:"allowedPrefixes,omitempty" json:"allowedPrefixes,omitempty"`
+}
+
+type BGPPeerSpec struct {
+	RouterRef string           `yaml:"routerRef" json:"routerRef"`
+	PeerASN   uint32           `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
+	Peers     []string         `yaml:"peers" json:"peers"`
+	Password  string           `yaml:"password,omitempty" json:"password,omitempty"`
+	When      ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
 type DHCPv4LeaseSpec struct {
 	Interface        string `yaml:"interface" json:"interface"`
 	Hostname         string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
@@ -1030,7 +1082,7 @@ type IngressHealthCheckSpec struct {
 }
 
 type IngressServicePolicySpec struct {
-	Selection           string `yaml:"selection,omitempty" json:"selection,omitempty" jsonschema:"enum=,enum=sourceHash,enum=random,enum=failover"`
+	Selection           string `yaml:"selection,omitempty" json:"selection,omitempty" jsonschema:"enum=,enum=failover"`
 	OnNoHealthyBackends string `yaml:"onNoHealthyBackends,omitempty" json:"onNoHealthyBackends,omitempty" jsonschema:"enum=,enum=drop,enum=reject"`
 }
 
@@ -1317,6 +1369,18 @@ func (r Resource) PPPoESessionSpec() (PPPoESessionSpec, error) {
 
 func (r Resource) IPv4StaticAddressSpec() (IPv4StaticAddressSpec, error) {
 	return specAs[IPv4StaticAddressSpec](r)
+}
+
+func (r Resource) VirtualIPv4AddressSpec() (VirtualIPv4AddressSpec, error) {
+	return specAs[VirtualIPv4AddressSpec](r)
+}
+
+func (r Resource) BGPRouterSpec() (BGPRouterSpec, error) {
+	return specAs[BGPRouterSpec](r)
+}
+
+func (r Resource) BGPPeerSpec() (BGPPeerSpec, error) {
+	return specAs[BGPPeerSpec](r)
 }
 
 func (r Resource) DHCPv4LeaseSpec() (DHCPv4LeaseSpec, error) {

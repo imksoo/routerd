@@ -1,0 +1,120 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+package config
+
+import (
+	"strings"
+	"testing"
+
+	"routerd/pkg/api"
+)
+
+func TestValidateBGPRouterPeerAndVirtualIPv4Address(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "k8s-api"}, Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "10.240.70.10/32",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Priority: 150, Peers: []string{"10.240.70.3"}},
+				Track:     []api.ResourceTrackSpec{{Resource: "BGPRouter/lan", UnhealthyPenalty: 50}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:          64512,
+				RouterID:     "10.240.70.2",
+				ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.240.70.200/29"}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "k8s"}, Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64513,
+				Peers:     []string{"10.240.70.21", "10.240.70.22"},
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate BGP/VRRP resources: %v", err)
+	}
+	router.Spec.Resources[3].Spec = api.BGPPeerSpec{RouterRef: "BGPRouter/missing", PeerASN: 64513, Peers: []string{"10.240.70.21"}}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing BGPRouter") {
+		t.Fatalf("expected missing routerRef error, got %v", err)
+	}
+}
+
+func TestValidateVirtualIPv4AddressVRRPRequiresPeers(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "10.240.70.10/32",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.vrrp.peers is required") {
+		t.Fatalf("expected vrrp peers error, got %v", err)
+	}
+}
+
+func TestValidateVirtualIPv4AddressPreemptDelayRequiresPreempt(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "10.240.70.10/32",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Peers: []string{"10.240.70.3"}, PreemptDelay: "5m"},
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.vrrp.preemptDelay requires") {
+		t.Fatalf("expected preemptDelay validation error, got %v", err)
+	}
+}
+
+func TestValidateVirtualIPv4AddressRejectsDuplicateVRIDOnInterface(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip-a"}, Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan", Address: "10.240.70.10/32", Mode: "vrrp",
+				VRRP: api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Peers: []string{"10.240.70.3"}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip-b"}, Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan", Address: "10.240.70.11/32", Mode: "vrrp",
+				VRRP: api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Peers: []string{"10.240.70.3"}},
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "virtualRouterID conflicts") {
+		t.Fatalf("expected duplicate VRID validation error, got %v", err)
+	}
+}
+
+func TestValidateVirtualIPv4AddressRejectsInvalidVRRPPeer(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan", Address: "10.240.70.10/32", Mode: "vrrp",
+				VRRP: api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Peers: []string{"bad_peer"}},
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.vrrp.peers[0]") {
+		t.Fatalf("expected invalid VRRP peer validation error, got %v", err)
+	}
+}

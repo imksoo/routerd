@@ -10,6 +10,19 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Added FRR-backed `BGPRouter` / `BGPPeer`, keepalived-backed
+  `VirtualIPv4Address`, and runtime `IngressService` backend health/failover
+  control for Kubernetes edge use cases.
+
+### Changed
+
+- FRR BGP config is now syntax-checked with `vtysh -C -f` and applied through
+  `frr-reload.py --reload`. VRRP defaults to unicast peers with `nopreempt`,
+  supports track hysteresis and `preemptDelay`, and Linux firewall holes are
+  derived for BGP, VRRP, and IngressService listener ports.
+
 ## v20260518.1810
 
 ### Added

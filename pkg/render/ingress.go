@@ -75,9 +75,9 @@ func ingressRuleFromService(router *api.Router, aliases map[string]string, res a
 	if len(spec.Backends) == 0 {
 		return ingressNATRule{}, false, fmt.Errorf("%s needs at least one backend", res.ID())
 	}
-	if len(spec.Backends) > 1 {
-		return ingressNATRule{}, false, fmt.Errorf("%s backend pools are not implemented yet", res.ID())
-	}
+	// Static nftables rendering uses the first backend as the initial active
+	// endpoint. The controller-owned runtime state can update the active
+	// endpoint as health checks change without regenerating the whole ruleset.
 	return ingressRuleFromEndpoint(router, aliases, res, spec.Listen, spec.Backends[0], spec.Hairpin)
 }
 

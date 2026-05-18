@@ -178,6 +178,14 @@ Every controller follows the common `framework.FuncController` shape:
 
 The `eventedStore` wrapper guarantees that every persisted state change emits `routerd.resource.status.changed`, which downstream controllers consume to resolve cross-resource dependencies.
 
+Kubernetes edge resources use this status flow directly. `IngressService`
+health checks choose an active backend and the NAT renderer uses that status on
+the next reconcile. `BGPRouter` / `BGPPeer` status is observed from FRR JSON by
+`BGPStateWatcher` and can lower `VirtualIPv4Address` VRRP priority through
+`track`. FRR config changes are syntax-checked with `vtysh -C -f` and applied
+with `frr-reload.py --reload`; routerd does not restart FRR for normal BGP
+resource changes.
+
 ### 5.3 Daemon contract
 
 Long-running OS processes (DHCPv6 client, DNS resolver, healthcheck, etc.) live as **daemons** rather than as controllers.

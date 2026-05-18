@@ -1076,6 +1076,63 @@ func TestNftablesInternalWANHolesUseOwningInterface(t *testing.T) {
 	}
 }
 
+func TestNftablesFirewallHolesForBGPVRRPAndIngress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "ens19"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.FirewallPolicySpec{LogDeny: true},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"Interface/lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "k8s"},
+			Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "10.240.70.2"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			Metadata: api.ObjectMeta{Name: "api-vip"},
+			Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "10.240.70.10/32",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"},
+			Metadata: api.ObjectMeta{Name: "k8s-api"},
+			Spec: api.IngressServiceSpec{
+				Listen:   api.IngressListenSpec{Interface: "lan", Address: "10.240.70.10", Protocol: "tcp", Port: 6443},
+				Backends: []api.IngressBackendSpec{{Address: "10.240.70.11", Port: 6443}},
+			},
+		},
+	}}}
+	data, err := NftablesFirewall(router, InternalFirewallHoles(router))
+	if err != nil {
+		t.Fatalf("render nftables firewall: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`iifname "ens19" tcp dport 179 counter accept comment "net.routerd.net/v1alpha1/BGPRouter/k8s"`,
+		`iifname "ens19" ip protocol 112 counter accept comment "net.routerd.net/v1alpha1/VirtualIPv4Address/api-vip"`,
+		`iifname "ens19" tcp dport 6443 counter accept comment "firewall.routerd.net/v1alpha1/IngressService/k8s-api"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNftablesClientPolicyIncludeGuestMACs(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

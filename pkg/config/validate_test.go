@@ -872,11 +872,26 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 	}
 
 	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+		Listen:      api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
+		Backends:    []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}, {Address: "172.18.1.90", Port: 8443}},
+		HealthCheck: api.IngressHealthCheckSpec{Protocol: "tcp", Interval: "5s", Timeout: "1s"},
+		Policy:      api.IngressServicePolicySpec{Selection: "failover", OnNoHealthyBackends: "reject"},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate ingress backend pool: %v", err)
+	}
+
+	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
 		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
 		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}, {Address: "172.18.1.90", Port: 8443}},
+		Policy:   api.IngressServicePolicySpec{Selection: "random"},
 	}
-	if err := Validate(router); err == nil {
-		t.Fatal("expected backend pool to be rejected until pool support is implemented")
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.policy.selection must be failover") {
+		t.Fatalf("expected unsupported ingress selection to be rejected, got %v", err)
+	}
+	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
+		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
 	}
 
 	router.Spec.Resources[2].Spec = api.PortForwardSpec{

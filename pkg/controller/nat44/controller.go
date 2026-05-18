@@ -126,6 +126,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			SNATAddress:               snatAddress,
 		})
 	}
+	renderRouter := c.effectiveIngressRouter()
 	if platform.CurrentOS() == platform.OSFreeBSD {
 		if len(rules) == 0 {
 			if c.DryRun {
@@ -135,7 +136,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		}
 		return c.reconcilePF(ctx, rules)
 	}
-	data, err := render.NftablesNAT44RulesForRouter(c.Router, rules)
+	data, err := render.NftablesNAT44RulesForRouter(renderRouter, rules)
 	if err != nil {
 		return err
 	}
@@ -332,6 +333,50 @@ func (c Controller) resolveSNATAddress(spec api.NAT44RuleSpec) (string, string) 
 		return "", "SNATAddressSourcePending"
 	}
 	return value, ""
+}
+
+func (c Controller) effectiveIngressRouter() *api.Router {
+	if c.Router == nil || c.Store == nil {
+		return c.Router
+	}
+	next := *c.Router
+	next.Spec.Resources = append([]api.Resource(nil), c.Router.Spec.Resources...)
+	for i, resource := range next.Spec.Resources {
+		if resource.APIVersion != api.FirewallAPIVersion || resource.Kind != "IngressService" {
+			continue
+		}
+		spec, err := resource.IngressServiceSpec()
+		if err != nil {
+			continue
+		}
+		active := c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)["activeBackend"]
+		name, address, port := activeBackend(active)
+		if address == "" || port == 0 {
+			continue
+		}
+		spec.Backends = []api.IngressBackendSpec{{Name: name, Address: address, Port: port}}
+		next.Spec.Resources[i].Spec = spec
+	}
+	return &next
+}
+
+func activeBackend(value any) (string, string, int) {
+	item, ok := value.(map[string]any)
+	if !ok {
+		return "", "", 0
+	}
+	name := strings.TrimSpace(fmt.Sprint(item["name"]))
+	address := strings.TrimSpace(fmt.Sprint(item["address"]))
+	port := 0
+	switch typed := item["port"].(type) {
+	case int:
+		port = typed
+	case int64:
+		port = int(typed)
+	case float64:
+		port = int(typed)
+	}
+	return name, address, port
 }
 
 func statusAddressValue(value string) string {

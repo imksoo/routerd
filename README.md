@@ -89,6 +89,8 @@ Implemented resource areas include:
   DNSSEC flags, multiple listen profiles, and cache
 - IPv4 and IPv6 address derivation, static routes, default route policy,
   route-set exclusions, path MTU policy, TCP MSS clamping, NAT44, and DS-Lite
+- Kubernetes edge building blocks: FRR-backed BGP peers, keepalived-backed
+  IPv4 VIPs, and multi-backend `IngressService` health/failover
 - guest-device isolation with `ClientPolicy`, DHCPv4 reservations, and
   MAC-based nftables filtering on shared LAN segments
 - `HealthCheck`, `EgressRoutePolicy`, `EventRule`, and `DerivedEvent`

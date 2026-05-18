@@ -10,3 +10,4 @@ website/build/
 website/node_modules/
 webconsole/node_modules/
 .claude/
+/.tmp/

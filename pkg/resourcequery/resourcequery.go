@@ -137,7 +137,7 @@ func APIVersionForKind(kind string) string {
 		return api.RouterAPIVersion
 	case "LogSink", "LogRetention", "Sysctl", "SysctlProfile", "KernelModule", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "NTPServer", "WebConsole", "NixOSHost":
 		return api.SystemAPIVersion
-	case "FirewallZone", "FirewallPolicy", "FirewallLog", "FirewallRule", "ClientPolicy":
+	case "FirewallZone", "FirewallPolicy", "FirewallLog", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
 	default:
 		return api.NetAPIVersion

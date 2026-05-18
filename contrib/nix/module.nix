@@ -80,6 +80,8 @@ in {
         nftables
         dnsmasq
         conntrack-tools
+        frr
+        keepalived
         wireguard-tools
         strongswan
         radvd

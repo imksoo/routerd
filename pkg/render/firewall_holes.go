@@ -27,6 +27,20 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 	}
 	for _, resource := range router.Spec.Resources {
 		switch resource.Kind {
+		case "BGPRouter":
+			spec, _ := resource.BGPRouterSpec()
+			port := defaultInt(spec.Listen.Port, 179)
+			for _, zone := range zones.nonSelfZones() {
+				add(resource.Metadata.Name+"-bgp-"+zone, zone, "self", "tcp", port, resource.ID(), zones.firstIfName(zone))
+			}
+		case "VirtualIPv4Address":
+			spec, _ := resource.VirtualIPv4AddressSpec()
+			if strings.TrimSpace(spec.Mode) == "vrrp" {
+				add(resource.Metadata.Name+"-vrrp", zones.byResource(spec.Interface), "self", "vrrp", 0, resource.ID(), zones.ifNameByResource(spec.Interface))
+			}
+		case "IngressService":
+			spec, _ := resource.IngressServiceSpec()
+			add(resource.Metadata.Name+"-ingress-"+spec.Listen.Protocol, zones.byResource(spec.Listen.Interface), "self", spec.Listen.Protocol, spec.Listen.Port, resource.ID(), zones.ifNameByResource(spec.Listen.Interface))
 		case "DHCPv6PrefixDelegation":
 			spec, _ := resource.DHCPv6PrefixDelegationSpec()
 			add(resource.Metadata.Name+"-dhcpv6-client", zones.byResource(spec.Interface), "self", "udp", 546, resource.ID(), zones.ifNameByResource(spec.Interface))
@@ -214,6 +228,24 @@ func (z internalFirewallZonesByRef) firstUntrust() string {
 func (z internalFirewallZonesByRef) firstUntrustIfName() string {
 	zone := z.firstUntrust()
 	if zone == "" || len(z.zoneIf[zone]) == 0 {
+		return ""
+	}
+	return z.zoneIf[zone][0]
+}
+
+func (z internalFirewallZonesByRef) nonSelfZones() []string {
+	var out []string
+	for name := range z.role {
+		if name != "" && name != "self" {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (z internalFirewallZonesByRef) firstIfName(zone string) string {
+	if len(z.zoneIf[zone]) == 0 {
 		return ""
 	}
 	return z.zoneIf[zone][0]

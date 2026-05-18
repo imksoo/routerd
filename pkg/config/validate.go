@@ -49,10 +49,12 @@ func Validate(router *api.Router) error {
 	dsliteTunnels := map[string]bool{}
 	routeSets := map[string]bool{}
 	healthChecks := map[string]bool{}
+	bgpRouters := map[string]bool{}
 	zones := map[string]bool{}
 	ipAddressSets := map[string]bool{}
 	udpListenPorts := map[int]string{}
 	staticByInterfaceAddress := map[string]string{}
+	vrrpByInterfaceVRID := map[string]string{}
 	protectedInterfaces := map[string]bool{}
 	for _, name := range router.Spec.Apply.ProtectedInterfaces {
 		protectedInterfaces[name] = true
@@ -223,6 +225,22 @@ func Validate(router *api.Router) error {
 			}
 			staticByInterfaceAddress[key] = res.ID()
 		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv4Address" {
+			spec, err := res.VirtualIPv4AddressSpec()
+			if err != nil {
+				return err
+			}
+			if defaultString(spec.Mode, "static") == "vrrp" {
+				key := spec.Interface + "|" + strconv.Itoa(spec.VRRP.VirtualRouterID)
+				if existing := vrrpByInterfaceVRID[key]; existing != "" {
+					return fmt.Errorf("%s spec.vrrp.virtualRouterID conflicts with %s on interface %q", res.ID(), existing, spec.Interface)
+				}
+				vrrpByInterfaceVRID[key] = res.ID()
+			}
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "BGPRouter" {
+			bgpRouters[res.Metadata.Name] = true
+		}
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallZone" {
 			zones[res.Metadata.Name] = true
 		}
@@ -245,7 +263,7 @@ func Validate(router *api.Router) error {
 
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Scope", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface", "PPPoESession":
+		case "IPv4StaticAddress", "VirtualIPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Scope", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface", "PPPoESession":
 			name, err := interfaceRef(res)
 			if err != nil {
 				return err
@@ -258,6 +276,16 @@ func Validate(router *api.Router) error {
 			}
 			if (res.Kind == "PPPoEInterface" || res.Kind == "PPPoESession") && !baseInterfaces[name] {
 				return fmt.Errorf("%s spec.interface must reference a base Interface %q", res.ID(), name)
+			}
+		}
+		if res.Kind == "BGPPeer" {
+			spec, err := res.BGPPeerSpec()
+			if err != nil {
+				return err
+			}
+			kind, name, _ := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
+			if kind != "BGPRouter" || !bgpRouters[name] {
+				return fmt.Errorf("%s spec.routerRef references missing BGPRouter %q", res.ID(), spec.RouterRef)
 			}
 		}
 		if res.Kind == "Bridge" {
@@ -1640,6 +1668,140 @@ func validateResource(res api.Resource) error {
 		if spec.AllowOverlap && spec.AllowOverlapReason == "" {
 			return fmt.Errorf("%s spec.allowOverlapReason is required when allowOverlap is true", res.ID())
 		}
+	case "VirtualIPv4Address":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.VirtualIPv4AddressSpec()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(spec.Interface) == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		if strings.TrimSpace(spec.Address) == "" && strings.TrimSpace(spec.AddressFrom.Resource) == "" {
+			return fmt.Errorf("%s spec.address or spec.addressFrom is required", res.ID())
+		}
+		if strings.TrimSpace(spec.Address) != "" && strings.TrimSpace(spec.AddressFrom.Resource) != "" {
+			return fmt.Errorf("%s spec.address and spec.addressFrom are mutually exclusive", res.ID())
+		}
+		if strings.TrimSpace(spec.Address) != "" {
+			prefix, err := netip.ParsePrefix(spec.Address)
+			if err != nil || !prefix.Addr().Is4() {
+				return fmt.Errorf("%s spec.address must be an IPv4 prefix", res.ID())
+			}
+			if prefix.Bits() != 32 {
+				return fmt.Errorf("%s spec.address must be an IPv4 /32 prefix", res.ID())
+			}
+		}
+		if err := validateIngressAddressSource(res.ID(), "spec.addressFrom", spec.AddressFrom); err != nil {
+			return err
+		}
+		switch defaultString(spec.Mode, "static") {
+		case "static":
+		case "vrrp":
+			if spec.VRRP.VirtualRouterID < 1 || spec.VRRP.VirtualRouterID > 255 {
+				return fmt.Errorf("%s spec.vrrp.virtualRouterID must be within 1-255", res.ID())
+			}
+			if len(spec.VRRP.Peers) == 0 {
+				return fmt.Errorf("%s spec.vrrp.peers is required for unicast VRRP", res.ID())
+			}
+			if spec.VRRP.Priority != 0 && (spec.VRRP.Priority < 1 || spec.VRRP.Priority > 254) {
+				return fmt.Errorf("%s spec.vrrp.priority must be within 1-254", res.ID())
+			}
+			if spec.VRRP.AdvertInterval != "" {
+				if _, err := time.ParseDuration(spec.VRRP.AdvertInterval); err != nil {
+					return fmt.Errorf("%s spec.vrrp.advertInterval is invalid: %w", res.ID(), err)
+				}
+			}
+			if spec.VRRP.PreemptDelay != "" {
+				if spec.VRRP.Preempt == nil || !*spec.VRRP.Preempt {
+					return fmt.Errorf("%s spec.vrrp.preemptDelay requires spec.vrrp.preempt=true", res.ID())
+				}
+				if _, err := time.ParseDuration(spec.VRRP.PreemptDelay); err != nil {
+					return fmt.Errorf("%s spec.vrrp.preemptDelay is invalid: %w", res.ID(), err)
+				}
+			}
+			for i, peer := range spec.VRRP.Peers {
+				if err := validateAddressOrHostname(peer); err != nil {
+					return fmt.Errorf("%s spec.vrrp.peers[%d] must be a single peer address or hostname", res.ID(), i)
+				}
+			}
+		default:
+			return fmt.Errorf("%s spec.mode must be static or vrrp", res.ID())
+		}
+		for i, track := range spec.Track {
+			if err := validateSourceResourceRef(track.Resource); err != nil {
+				return fmt.Errorf("%s spec.track[%d].resource %w", res.ID(), i, err)
+			}
+			if track.UnhealthyPenalty < 0 || track.UnhealthyPenalty > 254 {
+				return fmt.Errorf("%s spec.track[%d].unhealthyPenalty must be within 0-254", res.ID(), i)
+			}
+			if track.ConfirmConsecutiveUnhealthy < 0 || track.ConfirmConsecutiveUnhealthy > 255 {
+				return fmt.Errorf("%s spec.track[%d].confirmConsecutiveUnhealthy must be non-negative and within 1-255 when set", res.ID(), i)
+			}
+			if track.ConfirmConsecutiveHealthy < 0 || track.ConfirmConsecutiveHealthy > 255 {
+				return fmt.Errorf("%s spec.track[%d].confirmConsecutiveHealthy must be non-negative and within 1-255 when set", res.ID(), i)
+			}
+		}
+	case "BGPRouter":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.BGPRouterSpec()
+		if err != nil {
+			return err
+		}
+		if spec.ASN == 0 {
+			return fmt.Errorf("%s spec.asn is required", res.ID())
+		}
+		addr, err := netip.ParseAddr(spec.RouterID)
+		if err != nil || !addr.Is4() {
+			return fmt.Errorf("%s spec.routerID must be an IPv4 address", res.ID())
+		}
+		if spec.Listen.Port != 0 && (spec.Listen.Port < 1 || spec.Listen.Port > 65535) {
+			return fmt.Errorf("%s spec.listen.port must be within 1-65535", res.ID())
+		}
+		switch defaultString(spec.Backend, "frr") {
+		case "frr":
+		default:
+			return fmt.Errorf("%s spec.backend must be frr", res.ID())
+		}
+		for i, prefix := range spec.ImportPolicy.AllowedPrefixes {
+			parsed, err := netip.ParsePrefix(prefix)
+			if err != nil || !parsed.Addr().Is4() {
+				return fmt.Errorf("%s spec.importPolicy.allowedPrefixes[%d] must be an IPv4 prefix", res.ID(), i)
+			}
+		}
+	case "BGPPeer":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.BGPPeerSpec()
+		if err != nil {
+			return err
+		}
+		kind, name, ok := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
+		if !ok || kind != "BGPRouter" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s spec.routerRef must reference BGPRouter/<name>", res.ID())
+		}
+		if spec.PeerASN == 0 {
+			return fmt.Errorf("%s spec.peerASN is required", res.ID())
+		}
+		if len(spec.Peers) == 0 {
+			return fmt.Errorf("%s spec.peers is required", res.ID())
+		}
+		seenPeers := map[string]bool{}
+		for i, peer := range spec.Peers {
+			peer = strings.TrimSpace(peer)
+			if peer == "" || strings.ContainsAny(peer, " \t\n\r") {
+				return fmt.Errorf("%s spec.peers[%d] must be a single peer address or hostname", res.ID(), i)
+			}
+			if seenPeers[peer] {
+				return fmt.Errorf("%s spec.peers[%d] duplicates %q", res.ID(), i, peer)
+			}
+			seenPeers[peer] = true
+		}
 	case "DHCPv6Address", "IPv6RAAddress":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -2914,14 +3076,34 @@ func validateResource(res api.Resource) error {
 		if len(spec.Backends) == 0 {
 			return fmt.Errorf("%s spec.backends is required", res.ID())
 		}
-		if len(spec.Backends) > 1 {
-			return fmt.Errorf("%s backend pools are not implemented yet; use one backend", res.ID())
+		if spec.HealthCheck.Protocol != "" {
+			switch spec.HealthCheck.Protocol {
+			case "tcp":
+			default:
+				return fmt.Errorf("%s spec.healthCheck.protocol must be tcp", res.ID())
+			}
 		}
-		if spec.HealthCheck.Protocol != "" || spec.HealthCheck.Interval != "" || spec.HealthCheck.Timeout != "" {
-			return fmt.Errorf("%s spec.healthCheck requires backend pool support, which is not implemented yet", res.ID())
+		for field, value := range map[string]string{"interval": spec.HealthCheck.Interval, "timeout": spec.HealthCheck.Timeout} {
+			if value == "" {
+				continue
+			}
+			if _, err := time.ParseDuration(value); err != nil {
+				return fmt.Errorf("%s spec.healthCheck.%s is invalid: %w", res.ID(), field, err)
+			}
 		}
-		if spec.Policy.Selection != "" || spec.Policy.OnNoHealthyBackends != "" {
-			return fmt.Errorf("%s spec.policy requires backend pool support, which is not implemented yet", res.ID())
+		if spec.Policy.Selection != "" {
+			switch spec.Policy.Selection {
+			case "failover":
+			default:
+				return fmt.Errorf("%s spec.policy.selection must be failover", res.ID())
+			}
+		}
+		if spec.Policy.OnNoHealthyBackends != "" {
+			switch spec.Policy.OnNoHealthyBackends {
+			case "drop", "reject":
+			default:
+				return fmt.Errorf("%s spec.policy.onNoHealthyBackends must be drop or reject", res.ID())
+			}
 		}
 		for i, backend := range spec.Backends {
 			if err := validateIngressTarget(res.ID(), fmt.Sprintf("spec.backends[%d]", i), backend.Address, backend.AddressFrom, backend.Port); err != nil {
@@ -3606,6 +3788,9 @@ func interfaceRef(res api.Resource) (string, error) {
 	case "IPv4StaticAddress":
 		spec, err := res.IPv4StaticAddressSpec()
 		return spec.Interface, err
+	case "VirtualIPv4Address":
+		spec, err := res.VirtualIPv4AddressSpec()
+		return spec.Interface, err
 	case "DHCPv4Lease":
 		spec, err := res.DHCPv4LeaseSpec()
 		return spec.Interface, err
@@ -3813,6 +3998,36 @@ func validateSourceResourceRef(value string) error {
 	parts := strings.Split(strings.TrimSpace(value), "/")
 	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
 		return fmt.Errorf("must be Kind/name")
+	}
+	return nil
+}
+
+func validateAddressOrHostname(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, " \t\n\r") {
+		return fmt.Errorf("must be a single address or hostname")
+	}
+	if _, err := netip.ParseAddr(value); err == nil {
+		return nil
+	}
+	hostname := strings.TrimSuffix(value, ".")
+	if hostname == "" || len(hostname) > 253 || strings.Contains(hostname, "..") {
+		return fmt.Errorf("must be a single address or hostname")
+	}
+	for _, label := range strings.Split(hostname, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return fmt.Errorf("must be a single address or hostname")
+		}
+		for _, r := range label {
+			switch {
+			case r >= 'a' && r <= 'z':
+			case r >= 'A' && r <= 'Z':
+			case r >= '0' && r <= '9':
+			case r == '-':
+			default:
+				return fmt.Errorf("must be a single address or hostname")
+			}
+		}
 	}
 	return nil
 }

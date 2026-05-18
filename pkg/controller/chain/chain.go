@@ -25,13 +25,16 @@ import (
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
 	"routerd/pkg/conntrack"
+	bgpcontroller "routerd/pkg/controller/bgp"
 	"routerd/pkg/controller/conntrackobserver"
 	"routerd/pkg/controller/dhcpv4lease"
 	dnsresolvercontroller "routerd/pkg/controller/dnsresolver"
 	firewallcontroller "routerd/pkg/controller/firewall"
 	"routerd/pkg/controller/framework"
+	ingressservicecontroller "routerd/pkg/controller/ingressservice"
 	"routerd/pkg/controller/nat44"
 	"routerd/pkg/controller/pppoesession"
+	vrrpcontroller "routerd/pkg/controller/vrrp"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/derived"
 	"routerd/pkg/egressroute"
@@ -136,6 +139,10 @@ func resourceOwnerController(kind string) string {
 	switch kind {
 	case "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress", "Interface", "Link":
 		return "address"
+	case "VirtualIPv4Address":
+		return "vrrp"
+	case "BGPRouter", "BGPPeer":
+		return "bgp"
 	case "DHCPv4Lease":
 		return "dhcpv4lease"
 	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Scope", "DHCPv6Information", "IPv6RouterAdvertisement":
@@ -551,6 +558,9 @@ func (r *Runner) Start(ctx context.Context) error {
 	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
+	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, Logger: logger}
+	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
+	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: r.Opts.DryRunNAT, DryRunRoute: r.Opts.DryRunRoute, DryRunFirewall: r.Opts.DryRunFirewall, NftCommand: r.Opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
 	firewall := firewallcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunFirewall, NftablesPath: firstNonEmpty(r.Opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: r.Opts.NftCommand, Logger: logger}
 	conntrackObs := conntrackobserver.Controller{Router: r.Router, Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: r.Opts.ConntrackInterval, Logger: logger}
@@ -612,7 +622,10 @@ func (r *Runner) Start(ctx context.Context) error {
 		}},
 		framework.FuncController{ControllerName: "dns-resolver", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, ReconcileFunc: dnsResolver.HandleEvent, PeriodicFunc: dnsResolver.Reconcile},
 		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Lease", "PPPoESession"), PeriodicFunc: wan.Reconcile},
-		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy"), PeriodicFunc: nat.Reconcile},
+		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: statusSubscriptions("IngressService"), PeriodicFunc: ingressService.Reconcile},
+		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy", "IngressService"), PeriodicFunc: nat.Reconcile},
+		framework.FuncController{ControllerName: "bgp", Every: 15 * time.Second, Subs: statusSubscriptions("BGPRouter", "BGPPeer"), PeriodicFunc: bgp.Reconcile},
+		framework.FuncController{ControllerName: "vrrp", Every: 15 * time.Second, Subs: statusSubscriptions("VirtualIPv4Address", "BGPRouter", "BGPPeer", "IngressService"), PeriodicFunc: vrrp.Reconcile},
 		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptions("IPAddressSet", "LocalServiceRedirect"), PeriodicFunc: ipAddressSet.Reconcile},
 	}
 	if !r.Opts.FirewallDisabled {
