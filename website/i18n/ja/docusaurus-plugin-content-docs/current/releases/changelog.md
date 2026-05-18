@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260519.0743
+
 ### 変更
 
 - 公開 documentation と example configuration の名前を整理し、内部 lab の

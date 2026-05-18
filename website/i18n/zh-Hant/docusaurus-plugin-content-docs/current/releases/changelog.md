@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ## Unreleased
 
+## v20260519.0743
+
 ### 變更
 
 - 整理公開 documentation 與 example configuration 的命名，避免內部 lab

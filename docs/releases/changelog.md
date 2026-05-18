@@ -10,6 +10,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260519.0743
+
 ### Changed
 
 - Sanitized public documentation and example configuration names so internal
