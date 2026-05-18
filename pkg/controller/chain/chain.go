@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -558,7 +559,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
-	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, Logger: logger}
+	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
 	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: r.Opts.DryRunNAT, DryRunRoute: r.Opts.DryRunRoute, DryRunFirewall: r.Opts.DryRunFirewall, NftCommand: r.Opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
@@ -639,6 +640,71 @@ func (r *Runner) Start(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+func ingressServiceDNSResolver(router *api.Router, store Store) *net.Resolver {
+	endpoint, ok := dnsResolverEndpoint(router, store)
+	if !ok {
+		return nil
+	}
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			dialer := net.Dialer{}
+			return dialer.DialContext(ctx, network, endpoint)
+		},
+	}
+}
+
+func dnsResolverEndpoint(router *api.Router, store Store) (string, bool) {
+	if router == nil {
+		return "", false
+	}
+	var candidates []string
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DNSResolver" {
+			continue
+		}
+		spec, err := resource.DNSResolverSpec()
+		if err != nil {
+			continue
+		}
+		for _, listen := range spec.Listen {
+			port := listen.Port
+			if port == 0 {
+				port = 53
+			}
+			for _, address := range append([]string(nil), listen.Addresses...) {
+				candidates = append(candidates, net.JoinHostPort(normalizeResolverAddress(address), strconv.Itoa(port)))
+			}
+			for _, source := range listen.AddressFrom {
+				if address := normalizeResolverAddress(resourcequery.Value(store, source)); address != "" {
+					candidates = append(candidates, net.JoinHostPort(address, strconv.Itoa(port)))
+				}
+			}
+		}
+	}
+	for _, candidate := range candidates {
+		host, _, err := net.SplitHostPort(candidate)
+		if err == nil && (host == "127.0.0.1" || host == "::1") {
+			return candidate, true
+		}
+	}
+	if len(candidates) > 0 {
+		return candidates[0], true
+	}
+	return "", false
+}
+
+func normalizeResolverAddress(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix.Addr().String()
+	}
+	return value
 }
 
 func (r *Runner) warmDaemonStatuses(ctx context.Context, controller DaemonStatusController, logger *slog.Logger) {

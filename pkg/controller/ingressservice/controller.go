@@ -25,12 +25,13 @@ type Store interface {
 type CheckFunc func(context.Context, string, int, time.Duration) error
 
 type Controller struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	DryRun bool
-	Check  CheckFunc
-	Logger *slog.Logger
+	Router   *api.Router
+	Bus      *bus.Bus
+	Store    Store
+	DryRun   bool
+	Resolver *net.Resolver
+	Check    CheckFunc
+	Logger   *slog.Logger
 }
 
 type backendStatus struct {
@@ -125,7 +126,11 @@ func (c *Controller) resolveAddress(ctx context.Context, backend api.IngressBack
 	if addr, err := netip.ParseAddr(address); err == nil && addr.Is4() {
 		return addr.String(), ""
 	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, address)
+	resolver := c.Resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	ips, err := resolver.LookupIPAddr(ctx, address)
 	if err != nil {
 		if previous != "" {
 			return previous, "DNSFailedUsingPrevious: " + err.Error()

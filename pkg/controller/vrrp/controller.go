@@ -18,6 +18,7 @@ import (
 	"routerd/pkg/bus"
 	"routerd/pkg/render"
 	"routerd/pkg/resourcequery"
+	routerstate "routerd/pkg/state"
 )
 
 type Store interface {
@@ -42,10 +43,17 @@ type Controller struct {
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
-	if c.Router == nil || c.Store == nil || !hasVirtualIPv4(c.Router) {
+	if c.Router == nil || c.Store == nil {
 		return nil
 	}
 	aliases := interfaceAliases(c.Router)
+	cleanupChanged, err := c.cleanupStaleStaticAddresses(ctx, aliases)
+	if err != nil {
+		return err
+	}
+	if !hasVirtualIPv4(c.Router) {
+		return nil
+	}
 	priorities, tracks := c.effectivePriorities()
 	staticChanged, err := c.applyStaticAddresses(ctx, aliases)
 	if err != nil {
@@ -56,7 +64,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	if len(data) == 0 {
-		return c.saveStatuses("Applied", "", staticChanged, tracks, nil)
+		return c.saveStatuses("Applied", "", cleanupChanged || staticChanged, tracks, nil, nil)
 	}
 	path := firstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -84,19 +92,21 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			return c.saveError(path, changed || staticChanged, tracks, "KeepalivedRestartFailed", fmt.Errorf("%s reload-or-restart keepalived.service: %w: %s", systemctl, err, strings.TrimSpace(string(out))))
 		}
 	}
-	return c.saveStatuses("Applied", path, changed || staticChanged, tracks, nil)
+	roles := c.observeVRRPRoles(ctx, aliases)
+	return c.saveStatuses("Applied", path, changed || cleanupChanged || staticChanged, tracks, roles, nil)
 }
 
 func (c *Controller) saveError(path string, changed bool, tracks map[string]trackSummary, reason string, err error) error {
-	saveErr := c.saveStatuses("Error", path, changed, tracks, map[string]any{"reason": reason, "error": err.Error()})
+	saveErr := c.saveStatuses("Error", path, changed, tracks, nil, map[string]any{"reason": reason, "error": err.Error()})
 	if saveErr != nil {
 		return saveErr
 	}
 	return err
 }
 
-func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[string]trackSummary, extra map[string]any) error {
+func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[string]trackSummary, roles map[string]string, extra map[string]any) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	aliases := interfaceAliases(c.Router)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VirtualIPv4Address" {
 			continue
@@ -114,6 +124,7 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 			"backend":    virtualIPv4Backend(spec),
 			"address":    address,
 			"interface":  spec.Interface,
+			"ifname":     aliases[spec.Interface],
 			"configPath": path,
 			"changed":    changed,
 			"dryRun":     c.DryRun,
@@ -126,7 +137,16 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 			status["basePriority"] = track.BasePriority
 			status["preempt"] = spec.VRRP.Preempt != nil && *spec.VRRP.Preempt
 			status["track"] = track.Entries
-			status["role"] = "unknown"
+			status["role"] = firstNonEmpty(roles[resource.Metadata.Name], "unknown")
+		} else {
+			status["desiredAddress"] = address
+			if !c.DryRun {
+				if phase == "Applied" {
+					status["appliedAddress"] = address
+				} else if previous := statusString(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", resource.Metadata.Name), "appliedAddress"); previous != "" {
+					status["appliedAddress"] = previous
+				}
+			}
 		}
 		for key, value := range extra {
 			status[key] = value
@@ -136,6 +156,115 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 		}
 	}
 	return nil
+}
+
+type staticVIP struct {
+	IfName  string
+	Address string
+}
+
+func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases map[string]string) (bool, error) {
+	lister, ok := c.Store.(routerstate.ObjectStatusLister)
+	if !ok {
+		return false, nil
+	}
+	desired := map[string]staticVIP{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VirtualIPv4Address" {
+			continue
+		}
+		spec, err := resource.VirtualIPv4AddressSpec()
+		if err != nil || (strings.TrimSpace(spec.Mode) != "" && spec.Mode != "static") {
+			continue
+		}
+		address, err := render.VirtualIPv4Address(c.Router, spec)
+		if err != nil {
+			continue
+		}
+		desired[resource.Metadata.Name] = staticVIP{IfName: aliases[spec.Interface], Address: address}
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	for _, item := range statuses {
+		if item.APIVersion != api.NetAPIVersion || item.Kind != "VirtualIPv4Address" || strings.TrimSpace(statusString(item.Status, "backend")) != "iproute2" {
+			continue
+		}
+		previous := staticVIP{IfName: statusString(item.Status, "ifname"), Address: statusString(item.Status, "appliedAddress")}
+		if previous.Address == "" && statusString(item.Status, "phase") != "Removed" {
+			previous.Address = statusString(item.Status, "address")
+		}
+		if previous.IfName == "" || previous.Address == "" {
+			continue
+		}
+		if current, ok := desired[item.Name]; ok && current.IfName == previous.IfName && current.Address == previous.Address {
+			continue
+		}
+		changed = true
+		if !c.DryRun {
+			ip := firstNonEmpty(c.IP, "ip")
+			if out, err := c.run(ctx, ip, "addr", "del", previous.Address, "dev", previous.IfName); err != nil {
+				return changed, fmt.Errorf("%s addr del %s dev %s: %w: %s", ip, previous.Address, previous.IfName, err, strings.TrimSpace(string(out)))
+			}
+		}
+		if !c.DryRun {
+			status := map[string]any{
+				"phase":          "Removed",
+				"backend":        "iproute2",
+				"address":        previous.Address,
+				"appliedAddress": "",
+				"ifname":         previous.IfName,
+				"changed":        true,
+				"dryRun":         c.DryRun,
+				"observedAt":     time.Now().UTC().Format(time.RFC3339Nano),
+			}
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", item.Name, status); err != nil {
+				return changed, err
+			}
+		}
+	}
+	return changed, nil
+}
+
+func (c *Controller) observeVRRPRoles(ctx context.Context, aliases map[string]string) map[string]string {
+	roles := map[string]string{}
+	if c.DryRun {
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.APIVersion == api.NetAPIVersion && resource.Kind == "VirtualIPv4Address" {
+				roles[resource.Metadata.Name] = "dryrun"
+			}
+		}
+		return roles
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VirtualIPv4Address" {
+			continue
+		}
+		spec, err := resource.VirtualIPv4AddressSpec()
+		if err != nil || spec.Mode != "vrrp" {
+			continue
+		}
+		ifname := aliases[spec.Interface]
+		address, err := render.VirtualIPv4Address(c.Router, spec)
+		if err != nil || ifname == "" {
+			roles[resource.Metadata.Name] = "unknown"
+			continue
+		}
+		ip := firstNonEmpty(c.IP, "ip")
+		out, err := c.run(ctx, ip, "-4", "addr", "show", "dev", ifname)
+		if err != nil {
+			roles[resource.Metadata.Name] = "unknown"
+			continue
+		}
+		if ipv4AddressPresent(string(out), address) {
+			roles[resource.Metadata.Name] = "master"
+		} else {
+			roles[resource.Metadata.Name] = "backup"
+		}
+	}
+	return roles
 }
 
 func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[string]string) (bool, error) {
@@ -362,6 +491,29 @@ func (c *Controller) run(ctx context.Context, name string, args ...string) ([]by
 		return c.Command(ctx, name, args...)
 	}
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+func ipv4AddressPresent(output, address string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field == "inet" && i+1 < len(fields) && fields[i+1] == address {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func statusString(status map[string]any, key string) string {
+	if status == nil {
+		return ""
+	}
+	value, ok := status[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func interfaceAliases(router *api.Router) map[string]string {

@@ -224,6 +224,13 @@ FRR listen-address binding is a bgpd daemon invocation option (`-l` /
 host firewall zones and service-manager bgpd options aligned when BGP must be
 limited to a specific interface address.
 
+`VirtualIPv4Address.spec.vrrp.authentication` is rendered into keepalived as
+`auth_pass`. Treat routerd config files and `/etc/keepalived/keepalived.conf`
+as secrets when this field is used. VRRP authentication is deprecated in VRRPv3
+(RFC 5798); routerd assumes `unicast_peer` plus L2 isolation and recommends
+using authentication only when it is still required by the surrounding network
+policy or to guard against simple misconfiguration.
+
 `PortForward` and `IngressService` render DNAT on Linux nftables and FreeBSD pf.
 Set `spec.hairpin.enabled: true` with `spec.hairpin.interfaces` to also allow
 LAN clients to reach the service through the WAN address. Hairpin mode requires

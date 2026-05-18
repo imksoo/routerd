@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"routerd/pkg/api"
+	routerstate "routerd/pkg/state"
 )
 
 type mapStore map[string]map[string]any
@@ -23,6 +24,18 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 		return status
 	}
 	return map[string]any{}
+}
+
+func (s mapStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
+	var out []routerstate.ObjectStatus
+	for key, status := range s {
+		parts := strings.Split(key, "/")
+		if len(parts) != 4 {
+			continue
+		}
+		out = append(out, routerstate.ObjectStatus{APIVersion: parts[0] + "/" + parts[1], Kind: parts[2], Name: parts[3], Status: status})
+	}
+	return out, nil
 }
 
 func TestReconcileLowersVRRPPriorityAfterTrackHysteresis(t *testing.T) {
@@ -134,6 +147,73 @@ func TestReconcileAppliesStaticVirtualIPv4Address(t *testing.T) {
 	want := []string{"ip addr replace 10.240.70.10/32 dev ens18"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
+	store := mapStore{}
+	controller := Controller{
+		Router:     vrrpRouter("vrrp"),
+		Store:      store,
+		ConfigPath: t.TempDir() + "/keepalived.conf",
+		Systemctl:  "systemctl",
+		IP:         "ip",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens18" {
+				return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	if status["role"] != "master" {
+		t.Fatalf("role = %#v, status=%#v", status["role"], status)
+	}
+}
+
+func TestReconcileCleansRemovedStaticVirtualIPv4Address(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualIPv4Address/old": {
+			"backend":        "iproute2",
+			"ifname":         "ens18",
+			"appliedAddress": "10.240.70.99/32",
+		},
+	}
+	var calls []string
+	controller := Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+		}}},
+		Store: store,
+		IP:    "ip",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []string{"ip addr del 10.240.70.99/32 dev ens18"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "old")
+	if status["phase"] != "Removed" || status["appliedAddress"] != "" {
+		t.Fatalf("stale VIP status was not cleared: %#v", status)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("second reconcile repeated cleanup: calls = %#v, want %#v", calls, want)
 	}
 }
 

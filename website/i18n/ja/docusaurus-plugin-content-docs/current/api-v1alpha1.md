@@ -180,6 +180,10 @@ hairpin は `listen.address` または `listen.addressFrom` が必須で、route
 DNAT と戻り経路用の masquerade/NAT reflection を生成します。
 `listen.addressFrom` と backend の `addressFrom` は `IPv4StaticAddress/<name>.address`
 や `VirtualIPv4Address/<name>.address` のような静的に描画できるアドレスリソースを参照できます。
+`VirtualIPv4Address.spec.vrrp.authentication` は keepalived の `auth_pass` に平文で出力されます。
+この値を使う場合、routerd config と `/etc/keepalived/keepalived.conf` は secret として扱ってください。
+VRRP authentication は VRRPv3 (RFC 5798) では deprecated です。routerd は `unicast_peer` と
+L2 隔離を前提にするため、authentication は周辺ネットワーク方針で必要な場合や単純な誤設定対策に限って使ってください。
 `IngressService` は複数 backend、TCP health check intent、failover selection を受け付けます。
 静的 nftables renderer は最初の backend を初期 active endpoint として使い、runtime controller が
 ruleset 全体を再生成せずに active state を更新できる形にします。
