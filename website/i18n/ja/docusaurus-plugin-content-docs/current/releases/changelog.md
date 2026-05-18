@@ -10,6 +10,11 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+### 変更
+
+- 現在の controller-chain 設定 path では使われなくなった dead compatibility
+  helper と旧 raw systemd unit renderer を削除しました。
+
 ## v20260517.2339
 
 ### 追加
