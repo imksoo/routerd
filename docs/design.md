@@ -184,7 +184,10 @@ the next reconcile. `BGPRouter` / `BGPPeer` status is observed from FRR JSON by
 `BGPStateWatcher` and can lower `VirtualIPv4Address` VRRP priority through
 `track`. FRR config changes are syntax-checked with `vtysh -C -f` and applied
 with `frr-reload.py --reload`; routerd does not restart FRR for normal BGP
-resource changes.
+resource changes. `VirtualIPv4Address` and `IngressService` hostnames feed
+DNSResolver-served zones as derived A records, and BGP/VRRP/Ingress status is
+also surfaced through dedicated `routerctl show` views and low-cardinality OTel
+metrics for transitions and backend health.
 
 ### 5.3 Daemon contract
 

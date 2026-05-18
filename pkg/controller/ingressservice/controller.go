@@ -87,7 +87,8 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	previous := previousBackends(c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", name))
+	previousStatus := c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", name)
+	previous := previousBackends(previousStatus)
 	var backends []backendStatus
 	for i, backend := range spec.Backends {
 		status := backendStatus{
@@ -124,8 +125,14 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 			phase = "Degraded"
 		}
 	}
+	listenAddress := statusAddressValue(spec.Listen.Address)
+	if listenAddress == "" && strings.TrimSpace(spec.Listen.AddressFrom.Resource) != "" {
+		listenAddress = statusAddressValue(resourcequery.Value(c.Store, spec.Listen.AddressFrom))
+	}
 	status := map[string]any{
 		"phase":           phase,
+		"hostname":        strings.TrimSpace(spec.Hostname),
+		"listenAddress":   listenAddress,
 		"activeBackend":   map[string]any{"name": active.Name, "address": active.ResolvedAddress, "port": active.Port},
 		"healthyBackends": healthy,
 		"totalBackends":   len(backends),
@@ -134,12 +141,28 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 		"dryRun":          c.DryRun,
 		"observedAt":      now,
 	}
+	if sameActiveBackend(previousStatus["activeBackend"], active) {
+		if previousTransition := statusString(previousStatus["lastActiveBackendTransitionAt"]); previousTransition != "" {
+			status["lastActiveBackendTransitionAt"] = previousTransition
+		}
+	} else {
+		status["previousActiveBackend"] = previousStatus["activeBackend"]
+		status["lastActiveBackendTransitionAt"] = now
+	}
 	if active.Name == "" {
 		status["conditions"] = []map[string]any{{"type": "BackendsHealthy", "status": "False", "reason": defaultString(spec.Policy.OnNoHealthyBackends, "drop")}}
 	} else {
 		status["conditions"] = []map[string]any{{"type": "BackendsHealthy", "status": "True", "reason": "ActiveBackendSelected"}}
 	}
 	return c.Store.SaveObjectStatus(api.FirewallAPIVersion, "IngressService", name, status)
+}
+
+func sameActiveBackend(previous any, active backendStatus) bool {
+	item, ok := previous.(map[string]any)
+	if !ok {
+		return active.Name == "" && active.ResolvedAddress == "" && active.Port == 0
+	}
+	return statusString(item["name"]) == active.Name && statusString(item["address"]) == active.ResolvedAddress && statusInt(item["port"]) == active.Port
 }
 
 func (c *Controller) resolveAddress(ctx context.Context, backend api.IngressBackendSpec, previous previousBackendStatus) (string, string) {

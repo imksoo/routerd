@@ -2353,6 +2353,9 @@
                         ],
                         "type": "object"
                       },
+                      "hostname": {
+                        "type": "string"
+                      },
                       "interface": {
                         "type": "string"
                       },
@@ -6672,6 +6675,9 @@
                           }
                         },
                         "type": "object"
+                      },
+                      "hostname": {
+                        "type": "string"
                       },
                       "listen": {
                         "additionalProperties": false,

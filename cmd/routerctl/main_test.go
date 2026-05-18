@@ -298,6 +298,162 @@ func TestShowDiffAndLedgerModes(t *testing.T) {
 	}
 }
 
+func TestShowBGPVRRPAndIngressTables(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens20
+        managed: false
+        owner: external
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSZone
+      metadata:
+        name: lan-zone
+      spec:
+        zone: lain.local
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSResolver
+      metadata:
+        name: lan-resolver
+      spec:
+        listen:
+          - name: lan
+            addresses: [127.0.0.1]
+            port: 53
+        sources:
+          - name: local
+            kind: zone
+            match: [lain.local]
+            zoneRef: [DNSZone/lan-zone]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VirtualIPv4Address
+      metadata:
+        name: k8s-api-vip
+      spec:
+        interface: lan
+        address: 192.168.123.250/32
+        hostname: k8s-api.lain.local
+        mode: vrrp
+        vrrp:
+          virtualRouterID: 66
+          priority: 150
+          peers: [192.168.123.111]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata:
+        name: lan
+      spec:
+        asn: 64512
+        routerID: 192.168.123.125
+        gracefulRestart:
+          enabled: true
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: IngressService
+      metadata:
+        name: kubernetes-api
+      spec:
+        listen:
+          interface: lan
+          address: 192.168.123.250
+          protocol: tcp
+          port: 6443
+        hostname: k8s-api.lain.local
+        backends:
+          - name: cp-01
+            address: 192.168.123.11
+            port: 6443
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "lan", map[string]any{
+		"phase":            "Established",
+		"establishedPeers": 1,
+		"acceptedPrefixes": 2,
+		"peers": []map[string]any{{
+			"address":           "192.168.123.111",
+			"asn":               64513,
+			"state":             "Established",
+			"messagesReceived":  12,
+			"messagesSent":      11,
+			"prefixesReceived":  2,
+			"lastEstablishedAt": time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339Nano),
+		}},
+	}); err != nil {
+		t.Fatalf("save bgp: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "k8s-api-vip", map[string]any{
+		"phase":                "Applied",
+		"address":              "192.168.123.250/32",
+		"hostname":             "k8s-api.lain.local",
+		"interface":            "lan",
+		"role":                 "master",
+		"priority":             150,
+		"basePriority":         150,
+		"virtualRouterID":      66,
+		"lastRoleTransitionAt": time.Now().Add(-3 * time.Minute).UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("save vrrp: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.FirewallAPIVersion, "IngressService", "kubernetes-api", map[string]any{
+		"phase":           "Active",
+		"hostname":        "k8s-api.lain.local",
+		"listenAddress":   "192.168.123.250",
+		"selection":       "failover",
+		"healthyBackends": 1,
+		"totalBackends":   1,
+		"activeBackend":   map[string]any{"name": "cp-01", "address": "192.168.123.11", "port": 6443},
+		"backends": []map[string]any{{
+			"name":            "cp-01",
+			"address":         "cp-01.lain.local",
+			"resolvedAddress": "192.168.123.11",
+			"port":            6443,
+			"healthy":         true,
+			"healthyCount":    7,
+			"lastHealthyAt":   time.Now().Add(-10 * time.Second).UTC().Format(time.RFC3339Nano),
+		}},
+	}); err != nil {
+		t.Fatalf("save ingress: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+	for _, tt := range []struct {
+		target string
+		want   []string
+	}{
+		{"bgp", []string{"ROUTER", "lan", "192.168.123.111", "Established", "12", "11"}},
+		{"vrrp", []string{"VIP", "k8s-api.lain.local", "master", "66"}},
+		{"ingress", []string{"SERVICE", "kubernetes-api", "cp-01/192.168.123.11:6443", "Healthy(7/0)"}},
+	} {
+		var out bytes.Buffer
+		if err := run([]string{"show", tt.target, "--config", configPath, "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
+			t.Fatalf("show %s: %v", tt.target, err)
+		}
+		got := out.String()
+		for _, want := range tt.want {
+			if !strings.Contains(got, want) {
+				t.Fatalf("show %s output missing %q:\n%s", tt.target, want, got)
+			}
+		}
+	}
+}
+
 func TestDescribeOrphans(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")

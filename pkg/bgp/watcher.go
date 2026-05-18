@@ -28,6 +28,8 @@ type Peer struct {
 	State             string `json:"state,omitempty"`
 	Established       bool   `json:"established"`
 	PrefixesReceived  int    `json:"prefixesReceived,omitempty"`
+	MessagesReceived  int    `json:"messagesReceived,omitempty"`
+	MessagesSent      int    `json:"messagesSent,omitempty"`
 	LastEstablishedAt string `json:"lastEstablishedAt,omitempty"`
 	LastErrorAt       string `json:"lastErrorAt,omitempty"`
 	LastErrorReason   string `json:"lastErrorReason,omitempty"`
@@ -82,6 +84,8 @@ func ParseFRRSummaryJSON(data []byte) ([]Peer, error) {
 			State:             state,
 			Established:       strings.EqualFold(state, "Established"),
 			PrefixesReceived:  int(firstNumber(item, "pfxRcd", "prefixReceivedCount", "prefixesReceived")),
+			MessagesReceived:  int(firstNumber(item, "msgRcvd", "messagesReceived", "messagesRcvd")),
+			MessagesSent:      int(firstNumber(item, "msgSent", "messagesSent")),
 			LastEstablishedAt: firstStringOrNumber(item, "lastEstablishedAt", "lastConnectionEstablished", "peerUptimeEstablishedEpoch"),
 			LastErrorAt:       firstStringOrNumber(item, "lastErrorAt", "lastResetTime", "lastNotificationTime"),
 			LastErrorReason:   lastErrorReason,

@@ -49,6 +49,45 @@ func TestValidateBGPRouterPeerAndVirtualIPv4Address(t *testing.T) {
 	}
 }
 
+func TestValidateHostnameRequiresDNSResolverZoneCoverage(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.DNSZoneSpec{Zone: "lain.local"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan-resolver"}, Spec: api.DNSResolverSpec{
+				Listen: []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
+				Sources: []api.DNSResolverSourceSpec{{
+					Name:    "local",
+					Kind:    "zone",
+					Match:   []string{"lain.local"},
+					ZoneRef: []string{"DNSZone/lan-zone"},
+				}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "10.240.70.10/32",
+				Hostname:  "k8s-api.lain.local",
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate hostname coverage: %v", err)
+	}
+	spec := router.Spec.Resources[3].Spec.(api.VirtualIPv4AddressSpec)
+	spec.Hostname = "k8s_api.lain.local"
+	router.Spec.Resources[3].Spec = spec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.hostname is invalid") {
+		t.Fatalf("expected invalid hostname error, got %v", err)
+	}
+	spec.Hostname = "k8s-api.other.local"
+	router.Spec.Resources[3].Spec = spec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not covered") {
+		t.Fatalf("expected uncovered hostname error, got %v", err)
+	}
+}
+
 func TestValidateBGPTimersRejectsInvalidHoldTime(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

@@ -35,7 +35,11 @@ The important production-oriented settings are:
 | `VirtualIPv4Address/k8s-api-vip` | VRRP `advertInterval: 1s`, `preemptDelay: 30s`, and track entries for API health and BGP health. |
 | `IngressService/kubernetes-api` | HTTPS health check on `/readyz`, `tlsSkipVerify: true` for kubeadm self-signed bootstrap certs, failover selection, and reject on no healthy backend. |
 | `BGPRouter/lan` | BGP timers `3s/9s/5s`, graceful restart, and an import allow-list for Kubernetes Service prefixes only. |
-| `DNSZone/lain-local` | Static `k8s-api.lain.local` record pointing at the VIP. |
+| `DNSResolver/lan-resolver` | Automatically serves `k8s-api.lain.local` from the VIP `hostname` field, plus static control-plane and worker records. |
 
 Keep the DHCP pool away from the VIP, control-plane addresses, worker
 addresses, and LoadBalancer/Service advertisement ranges.
+
+For operations, `routerctl show bgp`, `routerctl show vrrp`, and
+`routerctl show ingress` provide table views for peer state, VIP role, and
+backend health without dumping raw status JSON.

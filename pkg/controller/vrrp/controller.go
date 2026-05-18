@@ -123,6 +123,7 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 			"phase":      phase,
 			"backend":    virtualIPv4Backend(spec),
 			"address":    address,
+			"hostname":   strings.TrimSpace(spec.Hostname),
 			"interface":  spec.Interface,
 			"ifname":     aliases[spec.Interface],
 			"configPath": path,

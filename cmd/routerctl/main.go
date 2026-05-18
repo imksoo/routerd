@@ -1206,6 +1206,9 @@ func showCommand(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if kind := dedicatedShowKind(opts.Target); kind != "" {
+		return writeDedicatedShow(stdout, router, store, opts, kind)
+	}
 	kind, name, err := parseShowTarget(opts.Target)
 	if err != nil {
 		return err
@@ -1344,6 +1347,210 @@ func parseShowOptions(args []string) (showOptions, error) {
 	return opts, nil
 }
 
+func dedicatedShowKind(target string) string {
+	if strings.Contains(target, "/") {
+		return ""
+	}
+	switch strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(target), "-", ""), "_", "")) {
+	case "bgp":
+		return "bgp"
+	case "vrrp":
+		return "vrrp"
+	case "ingress":
+		return "ingress"
+	default:
+		return ""
+	}
+}
+
+func writeDedicatedShow(stdout io.Writer, router *api.Router, store routerstate.Store, opts showOptions, kind string) error {
+	resources, err := listObjectStatuses(store)
+	if err != nil {
+		return err
+	}
+	switch opts.Output {
+	case "", "table":
+		switch kind {
+		case "bgp":
+			return writeBGPShowTable(stdout, router, resources)
+		case "vrrp":
+			return writeVRRPShowTable(stdout, router, resources)
+		case "ingress":
+			return writeIngressShowTable(stdout, router, resources)
+		}
+	case "json":
+		return writeJSON(stdout, filterShowStatuses(resources, kind))
+	case "yaml":
+		return writeYAML(stdout, filterShowStatuses(resources, kind))
+	default:
+		return fmt.Errorf("unsupported output %q", opts.Output)
+	}
+	return nil
+}
+
+func listObjectStatuses(store routerstate.Store) ([]routerstate.ObjectStatus, error) {
+	lister, ok := store.(routerstate.ObjectStatusLister)
+	if !ok {
+		return nil, nil
+	}
+	return lister.ListObjectStatuses()
+}
+
+func filterShowStatuses(resources []routerstate.ObjectStatus, kind string) []routerstate.ObjectStatus {
+	var out []routerstate.ObjectStatus
+	for _, resource := range resources {
+		switch kind {
+		case "bgp":
+			if resource.Kind == "BGPRouter" || resource.Kind == "BGPPeer" {
+				out = append(out, resource)
+			}
+		case "vrrp":
+			if resource.Kind == "VirtualIPv4Address" {
+				out = append(out, resource)
+			}
+		case "ingress":
+			if resource.Kind == "IngressService" {
+				out = append(out, resource)
+			}
+		}
+	}
+	return out
+}
+
+func writeBGPShowTable(stdout io.Writer, router *api.Router, resources []routerstate.ObjectStatus) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	specs := bgpRouterSpecs(router)
+	fmt.Fprintln(w, "ROUTER\tASN\tROUTER_ID\tPEERS_ESTABLISHED\tPREFIXES_ACCEPTED\tGR")
+	var peers []map[string]any
+	for _, resource := range resources {
+		if resource.Kind != "BGPRouter" {
+			continue
+		}
+		spec := specs[resource.Name]
+		totalPeers := len(statusMaps(resource.Status["peers"]))
+		fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%d\t%s\n",
+			resource.Name,
+			spec.ASN,
+			spec.RouterID,
+			establishedSummary(resource.Status, totalPeers),
+			statusInt(resource.Status["acceptedPrefixes"]),
+			enabledString(api.BoolDefault(spec.GracefulRestart.Enabled, true)),
+		)
+		for _, peer := range statusMaps(resource.Status["peers"]) {
+			peer["_router"] = resource.Name
+			peers = append(peers, peer)
+		}
+	}
+	if len(peers) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "PEER\tAS\tSTATE\tUP\tRCVD\tSENT\tPFX\tLAST_ERROR")
+		for _, peer := range peers {
+			state := defaultShowString(statusString(peer["state"]), "unknown")
+			up := "-"
+			if strings.EqualFold(state, "Established") {
+				up = ageString(statusString(peer["lastEstablishedAt"]))
+			}
+			lastError := defaultShowString(statusString(peer["lastErrorReason"]), "-")
+			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%d\t%d\t%d\t%s\n",
+				statusString(peer["address"]),
+				statusInt(peer["asn"]),
+				state,
+				up,
+				statusInt(peer["messagesReceived"]),
+				statusInt(peer["messagesSent"]),
+				statusInt(peer["prefixesReceived"]),
+				lastError,
+			)
+		}
+	}
+	return w.Flush()
+}
+
+func writeVRRPShowTable(stdout io.Writer, router *api.Router, resources []routerstate.ObjectStatus) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	specs := virtualIPv4Specs(router)
+	fmt.Fprintln(w, "VIP\tHOSTNAME\tROLE\tPRIORITY\tBASE\tIFACE\tVRID\tPEERS\tLAST_TRANSITION")
+	for _, resource := range resources {
+		if resource.Kind != "VirtualIPv4Address" {
+			continue
+		}
+		spec := specs[resource.Name]
+		if defaultShowString(spec.Mode, "static") != "vrrp" && statusString(resource.Status["virtualRouterID"]) == "" {
+			continue
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\t%d\t%s\t%s\n",
+			statusString(resource.Status["address"]),
+			defaultShowString(statusString(resource.Status["hostname"]), "-"),
+			defaultShowString(statusString(resource.Status["role"]), "unknown"),
+			statusInt(resource.Status["priority"]),
+			statusInt(resource.Status["basePriority"]),
+			defaultShowString(statusString(resource.Status["interface"]), spec.Interface),
+			statusInt(resource.Status["virtualRouterID"]),
+			strings.Join(spec.VRRP.Peers, ","),
+			ageString(statusString(resource.Status["lastRoleTransitionAt"])),
+		)
+		tracks := statusMaps(resource.Status["track"])
+		if len(tracks) > 0 {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "TRACK\tSTATE\tPENALTY\tDETAIL")
+			for _, track := range tracks {
+				fmt.Fprintf(w, "%s\t%s\t%d\t%s/%s unhealthy=%d\n",
+					statusString(track["resource"]),
+					statusString(track["state"]),
+					statusInt(track["penalty"]),
+					statusString(track["unhealthyCount"]),
+					statusString(track["confirmConsecutiveUnhealthy"]),
+					statusInt(track["unhealthyConsecutive"]),
+				)
+			}
+		}
+	}
+	return w.Flush()
+}
+
+func writeIngressShowTable(stdout io.Writer, router *api.Router, resources []routerstate.ObjectStatus) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	specs := ingressServiceSpecs(router)
+	fmt.Fprintln(w, "SERVICE\tHOSTNAME\tLISTEN\tACTIVE_BACKEND\tSELECTION\tHEALTHY/TOTAL")
+	for _, resource := range resources {
+		if resource.Kind != "IngressService" {
+			continue
+		}
+		spec := specs[resource.Name]
+		active := statusMap(resource.Status["activeBackend"])
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d/%d\n",
+			resource.Name,
+			defaultShowString(statusString(resource.Status["hostname"]), "-"),
+			ingressListenString(spec, resource.Status),
+			activeBackendString(active),
+			defaultShowString(statusString(resource.Status["selection"]), "failover"),
+			statusInt(resource.Status["healthyBackends"]),
+			statusInt(resource.Status["totalBackends"]),
+		)
+		backends := statusMaps(resource.Status["backends"])
+		if len(backends) > 0 {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "BACKEND\tADDRESS\tSTATE\tLAST_HEALTHY\tLAST_UNHEALTHY")
+			for _, backend := range backends {
+				state := "Unhealthy"
+				if statusBool(backend["healthy"]) {
+					state = "Healthy"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s(%d/%d)\t%s\t%s\n",
+					statusString(backend["name"]),
+					backendAddressString(backend),
+					state,
+					statusInt(backend["healthyCount"]),
+					statusInt(backend["unhealthyCount"]),
+					ageString(statusString(backend["lastHealthyAt"])),
+					ageString(statusString(backend["lastUnhealthyAt"])),
+				)
+			}
+		}
+	}
+	return w.Flush()
+}
+
 func parseShowTarget(target string) (string, string, error) {
 	return parseResourceTarget("show", target)
 }
@@ -1396,6 +1603,7 @@ func canonicalShowKind(kind string) string {
 		"virtualip":              "VirtualIPv4Address",
 		"virtualipv4":            "VirtualIPv4Address",
 		"virtualipv4address":     "VirtualIPv4Address",
+		"vrrp":                   "VirtualIPv4Address",
 		"bgp":                    "BGPRouter",
 		"bgprouter":              "BGPRouter",
 		"bgppeer":                "BGPPeer",
@@ -1469,6 +1677,203 @@ func canonicalShowKind(kind string) string {
 		return ""
 	}
 	return kind
+}
+
+func bgpRouterSpecs(router *api.Router) map[string]api.BGPRouterSpec {
+	out := map[string]api.BGPRouterSpec{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := resource.BGPRouterSpec()
+		if err == nil {
+			out[resource.Metadata.Name] = spec
+		}
+	}
+	return out
+}
+
+func virtualIPv4Specs(router *api.Router) map[string]api.VirtualIPv4AddressSpec {
+	out := map[string]api.VirtualIPv4AddressSpec{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "VirtualIPv4Address" {
+			continue
+		}
+		spec, err := resource.VirtualIPv4AddressSpec()
+		if err == nil {
+			out[resource.Metadata.Name] = spec
+		}
+	}
+	return out
+}
+
+func ingressServiceSpecs(router *api.Router) map[string]api.IngressServiceSpec {
+	out := map[string]api.IngressServiceSpec{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IngressService" {
+			continue
+		}
+		spec, err := resource.IngressServiceSpec()
+		if err == nil {
+			out[resource.Metadata.Name] = spec
+		}
+	}
+	return out
+}
+
+func establishedSummary(status map[string]any, total int) string {
+	if total == 0 {
+		return "0/0"
+	}
+	return fmt.Sprintf("%d/%d", statusInt(status["establishedPeers"]), total)
+}
+
+func enabledString(enabled bool) string {
+	if enabled {
+		return "enabled"
+	}
+	return "disabled"
+}
+
+func ingressListenString(spec api.IngressServiceSpec, status map[string]any) string {
+	address := statusString(status["listenAddress"])
+	if address == "" {
+		address = spec.Listen.Address
+	}
+	if address == "" && spec.Listen.AddressFrom.Resource != "" {
+		address = spec.Listen.AddressFrom.Resource
+	}
+	return fmt.Sprintf("%s:%s:%d", spec.Listen.Interface, defaultShowString(address, "*"), spec.Listen.Port)
+}
+
+func activeBackendString(active map[string]any) string {
+	name := statusString(active["name"])
+	address := statusString(active["address"])
+	port := statusInt(active["port"])
+	if name == "" && address == "" {
+		return "-"
+	}
+	if port > 0 {
+		return fmt.Sprintf("%s/%s:%d", defaultShowString(name, "-"), address, port)
+	}
+	return fmt.Sprintf("%s/%s", defaultShowString(name, "-"), address)
+}
+
+func backendAddressString(backend map[string]any) string {
+	address := statusString(backend["address"])
+	resolved := statusString(backend["resolvedAddress"])
+	port := statusInt(backend["port"])
+	if resolved != "" && resolved != address {
+		return fmt.Sprintf("%s -> %s:%d", address, resolved, port)
+	}
+	if port > 0 {
+		return fmt.Sprintf("%s:%d", defaultShowString(resolved, address), port)
+	}
+	return defaultShowString(resolved, address)
+}
+
+func ageString(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return humanDuration(time.Since(ts))
+	}
+	if ts, err := strconv.ParseInt(value, 10, 64); err == nil && ts > 0 {
+		return humanDuration(time.Since(time.Unix(ts, 0)))
+	}
+	return value
+}
+
+func humanDuration(d time.Duration) string {
+	if d < 0 {
+		d = -d
+	}
+	if d >= 24*time.Hour {
+		return fmt.Sprintf("%dd%dh", int(d/(24*time.Hour)), int(d%(24*time.Hour)/time.Hour))
+	}
+	if d >= time.Hour {
+		return fmt.Sprintf("%dh%dm", int(d/time.Hour), int(d%time.Hour/time.Minute))
+	}
+	if d >= time.Minute {
+		return fmt.Sprintf("%dm%ds", int(d/time.Minute), int(d%time.Minute/time.Second))
+	}
+	return fmt.Sprintf("%ds", int(d/time.Second))
+}
+
+func statusMaps(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if m, ok := item.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func statusMap(value any) map[string]any {
+	if typed, ok := value.(map[string]any); ok {
+		return typed
+	}
+	return map[string]any{}
+}
+
+func statusString(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func statusInt(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func statusBool(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return false
+	}
+}
+
+func defaultShowString(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func resourceSelectionError(resources []api.Resource, kind, name string) error {
@@ -2308,6 +2713,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  diagnose egress [policy] [--config <path>] [--state-file <path>] [--no-host] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  diagnose dns [resolver] [--server <addr>] [--name <fqdn>] [--no-host] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  diagnose lan-client <ip> [--no-host] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  show bgp|vrrp|ingress [--config <path>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show <kind> [--config <path>] [--state-file <path>] [--ledger-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events|--spec|--status] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plan [--socket <path>]")

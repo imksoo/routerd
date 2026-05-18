@@ -127,6 +127,8 @@ func (c Controller) Reconcile(ctx context.Context) error {
 
 func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsresolver.RuntimeConfig, error) {
 	config := dnsresolver.RuntimeConfig{Resource: name, Spec: spec}
+	servedZones := dnsResolverZoneRefs(spec)
+	autoRecords := c.hostnameRecordsForResolver(servedZones)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DNSZone" {
 			continue
@@ -134,6 +136,9 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 		zoneSpec, err := resource.DNSZoneSpec()
 		if err != nil {
 			return config, err
+		}
+		if servedZones[resource.Metadata.Name] {
+			zoneSpec = appendHostnameRecords(resource.Metadata.Name, zoneSpec, autoRecords)
 		}
 		zoneSpec, pendingRecords, err := c.expandZoneSpec(zoneSpec)
 		if err != nil {
@@ -145,6 +150,130 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 		config.Zones = append(config.Zones, dnsresolver.RuntimeZone{Name: resource.Metadata.Name, Spec: zoneSpec})
 	}
 	return config, nil
+}
+
+type hostnameRecord struct {
+	Hostname string
+	Address  string
+}
+
+func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[string][]hostnameRecord {
+	out := map[string][]hostnameRecord{}
+	if c.Router == nil || c.Store == nil {
+		return out
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		switch resource.Kind {
+		case "VirtualIPv4Address":
+			if resource.APIVersion != api.NetAPIVersion {
+				continue
+			}
+			spec, err := resource.VirtualIPv4AddressSpec()
+			if err != nil {
+				continue
+			}
+			hostname := strings.TrimSpace(spec.Hostname)
+			if hostname == "" {
+				continue
+			}
+			address := statusAddressValue(statusString(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", resource.Metadata.Name)["address"]))
+			if address == "" {
+				address = statusAddressValue(spec.Address)
+			}
+			c.addHostnameRecord(out, servedZones, hostname, address)
+		case "IngressService":
+			if resource.APIVersion != api.FirewallAPIVersion {
+				continue
+			}
+			spec, err := resource.IngressServiceSpec()
+			if err != nil {
+				continue
+			}
+			hostname := strings.TrimSpace(spec.Hostname)
+			if hostname == "" {
+				continue
+			}
+			address := statusAddressValue(statusString(c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)["listenAddress"]))
+			if address == "" {
+				address = statusAddressValue(spec.Listen.Address)
+			}
+			if address == "" && strings.TrimSpace(spec.Listen.AddressFrom.Resource) != "" {
+				address = statusAddressValue(resourcequery.Value(c.Store, spec.Listen.AddressFrom))
+			}
+			c.addHostnameRecord(out, servedZones, hostname, address)
+		}
+	}
+	return out
+}
+
+func (c Controller) addHostnameRecord(out map[string][]hostnameRecord, servedZones map[string]bool, hostname, address string) {
+	hostname = strings.Trim(strings.TrimSpace(hostname), ".")
+	address = statusAddressValue(address)
+	if hostname == "" || address == "" {
+		return
+	}
+	if ip := net.ParseIP(address); ip == nil || ip.To4() == nil {
+		return
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DNSZone" || !servedZones[resource.Metadata.Name] {
+			continue
+		}
+		zoneSpec, err := resource.DNSZoneSpec()
+		if err != nil {
+			continue
+		}
+		relative, ok := relativeHostname(hostname, zoneSpec.Zone)
+		if !ok {
+			continue
+		}
+		out[resource.Metadata.Name] = append(out[resource.Metadata.Name], hostnameRecord{Hostname: relative, Address: address})
+		return
+	}
+}
+
+func appendHostnameRecords(zoneName string, spec api.DNSZoneSpec, records map[string][]hostnameRecord) api.DNSZoneSpec {
+	seen := map[string]bool{}
+	for _, record := range spec.Records {
+		seen[canonicalRecordHostname(record.Hostname, spec.Zone)] = true
+	}
+	for _, value := range records[zoneName] {
+		key := canonicalRecordHostname(value.Hostname, spec.Zone)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		spec.Records = append(spec.Records, api.DNSZoneRecordSpec{Hostname: value.Hostname, IPv4: value.Address})
+	}
+	return spec
+}
+
+func relativeHostname(hostname, zone string) (string, bool) {
+	hostname = strings.Trim(strings.ToLower(strings.TrimSpace(hostname)), ".")
+	zone = strings.Trim(strings.ToLower(strings.TrimSpace(zone)), ".")
+	if hostname == "" || zone == "" {
+		return "", false
+	}
+	if hostname == zone {
+		return "@", true
+	}
+	suffix := "." + zone
+	if !strings.HasSuffix(hostname, suffix) {
+		return "", false
+	}
+	return strings.TrimSuffix(hostname, suffix), true
+}
+
+func canonicalRecordHostname(hostname, zone string) string {
+	hostname = strings.Trim(strings.ToLower(strings.TrimSpace(hostname)), ".")
+	zone = strings.Trim(strings.ToLower(strings.TrimSpace(zone)), ".")
+	if hostname == "" || hostname == "@" {
+		return zone
+	}
+	if strings.HasSuffix(hostname, "."+zone) || hostname == zone {
+		return hostname
+	}
+	return hostname + "." + zone
 }
 
 func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, string, error) {
@@ -549,7 +678,16 @@ func compactStrings(values []string) []string {
 }
 
 func dnsResolverDependsOn(router *api.Router, ref daemonapi.ResourceRef) bool {
-	if router == nil || ref.APIVersion != api.NetAPIVersion {
+	if router == nil {
+		return false
+	}
+	if ref.APIVersion == api.NetAPIVersion && ref.Kind == "VirtualIPv4Address" && hostnameResourceExists(router, ref.Kind, ref.Name) {
+		return true
+	}
+	if ref.APIVersion == api.FirewallAPIVersion && ref.Kind == "IngressService" && hostnameResourceExists(router, ref.Kind, ref.Name) {
+		return true
+	}
+	if ref.APIVersion != api.NetAPIVersion {
 		return false
 	}
 	for _, resource := range router.Spec.Resources {
@@ -578,6 +716,39 @@ func dnsResolverDependsOn(router *api.Router, ref daemonapi.ResourceRef) bool {
 		}
 	}
 	return false
+}
+
+func hostnameResourceExists(router *api.Router, kind, name string) bool {
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != kind || resource.Metadata.Name != name {
+			continue
+		}
+		switch kind {
+		case "VirtualIPv4Address":
+			spec, err := resource.VirtualIPv4AddressSpec()
+			return err == nil && strings.TrimSpace(spec.Hostname) != ""
+		case "IngressService":
+			spec, err := resource.IngressServiceSpec()
+			return err == nil && strings.TrimSpace(spec.Hostname) != ""
+		}
+	}
+	return false
+}
+
+func dnsResolverZoneRefs(spec api.DNSResolverSpec) map[string]bool {
+	out := map[string]bool{}
+	for _, source := range spec.Sources {
+		if source.Kind != "zone" {
+			continue
+		}
+		for _, ref := range source.ZoneRef {
+			kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+			if ok && kind == "DNSZone" && name != "" {
+				out[name] = true
+			}
+		}
+	}
+	return out
 }
 
 func dnsZoneStatusRefs(spec api.DNSZoneSpec) []daemonapi.ResourceRef {
@@ -693,4 +864,11 @@ func valueFromStatusRef(store Store, ref string) string {
 		}
 		return fmt.Sprint(value)
 	}
+}
+
+func statusString(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }

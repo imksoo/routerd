@@ -197,12 +197,13 @@ sets stay un-NATed.
 validates it with `vtysh -C -f`, applies deltas with
 `frr-reload.py --reload`, watches FRR JSON status through `BGPStateWatcher`,
 and stores peer/prefix status for `routerctl`, Web Console resources, events,
-and OTel metrics. The controller interval is 15 seconds and must not be lowered
-below 3 seconds by future tuning; observed prefix status is capped at 4096
-entries to avoid high-cardinality status churn. Import policy is default deny; add
-`spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer pools. Accepted
-imports set `ip next-hop peer-address` so Kubernetes-advertised `/32` routes
-remain reachable through the advertising speaker.
+and OTel metrics. `routerctl show bgp` summarizes routers, peers, message
+counters, and last errors. The controller interval is 15 seconds and must not
+be lowered below 3 seconds by future tuning; observed prefix status is capped at
+4096 entries to avoid high-cardinality status churn. Import policy is default
+deny; add `spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer
+pools. Accepted imports set `ip next-hop peer-address` so Kubernetes-advertised
+`/32` routes remain reachable through the advertising speaker.
 
 `VirtualIPv4Address` currently targets Linux/systemd for VRRP mode through
 keepalived. VRRP uses explicit unicast peers and defaults to `nopreempt`; set
@@ -213,8 +214,10 @@ priority, and generated config path. `track` lowers priority when referenced
 resources such as `BGPRouter`, `BGPPeer`, or `IngressService` are not healthy.
 Track entries use hysteresis: by default three consecutive unhealthy observations
 are required to apply a penalty and two consecutive healthy observations are
-required to clear it. NixOS and FreeBSD remain groundwork until native renderers
-are implemented.
+required to clear it. `spec.hostname` can publish the VIP into matching
+DNSResolver-served `DNSZone` records, and `routerctl show vrrp` shows role,
+priority, peers, and transition age. NixOS and FreeBSD remain groundwork until
+native renderers are implemented.
 
 `BGPPeer.spec.password` is rendered into FRR as `neighbor ... password ...`.
 Treat routerd config files and rendered FRR config as secrets when this field is
@@ -244,7 +247,9 @@ previous resolved IPv4 address when DNS temporarily fails, records backend
 health in status, and selects the active backend. Linux nftables rendering uses
 that active backend on the next NAT reconcile. Existing conntrack entries are
 not flushed, so established flows can stay on the old backend while new flows
-use the selected backend.
+use the selected backend. `spec.hostname` can also publish the listen address
+into matching DNSResolver-served `DNSZone` records, and `routerctl show ingress`
+shows active backend and per-backend health.
 
 `IPAddressSet` writes literal IPv4/IPv6 addresses into nftables named sets when
 the ruleset is rendered. FQDN `A`/`AAAA` records are resolved by the runtime

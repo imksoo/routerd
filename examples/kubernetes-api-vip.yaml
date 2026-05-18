@@ -57,6 +57,7 @@ spec:
       spec:
         interface: lan
         address: 192.168.70.10/32
+        hostname: k8s-api.lain.local
         mode: vrrp
         vrrp:
           virtualRouterID: 70
@@ -84,8 +85,6 @@ spec:
         zone: lain.local
         ttl: 60
         records:
-          - hostname: k8s-api
-            ipv4: 192.168.70.10
           - hostname: k8s-cp-01
             ipv4: 192.168.70.21
           - hostname: k8s-cp-02
@@ -160,6 +159,7 @@ spec:
           address: 192.168.70.10
           protocol: tcp
           port: 6443
+        hostname: k8s-api.lain.local
         backends:
           - name: cp-01
             address: k8s-cp-01.lain.local

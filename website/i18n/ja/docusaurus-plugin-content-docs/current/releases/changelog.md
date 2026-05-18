@@ -15,6 +15,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - Kubernetes edge 用に、FRR backend の `BGPRouter` / `BGPPeer`、
   keepalived backend の `VirtualIPv4Address`、および `IngressService`
   backend health/failover controller を追加しました。
+- `routerctl show bgp`、`routerctl show vrrp`、`routerctl show ingress` の
+  table view、VIP/ingress の `hostname` field からの DNS record 自動派生、
+  BGP/VRRP/Ingress の transition と backend health 用 OTel metrics を追加しました。
 
 ### 変更
 

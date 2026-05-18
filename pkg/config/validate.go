@@ -51,6 +51,8 @@ func Validate(router *api.Router) error {
 	healthChecks := map[string]bool{}
 	bgpRouters := map[string]bool{}
 	zones := map[string]bool{}
+	dnsZones := map[string]string{}
+	dnsResolverZones := map[string]bool{}
 	ipAddressSets := map[string]bool{}
 	udpListenPorts := map[int]string{}
 	staticByInterfaceAddress := map[string]string{}
@@ -251,8 +253,59 @@ func Validate(router *api.Router) error {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "BGPRouter" {
 			bgpRouters[res.Metadata.Name] = true
 		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "DNSZone" {
+			spec, err := res.DNSZoneSpec()
+			if err != nil {
+				return err
+			}
+			dnsZones[res.Metadata.Name] = spec.Zone
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "DNSResolver" {
+			spec, err := res.DNSResolverSpec()
+			if err != nil {
+				return err
+			}
+			for _, source := range spec.Sources {
+				if source.Kind != "zone" {
+					continue
+				}
+				for _, ref := range source.ZoneRef {
+					kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+					if ok && kind == "DNSZone" && name != "" {
+						dnsResolverZones[name] = true
+					}
+				}
+			}
+		}
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallZone" {
 			zones[res.Metadata.Name] = true
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		hostname := ""
+		switch {
+		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv4Address":
+			spec, err := res.VirtualIPv4AddressSpec()
+			if err != nil {
+				return err
+			}
+			hostname = spec.Hostname
+		case res.APIVersion == api.FirewallAPIVersion && res.Kind == "IngressService":
+			spec, err := res.IngressServiceSpec()
+			if err != nil {
+				return err
+			}
+			hostname = spec.Hostname
+		}
+		if strings.TrimSpace(hostname) == "" {
+			continue
+		}
+		zoneName, ok := dnsHostnameCovered(hostname, dnsZones)
+		if !ok {
+			return fmt.Errorf("%s spec.hostname %q is not covered by any DNSZone", res.ID(), hostname)
+		}
+		if !dnsResolverZones[zoneName] {
+			return fmt.Errorf("%s spec.hostname %q is covered by DNSZone/%s but no DNSResolver source references that zone", res.ID(), hostname, zoneName)
 		}
 	}
 	for _, res := range router.Spec.Resources {
@@ -1736,6 +1789,11 @@ func validateResource(res api.Resource) error {
 		if err := validateIngressAddressSource(res.ID(), "spec.addressFrom", spec.AddressFrom); err != nil {
 			return err
 		}
+		if strings.TrimSpace(spec.Hostname) != "" {
+			if err := validateFQDN(spec.Hostname); err != nil {
+				return fmt.Errorf("%s spec.hostname is invalid: %w", res.ID(), err)
+			}
+		}
 		switch defaultString(spec.Mode, "static") {
 		case "static":
 		case "vrrp":
@@ -3121,6 +3179,11 @@ func validateResource(res api.Resource) error {
 		if err := validateIngressHairpin(res.ID(), "spec.hairpin", spec.Listen, spec.Hairpin); err != nil {
 			return err
 		}
+		if strings.TrimSpace(spec.Hostname) != "" {
+			if err := validateFQDN(spec.Hostname); err != nil {
+				return fmt.Errorf("%s spec.hostname is invalid: %w", res.ID(), err)
+			}
+		}
 		if len(spec.Backends) == 0 {
 			return fmt.Errorf("%s spec.backends is required", res.ID())
 		}
@@ -3830,6 +3893,56 @@ func validateDomainValue(value string) error {
 		return fmt.Errorf("must be a single DNS domain")
 	}
 	return nil
+}
+
+func validateFQDN(value string) error {
+	value = strings.Trim(strings.TrimSpace(value), ".")
+	if value == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if strings.ContainsAny(value, " \t\n\r/,") {
+		return fmt.Errorf("must be a single DNS name")
+	}
+	if !strings.Contains(value, ".") {
+		return fmt.Errorf("must be a fully qualified DNS name")
+	}
+	if len(value) > 253 {
+		return fmt.Errorf("must be 253 bytes or shorter")
+	}
+	for _, label := range strings.Split(value, ".") {
+		if label == "" || len(label) > 63 {
+			return fmt.Errorf("must contain non-empty labels of 63 bytes or less")
+		}
+		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return fmt.Errorf("labels must not start or end with '-'")
+		}
+		for _, r := range label {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
+				continue
+			}
+			return fmt.Errorf("labels must contain only letters, digits, or '-'")
+		}
+	}
+	return nil
+}
+
+func dnsHostnameCovered(hostname string, zones map[string]string) (string, bool) {
+	hostname = strings.Trim(strings.ToLower(strings.TrimSpace(hostname)), ".")
+	bestName := ""
+	bestLen := -1
+	for name, zone := range zones {
+		zone = strings.Trim(strings.ToLower(strings.TrimSpace(zone)), ".")
+		if zone == "" {
+			continue
+		}
+		if hostname == zone || strings.HasSuffix(hostname, "."+zone) {
+			if len(zone) > bestLen {
+				bestName = name
+				bestLen = len(zone)
+			}
+		}
+	}
+	return bestName, bestName != ""
 }
 
 func validateDNSZoneDomainSource(source api.StatusValueSourceSpec) error {

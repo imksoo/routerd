@@ -15,6 +15,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added FRR-backed `BGPRouter` / `BGPPeer`, keepalived-backed
   `VirtualIPv4Address`, and runtime `IngressService` backend health/failover
   control for Kubernetes edge use cases.
+- Added `routerctl show bgp`, `routerctl show vrrp`, and
+  `routerctl show ingress` table views, derived DNS records from VIP/ingress
+  `hostname` fields, and BGP/VRRP/Ingress OpenTelemetry metrics for transitions
+  and backend health.
 
 ### Changed
 

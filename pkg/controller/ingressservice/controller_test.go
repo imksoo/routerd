@@ -50,6 +50,12 @@ func TestReconcileIngressServiceSelectsHealthyFailoverBackend(t *testing.T) {
 	if active["name"] != "cp-02" || active["address"] != "10.0.0.12" {
 		t.Fatalf("active backend = %#v, status=%#v", active, status)
 	}
+	if status["hostname"] != "k8s-api.lain.local" {
+		t.Fatalf("hostname status = %#v", status)
+	}
+	if status["lastActiveBackendTransitionAt"] == "" {
+		t.Fatalf("missing active backend transition timestamp: %#v", status)
+	}
 	if status["phase"] != "Degraded" {
 		t.Fatalf("phase = %#v, status=%#v", status["phase"], status)
 	}
@@ -173,7 +179,8 @@ func ingressRouter() *api.Router {
 			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"},
 			Metadata: api.ObjectMeta{Name: "api"},
 			Spec: api.IngressServiceSpec{
-				Listen: api.IngressListenSpec{Interface: "lan", Protocol: "tcp", Port: 6443},
+				Listen:   api.IngressListenSpec{Interface: "lan", Protocol: "tcp", Port: 6443},
+				Hostname: "k8s-api.lain.local",
 				Backends: []api.IngressBackendSpec{
 					{Name: "cp-01", Address: "10.0.0.11", Port: 6443},
 					{Name: "cp-02", Address: "10.0.0.12", Port: 6443},
