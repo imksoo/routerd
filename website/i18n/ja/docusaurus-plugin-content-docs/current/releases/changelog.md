@@ -10,6 +10,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ## Unreleased
 
+## v20260518.1431
+
 ### 追加
 
 - controller reconcile の runtime status を control API、log、OpenTelemetry

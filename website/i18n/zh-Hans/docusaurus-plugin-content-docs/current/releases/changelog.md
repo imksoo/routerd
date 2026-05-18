@@ -10,6 +10,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 
 ## Unreleased
 
+## v20260518.1431
+
 ### 新增
 
 - 在 control API、日志、OpenTelemetry metrics/traces，以及 Web Console 的
