@@ -145,6 +145,66 @@ func TestStatusChangedIgnoresRenderDiagnostics(t *testing.T) {
 	}
 }
 
+func TestStatusChangedIgnoresNestedTrackCounters(t *testing.T) {
+	current := map[string]any{
+		"phase": "Applied",
+		"track": []any{map[string]any{
+			"resource":       "BGPRouter/lab",
+			"healthy":        true,
+			"healthyCount":   float64(10),
+			"unhealthyCount": float64(0),
+		}},
+	}
+	next := map[string]any{
+		"phase": "Applied",
+		"track": []map[string]any{{
+			"resource":       "BGPRouter/lab",
+			"healthy":        true,
+			"healthyCount":   11,
+			"unhealthyCount": 0,
+		}},
+	}
+	if statusChanged(current, next) {
+		t.Fatalf("nested track counter-only update should not be a resource status change")
+	}
+	if fields := statusChangedFields(current, next); len(fields) != 0 {
+		t.Fatalf("changed fields = %v, want none", fields)
+	}
+}
+
+func TestStatusChangedNormalizesStructSlices(t *testing.T) {
+	type backend struct {
+		Name            string `json:"name"`
+		ResolvedAddress string `json:"resolvedAddress"`
+		Port            int    `json:"port"`
+		Healthy         bool   `json:"healthy"`
+	}
+	current := map[string]any{
+		"phase": "Active",
+		"backends": []any{map[string]any{
+			"name":            "router06-ssh",
+			"resolvedAddress": "192.168.123.111",
+			"port":            float64(22),
+			"healthy":         true,
+		}},
+	}
+	next := map[string]any{
+		"phase": "Active",
+		"backends": []backend{{
+			Name:            "router06-ssh",
+			ResolvedAddress: "192.168.123.111",
+			Port:            22,
+			Healthy:         true,
+		}},
+	}
+	if statusChanged(current, next) {
+		t.Fatalf("struct slice equivalent to stored map slice should not be a resource status change")
+	}
+	if fields := statusChangedFields(current, next); len(fields) != 0 {
+		t.Fatalf("changed fields = %v, want none", fields)
+	}
+}
+
 func TestStatusChangedIgnoresPeerDetailTelemetry(t *testing.T) {
 	current := map[string]any{
 		"phase":           "Running",

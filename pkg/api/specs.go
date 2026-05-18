@@ -129,6 +129,7 @@ type SystemdUnitSpec struct {
 	RestartSec               string   `yaml:"restartSec,omitempty" json:"restartSec,omitempty"`
 	User                     string   `yaml:"user,omitempty" json:"user,omitempty"`
 	Group                    string   `yaml:"group,omitempty" json:"group,omitempty"`
+	SupplementaryGroups      []string `yaml:"supplementaryGroups,omitempty" json:"supplementaryGroups,omitempty"`
 	WorkingDirectory         string   `yaml:"workingDirectory,omitempty" json:"workingDirectory,omitempty"`
 	RuntimeDirectory         []string `yaml:"runtimeDirectory,omitempty" json:"runtimeDirectory,omitempty"`
 	RuntimeDirectoryPreserve string   `yaml:"runtimeDirectoryPreserve,omitempty" json:"runtimeDirectoryPreserve,omitempty" jsonschema:"enum=,enum=no,enum=yes,enum=restart"`

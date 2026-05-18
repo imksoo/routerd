@@ -342,12 +342,47 @@ func stableStatusValue(value any) any {
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, item := range typed {
+			if volatileNestedStatusField(key) {
+				continue
+			}
 			out[key] = stableStatusValue(item)
 		}
 		return out
 	default:
+		if normalized, ok := stableJSONValue(value); ok {
+			return stableStatusValue(normalized)
+		}
 		return value
 	}
+}
+
+func volatileNestedStatusField(key string) bool {
+	switch key {
+	case "healthyCount", "unhealthyCount", "observedAt", "updatedAt", "lastCheckedAt":
+		return true
+	default:
+		return false
+	}
+}
+
+func stableJSONValue(value any) (any, bool) {
+	if value == nil {
+		return nil, false
+	}
+	switch reflect.TypeOf(value).Kind() {
+	case reflect.Struct, reflect.Slice, reflect.Array:
+	default:
+		return nil, false
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, false
+	}
+	var out any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 func stableFloat64(value float64) any {
@@ -374,6 +409,10 @@ func statusSubscriptions(kinds ...string) []bus.Subscription {
 			return allowed[event.Resource.Kind]
 		},
 	}}
+}
+
+func bootstrapSubscriptions() []bus.Subscription {
+	return []bus.Subscription{{Topics: []string{"routerd.controller.bootstrap"}}}
 }
 
 func becamePhase(event daemonapi.DaemonEvent, phase string) bool {
@@ -623,10 +662,10 @@ func (r *Runner) Start(ctx context.Context) error {
 		}},
 		framework.FuncController{ControllerName: "dns-resolver", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, ReconcileFunc: dnsResolver.HandleEvent, PeriodicFunc: dnsResolver.Reconcile},
 		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Lease", "PPPoESession"), PeriodicFunc: wan.Reconcile},
-		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: statusSubscriptions("IngressService"), PeriodicFunc: ingressService.Reconcile},
+		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: bootstrapSubscriptions(), PeriodicFunc: ingressService.Reconcile},
 		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy", "IngressService"), PeriodicFunc: nat.Reconcile},
-		framework.FuncController{ControllerName: "bgp", Every: 15 * time.Second, Subs: statusSubscriptions("BGPRouter", "BGPPeer"), PeriodicFunc: bgp.Reconcile},
-		framework.FuncController{ControllerName: "vrrp", Every: 15 * time.Second, Subs: statusSubscriptions("VirtualIPv4Address", "BGPRouter", "BGPPeer", "IngressService"), PeriodicFunc: vrrp.Reconcile},
+		framework.FuncController{ControllerName: "bgp", Every: 15 * time.Second, Subs: bootstrapSubscriptions(), PeriodicFunc: bgp.Reconcile},
+		framework.FuncController{ControllerName: "vrrp", Every: 15 * time.Second, Subs: statusSubscriptions("BGPRouter", "BGPPeer", "IngressService"), PeriodicFunc: vrrp.Reconcile},
 		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptions("IPAddressSet", "LocalServiceRedirect"), PeriodicFunc: ipAddressSet.Reconcile},
 	}
 	if !r.Opts.FirewallDisabled {

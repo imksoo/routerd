@@ -239,6 +239,9 @@ If routerd itself manages `routerd.service` as a `SystemdUnit` resource, a unit
 file change is applied carefully: routerd schedules a delayed self-restart
 through `systemd-run` instead of directly restarting itself in the middle of the
 apply pass.
+When the same router config contains BGP, VRRP, or ingress service resources,
+routerd augments its own unit with the supplementary FRR groups and writable
+FRR/keepalived paths needed by the generated integrations.
 
 Useful options:
 

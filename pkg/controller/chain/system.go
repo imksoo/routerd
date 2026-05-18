@@ -488,6 +488,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		}
 		path := filepath.Join(c.SystemdSystemDir, unitName)
 		spec = render.MaybeAugmentDPIClassifierSpec(unitName, spec, render.NDPIAgentUnitName)
+		spec = maybeAugmentRouterdServiceAccess(c.Router, unitName, spec)
 		spec.Environment = mergeStringEnvs(spec.Environment, telemetryEnv)
 		changed, err := c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, spec, command)
 		if err != nil {
@@ -889,6 +890,56 @@ func mergeStringEnvs(base, extra []string) []string {
 		}
 		seen[key] = true
 		out = append(out, value)
+	}
+	return out
+}
+
+func maybeAugmentRouterdServiceAccess(router *api.Router, unitName string, spec api.SystemdUnitSpec) api.SystemdUnitSpec {
+	if unitName != "routerd.service" || !routerNeedsFRRKeepalivedAccess(router) || firstNonEmpty(spec.State, "present") == "absent" {
+		return spec
+	}
+	spec.SupplementaryGroups = appendMissingStrings(spec.SupplementaryGroups, "frr", "frrvty")
+	spec.ReadWritePaths = appendMissingStrings(spec.ReadWritePaths, "/run/frr", "/var/run/frr", "/etc/frr", "/etc/keepalived")
+	return spec
+}
+
+func routerNeedsFRRKeepalivedAccess(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, res := range router.Spec.Resources {
+		switch {
+		case res.APIVersion == api.NetAPIVersion && res.Kind == "BGPRouter":
+			return true
+		case res.APIVersion == api.FirewallAPIVersion && res.Kind == "IngressService":
+			return true
+		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv4Address":
+			spec, err := res.VirtualIPv4AddressSpec()
+			if err == nil && firstNonEmpty(spec.Mode, "static") == "vrrp" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func appendMissingStrings(values []string, additions ...string) []string {
+	out := append([]string(nil), values...)
+	for _, addition := range additions {
+		addition = strings.TrimSpace(addition)
+		if addition == "" {
+			continue
+		}
+		found := false
+		for _, existing := range out {
+			if existing == addition {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, addition)
+		}
 	}
 	return out
 }

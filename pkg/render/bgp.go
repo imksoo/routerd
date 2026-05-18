@@ -122,7 +122,8 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 
 func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 	prefixListName := "ROUTERD-" + frrName(cfg.Name) + "-IMPORT"
-	routeMapName := "ROUTERD-" + frrName(cfg.Name) + "-IN"
+	routeMapInName := "ROUTERD-" + frrName(cfg.Name) + "-IN"
+	routeMapOutName := "ROUTERD-" + frrName(cfg.Name) + "-OUT"
 	if len(cfg.AllowedPrefixes) == 0 {
 		buf.WriteString("ip prefix-list " + prefixListName + " seq 999 deny 0.0.0.0/0 le 32\n")
 	} else {
@@ -131,10 +132,11 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 		}
 		buf.WriteString("ip prefix-list " + prefixListName + " seq 999 deny 0.0.0.0/0 le 32\n")
 	}
-	buf.WriteString("route-map " + routeMapName + " permit 10\n")
+	buf.WriteString("route-map " + routeMapInName + " permit 10\n")
 	buf.WriteString(" match ip address prefix-list " + prefixListName + "\n")
 	buf.WriteString(" set ip next-hop peer-address\n")
-	buf.WriteString("route-map " + routeMapName + " deny 999\n")
+	buf.WriteString("route-map " + routeMapInName + " deny 999\n")
+	buf.WriteString("route-map " + routeMapOutName + " deny 999\n")
 	buf.WriteString("!\n")
 	buf.WriteString(fmt.Sprintf("router bgp %d\n", cfg.ASN))
 	buf.WriteString(" bgp router-id " + cfg.RouterID + "\n")
@@ -146,7 +148,8 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 		if peer.Password != "" {
 			buf.WriteString(fmt.Sprintf(" neighbor %s password %s\n", peer.Peer, peer.Password))
 		}
-		buf.WriteString(fmt.Sprintf(" neighbor %s route-map %s in\n", peer.Peer, routeMapName))
+		buf.WriteString(fmt.Sprintf(" neighbor %s route-map %s in\n", peer.Peer, routeMapInName))
+		buf.WriteString(fmt.Sprintf(" neighbor %s route-map %s out\n", peer.Peer, routeMapOutName))
 	}
 	buf.WriteString(" address-family ipv4 unicast\n")
 	for _, peer := range cfg.Peers {

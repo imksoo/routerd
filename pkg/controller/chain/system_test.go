@@ -221,6 +221,58 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd.service"}, Spec: api.SystemdUnitSpec{
+			ExecStart:      []string{"/usr/local/sbin/routerd", "serve"},
+			ReadWritePaths: []string{"/run/routerd"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+			ASN:      64512,
+			RouterID: "192.0.2.1",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "api-vip"}, Spec: api.VirtualIPv4AddressSpec{
+			Interface: "lan",
+			Address:   "192.0.2.250/32",
+			Mode:      "vrrp",
+			VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 66},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "ssh"}, Spec: api.IngressServiceSpec{
+			Listen:   api.IngressListenSpec{Address: "192.0.2.250", Port: 22, Protocol: "tcp"},
+			Backends: []api.IngressBackendSpec{{Address: "192.0.2.10", Port: 22}},
+		}},
+	}}}
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            mapStore{},
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			if name == "systemctl" && len(args) >= 2 && (args[0] == "is-active" || args[0] == "is-enabled") {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "routerd.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotUnit := string(data)
+	for _, want := range []string{
+		"SupplementaryGroups=frr frrvty",
+		"ReadWritePaths=/run/routerd /run/frr /var/run/frr /etc/frr /etc/keepalived",
+	} {
+		if !strings.Contains(gotUnit, want) {
+			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
+		}
+	}
+}
+
 func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

@@ -927,6 +927,12 @@
                         },
                         "type": "array"
                       },
+                      "supplementaryGroups": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "type": {
                         "enum": [
                           "",

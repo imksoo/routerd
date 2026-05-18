@@ -41,8 +41,10 @@ func TestFRRConfigRendersDefaultDenyImportPolicy(t *testing.T) {
 		"ip prefix-list ROUTERD-LAN-IMPORT seq 10 permit 10.0.0.200/29",
 		"ip prefix-list ROUTERD-LAN-IMPORT seq 999 deny 0.0.0.0/0 le 32",
 		"set ip next-hop peer-address",
+		"route-map ROUTERD-LAN-OUT deny 999",
 		"neighbor 10.0.0.21 remote-as 64513",
 		"neighbor 10.0.0.21 route-map ROUTERD-LAN-IN in",
+		"neighbor 10.0.0.21 route-map ROUTERD-LAN-OUT out",
 		"neighbor 10.0.0.22 activate",
 	} {
 		if !strings.Contains(got, want) {

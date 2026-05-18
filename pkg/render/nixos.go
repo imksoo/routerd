@@ -1434,6 +1434,7 @@ func writeNixOSSystemdUnit(buf *bytes.Buffer, unit nixOSSystemdUnit) {
 	writeNixOSSystemdString(buf, "Type", spec.Type)
 	writeNixOSSystemdString(buf, "User", spec.User)
 	writeNixOSSystemdString(buf, "Group", spec.Group)
+	writeNixOSSystemdStringList(buf, "SupplementaryGroups", spec.SupplementaryGroups)
 	writeNixOSSystemdString(buf, "WorkingDirectory", spec.WorkingDirectory)
 	writeNixOSSystemdStringList(buf, "Environment", spec.Environment)
 	writeNixOSSystemdStringList(buf, "EnvironmentFile", spec.EnvironmentFiles)

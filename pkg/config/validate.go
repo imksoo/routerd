@@ -1050,6 +1050,14 @@ func validateResource(res api.Resource) error {
 		default:
 			return fmt.Errorf("%s spec.runtimeDirectoryPreserve must be no, yes, or restart", res.ID())
 		}
+		for i, group := range spec.SupplementaryGroups {
+			if strings.TrimSpace(group) == "" {
+				return fmt.Errorf("%s spec.supplementaryGroups[%d] must not be empty", res.ID(), i)
+			}
+			if strings.ContainsAny(group, " \t\x00\n\r") {
+				return fmt.Errorf("%s spec.supplementaryGroups[%d] contains invalid characters", res.ID(), i)
+			}
+		}
 		for i, path := range spec.ReadWritePaths {
 			if strings.TrimSpace(path) == "" {
 				return fmt.Errorf("%s spec.readWritePaths[%d] must not be empty", res.ID(), i)

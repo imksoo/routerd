@@ -80,6 +80,7 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	if spec.Group != "" {
 		b.WriteString("Group=" + spec.Group + "\n")
 	}
+	writeSpaceList(&b, "SupplementaryGroups", spec.SupplementaryGroups)
 	if spec.WorkingDirectory != "" {
 		b.WriteString("WorkingDirectory=" + spec.WorkingDirectory + "\n")
 	}

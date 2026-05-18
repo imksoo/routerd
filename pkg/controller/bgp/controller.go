@@ -89,11 +89,16 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			return fmt.Errorf("%s --reload %s: %w: %s", reload, path, err, strings.TrimSpace(string(out)))
 		}
 	}
+	if !c.DryRun {
+		if changed {
+			if err := c.saveConfiguredStatuses("Applied", path, true, nil); err != nil {
+				return err
+			}
+		}
+		return c.observe(ctx)
+	}
 	if err := c.saveConfiguredStatuses("Applied", path, changed, nil); err != nil {
 		return err
-	}
-	if !c.DryRun {
-		return c.observe(ctx)
 	}
 	return nil
 }
