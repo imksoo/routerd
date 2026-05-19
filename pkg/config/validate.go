@@ -378,6 +378,21 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return fmt.Errorf("%s spec.interface must reference a base Interface %q", res.ID(), name)
 			}
 		}
+		if res.Kind == "ClusterNetworkRoute" {
+			spec, err := res.ClusterNetworkRouteSpec()
+			if err != nil {
+				return err
+			}
+			for i, via := range spec.Via {
+				name := strings.TrimSpace(via.Interface)
+				if name == "" {
+					return fmt.Errorf("%s spec.via[%d].interface is required", res.ID(), i)
+				}
+				if !interfaces[name] {
+					return fmt.Errorf("%s spec.via[%d].interface references missing Interface %q", res.ID(), i, name)
+				}
+			}
+		}
 		if res.Kind == "BGPPeer" {
 			spec, err := res.BGPPeerSpec()
 			if err != nil {
@@ -1840,6 +1855,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 					return fmt.Errorf("%s spec.vrrp.peers[%d] must be a single peer address or hostname", res.ID(), i)
 				}
 			}
+			if err := validateSecretValueSource(res.ID(), "spec.vrrp.authentication", spec.VRRP.Authentication, "spec.vrrp.authenticationFrom", spec.VRRP.AuthenticationFrom); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("%s spec.mode must be static or vrrp", res.ID())
 		}
@@ -1935,6 +1953,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if err := validateBGPBFD(res.ID(), spec.BFD); err != nil {
 			return err
 		}
+		if err := validateSecretValueSource(res.ID(), "spec.password", spec.Password, "spec.passwordFrom", spec.PasswordFrom); err != nil {
+			return err
+		}
 	case "DHCPv6Address", "IPv6RAAddress":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -1977,6 +1998,17 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		via, err := netip.ParseAddr(spec.Via)
 		if err != nil || !via.Is4() {
 			return fmt.Errorf("%s spec.via must be an IPv4 address", res.ID())
+		}
+	case "ClusterNetworkRoute":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.ClusterNetworkRouteSpec()
+		if err != nil {
+			return err
+		}
+		if err := validateClusterNetworkRoute(res.ID(), spec); err != nil {
+			return err
 		}
 	case "IPv6StaticRoute":
 		if res.APIVersion != api.NetAPIVersion {

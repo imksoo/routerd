@@ -27,6 +27,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - 新增面向 FRR-managed BGP peer 的 BFD support、FRR `bfdd` daemon rendering、
   BGP watcher tuning fields、BFD status observation，以及
   `examples/bgp-bfd.yaml`。
+- 新增面向 Kubernetes Pod / Service CIDR static route 的
+  `ClusterNetworkRoute` helper，並為 BGP peer password 與 VRRP/CARP
+  authentication 增加 `passwordFrom` / `authenticationFrom` secret source。
 
 ## v20260519.0743
 

@@ -1626,6 +1626,8 @@ func canonicalShowKind(kind string) string {
 		"dhcpv6information":      "DHCPv6Information",
 		"ipv6ra":                 "IPv6RAAddress",
 		"ipv4staticroute":        "IPv4StaticRoute",
+		"clusternetworkroute":    "ClusterNetworkRoute",
+		"k8sroutes":              "ClusterNetworkRoute",
 		"ipv6route":              "IPv6StaticRoute",
 		"ipv6staticroute":        "IPv6StaticRoute",
 		"ipv6raaddress":          "IPv6RAAddress",

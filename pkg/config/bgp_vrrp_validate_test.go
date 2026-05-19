@@ -3,6 +3,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -103,6 +105,58 @@ func TestValidateBGPTimersRejectsInvalidHoldTime(t *testing.T) {
 	}
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "holdTime must be greater") {
 		t.Fatalf("expected holdTime validation error, got %v", err)
+	}
+}
+
+func TestValidateSecretValueSources(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "bgp-password")
+	if err := os.WriteFile(secretPath, []byte("czNjcjN0"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{ASN: 64512, RouterID: "10.240.70.2"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.BGPPeerSpec{
+				RouterRef:    "BGPRouter/lan",
+				PeerASN:      64513,
+				Peers:        []string{"10.240.70.21"},
+				PasswordFrom: api.SecretValueSourceSpec{File: secretPath, Base64: true},
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("valid secret source should validate: %v", err)
+	}
+	if warnings := Warnings(router); len(warnings) != 0 {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+
+	peer := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
+	peer.Password = "plain"
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected mutually exclusive secret error, got %v", err)
+	}
+
+	peer.Password = ""
+	peer.PasswordFrom.File = filepath.Join(t.TempDir(), "missing")
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err != nil {
+		t.Fatalf("missing secret file should warn, not fail: %v", err)
+	}
+	if warnings := Warnings(router); len(warnings) != 1 || !strings.Contains(warnings[0], "does not exist") {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+
+	if err := os.WriteFile(secretPath, []byte("not-base64!"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	peer.PasswordFrom.File = secretPath
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "base64") {
+		t.Fatalf("expected base64 validation error, got %v", err)
 	}
 }
 

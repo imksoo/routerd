@@ -98,3 +98,31 @@ func TestKeepalivedConfigRendersPreemptDelay(t *testing.T) {
 		t.Fatalf("keepalived config did not render preempt_delay correctly:\n%s", got)
 	}
 }
+
+func TestKeepalivedConfigResolvesAuthenticationFromEnv(t *testing.T) {
+	t.Setenv("ROUTERD_TEST_VRRP_AUTH", "secret")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			Metadata: api.ObjectMeta{Name: "k8s-api"},
+			Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "10.240.70.10/32",
+				Mode:      "vrrp",
+				VRRP: api.VirtualIPv4VRRPSpec{
+					VirtualRouterID:    50,
+					Peers:              []string{"10.240.70.3"},
+					AuthenticationFrom: api.SecretValueSourceSpec{Env: "ROUTERD_TEST_VRRP_AUTH"},
+				},
+			},
+		},
+	}}}
+	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens18"})
+	if err != nil {
+		t.Fatalf("render keepalived config: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "auth_pass secret") {
+		t.Fatalf("keepalived config did not include env auth_pass:\n%s", got)
+	}
+}

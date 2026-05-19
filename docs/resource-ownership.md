@@ -30,6 +30,7 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `DSLiteTunnel` | Linux `ip6tnl` interface |
 | `IPAddressSet` | nftables IPv4/IPv6 named sets when referenced by a Linux renderer |
 | `IPv4Route` | Kernel route |
+| `ClusterNetworkRoute` | Generated `IPv4StaticRoute` intents for Pod / Service CIDRs through configured next hops |
 | `NAT44Rule` | nftables `routerd_nat` table |
 | `PortForward` / `IngressService` | Linux nftables `routerd_nat` / `routerd_filter` DNAT, optional hairpin SNAT, or FreeBSD `pf.conf` `rdr pass` / optional NAT reflection rules |
 | `BGPRouter` / `BGPPeer` | FRR BGP configuration under `/run/routerd/frr/routerd.conf`, applied with `frr-reload.py`; `/etc/frr/daemons` `bgpd` / `bfdd` toggles and `frr.service` restart when BFD daemon state changes |

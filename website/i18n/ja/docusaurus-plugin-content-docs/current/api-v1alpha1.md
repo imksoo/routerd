@@ -145,6 +145,7 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 | `DSLiteTunnel` | AFTR へ `ip6tnl` トンネルを張ります。AFTR は直接 IPv6、FQDN、または DHCPv6 情報から得ます。 |
 | `IPAddressSet` | 直接指定したアドレスや FQDN から、再利用可能な IP address set を定義します。Linux nftables renderer はこれを named set として出力し、redirect、NAT、policy routing から参照できます。 |
 | `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路や、明示的な破棄経路にも使います。 |
+| `ClusterNetworkRoute` | Kubernetes の Pod / Service CIDR を worker next hop 経由の static IPv4 route に展開します。 |
 | `BGPRouter` | ローカル BGP router を宣言します。初期 backend は FRR で、import policy は default deny です。 |
 | `BGPPeer` | `BGPRouter` にぶら下がる FRR 管理の BGP peer を宣言します。Kubernetes BGP speaker などに使います。 |
 | `NAT44Rule` | nftables の `routerd_nat` テーブルで IPv4 NAPT を行います。 |
@@ -164,6 +165,13 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 
 `IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4DefaultRoutePolicy` は `excludeDestinationCIDRs` を持ちます。これにより、LAN 内部、管理網、HGW LAN、RFC 1918 の内部網などを policy routing の対象から外せます。
 
+`ClusterNetworkRoute` は Kubernetes node 向けの補助 resource です。
+`spec.pods.cidrs` と `spec.services.cidrs` に Pod / Service CIDR を並べ、
+`spec.via[]` に worker または VIP の next hop を指定すると、routerd は
+対応する `IPv4StaticRoute` intent を生成します。同じ weight は同じ metric
+として扱われ、複数 next hop の ECMP に使えます。異なる weight は metric 差に
+変換され、優先経路と fallback 経路を表します。
+
 `FirewallRule` は宛先 CIDR に加えて `destinationSetRefs` と
 `excludeDestinationSetRefs` を持ちます。これにより、再利用可能な FQDN-backed set
 を各 rule にアドレス展開せず、許可・拒否・reject の条件として使えます。
@@ -181,8 +189,12 @@ DNAT と戻り経路用の masquerade/NAT reflection を生成します。
 `listen.addressFrom` と backend の `addressFrom` は `IPv4StaticAddress/<name>.address`
 や `VirtualIPv4Address/<name>.address` のような静的に描画できるアドレスリソースを参照できます。
 `VirtualIPv4Address.spec.vrrp.authentication` は keepalived では `auth_pass`、
-FreeBSD CARP では `pass` として描画されます。この値を使う場合、routerd config、
-`/etc/keepalived/keepalived.conf`、host interface state は secret として扱ってください。
+FreeBSD CARP では `pass` として描画されます。本番構成では routerd YAML に
+共有 secret を残さないため、`VirtualIPv4Address.spec.vrrp.authenticationFrom`
+を優先してください。`authenticationFrom.file` は local secret file、
+`authenticationFrom.env` は環境変数を読み、`base64: true` で base64 値を
+decode します。生成済み keepalived/CARP 設定や host interface state は secret
+として扱ってください。
 VRRP authentication は VRRPv3 (RFC 5798) では deprecated です。routerd は L2 隔離を前提にするため、
 authentication は周辺ネットワーク方針で必要な場合や単純な誤設定対策に限って使ってください。
 `IngressService` は複数 backend、TCP/HTTP health check、`failover`、`sourceHash`、
@@ -244,7 +256,10 @@ FreeBSD CARP は親 interface 上の multicast advertisement を使うため、
 role、priority、peer、transition 経過時間を表示します。
 
 `BGPPeer.spec.password` は FRR 設定に `neighbor ... password ...` として描画されます。
-この field を使う場合、routerd config と生成済み FRR config は secret として扱ってください。
+本番構成では routerd YAML に共有 secret を残さないため、`BGPPeer.spec.passwordFrom`
+を優先してください。`passwordFrom.file` は local root-owned secret file、
+`passwordFrom.env` は環境変数を読み、`base64: true` で base64 値を decode します。
+生成済み FRR config は secret として扱ってください。
 FRR の listen address 制限は managed FRR config の通常 stanza ではなく、bgpd 起動時の
 `-l` / `--listenon` option です。特定 interface に限定したい場合は firewall zone と
 service-manager 側の bgpd option を合わせて管理してください。

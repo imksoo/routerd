@@ -161,6 +161,7 @@ endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
 | `IPAddressSet` | Defines reusable IP address sets from literal addresses and FQDNs. Linux nftables renderers materialize these as named sets for firewall, redirect, NAT, and policy-routing consumers. |
 | `IPv4Route` | Adds IPv4 routes, including DS-Lite defaults and explicit drop routes. |
+| `ClusterNetworkRoute` | Expands Kubernetes Pod and Service CIDRs into static IPv4 routes through worker next hops. |
 | `BGPRouter` | Declares a local BGP router. The initial backend is FRR with default-deny import policy. |
 | `BGPPeer` | Declares FRR-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
@@ -178,6 +179,13 @@ endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
 `excludeDestinationSetRefs` in addition to CIDR fields. Use them to steer or
 exclude FQDN-backed destination sets without expanding addresses directly into
 the policy resource.
+
+`ClusterNetworkRoute` is a helper for Kubernetes nodes that need static routes
+for Pod CIDRs and Service CIDRs instead of dynamic routing. routerd expands each
+CIDR and each `spec.via[]` next hop into managed `IPv4StaticRoute` resources.
+Equal `weight` values produce equal route metrics for ECMP-capable platforms;
+different weights become different metrics so higher-weight next hops are
+preferred and lower-weight next hops act as fallback routes.
 
 `IPv4PolicyRoute`, `IPv4PolicyRouteSet`, and `IPv4DefaultRoutePolicy` support
 `excludeDestinationCIDRs`. Use it to keep LAN, management, HGW LAN, and RFC
@@ -242,20 +250,24 @@ transition age. NixOS remains groundwork until a native service-manager module
 owns the same host artifacts.
 
 `BGPPeer.spec.password` is rendered into FRR as `neighbor ... password ...`.
-Treat routerd config files and rendered FRR config as secrets when this field is
-used; external secret-source wiring is intentionally left for a separate design.
+Prefer `BGPPeer.spec.passwordFrom` for production configs so the routerd YAML
+does not contain the shared secret. `passwordFrom.file` reads a local root-owned
+secret file and `passwordFrom.env` reads an environment variable; `base64: true`
+decodes either source before rendering.
 FRR listen-address binding is a bgpd daemon invocation option (`-l` /
 `--listenon`), not a normal BGP config stanza in the managed FRR config. Keep
 host firewall zones and service-manager bgpd options aligned when BGP must be
 limited to a specific interface address.
 
 `VirtualIPv4Address.spec.vrrp.authentication` is rendered into keepalived as
-`auth_pass` and into FreeBSD CARP as `pass`. Treat routerd config files,
-`/etc/keepalived/keepalived.conf`, and host interface state as secrets when
-this field is used. VRRP authentication is deprecated in VRRPv3 (RFC 5798);
-routerd assumes L2 isolation and recommends using authentication only when it is
-still required by the surrounding network policy or to guard against simple
-misconfiguration.
+`auth_pass` and into FreeBSD CARP as `pass`. Prefer
+`VirtualIPv4Address.spec.vrrp.authenticationFrom` for production configs.
+`authenticationFrom.file` reads a local secret file and `authenticationFrom.env`
+reads an environment variable; `base64: true` decodes either source before
+rendering. Treat rendered keepalived config and host interface state as secrets. VRRP
+authentication is deprecated in VRRPv3 (RFC 5798); routerd assumes L2 isolation
+and recommends using authentication only when it is still required by the
+surrounding network policy or to guard against simple misconfiguration.
 
 `PortForward` and `IngressService` render DNAT on Linux nftables and FreeBSD pf.
 Set `spec.hairpin.enabled: true` with `spec.hairpin.interfaces` to also allow

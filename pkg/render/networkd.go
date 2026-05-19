@@ -20,6 +20,7 @@ type File struct {
 }
 
 func NetworkdDropins(router *api.Router) ([]File, error) {
+	router = api.ExpandClusterNetworkRoutes(router)
 	aliases := linkAliases(router)
 
 	var files []File

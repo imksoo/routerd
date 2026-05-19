@@ -297,6 +297,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "BGPRouter", api.BGPRouterSpec{}),
 			resourceSchema(api.NetAPIVersion, "BGPPeer", api.BGPPeerSpec{}),
 			resourceSchema(api.NetAPIVersion, "DHCPv4Lease", api.DHCPv4LeaseSpec{}),
+			resourceSchema(api.NetAPIVersion, "ClusterNetworkRoute", api.ClusterNetworkRouteSpec{}),
 			resourceSchema(api.NetAPIVersion, "DHCPv4Server", api.DHCPv4ServerSpec{}),
 			resourceSchema(api.NetAPIVersion, "DHCPv4Scope", api.DHCPv4ScopeSpec{}),
 			resourceSchema(api.NetAPIVersion, "DHCPv4Reservation", api.DHCPv4ReservationSpec{}),

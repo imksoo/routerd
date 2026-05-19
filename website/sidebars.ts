@@ -88,6 +88,7 @@ const sidebars: SidebarsConfig = {
         'operations/state-database',
         'operations/inventory',
         'operations/usb-persistence',
+        'operations/secrets',
         'operations/development',
         'operations/ndpi-agent-libndpi',
       ],

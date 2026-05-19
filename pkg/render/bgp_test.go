@@ -209,3 +209,26 @@ func TestFRRConfigRendersBFDPeerAndDaemons(t *testing.T) {
 		}
 	}
 }
+
+func TestFRRConfigResolvesBGPPeerPasswordFromEnv(t *testing.T) {
+	t.Setenv("ROUTERD_TEST_BGP_PASSWORD", "s3cr3t")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+			ASN:      64512,
+			RouterID: "10.0.0.1",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.BGPPeerSpec{
+			RouterRef:    "BGPRouter/lan",
+			PeerASN:      64513,
+			Peers:        []string{"10.0.0.21"},
+			PasswordFrom: api.SecretValueSourceSpec{Env: "ROUTERD_TEST_BGP_PASSWORD"},
+		}},
+	}}}
+	data, err := FRRConfig(router)
+	if err != nil {
+		t.Fatalf("render FRR config: %v", err)
+	}
+	if got := string(data); !strings.Contains(got, "neighbor 10.0.0.21 password s3cr3t") {
+		t.Fatalf("FRR config did not include env password:\n%s", got)
+	}
+}

@@ -393,13 +393,14 @@ type VirtualIPv4AddressSpec struct {
 }
 
 type VirtualIPv4VRRPSpec struct {
-	VirtualRouterID int      `yaml:"virtualRouterID" json:"virtualRouterID" jsonschema:"minimum=1,maximum=255"`
-	Priority        int      `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=1,maximum=254"`
-	Preempt         *bool    `yaml:"preempt,omitempty" json:"preempt,omitempty"`
-	PreemptDelay    string   `yaml:"preemptDelay,omitempty" json:"preemptDelay,omitempty"`
-	Peers           []string `yaml:"peers,omitempty" json:"peers,omitempty"`
-	AdvertInterval  string   `yaml:"advertInterval,omitempty" json:"advertInterval,omitempty"`
-	Authentication  string   `yaml:"authentication,omitempty" json:"authentication,omitempty"`
+	VirtualRouterID    int                   `yaml:"virtualRouterID" json:"virtualRouterID" jsonschema:"minimum=1,maximum=255"`
+	Priority           int                   `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=1,maximum=254"`
+	Preempt            *bool                 `yaml:"preempt,omitempty" json:"preempt,omitempty"`
+	PreemptDelay       string                `yaml:"preemptDelay,omitempty" json:"preemptDelay,omitempty"`
+	Peers              []string              `yaml:"peers,omitempty" json:"peers,omitempty"`
+	AdvertInterval     string                `yaml:"advertInterval,omitempty" json:"advertInterval,omitempty"`
+	Authentication     string                `yaml:"authentication,omitempty" json:"authentication,omitempty"`
+	AuthenticationFrom SecretValueSourceSpec `yaml:"authenticationFrom,omitempty" json:"authenticationFrom,omitempty"`
 }
 
 type ResourceTrackSpec struct {
@@ -472,14 +473,15 @@ type BGPWatcherSpec struct {
 }
 
 type BGPPeerSpec struct {
-	RouterRef   string             `yaml:"routerRef" json:"routerRef"`
-	PeerASN     uint32             `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
-	Peers       []string           `yaml:"peers" json:"peers"`
-	Password    string             `yaml:"password,omitempty" json:"password,omitempty"`
-	Timers      BGPTimersSpec      `yaml:"timers,omitempty" json:"timers,omitempty"`
-	Communities BGPCommunitiesSpec `yaml:"communities,omitempty" json:"communities,omitempty"`
-	BFD         BGPBFDSpec         `yaml:"bfd,omitempty" json:"bfd,omitempty"`
-	When        ResourceWhenSpec   `yaml:"when,omitempty" json:"when,omitempty"`
+	RouterRef    string                `yaml:"routerRef" json:"routerRef"`
+	PeerASN      uint32                `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
+	Peers        []string              `yaml:"peers" json:"peers"`
+	Password     string                `yaml:"password,omitempty" json:"password,omitempty"`
+	PasswordFrom SecretValueSourceSpec `yaml:"passwordFrom,omitempty" json:"passwordFrom,omitempty"`
+	Timers       BGPTimersSpec         `yaml:"timers,omitempty" json:"timers,omitempty"`
+	Communities  BGPCommunitiesSpec    `yaml:"communities,omitempty" json:"communities,omitempty"`
+	BFD          BGPBFDSpec            `yaml:"bfd,omitempty" json:"bfd,omitempty"`
+	When         ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type BGPBFDSpec struct {
@@ -487,6 +489,12 @@ type BGPBFDSpec struct {
 	MinRxInterval    string `yaml:"minRxInterval,omitempty" json:"minRxInterval,omitempty"`
 	MinTxInterval    string `yaml:"minTxInterval,omitempty" json:"minTxInterval,omitempty"`
 	DetectMultiplier int    `yaml:"detectMultiplier,omitempty" json:"detectMultiplier,omitempty" jsonschema:"minimum=1,maximum=50"`
+}
+
+type SecretValueSourceSpec struct {
+	File   string `yaml:"file,omitempty" json:"file,omitempty"`
+	Env    string `yaml:"env,omitempty" json:"env,omitempty"`
+	Base64 bool   `yaml:"base64,omitempty" json:"base64,omitempty"`
 }
 
 type DHCPv4LeaseSpec struct {
@@ -505,6 +513,23 @@ type IPv4StaticRouteSpec struct {
 	Via         string `yaml:"via" json:"via"`
 	Interface   string `yaml:"interface" json:"interface"`
 	Metric      int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+}
+
+type ClusterNetworkRouteSpec struct {
+	Pods     ClusterNetworkRouteCIDRSpec  `yaml:"pods,omitempty" json:"pods,omitempty"`
+	Services ClusterNetworkRouteCIDRSpec  `yaml:"services,omitempty" json:"services,omitempty"`
+	Via      []ClusterNetworkRouteViaSpec `yaml:"via" json:"via"`
+	When     ResourceWhenSpec             `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type ClusterNetworkRouteCIDRSpec struct {
+	CIDRs []string `yaml:"cidrs,omitempty" json:"cidrs,omitempty"`
+}
+
+type ClusterNetworkRouteViaSpec struct {
+	Interface string `yaml:"interface" json:"interface"`
+	NextHop   string `yaml:"nextHop" json:"nextHop"`
+	Weight    int    `yaml:"weight,omitempty" json:"weight,omitempty" jsonschema:"minimum=0,maximum=999"`
 }
 
 type IPv6StaticRouteSpec struct {
@@ -1454,6 +1479,10 @@ func (r Resource) DHCPv4LeaseSpec() (DHCPv4LeaseSpec, error) {
 
 func (r Resource) IPv4StaticRouteSpec() (IPv4StaticRouteSpec, error) {
 	return specAs[IPv4StaticRouteSpec](r)
+}
+
+func (r Resource) ClusterNetworkRouteSpec() (ClusterNetworkRouteSpec, error) {
+	return specAs[ClusterNetworkRouteSpec](r)
 }
 
 func (r Resource) IPv6StaticRouteSpec() (IPv6StaticRouteSpec, error) {

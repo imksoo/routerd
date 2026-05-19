@@ -31,6 +31,7 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `DSLiteTunnel` | Linux `ip6tnl` インターフェース |
 | `IPAddressSet` | Linux renderer から参照される nftables IPv4/IPv6 named set |
 | `IPv4Route` | カーネル経路 |
+| `ClusterNetworkRoute` | Pod / Service CIDR を指定 next hop 経由にする生成済み `IPv4StaticRoute` intent |
 | `NAT44Rule` | nftables `routerd_nat` テーブル |
 | `PortForward` / `IngressService` | Linux nftables の `routerd_nat` / `routerd_filter` DNAT、任意の hairpin SNAT、または FreeBSD `pf.conf` の `rdr pass` / 任意の NAT reflection ルール |
 | `BGPRouter` / `BGPPeer` | `/run/routerd/frr/routerd.conf` の FRR BGP 設定と `frr-reload.py` 適用。BFD daemon state 変更時の `/etc/frr/daemons` `bgpd` / `bfdd` toggle と `frr.service` restart |

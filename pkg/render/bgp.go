@@ -156,11 +156,15 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 			return nil, fmt.Errorf("%s references missing BGPRouter %q", res.ID(), spec.RouterRef)
 		}
 		for _, peer := range compactStrings(spec.Peers) {
+			password, err := secretValue(spec.Password, spec.PasswordFrom)
+			if err != nil {
+				return nil, fmt.Errorf("%s spec.passwordFrom: %w", res.ID(), err)
+			}
 			cfg.Peers = append(cfg.Peers, bgpPeerConfig{
 				ResourceName: res.Metadata.Name,
 				Peer:         peer,
 				ASN:          spec.PeerASN,
-				Password:     spec.Password,
+				Password:     password,
 				Timers:       renderBGPTimers(spec.Timers, cfg.Timers),
 				Communities:  renderBGPCommunities(spec.Communities, cfg.Communities),
 				BFD:          renderBGPBFD(spec.BFD),

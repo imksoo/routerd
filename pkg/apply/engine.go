@@ -147,6 +147,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeIPv4PolicyRoute(res, aliases, policies, includePlan, &rr)
 		case "IPv4PolicyRouteSet":
 			e.observeIPv4PolicyRouteSet(res, aliases, policies, includePlan, &rr)
+		case "ClusterNetworkRoute":
+			e.observeClusterNetworkRoute(res, includePlan, &rr)
 		case "IPv4ReversePathFilter":
 			e.observeIPv4ReversePathFilter(res, aliases, includePlan, &rr)
 		case "PathMTUPolicy":
@@ -967,6 +969,23 @@ func (e *Engine) observeIPv4PolicyRouteSet(res api.Resource, aliases map[string]
 	}
 	rr.Plan = append(rr.Plan, fmt.Sprintf("hash IPv4 packets by %s and select one of %d policy route targets", strings.Join(spec.HashFields, ","), len(spec.Targets)))
 	rr.Plan = append(rr.Plan, "store selected mark in conntrack mark so each flow keeps the same route")
+}
+
+func (e *Engine) observeClusterNetworkRoute(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.ClusterNetworkRouteSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["podCIDRs"] = strings.Join(spec.Pods.CIDRs, ",")
+	rr.Observed["serviceCIDRs"] = strings.Join(spec.Services.CIDRs, ",")
+	rr.Observed["nextHops"] = fmt.Sprintf("%d", len(spec.Via))
+	if !includePlan {
+		return
+	}
+	expanded := api.ExpandClusterNetworkRoutes(&api.Router{Spec: api.RouterSpec{Resources: []api.Resource{res}}})
+	rr.Plan = append(rr.Plan, fmt.Sprintf("expand into %d IPv4StaticRoute resources", len(expanded.Spec.Resources)-1))
 }
 
 func (e *Engine) observeIPv4ReversePathFilter(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {

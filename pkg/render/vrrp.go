@@ -103,6 +103,10 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 		}
 		peers := compactStrings(spec.VRRP.Peers)
 		sort.Strings(peers)
+		authentication, err := secretValue(spec.VRRP.Authentication, spec.VRRP.AuthenticationFrom)
+		if err != nil {
+			return nil, fmt.Errorf("%s spec.vrrp.authenticationFrom: %w", res.ID(), err)
+		}
 		instances = append(instances, vrrpInstance{
 			Name:            res.Metadata.Name,
 			Interface:       ifname,
@@ -113,7 +117,7 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 			PreemptDelay:    preemptDelay,
 			Peers:           peers,
 			AdvertInterval:  advert,
-			Authentication:  spec.VRRP.Authentication,
+			Authentication:  authentication,
 		})
 	}
 	sort.Slice(instances, func(i, j int) bool { return instances[i].Name < instances[j].Name })

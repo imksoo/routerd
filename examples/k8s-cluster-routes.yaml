@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: k8s-cluster-routes
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        managed: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: ClusterNetworkRoute
+      metadata:
+        name: k8s
+      spec:
+        pods:
+          cidrs:
+            - 10.244.0.0/16
+        services:
+          cidrs:
+            - 10.96.0.0/12
+        via:
+          - interface: lan
+            nextHop: 192.168.50.21
+            weight: 100
+          - interface: lan
+            nextHop: 192.168.50.22
+            weight: 100

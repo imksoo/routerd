@@ -350,6 +350,9 @@ func validateCommand(args []string, stdout io.Writer) error {
 	if err := config.Validate(router); err != nil {
 		return err
 	}
+	for _, warning := range config.Warnings(router) {
+		fmt.Fprintf(stdout, "warning: %s\n", warning)
+	}
 	fmt.Fprintf(stdout, "config %s exists\n", *configPath)
 	fmt.Fprintln(stdout, "config is valid")
 	return nil
@@ -390,12 +393,14 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 	}
 	stateChanges = append(stateChanges, policyChanges...)
 	effectiveRouter := filterRouterByWhen(router, stateStore)
+	configWarnings := config.Warnings(router)
 	switch name {
 	case "observe":
 		result, err := engine.Observe(effectiveRouter)
 		if err != nil {
 			return err
 		}
+		result.Warnings = append(result.Warnings, configWarnings...)
 		appendStatePolicyResults(result, router, stateStore, stateChanges)
 		appendPrefixDelegationStateWarnings(result, router, stateStore)
 		return writeResult(stdout, *statusFile, result)
@@ -404,6 +409,7 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 		if err != nil {
 			return err
 		}
+		result.Warnings = append(result.Warnings, configWarnings...)
 		appendStatePolicyResults(result, router, stateStore, stateChanges)
 		appendPrefixDelegationStateWarnings(result, router, stateStore)
 		return writeResult(stdout, *statusFile, result)
@@ -788,6 +794,8 @@ func canonicalResourceKind(kind string) string {
 		"unit":                   "SystemdUnit",
 		"route":                  "IPv4PolicyRouteSet",
 		"ipv4policyrouteset":     "IPv4PolicyRouteSet",
+		"clusternetworkroute":    "ClusterNetworkRoute",
+		"k8sroutes":              "ClusterNetworkRoute",
 	}
 	if canonical, ok := aliases[key]; ok {
 		return canonical
@@ -805,7 +813,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
+	case "Interface", "Link", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "StatePolicy", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4ReversePathFilter", "PathMTUPolicy":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -978,6 +986,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	}
 	router = effectiveConfig
 	optionWarnings = append(optionWarnings, warnings...)
+	optionWarnings = append(optionWarnings, config.Warnings(router)...)
 	stateStore, err := loadApplyStateStore(defaultString(opts.StatePath, defaultStatePath), opts.DryRun)
 	if err != nil {
 		return nil, err
@@ -2356,7 +2365,7 @@ func filterRouterByWhen(router *api.Router, store routerstate.Store) *api.Router
 			filtered.Spec.Resources = append(filtered.Spec.Resources, res)
 		}
 	}
-	return &filtered
+	return api.ExpandClusterNetworkRoutes(&filtered)
 }
 
 func filterDefaultRoutePolicyCandidatesByWhen(res api.Resource, store routerstate.Store) api.Resource {
@@ -2397,6 +2406,9 @@ func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 		return spec.When
 	case "IPv4PolicyRouteSet":
 		spec, _ := res.IPv4PolicyRouteSetSpec()
+		return spec.When
+	case "ClusterNetworkRoute":
+		spec, _ := res.ClusterNetworkRouteSpec()
 		return spec.When
 	default:
 		return api.ResourceWhenSpec{}
@@ -3148,7 +3160,7 @@ func controllerResourceKinds(name string) []string {
 	case "pppoesession":
 		return []string{"PPPoEInterface", "PPPoESession"}
 	case "route":
-		return []string{"IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy", "PathMTUPolicy"}
+		return []string{"IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy", "PathMTUPolicy"}
 	case "systemd-unit":
 		return []string{"SystemdUnit", "TailscaleNode", "HealthCheck"}
 	default:

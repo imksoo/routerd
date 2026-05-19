@@ -35,6 +35,7 @@ func FreeBSD(router *api.Router) (FreeBSDConfig, error) {
 }
 
 func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource, api.PPPoEInterfaceSpec) (string, error)) (FreeBSDConfig, error) {
+	router = api.ExpandClusterNetworkRoutes(router)
 	aliases := map[string]string{}
 	managed := map[string]bool{}
 	for _, res := range router.Spec.Resources {

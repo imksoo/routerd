@@ -2406,6 +2406,21 @@
                           "authentication": {
                             "type": "string"
                           },
+                          "authenticationFrom": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "base64": {
+                                "type": "boolean"
+                              },
+                              "env": {
+                                "type": "string"
+                              },
+                              "file": {
+                                "type": "string"
+                              }
+                            },
+                            "type": "object"
+                          },
                           "peers": {
                             "items": {
                               "type": "string"
@@ -2831,6 +2846,21 @@
                       "password": {
                         "type": "string"
                       },
+                      "passwordFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "base64": {
+                            "type": "boolean"
+                          },
+                          "env": {
+                            "type": "string"
+                          },
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "peerASN": {
                         "minimum": 1,
                         "type": "integer"
@@ -2976,6 +3006,141 @@
                     },
                     "required": [
                       "interface"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "ClusterNetworkRoute",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "pods": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "cidrs": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "services": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "cidrs": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "via": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "interface": {
+                              "type": "string"
+                            },
+                            "nextHop": {
+                              "type": "string"
+                            },
+                            "weight": {
+                              "maximum": 999,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "interface",
+                            "nextHop"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "via"
                     ],
                     "type": "object"
                   },

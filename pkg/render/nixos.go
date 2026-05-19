@@ -88,6 +88,7 @@ type nixOSChronyConfig struct {
 }
 
 func NixOSModule(router *api.Router) ([]byte, error) {
+	router = api.ExpandClusterNetworkRoutes(router)
 	host, err := nixOSHost(router)
 	if err != nil {
 		return nil, err

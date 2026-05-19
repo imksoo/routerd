@@ -79,6 +79,36 @@ func TestNetworkdDropinsRenderStaticRoutes(t *testing.T) {
 	}
 }
 
+func TestNetworkdDropinsExpandClusterNetworkRoutes(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "lan", api.InterfaceSpec{IfName: "ens19", Managed: true}),
+		netResource("ClusterNetworkRoute", "k8s", api.ClusterNetworkRouteSpec{
+			Pods:     api.ClusterNetworkRouteCIDRSpec{CIDRs: []string{"10.244.0.0/16"}},
+			Services: api.ClusterNetworkRouteCIDRSpec{CIDRs: []string{"10.96.0.0/12"}},
+			Via: []api.ClusterNetworkRouteViaSpec{
+				{Interface: "lan", NextHop: "192.168.50.21", Weight: 100},
+				{Interface: "lan", NextHop: "192.168.50.22", Weight: 100},
+			},
+		}),
+	}}}
+	files, err := NetworkdDropins(router)
+	if err != nil {
+		t.Fatalf("render networkd dropins: %v", err)
+	}
+	got := string(findNetworkdTestFile(files, "10-netplan-ens19.network.d/92-routerd-static-routes.conf").Data)
+	for _, want := range []string{
+		"Destination=10.244.0.0/16",
+		"Destination=10.96.0.0/12",
+		"Gateway=192.168.50.21",
+		"Gateway=192.168.50.22",
+		"Metric=900",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("cluster route drop-in missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNetworkdDropinsRenderBridge(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		netResource("Interface", "lan", api.InterfaceSpec{IfName: "ens19", Managed: true}),

@@ -30,6 +30,7 @@ routerd plan --config examples/<name>.yaml
 | `wireguard-hub-spoke.yaml` | You want a hub router with multiple WireGuard spokes and routed spoke prefixes. |
 | `vrf-lab.yaml` | You want to separate guest, staff, and IoT interfaces with Linux VRF route tables. |
 | `bgp-bfd.yaml` | You want FRR BGP peers with BFD-based sub-second failure detection and tuned watcher limits. |
+| `k8s-cluster-routes.yaml` | You want static Pod CIDR and Service CIDR routes toward Kubernetes worker nodes. |
 | `multi-instance-bgp.yaml` | You want separate FRR BGP instances for LAN speakers and a VRF-backed WAN peering domain. |
 
 ## WAN and home-router patterns

@@ -659,6 +659,45 @@ func TestValidateStaticRoutes(t *testing.T) {
 	}
 }
 
+func TestValidateClusterNetworkRoute(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "ClusterNetworkRoute"},
+				Metadata: api.ObjectMeta{Name: "k8s"},
+				Spec: api.ClusterNetworkRouteSpec{
+					Pods:     api.ClusterNetworkRouteCIDRSpec{CIDRs: []string{"10.244.0.0/16"}},
+					Services: api.ClusterNetworkRouteCIDRSpec{CIDRs: []string{"10.96.0.0/12"}},
+					Via:      []api.ClusterNetworkRouteViaSpec{{Interface: "lan", NextHop: "192.168.50.21"}},
+				},
+			},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate cluster route: %v", err)
+	}
+
+	spec := router.Spec.Resources[1].Spec.(api.ClusterNetworkRouteSpec)
+	spec.Services.CIDRs = []string{"10.244.10.0/24"}
+	router.Spec.Resources[1].Spec = spec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "overlaps") {
+		t.Fatalf("expected overlap validation error, got %v", err)
+	}
+	spec.Services.CIDRs = []string{"10.96.0.0/12"}
+	spec.Via[0].Interface = "missing"
+	router.Spec.Resources[1].Spec = spec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing Interface") {
+		t.Fatalf("expected missing interface validation error, got %v", err)
+	}
+}
+
 func TestValidateSelfAddressPolicy(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
