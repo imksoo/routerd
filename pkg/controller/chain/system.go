@@ -918,6 +918,11 @@ func routerNeedsFRRKeepalivedAccess(router *api.Router) bool {
 			if err == nil && firstNonEmpty(spec.Mode, "static") == "vrrp" {
 				return true
 			}
+		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv6Address":
+			spec, err := res.VirtualIPv6AddressSpec()
+			if err == nil && firstNonEmpty(spec.Mode, "static") == "vrrp" {
+				return true
+			}
 		}
 	}
 	return false

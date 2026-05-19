@@ -74,30 +74,37 @@ func ParseFRRSummaryJSON(data []byte) ([]Peer, error) {
 	if err != nil {
 		return nil, err
 	}
-	peersMap := findMap(root, "peers")
-	if peersMap == nil {
+	peersMaps := findMaps(root, "peers")
+	if len(peersMaps) == 0 {
 		return nil, nil
 	}
 	var peers []Peer
-	for address, raw := range peersMap {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
+	seen := map[string]bool{}
+	for _, peersMap := range peersMaps {
+		for address, raw := range peersMap {
+			if seen[address] {
+				continue
+			}
+			item, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			seen[address] = true
+			state := firstString(item, "state", "bgpState", "peerState")
+			lastErrorReason := firstString(item, "lastErrorReason", "lastResetDueTo", "lastNotificationReason", "lastErrorCode")
+			peers = append(peers, Peer{
+				Address:           address,
+				ASN:               uint32(firstNumber(item, "remoteAs", "remoteAS", "remote_as")),
+				State:             state,
+				Established:       strings.EqualFold(state, "Established"),
+				PrefixesReceived:  int(firstNumber(item, "pfxRcd", "prefixReceivedCount", "prefixesReceived")),
+				MessagesReceived:  int(firstNumber(item, "msgRcvd", "messagesReceived", "messagesRcvd")),
+				MessagesSent:      int(firstNumber(item, "msgSent", "messagesSent")),
+				LastEstablishedAt: firstStringOrNumber(item, "lastEstablishedAt", "lastConnectionEstablished", "peerUptimeEstablishedEpoch"),
+				LastErrorAt:       firstStringOrNumber(item, "lastErrorAt", "lastResetTime", "lastNotificationTime"),
+				LastErrorReason:   lastErrorReason,
+			})
 		}
-		state := firstString(item, "state", "bgpState", "peerState")
-		lastErrorReason := firstString(item, "lastErrorReason", "lastResetDueTo", "lastNotificationReason", "lastErrorCode")
-		peers = append(peers, Peer{
-			Address:           address,
-			ASN:               uint32(firstNumber(item, "remoteAs", "remoteAS", "remote_as")),
-			State:             state,
-			Established:       strings.EqualFold(state, "Established"),
-			PrefixesReceived:  int(firstNumber(item, "pfxRcd", "prefixReceivedCount", "prefixesReceived")),
-			MessagesReceived:  int(firstNumber(item, "msgRcvd", "messagesReceived", "messagesRcvd")),
-			MessagesSent:      int(firstNumber(item, "msgSent", "messagesSent")),
-			LastEstablishedAt: firstStringOrNumber(item, "lastEstablishedAt", "lastConnectionEstablished", "peerUptimeEstablishedEpoch"),
-			LastErrorAt:       firstStringOrNumber(item, "lastErrorAt", "lastResetTime", "lastNotificationTime"),
-			LastErrorReason:   lastErrorReason,
-		})
 	}
 	sort.Slice(peers, func(i, j int) bool { return peers[i].Address < peers[j].Address })
 	return peers, nil
@@ -248,6 +255,28 @@ func findMap(value any, key string) map[string]any {
 		}
 	}
 	return nil
+}
+
+func findMaps(value any, key string) []map[string]any {
+	var out []map[string]any
+	var walk func(any)
+	walk = func(value any) {
+		switch typed := value.(type) {
+		case map[string]any:
+			if child, ok := typed[key].(map[string]any); ok {
+				out = append(out, child)
+			}
+			for _, child := range typed {
+				walk(child)
+			}
+		case []any:
+			for _, child := range typed {
+				walk(child)
+			}
+		}
+	}
+	walk(value)
+	return out
 }
 
 func collectPrefixes(value any, out *[]Prefix) {

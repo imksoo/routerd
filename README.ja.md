@@ -86,9 +86,10 @@ WireGuard/Tailscale overlay、USB 状態から復元できるディスクレス 
   複数待ち受け、キャッシュ
 - IPv4/IPv6 アドレス派生、静的経路、既定経路ポリシー、経路対象外指定、
   Path MTU 方針、TCP MSS 調整、NAT44、DS-Lite
-- Kubernetes edge 用の構成要素として、任意で BFD を使える FRR backend の
-  BGP peer、Pod/Service CIDR 向け static route helper、keepalived backend の
-  IPv4 VIP、複数 backend `IngressService` の health/failover
+- Kubernetes edge 用の構成要素として、任意で BFD を使える dual-stack FRR
+  backend の BGP peer、Pod/Service CIDR 向け static route helper、
+  keepalived backend の IPv4/IPv6 VIP、複数 backend `IngressService` の
+  health/failover
 - `ClientPolicy`、DHCPv4 固定割り当て、MAC アドレスベース nftables 規則に
   よる同一 LAN 上のゲスト端末隔離
 - `HealthCheck`、`EgressRoutePolicy`、`EventRule`、`DerivedEvent` による

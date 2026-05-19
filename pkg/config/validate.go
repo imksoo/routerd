@@ -253,7 +253,20 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 			if defaultString(spec.Mode, "static") == "vrrp" {
-				key := spec.Interface + "|" + strconv.Itoa(spec.VRRP.VirtualRouterID)
+				key := res.Kind + "|" + spec.Interface + "|" + strconv.Itoa(spec.VRRP.VirtualRouterID)
+				if existing := vrrpByInterfaceVRID[key]; existing != "" {
+					return fmt.Errorf("%s spec.vrrp.virtualRouterID conflicts with %s on interface %q", res.ID(), existing, spec.Interface)
+				}
+				vrrpByInterfaceVRID[key] = res.ID()
+			}
+		}
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv6Address" {
+			spec, err := res.VirtualIPv6AddressSpec()
+			if err != nil {
+				return err
+			}
+			if defaultString(spec.Mode, "static") == "vrrp" {
+				key := res.Kind + "|" + spec.Interface + "|" + strconv.Itoa(spec.VRRP.VirtualRouterID)
 				if existing := vrrpByInterfaceVRID[key]; existing != "" {
 					return fmt.Errorf("%s spec.vrrp.virtualRouterID conflicts with %s on interface %q", res.ID(), existing, spec.Interface)
 				}
@@ -302,6 +315,12 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		switch {
 		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv4Address":
 			spec, err := res.VirtualIPv4AddressSpec()
+			if err != nil {
+				return err
+			}
+			hostname = spec.Hostname
+		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv6Address":
+			spec, err := res.VirtualIPv6AddressSpec()
 			if err != nil {
 				return err
 			}
@@ -363,7 +382,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4StaticAddress", "VirtualIPv4Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Scope", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface", "PPPoESession":
+		case "IPv4StaticAddress", "VirtualIPv4Address", "VirtualIPv6Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Scope", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface", "PPPoESession":
 			name, err := interfaceRef(res)
 			if err != nil {
 				return err
@@ -1815,6 +1834,90 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 			}
 			if prefix.Bits() != 32 {
 				return fmt.Errorf("%s spec.address must be an IPv4 /32 prefix", res.ID())
+			}
+		}
+		if err := validateIngressAddressSource(res.ID(), "spec.addressFrom", spec.AddressFrom); err != nil {
+			return err
+		}
+		if strings.TrimSpace(spec.Hostname) != "" {
+			if err := validateFQDN(spec.Hostname); err != nil {
+				return fmt.Errorf("%s spec.hostname is invalid: %w", res.ID(), err)
+			}
+		}
+		switch defaultString(spec.Mode, "static") {
+		case "static":
+		case "vrrp":
+			if spec.VRRP.VirtualRouterID < 1 || spec.VRRP.VirtualRouterID > 255 {
+				return fmt.Errorf("%s spec.vrrp.virtualRouterID must be within 1-255", res.ID())
+			}
+			if targetOS != platform.OSFreeBSD && len(spec.VRRP.Peers) == 0 {
+				return fmt.Errorf("%s spec.vrrp.peers is required for unicast VRRP", res.ID())
+			}
+			if spec.VRRP.Priority != 0 && (spec.VRRP.Priority < 1 || spec.VRRP.Priority > 254) {
+				return fmt.Errorf("%s spec.vrrp.priority must be within 1-254", res.ID())
+			}
+			if spec.VRRP.AdvertInterval != "" {
+				if _, err := time.ParseDuration(spec.VRRP.AdvertInterval); err != nil {
+					return fmt.Errorf("%s spec.vrrp.advertInterval is invalid: %w", res.ID(), err)
+				}
+			}
+			if spec.VRRP.PreemptDelay != "" {
+				if spec.VRRP.Preempt == nil || !*spec.VRRP.Preempt {
+					return fmt.Errorf("%s spec.vrrp.preemptDelay requires spec.vrrp.preempt=true", res.ID())
+				}
+				if _, err := time.ParseDuration(spec.VRRP.PreemptDelay); err != nil {
+					return fmt.Errorf("%s spec.vrrp.preemptDelay is invalid: %w", res.ID(), err)
+				}
+			}
+			for i, peer := range spec.VRRP.Peers {
+				if err := validateAddressOrHostname(peer); err != nil {
+					return fmt.Errorf("%s spec.vrrp.peers[%d] must be a single peer address or hostname", res.ID(), i)
+				}
+			}
+			if err := validateSecretValueSource(res.ID(), "spec.vrrp.authentication", spec.VRRP.Authentication, "spec.vrrp.authenticationFrom", spec.VRRP.AuthenticationFrom); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("%s spec.mode must be static or vrrp", res.ID())
+		}
+		for i, track := range spec.Track {
+			if err := validateSourceResourceRef(track.Resource); err != nil {
+				return fmt.Errorf("%s spec.track[%d].resource %w", res.ID(), i, err)
+			}
+			if track.UnhealthyPenalty < 0 || track.UnhealthyPenalty > 254 {
+				return fmt.Errorf("%s spec.track[%d].unhealthyPenalty must be within 0-254", res.ID(), i)
+			}
+			if track.ConfirmConsecutiveUnhealthy < 0 || track.ConfirmConsecutiveUnhealthy > 255 {
+				return fmt.Errorf("%s spec.track[%d].confirmConsecutiveUnhealthy must be non-negative and within 1-255 when set", res.ID(), i)
+			}
+			if track.ConfirmConsecutiveHealthy < 0 || track.ConfirmConsecutiveHealthy > 255 {
+				return fmt.Errorf("%s spec.track[%d].confirmConsecutiveHealthy must be non-negative and within 1-255 when set", res.ID(), i)
+			}
+		}
+	case "VirtualIPv6Address":
+		if res.APIVersion != api.NetAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.VirtualIPv6AddressSpec()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(spec.Interface) == "" {
+			return fmt.Errorf("%s spec.interface is required", res.ID())
+		}
+		if strings.TrimSpace(spec.Address) == "" && strings.TrimSpace(spec.AddressFrom.Resource) == "" {
+			return fmt.Errorf("%s spec.address or spec.addressFrom is required", res.ID())
+		}
+		if strings.TrimSpace(spec.Address) != "" && strings.TrimSpace(spec.AddressFrom.Resource) != "" {
+			return fmt.Errorf("%s spec.address and spec.addressFrom are mutually exclusive", res.ID())
+		}
+		if strings.TrimSpace(spec.Address) != "" {
+			prefix, err := netip.ParsePrefix(spec.Address)
+			if err != nil || !prefix.Addr().Is6() {
+				return fmt.Errorf("%s spec.address must be an IPv6 prefix", res.ID())
+			}
+			if prefix.Bits() != 128 {
+				return fmt.Errorf("%s spec.address must be an IPv6 /128 prefix", res.ID())
 			}
 		}
 		if err := validateIngressAddressSource(res.ID(), "spec.addressFrom", spec.AddressFrom); err != nil {
@@ -4036,6 +4139,9 @@ func interfaceRef(res api.Resource) (string, error) {
 		return spec.Interface, err
 	case "VirtualIPv4Address":
 		spec, err := res.VirtualIPv4AddressSpec()
+		return spec.Interface, err
+	case "VirtualIPv6Address":
+		spec, err := res.VirtualIPv6AddressSpec()
 		return spec.Interface, err
 	case "DHCPv4Lease":
 		spec, err := res.DHCPv4LeaseSpec()

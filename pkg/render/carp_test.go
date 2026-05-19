@@ -49,6 +49,35 @@ func TestCARPConfigRendersFreeBSDIfconfigCommands(t *testing.T) {
 	}
 }
 
+func TestCARPConfigRendersIPv6IfconfigCommands(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv6Address"},
+			Metadata: api.ObjectMeta{Name: "api-vip-v6"},
+			Spec: api.VirtualIPv6AddressSpec{
+				Interface: "lan",
+				Address:   "fd00:1234::10/128",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv6VRRPSpec{VirtualRouterID: 51, Priority: 150},
+			},
+		},
+	}}}
+	config, err := CARPConfig(router, map[string]string{"lan": "vtnet1"})
+	if err != nil {
+		t.Fatalf("render CARP config: %v", err)
+	}
+	wantCommands := [][]string{{
+		"vtnet1", "inet6", "vhid", "51", "advbase", "1", "advskew", "104", "alias", "fd00:1234::10/128",
+	}}
+	if !reflect.DeepEqual(config.IfconfigCommands(), wantCommands) {
+		t.Fatalf("commands = %#v, want %#v", config.IfconfigCommands(), wantCommands)
+	}
+	lines := strings.Join(config.RCConfLines(), "\n")
+	if !strings.Contains(lines, `ifconfig_vtnet1_alias0="inet6 vhid 51 advbase 1 advskew 104 alias fd00:1234::10/128"`) {
+		t.Fatalf("rc.conf lines missing CARP IPv6 alias:\n%s", lines)
+	}
+}
+
 func TestCARPConfigOverridesPriority(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

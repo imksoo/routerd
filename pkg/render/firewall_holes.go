@@ -38,6 +38,11 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 			if strings.TrimSpace(spec.Mode) == "vrrp" {
 				add(resource.Metadata.Name+"-vrrp", zones.byResource(spec.Interface), "self", "vrrp", 0, resource.ID(), zones.ifNameByResource(spec.Interface))
 			}
+		case "VirtualIPv6Address":
+			spec, _ := resource.VirtualIPv6AddressSpec()
+			if strings.TrimSpace(spec.Mode) == "vrrp" {
+				add(resource.Metadata.Name+"-vrrp6", zones.byResource(spec.Interface), "self", "vrrp6", 0, resource.ID(), zones.ifNameByResource(spec.Interface))
+			}
 		case "IngressService":
 			spec, _ := resource.IngressServiceSpec()
 			add(resource.Metadata.Name+"-ingress-"+spec.Listen.Protocol, zones.byResource(spec.Listen.Interface), "self", spec.Listen.Protocol, spec.Listen.Port, resource.ID(), zones.ifNameByResource(spec.Listen.Interface))

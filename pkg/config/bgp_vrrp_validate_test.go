@@ -52,6 +52,47 @@ func TestValidateBGPRouterPeerAndVirtualIPv4Address(t *testing.T) {
 	}
 }
 
+func TestValidateBGPDualStackAndVirtualIPv6Address(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv6Address"}, Metadata: api.ObjectMeta{Name: "k8s-api-v6"}, Spec: api.VirtualIPv6AddressSpec{
+				Interface: "lan",
+				Address:   "fd00:1234::10/128",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv6VRRPSpec{VirtualRouterID: 51, Priority: 150, Peers: []string{"fd00:1234::3"}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64512,
+				RouterID: "10.240.70.2",
+				ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{
+					"10.240.70.200/29",
+					"fd00:1234::/64",
+				}},
+				Redistribute: api.BGPRedistributeSpec{
+					Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{"fd00:50::/64"}},
+				},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "k8s"}, Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64513,
+				Peers:     []string{"10.240.70.21", "fd00:1234::21"},
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate dual-stack BGP/VRRP resources: %v", err)
+	}
+	spec := router.Spec.Resources[1].Spec.(api.VirtualIPv6AddressSpec)
+	spec.Address = "fd00:1234::10/64"
+	router.Spec.Resources[1].Spec = spec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "IPv6 /128") {
+		t.Fatalf("expected IPv6 /128 validation error, got %v", err)
+	}
+}
+
 func TestValidateHostnameRequiresDNSResolverZoneCoverage(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

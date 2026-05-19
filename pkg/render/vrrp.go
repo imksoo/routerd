@@ -15,8 +15,10 @@ import (
 
 type vrrpInstance struct {
 	Name            string
+	Kind            string
 	Interface       string
 	Address         string
+	Family          string
 	VirtualRouterID int
 	Priority        int
 	Preempt         *bool
@@ -59,12 +61,12 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 	}
 	var instances []vrrpInstance
 	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.NetAPIVersion || res.Kind != "VirtualIPv4Address" {
-			continue
-		}
-		spec, err := res.VirtualIPv4AddressSpec()
+		spec, ok, err := virtualAddressResourceSpec(res)
 		if err != nil {
 			return nil, err
+		}
+		if !ok {
+			continue
 		}
 		if strings.TrimSpace(spec.Mode) == "" || spec.Mode == "static" {
 			continue
@@ -76,7 +78,7 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 		if ifname == "" {
 			return nil, fmt.Errorf("%s references interface with empty ifname %q", res.ID(), spec.Interface)
 		}
-		address, err := VirtualIPv4Address(router, spec)
+		address, err := virtualAddress(router, spec)
 		if err != nil {
 			return nil, fmt.Errorf("%s spec.address: %w", res.ID(), err)
 		}
@@ -109,8 +111,10 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 		}
 		instances = append(instances, vrrpInstance{
 			Name:            res.Metadata.Name,
+			Kind:            res.Kind,
 			Interface:       ifname,
 			Address:         address,
+			Family:          spec.Family,
 			VirtualRouterID: spec.VRRP.VirtualRouterID,
 			Priority:        priority,
 			Preempt:         spec.VRRP.Preempt,
@@ -124,7 +128,111 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 	return instances, nil
 }
 
+type virtualAddressSpec struct {
+	Interface   string
+	Address     string
+	Hostname    string
+	Mode        string
+	VRRP        virtualVRRPSpec
+	Track       []api.ResourceTrackSpec
+	AddressFrom api.StatusValueSourceSpec
+	Family      string
+}
+
+type virtualVRRPSpec struct {
+	VirtualRouterID    int
+	Priority           int
+	Preempt            *bool
+	PreemptDelay       string
+	Peers              []string
+	AdvertInterval     string
+	Authentication     string
+	AuthenticationFrom api.SecretValueSourceSpec
+}
+
+func virtualAddressResourceSpec(res api.Resource) (virtualAddressSpec, bool, error) {
+	if res.APIVersion != api.NetAPIVersion {
+		return virtualAddressSpec{}, false, nil
+	}
+	switch res.Kind {
+	case "VirtualIPv4Address":
+		spec, err := res.VirtualIPv4AddressSpec()
+		if err != nil {
+			return virtualAddressSpec{}, false, err
+		}
+		return virtualAddressSpec{
+			Interface:   spec.Interface,
+			Address:     spec.Address,
+			Hostname:    spec.Hostname,
+			Mode:        spec.Mode,
+			VRRP:        virtualIPv4VRRPSpec(spec.VRRP),
+			Track:       spec.Track,
+			AddressFrom: spec.AddressFrom,
+			Family:      "ipv4",
+		}, true, nil
+	case "VirtualIPv6Address":
+		spec, err := res.VirtualIPv6AddressSpec()
+		if err != nil {
+			return virtualAddressSpec{}, false, err
+		}
+		return virtualAddressSpec{
+			Interface:   spec.Interface,
+			Address:     spec.Address,
+			Hostname:    spec.Hostname,
+			Mode:        spec.Mode,
+			VRRP:        virtualIPv6VRRPSpec(spec.VRRP),
+			Track:       spec.Track,
+			AddressFrom: spec.AddressFrom,
+			Family:      "ipv6",
+		}, true, nil
+	default:
+		return virtualAddressSpec{}, false, nil
+	}
+}
+
+func virtualIPv4VRRPSpec(spec api.VirtualIPv4VRRPSpec) virtualVRRPSpec {
+	return virtualVRRPSpec{
+		VirtualRouterID:    spec.VirtualRouterID,
+		Priority:           spec.Priority,
+		Preempt:            spec.Preempt,
+		PreemptDelay:       spec.PreemptDelay,
+		Peers:              spec.Peers,
+		AdvertInterval:     spec.AdvertInterval,
+		Authentication:     spec.Authentication,
+		AuthenticationFrom: spec.AuthenticationFrom,
+	}
+}
+
+func virtualIPv6VRRPSpec(spec api.VirtualIPv6VRRPSpec) virtualVRRPSpec {
+	return virtualVRRPSpec{
+		VirtualRouterID:    spec.VirtualRouterID,
+		Priority:           spec.Priority,
+		Preempt:            spec.Preempt,
+		PreemptDelay:       spec.PreemptDelay,
+		Peers:              spec.Peers,
+		AdvertInterval:     spec.AdvertInterval,
+		Authentication:     spec.Authentication,
+		AuthenticationFrom: spec.AuthenticationFrom,
+	}
+}
+
 func VirtualIPv4Address(router *api.Router, spec api.VirtualIPv4AddressSpec) (string, error) {
+	return virtualAddress(router, virtualAddressSpec{
+		Address:     spec.Address,
+		AddressFrom: spec.AddressFrom,
+		Family:      "ipv4",
+	})
+}
+
+func VirtualIPv6Address(router *api.Router, spec api.VirtualIPv6AddressSpec) (string, error) {
+	return virtualAddress(router, virtualAddressSpec{
+		Address:     spec.Address,
+		AddressFrom: spec.AddressFrom,
+		Family:      "ipv6",
+	})
+}
+
+func virtualAddress(router *api.Router, spec virtualAddressSpec) (string, error) {
 	address := strings.TrimSpace(spec.Address)
 	if address == "" && strings.TrimSpace(spec.AddressFrom.Resource) != "" {
 		resolved, err := renderAddressFromResource(router, spec.AddressFrom)
@@ -134,20 +242,34 @@ func VirtualIPv4Address(router *api.Router, spec api.VirtualIPv4AddressSpec) (st
 		address = strings.TrimSpace(resolved)
 	}
 	if address == "" {
-		return "", fmt.Errorf("must resolve to an IPv4 /32 prefix")
+		return "", fmt.Errorf("must resolve to an %s host prefix", virtualAddressFamilyLabel(spec.Family))
 	}
 	prefix, err := netip.ParsePrefix(address)
 	if err != nil {
 		addr, addrErr := netip.ParseAddr(address)
-		if addrErr == nil && addr.Is4() {
+		if addrErr == nil && spec.Family == "ipv4" && addr.Is4() {
 			return netip.PrefixFrom(addr, 32).String(), nil
 		}
-		return "", fmt.Errorf("must resolve to an IPv4 /32 prefix")
+		if addrErr == nil && spec.Family == "ipv6" && addr.Is6() {
+			return netip.PrefixFrom(addr, 128).String(), nil
+		}
+		return "", fmt.Errorf("must resolve to an %s host prefix", virtualAddressFamilyLabel(spec.Family))
 	}
-	if !prefix.Addr().Is4() || prefix.Bits() != 32 {
-		return "", fmt.Errorf("must resolve to an IPv4 /32 prefix")
+	wantBits := 32
+	if spec.Family == "ipv6" {
+		wantBits = 128
+	}
+	if (spec.Family == "ipv4" && !prefix.Addr().Is4()) || (spec.Family == "ipv6" && !prefix.Addr().Is6()) || prefix.Bits() != wantBits {
+		return "", fmt.Errorf("must resolve to an %s host prefix", virtualAddressFamilyLabel(spec.Family))
 	}
 	return prefix.Masked().String(), nil
+}
+
+func virtualAddressFamilyLabel(family string) string {
+	if family == "ipv6" {
+		return "IPv6 /128"
+	}
+	return "IPv4 /32"
 }
 
 func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
@@ -156,6 +278,9 @@ func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
 	buf.WriteString("  interface " + instance.Interface + "\n")
 	buf.WriteString(fmt.Sprintf("  virtual_router_id %d\n", instance.VirtualRouterID))
 	buf.WriteString(fmt.Sprintf("  priority %d\n", instance.Priority))
+	if instance.Family == "ipv6" {
+		buf.WriteString("  family inet6\n")
+	}
 	buf.WriteString(fmt.Sprintf("  advert_int %d\n", keepalivedAdvertSeconds(instance.AdvertInterval)))
 	if instance.Preempt == nil || !*instance.Preempt {
 		buf.WriteString("  nopreempt\n")

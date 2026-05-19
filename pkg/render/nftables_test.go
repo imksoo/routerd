@@ -1252,6 +1252,16 @@ func TestNftablesFirewallHolesForBGPVRRPAndIngress(t *testing.T) {
 			},
 		},
 		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv6Address"},
+			Metadata: api.ObjectMeta{Name: "api-vip-v6"},
+			Spec: api.VirtualIPv6AddressSpec{
+				Interface: "lan",
+				Address:   "fd00:1234::10/128",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv6VRRPSpec{VirtualRouterID: 51},
+			},
+		},
+		{
 			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"},
 			Metadata: api.ObjectMeta{Name: "k8s-api"},
 			Spec: api.IngressServiceSpec{
@@ -1268,6 +1278,7 @@ func TestNftablesFirewallHolesForBGPVRRPAndIngress(t *testing.T) {
 	for _, want := range []string{
 		`iifname "ens19" tcp dport 179 counter accept comment "net.routerd.net/v1alpha1/BGPRouter/k8s"`,
 		`iifname "ens19" ip protocol 112 counter accept comment "net.routerd.net/v1alpha1/VirtualIPv4Address/api-vip"`,
+		`iifname "ens19" ip6 nexthdr 112 counter accept comment "net.routerd.net/v1alpha1/VirtualIPv6Address/api-vip-v6"`,
 		`iifname "ens19" tcp dport 6443 counter accept comment "firewall.routerd.net/v1alpha1/IngressService/k8s-api"`,
 	} {
 		if !strings.Contains(got, want) {

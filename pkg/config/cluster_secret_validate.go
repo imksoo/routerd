@@ -121,6 +121,11 @@ func Warnings(router *api.Router) []string {
 			if err == nil {
 				warnings = append(warnings, secretSourceWarnings(res.ID(), "spec.vrrp.authenticationFrom", spec.VRRP.AuthenticationFrom)...)
 			}
+		case "VirtualIPv6Address":
+			spec, err := res.VirtualIPv6AddressSpec()
+			if err == nil {
+				warnings = append(warnings, secretSourceWarnings(res.ID(), "spec.vrrp.authenticationFrom", spec.VRRP.AuthenticationFrom)...)
+			}
 		}
 	}
 	return warnings

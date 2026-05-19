@@ -766,6 +766,8 @@ func pfFirewallProtocol(protocol string) string {
 		return "inet6 proto 4"
 	case "vrrp":
 		return "inet proto 112"
+	case "vrrp6":
+		return "inet6 proto 112"
 	default:
 		return ""
 	}

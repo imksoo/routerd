@@ -140,7 +140,7 @@ func resourceOwnerController(kind string) string {
 	switch kind {
 	case "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress", "Interface", "Link":
 		return "address"
-	case "VirtualIPv4Address":
+	case "VirtualIPv4Address", "VirtualIPv6Address":
 		return "vrrp"
 	case "BGPRouter", "BGPPeer":
 		return "bgp"

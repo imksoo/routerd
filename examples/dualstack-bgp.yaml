@@ -1,0 +1,59 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: dualstack-bgp-edge
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens20
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata:
+        name: lan
+      spec:
+        asn: 64512
+        routerID: 10.0.0.1
+        importPolicy:
+          allowedPrefixes:
+            - 10.244.0.0/16
+            - fd00:244::/48
+        redistribute:
+          connected:
+            allowedPrefixes:
+              - 192.168.70.0/24
+              - fd00:70::/64
+          static:
+            allowedPrefixes:
+              - 10.96.0.0/12
+              - fd00:96::/108
+        timers:
+          keepalive: 3s
+          holdTime: 9s
+          connectRetry: 5s
+        gracefulRestart:
+          enabled: true
+          restartTime: 120s
+          stalePathTime: 360s
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata:
+        name: k8s-speakers
+      spec:
+        routerRef: BGPRouter/lan
+        peerASN: 64513
+        peers:
+          - 192.168.70.21
+          - 192.168.70.22
+          - fd00:70::21
+          - fd00:70::22

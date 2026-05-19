@@ -146,6 +146,7 @@ func TestRuntimeConfigMarksDNSZoneRecordPendingWhenSourceUnresolved(t *testing.T
 func TestRuntimeConfigAddsHostnameRecordsFromVIPAndIngress(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/VirtualIPv4Address/k8s-api-vip":         {"address": "192.168.123.250/32"},
+		api.NetAPIVersion + "/VirtualIPv6Address/k8s-api-vip-v6":      {"address": "fd00:1234::250/128"},
 		api.FirewallAPIVersion + "/IngressService/kubernetes-api-alt": {"listenAddress": "192.168.123.251"},
 	}
 	controller := Controller{
@@ -165,11 +166,16 @@ func TestRuntimeConfigAddsHostnameRecordsFromVIPAndIngress(t *testing.T) {
 		t.Fatalf("zones = %#v", config.Zones)
 	}
 	records := map[string]string{}
+	recordsV6 := map[string]string{}
 	for _, record := range config.Zones[0].Spec.Records {
 		records[record.Hostname] = record.IPv4
+		recordsV6[record.Hostname] = record.IPv6
 	}
 	if records["k8s-api"] != "192.168.123.250" {
 		t.Fatalf("k8s-api record = %#v", records)
+	}
+	if recordsV6["k8s-api-v6"] != "fd00:1234::250" {
+		t.Fatalf("k8s-api-v6 record = %#v", recordsV6)
 	}
 	if records["k8s-api-alt"] != "192.168.123.251" {
 		t.Fatalf("k8s-api-alt record = %#v", records)
@@ -216,6 +222,9 @@ func TestDNSResolverDependsOnHostnameResources(t *testing.T) {
 	router := dnsResolverRouterWithHostnameResources()
 	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address", Name: "k8s-api-vip"}) {
 		t.Fatal("expected dependency on VirtualIPv4Address/k8s-api-vip")
+	}
+	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv6Address", Name: "k8s-api-vip-v6"}) {
+		t.Fatal("expected dependency on VirtualIPv6Address/k8s-api-vip-v6")
 	}
 	if !dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.FirewallAPIVersion, Kind: "IngressService", Name: "kubernetes-api-alt"}) {
 		t.Fatal("expected dependency on IngressService/kubernetes-api-alt")
@@ -295,6 +304,15 @@ func dnsResolverRouterWithHostnameResources() *api.Router {
 				Interface: "lan",
 				Address:   "192.168.123.250/32",
 				Hostname:  "k8s-api.lain.local",
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv6Address"},
+			Metadata: api.ObjectMeta{Name: "k8s-api-vip-v6"},
+			Spec: api.VirtualIPv6AddressSpec{
+				Interface: "lan",
+				Address:   "fd00:1234::250/128",
+				Hostname:  "k8s-api-v6.lain.local",
 			},
 		},
 		{

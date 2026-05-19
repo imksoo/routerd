@@ -124,6 +124,48 @@ func TestFRRConfigRendersRedistributeAndCommunities(t *testing.T) {
 	}
 }
 
+func TestFRRConfigRendersIPv6Unicast(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+			ASN:      64512,
+			RouterID: "10.0.0.1",
+			ImportPolicy: api.BGPImportPolicySpec{
+				AllowedPrefixes: []string{"10.0.0.200/29", "fd00:1234::/64"},
+			},
+			Redistribute: api.BGPRedistributeSpec{
+				Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{"192.168.50.0/24", "fd00:50::/64"}},
+			},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.BGPPeerSpec{
+			RouterRef: "BGPRouter/lan",
+			PeerASN:   64513,
+			Peers:     []string{"10.0.0.21", "fd00:1234::21"},
+		}},
+	}}}
+	data, err := FRRConfig(router)
+	if err != nil {
+		t.Fatalf("render FRR config: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"ip prefix-list ROUTERD-LAN-IMPORT seq 10 permit 10.0.0.200/29",
+		"ipv6 prefix-list ROUTERD-LAN-IMPORT-V6 seq 10 permit fd00:1234::/64",
+		"ipv6 prefix-list ROUTERD-LAN-REDIST-CONNECTED-V6 seq 10 permit fd00:50::/64",
+		"route-map ROUTERD-LAN-IN-V6 permit 10",
+		" match ipv6 address prefix-list ROUTERD-LAN-IMPORT-V6",
+		"address-family ipv6 unicast",
+		"  redistribute connected route-map ROUTERD-LAN-REDIST-CONNECTED-V6",
+		"  neighbor fd00:1234::21 activate",
+		"  neighbor fd00:1234::21 route-map ROUTERD-LAN-IN-V6 in",
+		"address-family ipv4 unicast",
+		"  neighbor 10.0.0.21 activate",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("FRR config missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestFRRConfigRendersMultipleBGPRouterInstances(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VRF"}, Metadata: api.ObjectMeta{Name: "wan-peering"}, Spec: api.VRFSpec{IfName: "vrf-wan", RouteTable: 65001}},

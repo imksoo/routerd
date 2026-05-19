@@ -48,6 +48,41 @@ func TestKeepalivedConfigRendersVRRPInstance(t *testing.T) {
 	}
 }
 
+func TestKeepalivedConfigRendersIPv6VRRPInstance(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv6Address"},
+			Metadata: api.ObjectMeta{Name: "k8s-api-v6"},
+			Spec: api.VirtualIPv6AddressSpec{
+				Interface: "lan",
+				Address:   "fd00:1234::10/128",
+				Mode:      "vrrp",
+				VRRP: api.VirtualIPv6VRRPSpec{
+					VirtualRouterID: 51,
+					Priority:        140,
+					Peers:           []string{"fd00:1234::3"},
+				},
+			},
+		},
+	}}}
+	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens18"})
+	if err != nil {
+		t.Fatalf("render keepalived config: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"vrrp_instance k8s_api_v6",
+		"family inet6",
+		"virtual_router_id 51",
+		"fd00:1234::3",
+		"fd00:1234::10/128",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("keepalived config missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestKeepalivedConfigOverridesPriority(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

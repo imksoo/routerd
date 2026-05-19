@@ -110,6 +110,7 @@ instead of pretending parity with Linux module loading.
 | --- | --- |
 | `IPv4StaticAddress` | Assigns a static IPv4 address. |
 | `VirtualIPv4Address` | Declares an IPv4 `/32` VIP. `mode: vrrp` uses keepalived on Linux and CARP on FreeBSD. |
+| `VirtualIPv6Address` | Declares an IPv6 `/128` VIP. `mode: vrrp` uses VRRPv3 on Linux keepalived and CARP inet6 aliases on FreeBSD. |
 | `DHCPv4Lease` | DHCPv4 lease, IPv4 address, and optional default route managed by `routerd-dhcpv4-client`. |
 | `DHCPv6Address` | Represents DHCPv6 IA_NA intent for platform renderers. |
 | `DHCPv6PrefixDelegation` | DHCPv6-PD lease managed by `routerd-dhcpv6-client`. |
@@ -235,8 +236,10 @@ validated and used for routerd-side listen collision checks; FRR address binding
 itself remains a bgpd daemon invocation option rather than an integrated config
 stanza.
 
-`VirtualIPv4Address` uses keepalived on Linux and CARP on FreeBSD for
-`mode: vrrp`. Linux VRRP uses explicit unicast peers and defaults to
+`VirtualIPv4Address` and `VirtualIPv6Address` use keepalived on Linux and CARP
+on FreeBSD for `mode: vrrp`. IPv6 VIPs render keepalived VRRPv3 with
+`family inet6`; FreeBSD renders `inet6` CARP aliases. Linux VRRP uses explicit
+unicast peers and defaults to
 `nopreempt`; FreeBSD CARP uses multicast advertisements on the parent interface,
 so `spec.vrrp.peers` is ignored there. Set `spec.vrrp.preempt: true` only when
 automatic failback is intended, and pair it with `spec.vrrp.preemptDelay` when
@@ -247,10 +250,10 @@ backend is used. `track` lowers priority when referenced resources such as
 `BGPRouter`, `BGPPeer`, or `IngressService` are not healthy. Track entries use
 hysteresis: by default three consecutive unhealthy observations are required to
 apply a penalty and two consecutive healthy observations are required to clear
-it. `spec.hostname` can publish the VIP into matching DNSResolver-served
-`DNSZone` records, and `routerctl show vrrp` shows role, priority, peers, and
-transition age. NixOS remains groundwork until a native service-manager module
-owns the same host artifacts.
+it. `spec.hostname` can publish VIPs into matching DNSResolver-served `DNSZone`
+records; IPv4 VIPs create A records and IPv6 VIPs create AAAA records. `routerctl
+show vrrp` shows role, priority, peers, and transition age. NixOS remains
+groundwork until a native service-manager module owns the same host artifacts.
 
 ### VRRP production tuning
 

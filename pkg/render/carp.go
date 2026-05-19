@@ -24,6 +24,7 @@ type CARPInterface struct {
 	Name          string
 	Interface     string
 	Address       string
+	Family        string
 	VirtualHostID int
 	AdvBase       int
 	AdvSkew       int
@@ -48,6 +49,7 @@ func CARPConfigWithOptions(router *api.Router, aliases map[string]string, opts C
 			Name:          instance.Name,
 			Interface:     instance.Interface,
 			Address:       instance.Address,
+			Family:        instance.Family,
 			VirtualHostID: instance.VirtualRouterID,
 			AdvBase:       keepalivedAdvertSeconds(instance.AdvertInterval),
 			AdvSkew:       carpAdvSkew(instance.Priority),
@@ -68,7 +70,7 @@ func (c CARPConfigData) IfconfigCommands() [][]string {
 	for _, iface := range c.Interfaces {
 		args := []string{
 			iface.Interface,
-			"inet",
+			carpAddressFamily(iface.Family),
 			"vhid", strconv.Itoa(iface.VirtualHostID),
 			"advbase", strconv.Itoa(iface.AdvBase),
 			"advskew", strconv.Itoa(iface.AdvSkew),
@@ -106,7 +108,7 @@ func (c CARPConfigData) PreemptSysctlValue() string {
 
 func (i CARPInterface) rcConfArgs() []string {
 	args := []string{
-		"inet",
+		carpAddressFamily(i.Family),
 		"vhid", strconv.Itoa(i.VirtualHostID),
 		"advbase", strconv.Itoa(i.AdvBase),
 		"advskew", strconv.Itoa(i.AdvSkew),
@@ -116,6 +118,13 @@ func (i CARPInterface) rcConfArgs() []string {
 	}
 	args = append(args, "alias", i.Address)
 	return args
+}
+
+func carpAddressFamily(family string) string {
+	if family == "ipv6" {
+		return "inet6"
+	}
+	return "inet"
 }
 
 func carpAdvSkew(priority int) int {

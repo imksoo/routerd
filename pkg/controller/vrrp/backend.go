@@ -71,26 +71,30 @@ func observeKeepalivedRoles(ctx context.Context, c *Controller, aliases map[stri
 	}
 	roles = map[string]string{}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VirtualIPv4Address" {
+		spec, ok, err := vrrpResourceSpec(resource)
+		if err != nil || !ok {
 			continue
 		}
-		spec, err := resource.VirtualIPv4AddressSpec()
 		if err != nil || spec.Mode != "vrrp" {
 			continue
 		}
 		ifname := aliases[spec.Interface]
-		address, err := render.VirtualIPv4Address(c.Router, spec)
+		address, err := renderVirtualAddress(c.Router, spec)
 		if err != nil || ifname == "" {
 			roles[resource.Metadata.Name] = "unknown"
 			continue
 		}
 		ip := firstNonEmpty(c.IP, "ip")
-		out, err := c.run(ctx, ip, "-4", "addr", "show", "dev", ifname)
+		ipFamily := "-4"
+		if spec.Family == "ipv6" {
+			ipFamily = "-6"
+		}
+		out, err := c.run(ctx, ip, ipFamily, "addr", "show", "dev", ifname)
 		if err != nil {
 			roles[resource.Metadata.Name] = "unknown"
 			continue
 		}
-		if ipv4AddressPresent(string(out), address) {
+		if ipAddressPresent(string(out), address, spec.Family) {
 			roles[resource.Metadata.Name] = "master"
 		} else {
 			roles[resource.Metadata.Name] = "backup"
@@ -165,7 +169,7 @@ func dryRunRoles(c *Controller) map[string]string {
 	}
 	roles := map[string]string{}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "VirtualIPv4Address" {
+		if resource.APIVersion == api.NetAPIVersion && isVirtualAddressKind(resource.Kind) {
 			roles[resource.Metadata.Name] = "dryrun"
 		}
 	}
@@ -210,8 +214,15 @@ func carpInterfaceConfigured(output string, iface render.CARPInterface) bool {
 	if before, _, ok := strings.Cut(host, "/"); ok {
 		host = before
 	}
-	return strings.Contains(output, "inet "+host+" ") &&
+	return strings.Contains(output, carpAddressNeedle(iface.Family, host)) &&
 		strings.Contains(output, fmt.Sprintf("vhid %d", iface.VirtualHostID)) &&
 		strings.Contains(output, fmt.Sprintf("advbase %d", iface.AdvBase)) &&
 		strings.Contains(output, fmt.Sprintf("advskew %d", iface.AdvSkew))
+}
+
+func carpAddressNeedle(family, host string) string {
+	if family == "ipv6" {
+		return "inet6 " + host + " "
+	}
+	return "inet " + host + " "
 }

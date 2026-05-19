@@ -38,6 +38,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added stateful firewall rule expressions for ICMP / ICMPv6 types, multi-port
   source and destination matches, nftables rate limits, and per-source
   connection limits.
+- Added dual-stack BGP rendering and observation for IPv4/IPv6 unicast, plus
+  `VirtualIPv6Address` VRRPv3/CARP VIP support, automatic AAAA records, and
+  dual-stack BGP/Kubernetes API VIP examples.
 
 ## v20260519.0743
 

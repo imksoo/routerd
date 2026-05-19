@@ -1500,7 +1500,7 @@ func filterShowStatuses(resources []routerstate.ObjectStatus, kind string) []rou
 				out = append(out, resource)
 			}
 		case "vrrp":
-			if resource.Kind == "VirtualIPv4Address" {
+			if resource.Kind == "VirtualIPv4Address" || resource.Kind == "VirtualIPv6Address" {
 				out = append(out, resource)
 			}
 		case "ingress":
@@ -1566,10 +1566,10 @@ func writeBGPShowTable(stdout io.Writer, router *api.Router, resources []routers
 
 func writeVRRPShowTable(stdout io.Writer, router *api.Router, resources []routerstate.ObjectStatus) error {
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	specs := virtualIPv4Specs(router)
+	specs := virtualAddressShowSpecs(router)
 	fmt.Fprintln(w, "VIP\tHOSTNAME\tROLE\tPRIORITY\tBASE\tIFACE\tVRID\tPEERS\tLAST_TRANSITION")
 	for _, resource := range resources {
-		if resource.Kind != "VirtualIPv4Address" {
+		if resource.Kind != "VirtualIPv4Address" && resource.Kind != "VirtualIPv6Address" {
 			continue
 		}
 		spec := specs[resource.Name]
@@ -1584,7 +1584,7 @@ func writeVRRPShowTable(stdout io.Writer, router *api.Router, resources []router
 			statusInt(resource.Status["basePriority"]),
 			defaultShowString(statusString(resource.Status["interface"]), spec.Interface),
 			statusInt(resource.Status["virtualRouterID"]),
-			strings.Join(spec.VRRP.Peers, ","),
+			strings.Join(spec.Peers, ","),
 			ageString(statusString(resource.Status["lastRoleTransitionAt"])),
 		)
 		tracks := statusMaps(resource.Status["track"])
@@ -1705,6 +1705,8 @@ func canonicalShowKind(kind string) string {
 		"virtualip":              "VirtualIPv4Address",
 		"virtualipv4":            "VirtualIPv4Address",
 		"virtualipv4address":     "VirtualIPv4Address",
+		"virtualipv6":            "VirtualIPv6Address",
+		"virtualipv6address":     "VirtualIPv6Address",
 		"vrrp":                   "VirtualIPv4Address",
 		"bgp":                    "BGPRouter",
 		"bgprouter":              "BGPRouter",
@@ -1800,18 +1802,29 @@ func bgpRouterSpecs(router *api.Router) map[string]api.BGPRouterSpec {
 	return out
 }
 
-func virtualIPv4Specs(router *api.Router) map[string]api.VirtualIPv4AddressSpec {
-	out := map[string]api.VirtualIPv4AddressSpec{}
+type virtualAddressShowSpec struct {
+	Interface string
+	Mode      string
+	Peers     []string
+}
+
+func virtualAddressShowSpecs(router *api.Router) map[string]virtualAddressShowSpec {
+	out := map[string]virtualAddressShowSpec{}
 	if router == nil {
 		return out
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "VirtualIPv4Address" {
-			continue
-		}
-		spec, err := resource.VirtualIPv4AddressSpec()
-		if err == nil {
-			out[resource.Metadata.Name] = spec
+		switch resource.Kind {
+		case "VirtualIPv4Address":
+			spec, err := resource.VirtualIPv4AddressSpec()
+			if err == nil {
+				out[resource.Metadata.Name] = virtualAddressShowSpec{Interface: spec.Interface, Mode: spec.Mode, Peers: spec.VRRP.Peers}
+			}
+		case "VirtualIPv6Address":
+			spec, err := resource.VirtualIPv6AddressSpec()
+			if err == nil {
+				out[resource.Metadata.Name] = virtualAddressShowSpec{Interface: spec.Interface, Mode: spec.Mode, Peers: spec.VRRP.Peers}
+			}
 		}
 	}
 	return out

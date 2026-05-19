@@ -99,6 +99,7 @@ FreeBSD では、routerd が rc.d サービスを生成します。
 | --- | --- |
 | `IPv4StaticAddress` | 静的 IPv4 アドレスを付与します。 |
 | `VirtualIPv4Address` | IPv4 `/32` VIP を宣言します。`mode: vrrp` は Linux では keepalived、FreeBSD では CARP を使います。 |
+| `VirtualIPv6Address` | IPv6 `/128` VIP を宣言します。`mode: vrrp` は Linux keepalived の VRRPv3 と FreeBSD CARP inet6 alias を使います。 |
 | `DHCPv4Lease` | `routerd-dhcpv4-client` が DHCPv4 リース、IPv4 アドレス、任意のデフォルト経路を管理します。 |
 | `DHCPv6Address` | DHCPv6 IA_NA の意図を表します。 |
 | `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` が管理する DHCPv6-PD リースです。 |
@@ -248,16 +249,19 @@ resource は、追加 router に `spec.vrf` を指定することで別々の FR
 `spec.listen.address` は routerd 側の listen collision check に使います。FRR の
 address bind 自体は integrated config stanza ではなく bgpd daemon invocation option です。
 
-`VirtualIPv4Address` の `mode: vrrp` は Linux では keepalived、FreeBSD では CARP を
-使います。Linux VRRP は明示的な unicast peer を使い、既定は `nopreempt` です。
+`VirtualIPv4Address` と `VirtualIPv6Address` の `mode: vrrp` は Linux では
+keepalived、FreeBSD では CARP を使います。IPv6 VIP は keepalived VRRPv3 の
+`family inet6` として描画され、FreeBSD では `inet6` CARP alias になります。
+Linux VRRP は明示的な unicast peer を使い、既定は `nopreempt` です。
 FreeBSD CARP は親 interface 上の multicast advertisement を使うため、
 `spec.vrrp.peers` は FreeBSD では無視されます。`preempt: true` の場合、Linux では
 `preemptDelay` で取り戻しを遅らせられます。FreeBSD には直接対応する
 `preemptDelay` はありません。`track` で `BGPRouter`、`BGPPeer`、`IngressService`
 などの状態に応じて priority を下げられます。既定では unhealthy 3 回連続で penalty
 を適用し、healthy 2 回連続で解除します。`spec.hostname` は DNSResolver が配信する
-対応 `DNSZone` へ VIP の A record として自動派生できます。`routerctl show vrrp` は
-role、priority、peer、transition 経過時間を表示します。
+対応 `DNSZone` へ VIP を自動公開できます。IPv4 VIP は A record、IPv6 VIP は AAAA
+record になります。`routerctl show vrrp` は role、priority、peer、transition
+経過時間を表示します。
 
 ### VRRP production tuning
 

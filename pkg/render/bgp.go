@@ -189,19 +189,35 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 
 func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 	prefixListName := "ROUTERD-" + frrName(cfg.Name) + "-IMPORT"
+	prefixListNameV6 := prefixListName + "-V6"
 	routeMapInName := "ROUTERD-" + frrName(cfg.Name) + "-IN"
+	routeMapInNameV6 := routeMapInName + "-V6"
 	routeMapOutName := "ROUTERD-" + frrName(cfg.Name) + "-OUT"
+	routeMapOutNameV6 := routeMapOutName + "-V6"
 	exportPrefixes := bgpExportPrefixes(cfg.Redistribute)
-	writeFRRPrefixList(buf, prefixListName, cfg.AllowedPrefixes)
-	if len(exportPrefixes) > 0 {
-		writeFRRPrefixList(buf, "ROUTERD-"+frrName(cfg.Name)+"-EXPORT", exportPrefixes)
+	allowedV4, allowedV6 := splitBGPPrefixFamilies(cfg.AllowedPrefixes)
+	exportV4, exportV6 := splitBGPPrefixFamilies(exportPrefixes)
+	connectedV4, connectedV6 := splitBGPPrefixFamilies(cfg.Redistribute.Connected)
+	staticV4, staticV6 := splitBGPPrefixFamilies(cfg.Redistribute.Static)
+	writeFRRPrefixList(buf, prefixListName, allowedV4, "ipv4")
+	if len(allowedV6) > 0 || bgpHasIPv6Peer(cfg.Peers) {
+		writeFRRPrefixList(buf, prefixListNameV6, allowedV6, "ipv6")
 	}
-	writeFRRRedistributePolicy(buf, cfg.Name, "CONNECTED", cfg.Redistribute.Connected)
-	writeFRRRedistributePolicy(buf, cfg.Name, "STATIC", cfg.Redistribute.Static)
+	if len(exportV4) > 0 {
+		writeFRRPrefixList(buf, "ROUTERD-"+frrName(cfg.Name)+"-EXPORT", exportV4, "ipv4")
+	}
+	if len(exportV6) > 0 {
+		writeFRRPrefixList(buf, "ROUTERD-"+frrName(cfg.Name)+"-EXPORT-V6", exportV6, "ipv6")
+	}
+	writeFRRRedistributePolicy(buf, cfg.Name, "CONNECTED", connectedV4, "ipv4")
+	writeFRRRedistributePolicy(buf, cfg.Name, "STATIC", staticV4, "ipv4")
+	writeFRRRedistributePolicy(buf, cfg.Name, "CONNECTED-V6", connectedV6, "ipv6")
+	writeFRRRedistributePolicy(buf, cfg.Name, "STATIC-V6", staticV6, "ipv6")
 	writeFRRBFDPeers(buf, cfg.Peers)
 	writeFRRCommunityLists(buf, cfg)
 	writeFRRRouteMap(buf, routeMapInName, bgpRouteMapSpec{
 		PrefixList:       prefixListName,
+		AddressFamily:    "ipv4",
 		AcceptCommunity:  routerCommunityListForRouteMap(cfg),
 		SetCommunities:   cfg.Communities.SetIn,
 		NextHopPeer:      true,
@@ -209,14 +225,32 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 		PermitIfNoPolicy: true,
 	})
 	writeFRRRouteMap(buf, routeMapOutName, bgpRouteMapSpec{
-		PrefixList:       routeMapOutPrefixList(cfg.Name, exportPrefixes),
-		SetCommunities:   bgpOutboundSetCommunities(exportPrefixes, cfg.Communities.SetOut),
+		PrefixList:       routeMapOutPrefixList(cfg.Name, exportV4, "ipv4"),
+		AddressFamily:    "ipv4",
+		SetCommunities:   bgpOutboundSetCommunities(exportV4, cfg.Communities.SetOut),
 		DefaultDeny:      true,
 		PermitIfNoPolicy: false,
 	})
+	if len(allowedV6) > 0 || len(exportV6) > 0 || bgpHasIPv6Peer(cfg.Peers) {
+		writeFRRRouteMap(buf, routeMapInNameV6, bgpRouteMapSpec{
+			PrefixList:       prefixListNameV6,
+			AddressFamily:    "ipv6",
+			AcceptCommunity:  routerCommunityListForRouteMap(cfg),
+			SetCommunities:   cfg.Communities.SetIn,
+			DefaultDeny:      true,
+			PermitIfNoPolicy: true,
+		})
+		writeFRRRouteMap(buf, routeMapOutNameV6, bgpRouteMapSpec{
+			PrefixList:       routeMapOutPrefixList(cfg.Name, exportV6, "ipv6"),
+			AddressFamily:    "ipv6",
+			SetCommunities:   bgpOutboundSetCommunities(exportV6, cfg.Communities.SetOut),
+			DefaultDeny:      true,
+			PermitIfNoPolicy: false,
+		})
+	}
 	for _, peer := range cfg.Peers {
 		if bgpPeerNeedsRouteMap(peer.Communities, cfg.Communities) {
-			writeFRRPeerCommunityRouteMaps(buf, cfg, peer, exportPrefixes)
+			writeFRRPeerCommunityRouteMaps(buf, cfg, peer, exportV4, exportV6)
 		}
 	}
 	buf.WriteString("!\n")
@@ -261,6 +295,9 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 			buf.WriteString(fmt.Sprintf(" neighbor %s bfd\n", peer.Peer))
 		}
 		writeFRRPeerSendCommunity(buf, peer)
+		if bgpPeerFamily(peer.Peer) != "ipv4" {
+			continue
+		}
 		inName := routeMapInName
 		outName := routeMapOutName
 		if bgpPeerNeedsRouteMap(peer.Communities, cfg.Communities) {
@@ -271,16 +308,42 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 		buf.WriteString(fmt.Sprintf(" neighbor %s route-map %s out\n", peer.Peer, outName))
 	}
 	buf.WriteString(" address-family ipv4 unicast\n")
-	if len(cfg.Redistribute.Connected) > 0 {
+	if len(connectedV4) > 0 {
 		buf.WriteString("  redistribute connected route-map " + redistributeRouteMapName(cfg.Name, "CONNECTED") + "\n")
 	}
-	if len(cfg.Redistribute.Static) > 0 {
+	if len(staticV4) > 0 {
 		buf.WriteString("  redistribute static route-map " + redistributeRouteMapName(cfg.Name, "STATIC") + "\n")
 	}
 	for _, peer := range cfg.Peers {
-		buf.WriteString(fmt.Sprintf("  neighbor %s activate\n", peer.Peer))
+		if bgpPeerFamily(peer.Peer) == "ipv4" {
+			buf.WriteString(fmt.Sprintf("  neighbor %s activate\n", peer.Peer))
+		}
 	}
 	buf.WriteString(" exit-address-family\n")
+	if bgpHasIPv6Peer(cfg.Peers) || len(connectedV6) > 0 || len(staticV6) > 0 {
+		buf.WriteString(" address-family ipv6 unicast\n")
+		if len(connectedV6) > 0 {
+			buf.WriteString("  redistribute connected route-map " + redistributeRouteMapName(cfg.Name, "CONNECTED-V6") + "\n")
+		}
+		if len(staticV6) > 0 {
+			buf.WriteString("  redistribute static route-map " + redistributeRouteMapName(cfg.Name, "STATIC-V6") + "\n")
+		}
+		for _, peer := range cfg.Peers {
+			if bgpPeerFamily(peer.Peer) != "ipv6" {
+				continue
+			}
+			inName := routeMapInNameV6
+			outName := routeMapOutNameV6
+			if bgpPeerNeedsRouteMap(peer.Communities, cfg.Communities) {
+				inName = peerRouteMapName(cfg.Name, peer, "IN-V6")
+				outName = peerRouteMapName(cfg.Name, peer, "OUT-V6")
+			}
+			buf.WriteString(fmt.Sprintf("  neighbor %s activate\n", peer.Peer))
+			buf.WriteString(fmt.Sprintf("  neighbor %s route-map %s in\n", peer.Peer, inName))
+			buf.WriteString(fmt.Sprintf("  neighbor %s route-map %s out\n", peer.Peer, outName))
+		}
+		buf.WriteString(" exit-address-family\n")
+	}
 	buf.WriteString("!\n")
 }
 
@@ -346,6 +409,7 @@ func bgpVRFRefName(value string) string {
 
 type bgpRouteMapSpec struct {
 	PrefixList       string
+	AddressFamily    string
 	AcceptCommunity  string
 	SetCommunities   []string
 	NextHopPeer      bool
@@ -353,13 +417,19 @@ type bgpRouteMapSpec struct {
 	PermitIfNoPolicy bool
 }
 
-func writeFRRPrefixList(buf *bytes.Buffer, name string, prefixes []string) {
+func writeFRRPrefixList(buf *bytes.Buffer, name string, prefixes []string, family string) {
+	keyword := "ip"
+	deny := "0.0.0.0/0 le 32"
+	if family == "ipv6" {
+		keyword = "ipv6"
+		deny = "::/0 le 128"
+	}
 	if len(prefixes) > 0 {
 		for i, prefix := range prefixes {
-			buf.WriteString(fmt.Sprintf("ip prefix-list %s seq %d permit %s\n", name, (i+1)*10, canonicalPrefix(prefix)))
+			buf.WriteString(fmt.Sprintf("%s prefix-list %s seq %d permit %s\n", keyword, name, (i+1)*10, canonicalPrefix(prefix)))
 		}
 	}
-	buf.WriteString("ip prefix-list " + name + " seq 999 deny 0.0.0.0/0 le 32\n")
+	buf.WriteString(keyword + " prefix-list " + name + " seq 999 deny " + deny + "\n")
 }
 
 func writeFRRRouteMap(buf *bytes.Buffer, name string, spec bgpRouteMapSpec) {
@@ -367,12 +437,16 @@ func writeFRRRouteMap(buf *bytes.Buffer, name string, spec bgpRouteMapSpec) {
 	if hasPolicy || spec.PermitIfNoPolicy {
 		buf.WriteString("route-map " + name + " permit 10\n")
 		if spec.PrefixList != "" {
-			buf.WriteString(" match ip address prefix-list " + spec.PrefixList + "\n")
+			if spec.AddressFamily == "ipv6" {
+				buf.WriteString(" match ipv6 address prefix-list " + spec.PrefixList + "\n")
+			} else {
+				buf.WriteString(" match ip address prefix-list " + spec.PrefixList + "\n")
+			}
 		}
 		if spec.AcceptCommunity != "" {
 			buf.WriteString(" match community " + spec.AcceptCommunity + "\n")
 		}
-		if spec.NextHopPeer {
+		if spec.NextHopPeer && spec.AddressFamily != "ipv6" {
 			buf.WriteString(" set ip next-hop peer-address\n")
 		}
 		if len(spec.SetCommunities) > 0 {
@@ -384,15 +458,16 @@ func writeFRRRouteMap(buf *bytes.Buffer, name string, spec bgpRouteMapSpec) {
 	}
 }
 
-func writeFRRRedistributePolicy(buf *bytes.Buffer, routerName, protocol string, prefixes []string) {
+func writeFRRRedistributePolicy(buf *bytes.Buffer, routerName, protocol string, prefixes []string, family string) {
 	if len(prefixes) == 0 {
 		return
 	}
 	list := redistributePrefixListName(routerName, protocol)
-	writeFRRPrefixList(buf, list, prefixes)
+	writeFRRPrefixList(buf, list, prefixes, family)
 	writeFRRRouteMap(buf, redistributeRouteMapName(routerName, protocol), bgpRouteMapSpec{
-		PrefixList:  list,
-		DefaultDeny: true,
+		PrefixList:    list,
+		AddressFamily: family,
+		DefaultDeny:   true,
 	})
 }
 
@@ -412,19 +487,36 @@ func writeFRRCommunityList(buf *bytes.Buffer, name string, communities []string)
 	}
 }
 
-func writeFRRPeerCommunityRouteMaps(buf *bytes.Buffer, cfg bgpRouterConfig, peer bgpPeerConfig, exportPrefixes []string) {
+func writeFRRPeerCommunityRouteMaps(buf *bytes.Buffer, cfg bgpRouterConfig, peer bgpPeerConfig, exportV4, exportV6 []string) {
 	writeFRRRouteMap(buf, peerRouteMapName(cfg.Name, peer, "IN"), bgpRouteMapSpec{
 		PrefixList:      "ROUTERD-" + frrName(cfg.Name) + "-IMPORT",
+		AddressFamily:   "ipv4",
 		AcceptCommunity: communityListForPeer(cfg, peer),
 		SetCommunities:  peer.Communities.SetIn,
 		NextHopPeer:     true,
 		DefaultDeny:     true,
 	})
 	writeFRRRouteMap(buf, peerRouteMapName(cfg.Name, peer, "OUT"), bgpRouteMapSpec{
-		PrefixList:     routeMapOutPrefixList(cfg.Name, exportPrefixes),
-		SetCommunities: bgpOutboundSetCommunities(exportPrefixes, peer.Communities.SetOut),
+		PrefixList:     routeMapOutPrefixList(cfg.Name, exportV4, "ipv4"),
+		AddressFamily:  "ipv4",
+		SetCommunities: bgpOutboundSetCommunities(exportV4, peer.Communities.SetOut),
 		DefaultDeny:    true,
 	})
+	if bgpPeerFamily(peer.Peer) == "ipv6" || len(exportV6) > 0 {
+		writeFRRRouteMap(buf, peerRouteMapName(cfg.Name, peer, "IN-V6"), bgpRouteMapSpec{
+			PrefixList:      "ROUTERD-" + frrName(cfg.Name) + "-IMPORT-V6",
+			AddressFamily:   "ipv6",
+			AcceptCommunity: communityListForPeer(cfg, peer),
+			SetCommunities:  peer.Communities.SetIn,
+			DefaultDeny:     true,
+		})
+		writeFRRRouteMap(buf, peerRouteMapName(cfg.Name, peer, "OUT-V6"), bgpRouteMapSpec{
+			PrefixList:     routeMapOutPrefixList(cfg.Name, exportV6, "ipv6"),
+			AddressFamily:  "ipv6",
+			SetCommunities: bgpOutboundSetCommunities(exportV6, peer.Communities.SetOut),
+			DefaultDeny:    true,
+		})
+	}
 }
 
 func writeFRRPeerSendCommunity(buf *bytes.Buffer, peer bgpPeerConfig) {
@@ -549,6 +641,40 @@ func bgpExportPrefixes(redistribute bgpRedistribute) []string {
 	return sortedUniqueStrings(append(append([]string{}, redistribute.Connected...), redistribute.Static...))
 }
 
+func splitBGPPrefixFamilies(prefixes []string) ([]string, []string) {
+	var v4 []string
+	var v6 []string
+	for _, value := range prefixes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		if prefix.Addr().Is4() {
+			v4 = append(v4, value)
+		} else if prefix.Addr().Is6() {
+			v6 = append(v6, value)
+		}
+	}
+	return sortedUniqueStrings(v4), sortedUniqueStrings(v6)
+}
+
+func bgpHasIPv6Peer(peers []bgpPeerConfig) bool {
+	for _, peer := range peers {
+		if bgpPeerFamily(peer.Peer) == "ipv6" {
+			return true
+		}
+	}
+	return false
+}
+
+func bgpPeerFamily(peer string) string {
+	addr, err := netip.ParseAddr(strings.TrimSpace(peer))
+	if err == nil && addr.Is6() {
+		return "ipv6"
+	}
+	return "ipv4"
+}
+
 func bgpOutboundSetCommunities(exportPrefixes []string, communities []string) []string {
 	if len(exportPrefixes) == 0 {
 		return nil
@@ -556,9 +682,12 @@ func bgpOutboundSetCommunities(exportPrefixes []string, communities []string) []
 	return communities
 }
 
-func routeMapOutPrefixList(routerName string, exportPrefixes []string) string {
+func routeMapOutPrefixList(routerName string, exportPrefixes []string, family string) string {
 	if len(exportPrefixes) == 0 {
 		return ""
+	}
+	if family == "ipv6" {
+		return "ROUTERD-" + frrName(routerName) + "-EXPORT-V6"
 	}
 	return "ROUTERD-" + frrName(routerName) + "-EXPORT"
 }

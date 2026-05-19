@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -292,6 +293,18 @@ func (c *Controller) observeInstances(ctx context.Context, vtysh string) (map[st
 		if err != nil {
 			return nil, false, fmt.Errorf("%s: %w", instance.Name, err)
 		}
+		if instance.IPv6 {
+			routesV6, err := c.run(ctx, vtysh, "-c", bgpShowIPv6RoutesCommand(instance.VRFName))
+			if err != nil {
+				return nil, false, fmt.Errorf("%s ipv6: %w", instance.Name, err)
+			}
+			prefixesV6, err := bgpstate.ParseFRRRoutesJSON(routesV6)
+			if err != nil {
+				return nil, false, fmt.Errorf("%s ipv6: %w", instance.Name, err)
+			}
+			state.Prefixes = append(state.Prefixes, prefixesV6...)
+			state = bgpstate.Normalize(state)
+		}
 		if instance.BFD {
 			bfd, err := c.observeBFD(ctx, vtysh, instance.VRFName)
 			if err != nil {
@@ -324,6 +337,7 @@ type bgpInstance struct {
 	Name    string
 	VRFName string
 	BFD     bool
+	IPv6    bool
 }
 
 func (c *Controller) bgpInstances() []bgpInstance {
@@ -341,10 +355,40 @@ func (c *Controller) bgpInstances() []bgpInstance {
 			continue
 		}
 		ref := strings.TrimSpace(spec.VRF)
-		out = append(out, bgpInstance{Name: resource.Metadata.Name, VRFName: vrfs[controllerBGPVRFRefName(ref)], BFD: c.bgpRouterUsesBFD(resource.Metadata.Name)})
+		out = append(out, bgpInstance{Name: resource.Metadata.Name, VRFName: vrfs[controllerBGPVRFRefName(ref)], BFD: c.bgpRouterUsesBFD(resource.Metadata.Name), IPv6: c.bgpRouterUsesIPv6(resource.Metadata.Name, spec)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func (c *Controller) bgpRouterUsesIPv6(routerName string, spec api.BGPRouterSpec) bool {
+	for _, prefix := range append(append([]string{}, spec.ImportPolicy.AllowedPrefixes...), append(spec.Redistribute.Connected.AllowedPrefixes, spec.Redistribute.Static.AllowedPrefixes...)...) {
+		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil && parsed.Addr().Is6() {
+			return true
+		}
+	}
+	if c.Router == nil {
+		return false
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
+			continue
+		}
+		peerSpec, err := resource.BGPPeerSpec()
+		if err != nil {
+			continue
+		}
+		_, name, ok := strings.Cut(strings.TrimSpace(peerSpec.RouterRef), "/")
+		if !ok || name != routerName {
+			continue
+		}
+		for _, peer := range peerSpec.Peers {
+			if addr, err := netip.ParseAddr(strings.TrimSpace(peer)); err == nil && addr.Is6() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *Controller) bgpRouterUsesBFD(routerName string) bool {
@@ -373,6 +417,13 @@ func bgpShowCommands(vrfName string) (string, string) {
 	}
 	vrf := strings.TrimSpace(vrfName)
 	return "show bgp vrf " + vrf + " summary json", "show bgp vrf " + vrf + " ipv4 unicast json"
+}
+
+func bgpShowIPv6RoutesCommand(vrfName string) string {
+	if strings.TrimSpace(vrfName) == "" {
+		return "show bgp ipv6 unicast json"
+	}
+	return "show bgp vrf " + strings.TrimSpace(vrfName) + " ipv6 unicast json"
 }
 
 func aggregateBGPStates(states map[string]bgpstate.State) bgpstate.State {

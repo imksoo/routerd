@@ -53,7 +53,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !hasVirtualIPv4(c.Router) {
+	if !hasVirtualAddress(c.Router) {
 		return nil
 	}
 	priorities, tracks := c.effectivePriorities()
@@ -81,20 +81,20 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	aliases := interfaceAliases(c.Router)
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VirtualIPv4Address" {
-			continue
-		}
-		spec, err := resource.VirtualIPv4AddressSpec()
+		spec, ok, err := vrrpResourceSpec(resource)
 		if err != nil {
 			return err
 		}
+		if !ok {
+			continue
+		}
 		address := spec.Address
-		if resolved, err := render.VirtualIPv4Address(c.Router, spec); err == nil {
+		if resolved, err := renderVirtualAddress(c.Router, spec); err == nil {
 			address = resolved
 		}
 		status := map[string]any{
 			"phase":      phase,
-			"backend":    c.virtualIPv4Backend(spec),
+			"backend":    c.virtualAddressBackend(spec),
 			"address":    address,
 			"hostname":   strings.TrimSpace(spec.Hostname),
 			"interface":  spec.Interface,
@@ -113,7 +113,7 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 			status["preempt"] = spec.VRRP.Preempt != nil && *spec.VRRP.Preempt
 			status["track"] = track.Entries
 			status["role"] = role
-			previous := c.Store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", resource.Metadata.Name)
+			previous := c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
 			if statusString(previous, "role") == role && statusString(previous, "lastRoleTransitionAt") != "" {
 				status["lastRoleTransitionAt"] = statusString(previous, "lastRoleTransitionAt")
 			} else {
@@ -124,7 +124,7 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 			if !c.DryRun {
 				if phase == "Applied" {
 					status["appliedAddress"] = address
-				} else if previous := statusString(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", resource.Metadata.Name), "appliedAddress"); previous != "" {
+				} else if previous := statusString(c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name), "appliedAddress"); previous != "" {
 					status["appliedAddress"] = previous
 				}
 			}
@@ -132,7 +132,7 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 		for key, value := range extra {
 			status[key] = value
 		}
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", resource.Metadata.Name, status); err != nil {
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
 			return err
 		}
 	}
@@ -151,18 +151,18 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 	}
 	desired := map[string]staticVIP{}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VirtualIPv4Address" {
+		spec, ok, err := vrrpResourceSpec(resource)
+		if err != nil || !ok {
 			continue
 		}
-		spec, err := resource.VirtualIPv4AddressSpec()
 		if err != nil || (strings.TrimSpace(spec.Mode) != "" && spec.Mode != "static") {
 			continue
 		}
-		address, err := render.VirtualIPv4Address(c.Router, spec)
+		address, err := renderVirtualAddress(c.Router, spec)
 		if err != nil {
 			continue
 		}
-		desired[resource.Metadata.Name] = staticVIP{IfName: aliases[spec.Interface], Address: address}
+		desired[resource.Kind+"\x00"+resource.Metadata.Name] = staticVIP{IfName: aliases[spec.Interface], Address: address}
 	}
 	statuses, err := lister.ListObjectStatuses()
 	if err != nil {
@@ -171,7 +171,7 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 	changed := false
 	for _, item := range statuses {
 		backend := strings.TrimSpace(statusString(item.Status, "backend"))
-		if item.APIVersion != api.NetAPIVersion || item.Kind != "VirtualIPv4Address" || (backend != "iproute2" && backend != "ifconfig") {
+		if item.APIVersion != api.NetAPIVersion || !isVirtualAddressKind(item.Kind) || (backend != "iproute2" && backend != "ifconfig") {
 			continue
 		}
 		previous := staticVIP{IfName: statusString(item.Status, "ifname"), Address: statusString(item.Status, "appliedAddress")}
@@ -181,7 +181,7 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 		if previous.IfName == "" || previous.Address == "" {
 			continue
 		}
-		if current, ok := desired[item.Name]; ok && current.IfName == previous.IfName && current.Address == previous.Address {
+		if current, ok := desired[item.Kind+"\x00"+item.Name]; ok && current.IfName == previous.IfName && current.Address == previous.Address {
 			continue
 		}
 		changed = true
@@ -201,7 +201,7 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 				"dryRun":         c.DryRun,
 				"observedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 			}
-			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", item.Name, status); err != nil {
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, item.Kind, item.Name, status); err != nil {
 				return changed, err
 			}
 		}
@@ -212,12 +212,12 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[string]string) (bool, error) {
 	changed := false
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VirtualIPv4Address" {
-			continue
-		}
-		spec, err := resource.VirtualIPv4AddressSpec()
+		spec, ok, err := vrrpResourceSpec(resource)
 		if err != nil {
 			return changed, err
+		}
+		if !ok {
+			continue
 		}
 		if strings.TrimSpace(spec.Mode) != "" && spec.Mode != "static" {
 			continue
@@ -226,7 +226,7 @@ func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[strin
 		if ifname == "" {
 			return changed, fmt.Errorf("%s references interface with empty ifname %q", resource.ID(), spec.Interface)
 		}
-		address, err := render.VirtualIPv4Address(c.Router, spec)
+		address, err := renderVirtualAddress(c.Router, spec)
 		if err != nil {
 			return changed, fmt.Errorf("%s spec.address: %w", resource.ID(), err)
 		}
@@ -247,6 +247,105 @@ type trackSummary struct {
 	Entries           []map[string]any
 }
 
+type virtualAddressSpec struct {
+	Interface   string
+	Address     string
+	Hostname    string
+	Mode        string
+	VRRP        virtualVRRPSpec
+	Track       []api.ResourceTrackSpec
+	AddressFrom api.StatusValueSourceSpec
+	Family      string
+}
+
+type virtualVRRPSpec struct {
+	VirtualRouterID    int
+	Priority           int
+	Preempt            *bool
+	PreemptDelay       string
+	Peers              []string
+	AdvertInterval     string
+	Authentication     string
+	AuthenticationFrom api.SecretValueSourceSpec
+}
+
+func vrrpResourceSpec(resource api.Resource) (virtualAddressSpec, bool, error) {
+	if resource.APIVersion != api.NetAPIVersion {
+		return virtualAddressSpec{}, false, nil
+	}
+	switch resource.Kind {
+	case "VirtualIPv4Address":
+		spec, err := resource.VirtualIPv4AddressSpec()
+		if err != nil {
+			return virtualAddressSpec{}, false, err
+		}
+		return virtualAddressSpec{
+			Interface:   spec.Interface,
+			Address:     spec.Address,
+			Hostname:    spec.Hostname,
+			Mode:        spec.Mode,
+			VRRP:        vrrpIPv4Spec(spec.VRRP),
+			Track:       spec.Track,
+			AddressFrom: spec.AddressFrom,
+			Family:      "ipv4",
+		}, true, nil
+	case "VirtualIPv6Address":
+		spec, err := resource.VirtualIPv6AddressSpec()
+		if err != nil {
+			return virtualAddressSpec{}, false, err
+		}
+		return virtualAddressSpec{
+			Interface:   spec.Interface,
+			Address:     spec.Address,
+			Hostname:    spec.Hostname,
+			Mode:        spec.Mode,
+			VRRP:        vrrpIPv6Spec(spec.VRRP),
+			Track:       spec.Track,
+			AddressFrom: spec.AddressFrom,
+			Family:      "ipv6",
+		}, true, nil
+	default:
+		return virtualAddressSpec{}, false, nil
+	}
+}
+
+func vrrpIPv4Spec(spec api.VirtualIPv4VRRPSpec) virtualVRRPSpec {
+	return virtualVRRPSpec{
+		VirtualRouterID:    spec.VirtualRouterID,
+		Priority:           spec.Priority,
+		Preempt:            spec.Preempt,
+		PreemptDelay:       spec.PreemptDelay,
+		Peers:              spec.Peers,
+		AdvertInterval:     spec.AdvertInterval,
+		Authentication:     spec.Authentication,
+		AuthenticationFrom: spec.AuthenticationFrom,
+	}
+}
+
+func vrrpIPv6Spec(spec api.VirtualIPv6VRRPSpec) virtualVRRPSpec {
+	return virtualVRRPSpec{
+		VirtualRouterID:    spec.VirtualRouterID,
+		Priority:           spec.Priority,
+		Preempt:            spec.Preempt,
+		PreemptDelay:       spec.PreemptDelay,
+		Peers:              spec.Peers,
+		AdvertInterval:     spec.AdvertInterval,
+		Authentication:     spec.Authentication,
+		AuthenticationFrom: spec.AuthenticationFrom,
+	}
+}
+
+func renderVirtualAddress(router *api.Router, spec virtualAddressSpec) (string, error) {
+	if spec.Family == "ipv6" {
+		return render.VirtualIPv6Address(router, api.VirtualIPv6AddressSpec{Address: spec.Address, AddressFrom: spec.AddressFrom})
+	}
+	return render.VirtualIPv4Address(router, api.VirtualIPv4AddressSpec{Address: spec.Address, AddressFrom: spec.AddressFrom})
+}
+
+func isVirtualAddressKind(kind string) bool {
+	return kind == "VirtualIPv4Address" || kind == "VirtualIPv6Address"
+}
+
 type trackDecision struct {
 	HealthyCount   int
 	UnhealthyCount int
@@ -260,10 +359,10 @@ func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSumm
 		c.trackState = map[string]trackDecision{}
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VirtualIPv4Address" {
+		spec, ok, err := vrrpResourceSpec(resource)
+		if err != nil || !ok {
 			continue
 		}
-		spec, err := resource.VirtualIPv4AddressSpec()
 		if err != nil || spec.Mode != "vrrp" {
 			continue
 		}
@@ -285,7 +384,7 @@ func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSumm
 			if penalty == 0 {
 				penalty = 50
 			}
-			decision := c.confirmTrack(resource.Metadata.Name, track, healthy)
+			decision := c.confirmTrack(resource.Kind, resource.Metadata.Name, track, healthy)
 			if decision.Penalized {
 				effective -= penalty
 			}
@@ -310,11 +409,11 @@ func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSumm
 	return priorities, summaries
 }
 
-func (c *Controller) confirmTrack(vip string, track api.ResourceTrackSpec, healthy bool) trackDecision {
-	key := vip + "\x00" + track.Resource
+func (c *Controller) confirmTrack(kind, vip string, track api.ResourceTrackSpec, healthy bool) trackDecision {
+	key := kind + "\x00" + vip + "\x00" + track.Resource
 	decision, ok := c.trackState[key]
 	if !ok {
-		decision = c.restoreTrackDecision(vip, track.Resource)
+		decision = c.restoreTrackDecision(kind, vip, track.Resource)
 	}
 	if healthy {
 		decision.HealthyCount++
@@ -333,11 +432,11 @@ func (c *Controller) confirmTrack(vip string, track api.ResourceTrackSpec, healt
 	return decision
 }
 
-func (c *Controller) restoreTrackDecision(vip, trackedResource string) trackDecision {
+func (c *Controller) restoreTrackDecision(kind, vip, trackedResource string) trackDecision {
 	if c.Store == nil {
 		return trackDecision{}
 	}
-	status := c.Store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", vip)
+	status := c.Store.ObjectStatus(api.NetAPIVersion, kind, vip)
 	for _, entry := range trackEntries(status["track"]) {
 		if strings.TrimSpace(fmt.Sprint(entry["resource"])) != trackedResource {
 			continue
@@ -411,7 +510,7 @@ func trackedPhaseHealthy(kind, phase string) bool {
 	}
 }
 
-func (c *Controller) virtualIPv4Backend(spec api.VirtualIPv4AddressSpec) string {
+func (c *Controller) virtualAddressBackend(spec virtualAddressSpec) string {
 	if strings.TrimSpace(spec.Mode) == "vrrp" {
 		return c.vrrpBackend().Name()
 	}
@@ -428,9 +527,9 @@ func (c *Controller) currentOS() platform.OS {
 	return platform.CurrentOS()
 }
 
-func hasVirtualIPv4(router *api.Router) bool {
+func hasVirtualAddress(router *api.Router) bool {
 	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "VirtualIPv4Address" {
+		if resource.APIVersion == api.NetAPIVersion && isVirtualAddressKind(resource.Kind) {
 			return true
 		}
 	}
@@ -447,8 +546,9 @@ func (c *Controller) run(ctx context.Context, name string, args ...string) ([]by
 func (c *Controller) replaceStaticAddress(ctx context.Context, ifname, address string) error {
 	if c.currentOS() == platform.OSFreeBSD {
 		ifconfig := firstNonEmpty(c.Ifconfig, "ifconfig")
-		if out, err := c.run(ctx, ifconfig, ifname, "inet", address, "alias"); err != nil {
-			return fmt.Errorf("%s %s inet %s alias: %w: %s", ifconfig, ifname, address, err, strings.TrimSpace(string(out)))
+		family := ifconfigAddressFamily(address)
+		if out, err := c.run(ctx, ifconfig, ifname, family, address, "alias"); err != nil {
+			return fmt.Errorf("%s %s %s %s alias: %w: %s", ifconfig, ifname, family, address, err, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
@@ -462,8 +562,9 @@ func (c *Controller) replaceStaticAddress(ctx context.Context, ifname, address s
 func (c *Controller) removeStaticAddress(ctx context.Context, ifname, address string) error {
 	if c.currentOS() == platform.OSFreeBSD {
 		ifconfig := firstNonEmpty(c.Ifconfig, "ifconfig")
-		if out, err := c.run(ctx, ifconfig, ifname, "inet", address, "-alias"); err != nil {
-			return fmt.Errorf("%s %s inet %s -alias: %w: %s", ifconfig, ifname, address, err, strings.TrimSpace(string(out)))
+		family := ifconfigAddressFamily(address)
+		if out, err := c.run(ctx, ifconfig, ifname, family, address, "-alias"); err != nil {
+			return fmt.Errorf("%s %s %s %s -alias: %w: %s", ifconfig, ifname, family, address, err, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
@@ -474,11 +575,29 @@ func (c *Controller) removeStaticAddress(ctx context.Context, ifname, address st
 	return nil
 }
 
+func ifconfigAddressFamily(address string) string {
+	if before, _, ok := strings.Cut(strings.TrimSpace(address), "/"); ok {
+		address = before
+	}
+	if strings.Contains(address, ":") {
+		return "inet6"
+	}
+	return "inet"
+}
+
 func ipv4AddressPresent(output, address string) bool {
+	return ipAddressPresent(output, address, "ipv4")
+}
+
+func ipAddressPresent(output, address, family string) bool {
+	token := "inet"
+	if family == "ipv6" {
+		token = "inet6"
+	}
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
 		for i, field := range fields {
-			if field == "inet" && i+1 < len(fields) && fields[i+1] == address {
+			if field == token && i+1 < len(fields) && fields[i+1] == address {
 				return true
 			}
 		}

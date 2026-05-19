@@ -155,6 +155,7 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 type hostnameRecord struct {
 	Hostname string
 	Address  string
+	Family   string
 }
 
 func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[string][]hostnameRecord {
@@ -177,6 +178,23 @@ func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[
 				continue
 			}
 			address := statusAddressValue(statusString(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", resource.Metadata.Name)["address"]))
+			if address == "" {
+				address = statusAddressValue(spec.Address)
+			}
+			c.addHostnameRecord(out, servedZones, hostname, address)
+		case "VirtualIPv6Address":
+			if resource.APIVersion != api.NetAPIVersion {
+				continue
+			}
+			spec, err := resource.VirtualIPv6AddressSpec()
+			if err != nil {
+				continue
+			}
+			hostname := strings.TrimSpace(spec.Hostname)
+			if hostname == "" {
+				continue
+			}
+			address := statusAddressValue(statusString(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualIPv6Address", resource.Metadata.Name)["address"]))
 			if address == "" {
 				address = statusAddressValue(spec.Address)
 			}
@@ -212,8 +230,13 @@ func (c Controller) addHostnameRecord(out map[string][]hostnameRecord, servedZon
 	if hostname == "" || address == "" {
 		return
 	}
-	if ip := net.ParseIP(address); ip == nil || ip.To4() == nil {
+	ip := net.ParseIP(address)
+	if ip == nil {
 		return
+	}
+	family := "ipv6"
+	if ip.To4() != nil {
+		family = "ipv4"
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DNSZone" || !servedZones[resource.Metadata.Name] {
@@ -227,7 +250,7 @@ func (c Controller) addHostnameRecord(out map[string][]hostnameRecord, servedZon
 		if !ok {
 			continue
 		}
-		out[resource.Metadata.Name] = append(out[resource.Metadata.Name], hostnameRecord{Hostname: relative, Address: address})
+		out[resource.Metadata.Name] = append(out[resource.Metadata.Name], hostnameRecord{Hostname: relative, Address: address, Family: family})
 		return
 	}
 }
@@ -235,15 +258,27 @@ func (c Controller) addHostnameRecord(out map[string][]hostnameRecord, servedZon
 func appendHostnameRecords(zoneName string, spec api.DNSZoneSpec, records map[string][]hostnameRecord) api.DNSZoneSpec {
 	seen := map[string]bool{}
 	for _, record := range spec.Records {
-		seen[canonicalRecordHostname(record.Hostname, spec.Zone)] = true
+		host := canonicalRecordHostname(record.Hostname, spec.Zone)
+		if strings.TrimSpace(record.IPv4) != "" || strings.TrimSpace(record.IPv4From.Resource) != "" {
+			seen[host+"|ipv4"] = true
+		}
+		if strings.TrimSpace(record.IPv6) != "" || strings.TrimSpace(record.IPv6From.Resource) != "" {
+			seen[host+"|ipv6"] = true
+		}
 	}
 	for _, value := range records[zoneName] {
-		key := canonicalRecordHostname(value.Hostname, spec.Zone)
+		key := canonicalRecordHostname(value.Hostname, spec.Zone) + "|" + value.Family
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		spec.Records = append(spec.Records, api.DNSZoneRecordSpec{Hostname: value.Hostname, IPv4: value.Address})
+		record := api.DNSZoneRecordSpec{Hostname: value.Hostname}
+		if value.Family == "ipv6" {
+			record.IPv6 = value.Address
+		} else {
+			record.IPv4 = value.Address
+		}
+		spec.Records = append(spec.Records, record)
 	}
 	return spec
 }
@@ -681,7 +716,7 @@ func dnsResolverDependsOn(router *api.Router, ref daemonapi.ResourceRef) bool {
 	if router == nil {
 		return false
 	}
-	if ref.APIVersion == api.NetAPIVersion && ref.Kind == "VirtualIPv4Address" && hostnameResourceExists(router, ref.Kind, ref.Name) {
+	if ref.APIVersion == api.NetAPIVersion && (ref.Kind == "VirtualIPv4Address" || ref.Kind == "VirtualIPv6Address") && hostnameResourceExists(router, ref.Kind, ref.Name) {
 		return true
 	}
 	if ref.APIVersion == api.FirewallAPIVersion && ref.Kind == "IngressService" && hostnameResourceExists(router, ref.Kind, ref.Name) {
@@ -726,6 +761,9 @@ func hostnameResourceExists(router *api.Router, kind, name string) bool {
 		switch kind {
 		case "VirtualIPv4Address":
 			spec, err := resource.VirtualIPv4AddressSpec()
+			return err == nil && strings.TrimSpace(spec.Hostname) != ""
+		case "VirtualIPv6Address":
+			spec, err := resource.VirtualIPv6AddressSpec()
 			return err == nil && strings.TrimSpace(spec.Hostname) != ""
 		case "IngressService":
 			spec, err := resource.IngressServiceSpec()

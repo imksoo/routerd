@@ -114,8 +114,8 @@ func validateBGPPrefixList(resourceID, path string, values []string) ([]netip.Pr
 	out := make([]netip.Prefix, 0, len(values))
 	for i, value := range values {
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
-		if err != nil || !prefix.Addr().Is4() {
-			return nil, fmt.Errorf("%s %s[%d] must be an IPv4 prefix", resourceID, path, i)
+		if err != nil || (!prefix.Addr().Is4() && !prefix.Addr().Is6()) {
+			return nil, fmt.Errorf("%s %s[%d] must be an IPv4 or IPv6 prefix", resourceID, path, i)
 		}
 		prefix = prefix.Masked()
 		key := prefix.String()

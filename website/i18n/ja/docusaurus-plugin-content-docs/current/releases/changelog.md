@@ -38,6 +38,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - stateful firewall rule expression として ICMP / ICMPv6 type、送信元 /
   宛先の複数 port match、nftables rate limit、送信元ごとの connection
   limit を追加しました。
+- IPv4/IPv6 unicast の dual-stack BGP rendering / observation、
+  `VirtualIPv6Address` による VRRPv3/CARP VIP support、AAAA record 自動派生、
+  dual-stack BGP / Kubernetes API VIP example を追加しました。
 
 ## v20260519.0743
 

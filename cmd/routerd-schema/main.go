@@ -294,6 +294,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.NetAPIVersion, "VXLANTunnel", api.VXLANTunnelSpec{}),
 			resourceSchema(api.NetAPIVersion, "IPv4StaticAddress", api.IPv4StaticAddressSpec{}),
 			resourceSchema(api.NetAPIVersion, "VirtualIPv4Address", api.VirtualIPv4AddressSpec{}),
+			resourceSchema(api.NetAPIVersion, "VirtualIPv6Address", api.VirtualIPv6AddressSpec{}),
 			resourceSchema(api.NetAPIVersion, "BGPRouter", api.BGPRouterSpec{}),
 			resourceSchema(api.NetAPIVersion, "BGPPeer", api.BGPPeerSpec{}),
 			resourceSchema(api.NetAPIVersion, "DHCPv4Lease", api.DHCPv4LeaseSpec{}),
