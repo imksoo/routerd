@@ -4,6 +4,7 @@ package ingressservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -14,9 +15,13 @@ import (
 	"time"
 
 	"routerd/pkg/api"
+	"routerd/pkg/ingressdrain"
+	routerstate "routerd/pkg/state"
 )
 
 type mapStore map[string]map[string]any
+
+var testNow = time.Date(2026, 5, 19, 1, 30, 0, 0, time.UTC)
 
 func (s mapStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
 	s[apiVersion+"/"+kind+"/"+name] = status
@@ -28,6 +33,49 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 		return status
 	}
 	return map[string]any{}
+}
+
+func (s mapStore) Get(name string) routerstate.Value {
+	status := s[api.RouterAPIVersion+"/State/"+name]
+	value, _ := status["value"].(routerstate.Value)
+	if value.Status == "" {
+		return routerstate.Value{Status: routerstate.StatusUnknown, Since: testNow, UpdatedAt: testNow}
+	}
+	return value
+}
+
+func (s mapStore) Set(name, value, reason string) routerstate.Value {
+	next := routerstate.Value{Status: routerstate.StatusSet, Value: value, Reason: reason, Since: testNow, UpdatedAt: testNow}
+	s[api.RouterAPIVersion+"/State/"+name] = map[string]any{"value": next}
+	return next
+}
+
+func (s mapStore) Unset(name, reason string) routerstate.Value {
+	next := routerstate.Value{Status: routerstate.StatusUnset, Reason: reason, Since: testNow, UpdatedAt: testNow}
+	s[api.RouterAPIVersion+"/State/"+name] = map[string]any{"value": next}
+	return next
+}
+
+func (s mapStore) Forget(name, reason string) routerstate.Value {
+	next := routerstate.Value{Status: routerstate.StatusUnknown, Reason: reason, Since: testNow, UpdatedAt: testNow}
+	s[api.RouterAPIVersion+"/State/"+name] = map[string]any{"value": next}
+	return next
+}
+
+func (s mapStore) Delete(name string) {
+	delete(s, api.RouterAPIVersion+"/State/"+name)
+}
+
+func (s mapStore) Age(name string) time.Duration {
+	return s.Now().Sub(s.Get(name).Since)
+}
+
+func (s mapStore) Now() time.Time { return testNow }
+
+func (s mapStore) Save(string) error { return nil }
+
+func (s mapStore) Variables() map[string]routerstate.Value {
+	return nil
 }
 
 func TestReconcileIngressServiceSelectsHealthyFailoverBackend(t *testing.T) {
@@ -58,6 +106,88 @@ func TestReconcileIngressServiceSelectsHealthyFailoverBackend(t *testing.T) {
 	}
 	if status["phase"] != "Degraded" {
 		t.Fatalf("phase = %#v, status=%#v", status["phase"], status)
+	}
+}
+
+func TestReconcileIngressServiceDrainsBackend(t *testing.T) {
+	store := mapStore{}
+	if _, err := ingressdrain.Drain(store, "api", "cp-01", 10*time.Minute); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	controller := Controller{
+		Router: ingressRouter(),
+		Store:  store,
+		Check: func(_ context.Context, _ string, _ int, _ time.Duration) error {
+			return nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.FirewallAPIVersion, "IngressService", "api")
+	active, _ := status["activeBackend"].(map[string]any)
+	if active["name"] != "cp-02" {
+		t.Fatalf("active backend = %#v, status=%#v", active, status)
+	}
+	if status["drainedBackends"] != 1 {
+		t.Fatalf("drainedBackends = %#v, status=%#v", status["drainedBackends"], status)
+	}
+	backends := status["backends"].([]backendStatus)
+	if !backends[0].Drained || backends[0].Healthy || backends[0].Reason != "Drained" || backends[0].DrainedUntil == "" {
+		t.Fatalf("drained backend = %#v", backends[0])
+	}
+}
+
+func TestReconcileIngressServiceUndrainRestoresBackend(t *testing.T) {
+	store := mapStore{}
+	if _, err := ingressdrain.Drain(store, "api", "cp-01", 0); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if err := ingressdrain.Undrain(store, "api", "cp-01"); err != nil {
+		t.Fatalf("undrain: %v", err)
+	}
+	controller := Controller{
+		Router: ingressRouter(),
+		Store:  store,
+		Check: func(_ context.Context, _ string, _ int, _ time.Duration) error {
+			return nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.FirewallAPIVersion, "IngressService", "api")
+	if status["phase"] != "Active" || status["drainedBackends"] != 0 {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestReconcileIngressServiceExpiresDrain(t *testing.T) {
+	store := mapStore{}
+	state := ingressdrain.State{
+		Service:      "api",
+		Backend:      "cp-01",
+		DrainedAt:    testNow.Add(-2 * time.Minute).Format(time.RFC3339Nano),
+		DrainedUntil: testNow.Add(-time.Minute).Format(time.RFC3339Nano),
+	}
+	data, _ := json.Marshal(state)
+	store.Set(ingressdrain.Key("api", "cp-01"), string(data), "test")
+	controller := Controller{
+		Router: ingressRouter(),
+		Store:  store,
+		Check: func(_ context.Context, _ string, _ int, _ time.Duration) error {
+			return nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.FirewallAPIVersion, "IngressService", "api")
+	if status["phase"] != "Active" || status["drainedBackends"] != 0 {
+		t.Fatalf("status = %#v", status)
+	}
+	if current := store.Get(ingressdrain.Key("api", "cp-01")); current.Status == routerstate.StatusSet {
+		t.Fatalf("expired drain was not deleted: %#v", current)
 	}
 }
 

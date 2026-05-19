@@ -249,6 +249,20 @@ it. `spec.hostname` can publish the VIP into matching DNSResolver-served
 transition age. NixOS remains groundwork until a native service-manager module
 owns the same host artifacts.
 
+### VRRP production tuning
+
+Use shorter advertisements only for control-plane VIPs where fast failover is
+worth the extra L2 chatter and operational sensitivity. A Kubernetes API VIP is
+a typical case: `advertInterval: 1s`, `preempt: true`, and
+`preemptDelay: 30s` lets the preferred router take the VIP back, but only after
+it has stayed healthy long enough to avoid a quick failback loop.
+
+Use slower, non-preemptive settings for home-router or DS-Lite/LAN service VIPs
+where stability matters more than returning to a preferred owner. A conservative
+preset is `advertInterval: 3s` with `preempt: false`; the backup keeps the VIP
+until it fails or is intentionally moved. See `examples/vrrp-tuning-presets.yaml`
+for complete resource fragments.
+
 `BGPPeer.spec.password` is rendered into FRR as `neighbor ... password ...`.
 Prefer `BGPPeer.spec.passwordFrom` for production configs so the routerd YAML
 does not contain the shared secret. `passwordFrom.file` reads a local root-owned
@@ -290,7 +304,11 @@ listen-port collisions between `IngressService`, `LocalServiceRedirect`, and
 routerd-managed local daemons on the same protocol/interface. `spec.hostname`
 can also publish the listen address into matching DNSResolver-served `DNSZone`
 records, and `routerctl show ingress` shows active backend and per-backend
-health.
+health. During maintenance, `routerctl drain ingress/<service> backend=<name>
+--duration 10m` marks a backend as drained in the runtime state store. The
+controller treats it as unhealthy with reason `Drained` until the duration
+expires or `routerctl undrain ingress/<service> backend=<name>` clears the
+state.
 
 `IPAddressSet` writes literal IPv4/IPv6 addresses into nftables named sets when
 the ruleset is rendered. FQDN `A`/`AAAA` records are resolved by the runtime

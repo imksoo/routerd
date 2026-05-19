@@ -255,6 +255,19 @@ FreeBSD CARP は親 interface 上の multicast advertisement を使うため、
 対応 `DNSZone` へ VIP の A record として自動派生できます。`routerctl show vrrp` は
 role、priority、peer、transition 経過時間を表示します。
 
+### VRRP production tuning
+
+制御プレーン VIP のように高速 failover が重要な場所だけ、短い advertisement を
+使います。Kubernetes API VIP では `advertInterval: 1s`、`preempt: true`、
+`preemptDelay: 30s` が典型です。優先 router が VIP を取り戻しますが、復帰直後の
+揺れで即 failback しないように待ち時間を入れます。
+
+家庭 LAN や DS-Lite 周辺の VIP では、優先 owner に戻すことより安定性を優先する
+設定が扱いやすいです。保守的な preset は `advertInterval: 3s` と
+`preempt: false` です。backup が VIP を持った後は、その node が落ちるか明示的に
+移動するまで保持します。完全な resource fragment は
+`examples/vrrp-tuning-presets.yaml` を参照してください。
+
 `BGPPeer.spec.password` は FRR 設定に `neighbor ... password ...` として描画されます。
 本番構成では routerd YAML に共有 secret を残さないため、`BGPPeer.spec.passwordFrom`
 を優先してください。`passwordFrom.file` は local root-owned secret file、
@@ -271,7 +284,11 @@ fallback として使います。Linux nftables は次回 NAT reconcile で stat
 active backend を転送先に使います。既存 conntrack は消さないため、既存 flow は
 旧 backend に残り、新規 flow が選択済み backend に向かいます。`spec.hostname` は
 listen address の A record として DNSResolver に自動反映でき、`routerctl show ingress`
-は active backend と backend ごとの health を表示します。
+は active backend と backend ごとの health を表示します。保守中は `routerctl drain
+ingress/<service> backend=<name> --duration 10m` で backend を runtime state 上の
+drain 状態にできます。controller は duration が切れるか `routerctl undrain
+ingress/<service> backend=<name>` で解除されるまで、該当 backend を reason `Drained`
+の unhealthy として扱います。
 
 `LocalServiceRedirect` は Linux nftables の `prerouting` に `redirect` rule を生成します。
 指定した interface から入ってきた packet と `IPAddressSet` 宛先だけを対象にします。

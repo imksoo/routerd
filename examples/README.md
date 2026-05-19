@@ -32,6 +32,7 @@ routerd plan --config examples/<name>.yaml
 | `bgp-bfd.yaml` | You want FRR BGP peers with BFD-based sub-second failure detection and tuned watcher limits. |
 | `k8s-cluster-routes.yaml` | You want static Pod CIDR and Service CIDR routes toward Kubernetes worker nodes. |
 | `multi-instance-bgp.yaml` | You want separate FRR BGP instances for LAN speakers and a VRF-backed WAN peering domain. |
+| `vrrp-tuning-presets.yaml` | You want VRRP/CARP timing presets for API VIP and conservative LAN failover patterns. |
 
 ## WAN and home-router patterns
 

@@ -18,7 +18,9 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/bus"
+	"routerd/pkg/ingressdrain"
 	"routerd/pkg/resourcequery"
+	routerstate "routerd/pkg/state"
 )
 
 type Store interface {
@@ -49,6 +51,8 @@ type backendStatus struct {
 	UnhealthyCount  int    `json:"unhealthyCount,omitempty"`
 	LastHealthyAt   string `json:"lastHealthyAt,omitempty"`
 	LastUnhealthyAt string `json:"lastUnhealthyAt,omitempty"`
+	Drained         bool   `json:"drained,omitempty"`
+	DrainedUntil    string `json:"drainedUntil,omitempty"`
 }
 
 type previousBackendStatus struct {
@@ -100,7 +104,9 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 		status.ResolvedAddress = resolved
 		checkOK := resolved != ""
 		status.Reason = reason
-		if checkOK && !c.DryRun {
+		if drain, ok := c.currentDrain(name, status.Name); ok {
+			status.applyDrained(previous[status.Name], drain, now)
+		} else if checkOK && !c.DryRun {
 			switch defaultString(spec.HealthCheck.Protocol, "tcp") {
 			case "tcp":
 				if err := c.check(ctx, resolved, backend.Port, timeout); err != nil {
@@ -113,8 +119,10 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 					status.Reason = strings.ToUpper(spec.HealthCheck.Protocol) + "CheckFailed: " + err.Error()
 				}
 			}
+			status.applyCheckResult(checkOK, previous[status.Name], spec.HealthCheck, now)
+		} else {
+			status.applyCheckResult(checkOK, previous[status.Name], spec.HealthCheck, now)
 		}
-		status.applyCheckResult(checkOK, previous[status.Name], spec.HealthCheck, now)
 		backends = append(backends, status)
 	}
 	active, activeBackends, effectiveSelection, healthy := selectActiveBackends(backends, spec.Policy.Selection)
@@ -137,6 +145,7 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 		"activeBackends":     activeBackendStatusMaps(activeBackends),
 		"healthyBackends":    healthy,
 		"totalBackends":      len(backends),
+		"drainedBackends":    drainedBackendCount(backends),
 		"backends":           backends,
 		"selection":          defaultString(spec.Policy.Selection, "failover"),
 		"effectiveSelection": effectiveSelection,
@@ -157,6 +166,35 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 		status["conditions"] = []map[string]any{{"type": "BackendsHealthy", "status": "True", "reason": "ActiveBackendSelected"}}
 	}
 	return c.Store.SaveObjectStatus(api.FirewallAPIVersion, "IngressService", name, status)
+}
+
+func (c *Controller) currentDrain(service, backend string) (ingressdrain.State, bool) {
+	store, ok := c.Store.(routerstate.Store)
+	if !ok {
+		return ingressdrain.State{}, false
+	}
+	return ingressdrain.Current(store, service, backend)
+}
+
+func (s *backendStatus) applyDrained(previous previousBackendStatus, drain ingressdrain.State, now string) {
+	s.Healthy = false
+	s.Reason = "Drained"
+	s.Drained = true
+	s.DrainedUntil = drain.DrainedUntil
+	s.HealthyCount = 0
+	s.UnhealthyCount = previous.UnhealthyCount + 1
+	s.LastHealthyAt = previous.LastHealthyAt
+	s.LastUnhealthyAt = now
+}
+
+func drainedBackendCount(backends []backendStatus) int {
+	var count int
+	for _, backend := range backends {
+		if backend.Drained {
+			count++
+		}
+	}
+	return count
 }
 
 func sameActiveBackend(previous any, active backendStatus) bool {

@@ -184,6 +184,81 @@ func (s eventedStore) ObjectStatus(apiVersion, kind, name string) map[string]any
 	return s.Store.ObjectStatus(apiVersion, kind, name)
 }
 
+func (s eventedStore) Get(name string) routerstate.Value {
+	store, ok := s.Store.(routerstate.Store)
+	if !ok {
+		now := time.Now().UTC()
+		return routerstate.Value{Status: routerstate.StatusUnknown, Since: now, UpdatedAt: now}
+	}
+	return store.Get(name)
+}
+
+func (s eventedStore) Set(name, value, reason string) routerstate.Value {
+	store, ok := s.Store.(routerstate.Store)
+	if !ok {
+		now := time.Now().UTC()
+		return routerstate.Value{Status: routerstate.StatusUnknown, Value: value, Reason: reason, Since: now, UpdatedAt: now}
+	}
+	return store.Set(name, value, reason)
+}
+
+func (s eventedStore) Unset(name, reason string) routerstate.Value {
+	store, ok := s.Store.(routerstate.Store)
+	if !ok {
+		now := time.Now().UTC()
+		return routerstate.Value{Status: routerstate.StatusUnknown, Reason: reason, Since: now, UpdatedAt: now}
+	}
+	return store.Unset(name, reason)
+}
+
+func (s eventedStore) Forget(name, reason string) routerstate.Value {
+	store, ok := s.Store.(routerstate.Store)
+	if !ok {
+		now := time.Now().UTC()
+		return routerstate.Value{Status: routerstate.StatusUnknown, Reason: reason, Since: now, UpdatedAt: now}
+	}
+	return store.Forget(name, reason)
+}
+
+func (s eventedStore) Delete(name string) {
+	store, ok := s.Store.(routerstate.Store)
+	if ok {
+		store.Delete(name)
+	}
+}
+
+func (s eventedStore) Age(name string) time.Duration {
+	store, ok := s.Store.(routerstate.Store)
+	if !ok {
+		return 0
+	}
+	return store.Age(name)
+}
+
+func (s eventedStore) Now() time.Time {
+	store, ok := s.Store.(routerstate.Store)
+	if !ok {
+		return time.Now().UTC()
+	}
+	return store.Now()
+}
+
+func (s eventedStore) Save(path string) error {
+	store, ok := s.Store.(routerstate.Store)
+	if !ok {
+		return nil
+	}
+	return store.Save(path)
+}
+
+func (s eventedStore) Variables() map[string]routerstate.Value {
+	store, ok := s.Store.(routerstate.Store)
+	if !ok {
+		return nil
+	}
+	return store.Variables()
+}
+
 func (s eventedStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
 	if s.Store == nil {
 		return nil, nil

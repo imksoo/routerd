@@ -17,6 +17,7 @@ import (
 	"routerd/pkg/apply"
 	"routerd/pkg/controlapi"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/ingressdrain"
 	"routerd/pkg/logstore"
 	"routerd/pkg/resource"
 	routerstate "routerd/pkg/state"
@@ -58,6 +59,41 @@ func TestShowIPv6PDTableIncludesSpecStateLedger(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("show output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestDrainAndUndrainIngressBackend(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "routerd.db")
+	var out bytes.Buffer
+	if err := run([]string{"drain", "ingress/kubernetes-api", "backend=cp-01", "--duration=10m", "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, `"service": "kubernetes-api"`) || !strings.Contains(got, `"backend": "cp-01"`) || !strings.Contains(got, `"drainedUntil"`) {
+		t.Fatalf("drain output = %s", got)
+	}
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	if state, ok := ingressdrain.Current(store, "kubernetes-api", "cp-01"); !ok || state.DrainedUntil == "" {
+		t.Fatalf("drain state = %#v ok=%v", state, ok)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+
+	out.Reset()
+	if err := run([]string{"undrain", "ingress/kubernetes-api", "--backend", "cp-01", "--state-file", statePath}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("undrain: %v", err)
+	}
+	store, err = routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("reopen state: %v", err)
+	}
+	defer store.Close()
+	if _, ok := ingressdrain.Current(store, "kubernetes-api", "cp-01"); ok {
+		t.Fatalf("drain state still present")
 	}
 }
 

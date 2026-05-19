@@ -26,6 +26,7 @@ import (
 	"routerd/pkg/apply"
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
+	"routerd/pkg/ingressdrain"
 	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
 	"routerd/pkg/platform"
@@ -83,6 +84,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return diagnoseCommand(args[1:], stdout, stderr)
 	case "show":
 		return showCommand(args[1:], stdout, stderr)
+	case "drain":
+		return ingressDrainCommand(args[1:], stdout, true)
+	case "undrain":
+		return ingressDrainCommand(args[1:], stdout, false)
 	case "apply":
 		return applyCommand(args[1:], stdout)
 	case "delete":
@@ -241,6 +246,96 @@ func deleteCommand(args []string, stdout io.Writer) error {
 		return err
 	}
 	return writeJSON(stdout, result)
+}
+
+func ingressDrainCommand(args []string, stdout io.Writer, drain bool) error {
+	statePath := defaultStatePath()
+	var duration time.Duration
+	var backend string
+	var target string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--state-file":
+			i++
+			if i >= len(args) {
+				return errors.New("--state-file requires a value")
+			}
+			statePath = args[i]
+		case strings.HasPrefix(arg, "--state-file="):
+			statePath = strings.TrimPrefix(arg, "--state-file=")
+		case arg == "--duration":
+			i++
+			if i >= len(args) {
+				return errors.New("--duration requires a value")
+			}
+			parsed, err := time.ParseDuration(args[i])
+			if err != nil {
+				return err
+			}
+			duration = parsed
+		case strings.HasPrefix(arg, "--duration="):
+			parsed, err := time.ParseDuration(strings.TrimPrefix(arg, "--duration="))
+			if err != nil {
+				return err
+			}
+			duration = parsed
+		case arg == "--backend":
+			i++
+			if i >= len(args) {
+				return errors.New("--backend requires a value")
+			}
+			backend = args[i]
+		case strings.HasPrefix(arg, "--backend="):
+			backend = strings.TrimPrefix(arg, "--backend=")
+		case strings.HasPrefix(arg, "backend="):
+			backend = strings.TrimPrefix(arg, "backend=")
+		case strings.HasPrefix(arg, "-"):
+			return fmt.Errorf("unknown option %q", arg)
+		default:
+			if target != "" {
+				return fmt.Errorf("unexpected argument %q", arg)
+			}
+			target = arg
+		}
+	}
+	if target == "" {
+		if drain {
+			return errors.New("drain requires ingress/<service> backend=<name>")
+		}
+		return errors.New("undrain requires ingress/<service> backend=<name>")
+	}
+	kind, service, err := parseResourceTarget("drain", target)
+	if err != nil {
+		return err
+	}
+	if kind != "IngressService" || strings.TrimSpace(service) == "" {
+		return fmt.Errorf("drain target must be ingress/<service>")
+	}
+	if strings.TrimSpace(backend) == "" {
+		return errors.New("backend=<name> is required")
+	}
+	store, err := routerstate.Load(statePath)
+	if err != nil {
+		return err
+	}
+	if drain {
+		state, err := ingressdrain.Drain(store, service, backend, duration)
+		if err != nil {
+			return err
+		}
+		if err := store.Save(statePath); err != nil {
+			return err
+		}
+		return writeJSON(stdout, state)
+	}
+	if err := ingressdrain.Undrain(store, service, backend); err != nil {
+		return err
+	}
+	if err := store.Save(statePath); err != nil {
+		return err
+	}
+	return writeJSON(stdout, map[string]any{"service": service, "backend": backend, "drained": false})
 }
 
 func eventsCommand(args []string, stdout io.Writer) error {
@@ -1533,18 +1628,22 @@ func writeIngressShowTable(stdout io.Writer, router *api.Router, resources []rou
 		backends := statusMaps(resource.Status["backends"])
 		if len(backends) > 0 {
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, "BACKEND\tADDRESS\tSTATE\tLAST_HEALTHY\tLAST_UNHEALTHY")
+			fmt.Fprintln(w, "BACKEND\tADDRESS\tSTATE\tDRAINED_UNTIL\tLAST_HEALTHY\tLAST_UNHEALTHY")
 			for _, backend := range backends {
 				state := "Unhealthy"
 				if statusBool(backend["healthy"]) {
 					state = "Healthy"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s(%d/%d)\t%s\t%s\n",
+				if statusBool(backend["drained"]) {
+					state = "Drained"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s(%d/%d)\t%s\t%s\t%s\n",
 					statusString(backend["name"]),
 					backendAddressString(backend),
 					state,
 					statusInt(backend["healthyCount"]),
 					statusInt(backend["unhealthyCount"]),
+					defaultShowString(statusString(backend["drainedUntil"]), "-"),
 					ageString(statusString(backend["lastHealthyAt"])),
 					ageString(statusString(backend["lastUnhealthyAt"])),
 				)
@@ -2721,6 +2820,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  show bgp|vrrp|ingress [--config <path>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show <kind> [--config <path>] [--state-file <path>] [--ledger-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  show <kind>/<name> [--diff|--ledger|--adopt|--events|--spec|--status] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  drain ingress/<service> backend=<name> [--duration 10m] [--state-file <path>]")
+	fmt.Fprintln(w, "  undrain ingress/<service> backend=<name> [--state-file <path>]")
 	fmt.Fprintln(w, "  plan [--socket <path>]")
 	fmt.Fprintln(w, "  apply [--socket <path>] [--dry-run]")
 	fmt.Fprintln(w, "  delete <kind>/<name> [--socket <path>] [--dry-run]")

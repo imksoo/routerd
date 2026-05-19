@@ -30,6 +30,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - 新增面向 Kubernetes Pod / Service CIDR static route 的
   `ClusterNetworkRoute` helper，並為 BGP peer password 與 VRRP/CARP
   authentication 增加 `passwordFrom` / `authenticationFrom` secret source。
+- 新增用於暫時性 `IngressService` backend maintenance 的 `routerctl drain` /
+  `undrain`，以及 VRRP production tuning 文件和
+  `examples/vrrp-tuning-presets.yaml`。
 
 ## v20260519.0743
 

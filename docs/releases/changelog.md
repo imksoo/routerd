@@ -30,6 +30,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added `ClusterNetworkRoute` helpers for Kubernetes Pod / Service CIDR static
   routes, plus `passwordFrom` / `authenticationFrom` secret sources for BGP
   peer passwords and VRRP/CARP authentication.
+- Added `routerctl drain` / `undrain` for temporary `IngressService` backend
+  maintenance and VRRP production tuning documentation with
+  `examples/vrrp-tuning-presets.yaml`.
 
 ## v20260519.0743
 
