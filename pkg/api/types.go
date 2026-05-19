@@ -125,12 +125,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "SystemdUnit":
-		var spec SystemdUnitSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "NTPClient":
 		var spec NTPClientSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -234,6 +228,9 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "PPPoESession":
+		if hasMappingKey(&raw.Spec, "socketSource") {
+			return fmt.Errorf("%s spec.socketSource is not supported; routerd derives daemon sockets automatically", r.ID())
+		}
 		var spec PPPoESessionSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
@@ -408,6 +405,9 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "HealthCheck":
+		if hasMappingKey(&raw.Spec, "socketSource") {
+			return fmt.Errorf("%s spec.socketSource is not supported; routerd derives daemon sockets automatically", r.ID())
+		}
 		var spec HealthCheckSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
@@ -533,12 +533,22 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "SystemdUnit":
+		return fmt.Errorf("%s is not supported; declare router intent and let routerd generate service units", r.ID())
 	default:
-		var spec map[string]any
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
+		return fmt.Errorf("unsupported resource kind %s in %s", raw.Kind, r.ID())
 	}
 	return nil
+}
+
+func hasMappingKey(node *yaml.Node, key string) bool {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }

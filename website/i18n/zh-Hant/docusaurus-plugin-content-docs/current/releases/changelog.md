@@ -144,7 +144,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 變更
 
-- 移除了目前 controller-chain 設定路徑已不再使用的 dead compatibility helper
+- 移除了目前 controller runtime 設定路徑已不再使用的 dead compatibility helper
   和舊 raw systemd unit renderer。
 
 ## v20260517.2339
@@ -379,7 +379,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 - 修正 Web Console Clients，忽略已過期的 dnsmasq lease，避免舊 host 無限期留在清單中。
 - DHCP lease 合併現在會優先採用最新的有效 lease，只有在條件相同時才以 lease file 設定順序作為 tie-breaker。
-- routerd 現在會把 controller-chain dnsmasq lease file 作為第一候選傳給 Web Console，
+- routerd 現在會把 controller runtime dnsmasq lease file 作為第一候選傳給 Web Console，
   讓 console 依照受管理 dnsmasq 實際使用的 lease file 顯示。
 
 ## v20260514.0654
@@ -885,20 +885,20 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 ### 異動
 
 - 即時連線檢視的 API / CLI 統一命名為 `connections`（舊稱 `conntrack-snapshot`）。請改用 `/api/v1/connections`、`routerctl connections`。IPv6 也納入同一張表。
-- NixOS 的宣告式渲染擴充。`Package`（NixOS 套件宣告）、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit` 皆會輸出至 `routerd render nixos`。NixOS 上的 `Package` 不再於執行期安裝，而由產生的 NixOS 設定接管。
-- `SystemdUnit` 可產生 FreeBSD `rc.d` 腳本（`routerd render freebsd --out-dir`）。
+- NixOS 的宣告式渲染擴充。`Package`（NixOS 套件宣告）、`SysctlProfile`、`NetworkAdoption`、`generated service artifacts` 皆會輸出至 `routerd render nixos`。NixOS 上的 `Package` 不再於執行期安裝，而由產生的 NixOS 設定接管。
+- `generated service artifacts` 可產生 FreeBSD `rc.d` 腳本（`routerd render freebsd --out-dir`）。
 
 ### 修正
 
 - 當 `Link/<name>` 狀態為空時，`IPv6DelegatedAddress` 不再略過將 PD 派生位址掛上實體介面的步驟。
-- `SystemdUnit` 不再對未變動的 active unit 做不必要的重啟。
+- `generated service artifacts` 不再對未變動的 active unit 做不必要的重啟。
 
 ## 0.3.0
 
 ### 新增
 
 - 宣告式 OS bootstrap 資源 `Package` 與 `SysctlProfile`。涵蓋 apt、dnf、nix、pkg 的套件宣告，以及路由器導向的 sysctl 推薦值（`nf_conntrack_max`、socket buffer、TCP/UDP timeout、`ip_forward` 等）。
-- `NetworkAdoption` 可由 YAML 關閉 systemd-networkd 的 DHCP / RA。`SystemdUnit` 由 routerd 自身渲染、安裝、啟用 unit 檔案。
+- `NetworkAdoption` 可由 YAML 關閉 systemd-networkd 的 DHCP / RA。`generated service artifacts` 由 routerd 自身渲染、安裝、啟用 unit 檔案。
 - `routerctl events --limit N --topic X --resource K/N -o json` 不再依賴 `sqlite3` 即可檢視 bus event。
 - `routerd plan --diff` 提供 apply 前的差異預覽。
 - `DNSResolver` 支援 bootstrap forwarder（內部 DNS 為主，公用 DNS 為備援）。
@@ -913,8 +913,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 
 ### 修正
 
-- `SystemdUnit` 之間的 `RuntimeDirectory` 衝突會在重啟時刪除 socket，已透過 `runtimeDirectoryPreserve` 宣告式解決。
-- `state: absent` 的 `SystemdUnit` 現可正確判定為 Drifted，並列入 plan 中刪除。
+- `generated service artifacts` 之間的 `RuntimeDirectory` 衝突會在重啟時刪除 socket，已透過 `runtimeDirectoryPreserve` 宣告式解決。
+- `state: absent` 的 `generated service artifacts` 現可正確判定為 Drifted，並列入 plan 中刪除。
 - `SysctlProfile` 觀測時的型別漂移誤判已抑制。
 
 ## 0.2.0

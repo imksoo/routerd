@@ -350,8 +350,6 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 }
 
 func TestNixOSModuleRendersDeclarativeSystemResources(t *testing.T) {
-	enabled := true
-	privateTmp := true
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -397,22 +395,9 @@ func TestNixOSModuleRendersDeclarativeSystemResources(t *testing.T) {
 				},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-				Metadata: api.ObjectMeta{Name: "routerd-dns-resolver.service"},
-				Spec: api.SystemdUnitSpec{
-					Description:              "routerd DNS resolver",
-					ExecStart:                []string{"/usr/local/sbin/routerd-dns-resolver", "--config", "/usr/local/etc/routerd/dns-resolver.yaml"},
-					After:                    []string{"network-online.target"},
-					WantedBy:                 []string{"multi-user.target"},
-					Restart:                  "always",
-					RuntimeDirectory:         []string{"routerd/dns-resolver"},
-					RuntimeDirectoryPreserve: "yes",
-					StateDirectory:           []string{"routerd/dns-resolver"},
-					RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6"},
-					ProtectSystem:            "strict",
-					PrivateTmp:               &privateTmp,
-					Enabled:                  &enabled,
-				},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.DNSResolverSpec{},
 			},
 		}},
 	}
@@ -433,12 +418,13 @@ func TestNixOSModuleRendersDeclarativeSystemResources(t *testing.T) {
 		`IPv6AcceptRA = false;`,
 		`services.resolved.enable = true;`,
 		`DNSStubListener=no`,
-		`systemd.services."routerd-dns-resolver" = {`,
-		`description = "routerd DNS resolver";`,
+		`systemd.services."routerd-dns-resolver@lan" = {`,
+		`description = "routerd DNS resolver lan";`,
 		`"/usr/local/sbin/routerd-dns-resolver"`,
+		`"--resource"`,
+		`"lan"`,
 		`RuntimeDirectory = [ "routerd/dns-resolver" ];`,
-		`RuntimeDirectoryPreserve = "yes";`,
-		`StateDirectory = [ "routerd/dns-resolver" ];`,
+		`StateDirectory = [ "routerd/dns-resolver" "routerd/dns-resolver/lan" ];`,
 		`RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];`,
 		`ProtectSystem = "strict";`,
 		`PrivateTmp = true;`,
@@ -568,13 +554,6 @@ func TestNixOSModuleSynthesizesFirewallLoggerUnit(t *testing.T) {
 				NFLogGroup: 7,
 			},
 		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"},
-			Spec: api.SystemdUnitSpec{
-				ExecStart: []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon"},
-			},
-		},
 	}}}
 	data, err := NixOSModule(router)
 	if err != nil {
@@ -604,11 +583,9 @@ func TestNixOSModuleSynthesizesFirewallLoggerUnit(t *testing.T) {
 func TestNixOSModuleSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"},
-			Spec: api.SystemdUnitSpec{
-				ExecStart: []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--engine=auto"},
-			},
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.FirewallLogSpec{Enabled: true},
 		},
 	}}}
 	data, err := NixOSModule(router)
@@ -764,8 +741,7 @@ func TestNixOSModuleSkipsDHCPv6ClientServiceWhenRouterdSupervisesClients(t *test
 				Metadata: api.ObjectMeta{Name: "host"},
 				Spec: api.NixOSHostSpec{
 					RouterdService: api.NixOSRouterdServiceSpec{
-						Enabled:    &enabled,
-						ExtraFlags: []string{"--controller-chain"},
+						Enabled: &enabled,
 					},
 				},
 			},

@@ -506,9 +506,6 @@ if [ ! -S "${socket}" ]; then
         --config "${config}" \
         --socket "${socket}" \
         --status-socket "${status_socket}" \
-        --controller-chain \
-        --controller-chain-dry-run-dns-resolver=false \
-        --controller-chain-dry-run-vrrp=false \
         > "${log_dir}/routerd-live.log" 2>&1 &
     sleep 1
 fi

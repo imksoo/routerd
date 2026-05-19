@@ -94,9 +94,9 @@ Implemented:
 - CI smoke coverage for Alpine `install.sh --list-deps` and a minimal
   `Package` validate/dry-run apply path
 - `routerd render alpine --out-dir` for OpenRC scripts and dnsmasq config
-- OpenRC script rendering for explicit `SystemdUnit`, managed dnsmasq,
-  `routerd-healthcheck`, DHCPv4/DHCPv6 clients, DNS resolver, firewall logger,
-  PPPoE, and Tailscale
+- OpenRC script rendering for generated routerd service artifacts, managed
+  dnsmasq, `routerd-healthcheck`, DNS resolver, firewall logger, PPPoE, and
+  Tailscale
 - apply-time OpenRC activation through `rc-update` / `rc-service`, with
   idempotency checks before enable/start/restart operations
 - `make alpine-vm-smoke` harness for installed Alpine guests
@@ -134,7 +134,7 @@ Implemented:
 - systemd unit generation for `routerd-dhcpv6-client`
 - systemd unit generation for `routerd-dhcpv4-client`
 - systemd unit generation for `routerd-pppoe-client`
-- NixOS module generation for `Package`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`
+- NixOS module generation for `Package`, `SysctlProfile`, `NetworkAdoption`, and generated service artifacts
 - automatic `nixos-rebuild test` from `routerd apply --dry-run`
 - automatic `nixos-rebuild switch` from `routerd apply`
 - rollback attempt with `nixos-rebuild switch --rollback` when a NixOS switch fails
@@ -200,7 +200,7 @@ Implemented:
 - automatic pf holes for routerd-owned DHCP, DNS, RA, DHCPv6-PD, DS-Lite, WireGuard, and healthcheck traffic
 - DNS resolver daemon builds on FreeBSD; `viaInterface` can target `fib:<n>` for FIB-bound upstream routing
 - cloud VPN `IPsecConnection` validates and renders strongSwan `swanctl` connection definitions; live cloud gateway validation remains deployment-specific
-- rc.d script generation, installation, and `service <name> onestart` activation from `SystemdUnit`
+- rc.d script generation, installation, and `service <name> onestart` activation from generated service artifacts
 - rc.d script generation for `routerd-healthcheck`
 - rc.d script generation for `routerd-firewall-logger` with direct `pflog0` input
 - rc.d script generation for `TailscaleNode`
@@ -244,7 +244,7 @@ NixOS, FreeBSD, and Alpine:
 | Area | Current gap | Backlog |
 | --- | --- | --- |
 | CI/runtime coverage | CI runs unit tests and Linux static checks on Ubuntu. Alpine now has a host-independent installer dependency smoke plus minimal `Package` validate/dry-run coverage and an installed-host smoke harness, but Alpine activation is not yet a regular VM job. FreeBSD is cross-built in release, and NixOS activation is not yet a regular VM job. | Add FreeBSD VM, NixOS VM, and Alpine VM smoke jobs that run validate, plan, dry-run apply, real package-manager checks, service activation, and renderer syntax checks. |
-| Alpine service manager | Alpine now has OpenRC rendering for explicit `SystemdUnit`, managed dnsmasq, `routerd-healthcheck`, DHCP clients, DNS resolver, firewall logger, PPPoE, and Tailscale. Apply-time activation uses `rc-update` / `rc-service` and avoids duplicate enable/start/restart work when state is unchanged. DNS resolver scripts are rendered but not enabled or started until runtime config materialization is in place. | Materialize DNS resolver runtime config for OpenRC, broaden installed-host networking ownership, and promote the Alpine smoke harness to CI. |
+| Alpine service manager | Alpine now has OpenRC rendering for generated routerd service artifacts, managed dnsmasq, `routerd-healthcheck`, DNS resolver, firewall logger, PPPoE, and Tailscale. Apply-time activation uses `rc-update` / `rc-service` and avoids duplicate enable/start/restart work when state is unchanged. DNS resolver scripts are rendered but not enabled or started until runtime config materialization is in place. | Materialize DNS resolver runtime config for OpenRC, broaden installed-host networking ownership, and promote the Alpine smoke harness to CI. |
 | NixOS imperative leftovers | NixOS renders the module and lets `nixos-rebuild` activate it. Runtime-only network mutations and legacy dnsmasq unit cleanup still run from `routerd.service` after activation. The cleanup is intentionally kept for the first release that contains generated NixOS dnsmasq service ownership. | Remove legacy dnsmasq cleanup after that release cycle, reduce post-activation reconciliation where NixOS has native declarations, and keep tests around remaining runtime-only resources. |
 | FreeBSD feature exceptions | `ClientPolicy` remains Linux-only because it depends on nftables Ethernet source address sets. | Keep rejecting it explicitly, and only add pf support after a design that preserves the same isolation semantics. |
 | Package bootstrap | Ubuntu, Alpine, and FreeBSD can install packages imperatively; NixOS intentionally renders package declarations instead. Schema, validation, examples, installer dependency lists, and CI smoke coverage now include `apk`. | Keep schema, validation, installer package lists, examples, and generated docs in sync for `apt`, `apk`, `pkg`, and Nix declarations. |

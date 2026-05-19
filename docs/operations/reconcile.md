@@ -25,11 +25,10 @@ routerd serve --config router.yaml
 
 In serve mode, routerd reacts to events on the bus and re-evaluates only the resources affected. Inputs include DHCPv6-PD renewals, health-check results, derived events, and configuration changes detected by inotify.
 
-Controller dry-run flags are scoped by ownership. `--controller-chain-dry-run-ingress=false`
-means the IngressService controller performs live health selection and its
-IngressService-derived nftables DNAT/hairpin rules are applied live as well.
-Independent `NAT44Rule`, `IPv4SourceNAT`, and `LocalServiceRedirect` resources
-remain controlled by `--controller-chain-dry-run-nat=false`.
+`routerd serve` runs the controller runtime directly from the declared config.
+There is no public flag to choose a partial controller set; if a resource is
+declared, the matching controller decides how to converge it, and `--dry-run`
+remains a pre-apply check rather than a persistent operating mode.
 
 When the config contains resources that forward traffic, such as
 `IngressService`, `PortForward`, NAT, BGP, or static/policy routes, apply and
@@ -52,14 +51,27 @@ the status database can still say "Applied" while the OS state has drifted.
 Controllers should converge the OS back to the declared YAML instead of
 assuming that the previous status row is still true.
 
+## Derived resources
+
+Some host objects are generated from higher-level intent instead of being
+written in YAML directly. For example, `routerd.service`,
+`routerd-healthcheck@*.service`, firewall log daemons, and helper DPI services
+are derived service units. Use this view to inspect those generated resources:
+
+```bash
+routerctl show derived-resources
+```
+
+If a removed or unsupported resource kind is still present in YAML, routerd
+fails config loading instead of silently ignoring it.
+
 ## Managed cleanup
 
 When a resource disappears from YAML, the owning controller removes or disables
-only the artifacts it owns. Stale `routerd-healthcheck@*.service` units are
-disabled and removed when no matching `HealthCheck` resource remains. NAT44
-clears the managed `routerd_nat` table or pf anchor when no NAT rules remain.
-`SystemdUnit` resources with `state: absent` remove the rendered unit and stop it
-only when it was present or still enabled/active.
+only the artifacts it owns. Stale `routerd-healthcheck@*.service` and supervised
+client daemon units are disabled and removed when no matching owning resource
+remains. NAT44 clears the managed `routerd_nat` table or pf anchor when no NAT
+rules remain.
 
 Firewall rendering keeps the managed nftables table in place and reloads it in
 one `nft -f` batch. For named sets such as firewall zone interface sets and

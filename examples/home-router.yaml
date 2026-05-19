@@ -304,214 +304,6 @@ spec:
           disableIPv6RA: true
 
     - apiVersion: system.routerd.net/v1alpha1
-      kind: SystemdUnit
-      metadata:
-        name: routerd.service
-      spec:
-        description: routerd controller chain for home-router
-        execStart:
-          - /usr/local/sbin/routerd
-          - serve
-          - --config
-          - /usr/local/etc/routerd/router.yaml
-          - --socket
-          - /run/routerd/routerd.sock
-          - --status-file
-          - /run/routerd/status.json
-          - --observe-interval
-          - "0"
-          - --controller-chain
-          - --controller-chain-daemon-sockets
-          - wan-pd=/run/routerd/dhcpv6-client/wan-pd.sock
-          - --controller-chain-dry-run-address=false
-          - --controller-chain-dry-run-dslite=false
-          - --controller-chain-dry-run-route=false
-          - --controller-chain-dry-run-dhcpv6=false
-          - --controller-chain-dry-run-dhcpv4lease=false
-          - --controller-chain-dry-run-pppoesession=false
-          - --controller-chain-dry-run-dns-resolver=false
-          - --controller-chain-dry-run-nat=false
-          - --controller-chain-dry-run-firewall=false
-          - --controller-chain-dry-run-bgp=false
-          - --controller-chain-dry-run-package=false
-          - --controller-chain-dry-run-network-adoption=false
-          - --controller-chain-dry-run-systemd-unit=false
-          - --controller-chain-supervise-client-daemons=true
-          - --controller-chain-dnsmasq-command
-          - /usr/sbin/dnsmasq
-          - --controller-chain-dnsmasq-config
-          - /run/routerd/dnsmasq.conf
-          - --controller-chain-dnsmasq-pid
-          - /run/routerd/dnsmasq.pid
-          - --controller-chain-dnsmasq-port
-          - "53"
-          - --controller-chain-dnsmasq-listen-addresses
-          - 127.0.0.1
-          - --controller-chain-nftables-file
-          - /run/routerd/nat44.nft
-          - --controller-chain-firewall-file
-          - /run/routerd/firewall.nft
-          - --controller-chain-conntrack-interval
-          - 30s
-        runtimeDirectory:
-          - routerd
-          - routerd/dhcpv6-client
-          - routerd/dhcpv4-client
-          - routerd/pppoe-client
-          - routerd/dns-resolver
-        runtimeDirectoryPreserve: "yes"
-        stateDirectory:
-          - routerd
-        logsDirectory:
-          - routerd
-        readWritePaths:
-          - /run/routerd
-          - /var/lib/routerd
-          - /var/log/routerd
-          - /var/lib/misc
-          - /etc/sysctl.d
-          - /etc/systemd/network
-          - /etc/systemd/resolved.conf.d
-          - /etc/systemd/system
-          - /usr/local/etc/routerd
-          - /var/cache/apt
-          - /var/lib/apt
-          - /var/lib/dpkg
-          - /var/log/apt
-        ambientCapabilities:
-          - CAP_NET_ADMIN
-          - CAP_NET_RAW
-          - CAP_NET_BIND_SERVICE
-          - CAP_SETUID
-          - CAP_SETGID
-          - CAP_CHOWN
-        capabilityBoundingSet:
-          - CAP_NET_ADMIN
-          - CAP_NET_RAW
-          - CAP_NET_BIND_SERVICE
-          - CAP_SETUID
-          - CAP_SETGID
-          - CAP_CHOWN
-        restrictAddressFamilies:
-          - AF_UNIX
-          - AF_INET
-          - AF_INET6
-          - AF_NETLINK
-        protectSystem: "no"
-        noNewPrivileges: false
-        enabled: true
-        started: false
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SystemdUnit
-      metadata:
-        name: routerd-dhcpv6-client@wan-pd.service
-      spec:
-        state: absent
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SystemdUnit
-      metadata:
-        name: routerd-ndpi-agent.service
-      spec:
-        description: routerd nDPI analysis agent
-        execStart:
-          - /usr/local/sbin/routerd-ndpi-agent
-          - daemon
-          - --socket
-          - /run/routerd/ndpi-agent/default.sock
-        wants:
-          - network-online.target
-        after:
-          - network-online.target
-        wantedBy:
-          - multi-user.target
-        restart: on-failure
-        restartSec: 5s
-        runtimeDirectory:
-          - routerd/ndpi-agent
-        runtimeDirectoryPreserve: "yes"
-        restrictAddressFamilies:
-          - AF_UNIX
-          - AF_INET
-          - AF_INET6
-        protectSystem: strict
-        protectHome: "true"
-        noNewPrivileges: true
-        privateTmp: true
-        enabled: true
-        started: true
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SystemdUnit
-      metadata:
-        name: routerd-dpi-classifier.service
-      spec:
-        description: routerd DPI classifier
-        execStart:
-          - /usr/local/sbin/routerd-dpi-classifier
-          - daemon
-          - --socket
-          - /run/routerd/dpi-classifier/default.sock
-          - --engine
-          - auto
-          - --ndpi-agent-socket
-          - /run/routerd/ndpi-agent/default.sock
-        wants:
-          - network-online.target
-          - routerd-ndpi-agent.service
-        after:
-          - network-online.target
-          - routerd-ndpi-agent.service
-        wantedBy:
-          - multi-user.target
-        restart: on-failure
-        runtimeDirectory:
-          - routerd/dpi-classifier
-        restrictAddressFamilies:
-          - AF_UNIX
-        noNewPrivileges: true
-        enabled: true
-        started: true
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SystemdUnit
-      metadata:
-        name: routerd-firewall-logger.service
-      spec:
-        description: routerd firewall NFLOG writer
-        execStart:
-          - /usr/local/sbin/routerd-firewall-logger
-          - daemon
-          - --path
-          - /var/lib/routerd/firewall-logs.db
-          - --nflog-group
-          - "1"
-          - --dpi-socket
-          - /run/routerd/dpi-classifier/default.sock
-        after:
-          - network-online.target
-          - routerd-dpi-classifier.service
-        wants:
-          - routerd-dpi-classifier.service
-        wantedBy:
-          - multi-user.target
-        restart: on-failure
-        stateDirectory:
-          - routerd
-        readWritePaths:
-          - /var/lib/routerd
-        ambientCapabilities:
-          - CAP_NET_ADMIN
-          - CAP_NET_RAW
-        capabilityBoundingSet:
-          - CAP_NET_ADMIN
-          - CAP_NET_RAW
-        restrictAddressFamilies:
-          - AF_UNIX
-          - AF_NETLINK
-          - AF_INET
-          - AF_INET6
-        noNewPrivileges: true
-        enabled: true
-        started: true
-    - apiVersion: system.routerd.net/v1alpha1
       kind: WebConsole
       metadata:
         name: mgmt
@@ -1315,7 +1107,6 @@ spec:
         name: internet-via-dslite-a
       spec:
         daemon: routerd-healthcheck
-        socketSource: /run/routerd/healthcheck/internet-via-dslite-a.sock
         targetSource: static
         target: 1.1.1.1
         protocol: tcp
@@ -1334,7 +1125,6 @@ spec:
         name: internet-via-dslite-b
       spec:
         daemon: routerd-healthcheck
-        socketSource: /run/routerd/healthcheck/internet-via-dslite-b.sock
         targetSource: static
         target: 1.1.1.1
         protocol: tcp
@@ -1353,7 +1143,6 @@ spec:
         name: internet-via-dslite-c
       spec:
         daemon: routerd-healthcheck
-        socketSource: /run/routerd/healthcheck/internet-via-dslite-c.sock
         targetSource: static
         target: 1.1.1.1
         protocol: tcp
@@ -1376,7 +1165,6 @@ spec:
             name: ds-lite-ra
       spec:
         daemon: routerd-healthcheck
-        socketSource: /run/routerd/healthcheck/internet-via-dslite-ra.sock
         targetSource: static
         target: 149.112.112.112
         protocol: tcp
@@ -1400,7 +1188,6 @@ spec:
       spec:
         disabled: true
         daemon: routerd-healthcheck
-        socketSource: /run/routerd/healthcheck/internet-via-pppoe.sock
         targetSource: static
         target: 208.67.222.222
         protocol: tcp
@@ -1420,7 +1207,6 @@ spec:
             name: ix2215-healthcheck
       spec:
         daemon: routerd-healthcheck
-        socketSource: /run/routerd/healthcheck/internet-via-ix2215.sock
         targetSource: static
         target: 1.0.0.1
         protocol: tcp
@@ -1441,7 +1227,6 @@ spec:
             name: wan-hgw
       spec:
         daemon: routerd-healthcheck
-        socketSource: /run/routerd/healthcheck/internet-via-hgw-direct.sock
         targetSource: static
         target: 94.140.14.14
         protocol: tcp
@@ -1459,7 +1244,6 @@ spec:
         name: internet-icmp
       spec:
         daemon: routerd-healthcheck
-        socketSource: /run/routerd/healthcheck/internet-icmp.sock
         targetSource: static
         target: 1.1.1.1
         protocol: icmp

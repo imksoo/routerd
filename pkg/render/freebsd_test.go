@@ -250,13 +250,6 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec:     api.FirewallLogSpec{Enabled: true, Path: "/var/db/routerd/firewall-logs.db"},
 		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"},
-			Spec: api.SystemdUnitSpec{
-				ExecStart: []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon"},
-			},
-		},
 	}}}
 	got, err := FreeBSD(router)
 	if err != nil {
@@ -297,11 +290,9 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 func TestFreeBSDRenderSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"},
-			Spec: api.SystemdUnitSpec{
-				ExecStart: []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--engine", "ndpi-agent"},
-			},
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.FirewallLogSpec{Enabled: true},
 		},
 	}}}
 	got, err := FreeBSD(router)

@@ -235,7 +235,7 @@ routerd ヘルパーサービスだけを再起動します。
 置き換えるファイルは `*.backup.YYYYMMDDHHMMSS` に退避します。
 途中で失敗した場合は、一時バックアップから復元します。
 
-routerd 自身が `routerd.service` を `SystemdUnit` リソースとして管理している場合、
+routerd 自身が `routerd.service` を `generated service artifacts` リソースとして管理している場合、
 unit file の変更は慎重に扱います。
 apply の途中で自分自身を直接再起動するのではなく、`systemd-run` で少し遅らせた
 self-restart を予約します。

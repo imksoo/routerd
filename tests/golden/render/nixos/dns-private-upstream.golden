@@ -3,4 +3,33 @@
 { config, lib, pkgs, ... }:
 
 {
+  systemd.services."routerd-dns-resolver@lan-resolver" = {
+    description = "routerd DNS resolver lan-resolver";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-dns-resolver"
+        "daemon"
+        "--resource"
+        "lan-resolver"
+        "--config-file"
+        "/var/lib/routerd/dns-resolver/lan-resolver/config.json"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/dns-resolver" ];
+      StateDirectory = [ "routerd/dns-resolver" "routerd/dns-resolver/lan-resolver" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
+      AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
+      CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "yes";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
 }

@@ -203,35 +203,78 @@ wg-lab-wireguard from=wan to=self ifnames=vtnet0 proto=udp port=51820 action=acc
   };
   systemd.services."routerd-dpi-classifier" = {
     description = "routerd DPI classifier";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "routerd-ndpi-agent.service" ];
+    wants = [ "network-online.target" "routerd-ndpi-agent.service" ];
     serviceConfig = {
       ExecStart = lib.concatStringsSep " " [
         "/usr/local/sbin/routerd-dpi-classifier"
         "daemon"
         "--socket"
-        "/var/run/routerd/dpi-classifier/default.sock"
-        "--ndpi-reader"
-        "/usr/local/bin/ndpiReader"
+        "/run/routerd/dpi-classifier/default.sock"
+        "--engine"
+        "auto"
+        "--ndpi-agent-socket"
+        "/run/routerd/ndpi-agent/default.sock"
       ];
+      Restart = "on-failure";
       RuntimeDirectory = [ "routerd/dpi-classifier" ];
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+      NoNewPrivileges = true;
     };
   };
   systemd.services."routerd-firewall-logger" = {
-    description = "routerd firewall logger";
-    after = [ "routerd-dpi-classifier.service" ];
-    wants = [ "routerd-dpi-classifier.service" ];
+    description = "routerd firewall log collector";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "routerd.service" "routerd-dpi-classifier.service" ];
+    wants = [ "network-online.target" "routerd-dpi-classifier.service" ];
     serviceConfig = {
       ExecStart = lib.concatStringsSep " " [
         "/usr/local/sbin/routerd-firewall-logger"
         "daemon"
         "--path"
         "/var/db/routerd/firewall-logs.db"
-        "--pflog-interface"
-        "pflog0"
+        "--nflog-group"
+        "1"
         "--dpi-socket"
-        "/var/run/routerd/dpi-classifier/default.sock"
+        "/run/routerd/dpi-classifier/default.sock"
       ];
+      Restart = "always";
+      RestartSec = "5s";
       RuntimeDirectory = [ "routerd" ];
+      RuntimeDirectoryPreserve = "yes";
       StateDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/var/lib/routerd" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
+      ProtectSystem = "strict";
+      ProtectHome = "true";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
+  systemd.services."routerd-ndpi-agent" = {
+    description = "routerd nDPI analysis agent";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-ndpi-agent"
+        "daemon"
+        "--socket"
+        "/run/routerd/ndpi-agent/default.sock"
+      ];
+      Restart = "on-failure";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/ndpi-agent" ];
+      RuntimeDirectoryPreserve = "yes";
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "true";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
     };
   };
   systemd.services."routerd-tailscale-home" = {

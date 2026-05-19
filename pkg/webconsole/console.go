@@ -2137,8 +2137,8 @@ func defaultResourceOwnerController(kind string) string {
 		return "pppoesession"
 	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy", "PathMTUPolicy":
 		return "route"
-	case "SystemdUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
-		return "systemd-unit"
+	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
+		return "service-unit"
 	case "ConntrackObserver", "TrafficFlowLog":
 		return "conntrack"
 	default:

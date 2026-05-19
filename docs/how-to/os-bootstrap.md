@@ -133,16 +133,16 @@ resolution, use `NetworkAdoption` for that interface. routerd will write a
 systemd-networkd drop-in that accepts RA but keeps systemd-networkd's DHCPv6
 client disabled.
 
-Use `SystemdUnit` for explicit local units that should be installed and enabled
-by routerd. routerd-managed DHCP, DNS, PPPoE, healthcheck, Tailscale, and helper
-daemon units are generated from their own resource kinds; do not duplicate
-those units manually unless you are intentionally adopting a local service.
+routerd-managed service units and init scripts are generated from the owning
+resource kinds. Do not declare local service-manager units in routerd config;
+write the desired router resources and let the renderer derive the host
+artifacts.
 
 On Alpine/OpenRC, `routerd render alpine --out-dir <dir>` can render OpenRC
-scripts for explicit `SystemdUnit`, managed dnsmasq, `routerd-healthcheck`,
-DHCP clients, DNS resolver, firewall logger, PPPoE, and Tailscale. During
-apply, routerd installs those scripts under `/etc/init.d` and uses `rc-update`
-and `rc-service` only when the current OpenRC state needs a change.
+scripts for routerd, managed dnsmasq, `routerd-healthcheck`, DNS resolver,
+firewall logger, PPPoE, and Tailscale. During apply, routerd installs those
+scripts under `/etc/init.d` and uses `rc-update` and `rc-service` only when the
+current OpenRC state needs a change.
 Synthesized DNS resolver scripts are rendered but not enabled or started until
 runtime config materialization is available outside the controller loop.
 It does not emulate systemd-only concepts. `NetworkAdoption` drop-ins for

@@ -235,10 +235,10 @@ Every replaced file is copied to `*.backup.YYYYMMDDHHMMSS` before replacement.
 If the install fails partway through, the script restores files from the
 temporary rollback backup.
 
-If routerd itself manages `routerd.service` as a `SystemdUnit` resource, a unit
-file change is applied carefully: routerd schedules a delayed self-restart
-through `systemd-run` instead of directly restarting itself in the middle of the
-apply pass.
+routerd derives its own `routerd.service` unit from the router configuration.
+When that unit changes, the controller schedules a delayed self-restart through
+`systemd-run` instead of directly restarting itself in the middle of the
+controller pass.
 When the same router config contains BGP, VRRP, or ingress service resources,
 routerd augments its own unit with the supplementary FRR groups and writable
 FRR/keepalived paths needed by the generated integrations.

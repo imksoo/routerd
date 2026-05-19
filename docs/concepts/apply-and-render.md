@@ -26,7 +26,7 @@ routerd plan --config /usr/local/etc/routerd/router.yaml
 
 ## Dry-run
 
-`--dry-run` runs through apply without changing the host, so you only see what would happen. routerd uses dry-run as the default for new controllers and for the early phase of any production rollout.
+`--dry-run` runs through apply without changing the host, so you only see what would happen before a live change.
 
 ```bash
 routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
@@ -34,11 +34,11 @@ routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
 
 ## Apply
 
-`routerd apply --once` is a bounded host pass: it validates intent, observes the current host where needed, writes rendered artifacts, records state, and exits. It does not own long-running daemon lifecycle. Starting, enabling, restarting, or reloading managed daemons is the responsibility of `routerd serve --controller-chain`.
+`routerd apply --once` is a bounded host pass: it validates intent, observes the current host where needed, writes rendered artifacts, records state, and exits. It does not own long-running daemon lifecycle. Starting, enabling, restarting, or reloading managed daemons is the responsibility of `routerd serve`.
 
 ```bash
 sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
-sudo routerd serve --config /usr/local/etc/routerd/router.yaml --controller-chain
+sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 ```
 
 ## Render

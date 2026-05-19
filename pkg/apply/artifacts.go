@@ -40,17 +40,6 @@ type serviceDeclaration struct {
 
 var serviceDeclarations = []serviceDeclaration{
 	{
-		kind: "SystemdUnit",
-		declare: func(ctx serviceDeclarationContext) []resource.Intent {
-			spec, err := ctx.res.SystemdUnitSpec()
-			if err != nil {
-				return nil
-			}
-			unitName := defaultString(spec.UnitName, ctx.res.Metadata.Name)
-			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{SystemdName: unitName}, resource.ActionEnsure, nil)}
-		},
-	},
-	{
 		kind: "PPPoEInterface",
 		declare: func(ctx serviceDeclarationContext) []resource.Intent {
 			spec, err := ctx.res.PPPoEInterfaceSpec()
@@ -197,8 +186,6 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			intents = append(intents, artifact("systemd.resolved.dropin", "90-routerd-adoption.conf", resource.ActionEnsure, "systemd-resolved", nil))
 		}
 		return intents
-	case "SystemdUnit":
-		return declaredServiceIntents(serviceContext)
 	case "Sysctl":
 		spec, err := res.SysctlSpec()
 		if err != nil {

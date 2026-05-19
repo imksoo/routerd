@@ -32,7 +32,7 @@ NixOS 上放在 `/run/systemd/system` 的 unit 不是系统配置的一部分。
 - `routerd-dhcpv6-client` 的 systemd unit 生成
 - `routerd-dhcpv4-client` 的 systemd unit 生成
 - `routerd-pppoe-client` 的 systemd unit 生成
-- `Package`、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit` 的 NixOS module 生成
+- `Package`、`SysctlProfile`、`NetworkAdoption`、`generated service artifacts` 的 NixOS module 生成
 - `nixos-rebuild switch` 后 DHCPv6-PD 到达 `Bound`
 - dnsmasq、DNS resolver、HealthCheck、firewall logger、Tailscale、DHCPv4 client、DHCPv6 client、PPPoE client service 可通过生成 module 声明
 - NAT、firewall、policy routing、Path MTU resource 需要 nftables 时自动启用

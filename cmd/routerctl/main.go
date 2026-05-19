@@ -910,6 +910,7 @@ type showResource struct {
 	APIVersion string              `json:"apiVersion" yaml:"apiVersion"`
 	Kind       string              `json:"kind" yaml:"kind"`
 	Name       string              `json:"name" yaml:"name"`
+	Source     string              `json:"source,omitempty" yaml:"source,omitempty"`
 	Spec       any                 `json:"spec,omitempty" yaml:"spec,omitempty"`
 	Observed   map[string]any      `json:"observed,omitempty" yaml:"observed,omitempty"`
 	Ledger     []resource.Artifact `json:"ledger,omitempty" yaml:"ledger,omitempty"`
@@ -1458,12 +1459,30 @@ func dedicatedShowKind(target string) string {
 		return "vrrp"
 	case "ingress":
 		return "ingress"
+	case "derivedresources", "derived":
+		return "derived-resources"
 	default:
 		return ""
 	}
 }
 
 func writeDedicatedShow(stdout io.Writer, router *api.Router, store routerstate.Store, opts showOptions, kind string) error {
+	if kind == "derived-resources" {
+		rows, err := buildDerivedShowResources(router, store)
+		if err != nil {
+			return err
+		}
+		switch opts.Output {
+		case "", "table":
+			return writeDerivedResourcesTable(stdout, rows)
+		case "json":
+			return writeJSON(stdout, rows)
+		case "yaml":
+			return writeYAML(stdout, rows)
+		default:
+			return fmt.Errorf("unsupported output %q", opts.Output)
+		}
+	}
 	resources, err := listObjectStatuses(store)
 	if err != nil {
 		return err
@@ -1491,6 +1510,129 @@ func writeDedicatedShow(stdout io.Writer, router *api.Router, store routerstate.
 		return fmt.Errorf("unsupported output %q", opts.Output)
 	}
 	return nil
+}
+
+func buildDerivedShowResources(router *api.Router, store routerstate.Store) ([]showResource, error) {
+	explicit := map[string]bool{}
+	if router != nil {
+		for _, res := range router.Spec.Resources {
+			explicit[res.APIVersion+"/"+res.Kind+"/"+res.Metadata.Name] = true
+		}
+	}
+	byID := map[string]showResource{}
+	add := func(row showResource) {
+		id := row.APIVersion + "/" + row.Kind + "/" + row.Name
+		if existing, ok := byID[id]; ok {
+			if len(row.Observed) > 0 {
+				existing.Observed = row.Observed
+				existing.State = row.State
+			}
+			if row.Source != "" {
+				existing.Source = row.Source
+			}
+			byID[id] = existing
+			return
+		}
+		byID[id] = row
+	}
+	for _, row := range plannedDerivedShowResources(router) {
+		add(row)
+	}
+	statuses, err := listObjectStatuses(store)
+	if err != nil {
+		return nil, err
+	}
+	for _, status := range statuses {
+		id := status.APIVersion + "/" + status.Kind + "/" + status.Name
+		if explicit[id] {
+			continue
+		}
+		source := firstNonEmpty(statusString(status.Status["source"]), status.Owner)
+		add(showResource{
+			APIVersion: status.APIVersion,
+			Kind:       status.Kind,
+			Name:       status.Name,
+			Source:     source,
+			Observed:   status.Status,
+			State:      status.Status,
+		})
+	}
+	rows := make([]showResource, 0, len(byID))
+	for _, row := range byID {
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Kind != rows[j].Kind {
+			return rows[i].Kind < rows[j].Kind
+		}
+		return rows[i].Name < rows[j].Name
+	})
+	return rows, nil
+}
+
+func plannedDerivedShowResources(router *api.Router) []showResource {
+	if router == nil {
+		return nil
+	}
+	var rows []showResource
+	addServiceUnit := func(name, source string) {
+		rows = append(rows, showResource{
+			APIVersion: api.SystemAPIVersion,
+			Kind:       "ServiceUnit",
+			Name:       name,
+			Source:     source,
+			State:      map[string]any{"phase": "Planned", "source": source},
+		})
+	}
+	addServiceUnit(render.RouterdUnitName, "Router/"+router.Metadata.Name)
+	if render.RouterWantsDPIClassifier(router) {
+		addServiceUnit(render.DPIClassifierUnitName, "TrafficFlowLog/FirewallLog")
+	}
+	if render.RouterWantsNDPIAgent(router) {
+		addServiceUnit(render.NDPIAgentUnitName, "TrafficFlowLog/FirewallLog")
+	}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "TailscaleNode":
+			spec, err := res.TailscaleNodeSpec()
+			if err != nil {
+				continue
+			}
+			unit := render.TailscaleSystemdSpec(res.Metadata.Name, spec)
+			addServiceUnit(firstNonEmpty(unit.UnitName, render.TailscaleUnitName(res.Metadata.Name)), "TailscaleNode/"+res.Metadata.Name)
+		case "HealthCheck":
+			spec, err := res.HealthCheckSpec()
+			if err == nil && spec.Daemon == "routerd-healthcheck" {
+				addServiceUnit("routerd-healthcheck@"+res.Metadata.Name+".service", "HealthCheck/"+res.Metadata.Name)
+			}
+		case "FirewallLog":
+			spec, err := res.FirewallLogSpec()
+			if err == nil && spec.Enabled {
+				addServiceUnit("routerd-firewall-logger.service", "FirewallLog/"+res.Metadata.Name)
+			}
+		}
+	}
+	return rows
+}
+
+func writeDerivedResourcesTable(stdout io.Writer, rows []showResource) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "KIND\tNAME\tSOURCE\tPHASE\tDETAIL")
+	for _, row := range rows {
+		status := row.Observed
+		if len(status) == 0 {
+			status = row.State
+		}
+		detail := firstNonEmpty(statusString(status["path"]), statusString(status["unitName"]), "-")
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			row.Kind,
+			row.Name,
+			defaultShowString(row.Source, "-"),
+			defaultShowString(statusString(status["phase"]), "Planned"),
+			detail,
+		)
+	}
+	return w.Flush()
 }
 
 func listObjectStatuses(store routerstate.Store) ([]routerstate.ObjectStatus, error) {

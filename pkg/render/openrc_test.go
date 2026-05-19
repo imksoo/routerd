@@ -145,12 +145,10 @@ func TestOpenRCRenderSynthesizesHelperDaemons(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]string{
-		"routerd_dhcpv4_client_wan_v4":   "'/usr/local/sbin/routerd-dhcpv4-client'",
-		"routerd_dhcpv6_client_wan_pd":   "'/usr/local/sbin/routerd-dhcpv6-client'",
-		"routerd_pppoe_client_wan_pppoe": "'/usr/local/sbin/routerd-pppoe-client'",
-		"routerd_dns_resolver_lan":       "'/usr/local/sbin/routerd-dns-resolver'",
-		"routerd_firewall_logger":        "'/usr/local/sbin/routerd-firewall-logger'",
-		"routerd_tailscale_edge":         "'/usr/bin/tailscale'",
+		"routerd":                  "'/usr/local/sbin/routerd'",
+		"routerd_dns_resolver_lan": "'/usr/local/sbin/routerd-dns-resolver'",
+		"routerd_firewall_logger":  "'/usr/local/sbin/routerd-firewall-logger'",
+		"routerd_tailscale_edge":   "'/usr/bin/tailscale'",
 	} {
 		script := string(got.InitScripts[name])
 		if !strings.Contains(script, want) {
@@ -169,11 +167,9 @@ func TestOpenRCRenderSynthesizesHelperDaemons(t *testing.T) {
 func TestOpenRCRenderSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"},
-			Spec: api.SystemdUnitSpec{
-				ExecStart: []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--engine", "auto"},
-			},
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec:     api.FirewallLogSpec{Enabled: true},
 		},
 	}}}
 	got, err := OpenRCWithOptions(router, OpenRCOptions{})

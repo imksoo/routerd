@@ -293,11 +293,19 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		return err
 	}
 	if features.HasSystemd {
-		explicitUnits := systemdUnitNames(c.Router)
+		explicitUnits := map[string]bool{}
+		routerdSpec := render.RouterdServiceSystemdSpec()
+		routerdSpec = maybeAugmentRouterdServiceAccess(c.Router, render.RouterdUnitName, routerdSpec)
+		routerdSpec.Environment = mergeStringEnvs(routerdSpec.Environment, telemetryEnv)
+		if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.RouterdUnitName, "Router/"+c.Router.Metadata.Name, routerdSpec, command); err != nil {
+			return err
+		}
 		if c.SynthesizeClientDaemonUnits {
 			if err := c.reconcileClientDaemonUnits(ctx, explicitUnits, telemetryEnv, command); err != nil {
 				return err
 			}
+		} else if err := c.cleanupStaleClientDaemonUnits(ctx, command); err != nil {
+			return err
 		}
 		for _, resource := range c.Router.Spec.Resources {
 			if resource.Kind != "TailscaleNode" {
@@ -405,7 +413,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			path := filepath.Join(c.SystemdSystemDir, unitName)
 			changed, err := c.applyHealthCheckSystemdUnit(ctx, path, unitName, resource.Metadata.Name, spec, telemetryEnv, command)
 			if err != nil {
-				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, map[string]any{
+				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 					"phase":     "Error",
 					"reason":    "ApplyFailed",
 					"unitName":  unitName,
@@ -435,7 +443,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 					return err
 				}
 			}
-			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, map[string]any{
+			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 				"phase":     phase,
 				"unitName":  unitName,
 				"path":      path,
@@ -446,8 +454,8 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				return err
 			}
 			if changed && !c.DryRun && c.Bus != nil {
-				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.systemd_unit.applied", daemonapi.SeverityInfo)
-				event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit", Name: unitName}
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.applied", daemonapi.SeverityInfo)
+				event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: unitName}
 				event.Attributes = map[string]string{"unitName": unitName, "path": path, "source": "HealthCheck/" + resource.Metadata.Name}
 				if err := c.Bus.Publish(ctx, event); err != nil {
 					return err
@@ -457,79 +465,44 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		if err := c.cleanupStaleHealthCheckUnits(ctx, explicitUnits, command); err != nil {
 			return err
 		}
-		if render.RouterWantsNDPIAgent(c.Router) && !explicitUnits[render.NDPIAgentUnitName] {
-			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "SystemdUnit/"+render.DPIClassifierUnitName, render.NDPIAgentSystemdSpec("/run"), command); err != nil {
+		if render.RouterWantsDPIClassifier(c.Router) {
+			dpiSpec := render.DPIClassifierSystemdSpec("/run")
+			dpiSpec.Environment = mergeStringEnvs(dpiSpec.Environment, telemetryEnv)
+			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.DPIClassifierUnitName, "TrafficFlowLog/FirewallLog", dpiSpec, command); err != nil {
+				return err
+			}
+		}
+		if render.RouterWantsNDPIAgent(c.Router) {
+			ndpiSpec := render.NDPIAgentSystemdSpec("/run")
+			ndpiSpec.Environment = mergeStringEnvs(ndpiSpec.Environment, telemetryEnv)
+			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "TrafficFlowLog/FirewallLog", ndpiSpec, command); err != nil {
+				return err
+			}
+		}
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.Kind != "FirewallLog" {
+				continue
+			}
+			spec, err := resource.FirewallLogSpec()
+			if err != nil {
+				return err
+			}
+			if !spec.Enabled {
+				continue
+			}
+			dpiSocket := ""
+			if render.RouterWantsDPIClassifier(c.Router) {
+				dpiSocket = "/run/routerd/dpi-classifier/default.sock"
+			}
+			unit := render.FirewallLoggerSystemdSpec(spec, dpiSocket)
+			unit.Environment = mergeStringEnvs(unit.Environment, telemetryEnv)
+			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, "routerd-firewall-logger.service", "FirewallLog/"+resource.Metadata.Name, unit, command); err != nil {
 				return err
 			}
 		}
 	}
 	if err := c.reconcileDisabledPPPoEInterfaces(); err != nil {
 		return err
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := resource.SystemdUnitSpec()
-		if err != nil {
-			return err
-		}
-		unitName := firstNonEmpty(spec.UnitName, resource.Metadata.Name)
-		if !features.HasSystemd {
-			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", resource.Metadata.Name, map[string]any{
-				"phase":     "Pending",
-				"reason":    "SystemdUnsupported",
-				"unitName":  unitName,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-			}); err != nil {
-				return err
-			}
-			continue
-		}
-		path := filepath.Join(c.SystemdSystemDir, unitName)
-		spec = render.MaybeAugmentDPIClassifierSpec(unitName, spec, render.NDPIAgentUnitName)
-		spec = maybeAugmentRouterdServiceAccess(c.Router, unitName, spec)
-		spec.Environment = mergeStringEnvs(spec.Environment, telemetryEnv)
-		changed, err := c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, spec, command)
-		if err != nil {
-			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", resource.Metadata.Name, map[string]any{
-				"phase":     "Error",
-				"reason":    "ApplyFailed",
-				"unitName":  unitName,
-				"path":      path,
-				"error":     err.Error(),
-				"dryRun":    c.DryRun,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-			}); saveErr != nil {
-				return saveErr
-			}
-			return err
-		}
-		phase := "Applied"
-		if firstNonEmpty(spec.State, "present") == "absent" {
-			phase = "Absent"
-		}
-		if c.DryRun && changed {
-			phase = "Rendered"
-		}
-		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", resource.Metadata.Name, map[string]any{
-			"phase":     phase,
-			"unitName":  unitName,
-			"path":      path,
-			"changed":   changed,
-			"dryRun":    c.DryRun,
-			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-		}); err != nil {
-			return err
-		}
-		if changed && !c.DryRun && c.Bus != nil {
-			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.systemd_unit.applied", daemonapi.SeverityInfo)
-			event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit", Name: resource.Metadata.Name}
-			event.Attributes = map[string]string{"unitName": unitName, "path": path}
-			if err := c.Bus.Publish(ctx, event); err != nil {
-				return err
-			}
-		}
 	}
 	return nil
 }
@@ -675,7 +648,7 @@ func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context
 	path := filepath.Join(c.SystemdSystemDir, unitName)
 	changed, err := c.applySystemdUnit(ctx, resourceName, path, unitName, spec, command)
 	if err != nil {
-		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, map[string]any{
+		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 			"phase":     "Error",
 			"reason":    "ApplyFailed",
 			"unitName":  unitName,
@@ -702,7 +675,7 @@ func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context
 		"dryRun":    c.DryRun,
 		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, status); err != nil {
+	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 		return err
 	}
 	if err := c.Store.SaveObjectStatus(apiVersion, kind, resourceName, map[string]any{
@@ -715,8 +688,8 @@ func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context
 		return err
 	}
 	if changed && !c.DryRun && c.Bus != nil {
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.systemd_unit.applied", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit", Name: unitName}
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.applied", daemonapi.SeverityInfo)
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: unitName}
 		event.Attributes = map[string]string{"unitName": unitName, "path": path, "source": kind + "/" + resourceName}
 		return c.Bus.Publish(ctx, event)
 	}
@@ -727,7 +700,7 @@ func (c SystemdUnitController) reconcileSyntheticSystemdHelperUnit(ctx context.C
 	path := filepath.Join(c.SystemdSystemDir, unitName)
 	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, spec, command)
 	if err != nil {
-		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, map[string]any{
+		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 			"phase":     "Error",
 			"reason":    "ApplyFailed",
 			"unitName":  unitName,
@@ -754,34 +727,16 @@ func (c SystemdUnitController) reconcileSyntheticSystemdHelperUnit(ctx context.C
 		"dryRun":    c.DryRun,
 		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName, status); err != nil {
+	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 		return err
 	}
 	if changed && !c.DryRun && c.Bus != nil {
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.systemd_unit.applied", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit", Name: unitName}
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.service_unit.applied", daemonapi.SeverityInfo)
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "ServiceUnit", Name: unitName}
 		event.Attributes = map[string]string{"unitName": unitName, "path": path, "source": source}
 		return c.Bus.Publish(ctx, event)
 	}
 	return nil
-}
-
-func systemdUnitNames(router *api.Router) map[string]bool {
-	out := map[string]bool{}
-	if router == nil {
-		return out
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := resource.SystemdUnitSpec()
-		if err != nil {
-			continue
-		}
-		out[firstNonEmpty(spec.UnitName, resource.Metadata.Name)] = true
-	}
-	return out
 }
 
 func interfaceAliases(router *api.Router) map[string]string {
@@ -950,10 +905,7 @@ func appendMissingStrings(values []string, additions ...string) []string {
 }
 
 func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, telemetryEnv []string, command outputCommandFunc) (bool, error) {
-	socket := spec.SocketSource
-	if socket == "" {
-		socket = filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
-	}
+	socket := filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
 	resolved := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, resourceName, spec)
 	data := render.HealthCheckSystemdUnit(render.HealthCheckSystemdOptions{
 		Resource:        resourceName,
@@ -1050,6 +1002,39 @@ func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context,
 			return err
 		}
 		removed = true
+	}
+	if removed {
+		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context, command outputCommandFunc) error {
+	if c.DryRun {
+		return nil
+	}
+	patterns := []string{
+		"routerd-dhcpv4-client@*.service",
+		"routerd-dhcpv6-client@*.service",
+		"routerd-pppoe-client@*.service",
+	}
+	var removed bool
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, pattern))
+		if err != nil {
+			return err
+		}
+		for _, path := range matches {
+			unitName := filepath.Base(path)
+			_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
+			_, _ = command(ctx, "systemctl", "reset-failed", unitName)
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			removed = true
+		}
 	}
 	if removed {
 		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {

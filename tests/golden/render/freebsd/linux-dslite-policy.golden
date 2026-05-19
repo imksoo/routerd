@@ -65,43 +65,45 @@ gateway_enable="YES"
 ipv6_gateway_enable="YES"
 pf_enable="YES"
 pflog_enable="YES"
-routerd_dhcpv6_client_wan_pd_enable="YES"
+routerd_enable="YES"
 routerd_healthcheck_internet_icmp_enable="YES"
 routerd_healthcheck_internet_tcp443_enable="YES"
 routerd_healthcheck_internet_unreachable_enable="YES"
-### rc.d-routerd_dhcpv6_client_wan_pd
+### rc.d-routerd
 #!/bin/sh
 #
 # Managed by routerd.
 #
-# PROVIDE: routerd_dhcpv6_client_wan_pd
+# PROVIDE: routerd
 # REQUIRE: NETWORKING
 # KEYWORD: shutdown
 
 . /etc/rc.subr
 
-name='routerd_dhcpv6_client_wan_pd'
+name='routerd'
 rcvar="${name}_enable"
 daemon_pidfile="/var/run/${name}/${name}.daemon.pid"
 child_pidfile="/var/run/${name}/${name}.pid"
 daemon_command="/usr/sbin/daemon"
-daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-dhcpv6-client' '--resource' 'wan-pd' '--interface' 'ens18' '--socket' '/var/run/routerd/dhcpv6-client/wan-pd.sock' '--lease-file' '/var/db/routerd/dhcpv6-client/wan-pd/lease.json' '--event-file' '/var/db/routerd/dhcpv6-client/wan-pd/events.jsonl' '--iaid' '1'"
+daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd' 'serve'"
 start_cmd="${name}_start"
 stop_cmd="${name}_stop"
 status_cmd="${name}_status"
 start_precmd="${name}_prestart"
 
-routerd_dhcpv6_client_wan_pd_prestart() {
+routerd_prestart() {
   mkdir -p "/var/run/${name}"
   mkdir -p '/var/run/routerd'
+  mkdir -p '/var/run/routerd/dhcpv4-client'
   mkdir -p '/var/run/routerd/dhcpv6-client'
+  mkdir -p '/var/run/routerd/dns-resolver'
+  mkdir -p '/var/run/routerd/pppoe-client'
   mkdir -p '/var/db/routerd'
-  mkdir -p '/var/db/routerd/dhcpv6-client'
-  mkdir -p '/var/db/routerd/dhcpv6-client/wan-pd'
   mkdir -p '/var/log/routerd'
+  '/usr/local/sbin/routerd' 'check'
 }
 
-routerd_dhcpv6_client_wan_pd_read_pidfile() {
+routerd_read_pidfile() {
   _file="$1"
   if [ -r "${_file}" ]; then
     read _pid < "${_file}"
@@ -113,17 +115,17 @@ routerd_dhcpv6_client_wan_pd_read_pidfile() {
   return 1
 }
 
-routerd_dhcpv6_client_wan_pd_pgrep_child() {
-  ps -axo pid,command | awk -v exe='/usr/local/sbin/routerd-dhcpv6-client' -v pat='/usr/local/sbin/routerd-dhcpv6-client .*--resource .*wan-pd .*--interface .*ens18' '$0 ~ exe && $0 ~ pat { print $1; exit }'
+routerd_pgrep_child() {
+  ps -axo pid,command | awk -v exe='/usr/local/sbin/routerd' -v pat='/usr/local/sbin/routerd .*serve' '$0 ~ exe && $0 ~ pat { print $1; exit }'
 }
 
-routerd_dhcpv6_client_wan_pd_managed_child_pid() {
-  _candidate_pid=$(routerd_dhcpv6_client_wan_pd_child_pid)
+routerd_managed_child_pid() {
+  _candidate_pid=$(routerd_child_pid)
   if [ -z "${_candidate_pid}" ]; then
     return 1
   fi
   _parent_pid=$(ps -o ppid= -p "${_candidate_pid}" 2>/dev/null | tr -d ' ')
-  _supervisor_pid=$(routerd_dhcpv6_client_wan_pd_supervisor_pid)
+  _supervisor_pid=$(routerd_supervisor_pid)
   if [ -n "${_supervisor_pid}" ] && [ "${_parent_pid}" = "${_supervisor_pid}" ]; then
     echo "${_candidate_pid}"
     return 0
@@ -131,8 +133,8 @@ routerd_dhcpv6_client_wan_pd_managed_child_pid() {
   return 1
 }
 
-routerd_dhcpv6_client_wan_pd_parent_daemon_pid() {
-  _child_pid=$(routerd_dhcpv6_client_wan_pd_child_pid)
+routerd_parent_daemon_pid() {
+  _child_pid=$(routerd_child_pid)
   if [ -z "${_child_pid}" ]; then
     return 1
   fi
@@ -150,15 +152,15 @@ routerd_dhcpv6_client_wan_pd_parent_daemon_pid() {
   return 1
 }
 
-routerd_dhcpv6_client_wan_pd_supervisor_pid() {
-  routerd_dhcpv6_client_wan_pd_read_pidfile "${daemon_pidfile}" || routerd_dhcpv6_client_wan_pd_parent_daemon_pid
+routerd_supervisor_pid() {
+  routerd_read_pidfile "${daemon_pidfile}" || routerd_parent_daemon_pid
 }
 
-routerd_dhcpv6_client_wan_pd_child_pid() {
-  routerd_dhcpv6_client_wan_pd_read_pidfile "${child_pidfile}" || routerd_dhcpv6_client_wan_pd_pgrep_child
+routerd_child_pid() {
+  routerd_read_pidfile "${child_pidfile}" || routerd_pgrep_child
 }
 
-routerd_dhcpv6_client_wan_pd_start() {
+routerd_start() {
   _child_pid=$(${name}_child_pid)
   if [ -n "${_child_pid}" ]; then
     echo "${name} is already running as pid ${_child_pid}."
@@ -176,7 +178,7 @@ routerd_dhcpv6_client_wan_pd_start() {
   return 1
 }
 
-routerd_dhcpv6_client_wan_pd_stop() {
+routerd_stop() {
   _supervisor_pid=$(${name}_supervisor_pid)
   _child_pid=$(${name}_child_pid)
   if [ -z "${_supervisor_pid}" ] && [ -z "${_child_pid}" ]; then
@@ -209,7 +211,7 @@ routerd_dhcpv6_client_wan_pd_stop() {
   return 1
 }
 
-routerd_dhcpv6_client_wan_pd_status() {
+routerd_status() {
   _child_pid=$(${name}_child_pid)
   if [ -z "${_child_pid}" ]; then
     echo "${name} is not running."
@@ -219,7 +221,7 @@ routerd_dhcpv6_client_wan_pd_status() {
 }
 
 load_rc_config $name
-: ${routerd_dhcpv6_client_wan_pd_enable:="YES"}
+: ${routerd_enable:="YES"}
 run_rc_command "$1"
 ### rc.d-routerd_dnsmasq
 #!/bin/sh
@@ -263,7 +265,7 @@ rcvar="${name}_enable"
 daemon_pidfile="/var/run/${name}/${name}.daemon.pid"
 child_pidfile="/var/run/${name}/${name}.pid"
 daemon_command="/usr/sbin/daemon"
-daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-icmp' '--target' '1.1.1.1' '--protocol' 'icmp' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '1' '--unhealthy-threshold' '3' '--socket' '/run/routerd/healthcheck/internet-icmp.sock' '--state-file' '/var/db/routerd/healthcheck/internet-icmp/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-icmp/events.jsonl'"
+daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-icmp' '--target' '1.1.1.1' '--protocol' 'icmp' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '1' '--unhealthy-threshold' '3' '--socket' '/var/run/routerd/healthcheck/internet-icmp.sock' '--state-file' '/var/db/routerd/healthcheck/internet-icmp/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-icmp/events.jsonl'"
 start_cmd="${name}_start"
 stop_cmd="${name}_stop"
 status_cmd="${name}_status"
@@ -412,7 +414,7 @@ rcvar="${name}_enable"
 daemon_pidfile="/var/run/${name}/${name}.daemon.pid"
 child_pidfile="/var/run/${name}/${name}.pid"
 daemon_command="/usr/sbin/daemon"
-daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-tcp443' '--target' '1.1.1.1' '--protocol' 'tcp' '--source-interface' 'ds-routerd-test' '--port' '443' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '1' '--unhealthy-threshold' '3' '--socket' '/run/routerd/healthcheck/internet-tcp443.sock' '--state-file' '/var/db/routerd/healthcheck/internet-tcp443/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-tcp443/events.jsonl'"
+daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-tcp443' '--target' '1.1.1.1' '--protocol' 'tcp' '--source-interface' 'ds-routerd-test' '--port' '443' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '1' '--unhealthy-threshold' '3' '--socket' '/var/run/routerd/healthcheck/internet-tcp443.sock' '--state-file' '/var/db/routerd/healthcheck/internet-tcp443/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-tcp443/events.jsonl'"
 start_cmd="${name}_start"
 stop_cmd="${name}_stop"
 status_cmd="${name}_status"
@@ -561,7 +563,7 @@ rcvar="${name}_enable"
 daemon_pidfile="/var/run/${name}/${name}.daemon.pid"
 child_pidfile="/var/run/${name}/${name}.pid"
 daemon_command="/usr/sbin/daemon"
-daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-unreachable' '--target' '192.0.2.1' '--protocol' 'tcp' '--port' '443' '--interval' '30s' '--timeout' '1s' '--healthy-threshold' '1' '--unhealthy-threshold' '1' '--socket' '/run/routerd/healthcheck/internet-unreachable.sock' '--state-file' '/var/db/routerd/healthcheck/internet-unreachable/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-unreachable/events.jsonl'"
+daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-unreachable' '--target' '192.0.2.1' '--protocol' 'tcp' '--port' '443' '--interval' '30s' '--timeout' '1s' '--healthy-threshold' '1' '--unhealthy-threshold' '1' '--socket' '/var/run/routerd/healthcheck/internet-unreachable.sock' '--state-file' '/var/db/routerd/healthcheck/internet-unreachable/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-unreachable/events.jsonl'"
 start_cmd="${name}_start"
 stop_cmd="${name}_stop"
 status_cmd="${name}_status"

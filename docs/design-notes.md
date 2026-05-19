@@ -66,7 +66,7 @@ routerd starts mutating OpenRC state.
 
 The first supported OpenRC surface is narrow:
 
-- explicit `SystemdUnit` resources mapped to OpenRC scripts
+- explicit `generated service artifacts` resources mapped to OpenRC scripts
 - synthesized `routerd-healthcheck` scripts
 - synthesized managed dnsmasq scripts when DHCP or RA resources require dnsmasq
 - synthesized scripts for DHCPv4/DHCPv6 clients, firewall logger, PPPoE, and
@@ -74,7 +74,7 @@ The first supported OpenRC surface is narrow:
 - DNS resolver scripts, with enable/start deferred until routerd can materialize
   the resolver runtime config outside the controller loop
 
-This keeps the code out of a compatibility trap. `SystemdUnit` remains the API
+This keeps the code out of a compatibility trap. `generated service artifacts` remains the API
 shape for now, but OpenRC only maps fields that have clear init-script meaning:
 `ExecStart`, `ExecStartPre`, environment, working directory, user/group, and
 runtime/state/log directories. systemd sandboxing, `NetworkAdoption`, networkd,

@@ -890,6 +890,74 @@ spec:
 	}
 }
 
+func TestShowDerivedResourcesListsGeneratedServiceUnits(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet
+      spec:
+        daemon: routerd-healthcheck
+        target: 1.1.1.1
+        protocol: tcp
+        port: 443
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallLog
+      metadata:
+        name: nflog
+      spec:
+        enabled: true
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	dbPath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", "routerd-healthcheck@internet.service", map[string]any{
+		"phase":    "Applied",
+		"source":   "HealthCheck/internet",
+		"unitName": "routerd-healthcheck@internet.service",
+		"path":     "/etc/systemd/system/routerd-healthcheck@internet.service",
+	}); err != nil {
+		t.Fatalf("save service unit status: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite state: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = run([]string{"show", "derived-resources", "--config", configPath, "--state-file", dbPath, "--ledger-file", dbPath}, &out, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("show derived-resources: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"KIND",
+		"ServiceUnit",
+		"routerd.service",
+		"Router/test",
+		"routerd-healthcheck@internet.service",
+		"HealthCheck/internet",
+		"Applied",
+		"routerd-firewall-logger.service",
+		"FirewallLog/nflog",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("derived resources output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestDiagnoseEgressShowsPolicyHealthAndNAT(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")

@@ -271,16 +271,6 @@ func nixOSRouterdSupervisesClientDaemons(spec api.NixOSRouterdServiceSpec) bool 
 	if !api.BoolDefault(spec.Enabled, false) {
 		return false
 	}
-	for i, flag := range spec.ExtraFlags {
-		switch {
-		case flag == "--controller-chain-supervise-client-daemons=false":
-			return false
-		case flag == "--controller-chain-supervise-client-daemons=true":
-			return true
-		case flag == "--controller-chain-supervise-client-daemons" && i+1 < len(spec.ExtraFlags):
-			return spec.ExtraFlags[i+1] != "false"
-		}
-	}
 	return true
 }
 
@@ -1051,26 +1041,12 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 		return nil, err
 	}
 	dpiSocket := ""
-	if hasSystemdUnit(router, DPIClassifierUnitName) {
+	if RouterWantsDPIClassifier(router) {
 		dpiSocket = "/run/routerd/dpi-classifier/default.sock"
 	}
 	wantsNDPIAgent := RouterWantsNDPIAgent(router)
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := res.SystemdUnitSpec()
-		if err != nil {
-			return nil, err
-		}
-		if defaultString(spec.State, "present") == "absent" {
-			continue
-		}
-		name := defaultString(spec.UnitName, res.Metadata.Name)
-		explicit[name] = true
-		spec = MaybeAugmentDPIClassifierSpec(name, spec, NDPIAgentUnitName)
-		spec.Environment = mergeEnvironment(spec.Environment, telemetryEnv)
-		out = append(out, nixOSSystemdUnit{Name: name, Spec: spec})
+	if RouterWantsDPIClassifier(router) {
+		out = append(out, nixOSSystemdUnit{Name: DPIClassifierUnitName, Spec: DPIClassifierSystemdSpec("/run")})
 	}
 	if wantsNDPIAgent && !explicit[NDPIAgentUnitName] {
 		out = append(out, nixOSSystemdUnit{Name: NDPIAgentUnitName, Spec: NDPIAgentSystemdSpec("/run")})
@@ -1120,6 +1096,23 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 				StateRoot:   "/var/lib",
 				LogRoot:     "/var/log",
 			}),
+		})
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "DNSResolver" {
+			continue
+		}
+		spec, err := res.DNSResolverSpec()
+		if err != nil {
+			return nil, err
+		}
+		name := "routerd-dns-resolver@" + res.Metadata.Name + ".service"
+		if explicit[name] {
+			continue
+		}
+		out = append(out, nixOSSystemdUnit{
+			Name: name,
+			Spec: DNSResolverSystemdSpec(res.Metadata.Name, spec, "/usr/local/sbin/routerd-dns-resolver", ""),
 		})
 	}
 	for _, res := range router.Spec.Resources {
@@ -1191,7 +1184,7 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 		}
 		out = append(out, nixOSSystemdUnit{
 			Name: name,
-			Spec: firewallLoggerSystemdSpec(spec, dpiSocket),
+			Spec: FirewallLoggerSystemdSpec(spec, dpiSocket),
 		})
 	}
 	if nixOSNeedsDnsmasq(router) {
@@ -1329,7 +1322,7 @@ func pppoeSessionSystemdSpec(name, ifname string, spec api.PPPoESessionSpec, tel
 	}, nil
 }
 
-func firewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.SystemdUnitSpec {
+func FirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.SystemdUnitSpec {
 	path := spec.Path
 	if path == "" {
 		path = "/var/lib/routerd/firewall-logs.db"
@@ -1373,22 +1366,6 @@ func firewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.S
 		NoNewPrivileges:          &noNewPrivileges,
 		PrivateTmp:               &privateTmp,
 	}
-}
-
-func hasSystemdUnit(router *api.Router, unitName string) bool {
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := res.SystemdUnitSpec()
-		if err != nil || defaultString(spec.State, "present") == "absent" {
-			continue
-		}
-		if defaultString(spec.UnitName, res.Metadata.Name) == unitName {
-			return true
-		}
-	}
-	return false
 }
 
 func renderTailscaleNixOSUnit(name string, spec api.TailscaleNodeSpec) nixOSSystemdUnit {

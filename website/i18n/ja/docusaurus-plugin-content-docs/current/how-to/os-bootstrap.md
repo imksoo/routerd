@@ -83,7 +83,7 @@ spec:
 
 ## 既存ホスト設定の引き継ぎ
 
-`NetworkAdoption` は、systemd-networkd や systemd-resolved の既存設定が routerd と競合する場合に使います。`SystemdUnit` は明示的なローカル unit を routerd から配置・有効化したい場合に使います。DHCP、DNS、PPPoE、healthcheck、Tailscale などの routerd managed unit は、それぞれの resource kind から生成されるので重複定義しないでください。
+`NetworkAdoption` は、systemd-networkd や systemd-resolved の既存設定が routerd と競合する場合に使います。`generated service artifacts` は明示的なローカル unit を routerd から配置・有効化したい場合に使います。DHCP、DNS、PPPoE、healthcheck、Tailscale などの routerd managed unit は、それぞれの resource kind から生成されるので重複定義しないでください。
 
 Ubuntu 26.04 LTS では、RA の状態によっては、installer が書いた netplan で `dhcp6: false` にしていても
 systemd-networkd が interface 上で DHCPv6 client socket を開くことがあります。
@@ -121,7 +121,7 @@ provider DNS や AFTR 解決のために WAN link で RA 由来の IPv6 default 
 その interface に `NetworkAdoption` を使います。routerd は systemd-networkd drop-in として
 RA を受ける設定を書きつつ、systemd-networkd の DHCPv6 client は無効のままにします。
 
-Alpine / OpenRC では、`routerd render alpine --out-dir <dir>` が明示的な `SystemdUnit`、managed dnsmasq、`routerd-healthcheck`、DHCP client、DNS resolver、firewall logger、PPPoE、Tailscale の OpenRC script を生成できます。
+Alpine / OpenRC では、`routerd render alpine --out-dir <dir>` が明示的な `generated service artifacts`、managed dnsmasq、`routerd-healthcheck`、DHCP client、DNS resolver、firewall logger、PPPoE、Tailscale の OpenRC script を生成できます。
 apply 時は `/etc/init.d` に script を配置し、現在の OpenRC 状態に差分がある場合だけ `rc-update` と `rc-service` を実行します。
 自動生成された DNS resolver script は、controller loop 外で runtime config を materialize できるまでは enable / start しません。
 systemd-only の意味は模倣しません。

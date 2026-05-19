@@ -117,6 +117,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "validate":
 		return validateCommand(args[1:], stdout)
+	case "check":
+		return checkCommand(args[1:], stdout)
 	case "observe":
 		return configCommand(args[1:], stdout, "observe")
 	case "plan":
@@ -372,6 +374,54 @@ func validateCommand(args []string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "config %s exists\n", *configPath)
 	fmt.Fprintln(stdout, "config is valid")
+	return nil
+}
+
+func checkCommand(args []string, stdout io.Writer) (err error) {
+	fs := flag.NewFlagSet("check", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", defaultConfigPath, "config path")
+	statusFile := fs.String("status-file", "", "optional status file for the generated preflight result")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := requireExistingFile(*configPath); err != nil {
+		return err
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	if err := config.Validate(router); err != nil {
+		return err
+	}
+	logger, err := eventlog.New(router)
+	if err != nil {
+		return err
+	}
+	defer closeLogger(logger, "check", &err)
+	opts := applyOptions{
+		ConfigPath:          *configPath,
+		StatusFile:          *statusFile,
+		StatePath:           defaultStatePath,
+		LedgerPath:          defaultLedgerPath,
+		DryRun:              true,
+		SkipServiceManager:  true,
+		AnnounceDryRunToCLI: false,
+	}
+	result, err := runApplyOnce(router, opts, io.Discard, logger)
+	if err != nil {
+		return err
+	}
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(stdout, "warning: %s\n", warning)
+	}
+	if *statusFile != "" {
+		if err := writeResult(io.Discard, *statusFile, result); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(stdout, "config %s passed preflight check\n", *configPath)
 	return nil
 }
 
@@ -811,8 +861,6 @@ func canonicalResourceKind(kind string) string {
 		"cluster":                "RouterdCluster",
 		"networkadoption":        "NetworkAdoption",
 		"adoption":               "NetworkAdoption",
-		"systemdunit":            "SystemdUnit",
-		"unit":                   "SystemdUnit",
 		"route":                  "IPv4PolicyRouteSet",
 		"ipv4policyrouteset":     "IPv4PolicyRouteSet",
 		"clusternetworkroute":    "ClusterNetworkRoute",
@@ -828,7 +876,7 @@ func apiVersionForKind(kind string) string {
 	switch kind {
 	case "FirewallZone", "FirewallPolicy", "FirewallRule", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
-	case "Hostname", "Sysctl", "SysctlProfile", "KernelModule", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "NTPServer", "LogSink", "ObservabilityPipeline", "RouterdCluster", "NixOSHost":
+	case "Hostname", "Sysctl", "SysctlProfile", "KernelModule", "Package", "NetworkAdoption", "NTPClient", "NTPServer", "LogSink", "ObservabilityPipeline", "RouterdCluster", "NixOSHost", "ServiceUnit":
 		return api.SystemAPIVersion
 	case "Telemetry":
 		return api.ObservabilityAPIVersion
@@ -3190,82 +3238,36 @@ func recordLastAppliedPath(router *api.Router, store routerstate.Store, path str
 	return nil
 }
 
-func parseSocketOverrides(raw string) map[string]string {
-	out := map[string]string{}
-	for _, item := range strings.Split(raw, ",") {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-		name, socket, ok := strings.Cut(item, "=")
-		if ok && strings.TrimSpace(name) != "" && strings.TrimSpace(socket) != "" {
-			out[strings.TrimSpace(name)] = strings.TrimSpace(socket)
-		}
+func controllerDefaultStatuses() []controlapi.ControllerStatus {
+	names := []string{
+		"address",
+		"bgp",
+		"dhcpv4lease",
+		"dhcpv6",
+		"dns-resolver",
+		"dslite",
+		"firewall",
+		"ingress",
+		"kernel-module",
+		"nat",
+		"network-adoption",
+		"package",
+		"pppoesession",
+		"route",
+		"service-unit",
+		"vrrp",
 	}
-	return out
-}
-
-func parseCSV(raw string) []string {
-	var out []string
-	for _, item := range strings.Split(raw, ",") {
-		item = strings.TrimSpace(item)
-		if item != "" {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
-func activeControllerDryRunNames(controllers []controlapi.ControllerStatus) []string {
-	var out []string
-	for _, controller := range controllers {
-		if controller.Mode == "dry-run" {
-			out = append(out, controller.Name)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func controllerStatusesFromDryRunModes(modes map[string]bool) []controlapi.ControllerStatus {
-	names := make([]string, 0, len(modes))
-	for name := range modes {
-		names = append(names, name)
-	}
-	sort.Strings(names)
 	out := make([]controlapi.ControllerStatus, 0, len(names))
 	for _, name := range names {
-		mode := "live"
-		reason := controlapi.ControllerModeReasonLive
-		message := "controller is applying host state"
-		if modes[name] {
-			mode = "dry-run"
-			reason, message = controllerDryRunReason(name)
-		}
 		out = append(out, controlapi.ControllerStatus{
 			Name:          name,
-			Mode:          mode,
-			Reason:        reason,
-			Message:       message,
+			Mode:          "live",
+			Reason:        controlapi.ControllerModeReasonLive,
+			Message:       "controller is reconciling declared router state",
 			ResourceKinds: controllerResourceKinds(name),
 		})
 	}
 	return out
-}
-
-func controllerDryRunReason(name string) (controlapi.ControllerModeReason, string) {
-	switch name {
-	case "firewall":
-		return controlapi.ControllerModeReasonManual, "controller-chain dry-run flag is true; firewall rules are observed but not enforced by this controller"
-	case "network-adoption":
-		return controlapi.ControllerModeReasonManual, "controller-chain dry-run flag is true; networkd/resolved adoption drop-ins are not written"
-	case "package":
-		return controlapi.ControllerModeReasonManual, "controller-chain dry-run flag is true; OS packages are not installed"
-	case "systemd-unit":
-		return controlapi.ControllerModeReasonManual, "controller-chain dry-run flag is true; service-manager units are not installed or restarted"
-	default:
-		return controlapi.ControllerModeReasonManual, "controller-chain dry-run flag is true"
-	}
 }
 
 func controllerResourceKinds(name string) []string {
@@ -3300,8 +3302,8 @@ func controllerResourceKinds(name string) []string {
 		return []string{"PPPoEInterface", "PPPoESession"}
 	case "route":
 		return []string{"IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy", "PathMTUPolicy"}
-	case "systemd-unit":
-		return []string{"SystemdUnit", "TailscaleNode", "HealthCheck"}
+	case "service-unit":
+		return []string{"ServiceUnit", "TailscaleNode", "HealthCheck", "FirewallLog", "TrafficFlowLog"}
 	default:
 		return nil
 	}
@@ -3343,61 +3345,13 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
-	controllerChain := fs.Bool("controller-chain", false, "start experimental daemon/bus/controller chain")
-	controllerDryRunAddress := fs.Bool("controller-chain-dry-run-address", true, "do not mutate LAN addresses in the experimental controller chain")
-	controllerDryRunDSLite := fs.Bool("controller-chain-dry-run-dslite", true, "do not mutate DS-Lite tunnels in the experimental controller chain")
-	controllerDryRunRoute := fs.Bool("controller-chain-dry-run-route", true, "do not mutate IPv4 routes in the experimental controller chain")
-	controllerDryRunDHCPv6 := fs.Bool("controller-chain-dry-run-dhcpv6", true, "do not start DHCPv6 service in the experimental controller chain")
-	controllerDryRunDHCPv4Lease := fs.Bool("controller-chain-dry-run-dhcpv4lease", true, "do not apply DHCPv4 lease address/default route in the experimental controller chain")
-	controllerDryRunPPPoESession := fs.Bool("controller-chain-dry-run-pppoesession", true, "do not apply PPPoE session route/DNS in the experimental controller chain")
-	controllerDryRunDNSResolver := fs.Bool("controller-chain-dry-run-dns-resolver", true, "do not start DNS resolver daemons in the experimental controller chain")
-	controllerDryRunNAT := fs.Bool("controller-chain-dry-run-nat", true, "do not apply nftables NAT rules in the experimental controller chain")
-	controllerDryRunIngress := fs.Bool("controller-chain-dry-run-ingress", true, "do not apply IngressService nftables rules in the experimental controller chain")
-	controllerDryRunFirewall := fs.Bool("controller-chain-dry-run-firewall", true, "do not apply nftables firewall rules in the experimental controller chain")
-	controllerDryRunBGP := fs.Bool("controller-chain-dry-run-bgp", true, "do not apply FRR BGP config in the experimental controller chain")
-	controllerDryRunVRRP := fs.Bool("controller-chain-dry-run-vrrp", false, "do not apply keepalived/CARP VRRP config in the experimental controller chain")
-	controllerDryRunPackage := fs.Bool("controller-chain-dry-run-package", true, "do not install OS packages in the experimental controller chain")
-	controllerDryRunNetworkAdoption := fs.Bool("controller-chain-dry-run-network-adoption", true, "do not write systemd-networkd/resolved adoption drop-ins in the experimental controller chain")
-	controllerDryRunSystemdUnit := fs.Bool("controller-chain-dry-run-systemd-unit", true, "do not install or restart systemd units in the experimental controller chain")
-	controllerSuperviseClientDaemons := fs.Bool("controller-chain-supervise-client-daemons", true, "start routerd DHCP/PPPoE client daemons as routerd child processes")
-	controllerFirewall := fs.String("controller-chain-firewall", "enable", "firewall controller mode: enable or disable")
-	controllerDaemonSockets := fs.String("controller-chain-daemon-sockets", "", "comma-separated resource=unix-socket overrides for the experimental controller chain")
-	controllerDnsmasqCommand := fs.String("controller-chain-dnsmasq-command", "dnsmasq", "dnsmasq command for the experimental controller chain")
-	controllerDnsmasqConfig := fs.String("controller-chain-dnsmasq-config", "/run/routerd/dnsmasq-phase1.conf", "dnsmasq config path for the experimental controller chain")
-	controllerDnsmasqPID := fs.String("controller-chain-dnsmasq-pid", "/run/routerd/dnsmasq-phase1.pid", "dnsmasq pid path for the experimental controller chain")
-	controllerDnsmasqPort := fs.Int("controller-chain-dnsmasq-port", 1053, "dnsmasq listen port for the experimental controller chain")
-	controllerDnsmasqListen := fs.String("controller-chain-dnsmasq-listen-addresses", "127.0.0.1", "comma-separated dnsmasq listen addresses for the experimental controller chain")
-	controllerNftablesPath := fs.String("controller-chain-nftables-file", "/run/routerd/nat44.nft", "nftables ruleset output path for the experimental controller chain")
-	controllerFirewallPath := fs.String("controller-chain-firewall-file", "/run/routerd/firewall.nft", "nftables firewall ruleset output path for the experimental controller chain")
-	controllerNftCommand := fs.String("controller-chain-nft-command", "nft", "nft command for the experimental controller chain")
-	controllerConntrackInterval := fs.Duration("controller-chain-conntrack-interval", 30*time.Second, "conntrack observer interval for the experimental controller chain")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *statusSocketPath == *socketPath {
 		return errors.New("--status-socket must differ from --socket")
 	}
-	controllerDryRunModes := map[string]bool{
-		"address":          *controllerDryRunAddress,
-		"dslite":           *controllerDryRunDSLite,
-		"route":            *controllerDryRunRoute,
-		"dhcpv6":           *controllerDryRunDHCPv6,
-		"dhcpv4lease":      *controllerDryRunDHCPv4Lease,
-		"pppoesession":     *controllerDryRunPPPoESession,
-		"dns-resolver":     *controllerDryRunDNSResolver,
-		"nat":              *controllerDryRunNAT,
-		"ingress":          *controllerDryRunIngress,
-		"firewall":         *controllerDryRunFirewall,
-		"bgp":              *controllerDryRunBGP,
-		"vrrp":             *controllerDryRunVRRP,
-		"package":          *controllerDryRunPackage,
-		"network-adoption": *controllerDryRunNetworkAdoption,
-		"systemd-unit":     *controllerDryRunSystemdUnit,
-	}
-	controllerStatuses := controllerStatusesFromDryRunModes(controllerDryRunModes)
-	if !*controllerChain {
-		controllerStatuses = nil
-	}
+	controllerStatuses := controllerDefaultStatuses()
 	controllerRuntime := controlapi.NewControllerRuntimeStore(controllerStatuses)
 	router, err := config.Load(*configPath)
 	if err != nil {
@@ -3415,15 +3369,6 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		"observeInterval": observeInterval.String(),
 		"applyInterval":   applyInterval.String(),
 	})
-	if *controllerChain {
-		dryRunModes := activeControllerDryRunNames(controllerStatuses)
-		if len(dryRunModes) > 0 {
-			logger.Emit(eventlog.LevelWarning, "serve", "controller dry-run modes active", map[string]string{
-				"controllers": strings.Join(dryRunModes, ","),
-			})
-		}
-	}
-
 	cache := &resultCache{}
 	engine := apply.New()
 	if result, observeErr := engine.Observe(router); observeErr == nil {
@@ -3453,53 +3398,34 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	}()
 	var controllerBus *bus.Bus
 	var stateStore *routerstate.SQLiteStore
-	if *controllerChain {
-		stateStore, err = routerstate.OpenSQLite(defaultStatePath)
-		if err != nil {
-			return err
-		}
-		defer stateStore.Close()
-		controllerBus = bus.NewWithStore(stateStore)
-		controllerBus.SetLogger(slog.Default())
-		publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
-		chainRunner := controllerchain.Runner{
-			Router: router,
-			Bus:    controllerBus,
-			Store:  stateStore,
-			Opts: controllerchain.Options{
-				DaemonSockets:          parseSocketOverrides(*controllerDaemonSockets),
-				DryRunAddress:          *controllerDryRunAddress,
-				DryRunDSLite:           *controllerDryRunDSLite,
-				DryRunRoute:            *controllerDryRunRoute,
-				DryRunDHCPv6:           *controllerDryRunDHCPv6,
-				DryRunDHCPv4Lease:      *controllerDryRunDHCPv4Lease,
-				DryRunPPPoESession:     *controllerDryRunPPPoESession,
-				DryRunDNSResolver:      *controllerDryRunDNSResolver,
-				DryRunNAT:              *controllerDryRunNAT,
-				DryRunIngress:          *controllerDryRunIngress,
-				DryRunFirewall:         *controllerDryRunFirewall,
-				DryRunBGP:              *controllerDryRunBGP,
-				DryRunVRRP:             *controllerDryRunVRRP,
-				DryRunPackage:          *controllerDryRunPackage,
-				DryRunNetworkAdoption:  *controllerDryRunNetworkAdoption,
-				DryRunSystemdUnit:      *controllerDryRunSystemdUnit,
-				SuperviseClientDaemons: *controllerSuperviseClientDaemons,
-				FirewallDisabled:       *controllerFirewall == "disable",
-				DnsmasqCommand:         *controllerDnsmasqCommand,
-				DnsmasqConfig:          *controllerDnsmasqConfig,
-				DnsmasqPID:             *controllerDnsmasqPID,
-				DnsmasqPort:            *controllerDnsmasqPort,
-				DnsmasqListen:          parseCSV(*controllerDnsmasqListen),
-				NftablesPath:           *controllerNftablesPath,
-				FirewallPath:           *controllerFirewallPath,
-				NftCommand:             *controllerNftCommand,
-				ConntrackInterval:      *controllerConntrackInterval,
-				ControllerObserver:     controllerRuntime,
-			},
-		}
-		if err := chainRunner.Start(ctx); err != nil {
-			return err
-		}
+	stateStore, err = routerstate.OpenSQLite(defaultStatePath)
+	if err != nil {
+		return err
+	}
+	defer stateStore.Close()
+	controllerBus = bus.NewWithStore(stateStore)
+	controllerBus.SetLogger(slog.Default())
+	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
+	chainRunner := controllerchain.Runner{
+		Router: router,
+		Bus:    controllerBus,
+		Store:  stateStore,
+		Opts: controllerchain.Options{
+			SuperviseClientDaemons: true,
+			DnsmasqCommand:         "dnsmasq",
+			DnsmasqConfig:          "/run/routerd/dnsmasq.conf",
+			DnsmasqPID:             "/run/routerd/dnsmasq.pid",
+			DnsmasqPort:            53,
+			DnsmasqListen:          []string{"127.0.0.1"},
+			NftablesPath:           "/run/routerd/nat44.nft",
+			FirewallPath:           "/run/routerd/firewall.nft",
+			NftCommand:             "nft",
+			ConntrackInterval:      30 * time.Second,
+			ControllerObserver:     controllerRuntime,
+		},
+	}
+	if err := chainRunner.Start(ctx); err != nil {
+		return err
 	}
 	if *observeInterval > 0 {
 		go runObserveSchedule(stop, *observeInterval, router, cache, *statusFile, logger)
@@ -3538,7 +3464,7 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 			return webErr
 		}
 		if ok {
-			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths(*controllerDnsmasqConfig)); err != nil {
+			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths("/run/routerd/dnsmasq.conf")); err != nil {
 				return err
 			}
 		}
@@ -7228,7 +7154,7 @@ func saveVRRPRenderedStatuses(router *api.Router, store routerstate.ObjectStatus
 			"address":    address,
 			"ifname":     ifname,
 			"configPath": runtimeKeepalivedConfigPath,
-			"applyWith":  "routerd serve --controller-chain",
+			"applyWith":  "routerd serve",
 			"changed":    changed,
 			"dryRun":     false,
 			"observedAt": now,
@@ -7329,7 +7255,7 @@ func saveBGPRenderedStatuses(router *api.Router, store routerstate.ObjectStatusS
 			"backend":     "frr",
 			"configPath":  runtimeFRRConfigPath,
 			"daemonsPath": runtimeFRRDaemonsPath,
-			"applyWith":   "routerd serve --controller-chain",
+			"applyWith":   "routerd serve",
 			"changed":     changed,
 			"dryRun":      false,
 			"observedAt":  now,
@@ -7809,109 +7735,8 @@ func applyTimesyncdConfig(path string, configData []byte) ([]string, error) {
 }
 
 func applySystemdUnitResources(router *api.Router) ([]string, error) {
-	if !platformFeatures.HasSystemd || isNixOSHost() {
-		return nil, nil
-	}
-	telemetryEnv, err := render.TelemetryEnvironment(router)
-	if err != nil {
-		return nil, err
-	}
-	var changedFiles []string
-	var changedUnits []string
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := res.SystemdUnitSpec()
-		if err != nil {
-			return nil, err
-		}
-		unitName := firstNonEmptyString(spec.UnitName, res.Metadata.Name)
-		if unitName == "" {
-			return nil, fmt.Errorf("%s has empty unit name", res.ID())
-		}
-		path := filepath.Join(platformDefaults.SystemdSystemDir, unitName)
-		if spec.State == "absent" {
-			_ = runLogged("systemctl", "disable", "--now", unitName)
-			if err := os.Remove(path); err == nil {
-				changedFiles = append(changedFiles, path)
-				changedUnits = append(changedUnits, unitName)
-			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return nil, fmt.Errorf("remove systemd unit %s: %w", path, err)
-			}
-			continue
-		}
-		spec.Environment = mergeEnvironmentEntries(spec.Environment, telemetryEnv)
-		data := render.SystemdUnit(res.Metadata.Name, spec)
-		if err := os.MkdirAll(filepathDir(path), 0755); err != nil {
-			return nil, fmt.Errorf("create directory for %s: %w", path, err)
-		}
-		changed, err := writeFileIfChanged(path, data, 0644)
-		if err != nil {
-			return nil, fmt.Errorf("write systemd unit %s: %w", path, err)
-		}
-		if changed {
-			changedFiles = append(changedFiles, path)
-			changedUnits = append(changedUnits, unitName)
-		}
-	}
-	if len(changedUnits) > 0 {
-		if err := runLogged("systemctl", "daemon-reload"); err != nil {
-			return nil, err
-		}
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := res.SystemdUnitSpec()
-		if err != nil {
-			return nil, err
-		}
-		unitName := firstNonEmptyString(spec.UnitName, res.Metadata.Name)
-		if spec.State == "absent" {
-			continue
-		}
-		if err := runLogged("systemctl", "unmask", unitName); err != nil {
-			return nil, err
-		}
-		if api.BoolDefault(spec.Enabled, true) {
-			if err := runLogged("systemctl", "enable", unitName); err != nil {
-				return nil, err
-			}
-		} else {
-			if err := runLogged("systemctl", "disable", unitName); err != nil {
-				return nil, err
-			}
-		}
-		if api.BoolDefault(spec.Started, true) {
-			if unitName == "routerd.service" && containsString(changedUnits, unitName) {
-				if err := scheduleRouterdServiceRestartLogged(); err != nil {
-					return nil, err
-				}
-				continue
-			}
-			if containsString(changedUnits, unitName) {
-				if err := runLogged("systemctl", "restart", unitName); err != nil {
-					return nil, err
-				}
-				continue
-			}
-			if err := runLogged("systemctl", "is-active", "--quiet", unitName); err != nil {
-				if err := runLogged("systemctl", "start", unitName); err != nil {
-					return nil, err
-				}
-			}
-		} else {
-			if unitName == "routerd.service" {
-				continue
-			}
-			if err := runLogged("systemctl", "stop", unitName); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return changedFiles, nil
+	_ = router
+	return nil, nil
 }
 
 func applyOpenRCServiceResources(router *api.Router) ([]string, error) {
@@ -7940,36 +7765,6 @@ func applyOpenRCServiceResources(router *api.Router) ([]string, error) {
 		if changed {
 			changedFiles = append(changedFiles, path)
 			changedServices[name] = true
-		}
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := res.SystemdUnitSpec()
-		if err != nil {
-			return nil, err
-		}
-		if defaultString(spec.State, "present") != "absent" {
-			continue
-		}
-		name := render.OpenRCServiceName(firstNonEmptyString(spec.UnitName, res.Metadata.Name))
-		path := filepath.Join(platformDefaults.OpenRCScriptDir, name)
-		if openRCServiceActive(name) {
-			if err := runLogged("rc-service", name, "stop"); err != nil {
-				return nil, err
-			}
-		}
-		if enabledServices[name] {
-			if err := runLogged("rc-update", "del", name, "default"); err != nil {
-				return nil, err
-			}
-			delete(enabledServices, name)
-		}
-		if err := os.Remove(path); err == nil {
-			changedFiles = append(changedFiles, path)
-		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("remove OpenRC script %s: %w", path, err)
 		}
 	}
 	for _, service := range cfg.Services {

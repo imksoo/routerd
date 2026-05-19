@@ -170,8 +170,8 @@ func resourceOwnerController(kind string) string {
 		return "pppoesession"
 	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy", "PathMTUPolicy":
 		return "route"
-	case "SystemdUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
-		return "systemd-unit"
+	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
+		return "service-unit"
 	case "ConntrackObserver", "TrafficFlowLog":
 		return "conntrack"
 	default:
@@ -521,7 +521,7 @@ type Options struct {
 	DryRunVRRP             bool
 	DryRunPackage          bool
 	DryRunNetworkAdoption  bool
-	DryRunSystemdUnit      bool
+	DryRunServiceUnit      bool
 	SuperviseClientDaemons bool
 	FirewallDisabled       bool
 	DnsmasqCommand         string
@@ -602,14 +602,12 @@ func (r *Runner) Start(ctx context.Context) error {
 			continue
 		}
 		spec, err := resource.HealthCheckSpec()
-		if err != nil || healthCheckDisabled(spec) || spec.SocketSource == "embedded" || (spec.Daemon == "" && spec.SocketSource == "") {
+		if err != nil || healthCheckDisabled(spec) || spec.Daemon == "" {
 			continue
 		}
 		name := resource.Metadata.Name
-		socket := spec.SocketSource
-		if socket == "" {
-			socket = filepath.Join("/run/routerd/healthcheck", name+".sock")
-		}
+		defaults, _ := platform.Current()
+		socket := filepath.Join(defaults.RuntimeDir, "healthcheck", name+".sock")
 		source := daemonsource.DaemonSource{
 			Daemon:    daemonapi.DaemonRef{Name: "routerd-healthcheck-" + name, Kind: "routerd-healthcheck", Instance: name},
 			Socket:    socket,
@@ -625,15 +623,12 @@ func (r *Runner) Start(ctx context.Context) error {
 		if resource.Kind != "PPPoESession" {
 			continue
 		}
-		spec, err := resource.PPPoESessionSpec()
+		_, err := resource.PPPoESessionSpec()
 		if err != nil {
 			continue
 		}
 		name := resource.Metadata.Name
-		socket := spec.SocketSource
-		if socket == "" {
-			socket = r.Opts.DaemonSockets[name]
-		}
+		socket := r.Opts.DaemonSockets[name]
 		if socket == "" {
 			socket = filepath.Join("/run/routerd/pppoe-client", name+".sock")
 		}
@@ -677,14 +672,14 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunVRRP = true
 		opts.DryRunPackage = true
 		opts.DryRunNetworkAdoption = true
-		opts.DryRunSystemdUnit = true
+		opts.DryRunServiceUnit = true
 	}
 	r.Opts = opts
 	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
 	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNetworkAdoption}
-	systemdUnits := SystemdUnitController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunSystemdUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons}
+	serviceUnits := SystemdUnitController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons}
 	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
 	ntpClient := NTPClientController{Router: r.Router, Bus: r.Bus, Store: store}
 	ntpServer := NTPServerController{Router: r.Router, Bus: r.Bus, Store: store}
@@ -728,7 +723,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, PeriodicFunc: kernelModules.Reconcile},
 		framework.FuncController{ControllerName: "sysctl", Every: 30 * time.Second, PeriodicFunc: sysctl.Reconcile},
 		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, PeriodicFunc: adoption.Reconcile},
-		framework.FuncController{ControllerName: "systemd-unit", Every: 5 * time.Minute, PeriodicFunc: systemdUnits.Reconcile},
+		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, PeriodicFunc: serviceUnits.Reconcile},
 		framework.FuncController{ControllerName: "log-retention", Every: time.Hour, PeriodicFunc: logRetention.Reconcile},
 		framework.FuncController{ControllerName: "ntp-client", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Lease", "DHCPv6Information"), PeriodicFunc: ntpClient.Reconcile},
 		framework.FuncController{ControllerName: "ntp-server", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Lease", "DHCPv6Information", "IPv4StaticAddress", "IPv6DelegatedAddress"), PeriodicFunc: ntpServer.Reconcile},
@@ -1360,24 +1355,18 @@ func (c DaemonStatusController) daemonSockets() []string {
 			add(socket)
 		case "HealthCheck":
 			spec, err := resource.HealthCheckSpec()
-			if err != nil || healthCheckDisabled(spec) || spec.SocketSource == "embedded" || (spec.Daemon == "" && spec.SocketSource == "") {
+			if err != nil || healthCheckDisabled(spec) || spec.Daemon == "" {
 				continue
 			}
-			socket := spec.SocketSource
-			if socket == "" {
-				defaults, _ := platform.Current()
-				socket = filepath.Join(defaults.RuntimeDir, "healthcheck", resource.Metadata.Name+".sock")
-			}
+			defaults, _ := platform.Current()
+			socket := filepath.Join(defaults.RuntimeDir, "healthcheck", resource.Metadata.Name+".sock")
 			add(socket)
 		case "PPPoESession":
-			spec, err := resource.PPPoESessionSpec()
+			_, err := resource.PPPoESessionSpec()
 			if err != nil {
 				continue
 			}
-			socket := spec.SocketSource
-			if socket == "" {
-				socket = c.DaemonSockets[resource.Metadata.Name]
-			}
+			socket := c.DaemonSockets[resource.Metadata.Name]
 			if socket == "" {
 				defaults, _ := platform.Current()
 				socket = filepath.Join(defaults.RuntimeDir, "pppoe-client", resource.Metadata.Name+".sock")

@@ -203,6 +203,35 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       ];
     };
   };
+  systemd.services."routerd-dns-resolver@lan-resolver" = {
+    description = "routerd DNS resolver lan-resolver";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-dns-resolver"
+        "daemon"
+        "--resource"
+        "lan-resolver"
+        "--config-file"
+        "/var/lib/routerd/dns-resolver/lan-resolver/config.json"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/dns-resolver" ];
+      StateDirectory = [ "routerd/dns-resolver" "routerd/dns-resolver/lan-resolver" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
+      AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
+      CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "yes";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
   systemd.services."routerd-dnsmasq" = {
     description = "routerd managed dnsmasq DHCP service";
     wantedBy = [ "multi-user.target" ];
@@ -252,17 +281,16 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
         "/run/routerd/ndpi-agent/default.sock"
       ];
       Restart = "on-failure";
-      Environment = [ "OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.119:4317" "OTEL_EXPORTER_OTLP_INSECURE=true" "OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,routerd.node=home-router" "OTEL_SERVICE_NAMESPACE=routerd" ];
       RuntimeDirectory = [ "routerd/dpi-classifier" ];
       RestrictAddressFamilies = [ "AF_UNIX" ];
       NoNewPrivileges = true;
     };
   };
   systemd.services."routerd-firewall-logger" = {
-    description = "routerd firewall NFLOG writer";
+    description = "routerd firewall log collector";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" "routerd-dpi-classifier.service" ];
-    wants = [ "routerd-dpi-classifier.service" ];
+    after = [ "network-online.target" "routerd.service" "routerd-dpi-classifier.service" ];
+    wants = [ "network-online.target" "routerd-dpi-classifier.service" ];
     serviceConfig = {
       ExecStart = lib.concatStringsSep " " [
         "/usr/local/sbin/routerd-firewall-logger"
@@ -274,14 +302,19 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
         "--dpi-socket"
         "/run/routerd/dpi-classifier/default.sock"
       ];
-      Restart = "on-failure";
-      Environment = [ "OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.119:4317" "OTEL_EXPORTER_OTLP_INSECURE=true" "OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,routerd.node=home-router" "OTEL_SERVICE_NAMESPACE=routerd" ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd" ];
+      RuntimeDirectoryPreserve = "yes";
       StateDirectory = [ "routerd" ];
       ReadWritePaths = [ "/var/lib/routerd" ];
       AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
       CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
-      RestrictAddressFamilies = [ "AF_UNIX" "AF_NETLINK" "AF_INET" "AF_INET6" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
+      ProtectSystem = "strict";
+      ProtectHome = "true";
       NoNewPrivileges = true;
+      PrivateTmp = true;
     };
   };
   systemd.services."routerd-healthcheck@internet-icmp" = {
@@ -714,7 +747,6 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       ];
       Restart = "on-failure";
       RestartSec = "5s";
-      Environment = [ "OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.119:4317" "OTEL_EXPORTER_OTLP_INSECURE=true" "OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,routerd.node=home-router" "OTEL_SERVICE_NAMESPACE=routerd" ];
       RuntimeDirectory = [ "routerd/ndpi-agent" ];
       RuntimeDirectoryPreserve = "yes";
       RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
@@ -754,67 +786,6 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       NoNewPrivileges = true;
       PrivateTmp = true;
       RemainAfterExit = true;
-    };
-  };
-  systemd.services."routerd" = {
-    description = "routerd controller chain for home-router";
-    serviceConfig = {
-      ExecStart = lib.concatStringsSep " " [
-        "/usr/local/sbin/routerd"
-        "serve"
-        "--config"
-        "/usr/local/etc/routerd/router.yaml"
-        "--socket"
-        "/run/routerd/routerd.sock"
-        "--status-file"
-        "/run/routerd/status.json"
-        "--observe-interval"
-        "0"
-        "--controller-chain"
-        "--controller-chain-daemon-sockets"
-        "wan-pd=/run/routerd/dhcpv6-client/wan-pd.sock"
-        "--controller-chain-dry-run-address=false"
-        "--controller-chain-dry-run-dslite=false"
-        "--controller-chain-dry-run-route=false"
-        "--controller-chain-dry-run-dhcpv6=false"
-        "--controller-chain-dry-run-dhcpv4lease=false"
-        "--controller-chain-dry-run-pppoesession=false"
-        "--controller-chain-dry-run-dns-resolver=false"
-        "--controller-chain-dry-run-nat=false"
-        "--controller-chain-dry-run-firewall=false"
-        "--controller-chain-dry-run-bgp=false"
-        "--controller-chain-dry-run-package=false"
-        "--controller-chain-dry-run-network-adoption=false"
-        "--controller-chain-dry-run-systemd-unit=false"
-        "--controller-chain-supervise-client-daemons=true"
-        "--controller-chain-dnsmasq-command"
-        "/usr/sbin/dnsmasq"
-        "--controller-chain-dnsmasq-config"
-        "/run/routerd/dnsmasq.conf"
-        "--controller-chain-dnsmasq-pid"
-        "/run/routerd/dnsmasq.pid"
-        "--controller-chain-dnsmasq-port"
-        "53"
-        "--controller-chain-dnsmasq-listen-addresses"
-        "127.0.0.1"
-        "--controller-chain-nftables-file"
-        "/run/routerd/nat44.nft"
-        "--controller-chain-firewall-file"
-        "/run/routerd/firewall.nft"
-        "--controller-chain-conntrack-interval"
-        "30s"
-      ];
-      Environment = [ "OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.119:4317" "OTEL_EXPORTER_OTLP_INSECURE=true" "OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,routerd.node=home-router" "OTEL_SERVICE_NAMESPACE=routerd" ];
-      RuntimeDirectory = [ "routerd" "routerd/dhcpv6-client" "routerd/dhcpv4-client" "routerd/pppoe-client" "routerd/dns-resolver" ];
-      RuntimeDirectoryPreserve = "yes";
-      StateDirectory = [ "routerd" ];
-      LogsDirectory = [ "routerd" ];
-      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" "/var/lib/misc" "/etc/sysctl.d" "/etc/systemd/network" "/etc/systemd/resolved.conf.d" "/etc/systemd/system" "/usr/local/etc/routerd" "/var/cache/apt" "/var/lib/apt" "/var/lib/dpkg" "/var/log/apt" ];
-      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" "CAP_NET_BIND_SERVICE" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
-      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" "CAP_NET_BIND_SERVICE" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
-      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
-      ProtectSystem = "no";
-      NoNewPrivileges = false;
     };
   };
 }

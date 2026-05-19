@@ -34,7 +34,7 @@ routerd 不会把 status database 当成唯一真相。status store 会记录前
 
 ## 受管理项的清理
 
-当 resource 从 YAML 消失时，拥有它的 controller 只会移除或停用自己拥有的 artifact。没有对应 `HealthCheck` resource 的旧 `routerd-healthcheck@*.service` unit 会被 disable 并移除。NAT44 没有任何规则时，会清空受管理的 `routerd_nat` table 或 pf anchor。`state: absent` 的 `SystemdUnit` 会移除 render 出来的 unit；只有当 unit 存在或仍为 enabled/active 时才会停止它。
+当 resource 从 YAML 消失时，拥有它的 controller 只会移除或停用自己拥有的 artifact。没有对应 `HealthCheck` resource 的旧 `routerd-healthcheck@*.service` unit 会被 disable 并移除。NAT44 没有任何规则时，会清空受管理的 `routerd_nat` table 或 pf anchor。`state: absent` 的 `generated service artifacts` 会移除 render 出来的 unit；只有当 unit 存在或仍为 enabled/active 时才会停止它。
 
 Firewall rendering 会保留受管理的 nftables table，并在单个 `nft -f` batch 中重新加载。对 firewall zone interface set 与 client-policy MAC set 这类 named set，routerd 会先 destroy 受管理的 set，再重新定义，避免已移除的元素残留。正常 apply 不会 destroy 并重建整个 filter table。
 

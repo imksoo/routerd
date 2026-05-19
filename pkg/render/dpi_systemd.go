@@ -36,6 +36,23 @@ func NDPIAgentSystemdSpec(runtimeRoot string) api.SystemdUnitSpec {
 	}
 }
 
+func DPIClassifierSystemdSpec(runtimeRoot string) api.SystemdUnitSpec {
+	noNewPrivileges := true
+	socket := filepath.Join(runtimeRoot, "routerd/dpi-classifier/default.sock")
+	agentSocket := filepath.Join(runtimeRoot, "routerd/ndpi-agent/default.sock")
+	return api.SystemdUnitSpec{
+		Description:             "routerd DPI classifier",
+		ExecStart:               []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--socket", socket, "--engine", "auto", "--ndpi-agent-socket", agentSocket},
+		Wants:                   []string{"network-online.target", NDPIAgentUnitName},
+		After:                   []string{"network-online.target", NDPIAgentUnitName},
+		WantedBy:                []string{"multi-user.target"},
+		Restart:                 "on-failure",
+		RuntimeDirectory:        []string{"routerd/dpi-classifier"},
+		RestrictAddressFamilies: []string{"AF_UNIX"},
+		NoNewPrivileges:         &noNewPrivileges,
+	}
+}
+
 func MaybeAugmentDPIClassifierSpec(unitName string, spec api.SystemdUnitSpec, agentUnitName string) api.SystemdUnitSpec {
 	if unitName != DPIClassifierUnitName || !SystemdUnitUsesNDPIAgent(spec) {
 		return spec
@@ -46,20 +63,25 @@ func MaybeAugmentDPIClassifierSpec(unitName string, spec api.SystemdUnitSpec, ag
 }
 
 func RouterWantsNDPIAgent(router *api.Router) bool {
+	return RouterWantsDPIClassifier(router)
+}
+
+func RouterWantsDPIClassifier(router *api.Router) bool {
 	if router == nil {
 		return false
 	}
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := res.SystemdUnitSpec()
-		if err != nil || defaultString(spec.State, "present") == "absent" {
-			continue
-		}
-		unitName := defaultString(spec.UnitName, res.Metadata.Name)
-		if unitName == DPIClassifierUnitName && SystemdUnitUsesNDPIAgent(spec) {
-			return true
+		switch res.Kind {
+		case "TrafficFlowLog":
+			spec, err := res.TrafficFlowLogSpec()
+			if err == nil && spec.Enabled && (spec.IncludeNDPI || spec.IncludeTLSSNI) {
+				return true
+			}
+		case "FirewallLog":
+			spec, err := res.FirewallLogSpec()
+			if err == nil && spec.Enabled {
+				return true
+			}
 		}
 	}
 	return false

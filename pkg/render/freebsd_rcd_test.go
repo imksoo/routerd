@@ -57,7 +57,7 @@ func TestFreeBSDRCDScript(t *testing.T) {
 	}
 }
 
-func TestFreeBSDRenderSynthesizesDHCPv6ClientRCD(t *testing.T) {
+func TestFreeBSDRenderRoutesDHCPv6ClientThroughRouterd(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
@@ -74,22 +74,22 @@ func TestFreeBSDRenderSynthesizesDHCPv6ClientRCD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := string(cfg.RCDScripts["routerd_dhcpv6_client_wan_pd"])
+	if _, ok := cfg.RCDScripts["routerd_dhcpv6_client_wan_pd"]; ok {
+		t.Fatalf("DHCPv6 client rc.d script must not be synthesized when routerd supervises clients")
+	}
+	script := string(cfg.RCDScripts["routerd"])
 	for _, want := range []string{
-		`PROVIDE: routerd_dhcpv6_client_wan_pd`,
+		`PROVIDE: routerd`,
 		`daemon_command="/usr/sbin/daemon"`,
-		`'/usr/local/sbin/routerd-dhcpv6-client'`,
-		`'--interface' 'vtnet0'`,
-		`'--socket' '/var/run/routerd/dhcpv6-client/wan-pd.sock'`,
-		`'--lease-file' '/var/db/routerd/dhcpv6-client/wan-pd/lease.json'`,
-		`'--event-file' '/var/db/routerd/dhcpv6-client/wan-pd/events.jsonl'`,
-		`'--iaid' '1'`,
-		`mkdir -p '/var/run/routerd/dhcpv6-client'`,
-		`mkdir -p '/var/db/routerd/dhcpv6-client/wan-pd'`,
+		`'/usr/local/sbin/routerd' 'check'`,
+		`'/usr/local/sbin/routerd' 'serve'`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("rc.d script missing %q:\n%s", want, script)
 		}
+	}
+	if strings.Contains(script, "controller"+"-chain") {
+		t.Fatalf("routerd rc.d script must not expose legacy controller flags:\n%s", script)
 	}
 }
 
@@ -107,7 +107,7 @@ func TestFreeBSDRCDPgrepPatternIncludesResourceName(t *testing.T) {
 	}
 }
 
-func TestFreeBSDRenderSynthesizesDHCPv4ClientRCD(t *testing.T) {
+func TestFreeBSDRenderRoutesDHCPv4ClientThroughRouterd(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
@@ -124,42 +124,27 @@ func TestFreeBSDRenderSynthesizesDHCPv4ClientRCD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := string(cfg.RCDScripts["routerd_dhcpv4_client_wan_v4"])
+	if _, ok := cfg.RCDScripts["routerd_dhcpv4_client_wan_v4"]; ok {
+		t.Fatalf("DHCPv4 client rc.d script must not be synthesized when routerd supervises clients")
+	}
+	script := string(cfg.RCDScripts["routerd"])
 	for _, want := range []string{
-		`PROVIDE: routerd_dhcpv4_client_wan_v4`,
+		`PROVIDE: routerd`,
 		`daemon_command="/usr/sbin/daemon"`,
-		`'/usr/local/sbin/routerd-dhcpv4-client'`,
-		`'--interface' 'vtnet0'`,
-		`'--socket' '/var/run/routerd/dhcpv4-client/wan-v4.sock'`,
-		`'--lease-file' '/var/db/routerd/dhcpv4-client/wan-v4/lease.json'`,
-		`'--event-file' '/var/db/routerd/dhcpv4-client/wan-v4/events.jsonl'`,
-		`'--hostname' 'router04'`,
-		`mkdir -p '/var/run/routerd/dhcpv4-client'`,
-		`mkdir -p '/var/db/routerd/dhcpv4-client/wan-v4'`,
+		`'/usr/local/sbin/routerd' 'check'`,
+		`'/usr/local/sbin/routerd' 'serve'`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("rc.d script missing %q:\n%s", want, script)
 		}
 	}
+	if strings.Contains(script, "controller"+"-chain") {
+		t.Fatalf("routerd rc.d script must not expose legacy controller flags:\n%s", script)
+	}
 }
 
 func TestFreeBSDRenderSkipsDHCPClientRCDWhenRouterdSupervisesClients(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "routerd.service"},
-			Spec: api.SystemdUnitSpec{
-				ExecStartPre: []string{"/usr/local/sbin/routerd", "apply", "--config", "/usr/local/etc/routerd/router.yaml", "--once", "--skip-service-manager"},
-				ExecStart: []string{
-					"/usr/local/sbin/routerd",
-					"serve",
-					"--config",
-					"/usr/local/etc/routerd/router.yaml",
-					"--controller-chain",
-					"--controller-chain-dry-run-dhcpv4lease=false",
-				},
-			},
-		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "wan"},
@@ -190,26 +175,26 @@ func TestFreeBSDRenderSkipsDHCPClientRCDWhenRouterdSupervisesClients(t *testing.
 		t.Fatalf("DHCPv6 rc.d script should not be synthesized when routerd supervises clients")
 	}
 	routerdScript := string(cfg.RCDScripts["routerd"])
-	if !strings.Contains(routerdScript, `'--controller-chain-dry-run-dhcpv4lease=false'`) {
-		t.Fatalf("routerd rc.d script missing DHCPv4Lease flag:\n%s", routerdScript)
+	if strings.Contains(routerdScript, "controller"+"-chain") {
+		t.Fatalf("routerd rc.d script must not expose legacy controller flags:\n%s", routerdScript)
 	}
-	if strings.Contains(routerdScript, "apply") || strings.Contains(routerdScript, "--skip-service-manager") {
-		t.Fatalf("routerd rc.d script must not run routerd apply from prestart:\n%s", routerdScript)
+	if !strings.Contains(routerdScript, "'check'") || !strings.Contains(routerdScript, "'serve'") || strings.Contains(routerdScript, "--skip-service-manager") {
+		t.Fatalf("routerd rc.d script must run check then serve without skip-service-manager:\n%s", routerdScript)
 	}
 	if strings.Contains(routerdScript, `$("`) {
 		t.Fatalf("routerd rc.d script contains quoted command substitution:\n%s", routerdScript)
 	}
 }
 
-func TestFreeBSDRenderIncludesSystemdUnitAsRCD(t *testing.T) {
+func TestFreeBSDRenderSynthesizesHealthCheckResourceAsRCD(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "routerd-healthcheck@internet.service"},
-			Spec: api.SystemdUnitSpec{
-				ExecStart:        []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", "internet"},
-				RuntimeDirectory: []string{"routerd/healthcheck"},
-				StateDirectory:   []string{"routerd/healthcheck"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+			Metadata: api.ObjectMeta{Name: "internet"},
+			Spec: api.HealthCheckSpec{
+				Daemon:   "routerd-healthcheck",
+				Target:   "1.1.1.1",
+				Protocol: "icmp",
 			},
 		},
 	}}}

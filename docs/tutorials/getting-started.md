@@ -109,7 +109,7 @@ artifacts without committing network changes.
 sudo routerd serve --config first-router.yaml
 ```
 
-In production, install a `SystemdUnit` resource or a systemd unit file so that
+In production, install routerd with the packaged service manager files so that
 `routerd serve` starts on boot.
 
 ## 7. Inspect status

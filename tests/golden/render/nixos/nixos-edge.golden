@@ -117,6 +117,35 @@ wg-lab-wireguard from=wan to=self ifnames=ens18 proto=udp port=51820 action=acce
     traceroute
     wireguard-tools
   ];
+  systemd.services."routerd-dns-resolver@lan-resolver" = {
+    description = "routerd DNS resolver lan-resolver";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-dns-resolver"
+        "daemon"
+        "--resource"
+        "lan-resolver"
+        "--config-file"
+        "/var/lib/routerd/dns-resolver/lan-resolver/config.json"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/dns-resolver" ];
+      StateDirectory = [ "routerd/dns-resolver" "routerd/dns-resolver/lan-resolver" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
+      AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
+      CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "yes";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
   systemd.services."routerd-dnsmasq" = {
     description = "routerd managed dnsmasq DHCP service";
     wantedBy = [ "multi-user.target" ];
@@ -147,25 +176,6 @@ wg-lab-wireguard from=wan to=self ifnames=ens18 proto=udp port=51820 action=acce
       ProtectHome = "true";
       NoNewPrivileges = true;
       PrivateTmp = true;
-    };
-  };
-  systemd.services."routerd-dpi-classifier" = {
-    description = "routerd DPI classifier";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    serviceConfig = {
-      ExecStart = lib.concatStringsSep " " [
-        "/usr/local/sbin/routerd-dpi-classifier"
-        "daemon"
-        "--socket"
-        "/run/routerd/dpi-classifier/default.sock"
-        "--ndpi-reader"
-        "/run/current-system/sw/bin/ndpiReader"
-      ];
-      Restart = "on-failure";
-      RuntimeDirectory = [ "routerd/dpi-classifier" ];
-      RestrictAddressFamilies = [ "AF_UNIX" ];
-      NoNewPrivileges = true;
     };
   };
   systemd.services."routerd-tailscale-home" = {

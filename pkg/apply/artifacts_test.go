@@ -146,11 +146,6 @@ func TestOpenRCServiceArtifactIntentsAvoidSystemd(t *testing.T) {
 	features := platform.Features{HasOpenRC: true}
 	resources := []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "custom.service"},
-			Spec:     api.SystemdUnitSpec{},
-		},
-		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
 			Metadata: api.ObjectMeta{Name: "wan"},
 			Spec:     api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp0"},
@@ -209,11 +204,6 @@ func TestOpenRCServiceArtifactIntentsAvoidSystemd(t *testing.T) {
 
 func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 	resources := []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "custom.service"},
-			Spec:     api.SystemdUnitSpec{},
-		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
 			Metadata: api.ObjectMeta{Name: "wan"},

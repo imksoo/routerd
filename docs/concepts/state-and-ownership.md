@@ -58,7 +58,7 @@ Events are persisted in the SQLite `events` table and in per-daemon `events.json
 The `generation` value in status output is the latest committed apply generation.
 It is incremented when `routerd apply` changes the host-side intent store and records a completed apply in SQLite.
 It is not a reconcile loop counter.
-Dry-run plans, daemon events, health checks, and periodic controller-chain reconciliation do not increment it.
+Dry-run plans, daemon events, health checks, and periodic controller runtime reconciliation do not increment it.
 New apply generations store the YAML snapshot that was applied.
 The Web Console uses those snapshots to show a read-only generation history and unified diffs between stored generations.
 Rows created before YAML snapshot storage was introduced remain valid history, but they cannot be diffed.

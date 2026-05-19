@@ -41,32 +41,27 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 	if err != nil {
 		return OpenRCConfig{}, err
 	}
+	routerdSpec := RouterdServiceSystemdSpec()
+	routerdData, err := OpenRCScript("routerd", routerdSpec)
+	if err != nil {
+		return OpenRCConfig{}, err
+	}
+	out["routerd"] = routerdData
+	services = append(services, OpenRCService{Name: "routerd", Enabled: true, Started: true})
+	explicit["routerd"] = true
 	dpiSocket := ""
-	if hasSystemdUnit(router, DPIClassifierUnitName) {
+	if RouterWantsDPIClassifier(router) {
 		dpiSocket = "/run/routerd/dpi-classifier/default.sock"
 	}
 	wantsNDPIAgent := RouterWantsNDPIAgent(router)
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := res.SystemdUnitSpec()
+	if RouterWantsDPIClassifier(router) {
+		name := openRCServiceName(DPIClassifierUnitName)
+		data, err := OpenRCScript(name, DPIClassifierSystemdSpec("/run"))
 		if err != nil {
 			return OpenRCConfig{}, err
 		}
-		if defaultString(spec.State, "present") == "absent" {
-			continue
-		}
-		name := openRCServiceName(defaultString(spec.UnitName, res.Metadata.Name))
-		explicit[name] = true
-		spec = MaybeAugmentDPIClassifierSpec(defaultString(spec.UnitName, res.Metadata.Name), spec, openRCServiceName(NDPIAgentUnitName))
-		spec.Environment = mergeEnvironment(spec.Environment, telemetryEnv)
-		data, err := OpenRCScript(name, spec)
-		if err != nil {
-			return OpenRCConfig{}, fmt.Errorf("%s: %w", res.ID(), err)
-		}
 		out[name] = data
-		services = append(services, OpenRCService{Name: name, Enabled: api.BoolDefault(spec.Enabled, true), Started: api.BoolDefault(spec.Started, true)})
+		services = append(services, OpenRCService{Name: name, Enabled: true, Started: true})
 	}
 	if wantsNDPIAgent {
 		name := openRCServiceName(NDPIAgentUnitName)
@@ -246,7 +241,7 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 		if explicit[name] {
 			continue
 		}
-		data, err := OpenRCScript(name, firewallLoggerSystemdSpec(spec, dpiSocket))
+		data, err := OpenRCScript(name, FirewallLoggerSystemdSpec(spec, dpiSocket))
 		if err != nil {
 			return OpenRCConfig{}, fmt.Errorf("%s: %w", res.ID(), err)
 		}
@@ -460,26 +455,7 @@ func dhcpv6PrefixDelegationOpenRCSystemdSpec(resource, ifname string, spec api.D
 }
 
 func openRCRouterdSupervisesClientDaemons(router *api.Router) bool {
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := res.SystemdUnitSpec()
-		if err != nil || defaultString(spec.State, "present") == "absent" {
-			continue
-		}
-		unitName := defaultString(spec.UnitName, res.Metadata.Name)
-		if openRCServiceName(unitName) != "routerd" {
-			continue
-		}
-		if !containsInitArg(spec.ExecStart, "--controller-chain") {
-			continue
-		}
-		if initBoolFlagValue(spec.ExecStart, "--controller-chain-supervise-client-daemons", true) {
-			return true
-		}
-	}
-	return false
+	return true
 }
 
 func containsInitArg(args []string, needle string) bool {

@@ -55,10 +55,7 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 			sourceAddress = value
 		}
 	}
-	socket := strings.TrimSpace(spec.SocketSource)
-	if socket == "" {
-		socket = runtimeRoot + "/routerd/healthcheck/" + resource + ".sock"
-	}
+	socket := runtimeRoot + "/routerd/healthcheck/" + resource + ".sock"
 	execStart := []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", resource}
 	appendFlag := func(flag, value string) {
 		if strings.TrimSpace(value) != "" {

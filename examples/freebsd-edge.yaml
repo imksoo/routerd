@@ -266,50 +266,6 @@ spec:
         enabled: true
         path: /var/db/routerd/firewall-logs.db
 
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SystemdUnit
-      metadata:
-        name: routerd-dpi-classifier.service
-      spec:
-        description: routerd DPI classifier
-        execStart:
-          - /usr/local/sbin/routerd-dpi-classifier
-          - daemon
-          - --socket
-          - /var/run/routerd/dpi-classifier/default.sock
-          - --ndpi-reader
-          - /usr/local/bin/ndpiReader
-        runtimeDirectory:
-          - routerd/dpi-classifier
-        enabled: true
-        started: true
-
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SystemdUnit
-      metadata:
-        name: routerd-firewall-logger.service
-      spec:
-        description: routerd firewall logger
-        execStart:
-          - /usr/local/sbin/routerd-firewall-logger
-          - daemon
-          - --path
-          - /var/db/routerd/firewall-logs.db
-          - --pflog-interface
-          - pflog0
-          - --dpi-socket
-          - /var/run/routerd/dpi-classifier/default.sock
-        wants:
-          - routerd-dpi-classifier.service
-        after:
-          - routerd-dpi-classifier.service
-        runtimeDirectory:
-          - routerd
-        stateDirectory:
-          - routerd
-        enabled: true
-        started: true
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Server
       metadata:

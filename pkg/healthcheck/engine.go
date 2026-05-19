@@ -109,7 +109,7 @@ func (c *Controller) Start(ctx context.Context) {
 			continue
 		}
 		spec, err := resource.HealthCheckSpec()
-		if err == nil && (spec.Daemon == DaemonKind || spec.SocketSource != "") {
+		if err == nil && spec.Daemon == DaemonKind {
 			continue
 		}
 		resource := resource

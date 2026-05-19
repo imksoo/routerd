@@ -107,7 +107,7 @@ routerd apply --config first-router.yaml --once --dry-run
 sudo routerd serve --config first-router.yaml
 ```
 
-本番では、`SystemdUnit` リソースまたは systemd ユニットファイルを使います。
+本番では、`generated service artifacts` リソースまたは systemd ユニットファイルを使います。
 これにより、`routerd serve` を起動時に開始できます。
 
 ## 7. 状態を確認します

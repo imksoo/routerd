@@ -46,7 +46,6 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `SysctlProfile` | A set of sysctl values |
 | `KernelModule` | Runtime module load state and `/etc/modules-load.d/90-routerd-<name>.conf` on Linux |
 | `NetworkAdoption` | systemd-networkd / systemd-resolved drop-ins |
-| `SystemdUnit` | systemd unit, FreeBSD rc.d script, or OpenRC init script and enabled state |
 | `NTPClient` | NTP client configuration |
 
 ## How removal works

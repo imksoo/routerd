@@ -75,9 +75,9 @@ interfaces, packet family, protocol, addresses, and ports without running a
 separate packet capture process.
 
 The Web Console Firewall tab and `routerctl firewall-logs` read from that
-database. The logger must be enabled as a managed `SystemdUnit`, for example
-with `routerd-firewall-logger daemon --path /var/lib/routerd/firewall-logs.db
---nflog-group 1`.
+database. When `FirewallLog.spec.enabled` is true, routerd derives the
+`routerd-firewall-logger` service artifact and passes the configured database
+path and NFLOG group to it.
 
 For accepted-flow DPI observation, set `FirewallLog.spec.log.copyRange` to cap
 the NFLOG payload copied from each packet. Values such as `1536` or `2048`

@@ -74,6 +74,9 @@ func exampleConfigPath(t *testing.T, path string) string {
 }
 
 func renderGoldenDirtyForExample(path string) bool {
+	if os.Getenv(updateEnv) != "" {
+		return true
+	}
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	for _, target := range []string{"linux", "alpine", "freebsd", "nixos"} {
 		rel := filepath.ToSlash(filepath.Join("tests", "golden", "render", target, name+".golden"))

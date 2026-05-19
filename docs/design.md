@@ -131,7 +131,7 @@ routerd configuration is a set of resources. The shape is similar to Kubernetes 
 | `net.routerd.net/v1alpha1` | Networking (Link, IPv4Static, DSLite, PPPoE, EgressRoute, HealthCheck, etc.) |
 | `dns.routerd.net/v1alpha1` | DNS (DNSZone, DNSResolver, DHCPv4Reservation, etc.) |
 | `firewall.routerd.net/v1alpha1` | Firewall (FirewallZone, FirewallPolicy, FirewallRule, NAT44Rule, etc.) |
-| `system.routerd.net/v1alpha1` | OS bootstrap (Package, SysctlProfile, SystemdUnit, NetworkAdoption, WebConsole, etc.) |
+| `system.routerd.net/v1alpha1` | OS bootstrap (Package, SysctlProfile, NetworkAdoption, WebConsole, etc.) |
 | `control.routerd.net/v1alpha1` | controller chain and routerctl control surface |
 
 The full list is in the [API reference](./api-v1alpha1.md).
@@ -210,7 +210,7 @@ edit → routerctl validate → routerctl apply --once
                                  → render host artifacts
                                  → record state and exit
 
-routerd serve --controller-chain
+routerd serve
   → consumes state/events
   → starts / enables / reloads managed daemons
   → updates OS state (nftables / netlink / systemd) continuously
@@ -220,7 +220,7 @@ We strongly recommend keeping the configuration in git.
 Apply changes to production via routerd; do not run ad hoc commands such as `nft add rule`, `ip route add`, or `sysctl -w` directly on the host.
 Ad hoc changes are either reverted by the next reconcile or, worse, create drift between the routerd state DB and what the kernel actually has.
 
-The right response to drift is to express the new desired state in configuration and apply it again. `apply --once` must return quickly and hand daemon lifecycle to the controller chain; the long-running `serve --controller-chain` process keeps the configuration ↔ state DB ↔ OS state triangle aligned.
+The right response to drift is to express the new desired state in configuration and apply it again. `apply --once` must return quickly and hand daemon lifecycle to the controller runtime; the long-running `serve` process keeps the configuration ↔ state DB ↔ OS state triangle aligned.
 
 ---
 

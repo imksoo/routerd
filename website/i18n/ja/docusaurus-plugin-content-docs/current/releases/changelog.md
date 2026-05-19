@@ -48,7 +48,7 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   file lease で gate する `RouterdCluster` を追加しました。
 - Alpine/OpenRC 向け VRRP render support を追加しました。`routerd apply --once`
   が keepalived config artifact を書き、OpenRC の `keepalived` service 管理と
-  live VRRP role observation は controller-chain serve が担当します。Alpine 向け
+  live VRRP role observation は controller runtime が担当します。Alpine 向け
   Kubernetes VIP example も追加しました。
 - Alpine Live ISO の経路を改善し、VRRP controller の既定を live にし、
   `routerctl show vrrp` は live address から role を再観測します。version
@@ -57,7 +57,7 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - live VRRP reconcile で keepalived の no-op reload/restart を避け、
   最後に keepalived を reload/restart した時刻と理由を controller status に
   出すようにしました。
-- VRRP daemon lifecycle は controller-chain serve に限定しました。
+- VRRP daemon lifecycle は controller runtime に限定しました。
   `routerd apply --once` は keepalived artifact を render し、reload/restart
   せず controller handoff status を記録します。
 - IngressService の live nftables apply を独立 NAT44 dry-run mode から分離し、
@@ -106,11 +106,11 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - BGP の `apply --once` を daemon lifecycle から分離しました。`routerd apply
   --once` は FRR config と daemon artifact の render のみ行い、`bgpd` の
   enable/restart、`vtysh` validation、live reload、peer observation は
-  `routerd serve --controller-chain` が担当します。
+  `routerd serve` が担当します。
 - FRR JSON が数値フィールドを文字列として返す場合の BGP observation を修正し、
   `routerctl show bgp` は古い stored status を live `vtysh` output で更新して
   表示するようにしました。
-- FRR readiness と reload status は BGP controller 側に残し、controller-chain
+- FRR readiness と reload status は BGP controller 側に残し、controller runtime
   serve が pending/error state を報告できるようにしました。`apply --once` は
   `bgpd` や `frr-reload.py` を待ちません。
 - Web Console に Routes view と `/api/v1/routes` endpoint を追加しました。kernel、
@@ -180,7 +180,7 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ### 変更
 
-- 現在の controller-chain 設定 path では使われなくなった dead compatibility
+- 現在の controller runtime 設定 path では使われなくなった dead compatibility
   helper と旧 raw systemd unit renderer を削除しました。
 
 ## v20260517.2339
@@ -434,7 +434,7 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   古い host が無期限に残り続けません。
 - DHCP lease の統合では、まず有効期限が新しい lease を優先し、lease file の
   設定順は同条件の場合の tie-breaker としてだけ使います。
-- routerd は controller-chain の dnsmasq lease file を Web Console に先頭候補として渡します。
+- routerd は controller runtime の dnsmasq lease file を Web Console に先頭候補として渡します。
   これにより、管理対象 dnsmasq が実際に使う lease file に沿って表示します。
 
 ## v20260514.0654
@@ -988,20 +988,20 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 ### Changed
 
 - 実時間コネクション表示の API / CLI を `connections` に統一しました (旧称 `conntrack-snapshot`)。`/api/v1/connections`、`routerctl connections` を使います。IPv6 を含む全ファミリを同じ表で扱います。
-- NixOS 向けの宣言的レンダリングを拡張しました。`Package` (NixOS パッケージ宣言)、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit` を `routerd render nixos` の出力に統合します。NixOS 上の `Package` は実行時に導入せず、生成された NixOS 設定で管理します。
-- `SystemdUnit` から FreeBSD `rc.d` スクリプトを生成できるようになりました (`routerd render freebsd --out-dir`)。
+- NixOS 向けの宣言的レンダリングを拡張しました。`Package` (NixOS パッケージ宣言)、`SysctlProfile`、`NetworkAdoption`、`generated service artifacts` を `routerd render nixos` の出力に統合します。NixOS 上の `Package` は実行時に導入せず、生成された NixOS 設定で管理します。
+- `generated service artifacts` から FreeBSD `rc.d` スクリプトを生成できるようになりました (`routerd render freebsd --out-dir`)。
 
 ### Fixed
 
 - `IPv6DelegatedAddress` controller が `Link/<name>` の status が空のとき、PD 由来アドレスをホストインターフェースに付与しない問題を修正しました。
-- `SystemdUnit` controller が変更のない active unit を毎回再起動する問題を修正しました。
+- `generated service artifacts` controller が変更のない active unit を毎回再起動する問題を修正しました。
 
 ## 0.3.0
 
 ### Added
 
 - 宣言的な OS bootstrap リソースとして `Package` と `SysctlProfile` を追加しました。apt、dnf、nix、pkg のパッケージ宣言と、ルーター用途向けの sysctl 推奨値 (`nf_conntrack_max`、socket buffer、TCP/UDP timeout、`ip_forward` など) を 1 つのリソースで適用します。
-- `NetworkAdoption` で systemd-networkd の DHCP / RA を YAML から無効化できます。`SystemdUnit` で routerd 自身が unit を render + install + enable できます。
+- `NetworkAdoption` で systemd-networkd の DHCP / RA を YAML から無効化できます。`generated service artifacts` で routerd 自身が unit を render + install + enable できます。
 - `routerctl events --limit N --topic X --resource K/N -o json` で sqlite3 不要に bus event を確認できます。
 - `routerd plan --diff` で apply 前差分を表示します。
 - `DNSResolver` に bootstrap forwarder (RFC1918 内部 DNS を優先しつつ public DNS を予備にする) を追加しました。
@@ -1016,8 +1016,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ### Fixed
 
-- `SystemdUnit` 同士の `RuntimeDirectory` 競合で再起動時に socket が消える問題を、`runtimeDirectoryPreserve` で declarative に解消しました。
-- `SystemdUnit` の `state: absent` を正しく Drifted として検出し、unit 削除を plan に含めるようにしました。
+- `generated service artifacts` 同士の `RuntimeDirectory` 競合で再起動時に socket が消える問題を、`runtimeDirectoryPreserve` で declarative に解消しました。
+- `generated service artifacts` の `state: absent` を正しく Drifted として検出し、unit 削除を plan に含めるようにしました。
 - `SysctlProfile` の observe で型ゆらぎによる不要な drift を抑えました。
 
 ## 0.2.0

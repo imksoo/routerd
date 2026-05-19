@@ -132,7 +132,7 @@ routerd 的配置以资源集合表达。形式类似 Kubernetes，但 apiVersio
 | `net.routerd.net/v1alpha1` | 网络功能（Link、IPv4Static、DSLite、PPPoE、EgressRoute、HealthCheck 等） |
 | `dns.routerd.net/v1alpha1` | DNS（DNSZone、DNSResolver、DHCPv4Reservation 等） |
 | `firewall.routerd.net/v1alpha1` | Firewall（FirewallZone、FirewallPolicy、FirewallRule、NAT44Rule 等） |
-| `system.routerd.net/v1alpha1` | OS bootstrap（Package、SysctlProfile、SystemdUnit、NetworkAdoption、WebConsole 等） |
+| `system.routerd.net/v1alpha1` | OS bootstrap（Package、SysctlProfile、generated service artifacts、NetworkAdoption、WebConsole 等） |
 | `control.routerd.net/v1alpha1` | controller chain 与 routerctl 控制 API |
 
 完整清单见 [API 参考](/docs/reference/api-v1alpha1)。

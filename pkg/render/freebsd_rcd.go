@@ -19,30 +19,23 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	routerdSpec := RouterdServiceSystemdSpec()
+	routerdData, err := FreeBSDRCDScript("routerd", routerdSpec)
+	if err != nil {
+		return nil, err
+	}
+	out["routerd"] = routerdData
+	explicit["routerd"] = true
 	dpiSocket := ""
-	if hasSystemdUnit(router, DPIClassifierUnitName) {
+	if RouterWantsDPIClassifier(router) {
 		dpiSocket = "/var/run/routerd/dpi-classifier/default.sock"
 	}
 	wantsNDPIAgent := RouterWantsNDPIAgent(router)
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := res.SystemdUnitSpec()
+	if RouterWantsDPIClassifier(router) {
+		name := freeBSDServiceName(DPIClassifierUnitName)
+		data, err := FreeBSDRCDScript(name, DPIClassifierSystemdSpec("/var/run"))
 		if err != nil {
 			return nil, err
-		}
-		if defaultString(spec.State, "present") == "absent" {
-			continue
-		}
-		unitName := defaultString(spec.UnitName, res.Metadata.Name)
-		name := freeBSDServiceName(unitName)
-		explicit[name] = true
-		spec = MaybeAugmentDPIClassifierSpec(unitName, spec, freeBSDServiceName(NDPIAgentUnitName))
-		spec.Environment = mergeEnvironment(spec.Environment, telemetryEnv)
-		data, err := FreeBSDRCDScript(name, spec)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", res.ID(), err)
 		}
 		out[name] = data
 	}
@@ -266,26 +259,7 @@ func FreeBSDCARPRCDScript(config CARPConfigData) []byte {
 }
 
 func freeBSDRouterdSupervisesClientDaemons(router *api.Router) bool {
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "SystemdUnit" {
-			continue
-		}
-		spec, err := res.SystemdUnitSpec()
-		if err != nil || defaultString(spec.State, "present") == "absent" {
-			continue
-		}
-		unitName := defaultString(spec.UnitName, res.Metadata.Name)
-		if freeBSDServiceName(unitName) != "routerd" {
-			continue
-		}
-		if !containsFreeBSDArg(spec.ExecStart, "--controller-chain") {
-			continue
-		}
-		if freeBSDBoolFlagValue(spec.ExecStart, "--controller-chain-supervise-client-daemons", true) {
-			return true
-		}
-	}
-	return false
+	return true
 }
 
 func containsFreeBSDArg(args []string, needle string) bool {
@@ -581,13 +555,6 @@ func FreeBSDRCDScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
 	}
 	name = freeBSDServiceName(name)
 	execStartPre := spec.ExecStartPre
-	if name == "routerd" && containsFreeBSDArg(spec.ExecStart, "serve") && containsFreeBSDArg(spec.ExecStart, "--controller-chain") {
-		// Running a full apply from routerd's own rc.d prestart path races
-		// with the base rc boot sequence and may start services such as ntpd
-		// or dnsmasq twice. Boot-time interface state must be persisted in
-		// rc.conf by a normal apply before reboot.
-		execStartPre = nil
-	}
 	var buf bytes.Buffer
 	buf.WriteString("#!/bin/sh\n")
 	buf.WriteString("#\n")

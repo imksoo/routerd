@@ -267,11 +267,11 @@ exit 0
 	if got := statusStringMap(status, "phase"); got != "Rendered" {
 		t.Fatalf("phase = %q, want Rendered; status=%#v", got, status)
 	}
-	if got := statusStringMap(status, "applyWith"); got != "routerd serve --controller-chain" {
-		t.Fatalf("applyWith = %q, want controller-chain handoff; status=%#v", got, status)
+	if got := statusStringMap(status, "applyWith"); got != "routerd serve" {
+		t.Fatalf("applyWith = %q, want serve handoff; status=%#v", got, status)
 	}
 	if got := statusStringMap(status, "role"); got != "unknown" {
-		t.Fatalf("role = %q, want unknown before controller-chain observation; status=%#v", got, status)
+		t.Fatalf("role = %q, want unknown before serve observation; status=%#v", got, status)
 	}
 	commands, err := os.ReadFile(commandLog)
 	if err != nil {
@@ -401,53 +401,26 @@ exit 99
 	if got := statusStringMap(status, "phase"); got != "Rendered" {
 		t.Fatalf("phase = %q, want Rendered; status=%#v", got, status)
 	}
-	if got := statusStringMap(status, "applyWith"); got != "routerd serve --controller-chain" {
-		t.Fatalf("applyWith = %q, want controller-chain handoff; status=%#v", got, status)
+	if got := statusStringMap(status, "applyWith"); got != "routerd serve" {
+		t.Fatalf("applyWith = %q, want serve handoff; status=%#v", got, status)
 	}
 	if !strings.Contains(stdout.String(), "rendered BGP artifacts") || strings.Contains(stdout.String(), "observed BGP") || strings.Contains(stdout.String(), "applied bgp") {
 		t.Fatalf("stdout did not describe BGP as render-only:\n%s", stdout.String())
 	}
 }
 
-func TestActiveControllerDryRunModes(t *testing.T) {
-	got := activeControllerDryRunNames(controllerStatusesFromDryRunModes(map[string]bool{
-		"route": false,
-		"ra":    true,
-		"nat":   false,
-		"foo":   true,
-	}))
-	want := []string{"foo", "ra"}
-	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("activeControllerDryRunNames = %v, want %v", got, want)
+func TestControllerDefaultStatusesAreLive(t *testing.T) {
+	got := controllerDefaultStatuses()
+	if len(got) == 0 {
+		t.Fatal("controller statuses are empty")
 	}
-}
-
-func TestControllerStatusesFromDryRunModes(t *testing.T) {
-	got := controllerStatusesFromDryRunModes(map[string]bool{
-		"route": false,
-		"nat":   true,
-		"vrrp":  false,
-	})
-	if len(got) != 3 {
-		t.Fatalf("len = %d, want 3", len(got))
-	}
-	if got[0].Name != "nat" || got[0].Mode != "dry-run" {
-		t.Fatalf("first status = %+v, want nat dry-run", got[0])
-	}
-	if got[0].Reason != controlapi.ControllerModeReasonManual || got[0].Message == "" {
-		t.Fatalf("first reason = %q message = %q, want manual reason with message", got[0].Reason, got[0].Message)
-	}
-	if got[1].Name != "route" || got[1].Mode != "live" {
-		t.Fatalf("second status = %+v, want route live", got[1])
-	}
-	if got[1].Reason != controlapi.ControllerModeReasonLive || got[1].Message == "" {
-		t.Fatalf("second reason = %q message = %q, want live reason with message", got[1].Reason, got[1].Message)
-	}
-	if len(got[0].ResourceKinds) == 0 {
-		t.Fatalf("nat resource kinds should be populated")
-	}
-	if got[2].Name != "vrrp" || got[2].Mode != "live" || len(got[2].ResourceKinds) == 0 {
-		t.Fatalf("third status = %+v, want vrrp live with resource kinds", got[2])
+	for _, status := range got {
+		if status.Mode != "live" || status.Reason != controlapi.ControllerModeReasonLive {
+			t.Fatalf("status = %+v, want live", status)
+		}
+		if len(status.ResourceKinds) == 0 {
+			t.Fatalf("status = %+v missing resource kinds", status)
+		}
 	}
 }
 
@@ -864,13 +837,9 @@ exit 0
 			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "routerd-healthcheck@internet.service"},
-			Spec: api.SystemdUnitSpec{
-				ExecStart:        []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", "internet"},
-				RuntimeDirectory: []string{"routerd/healthcheck"},
-				StateDirectory:   []string{"routerd/healthcheck"},
-			},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+			Metadata: api.ObjectMeta{Name: "internet"},
+			Spec:     api.HealthCheckSpec{Daemon: "routerd-healthcheck", Target: "1.1.1.1", Protocol: "icmp"},
 		},
 	}}}
 
@@ -1014,13 +983,9 @@ exit 0
 			},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "routerd-healthcheck@internet.service"},
-			Spec: api.SystemdUnitSpec{
-				ExecStart:        []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", "internet"},
-				RuntimeDirectory: []string{"routerd/healthcheck"},
-				StateDirectory:   []string{"routerd/healthcheck"},
-			},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+			Metadata: api.ObjectMeta{Name: "internet"},
+			Spec:     api.HealthCheckSpec{Daemon: "routerd-healthcheck", Target: "1.1.1.1", Protocol: "icmp"},
 		},
 	}}}
 
@@ -1079,13 +1044,9 @@ exit 1
 			},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "routerd-healthcheck@internet.service"},
-			Spec: api.SystemdUnitSpec{
-				ExecStart:        []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", "internet"},
-				RuntimeDirectory: []string{"routerd/healthcheck"},
-				StateDirectory:   []string{"routerd/healthcheck"},
-			},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+			Metadata: api.ObjectMeta{Name: "internet"},
+			Spec:     api.HealthCheckSpec{Daemon: "routerd-healthcheck", Target: "1.1.1.1", Protocol: "icmp"},
 		},
 	}}}
 
@@ -1139,7 +1100,7 @@ exit 0
 	}
 }
 
-func TestApplySystemdUnitResourcesSchedulesRouterdRestart(t *testing.T) {
+func TestApplySystemdUnitResourcesNoopsWithoutConfigResource(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -1168,30 +1129,16 @@ exit 0
 		platformFeatures = oldFeatures
 	})
 
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd.service"}, Spec: api.SystemdUnitSpec{
-			Description: "routerd test",
-			ExecStart:   []string{"/usr/local/sbin/routerd", "serve", "--config", "/usr/local/etc/routerd/router.yaml"},
-		}},
-	}}}
+	router := &api.Router{Spec: api.RouterSpec{}}
 	changed, err := applySystemdUnitResources(router)
 	if err != nil {
 		t.Fatalf("apply systemd unit resources: %v", err)
 	}
-	if !stringSliceContains(changed, filepath.Join(platformDefaults.SystemdSystemDir, "routerd.service")) {
-		t.Fatalf("changed = %v, want routerd.service unit path", changed)
+	if len(changed) != 0 {
+		t.Fatalf("changed = %v, want no direct apply-time service manager changes", changed)
 	}
-	commands, err := os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatalf("read command log: %v", err)
-	}
-	gotCommands := string(commands)
-	if strings.Contains(gotCommands, "\nsystemctl restart routerd.service\n") || strings.HasPrefix(gotCommands, "systemctl restart routerd.service\n") {
-		t.Fatalf("routerd.service must not be directly restarted:\n%s", gotCommands)
-	}
-	if !strings.Contains(gotCommands, "systemd-run --unit routerd-self-restart-") ||
-		!strings.Contains(gotCommands, "--on-active=10s --collect systemctl restart routerd.service") {
-		t.Fatalf("routerd.service restart was not scheduled through systemd-run:\n%s", gotCommands)
+	if _, err := os.Stat(commandLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("apply --once path must not call service manager, command log err=%v", err)
 	}
 }
 
@@ -1251,25 +1198,20 @@ exit 0
 		platformFeatures = oldFeatures
 	})
 
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "smoke.service"}, Spec: api.SystemdUnitSpec{
-			Description: "smoke",
-			ExecStart:   []string{"/bin/sleep", "3600"},
-		}},
-	}}}
+	router := &api.Router{Spec: api.RouterSpec{}}
 	changed, err := applyOpenRCServiceResources(router)
 	if err != nil {
 		t.Fatalf("apply OpenRC service resources: %v", err)
 	}
-	if !containsString(changed, filepath.Join(platformDefaults.OpenRCScriptDir, "smoke")) {
-		t.Fatalf("changed = %v, want smoke OpenRC script", changed)
+	if !containsString(changed, filepath.Join(platformDefaults.OpenRCScriptDir, "routerd")) {
+		t.Fatalf("changed = %v, want routerd OpenRC script", changed)
 	}
 	commands, err := os.ReadFile(commandLog)
 	if err != nil {
 		t.Fatalf("read command log: %v", err)
 	}
 	first := string(commands)
-	for _, want := range []string{"rc-update add smoke default", "rc-service smoke status", "rc-service smoke start"} {
+	for _, want := range []string{"rc-update add routerd default", "rc-service routerd status", "rc-service routerd start"} {
 		if !strings.Contains(first, want) {
 			t.Fatalf("first apply missing %q:\n%s", want, first)
 		}
@@ -1331,11 +1273,9 @@ exit 0
 			}}},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
-			Metadata: api.ObjectMeta{Name: "routerd-healthcheck@internet.service"},
-			Spec: api.SystemdUnitSpec{
-				ExecStart: []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", "internet"},
-			},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+			Metadata: api.ObjectMeta{Name: "internet"},
+			Spec:     api.HealthCheckSpec{Daemon: "routerd-healthcheck", Target: "1.1.1.1", Protocol: "icmp"},
 		},
 	}}}
 

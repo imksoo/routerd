@@ -42,7 +42,7 @@ routerd は `/etc/nixos/routerd-generated.nix` に書き出すことでこれを
 - `routerd-dhcpv6-client` の systemd ユニット生成
 - `routerd-dhcpv4-client` の systemd ユニット生成
 - `routerd-pppoe-client` の systemd ユニット生成
-- `Package`、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit` の NixOS モジュール生成
+- `Package`、`SysctlProfile`、`NetworkAdoption`、`generated service artifacts` の NixOS モジュール生成
 - `nixos-rebuild switch` 後に DHCPv6-PD が `Bound` まで到達
 - dnsmasq、DNS リゾルバー、HealthCheck、ファイアウォールロガー、Tailscale、DHCPv4 クライアント、DHCPv6 クライアント、PPPoE クライアントのサービスを生成モジュールで宣言可能
 - NAT、firewall、policy routing、Path MTU リソースが必要とする nftables の有効化

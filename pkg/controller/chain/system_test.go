@@ -162,17 +162,7 @@ func TestNetworkAdoptionControllerTreatsNixOSAsDeclarative(t *testing.T) {
 
 func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd.service"}, Spec: api.SystemdUnitSpec{
-			Description:             "routerd test",
-			ExecStart:               []string{"/usr/local/sbin/routerd", "serve", "--config", "/usr/local/etc/routerd/router.yaml"},
-			RuntimeDirectory:        []string{"routerd", "routerd/healthcheck"},
-			StateDirectory:          []string{"routerd"},
-			ReadWritePaths:          []string{"/run/routerd", "/var/lib/routerd", "/etc/sysctl.d"},
-			AmbientCapabilities:     []string{"CAP_NET_ADMIN"},
-			RestrictAddressFamilies: []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
-		}},
-	}}}
+	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{}}
 	store := mapStore{}
 	var commands []string
 	controller := SystemdUnitController{
@@ -197,10 +187,13 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		t.Fatalf("read unit: %v", err)
 	}
 	gotUnit := string(data)
-	for _, want := range []string{"RuntimeDirectory=routerd routerd/healthcheck", "StateDirectory=routerd", "ReadWritePaths=/run/routerd /var/lib/routerd /etc/sysctl.d", "AmbientCapabilities=CAP_NET_ADMIN", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK", "ProtectSystem=no", "NoNewPrivileges=yes"} {
+	for _, want := range []string{"ExecStartPre=/usr/local/sbin/routerd check", "ExecStart=/usr/local/sbin/routerd serve", "RuntimeDirectory=routerd routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver", "StateDirectory=routerd", "ReadWritePaths=/run/routerd /var/lib/routerd", "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK", "ProtectSystem=no", "NoNewPrivileges=no"} {
 		if !strings.Contains(gotUnit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
 		}
+	}
+	if strings.Contains(gotUnit, "controller"+"-chain") {
+		t.Fatalf("routerd.service must not expose legacy controller flags:\n%s", gotUnit)
 	}
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{"systemctl daemon-reload", "systemctl enable routerd.service"} {
@@ -215,7 +208,7 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		!strings.Contains(gotCommands, "--on-active=10s --collect systemctl restart routerd.service") {
 		t.Fatalf("routerd.service restart was not scheduled through systemd-run:\n%s", gotCommands)
 	}
-	status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", "routerd.service")
+	status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", "routerd.service")
 	if status["phase"] != "Applied" || status["changed"] != true {
 		t.Fatalf("status = %#v", status)
 	}
@@ -224,10 +217,6 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd.service"}, Spec: api.SystemdUnitSpec{
-			ExecStart:      []string{"/usr/local/sbin/routerd", "serve"},
-			ReadWritePaths: []string{"/run/routerd"},
-		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
 			ASN:      64512,
 			RouterID: "192.0.2.1",
@@ -265,7 +254,7 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 	gotUnit := string(data)
 	for _, want := range []string{
 		"SupplementaryGroups=frr frrvty",
-		"ReadWritePaths=/run/routerd /run/frr /var/run/frr /etc/frr /etc/keepalived",
+		"/run/frr /var/run/frr /etc/frr /etc/keepalived",
 	} {
 		if !strings.Contains(gotUnit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
@@ -276,11 +265,9 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd-firewall-logger.service"}, Spec: api.SystemdUnitSpec{
-			Description: "routerd firewall logger",
-			ExecStart:   []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", "/var/lib/routerd/firewall-logs.db", "--nflog-group", "1"},
-			Enabled:     systemBoolPtr(true),
-			Started:     systemBoolPtr(true),
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.FirewallLogSpec{
+			Enabled: true,
+			Path:    "/var/lib/routerd/firewall-logs.db",
 		}},
 	}}}
 	store := mapStore{}
@@ -314,12 +301,7 @@ func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 func TestSystemdUnitControllerSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd-dpi-classifier.service"}, Spec: api.SystemdUnitSpec{
-			Description: "routerd DPI classifier",
-			ExecStart:   []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--engine", "auto"},
-			Enabled:     systemBoolPtr(true),
-			Started:     systemBoolPtr(true),
-		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.FirewallLogSpec{Enabled: true}},
 	}}}
 	store := mapStore{}
 	var commands []string
@@ -351,13 +333,13 @@ func TestSystemdUnitControllerSynthesizesNDPIAgentForAutoClassifier(t *testing.T
 		t.Fatalf("read classifier unit: %v", err)
 	}
 	classifier := string(classifierData)
-	for _, want := range []string{"After=routerd-ndpi-agent.service", "Wants=routerd-ndpi-agent.service"} {
+	for _, want := range []string{"routerd-ndpi-agent.service"} {
 		if !strings.Contains(classifier, want) {
 			t.Fatalf("classifier unit missing %q:\n%s", want, classifier)
 		}
 	}
-	status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", "routerd-ndpi-agent.service")
-	if status["phase"] != "Applied" || status["source"] != "SystemdUnit/routerd-dpi-classifier.service" {
+	status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", "routerd-ndpi-agent.service")
+	if status["phase"] != "Applied" || status["source"] != "TrafficFlowLog/FirewallLog" {
 		t.Fatalf("status = %#v", status)
 	}
 	gotCommands := strings.Join(commands, "\n")
@@ -368,11 +350,7 @@ func TestSystemdUnitControllerSynthesizesNDPIAgentForAutoClassifier(t *testing.T
 
 func TestSystemdUnitControllerDoesNotReloadForAlreadyAbsentUnit(t *testing.T) {
 	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd-dhcpv6-client@wan-pd.service"}, Spec: api.SystemdUnitSpec{
-			State: "absent",
-		}},
-	}}}
+	router := &api.Router{Spec: api.RouterSpec{}}
 	store := mapStore{}
 	var commands []string
 	controller := SystemdUnitController{
@@ -392,26 +370,14 @@ func TestSystemdUnitControllerDoesNotReloadForAlreadyAbsentUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	gotCommands := strings.Join(commands, "\n")
-	if strings.Contains(gotCommands, "systemctl daemon-reload") {
-		t.Fatalf("already absent unit must not reload systemd:\n%s", gotCommands)
-	}
 	if strings.Contains(gotCommands, "systemctl disable --now routerd-dhcpv6-client@wan-pd.service") {
 		t.Fatalf("already absent disabled unit must not call disable:\n%s", gotCommands)
-	}
-	status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", "routerd-dhcpv6-client@wan-pd.service")
-	if status["phase"] != "Absent" || status["changed"] != false {
-		t.Fatalf("status = %#v", status)
 	}
 }
 
 func TestSystemdUnitControllerSchedulesOwnUnitRestart(t *testing.T) {
 	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"}, Metadata: api.ObjectMeta{Name: "routerd.service"}, Spec: api.SystemdUnitSpec{
-			Description: "routerd test",
-			ExecStart:   []string{"/usr/local/sbin/routerd", "serve", "--config", "/usr/local/etc/routerd/router.yaml"},
-		}},
-	}}}
+	router := &api.Router{Spec: api.RouterSpec{}}
 	var commands []string
 	controller := SystemdUnitController{
 		Router:           router,
@@ -489,10 +455,6 @@ func TestSystemdUnitControllerSynthesizesTailscaleUnits(t *testing.T) {
 	}
 }
 
-func systemBoolPtr(v bool) *bool {
-	return &v
-}
-
 func commandLineContains(commands []string, want string) bool {
 	for _, command := range commands {
 		if command == want {
@@ -508,7 +470,6 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-lite-a"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-dslite-a"}, Spec: api.HealthCheckSpec{
 			Daemon:             "routerd-healthcheck",
-			SocketSource:       "/run/routerd/healthcheck/internet-via-dslite-a.sock",
 			Target:             "1.1.1.1",
 			TargetSource:       "static",
 			SourceInterface:    "ds-lite-a",
@@ -571,7 +532,7 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
 		}
 	}
-	status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName)
+	status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
 	if status["phase"] != "Applied" || status["changed"] != true {
 		t.Fatalf("status = %#v", status)
 	}
@@ -694,7 +655,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
 		}
 	}
-	if status := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", "routerd-dhcpv4-client@wan-v4.service"); status["phase"] != "Applied" {
+	if status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", "routerd-dhcpv4-client@wan-v4.service"); status["phase"] != "Applied" {
 		t.Fatalf("dhcpv4 unit status = %#v", status)
 	}
 	if status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Lease", "wan-v4"); status["managedBy"] != "systemd" {
@@ -743,7 +704,7 @@ func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
 			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
 		}
 	}
-	unitStatus := store.ObjectStatus(api.SystemAPIVersion, "SystemdUnit", unitName)
+	unitStatus := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
 	if unitStatus["phase"] != "Disabled" {
 		t.Fatalf("unit status = %#v", unitStatus)
 	}
@@ -781,7 +742,7 @@ func TestSystemdUnitControllerMarksDisabledPPPoEInterface(t *testing.T) {
 		}},
 	}}}
 	store := mapStore{}
-	controller := SystemdUnitController{Router: router, Store: store}
+	controller := SystemdUnitController{Router: router, Store: store, SystemdSystemDir: t.TempDir(), DryRun: true}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}

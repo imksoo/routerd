@@ -45,21 +45,12 @@ spec:
             manager: apk
             names:
               - busybox
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SystemdUnit
-      metadata:
-        name: routerd-smoke.service
-      spec:
-        description: routerd Alpine OpenRC smoke daemon
-        execStart:
-          - /bin/sleep
-          - "3600"
 EOF
 
 routerd validate --config "$config"
 routerd plan --config "$config" --status-file "${tmpdir}/plan-status.json" >/dev/null
 routerd render alpine --config "$config" --out-dir "${tmpdir}/render" >/dev/null
-test -x "${tmpdir}/render/openrc-routerd_smoke"
+test -x "${tmpdir}/render/openrc-routerd"
 
 if [ "${ROUTERD_ALPINE_VM_APPLY:-}" != "1" ]; then
     echo "validated Alpine VM smoke inputs; set ROUTERD_ALPINE_VM_APPLY=1 to exercise rc-update/rc-service" >&2

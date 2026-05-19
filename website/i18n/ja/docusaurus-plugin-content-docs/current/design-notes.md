@@ -78,14 +78,14 @@ OpenRC 対応は、まず applier ではなく renderer として始めます。
 
 最初に対応する OpenRC surface は狭く保ちます：
 
-- 明示的な `SystemdUnit` resource から OpenRC script への変換
+- 明示的な `generated service artifacts` resource から OpenRC script への変換
 - `routerd-healthcheck` script の自動生成
 - DHCP または RA resource が dnsmasq を必要とする場合の managed dnsmasq script 自動生成
 - DHCPv4 / DHCPv6 client、firewall logger、PPPoE、Tailscale の script 自動生成
 - DNS resolver script。resolver runtime config を controller loop 外で materialize できるまでは enable / start しません
 
 これは互換性の袋小路を避けるためです。
-API shape は当面 `SystemdUnit` のままですが、OpenRC に写すのは明確に init script の意味を持つ field に限ります：`ExecStart`、`ExecStartPre`、environment、working directory、user/group、runtime/state/log directory。
+API shape は当面 `generated service artifacts` のままですが、OpenRC に写すのは明確に init script の意味を持つ field に限ります：`ExecStart`、`ExecStartPre`、environment、working directory、user/group、runtime/state/log directory。
 systemd sandboxing、`NetworkAdoption`、networkd、resolved、timesyncd の意味は OpenRC 上で模倣しません。
 
 apply-time activation は `HasOpenRC` で分岐します。

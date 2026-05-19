@@ -436,7 +436,6 @@ type PPPoESessionSpec struct {
 	ACName          string `yaml:"acName,omitempty" json:"acName,omitempty"`
 	LCPEchoInterval int    `yaml:"lcpEchoInterval,omitempty" json:"lcpEchoInterval,omitempty" jsonschema:"minimum=0"`
 	LCPEchoFailure  int    `yaml:"lcpEchoFailure,omitempty" json:"lcpEchoFailure,omitempty" jsonschema:"minimum=0"`
-	SocketSource    string `yaml:"socketSource,omitempty" json:"socketSource,omitempty"`
 }
 
 type IPv4StaticAddressSpec struct {
@@ -1087,7 +1086,6 @@ type HealthCheckSpec struct {
 	Disabled           bool                  `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	Type               string                `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=ping"`
 	Daemon             string                `yaml:"daemon,omitempty" json:"daemon,omitempty" jsonschema:"enum=,enum=routerd-healthcheck"`
-	SocketSource       string                `yaml:"socketSource,omitempty" json:"socketSource,omitempty"`
 	Role               string                `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=link,enum=next-hop,enum=internet,enum=service,enum=policy"`
 	AddressFamily      string                `yaml:"addressFamily,omitempty" json:"addressFamily,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
 	Target             string                `yaml:"target,omitempty" json:"target,omitempty"`
@@ -1531,10 +1529,6 @@ func (r Resource) PackageSpec() (PackageSpec, error) {
 
 func (r Resource) NetworkAdoptionSpec() (NetworkAdoptionSpec, error) {
 	return specAs[NetworkAdoptionSpec](r)
-}
-
-func (r Resource) SystemdUnitSpec() (SystemdUnitSpec, error) {
-	return specAs[SystemdUnitSpec](r)
 }
 
 func (r Resource) NTPClientSpec() (NTPClientSpec, error) {

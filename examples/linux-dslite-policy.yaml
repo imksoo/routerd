@@ -339,7 +339,6 @@ spec:
       name: internet-tcp443
     spec:
       daemon: routerd-healthcheck
-      socketSource: /run/routerd/healthcheck/internet-tcp443.sock
       targetSource: static
       target: 1.1.1.1
       protocol: tcp
@@ -355,7 +354,6 @@ spec:
       name: internet-unreachable
     spec:
       daemon: routerd-healthcheck
-      socketSource: /run/routerd/healthcheck/internet-unreachable.sock
       targetSource: static
       target: 192.0.2.1
       protocol: tcp
@@ -370,7 +368,6 @@ spec:
       name: internet-icmp
     spec:
       daemon: routerd-healthcheck
-      socketSource: /run/routerd/healthcheck/internet-icmp.sock
       targetSource: static
       target: 1.1.1.1
       protocol: icmp
