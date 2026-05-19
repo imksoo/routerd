@@ -47,6 +47,10 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - 自动处理 IngressService 的同一 interface hairpin SNAT 和转发所需的 runtime
   `ip_forward` sysctl，并在 `routerctl show ingress --verbose` 中显示
   forwarding、nftables、conntrack 的 dataplane 状态。
+- 修复没有声明 listen-interface prefix 的 Live ISO 风格配置中的
+  IngressService `hairpin.mode: auto`：同一 private `/24` 内的 listen/backend
+  address 会被视为需要 hairpin，并在 verbose ingress 输出中提示预期的 nftables SNAT
+  是否缺失。
 
 ## v20260519.0743
 

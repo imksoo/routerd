@@ -1699,17 +1699,28 @@ func observeIngressDataplane(name string, spec api.IngressServiceSpec, status ma
 	row.NFTDNAT = nftDNAT
 	row.NFTSNAT = nftSNAT
 	if nftDetail != "" {
-		row.Detail = nftDetail
+		row.appendDetail(nftDetail)
+	}
+	if hairpinDetail := ingressHairpinDataplaneDetail(spec, status, nftSNAT); hairpinDetail != "" {
+		row.appendDetail(hairpinDetail)
 	}
 	count, detail := ingressConntrackCount(spec, status)
 	row.Conntrack = count
 	if detail != "" {
-		if row.Detail != "" {
-			row.Detail += "; "
-		}
-		row.Detail += detail
+		row.appendDetail(detail)
 	}
 	return row
+}
+
+func (r *ingressDataplaneRow) appendDetail(detail string) {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return
+	}
+	if r.Detail != "" {
+		r.Detail += "; "
+	}
+	r.Detail += detail
 }
 
 func dataplaneSysctlValue(key string) string {
@@ -1743,6 +1754,89 @@ func ingressNFTRuleCounts(name string) (int, int, string) {
 		}
 	}
 	return dnat, snat, ""
+}
+
+func ingressHairpinDataplaneDetail(spec api.IngressServiceSpec, status map[string]any, nftSNAT int) string {
+	mode := strings.TrimSpace(spec.Hairpin.Mode)
+	if mode == "" {
+		mode = "auto"
+	}
+	required := false
+	switch mode {
+	case "off":
+		required = false
+	case "manual":
+		required = spec.Hairpin.Enabled || len(spec.Hairpin.Interfaces) > 0
+	case "auto":
+		required = ingressShowAutoHairpinRequired(spec, status)
+	default:
+		return "hairpinMode=" + mode
+	}
+	state := "nft_snat=not-required"
+	if required && nftSNAT == 0 {
+		state = "nft_snat=missing"
+	} else if required {
+		state = "nft_snat=present"
+	} else if nftSNAT > 0 {
+		state = "nft_snat=present"
+	}
+	return fmt.Sprintf("hairpinMode=%s hairpinRequired=%t %s", mode, required, state)
+}
+
+func ingressShowAutoHairpinRequired(spec api.IngressServiceSpec, status map[string]any) bool {
+	listen := statusString(status["listenAddress"])
+	if listen == "" {
+		listen = spec.Listen.Address
+	}
+	listenAddr, err := netip.ParseAddr(strings.TrimSpace(listen))
+	if err != nil || !listenAddr.Is4() {
+		return false
+	}
+	for _, backend := range ingressShowBackendAddresses(spec, status) {
+		addr, err := netip.ParseAddr(backend)
+		if err == nil && addr.Is4() && ingressShowSamePrivateIPv4Slash24(listenAddr, addr) {
+			return true
+		}
+	}
+	return false
+}
+
+func ingressShowBackendAddresses(spec api.IngressServiceSpec, status map[string]any) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			return
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	for _, backend := range statusMaps(status["backends"]) {
+		add(statusString(backend["resolvedAddress"]))
+		if address := statusString(backend["address"]); net.ParseIP(address) != nil {
+			add(address)
+		}
+	}
+	if active := statusMap(status["activeBackend"]); len(active) > 0 {
+		add(statusString(active["resolvedAddress"]))
+		if address := statusString(active["address"]); net.ParseIP(address) != nil {
+			add(address)
+		}
+	}
+	for _, backend := range spec.Backends {
+		if net.ParseIP(backend.Address) != nil {
+			add(backend.Address)
+		}
+	}
+	return out
+}
+
+func ingressShowSamePrivateIPv4Slash24(a, b netip.Addr) bool {
+	if !a.Is4() || !b.Is4() || !a.IsPrivate() || !b.IsPrivate() {
+		return false
+	}
+	return netip.PrefixFrom(a, 24).Contains(b)
 }
 
 func ingressConntrackCount(spec api.IngressServiceSpec, status map[string]any) (string, string) {

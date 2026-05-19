@@ -62,6 +62,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `ip_forward` sysctls for forwarding configs, and added
   `routerctl show ingress --verbose` dataplane checks for forwarding, nftables,
   and conntrack state.
+- Fixed IngressService `hairpin.mode: auto` for live ISO-style configs without
+  a declared listen-interface prefix by treating same private `/24`
+  listen/backend addresses as hairpin-required, and made verbose ingress output
+  warn when the expected nftables SNAT is missing.
 
 ## v20260519.0743
 

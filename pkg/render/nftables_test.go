@@ -765,6 +765,31 @@ func TestNftablesIngressServiceAutoHairpinForSameInterfaceSubnet(t *testing.T) {
 	}
 }
 
+func TestNftablesIngressServiceAutoHairpinFallsBackToPrivateSlash24(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "kubernetes-api"}, Spec: api.IngressServiceSpec{
+				Listen: api.IngressListenSpec{Interface: "lan", Address: "192.168.1.248", Protocol: "tcp", Port: 6443},
+				Backends: []api.IngressBackendSpec{
+					{Name: "cp-01", Address: "192.168.1.54", Port: 6443},
+					{Name: "cp-02", Address: "192.168.1.55", Port: 6443},
+					{Name: "cp-03", Address: "192.168.1.56", Port: 6443},
+				},
+			}},
+		}},
+	}
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	want := `iifname "eth0" ip daddr 192.168.1.54 tcp dport 6443 ct original ip daddr 192.168.1.248 ct original proto-dst 6443 counter masquerade comment "routerd IngressService kubernetes-api hairpin"`
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables output missing fallback auto hairpin SNAT %q:\n%s", want, got)
+	}
+}
+
 func TestNftablesIngressServiceSourceHashDistributesBackends(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

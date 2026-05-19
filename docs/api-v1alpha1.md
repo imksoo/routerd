@@ -304,8 +304,12 @@ the return-path masquerade/NAT reflection rule. `listen.addressFrom` and backend
 `IngressService` treats omitted `spec.hairpin.mode` as `auto`: when the listen
 address and the selected backend are on a prefix declared for the same listen
 interface, routerd automatically emits the same-interface return-path SNAT
-needed for LAN clients to use the VIP. Set `spec.hairpin.mode: off` to suppress
-that behavior, or `manual` with `interfaces` for explicit NAT reflection.
+needed for LAN clients to use the VIP. If no listen-interface prefix is
+declared in YAML, auto mode also treats private IPv4 listen/backend addresses
+in the same `/24` as hairpin-required, which covers live ISO deployments where
+the interface address is inherited from the boot environment. Set
+`spec.hairpin.mode: off` to suppress that behavior, or `manual` with
+`interfaces` for explicit NAT reflection.
 `IngressService` accepts multiple backends, TCP/HTTP health checks, and
 `failover`, `sourceHash`, or `random` backend selection. The runtime controller
 resolves backend FQDNs, falls back to the previous resolved IPv4 address when DNS
@@ -323,6 +327,8 @@ records. Set `spec.externalDNS: true` when AD DNS or another external DNS system
 owns the name. `routerctl show ingress` shows active backend and per-backend
 health; `routerctl show ingress --verbose` also samples the live dataplane
 (`ip_forward`, nftables DNAT/SNAT rule counts, and matching conntrack flows).
+The `DETAIL` column reports `hairpinMode`, whether hairpin is required, and
+whether the expected nftables SNAT rule is present or missing.
 Ingress and NAT-like resources automatically enable runtime
 `net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1` during apply or
 controller reconcile, even when no explicit `SysctlProfile` is present. During

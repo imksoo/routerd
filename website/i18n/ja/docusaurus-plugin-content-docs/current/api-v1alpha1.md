@@ -198,8 +198,10 @@ DNAT と戻り経路用の masquerade/NAT reflection を生成します。
 `IngressService` では `spec.hairpin.mode` 未指定を `auto` として扱います。
 listen address と選択済み backend が listen interface に宣言された同じ prefix 上に
 ある場合、routerd は LAN client が VIP を使うために必要な同一 interface の戻り
-SNAT を自動生成します。抑止する場合は `spec.hairpin.mode: off`、明示指定する場合は
-`manual` と `interfaces` を使います。
+SNAT を自動生成します。YAML に listen interface の prefix が宣言されていない場合も、
+private IPv4 の listen/backend address が同じ `/24` にあれば hairpin が必要と判断します。
+これは Live ISO のように boot 環境から interface address を引き継ぐ構成をカバーします。
+抑止する場合は `spec.hairpin.mode: off`、明示指定する場合は `manual` と `interfaces` を使います。
 `VirtualIPv4Address.spec.vrrp.authentication` は keepalived では `auth_pass`、
 FreeBSD CARP では `pass` として描画されます。本番構成では routerd YAML に
 共有 secret を残さないため、`VirtualIPv4Address.spec.vrrp.authenticationFrom`
@@ -304,7 +306,9 @@ listen address の A record として DNSResolver に自動反映できます。
 管理する場合は `spec.externalDNS: true` を設定してください。
 `routerctl show ingress` は active backend と backend ごとの health を表示します。
 `routerctl show ingress --verbose` は live dataplane の `ip_forward`、nftables
-DNAT/SNAT rule 数、該当 conntrack flow 数も表示します。Ingress/NAT 系 resource が
+DNAT/SNAT rule 数、該当 conntrack flow 数も表示します。`DETAIL` column には
+`hairpinMode`、hairpin が必要か、期待される nftables SNAT rule が present/missing
+のどちらかも出します。Ingress/NAT 系 resource が
 ある場合、明示的な `SysctlProfile` がなくても apply/controller reconcile 時に
 runtime の `net.ipv4.ip_forward=1` と `net.ipv6.conf.all.forwarding=1` を自動適用します。
 保守中は `routerctl drain

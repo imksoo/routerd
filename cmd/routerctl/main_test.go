@@ -531,12 +531,38 @@ EOF
 	if !strings.Contains(strings.Join(strings.Fields(got), " "), "kubernetes-api 1 1 1 1 1") {
 		t.Fatalf("verbose ingress dataplane counts were not rendered:\n%s", got)
 	}
+	if !strings.Contains(got, "hairpinMode=auto hairpinRequired=true nft_snat=present") {
+		t.Fatalf("verbose ingress output missing hairpin detail:\n%s", got)
+	}
 }
 
 func writeTestCommand(t *testing.T, path, script string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestIngressHairpinDataplaneDetailWarnsWhenAutoSNATMissing(t *testing.T) {
+	spec := api.IngressServiceSpec{
+		Listen: api.IngressListenSpec{Address: "192.168.1.248", Protocol: "tcp", Port: 6443},
+		Backends: []api.IngressBackendSpec{
+			{Name: "cp-01", Address: "192.168.1.54", Port: 6443},
+		},
+	}
+	status := map[string]any{
+		"listenAddress": "192.168.1.248",
+		"backends": []map[string]any{{
+			"name":            "cp-01",
+			"resolvedAddress": "192.168.1.54",
+			"port":            6443,
+			"healthy":         true,
+		}},
+	}
+	got := ingressHairpinDataplaneDetail(spec, status, 0)
+	want := "hairpinMode=auto hairpinRequired=true nft_snat=missing"
+	if got != want {
+		t.Fatalf("detail = %q, want %q", got, want)
 	}
 }
 

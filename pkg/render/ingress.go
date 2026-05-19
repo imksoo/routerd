@@ -194,7 +194,20 @@ func ingressNeedsSameInterfaceHairpin(router *api.Router, listenInterface, liste
 			}
 		}
 	}
+	for _, target := range targets {
+		targetAddr, err := netip.ParseAddr(strings.TrimSpace(target.Address))
+		if err == nil && targetAddr.Is4() && ingressSamePrivateIPv4Slash24(listenAddr, targetAddr) {
+			return true
+		}
+	}
 	return false
+}
+
+func ingressSamePrivateIPv4Slash24(a, b netip.Addr) bool {
+	if !a.Is4() || !b.Is4() || !a.IsPrivate() || !b.IsPrivate() {
+		return false
+	}
+	return netip.PrefixFrom(a, 24).Contains(b)
 }
 
 func ingressInterfaceIPv4Prefixes(router *api.Router, interfaceName string) []netip.Prefix {

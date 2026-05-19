@@ -64,6 +64,10 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - IngressService の同一 interface hairpin SNAT と forwarding 用 runtime
   `ip_forward` sysctl を自動適用し、`routerctl show ingress --verbose` で
   forwarding、nftables、conntrack の dataplane 状態を確認できるようにしました。
+- listen interface prefix が YAML に無い Live ISO 風構成でも、
+  private `/24` 内の IngressService listen/backend address は
+  `hairpin.mode: auto` で hairpin が必要と判定するようにし、verbose ingress 出力は
+  期待される nftables SNAT が無い場合に warning を出すようにしました。
 
 ## v20260519.0743
 
