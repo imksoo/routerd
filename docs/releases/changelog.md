@@ -102,14 +102,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Fixed
 
-- Fixed BGP bootstrap parity so `routerd apply --once` enables `bgpd`, restarts
-  FRR when needed, loads the generated FRR config, and records live peer state
-  through the same controller path as daemon mode.
+- Separated BGP apply-once rendering from daemon lifecycle. `routerd apply
+  --once` now writes the FRR config and daemon artifact only; `routerd serve
+  --controller-chain` owns bgpd enable/restart, `vtysh` validation, live reload,
+  and peer observation.
 - Fixed BGP observation for FRR JSON fields emitted as strings and made
   `routerctl show bgp` refresh stale stored status from live `vtysh` output.
-- Fixed FRR bootstrap reload ordering by waiting for `bgpd` readiness before
-  running `frr-reload.py`, with a bounded timeout so `apply --once` fails with
-  controller status instead of hanging.
+- Kept FRR readiness and reload status in the BGP controller path so
+  controller-chain serve can report pending/error state without making
+  `apply --once` wait on bgpd or `frr-reload.py`.
 - Added a Web Console Routes view and `/api/v1/routes` endpoint that combines
   kernel, BGP, static, DHCP, and policy route information with BGP peer state.
 

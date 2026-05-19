@@ -278,53 +278,19 @@ exit 0
 	}
 }
 
-func TestRunApplyOnceBGPBootstrapsFRR(t *testing.T) {
+func TestRunApplyOnceBGPRendersFRRArtifactsWithoutDaemonLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		t.Fatalf("create fake bin dir: %v", err)
 	}
 	commandLog := filepath.Join(dir, "commands.log")
-	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
-echo "systemctl $@" >> %q
-exit 0
-`, commandLog))
-	writeExecutable(t, filepath.Join(binDir, "frr-reload.py"), fmt.Sprintf(`#!/bin/sh
-echo "frr-reload.py $@" >> %q
-exit 0
-`, commandLog))
-	writeExecutable(t, filepath.Join(binDir, "ss"), fmt.Sprintf(`#!/bin/sh
-echo "ss $@" >> %q
-cat <<'EOF'
-State  Recv-Q Send-Q Local Address:Port Peer Address:Port
-LISTEN 0      4096         0.0.0.0:179      0.0.0.0:*
-EOF
-exit 0
-`, commandLog))
-	writeExecutable(t, filepath.Join(binDir, "vtysh"), fmt.Sprintf(`#!/bin/sh
-echo "vtysh $@" >> %q
-case "$*" in
-  "-C -f "*)
-    test -s "$3"
-    exit $?
-    ;;
-  "-c show running-config")
-    echo ""
-    exit 0
-    ;;
-  "-c show bgp summary json")
-    cat <<'JSON'
-{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":"64513","state":"Established","pfxRcd":"2","msgRcvd":"12","msgSent":"11"}}}}
-JSON
-    exit 0
-    ;;
-  "-c show bgp ipv4 unicast json")
-    echo '{"routes":{"10.250.0.10/32":[{"valid":true,"bestpath":true}]}}'
-    exit 0
-    ;;
-esac
-exit 1
-`, commandLog))
+	for _, name := range []string{"systemctl", "rc-service", "ss", "vtysh", "frr-reload.py"} {
+		writeExecutable(t, filepath.Join(binDir, name), fmt.Sprintf(`#!/bin/sh
+echo "%s $@" >> %q
+exit 99
+`, name, commandLog))
+	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	oldDefaults := platformDefaults
@@ -403,19 +369,18 @@ exit 1
 	if !strings.Contains(string(config), "router bgp 64512") || !strings.Contains(string(config), "neighbor 10.0.0.21 remote-as 64513") {
 		t.Fatalf("frr config missing bgp stanza:\n%s", config)
 	}
-	commands, err := os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatalf("read command log: %v", err)
-	}
-	for _, want := range []string{
-		"systemctl enable frr.service",
-		"systemctl restart frr.service",
-		"ss -ltn",
-		"vtysh -C -f " + runtimeFRRConfigPath,
-		"frr-reload.py --reload " + runtimeFRRConfigPath,
-	} {
-		if !strings.Contains(string(commands), want) {
-			t.Fatalf("command log missing %q:\n%s", want, commands)
+	if commands, err := os.ReadFile(commandLog); err == nil {
+		for _, unwanted := range []string{
+			"systemctl enable frr.service",
+			"systemctl restart frr.service",
+			"rc-service frr restart",
+			"ss -ltn",
+			"vtysh ",
+			"frr-reload.py ",
+		} {
+			if strings.Contains(string(commands), unwanted) {
+				t.Fatalf("apply --once must not run BGP daemon lifecycle command %q:\n%s", unwanted, commands)
+			}
 		}
 	}
 	store, err := routerstate.OpenSQLite(statePath)
@@ -424,14 +389,14 @@ exit 1
 	}
 	defer func() { _ = store.Close() }()
 	status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if got := statusStringMap(status, "phase"); got != "Established" {
-		t.Fatalf("phase = %q, want Established; status=%#v", got, status)
+	if got := statusStringMap(status, "phase"); got != "Rendered" {
+		t.Fatalf("phase = %q, want Rendered; status=%#v", got, status)
 	}
-	if got := statusIntMap(status, "establishedPeers"); got != 1 {
-		t.Fatalf("establishedPeers = %d, want 1; status=%#v", got, status)
+	if got := statusStringMap(status, "applyWith"); got != "routerd serve --controller-chain" {
+		t.Fatalf("applyWith = %q, want controller-chain handoff; status=%#v", got, status)
 	}
-	if !strings.Contains(stdout.String(), "applied bgp") || !strings.Contains(stdout.String(), "observed BGP lan=1/1") {
-		t.Fatalf("stdout missing BGP apply/observe lines:\n%s", stdout.String())
+	if !strings.Contains(stdout.String(), "rendered BGP artifacts") || strings.Contains(stdout.String(), "observed BGP") || strings.Contains(stdout.String(), "applied bgp") {
+		t.Fatalf("stdout did not describe BGP as render-only:\n%s", stdout.String())
 	}
 }
 

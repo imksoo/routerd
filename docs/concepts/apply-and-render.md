@@ -34,11 +34,11 @@ routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run
 
 ## Apply
 
-`routerd apply` mutates the host to match the YAML intent. Use `--once` to run a single pass; use `routerd serve` for the long-running daemon mode.
+`routerd apply --once` is a bounded host pass: it validates intent, observes the current host where needed, writes rendered artifacts, records state, and exits. It does not own long-running daemon lifecycle. Starting, enabling, restarting, or reloading managed daemons is the responsibility of `routerd serve --controller-chain`.
 
 ```bash
 sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
-sudo routerd serve --config /usr/local/etc/routerd/router.yaml
+sudo routerd serve --config /usr/local/etc/routerd/router.yaml --controller-chain
 ```
 
 ## Render

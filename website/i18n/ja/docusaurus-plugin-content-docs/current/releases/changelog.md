@@ -103,16 +103,16 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ### 修正
 
-- BGP bootstrap の daemon mode / `routerd apply --once` 差分を修正しました。
-  `BGPRouter` がある場合は `bgpd` を enable し、必要に応じて FRR を restart して
-  生成済み FRR config を読み込み、live peer state を同じ controller 経路で
-  保存します。
+- BGP の `apply --once` を daemon lifecycle から分離しました。`routerd apply
+  --once` は FRR config と daemon artifact の render のみ行い、`bgpd` の
+  enable/restart、`vtysh` validation、live reload、peer observation は
+  `routerd serve --controller-chain` が担当します。
 - FRR JSON が数値フィールドを文字列として返す場合の BGP observation を修正し、
   `routerctl show bgp` は古い stored status を live `vtysh` output で更新して
   表示するようにしました。
-- FRR bootstrap reload の順序を修正し、`frr-reload.py` 実行前に `bgpd` の ready を
-  待つようにしました。timeout を設け、`apply --once` が hang せず controller status
-  に reason を残して失敗します。
+- FRR readiness と reload status は BGP controller 側に残し、controller-chain
+  serve が pending/error state を報告できるようにしました。`apply --once` は
+  `bgpd` や `frr-reload.py` を待ちません。
 - Web Console に Routes view と `/api/v1/routes` endpoint を追加しました。kernel、
   BGP、static、DHCP、policy route 情報と BGP peer state を同じ画面で確認できます。
 

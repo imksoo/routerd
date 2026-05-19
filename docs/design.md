@@ -203,18 +203,24 @@ For details, see [reconcile loop behaviour](./operations/reconcile).
 The routerd configuration file (default `/usr/local/etc/routerd/router.yaml`) is rolled out as follows.
 
 ```
-edit → routerctl validate → routerctl apply (or auto reload)
+edit → routerctl validate → routerctl apply --once
                               │
-                              └─ controller chain updates the state DB
-                                 → daemons restart / reload
-                                 → OS state (nftables / netlink / systemd) is updated
+                              └─ observe host state
+                                 → plan
+                                 → render host artifacts
+                                 → record state and exit
+
+routerd serve --controller-chain
+  → consumes state/events
+  → starts / enables / reloads managed daemons
+  → updates OS state (nftables / netlink / systemd) continuously
 ```
 
 We strongly recommend keeping the configuration in git.
 Apply changes to production via routerd; do not run ad hoc commands such as `nft add rule`, `ip route add`, or `sysctl -w` directly on the host.
 Ad hoc changes are either reverted by the next reconcile or, worse, create drift between the routerd state DB and what the kernel actually has.
 
-The right response to drift is to express the new desired state in configuration and apply it again. That keeps the configuration ↔ state DB ↔ OS state triangle aligned.
+The right response to drift is to express the new desired state in configuration and apply it again. `apply --once` must return quickly and hand daemon lifecycle to the controller chain; the long-running `serve --controller-chain` process keeps the configuration ↔ state DB ↔ OS state triangle aligned.
 
 ---
 
