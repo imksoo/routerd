@@ -106,6 +106,63 @@ func TestValidateBGPTimersRejectsInvalidHoldTime(t *testing.T) {
 	}
 }
 
+func TestValidateBGPBFDAndWatcher(t *testing.T) {
+	enabled := true
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64512,
+				RouterID: "10.240.70.2",
+				Watcher:  api.BGPWatcherSpec{PollInterval: "5s", MaxPrefixes: 10000, PeerStateChangeThrottle: "5s"},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64513,
+				Peers:     []string{"10.240.70.21"},
+				BFD: api.BGPBFDSpec{
+					Enabled:          &enabled,
+					MinRxInterval:    "300ms",
+					MinTxInterval:    "300ms",
+					DetectMultiplier: 3,
+				},
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("valid BFD/watcher config should validate: %v", err)
+	}
+
+	peerSpec := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
+	peerSpec.BFD.MinRxInterval = "10ms"
+	router.Spec.Resources[1].Spec = peerSpec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.bfd.minRxInterval") {
+		t.Fatalf("expected minRx validation error, got %v", err)
+	}
+	peerSpec.BFD.MinRxInterval = "300ms"
+	peerSpec.BFD.Enabled = nil
+	router.Spec.Resources[1].Spec = peerSpec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "timer fields require") {
+		t.Fatalf("expected disabled BFD timer validation error, got %v", err)
+	}
+
+	peerSpec.BFD.Enabled = &enabled
+	router.Spec.Resources[1].Spec = peerSpec
+	routerSpec := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
+	routerSpec.Watcher.PollInterval = "2s"
+	router.Spec.Resources[0].Spec = routerSpec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.watcher.pollInterval") {
+		t.Fatalf("expected watcher poll interval validation error, got %v", err)
+	}
+	routerSpec.Watcher.PollInterval = "5s"
+	routerSpec.Watcher.MaxPrefixes = 1000000
+	router.Spec.Resources[0].Spec = routerSpec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.watcher.maxPrefixes") {
+		t.Fatalf("expected watcher maxPrefixes validation error, got %v", err)
+	}
+}
+
 func TestValidateBGPRedistributeRejectsImportOverlap(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

@@ -198,11 +198,16 @@ validates it with `vtysh -C -f`, applies deltas with
 `frr-reload.py --reload`, watches FRR JSON status through `BGPStateWatcher`,
 and stores peer/prefix status for `routerctl`, Web Console resources, events,
 and OTel metrics. `routerctl show bgp` summarizes routers, peers, message
-counters, and last errors. The controller interval is 15 seconds and must not
-be lowered below 3 seconds by future tuning; observed prefix status is capped at
-4096 entries to avoid high-cardinality status churn. Import policy is default
-deny; add `spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer
-pools. Accepted imports set `ip next-hop peer-address` so Kubernetes-advertised
+counters, BFD status, and last errors. `BGPPeer.spec.bfd` enables FRR BFD for
+peers that need sub-second failure detection; when any managed peer uses BFD,
+routerd also keeps `bgpd=yes` and `bfdd=yes` in the FRR daemons file and
+restarts `frr.service` only when those daemon toggles change. The
+watcher defaults to a 15 second controller interval and 4096 observed prefixes,
+and `BGPRouter.spec.watcher` can tune `pollInterval`, `maxPrefixes`, and
+`peerStateChangeThrottle`; validation rejects intervals below 3 seconds and
+prefix caps of 1,000,000 or more. Import policy is default deny; add
+`spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer pools. Accepted
+imports set `ip next-hop peer-address` so Kubernetes-advertised
 `/32` routes remain reachable through the advertising speaker. `BGPRouter` can
 redistribute connected and static IPv4 routes with independent
 `allowedPrefixes`; routerd renders FRR `redistribute connected/static route-map`

@@ -67,3 +67,32 @@ func TestLimitPrefixes(t *testing.T) {
 		t.Fatalf("LimitPrefixes mutated input: %#v", state)
 	}
 }
+
+func TestParseFRRBFDPeersJSONAndAttach(t *testing.T) {
+	data := []byte(`{
+	  "peers": {
+	    "10.0.0.21": {
+	      "status": "up",
+	      "lastUp": "2026-05-19T00:00:00Z"
+	    },
+	    "10.0.0.22": {
+	      "status": "down",
+	      "lastDown": "2026-05-19T00:01:00Z"
+	    }
+	  }
+	}`)
+	bfd, err := ParseFRRBFDPeersJSON(data)
+	if err != nil {
+		t.Fatalf("parse BFD peers: %v", err)
+	}
+	state := AttachBFD(State{Peers: []Peer{
+		{Address: "10.0.0.21", State: "Established"},
+		{Address: "10.0.0.23", State: "Idle"},
+	}}, bfd)
+	if state.Peers[0].BFD == nil || state.Peers[0].BFD.State != "up" || state.Peers[0].BFD.LastUp != "2026-05-19T00:00:00Z" {
+		t.Fatalf("attached BFD = %#v", state.Peers[0].BFD)
+	}
+	if state.Peers[1].BFD != nil {
+		t.Fatalf("unexpected BFD on unmatched peer: %#v", state.Peers[1].BFD)
+	}
+}

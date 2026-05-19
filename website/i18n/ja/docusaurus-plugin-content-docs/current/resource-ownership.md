@@ -33,7 +33,7 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `IPv4Route` | カーネル経路 |
 | `NAT44Rule` | nftables `routerd_nat` テーブル |
 | `PortForward` / `IngressService` | Linux nftables の `routerd_nat` / `routerd_filter` DNAT、任意の hairpin SNAT、または FreeBSD `pf.conf` の `rdr pass` / 任意の NAT reflection ルール |
-| `BGPRouter` / `BGPPeer` | `/run/routerd/frr/routerd.conf` の FRR BGP 設定と `frr-reload.py` 適用 |
+| `BGPRouter` / `BGPPeer` | `/run/routerd/frr/routerd.conf` の FRR BGP 設定と `frr-reload.py` 適用。BFD daemon state 変更時の `/etc/frr/daemons` `bgpd` / `bfdd` toggle と `frr.service` restart |
 | `VirtualIPv4Address` | `ip addr` / `ifconfig` による static VIP、または Linux keepalived / FreeBSD CARP による VRRP VIP ownership |
 | `WireGuardInterface` / `WireGuardPeer` | WireGuard 設定 |
 | `TailscaleNode` | `routerd-tailscale-<name>` service unit / script と `tailscale up` 引数 |

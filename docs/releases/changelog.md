@@ -24,6 +24,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added multi-instance `BGPRouter` support with VRF-backed FRR BGP instances,
   listen-address collision validation, per-router observed status, and
   `examples/multi-instance-bgp.yaml`.
+- Added BFD support for FRR-managed BGP peers, FRR `bfdd` daemon rendering,
+  BGP watcher tuning fields, BFD status observation, and
+  `examples/bgp-bfd.yaml`.
 
 ## v20260519.0743
 

@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
 	"routerd/pkg/api"
 )
@@ -163,6 +164,53 @@ func validateBGPCommunities(resourceID, path string, spec api.BGPCommunitiesSpec
 	return nil
 }
 
+func validateBGPBFD(resourceID string, spec api.BGPBFDSpec) error {
+	if spec.Enabled == nil || !*spec.Enabled {
+		if spec.MinRxInterval != "" || spec.MinTxInterval != "" || spec.DetectMultiplier != 0 {
+			return fmt.Errorf("%s spec.bfd timer fields require spec.bfd.enabled: true", resourceID)
+		}
+		return nil
+	}
+	for _, item := range []struct {
+		field string
+		value string
+	}{
+		{field: "minRxInterval", value: spec.MinRxInterval},
+		{field: "minTxInterval", value: spec.MinTxInterval},
+	} {
+		if strings.TrimSpace(item.value) == "" {
+			continue
+		}
+		ms, err := parseDurationMilliseconds(item.value)
+		if err != nil || ms < 50 || ms > 60000 {
+			return fmt.Errorf("%s spec.bfd.%s must be between 50ms and 60000ms", resourceID, item.field)
+		}
+	}
+	if spec.DetectMultiplier < 0 || spec.DetectMultiplier > 50 {
+		return fmt.Errorf("%s spec.bfd.detectMultiplier must be within 1-50 when set", resourceID)
+	}
+	return nil
+}
+
+func validateBGPWatcher(resourceID string, spec api.BGPWatcherSpec) error {
+	if strings.TrimSpace(spec.PollInterval) != "" {
+		duration, err := time.ParseDuration(spec.PollInterval)
+		if err != nil || duration < 3*time.Second {
+			return fmt.Errorf("%s spec.watcher.pollInterval must be at least 3s", resourceID)
+		}
+	}
+	if spec.MaxPrefixes < 0 || spec.MaxPrefixes >= 1000000 {
+		return fmt.Errorf("%s spec.watcher.maxPrefixes must be less than 1000000 when set", resourceID)
+	}
+	if strings.TrimSpace(spec.PeerStateChangeThrottle) != "" {
+		duration, err := time.ParseDuration(spec.PeerStateChangeThrottle)
+		if err != nil || duration < 0 {
+			return fmt.Errorf("%s spec.watcher.peerStateChangeThrottle must be a non-negative duration", resourceID)
+		}
+	}
+	return nil
+}
+
 func validateBGPCommunityList(resourceID, path string, values []string) error {
 	seen := map[string]int{}
 	for i, value := range values {
@@ -193,4 +241,13 @@ func validBGPCommunity(value string) bool {
 	}
 	community, err := strconv.ParseUint(right, 10, 16)
 	return err == nil && community <= 65535
+}
+
+func parseDurationMilliseconds(value string) (int, error) {
+	duration, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil {
+		return 0, err
+	}
+	ms := int(duration.Round(time.Millisecond) / time.Millisecond)
+	return ms, nil
 }

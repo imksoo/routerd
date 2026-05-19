@@ -24,6 +24,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - 新增基于 VRF-backed FRR BGP instance 的 multi-instance `BGPRouter` support、
   listen-address collision validation、per-router observed status，以及
   `examples/multi-instance-bgp.yaml`。
+- 新增面向 FRR-managed BGP peer 的 BFD support、FRR `bfdd` daemon rendering、
+  BGP watcher tuning fields、BFD status observation，以及
+  `examples/bgp-bfd.yaml`。
 
 ## v20260519.0743
 

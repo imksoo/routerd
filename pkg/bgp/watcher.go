@@ -27,12 +27,19 @@ type Peer struct {
 	ASN               uint32 `json:"asn,omitempty"`
 	State             string `json:"state,omitempty"`
 	Established       bool   `json:"established"`
+	BFD               *BFD   `json:"bfd,omitempty"`
 	PrefixesReceived  int    `json:"prefixesReceived,omitempty"`
 	MessagesReceived  int    `json:"messagesReceived,omitempty"`
 	MessagesSent      int    `json:"messagesSent,omitempty"`
 	LastEstablishedAt string `json:"lastEstablishedAt,omitempty"`
 	LastErrorAt       string `json:"lastErrorAt,omitempty"`
 	LastErrorReason   string `json:"lastErrorReason,omitempty"`
+}
+
+type BFD struct {
+	State    string `json:"state,omitempty"`
+	LastUp   string `json:"lastUp,omitempty"`
+	LastDown string `json:"lastDown,omitempty"`
 }
 
 type Prefix struct {
@@ -108,6 +115,16 @@ func ParseFRRRoutesJSON(data []byte) ([]Prefix, error) {
 	return prefixes, nil
 }
 
+func ParseFRRBFDPeersJSON(data []byte) (map[string]BFD, error) {
+	root, err := decodeMap(data)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]BFD{}
+	collectBFDPeers("", root, out)
+	return out, nil
+}
+
 func Diff(previous, current State) []Event {
 	previous = Normalize(previous)
 	current = Normalize(current)
@@ -179,6 +196,17 @@ func Normalize(state State) State {
 	sort.Slice(state.Peers, func(i, j int) bool { return state.Peers[i].Address < state.Peers[j].Address })
 	state.Prefixes = uniquePrefixes(state.Prefixes)
 	sort.Slice(state.Prefixes, func(i, j int) bool { return state.Prefixes[i].Prefix < state.Prefixes[j].Prefix })
+	return state
+}
+
+func AttachBFD(state State, bfd map[string]BFD) State {
+	for i, peer := range state.Peers {
+		if status, ok := bfd[peer.Address]; ok {
+			status.State = strings.TrimSpace(status.State)
+			peer.BFD = &status
+			state.Peers[i] = peer
+		}
+	}
 	return state
 }
 
@@ -301,6 +329,38 @@ func communitiesFromRoute(route map[string]any) []string {
 		out = append(out, communitiesFromValue(route[key])...)
 	}
 	return sortedUnique(out)
+}
+
+func collectBFDPeers(key string, value any, out map[string]BFD) {
+	switch typed := value.(type) {
+	case map[string]any:
+		if peer, status, ok := bfdPeerStatus(key, typed); ok {
+			out[peer] = status
+		}
+		for childKey, child := range typed {
+			collectBFDPeers(childKey, child, out)
+		}
+	case []any:
+		for _, child := range typed {
+			collectBFDPeers("", child, out)
+		}
+	}
+}
+
+func bfdPeerStatus(key string, item map[string]any) (string, BFD, bool) {
+	peer := firstString(item, "peer", "peerId", "peerAddress", "remote", "remoteAddress", "neighbor")
+	if peer == "" && strings.Contains(key, ".") {
+		peer = key
+	}
+	state := firstString(item, "status", "state", "peerState", "localDiag")
+	if peer == "" || state == "" {
+		return "", BFD{}, false
+	}
+	return peer, BFD{
+		State:    state,
+		LastUp:   firstStringOrNumber(item, "lastUp", "lastUpTime", "lastUpTimestamp"),
+		LastDown: firstStringOrNumber(item, "lastDown", "lastDownTime", "lastDownTimestamp"),
+	}, true
 }
 
 func communitiesFromValue(value any) []string {

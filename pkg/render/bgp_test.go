@@ -163,3 +163,49 @@ func TestFRRConfigRendersMultipleBGPRouterInstances(t *testing.T) {
 		}
 	}
 }
+
+func TestFRRConfigRendersBFDPeerAndDaemons(t *testing.T) {
+	enabled := true
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+			ASN:      64512,
+			RouterID: "10.0.0.1",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.BGPPeerSpec{
+			RouterRef: "BGPRouter/lan",
+			PeerASN:   64513,
+			Peers:     []string{"10.0.0.21"},
+			BFD: api.BGPBFDSpec{
+				Enabled:          &enabled,
+				MinRxInterval:    "300ms",
+				MinTxInterval:    "300ms",
+				DetectMultiplier: 3,
+			},
+		}},
+	}}}
+	data, err := FRRConfig(router)
+	if err != nil {
+		t.Fatalf("render FRR config: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"bfd\n peer 10.0.0.21",
+		"  receive-interval 300",
+		"  transmit-interval 300",
+		"  detect-multiplier 3",
+		" neighbor 10.0.0.21 bfd",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("FRR config missing %q:\n%s", want, got)
+		}
+	}
+	daemons, err := FRRDaemons([]byte("zebra=yes\nbgpd=no\n"), router)
+	if err != nil {
+		t.Fatalf("render FRR daemons: %v", err)
+	}
+	for _, want := range []string{"zebra=yes", "bgpd=yes", "bfdd=yes"} {
+		if !strings.Contains(string(daemons), want) {
+			t.Fatalf("FRR daemons missing %q:\n%s", want, daemons)
+		}
+	}
+}

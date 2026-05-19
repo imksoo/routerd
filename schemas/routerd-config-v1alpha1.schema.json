@@ -2664,6 +2664,23 @@
                       "vrf": {
                         "type": "string"
                       },
+                      "watcher": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "maxPrefixes": {
+                            "maximum": 999999,
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "peerStateChangeThrottle": {
+                            "type": "string"
+                          },
+                          "pollInterval": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "when": {
                         "additionalProperties": false,
                         "properties": {
@@ -2752,6 +2769,26 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "bfd": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "detectMultiplier": {
+                            "maximum": 50,
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "minRxInterval": {
+                            "type": "string"
+                          },
+                          "minTxInterval": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "communities": {
                         "additionalProperties": false,
                         "properties": {

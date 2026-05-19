@@ -32,7 +32,7 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | `IPv4Route` | Kernel route |
 | `NAT44Rule` | nftables `routerd_nat` table |
 | `PortForward` / `IngressService` | Linux nftables `routerd_nat` / `routerd_filter` DNAT, optional hairpin SNAT, or FreeBSD `pf.conf` `rdr pass` / optional NAT reflection rules |
-| `BGPRouter` / `BGPPeer` | FRR BGP configuration under `/run/routerd/frr/routerd.conf`, applied with `frr-reload.py` |
+| `BGPRouter` / `BGPPeer` | FRR BGP configuration under `/run/routerd/frr/routerd.conf`, applied with `frr-reload.py`; `/etc/frr/daemons` `bgpd` / `bfdd` toggles and `frr.service` restart when BFD daemon state changes |
 | `VirtualIPv4Address` | Static VIP through `ip addr` or `ifconfig`; VRRP VIP ownership through keepalived on Linux or CARP on FreeBSD |
 | `WireGuardInterface` / `WireGuardPeer` | WireGuard configuration |
 | `TailscaleNode` | `routerd-tailscale-<name>` service unit/script and `tailscale up` arguments |

@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: bgp-bfd
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        managed: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata:
+        name: lan
+      spec:
+        asn: 64512
+        routerID: 192.168.50.1
+        listen:
+          address: 192.168.50.1
+        timers:
+          keepalive: 3s
+          holdTime: 9s
+          connectRetry: 5s
+        gracefulRestart:
+          enabled: true
+        watcher:
+          pollInterval: 5s
+          maxPrefixes: 10000
+          peerStateChangeThrottle: 5s
+        importPolicy:
+          allowedPrefixes:
+            - 10.240.70.200/29
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata:
+        name: fabric-speakers
+      spec:
+        routerRef: BGPRouter/lan
+        peerASN: 64513
+        peers:
+          - 192.168.50.21
+          - 192.168.50.22
+        bfd:
+          enabled: true
+          minRxInterval: 300ms
+          minTxInterval: 300ms
+          detectMultiplier: 3

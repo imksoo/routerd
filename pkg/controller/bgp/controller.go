@@ -36,14 +36,17 @@ type Controller struct {
 	Store       Store
 	DryRun      bool
 	ConfigPath  string
+	DaemonsPath string
 	VTYSH       string
 	FRRReload   string
+	Systemctl   string
 	MaxPrefixes int
 	Command     CommandFunc
 	Logger      *slog.Logger
 	lastState   bgpstate.State
 	observed    bool
 	truncated   bool
+	peerEvents  map[string]time.Time
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
@@ -71,6 +74,10 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		if err := os.WriteFile(path, data, 0644); err != nil {
 			return err
 		}
+	}
+	daemonsChanged, daemonsPath, err := c.renderFRRDaemons()
+	if err != nil {
+		return err
 	}
 	reloadNeeded := changed
 	if !reloadNeeded && !c.DryRun && !c.observed {
@@ -102,9 +109,20 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			return fmt.Errorf("%s --reload %s: %w: %s", reload, path, err, strings.TrimSpace(string(out)))
 		}
 	}
+	if !c.DryRun && daemonsChanged {
+		systemctl := firstNonEmpty(c.Systemctl, "systemctl")
+		if out, err := c.run(ctx, systemctl, "restart", "frr.service"); err != nil {
+			saveErr := c.saveConfiguredStatuses("Error", path, true, map[string]any{"reason": "FRRServiceRestartFailed", "error": strings.TrimSpace(string(out)), "daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
+			if saveErr != nil {
+				return saveErr
+			}
+			return fmt.Errorf("%s restart frr.service: %w: %s", systemctl, err, strings.TrimSpace(string(out)))
+		}
+	}
 	if !c.DryRun {
-		if reloadNeeded {
-			if err := c.saveConfiguredStatuses("Applied", path, reloadNeeded, nil); err != nil {
+		if reloadNeeded || daemonsChanged {
+			extra := map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged}
+			if err := c.saveConfiguredStatuses("Applied", path, reloadNeeded || daemonsChanged, extra); err != nil {
 				return err
 			}
 		}
@@ -114,6 +132,49 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (c *Controller) renderFRRDaemons() (bool, string, error) {
+	path := firstNonEmpty(c.DaemonsPath, "/etc/frr/daemons")
+	if !c.routerUsesBFD() {
+		return false, path, nil
+	}
+	var existing []byte
+	if current, err := os.ReadFile(path); err == nil {
+		existing = current
+	} else if err != nil && !os.IsNotExist(err) {
+		return false, path, err
+	}
+	data, err := render.FRRDaemons(existing, c.Router)
+	if err != nil || len(data) == 0 {
+		return false, path, err
+	}
+	changed := !bytes.Equal(existing, data)
+	if changed && !c.DryRun {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return false, path, err
+		}
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			return false, path, err
+		}
+	}
+	return changed, path, nil
+}
+
+func (c *Controller) routerUsesBFD() bool {
+	if c.Router == nil {
+		return false
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
+			continue
+		}
+		spec, err := resource.BGPPeerSpec()
+		if err == nil && spec.BFD.Enabled != nil && *spec.BFD.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) runningConfigMatches(ctx context.Context, desired []byte) (bool, error) {
@@ -177,19 +238,43 @@ func (c *Controller) observe(ctx context.Context) error {
 		return err
 	}
 	for _, event := range events {
-		if c.Bus == nil {
-			continue
-		}
-		daemonEvent := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "frr", Kind: "frr", Instance: "bgp"}, "routerd.bgp."+strings.ReplaceAll(event.Type, " ", "."), daemonapi.SeverityInfo)
-		daemonEvent.Attributes = map[string]string{
-			"peer":     event.Peer,
-			"prefix":   event.Prefix,
-			"previous": event.Previous,
-			"current":  event.Current,
-		}
-		_ = c.Bus.Publish(ctx, daemonEvent)
+		c.publishBGPEvent(ctx, event)
 	}
 	return nil
+}
+
+func (c *Controller) publishBGPEvent(ctx context.Context, event bgpstate.Event) {
+	if c.throttleBGPEvent(event) || c.Bus == nil {
+		return
+	}
+	daemonEvent := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "frr", Kind: "frr", Instance: "bgp"}, "routerd.bgp."+strings.ReplaceAll(event.Type, " ", "."), daemonapi.SeverityInfo)
+	daemonEvent.Attributes = map[string]string{
+		"peer":     event.Peer,
+		"prefix":   event.Prefix,
+		"previous": event.Previous,
+		"current":  event.Current,
+	}
+	_ = c.Bus.Publish(ctx, daemonEvent)
+}
+
+func (c *Controller) throttleBGPEvent(event bgpstate.Event) bool {
+	if event.Peer == "" || (event.Type != bgpstate.EventPeerUp && event.Type != bgpstate.EventPeerDown) {
+		return false
+	}
+	window := c.peerStateChangeThrottle()
+	if window <= 0 {
+		return false
+	}
+	if c.peerEvents == nil {
+		c.peerEvents = map[string]time.Time{}
+	}
+	key := event.Type + "|" + event.Peer
+	now := time.Now()
+	if previous, ok := c.peerEvents[key]; ok && now.Sub(previous) < window {
+		return true
+	}
+	c.peerEvents[key] = now
+	return false
 }
 
 func (c *Controller) observeInstances(ctx context.Context, vtysh string) (map[string]bgpstate.State, bool, error) {
@@ -207,7 +292,14 @@ func (c *Controller) observeInstances(ctx context.Context, vtysh string) (map[st
 		if err != nil {
 			return nil, false, fmt.Errorf("%s: %w", instance.Name, err)
 		}
-		limited, truncated := bgpstate.LimitPrefixes(state, defaultInt(c.MaxPrefixes, bgpstate.DefaultMaxPrefixes))
+		if instance.BFD {
+			bfd, err := c.observeBFD(ctx, vtysh, instance.VRFName)
+			if err != nil {
+				return nil, false, fmt.Errorf("%s bfd: %w", instance.Name, err)
+			}
+			state = bgpstate.AttachBFD(state, bfd)
+		}
+		limited, truncated := bgpstate.LimitPrefixes(state, c.maxPrefixesForRouter(instance.Name))
 		if truncated {
 			truncatedAny = true
 		}
@@ -216,9 +308,22 @@ func (c *Controller) observeInstances(ctx context.Context, vtysh string) (map[st
 	return states, truncatedAny, nil
 }
 
+func (c *Controller) observeBFD(ctx context.Context, vtysh, vrfName string) (map[string]bgpstate.BFD, error) {
+	cmd := "show bfd peers brief json"
+	if strings.TrimSpace(vrfName) != "" {
+		cmd = "show bfd vrf " + strings.TrimSpace(vrfName) + " peers brief json"
+	}
+	out, err := c.run(ctx, vtysh, "-c", cmd)
+	if err != nil {
+		return nil, err
+	}
+	return bgpstate.ParseFRRBFDPeersJSON(out)
+}
+
 type bgpInstance struct {
 	Name    string
 	VRFName string
+	BFD     bool
 }
 
 func (c *Controller) bgpInstances() []bgpInstance {
@@ -236,10 +341,30 @@ func (c *Controller) bgpInstances() []bgpInstance {
 			continue
 		}
 		ref := strings.TrimSpace(spec.VRF)
-		out = append(out, bgpInstance{Name: resource.Metadata.Name, VRFName: vrfs[controllerBGPVRFRefName(ref)]})
+		out = append(out, bgpInstance{Name: resource.Metadata.Name, VRFName: vrfs[controllerBGPVRFRefName(ref)], BFD: c.bgpRouterUsesBFD(resource.Metadata.Name)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func (c *Controller) bgpRouterUsesBFD(routerName string) bool {
+	if c.Router == nil {
+		return false
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
+			continue
+		}
+		spec, err := resource.BGPPeerSpec()
+		if err != nil || !(spec.BFD.Enabled != nil && *spec.BFD.Enabled) {
+			continue
+		}
+		_, name, ok := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
+		if ok && name == routerName {
+			return true
+		}
+	}
+	return false
 }
 
 func bgpShowCommands(vrfName string) (string, string) {
@@ -346,7 +471,7 @@ func (c *Controller) saveObservedStatuses(states map[string]bgpstate.State, aggr
 				"observedCommunities": observedCommunities(state.Prefixes),
 				"establishedPeers":    established,
 				"acceptedPrefixes":    len(state.Prefixes),
-				"prefixLimit":         defaultInt(c.MaxPrefixes, bgpstate.DefaultMaxPrefixes),
+				"prefixLimit":         c.maxPrefixesForRouter(resource.Metadata.Name),
 				"prefixesTruncated":   c.truncated,
 				"observedAt":          now,
 				"conditions":          []map[string]any{{"type": "Observed", "status": "True", "reason": "FRRStatus"}},
@@ -427,6 +552,70 @@ func (c *Controller) bgpInstanceVRFName(routerName string) string {
 		}
 	}
 	return ""
+}
+
+func (c *Controller) maxPrefixesForRouter(routerName string) int {
+	if c.MaxPrefixes > 0 {
+		return c.MaxPrefixes
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" || resource.Metadata.Name != routerName {
+			continue
+		}
+		spec, err := resource.BGPRouterSpec()
+		if err == nil && spec.Watcher.MaxPrefixes > 0 {
+			return spec.Watcher.MaxPrefixes
+		}
+	}
+	return bgpstate.DefaultMaxPrefixes
+}
+
+func (c *Controller) peerStateChangeThrottle() time.Duration {
+	var out time.Duration
+	if c.Router == nil {
+		return 0
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := resource.BGPRouterSpec()
+		if err != nil || strings.TrimSpace(spec.Watcher.PeerStateChangeThrottle) == "" {
+			continue
+		}
+		duration, err := time.ParseDuration(spec.Watcher.PeerStateChangeThrottle)
+		if err != nil || duration <= 0 {
+			continue
+		}
+		if out == 0 || duration < out {
+			out = duration
+		}
+	}
+	return out
+}
+
+func PollInterval(router *api.Router) time.Duration {
+	out := 15 * time.Second
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := resource.BGPRouterSpec()
+		if err != nil || strings.TrimSpace(spec.Watcher.PollInterval) == "" {
+			continue
+		}
+		duration, err := time.ParseDuration(spec.Watcher.PollInterval)
+		if err != nil || duration < MinPollInterval {
+			continue
+		}
+		if duration < out {
+			out = duration
+		}
+	}
+	return out
 }
 
 func observedCommunities(prefixes []bgpstate.Prefix) []string {

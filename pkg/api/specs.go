@@ -419,6 +419,7 @@ type BGPRouterSpec struct {
 	Communities     BGPCommunitiesSpec     `yaml:"communities,omitempty" json:"communities,omitempty"`
 	Timers          BGPTimersSpec          `yaml:"timers,omitempty" json:"timers,omitempty"`
 	GracefulRestart BGPGracefulRestartSpec `yaml:"gracefulRestart,omitempty" json:"gracefulRestart,omitempty"`
+	Watcher         BGPWatcherSpec         `yaml:"watcher,omitempty" json:"watcher,omitempty"`
 	Backend         string                 `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=frr"`
 	When            ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
 }
@@ -464,6 +465,12 @@ type BGPGracefulRestartSpec struct {
 	StalePathTime string `yaml:"stalePathTime,omitempty" json:"stalePathTime,omitempty"`
 }
 
+type BGPWatcherSpec struct {
+	PollInterval            string `yaml:"pollInterval,omitempty" json:"pollInterval,omitempty"`
+	MaxPrefixes             int    `yaml:"maxPrefixes,omitempty" json:"maxPrefixes,omitempty" jsonschema:"minimum=1,maximum=999999"`
+	PeerStateChangeThrottle string `yaml:"peerStateChangeThrottle,omitempty" json:"peerStateChangeThrottle,omitempty"`
+}
+
 type BGPPeerSpec struct {
 	RouterRef   string             `yaml:"routerRef" json:"routerRef"`
 	PeerASN     uint32             `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
@@ -471,7 +478,15 @@ type BGPPeerSpec struct {
 	Password    string             `yaml:"password,omitempty" json:"password,omitempty"`
 	Timers      BGPTimersSpec      `yaml:"timers,omitempty" json:"timers,omitempty"`
 	Communities BGPCommunitiesSpec `yaml:"communities,omitempty" json:"communities,omitempty"`
+	BFD         BGPBFDSpec         `yaml:"bfd,omitempty" json:"bfd,omitempty"`
 	When        ResourceWhenSpec   `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type BGPBFDSpec struct {
+	Enabled          *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	MinRxInterval    string `yaml:"minRxInterval,omitempty" json:"minRxInterval,omitempty"`
+	MinTxInterval    string `yaml:"minTxInterval,omitempty" json:"minTxInterval,omitempty"`
+	DetectMultiplier int    `yaml:"detectMultiplier,omitempty" json:"detectMultiplier,omitempty" jsonschema:"minimum=1,maximum=50"`
 }
 
 type DHCPv4LeaseSpec struct {

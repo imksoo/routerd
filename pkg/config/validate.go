@@ -1886,6 +1886,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if err := validateBGPGracefulRestart(res.ID(), spec.GracefulRestart); err != nil {
 			return err
 		}
+		if err := validateBGPWatcher(res.ID(), spec.Watcher); err != nil {
+			return err
+		}
 		switch defaultString(spec.Backend, "frr") {
 		case "frr":
 		default:
@@ -1927,6 +1930,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 			return err
 		}
 		if err := validateBGPCommunities(res.ID(), "spec.communities", spec.Communities); err != nil {
+			return err
+		}
+		if err := validateBGPBFD(res.ID(), spec.BFD); err != nil {
 			return err
 		}
 	case "DHCPv6Address", "IPv6RAAddress":
