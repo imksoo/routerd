@@ -51,6 +51,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
   IngressService `hairpin.mode: auto`：同一 private `/24` 内的 listen/backend
   address 会被视为需要 hairpin，并在 verbose ingress 输出中提示预期的 nftables SNAT
   是否缺失。
+- 新增 `pkg/servicemgr` 抽象，统一 systemd、OpenRC、rc.d、NixOS 的 service
+  artifact 命名和 lifecycle command，并让 service artifact intent generation
+  通过该层，减少每个 resource 中分散的 OS switch drift。
 
 ## v20260519.0743
 

@@ -68,6 +68,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   private `/24` 内の IngressService listen/backend address は
   `hairpin.mode: auto` で hairpin が必要と判定するようにし、verbose ingress 出力は
   期待される nftables SNAT が無い場合に warning を出すようにしました。
+- systemd、OpenRC、rc.d、NixOS の service artifact 名と lifecycle command を扱う
+  `pkg/servicemgr` abstraction を追加し、service artifact intent generation を
+  そこへ寄せて resource ごとの OS switch drift を減らしました。
 
 ## v20260519.0743
 

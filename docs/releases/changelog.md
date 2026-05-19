@@ -66,6 +66,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   a declared listen-interface prefix by treating same private `/24`
   listen/backend addresses as hairpin-required, and made verbose ingress output
   warn when the expected nftables SNAT is missing.
+- Added a `pkg/servicemgr` abstraction for systemd, OpenRC, rc.d, and NixOS
+  service artifact naming and lifecycle commands, then routed service artifact
+  intent generation through it to reduce per-resource OS switch drift.
 
 ## v20260519.0743
 
