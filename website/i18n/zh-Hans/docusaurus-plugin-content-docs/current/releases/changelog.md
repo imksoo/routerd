@@ -33,6 +33,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - 新增用于临时 `IngressService` backend maintenance 的 `routerctl drain` /
   `undrain`，以及 VRRP production tuning 文档和
   `examples/vrrp-tuning-presets.yaml`。
+- 改善 Alpine Live ISO 路径：VRRP controller 默认为 live，
+  `routerctl show vrrp` 会从 live address 重新观测 role，version output 可嵌入
+  commit，并补上 FRR reload tooling dependency 与非阻塞 setup wizard 行为。
 
 ## v20260519.0743
 

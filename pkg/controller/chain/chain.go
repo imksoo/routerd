@@ -515,7 +515,10 @@ type Options struct {
 	DryRunPPPoESession     bool
 	DryRunDNSResolver      bool
 	DryRunNAT              bool
+	DryRunIngress          bool
 	DryRunFirewall         bool
+	DryRunBGP              bool
+	DryRunVRRP             bool
 	DryRunPackage          bool
 	DryRunNetworkAdoption  bool
 	DryRunSystemdUnit      bool
@@ -668,7 +671,10 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunPPPoESession = true
 		opts.DryRunDNSResolver = true
 		opts.DryRunNAT = true
+		opts.DryRunIngress = true
 		opts.DryRunFirewall = true
+		opts.DryRunBGP = true
+		opts.DryRunVRRP = true
 		opts.DryRunPackage = true
 		opts.DryRunNetworkAdoption = true
 		opts.DryRunSystemdUnit = true
@@ -703,9 +709,9 @@ func (r *Runner) Start(ctx context.Context) error {
 	observabilityPipeline := observabilitypipeline.Controller{Router: r.Router, Bus: r.Bus, Store: store}
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
-	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
-	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
-	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
+	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
+	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunBGP, Logger: logger}
+	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunVRRP, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: r.Opts.DryRunNAT, DryRunRoute: r.Opts.DryRunRoute, DryRunFirewall: r.Opts.DryRunFirewall, NftCommand: r.Opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
 	firewall := firewallcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunFirewall, NftablesPath: firstNonEmpty(r.Opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: r.Opts.NftCommand, Logger: logger}
 	conntrackObs := conntrackobserver.Controller{Router: r.Router, Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: r.Opts.ConntrackInterval, Logger: logger}

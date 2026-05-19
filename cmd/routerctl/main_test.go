@@ -348,7 +348,7 @@ spec:
       metadata:
         name: lan
       spec:
-        ifname: ens20
+        ifname: routerdtest0
         managed: false
         owner: external
     - apiVersion: net.routerd.net/v1alpha1
@@ -488,6 +488,24 @@ spec:
 				t.Fatalf("show %s output missing %q:\n%s", tt.target, want, got)
 			}
 		}
+	}
+}
+
+func TestIPOutputHasAddress(t *testing.T) {
+	output := `2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500
+    inet 192.168.123.250/32 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet6 2001:db8::250/128 scope global
+       valid_lft forever preferred_lft forever
+`
+	if !ipOutputHasAddress(output, "192.168.123.250/32", "ipv4") {
+		t.Fatalf("IPv4 VIP was not detected")
+	}
+	if !ipOutputHasAddress(output, "2001:db8::250/128", "ipv6") {
+		t.Fatalf("IPv6 VIP was not detected")
+	}
+	if ipOutputHasAddress(output, "192.168.123.251/32", "ipv4") {
+		t.Fatalf("unexpected IPv4 VIP match")
 	}
 }
 

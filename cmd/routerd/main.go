@@ -57,7 +57,7 @@ import (
 	"routerd/pkg/webconsole"
 )
 
-var version = routerversion.Version
+var version = routerversion.String()
 
 const (
 	routerdDnsmasqService       = "routerd-dnsmasq.service"
@@ -3273,6 +3273,12 @@ func controllerResourceKinds(name string) []string {
 		return []string{"DSLiteTunnel"}
 	case "firewall":
 		return []string{"FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
+	case "ingress":
+		return []string{"IngressService"}
+	case "bgp":
+		return []string{"BGPRouter", "BGPPeer"}
+	case "vrrp":
+		return []string{"VirtualIPv4Address", "VirtualIPv6Address"}
 	case "nat":
 		return []string{"NAT44Rule", "IPv4SourceNAT", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
 	case "network-adoption":
@@ -3337,7 +3343,10 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	controllerDryRunPPPoESession := fs.Bool("controller-chain-dry-run-pppoesession", true, "do not apply PPPoE session route/DNS in the experimental controller chain")
 	controllerDryRunDNSResolver := fs.Bool("controller-chain-dry-run-dns-resolver", true, "do not start DNS resolver daemons in the experimental controller chain")
 	controllerDryRunNAT := fs.Bool("controller-chain-dry-run-nat", true, "do not apply nftables NAT rules in the experimental controller chain")
+	controllerDryRunIngress := fs.Bool("controller-chain-dry-run-ingress", true, "do not apply IngressService nftables rules in the experimental controller chain")
 	controllerDryRunFirewall := fs.Bool("controller-chain-dry-run-firewall", true, "do not apply nftables firewall rules in the experimental controller chain")
+	controllerDryRunBGP := fs.Bool("controller-chain-dry-run-bgp", true, "do not apply FRR BGP config in the experimental controller chain")
+	controllerDryRunVRRP := fs.Bool("controller-chain-dry-run-vrrp", false, "do not apply keepalived/CARP VRRP config in the experimental controller chain")
 	controllerDryRunPackage := fs.Bool("controller-chain-dry-run-package", true, "do not install OS packages in the experimental controller chain")
 	controllerDryRunNetworkAdoption := fs.Bool("controller-chain-dry-run-network-adoption", true, "do not write systemd-networkd/resolved adoption drop-ins in the experimental controller chain")
 	controllerDryRunSystemdUnit := fs.Bool("controller-chain-dry-run-systemd-unit", true, "do not install or restart systemd units in the experimental controller chain")
@@ -3368,7 +3377,10 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 		"pppoesession":     *controllerDryRunPPPoESession,
 		"dns-resolver":     *controllerDryRunDNSResolver,
 		"nat":              *controllerDryRunNAT,
+		"ingress":          *controllerDryRunIngress,
 		"firewall":         *controllerDryRunFirewall,
+		"bgp":              *controllerDryRunBGP,
+		"vrrp":             *controllerDryRunVRRP,
 		"package":          *controllerDryRunPackage,
 		"network-adoption": *controllerDryRunNetworkAdoption,
 		"systemd-unit":     *controllerDryRunSystemdUnit,
@@ -3455,7 +3467,10 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 				DryRunPPPoESession:     *controllerDryRunPPPoESession,
 				DryRunDNSResolver:      *controllerDryRunDNSResolver,
 				DryRunNAT:              *controllerDryRunNAT,
+				DryRunIngress:          *controllerDryRunIngress,
 				DryRunFirewall:         *controllerDryRunFirewall,
+				DryRunBGP:              *controllerDryRunBGP,
+				DryRunVRRP:             *controllerDryRunVRRP,
 				DryRunPackage:          *controllerDryRunPackage,
 				DryRunNetworkAdoption:  *controllerDryRunNetworkAdoption,
 				DryRunSystemdUnit:      *controllerDryRunSystemdUnit,
@@ -7123,7 +7138,7 @@ func linuxVirtualAddressStatus(router *api.Router, res api.Resource, aliases map
 			return nil, "", false, err
 		}
 		ifname := aliases[spec.Interface]
-		role := linuxVirtualAddressRole(ifname, address, "ipv4")
+		role := linuxVirtualAddressRole(ifname, address, "ipv4", changed)
 		status := map[string]any{
 			"phase":           "Applied",
 			"backend":         "keepalived",
@@ -7157,7 +7172,7 @@ func linuxVirtualAddressStatus(router *api.Router, res api.Resource, aliases map
 			return nil, "", false, err
 		}
 		ifname := aliases[spec.Interface]
-		role := linuxVirtualAddressRole(ifname, address, "ipv6")
+		role := linuxVirtualAddressRole(ifname, address, "ipv6", changed)
 		status := map[string]any{
 			"phase":           "Applied",
 			"backend":         "keepalived",
@@ -7205,7 +7220,7 @@ func statusStringMain(status map[string]any, key string) string {
 	}
 }
 
-func linuxVirtualAddressRole(ifname, address, family string) string {
+func linuxVirtualAddressRole(ifname, address, family string, wait bool) string {
 	if strings.TrimSpace(ifname) == "" || strings.TrimSpace(address) == "" {
 		return "unknown"
 	}
@@ -7213,12 +7228,21 @@ func linuxVirtualAddressRole(ifname, address, family string) string {
 	if family == "ipv6" {
 		ipFamily = "-6"
 	}
-	out, err := exec.Command("ip", ipFamily, "addr", "show", "dev", ifname).CombinedOutput()
-	if err != nil {
-		return "unknown"
+	attempts := 1
+	if wait {
+		attempts = 30
 	}
-	if linuxIPOutputHasAddress(string(out), address, family) {
-		return "master"
+	for i := 0; i < attempts; i++ {
+		out, err := exec.Command("ip", ipFamily, "addr", "show", "dev", ifname).CombinedOutput()
+		if err != nil {
+			return "unknown"
+		}
+		if linuxIPOutputHasAddress(string(out), address, family) {
+			return "master"
+		}
+		if i+1 < attempts {
+			time.Sleep(200 * time.Millisecond)
+		}
 	}
 	return "backup"
 }

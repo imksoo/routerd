@@ -47,6 +47,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added Alpine/OpenRC VRRP apply support: `routerd apply --once` now renders
   keepalived config, manages the OpenRC `keepalived` service, records observed
   VRRP roles from live addresses, and includes an Alpine Kubernetes VIP example.
+- Polished the Alpine live ISO path with live VRRP controller defaults, live
+  `routerctl show vrrp` role observation, commit-aware version output, FRR
+  reload tooling dependencies, and non-blocking setup wizard behavior.
 
 ## v20260519.0743
 

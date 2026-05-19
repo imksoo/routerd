@@ -377,7 +377,7 @@ dependency_packages()
             packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables frr keepalived"
             ;;
         apk)
-            packages="alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux e2fsprogs dosfstools exfatprogs frr keepalived"
+            packages="alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux e2fsprogs dosfstools exfatprogs frr frr-pythontools keepalived"
             ;;
         pacman)
             packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables frr keepalived"
@@ -561,7 +561,7 @@ verify_dependencies()
 {
     missing=""
     for cmd in $(dependency_commands); do
-        if ! command -v "${cmd}" >/dev/null 2>&1; then
+        if ! dependency_command_available "${cmd}"; then
             missing="${missing} ${cmd}"
         fi
     done
@@ -571,6 +571,21 @@ verify_dependencies()
     else
         echo "dependency command check passed"
     fi
+}
+
+dependency_command_available()
+{
+    cmd=$1
+    if command -v "${cmd}" >/dev/null 2>&1; then
+        return 0
+    fi
+    case "${cmd}" in
+        frr-reload.py)
+            [ -x /usr/lib/frr/frr-reload.py ] || [ -x /usr/libexec/frr/frr-reload.py ]
+            return $?
+            ;;
+    esac
+    return 1
 }
 
 configure_terminal()

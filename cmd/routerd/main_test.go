@@ -185,9 +185,10 @@ func TestControllerStatusesFromDryRunModes(t *testing.T) {
 	got := controllerStatusesFromDryRunModes(map[string]bool{
 		"route": false,
 		"nat":   true,
+		"vrrp":  false,
 	})
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2", len(got))
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3", len(got))
 	}
 	if got[0].Name != "nat" || got[0].Mode != "dry-run" {
 		t.Fatalf("first status = %+v, want nat dry-run", got[0])
@@ -203,6 +204,9 @@ func TestControllerStatusesFromDryRunModes(t *testing.T) {
 	}
 	if len(got[0].ResourceKinds) == 0 {
 		t.Fatalf("nat resource kinds should be populated")
+	}
+	if got[2].Name != "vrrp" || got[2].Mode != "live" || len(got[2].ResourceKinds) == 0 {
+		t.Fatalf("third status = %+v, want vrrp live with resource kinds", got[2])
 	}
 }
 

@@ -3,6 +3,7 @@
 set -euo pipefail
 
 version=${VERSION:-$(awk '/^VERSION[[:space:]]*\\?=/{print $3; exit}' Makefile)}
+git_commit=${GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || true)}
 distbase=${DISTBASE:-dist}
 workdir=${ROUTERD_LIVE_WORKDIR:-"${distbase}/live/work"}
 cachedir=${ROUTERD_LIVE_CACHEDIR:-"${distbase}/live/cache"}
@@ -57,7 +58,7 @@ bsdtar -C "${iso_root}" -xf "${alpine_iso}"
 chmod -R u+w "${iso_root}"
 install -d "${iso_root}/boot/grub"
 
-make build-daemons ROUTERD_OS=linux GOARCH=amd64
+make build-daemons ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}"
 
 install -d "${overlay_root}/usr/local/sbin" \
     "${overlay_root}/usr/share/routerd" \
@@ -507,6 +508,7 @@ if [ ! -S "${socket}" ]; then
         --status-socket "${status_socket}" \
         --controller-chain \
         --controller-chain-dry-run-dns-resolver=false \
+        --controller-chain-dry-run-vrrp=false \
         > "${log_dir}/routerd-live.log" 2>&1 &
     sleep 1
 fi
@@ -552,8 +554,12 @@ if ! routerd_skip_wizard; then
     done
   fi
   /usr/share/routerd/install.sh --deps-only || true
-  echo "Starting routerd setup wizard. Press Ctrl+C to skip."
-  /usr/share/routerd/install.sh configure || true
+  echo "Starting routerd setup wizard. Press Enter within 5 seconds to continue, or wait to skip."
+  if read -r -t 5 _routerd_start_wizard; then
+    /usr/share/routerd/install.sh configure || true
+  else
+    echo "routerd setup wizard skipped; run /usr/share/routerd/install.sh configure to start it manually."
+  fi
 fi
 EOF
 

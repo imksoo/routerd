@@ -37,3 +37,14 @@ Live ISO では `/usr/local/etc/routerd/router.yaml` が存在する場合、ロ
 ```text
 routerd.skip-wizard=1
 ```
+
+どちらの条件も満たさない場合、Live ISO はログイン時に 5 秒だけ wizard の
+開始入力を待ちます。入力が無ければ wizard 経路を終了し、ephemeral mode の
+まま動きます。後から開始する場合は
+`/usr/share/routerd/install.sh configure` を実行します。
+
+Kubernetes VIP example のように `advertInterval` が 1 秒の構成では、active
+node の keepalived を停止すると、おおむね数秒で backup へ VIP が移ります。
+keepalived の検出窓は概ね `advertInterval * 3` です。高 priority node への
+reclaim は、設定した `preemptDelay` と次の advert convergence window の後に
+進みます。

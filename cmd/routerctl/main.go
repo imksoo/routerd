@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"reflect"
@@ -40,7 +41,7 @@ import (
 
 var platformDefaults, _ = platform.Current()
 
-var version = routerversion.Version
+var version = routerversion.String()
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -1463,6 +1464,9 @@ func writeDedicatedShow(stdout io.Writer, router *api.Router, store routerstate.
 	if err != nil {
 		return err
 	}
+	if kind == "vrrp" {
+		resources = withLiveVRRPRoles(router, resources)
+	}
 	switch opts.Output {
 	case "", "table":
 		switch kind {
@@ -1808,6 +1812,8 @@ func bgpRouterSpecs(router *api.Router) map[string]api.BGPRouterSpec {
 
 type virtualAddressShowSpec struct {
 	Interface string
+	Address   string
+	Family    string
 	Mode      string
 	Peers     []string
 }
@@ -1822,16 +1828,103 @@ func virtualAddressShowSpecs(router *api.Router) map[string]virtualAddressShowSp
 		case "VirtualIPv4Address":
 			spec, err := resource.VirtualIPv4AddressSpec()
 			if err == nil {
-				out[resource.Metadata.Name] = virtualAddressShowSpec{Interface: spec.Interface, Mode: spec.Mode, Peers: spec.VRRP.Peers}
+				out[resource.Metadata.Name] = virtualAddressShowSpec{Interface: spec.Interface, Address: spec.Address, Family: "ipv4", Mode: spec.Mode, Peers: spec.VRRP.Peers}
 			}
 		case "VirtualIPv6Address":
 			spec, err := resource.VirtualIPv6AddressSpec()
 			if err == nil {
-				out[resource.Metadata.Name] = virtualAddressShowSpec{Interface: spec.Interface, Mode: spec.Mode, Peers: spec.VRRP.Peers}
+				out[resource.Metadata.Name] = virtualAddressShowSpec{Interface: spec.Interface, Address: spec.Address, Family: "ipv6", Mode: spec.Mode, Peers: spec.VRRP.Peers}
 			}
 		}
 	}
 	return out
+}
+
+func withLiveVRRPRoles(router *api.Router, resources []routerstate.ObjectStatus) []routerstate.ObjectStatus {
+	if router == nil {
+		return resources
+	}
+	specs := virtualAddressShowSpecs(router)
+	aliases := interfaceAliases(router.Spec.Resources)
+	out := make([]routerstate.ObjectStatus, len(resources))
+	copy(out, resources)
+	for i := range out {
+		if out[i].Kind != "VirtualIPv4Address" && out[i].Kind != "VirtualIPv6Address" {
+			continue
+		}
+		spec := specs[out[i].Name]
+		if defaultShowString(spec.Mode, "static") != "vrrp" {
+			continue
+		}
+		role, ok := liveVRRPRole(out[i].Status, spec, aliases)
+		if !ok {
+			continue
+		}
+		status := map[string]any{}
+		for key, value := range out[i].Status {
+			status[key] = value
+		}
+		if previous := statusString(status["role"]); previous != role {
+			status["role"] = role
+			status["lastRoleTransitionAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		out[i].Status = status
+	}
+	return out
+}
+
+func liveVRRPRole(status map[string]any, spec virtualAddressShowSpec, aliases map[string]string) (string, bool) {
+	ifname := statusString(status["ifname"])
+	if ifname == "" {
+		ifname = aliases[spec.Interface]
+	}
+	address := statusString(status["address"])
+	if address == "" {
+		address = spec.Address
+	}
+	if strings.TrimSpace(ifname) == "" || strings.TrimSpace(address) == "" {
+		return "", false
+	}
+	family := spec.Family
+	if family == "" {
+		family = "ipv4"
+		if strings.Contains(address, ":") {
+			family = "ipv6"
+		}
+	}
+	ipFamily := "-4"
+	if family == "ipv6" {
+		ipFamily = "-6"
+	}
+	out, err := exec.Command("ip", ipFamily, "addr", "show", "dev", ifname).CombinedOutput()
+	if err != nil {
+		return "", false
+	}
+	if ipOutputHasAddress(string(out), address, family) {
+		return "master", true
+	}
+	return "backup", true
+}
+
+func ipOutputHasAddress(output, address, family string) bool {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(address))
+	if err != nil {
+		addr, addrErr := netip.ParseAddr(strings.TrimSpace(address))
+		if addrErr != nil {
+			return false
+		}
+		bits := 32
+		if family == "ipv6" {
+			bits = 128
+		}
+		prefix = netip.PrefixFrom(addr, bits)
+	}
+	token := "inet "
+	if family == "ipv6" {
+		token = "inet6 "
+	}
+	needle := token + prefix.Addr().String() + "/" + strconv.Itoa(prefix.Bits())
+	return strings.Contains(output, needle)
 }
 
 func ingressServiceSpecs(router *api.Router) map[string]api.IngressServiceSpec {

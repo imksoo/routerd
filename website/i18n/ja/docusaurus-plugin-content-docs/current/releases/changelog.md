@@ -48,6 +48,10 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   が keepalived config を render し、OpenRC の `keepalived` service を管理し、
   live address から観測した VRRP role を status に保存します。Alpine 向け
   Kubernetes VIP example も追加しました。
+- Alpine Live ISO の経路を改善し、VRRP controller の既定を live にし、
+  `routerctl show vrrp` は live address から role を再観測します。version
+  output には commit を埋め込めるようにし、FRR reload tooling dependency と、
+  非 blocking の setup wizard 動作も追加しました。
 
 ## v20260519.0743
 

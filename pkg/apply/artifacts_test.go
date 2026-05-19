@@ -142,9 +142,83 @@ func TestVirtualIPv4AddressAndBGPRouterArtifactIntentsUseOpenRC(t *testing.T) {
 	}
 }
 
+func TestOpenRCServiceArtifactIntentsAvoidSystemd(t *testing.T) {
+	features := platform.Features{HasOpenRC: true}
+	resources := []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "custom.service"},
+			Spec:     api.SystemdUnitSpec{},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp0"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			Metadata: api.ObjectMeta{Name: "api-vip"},
+			Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "192.168.10.10/32",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "192.168.10.1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"},
+			Metadata: api.ObjectMeta{Name: "edge"},
+			Spec:     api.TailscaleNodeSpec{},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+			Metadata: api.ObjectMeta{Name: "wan-pd"},
+			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+			Metadata: api.ObjectMeta{Name: "lan-dhcp"},
+			Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan-dns"},
+			Spec: api.DNSResolverSpec{
+				Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}}},
+				Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
+			},
+		},
+	}
+	for _, res := range resources {
+		t.Run(res.Kind, func(t *testing.T) {
+			intents := resourceArtifactIntentsForPlatform(res, map[string]string{"lan": "eth0", "wan": "eth1"}, platform.OSLinux, features)
+			if !hasArtifactKind(intents, "openrc.service") {
+				t.Fatalf("%s missing OpenRC service intent: %+v", res.Kind, intents)
+			}
+			if hasArtifactKind(intents, "systemd.service") || hasArtifactKind(intents, "systemd.unit") {
+				t.Fatalf("%s should not claim systemd artifacts on OpenRC: %+v", res.Kind, intents)
+			}
+		})
+	}
+}
+
 func hasArtifactIntent(intents []resource.Intent, kind, name, applyWith string) bool {
 	for _, intent := range intents {
 		if intent.Artifact.Kind == kind && intent.Artifact.Name == name && intent.ApplyWith == applyWith {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArtifactKind(intents []resource.Intent, kind string) bool {
+	for _, intent := range intents {
+		if intent.Artifact.Kind == kind {
 			return true
 		}
 	}

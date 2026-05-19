@@ -134,9 +134,13 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if spec.Disabled {
 			action = resource.ActionDelete
 		}
+		service := artifact("systemd.service", "routerd-pppoe-"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", map[string]string{"disabled": fmt.Sprintf("%t", spec.Disabled)})
+		if features.HasOpenRC {
+			service = artifact("openrc.service", render.OpenRCServiceName("routerd-pppoe-client@"+res.Metadata.Name+".service"), resource.ActionEnsure, "rc-service", map[string]string{"disabled": fmt.Sprintf("%t", spec.Disabled)})
+		}
 		return []resource.Intent{
 			artifact("ppp.interface", ifname, action, "pppd", nil),
-			artifact("systemd.service", "routerd-pppoe-"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", map[string]string{"disabled": fmt.Sprintf("%t", spec.Disabled)}),
+			service,
 			artifact("file", "/etc/ppp/chap-secrets", resource.ActionEnsure, "file", nil),
 			artifact("file", "/etc/ppp/pap-secrets", resource.ActionEnsure, "file", nil),
 			artifact("file", "/usr/local/etc/mpd5/mpd.conf", resource.ActionEnsure, "mpd5", nil),
@@ -220,8 +224,12 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if defaultString(spec.State, "present") == "absent" {
 			action = resource.ActionDelete
 		}
+		service := artifact("systemd.unit", render.TailscaleUnitName(res.Metadata.Name), action, "systemd", nil)
+		if features.HasOpenRC {
+			service = artifact("openrc.service", render.OpenRCServiceName(render.TailscaleUnitName(res.Metadata.Name)), action, "rc-service", nil)
+		}
 		return []resource.Intent{
-			artifact("systemd.unit", render.TailscaleUnitName(res.Metadata.Name), action, "systemd", nil),
+			service,
 			artifact("tailscale.node", res.Metadata.Name, action, "tailscale", nil),
 		}
 	case "IPsecConnection":
@@ -279,7 +287,6 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		return []resource.Intent{artifact("net.ipv6.ra.client", aliases[spec.Interface], resource.ActionEnsure, "platform-network", nil)}
 	case "DHCPv6PrefixDelegation":
-		_, features := platform.Current()
 		if features.HasOpenRC {
 			return []resource.Intent{artifact("openrc.service", render.OpenRCServiceName("routerd-dhcpv6-client@"+res.Metadata.Name+".service"), resource.ActionEnsure, "rc-service", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
 		}
@@ -306,6 +313,9 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 	case "DNSZone":
 		return []resource.Intent{artifact("routerd.dns.zone", res.Metadata.Name, resource.ActionEnsure, "routerd-dns-resolver", nil)}
 	case "DNSResolver":
+		if features.HasOpenRC {
+			return []resource.Intent{artifact("openrc.service", render.OpenRCServiceName("routerd-dns-resolver@"+res.Metadata.Name+".service"), resource.ActionEnsure, "rc-service", nil)}
+		}
 		return []resource.Intent{artifact("systemd.service", "routerd-dns-resolver@"+res.Metadata.Name+".service", resource.ActionEnsure, "systemctl", nil)}
 	case "DSLiteTunnel":
 		spec, err := res.DSLiteTunnelSpec()

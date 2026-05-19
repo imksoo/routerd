@@ -38,3 +38,14 @@ the boot command line with:
 ```text
 routerd.skip-wizard=1
 ```
+
+When neither condition is true, the live ISO waits 5 seconds at login before
+starting the wizard. If there is no input, it exits the wizard path and leaves
+the system running in ephemeral mode; start it later with
+`/usr/share/routerd/install.sh configure`.
+
+With the example Kubernetes VIP profile and a 1 second `advertInterval`,
+stopping keepalived on the active node should move the VIP to the backup in
+roughly a few seconds. The keepalived detection window is approximately
+`advertInterval * 3`; reclaim by the higher-priority node then follows the
+configured `preemptDelay` plus the next advert convergence window.
