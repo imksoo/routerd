@@ -92,7 +92,10 @@ harness into a regular VM job.
 
 ## 8. Open work
 
-- Stateful firewall in production: applied today, but still wants richer rule expressions, ICMP type matching, multiple ports per rule, and rate limiting.
+- Stateful firewall in production: `FirewallRule` now covers ICMP type matching,
+  multiple ports per rule, nftables rate limiting, and per-source connection
+  limits. Future work should focus on rule grouping and higher-level policy
+  ergonomics rather than basic expression coverage.
 - DoH proxying for clients on the LAN.
 - BFD for BGP peers that need sub-second failure detection.
 - Operator-controlled IngressService backend drain mode through `routerctl` without editing YAML.

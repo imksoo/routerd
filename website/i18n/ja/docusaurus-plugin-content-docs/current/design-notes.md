@@ -96,7 +96,10 @@ systemd 側と同じく、望む状態と file が変わらない場合は servi
 
 ## 8. 残課題
 
-- 状態を持つ firewall の本番運用：適用は始まったが、ルール表現力 / ICMP type 一致 / 複数 port / rate limit を拡張する必要がある。
+- 状態を持つ firewall の本番運用：`FirewallRule` は ICMP type 一致、
+  複数 port、nftables rate limit、送信元ごとの connection limit を扱えます。
+  今後は基本的な expression coverage ではなく、rule grouping と上位 policy の
+  使いやすさを改善します。
 - LAN 向け DoH 代理。
 - Tier C のための FRR 経由 BGP / OSPF 統合。
 - 高可用 (leader 選出、耐障害 control plane)。

@@ -25,6 +25,14 @@ routerd は nftables の `inet routerd_filter` テーブルを管理します。
 
 NAT44 は別の `ip routerd_nat` テーブルを使います。
 
+## Rule expression
+
+`FirewallRule` は CIDR の送信元 / 宛先 match、再利用可能な `IPAddressSet`
+宛先参照、TCP/UDP の `sourcePorts` / `destinationPorts`、ICMP / ICMPv6
+type 名、nftables `rateLimit`、送信元ごとの `connLimit` を扱えます。
+`rateLimit` と `connLimit` は閾値を超えた通信に一致するため、scan や
+brute-force を緩和する `drop` / `reject` rule と組み合わせるのが基本です。
+
 ## ゲスト端末の隔離
 
 `ClientPolicy` は、同じ LAN セグメント上の端末を MAC アドレスで分類するゲストモードです。

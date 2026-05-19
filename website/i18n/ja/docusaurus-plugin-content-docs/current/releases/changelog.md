@@ -35,6 +35,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   `examples/vrrp-tuning-presets.yaml` を追加しました。
 - BGP / VRRP / IngressService の Web Console 運用ページに SSE 更新、
   filter 付き event log、軽量なローカル SVG metric trend を追加しました。
+- stateful firewall rule expression として ICMP / ICMPv6 type、送信元 /
+  宛先の複数 port match、nftables rate limit、送信元ごとの connection
+  limit を追加しました。
 
 ## v20260519.0743
 

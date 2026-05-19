@@ -44,7 +44,8 @@ The role-based defaults from `FirewallZone` cover the common case, but you need 
     fromZone: lan
     toZone: self
     protocol: tcp
-    port: 9100
+    destinationPorts:
+      - "9100"
     action: accept
 ```
 
@@ -65,8 +66,68 @@ closed by the role matrix.
     destinationCIDRs:
       - 192.0.2.126/32
     protocol: tcp
-    port: 8080
+    destinationPorts:
+      - "8080"
     action: accept
+```
+
+## Example: multi-port web and ICMP echo
+
+Use `destinationPorts` when a rule covers more than one TCP or UDP port.
+ICMP rules can be narrowed to specific type names.
+
+```yaml
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: wan-web
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - "80"
+      - "443"
+    action: accept
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: wan-icmp-echo
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: icmp
+    icmpType: echo-request
+    action: accept
+```
+
+## Example: reject SSH over a rate or connection limit
+
+`rateLimit` matches traffic over the configured threshold. `connLimit` matches
+when one source already has more than the allowed concurrent tracked states.
+
+```yaml
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: ssh-bruteforce-over-limit
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - "22"
+    action: reject
+    rateLimit:
+      rate: 8
+      burst: 16
+      unit: packet
+      per: minute
+      log: true
+    connLimit:
+      maxPerSource: 4
+      log: true
 ```
 
 ## Validating before apply

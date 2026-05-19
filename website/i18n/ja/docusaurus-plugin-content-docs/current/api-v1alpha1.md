@@ -175,6 +175,10 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 `FirewallRule` は宛先 CIDR に加えて `destinationSetRefs` と
 `excludeDestinationSetRefs` を持ちます。これにより、再利用可能な FQDN-backed set
 を各 rule にアドレス展開せず、許可・拒否・reject の条件として使えます。
+stateful rule expression は `sourcePorts`、`destinationPorts`、ICMP / ICMPv6
+type matching、`rateLimit`、`connLimit` も扱えます。`port` は単一の
+destination port shorthand として引き続き受け付けますが、新しい例では
+`destinationPorts` を使います。
 
 `NAT44Rule` は `destinationCIDRs`、`destinationSetRefs`、`excludeDestinationCIDRs`、
 `excludeDestinationSetRefs` を持ちます。これにより、インターネット向け通信だけを

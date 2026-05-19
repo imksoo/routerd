@@ -1127,6 +1127,52 @@ func TestValidateFirewallPolicyAndRule(t *testing.T) {
 	}
 }
 
+func TestValidateFirewallRuleStatefulExpressions(t *testing.T) {
+	base := func(spec api.FirewallRuleSpec) *api.Router {
+		return &api.Router{
+			TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+			Metadata: api.ObjectMeta{Name: "test"},
+			Spec: api.RouterSpec{Resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "rule"}, Spec: spec},
+			}},
+		}
+	}
+	valid := api.FirewallRuleSpec{
+		FromZone:         "wan",
+		ToZone:           "self",
+		Protocol:         "tcp",
+		DestinationPorts: []api.FirewallPort{"22", "443"},
+		Action:           "reject",
+		RateLimit:        api.FirewallRateLimitSpec{Rate: 10, Burst: 20, Unit: "packet", Per: "second"},
+		ConnLimit:        api.FirewallConnLimitSpec{MaxPerSource: 4},
+	}
+	if err := Validate(base(valid)); err != nil {
+		t.Fatalf("valid stateful firewall rule rejected: %v", err)
+	}
+	for _, tt := range []struct {
+		name string
+		spec api.FirewallRuleSpec
+		want string
+	}{
+		{name: "range mixed with list", spec: api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "tcp", DestinationPorts: []api.FirewallPort{"80-90", "443"}, Action: "accept"}, want: "cannot mix"},
+		{name: "port without tcp udp", spec: api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "icmp", DestinationPorts: []api.FirewallPort{"443"}, Action: "accept"}, want: "require protocol tcp or udp"},
+		{name: "icmp type with tcp", spec: api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "tcp", ICMPType: "echo-request", Action: "accept"}, want: "requires protocol icmp"},
+		{name: "bad icmpv6 type", spec: api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "icmpv6", ICMPv6Type: "bogus", Action: "accept"}, want: "not supported"},
+		{name: "bad rate unit", spec: api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "tcp", DestinationPorts: []api.FirewallPort{"22"}, Action: "drop", RateLimit: api.FirewallRateLimitSpec{Rate: 1, Unit: "bit", Per: "second"}}, want: "unit"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := Validate(base(tt.spec))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateClientPolicy(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

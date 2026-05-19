@@ -8210,7 +8210,26 @@
                         ],
                         "type": "string"
                       },
+                      "connLimit": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "log": {
+                            "type": "boolean"
+                          },
+                          "maxPerSource": {
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "destinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "destinationPorts": {
                         "items": {
                           "type": "string"
                         },
@@ -8229,6 +8248,12 @@
                         "type": "array"
                       },
                       "fromZone": {
+                        "type": "string"
+                      },
+                      "icmpType": {
+                        "type": "string"
+                      },
+                      "icmpv6Type": {
                         "type": "string"
                       },
                       "log": {
@@ -8258,12 +8283,43 @@
                             "minimum": 0,
                             "type": "integer"
                           },
+                          "log": {
+                            "type": "boolean"
+                          },
                           "packetsPerSecond": {
                             "minimum": 0,
                             "type": "integer"
+                          },
+                          "per": {
+                            "enum": [
+                              "",
+                              "second",
+                              "minute"
+                            ],
+                            "type": "string"
+                          },
+                          "rate": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "unit": {
+                            "enum": [
+                              "",
+                              "packet",
+                              "byte",
+                              "kilobyte",
+                              "megabyte"
+                            ],
+                            "type": "string"
                           }
                         },
                         "type": "object"
+                      },
+                      "sourcePorts": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
                       },
                       "srcCIDRs": {
                         "items": {

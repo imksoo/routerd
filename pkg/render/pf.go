@@ -664,19 +664,64 @@ func pfFirewallRuleExprOnSelf(onExpr, selfExpr, name string, spec api.FirewallRu
 	if proto := pfFirewallProtocol(spec.Protocol); proto != "" {
 		parts = append(parts, proto)
 	}
-	if len(spec.SourceCIDRs) > 0 {
-		parts = append(parts, "from", pfCIDRSet(spec.SourceCIDRs))
+	if icmpType := pfFirewallICMPType(spec); icmpType != "" {
+		parts = append(parts, icmpType)
+	}
+	if len(spec.SourceCIDRs) > 0 || len(spec.SourcePorts) > 0 {
+		source := "any"
+		if len(spec.SourceCIDRs) > 0 {
+			source = pfCIDRSet(spec.SourceCIDRs)
+		}
+		parts = append(parts, "from", source)
+		if ports := pfFirewallSourcePorts(spec); len(ports) > 0 {
+			parts = append(parts, "port", pfPortSet(ports))
+		}
 	}
 	if len(spec.DestinationCIDRs) > 0 {
 		parts = append(parts, "to", pfCIDRSet(spec.DestinationCIDRs))
 	} else if spec.ToZone == "self" {
 		parts = append(parts, "to", selfExpr)
 	}
-	if spec.Port != 0 {
-		parts = append(parts, "port", strconv.Itoa(spec.Port))
+	if ports := pfFirewallDestinationPorts(spec); len(ports) > 0 {
+		parts = append(parts, "port", pfPortSet(ports))
 	}
 	parts = append(parts, "keep", "state", "label", pfQuote("routerd:"+name))
 	return strings.Join(parts, " ")
+}
+
+func pfFirewallDestinationPorts(spec api.FirewallRuleSpec) []string {
+	var ports []string
+	if len(spec.DestinationPorts) > 0 {
+		for _, port := range spec.DestinationPorts {
+			value := strings.TrimSpace(string(port))
+			if value != "" {
+				ports = append(ports, strings.ReplaceAll(value, "-", ":"))
+			}
+		}
+		return ports
+	}
+	if spec.Port != 0 {
+		return []string{strconv.Itoa(spec.Port)}
+	}
+	return nil
+}
+
+func pfFirewallSourcePorts(spec api.FirewallRuleSpec) []string {
+	ports := make([]string, 0, len(spec.SourcePorts))
+	for _, port := range spec.SourcePorts {
+		value := strings.TrimSpace(string(port))
+		if value != "" {
+			ports = append(ports, strings.ReplaceAll(value, "-", ":"))
+		}
+	}
+	return ports
+}
+
+func pfPortSet(ports []string) string {
+	if len(ports) == 1 {
+		return ports[0]
+	}
+	return "{ " + strings.Join(ports, " ") + " }"
 }
 
 func pfFirewallHoleExprs(zone firewallZone, hole FirewallHole, logging firewallLogging) []string {
@@ -723,6 +768,64 @@ func pfFirewallProtocol(protocol string) string {
 		return "inet proto 112"
 	default:
 		return ""
+	}
+}
+
+func pfFirewallICMPType(spec api.FirewallRuleSpec) string {
+	switch spec.Protocol {
+	case "icmp":
+		if icmpType := pfFirewallRuleICMPType(spec); icmpType != "" {
+			return "icmp-type " + pfICMPTypeName(icmpType)
+		}
+	case "icmpv6", "ipv6-icmp":
+		if icmpType := pfFirewallRuleICMPv6Type(spec); icmpType != "" {
+			return "icmp6-type " + pfICMPv6TypeName(icmpType)
+		}
+	}
+	return ""
+}
+
+func pfFirewallRuleICMPType(spec api.FirewallRuleSpec) string {
+	if strings.TrimSpace(spec.ICMPType) != "" {
+		return strings.TrimSpace(spec.ICMPType)
+	}
+	return strings.TrimSpace(spec.ICMPTypeKebab)
+}
+
+func pfFirewallRuleICMPv6Type(spec api.FirewallRuleSpec) string {
+	if strings.TrimSpace(spec.ICMPv6Type) != "" {
+		return strings.TrimSpace(spec.ICMPv6Type)
+	}
+	return strings.TrimSpace(spec.ICMPv6TypeKebab)
+}
+
+func pfICMPTypeName(value string) string {
+	switch strings.TrimSpace(value) {
+	case "echo-request":
+		return "echoreq"
+	case "echo-reply":
+		return "echorep"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func pfICMPv6TypeName(value string) string {
+	switch strings.TrimSpace(value) {
+	case "echo-request":
+		return "echoreq"
+	case "echo-reply":
+		return "echorep"
+	case "router-solicit", "nd-router-solicit":
+		return "routersol"
+	case "router-advert", "nd-router-advert":
+		return "routeradv"
+	case "neighbor-solicit", "nd-neighbor-solicit":
+		return "neighbrsol"
+	case "neighbor-advert", "nd-neighbor-advert":
+		return "neighbradv"
+	default:
+		return strings.TrimSpace(value)
 	}
 }
 

@@ -3,6 +3,8 @@
 package render
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -932,6 +934,88 @@ func TestNftablesFirewallRuleUsesDestinationAddressSet(t *testing.T) {
 			t.Fatalf("firewall output missing %q:\n%s", want, got)
 		}
 	}
+}
+
+func TestNftablesFirewallRuleStatefulExpressions(t *testing.T) {
+	router := nftablesStatefulFirewallTestRouter()
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`tcp sport 1024-65535 tcp dport { 80, 443 } counter accept`,
+		`ip protocol icmp icmp type echo-request counter accept`,
+		`tcp dport 22 limit rate over 8/minute burst 16 packets log prefix "routerd firewall ssh-flood rate-limit " counter reject`,
+		`meter routerd_conn_ssh_flood_v4 { ip saddr ct count over 4 } log prefix "routerd firewall ssh-flood conn-limit "`,
+		`meta l4proto ipv6-icmp icmpv6 type nd-neighbor-solicit counter accept`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesFirewallRuleSyntaxSmoke(t *testing.T) {
+	if os.Getenv("ROUTERD_NFT_SYNTAX") != "1" {
+		t.Skip("set ROUTERD_NFT_SYNTAX=1 to run nft syntax smoke")
+	}
+	if _, err := exec.LookPath("unshare"); err != nil {
+		t.Skip("unshare is not installed")
+	}
+	if _, err := exec.LookPath("nft"); err != nil {
+		t.Skip("nft is not installed")
+	}
+	data, err := NftablesIPv4SourceNAT(nftablesStatefulFirewallTestRouter())
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	cmd := exec.Command("unshare", "-Urn", "nft", "-c", "-f", "-")
+	cmd.Stdin = strings.NewReader(string(data))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("nft syntax check failed: %v\n%s\n%s", err, output, data)
+	}
+}
+
+func nftablesStatefulFirewallTestRouter() *api.Router {
+	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "web"}, Spec: api.FirewallRuleSpec{
+			FromZone:         "wan",
+			ToZone:           "self",
+			Protocol:         "tcp",
+			SourcePorts:      []api.FirewallPort{"1024-65535"},
+			DestinationPorts: []api.FirewallPort{"80", "443"},
+			Action:           "accept",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "echo"}, Spec: api.FirewallRuleSpec{
+			FromZone: "wan",
+			ToZone:   "self",
+			Protocol: "icmp",
+			ICMPType: "echo-request",
+			Action:   "accept",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "ssh-flood"}, Spec: api.FirewallRuleSpec{
+			FromZone:         "wan",
+			ToZone:           "self",
+			Protocol:         "tcp",
+			DestinationPorts: []api.FirewallPort{"22"},
+			Action:           "reject",
+			RateLimit:        api.FirewallRateLimitSpec{Rate: 8, Burst: 16, Unit: "packet", Per: "minute", Log: true},
+			ConnLimit:        api.FirewallConnLimitSpec{MaxPerSource: 4, Log: true},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "nd"}, Spec: api.FirewallRuleSpec{
+			FromZone:   "lan",
+			ToZone:     "self",
+			Protocol:   "icmpv6",
+			ICMPv6Type: "neighbor-solicit",
+			Action:     "accept",
+		}},
+	}}}
 }
 
 func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {

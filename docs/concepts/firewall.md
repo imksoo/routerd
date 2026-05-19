@@ -27,6 +27,15 @@ dnsmasq DHCP service, and `routerd-dns-resolver`.
 The firewall table is separate from NAT. NAT44 continues to use `ip
 routerd_nat`.
 
+## Rule expressions
+
+`FirewallRule` supports CIDR source/destination matches, reusable
+`IPAddressSet` destination references, TCP/UDP `sourcePorts` and
+`destinationPorts`, ICMP / ICMPv6 type names, nftables `rateLimit`, and
+per-source `connLimit`. `rateLimit` and `connLimit` match over-limit traffic,
+so they are usually paired with `drop` or `reject` rules for dampening scans or
+brute-force attempts.
+
 ## Guest client isolation
 
 `ClientPolicy` is a MAC-based guest mode for shared LAN segments. It is meant

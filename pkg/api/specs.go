@@ -5,6 +5,9 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+
+	"gopkg.in/yaml.v3"
 )
 
 type LogSinkSpec struct {
@@ -1350,14 +1353,64 @@ type FirewallRuleSpec struct {
 	ExcludeDestinationSetRefs []string              `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
 	Protocol                  string                `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=,enum=tcp,enum=udp,enum=icmp,enum=icmpv6,enum=ipv6-icmp,enum=ipip"`
 	Port                      int                   `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=0,maximum=65535"`
+	SourcePorts               []FirewallPort        `yaml:"sourcePorts,omitempty" json:"sourcePorts,omitempty"`
+	DestinationPorts          []FirewallPort        `yaml:"destinationPorts,omitempty" json:"destinationPorts,omitempty"`
+	ICMPType                  string                `yaml:"icmpType,omitempty" json:"icmpType,omitempty"`
+	ICMPTypeKebab             string                `yaml:"icmp-type,omitempty" json:"-"`
+	ICMPv6Type                string                `yaml:"icmpv6Type,omitempty" json:"icmpv6Type,omitempty"`
+	ICMPv6TypeKebab           string                `yaml:"icmpv6-type,omitempty" json:"-"`
 	Action                    string                `yaml:"action" json:"action" jsonschema:"enum=accept,enum=drop,enum=reject"`
 	Log                       bool                  `yaml:"log,omitempty" json:"log,omitempty"`
 	RateLimit                 FirewallRateLimitSpec `yaml:"rateLimit,omitempty" json:"rateLimit,omitempty"`
+	ConnLimit                 FirewallConnLimitSpec `yaml:"connLimit,omitempty" json:"connLimit,omitempty"`
+}
+
+type FirewallPort string
+
+func (p *FirewallPort) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		if value.Tag == "!!int" {
+			n, err := strconv.Atoi(value.Value)
+			if err != nil {
+				return err
+			}
+			*p = FirewallPort(strconv.Itoa(n))
+			return nil
+		}
+		*p = FirewallPort(value.Value)
+		return nil
+	default:
+		return fmt.Errorf("port must be a scalar")
+	}
+}
+
+func (p *FirewallPort) UnmarshalJSON(data []byte) error {
+	var n int
+	if err := json.Unmarshal(data, &n); err == nil {
+		*p = FirewallPort(strconv.Itoa(n))
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	*p = FirewallPort(s)
+	return nil
 }
 
 type FirewallRateLimitSpec struct {
-	PacketsPerSecond int `yaml:"packetsPerSecond,omitempty" json:"packetsPerSecond,omitempty" jsonschema:"minimum=0"`
-	Burst            int `yaml:"burst,omitempty" json:"burst,omitempty" jsonschema:"minimum=0"`
+	Rate             int    `yaml:"rate,omitempty" json:"rate,omitempty" jsonschema:"minimum=0"`
+	Unit             string `yaml:"unit,omitempty" json:"unit,omitempty" jsonschema:"enum=,enum=packet,enum=byte,enum=kilobyte,enum=megabyte"`
+	Per              string `yaml:"per,omitempty" json:"per,omitempty" jsonschema:"enum=,enum=second,enum=minute"`
+	Log              bool   `yaml:"log,omitempty" json:"log,omitempty"`
+	PacketsPerSecond int    `yaml:"packetsPerSecond,omitempty" json:"packetsPerSecond,omitempty" jsonschema:"minimum=0"`
+	Burst            int    `yaml:"burst,omitempty" json:"burst,omitempty" jsonschema:"minimum=0"`
+}
+
+type FirewallConnLimitSpec struct {
+	MaxPerSource int  `yaml:"maxPerSource,omitempty" json:"maxPerSource,omitempty" jsonschema:"minimum=0"`
+	Log          bool `yaml:"log,omitempty" json:"log,omitempty"`
 }
 
 type HostnameSpec struct {

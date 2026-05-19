@@ -1,0 +1,95 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: firewall-rate-limit
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: ens18
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        managed: false
+        owner: external
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: wan
+      spec:
+        role: untrust
+        interfaces:
+          - wan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata:
+        name: lan
+      spec:
+        role: trust
+        interfaces:
+          - lan
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata:
+        name: default
+      spec:
+        logDeny: true
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallRule
+      metadata:
+        name: wan-web
+      spec:
+        fromZone: wan
+        toZone: self
+        protocol: tcp
+        destinationPorts:
+          - "80"
+          - "443"
+        action: accept
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallRule
+      metadata:
+        name: wan-icmp-echo
+      spec:
+        fromZone: wan
+        toZone: self
+        protocol: icmp
+        icmpType: echo-request
+        action: accept
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallRule
+      metadata:
+        name: ssh-bruteforce-over-limit
+      spec:
+        fromZone: wan
+        toZone: self
+        protocol: tcp
+        destinationPorts:
+          - "22"
+        action: reject
+        rateLimit:
+          rate: 8
+          burst: 16
+          unit: packet
+          per: minute
+          log: true
+        connLimit:
+          maxPerSource: 4
+          log: true

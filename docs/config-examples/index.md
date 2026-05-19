@@ -38,6 +38,7 @@ The numbers in diagrams and YAML comments intentionally match. For example,
 | [Port forward to an inside web server](./port-forward-web.md) | Works today with a known WAN address | You need to publish one inside HTTPS service and support hairpin access from LAN clients. |
 | [Kubernetes API VIP with BGP](./kubernetes-api-vip.md) | Works today with FRR and keepalived installed | You want routerd to hold a Kubernetes API VIP, health-check control planes, and receive Service prefixes by BGP. |
 | [Guest and IoT client isolation](./guest-isolation.md) | Works today on Linux nftables | A small set of MAC addresses should reach the internet but not the trusted LAN or management networks. |
+| [Firewall rate limits and ICMP rules](./firewall-rate-limit.md) | Works today on Linux nftables | You need multi-port service openings, ICMP type matching, and SSH brute-force dampening. |
 | [Multi-WAN IPv4 failover](./multi-wan-failover.md) | Works today; tune health checks carefully | Several IPv4 egress paths exist and routerd should select a healthy default route. |
 | [Redirect public DNS to the local resolver](./local-dns-redirect.md) | Works today on Linux nftables | LAN clients try to query public plaintext DNS directly and you want port 53 to stay local. |
 | [Tailscale subnet and exit node](./tailscale-subnet-exit.md) | Works today when Tailscale is installed | The router should advertise LAN routes or an exit-node service into a tailnet. |

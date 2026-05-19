@@ -3776,11 +3776,20 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		default:
 			return fmt.Errorf("%s spec.protocol must be tcp, udp, icmp, icmpv6, ipv6-icmp, or ipip", res.ID())
 		}
-		if spec.Port != 0 && spec.Protocol != "tcp" && spec.Protocol != "udp" {
-			return fmt.Errorf("%s spec.port requires protocol tcp or udp", res.ID())
+		if spec.Port != 0 && len(spec.DestinationPorts) > 0 {
+			return fmt.Errorf("%s spec.port and spec.destinationPorts are mutually exclusive", res.ID())
 		}
-		if spec.Port < 0 || spec.Port > 65535 {
-			return fmt.Errorf("%s spec.port must be between 1 and 65535", res.ID())
+		if err := validateFirewallRulePorts(res.ID(), spec); err != nil {
+			return err
+		}
+		if err := validateFirewallRuleICMP(res.ID(), spec); err != nil {
+			return err
+		}
+		if err := validateFirewallRateLimit(res.ID(), spec.RateLimit); err != nil {
+			return err
+		}
+		if spec.ConnLimit.MaxPerSource < 0 {
+			return fmt.Errorf("%s spec.connLimit.maxPerSource must be greater than or equal to 0", res.ID())
 		}
 		for i, cidr := range spec.SourceCIDRs {
 			if _, err := netip.ParsePrefix(cidr); err != nil {
@@ -4427,6 +4436,164 @@ func validateSystemdEnvironmentFilePath(value string) error {
 		return fmt.Errorf("contains invalid characters")
 	}
 	return nil
+}
+
+func validateFirewallRulePorts(resourceID string, spec api.FirewallRuleSpec) error {
+	srcPorts := spec.SourcePorts
+	dstPorts := spec.DestinationPorts
+	if spec.Port != 0 {
+		dstPorts = []api.FirewallPort{api.FirewallPort(strconv.Itoa(spec.Port))}
+	}
+	if len(srcPorts) == 0 && len(dstPorts) == 0 {
+		return nil
+	}
+	if spec.Protocol != "tcp" && spec.Protocol != "udp" {
+		return fmt.Errorf("%s sourcePorts, destinationPorts, or port require protocol tcp or udp", resourceID)
+	}
+	if spec.Port < 0 || spec.Port > 65535 {
+		return fmt.Errorf("%s spec.port must be between 1 and 65535", resourceID)
+	}
+	if err := validateFirewallPortList(resourceID, "spec.sourcePorts", srcPorts); err != nil {
+		return err
+	}
+	return validateFirewallPortList(resourceID, "spec.destinationPorts", dstPorts)
+}
+
+func validateFirewallPortList(resourceID, field string, ports []api.FirewallPort) error {
+	rangeCount := 0
+	for i, port := range ports {
+		value := strings.TrimSpace(string(port))
+		if value == "" {
+			return fmt.Errorf("%s %s[%d] must not be empty", resourceID, field, i)
+		}
+		if strings.Contains(value, "-") {
+			rangeCount++
+			parts := strings.Split(value, "-")
+			if len(parts) != 2 {
+				return fmt.Errorf("%s %s[%d] must be a port or start-end range", resourceID, field, i)
+			}
+			start, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+			if err != nil {
+				return fmt.Errorf("%s %s[%d] range start is invalid: %w", resourceID, field, i, err)
+			}
+			end, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+			if err != nil {
+				return fmt.Errorf("%s %s[%d] range end is invalid: %w", resourceID, field, i, err)
+			}
+			if start < 1 || start > 65535 || end < 1 || end > 65535 || start > end {
+				return fmt.Errorf("%s %s[%d] range must be within 1-65535 and start <= end", resourceID, field, i)
+			}
+			continue
+		}
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("%s %s[%d] must be a port number or start-end range: %w", resourceID, field, i, err)
+		}
+		if n < 1 || n > 65535 {
+			return fmt.Errorf("%s %s[%d] must be between 1 and 65535", resourceID, field, i)
+		}
+	}
+	if rangeCount > 0 && len(ports) > 1 {
+		return fmt.Errorf("%s %s cannot mix a port range with multiple port entries", resourceID, field)
+	}
+	return nil
+}
+
+func validateFirewallRuleICMP(resourceID string, spec api.FirewallRuleSpec) error {
+	icmpType := firewallRuleICMPType(spec)
+	icmpv6Type := firewallRuleICMPv6Type(spec)
+	if icmpType != "" {
+		if spec.Protocol != "icmp" {
+			return fmt.Errorf("%s spec.icmpType requires protocol icmp", resourceID)
+		}
+		if _, ok := firewallICMPTypes[strings.TrimSpace(icmpType)]; !ok {
+			return fmt.Errorf("%s spec.icmpType %q is not supported", resourceID, icmpType)
+		}
+	}
+	if icmpv6Type != "" {
+		if spec.Protocol != "icmpv6" && spec.Protocol != "ipv6-icmp" {
+			return fmt.Errorf("%s spec.icmpv6Type requires protocol icmpv6 or ipv6-icmp", resourceID)
+		}
+		if _, ok := firewallICMPv6Types[strings.TrimSpace(icmpv6Type)]; !ok {
+			return fmt.Errorf("%s spec.icmpv6Type %q is not supported", resourceID, icmpv6Type)
+		}
+	}
+	return nil
+}
+
+func firewallRuleICMPType(spec api.FirewallRuleSpec) string {
+	if strings.TrimSpace(spec.ICMPType) != "" {
+		return strings.TrimSpace(spec.ICMPType)
+	}
+	return strings.TrimSpace(spec.ICMPTypeKebab)
+}
+
+func firewallRuleICMPv6Type(spec api.FirewallRuleSpec) string {
+	if strings.TrimSpace(spec.ICMPv6Type) != "" {
+		return strings.TrimSpace(spec.ICMPv6Type)
+	}
+	return strings.TrimSpace(spec.ICMPv6TypeKebab)
+}
+
+func validateFirewallRateLimit(resourceID string, limit api.FirewallRateLimitSpec) error {
+	rate := limit.Rate
+	if rate == 0 {
+		rate = limit.PacketsPerSecond
+	}
+	if rate < 0 {
+		return fmt.Errorf("%s spec.rateLimit.rate must be greater than or equal to 0", resourceID)
+	}
+	if rate == 0 {
+		if limit.Unit != "" || limit.Per != "" || limit.Burst != 0 || limit.Log {
+			return fmt.Errorf("%s spec.rateLimit.rate is required when rateLimit is configured", resourceID)
+		}
+		return nil
+	}
+	switch limit.Unit {
+	case "", "packet", "byte", "kilobyte", "megabyte":
+	default:
+		return fmt.Errorf("%s spec.rateLimit.unit must be packet, byte, kilobyte, or megabyte", resourceID)
+	}
+	switch limit.Per {
+	case "", "second", "minute":
+	default:
+		return fmt.Errorf("%s spec.rateLimit.per must be second or minute", resourceID)
+	}
+	if limit.Burst < 0 {
+		return fmt.Errorf("%s spec.rateLimit.burst must be greater than or equal to 0", resourceID)
+	}
+	return nil
+}
+
+var firewallICMPTypes = map[string]string{
+	"echo-reply":              "echo-reply",
+	"destination-unreachable": "destination-unreachable",
+	"source-quench":           "source-quench",
+	"redirect":                "redirect",
+	"echo-request":            "echo-request",
+	"router-advertisement":    "router-advertisement",
+	"router-solicitation":     "router-solicitation",
+	"time-exceeded":           "time-exceeded",
+	"parameter-problem":       "parameter-problem",
+	"timestamp-request":       "timestamp-request",
+	"timestamp-reply":         "timestamp-reply",
+}
+
+var firewallICMPv6Types = map[string]string{
+	"destination-unreachable": "destination-unreachable",
+	"packet-too-big":          "packet-too-big",
+	"time-exceeded":           "time-exceeded",
+	"parameter-problem":       "parameter-problem",
+	"echo-request":            "echo-request",
+	"echo-reply":              "echo-reply",
+	"router-solicit":          "nd-router-solicit",
+	"router-advert":           "nd-router-advert",
+	"neighbor-solicit":        "nd-neighbor-solicit",
+	"neighbor-advert":         "nd-neighbor-advert",
+	"nd-router-solicit":       "nd-router-solicit",
+	"nd-router-advert":        "nd-router-advert",
+	"nd-neighbor-solicit":     "nd-neighbor-solicit",
+	"nd-neighbor-advert":      "nd-neighbor-advert",
 }
 
 func stringInSlice(value string, values []string) bool {

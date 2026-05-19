@@ -37,6 +37,7 @@ sidebar_position: 0
 | [内部 Web server への port forward](./port-forward-web.md) | WAN address が分かっていれば現在の実装で利用可能 | 内部の HTTPS server を 1 つ公開し、LAN からも同じ公開名で到達したい。 |
 | [BGP 付き Kubernetes API VIP](./kubernetes-api-vip.md) | FRR と keepalived が入っていれば現在の実装で利用可能 | Kubernetes API VIP を routerd が保持し、control plane を health check し、Service prefix を BGP で受けたい。 |
 | [Guest / IoT client の分離](./guest-isolation.md) | Linux nftables で利用可能 | 一部の MAC address だけ internet 可、LAN と管理網は不可にしたい。 |
+| [Firewall rate limit と ICMP rule](./firewall-rate-limit.md) | Linux nftables で利用可能 | 複数 port の service opening、ICMP type match、SSH brute-force 緩和を使いたい。 |
 | [Multi-WAN IPv4 failover](./multi-wan-failover.md) | 現在の実装で利用可能。health check は慎重に調整 | 複数の IPv4 出口から正常な default route を選びたい。 |
 | [Public DNS を local resolver に redirect](./local-dns-redirect.md) | Linux nftables で利用可能 | LAN client が平文 DNS を外へ直接投げるのを router の DNS に集約したい。 |
 | [Tailscale subnet / exit node](./tailscale-subnet-exit.md) | Tailscale が利用できる環境で利用可能 | LAN route や exit node を tailnet に広告したい。 |

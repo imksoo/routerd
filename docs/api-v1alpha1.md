@@ -194,7 +194,10 @@ preferred and lower-weight next hops act as fallback routes.
 `FirewallRule` supports `destinationSetRefs` and `excludeDestinationSetRefs`
 in addition to destination CIDR narrowing. Use these fields to accept, drop, or
 reject traffic for reusable FQDN-backed sets without expanding addresses into
-each rule.
+each rule. Stateful rule expressions also support `sourcePorts`,
+`destinationPorts`, ICMP / ICMPv6 type matching, `rateLimit`, and `connLimit`.
+`port` remains accepted as a single destination port shorthand; new examples
+prefer `destinationPorts`.
 
 `NAT44Rule` supports `destinationCIDRs`, `destinationSetRefs`,
 `excludeDestinationCIDRs`, and `excludeDestinationSetRefs`. This allows internet

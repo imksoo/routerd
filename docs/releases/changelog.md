@@ -35,6 +35,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `examples/vrrp-tuning-presets.yaml`.
 - Added live BGP / VRRP / IngressService Web Console operational pages with
   SSE refresh, filtered event logs, and lightweight local SVG metric trends.
+- Added stateful firewall rule expressions for ICMP / ICMPv6 types, multi-port
+  source and destination matches, nftables rate limits, and per-source
+  connection limits.
 
 ## v20260519.0743
 

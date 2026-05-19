@@ -47,7 +47,8 @@ title: ファイアウォール例外を追加する
     fromZone: lan
     toZone: self
     protocol: tcp
-    port: 9100
+    destinationPorts:
+      - "9100"
     action: accept
 ```
 
@@ -68,8 +69,68 @@ title: ファイアウォール例外を追加する
     destinationCIDRs:
       - 192.0.2.126/32
     protocol: tcp
-    port: 8080
+    destinationPorts:
+      - "8080"
     action: accept
+```
+
+## 例：複数 web port と ICMP echo
+
+TCP / UDP の複数 port を 1 rule で扱う場合は `destinationPorts` を使います。
+ICMP rule は type 名で絞り込めます。
+
+```yaml
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: wan-web
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - "80"
+      - "443"
+    action: accept
+
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: wan-icmp-echo
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: icmp
+    icmpType: echo-request
+    action: accept
+```
+
+## 例：rate / connection limit を超えた SSH を reject
+
+`rateLimit` は設定した閾値を超えた通信に一致します。`connLimit` は同じ送信元が
+許可数を超える concurrent tracked state を既に持っている場合に一致します。
+
+```yaml
+- apiVersion: firewall.routerd.net/v1alpha1
+  kind: FirewallRule
+  metadata:
+    name: ssh-bruteforce-over-limit
+  spec:
+    fromZone: wan
+    toZone: self
+    protocol: tcp
+    destinationPorts:
+      - "22"
+    action: reject
+    rateLimit:
+      rate: 8
+      burst: 16
+      unit: packet
+      per: minute
+      log: true
+    connLimit:
+      maxPerSource: 4
+      log: true
 ```
 
 ## 適用前の確認

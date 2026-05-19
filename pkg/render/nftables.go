@@ -912,24 +912,52 @@ func nftFirewallRuleExpr(name string, spec api.FirewallRuleSpec, logging firewal
 }
 
 func nftFirewallRuleExprs(name string, spec api.FirewallRuleSpec, logging firewallLogging, addressSets map[string]nftIPAddressSet) ([]string, error) {
-	matches, err := nftFirewallMatches(name, spec, addressSets)
+	matches, err := nftFirewallMatchAlternatives(name, spec, addressSets)
 	if err != nil {
 		return nil, err
 	}
-	var suffix []string
-	if proto := nftFirewallProtocol(spec.Protocol); proto != "" {
-		suffix = append(suffix, proto)
+	var common []string
+	srcPorts := firewallSourcePorts(spec)
+	dstPorts := firewallDestinationPorts(spec)
+	if proto := nftFirewallProtocol(spec.Protocol); proto != "" && len(srcPorts) == 0 && len(dstPorts) == 0 {
+		common = append(common, proto)
 	}
-	if spec.Port != 0 {
-		suffix = append(suffix, "dport "+strconv.Itoa(spec.Port))
+	if len(srcPorts) > 0 {
+		common = append(common, nftPortMatch(spec.Protocol, "sport", srcPorts))
+	}
+	if len(dstPorts) > 0 {
+		common = append(common, nftPortMatch(spec.Protocol, "dport", dstPorts))
+	}
+	if icmp := nftICMPTypeMatch(spec); icmp != "" {
+		common = append(common, icmp)
+	}
+	rateLimit := nftFirewallRateLimitExpr(spec.RateLimit)
+	suffix := append([]string{}, common...)
+	if limit := nftFirewallRateLimitExpr(spec.RateLimit); limit != "" {
+		suffix = append(suffix, limit)
+		if spec.RateLimit.Log {
+			suffix = append(suffix, nftLogExpr("routerd firewall "+name+" rate-limit ", logging))
+		}
 	}
 	if spec.Log {
 		suffix = append(suffix, nftLogExpr("routerd firewall "+name+" ", logging))
 	}
 	suffix = append(suffix, "counter", spec.Action)
+	connSuffix := append([]string{}, common...)
+	if spec.Log {
+		connSuffix = append(connSuffix, nftLogExpr("routerd firewall "+name+" ", logging))
+	}
+	connSuffix = append(connSuffix, "counter", spec.Action)
 	var out []string
 	for _, match := range matches {
-		out = append(out, strings.Join(strings.Fields(strings.Join([]string{match, strings.Join(suffix, " ")}, " ")), " "))
+		if spec.ConnLimit.MaxPerSource > 0 {
+			for _, connLimit := range nftFirewallConnLimitExprs(name, spec.ConnLimit, match.Family, logging) {
+				out = append(out, strings.Join(strings.Fields(strings.Join([]string{match.Expr, connLimit, strings.Join(connSuffix, " ")}, " ")), " "))
+			}
+		}
+		if rateLimit != "" || spec.ConnLimit.MaxPerSource <= 0 {
+			out = append(out, strings.Join(strings.Fields(strings.Join([]string{match.Expr, strings.Join(suffix, " ")}, " ")), " "))
+		}
 	}
 	return out, nil
 }
@@ -1000,6 +1028,184 @@ func nftFirewallProtocol(protocol string) string {
 	}
 }
 
+func nftFirewallProtocolFamily(protocol string) string {
+	switch protocol {
+	case "icmp", "vrrp":
+		return "ip"
+	case "icmpv6", "ipv6-icmp", "ipip":
+		return "ip6"
+	default:
+		return ""
+	}
+}
+
+func firewallSourcePorts(spec api.FirewallRuleSpec) []api.FirewallPort {
+	return spec.SourcePorts
+}
+
+func firewallDestinationPorts(spec api.FirewallRuleSpec) []api.FirewallPort {
+	if len(spec.DestinationPorts) > 0 {
+		return spec.DestinationPorts
+	}
+	if spec.Port != 0 {
+		return []api.FirewallPort{api.FirewallPort(strconv.Itoa(spec.Port))}
+	}
+	return nil
+}
+
+func nftPortMatch(protocol, direction string, ports []api.FirewallPort) string {
+	values := make([]string, 0, len(ports))
+	for _, port := range ports {
+		value := strings.TrimSpace(string(port))
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	if len(values) == 0 {
+		return ""
+	}
+	prefix := protocol
+	if prefix != "tcp" && prefix != "udp" {
+		prefix = "th"
+	}
+	if len(values) == 1 {
+		return prefix + " " + direction + " " + values[0]
+	}
+	return prefix + " " + direction + " { " + strings.Join(values, ", ") + " }"
+}
+
+func nftICMPTypeMatch(spec api.FirewallRuleSpec) string {
+	switch spec.Protocol {
+	case "icmp":
+		if icmpType := firewallRuleICMPType(spec); icmpType != "" {
+			return "icmp type " + nftICMPTypeName(icmpType)
+		}
+	case "icmpv6", "ipv6-icmp":
+		if icmpType := firewallRuleICMPv6Type(spec); icmpType != "" {
+			return "icmpv6 type " + nftICMPv6TypeName(icmpType)
+		}
+	}
+	return ""
+}
+
+func firewallRuleICMPType(spec api.FirewallRuleSpec) string {
+	if strings.TrimSpace(spec.ICMPType) != "" {
+		return strings.TrimSpace(spec.ICMPType)
+	}
+	return strings.TrimSpace(spec.ICMPTypeKebab)
+}
+
+func firewallRuleICMPv6Type(spec api.FirewallRuleSpec) string {
+	if strings.TrimSpace(spec.ICMPv6Type) != "" {
+		return strings.TrimSpace(spec.ICMPv6Type)
+	}
+	return strings.TrimSpace(spec.ICMPv6TypeKebab)
+}
+
+func nftICMPTypeName(value string) string {
+	value = strings.TrimSpace(value)
+	if normalized, ok := nftICMPTypeAliases[value]; ok {
+		return normalized
+	}
+	return value
+}
+
+func nftICMPv6TypeName(value string) string {
+	value = strings.TrimSpace(value)
+	if normalized, ok := nftICMPv6TypeAliases[value]; ok {
+		return normalized
+	}
+	return value
+}
+
+var nftICMPTypeAliases = map[string]string{
+	"echo-reply":              "echo-reply",
+	"destination-unreachable": "destination-unreachable",
+	"source-quench":           "source-quench",
+	"redirect":                "redirect",
+	"echo-request":            "echo-request",
+	"router-advertisement":    "router-advertisement",
+	"router-solicitation":     "router-solicitation",
+	"time-exceeded":           "time-exceeded",
+	"parameter-problem":       "parameter-problem",
+	"timestamp-request":       "timestamp-request",
+	"timestamp-reply":         "timestamp-reply",
+}
+
+var nftICMPv6TypeAliases = map[string]string{
+	"destination-unreachable": "destination-unreachable",
+	"packet-too-big":          "packet-too-big",
+	"time-exceeded":           "time-exceeded",
+	"parameter-problem":       "parameter-problem",
+	"echo-request":            "echo-request",
+	"echo-reply":              "echo-reply",
+	"router-solicit":          "nd-router-solicit",
+	"router-advert":           "nd-router-advert",
+	"neighbor-solicit":        "nd-neighbor-solicit",
+	"neighbor-advert":         "nd-neighbor-advert",
+	"nd-router-solicit":       "nd-router-solicit",
+	"nd-router-advert":        "nd-router-advert",
+	"nd-neighbor-solicit":     "nd-neighbor-solicit",
+	"nd-neighbor-advert":      "nd-neighbor-advert",
+}
+
+func nftFirewallRateLimitExpr(limit api.FirewallRateLimitSpec) string {
+	rate := limit.Rate
+	unit := strings.TrimSpace(limit.Unit)
+	per := strings.TrimSpace(limit.Per)
+	if rate == 0 && limit.PacketsPerSecond > 0 {
+		rate = limit.PacketsPerSecond
+	}
+	if unit == "" && rate > 0 {
+		unit = "packet"
+	}
+	if per == "" && rate > 0 {
+		per = "second"
+	}
+	if rate <= 0 {
+		return ""
+	}
+	value := strconv.Itoa(rate)
+	burstUnit := "packets"
+	switch unit {
+	case "byte":
+		value += " bytes"
+		burstUnit = "bytes"
+	case "kilobyte":
+		value += " kbytes"
+		burstUnit = "kbytes"
+	case "megabyte":
+		value += " mbytes"
+		burstUnit = "mbytes"
+	}
+	expr := "limit rate over " + value + "/" + per
+	if limit.Burst > 0 {
+		expr += " burst " + strconv.Itoa(limit.Burst) + " " + burstUnit
+	}
+	return expr
+}
+
+func nftFirewallConnLimitExprs(name string, limit api.FirewallConnLimitSpec, family string, logging firewallLogging) []string {
+	if limit.MaxPerSource <= 0 {
+		return []string{""}
+	}
+	safeName := nftSetName("routerd_conn_" + name)
+	logExpr := ""
+	if limit.Log {
+		logExpr = nftLogExpr("routerd firewall "+name+" conn-limit ", logging)
+	}
+	if family == "ip" {
+		return []string{strings.TrimSpace("meter " + safeName + "_v4 { ip saddr ct count over " + strconv.Itoa(limit.MaxPerSource) + " } " + logExpr)}
+	}
+	if family == "ip6" {
+		return []string{strings.TrimSpace("meter " + safeName + "_v6 { ip6 saddr ct count over " + strconv.Itoa(limit.MaxPerSource) + " } " + logExpr)}
+	}
+	return []string{
+		strings.TrimSpace("meta nfproto ipv4 meter " + safeName + "_v4 { ip saddr ct count over " + strconv.Itoa(limit.MaxPerSource) + " } " + logExpr),
+		strings.TrimSpace("meta nfproto ipv6 meter " + safeName + "_v6 { ip6 saddr ct count over " + strconv.Itoa(limit.MaxPerSource) + " } " + logExpr),
+	}
+}
+
 func nftFirewallCIDRMatch(resourceID, direction string, cidrs []string) (string, error) {
 	var v4, v6 []string
 	for _, cidr := range cidrs {
@@ -1039,6 +1245,18 @@ type nftFirewallMatch struct {
 }
 
 func nftFirewallMatches(resourceID string, spec api.FirewallRuleSpec, addressSets map[string]nftIPAddressSet) ([]string, error) {
+	matches, err := nftFirewallMatchAlternatives(resourceID, spec, addressSets)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(matches))
+	for _, match := range matches {
+		out = append(out, match.Expr)
+	}
+	return out, nil
+}
+
+func nftFirewallMatchAlternatives(resourceID string, spec api.FirewallRuleSpec, addressSets map[string]nftIPAddressSet) ([]nftFirewallMatch, error) {
 	sources, err := nftFirewallCIDRMatchAlternatives(resourceID, "saddr", spec.SourceCIDRs)
 	if err != nil {
 		return nil, err
@@ -1057,12 +1275,19 @@ func nftFirewallMatches(resourceID string, spec api.FirewallRuleSpec, addressSet
 	if len(destinations) == 0 {
 		destinations = []nftFirewallMatch{{}}
 	}
-	var out []string
+	var out []nftFirewallMatch
 	for _, source := range sources {
 		for _, destination := range destinations {
 			family, ok := mergeNftMatchFamilies(source.Family, destination.Family)
 			if !ok {
 				continue
+			}
+			if protoFamily := nftFirewallProtocolFamily(spec.Protocol); protoFamily != "" {
+				var protoOK bool
+				family, protoOK = mergeNftMatchFamilies(family, protoFamily)
+				if !protoOK {
+					continue
+				}
 			}
 			parts := []string{source.Expr, destination.Expr}
 			for _, exclude := range excludes {
@@ -1070,7 +1295,7 @@ func nftFirewallMatches(resourceID string, spec api.FirewallRuleSpec, addressSet
 					parts = append(parts, exclude.Expr)
 				}
 			}
-			out = append(out, strings.Join(strings.Fields(strings.Join(parts, " ")), " "))
+			out = append(out, nftFirewallMatch{Family: family, Expr: strings.Join(strings.Fields(strings.Join(parts, " ")), " ")})
 		}
 	}
 	if len(out) == 0 {
