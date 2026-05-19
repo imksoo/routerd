@@ -305,6 +305,91 @@ func TestHandlerServesOperationalViews(t *testing.T) {
 	}
 }
 
+func TestHandlerServesRoutesWithBGPPeersAndKernelRoutes(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeWebConsoleTestCommand(t, filepath.Join(binDir, "ip"), `#!/bin/sh
+case "$*" in
+  "-j -4 route show table all")
+    echo '[{"dst":"default","gateway":"192.168.123.1","dev":"ens18","protocol":"dhcp","metric":100,"table":"main"},{"dst":"10.250.0.0/24","gateway":"192.168.123.111","dev":"ens18","protocol":"bgp","table":254}]'
+    exit 0
+    ;;
+  "-j -6 route show table all")
+    echo '[]'
+    exit 0
+    ;;
+esac
+exit 1
+`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	store := fakeStore{resources: []routerstate.ObjectStatus{
+		{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "BGPRouter",
+			Name:       "lan",
+			Status: map[string]any{
+				"phase": "Established",
+				"peers": []map[string]any{{
+					"address":          "192.168.123.111",
+					"asn":              64513,
+					"state":            "Established",
+					"messagesReceived": 12,
+					"messagesSent":     11,
+					"prefixesReceived": 2,
+				}},
+				"prefixes": []map[string]any{{
+					"prefix":  "10.250.0.0/24",
+					"nextHop": "192.168.123.111",
+				}},
+			},
+		},
+		{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "DHCPv4Lease",
+			Name:       "wan",
+			Status: map[string]any{
+				"phase":                 "Bound",
+				"interface":             "wan",
+				"appliedDefaultGateway": "192.168.123.1",
+			},
+		},
+	}}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"}, Metadata: api.ObjectMeta{Name: "services"}, Spec: api.IPv4StaticRouteSpec{Interface: "lan", Destination: "10.96.0.0/12", Via: "192.168.123.50", Metric: 50}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan", RouteMetric: 100}},
+	}}}
+	handler := New(Options{Store: store, Router: router, Title: "routerd"})
+	for _, tt := range []struct {
+		path string
+		want []string
+	}{
+		{"/api/v1/routes", []string{`"source": "bgp"`, `"source": "static"`, `"source": "dhcpv4"`, `"source": "kernel"`, `"bgpPeers"`, `"192.168.123.111"`}},
+		{"/routes", []string{"<h1>Routes</h1>", "BGP Peers", "10.250.0.0/24", "10.96.0.0/12", "192.168.123.111", "Established"}},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%s", tt.path, rec.Code, rec.Body.String())
+		}
+		got := rec.Body.String()
+		for _, want := range tt.want {
+			if !strings.Contains(got, want) {
+				t.Fatalf("%s body missing %q:\n%s", tt.path, want, got)
+			}
+		}
+	}
+}
+
+func writeWebConsoleTestCommand(t *testing.T, path, script string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHandlerFiltersEventAPI(t *testing.T) {
 	handler := New(Options{Store: fakeStore{events: []routerstate.StoredEvent{
 		{

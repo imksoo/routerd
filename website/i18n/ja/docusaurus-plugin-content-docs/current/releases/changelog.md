@@ -110,6 +110,11 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - FRR JSON が数値フィールドを文字列として返す場合の BGP observation を修正し、
   `routerctl show bgp` は古い stored status を live `vtysh` output で更新して
   表示するようにしました。
+- FRR bootstrap reload の順序を修正し、`frr-reload.py` 実行前に `bgpd` の ready を
+  待つようにしました。timeout を設け、`apply --once` が hang せず controller status
+  に reason を残して失敗します。
+- Web Console に Routes view と `/api/v1/routes` endpoint を追加しました。kernel、
+  BGP、static、DHCP、policy route 情報と BGP peer state を同じ画面で確認できます。
 
 ## v20260519.0743
 

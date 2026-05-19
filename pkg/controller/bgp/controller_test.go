@@ -355,6 +355,7 @@ func TestReconcileObservesBFDAndWritesFRRDaemons(t *testing.T) {
 	want := []string{
 		"systemctl enable frr.service",
 		"systemctl restart frr.service",
+		"vtysh -c show bgp summary json",
 		"vtysh -C -f " + configPath,
 		"frr-reload.py --reload " + configPath,
 		"vtysh -c show bgp summary json",
@@ -422,6 +423,7 @@ func TestReconcileRetriesFRRValidationAfterDaemonRestart(t *testing.T) {
 	want := []string{
 		"systemctl enable frr.service",
 		"systemctl restart frr.service",
+		"vtysh -c show bgp summary json",
 		"vtysh -C -f " + configPath,
 		"vtysh -C -f " + configPath,
 		"frr-reload.py --reload " + configPath,
@@ -474,6 +476,7 @@ func TestReconcileEnablesBGPDWithOpenRC(t *testing.T) {
 	want := []string{
 		"rc-update add frr default",
 		"rc-service frr restart",
+		"vtysh -c show bgp summary json",
 		"vtysh -C -f " + configPath,
 		"frr-reload.py --reload " + configPath,
 		"vtysh -c show bgp summary json",

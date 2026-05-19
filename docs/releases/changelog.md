@@ -107,6 +107,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   through the same controller path as daemon mode.
 - Fixed BGP observation for FRR JSON fields emitted as strings and made
   `routerctl show bgp` refresh stale stored status from live `vtysh` output.
+- Fixed FRR bootstrap reload ordering by waiting for `bgpd` readiness before
+  running `frr-reload.py`, with a bounded timeout so `apply --once` fails with
+  controller status instead of hanging.
+- Added a Web Console Routes view and `/api/v1/routes` endpoint that combines
+  kernel, BGP, static, DHCP, and policy route information with BGP peer state.
 
 ## v20260519.0743
 

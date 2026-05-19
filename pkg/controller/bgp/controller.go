@@ -112,9 +112,21 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 				return fmt.Errorf("%s %s: %w: %s", command.Name, strings.Join(command.Args, " "), err, strings.TrimSpace(string(out)))
 			}
 		}
+		readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		out, err := c.waitFRRReady(readyCtx)
+		cancel()
+		if err != nil {
+			saveErr := c.saveConfiguredStatuses("Error", path, true, map[string]any{"reason": "FRRNotReady", "error": strings.TrimSpace(string(out)), "daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
+			if saveErr != nil {
+				return saveErr
+			}
+			return fmt.Errorf("wait for bgpd readiness: %w: %s", err, strings.TrimSpace(string(out)))
+		}
 	}
 	if !c.DryRun && reloadNeeded {
-		out, err := c.validateFRRConfig(ctx, path, daemonsChanged)
+		reloadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		out, err := c.validateFRRConfig(reloadCtx, path, daemonsChanged)
 		if err != nil {
 			vtysh := firstNonEmpty(c.VTYSH, "vtysh")
 			saveErr := c.saveConfiguredStatuses("Error", path, reloadNeeded, map[string]any{"reason": "FRRSyntaxInvalid", "error": strings.TrimSpace(string(out))})
@@ -124,7 +136,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			return fmt.Errorf("%s -C -f %s: %w: %s", vtysh, path, err, strings.TrimSpace(string(out)))
 		}
 		reload := firstNonEmpty(c.FRRReload, defaultFRRReload())
-		if out, err := c.run(ctx, reload, "--reload", path); err != nil {
+		if out, err := c.run(reloadCtx, reload, "--reload", path); err != nil {
 			saveErr := c.saveConfiguredStatuses("Error", path, reloadNeeded, map[string]any{"reason": "FRRReloadFailed", "error": strings.TrimSpace(string(out))})
 			if saveErr != nil {
 				return saveErr
@@ -178,6 +190,23 @@ func (c *Controller) renderFRRDaemons() (bool, string, error) {
 		}
 	}
 	return changed, path, nil
+}
+
+func (c *Controller) waitFRRReady(ctx context.Context) ([]byte, error) {
+	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
+	var lastOut []byte
+	for {
+		out, err := c.run(ctx, vtysh, "-c", "show bgp summary json")
+		if err == nil {
+			return out, nil
+		}
+		lastOut = out
+		select {
+		case <-ctx.Done():
+			return lastOut, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 func (c *Controller) validateFRRConfig(ctx context.Context, path string, retry bool) ([]byte, error) {

@@ -341,6 +341,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.clients(w)
 	case "api/v1/vpn":
 		h.vpn(w)
+	case "api/v1/routes":
+		h.routes(w)
 	case "api/v1/bgp":
 		h.operationalStatus(w, "bgp")
 	case "api/v1/vrrp":
@@ -357,6 +359,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.operationalPage(w, "vrrp")
 	case "ingress":
 		h.operationalPage(w, "ingress")
+	case "routes":
+		h.routesPage(w)
 	default:
 		if strings.HasPrefix(path, "api/v1/generations/") {
 			h.generationDetail(w, r, strings.TrimPrefix(path, "api/v1/generations/"))
@@ -645,6 +649,42 @@ type OperationalStatus struct {
 	Resources   []routerstate.ObjectStatus `json:"resources"`
 }
 
+type RoutesStatus struct {
+	GeneratedAt time.Time      `json:"generatedAt"`
+	Routes      []RouteEntry   `json:"routes"`
+	BGPPeers    []RouteBGPPeer `json:"bgpPeers,omitempty"`
+	Errors      []string       `json:"errors,omitempty"`
+}
+
+type RouteEntry struct {
+	Source      string `json:"source"`
+	Resource    string `json:"resource,omitempty"`
+	Family      string `json:"family,omitempty"`
+	Destination string `json:"destination"`
+	Gateway     string `json:"gateway,omitempty"`
+	Device      string `json:"device,omitempty"`
+	Protocol    string `json:"protocol,omitempty"`
+	Table       string `json:"table,omitempty"`
+	Metric      string `json:"metric,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+	Type        string `json:"type,omitempty"`
+	Peer        string `json:"peer,omitempty"`
+	Phase       string `json:"phase,omitempty"`
+	ObservedAt  string `json:"observedAt,omitempty"`
+}
+
+type RouteBGPPeer struct {
+	Router           string `json:"router"`
+	Peer             string `json:"peer"`
+	ASN              string `json:"asn,omitempty"`
+	State            string `json:"state,omitempty"`
+	Established      bool   `json:"established,omitempty"`
+	PrefixesReceived string `json:"prefixesReceived,omitempty"`
+	Messages         string `json:"messages,omitempty"`
+	LastEstablished  string `json:"lastEstablishedAt,omitempty"`
+	LastError        string `json:"lastErrorReason,omitempty"`
+}
+
 func (h Handler) operationalStatus(w http.ResponseWriter, kind string) {
 	resources, err := h.operationalResources(kind)
 	if err != nil {
@@ -652,6 +692,19 @@ func (h Handler) operationalStatus(w http.ResponseWriter, kind string) {
 		return
 	}
 	writeJSON(w, OperationalStatus{GeneratedAt: time.Now().UTC(), Kind: kind, Resources: resources})
+}
+
+func (h Handler) routes(w http.ResponseWriter) {
+	status := h.routesStatus()
+	writeJSON(w, status)
+}
+
+func (h Handler) routesPage(w http.ResponseWriter) {
+	status := h.routesStatus()
+	page := routesHTMLPage(h.opts.Title, status)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(page))
 }
 
 func (h Handler) operationalPage(w http.ResponseWriter, kind string) {
@@ -689,6 +742,325 @@ func (h Handler) operationalResources(kind string) ([]routerstate.ObjectStatus, 
 		}
 	}
 	return out, nil
+}
+
+func (h Handler) routesStatus() RoutesStatus {
+	status := RoutesStatus{GeneratedAt: time.Now().UTC()}
+	resources, err := h.resourceStatuses()
+	if err != nil {
+		status.Errors = append(status.Errors, err.Error())
+	}
+	status.Routes = append(status.Routes, h.configuredRouteEntries(resources)...)
+	status.Routes = append(status.Routes, bgpRouteEntries(resources)...)
+	status.BGPPeers = bgpRoutePeers(resources)
+	live, errors := liveKernelRouteEntries()
+	status.Routes = append(status.Routes, live...)
+	status.Errors = append(status.Errors, errors...)
+	sortRouteEntries(status.Routes)
+	sort.Slice(status.BGPPeers, func(i, j int) bool {
+		if status.BGPPeers[i].Router != status.BGPPeers[j].Router {
+			return status.BGPPeers[i].Router < status.BGPPeers[j].Router
+		}
+		return status.BGPPeers[i].Peer < status.BGPPeers[j].Peer
+	})
+	return status
+}
+
+func (h Handler) configuredRouteEntries(resources []routerstate.ObjectStatus) []RouteEntry {
+	statuses := map[string]map[string]any{}
+	for _, resource := range resources {
+		statuses[resource.APIVersion+"/"+resource.Kind+"/"+resource.Name] = resource.Status
+	}
+	var out []RouteEntry
+	if h.opts.Router == nil {
+		return out
+	}
+	expanded := api.ExpandClusterNetworkRoutes(h.opts.Router)
+	for _, resource := range expanded.Spec.Resources {
+		status := statuses[resource.APIVersion+"/"+resource.Kind+"/"+resource.Metadata.Name]
+		switch resource.Kind {
+		case "IPv4StaticRoute":
+			spec, err := resource.IPv4StaticRouteSpec()
+			if err != nil {
+				continue
+			}
+			out = append(out, RouteEntry{
+				Source:      "static",
+				Resource:    resource.Kind + "/" + resource.Metadata.Name,
+				Family:      "ipv4",
+				Destination: firstNonEmpty(stringFromMap(status, "destination"), spec.Destination),
+				Gateway:     firstNonEmpty(stringFromMap(status, "gateway"), spec.Via),
+				Device:      firstNonEmpty(stringFromMap(status, "device"), spec.Interface),
+				Metric:      routeMetricText(firstNonEmpty(stringFromMap(status, "metric"), strconv.Itoa(spec.Metric))),
+				Phase:       stringFromMap(status, "phase"),
+				ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
+			})
+		case "IPv6StaticRoute":
+			spec, err := resource.IPv6StaticRouteSpec()
+			if err != nil {
+				continue
+			}
+			out = append(out, RouteEntry{
+				Source:      "static",
+				Resource:    resource.Kind + "/" + resource.Metadata.Name,
+				Family:      "ipv6",
+				Destination: firstNonEmpty(stringFromMap(status, "destination"), spec.Destination),
+				Gateway:     firstNonEmpty(stringFromMap(status, "gateway"), spec.Via),
+				Device:      firstNonEmpty(stringFromMap(status, "device"), spec.Interface),
+				Metric:      routeMetricText(firstNonEmpty(stringFromMap(status, "metric"), strconv.Itoa(spec.Metric))),
+				Phase:       stringFromMap(status, "phase"),
+				ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
+			})
+		case "IPv4Route":
+			spec, err := resource.IPv4RouteSpec()
+			if err != nil {
+				continue
+			}
+			out = append(out, RouteEntry{
+				Source:      "static",
+				Resource:    resource.Kind + "/" + resource.Metadata.Name,
+				Family:      "ipv4",
+				Destination: firstNonEmpty(stringFromMap(status, "destination"), spec.Destination),
+				Gateway:     firstNonEmpty(stringFromMap(status, "gateway"), spec.Gateway),
+				Device:      firstNonEmpty(stringFromMap(status, "device"), spec.Device),
+				Metric:      routeMetricText(firstNonEmpty(stringFromMap(status, "metric"), strconv.Itoa(spec.Metric))),
+				Type:        firstNonEmpty(stringFromMap(status, "type"), spec.Type),
+				Phase:       stringFromMap(status, "phase"),
+				ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
+			})
+		case "DHCPv4Lease":
+			spec, err := resource.DHCPv4LeaseSpec()
+			if err != nil {
+				continue
+			}
+			gateway := firstNonEmpty(stringFromMap(status, "appliedDefaultGateway"), stringFromMap(status, "defaultGateway"), stringFromMap(status, "gateway"))
+			if gateway == "" {
+				continue
+			}
+			out = append(out, RouteEntry{
+				Source:      "dhcpv4",
+				Resource:    resource.Kind + "/" + resource.Metadata.Name,
+				Family:      "ipv4",
+				Destination: "default",
+				Gateway:     gateway,
+				Device:      firstNonEmpty(stringFromMap(status, "interface"), spec.Interface),
+				Protocol:    "dhcp",
+				Metric:      routeMetricText(firstNonEmpty(stringFromMap(status, "routeMetric"), strconv.Itoa(spec.RouteMetric))),
+				Phase:       stringFromMap(status, "phase"),
+				ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
+			})
+		case "IPv4DefaultRoutePolicy":
+			spec, err := resource.IPv4DefaultRoutePolicySpec()
+			if err != nil {
+				continue
+			}
+			for _, candidate := range spec.Candidates {
+				if candidate.RouteSet != "" {
+					continue
+				}
+				out = append(out, RouteEntry{
+					Source:      "policy",
+					Resource:    resource.Kind + "/" + resource.Metadata.Name,
+					Family:      "ipv4",
+					Destination: "default",
+					Gateway:     candidate.Gateway,
+					Device:      candidate.Interface,
+					Table:       routeMetricText(strconv.Itoa(candidate.Table)),
+					Metric:      routeMetricText(strconv.Itoa(candidate.RouteMetric)),
+					Phase:       stringFromMap(status, "phase"),
+					ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
+				})
+			}
+		}
+	}
+	return out
+}
+
+func bgpRouteEntries(resources []routerstate.ObjectStatus) []RouteEntry {
+	var out []RouteEntry
+	for _, resource := range resources {
+		if resource.Kind != "BGPRouter" {
+			continue
+		}
+		for _, prefix := range statusList(resource.Status["prefixes"]) {
+			destination := firstNonEmpty(statusAnyText(prefix["prefix"]), statusAnyText(prefix["network"]))
+			if destination == "" {
+				continue
+			}
+			out = append(out, RouteEntry{
+				Source:      "bgp",
+				Resource:    resource.Kind + "/" + resource.Name,
+				Family:      routeFamily(destination),
+				Destination: destination,
+				Protocol:    "bgp",
+				Peer:        firstNonEmpty(statusAnyText(prefix["peer"]), statusAnyText(prefix["nextHop"]), statusAnyText(prefix["nexthop"])),
+				Phase:       statusText(resource.Status, "phase"),
+				ObservedAt:  statusText(resource.Status, "observedAt"),
+			})
+		}
+	}
+	return out
+}
+
+func bgpRoutePeers(resources []routerstate.ObjectStatus) []RouteBGPPeer {
+	var out []RouteBGPPeer
+	for _, resource := range resources {
+		if resource.Kind != "BGPRouter" {
+			continue
+		}
+		for _, peer := range statusList(resource.Status["peers"]) {
+			messages := ""
+			if statusAnyText(peer["messagesReceived"]) != "" || statusAnyText(peer["messagesSent"]) != "" {
+				messages = fmt.Sprintf("%d/%d", statusIntValue(peer["messagesReceived"]), statusIntValue(peer["messagesSent"]))
+			}
+			established, _ := statusBoolValue(peer["established"])
+			out = append(out, RouteBGPPeer{
+				Router:           resource.Name,
+				Peer:             statusAnyText(peer["address"]),
+				ASN:              statusAnyText(peer["asn"]),
+				State:            statusAnyText(peer["state"]),
+				Established:      established,
+				PrefixesReceived: statusAnyText(peer["prefixesReceived"]),
+				Messages:         messages,
+				LastEstablished:  statusAnyText(peer["lastEstablishedAt"]),
+				LastError:        statusAnyText(peer["lastErrorReason"]),
+			})
+		}
+	}
+	return out
+}
+
+type linuxRouteJSON struct {
+	Dst      string `json:"dst"`
+	Gateway  string `json:"gateway"`
+	Dev      string `json:"dev"`
+	Protocol string `json:"protocol"`
+	Proto    string `json:"proto"`
+	Table    any    `json:"table"`
+	Metric   any    `json:"metric"`
+	Scope    string `json:"scope"`
+	Type     string `json:"type"`
+	Prefsrc  string `json:"prefsrc"`
+}
+
+func liveKernelRouteEntries() ([]RouteEntry, []string) {
+	var entries []RouteEntry
+	var errors []string
+	for _, family := range []struct {
+		Name string
+		Flag string
+	}{
+		{Name: "ipv4", Flag: "-4"},
+		{Name: "ipv6", Flag: "-6"},
+	} {
+		out, err := commandOutputTimeout(2*time.Second, "ip", "-j", family.Flag, "route", "show", "table", "all")
+		if err != nil {
+			errors = append(errors, err.Error())
+			continue
+		}
+		routes, err := parseLinuxRoutesJSON(out, family.Name)
+		if err != nil {
+			errors = append(errors, err.Error())
+			continue
+		}
+		entries = append(entries, routes...)
+	}
+	return entries, errors
+}
+
+func parseLinuxRoutesJSON(data []byte, family string) ([]RouteEntry, error) {
+	var raw []linuxRouteJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse ip route %s json: %w", family, err)
+	}
+	out := make([]RouteEntry, 0, len(raw))
+	for _, item := range raw {
+		destination := firstNonEmpty(item.Dst, "default")
+		protocol := firstNonEmpty(item.Protocol, item.Proto)
+		out = append(out, RouteEntry{
+			Source:      "kernel",
+			Family:      family,
+			Destination: destination,
+			Gateway:     item.Gateway,
+			Device:      item.Dev,
+			Protocol:    protocol,
+			Table:       routeAnyText(item.Table),
+			Metric:      routeAnyText(item.Metric),
+			Scope:       item.Scope,
+			Type:        item.Type,
+			Phase:       "installed",
+		})
+	}
+	return out, nil
+}
+
+func sortRouteEntries(entries []RouteEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		left := entries[i]
+		right := entries[j]
+		if left.Family != right.Family {
+			return left.Family < right.Family
+		}
+		if left.Destination != right.Destination {
+			return left.Destination < right.Destination
+		}
+		if left.Source != right.Source {
+			return left.Source < right.Source
+		}
+		if left.Resource != right.Resource {
+			return left.Resource < right.Resource
+		}
+		return left.Device < right.Device
+	})
+}
+
+func routeAnyText(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(typed)
+	case float64:
+		if typed == float64(int64(typed)) {
+			return strconv.FormatInt(int64(typed), 10)
+		}
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	default:
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+}
+
+func routeMetricText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "0" {
+		return ""
+	}
+	return value
+}
+
+func routeFamily(destination string) string {
+	destination = strings.TrimSpace(destination)
+	if destination == "" || destination == "default" {
+		return ""
+	}
+	prefix, err := netip.ParsePrefix(destination)
+	if err == nil {
+		if prefix.Addr().Is6() {
+			return "ipv6"
+		}
+		return "ipv4"
+	}
+	addr, err := netip.ParseAddr(destination)
+	if err == nil && addr.Is6() {
+		return "ipv6"
+	}
+	if err == nil {
+		return "ipv4"
+	}
+	if strings.Contains(destination, ":") {
+		return "ipv6"
+	}
+	return "ipv4"
 }
 
 func (h Handler) controllers(w http.ResponseWriter) {
@@ -1350,7 +1722,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </head>
 <body>
 <main>
-<nav><a href="./">Summary</a><a href="bgp">BGP</a><a href="vrrp">VRRP</a><a href="ingress">Ingress</a></nav>
+<nav><a href="./">Summary</a><a href="routes">Routes</a><a href="bgp">BGP</a><a href="vrrp">VRRP</a><a href="ingress">Ingress</a></nav>
 <h1>` + html.EscapeString(displayTitle) + `</h1>
 <div class="toolbar"><span id="live-state" class="badge">Connecting</span><span id="last-updated" class="muted"></span></div>
 <section>
@@ -1372,6 +1744,77 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </main>
 </body>
 </html>`
+}
+
+func routesHTMLPage(title string, status RoutesStatus) string {
+	var body strings.Builder
+	body.WriteString(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>` + html.EscapeString(title+" Routes") + `</title>
+<style>
+:root{color-scheme:light dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{margin:0;background:#f7f8fa;color:#171b22}
+main{max-width:1240px;margin:0 auto;padding:24px}
+nav{display:flex;gap:12px;margin:0 0 20px;flex-wrap:wrap}
+a{color:#0f5f9f;text-decoration:none}
+h1{font-size:24px;margin:0 0 18px}
+section{margin:0 0 28px}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dde2ea}
+th,td{padding:9px 10px;border-bottom:1px solid #e7ebf0;text-align:left;font-size:14px;vertical-align:top}
+th{background:#eef2f6;font-weight:650}
+.muted{color:#5d6673}
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px}
+.badge{display:inline-flex;align-items:center;gap:6px;border:1px solid #bfd3e6;border-radius:999px;padding:4px 9px;font-size:13px;background:#fff}
+.controls{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.controls input,.controls select{font:inherit;font-size:14px;padding:6px 8px;border:1px solid #cad3df;border-radius:6px;background:#fff;color:inherit}
+@media (prefers-color-scheme:dark){body{background:#11151b;color:#eef2f6}table{background:#171c23;border-color:#303744}th,td{border-color:#2a313c}th{background:#202733}a{color:#8bc7ff}.muted{color:#a7b0bd}.badge{background:#171c23;border-color:#303744}.controls input,.controls select{background:#171c23;border-color:#303744}}
+</style>
+</head>
+<body>
+<main>
+<nav><a href="./">Summary</a><a href="routes">Routes</a><a href="bgp">BGP</a><a href="vrrp">VRRP</a><a href="ingress">Ingress</a></nav>
+<h1>Routes</h1>
+<div class="toolbar"><span id="live-state" class="badge">Polling</span><span id="last-updated" class="muted">Updated ` + html.EscapeString(status.GeneratedAt.Format(time.RFC3339)) + `</span></div>
+<section><div class="controls"><label>Source <select id="route-source"><option value="">All</option><option>kernel</option><option>bgp</option><option>static</option><option>dhcpv4</option><option>policy</option></select></label><label>Search <input id="route-search" placeholder="prefix, gateway, device, peer"></label></div><table><thead><tr><th>Source</th><th>Resource</th><th>Family</th><th>Destination</th><th>Gateway</th><th>Device</th><th>Protocol</th><th>Table</th><th>Metric</th><th>Peer</th><th>Phase</th></tr></thead><tbody id="routes-body">`)
+	writeRouteRowsHTML(&body, status.Routes)
+	body.WriteString(`</tbody></table></section><section><h2>BGP Peers</h2><table><thead><tr><th>Router</th><th>Peer</th><th>ASN</th><th>State</th><th>Prefixes</th><th>Messages</th><th>Last Established</th><th>Last Error</th></tr></thead><tbody id="bgp-peers-body">`)
+	writeRoutePeerRowsHTML(&body, status.BGPPeers)
+	body.WriteString(`</tbody></table></section>`)
+	if len(status.Errors) > 0 {
+		body.WriteString(`<section><h2>Collection errors</h2><table><tbody>`)
+		for _, errText := range status.Errors {
+			writeHTMLRow(&body, []string{errText})
+		}
+		body.WriteString(`</tbody></table></section>`)
+	}
+	body.WriteString(`<script>
+(function(){
+const routesBody=document.getElementById("routes-body"),peersBody=document.getElementById("bgp-peers-body"),state=document.getElementById("live-state"),updated=document.getElementById("last-updated"),source=document.getElementById("route-source"),search=document.getElementById("route-search");
+let routes=[],peers=[];
+function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function row(cells){return "<tr>"+cells.map(v=>"<td>"+esc(v||"-")+"</td>").join("")+"</tr>";}
+function routeText(r){return [r.source,r.resource,r.family,r.destination,r.gateway,r.device,r.protocol,r.table,r.metric,r.peer,r.phase].join(" ").toLowerCase();}
+function render(){const s=(search.value||"").toLowerCase(),src=source.value;routesBody.innerHTML=routes.filter(r=>(!src||r.source===src)&&(!s||routeText(r).includes(s))).map(r=>row([r.source,r.resource,r.family,r.destination,r.gateway,r.device,r.protocol,r.table,r.metric,r.peer,r.phase])).join("")||'<tr><td colspan="11" class="muted">No matching routes</td></tr>';peersBody.innerHTML=peers.map(p=>row([p.router,p.peer,p.asn,p.state,p.prefixesReceived,p.messages,p.lastEstablishedAt,p.lastErrorReason])).join("")||'<tr><td colspan="8" class="muted">No BGP peers observed</td></tr>';}
+async function refresh(){try{const r=await fetch("./api/v1/routes",{cache:"no-store"});if(!r.ok)throw new Error(String(r.status));const data=await r.json();routes=data.routes||[];peers=data.bgpPeers||[];updated.textContent=data.generatedAt?"Updated "+new Date(data.generatedAt).toLocaleString():"";state.textContent="Live";render();}catch(e){state.textContent="Polling failed";}}
+[source,search].forEach(el=>el.addEventListener("input",render));setInterval(refresh,30000);refresh();
+})();
+</script></main></body></html>`)
+	return body.String()
+}
+
+func writeRouteRowsHTML(body *strings.Builder, routes []RouteEntry) {
+	for _, route := range routes {
+		writeHTMLRow(body, []string{route.Source, route.Resource, route.Family, route.Destination, route.Gateway, route.Device, route.Protocol, route.Table, route.Metric, route.Peer, route.Phase})
+	}
+}
+
+func writeRoutePeerRowsHTML(body *strings.Builder, peers []RouteBGPPeer) {
+	for _, peer := range peers {
+		writeHTMLRow(body, []string{peer.Router, peer.Peer, peer.ASN, peer.State, peer.PrefixesReceived, peer.Messages, peer.LastEstablished, peer.LastError})
+	}
 }
 
 func operationalPageScript(kind string) string {
