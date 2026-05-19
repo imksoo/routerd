@@ -56,6 +56,10 @@ The current Fluent UI web app provides:
   pagination, and page size controls
 - DNS query, traffic flow, and firewall log views backed by separate log
   databases
+- dedicated BGP, VRRP, and IngressService operational pages at `/bgp`, `/vrrp`,
+  and `/ingress`. These pages use Server-Sent Events to refresh resource
+  tables, keep a local 5/15/60 minute SVG trend, and show a filtered event log
+  for the relevant resources.
 - Firewall rows combine firewall logs, DNS answers, DHCP leases, MAC vendor
   hints, and current conntrack reply tuples. This helps explain whether a
   denied packet is unsolicited traffic or an off-path reply for an existing
@@ -68,17 +72,20 @@ conversation from both directions.
 
 ## API boundary
 
-Web Console APIs are read-only and exposed only under `/api/v1`.
+Web Console APIs are read-only. The JSON endpoints are under `/api/v1`; the
+SSE stream is also available through the short `/api/events/stream` alias.
 
 | Path | Content |
 | --- | --- |
 | `/api/v1/summary` | status, resource phases, recent events, and connection summary |
 | `/api/v1/resources` | resource statuses from the state database |
-| `/api/v1/events` | recent bus events |
+| `/api/v1/events?limit=200&resourceKind=&resourceName=&q=` | recent bus events with optional filters |
+| `/api/v1/events/stream` or `/api/events/stream` | Server-Sent Events stream for `routerd.*` bus events |
 | `/api/v1/connections` | live connection observation from conntrack or pf state |
 | `/api/v1/dns-queries?since=1h&client=&qname=&limit=100` | DNS query log rows |
 | `/api/v1/traffic-flows?since=1h&client=&peer=&limit=100` | traffic flow log rows with DNS-derived hostnames |
 | `/api/v1/firewall-logs?since=24h&action=drop&src=&limit=100` | firewall log rows |
+| `/api/v1/bgp`, `/api/v1/vrrp`, `/api/v1/ingress` | filtered operational status for Kubernetes-edge routing and VIP resources |
 | `/api/v1/config` | active YAML configuration |
 | `/api/v1/generations?limit=100` | completed apply generations and whether a YAML snapshot is stored |
 | `/api/v1/generations/<id>/config` | stored YAML for one apply generation |

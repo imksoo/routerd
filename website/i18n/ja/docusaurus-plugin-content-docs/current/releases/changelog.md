@@ -33,6 +33,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - 一時的な `IngressService` backend maintenance 用の `routerctl drain` /
   `undrain` と、VRRP production tuning documentation および
   `examples/vrrp-tuning-presets.yaml` を追加しました。
+- BGP / VRRP / IngressService の Web Console 運用ページに SSE 更新、
+  filter 付き event log、軽量なローカル SVG metric trend を追加しました。
 
 ## v20260519.0743
 

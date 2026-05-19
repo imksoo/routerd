@@ -287,7 +287,7 @@ func TestHandlerServesOperationalViews(t *testing.T) {
 		{"/api/v1/bgp", []string{`"kind": "bgp"`, `"BGPRouter"`, `"192.168.123.111"`}},
 		{"/api/v1/vrrp", []string{`"kind": "vrrp"`, `"VirtualIPv4Address"`, `"k8s-api.lain.local"`}},
 		{"/api/v1/ingress", []string{`"kind": "ingress"`, `"IngressService"`, `"kubernetes-api"`}},
-		{"/bgp", []string{"<h1>BGP</h1>", "192.168.123.111", "12/11"}},
+		{"/bgp", []string{"<h1>BGP</h1>", "192.168.123.111", "12/11", "EventSource", "Event log", "metric-chart"}},
 		{"/vrrp", []string{"<h1>VRRP</h1>", "k8s-api.lain.local", "master"}},
 		{"/ingress", []string{"<h1>IngressService</h1>", "kubernetes-api", "cp-01 / 192.168.123.11:6443"}},
 	} {
@@ -305,13 +305,45 @@ func TestHandlerServesOperationalViews(t *testing.T) {
 	}
 }
 
+func TestHandlerFiltersEventAPI(t *testing.T) {
+	handler := New(Options{Store: fakeStore{events: []routerstate.StoredEvent{
+		{
+			ID:           1,
+			Topic:        "routerd.resource.status.changed",
+			CreatedAt:    time.Date(2026, 5, 18, 1, 2, 3, 0, time.UTC),
+			Severity:     "info",
+			ResourceKind: "BGPRouter",
+			ResourceName: "lan",
+			Message:      "BGP router observed",
+		},
+		{
+			ID:           2,
+			Topic:        "routerd.resource.status.changed",
+			CreatedAt:    time.Date(2026, 5, 18, 1, 3, 3, 0, time.UTC),
+			Severity:     "warning",
+			ResourceKind: "IngressService",
+			ResourceName: "kubernetes-api",
+			Message:      "backend unhealthy",
+		},
+	}}})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/events?resourceKind=IngressService&q=backend", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if !strings.Contains(got, "kubernetes-api") || strings.Contains(got, "BGPRouter") {
+		t.Fatalf("filtered events mismatch:\n%s", got)
+	}
+}
+
 func TestHandlerStreamsBusEventsOverSSE(t *testing.T) {
 	eventBus := bus.New()
 	handler := New(Options{Bus: eventBus})
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/events/stream", nil)
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/events/stream", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

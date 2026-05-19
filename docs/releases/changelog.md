@@ -33,6 +33,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added `routerctl drain` / `undrain` for temporary `IngressService` backend
   maintenance and VRRP production tuning documentation with
   `examples/vrrp-tuning-presets.yaml`.
+- Added live BGP / VRRP / IngressService Web Console operational pages with
+  SSE refresh, filtered event logs, and lightweight local SVG metric trends.
 
 ## v20260519.0743
 
