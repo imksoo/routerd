@@ -48,7 +48,7 @@ func TestReconcileValidatesAndReloadsFRR(t *testing.T) {
 			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
 				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1,"lastConnectionEstablished":"2026-05-18T10:00:00Z"}}}}`), nil
 			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
-				return []byte(`{"routes":{"10.0.0.200/32":[{"valid":true,"bestpath":true}]}}`), nil
+				return []byte(`{"routes":{"10.0.0.200/32":[{"valid":true,"bestpath":true,"community":{"string":"64513:100 no-export"}}]}}`), nil
 			default:
 				t.Fatalf("unexpected command: %s %v", name, args)
 				return nil, nil
@@ -74,6 +74,10 @@ func TestReconcileValidatesAndReloadsFRR(t *testing.T) {
 	peers, ok := status["peers"].([]bgpstate.Peer)
 	if !ok || len(peers) != 1 || peers[0].LastEstablishedAt != "2026-05-18T10:00:00Z" {
 		t.Fatalf("peer history = %#v", status["peers"])
+	}
+	communities, ok := status["observedCommunities"].([]string)
+	if !ok || !reflect.DeepEqual(communities, []string{"64513:100", "no-export"}) {
+		t.Fatalf("observed communities = %#v", status["observedCommunities"])
 	}
 }
 

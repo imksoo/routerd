@@ -18,6 +18,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - ingress/local router service の listen-port collision validation と、
   Linux nftables 向けの `IngressService` `sourceHash` / `random` backend
   distribution を追加しました。
+- FRR BGP の connected/static redistribution、BGP community の send/accept/set
+  policy、観測 community の status 解析、
+  `examples/lan-advertise-with-community.yaml` を追加しました。
 
 ## v20260519.0743
 

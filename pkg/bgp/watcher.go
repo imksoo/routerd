@@ -36,9 +36,10 @@ type Peer struct {
 }
 
 type Prefix struct {
-	Prefix string `json:"prefix"`
-	Best   bool   `json:"best,omitempty"`
-	Valid  bool   `json:"valid,omitempty"`
+	Prefix      string   `json:"prefix"`
+	Best        bool     `json:"best,omitempty"`
+	Valid       bool     `json:"valid,omitempty"`
+	Communities []string `json:"communities,omitempty"`
 }
 
 type Event struct {
@@ -230,8 +231,8 @@ func collectPrefixes(value any, out *[]Prefix) {
 		for key, child := range typed {
 			if strings.Contains(key, "/") {
 				if routes, ok := child.([]any); ok {
-					best, valid := routeFlags(routes)
-					*out = append(*out, Prefix{Prefix: key, Best: best, Valid: valid})
+					best, valid, communities := routeFlags(routes)
+					*out = append(*out, Prefix{Prefix: key, Best: best, Valid: valid, Communities: communities})
 					continue
 				}
 			}
@@ -249,12 +250,13 @@ func routePrefix(route map[string]any) (Prefix, bool) {
 	if prefix == "" || !strings.Contains(prefix, "/") {
 		return Prefix{}, false
 	}
-	return Prefix{Prefix: prefix, Best: firstBool(route, "bestpath", "best"), Valid: !firstBool(route, "invalid")}, true
+	return Prefix{Prefix: prefix, Best: firstBool(route, "bestpath", "best"), Valid: !firstBool(route, "invalid"), Communities: communitiesFromRoute(route)}, true
 }
 
-func routeFlags(routes []any) (bool, bool) {
+func routeFlags(routes []any) (bool, bool, []string) {
 	valid := false
 	best := false
+	var communities []string
 	for _, raw := range routes {
 		route, ok := raw.(map[string]any)
 		if !ok {
@@ -266,8 +268,9 @@ func routeFlags(routes []any) (bool, bool) {
 		if firstBool(route, "bestpath", "best") {
 			best = true
 		}
+		communities = append(communities, communitiesFromRoute(route)...)
 	}
-	return best, valid
+	return best, valid, sortedUnique(communities)
 }
 
 func uniquePrefixes(values []Prefix) []Prefix {
@@ -280,13 +283,64 @@ func uniquePrefixes(values []Prefix) []Prefix {
 		if existing, ok := seen[value.Prefix]; ok {
 			value.Best = value.Best || existing.Best
 			value.Valid = value.Valid || existing.Valid
+			value.Communities = sortedUnique(append(value.Communities, existing.Communities...))
 		}
+		value.Communities = sortedUnique(value.Communities)
 		seen[value.Prefix] = value
 	}
 	out := make([]Prefix, 0, len(seen))
 	for _, value := range seen {
 		out = append(out, value)
 	}
+	return out
+}
+
+func communitiesFromRoute(route map[string]any) []string {
+	var out []string
+	for _, key := range []string{"community", "communities"} {
+		out = append(out, communitiesFromValue(route[key])...)
+	}
+	return sortedUnique(out)
+}
+
+func communitiesFromValue(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return strings.Fields(strings.TrimSpace(typed))
+	case []any:
+		var out []string
+		for _, item := range typed {
+			out = append(out, communitiesFromValue(item)...)
+		}
+		return out
+	case map[string]any:
+		var out []string
+		for _, key := range []string{"string", "value", "name"} {
+			if value, ok := typed[key].(string); ok {
+				out = append(out, strings.Fields(strings.TrimSpace(value))...)
+			}
+		}
+		if list, ok := typed["list"]; ok {
+			out = append(out, communitiesFromValue(list)...)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func sortedUnique(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
 	return out
 }
 

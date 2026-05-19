@@ -63,3 +63,63 @@ func TestFRRConfigRendersDefaultDenyImportPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestFRRConfigRendersRedistributeAndCommunities(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec: api.BGPRouterSpec{
+				ASN:      64512,
+				RouterID: "10.0.0.1",
+				ImportPolicy: api.BGPImportPolicySpec{
+					AllowedPrefixes: []string{"10.0.0.200/29"},
+				},
+				Redistribute: api.BGPRedistributeSpec{
+					Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{"192.168.50.0/24"}},
+					Static:    api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{"198.51.100.0/24"}},
+				},
+				Communities: api.BGPCommunitiesSpec{
+					Send:   "both",
+					Accept: []string{"64513:100", "no-export"},
+					Set:    api.BGPCommunitySetSpec{In: []string{"64512:10"}, Out: []string{"64512:20"}},
+				},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+			Metadata: api.ObjectMeta{Name: "fabric"},
+			Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64513,
+				Peers:     []string{"10.0.0.21"},
+			},
+		},
+	}}}
+	data, err := FRRConfig(router)
+	if err != nil {
+		t.Fatalf("render FRR config: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"ip prefix-list ROUTERD-LAN-REDIST-CONNECTED seq 10 permit 192.168.50.0/24",
+		"ip prefix-list ROUTERD-LAN-REDIST-STATIC seq 10 permit 198.51.100.0/24",
+		"ip prefix-list ROUTERD-LAN-EXPORT seq 10 permit 192.168.50.0/24",
+		"ip prefix-list ROUTERD-LAN-EXPORT seq 20 permit 198.51.100.0/24",
+		"bgp community-list standard ROUTERD-LAN-COMM-ACCEPT permit 64513:100",
+		"bgp community-list standard ROUTERD-LAN-COMM-ACCEPT permit no-export",
+		"route-map ROUTERD-LAN-IN permit 10",
+		" match community ROUTERD-LAN-COMM-ACCEPT",
+		" set community 64512:10 additive",
+		"route-map ROUTERD-LAN-OUT permit 10",
+		" match ip address prefix-list ROUTERD-LAN-EXPORT",
+		" set community 64512:20 additive",
+		"neighbor 10.0.0.21 send-community both",
+		"  redistribute connected route-map ROUTERD-LAN-REDIST-CONNECTED",
+		"  redistribute static route-map ROUTERD-LAN-REDIST-STATIC",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("FRR config missing %q:\n%s", want, got)
+		}
+	}
+}

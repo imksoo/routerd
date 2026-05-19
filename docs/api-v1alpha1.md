@@ -203,7 +203,14 @@ be lowered below 3 seconds by future tuning; observed prefix status is capped at
 4096 entries to avoid high-cardinality status churn. Import policy is default
 deny; add `spec.importPolicy.allowedPrefixes` for Kubernetes LoadBalancer
 pools. Accepted imports set `ip next-hop peer-address` so Kubernetes-advertised
-`/32` routes remain reachable through the advertising speaker.
+`/32` routes remain reachable through the advertising speaker. `BGPRouter` can
+redistribute connected and static IPv4 routes with independent
+`allowedPrefixes`; routerd renders FRR `redistribute connected/static route-map`
+statements and keeps the peer outbound route-map default-deny unless exported
+prefixes are explicitly listed. BGP community policy can be declared on the
+router or peer with `communities.send`, `communities.accept`, and
+`communities.set.in/out`. The watcher records observed route communities in
+status when FRR exposes them in JSON output.
 
 `VirtualIPv4Address` uses keepalived on Linux and CARP on FreeBSD for
 `mode: vrrp`. Linux VRRP uses explicit unicast peers and defaults to

@@ -18,6 +18,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added listen-port collision validation for ingress/local router services and
   `IngressService` `sourceHash` / `random` backend distribution on Linux
   nftables.
+- Added FRR BGP connected/static redistribution, BGP community send/accept/set
+  policy, observed community status parsing, and
+  `examples/lan-advertise-with-community.yaml`.
 
 ## v20260519.0743
 

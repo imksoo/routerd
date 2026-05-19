@@ -2533,6 +2533,45 @@
                         ],
                         "type": "string"
                       },
+                      "communities": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "accept": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "send": {
+                            "enum": [
+                              "",
+                              "standard",
+                              "extended",
+                              "both"
+                            ],
+                            "type": "string"
+                          },
+                          "set": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "in": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "out": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              }
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "gracefulRestart": {
                         "additionalProperties": false,
                         "properties": {
@@ -2567,6 +2606,36 @@
                             "maximum": 65535,
                             "minimum": 1,
                             "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "redistribute": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "connected": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "allowedPrefixes": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          "static": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "allowedPrefixes": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              }
+                            },
+                            "type": "object"
                           }
                         },
                         "type": "object"
@@ -2677,6 +2746,45 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "communities": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "accept": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "send": {
+                            "enum": [
+                              "",
+                              "standard",
+                              "extended",
+                              "both"
+                            ],
+                            "type": "string"
+                          },
+                          "set": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "in": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "out": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              }
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "password": {
                         "type": "string"
                       },

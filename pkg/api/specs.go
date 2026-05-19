@@ -414,6 +414,8 @@ type BGPRouterSpec struct {
 	RouterID        string                 `yaml:"routerID" json:"routerID"`
 	Listen          BGPListenSpec          `yaml:"listen,omitempty" json:"listen,omitempty"`
 	ImportPolicy    BGPImportPolicySpec    `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
+	Redistribute    BGPRedistributeSpec    `yaml:"redistribute,omitempty" json:"redistribute,omitempty"`
+	Communities     BGPCommunitiesSpec     `yaml:"communities,omitempty" json:"communities,omitempty"`
 	Timers          BGPTimersSpec          `yaml:"timers,omitempty" json:"timers,omitempty"`
 	GracefulRestart BGPGracefulRestartSpec `yaml:"gracefulRestart,omitempty" json:"gracefulRestart,omitempty"`
 	Backend         string                 `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=,enum=frr"`
@@ -426,6 +428,26 @@ type BGPListenSpec struct {
 
 type BGPImportPolicySpec struct {
 	AllowedPrefixes []string `yaml:"allowedPrefixes,omitempty" json:"allowedPrefixes,omitempty"`
+}
+
+type BGPRedistributeSpec struct {
+	Connected BGPRedistributeRouteSpec `yaml:"connected,omitempty" json:"connected,omitempty"`
+	Static    BGPRedistributeRouteSpec `yaml:"static,omitempty" json:"static,omitempty"`
+}
+
+type BGPRedistributeRouteSpec struct {
+	AllowedPrefixes []string `yaml:"allowedPrefixes,omitempty" json:"allowedPrefixes,omitempty"`
+}
+
+type BGPCommunitiesSpec struct {
+	Send   string              `yaml:"send,omitempty" json:"send,omitempty" jsonschema:"enum=,enum=standard,enum=extended,enum=both"`
+	Accept []string            `yaml:"accept,omitempty" json:"accept,omitempty"`
+	Set    BGPCommunitySetSpec `yaml:"set,omitempty" json:"set,omitempty"`
+}
+
+type BGPCommunitySetSpec struct {
+	In  []string `yaml:"in,omitempty" json:"in,omitempty"`
+	Out []string `yaml:"out,omitempty" json:"out,omitempty"`
 }
 
 type BGPTimersSpec struct {
@@ -441,12 +463,13 @@ type BGPGracefulRestartSpec struct {
 }
 
 type BGPPeerSpec struct {
-	RouterRef string           `yaml:"routerRef" json:"routerRef"`
-	PeerASN   uint32           `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
-	Peers     []string         `yaml:"peers" json:"peers"`
-	Password  string           `yaml:"password,omitempty" json:"password,omitempty"`
-	Timers    BGPTimersSpec    `yaml:"timers,omitempty" json:"timers,omitempty"`
-	When      ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
+	RouterRef   string             `yaml:"routerRef" json:"routerRef"`
+	PeerASN     uint32             `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
+	Peers       []string           `yaml:"peers" json:"peers"`
+	Password    string             `yaml:"password,omitempty" json:"password,omitempty"`
+	Timers      BGPTimersSpec      `yaml:"timers,omitempty" json:"timers,omitempty"`
+	Communities BGPCommunitiesSpec `yaml:"communities,omitempty" json:"communities,omitempty"`
+	When        ResourceWhenSpec   `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type DHCPv4LeaseSpec struct {

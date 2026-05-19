@@ -19,6 +19,8 @@ type bgpRouterConfig struct {
 	RouterID        string
 	ListenPort      int
 	AllowedPrefixes []string
+	Redistribute    bgpRedistribute
+	Communities     bgpCommunities
 	Timers          bgpTimers
 	GracefulRestart bgpGracefulRestart
 	Peers           []bgpPeerConfig
@@ -30,6 +32,19 @@ type bgpPeerConfig struct {
 	ASN          uint32
 	Password     string
 	Timers       bgpTimers
+	Communities  bgpCommunities
+}
+
+type bgpRedistribute struct {
+	Connected []string
+	Static    []string
+}
+
+type bgpCommunities struct {
+	Send   string
+	Accept []string
+	SetIn  []string
+	SetOut []string
 }
 
 type bgpTimers struct {
@@ -91,10 +106,17 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 			RouterID:        strings.TrimSpace(spec.RouterID),
 			ListenPort:      listenPort,
 			AllowedPrefixes: compactStrings(spec.ImportPolicy.AllowedPrefixes),
+			Redistribute: bgpRedistribute{
+				Connected: compactStrings(spec.Redistribute.Connected.AllowedPrefixes),
+				Static:    compactStrings(spec.Redistribute.Static.AllowedPrefixes),
+			},
+			Communities:     renderBGPCommunities(spec.Communities, bgpCommunities{}),
 			Timers:          renderBGPTimers(spec.Timers, bgpTimers{}),
 			GracefulRestart: renderBGPGracefulRestart(spec.GracefulRestart),
 		}
 		sort.Strings(cfg.AllowedPrefixes)
+		sort.Strings(cfg.Redistribute.Connected)
+		sort.Strings(cfg.Redistribute.Static)
 		byName[res.Metadata.Name] = &cfg
 		names = append(names, res.Metadata.Name)
 	}
@@ -121,6 +143,7 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 				ASN:          spec.PeerASN,
 				Password:     spec.Password,
 				Timers:       renderBGPTimers(spec.Timers, cfg.Timers),
+				Communities:  renderBGPCommunities(spec.Communities, cfg.Communities),
 			})
 		}
 	}
@@ -143,19 +166,33 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 	prefixListName := "ROUTERD-" + frrName(cfg.Name) + "-IMPORT"
 	routeMapInName := "ROUTERD-" + frrName(cfg.Name) + "-IN"
 	routeMapOutName := "ROUTERD-" + frrName(cfg.Name) + "-OUT"
-	if len(cfg.AllowedPrefixes) == 0 {
-		buf.WriteString("ip prefix-list " + prefixListName + " seq 999 deny 0.0.0.0/0 le 32\n")
-	} else {
-		for i, prefix := range cfg.AllowedPrefixes {
-			buf.WriteString(fmt.Sprintf("ip prefix-list %s seq %d permit %s\n", prefixListName, (i+1)*10, canonicalPrefix(prefix)))
-		}
-		buf.WriteString("ip prefix-list " + prefixListName + " seq 999 deny 0.0.0.0/0 le 32\n")
+	exportPrefixes := bgpExportPrefixes(cfg.Redistribute)
+	writeFRRPrefixList(buf, prefixListName, cfg.AllowedPrefixes)
+	if len(exportPrefixes) > 0 {
+		writeFRRPrefixList(buf, "ROUTERD-"+frrName(cfg.Name)+"-EXPORT", exportPrefixes)
 	}
-	buf.WriteString("route-map " + routeMapInName + " permit 10\n")
-	buf.WriteString(" match ip address prefix-list " + prefixListName + "\n")
-	buf.WriteString(" set ip next-hop peer-address\n")
-	buf.WriteString("route-map " + routeMapInName + " deny 999\n")
-	buf.WriteString("route-map " + routeMapOutName + " deny 999\n")
+	writeFRRRedistributePolicy(buf, cfg.Name, "CONNECTED", cfg.Redistribute.Connected)
+	writeFRRRedistributePolicy(buf, cfg.Name, "STATIC", cfg.Redistribute.Static)
+	writeFRRCommunityLists(buf, cfg)
+	writeFRRRouteMap(buf, routeMapInName, bgpRouteMapSpec{
+		PrefixList:       prefixListName,
+		AcceptCommunity:  routerCommunityListForRouteMap(cfg),
+		SetCommunities:   cfg.Communities.SetIn,
+		NextHopPeer:      true,
+		DefaultDeny:      true,
+		PermitIfNoPolicy: true,
+	})
+	writeFRRRouteMap(buf, routeMapOutName, bgpRouteMapSpec{
+		PrefixList:       routeMapOutPrefixList(cfg.Name, exportPrefixes),
+		SetCommunities:   bgpOutboundSetCommunities(exportPrefixes, cfg.Communities.SetOut),
+		DefaultDeny:      true,
+		PermitIfNoPolicy: false,
+	})
+	for _, peer := range cfg.Peers {
+		if bgpPeerNeedsRouteMap(peer.Communities, cfg.Communities) {
+			writeFRRPeerCommunityRouteMaps(buf, cfg, peer, exportPrefixes)
+		}
+	}
 	buf.WriteString("!\n")
 	buf.WriteString(fmt.Sprintf("router bgp %d\n", cfg.ASN))
 	buf.WriteString(" bgp router-id " + cfg.RouterID + "\n")
@@ -190,15 +227,120 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 		if peer.Timers.ConnectRetrySeconds > 0 {
 			buf.WriteString(fmt.Sprintf(" neighbor %s timers connect %d\n", peer.Peer, peer.Timers.ConnectRetrySeconds))
 		}
-		buf.WriteString(fmt.Sprintf(" neighbor %s route-map %s in\n", peer.Peer, routeMapInName))
-		buf.WriteString(fmt.Sprintf(" neighbor %s route-map %s out\n", peer.Peer, routeMapOutName))
+		writeFRRPeerSendCommunity(buf, peer)
+		inName := routeMapInName
+		outName := routeMapOutName
+		if bgpPeerNeedsRouteMap(peer.Communities, cfg.Communities) {
+			inName = peerRouteMapName(cfg.Name, peer, "IN")
+			outName = peerRouteMapName(cfg.Name, peer, "OUT")
+		}
+		buf.WriteString(fmt.Sprintf(" neighbor %s route-map %s in\n", peer.Peer, inName))
+		buf.WriteString(fmt.Sprintf(" neighbor %s route-map %s out\n", peer.Peer, outName))
 	}
 	buf.WriteString(" address-family ipv4 unicast\n")
+	if len(cfg.Redistribute.Connected) > 0 {
+		buf.WriteString("  redistribute connected route-map " + redistributeRouteMapName(cfg.Name, "CONNECTED") + "\n")
+	}
+	if len(cfg.Redistribute.Static) > 0 {
+		buf.WriteString("  redistribute static route-map " + redistributeRouteMapName(cfg.Name, "STATIC") + "\n")
+	}
 	for _, peer := range cfg.Peers {
 		buf.WriteString(fmt.Sprintf("  neighbor %s activate\n", peer.Peer))
 	}
 	buf.WriteString(" exit-address-family\n")
 	buf.WriteString("!\n")
+}
+
+type bgpRouteMapSpec struct {
+	PrefixList       string
+	AcceptCommunity  string
+	SetCommunities   []string
+	NextHopPeer      bool
+	DefaultDeny      bool
+	PermitIfNoPolicy bool
+}
+
+func writeFRRPrefixList(buf *bytes.Buffer, name string, prefixes []string) {
+	if len(prefixes) > 0 {
+		for i, prefix := range prefixes {
+			buf.WriteString(fmt.Sprintf("ip prefix-list %s seq %d permit %s\n", name, (i+1)*10, canonicalPrefix(prefix)))
+		}
+	}
+	buf.WriteString("ip prefix-list " + name + " seq 999 deny 0.0.0.0/0 le 32\n")
+}
+
+func writeFRRRouteMap(buf *bytes.Buffer, name string, spec bgpRouteMapSpec) {
+	hasPolicy := spec.PrefixList != "" || spec.AcceptCommunity != "" || len(spec.SetCommunities) > 0 || spec.NextHopPeer
+	if hasPolicy || spec.PermitIfNoPolicy {
+		buf.WriteString("route-map " + name + " permit 10\n")
+		if spec.PrefixList != "" {
+			buf.WriteString(" match ip address prefix-list " + spec.PrefixList + "\n")
+		}
+		if spec.AcceptCommunity != "" {
+			buf.WriteString(" match community " + spec.AcceptCommunity + "\n")
+		}
+		if spec.NextHopPeer {
+			buf.WriteString(" set ip next-hop peer-address\n")
+		}
+		if len(spec.SetCommunities) > 0 {
+			buf.WriteString(" set community " + strings.Join(spec.SetCommunities, " ") + " additive\n")
+		}
+	}
+	if spec.DefaultDeny {
+		buf.WriteString("route-map " + name + " deny 999\n")
+	}
+}
+
+func writeFRRRedistributePolicy(buf *bytes.Buffer, routerName, protocol string, prefixes []string) {
+	if len(prefixes) == 0 {
+		return
+	}
+	list := redistributePrefixListName(routerName, protocol)
+	writeFRRPrefixList(buf, list, prefixes)
+	writeFRRRouteMap(buf, redistributeRouteMapName(routerName, protocol), bgpRouteMapSpec{
+		PrefixList:  list,
+		DefaultDeny: true,
+	})
+}
+
+func writeFRRCommunityLists(buf *bytes.Buffer, cfg bgpRouterConfig) {
+	writeFRRCommunityList(buf, communityListName(cfg.Name, "ACCEPT"), cfg.Communities.Accept)
+	for _, peer := range cfg.Peers {
+		if len(peer.Communities.Accept) == 0 || equalStringSet(peer.Communities.Accept, cfg.Communities.Accept) {
+			continue
+		}
+		writeFRRCommunityList(buf, peerCommunityListName(cfg.Name, peer), peer.Communities.Accept)
+	}
+}
+
+func writeFRRCommunityList(buf *bytes.Buffer, name string, communities []string) {
+	for _, community := range communities {
+		buf.WriteString(fmt.Sprintf("bgp community-list standard %s permit %s\n", name, community))
+	}
+}
+
+func writeFRRPeerCommunityRouteMaps(buf *bytes.Buffer, cfg bgpRouterConfig, peer bgpPeerConfig, exportPrefixes []string) {
+	writeFRRRouteMap(buf, peerRouteMapName(cfg.Name, peer, "IN"), bgpRouteMapSpec{
+		PrefixList:      "ROUTERD-" + frrName(cfg.Name) + "-IMPORT",
+		AcceptCommunity: communityListForPeer(cfg, peer),
+		SetCommunities:  peer.Communities.SetIn,
+		NextHopPeer:     true,
+		DefaultDeny:     true,
+	})
+	writeFRRRouteMap(buf, peerRouteMapName(cfg.Name, peer, "OUT"), bgpRouteMapSpec{
+		PrefixList:     routeMapOutPrefixList(cfg.Name, exportPrefixes),
+		SetCommunities: bgpOutboundSetCommunities(exportPrefixes, peer.Communities.SetOut),
+		DefaultDeny:    true,
+	})
+}
+
+func writeFRRPeerSendCommunity(buf *bytes.Buffer, peer bgpPeerConfig) {
+	switch peer.Communities.Send {
+	case "standard":
+		buf.WriteString(fmt.Sprintf(" neighbor %s send-community\n", peer.Peer))
+	case "extended", "both":
+		buf.WriteString(fmt.Sprintf(" neighbor %s send-community %s\n", peer.Peer, peer.Communities.Send))
+	}
 }
 
 func renderBGPTimers(spec api.BGPTimersSpec, fallback bgpTimers) bgpTimers {
@@ -224,6 +366,107 @@ func renderBGPGracefulRestart(spec api.BGPGracefulRestartSpec) bgpGracefulRestar
 		out.StalePathTimeSeconds = seconds
 	}
 	return out
+}
+
+func renderBGPCommunities(spec api.BGPCommunitiesSpec, fallback bgpCommunities) bgpCommunities {
+	out := fallback
+	if send := strings.TrimSpace(spec.Send); send != "" {
+		out.Send = send
+	}
+	if spec.Accept != nil {
+		out.Accept = compactStrings(spec.Accept)
+		sort.Strings(out.Accept)
+	}
+	if spec.Set.In != nil {
+		out.SetIn = compactStrings(spec.Set.In)
+		sort.Strings(out.SetIn)
+	}
+	if spec.Set.Out != nil {
+		out.SetOut = compactStrings(spec.Set.Out)
+		sort.Strings(out.SetOut)
+	}
+	return out
+}
+
+func bgpExportPrefixes(redistribute bgpRedistribute) []string {
+	return sortedUniqueStrings(append(append([]string{}, redistribute.Connected...), redistribute.Static...))
+}
+
+func bgpOutboundSetCommunities(exportPrefixes []string, communities []string) []string {
+	if len(exportPrefixes) == 0 {
+		return nil
+	}
+	return communities
+}
+
+func routeMapOutPrefixList(routerName string, exportPrefixes []string) string {
+	if len(exportPrefixes) == 0 {
+		return ""
+	}
+	return "ROUTERD-" + frrName(routerName) + "-EXPORT"
+}
+
+func redistributePrefixListName(routerName, protocol string) string {
+	return "ROUTERD-" + frrName(routerName) + "-REDIST-" + frrName(protocol)
+}
+
+func redistributeRouteMapName(routerName, protocol string) string {
+	return "ROUTERD-" + frrName(routerName) + "-REDIST-" + frrName(protocol)
+}
+
+func communityListName(routerName, suffix string) string {
+	return "ROUTERD-" + frrName(routerName) + "-COMM-" + frrName(suffix)
+}
+
+func peerCommunityListName(routerName string, peer bgpPeerConfig) string {
+	return communityListName(routerName, peer.ResourceName+"-"+peer.Peer+"-ACCEPT")
+}
+
+func routerCommunityListForRouteMap(cfg bgpRouterConfig) string {
+	if len(cfg.Communities.Accept) == 0 {
+		return ""
+	}
+	return communityListName(cfg.Name, "ACCEPT")
+}
+
+func communityListForPeer(cfg bgpRouterConfig, peer bgpPeerConfig) string {
+	if len(peer.Communities.Accept) == 0 {
+		return ""
+	}
+	if equalStringSet(peer.Communities.Accept, cfg.Communities.Accept) {
+		return communityListName(cfg.Name, "ACCEPT")
+	}
+	return peerCommunityListName(cfg.Name, peer)
+}
+
+func peerRouteMapName(routerName string, peer bgpPeerConfig, direction string) string {
+	return "ROUTERD-" + frrName(routerName) + "-" + frrName(peer.ResourceName+"-"+peer.Peer) + "-" + frrName(direction)
+}
+
+func bgpPeerNeedsRouteMap(peer, router bgpCommunities) bool {
+	return !equalStringSet(peer.Accept, router.Accept) ||
+		!equalStringSet(peer.SetIn, router.SetIn) ||
+		!equalStringSet(peer.SetOut, router.SetOut)
+}
+
+func sortedUniqueStrings(values []string) []string {
+	out := compactStrings(values)
+	sort.Strings(out)
+	return out
+}
+
+func equalStringSet(a, b []string) bool {
+	a = sortedUniqueStrings(a)
+	b = sortedUniqueStrings(b)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func durationSeconds(value string) int {

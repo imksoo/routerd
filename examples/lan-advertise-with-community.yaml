@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: lan-advertise-with-community
+
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens19
+        managed: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-base
+      spec:
+        interface: lan
+        address: 192.168.50.1/24
+        exclusive: false
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata:
+        name: service-range
+      spec:
+        destination: 198.51.100.0/24
+        device: lo
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata:
+        name: lan
+      spec:
+        asn: 64512
+        routerID: 192.168.50.1
+        importPolicy:
+          allowedPrefixes:
+            - 10.240.70.200/29
+        redistribute:
+          connected:
+            allowedPrefixes:
+              - 192.168.50.0/24
+          static:
+            allowedPrefixes:
+              - 198.51.100.0/24
+        communities:
+          send: both
+          accept:
+            - 64513:100
+            - no-export
+          set:
+            in:
+              - 64512:10
+            out:
+              - 64512:20
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata:
+        name: fabric
+      spec:
+        routerRef: BGPRouter/lan
+        peerASN: 64513
+        peers:
+          - 192.168.50.21
+          - 192.168.50.22

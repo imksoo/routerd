@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -245,16 +246,17 @@ func (c *Controller) saveObservedStatuses(state bgpstate.State) error {
 				phase = "Pending"
 			}
 			status := map[string]any{
-				"phase":             phase,
-				"backend":           "frr",
-				"peers":             state.Peers,
-				"prefixes":          state.Prefixes,
-				"establishedPeers":  established,
-				"acceptedPrefixes":  len(state.Prefixes),
-				"prefixLimit":       defaultInt(c.MaxPrefixes, bgpstate.DefaultMaxPrefixes),
-				"prefixesTruncated": c.truncated,
-				"observedAt":        now,
-				"conditions":        []map[string]any{{"type": "Observed", "status": "True", "reason": "FRRStatus"}},
+				"phase":               phase,
+				"backend":             "frr",
+				"peers":               state.Peers,
+				"prefixes":            state.Prefixes,
+				"observedCommunities": observedCommunities(state.Prefixes),
+				"establishedPeers":    established,
+				"acceptedPrefixes":    len(state.Prefixes),
+				"prefixLimit":         defaultInt(c.MaxPrefixes, bgpstate.DefaultMaxPrefixes),
+				"prefixesTruncated":   c.truncated,
+				"observedAt":          now,
+				"conditions":          []map[string]any{{"type": "Observed", "status": "True", "reason": "FRRStatus"}},
 			}
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name, status); err != nil {
 				return err
@@ -288,6 +290,23 @@ func (c *Controller) saveObservedStatuses(state bgpstate.State) error {
 		}
 	}
 	return nil
+}
+
+func observedCommunities(prefixes []bgpstate.Prefix) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, prefix := range prefixes {
+		for _, community := range prefix.Communities {
+			community = strings.TrimSpace(community)
+			if community == "" || seen[community] {
+				continue
+			}
+			seen[community] = true
+			out = append(out, community)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (c *Controller) applyPeerHistory(peers []bgpstate.Peer, now string) []bgpstate.Peer {

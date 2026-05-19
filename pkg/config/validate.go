@@ -1881,11 +1881,8 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		default:
 			return fmt.Errorf("%s spec.backend must be frr", res.ID())
 		}
-		for i, prefix := range spec.ImportPolicy.AllowedPrefixes {
-			parsed, err := netip.ParsePrefix(prefix)
-			if err != nil || !parsed.Addr().Is4() {
-				return fmt.Errorf("%s spec.importPolicy.allowedPrefixes[%d] must be an IPv4 prefix", res.ID(), i)
-			}
+		if err := validateBGPRouterPolicy(res.ID(), spec); err != nil {
+			return err
 		}
 	case "BGPPeer":
 		if res.APIVersion != api.NetAPIVersion {
@@ -1917,6 +1914,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 			seenPeers[peer] = true
 		}
 		if err := validateBGPTimers(res.ID(), "spec.timers", spec.Timers); err != nil {
+			return err
+		}
+		if err := validateBGPCommunities(res.ID(), "spec.communities", spec.Communities); err != nil {
 			return err
 		}
 	case "DHCPv6Address", "IPv6RAAddress":

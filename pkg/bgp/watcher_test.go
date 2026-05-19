@@ -14,7 +14,7 @@ func TestParseFRRStateAndDiff(t *testing.T) {
 	}`)
 	routes := []byte(`{
 	  "routes": {
-	    "10.0.0.200/32": [{"valid": true, "bestpath": true}]
+	    "10.0.0.200/32": [{"valid": true, "bestpath": true, "community": {"string": "64513:100 no-export"}}]
 	  }
 	}`)
 	state, err := ParseFRRState(summary, routes)
@@ -32,6 +32,9 @@ func TestParseFRRStateAndDiff(t *testing.T) {
 	}
 	if len(state.Prefixes) != 1 || state.Prefixes[0].Prefix != "10.0.0.200/32" {
 		t.Fatalf("prefixes = %#v", state.Prefixes)
+	}
+	if got := state.Prefixes[0].Communities; len(got) != 2 || got[0] != "64513:100" || got[1] != "no-export" {
+		t.Fatalf("communities = %#v", got)
 	}
 	events := Diff(State{}, state)
 	if len(events) != 2 {

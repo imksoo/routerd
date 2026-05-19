@@ -106,6 +106,51 @@ func TestValidateBGPTimersRejectsInvalidHoldTime(t *testing.T) {
 	}
 }
 
+func TestValidateBGPRedistributeRejectsImportOverlap(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:          64512,
+				RouterID:     "10.240.70.2",
+				ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.240.70.0/24"}},
+				Redistribute: api.BGPRedistributeSpec{
+					Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{"10.240.70.128/25"}},
+				},
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "overlaps") {
+		t.Fatalf("expected BGP prefix overlap validation error, got %v", err)
+	}
+}
+
+func TestValidateBGPCommunitiesRejectsInvalidCommunity(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64512,
+				RouterID: "10.240.70.2",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64513,
+				Peers:     []string{"10.240.70.21"},
+				Communities: api.BGPCommunitiesSpec{
+					Send: "both",
+					Set:  api.BGPCommunitySetSpec{Out: []string{"64512:not-a-number"}},
+				},
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.communities.set.out[0]") {
+		t.Fatalf("expected BGP community validation error, got %v", err)
+	}
+}
+
 func TestValidateVirtualIPv4AddressRejectsStaticAddressConflict(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
