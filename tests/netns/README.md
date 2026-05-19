@@ -1,28 +1,41 @@
-# Network namespace tests
+# Network Namespace Tests
 
-These tests are reserved for host-network integration checks. They are not run
-by `go test ./...` because they require Linux network namespaces, FRR,
-keepalived, nftables, conntrack, and explicit `sudo`.
+These host-network integration tests are intentionally outside `go test ./...`.
+They create Linux network namespaces, veth pairs, temporary FRR/keepalived
+state, and nftables rules inside test namespaces. Run them only on a disposable
+Ubuntu 24.04-style host with `iproute2`, `frr`, `keepalived`, `nftables`, and
+Python 3 installed.
 
-Do not add tests here that mutate the default host namespace. Each test must:
+Every script requires explicit root privileges and cleans up its namespaces and
+temporary files with a trap:
 
-- create its own network namespaces and veth links
-- run with explicit `sudo`
-- clean up namespaces, temporary FRR/keepalived state, and nftables tables on
-  exit
-- avoid touching production interfaces, routes, or firewall tables
+```sh
+cd tests/netns
+sudo ./run-all.sh
+```
 
-Required scenarios before deploying the BGP/VRRP/IngressService stack to
-homert02:
+To run one scenario:
 
-1. FRR config syntax or reload failure leaves the previous working config in
-   place.
-2. Two keepalived instances hand a VIP to the standby node within the configured
-   advert/preempt timing.
-3. BGPStateWatcher preserves peer and prefix event ordering under repeated
-   BGP peer flaps.
-4. IngressService failover keeps existing conntrack flows while new flows use
-   the selected backend.
-5. Prefixes outside `BGPRouter.spec.importPolicy.allowedPrefixes` are rejected
-   by FRR import policy.
+```sh
+sudo ./frr-config-rollback.sh
+sudo ./keepalived-vip-failover.sh
+sudo ./bgp-event-ordering.sh
+sudo ./ingress-conntrack-survive.sh
+sudo ./bgp-import-policy-reject.sh
+```
 
+`make run` is a convenience wrapper for `sudo ./run-all.sh`.
+
+The scripts cover:
+
+| Script | Check |
+| --- | --- |
+| `frr-config-rollback.sh` | FRR rejects a bad reload and keeps the previous running config. |
+| `keepalived-vip-failover.sh` | Two keepalived instances move a VIP to standby within advert/preempt timing. |
+| `bgp-event-ordering.sh` | Repeated 1 Hz-ish BGP peer flaps do not expose prefix observations before peer establishment observations. |
+| `ingress-conntrack-survive.sh` | Existing DNAT conntrack flows stay on the old backend while new flows use the new backend. |
+| `bgp-import-policy-reject.sh` | FRR import policy accepts allowed prefixes and rejects disallowed prefixes. |
+
+Do not add tests here that mutate the default host namespace. New scenarios must
+create their own namespaces and links, run with explicit `sudo`, and tear down
+all host artifacts on exit.

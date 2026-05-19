@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ "${EUID}" -ne 0 ]]; then
+  printf 'run explicitly with sudo: sudo %s\n' "$0" >&2
+  exit 1
+fi
+
+scripts=(
+  frr-config-rollback.sh
+  keepalived-vip-failover.sh
+  bgp-event-ordering.sh
+  ingress-conntrack-survive.sh
+  bgp-import-policy-reject.sh
+)
+
+for script in "${scripts[@]}"; do
+  printf '==> %s\n' "$script" >&2
+  "$SCRIPT_DIR/$script"
+done
+
+printf 'all netns tests passed\n'
