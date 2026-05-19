@@ -81,13 +81,42 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	backend := firewallbackend.ForPlatform(platform.CurrentOS(), c.NftCommand)
 	ruleset, err := backend.Render(c.Router, c.NftablesPath)
 	if err != nil {
+		_ = c.saveErrorStatuses(ctx, backend.Name(), c.NftablesPath, "RenderFailed", err)
 		return err
 	}
 	changed, err := backend.Apply(ctx, ruleset, c.DryRun)
 	if err != nil {
+		_ = c.saveErrorStatuses(ctx, ruleset.Backend, ruleset.Path, "ApplyFailed", err)
 		return err
 	}
 	return c.savePolicyStatuses(ctx, ruleset.Backend, ruleset.Path, changed, ruleset.InternalHoles)
+}
+
+func (c Controller) saveErrorStatuses(ctx context.Context, backend, path, reason string, applyErr error) error {
+	status := map[string]any{
+		"phase":        "Error",
+		"backend":      backend,
+		"dryRun":       c.DryRun,
+		"reason":       reason,
+		"error":        applyErr.Error(),
+		"rulesetPath":  path,
+		"nftablesPath": path,
+		"conditions":   []map[string]any{{"type": "Applied", "status": "False", "reason": reason, "message": applyErr.Error()}},
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.FirewallAPIVersion {
+			continue
+		}
+		if err := c.Store.SaveObjectStatus(api.FirewallAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
+			return err
+		}
+	}
+	if c.Bus != nil {
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.firewall.rules.error", daemonapi.SeverityError)
+		event.Attributes = map[string]string{"backend": backend, "nftablesPath": path, "dryRun": fmt.Sprintf("%t", c.DryRun), "reason": reason, "error": applyErr.Error()}
+		_ = c.Bus.Publish(ctx, event)
+	}
+	return nil
 }
 
 func (c Controller) savePolicyStatuses(ctx context.Context, backend, path string, changed bool, internalHoles int) error {

@@ -69,6 +69,26 @@ func TestBespokeLifecycleContractsCoverRequiredIntegrations(t *testing.T) {
 	}
 }
 
+func TestBespokeLifecycleContractsCoverOSMatrix(t *testing.T) {
+	for _, contract := range bespokeLifecycleContracts() {
+		t.Run(contract.name, func(t *testing.T) {
+			for _, manager := range lifecycleMatrixManagers() {
+				plan := bespokeMatrixPlan(contract, manager)
+				if len(plan.Commands) == 0 {
+					t.Fatalf("%s/%s has no commands", contract.name, manager.Name())
+				}
+				for _, forbidden := range bespokeMatrixForbidden(contract, manager) {
+					for _, command := range plan.Commands {
+						if reflect.DeepEqual(command, forbidden) {
+							t.Fatalf("%s/%s collapsed into forbidden generic command %q", contract.name, manager.Name(), commandLine(command))
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
 func bespokeLifecycleContracts() []bespokeLifecycleContract {
 	frr := Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr"}
 	keepalived := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}
@@ -213,8 +233,93 @@ func renderBespokeLifecycleGolden(t *testing.T, contracts []bespokeLifecycleCont
 				b.WriteString("\n")
 			}
 		}
+		b.WriteString("os-matrix:\n")
+		for _, manager := range lifecycleMatrixManagers() {
+			b.WriteString("  ")
+			b.WriteString(manager.Name())
+			b.WriteString(":\n")
+			for _, command := range bespokeMatrixPlan(contract, manager).Commands {
+				b.WriteString("    ")
+				b.WriteString(commandLine(command))
+				b.WriteString("\n")
+			}
+			if forbidden := bespokeMatrixForbidden(contract, manager); len(forbidden) > 0 {
+				b.WriteString("    forbidden:\n")
+				for _, command := range forbidden {
+					b.WriteString("      ")
+					b.WriteString(commandLine(command))
+					b.WriteString("\n")
+				}
+			}
+		}
 	}
 	return b.String()
+}
+
+func lifecycleMatrixManagers() []Manager {
+	return []Manager{Systemd{}, OpenRC{}, RCD{}, NixOS{}}
+}
+
+func bespokeMatrixPlan(contract bespokeLifecycleContract, manager Manager) Plan {
+	frr := Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr"}
+	keepalived := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}
+	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq", RCDName: "routerd_dnsmasq", NixName: "routerd-dnsmasq"}
+	switch contract.name {
+	case "frr-live-reload", "frr-graceful-restart-drain":
+		plan := manager.Plan(OperationReload, frr, FRRLiveReloadHooks("/run/routerd/frr/routerd.conf", "vtysh", "frr-reload.py")...)
+		if contract.name == "frr-graceful-restart-drain" {
+			plan.Commands = append(plan.Commands,
+				Command{Name: "vtysh", Args: []string{"-c", "show bgp summary json"}},
+				Command{Name: "status", Args: []string{"wait", "bgp graceful-restart negotiation"}},
+			)
+		}
+		return plan
+	case "keepalived-openrc-reload":
+		return manager.Plan(OperationReload, keepalived)
+	case "keepalived-openrc-restart":
+		return manager.Plan(OperationRestart, keepalived)
+	case "dnsmasq-sighup-reload":
+		return manager.Plan(OperationReload, dnsmasq, PIDSignalHook(OperationReload, "HUP", "/run/routerd/dnsmasq.pid"))
+	case "bfd-daemon-enable":
+		return Plan{Operation: OperationRestart, Commands: []Command{
+			{Name: "artifact-write", Args: []string{"/etc/frr/daemons", "zebra=yes", "bgpd=yes", "bfdd=yes"}},
+			manager.Command(OperationRestart, frr),
+		}}
+	case "vrrp-track-script-artifacts":
+		return Plan{Operation: OperationEnable, Commands: []Command{
+			{Name: "artifact-write", Args: []string{"/usr/local/libexec/routerd/keepalived-track.d", "mode=0755"}},
+			manager.Command(OperationReload, keepalived),
+		}}
+	default:
+		return contract.plan
+	}
+}
+
+func bespokeMatrixForbidden(contract bespokeLifecycleContract, manager Manager) []Command {
+	frr := Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr"}
+	keepalived := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}
+	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq", RCDName: "routerd_dnsmasq", NixName: "routerd-dnsmasq"}
+	switch contract.name {
+	case "frr-live-reload", "frr-graceful-restart-drain":
+		return []Command{manager.Command(OperationRestart, frr)}
+	case "keepalived-openrc-reload", "vrrp-track-script-artifacts":
+		if manager.Name() == "nixos" {
+			return nil
+		}
+		return []Command{manager.Command(OperationRestart, keepalived)}
+	case "keepalived-openrc-restart":
+		if manager.Name() == "nixos" {
+			return nil
+		}
+		return []Command{manager.Command(OperationReload, keepalived)}
+	case "dnsmasq-sighup-reload":
+		if manager.Name() == "nixos" {
+			return nil
+		}
+		return []Command{manager.Command(OperationRestart, dnsmasq), manager.Command(OperationReload, dnsmasq)}
+	default:
+		return contract.forbidden
+	}
 }
 
 func commandLine(command Command) string {

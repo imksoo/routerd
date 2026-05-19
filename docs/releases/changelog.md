@@ -93,6 +93,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Expanded render golden coverage for firewall hole derivation and OS-specific
   interface/network artifacts, including Linux netplan/systemd-networkd output
   and Alpine nftables snapshots.
+- Strengthened abstraction-layer regression coverage with cross-OS semantic
+  tests, invalid-spec checks, firewall backend error propagation status/events,
+  edge-case declarations, race-tested reload calls, 80% coverage gates, and a
+  four-OS bespoke lifecycle command matrix.
 
 ## v20260519.0743
 

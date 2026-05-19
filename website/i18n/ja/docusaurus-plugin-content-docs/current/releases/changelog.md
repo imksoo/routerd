@@ -94,6 +94,10 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - firewall hole derivation と OS 別 interface/network artifact の render golden
   coverage を拡張し、Linux の netplan/systemd-networkd output と Alpine の
   nftables snapshot も固定しました。
+- abstraction layer regression coverage を強化し、cross-OS semantic test、
+  invalid spec check、firewall backend error propagation の status/event、
+  edge-case declaration、race-tested reload、80% coverage gate、4 OS の
+  bespoke lifecycle command matrix を追加しました。
 
 ## v20260519.0743
 

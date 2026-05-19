@@ -5,6 +5,7 @@ package netconfigbackend
 import (
 	"fmt"
 	"net/netip"
+	"strings"
 
 	"routerd/pkg/api"
 	"routerd/pkg/platform"
@@ -58,6 +59,9 @@ func (b Netplan) Render(router *api.Router) ([]render.File, error) {
 		defaults, _ := platform.Current()
 		path = defaults.NetplanFile
 	}
+	if err := validateOutputPath(b.Name(), path); err != nil {
+		return nil, err
+	}
 	return []render.File{{Path: path, Data: data}}, nil
 }
 
@@ -92,6 +96,9 @@ func (b NixOS) Render(router *api.Router) ([]render.File, error) {
 	if path == "" {
 		path = "/etc/nixos/routerd-generated.nix"
 	}
+	if err := validateOutputPath(b.Name(), path); err != nil {
+		return nil, err
+	}
 	return []render.File{{Path: path, Data: data}}, nil
 }
 
@@ -118,6 +125,9 @@ func (b RCConf) Render(router *api.Router) ([]render.File, error) {
 	path := b.Path
 	if path == "" {
 		path = "/etc/rc.conf.d/routerd"
+	}
+	if err := validateOutputPath(b.Name(), path); err != nil {
+		return nil, err
 	}
 	return []render.File{{Path: path, Data: data.RCConf}}, nil
 }
@@ -183,4 +193,14 @@ func DeclarationsFromRouter(router *api.Router) (Declarations, error) {
 		}
 	}
 	return declarations, nil
+}
+
+func validateOutputPath(backend, path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("%s output path is empty", backend)
+	}
+	if strings.Contains(path, "\x00") {
+		return fmt.Errorf("%s output path contains NUL byte", backend)
+	}
+	return nil
 }

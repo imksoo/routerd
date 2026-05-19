@@ -4,13 +4,16 @@ package firewallbackend
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"routerd/pkg/api"
+	"routerd/pkg/platform"
 	"routerd/pkg/render"
 )
 
@@ -74,6 +77,110 @@ func TestFirewallBackendDiffSkipsUnchangedReload(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatalf("dry-run unchanged apply should not reload: %#v", calls)
+	}
+}
+
+func TestForPlatformSelectsNativeBackend(t *testing.T) {
+	if got := ForPlatform(platform.OSLinux, "").Name(); got != "nftables" {
+		t.Fatalf("linux backend = %q", got)
+	}
+	if got := ForPlatform(platform.OSFreeBSD, "").Name(); got != "pf" {
+		t.Fatalf("freebsd backend = %q", got)
+	}
+}
+
+func TestFirewallBackendRenderMetadata(t *testing.T) {
+	router := nftBespokeRouter()
+	nftRuleset, err := Nftables{}.Render(router, "/tmp/routerd/custom.nft")
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	if nftRuleset.Backend != "nftables" || nftRuleset.Path != "/tmp/routerd/custom.nft" || nftRuleset.InternalHoles == 0 {
+		t.Fatalf("nft ruleset metadata = %#v", nftRuleset)
+	}
+	pfRuleset, err := PF{}.Render(pfBespokeRouter(), "/tmp/routerd/custom.nft")
+	if err != nil {
+		t.Fatalf("render pf: %v", err)
+	}
+	if pfRuleset.Backend != "pf" || pfRuleset.Path != "/tmp/routerd/custom.pf" {
+		t.Fatalf("pf ruleset metadata = %#v", pfRuleset)
+	}
+}
+
+func TestFirewallBackendApplyWritesChangedRulesetInDryRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall.nft")
+	data := []byte("table inet routerd_filter {}\n")
+	changed, err := Nftables{}.Apply(context.Background(), Ruleset{Backend: "nftables", Path: path, Data: data}, true)
+	if err != nil {
+		t.Fatalf("apply dry-run: %v", err)
+	}
+	if !changed {
+		t.Fatal("first dry-run apply should still report changed")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read written ruleset: %v", err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("ruleset data = %q, want %q", got, data)
+	}
+}
+
+func TestFirewallBackendRejectsInvalidRulesetPath(t *testing.T) {
+	for _, backend := range []Backend{Nftables{}, PF{}} {
+		t.Run(backend.Name(), func(t *testing.T) {
+			if _, err := backend.Apply(context.Background(), Ruleset{Backend: backend.Name(), Data: []byte("pass\n")}, true); err == nil {
+				t.Fatal("Apply with empty path succeeded, want error")
+			}
+			if err := backend.Reload(context.Background(), Ruleset{Backend: backend.Name(), Path: "bad\x00path", Data: []byte("pass\n")}); err == nil {
+				t.Fatal("Reload with NUL path succeeded, want error")
+			}
+		})
+	}
+}
+
+func TestFirewallBackendPropagatesCommandFailure(t *testing.T) {
+	wantErr := errors.New("syntax failed")
+	backend := Nftables{Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		return []byte("bad syntax"), wantErr
+	}}
+	err := backend.Reload(context.Background(), Ruleset{Backend: "nftables", Path: filepath.Join(t.TempDir(), "firewall.nft")})
+	if err == nil || !strings.Contains(err.Error(), "bad syntax") || !strings.Contains(err.Error(), "nft -c -f") {
+		t.Fatalf("Reload error = %v, want wrapped syntax error", err)
+	}
+}
+
+func TestFirewallBackendConcurrentReloadIsRaceClean(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall.nft")
+	backend := Nftables{Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		return []byte("ok"), nil
+	}}
+	ruleset := Ruleset{Backend: "nftables", Path: path, Data: []byte("table inet routerd_filter {}\n")}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := backend.Reload(context.Background(), ruleset); err != nil {
+				t.Errorf("Reload: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestFirewallBackendRendersEdgeCaseResourceNames(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan.edge"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan.edge"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "allow-dash.dot"}, Spec: api.FirewallRuleSpec{FromZone: "lan-zone", ToZone: "self", Protocol: "tcp", Port: 443, Action: "accept"}},
+	}}}
+	ruleset, err := Nftables{}.Render(router, "")
+	if err != nil {
+		t.Fatalf("render edge ruleset: %v", err)
+	}
+	if !strings.Contains(string(ruleset.Data), "chain lan_zone_to_self") || !strings.Contains(string(ruleset.Data), "tcp dport 443") {
+		t.Fatalf("edge ruleset missing expected chain/rule:\n%s", ruleset.Data)
 	}
 }
 

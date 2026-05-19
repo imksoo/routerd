@@ -59,6 +59,9 @@ func (b Nftables) Diff(ruleset Ruleset) (bool, error) {
 }
 
 func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool, error) {
+	if err := validateRuleset(ruleset); err != nil {
+		return false, err
+	}
 	changed, err := b.Diff(ruleset)
 	if err != nil {
 		return false, err
@@ -78,6 +81,9 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 }
 
 func (b Nftables) Reload(ctx context.Context, ruleset Ruleset) error {
+	if err := validateRuleset(ruleset); err != nil {
+		return err
+	}
 	nft := firstNonEmpty(b.Command, "nft")
 	if out, err := b.run(ctx, nft, "-c", "-f", ruleset.Path); err != nil {
 		return fmt.Errorf("%s -c -f %s: %w: %s", nft, ruleset.Path, err, strings.TrimSpace(string(out)))
@@ -126,6 +132,9 @@ func (b PF) Diff(ruleset Ruleset) (bool, error) {
 }
 
 func (b PF) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool, error) {
+	if err := validateRuleset(ruleset); err != nil {
+		return false, err
+	}
 	changed, err := b.Diff(ruleset)
 	if err != nil {
 		return false, err
@@ -145,6 +154,9 @@ func (b PF) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool, erro
 }
 
 func (b PF) Reload(ctx context.Context, ruleset Ruleset) error {
+	if err := validateRuleset(ruleset); err != nil {
+		return err
+	}
 	pfctl := firstNonEmpty(b.Command, "pfctl")
 	if pfctl == "nft" {
 		pfctl = "pfctl"
@@ -185,6 +197,16 @@ func writeRuleset(path string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+func validateRuleset(ruleset Ruleset) error {
+	if strings.TrimSpace(ruleset.Path) == "" {
+		return fmt.Errorf("%s ruleset path is empty", firstNonEmpty(ruleset.Backend, "firewall"))
+	}
+	if strings.Contains(ruleset.Path, "\x00") {
+		return fmt.Errorf("%s ruleset path contains NUL byte", firstNonEmpty(ruleset.Backend, "firewall"))
+	}
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {

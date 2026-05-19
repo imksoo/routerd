@@ -72,6 +72,71 @@ func TestBackendDeclarationsMatchAcrossOSBackends(t *testing.T) {
 	}
 }
 
+func TestBackendsRejectInvalidOutputPaths(t *testing.T) {
+	router := networkConfigRouter()
+	tests := []Backend{
+		Netplan{Path: "bad\x00netplan.yaml"},
+		NixOS{Path: "bad\x00module.nix"},
+		RCConf{Path: "bad\x00rc.conf"},
+	}
+	for _, backend := range tests {
+		t.Run(backend.Name(), func(t *testing.T) {
+			if _, err := backend.Render(router); err == nil {
+				t.Fatalf("%s accepted invalid output path", backend.Name())
+			}
+		})
+	}
+}
+
+func TestDeclarationsRejectInvalidIPv6RouteVia(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"}, Metadata: api.ObjectMeta{Name: "bad-via"}, Spec: api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8::/64", Via: "not-an-ip"}},
+	}}}
+	if _, err := DeclarationsFromRouter(router); err == nil || !strings.Contains(err.Error(), "spec.via is invalid") {
+		t.Fatalf("DeclarationsFromRouter error = %v, want invalid via", err)
+	}
+}
+
+func TestDeclarationsPreserveEdgeCasesForSemanticReview(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan duplicate one"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan-alias", Address: "192.0.2.1/24"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-duplicate-two"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan-alias", Address: "192.0.2.1/24"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"}, Metadata: api.ObjectMeta{Name: strings.Repeat("r", 64)}, Spec: api.IPv4StaticRouteSpec{Interface: "wan.alias", Destination: "198.51.100.0/24", Via: "192.0.2.254"}},
+	}}}
+	declarations, err := DeclarationsFromRouter(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(declarations.Addresses) != 2 || declarations.Addresses[0].Address != declarations.Addresses[1].Address {
+		t.Fatalf("duplicate subnet declarations should be preserved for validator/controller review: %#v", declarations.Addresses)
+	}
+	if got := declarations.Routes[0].Interface; got != "wan.alias" {
+		t.Fatalf("interface alias route declaration = %q", got)
+	}
+}
+
+func TestNetworkConfigSemanticEquivalenceAcrossBackends(t *testing.T) {
+	router := networkConfigRouter()
+	want, err := DeclarationsFromRouter(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, backend := range []Backend{Netplan{}, Networkd{}, NixOS{}, RCConf{}} {
+		t.Run(backend.Name(), func(t *testing.T) {
+			got, err := backend.Declarations(router)
+			if err != nil {
+				t.Fatalf("declarations: %v", err)
+			}
+			if files, err := backend.Render(router); err != nil || len(files) == 0 {
+				t.Fatalf("render %s files=%d err=%v", backend.Name(), len(files), err)
+			}
+			if len(got.Addresses) != len(want.Addresses) || len(got.Routes) != len(want.Routes) {
+				t.Fatalf("%s declarations = %#v, want %#v", backend.Name(), got, want)
+			}
+		})
+	}
+}
+
 func networkConfigRouter() *api.Router {
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: true}},

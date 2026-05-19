@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"routerd/pkg/platform"
 	"routerd/pkg/resource"
@@ -98,6 +99,42 @@ func ForPlatform(features platform.Features) Manager {
 
 func IntentForPlatform(owner string, features platform.Features, service Service, action string, attrs map[string]string) resource.Intent {
 	return ForPlatform(features).Intent(owner, service, action, attrs)
+}
+
+func ValidateService(manager Manager, service Service) error {
+	raw := rawServiceName(manager, service)
+	if strings.ContainsAny(raw, "/\x00") {
+		return fmt.Errorf("%s service name %q contains an invalid path separator or NUL byte", manager.Name(), raw)
+	}
+	name := strings.TrimSpace(manager.ServiceName(service))
+	if name == "" {
+		return fmt.Errorf("%s service name is empty", manager.Name())
+	}
+	if len(name) > 64 {
+		return fmt.Errorf("%s service name %q exceeds 64 characters", manager.Name(), name)
+	}
+	if !utf8.ValidString(name) {
+		return fmt.Errorf("%s service name %q is not valid UTF-8", manager.Name(), name)
+	}
+	if strings.ContainsAny(name, "/\x00") {
+		return fmt.Errorf("%s service name %q contains an invalid path separator or NUL byte", manager.Name(), name)
+	}
+	return nil
+}
+
+func rawServiceName(manager Manager, service Service) string {
+	switch manager.(type) {
+	case Systemd:
+		return firstNonEmpty(service.SystemdName, service.Name)
+	case OpenRC:
+		return firstNonEmpty(service.OpenRCName, service.SystemdName, service.Name)
+	case RCD:
+		return firstNonEmpty(service.RCDName, service.SystemdName, service.Name)
+	case NixOS:
+		return firstNonEmpty(service.NixName, service.SystemdName, service.Name)
+	default:
+		return manager.ServiceName(service)
+	}
 }
 
 type Systemd struct{}

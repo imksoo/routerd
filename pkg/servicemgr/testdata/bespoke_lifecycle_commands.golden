@@ -7,6 +7,27 @@ commands:
   frr-reload.py --reload /run/routerd/frr/routerd.conf
 forbidden:
   systemctl restart frr.service
+os-matrix:
+  systemd:
+    vtysh -C -f /run/routerd/frr/routerd.conf
+    frr-reload.py --reload /run/routerd/frr/routerd.conf
+    forbidden:
+      systemctl restart frr.service
+  openrc:
+    vtysh -C -f /run/routerd/frr/routerd.conf
+    frr-reload.py --reload /run/routerd/frr/routerd.conf
+    forbidden:
+      rc-service frr restart
+  rc.d:
+    vtysh -C -f /run/routerd/frr/routerd.conf
+    frr-reload.py --reload /run/routerd/frr/routerd.conf
+    forbidden:
+      service frr restart
+  nixos:
+    vtysh -C -f /run/routerd/frr/routerd.conf
+    frr-reload.py --reload /run/routerd/frr/routerd.conf
+    forbidden:
+      nixos-rebuild switch
 
 [keepalived-openrc-reload]
 proves: OpenRC keepalived config changes use signal reload instead of restart when the daemon is already running.
@@ -14,6 +35,21 @@ commands:
   rc-service keepalived reload
 forbidden:
   rc-service keepalived restart
+os-matrix:
+  systemd:
+    systemctl reload keepalived.service
+    forbidden:
+      systemctl restart keepalived.service
+  openrc:
+    rc-service keepalived reload
+    forbidden:
+      rc-service keepalived restart
+  rc.d:
+    service keepalived reload
+    forbidden:
+      service keepalived restart
+  nixos:
+    nixos-rebuild switch
 
 [keepalived-openrc-restart]
 proves: OpenRC keepalived restart remains available as the fallback path and is not conflated with reload.
@@ -21,6 +57,21 @@ commands:
   rc-service keepalived restart
 forbidden:
   rc-service keepalived reload
+os-matrix:
+  systemd:
+    systemctl restart keepalived.service
+    forbidden:
+      systemctl reload keepalived.service
+  openrc:
+    rc-service keepalived restart
+    forbidden:
+      rc-service keepalived reload
+  rc.d:
+    service keepalived restart
+    forbidden:
+      service keepalived reload
+  nixos:
+    nixos-rebuild switch
 
 [dnsmasq-sighup-reload]
 proves: dnsmasq host and lease updates can be reloaded with SIGHUP through the pid file without a service restart.
@@ -29,6 +80,24 @@ commands:
 forbidden:
   systemctl restart routerd-dnsmasq.service
   systemctl reload routerd-dnsmasq.service
+os-matrix:
+  systemd:
+    sh -c kill -HUP "$(cat /run/routerd/dnsmasq.pid)"
+    forbidden:
+      systemctl restart routerd-dnsmasq.service
+      systemctl reload routerd-dnsmasq.service
+  openrc:
+    sh -c kill -HUP "$(cat /run/routerd/dnsmasq.pid)"
+    forbidden:
+      rc-service routerd_dnsmasq restart
+      rc-service routerd_dnsmasq reload
+  rc.d:
+    sh -c kill -HUP "$(cat /run/routerd/dnsmasq.pid)"
+    forbidden:
+      service routerd_dnsmasq restart
+      service routerd_dnsmasq reload
+  nixos:
+    sh -c kill -HUP "$(cat /run/routerd/dnsmasq.pid)"
 
 [dhcp-client-renew-release-ipc]
 proves: DHCPv4/v6 client renew and release operations stay on the Unix-socket daemon API instead of restarting client daemons.
@@ -39,12 +108,54 @@ commands:
 forbidden:
   systemctl restart routerd-dhcpv4-client@wan.service
   systemctl restart routerd-dhcpv6-client@wan-pd.service
+os-matrix:
+  systemd:
+    daemonapi POST unix:///run/routerd/dhcpv4-client/wan.sock /v1/commands/renew
+    daemonapi POST unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/commands/renew
+    daemonapi POST unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/commands/release
+    forbidden:
+      systemctl restart routerd-dhcpv4-client@wan.service
+      systemctl restart routerd-dhcpv6-client@wan-pd.service
+  openrc:
+    daemonapi POST unix:///run/routerd/dhcpv4-client/wan.sock /v1/commands/renew
+    daemonapi POST unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/commands/renew
+    daemonapi POST unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/commands/release
+    forbidden:
+      systemctl restart routerd-dhcpv4-client@wan.service
+      systemctl restart routerd-dhcpv6-client@wan-pd.service
+  rc.d:
+    daemonapi POST unix:///run/routerd/dhcpv4-client/wan.sock /v1/commands/renew
+    daemonapi POST unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/commands/renew
+    daemonapi POST unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/commands/release
+    forbidden:
+      systemctl restart routerd-dhcpv4-client@wan.service
+      systemctl restart routerd-dhcpv6-client@wan-pd.service
+  nixos:
+    daemonapi POST unix:///run/routerd/dhcpv4-client/wan.sock /v1/commands/renew
+    daemonapi POST unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/commands/renew
+    daemonapi POST unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/commands/release
+    forbidden:
+      systemctl restart routerd-dhcpv4-client@wan.service
+      systemctl restart routerd-dhcpv6-client@wan-pd.service
 
 [bfd-daemon-enable]
 proves: BGP BFD enables bgpd and bfdd in /etc/frr/daemons before the service restart needed for daemon-set changes.
 commands:
   artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=yes
   systemctl restart frr.service
+os-matrix:
+  systemd:
+    artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=yes
+    systemctl restart frr.service
+  openrc:
+    artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=yes
+    rc-service frr restart
+  rc.d:
+    artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=yes
+    service frr restart
+  nixos:
+    artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=yes
+    nixos-rebuild switch
 
 [ingress-nft-map-apply]
 proves: IngressService backend rotation updates nftables dataplane state only and must not restart any daemon.
@@ -54,6 +165,31 @@ commands:
 forbidden:
   systemctl restart routerd.service
   systemctl restart nftables.service
+os-matrix:
+  systemd:
+    nft -c -f /run/routerd/nat44.nft
+    nft -f /run/routerd/nat44.nft
+    forbidden:
+      systemctl restart routerd.service
+      systemctl restart nftables.service
+  openrc:
+    nft -c -f /run/routerd/nat44.nft
+    nft -f /run/routerd/nat44.nft
+    forbidden:
+      systemctl restart routerd.service
+      systemctl restart nftables.service
+  rc.d:
+    nft -c -f /run/routerd/nat44.nft
+    nft -f /run/routerd/nat44.nft
+    forbidden:
+      systemctl restart routerd.service
+      systemctl restart nftables.service
+  nixos:
+    nft -c -f /run/routerd/nat44.nft
+    nft -f /run/routerd/nat44.nft
+    forbidden:
+      systemctl restart routerd.service
+      systemctl restart nftables.service
 
 [vrrp-track-script-artifacts]
 proves: VRRP track scripts remain explicit artifacts with executable permissions for keepalived callbacks.
@@ -62,6 +198,25 @@ commands:
   rc-service keepalived reload
 forbidden:
   rc-service keepalived restart
+os-matrix:
+  systemd:
+    artifact-write /usr/local/libexec/routerd/keepalived-track.d mode=0755
+    systemctl reload keepalived.service
+    forbidden:
+      systemctl restart keepalived.service
+  openrc:
+    artifact-write /usr/local/libexec/routerd/keepalived-track.d mode=0755
+    rc-service keepalived reload
+    forbidden:
+      rc-service keepalived restart
+  rc.d:
+    artifact-write /usr/local/libexec/routerd/keepalived-track.d mode=0755
+    service keepalived reload
+    forbidden:
+      service keepalived restart
+  nixos:
+    artifact-write /usr/local/libexec/routerd/keepalived-track.d mode=0755
+    nixos-rebuild switch
 
 [dslite-tunnel-event-hook]
 proves: DS-Lite tunnel apply remains a dataplane hook with ipip6 tunnel updates and route event publication, not a service restart.
@@ -69,6 +224,23 @@ commands:
   modprobe ip6_tunnel
   ip -6 tunnel replace ds-lite mode ipip6
   bus publish routerd.tunnel.ds-lite.up
+os-matrix:
+  systemd:
+    modprobe ip6_tunnel
+    ip -6 tunnel replace ds-lite mode ipip6
+    bus publish routerd.tunnel.ds-lite.up
+  openrc:
+    modprobe ip6_tunnel
+    ip -6 tunnel replace ds-lite mode ipip6
+    bus publish routerd.tunnel.ds-lite.up
+  rc.d:
+    modprobe ip6_tunnel
+    ip -6 tunnel replace ds-lite mode ipip6
+    bus publish routerd.tunnel.ds-lite.up
+  nixos:
+    modprobe ip6_tunnel
+    ip -6 tunnel replace ds-lite mode ipip6
+    bus publish routerd.tunnel.ds-lite.up
 
 [dhcp-event-daemon-ipc-order]
 proves: DHCP event relay and fingerprint watcher keep Unix-socket IPC and daemon status warmup ordering before controller bootstrap.
@@ -76,6 +248,23 @@ commands:
   daemon-status GET unix:///run/routerd/dhcpv4-client/wan.sock /v1/status
   daemon-status GET unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/status
   bus publish routerd.controller.bootstrap
+os-matrix:
+  systemd:
+    daemon-status GET unix:///run/routerd/dhcpv4-client/wan.sock /v1/status
+    daemon-status GET unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/status
+    bus publish routerd.controller.bootstrap
+  openrc:
+    daemon-status GET unix:///run/routerd/dhcpv4-client/wan.sock /v1/status
+    daemon-status GET unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/status
+    bus publish routerd.controller.bootstrap
+  rc.d:
+    daemon-status GET unix:///run/routerd/dhcpv4-client/wan.sock /v1/status
+    daemon-status GET unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/status
+    bus publish routerd.controller.bootstrap
+  nixos:
+    daemon-status GET unix:///run/routerd/dhcpv4-client/wan.sock /v1/status
+    daemon-status GET unix:///run/routerd/dhcpv6-client/wan-pd.sock /v1/status
+    bus publish routerd.controller.bootstrap
 
 [frr-graceful-restart-drain]
 proves: FRR graceful-restart keeps config-only reloads in place and observes peers after negotiation-sensitive reloads.
@@ -86,3 +275,32 @@ commands:
   status wait bgp graceful-restart negotiation
 forbidden:
   systemctl restart frr.service
+os-matrix:
+  systemd:
+    vtysh -C -f /run/routerd/frr/routerd.conf
+    frr-reload.py --reload /run/routerd/frr/routerd.conf
+    vtysh -c show bgp summary json
+    status wait bgp graceful-restart negotiation
+    forbidden:
+      systemctl restart frr.service
+  openrc:
+    vtysh -C -f /run/routerd/frr/routerd.conf
+    frr-reload.py --reload /run/routerd/frr/routerd.conf
+    vtysh -c show bgp summary json
+    status wait bgp graceful-restart negotiation
+    forbidden:
+      rc-service frr restart
+  rc.d:
+    vtysh -C -f /run/routerd/frr/routerd.conf
+    frr-reload.py --reload /run/routerd/frr/routerd.conf
+    vtysh -c show bgp summary json
+    status wait bgp graceful-restart negotiation
+    forbidden:
+      service frr restart
+  nixos:
+    vtysh -C -f /run/routerd/frr/routerd.conf
+    frr-reload.py --reload /run/routerd/frr/routerd.conf
+    vtysh -c show bgp summary json
+    status wait bgp graceful-restart negotiation
+    forbidden:
+      nixos-rebuild switch
