@@ -89,6 +89,7 @@ const sidebars: SidebarsConfig = {
         'operations/state-database',
         'operations/inventory',
         'operations/usb-persistence',
+        'operations/alpine-deployment',
         'operations/secrets',
         'operations/observability',
         'operations/high-availability',

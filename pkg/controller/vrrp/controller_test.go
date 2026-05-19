@@ -186,6 +186,35 @@ func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 	}
 }
 
+func TestReconcileRestartsKeepalivedWithOpenRC(t *testing.T) {
+	store := mapStore{}
+	var calls []string
+	controller := Controller{
+		Router:     vrrpRouter("vrrp"),
+		Store:      store,
+		ConfigPath: t.TempDir() + "/keepalived.conf",
+		OpenRC:     true,
+		RCService:  "rc-service",
+		IP:         "ip",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens18" {
+				return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if !containsString(calls, "rc-service keepalived restart") {
+		t.Fatalf("missing OpenRC keepalived restart: %#v", calls)
+	}
+	if containsString(calls, "systemctl reload-or-restart keepalived.service") {
+		t.Fatalf("OpenRC path used systemctl: %#v", calls)
+	}
+}
+
 func TestReconcileAppliesFreeBSDCARPVirtualIPv4Address(t *testing.T) {
 	store := mapStore{}
 	var calls []string

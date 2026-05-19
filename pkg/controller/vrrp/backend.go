@@ -56,12 +56,23 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 				return backendResult{}, c.saveError(path, changed, nil, "KeepalivedConfigInvalid", fmt.Errorf("%s: %w: %s", checker, err, strings.TrimSpace(string(out))))
 			}
 		}
-		systemctl := firstNonEmpty(c.Systemctl, "systemctl")
-		if out, err := c.run(ctx, systemctl, "reload-or-restart", "keepalived.service"); err != nil {
-			return backendResult{}, c.saveError(path, changed, nil, "KeepalivedRestartFailed", fmt.Errorf("%s reload-or-restart keepalived.service: %w: %s", systemctl, err, strings.TrimSpace(string(out))))
+		if c.useOpenRC() {
+			rcService := firstNonEmpty(c.RCService, "rc-service")
+			if out, err := c.run(ctx, rcService, "keepalived", "restart"); err != nil {
+				return backendResult{}, c.saveError(path, changed, nil, "KeepalivedRestartFailed", fmt.Errorf("%s keepalived restart: %w: %s", rcService, err, strings.TrimSpace(string(out))))
+			}
+		} else {
+			systemctl := firstNonEmpty(c.Systemctl, "systemctl")
+			if out, err := c.run(ctx, systemctl, "reload-or-restart", "keepalived.service"); err != nil {
+				return backendResult{}, c.saveError(path, changed, nil, "KeepalivedRestartFailed", fmt.Errorf("%s reload-or-restart keepalived.service: %w: %s", systemctl, err, strings.TrimSpace(string(out))))
+			}
 		}
 	}
 	return backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRoles(ctx, c, aliases)}, nil
+}
+
+func (c *Controller) useOpenRC() bool {
+	return c.OpenRC || platform.IsAlpineHost()
 }
 
 func observeKeepalivedRoles(ctx context.Context, c *Controller, aliases map[string]string) map[string]string {

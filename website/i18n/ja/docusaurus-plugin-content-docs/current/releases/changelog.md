@@ -44,6 +44,10 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - OTLP environment rendering と stdout / syslog / Loki への内蔵 routerd event
   forwarding 用の `ObservabilityPipeline`、および apply/controller mutation を
   file lease で gate する `RouterdCluster` を追加しました。
+- Alpine/OpenRC 向け VRRP apply support を追加しました。`routerd apply --once`
+  が keepalived config を render し、OpenRC の `keepalived` service を管理し、
+  live address から観測した VRRP role を status に保存します。Alpine 向け
+  Kubernetes VIP example も追加しました。
 
 ## v20260519.0743
 

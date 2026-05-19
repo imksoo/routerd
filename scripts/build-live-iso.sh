@@ -538,7 +538,13 @@ echo
 if [ -x /usr/share/routerd/live-autostart.sh ]; then
   /usr/share/routerd/live-autostart.sh || true
 fi
-if [ ! -f /usr/local/etc/routerd/router.yaml ]; then
+routerd_skip_wizard()
+{
+  [ -f /usr/local/etc/routerd/router.yaml ] && return 0
+  grep -qw 'routerd.skip-wizard=1' /proc/cmdline 2>/dev/null && return 0
+  return 1
+}
+if ! routerd_skip_wizard; then
   if command -v udhcpc >/dev/null 2>&1; then
     for iface in $(ls /sys/class/net 2>/dev/null | grep -E '^(eth|en|ens)' || true); do
       ip link set "$iface" up 2>/dev/null || true

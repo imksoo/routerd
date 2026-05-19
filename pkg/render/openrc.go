@@ -264,8 +264,35 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 			services = append(services, OpenRCService{Name: name, Enabled: true, Started: true})
 		}
 	}
+	if routerNeedsKeepalived(router) {
+		name := "keepalived"
+		if !explicit[name] {
+			data, err := OpenRCScript(name, keepalivedOpenRCSystemdSpec("", ""))
+			if err != nil {
+				return OpenRCConfig{}, err
+			}
+			out[name] = data
+			services = append(services, OpenRCService{Name: name, Enabled: true, Started: true})
+		}
+	}
 	sort.SliceStable(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 	return OpenRCConfig{InitScripts: out, Services: services}, nil
+}
+
+func routerNeedsKeepalived(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, res := range router.Spec.Resources {
+		spec, ok, err := virtualAddressResourceSpec(res)
+		if err != nil || !ok {
+			continue
+		}
+		if spec.Mode == "vrrp" {
+			return true
+		}
+	}
+	return false
 }
 
 func OpenRCScript(name string, spec api.SystemdUnitSpec) ([]byte, error) {
@@ -360,6 +387,29 @@ func dnsmasqOpenRCSystemdSpec(dnsmasqPath, configPath string) api.SystemdUnitSpe
 
 func DnsmasqOpenRCScript(configPath, dnsmasqPath string) ([]byte, error) {
 	return OpenRCScript("routerd_dnsmasq", dnsmasqOpenRCSystemdSpec(dnsmasqPath, configPath))
+}
+
+func keepalivedOpenRCSystemdSpec(configPath, keepalivedPath string) api.SystemdUnitSpec {
+	if strings.TrimSpace(keepalivedPath) == "" {
+		keepalivedPath = "/usr/sbin/keepalived"
+	}
+	if strings.TrimSpace(configPath) == "" {
+		configPath = "/etc/keepalived/keepalived.conf"
+	}
+	return api.SystemdUnitSpec{
+		Description:      "routerd managed keepalived VRRP service",
+		ExecStartPre:     []string{keepalivedPath, "--config-test", "--use-file", configPath},
+		ExecStart:        []string{keepalivedPath, "--dont-fork", "--log-console", "--use-file", configPath},
+		After:            []string{"network-online.target"},
+		Restart:          "on-failure",
+		RestartSec:       "2s",
+		RuntimeDirectory: []string{"routerd"},
+		StateDirectory:   []string{"routerd"},
+	}
+}
+
+func KeepalivedOpenRCScript(configPath, keepalivedPath string) ([]byte, error) {
+	return OpenRCScript("keepalived", keepalivedOpenRCSystemdSpec(configPath, keepalivedPath))
 }
 
 func dhcpv6PrefixDelegationOpenRCSystemdSpec(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, telemetryEnv []string) api.SystemdUnitSpec {

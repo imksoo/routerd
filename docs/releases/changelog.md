@@ -44,6 +44,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added `ObservabilityPipeline` for OTLP environment rendering and built-in
   routerd event forwarding to stdout, syslog, or Loki, plus `RouterdCluster`
   file-lease high availability gating for apply/controller mutation.
+- Added Alpine/OpenRC VRRP apply support: `routerd apply --once` now renders
+  keepalived config, manages the OpenRC `keepalived` service, records observed
+  VRRP roles from live addresses, and includes an Alpine Kubernetes VIP example.
 
 ## v20260519.0743
 

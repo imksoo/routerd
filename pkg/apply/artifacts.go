@@ -18,6 +18,14 @@ func resourceArtifactIntents(res api.Resource, aliases map[string]string) []reso
 }
 
 func resourceArtifactIntentsForOS(res api.Resource, aliases map[string]string, targetOS platform.OS) []resource.Intent {
+	_, features := platform.Current()
+	if targetOS == platform.OSFreeBSD {
+		features = platform.Features{HasRCD: true}
+	}
+	return resourceArtifactIntentsForPlatform(res, aliases, targetOS, features)
+}
+
+func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]string, targetOS platform.OS, features platform.Features) []resource.Intent {
 	owner := res.ID()
 	artifact := func(kind, name, action, applyWith string, attrs map[string]string) resource.Intent {
 		if attrs == nil {
@@ -71,8 +79,9 @@ func resourceArtifactIntentsForOS(res api.Resource, aliases map[string]string, t
 			return nil
 		}
 		unitName := defaultString(spec.UnitName, res.Metadata.Name)
-		_, features := platform.Current()
-		if features.HasRCD {
+		if features.HasOpenRC {
+			return []resource.Intent{artifact("openrc.service", render.OpenRCServiceName(unitName), resource.ActionEnsure, "rc-service", nil)}
+		} else if features.HasRCD {
 			return []resource.Intent{artifact("rc.d.service", render.FreeBSDServiceName(unitName), resource.ActionEnsure, "service", nil)}
 		}
 		return []resource.Intent{artifact("systemd.service", unitName, resource.ActionEnsure, "systemctl", nil)}
@@ -162,17 +171,25 @@ func resourceArtifactIntentsForOS(res api.Resource, aliases map[string]string, t
 					artifact("sysctl", "net.inet.carp.preempt", resource.ActionEnsure, "sysctl", nil),
 				}
 			}
+			service := artifact("systemd.service", "keepalived.service", resource.ActionEnsure, "systemctl", nil)
+			if features.HasOpenRC {
+				service = artifact("openrc.service", "keepalived", resource.ActionEnsure, "rc-service", nil)
+			}
 			return []resource.Intent{
 				artifact("keepalived.config", "/etc/keepalived/keepalived.conf", resource.ActionEnsure, "keepalived", map[string]string{"interface": aliases[spec.Interface]}),
-				artifact("systemd.service", "keepalived.service", resource.ActionEnsure, "systemctl", nil),
+				service,
 				artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "keepalived", nil),
 			}
 		}
 		return []resource.Intent{artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "ip-addr", nil)}
 	case "BGPRouter":
+		service := artifact("systemd.service", "frr.service", resource.ActionEnsure, "systemctl", nil)
+		if features.HasOpenRC {
+			service = artifact("openrc.service", "frr", resource.ActionEnsure, "rc-service", nil)
+		}
 		return []resource.Intent{
 			artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil),
-			artifact("systemd.service", "frr.service", resource.ActionEnsure, "systemctl", nil),
+			service,
 			artifact("frr.bgp.router", res.Metadata.Name, resource.ActionEnsure, "frr", nil),
 		}
 	case "BGPPeer":
@@ -229,7 +246,6 @@ func resourceArtifactIntentsForOS(res api.Resource, aliases map[string]string, t
 		intents := []resource.Intent{
 			artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil),
 		}
-		_, features := platform.Current()
 		if features.HasOpenRC {
 			intents = append(intents, artifact("openrc.service", "routerd_dnsmasq", resource.ActionEnsure, "rc-service", nil))
 		} else if features.HasRCD {

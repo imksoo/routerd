@@ -7,6 +7,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/platform"
+	"routerd/pkg/resource"
 )
 
 func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
@@ -108,6 +109,46 @@ func TestVirtualIPv4AddressArtifactIntentsUseFreeBSDCARP(t *testing.T) {
 			t.Fatalf("missing FreeBSD intent kind %q in %+v", want, intents)
 		}
 	}
+}
+
+func TestVirtualIPv4AddressAndBGPRouterArtifactIntentsUseOpenRC(t *testing.T) {
+	features := platform.Features{HasOpenRC: true}
+	vip := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+		Metadata: api.ObjectMeta{Name: "api-vip"},
+		Spec: api.VirtualIPv4AddressSpec{
+			Interface: "lan",
+			Address:   "192.168.10.10/32",
+			Mode:      "vrrp",
+			VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+		},
+	}
+	vipIntents := resourceArtifactIntentsForPlatform(vip, map[string]string{"lan": "eth0"}, platform.OSLinux, features)
+	if !hasArtifactIntent(vipIntents, "openrc.service", "keepalived", "rc-service") {
+		t.Fatalf("VRRP VIP missing keepalived OpenRC intent: %+v", vipIntents)
+	}
+	if hasArtifactIntent(vipIntents, "systemd.service", "keepalived.service", "systemctl") {
+		t.Fatalf("VRRP VIP should not claim systemd keepalived on OpenRC: %+v", vipIntents)
+	}
+
+	bgp := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+		Metadata: api.ObjectMeta{Name: "lan"},
+		Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "192.168.10.1"},
+	}
+	bgpIntents := resourceArtifactIntentsForPlatform(bgp, nil, platform.OSLinux, features)
+	if !hasArtifactIntent(bgpIntents, "openrc.service", "frr", "rc-service") {
+		t.Fatalf("BGPRouter missing FRR OpenRC intent: %+v", bgpIntents)
+	}
+}
+
+func hasArtifactIntent(intents []resource.Intent, kind, name, applyWith string) bool {
+	for _, intent := range intents {
+		if intent.Artifact.Kind == kind && intent.Artifact.Name == name && intent.ApplyWith == applyWith {
+			return true
+		}
+	}
+	return false
 }
 
 func TestVXLANSegmentClaimsL2FilterTable(t *testing.T) {

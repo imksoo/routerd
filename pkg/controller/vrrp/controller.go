@@ -33,11 +33,13 @@ type Controller struct {
 	DryRun          bool
 	ConfigPath      string
 	Systemctl       string
+	RCService       string
 	KeepalivedCheck string
 	IP              string
 	Ifconfig        string
 	Sysctl          string
 	Kldload         string
+	OpenRC          bool
 	OperatingSystem platform.OS
 	Command         CommandFunc
 	Logger          *slog.Logger

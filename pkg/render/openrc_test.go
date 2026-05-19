@@ -189,3 +189,48 @@ func TestOpenRCRenderSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
 		t.Fatalf("classifier script missing ndpi dependency:\n%s", classifier)
 	}
 }
+
+func TestOpenRCRenderSynthesizesKeepalivedForVRRP(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "eth0", Managed: false},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			Metadata: api.ObjectMeta{Name: "k8s-api"},
+			Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "192.168.1.248/32",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Priority: 150},
+			},
+		},
+	}}}
+	got, err := OpenRCWithOptions(router, OpenRCOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(got.InitScripts["keepalived"])
+	for _, want := range []string{
+		`name='keepalived'`,
+		`command='/usr/sbin/keepalived'`,
+		`command_args="'--dont-fork' '--log-console' '--use-file' '/etc/keepalived/keepalived.conf'"`,
+		`use net`,
+		`'/usr/sbin/keepalived' '--config-test' '--use-file' '/etc/keepalived/keepalived.conf'`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("keepalived OpenRC script missing %q:\n%s", want, script)
+		}
+	}
+	var found bool
+	for _, service := range got.Services {
+		if service.Name == "keepalived" && service.Enabled && service.Started {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("keepalived service not enabled/started: %#v", got.Services)
+	}
+}

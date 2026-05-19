@@ -301,7 +301,7 @@ func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
 		buf.WriteString("  }\n")
 	}
 	buf.WriteString("  virtual_ipaddress {\n")
-	buf.WriteString("    " + instance.Address + "\n")
+	buf.WriteString("    " + instance.Address + " dev " + instance.Interface + "\n")
 	buf.WriteString("  }\n")
 	buf.WriteString("}\n\n")
 }
