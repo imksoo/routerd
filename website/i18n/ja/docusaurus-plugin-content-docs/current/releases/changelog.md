@@ -85,6 +85,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   firewall backend abstraction を追加しました。nftables の `ct state`、`jhash`、
   `numgen`、hairpin conntrack expression と、pf の `rdr`、`nat-anchor`、
   hairpin NAT syntax を regression contract で固定します。
+- netplan、systemd-networkd drop-in、NixOS module、FreeBSD rc.conf fragment
+  向けに、挙動変更なしの network config backend abstraction を追加しました。
+  IPv4/IPv6 address と route は共通 declaration として扱います。
 
 ## v20260519.0743
 

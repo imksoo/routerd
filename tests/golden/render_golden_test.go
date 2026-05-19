@@ -14,6 +14,7 @@ import (
 
 	"routerd/pkg/api"
 	"routerd/pkg/config"
+	"routerd/pkg/netconfigbackend"
 	"routerd/pkg/render"
 )
 
@@ -81,11 +82,11 @@ func renderSnapshot(target string, router *api.Router) ([]byte, error) {
 	case "freebsd":
 		return renderFreeBSDSnapshot(router)
 	case "nixos":
-		data, err := render.NixOSModule(router)
+		files, err := netconfigbackend.NixOS{Path: "routerd-generated.nix"}.Render(router)
 		if err != nil {
 			return nil, err
 		}
-		return sectionedFiles(map[string][]byte{"routerd-generated.nix": data}), nil
+		return sectionedFiles(fileMap(files)), nil
 	default:
 		return nil, fmt.Errorf("unknown target %q", target)
 	}
@@ -163,7 +164,16 @@ func renderFreeBSDSnapshot(router *api.Router) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	addFile(files, "rc.conf.d-routerd", data.RCConf)
+	rcConf, err := netconfigbackend.RCConf{
+		Path:        "rc.conf.d-routerd",
+		PasswordFor: func(api.Resource, api.PPPoEInterfaceSpec) (string, error) { return "", nil },
+	}.Render(router)
+	if err != nil {
+		return nil, err
+	}
+	for name, content := range fileMap(rcConf) {
+		addFile(files, name, content)
+	}
 	dnsmasqConfig, warnings, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
 		RuntimeDir: "/var/run/routerd",
 		LeaseFile:  "/var/db/routerd/dnsmasq/dnsmasq.leases",
@@ -199,6 +209,14 @@ func addWarnings(files map[string][]byte, warnings []string) {
 	}
 	sort.Strings(warnings)
 	files["warnings.txt"] = []byte(strings.Join(warnings, "\n") + "\n")
+}
+
+func fileMap(files []render.File) map[string][]byte {
+	out := map[string][]byte{}
+	for _, file := range files {
+		out[file.Path] = file.Data
+	}
+	return out
 }
 
 func sectionedFiles(files map[string][]byte) []byte {

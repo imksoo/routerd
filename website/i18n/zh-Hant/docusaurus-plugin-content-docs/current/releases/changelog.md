@@ -68,6 +68,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
   backend abstraction，並用 regression contract 固定 nftables 的 `ct state`、
   `jhash`、`numgen`、hairpin conntrack expression，以及 pf 的 `rdr`、
   `nat-anchor`、hairpin NAT syntax。
+- 為 netplan、systemd-networkd drop-in、NixOS module、FreeBSD rc.conf
+  fragment 新增無行為變化的 network config backend abstraction，並以通用
+  IPv4/IPv6 address 與 route declaration 表示網路設定。
 
 ## v20260519.0743
 

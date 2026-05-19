@@ -44,6 +44,7 @@ import (
 	"routerd/pkg/ha"
 	"routerd/pkg/inventory"
 	"routerd/pkg/logstore"
+	"routerd/pkg/netconfigbackend"
 	"routerd/pkg/observe"
 	routerotel "routerd/pkg/otel"
 	"routerd/pkg/pdclient"
@@ -326,9 +327,13 @@ func renderNixOSCommand(args []string, stdout io.Writer) error {
 	if err := config.Validate(router); err != nil {
 		return err
 	}
-	data, err := render.NixOSModule(router)
+	files, err := netconfigbackend.NixOS{}.Render(router)
 	if err != nil {
 		return err
+	}
+	var data []byte
+	if len(files) > 0 {
+		data = files[0].Data
 	}
 	if *outPath == "" {
 		_, err := stdout.Write(data)
@@ -1179,11 +1184,15 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 				networkChangedFiles, err = applyRuntimeLinuxNetworkResources(effectiveRouter)
 				return err
 			}
-			netplanData, err := render.Netplan(effectiveRouter)
+			netplanFiles, err := netconfigbackend.Netplan{Path: opts.NetplanPath}.Render(effectiveRouter)
 			if err != nil {
 				return err
 			}
-			networkdFiles, err := render.NetworkdDropins(effectiveRouter)
+			var netplanData []byte
+			if len(netplanFiles) > 0 {
+				netplanData = netplanFiles[0].Data
+			}
+			networkdFiles, err := netconfigbackend.Networkd{}.Render(effectiveRouter)
 			if err != nil {
 				return err
 			}

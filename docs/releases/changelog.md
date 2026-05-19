@@ -83,6 +83,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   render/diff/reload paths, with regression contracts protecting nftables
   `ct state`, `jhash`, `numgen`, hairpin conntrack expressions and pf
   `rdr`, `nat-anchor`, and hairpin NAT syntax.
+- Added a no-behavior-change network config backend abstraction for netplan,
+  systemd-networkd drop-ins, NixOS modules, and FreeBSD rc.conf fragments,
+  backed by common IPv4/IPv6 address and route declarations.
 
 ## v20260519.0743
 
