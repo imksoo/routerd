@@ -156,3 +156,7 @@ spec:
     site: edge
   signals: [logs, metrics, traces]
 ```
+
+Use `ObservabilityPipeline` when you also want routerd to forward its internal
+event stream to stdout, syslog, or Loki without adding a separate local
+collector. See [Observability pipeline](../operations/observability.md).

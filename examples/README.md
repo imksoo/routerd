@@ -20,6 +20,8 @@ routerd plan --config examples/<name>.yaml
 | `dns-private-upstream.yaml` | You need conditional DNS forwarding or private upstream resolvers. |
 | `guest-mode.yaml` | You want MAC-based guest isolation that keeps DHCP/DNS/NTP local services available while blocking private-address egress. |
 | `telemetry-export.yaml` | You want to send routerd telemetry to an OTLP collector. |
+| `observability-loki.yaml` | You want routerd OTLP export plus routerd event log forwarding to Loki. |
+| `ha-2-node.yaml` | You want a two-node routerd lease gate so only the leader applies host changes. |
 
 ## VPN and segmentation
 

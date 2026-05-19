@@ -41,6 +41,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - IPv4/IPv6 unicast の dual-stack BGP rendering / observation、
   `VirtualIPv6Address` による VRRPv3/CARP VIP support、AAAA record 自動派生、
   dual-stack BGP / Kubernetes API VIP example を追加しました。
+- OTLP environment rendering と stdout / syslog / Loki への内蔵 routerd event
+  forwarding 用の `ObservabilityPipeline`、および apply/controller mutation を
+  file lease で gate する `RouterdCluster` を追加しました。
 
 ## v20260519.0743
 

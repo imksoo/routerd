@@ -37,7 +37,7 @@ spec:
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | インターフェース、再利用可能な `IPAddressSet`、DHCP、DNS、経路、トンネル、VIP、BGP、イベント、通信フローログ |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
-| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `KernelModule`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `LogRetention`, `WebConsole`, `NixOSHost` |
+| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `KernelModule`, `Package`, `NetworkAdoption`, `SystemdUnit`, `NTPClient`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole`, `NixOSHost` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
 
 ## システム準備
@@ -53,6 +53,8 @@ spec:
 | `Hostname` | ホスト名を設定します。 |
 | `NTPClient` | OS の NTP クライアントを有効にします。DHCPv4 / DHCPv6 の状態から時刻サーバーを導出し、空なら public NTP サーバーへ戻せます。 |
 | `LogSink` | routerd のイベントを syslog や外部プログラムへ送ります。 |
+| `ObservabilityPipeline` | OTLP environment と、stdout / syslog / Loki への routerd event forwarding を設定します。 |
+| `RouterdCluster` | file lease により leader だけが host configuration を変更し、standby は status 観測に回ります。 |
 | `LogRetention` | イベント、DNS、通信フロー、ファイアウォールログの保管期間を管理します。 |
 | `WebConsole` | 読み取り専用の Web 画面を管理ネットワークで待ち受けます。 |
 

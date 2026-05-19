@@ -41,6 +41,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added dual-stack BGP rendering and observation for IPv4/IPv6 unicast, plus
   `VirtualIPv6Address` VRRPv3/CARP VIP support, automatic AAAA records, and
   dual-stack BGP/Kubernetes API VIP examples.
+- Added `ObservabilityPipeline` for OTLP environment rendering and built-in
+  routerd event forwarding to stdout, syslog, or Loki, plus `RouterdCluster`
+  file-lease high availability gating for apply/controller mutation.
 
 ## v20260519.0743
 

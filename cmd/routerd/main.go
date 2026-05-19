@@ -40,6 +40,7 @@ import (
 	controllerchain "routerd/pkg/controller/chain"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/eventlog"
+	"routerd/pkg/ha"
 	"routerd/pkg/inventory"
 	"routerd/pkg/logstore"
 	"routerd/pkg/observe"
@@ -788,6 +789,10 @@ func canonicalResourceKind(kind string) string {
 		"package":                "Package",
 		"packages":               "Package",
 		"telemetry":              "Telemetry",
+		"observabilitypipeline":  "ObservabilityPipeline",
+		"obspipeline":            "ObservabilityPipeline",
+		"routerdcluster":         "RouterdCluster",
+		"cluster":                "RouterdCluster",
 		"networkadoption":        "NetworkAdoption",
 		"adoption":               "NetworkAdoption",
 		"systemdunit":            "SystemdUnit",
@@ -807,7 +812,7 @@ func apiVersionForKind(kind string) string {
 	switch kind {
 	case "FirewallZone", "FirewallPolicy", "FirewallRule", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
-	case "Hostname", "Sysctl", "SysctlProfile", "KernelModule", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "NTPServer", "LogSink", "NixOSHost":
+	case "Hostname", "Sysctl", "SysctlProfile", "KernelModule", "Package", "NetworkAdoption", "SystemdUnit", "NTPClient", "NTPServer", "LogSink", "ObservabilityPipeline", "RouterdCluster", "NixOSHost":
 		return api.SystemAPIVersion
 	case "Telemetry":
 		return api.ObservabilityAPIVersion
@@ -1039,6 +1044,28 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	appendPrefixDelegationStateWarnings(result, router, stateStore)
 	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
+	}
+	if !opts.DryRun {
+		decision, clusterName, err := acquireApplyClusterLease(context.Background(), effectiveRouter, stateStore)
+		if err != nil {
+			return nil, err
+		}
+		if decision.Enabled && decision.Lease != nil {
+			defer decision.Lease.Close()
+		}
+		if decision.Enabled && !decision.Leader {
+			result.Phase = "Standby"
+			result.Warnings = append(result.Warnings, fmt.Sprintf("RouterdCluster/%s lease is held by %s; apply skipped on standby", clusterName, decision.Holder))
+			if err := stateStore.Save(defaultString(opts.StatePath, defaultStatePath)); err != nil {
+				return nil, err
+			}
+			if store, ok := stateStore.(routerstate.GenerationStore); ok && generation != 0 {
+				_ = store.FinishGeneration(generation, result.Phase, result.Warnings)
+				generationFinished = true
+			}
+			logger.Emit(eventlog.LevelInfo, "apply", "routerd apply skipped on standby", map[string]string{"cluster": clusterName, "holder": decision.Holder})
+			return result, nil
+		}
 	}
 	if !opts.DryRun {
 		recordWarningEvents(router, stateStore, result.Warnings)
@@ -1455,6 +1482,57 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		generationFinished = true
 	}
 	return result, nil
+}
+
+func acquireApplyClusterLease(ctx context.Context, router *api.Router, store any) (ha.Decision, string, error) {
+	resource, spec, ok, err := applyClusterResource(router)
+	if err != nil || !ok {
+		return ha.Decision{Leader: true}, "", err
+	}
+	ttl := 30 * time.Second
+	if strings.TrimSpace(spec.LeaseTTL) != "" {
+		ttl, _ = time.ParseDuration(spec.LeaseTTL)
+	}
+	decision, err := ha.Acquire(ctx, ha.Config{
+		Name:      resource.Metadata.Name,
+		Identity:  spec.Identity,
+		Peers:     spec.Peers,
+		LeasePath: spec.LeasePath,
+		TTL:       ttl,
+	})
+	if err != nil {
+		return decision, resource.Metadata.Name, err
+	}
+	if statusStore, ok := store.(routerstate.ObjectStatusStore); ok {
+		phase := "Standby"
+		if decision.Leader {
+			phase = "Leader"
+		}
+		_ = statusStore.SaveObjectStatus(api.SystemAPIVersion, "RouterdCluster", resource.Metadata.Name, map[string]any{
+			"phase":      phase,
+			"identity":   decision.Identity,
+			"holder":     decision.Holder,
+			"leasePath":  decision.LeasePath,
+			"expiresAt":  decision.ExpiresAt.Format(time.RFC3339Nano),
+			"reason":     decision.Reason,
+			"observedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return decision, resource.Metadata.Name, nil
+}
+
+func applyClusterResource(router *api.Router) (api.Resource, api.RouterdClusterSpec, bool, error) {
+	if router == nil {
+		return api.Resource{}, api.RouterdClusterSpec{}, false, nil
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.SystemAPIVersion || resource.Kind != "RouterdCluster" {
+			continue
+		}
+		spec, err := resource.RouterdClusterSpec()
+		return resource, spec, true, err
+	}
+	return api.Resource{}, api.RouterdClusterSpec{}, false, nil
 }
 
 func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger, engine *apply.Engine, result *apply.Result, generation int64, stateStore routerstate.Store) (*apply.Result, error) {

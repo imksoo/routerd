@@ -156,3 +156,7 @@ spec:
     site: edge
   signals: [logs, metrics, traces]
 ```
+
+routerd 内部 event stream も stdout / syslog / Loki に転送したい場合は
+`ObservabilityPipeline` を使います。詳しくは
+[Observability pipeline](../operations/observability.md) を参照してください。

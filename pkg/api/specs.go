@@ -30,6 +30,69 @@ type TelemetryOTLPSpec struct {
 	Insecure bool   `yaml:"insecure,omitempty" json:"insecure,omitempty"`
 }
 
+type ObservabilityPipelineSpec struct {
+	OTLP             ObservabilityPipelineOTLPSpec     `yaml:"otlp,omitempty" json:"otlp,omitempty"`
+	ServiceNamespace string                            `yaml:"serviceNamespace,omitempty" json:"serviceNamespace,omitempty"`
+	Attributes       map[string]string                 `yaml:"attributes,omitempty" json:"attributes,omitempty"`
+	Signals          []string                          `yaml:"signals,omitempty" json:"signals,omitempty" jsonschema:"enum=logs,enum=metrics,enum=traces"`
+	Sampling         ObservabilityPipelineSamplingSpec `yaml:"sampling,omitempty" json:"sampling,omitempty"`
+	Logs             ObservabilityPipelineLogsSpec     `yaml:"logs,omitempty" json:"logs,omitempty"`
+	When             ResourceWhenSpec                  `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type ObservabilityPipelineOTLPSpec struct {
+	Endpoint string            `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	Insecure bool              `yaml:"insecure,omitempty" json:"insecure,omitempty"`
+	Headers  map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	TLS      OTELTLSSpec       `yaml:"tls,omitempty" json:"tls,omitempty"`
+}
+
+type OTELTLSSpec struct {
+	CAFile             string `yaml:"caFile,omitempty" json:"caFile,omitempty"`
+	CertFile           string `yaml:"certFile,omitempty" json:"certFile,omitempty"`
+	KeyFile            string `yaml:"keyFile,omitempty" json:"keyFile,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecureSkipVerify,omitempty" json:"insecureSkipVerify,omitempty"`
+}
+
+type ObservabilityPipelineSamplingSpec struct {
+	Rate float64 `yaml:"rate,omitempty" json:"rate,omitempty"`
+}
+
+type ObservabilityPipelineLogsSpec struct {
+	Enabled *bool                          `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Sinks   []ObservabilityPipelineLogSink `yaml:"sinks,omitempty" json:"sinks,omitempty"`
+}
+
+type ObservabilityPipelineLogSink struct {
+	Name     string                     `yaml:"name,omitempty" json:"name,omitempty"`
+	Type     string                     `yaml:"type" json:"type" jsonschema:"enum=stdout,enum=syslog,enum=loki,enum=kafka"`
+	Enabled  *bool                      `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	MinLevel string                     `yaml:"minLevel,omitempty" json:"minLevel,omitempty" jsonschema:"enum=debug,enum=info,enum=warning,enum=error"`
+	Labels   map[string]string          `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Loki     ObservabilityLokiSinkSpec  `yaml:"loki,omitempty" json:"loki,omitempty"`
+	Syslog   LogSinkSyslogSpec          `yaml:"syslog,omitempty" json:"syslog,omitempty"`
+	Kafka    ObservabilityKafkaSinkSpec `yaml:"kafka,omitempty" json:"kafka,omitempty"`
+}
+
+type ObservabilityLokiSinkSpec struct {
+	URL     string            `yaml:"url,omitempty" json:"url,omitempty"`
+	Tenant  string            `yaml:"tenant,omitempty" json:"tenant,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+}
+
+type ObservabilityKafkaSinkSpec struct {
+	Brokers []string `yaml:"brokers,omitempty" json:"brokers,omitempty"`
+	Topic   string   `yaml:"topic,omitempty" json:"topic,omitempty"`
+}
+
+type RouterdClusterSpec struct {
+	Peers     []string         `yaml:"peers" json:"peers"`
+	LeaseTTL  string           `yaml:"leaseTTL,omitempty" json:"leaseTTL,omitempty"`
+	LeasePath string           `yaml:"leasePath,omitempty" json:"leasePath,omitempty"`
+	Identity  string           `yaml:"identity,omitempty" json:"identity,omitempty"`
+	When      ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
 type LogRetentionSpec struct {
 	Schedule          string                   `yaml:"schedule,omitempty" json:"schedule,omitempty" jsonschema:"enum=,enum=daily"`
 	IncrementalVacuum bool                     `yaml:"incrementalVacuum,omitempty" json:"incrementalVacuum,omitempty"`
@@ -1734,6 +1797,14 @@ func (r Resource) LogSinkSpec() (LogSinkSpec, error) {
 
 func (r Resource) TelemetrySpec() (TelemetrySpec, error) {
 	return specAs[TelemetrySpec](r)
+}
+
+func (r Resource) ObservabilityPipelineSpec() (ObservabilityPipelineSpec, error) {
+	return specAs[ObservabilityPipelineSpec](r)
+}
+
+func (r Resource) RouterdClusterSpec() (RouterdClusterSpec, error) {
+	return specAs[RouterdClusterSpec](r)
 }
 
 func (r Resource) HostnameSpec() (HostnameSpec, error) {

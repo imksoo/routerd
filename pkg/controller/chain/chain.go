@@ -40,8 +40,10 @@ import (
 	"routerd/pkg/derived"
 	"routerd/pkg/egressroute"
 	"routerd/pkg/eventrule"
+	"routerd/pkg/ha"
 	"routerd/pkg/healthcheck"
 	"routerd/pkg/logstore"
+	"routerd/pkg/observabilitypipeline"
 	"routerd/pkg/platform"
 	"routerd/pkg/render"
 	"routerd/pkg/resourcequery"
@@ -645,6 +647,33 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 
 	store := eventedStore{Store: r.Store, Bus: r.Bus}
+	haDecision, err := acquireClusterLease(ctx, r.Router, store)
+	if err != nil {
+		return err
+	}
+	if haDecision.Enabled && haDecision.Leader && haDecision.Lease != nil {
+		go haDecision.Lease.Heartbeat(ctx, func(err error) {
+			logger.Warn("routerd cluster lease heartbeat failed", "error", err)
+		})
+		defer haDecision.Lease.Close()
+	}
+	opts := r.Opts
+	if haDecision.Enabled && !haDecision.Leader {
+		logger.Info("routerd cluster standby mode; mutating controllers run dry-run", "holder", haDecision.Holder, "leasePath", haDecision.LeasePath)
+		opts.DryRunAddress = true
+		opts.DryRunDSLite = true
+		opts.DryRunRoute = true
+		opts.DryRunDHCPv6 = true
+		opts.DryRunDHCPv4Lease = true
+		opts.DryRunPPPoESession = true
+		opts.DryRunDNSResolver = true
+		opts.DryRunNAT = true
+		opts.DryRunFirewall = true
+		opts.DryRunPackage = true
+		opts.DryRunNetworkAdoption = true
+		opts.DryRunSystemdUnit = true
+	}
+	r.Opts = opts
 	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
 	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
@@ -671,6 +700,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	wan := egressroute.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
+	observabilityPipeline := observabilitypipeline.Controller{Router: r.Router, Bus: r.Bus, Store: store}
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
 	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
@@ -681,6 +711,9 @@ func (r *Runner) Start(ctx context.Context) error {
 	conntrackObs := conntrackobserver.Controller{Router: r.Router, Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: r.Opts.ConntrackInterval, Logger: logger}
 	rules.Start(ctx)
 	derivedEvents.Start(ctx)
+	if err := observabilityPipeline.Start(ctx); err != nil {
+		return err
+	}
 	health.Start(ctx)
 	conntrackObs.Start(ctx)
 	controllers := []framework.Controller{
@@ -754,6 +787,57 @@ func (r *Runner) Start(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+func acquireClusterLease(ctx context.Context, router *api.Router, store Store) (ha.Decision, error) {
+	resource, spec, ok, err := routerdClusterResource(router)
+	if err != nil || !ok {
+		return ha.Decision{Leader: true}, err
+	}
+	ttl := 30 * time.Second
+	if strings.TrimSpace(spec.LeaseTTL) != "" {
+		ttl, _ = time.ParseDuration(spec.LeaseTTL)
+	}
+	decision, err := ha.Acquire(ctx, ha.Config{
+		Name:      resource.Metadata.Name,
+		Identity:  spec.Identity,
+		Peers:     spec.Peers,
+		LeasePath: spec.LeasePath,
+		TTL:       ttl,
+	})
+	if err != nil {
+		return decision, err
+	}
+	if store != nil {
+		phase := "Standby"
+		if decision.Leader {
+			phase = "Leader"
+		}
+		_ = store.SaveObjectStatus(api.SystemAPIVersion, "RouterdCluster", resource.Metadata.Name, map[string]any{
+			"phase":      phase,
+			"identity":   decision.Identity,
+			"holder":     decision.Holder,
+			"leasePath":  decision.LeasePath,
+			"expiresAt":  decision.ExpiresAt.Format(time.RFC3339Nano),
+			"reason":     decision.Reason,
+			"observedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return decision, nil
+}
+
+func routerdClusterResource(router *api.Router) (api.Resource, api.RouterdClusterSpec, bool, error) {
+	if router == nil {
+		return api.Resource{}, api.RouterdClusterSpec{}, false, nil
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.SystemAPIVersion || resource.Kind != "RouterdCluster" {
+			continue
+		}
+		spec, err := resource.RouterdClusterSpec()
+		return resource, spec, true, err
+	}
+	return api.Resource{}, api.RouterdClusterSpec{}, false, nil
 }
 
 func ingressServiceDNSResolver(router *api.Router, store Store) *net.Resolver {

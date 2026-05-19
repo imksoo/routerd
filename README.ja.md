@@ -95,11 +95,13 @@ WireGuard/Tailscale overlay、USB 状態から復元できるディスクレス 
 - `HealthCheck`、`EgressRoutePolicy`、`EventRule`、`DerivedEvent` による
   状態連携
 - `Package`、`Sysctl`、`SysctlProfile`、`NetworkAdoption`、`SystemdUnit`、
-  `NTPClient`、`LogSink`、`LogRetention`、`WebConsole`
+  `NTPClient`、`LogSink`、`ObservabilityPipeline`、`RouterdCluster`、
+  `LogRetention`、`WebConsole`
 - `routerctl` による NAPT と conntrack の確認
 - 状態、イベント、コネクション、DNS クエリー、通信フロー、ファイアウォール
   ログ、現在の設定を表示する読み取り専用 Web Console
-- OpenTelemetry exporter を設定した場合のログ、メトリクス、トレース送信
+- OpenTelemetry exporter を設定した場合のログ、メトリクス、トレース送信と、
+  stdout / syslog / Loki への内蔵 event log forwarding
 
 状態を持つファイアウォールフィルターは、意図して範囲を絞っています。
 routerd は NAT44、ゾーンポリシー、管理対象サービス用の許可、拒否ログ、

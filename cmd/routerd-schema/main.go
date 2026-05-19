@@ -271,6 +271,7 @@ func resourceUnionSchema() map[string]any {
 		"oneOf": []any{
 			resourceSchema(api.SystemAPIVersion, "LogSink", api.LogSinkSpec{}),
 			resourceSchema(api.ObservabilityAPIVersion, "Telemetry", api.TelemetrySpec{}),
+			resourceSchema(api.SystemAPIVersion, "ObservabilityPipeline", api.ObservabilityPipelineSpec{}),
 			resourceSchema(api.SystemAPIVersion, "LogRetention", api.LogRetentionSpec{}),
 			resourceSchema(api.SystemAPIVersion, "Sysctl", api.SysctlSpec{}),
 			resourceSchema(api.SystemAPIVersion, "SysctlProfile", api.SysctlProfileSpec{}),
@@ -282,6 +283,7 @@ func resourceUnionSchema() map[string]any {
 			resourceSchema(api.SystemAPIVersion, "NTPServer", api.NTPServerSpec{}),
 			resourceSchema(api.SystemAPIVersion, "WebConsole", api.WebConsoleSpec{}),
 			resourceSchema(api.SystemAPIVersion, "NixOSHost", api.NixOSHostSpec{}),
+			resourceSchema(api.SystemAPIVersion, "RouterdCluster", api.RouterdClusterSpec{}),
 			resourceSchema(api.NetAPIVersion, "Interface", api.InterfaceSpec{}),
 			resourceSchema(api.NetAPIVersion, "Link", api.LinkSpec{}),
 			resourceSchema(api.NetAPIVersion, "PPPoEInterface", api.PPPoEInterfaceSpec{}),

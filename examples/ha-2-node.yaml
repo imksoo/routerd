@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=../schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: routerd-ha-example
+
+spec:
+  resources:
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: RouterdCluster
+      metadata:
+        name: edge-ha
+      spec:
+        peers:
+          - routerd-01.lain.local
+          - routerd-02.lain.local
+        leaseTTL: 30s
+        leasePath: /var/lib/routerd/ha-lease
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: ens20
+        adminUp: true
+        managed: false
+        owner: external
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VirtualIPv4Address
+      metadata:
+        name: api-vip
+      spec:
+        interface: lan
+        address: 192.168.70.10/32
+        mode: vrrp
+        vrrp:
+          virtualRouterID: 70
+          priority: 150
+          peers:
+            - 192.168.70.3

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -981,6 +982,62 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 			default:
 				return fmt.Errorf("%s spec.signals must contain only logs, metrics, or traces", res.ID())
 			}
+		}
+	case "ObservabilityPipeline":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.ObservabilityPipelineSpec()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(spec.OTLP.Endpoint) != "" {
+			if _, err := url.ParseRequestURI(strings.TrimSpace(spec.OTLP.Endpoint)); err != nil {
+				return fmt.Errorf("%s spec.otlp.endpoint is invalid: %w", res.ID(), err)
+			}
+		}
+		for _, signal := range spec.Signals {
+			switch signal {
+			case "logs", "metrics", "traces":
+			default:
+				return fmt.Errorf("%s spec.signals must contain only logs, metrics, or traces", res.ID())
+			}
+		}
+		if spec.Sampling.Rate < 0 || spec.Sampling.Rate > 1 {
+			return fmt.Errorf("%s spec.sampling.rate must be between 0 and 1", res.ID())
+		}
+		for i, sink := range spec.Logs.Sinks {
+			if err := validateObservabilitySink(res.ID(), i, sink); err != nil {
+				return err
+			}
+		}
+	case "RouterdCluster":
+		if res.APIVersion != api.SystemAPIVersion {
+			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.RouterdClusterSpec()
+		if err != nil {
+			return err
+		}
+		if len(compactStrings(spec.Peers)) < 2 {
+			return fmt.Errorf("%s spec.peers must contain at least 2 peers", res.ID())
+		}
+		ttl := 30 * time.Second
+		if strings.TrimSpace(spec.LeaseTTL) != "" {
+			var err error
+			ttl, err = time.ParseDuration(spec.LeaseTTL)
+			if err != nil {
+				return fmt.Errorf("%s spec.leaseTTL is invalid: %w", res.ID(), err)
+			}
+		}
+		if ttl < 5*time.Second || ttl > 10*time.Minute {
+			return fmt.Errorf("%s spec.leaseTTL must be between 5s and 10m", res.ID())
+		}
+		if strings.TrimSpace(spec.LeasePath) == "" {
+			return fmt.Errorf("%s spec.leasePath is required", res.ID())
+		}
+		if strings.ContainsAny(spec.LeasePath, "\n\r") || !strings.HasPrefix(strings.TrimSpace(spec.LeasePath), "/") {
+			return fmt.Errorf("%s spec.leasePath must be an absolute path", res.ID())
 		}
 	case "Sysctl":
 		if res.APIVersion != api.SystemAPIVersion {
@@ -4669,6 +4726,54 @@ func validateFirewallRateLimit(resourceID string, limit api.FirewallRateLimitSpe
 		return fmt.Errorf("%s spec.rateLimit.burst must be greater than or equal to 0", resourceID)
 	}
 	return nil
+}
+
+func validateObservabilitySink(resourceID string, index int, sink api.ObservabilityPipelineLogSink) error {
+	path := fmt.Sprintf("spec.logs.sinks[%d]", index)
+	switch sink.Type {
+	case "stdout", "syslog", "loki", "kafka":
+	default:
+		return fmt.Errorf("%s %s.type must be stdout, syslog, loki, or kafka", resourceID, path)
+	}
+	switch defaultString(sink.MinLevel, "info") {
+	case "debug", "info", "warning", "error":
+	default:
+		return fmt.Errorf("%s %s.minLevel must be debug, info, warning, or error", resourceID, path)
+	}
+	switch sink.Type {
+	case "loki":
+		if strings.TrimSpace(sink.Loki.URL) == "" {
+			return fmt.Errorf("%s %s.loki.url is required when type is loki", resourceID, path)
+		}
+		if _, err := url.ParseRequestURI(strings.TrimSpace(sink.Loki.URL)); err != nil {
+			return fmt.Errorf("%s %s.loki.url is invalid: %w", resourceID, path, err)
+		}
+	case "syslog":
+		switch sink.Syslog.Network {
+		case "", "unix", "unixgram", "tcp", "udp":
+		default:
+			return fmt.Errorf("%s %s.syslog.network must be unix, unixgram, tcp, or udp", resourceID, path)
+		}
+	case "kafka":
+		if len(compactStrings(sink.Kafka.Brokers)) == 0 || strings.TrimSpace(sink.Kafka.Topic) == "" {
+			return fmt.Errorf("%s %s.kafka.brokers and kafka.topic document the intended sink and must be set", resourceID, path)
+		}
+	}
+	return nil
+}
+
+func compactStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 var firewallICMPTypes = map[string]string{

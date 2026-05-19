@@ -140,6 +140,39 @@ func TestValidateLogSinkPluginRequiresPath(t *testing.T) {
 	}
 }
 
+func TestValidateObservabilityPipelineAndRouterdCluster(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "ObservabilityPipeline"}, Metadata: api.ObjectMeta{Name: "remote"}, Spec: api.ObservabilityPipelineSpec{
+				Sampling: api.ObservabilityPipelineSamplingSpec{Rate: 0.5},
+				Logs: api.ObservabilityPipelineLogsSpec{Sinks: []api.ObservabilityPipelineLogSink{{
+					Type: "loki",
+					Loki: api.ObservabilityLokiSinkSpec{URL: "http://loki.example/loki/api/v1/push"},
+				}}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "RouterdCluster"}, Metadata: api.ObjectMeta{Name: "ha"}, Spec: api.RouterdClusterSpec{
+				Peers:     []string{"routerd-01.lain.local", "routerd-02.lain.local"},
+				LeaseTTL:  "30s",
+				LeasePath: "/var/lib/routerd/ha-lease",
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate observability/ha: %v", err)
+	}
+	router.Spec.Resources[0].Spec = api.ObservabilityPipelineSpec{Sampling: api.ObservabilityPipelineSamplingSpec{Rate: 1.5}}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "sampling.rate") {
+		t.Fatalf("expected sampling validation error, got %v", err)
+	}
+	router.Spec.Resources[0].Spec = api.ObservabilityPipelineSpec{}
+	router.Spec.Resources[1].Spec = api.RouterdClusterSpec{Peers: []string{"routerd-01"}, LeaseTTL: "30s", LeasePath: "/var/lib/routerd/ha-lease"}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "at least 2 peers") {
+		t.Fatalf("expected peers validation error, got %v", err)
+	}
+}
+
 func TestValidateHealthCheckRole(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

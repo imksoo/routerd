@@ -15,7 +15,22 @@ func TelemetryEnvironment(router *api.Router) ([]string, error) {
 		return nil, nil
 	}
 	var selected *api.TelemetrySpec
+	var pipeline *api.ObservabilityPipelineSpec
 	for _, res := range router.Spec.Resources {
+		if res.Kind == "ObservabilityPipeline" {
+			spec, err := res.ObservabilityPipelineSpec()
+			if err != nil {
+				return nil, err
+			}
+			if strings.TrimSpace(spec.OTLP.Endpoint) == "" {
+				continue
+			}
+			if pipeline != nil || selected != nil {
+				return nil, fmt.Errorf("multiple telemetry pipeline resources are not supported")
+			}
+			pipeline = &spec
+			continue
+		}
 		if res.Kind != "Telemetry" {
 			continue
 		}
@@ -23,10 +38,13 @@ func TelemetryEnvironment(router *api.Router) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if selected != nil {
-			return nil, fmt.Errorf("multiple Telemetry resources are not supported")
+		if selected != nil || pipeline != nil {
+			return nil, fmt.Errorf("multiple telemetry pipeline resources are not supported")
 		}
 		selected = &spec
+	}
+	if pipeline != nil {
+		return observabilityPipelineEnvironment(*pipeline), nil
 	}
 	if selected == nil {
 		return nil, nil
@@ -56,6 +74,41 @@ func TelemetryEnvironment(router *api.Router) ([]string, error) {
 	}
 	sort.Strings(env)
 	return env, nil
+}
+
+func observabilityPipelineEnvironment(spec api.ObservabilityPipelineSpec) []string {
+	var env []string
+	env = append(env, "OTEL_EXPORTER_OTLP_ENDPOINT="+strings.TrimSpace(spec.OTLP.Endpoint))
+	if spec.OTLP.Insecure || spec.OTLP.TLS.InsecureSkipVerify {
+		env = append(env, "OTEL_EXPORTER_OTLP_INSECURE=true")
+	}
+	if len(spec.OTLP.Headers) > 0 {
+		var headers []string
+		for _, key := range sortedMapKeysString(spec.OTLP.Headers) {
+			headers = append(headers, key+"="+spec.OTLP.Headers[key])
+		}
+		env = append(env, "OTEL_EXPORTER_OTLP_HEADERS="+strings.Join(headers, ","))
+	}
+	namespace := strings.TrimSpace(spec.ServiceNamespace)
+	if namespace == "" {
+		namespace = "routerd"
+	}
+	env = append(env, "OTEL_SERVICE_NAMESPACE="+namespace)
+	if len(spec.Attributes) > 0 {
+		var attrs []string
+		for _, key := range sortedMapKeysString(spec.Attributes) {
+			attrs = append(attrs, key+"="+spec.Attributes[key])
+		}
+		env = append(env, "OTEL_RESOURCE_ATTRIBUTES="+strings.Join(attrs, ","))
+	}
+	signals := telemetrySignals(spec.Signals)
+	for _, signal := range []string{"logs", "metrics", "traces"} {
+		if !signals[signal] {
+			env = append(env, telemetrySignalExporterEnv(signal)+"=none")
+		}
+	}
+	sort.Strings(env)
+	return env
 }
 
 func telemetrySignals(values []string) map[string]bool {

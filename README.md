@@ -97,12 +97,13 @@ Implemented resource areas include:
 - `HealthCheck`, `EgressRoutePolicy`, `EventRule`, and `DerivedEvent`
   coordination
 - `Package`, `Sysctl`, `SysctlProfile`, `NetworkAdoption`, `SystemdUnit`,
-  `NTPClient`, `LogSink`, `LogRetention`, and `WebConsole`
+  `NTPClient`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`,
+  `LogRetention`, and `WebConsole`
 - local NAPT/conntrack inspection through `routerctl`
 - read-only Web Console for status, events, connections, DNS queries, traffic,
   firewall logs, and the active configuration
-- OpenTelemetry SDK hooks for logs, metrics, and traces when exporters are
-  configured
+- OpenTelemetry SDK hooks and built-in event log forwarding to stdout, syslog,
+  or Loki when exporters are configured
 
 Stateful firewall filtering is intentionally scoped. routerd renders NAT44,
 zone policy, service holes, denial logging, and traffic inspection, but it is

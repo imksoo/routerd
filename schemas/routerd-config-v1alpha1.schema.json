@@ -272,6 +272,286 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "ObservabilityPipeline",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "attributes": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      },
+                      "logs": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "sinks": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "enabled": {
+                                  "type": "boolean"
+                                },
+                                "kafka": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "brokers": {
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "topic": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "labels": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "type": "object"
+                                },
+                                "loki": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "headers": {
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      },
+                                      "type": "object"
+                                    },
+                                    "tenant": {
+                                      "type": "string"
+                                    },
+                                    "url": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "minLevel": {
+                                  "enum": [
+                                    "debug",
+                                    "info",
+                                    "warning",
+                                    "error"
+                                  ],
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "syslog": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "address": {
+                                      "type": "string"
+                                    },
+                                    "facility": {
+                                      "enum": [
+                                        "kern",
+                                        "user",
+                                        "mail",
+                                        "daemon",
+                                        "auth",
+                                        "syslog",
+                                        "lpr",
+                                        "news",
+                                        "uucp",
+                                        "cron",
+                                        "authpriv",
+                                        "ftp",
+                                        "local0",
+                                        "local1",
+                                        "local2",
+                                        "local3",
+                                        "local4",
+                                        "local5",
+                                        "local6",
+                                        "local7"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "network": {
+                                      "enum": [
+                                        "",
+                                        "unix",
+                                        "unixgram",
+                                        "tcp",
+                                        "udp"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "tag": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "type": {
+                                  "enum": [
+                                    "stdout",
+                                    "syslog",
+                                    "loki",
+                                    "kafka"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "otlp": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "endpoint": {
+                            "type": "string"
+                          },
+                          "headers": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          },
+                          "insecure": {
+                            "type": "boolean"
+                          },
+                          "tls": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "caFile": {
+                                "type": "string"
+                              },
+                              "certFile": {
+                                "type": "string"
+                              },
+                              "insecureSkipVerify": {
+                                "type": "boolean"
+                              },
+                              "keyFile": {
+                                "type": "string"
+                              }
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "sampling": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "rate": {
+                            "type": "number"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "serviceNamespace": {
+                        "type": "string"
+                      },
+                      "signals": {
+                        "items": {
+                          "enum": [
+                            "logs",
+                            "metrics",
+                            "traces"
+                          ],
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "system.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "LogRetention",
                     "type": "string"
                   },
@@ -1442,6 +1722,108 @@
                         "type": "array"
                       }
                     },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "system.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "RouterdCluster",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "identity": {
+                        "type": "string"
+                      },
+                      "leasePath": {
+                        "type": "string"
+                      },
+                      "leaseTTL": {
+                        "type": "string"
+                      },
+                      "peers": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "peers"
+                    ],
                     "type": "object"
                   },
                   "status": {
