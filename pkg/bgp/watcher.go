@@ -95,7 +95,7 @@ func ParseFRRSummaryJSON(data []byte) ([]Peer, error) {
 			lastErrorReason := firstString(item, "lastErrorReason", "lastResetDueTo", "lastNotificationReason", "lastErrorCode")
 			peers = append(peers, Peer{
 				Address:           address,
-				ASN:               uint32(firstNumber(item, "remoteAs", "remoteAS", "remote_as")),
+				ASN:               uint32(firstNumber(item, "remoteAs", "remoteAS", "remote_as", "remoteAsn", "remoteASN", "remote_asn", "peerAs", "peerAS", "peer_as")),
 				State:             state,
 				Established:       strings.EqualFold(state, "Established"),
 				PrefixesReceived:  int(firstNumber(item, "pfxRcd", "prefixReceivedCount", "prefixesReceived")),

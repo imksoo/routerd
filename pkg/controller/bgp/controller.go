@@ -5,6 +5,7 @@ package bgp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -32,6 +33,14 @@ type Store interface {
 type CommandFunc func(context.Context, string, ...string) ([]byte, error)
 
 const MinPollInterval = 3 * time.Second
+
+const (
+	frrReadyTimeout       = 30 * time.Second
+	frrReadyProbeTimeout  = 2 * time.Second
+	frrReloadTimeout      = 15 * time.Second
+	frrServiceCmdTimeout  = 30 * time.Second
+	frrValidateCmdTimeout = 10 * time.Second
+)
 
 type Controller struct {
 	Router      *api.Router
@@ -104,7 +113,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			if command.Name == "" {
 				continue
 			}
-			if out, err := c.run(ctx, command.Name, command.Args...); err != nil {
+			if out, err := c.runWithTimeout(ctx, frrServiceCmdTimeout, command.Name, command.Args...); err != nil {
 				saveErr := c.saveConfiguredStatuses("Error", path, true, map[string]any{"reason": "FRRServiceEnableRestartFailed", "error": strings.TrimSpace(string(out)), "daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
 				if saveErr != nil {
 					return saveErr
@@ -112,22 +121,21 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 				return fmt.Errorf("%s %s: %w: %s", command.Name, strings.Join(command.Args, " "), err, strings.TrimSpace(string(out)))
 			}
 		}
-		readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		readyCtx, cancel := context.WithTimeout(ctx, frrReadyTimeout)
 		out, err := c.waitFRRReady(readyCtx)
 		cancel()
 		if err != nil {
-			saveErr := c.saveConfiguredStatuses("Error", path, true, map[string]any{"reason": "FRRNotReady", "error": strings.TrimSpace(string(out)), "daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
-			if saveErr != nil {
-				return saveErr
-			}
-			return fmt.Errorf("wait for bgpd readiness: %w: %s", err, strings.TrimSpace(string(out)))
+			return c.saveFRRConfigPending(path, reloadNeeded, "FRRNotReady", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
 		}
 	}
 	if !c.DryRun && reloadNeeded {
-		reloadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		out, err := c.validateFRRConfig(reloadCtx, path, daemonsChanged)
+		validateCtx, cancel := context.WithTimeout(ctx, frrValidateCmdTimeout)
+		out, err := c.validateFRRConfig(validateCtx, path, daemonsChanged)
+		cancel()
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(validateCtx.Err(), context.DeadlineExceeded) {
+				return c.saveFRRConfigPending(path, reloadNeeded, "FRRValidateTimeout", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
+			}
 			vtysh := firstNonEmpty(c.VTYSH, "vtysh")
 			saveErr := c.saveConfiguredStatuses("Error", path, reloadNeeded, map[string]any{"reason": "FRRSyntaxInvalid", "error": strings.TrimSpace(string(out))})
 			if saveErr != nil {
@@ -136,12 +144,8 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			return fmt.Errorf("%s -C -f %s: %w: %s", vtysh, path, err, strings.TrimSpace(string(out)))
 		}
 		reload := firstNonEmpty(c.FRRReload, defaultFRRReload())
-		if out, err := c.run(reloadCtx, reload, "--reload", path); err != nil {
-			saveErr := c.saveConfiguredStatuses("Error", path, reloadNeeded, map[string]any{"reason": "FRRReloadFailed", "error": strings.TrimSpace(string(out))})
-			if saveErr != nil {
-				return saveErr
-			}
-			return fmt.Errorf("%s --reload %s: %w: %s", reload, path, err, strings.TrimSpace(string(out)))
+		if out, err := c.runWithTimeout(ctx, frrReloadTimeout, reload, "--reload", path); err != nil {
+			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadFailed", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
 		}
 	}
 	if !c.DryRun {
@@ -193,20 +197,52 @@ func (c *Controller) renderFRRDaemons() (bool, string, error) {
 }
 
 func (c *Controller) waitFRRReady(ctx context.Context) ([]byte, error) {
-	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
 	var lastOut []byte
 	for {
-		out, err := c.run(ctx, vtysh, "-c", "show bgp summary json")
-		if err == nil {
+		out, err := c.runWithTimeout(ctx, frrReadyProbeTimeout, "ss", "-ltn")
+		if err == nil && bgpdListenPresent(out) {
 			return out, nil
 		}
 		lastOut = out
+		if err == nil {
+			err = fmt.Errorf("bgpd is not listening on tcp/179")
+		}
 		select {
 		case <-ctx.Done():
 			return lastOut, ctx.Err()
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+func bgpdListenPresent(out []byte) bool {
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		state := strings.ToUpper(fields[0])
+		if state != "LISTEN" {
+			continue
+		}
+		for _, field := range fields[3:] {
+			if listenAddressHasPort(field, "179") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func listenAddressHasPort(address, port string) bool {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return false
+	}
+	if strings.HasSuffix(address, ":"+port) {
+		return true
+	}
+	return strings.HasSuffix(address, "]:"+port)
 }
 
 func (c *Controller) validateFRRConfig(ctx context.Context, path string, retry bool) ([]byte, error) {
@@ -580,6 +616,28 @@ func (c *Controller) saveConfiguredStatuses(phase, path string, changed bool, ex
 	return nil
 }
 
+func (c *Controller) saveFRRConfigPending(path string, changed bool, pendingReason string, out []byte, err error, extra map[string]any) error {
+	status := map[string]any{
+		"reason":        "FRRConfigPending",
+		"pendingReason": pendingReason,
+		"conditions": []map[string]any{{
+			"type":    "Configured",
+			"status":  "False",
+			"reason":  "FRRConfigPending",
+			"message": pendingReason,
+		}},
+	}
+	if message := strings.TrimSpace(string(out)); message != "" {
+		status["error"] = message
+	} else if err != nil {
+		status["error"] = err.Error()
+	}
+	for key, value := range extra {
+		status[key] = value
+	}
+	return c.saveConfiguredStatuses("Pending", path, changed, status)
+}
+
 func (c *Controller) saveObservedStatuses(states map[string]bgpstate.State, aggregate bgpstate.State) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	peersByResource := c.peersByResource(aggregate)
@@ -884,6 +942,8 @@ func (c *Controller) peersByResource(state bgpstate.State) map[string][]bgpstate
 			peer, ok := byAddress[peerAddress]
 			if !ok {
 				peer = bgpstate.Peer{Address: peerAddress, ASN: spec.PeerASN, State: "Missing"}
+			} else if peer.ASN == 0 {
+				peer.ASN = spec.PeerASN
 			}
 			out[resource.Metadata.Name] = append(out[resource.Metadata.Name], peer)
 		}
@@ -902,6 +962,12 @@ func statusInt(value any) int {
 	switch typed := value.(type) {
 	case int:
 		return typed
+	case uint:
+		return int(typed)
+	case uint32:
+		return int(typed)
+	case uint64:
+		return int(typed)
 	case int64:
 		return int(typed)
 	case float64:
@@ -943,6 +1009,15 @@ func (c *Controller) run(ctx context.Context, name string, args ...string) ([]by
 		return c.Command(ctx, name, args...)
 	}
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+func (c *Controller) runWithTimeout(ctx context.Context, timeout time.Duration, name string, args ...string) ([]byte, error) {
+	if timeout <= 0 {
+		return c.run(ctx, name, args...)
+	}
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return c.run(cmdCtx, name, args...)
 }
 
 func defaultFRRReload() string {

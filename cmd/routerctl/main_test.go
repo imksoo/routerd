@@ -588,7 +588,7 @@ spec:
 case "$*" in
   "-c show bgp summary json")
     cat <<'JSON'
-{"ipv4Unicast":{"peers":{"192.168.123.111":{"remoteAs":"64513","state":"Established","pfxRcd":"2","msgRcvd":"12","msgSent":"11"}}}}
+{"ipv4Unicast":{"peers":{"192.168.123.111":{"remoteAsn":64513,"state":"Established","pfxRcd":"2","msgRcvd":"12","msgSent":"11"}}}}
 JSON
     exit 0
     ;;
@@ -606,7 +606,7 @@ exit 1
 		t.Fatalf("show bgp: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"lan", "1/1", "192.168.123.111", "Established", "12", "11", "2"} {
+	for _, want := range []string{"lan", "1/1", "192.168.123.111", "64513", "Established", "12", "11", "2"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("show bgp output missing %q:\n%s", want, got)
 		}

@@ -293,6 +293,14 @@ exit 0
 echo "frr-reload.py $@" >> %q
 exit 0
 `, commandLog))
+	writeExecutable(t, filepath.Join(binDir, "ss"), fmt.Sprintf(`#!/bin/sh
+echo "ss $@" >> %q
+cat <<'EOF'
+State  Recv-Q Send-Q Local Address:Port Peer Address:Port
+LISTEN 0      4096         0.0.0.0:179      0.0.0.0:*
+EOF
+exit 0
+`, commandLog))
 	writeExecutable(t, filepath.Join(binDir, "vtysh"), fmt.Sprintf(`#!/bin/sh
 echo "vtysh $@" >> %q
 case "$*" in
@@ -402,6 +410,7 @@ exit 1
 	for _, want := range []string{
 		"systemctl enable frr.service",
 		"systemctl restart frr.service",
+		"ss -ltn",
 		"vtysh -C -f " + runtimeFRRConfigPath,
 		"frr-reload.py --reload " + runtimeFRRConfigPath,
 	} {

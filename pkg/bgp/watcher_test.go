@@ -57,6 +57,22 @@ func TestParseFRRStateAndDiff(t *testing.T) {
 	}
 }
 
+func TestParseFRRSummaryAcceptsRemoteASNVariants(t *testing.T) {
+	peers, err := ParseFRRSummaryJSON([]byte(`{
+	  "ipv4Unicast": {
+	    "peers": {
+	      "10.0.0.21": {"remoteAsn": 64513, "state": "Established"}
+	    }
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse FRR summary: %v", err)
+	}
+	if len(peers) != 1 || peers[0].ASN != 64513 {
+		t.Fatalf("peers = %#v", peers)
+	}
+}
+
 func TestLimitPrefixes(t *testing.T) {
 	state := State{Prefixes: []Prefix{{Prefix: "10.0.0.1/32"}, {Prefix: "10.0.0.2/32"}}}
 	limited, truncated := LimitPrefixes(state, 1)

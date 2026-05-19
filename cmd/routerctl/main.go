@@ -2261,6 +2261,8 @@ func routerctlPeersForRouter(router *api.Router, routerName string, state bgpsta
 			peer, ok := byAddress[strings.TrimSpace(address)]
 			if !ok {
 				peer = bgpstate.Peer{Address: strings.TrimSpace(address), ASN: spec.PeerASN, State: "Missing"}
+			} else if peer.ASN == 0 {
+				peer.ASN = spec.PeerASN
 			}
 			out = append(out, peer)
 		}
@@ -2564,6 +2566,12 @@ func statusInt(value any) int {
 	switch typed := value.(type) {
 	case int:
 		return typed
+	case uint:
+		return int(typed)
+	case uint32:
+		return int(typed)
+	case uint64:
+		return int(typed)
 	case int64:
 		return int(typed)
 	case float64:
