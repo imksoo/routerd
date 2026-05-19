@@ -4,6 +4,9 @@ ds-lite-b-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=ac
 ds-lite-c-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/ds-lite-c
 ds-lite-ra-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/ds-lite-ra
 home-router-tailscale from=wan to=self ifnames=ens18 proto=udp port=41641 action=accept direction= comment=net.routerd.net/v1alpha1/TailscaleNode/home-router
+k8s-edge-bgp-lan from=lan to=self ifnames=ens19 proto=tcp port=179 action=accept direction= comment=net.routerd.net/v1alpha1/BGPRouter/k8s-edge
+k8s-edge-bgp-management from=management to=self ifnames=ens20 proto=tcp port=179 action=accept direction= comment=net.routerd.net/v1alpha1/BGPRouter/k8s-edge
+k8s-edge-bgp-wan from=wan to=self ifnames=ens18 proto=tcp port=179 action=accept direction= comment=net.routerd.net/v1alpha1/BGPRouter/k8s-edge
 lan-dhcpv4-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Server/lan-dhcpv4
 lan-dhcpv6-dhcpv6-server-lan from=lan to=self ifnames=ens19 proto=udp port=547 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6Server/lan-dhcpv6
 lan-ra-ra from=self to=lan ifnames=ens19 proto=icmpv6 port=0 action=accept direction= comment=net.routerd.net/v1alpha1/IPv6RouterAdvertisement/lan-ra
@@ -106,8 +109,11 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
     "net.core.wmem_max" = 16777216;
     "net.ipv4.conf.all.forwarding" = 1;
     "net.ipv4.conf.all.rp_filter" = 0;
+    "net.ipv4.conf.all.send_redirects" = 0;
     "net.ipv4.conf.all.src_valid_mark" = 1;
     "net.ipv4.conf.default.rp_filter" = 0;
+    "net.ipv4.conf.default.send_redirects" = 0;
+    "net.ipv4.conf.ens19.send_redirects" = 0;
     "net.ipv4.ip_forward" = 1;
     "net.ipv4.ip_local_port_range" = "1024 65535";
     "net.ipv4.tcp_fin_timeout" = 30;
@@ -232,15 +238,18 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
   systemd.services."routerd-dpi-classifier" = {
     description = "routerd DPI classifier";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
+    after = [ "network-online.target" "routerd-ndpi-agent.service" ];
+    wants = [ "network-online.target" "routerd-ndpi-agent.service" ];
     serviceConfig = {
       ExecStart = lib.concatStringsSep " " [
         "/usr/local/sbin/routerd-dpi-classifier"
         "daemon"
         "--socket"
         "/run/routerd/dpi-classifier/default.sock"
-        "--ndpi-reader"
-        "ndpiReader"
+        "--engine"
+        "auto"
+        "--ndpi-agent-socket"
+        "/run/routerd/ndpi-agent/default.sock"
       ];
       Restart = "on-failure";
       Environment = [ "OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.119:4317" "OTEL_EXPORTER_OTLP_INSECURE=true" "OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,routerd.node=home-router" "OTEL_SERVICE_NAMESPACE=routerd" ];
@@ -691,6 +700,30 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       PrivateTmp = true;
     };
   };
+  systemd.services."routerd-ndpi-agent" = {
+    description = "routerd nDPI analysis agent";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-ndpi-agent"
+        "daemon"
+        "--socket"
+        "/run/routerd/ndpi-agent/default.sock"
+      ];
+      Restart = "on-failure";
+      RestartSec = "5s";
+      Environment = [ "OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.119:4317" "OTEL_EXPORTER_OTLP_INSECURE=true" "OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,routerd.node=home-router" "OTEL_SERVICE_NAMESPACE=routerd" ];
+      RuntimeDirectory = [ "routerd/ndpi-agent" ];
+      RuntimeDirectoryPreserve = "yes";
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "true";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
   systemd.services."routerd-tailscale-home-router" = {
     description = "routerd Tailscale node home-router";
     wantedBy = [ "multi-user.target" ];
@@ -749,6 +782,7 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
         "--controller-chain-dry-run-dns-resolver=false"
         "--controller-chain-dry-run-nat=false"
         "--controller-chain-dry-run-firewall=false"
+        "--controller-chain-dry-run-bgp=false"
         "--controller-chain-dry-run-package=false"
         "--controller-chain-dry-run-network-adoption=false"
         "--controller-chain-dry-run-systemd-unit=false"

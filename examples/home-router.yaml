@@ -105,6 +105,7 @@ spec:
               - chrony
               - net-tools
               - kmod
+              - frr
               - libnetfilter-log1
               - libndpi-bin
               - tailscale
@@ -217,6 +218,34 @@ spec:
     - apiVersion: system.routerd.net/v1alpha1
       kind: Sysctl
       metadata:
+        name: ipv4-disable-send-redirects-all
+      spec:
+        key: net.ipv4.conf.all.send_redirects
+        value: "0"
+        runtime: true
+        persistent: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv4-disable-send-redirects-default
+      spec:
+        key: net.ipv4.conf.default.send_redirects
+        value: "0"
+        runtime: true
+        persistent: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
+        name: ipv4-disable-send-redirects-lan
+      spec:
+        key: net.ipv4.conf.ens19.send_redirects
+        value: "0"
+        runtime: true
+        persistent: true
+        optional: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata:
         name: wan-accept-ra
       spec:
         key: net.ipv6.conf.ens18.accept_ra
@@ -303,6 +332,7 @@ spec:
           - --controller-chain-dry-run-dns-resolver=false
           - --controller-chain-dry-run-nat=false
           - --controller-chain-dry-run-firewall=false
+          - --controller-chain-dry-run-bgp=false
           - --controller-chain-dry-run-package=false
           - --controller-chain-dry-run-network-adoption=false
           - --controller-chain-dry-run-systemd-unit=false
@@ -380,6 +410,38 @@ spec:
     - apiVersion: system.routerd.net/v1alpha1
       kind: SystemdUnit
       metadata:
+        name: routerd-ndpi-agent.service
+      spec:
+        description: routerd nDPI analysis agent
+        execStart:
+          - /usr/local/sbin/routerd-ndpi-agent
+          - daemon
+          - --socket
+          - /run/routerd/ndpi-agent/default.sock
+        wants:
+          - network-online.target
+        after:
+          - network-online.target
+        wantedBy:
+          - multi-user.target
+        restart: on-failure
+        restartSec: 5s
+        runtimeDirectory:
+          - routerd/ndpi-agent
+        runtimeDirectoryPreserve: "yes"
+        restrictAddressFamilies:
+          - AF_UNIX
+          - AF_INET
+          - AF_INET6
+        protectSystem: strict
+        protectHome: "true"
+        noNewPrivileges: true
+        privateTmp: true
+        enabled: true
+        started: true
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: SystemdUnit
+      metadata:
         name: routerd-dpi-classifier.service
       spec:
         description: routerd DPI classifier
@@ -388,10 +450,16 @@ spec:
           - daemon
           - --socket
           - /run/routerd/dpi-classifier/default.sock
-          - --ndpi-reader
-          - ndpiReader
+          - --engine
+          - auto
+          - --ndpi-agent-socket
+          - /run/routerd/ndpi-agent/default.sock
+        wants:
+          - network-online.target
+          - routerd-ndpi-agent.service
         after:
           - network-online.target
+          - routerd-ndpi-agent.service
         wantedBy:
           - multi-user.target
         restart: on-failure
@@ -589,6 +657,49 @@ spec:
       spec:
         interface: wan
         address: 192.168.1.249/24
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata:
+        name: k8s-edge
+      spec:
+        asn: 64500
+        routerID: 192.168.1.1
+        importPolicy:
+          allowedPrefixes:
+            - 10.96.0.0/12
+            - 10.244.0.0/16
+            - 192.168.80.0/24
+        exportPolicy:
+          allowedPrefixes:
+            - 172.18.0.0/16
+        redistribute:
+          connected:
+            allowedPrefixes:
+              - 172.18.0.0/16
+        timers:
+          keepalive: 3s
+          holdTime: 9s
+          connectRetry: 5s
+        gracefulRestart:
+          enabled: true
+          restartTime: 120s
+          stalePathTime: 360s
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata:
+        name: k8s-rt
+      spec:
+        routerRef: BGPRouter/k8s-edge
+        peerASN: 64512
+        peers:
+          - 192.168.1.38
+          - 192.168.1.53
+        timers:
+          keepalive: 3s
+          holdTime: 9s
+          connectRetry: 5s
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: PPPoEInterface

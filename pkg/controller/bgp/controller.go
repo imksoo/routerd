@@ -94,7 +94,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	reloadNeeded := changed
-	if !reloadNeeded && !c.DryRun && !c.observed {
+	if !reloadNeeded && !c.DryRun {
 		matches, err := c.runningConfigMatches(ctx, data)
 		if err != nil {
 			if c.Logger != nil {
@@ -108,13 +108,30 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if daemonsChanged {
 		reloadNeeded = true
 	}
-	if !c.DryRun && daemonsChanged {
+	daemonRestartNeeded := daemonsChanged
+	if !c.DryRun && reloadNeeded && !daemonRestartNeeded {
+		listening, out, err := c.bgpdListening(ctx)
+		if err != nil {
+			if c.Logger != nil {
+				c.Logger.Warn("BGP daemon readiness check failed; restarting FRR", "error", err, "output", strings.TrimSpace(string(out)))
+			}
+			daemonRestartNeeded = true
+			reloadNeeded = true
+		} else if !listening {
+			if c.Logger != nil {
+				c.Logger.Warn("BGP daemon is enabled but not listening; restarting FRR", "output", strings.TrimSpace(string(out)))
+			}
+			daemonRestartNeeded = true
+			reloadNeeded = true
+		}
+	}
+	if !c.DryRun && daemonRestartNeeded {
 		for _, command := range c.frrDaemonChangeCommands() {
 			if command.Name == "" {
 				continue
 			}
 			if out, err := c.runWithTimeout(ctx, frrServiceCmdTimeout, command.Name, command.Args...); err != nil {
-				saveErr := c.saveConfiguredStatuses("Error", path, true, map[string]any{"reason": "FRRServiceEnableRestartFailed", "error": strings.TrimSpace(string(out)), "daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
+				saveErr := c.saveConfiguredStatuses("Error", path, true, map[string]any{"reason": "FRRServiceEnableRestartFailed", "error": strings.TrimSpace(string(out)), "daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
 				if saveErr != nil {
 					return saveErr
 				}
@@ -125,16 +142,16 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		out, err := c.waitFRRReady(readyCtx)
 		cancel()
 		if err != nil {
-			return c.saveFRRConfigPending(path, reloadNeeded, "FRRNotReady", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
+			return c.saveFRRConfigPending(path, reloadNeeded, "FRRNotReady", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
 		}
 	}
 	if !c.DryRun && reloadNeeded {
 		validateCtx, cancel := context.WithTimeout(ctx, frrValidateCmdTimeout)
-		out, err := c.validateFRRConfig(validateCtx, path, daemonsChanged)
+		out, err := c.validateFRRConfig(validateCtx, path, daemonRestartNeeded)
 		cancel()
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(validateCtx.Err(), context.DeadlineExceeded) {
-				return c.saveFRRConfigPending(path, reloadNeeded, "FRRValidateTimeout", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
+				return c.saveFRRConfigPending(path, reloadNeeded, "FRRValidateTimeout", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
 			}
 			vtysh := firstNonEmpty(c.VTYSH, "vtysh")
 			saveErr := c.saveConfiguredStatuses("Error", path, reloadNeeded, map[string]any{"reason": "FRRSyntaxInvalid", "error": strings.TrimSpace(string(out))})
@@ -144,23 +161,34 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			return fmt.Errorf("%s -C -f %s: %w: %s", vtysh, path, err, strings.TrimSpace(string(out)))
 		}
 		reload := firstNonEmpty(c.FRRReload, defaultFRRReload())
-		if out, err := c.runWithTimeout(ctx, frrReloadTimeout, reload, "--reload", path); err != nil {
-			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadFailed", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
+		if out, err := c.runWithTimeout(ctx, frrReloadTimeout, reload, "--reload", "--stdout", path); err != nil {
+			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadFailed", out, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
+		}
+		verifyCtx, cancel := context.WithTimeout(ctx, frrValidateCmdTimeout)
+		matches, err := c.runningConfigMatches(verifyCtx, data)
+		cancel()
+		if err != nil {
+			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadVerifyFailed", nil, err, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
+		}
+		if !matches {
+			msg := []byte("running FRR config does not contain rendered BGP critical lines after frr-reload")
+			return c.saveFRRConfigPending(path, reloadNeeded, "FRRReloadUnverified", msg, nil, map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded})
 		}
 	}
 	if !c.DryRun {
-		if reloadNeeded || daemonsChanged {
-			extra := map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged}
+		if reloadNeeded || daemonRestartNeeded {
+			extra := map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged, "daemonRestartNeeded": daemonRestartNeeded}
 			if err := c.saveConfiguredStatuses("Applied", path, reloadNeeded || daemonsChanged, extra); err != nil {
 				return err
 			}
 			c.applyMeta = map[string]any{
 				"configPath":      path,
-				"applyWith":       "frr-reload.py --reload",
-				"changed":         reloadNeeded || daemonsChanged,
+				"applyWith":       "frr-reload.py --reload --stdout",
+				"changed":         reloadNeeded || daemonRestartNeeded,
 				"dryRun":          c.DryRun,
 				"daemonsPath":     daemonsPath,
 				"daemonsChanged":  daemonsChanged,
+				"daemonRestarted": daemonRestartNeeded,
 				"configuredPhase": "Applied",
 			}
 		}
@@ -199,13 +227,13 @@ func (c *Controller) renderFRRDaemons() (bool, string, error) {
 func (c *Controller) waitFRRReady(ctx context.Context) ([]byte, error) {
 	var lastOut []byte
 	for {
-		out, err := c.runWithTimeout(ctx, frrReadyProbeTimeout, "ss", "-ltn")
-		if err == nil && bgpdListenPresent(out) {
+		listening, out, err := c.bgpdListening(ctx)
+		if err == nil && listening {
 			return out, nil
 		}
 		lastOut = out
 		if err == nil {
-			err = fmt.Errorf("bgpd is not listening on tcp/179")
+			err = fmt.Errorf("bgpd vty is not listening on tcp/2605")
 		}
 		select {
 		case <-ctx.Done():
@@ -215,7 +243,19 @@ func (c *Controller) waitFRRReady(ctx context.Context) ([]byte, error) {
 	}
 }
 
-func bgpdListenPresent(out []byte) bool {
+func (c *Controller) bgpdListening(ctx context.Context) (bool, []byte, error) {
+	out, err := c.runWithTimeout(ctx, frrReadyProbeTimeout, "ss", "-ltn")
+	if err != nil {
+		return false, out, err
+	}
+	return bgpdVTYListenPresent(out), out, nil
+}
+
+func bgpdVTYListenPresent(out []byte) bool {
+	return listenPortPresent(out, "2605")
+}
+
+func listenPortPresent(out []byte, port string) bool {
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 4 {
@@ -226,7 +266,7 @@ func bgpdListenPresent(out []byte) bool {
 			continue
 		}
 		for _, field := range fields[3:] {
-			if listenAddressHasPort(field, "179") {
+			if listenAddressHasPort(field, port) {
 				return true
 			}
 		}
@@ -600,7 +640,7 @@ func (c *Controller) saveConfiguredStatuses(phase, path string, changed bool, ex
 			"phase":      phase,
 			"backend":    "frr",
 			"configPath": path,
-			"applyWith":  "frr-reload.py --reload",
+			"applyWith":  "frr-reload.py --reload --stdout",
 			"changed":    changed,
 			"dryRun":     c.DryRun,
 			"observedAt": now,

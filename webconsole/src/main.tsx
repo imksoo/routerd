@@ -2565,7 +2565,6 @@ function App() {
   const navSubItems = useMemo(() => navigationSubItems(selected, connectionGroupsList, summary), [selected, connectionGroupsList, summary]);
   const resources = useMemo(() => importantResources(summary?.resources ?? []), [summary?.resources]);
   const controllers = summary?.controllers ?? (summary?.status?.status?.controllers as ControllerStatus[] | undefined) ?? [];
-  const dryRunControllers = useMemo(() => controllers.filter(controller => controller.mode === "dry-run"), [controllers]);
   const events = summary?.events ?? [];
   const filteredEvents = useMemo(() => filterEvents(events, eventFilters), [events, eventFilters]);
   const eventFacets = useMemo(() => eventFilterFacets(events), [events]);
@@ -2753,7 +2752,6 @@ function App() {
               <span className={`${styles.navText} ${!compact && navCollapsed ? styles.navTextCollapsed : ""}`}>
                 <span className={styles.navTextHeader}>
                   <Text weight={selected === item.key ? "semibold" : "regular"}>{item.label}</Text>
-                  {item.key === "resources" && dryRunControllers.length > 0 ? <Badge size="small" appearance="tint" color="warning">{dryRunControllers.length}</Badge> : null}
                   {item.key === "resources" && resources.filter(r => ["danger","warning"].includes(phaseColor(r.status?.phase))).length > 0 ? <Badge size="small" appearance="tint" color="danger">{resources.filter(r => ["danger","warning"].includes(phaseColor(r.status?.phase))).length}</Badge> : null}
                 </span>
                 <Text size={200} className={styles.navDescription}>{item.description}</Text>
@@ -2861,16 +2859,6 @@ function App() {
             {error ? <Card><Text role="alert">Web console error: {error}</Text></Card> : null}
             {selected === "overview" ? (
               <>
-                {dryRunControllers.length > 0 ? (
-                  <div className={styles.dryRunBanner}>
-                    <div className={styles.badges}>
-                      <Badge appearance="tint" color="warning">dry-run</Badge>
-                      <Text weight="semibold">{dryRunControllers.length} controllers are running in dry-run mode</Text>
-                      <Text className={styles.muted}>{dryRunControllers.map(controller => controller.name).join(", ")}</Text>
-                    </div>
-                    <Button appearance="secondary" onClick={() => navigateTo("controllers")}>View controllers</Button>
-                  </div>
-                ) : null}
                 <div id="overview-metrics" className={styles.connectionAnchor}>
                   <div className={styles.grid}>
                     <Metric label="phase" value={String(summary?.status?.status?.phase ?? "Unknown")} />
@@ -4010,7 +3998,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
                   <TableCell><Highlighted text={resource.kind ?? ""} query={query} /></TableCell>
                   <TableCell><code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code></TableCell>
                   <TableCell><Badge appearance="tint" color={phaseColor(status.phase)}><Highlighted text={String(status.phase ?? "Unknown")} query={query} /></Badge></TableCell>
-                  <TableCell>{dryRunController ? <Badge appearance="tint" color="warning">dry-run</Badge> : <Text size={200} className={styles.muted}>live</Text>}</TableCell>
+                  <TableCell>{dryRunController ? <ModeBadge mode="dry-run" /> : <Text size={200} className={styles.muted}>live</Text>}</TableCell>
                   <TableCell>
                     <div className={styles.connectionFlow}>
                       <OwnershipLine resource={resource} />
@@ -4037,7 +4025,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
               </div>
               <code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code>
               <div className={styles.resourceMobileMeta}>
-                {dryRunController ? <Badge appearance="tint" color="warning">dry-run</Badge> : <Text size={200} className={styles.muted}>live</Text>}
+                {dryRunController ? <ModeBadge mode="dry-run" /> : <Text size={200} className={styles.muted}>live</Text>}
                 <OwnershipLine resource={resource} />
                 <code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code>
                 <ResourceStatusExtra resource={resource} />
@@ -4320,6 +4308,12 @@ function SearchControl({
   );
 }
 
+function ModeBadge({ mode }: { mode?: string }) {
+  const normalized = String(mode || "unknown");
+  const color = normalized === "dry-run" ? "informative" : normalized === "live" ? "subtle" : "subtle";
+  return <Badge appearance="outline" color={color}>{normalized}</Badge>;
+}
+
 function ControllerTable({ controllers }: { controllers: ControllerStatus[] }) {
   const styles = useStyles();
   const rows = controllers;
@@ -4348,7 +4342,7 @@ function ControllerTable({ controllers }: { controllers: ControllerStatus[] }) {
           {rows.map(controller => (
             <TableRow key={controller.name} className={styles.stableTallTableRow}>
               <TableCell><code className={styles.code}>{controller.name}</code></TableCell>
-              <TableCell><Badge appearance="tint" color={controller.mode === "dry-run" ? "warning" : "success"}>{controller.mode ?? "unknown"}</Badge></TableCell>
+              <TableCell><ModeBadge mode={controller.mode} /></TableCell>
               <TableCell>
                 <div className={styles.connectionFlow}>
                   <Text>{controller.reconcileCount ?? 0} runs</Text>
