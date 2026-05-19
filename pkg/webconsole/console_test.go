@@ -187,6 +187,43 @@ func TestHandlerHidesStaleWireGuardPeerStatus(t *testing.T) {
 	}
 }
 
+func TestHandlerIncludesConfiguredResourcesWithoutObservedStatus(t *testing.T) {
+	handler := New(Options{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"},
+				Metadata: api.ObjectMeta{Name: "homert02"},
+				Spec:     api.TailscaleNodeSpec{AdvertiseExitNode: true},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.0.2.1/24"},
+			},
+		}}},
+	})
+	resources, err := handler.resourceStatuses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("resources = %+v, want configured resources without observed status", resources)
+	}
+	var tailscale *routerstate.ObjectStatus
+	for i := range resources {
+		if resources[i].Kind == "TailscaleNode" && resources[i].Name == "homert02" {
+			tailscale = &resources[i]
+		}
+	}
+	if tailscale == nil {
+		t.Fatalf("configured TailscaleNode missing from resources: %+v", resources)
+	}
+	status := tailscale.Status
+	if status["phase"] != "NotObserved" || status["reason"] != "NoObservedStatus" || status["configured"] != true || status["observed"] != false {
+		t.Fatalf("tailscale synthetic status = %+v", status)
+	}
+}
+
 func TestHandlerServesVPNStatus(t *testing.T) {
 	handler := New(Options{VPNStatus: func() (VPNStatus, error) {
 		return VPNStatus{

@@ -179,6 +179,9 @@ func listenEndpointsConflict(a, b listenEndpoint) bool {
 	if a.Group != "" && a.Group == b.Group {
 		return false
 	}
+	if a.Role == "redirect" && b.Role == "redirect" {
+		return false
+	}
 	if listenRedirectsToDaemon(a, b) {
 		return false
 	}

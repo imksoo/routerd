@@ -81,6 +81,24 @@ func TestValidateAllowsLocalRedirectToInternalDaemonListenPort(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsMultipleLocalRedirectRulesToSamePort(t *testing.T) {
+	router := routerWithResources(
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "LocalServiceRedirect"}, Metadata: api.ObjectMeta{Name: "local-dns"}, Spec: api.LocalServiceRedirectSpec{
+			Interface: "lan",
+			Rules: []api.LocalServiceRedirectRuleSpec{
+				{Protocols: []string{"udp", "tcp"}, DestinationSetRef: "public-dns-google", DestinationPort: 53, RedirectPort: 53},
+				{Protocols: []string{"udp", "tcp"}, DestinationSetRef: "public-dns-cloudflare", DestinationPort: 53, RedirectPort: 53},
+			},
+		}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "public-dns-google"}, Spec: api.IPAddressSetSpec{Addresses: []string{"8.8.8.8"}}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "public-dns-cloudflare"}, Spec: api.IPAddressSetSpec{Addresses: []string{"1.1.1.1"}}},
+	)
+	if err := Validate(router); err != nil {
+		t.Fatalf("local redirect rules sharing a redirect port should validate: %v", err)
+	}
+}
+
 func TestValidateAllowsSharedDHCPv6ClientListenPort(t *testing.T) {
 	router := routerWithResources(
 		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},

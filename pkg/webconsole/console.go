@@ -1657,15 +1657,61 @@ func (h Handler) generationDiff(w http.ResponseWriter, r *http.Request, fromText
 }
 
 func (h Handler) resourceStatuses() ([]routerstate.ObjectStatus, error) {
+	var resources []routerstate.ObjectStatus
 	if lister, ok := h.opts.Store.(routerstate.ObjectStatusLister); ok {
-		resources, err := lister.ListObjectStatuses()
+		listed, err := lister.ListObjectStatuses()
 		if err != nil {
 			return nil, err
 		}
-		resources = h.filterStaleObjectStatuses(resources)
-		return annotateResourceOwnership(resources, h.controllerStatuses()), nil
+		resources = listed
 	}
-	return nil, nil
+	resources = h.mergeConfiguredResourceStatuses(resources)
+	resources = h.filterStaleObjectStatuses(resources)
+	return annotateResourceOwnership(resources, h.controllerStatuses()), nil
+}
+
+func (h Handler) mergeConfiguredResourceStatuses(resources []routerstate.ObjectStatus) []routerstate.ObjectStatus {
+	if h.opts.Router == nil {
+		return resources
+	}
+	out := append([]routerstate.ObjectStatus(nil), resources...)
+	seen := make(map[string]int, len(out))
+	for i := range out {
+		seen[objectStatusKey(out[i].APIVersion, out[i].Kind, out[i].Name)] = i
+	}
+	for _, resource := range h.opts.Router.Spec.Resources {
+		if resource.Kind == "" || resource.Metadata.Name == "" {
+			continue
+		}
+		key := objectStatusKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)
+		if idx, ok := seen[key]; ok {
+			if out[idx].Status == nil {
+				out[idx].Status = map[string]any{}
+			}
+			out[idx].Status["configured"] = true
+			if _, exists := out[idx].Status["observed"]; !exists {
+				out[idx].Status["observed"] = true
+			}
+			continue
+		}
+		out = append(out, routerstate.ObjectStatus{
+			APIVersion: resource.APIVersion,
+			Kind:       resource.Kind,
+			Name:       resource.Metadata.Name,
+			Status: map[string]any{
+				"phase":      "NotObserved",
+				"reason":     "NoObservedStatus",
+				"message":    "resource is declared in config but no controller status has been written yet",
+				"configured": true,
+				"observed":   false,
+			},
+		})
+	}
+	return out
+}
+
+func objectStatusKey(apiVersion, kind, name string) string {
+	return apiVersion + "/" + kind + "/" + name
 }
 
 func (h Handler) controllerStatuses() []controlapi.ControllerStatus {
