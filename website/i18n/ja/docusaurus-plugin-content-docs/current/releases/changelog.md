@@ -71,6 +71,11 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - systemd、OpenRC、rc.d、NixOS の service artifact 名と lifecycle command を扱う
   `pkg/servicemgr` abstraction を追加し、service artifact intent generation を
   そこへ寄せて resource ごとの OS switch drift を減らしました。
+- すべての checked-in example config について Linux、Alpine/OpenRC、
+  FreeBSD/rc.d、NixOS の render snapshot を固定する golden test と、
+  netns 側の compatibility wrapper を追加しました。`pkg/servicemgr` には lifecycle
+  hook を追加し、FRR の config-check + live reload、keepalived の reload/restart
+  分離、signal-based daemon reload が generic restart に潰れないようにしました。
 
 ## v20260519.0743
 

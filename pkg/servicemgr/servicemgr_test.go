@@ -78,3 +78,62 @@ func TestManagerCommands(t *testing.T) {
 		})
 	}
 }
+
+func TestManagerPlanKeepsFRRConfigCheckAndLiveReload(t *testing.T) {
+	service := Service{SystemdName: "frr.service", OpenRCName: "frr"}
+	plan := Systemd{}.Plan(OperationReload, service,
+		Hook{
+			Operation:     OperationReload,
+			BeforeDefault: true,
+			Command:       Command{Name: "vtysh", Args: []string{"-C", "-f", "/run/routerd/frr/routerd.conf"}},
+		},
+		Hook{
+			Operation:      OperationReload,
+			ReplaceDefault: true,
+			Command:        Command{Name: "frr-reload.py", Args: []string{"--reload", "/run/routerd/frr/routerd.conf"}},
+		},
+	)
+	want := []Command{
+		{Name: "vtysh", Args: []string{"-C", "-f", "/run/routerd/frr/routerd.conf"}},
+		{Name: "frr-reload.py", Args: []string{"--reload", "/run/routerd/frr/routerd.conf"}},
+	}
+	if !reflect.DeepEqual(plan.Commands, want) {
+		t.Fatalf("FRR reload plan = %#v, want %#v", plan.Commands, want)
+	}
+	for _, cmd := range plan.Commands {
+		if cmd.Name == "systemctl" && reflect.DeepEqual(cmd.Args, []string{"restart", "frr.service"}) {
+			t.Fatalf("FRR live reload plan must not restart bgpd: %#v", plan.Commands)
+		}
+	}
+}
+
+func TestManagerPlanDistinguishesKeepalivedReloadAndRestart(t *testing.T) {
+	service := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived"}
+	reload := OpenRC{}.Plan(OperationReload, service)
+	restart := OpenRC{}.Plan(OperationRestart, service)
+	if len(reload.Commands) != 1 || len(restart.Commands) != 1 {
+		t.Fatalf("unexpected plans reload=%#v restart=%#v", reload, restart)
+	}
+	if reflect.DeepEqual(reload.Commands, restart.Commands) {
+		t.Fatalf("reload and restart collapsed to the same command: %#v", reload.Commands)
+	}
+	if got := reload.Commands[0]; !reflect.DeepEqual(got, Command{Name: "rc-service", Args: []string{"keepalived", "reload"}}) {
+		t.Fatalf("keepalived reload = %#v", got)
+	}
+	if got := restart.Commands[0]; !reflect.DeepEqual(got, Command{Name: "rc-service", Args: []string{"keepalived", "restart"}}) {
+		t.Fatalf("keepalived restart = %#v", got)
+	}
+}
+
+func TestManagerPlanAllowsSignalBasedDaemonReload(t *testing.T) {
+	service := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq"}
+	plan := Systemd{}.Plan(OperationReload, service, Hook{
+		Operation:      OperationReload,
+		ReplaceDefault: true,
+		Command:        Command{Name: "kill", Args: []string{"-HUP", "$(cat /run/routerd/dnsmasq.pid)"}},
+	})
+	want := []Command{{Name: "kill", Args: []string{"-HUP", "$(cat /run/routerd/dnsmasq.pid)"}}}
+	if !reflect.DeepEqual(plan.Commands, want) {
+		t.Fatalf("dnsmasq signal reload plan = %#v, want %#v", plan.Commands, want)
+	}
+}

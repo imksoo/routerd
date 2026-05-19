@@ -24,6 +24,18 @@ type Command struct {
 	Args []string
 }
 
+type Hook struct {
+	Operation      Operation
+	Command        Command
+	BeforeDefault  bool
+	ReplaceDefault bool
+}
+
+type Plan struct {
+	Operation Operation
+	Commands  []Command
+}
+
 type Service struct {
 	Name                string
 	SystemdName         string
@@ -39,6 +51,7 @@ type Manager interface {
 	ApplyWith() string
 	ServiceName(Service) string
 	Command(Operation, Service) Command
+	Plan(Operation, Service, ...Hook) Plan
 	Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent
 }
 
@@ -82,6 +95,9 @@ func (m Systemd) Command(op Operation, s Service) Command {
 		return Command{}
 	}
 }
+func (m Systemd) Plan(op Operation, s Service, hooks ...Hook) Plan {
+	return operationPlan(op, m.Command(op, s), hooks...)
+}
 func (m Systemd) Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent {
 	return serviceIntent(owner, firstNonEmpty(service.SystemdArtifactKind, m.ArtifactKind()), m.ServiceName(service), action, m.ApplyWith(), attrs)
 }
@@ -108,6 +124,9 @@ func (m OpenRC) Command(op Operation, s Service) Command {
 	default:
 		return Command{}
 	}
+}
+func (m OpenRC) Plan(op Operation, s Service, hooks ...Hook) Plan {
+	return operationPlan(op, m.Command(op, s), hooks...)
 }
 func (m OpenRC) Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent {
 	return serviceIntent(owner, m.ArtifactKind(), m.ServiceName(service), action, m.ApplyWith(), attrs)
@@ -136,6 +155,9 @@ func (m RCD) Command(op Operation, s Service) Command {
 		return Command{}
 	}
 }
+func (m RCD) Plan(op Operation, s Service, hooks ...Hook) Plan {
+	return operationPlan(op, m.Command(op, s), hooks...)
+}
 func (m RCD) Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent {
 	return serviceIntent(owner, m.ArtifactKind(), m.ServiceName(service), action, m.ApplyWith(), attrs)
 }
@@ -160,8 +182,35 @@ func (m NixOS) Command(op Operation, s Service) Command {
 		return Command{}
 	}
 }
+func (m NixOS) Plan(op Operation, s Service, hooks ...Hook) Plan {
+	return operationPlan(op, m.Command(op, s), hooks...)
+}
 func (m NixOS) Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent {
 	return serviceIntent(owner, m.ArtifactKind(), m.ServiceName(service), action, m.ApplyWith(), attrs)
+}
+
+func operationPlan(op Operation, defaultCommand Command, hooks ...Hook) Plan {
+	var before, after []Command
+	replaceDefault := false
+	for _, hook := range hooks {
+		if hook.Operation != op || hook.Command.Name == "" {
+			continue
+		}
+		if hook.ReplaceDefault {
+			replaceDefault = true
+		}
+		if hook.BeforeDefault {
+			before = append(before, hook.Command)
+		} else {
+			after = append(after, hook.Command)
+		}
+	}
+	commands := append([]Command(nil), before...)
+	if !replaceDefault && defaultCommand.Name != "" {
+		commands = append(commands, defaultCommand)
+	}
+	commands = append(commands, after...)
+	return Plan{Operation: op, Commands: commands}
 }
 
 func serviceIntent(owner, kind, name, action, applyWith string, attrs map[string]string) resource.Intent {

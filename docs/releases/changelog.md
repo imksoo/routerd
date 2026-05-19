@@ -69,6 +69,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added a `pkg/servicemgr` abstraction for systemd, OpenRC, rc.d, and NixOS
   service artifact naming and lifecycle commands, then routed service artifact
   intent generation through it to reduce per-resource OS switch drift.
+- Added render golden tests for all checked-in example configs across Linux,
+  Alpine/OpenRC, FreeBSD/rc.d, and NixOS snapshots, plus a netns compatibility
+  wrapper. Extended `pkg/servicemgr` with lifecycle hooks so FRR config-check
+  + live reload, keepalived reload-vs-restart, and signal-based daemon reloads
+  remain expressible instead of collapsing into generic restarts.
 
 ## v20260519.0743
 

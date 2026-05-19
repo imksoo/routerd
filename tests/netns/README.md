@@ -23,6 +23,7 @@ sudo ./keepalived-no-spurious-restart.sh
 sudo ./bgp-event-ordering.sh
 sudo ./ingress-conntrack-survive.sh
 sudo ./bgp-import-policy-reject.sh
+./render-compatibility.sh
 ```
 
 `make run` is a convenience wrapper for `sudo ./run-all.sh`.
@@ -37,6 +38,7 @@ The scripts cover:
 | `bgp-event-ordering.sh` | Repeated 1 Hz-ish BGP peer flaps do not expose prefix observations before peer establishment observations. |
 | `ingress-conntrack-survive.sh` | Existing DNAT conntrack flows stay on the old backend while new flows use the new backend. |
 | `bgp-import-policy-reject.sh` | FRR import policy accepts allowed prefixes and rejects disallowed prefixes. |
+| `render-compatibility.sh` | Non-root render golden compatibility check for Linux, Alpine/OpenRC, FreeBSD/rc.d, and NixOS output snapshots. |
 
 Do not add tests here that mutate the default host namespace. New scenarios must
 create their own namespaces and links, run with explicit `sudo`, and tear down

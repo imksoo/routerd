@@ -54,6 +54,11 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - 新增 `pkg/servicemgr` 抽象，统一 systemd、OpenRC、rc.d、NixOS 的 service
   artifact 命名和 lifecycle command，并让 service artifact intent generation
   通过该层，减少每个 resource 中分散的 OS switch drift。
+- 为所有 checked-in example config 增加 Linux、Alpine/OpenRC、FreeBSD/rc.d、
+  NixOS render snapshot golden test，并增加 netns compatibility wrapper。
+  `pkg/servicemgr` 也新增 lifecycle hook，使 FRR config-check + live reload、
+  keepalived reload/restart 区分、signal-based daemon reload 不会退化成 generic
+  restart。
 
 ## v20260519.0743
 
