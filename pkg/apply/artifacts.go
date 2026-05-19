@@ -26,6 +26,128 @@ func resourceArtifactIntentsForOS(res api.Resource, aliases map[string]string, t
 	return resourceArtifactIntentsForPlatform(res, aliases, targetOS, features)
 }
 
+type serviceDeclarationContext struct {
+	owner    string
+	res      api.Resource
+	targetOS platform.OS
+	features platform.Features
+}
+
+type serviceDeclaration struct {
+	kind    string
+	declare func(serviceDeclarationContext) []resource.Intent
+}
+
+var serviceDeclarations = []serviceDeclaration{
+	{
+		kind: "SystemdUnit",
+		declare: func(ctx serviceDeclarationContext) []resource.Intent {
+			spec, err := ctx.res.SystemdUnitSpec()
+			if err != nil {
+				return nil
+			}
+			unitName := defaultString(spec.UnitName, ctx.res.Metadata.Name)
+			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{SystemdName: unitName}, resource.ActionEnsure, nil)}
+		},
+	},
+	{
+		kind: "PPPoEInterface",
+		declare: func(ctx serviceDeclarationContext) []resource.Intent {
+			spec, err := ctx.res.PPPoEInterfaceSpec()
+			if err != nil {
+				return nil
+			}
+			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{
+				SystemdName: "routerd-pppoe-" + ctx.res.Metadata.Name + ".service",
+				OpenRCName:  "routerd_pppoe_client_" + ctx.res.Metadata.Name,
+			}, resource.ActionEnsure, map[string]string{"disabled": fmt.Sprintf("%t", spec.Disabled)})}
+		},
+	},
+	{
+		kind: "VirtualIPv4Address",
+		declare: func(ctx serviceDeclarationContext) []resource.Intent {
+			spec, err := ctx.res.VirtualIPv4AddressSpec()
+			if err != nil || defaultString(spec.Mode, "static") != "vrrp" {
+				return nil
+			}
+			service := servicemgr.Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}
+			if ctx.targetOS == platform.OSFreeBSD {
+				service = servicemgr.Service{RCDName: "routerd_carp", SystemdName: "routerd-carp.service"}
+			}
+			return []resource.Intent{serviceIntent(ctx, service, resource.ActionEnsure, nil)}
+		},
+	},
+	{
+		kind: "BGPRouter",
+		declare: func(ctx serviceDeclarationContext) []resource.Intent {
+			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr"}, resource.ActionEnsure, nil)}
+		},
+	},
+	{
+		kind: "TailscaleNode",
+		declare: func(ctx serviceDeclarationContext) []resource.Intent {
+			spec, err := ctx.res.TailscaleNodeSpec()
+			if err != nil {
+				return nil
+			}
+			action := resource.ActionEnsure
+			if defaultString(spec.State, "present") == "absent" {
+				action = resource.ActionDelete
+			}
+			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{
+				SystemdName:         render.TailscaleUnitName(ctx.res.Metadata.Name),
+				SystemdArtifactKind: "systemd.unit",
+			}, action, nil)}
+		},
+	},
+	{
+		kind: "DHCPv4Server",
+		declare: func(ctx serviceDeclarationContext) []resource.Intent {
+			return []resource.Intent{dnsmasqServiceIntent(ctx)}
+		},
+	},
+	{
+		kind: "DHCPv6Server",
+		declare: func(ctx serviceDeclarationContext) []resource.Intent {
+			return []resource.Intent{dnsmasqServiceIntent(ctx)}
+		},
+	},
+	{
+		kind: "DHCPv6PrefixDelegation",
+		declare: func(ctx serviceDeclarationContext) []resource.Intent {
+			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{SystemdName: "routerd-dhcpv6-client@" + ctx.res.Metadata.Name + ".service"}, resource.ActionEnsure, map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
+		},
+	},
+	{
+		kind: "DNSResolver",
+		declare: func(ctx serviceDeclarationContext) []resource.Intent {
+			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{SystemdName: "routerd-dns-resolver@" + ctx.res.Metadata.Name + ".service"}, resource.ActionEnsure, nil)}
+		},
+	},
+}
+
+func declaredServiceIntents(ctx serviceDeclarationContext) []resource.Intent {
+	for _, declaration := range serviceDeclarations {
+		if declaration.kind == ctx.res.Kind {
+			return declaration.declare(ctx)
+		}
+	}
+	return nil
+}
+
+func serviceIntent(ctx serviceDeclarationContext, service servicemgr.Service, action string, attrs map[string]string) resource.Intent {
+	return servicemgr.IntentForPlatform(ctx.owner, ctx.features, service, action, attrs)
+}
+
+func dnsmasqServiceIntent(ctx serviceDeclarationContext) resource.Intent {
+	return serviceIntent(ctx, servicemgr.Service{
+		SystemdName: "routerd-dnsmasq.service",
+		OpenRCName:  "routerd_dnsmasq",
+		RCDName:     "routerd_dnsmasq",
+		NixName:     "routerd-dnsmasq",
+	}, resource.ActionEnsure, nil)
+}
+
 func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]string, targetOS platform.OS, features platform.Features) []resource.Intent {
 	owner := res.ID()
 	artifact := func(kind, name, action, applyWith string, attrs map[string]string) resource.Intent {
@@ -38,9 +160,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			ApplyWith: applyWith,
 		}
 	}
-	service := func(service servicemgr.Service, action string, attrs map[string]string) resource.Intent {
-		return servicemgr.IntentForPlatform(owner, features, service, action, attrs)
-	}
+	serviceContext := serviceDeclarationContext{owner: owner, res: res, targetOS: targetOS, features: features}
 	switch res.Kind {
 	case "LogSink":
 		return []resource.Intent{artifact("routerd.logSink", res.Metadata.Name, resource.ActionEnsure, "eventlog", nil)}
@@ -78,12 +198,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		return intents
 	case "SystemdUnit":
-		spec, err := res.SystemdUnitSpec()
-		if err != nil {
-			return nil
-		}
-		unitName := defaultString(spec.UnitName, res.Metadata.Name)
-		return []resource.Intent{service(servicemgr.Service{SystemdName: unitName}, resource.ActionEnsure, nil)}
+		return declaredServiceIntents(serviceContext)
 	case "Sysctl":
 		spec, err := res.SysctlSpec()
 		if err != nil {
@@ -133,14 +248,15 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if spec.Disabled {
 			action = resource.ActionDelete
 		}
-		return []resource.Intent{
-			artifact("ppp.interface", ifname, action, "pppd", nil),
-			service(servicemgr.Service{SystemdName: "routerd-pppoe-" + res.Metadata.Name + ".service", OpenRCName: "routerd_pppoe_client_" + res.Metadata.Name}, resource.ActionEnsure, map[string]string{"disabled": fmt.Sprintf("%t", spec.Disabled)}),
+		intents := []resource.Intent{artifact("ppp.interface", ifname, action, "pppd", nil)}
+		intents = append(intents, declaredServiceIntents(serviceContext)...)
+		intents = append(intents,
 			artifact("file", "/etc/ppp/chap-secrets", resource.ActionEnsure, "file", nil),
 			artifact("file", "/etc/ppp/pap-secrets", resource.ActionEnsure, "file", nil),
 			artifact("file", "/usr/local/etc/mpd5/mpd.conf", resource.ActionEnsure, "mpd5", nil),
 			artifact("rc.d.service", "mpd5", action, "service", nil),
-		}
+		)
+		return intents
 	case "PPPoESession":
 		spec, err := res.PPPoESessionSpec()
 		if err != nil {
@@ -164,25 +280,22 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		if defaultString(spec.Mode, "static") == "vrrp" {
 			if targetOS == platform.OSFreeBSD {
-				return []resource.Intent{
-					artifact("freebsd.carp", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "ifconfig", map[string]string{"interface": aliases[spec.Interface]}),
-					service(servicemgr.Service{RCDName: "routerd_carp", SystemdName: "routerd-carp.service"}, resource.ActionEnsure, nil),
-					artifact("sysctl", "net.inet.carp.preempt", resource.ActionEnsure, "sysctl", nil),
-				}
+				intents := []resource.Intent{artifact("freebsd.carp", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "ifconfig", map[string]string{"interface": aliases[spec.Interface]})}
+				intents = append(intents, declaredServiceIntents(serviceContext)...)
+				intents = append(intents, artifact("sysctl", "net.inet.carp.preempt", resource.ActionEnsure, "sysctl", nil))
+				return intents
 			}
-			return []resource.Intent{
-				artifact("keepalived.config", "/etc/keepalived/keepalived.conf", resource.ActionEnsure, "keepalived", map[string]string{"interface": aliases[spec.Interface]}),
-				service(servicemgr.Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}, resource.ActionEnsure, nil),
-				artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "keepalived", nil),
-			}
+			intents := []resource.Intent{artifact("keepalived.config", "/etc/keepalived/keepalived.conf", resource.ActionEnsure, "keepalived", map[string]string{"interface": aliases[spec.Interface]})}
+			intents = append(intents, declaredServiceIntents(serviceContext)...)
+			intents = append(intents, artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "keepalived", nil))
+			return intents
 		}
 		return []resource.Intent{artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "ip-addr", nil)}
 	case "BGPRouter":
-		return []resource.Intent{
-			artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil),
-			service(servicemgr.Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr"}, resource.ActionEnsure, nil),
-			artifact("frr.bgp.router", res.Metadata.Name, resource.ActionEnsure, "frr", nil),
-		}
+		intents := []resource.Intent{artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil)}
+		intents = append(intents, declaredServiceIntents(serviceContext)...)
+		intents = append(intents, artifact("frr.bgp.router", res.Metadata.Name, resource.ActionEnsure, "frr", nil))
+		return intents
 	case "BGPPeer":
 		spec, err := res.BGPPeerSpec()
 		if err != nil {
@@ -211,10 +324,9 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if defaultString(spec.State, "present") == "absent" {
 			action = resource.ActionDelete
 		}
-		return []resource.Intent{
-			service(servicemgr.Service{SystemdName: render.TailscaleUnitName(res.Metadata.Name), SystemdArtifactKind: "systemd.unit"}, action, nil),
-			artifact("tailscale.node", res.Metadata.Name, action, "tailscale", nil),
-		}
+		intents := declaredServiceIntents(serviceContext)
+		intents = append(intents, artifact("tailscale.node", res.Metadata.Name, action, "tailscale", nil))
+		return intents
 	case "IPsecConnection":
 		return []resource.Intent{
 			artifact("ipsec.swanctl.connection", res.Metadata.Name, resource.ActionEnsure, "swanctl", nil),
@@ -234,10 +346,8 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		return []resource.Intent{artifact("net.vxlan.tunnel", defaultString(spec.IfName, res.Metadata.Name), resource.ActionEnsure, "ip-link", map[string]string{"vni": fmt.Sprintf("%d", spec.VNI)})}
 	case "DHCPv4Server", "DHCPv6Server":
-		intents := []resource.Intent{
-			artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil),
-			service(servicemgr.Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq", RCDName: "routerd_dnsmasq", NixName: "routerd-dnsmasq"}, resource.ActionEnsure, nil),
-		}
+		intents := []resource.Intent{artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil)}
+		intents = append(intents, declaredServiceIntents(serviceContext)...)
 		return intents
 	case "DHCPv4Reservation":
 		spec, err := res.DHCPv4ReservationSpec()
@@ -264,7 +374,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		return []resource.Intent{artifact("net.ipv6.ra.client", aliases[spec.Interface], resource.ActionEnsure, "platform-network", nil)}
 	case "DHCPv6PrefixDelegation":
-		return []resource.Intent{service(servicemgr.Service{SystemdName: "routerd-dhcpv6-client@" + res.Metadata.Name + ".service"}, resource.ActionEnsure, map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
+		return declaredServiceIntents(serviceContext)
 	case "IPv6DelegatedAddress":
 		spec, err := res.IPv6DelegatedAddressSpec()
 		if err != nil {
@@ -284,7 +394,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 	case "DNSZone":
 		return []resource.Intent{artifact("routerd.dns.zone", res.Metadata.Name, resource.ActionEnsure, "routerd-dns-resolver", nil)}
 	case "DNSResolver":
-		return []resource.Intent{service(servicemgr.Service{SystemdName: "routerd-dns-resolver@" + res.Metadata.Name + ".service"}, resource.ActionEnsure, nil)}
+		return declaredServiceIntents(serviceContext)
 	case "DSLiteTunnel":
 		spec, err := res.DSLiteTunnelSpec()
 		if err != nil {

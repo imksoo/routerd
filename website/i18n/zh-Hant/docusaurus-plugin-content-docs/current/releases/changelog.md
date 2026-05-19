@@ -71,6 +71,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - 為 netplan、systemd-networkd drop-in、NixOS module、FreeBSD rc.conf
   fragment 新增無行為變化的 network config backend abstraction，並以通用
   IPv4/IPv6 address 與 route declaration 表示網路設定。
+- 將 PPPoE、VRRP/CARP、FRR、dnsmasq、DHCPv6 PD、DNS resolver、Tailscale 的
+  service-backed artifact intent 整理為 ServiceManager declaration table，使
+  systemd/OpenRC/rc.d/NixOS ownership 在不改變輸出的前提下保持一致。
 
 ## v20260519.0743
 

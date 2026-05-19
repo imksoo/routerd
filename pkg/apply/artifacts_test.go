@@ -207,9 +207,105 @@ func TestOpenRCServiceArtifactIntentsAvoidSystemd(t *testing.T) {
 	}
 }
 
+func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
+	resources := []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SystemdUnit"},
+			Metadata: api.ObjectMeta{Name: "custom.service"},
+			Spec:     api.SystemdUnitSpec{},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp0"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+			Metadata: api.ObjectMeta{Name: "api-vip"},
+			Spec: api.VirtualIPv4AddressSpec{
+				Interface: "lan",
+				Address:   "192.168.10.10/32",
+				Mode:      "vrrp",
+				VRRP:      api.VirtualIPv4VRRPSpec{VirtualRouterID: 50},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "192.168.10.1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"},
+			Metadata: api.ObjectMeta{Name: "edge"},
+			Spec:     api.TailscaleNodeSpec{},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+			Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
+			Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"},
+			Metadata: api.ObjectMeta{Name: "lan-dhcpv6"},
+			Spec:     api.DHCPv6ServerSpec{Server: "dnsmasq"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+			Metadata: api.ObjectMeta{Name: "wan-pd"},
+			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan-dns"},
+			Spec: api.DNSResolverSpec{
+				Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}}},
+				Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
+			},
+		},
+	}
+	platforms := []struct {
+		name     string
+		targetOS platform.OS
+		features platform.Features
+		kind     string
+		apply    string
+	}{
+		{name: "systemd", targetOS: platform.OSLinux, features: platform.Features{HasSystemd: true}, kind: "systemd.service", apply: "systemctl"},
+		{name: "openrc", targetOS: platform.OSLinux, features: platform.Features{HasOpenRC: true}, kind: "openrc.service", apply: "rc-service"},
+		{name: "rcd", targetOS: platform.OSFreeBSD, features: platform.Features{HasRCD: true}, kind: "rc.d.service", apply: "service"},
+		{name: "nixos", targetOS: platform.OSLinux, features: platform.Features{}, kind: "nixos.service", apply: "nixos-module"},
+	}
+	for _, res := range resources {
+		for _, platformCase := range platforms {
+			t.Run(res.Kind+"/"+platformCase.name, func(t *testing.T) {
+				intents := resourceArtifactIntentsForPlatform(res, map[string]string{"lan": "eth0", "wan": "eth1"}, platformCase.targetOS, platformCase.features)
+				wantKind := platformCase.kind
+				if res.Kind == "TailscaleNode" && platformCase.name == "systemd" {
+					wantKind = "systemd.unit"
+				}
+				if !hasArtifactKind(intents, wantKind) {
+					t.Fatalf("missing %s service intent: %+v", wantKind, intents)
+				}
+				if !hasApplyWith(intents, wantKind, platformCase.apply) {
+					t.Fatalf("missing %s applyWith=%s service intent: %+v", wantKind, platformCase.apply, intents)
+				}
+			})
+		}
+	}
+}
+
 func hasArtifactIntent(intents []resource.Intent, kind, name, applyWith string) bool {
 	for _, intent := range intents {
 		if intent.Artifact.Kind == kind && intent.Artifact.Name == name && intent.ApplyWith == applyWith {
+			return true
+		}
+	}
+	return false
+}
+
+func hasApplyWith(intents []resource.Intent, kind, applyWith string) bool {
+	for _, intent := range intents {
+		if intent.Artifact.Kind == kind && intent.ApplyWith == applyWith {
 			return true
 		}
 	}

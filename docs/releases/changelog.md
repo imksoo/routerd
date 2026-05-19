@@ -86,6 +86,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added a no-behavior-change network config backend abstraction for netplan,
   systemd-networkd drop-ins, NixOS modules, and FreeBSD rc.conf fragments,
   backed by common IPv4/IPv6 address and route declarations.
+- Reworked service-backed artifact intents into a ServiceManager declaration
+  table so systemd, OpenRC, rc.d, and NixOS service ownership stays consistent
+  across PPPoE, VRRP/CARP, FRR, dnsmasq, DHCPv6 PD, DNS resolver, and Tailscale
+  resources without changing rendered output.
 
 ## v20260519.0743
 
