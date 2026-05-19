@@ -3544,11 +3544,19 @@ func serveCommand(args []string, stdout io.Writer) (err error) {
 	handler := controlapi.Handler{
 		Status: func(r *http.Request) (*controlapi.Status, error) {
 			status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore))
-			status.Status.Controllers = controllerRuntime.Snapshot()
+			controllers := controllerRuntime.Snapshot()
+			if stateStore != nil {
+				controllers = augmentControllerStatusesFromState(controllers, stateStore)
+			}
+			status.Status.Controllers = controllers
 			return &status, nil
 		},
 		Controllers: func(r *http.Request) (*controlapi.Controllers, error) {
-			controllers := controlapi.NewControllers(controllerRuntime.Snapshot())
+			statuses := controllerRuntime.Snapshot()
+			if stateStore != nil {
+				statuses = augmentControllerStatusesFromState(statuses, stateStore)
+			}
+			controllers := controlapi.NewControllers(statuses)
 			return &controllers, nil
 		},
 		Connections: func(r *http.Request, req controlapi.ConnectionsRequest) (*controlapi.ConnectionTable, error) {
@@ -4085,6 +4093,85 @@ func runObserveSchedule(stop <-chan struct{}, interval time.Duration, router *ap
 			}
 			logger.Emit(eventlog.LevelDebug, "serve", "scheduled observe completed", map[string]string{"phase": result.Phase})
 		}
+	}
+}
+
+func augmentControllerStatusesFromState(controllers []controlapi.ControllerStatus, store routerstate.Store) []controlapi.ControllerStatus {
+	lister, ok := store.(routerstate.ObjectStatusLister)
+	if !ok || len(controllers) == 0 {
+		return controllers
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return controllers
+	}
+	var lastReloadAt *time.Time
+	var lastRestartAt *time.Time
+	var lastActionAt *time.Time
+	var lastChangeReason string
+	for _, item := range statuses {
+		if item.APIVersion != api.NetAPIVersion || (item.Kind != "VirtualIPv4Address" && item.Kind != "VirtualIPv6Address") {
+			continue
+		}
+		if t := parseStatusTime(statusStringMap(item.Status, "lastReloadAt")); newerTime(t, lastReloadAt) {
+			lastReloadAt = t
+			if newerTime(t, lastActionAt) {
+				lastActionAt = t
+				lastChangeReason = statusStringMap(item.Status, "lastChangeReason")
+			}
+		}
+		if t := parseStatusTime(statusStringMap(item.Status, "lastRestartAt")); newerTime(t, lastRestartAt) {
+			lastRestartAt = t
+			if newerTime(t, lastActionAt) {
+				lastActionAt = t
+				lastChangeReason = statusStringMap(item.Status, "lastChangeReason")
+			}
+		}
+	}
+	if lastReloadAt == nil && lastRestartAt == nil && lastChangeReason == "" {
+		return controllers
+	}
+	out := append([]controlapi.ControllerStatus(nil), controllers...)
+	for i := range out {
+		if out[i].Name != "vrrp" {
+			continue
+		}
+		out[i].LastReloadAt = lastReloadAt
+		out[i].LastRestartAt = lastRestartAt
+		out[i].LastChangeReason = lastChangeReason
+	}
+	return out
+}
+
+func parseStatusTime(value string) *time.Time {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
+func newerTime(candidate, current *time.Time) bool {
+	if candidate == nil {
+		return false
+	}
+	return current == nil || candidate.After(*current)
+}
+
+func statusStringMap(status map[string]any, key string) string {
+	if status == nil {
+		return ""
+	}
+	switch value := status[key].(type) {
+	case string:
+		return value
+	case fmt.Stringer:
+		return value.String()
+	default:
+		return ""
 	}
 }
 

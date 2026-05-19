@@ -52,6 +52,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   `routerctl show vrrp` は live address から role を再観測します。version
   output には commit を埋め込めるようにし、FRR reload tooling dependency と、
   非 blocking の setup wizard 動作も追加しました。
+- live VRRP reconcile で keepalived の no-op reload/restart を避け、
+  最後に keepalived を reload/restart した時刻と理由を controller status に
+  出すようにしました。
 
 ## v20260519.0743
 

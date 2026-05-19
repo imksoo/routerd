@@ -34,6 +34,9 @@ func (s *ControllerRuntimeStore) SetBase(base []ControllerStatus) {
 		controller.LastTrigger = current.LastTrigger
 		controller.LastReconcileTime = current.LastReconcileTime
 		controller.LastSuccessTime = current.LastSuccessTime
+		controller.LastReloadAt = current.LastReloadAt
+		controller.LastRestartAt = current.LastRestartAt
+		controller.LastChangeReason = current.LastChangeReason
 		controller.NextReconcileTime = current.NextReconcileTime
 		controller.ReconcileCount = current.ReconcileCount
 		controller.ReconcileErrorCount = current.ReconcileErrorCount

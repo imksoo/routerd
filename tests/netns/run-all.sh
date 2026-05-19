@@ -11,6 +11,7 @@ fi
 scripts=(
   frr-config-rollback.sh
   keepalived-vip-failover.sh
+  keepalived-no-spurious-restart.sh
   bgp-event-ordering.sh
   ingress-conntrack-survive.sh
   bgp-import-policy-reject.sh

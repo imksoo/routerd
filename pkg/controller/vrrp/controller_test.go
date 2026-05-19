@@ -4,6 +4,7 @@ package vrrp
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -198,6 +199,9 @@ func TestReconcileRestartsKeepalivedWithOpenRC(t *testing.T) {
 		IP:         "ip",
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
+			if name == "rc-service" && strings.Join(args, " ") == "keepalived status" {
+				return []byte("stopped"), errors.New("stopped")
+			}
 			if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens18" {
 				return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
 			}
@@ -248,6 +252,83 @@ func TestReconcileAppliesFreeBSDCARPVirtualIPv4Address(t *testing.T) {
 	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
 	if status["backend"] != "carp" || status["role"] != "master" {
 		t.Fatalf("unexpected CARP status: %#v", status)
+	}
+}
+
+func TestReconcileSkipsNoopKeepalivedReloadWithOpenRC(t *testing.T) {
+	store := mapStore{}
+	var calls []string
+	controller := Controller{
+		Router:     vrrpRouter("vrrp"),
+		Store:      store,
+		ConfigPath: t.TempDir() + "/keepalived.conf",
+		OpenRC:     true,
+		RCService:  "rc-service",
+		IP:         "ip",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens18" {
+				return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if !containsString(calls, "rc-service keepalived reload") {
+		t.Fatalf("missing initial OpenRC reload: %#v", calls)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	if statusString(status, "lastReloadAt") == "" || statusString(status, "lastChangeReason") != "keepalived.config changed" {
+		t.Fatalf("missing reload status: %#v", status)
+	}
+	calls = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	for _, unwanted := range []string{"rc-service keepalived reload", "rc-service keepalived restart"} {
+		if containsString(calls, unwanted) {
+			t.Fatalf("no-op reconcile called %q: %#v", unwanted, calls)
+		}
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "vip")
+	if statusString(status, "lastReloadAt") == "" || statusString(status, "lastChangeReason") != "keepalived.config changed" {
+		t.Fatalf("reload status was not retained: %#v", status)
+	}
+}
+
+func TestReconcileSkipsNoopKeepalivedReloadWithSystemd(t *testing.T) {
+	store := mapStore{}
+	var calls []string
+	controller := Controller{
+		Router:     vrrpRouter("vrrp"),
+		Store:      store,
+		ConfigPath: t.TempDir() + "/keepalived.conf",
+		Systemctl:  "systemctl",
+		IP:         "ip",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens18" {
+				return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if !containsString(calls, "systemctl reload keepalived.service") {
+		t.Fatalf("missing initial systemd reload: %#v", calls)
+	}
+	calls = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	for _, unwanted := range []string{"systemctl reload keepalived.service", "systemctl restart keepalived.service", "systemctl reload-or-restart keepalived.service"} {
+		if containsString(calls, unwanted) {
+			t.Fatalf("no-op reconcile called %q: %#v", unwanted, calls)
+		}
 	}
 }
 

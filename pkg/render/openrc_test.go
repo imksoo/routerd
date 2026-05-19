@@ -219,6 +219,8 @@ func TestOpenRCRenderSynthesizesKeepalivedForVRRP(t *testing.T) {
 		`command_args="'--dont-fork' '--log-console' '--use-file' '/etc/keepalived/keepalived.conf'"`,
 		`use net`,
 		`'/usr/sbin/keepalived' '--config-test' '--use-file' '/etc/keepalived/keepalived.conf'`,
+		`reload()`,
+		`start-stop-daemon --signal HUP --pidfile "${pidfile}"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("keepalived OpenRC script missing %q:\n%s", want, script)

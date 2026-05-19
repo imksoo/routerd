@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"routerd/pkg/api"
 	"routerd/pkg/platform"
@@ -16,9 +17,12 @@ import (
 )
 
 type backendResult struct {
-	Path    string
-	Changed bool
-	Roles   map[string]string
+	Path             string
+	Changed          bool
+	Roles            map[string]string
+	LastReloadAt     string
+	LastRestartAt    string
+	LastChangeReason string
 }
 
 type backend interface {
@@ -46,29 +50,78 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		return backendResult{}, nil
 	}
 	path := firstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
-	changed, err := writeFileIfChanged(path, data, 0644)
+	changed, err := fileContentChanged(path, data)
 	if err != nil {
 		return backendResult{}, err
 	}
-	if !c.DryRun {
+	if changed && !c.DryRun {
+		if err := writeFile(path, data, 0644); err != nil {
+			return backendResult{}, err
+		}
 		if checker := strings.TrimSpace(c.KeepalivedCheck); checker != "" {
 			if out, err := c.run(ctx, checker, "--config-test", "--use-file", path); err != nil {
 				return backendResult{}, c.saveError(path, changed, nil, "KeepalivedConfigInvalid", fmt.Errorf("%s: %w: %s", checker, err, strings.TrimSpace(string(out))))
 			}
 		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		reason := "keepalived.config changed"
 		if c.useOpenRC() {
-			rcService := firstNonEmpty(c.RCService, "rc-service")
-			if out, err := c.run(ctx, rcService, "keepalived", "restart"); err != nil {
-				return backendResult{}, c.saveError(path, changed, nil, "KeepalivedRestartFailed", fmt.Errorf("%s keepalived restart: %w: %s", rcService, err, strings.TrimSpace(string(out))))
+			action, err := reloadOrRestartOpenRCKeepalived(ctx, c, path)
+			if err != nil {
+				return backendResult{}, err
 			}
+			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRoles(ctx, c, aliases), LastChangeReason: reason}
+			if action == "reload" {
+				result.LastReloadAt = now
+			} else {
+				result.LastRestartAt = now
+			}
+			return result, nil
 		} else {
-			systemctl := firstNonEmpty(c.Systemctl, "systemctl")
-			if out, err := c.run(ctx, systemctl, "reload-or-restart", "keepalived.service"); err != nil {
-				return backendResult{}, c.saveError(path, changed, nil, "KeepalivedRestartFailed", fmt.Errorf("%s reload-or-restart keepalived.service: %w: %s", systemctl, err, strings.TrimSpace(string(out))))
+			action, err := reloadOrRestartSystemdKeepalived(ctx, c, path)
+			if err != nil {
+				return backendResult{}, err
 			}
+			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRoles(ctx, c, aliases), LastChangeReason: reason}
+			if action == "reload" {
+				result.LastReloadAt = now
+			} else {
+				result.LastRestartAt = now
+			}
+			return result, nil
 		}
 	}
 	return backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRoles(ctx, c, aliases)}, nil
+}
+
+func reloadOrRestartOpenRCKeepalived(ctx context.Context, c *Controller, path string) (string, error) {
+	rcService := firstNonEmpty(c.RCService, "rc-service")
+	if _, err := c.run(ctx, rcService, "keepalived", "status"); err == nil {
+		if out, err := c.run(ctx, rcService, "keepalived", "reload"); err == nil {
+			return "reload", nil
+		} else if c.Logger != nil {
+			c.Logger.Warn("keepalived reload failed; restarting", "error", err, "output", strings.TrimSpace(string(out)))
+		}
+	}
+	if out, err := c.run(ctx, rcService, "keepalived", "restart"); err != nil {
+		return "", c.saveError(path, true, nil, "KeepalivedRestartFailed", fmt.Errorf("%s keepalived restart: %w: %s", rcService, err, strings.TrimSpace(string(out))))
+	}
+	return "restart", nil
+}
+
+func reloadOrRestartSystemdKeepalived(ctx context.Context, c *Controller, path string) (string, error) {
+	systemctl := firstNonEmpty(c.Systemctl, "systemctl")
+	if _, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service"); err == nil {
+		if out, err := c.run(ctx, systemctl, "reload", "keepalived.service"); err == nil {
+			return "reload", nil
+		} else if c.Logger != nil {
+			c.Logger.Warn("keepalived reload failed; restarting", "error", err, "output", strings.TrimSpace(string(out)))
+		}
+	}
+	if out, err := c.run(ctx, systemctl, "restart", "keepalived.service"); err != nil {
+		return "", c.saveError(path, true, nil, "KeepalivedRestartFailed", fmt.Errorf("%s restart keepalived.service: %w: %s", systemctl, err, strings.TrimSpace(string(out))))
+	}
+	return "restart", nil
 }
 
 func (c *Controller) useOpenRC() bool {
@@ -188,15 +241,27 @@ func dryRunRoles(c *Controller) map[string]string {
 }
 
 func writeFileIfChanged(path string, data []byte, mode os.FileMode) (bool, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return false, err
+	changed, err := fileContentChanged(path, data)
+	if err != nil || !changed {
+		return changed, err
 	}
+	return true, writeFile(path, data, mode)
+}
+
+func fileContentChanged(path string, data []byte) (bool, error) {
 	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, data) {
 		return false, nil
 	} else if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
-	return true, os.WriteFile(path, data, mode)
+	return true, nil
+}
+
+func writeFile(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, mode)
 }
 
 func carpRoleForVHID(output string, vhid int) string {

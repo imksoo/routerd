@@ -36,6 +36,8 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - 改善 Alpine Live ISO 路径：VRRP controller 默认为 live，
   `routerctl show vrrp` 会从 live address 重新观测 role，version output 可嵌入
   commit，并补上 FRR reload tooling dependency 与非阻塞 setup wizard 行为。
+- live VRRP reconcile 会避免 keepalived 的 no-op reload/restart，并在
+  controller status 中暴露最近一次 keepalived reload/restart 的时间与原因。
 
 ## v20260519.0743
 

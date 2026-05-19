@@ -267,7 +267,7 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 	if routerNeedsKeepalived(router) {
 		name := "keepalived"
 		if !explicit[name] {
-			data, err := OpenRCScript(name, keepalivedOpenRCSystemdSpec("", ""))
+			data, err := KeepalivedOpenRCScript("", "")
 			if err != nil {
 				return OpenRCConfig{}, err
 			}
@@ -409,7 +409,18 @@ func keepalivedOpenRCSystemdSpec(configPath, keepalivedPath string) api.SystemdU
 }
 
 func KeepalivedOpenRCScript(configPath, keepalivedPath string) ([]byte, error) {
-	return OpenRCScript("keepalived", keepalivedOpenRCSystemdSpec(configPath, keepalivedPath))
+	data, err := OpenRCScript("keepalived", keepalivedOpenRCSystemdSpec(configPath, keepalivedPath))
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	buf.Write(data)
+	buf.WriteString("\nreload() {\n")
+	buf.WriteString("\tebegin \"Reloading keepalived\"\n")
+	buf.WriteString("\tstart-stop-daemon --signal HUP --pidfile \"${pidfile}\"\n")
+	buf.WriteString("\teend $?\n")
+	buf.WriteString("}\n")
+	return buf.Bytes(), nil
 }
 
 func dhcpv6PrefixDelegationOpenRCSystemdSpec(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, telemetryEnv []string) api.SystemdUnitSpec {

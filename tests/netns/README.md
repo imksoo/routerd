@@ -19,6 +19,7 @@ To run one scenario:
 ```sh
 sudo ./frr-config-rollback.sh
 sudo ./keepalived-vip-failover.sh
+sudo ./keepalived-no-spurious-restart.sh
 sudo ./bgp-event-ordering.sh
 sudo ./ingress-conntrack-survive.sh
 sudo ./bgp-import-policy-reject.sh
@@ -32,6 +33,7 @@ The scripts cover:
 | --- | --- |
 | `frr-config-rollback.sh` | FRR rejects a bad reload and keeps the previous running config. |
 | `keepalived-vip-failover.sh` | Two keepalived instances move a VIP to standby within advert/preempt timing. |
+| `keepalived-no-spurious-restart.sh` | Repeated routerd VRRP reconciles do not restart an unchanged keepalived instance for 60 seconds. |
 | `bgp-event-ordering.sh` | Repeated 1 Hz-ish BGP peer flaps do not expose prefix observations before peer establishment observations. |
 | `ingress-conntrack-survive.sh` | Existing DNAT conntrack flows stay on the old backend while new flows use the new backend. |
 | `bgp-import-policy-reject.sh` | FRR import policy accepts allowed prefixes and rejects disallowed prefixes. |

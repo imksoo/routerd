@@ -19,6 +19,9 @@ before starting the daemon.
 `routerctl show vrrp` reports the observed role from the live interface state.
 On Linux/OpenRC this is derived from `ip addr show`: the node that owns the
 VIP address is `master`, and the peer that does not own it is `backup`.
+`LAST_TRANSITION` is the time routerd or `routerctl show vrrp` most recently
+observed the node's role changing, so a keepalived-only failover updates it when
+the CLI next reads the live VIP ownership.
 
 To preview the Alpine output without touching the host, use:
 

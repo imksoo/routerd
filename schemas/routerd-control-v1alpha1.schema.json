@@ -39,6 +39,9 @@
                   "interval": {
                     "type": "string"
                   },
+                  "lastChangeReason": {
+                    "type": "string"
+                  },
                   "lastDuration": {
                     "type": "string"
                   },
@@ -49,6 +52,14 @@
                     "type": "string"
                   },
                   "lastReconcileTime": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "lastReloadAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "lastRestartAt": {
                     "format": "date-time",
                     "type": "string"
                   },

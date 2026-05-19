@@ -68,7 +68,17 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, nil)
+	extra := map[string]any{}
+	if result.LastReloadAt != "" {
+		extra["lastReloadAt"] = result.LastReloadAt
+	}
+	if result.LastRestartAt != "" {
+		extra["lastRestartAt"] = result.LastRestartAt
+	}
+	if result.LastChangeReason != "" {
+		extra["lastChangeReason"] = result.LastChangeReason
+	}
+	return c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, extra)
 }
 
 func (c *Controller) saveError(path string, changed bool, tracks map[string]trackSummary, reason string, err error) error {
@@ -116,6 +126,7 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 			status["track"] = track.Entries
 			status["role"] = role
 			previous := c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
+			carryBackendActionStatus(status, previous, extra)
 			if statusString(previous, "role") == role && statusString(previous, "lastRoleTransitionAt") != "" {
 				status["lastRoleTransitionAt"] = statusString(previous, "lastRoleTransitionAt")
 			} else {
@@ -139,6 +150,18 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 		}
 	}
 	return nil
+}
+
+func carryBackendActionStatus(status, previous map[string]any, extra map[string]any) {
+	for _, key := range []string{"lastReloadAt", "lastRestartAt", "lastChangeReason"} {
+		if value, ok := extra[key]; ok && fmt.Sprint(value) != "" {
+			status[key] = value
+			continue
+		}
+		if value := statusString(previous, key); value != "" {
+			status[key] = value
+		}
+	}
 }
 
 type staticVIP struct {

@@ -45,6 +45,9 @@ type ControllerStatus struct {
 	LastTrigger           string               `json:"lastTrigger,omitempty" yaml:"lastTrigger,omitempty"`
 	LastReconcileTime     *time.Time           `json:"lastReconcileTime,omitempty" yaml:"lastReconcileTime,omitempty"`
 	LastSuccessTime       *time.Time           `json:"lastSuccessTime,omitempty" yaml:"lastSuccessTime,omitempty"`
+	LastReloadAt          *time.Time           `json:"lastReloadAt,omitempty" yaml:"lastReloadAt,omitempty"`
+	LastRestartAt         *time.Time           `json:"lastRestartAt,omitempty" yaml:"lastRestartAt,omitempty"`
+	LastChangeReason      string               `json:"lastChangeReason,omitempty" yaml:"lastChangeReason,omitempty"`
 	NextReconcileTime     *time.Time           `json:"nextReconcileTime,omitempty" yaml:"nextReconcileTime,omitempty"`
 	ReconcileCount        int64                `json:"reconcileCount,omitempty" yaml:"reconcileCount,omitempty"`
 	ReconcileErrorCount   int64                `json:"reconcileErrorCount,omitempty" yaml:"reconcileErrorCount,omitempty"`

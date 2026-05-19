@@ -19,6 +19,9 @@ script は起動前に `keepalived --config-test --use-file
 `routerctl show vrrp` の role は live interface state から観測します。
 Linux/OpenRC では `ip addr show` で VIP を持っている node を `master`、
 持っていない peer を `backup` と判定します。
+`LAST_TRANSITION` は routerd または `routerctl show vrrp` がその node の
+role 変化を最後に観測した時刻です。keepalived 単独の failover では、CLI が
+次に live VIP ownership を読んだタイミングで更新されます。
 
 host を変更せず Alpine 向け出力を確認するには次を使います。
 
