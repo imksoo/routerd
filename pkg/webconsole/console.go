@@ -359,8 +359,6 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.operationalPage(w, "vrrp")
 	case "ingress":
 		h.operationalPage(w, "ingress")
-	case "routes":
-		h.routesPage(w)
 	default:
 		if strings.HasPrefix(path, "api/v1/generations/") {
 			h.generationDetail(w, r, strings.TrimPrefix(path, "api/v1/generations/"))
@@ -699,14 +697,6 @@ func (h Handler) routes(w http.ResponseWriter) {
 	writeJSON(w, status)
 }
 
-func (h Handler) routesPage(w http.ResponseWriter) {
-	status := h.routesStatus()
-	page := routesHTMLPage(h.opts.Title, status)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(page))
-}
-
 func (h Handler) operationalPage(w http.ResponseWriter, kind string) {
 	resources, err := h.operationalResources(kind)
 	if err != nil {
@@ -753,7 +743,7 @@ func (h Handler) routesStatus() RoutesStatus {
 	status.Routes = append(status.Routes, h.configuredRouteEntries(resources)...)
 	status.Routes = append(status.Routes, bgpRouteEntries(resources)...)
 	status.BGPPeers = bgpRoutePeers(resources)
-	live, errors := liveKernelRouteEntries()
+	live, errors := liveKernelRouteEntries(time.Now().UTC())
 	status.Routes = append(status.Routes, live...)
 	status.Errors = append(status.Errors, errors...)
 	sortRouteEntries(status.Routes)
@@ -943,7 +933,7 @@ type linuxRouteJSON struct {
 	Prefsrc  string `json:"prefsrc"`
 }
 
-func liveKernelRouteEntries() ([]RouteEntry, []string) {
+func liveKernelRouteEntries(now time.Time) ([]RouteEntry, []string) {
 	var entries []RouteEntry
 	var errors []string
 	for _, family := range []struct {
@@ -958,7 +948,7 @@ func liveKernelRouteEntries() ([]RouteEntry, []string) {
 			errors = append(errors, err.Error())
 			continue
 		}
-		routes, err := parseLinuxRoutesJSON(out, family.Name)
+		routes, err := parseLinuxRoutesJSON(out, family.Name, now)
 		if err != nil {
 			errors = append(errors, err.Error())
 			continue
@@ -968,7 +958,7 @@ func liveKernelRouteEntries() ([]RouteEntry, []string) {
 	return entries, errors
 }
 
-func parseLinuxRoutesJSON(data []byte, family string) ([]RouteEntry, error) {
+func parseLinuxRoutesJSON(data []byte, family string, now time.Time) ([]RouteEntry, error) {
 	var raw []linuxRouteJSON
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse ip route %s json: %w", family, err)
@@ -989,6 +979,7 @@ func parseLinuxRoutesJSON(data []byte, family string) ([]RouteEntry, error) {
 			Scope:       item.Scope,
 			Type:        item.Type,
 			Phase:       "installed",
+			ObservedAt:  now.Format(time.RFC3339Nano),
 		})
 	}
 	return out, nil
@@ -1768,7 +1759,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </head>
 <body>
 <main>
-<nav><a href="./">Summary</a><a href="routes">Routes</a><a href="bgp">BGP</a><a href="vrrp">VRRP</a><a href="ingress">Ingress</a></nav>
+<nav><a href="./">Summary</a><a href="bgp">BGP</a><a href="vrrp">VRRP</a><a href="ingress">Ingress</a></nav>
 <h1>` + html.EscapeString(displayTitle) + `</h1>
 <div class="toolbar"><span id="live-state" class="badge">Connecting</span><span id="last-updated" class="muted"></span></div>
 <section>
@@ -1790,77 +1781,6 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </main>
 </body>
 </html>`
-}
-
-func routesHTMLPage(title string, status RoutesStatus) string {
-	var body strings.Builder
-	body.WriteString(`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>` + html.EscapeString(title+" Routes") + `</title>
-<style>
-:root{color-scheme:light dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-body{margin:0;background:#f7f8fa;color:#171b22}
-main{max-width:1240px;margin:0 auto;padding:24px}
-nav{display:flex;gap:12px;margin:0 0 20px;flex-wrap:wrap}
-a{color:#0f5f9f;text-decoration:none}
-h1{font-size:24px;margin:0 0 18px}
-section{margin:0 0 28px}
-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dde2ea}
-th,td{padding:9px 10px;border-bottom:1px solid #e7ebf0;text-align:left;font-size:14px;vertical-align:top}
-th{background:#eef2f6;font-weight:650}
-.muted{color:#5d6673}
-.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px}
-.badge{display:inline-flex;align-items:center;gap:6px;border:1px solid #bfd3e6;border-radius:999px;padding:4px 9px;font-size:13px;background:#fff}
-.controls{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
-.controls input,.controls select{font:inherit;font-size:14px;padding:6px 8px;border:1px solid #cad3df;border-radius:6px;background:#fff;color:inherit}
-@media (prefers-color-scheme:dark){body{background:#11151b;color:#eef2f6}table{background:#171c23;border-color:#303744}th,td{border-color:#2a313c}th{background:#202733}a{color:#8bc7ff}.muted{color:#a7b0bd}.badge{background:#171c23;border-color:#303744}.controls input,.controls select{background:#171c23;border-color:#303744}}
-</style>
-</head>
-<body>
-<main>
-<nav><a href="./">Summary</a><a href="routes">Routes</a><a href="bgp">BGP</a><a href="vrrp">VRRP</a><a href="ingress">Ingress</a></nav>
-<h1>Routes</h1>
-<div class="toolbar"><span id="live-state" class="badge">Polling</span><span id="last-updated" class="muted">Updated ` + html.EscapeString(status.GeneratedAt.Format(time.RFC3339)) + `</span></div>
-<section><div class="controls"><label>Source <select id="route-source"><option value="">All</option><option>kernel</option><option>bgp</option><option>static</option><option>dhcpv4</option><option>policy</option></select></label><label>Search <input id="route-search" placeholder="prefix, gateway, device, peer"></label></div><table><thead><tr><th>Source</th><th>Resource</th><th>Family</th><th>Destination</th><th>Gateway</th><th>Device</th><th>Protocol</th><th>Table</th><th>Metric</th><th>Peer</th><th>Phase</th></tr></thead><tbody id="routes-body">`)
-	writeRouteRowsHTML(&body, status.Routes)
-	body.WriteString(`</tbody></table></section><section><h2>BGP Peers</h2><table><thead><tr><th>Router</th><th>Peer</th><th>ASN</th><th>State</th><th>Prefixes</th><th>Messages</th><th>Last Established</th><th>Last Error</th></tr></thead><tbody id="bgp-peers-body">`)
-	writeRoutePeerRowsHTML(&body, status.BGPPeers)
-	body.WriteString(`</tbody></table></section>`)
-	if len(status.Errors) > 0 {
-		body.WriteString(`<section><h2>Collection errors</h2><table><tbody>`)
-		for _, errText := range status.Errors {
-			writeHTMLRow(&body, []string{errText})
-		}
-		body.WriteString(`</tbody></table></section>`)
-	}
-	body.WriteString(`<script>
-(function(){
-const routesBody=document.getElementById("routes-body"),peersBody=document.getElementById("bgp-peers-body"),state=document.getElementById("live-state"),updated=document.getElementById("last-updated"),source=document.getElementById("route-source"),search=document.getElementById("route-search");
-let routes=[],peers=[];
-function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
-function row(cells){return "<tr>"+cells.map(v=>"<td>"+esc(v||"-")+"</td>").join("")+"</tr>";}
-function routeText(r){return [r.source,r.resource,r.family,r.destination,r.gateway,r.device,r.protocol,r.table,r.metric,r.peer,r.phase].join(" ").toLowerCase();}
-function render(){const s=(search.value||"").toLowerCase(),src=source.value;routesBody.innerHTML=routes.filter(r=>(!src||r.source===src)&&(!s||routeText(r).includes(s))).map(r=>row([r.source,r.resource,r.family,r.destination,r.gateway,r.device,r.protocol,r.table,r.metric,r.peer,r.phase])).join("")||'<tr><td colspan="11" class="muted">No matching routes</td></tr>';peersBody.innerHTML=peers.map(p=>row([p.router,p.peer,p.asn,p.state,p.prefixesReceived,p.messages,p.lastEstablishedAt,p.lastErrorReason])).join("")||'<tr><td colspan="8" class="muted">No BGP peers observed</td></tr>';}
-async function refresh(){try{const r=await fetch("./api/v1/routes",{cache:"no-store"});if(!r.ok)throw new Error(String(r.status));const data=await r.json();routes=data.routes||[];peers=data.bgpPeers||[];updated.textContent=data.generatedAt?"Updated "+new Date(data.generatedAt).toLocaleString():"";state.textContent="Live";render();}catch(e){state.textContent="Polling failed";}}
-[source,search].forEach(el=>el.addEventListener("input",render));setInterval(refresh,30000);refresh();
-})();
-</script></main></body></html>`)
-	return body.String()
-}
-
-func writeRouteRowsHTML(body *strings.Builder, routes []RouteEntry) {
-	for _, route := range routes {
-		writeHTMLRow(body, []string{route.Source, route.Resource, route.Family, route.Destination, route.Gateway, route.Device, route.Protocol, route.Table, route.Metric, route.Peer, route.Phase})
-	}
-}
-
-func writeRoutePeerRowsHTML(body *strings.Builder, peers []RouteBGPPeer) {
-	for _, peer := range peers {
-		writeHTMLRow(body, []string{peer.Router, peer.Peer, peer.ASN, peer.State, peer.PrefixesReceived, peer.Messages, peer.LastEstablished, peer.LastError})
-	}
 }
 
 func operationalPageScript(kind string) string {

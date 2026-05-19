@@ -132,6 +132,42 @@ type ResourceStatus = {
   status?: Record<string, unknown>;
 };
 
+type RoutesStatus = {
+  generatedAt?: string;
+  routes?: RouteEntry[];
+  bgpPeers?: RouteBGPPeer[];
+  errors?: string[];
+};
+
+type RouteEntry = {
+  source?: string;
+  resource?: string;
+  family?: string;
+  destination?: string;
+  gateway?: string;
+  device?: string;
+  protocol?: string;
+  table?: string;
+  metric?: string;
+  scope?: string;
+  type?: string;
+  peer?: string;
+  phase?: string;
+  observedAt?: string;
+};
+
+type RouteBGPPeer = {
+  router?: string;
+  peer?: string;
+  asn?: string;
+  state?: string;
+  established?: boolean;
+  prefixesReceived?: string;
+  messages?: string;
+  lastEstablishedAt?: string;
+  lastErrorReason?: string;
+};
+
 type ControllerStatus = {
   name?: string;
   mode?: string;
@@ -558,7 +594,7 @@ type ClientRow = {
   isolationPolicy: Set<string>;
 };
 
-type ViewKey = "overview" | "resources" | "controllers" | "clients" | "connections" | "vpn" | "events" | "firewall" | "config" | "generations";
+type ViewKey = "overview" | "resources" | "routes" | "controllers" | "clients" | "connections" | "vpn" | "events" | "firewall" | "config" | "generations";
 type NavSubItem = { key: string; label: string; count?: number; view: ViewKey; targetID: string };
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
@@ -572,12 +608,13 @@ const connectionPageSizesStorageKey = "routerd.webconsole.connectionPageSizes";
 const navItems: { key: ViewKey; label: string; description: string; icon: React.ReactNode }[] = [
   { key: "overview", label: "Overview", description: "Status and interfaces", icon: <HomeRegular /> },
   { key: "resources", label: "Resources", description: "Resource phases and status detail", icon: <ServerRegular /> },
-  { key: "controllers", label: "Controllers", description: "Live and dry-run controller modes", icon: <ServerRegular /> },
+  { key: "routes", label: "Routes", description: "Kernel, static, DHCP, and BGP routes", icon: <DatabaseRegular /> },
   { key: "clients", label: "Clients", description: "Leases and endpoint traffic", icon: <PeopleRegular /> },
   { key: "connections", label: "Connections", description: "conntrack and live flows", icon: <PlugConnectedRegular /> },
   { key: "vpn", label: "VPN", description: "WireGuard and Tailscale peers", icon: <PlugConnectedRegular /> },
   { key: "events", label: "Events", description: "Bus events and resource changes", icon: <ServerRegular /> },
   { key: "firewall", label: "Firewall", description: "Deny ranking and timeline", icon: <ShieldRegular /> },
+  { key: "controllers", label: "Controllers", description: "Live and dry-run controller modes", icon: <ServerRegular /> },
   { key: "config", label: "Config", description: "Read-only YAML tree", icon: <DocumentTextRegular /> },
   { key: "generations", label: "Generations", description: "Applied YAML history and diffs", icon: <DocumentTextRegular /> },
 ];
@@ -1181,6 +1218,16 @@ const useStyles = makeStyles({
       gridTemplateColumns: "1fr",
     },
   },
+  routeFilters: {
+    display: "grid",
+    gridTemplateColumns: "minmax(min(100%, 16rem), 1.4fr) repeat(2, minmax(min-content, 12rem))",
+    gap: "8px",
+    alignItems: "end",
+    marginBottom: "12px",
+    "@media (max-width: 860px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
   singleSearchRow: {
     display: "grid",
     gridTemplateColumns: "minmax(min(100%, 14rem), 26rem)",
@@ -1259,6 +1306,28 @@ const useStyles = makeStyles({
   resourceMobileMeta: {
     display: "grid",
     gap: "4px",
+  },
+  routeMobileCard: {
+    display: "grid",
+    gap: "8px",
+    padding: "10px 12px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  routeMobileHeader: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) max-content",
+    gap: "8px",
+    alignItems: "start",
+  },
+  routeMobileDetails: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 9rem), 1fr))",
+    gap: "6px",
+  },
+  routePeerSection: {
+    marginTop: "12px",
   },
   clientsGrid: {
     display: "grid",
@@ -1524,6 +1593,11 @@ const useStyles = makeStyles({
     "@media (max-width: 640px)": {
       minWidth: "100%",
     },
+  },
+  routeTable: {
+    width: "max-content",
+    minWidth: "min(100%, 74rem)",
+    tableLayout: "auto",
   },
   controllerTable: {
     width: "max-content",
@@ -2185,6 +2259,7 @@ function App() {
   const initialLocation = parseLocationHash();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [config, setConfig] = useState<ConfigSnapshot | null>(null);
+  const [routesStatus, setRoutesStatus] = useState<RoutesStatus | null>(null);
   const [generations, setGenerations] = useState<GenerationRecord[]>([]);
   const [firewallDenyTimeline, setFirewallDenyTimeline] = useState<FirewallDenyTimelineBucket[]>([]);
   const [generationDiff, setGenerationDiff] = useState<string>("");
@@ -2279,6 +2354,7 @@ function App() {
     const generationLimit = selected === "generations" ? 200 : 50;
     const shouldFetchConfig = selected === "config";
     const shouldFetchGenerations = selected === "config" || selected === "generations";
+    const shouldFetchRoutes = selected === "routes";
     const includeClients = selected === "clients" || selected === "connections";
     const includeTuning = selected === "firewall";
     const includeVPN = selected === "vpn";
@@ -2303,11 +2379,12 @@ function App() {
       dhcpLeases: includeDHCPLeases ? "1" : "0",
     });
     try {
-      const [summaryResponse, configResponse, generationResponse, denyTimelineResponse] = await Promise.all([
+      const [summaryResponse, configResponse, generationResponse, denyTimelineResponse, routesResponse] = await Promise.all([
         fetchJSON<Summary>(`api/v1/summary?${summaryQuery.toString()}`),
         shouldFetchConfig ? (configRef.current ? Promise.resolve(configRef.current) : fetchJSON<ConfigSnapshot>("api/v1/config")) : Promise.resolve(null),
         shouldFetchGenerations ? fetchJSON<GenerationRecord[]>(`api/v1/generations?limit=${generationLimit}`) : Promise.resolve(null),
         selected === "firewall" ? fetchJSON<FirewallDenyTimelineBucket[]>("api/v1/firewall/deny-timeline?range=24h&bucket=5min") : Promise.resolve(null),
+        shouldFetchRoutes ? fetchJSON<RoutesStatus>("api/v1/routes") : Promise.resolve(null),
       ]);
       pendingScrollSnapshot.current = scrollSnapshot;
       setSummary(current => reconcileSummary(current, summaryResponse));
@@ -2327,6 +2404,9 @@ function App() {
       }
       if (Array.isArray(generationResponse)) {
         setGenerations(current => reconcileRecords(current, generationResponse, row => String(row.generation)));
+      }
+      if (routesResponse) {
+        setRoutesStatus(routesResponse as RoutesStatus);
       }
       setError("");
     } catch (err) {
@@ -2833,6 +2913,9 @@ function App() {
                 </div>
                 <ResourceTable resources={resources} controllers={controllers} navigateTo={navigateTo} />
               </Card>
+            ) : null}
+            {selected === "routes" ? (
+              <RoutesView status={routesStatus} />
             ) : null}
             {selected === "controllers" ? (
               <Card id="controllers-table" className={styles.connectionAnchor}>
@@ -3965,6 +4048,203 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
         })}
       </div>
     </>
+  );
+}
+
+function RoutesView({ status }: { status: RoutesStatus | null }) {
+  const styles = useStyles();
+  const routes = status?.routes ?? [];
+  const peers = status?.bgpPeers ?? [];
+  const [query, setQuery] = useState("");
+  const [protocol, setProtocol] = useState("all");
+  const [family, setFamily] = useState("all");
+  const protocols = useMemo(() => routeProtocolOptions(routes), [routes]);
+  const families = useMemo(() => routeFamilyOptions(routes), [routes]);
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return routes.filter(route => {
+      if (protocol !== "all" && routeProtocolBucket(route) !== protocol) return false;
+      if (family !== "all" && String(route.family || "unknown") !== family) return false;
+      if (!needle) return true;
+      return routeSearchText(route).includes(needle);
+    });
+  }, [routes, query, protocol, family]);
+  const latest = latestRouteObservedAt(status);
+  return (
+    <Card id="routes-table" className={styles.connectionAnchor}>
+      <CardHeader
+        header={<Text weight="semibold">Routes</Text>}
+        description={<Text className={styles.muted}>Kernel, configured, DHCP, and BGP routes with next-hop and observation state</Text>}
+      />
+      <div className={styles.grid}>
+        <Metric label="total routes" value={String(routes.length)} />
+        <Metric label="BGP" value={String(routes.filter(route => routeProtocolBucket(route) === "bgp").length)} />
+        <Metric label="static" value={String(routes.filter(route => routeProtocolBucket(route) === "static").length)} />
+        <Metric label="connected" value={String(routes.filter(route => routeProtocolBucket(route) === "connected").length)} />
+        <Metric label="kernel" value={String(routes.filter(route => routeProtocolBucket(route) === "kernel").length)} />
+        <Metric label="last reload" value={latest ? relativeTimeText(latest) : "-"} />
+      </div>
+      <div className={styles.routeFilters}>
+        <SearchControl label="Search routes" value={query} placeholder="prefix, next-hop, device, peer" onChange={setQuery} />
+        <div className={styles.filterControl}>
+          <Text size={200} className={styles.muted}>Protocol</Text>
+          <Select size="small" value={protocol} onChange={event => setProtocol(event.target.value)}>
+            <option value="all">All protocols</option>
+            {protocols.map(value => <option key={value} value={value}>{routeProtocolLabel(value)}</option>)}
+          </Select>
+        </div>
+        <div className={styles.filterControl}>
+          <Text size={200} className={styles.muted}>Family</Text>
+          <Select size="small" value={family} onChange={event => setFamily(event.target.value)}>
+            <option value="all">All families</option>
+            {families.map(value => <option key={value} value={value}>{formatFacet(value)}</option>)}
+          </Select>
+        </div>
+      </div>
+      <Text size={200} className={styles.muted}>Showing {filtered.length} of {routes.length} routes</Text>
+      {status?.errors?.length ? (
+        <div className={styles.activeFilterBanner}>
+          <Text weight="semibold">Collection errors</Text>
+          <Text size={200} className={styles.muted}>{status.errors.join("; ")}</Text>
+        </div>
+      ) : null}
+      <div className={`${styles.tableWrap} ${styles.resourceDesktopTable}`} data-routerd-scroll-key="routes-table">
+        <Table size="small" className={styles.routeTable}>
+          <colgroup>
+            <col style={{ width: "108px" }} />
+            <col style={{ width: "92px" }} />
+            <col style={{ width: "220px" }} />
+            <col style={{ width: "160px" }} />
+            <col style={{ width: "120px" }} />
+            <col style={{ width: "112px" }} />
+            <col style={{ width: "86px" }} />
+            <col style={{ width: "80px" }} />
+            <col style={{ width: "150px" }} />
+            <col style={{ width: "118px" }} />
+          </colgroup>
+          <TableHeader>
+            <TableRow>
+              <TableHeaderCell>Protocol</TableHeaderCell>
+              <TableHeaderCell>Family</TableHeaderCell>
+              <TableHeaderCell>Destination</TableHeaderCell>
+              <TableHeaderCell>Next hop</TableHeaderCell>
+              <TableHeaderCell>Device</TableHeaderCell>
+              <TableHeaderCell>Table</TableHeaderCell>
+              <TableHeaderCell>Metric</TableHeaderCell>
+              <TableHeaderCell>Phase</TableHeaderCell>
+              <TableHeaderCell>Resource</TableHeaderCell>
+              <TableHeaderCell>Observed</TableHeaderCell>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.map(route => (
+              <TableRow key={routeKey(route)} className={styles.stableTableRow}>
+                <TableCell><Badge appearance="tint" color={routeProtocolColor(routeProtocolBucket(route))}>{routeProtocolLabel(routeProtocolBucket(route))}</Badge></TableCell>
+                <TableCell>{formatFacet(route.family || "-")}</TableCell>
+                <TableCell><code className={styles.wrapCode}><Highlighted text={route.destination || "default"} query={query} /></code></TableCell>
+                <TableCell><code className={styles.wrapCode}><Highlighted text={route.gateway || route.peer || "-"} query={query} /></code></TableCell>
+                <TableCell><code className={styles.code}><Highlighted text={route.device || "-"} query={query} /></code></TableCell>
+                <TableCell><code className={styles.code}>{route.table || "-"}</code></TableCell>
+                <TableCell>{route.metric || "-"}</TableCell>
+                <TableCell><Text size={200} className={styles.muted}>{route.phase || "-"}</Text></TableCell>
+                <TableCell><code className={styles.wrapCode}><Highlighted text={route.resource || route.source || "-"} query={query} /></code></TableCell>
+                <TableCell>{route.observedAt ? <RelativeTime value={route.observedAt} /> : <Text size={200} className={styles.muted}>-</Text>}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <div className={styles.resourceMobileList}>
+        {filtered.map(route => (
+          <div className={styles.routeMobileCard} key={`mobile-${routeKey(route)}`}>
+            <div className={styles.routeMobileHeader}>
+              <div className={styles.connectionFlow}>
+                <code className={styles.wrapCode}><Highlighted text={route.destination || "default"} query={query} /></code>
+                <Text size={200} className={styles.muted}>{route.gateway || route.peer ? <>via <Highlighted text={route.gateway || route.peer || ""} query={query} /></> : "direct"}</Text>
+              </div>
+              <Badge appearance="tint" color={routeProtocolColor(routeProtocolBucket(route))}>{routeProtocolLabel(routeProtocolBucket(route))}</Badge>
+            </div>
+            <div className={styles.routeMobileDetails}>
+              <RouteDetail label="family" value={formatFacet(route.family || "-")} />
+              <RouteDetail label="device" value={route.device || "-"} code />
+              <RouteDetail label="table" value={route.table || "-"} code />
+              <RouteDetail label="metric" value={route.metric || "-"} />
+              <RouteDetail label="phase" value={route.phase || "-"} />
+              <div className={styles.connectionFlow}>
+                <Text size={200} className={styles.muted}>observed</Text>
+                {route.observedAt ? <RelativeTime value={route.observedAt} /> : <Text size={200}>-</Text>}
+              </div>
+            </div>
+            <Text size={200} className={styles.muted}>{route.resource || route.source || "-"}</Text>
+          </div>
+        ))}
+      </div>
+      <RoutePeers peers={peers} />
+    </Card>
+  );
+}
+
+function RouteDetail({ label, value, code }: { label: string; value: string; code?: boolean }) {
+  const styles = useStyles();
+  return (
+    <div className={styles.connectionFlow}>
+      <Text size={200} className={styles.muted}>{label}</Text>
+      {code ? <code className={styles.code}>{value}</code> : <Text>{value}</Text>}
+    </div>
+  );
+}
+
+function RoutePeers({ peers }: { peers: RouteBGPPeer[] }) {
+  const styles = useStyles();
+  if (peers.length === 0) return null;
+  return (
+    <div className={styles.routePeerSection}>
+      <CardHeader header={<Text weight="semibold">BGP peers</Text>} description={<Text className={styles.muted}>Peer state associated with BGP route observations</Text>} />
+      <div className={`${styles.tableWrap} ${styles.resourceDesktopTable}`} data-routerd-scroll-key="routes-bgp-peers">
+        <Table size="small" className={styles.resourceTable}>
+          <TableHeader>
+            <TableRow>
+              <TableHeaderCell>Router</TableHeaderCell>
+              <TableHeaderCell>Peer</TableHeaderCell>
+              <TableHeaderCell>ASN</TableHeaderCell>
+              <TableHeaderCell>State</TableHeaderCell>
+              <TableHeaderCell>Prefixes</TableHeaderCell>
+              <TableHeaderCell>Messages</TableHeaderCell>
+              <TableHeaderCell>Last established</TableHeaderCell>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {peers.map(peer => (
+              <TableRow key={routePeerKey(peer)} className={styles.stableTableRow}>
+                <TableCell><code className={styles.code}>{peer.router || "-"}</code></TableCell>
+                <TableCell><code className={styles.code}>{peer.peer || "-"}</code></TableCell>
+                <TableCell>{peer.asn || "-"}</TableCell>
+                <TableCell><Badge appearance="tint" color={peer.established ? "success" : "warning"}>{peer.state || "Unknown"}</Badge></TableCell>
+                <TableCell>{peer.prefixesReceived || "-"}</TableCell>
+                <TableCell>{peer.messages || "-"}</TableCell>
+                <TableCell>{peer.lastEstablishedAt ? <RelativeTime value={peer.lastEstablishedAt} /> : <Text size={200} className={styles.muted}>-</Text>}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <div className={styles.resourceMobileList}>
+        {peers.map(peer => (
+          <div className={styles.routeMobileCard} key={`mobile-${routePeerKey(peer)}`}>
+            <div className={styles.routeMobileHeader}>
+              <code className={styles.code}>{peer.peer || "-"}</code>
+              <Badge appearance="tint" color={peer.established ? "success" : "warning"}>{peer.state || "Unknown"}</Badge>
+            </div>
+            <div className={styles.routeMobileDetails}>
+              <RouteDetail label="router" value={peer.router || "-"} code />
+              <RouteDetail label="ASN" value={peer.asn || "-"} />
+              <RouteDetail label="prefixes" value={peer.prefixesReceived || "-"} />
+              <RouteDetail label="messages" value={peer.messages || "-"} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -6687,6 +6967,106 @@ function formatConnectionGroupTitle(label: { family: string; protocol: string })
 
 function connectionGroupID(key: string) {
   return `connections-${key.replace(/[^a-zA-Z0-9_-]+/g, "-")}`;
+}
+
+function routeKey(route: RouteEntry) {
+  return [
+    route.source || "",
+    route.resource || "",
+    route.family || "",
+    route.destination || "",
+    route.gateway || "",
+    route.device || "",
+    route.protocol || "",
+    route.table || "",
+    route.metric || "",
+    route.peer || "",
+  ].join("|");
+}
+
+function routePeerKey(peer: RouteBGPPeer) {
+  return [peer.router || "", peer.peer || "", peer.asn || ""].join("|");
+}
+
+function routeSearchText(route: RouteEntry) {
+  return [
+    route.source,
+    route.resource,
+    route.family,
+    route.destination,
+    route.gateway,
+    route.device,
+    route.protocol,
+    route.table,
+    route.metric,
+    route.scope,
+    route.type,
+    route.peer,
+    route.phase,
+  ].join(" ").toLowerCase();
+}
+
+function routeProtocolBucket(route: RouteEntry) {
+  const source = String(route.source || "").toLowerCase();
+  const protocol = String(route.protocol || "").toLowerCase();
+  if (source === "bgp" || protocol === "bgp") return "bgp";
+  if (source === "static" || protocol === "static") return "static";
+  if (source === "kernel" && !route.gateway && (protocol === "kernel" || route.scope === "link")) return "connected";
+  if (source === "kernel") return "kernel";
+  if (source === "dhcpv4" || protocol === "dhcp") return "dhcp";
+  if (source === "policy") return "policy";
+  return source || protocol || "other";
+}
+
+function routeProtocolLabel(value: string) {
+  switch (value) {
+    case "bgp":
+      return "BGP";
+    case "dhcp":
+      return "DHCP";
+    default:
+      return formatFacet(value);
+  }
+}
+
+function routeProtocolOptions(routes: RouteEntry[]) {
+  const preferred = ["bgp", "static", "connected", "kernel"];
+  const values = new Set(routes.map(routeProtocolBucket));
+  const out = preferred.filter(value => values.has(value));
+  for (const value of Array.from(values).sort(facetSort)) {
+    if (!out.includes(value)) out.push(value);
+  }
+  return out;
+}
+
+function routeFamilyOptions(routes: RouteEntry[]) {
+  return Array.from(new Set(routes.map(route => String(route.family || "unknown")))).sort(facetSort);
+}
+
+function routeProtocolColor(value: string): "success" | "warning" | "danger" | "informative" | "subtle" {
+  switch (value) {
+    case "bgp":
+      return "success";
+    case "static":
+      return "informative";
+    case "connected":
+      return "subtle";
+    case "kernel":
+      return "warning";
+    default:
+      return "subtle";
+  }
+}
+
+function latestRouteObservedAt(status: RoutesStatus | null) {
+  const values = (status?.routes ?? []).map(route => route.observedAt).filter(Boolean) as string[];
+  let latest = "";
+  for (const value of values) {
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) continue;
+    if (!latest || timestamp > Date.parse(latest)) latest = value;
+  }
+  return latest || status?.generatedAt || "";
 }
 
 function navigationSubItems(selected: ViewKey, groups: { key: string; rows: ConnectionEntry[] }[], summary: Summary | null): NavSubItem[] {
