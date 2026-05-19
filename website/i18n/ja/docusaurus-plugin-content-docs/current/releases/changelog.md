@@ -46,9 +46,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - OTLP environment rendering と stdout / syslog / Loki への内蔵 routerd event
   forwarding 用の `ObservabilityPipeline`、および apply/controller mutation を
   file lease で gate する `RouterdCluster` を追加しました。
-- Alpine/OpenRC 向け VRRP apply support を追加しました。`routerd apply --once`
-  が keepalived config を render し、OpenRC の `keepalived` service を管理し、
-  live address から観測した VRRP role を status に保存します。Alpine 向け
+- Alpine/OpenRC 向け VRRP render support を追加しました。`routerd apply --once`
+  が keepalived config artifact を書き、OpenRC の `keepalived` service 管理と
+  live VRRP role observation は controller-chain serve が担当します。Alpine 向け
   Kubernetes VIP example も追加しました。
 - Alpine Live ISO の経路を改善し、VRRP controller の既定を live にし、
   `routerctl show vrrp` は live address から role を再観測します。version
@@ -57,9 +57,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - live VRRP reconcile で keepalived の no-op reload/restart を避け、
   最後に keepalived を reload/restart した時刻と理由を controller status に
   出すようにしました。
-- `routerd apply --once` の VRRP 処理を daemon mode と同じ controller
-  reconcile 経路へ寄せ、keepalived reload/restart status fields が一貫して
-  保存されるようにしました。
+- VRRP daemon lifecycle は controller-chain serve に限定しました。
+  `routerd apply --once` は keepalived artifact を render し、reload/restart
+  せず controller handoff status を記録します。
 - IngressService の live nftables apply を独立 NAT44 dry-run mode から分離し、
   hostname の DNSZone coverage は warning に緩和しました。外部 DNS 管理の名前は
   `externalDNS` で自動公開と warning を抑止できます。
@@ -103,16 +103,16 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 
 ### 修正
 
-- BGP bootstrap の daemon mode / `routerd apply --once` 差分を修正しました。
-  `BGPRouter` がある場合は `bgpd` を enable し、必要に応じて FRR を restart して
-  生成済み FRR config を読み込み、live peer state を同じ controller 経路で
-  保存します。
+- BGP の `apply --once` を daemon lifecycle から分離しました。`routerd apply
+  --once` は FRR config と daemon artifact の render のみ行い、`bgpd` の
+  enable/restart、`vtysh` validation、live reload、peer observation は
+  `routerd serve --controller-chain` が担当します。
 - FRR JSON が数値フィールドを文字列として返す場合の BGP observation を修正し、
   `routerctl show bgp` は古い stored status を live `vtysh` output で更新して
   表示するようにしました。
-- FRR bootstrap reload の順序を修正し、`frr-reload.py` 実行前に `bgpd` の ready を
-  待つようにしました。timeout を設け、`apply --once` が hang せず controller status
-  に reason を残して失敗します。
+- FRR readiness と reload status は BGP controller 側に残し、controller-chain
+  serve が pending/error state を報告できるようにしました。`apply --once` は
+  `bgpd` や `frr-reload.py` を待ちません。
 - Web Console に Routes view と `/api/v1/routes` endpoint を追加しました。kernel、
   BGP、static、DHCP、policy route 情報と BGP peer state を同じ画面で確認できます。
 

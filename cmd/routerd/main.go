@@ -37,9 +37,7 @@ import (
 	"routerd/pkg/bus"
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
-	bgpcontroller "routerd/pkg/controller/bgp"
 	controllerchain "routerd/pkg/controller/chain"
-	vrrpcontroller "routerd/pkg/controller/vrrp"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/eventlog"
 	"routerd/pkg/ha"
@@ -1167,10 +1165,9 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 
 		var vrrpChangedFiles []string
 		var vrrpChanged bool
-		var observedVRRP []string
 		if err := recordStageError("vrrp", func() error {
 			var err error
-			vrrpChangedFiles, vrrpChanged, observedVRRP, err = reconcileVRRPControllerOnce(context.Background(), effectiveRouter, stateStore, false)
+			vrrpChangedFiles, vrrpChanged, err = applyVRRPArtifactsOnce(effectiveRouter, stateStore)
 			return err
 		}()); err != nil {
 			return nil, err
@@ -1178,10 +1175,9 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 
 		var bgpChangedFiles []string
 		var bgpChanged bool
-		var observedBGP []string
 		if err := recordStageError("bgp", func() error {
 			var err error
-			bgpChangedFiles, bgpChanged, observedBGP, err = reconcileBGPControllerOnce(context.Background(), effectiveRouter, stateStore, false)
+			bgpChangedFiles, bgpChanged, err = applyBGPArtifactsOnce(effectiveRouter, stateStore)
 			return err
 		}()); err != nil {
 			return nil, err
@@ -1419,17 +1415,17 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 				fmt.Fprintln(stdout, "applied NTP client")
 			}
 			if len(vrrpChangedFiles) > 0 {
-				fmt.Fprintln(stdout, "applied keepalived")
+				fmt.Fprintln(stdout, "rendered VRRP artifacts")
 			}
 			if bgpChanged {
-				fmt.Fprintln(stdout, "applied bgp")
+				fmt.Fprintln(stdout, "rendered BGP artifacts")
 			}
 		}
 		if len(changedFiles) == 0 && vrrpChanged {
-			fmt.Fprintln(stdout, "applied virtual address")
+			fmt.Fprintln(stdout, "rendered VRRP artifacts")
 		}
 		if len(changedFiles) == 0 && bgpChanged {
-			fmt.Fprintln(stdout, "applied bgp")
+			fmt.Fprintln(stdout, "rendered BGP artifacts")
 		}
 		for _, key := range appliedRuntime {
 			fmt.Fprintf(stdout, "applied sysctl %s\n", key)
@@ -1442,12 +1438,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		}
 		for _, hostname := range appliedHostnames {
 			fmt.Fprintf(stdout, "applied hostname %s\n", hostname)
-		}
-		for _, item := range observedVRRP {
-			fmt.Fprintf(stdout, "observed VRRP %s\n", item)
-		}
-		for _, item := range observedBGP {
-			fmt.Fprintf(stdout, "observed BGP %s\n", item)
 		}
 		for _, address := range appliedIPv6DelegatedAddresses {
 			fmt.Fprintf(stdout, "applied IPv6 delegated address %s\n", address)
@@ -1488,7 +1478,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			"ipv4DefaultRoutes":   fmt.Sprintf("%d", len(appliedDefaultRoutes)),
 			"ipv4PolicyRouteSets": fmt.Sprintf("%d", len(appliedPolicyRoutes)),
 			"ipv4PolicyRulesGone": fmt.Sprintf("%d", len(cleanedPolicyRules)),
-			"bgpPeers":            fmt.Sprintf("%d", len(observedBGP)),
+			"bgpFiles":            fmt.Sprintf("%d", len(bgpChangedFiles)),
 			"ownedOrphansGone":    fmt.Sprintf("%d", len(cleanedPreDSLiteOrphans)+len(cleanedLedgerOrphans)),
 			"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
 		})
@@ -7174,56 +7164,83 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	return nil, nil
 }
 
-func reconcileVRRPControllerOnce(ctx context.Context, router *api.Router, store routerstate.Store, dryRun bool) ([]string, bool, []string, error) {
-	statusStore, ok := store.(routerstate.ObjectStatusStore)
-	if !ok || router == nil || platformDefaults.OS == platform.OSFreeBSD || isNixOSHost() || !routerHasVirtualAddress(router) {
-		return nil, false, nil, nil
+func applyVRRPArtifactsOnce(router *api.Router, store routerstate.Store) ([]string, bool, error) {
+	if router == nil || platformDefaults.OS == platform.OSFreeBSD || isNixOSHost() || !routerHasVirtualAddress(router) {
+		return nil, false, nil
 	}
-	controller := vrrpcontroller.Controller{
-		Router:          router,
-		Store:           statusStore,
-		DryRun:          dryRun,
-		ConfigPath:      runtimeKeepalivedConfigPath,
-		Systemctl:       "systemctl",
-		RCService:       "rc-service",
-		KeepalivedCheck: "keepalived",
-		IP:              "ip",
-		OpenRC:          platformFeatures.HasOpenRC,
-		OperatingSystem: platformDefaults.OS,
-		Logger:          slog.Default(),
+	data, err := render.KeepalivedConfig(router, routerInterfaceAliases(router.Spec.Resources))
+	if err != nil || len(data) == 0 {
+		return nil, false, err
 	}
-	if err := controller.Reconcile(ctx); err != nil {
-		return nil, false, nil, err
+	if err := os.MkdirAll(filepath.Dir(runtimeKeepalivedConfigPath), 0755); err != nil {
+		return nil, false, err
 	}
-	files, changed, observed := summarizeVRRPControllerStatuses(router, statusStore)
-	return files, changed, observed, nil
+	changed, err := writeFileIfChanged(runtimeKeepalivedConfigPath, data, 0644)
+	if err != nil {
+		return nil, false, err
+	}
+	if statusStore, ok := store.(routerstate.ObjectStatusStore); ok {
+		if err := saveVRRPRenderedStatuses(router, statusStore, changed); err != nil {
+			return nil, false, err
+		}
+	}
+	if !changed {
+		return nil, false, nil
+	}
+	return []string{runtimeKeepalivedConfigPath}, true, nil
 }
 
-func reconcileBGPControllerOnce(ctx context.Context, router *api.Router, store routerstate.Store, dryRun bool) ([]string, bool, []string, error) {
-	statusStore, ok := store.(routerstate.ObjectStatusStore)
-	if !ok || router == nil || platformDefaults.OS == platform.OSFreeBSD || isNixOSHost() || !routerHasBGP(router) {
-		return nil, false, nil, nil
+func saveVRRPRenderedStatuses(router *api.Router, store routerstate.ObjectStatusStore, changed bool) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	aliases := routerInterfaceAliases(router.Spec.Resources)
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || (resource.Kind != "VirtualIPv4Address" && resource.Kind != "VirtualIPv6Address") {
+			continue
+		}
+		address, ifname, mode := "", "", ""
+		switch resource.Kind {
+		case "VirtualIPv4Address":
+			spec, err := resource.VirtualIPv4AddressSpec()
+			if err != nil {
+				return err
+			}
+			address = spec.Address
+			if resolved, err := render.VirtualIPv4Address(router, spec); err == nil {
+				address = resolved
+			}
+			ifname = aliases[spec.Interface]
+			mode = spec.Mode
+		case "VirtualIPv6Address":
+			spec, err := resource.VirtualIPv6AddressSpec()
+			if err != nil {
+				return err
+			}
+			address = spec.Address
+			if resolved, err := render.VirtualIPv6Address(router, spec); err == nil {
+				address = resolved
+			}
+			ifname = aliases[spec.Interface]
+			mode = spec.Mode
+		}
+		status := map[string]any{
+			"phase":      "Rendered",
+			"backend":    "keepalived",
+			"address":    address,
+			"ifname":     ifname,
+			"configPath": runtimeKeepalivedConfigPath,
+			"applyWith":  "routerd serve --controller-chain",
+			"changed":    changed,
+			"dryRun":     false,
+			"observedAt": now,
+		}
+		if mode == "vrrp" {
+			status["role"] = "unknown"
+		}
+		if err := store.SaveObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
+			return err
+		}
 	}
-	serviceCommand := "systemctl"
-	if platformFeatures.HasOpenRC {
-		serviceCommand = "rc-service"
-	}
-	controller := bgpcontroller.Controller{
-		Router:      router,
-		Store:       statusStore,
-		DryRun:      dryRun,
-		ConfigPath:  runtimeFRRConfigPath,
-		DaemonsPath: runtimeFRRDaemonsPath,
-		VTYSH:       "vtysh",
-		FRRReload:   "frr-reload.py",
-		Systemctl:   serviceCommand,
-		Logger:      slog.Default(),
-	}
-	if err := controller.Reconcile(ctx); err != nil {
-		return nil, false, nil, err
-	}
-	files, changed, observed := summarizeBGPControllerStatuses(router, statusStore)
-	return files, changed, observed, nil
+	return nil
 }
 
 func routerHasVirtualAddress(router *api.Router) bool {
@@ -7250,120 +7267,79 @@ func routerHasBGP(router *api.Router) bool {
 	return false
 }
 
-func summarizeVRRPControllerStatuses(router *api.Router, store routerstate.ObjectStatusStore) ([]string, bool, []string) {
-	var observed []string
-	changed := false
-	changedFiles := map[string]bool{}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.NetAPIVersion || (res.Kind != "VirtualIPv4Address" && res.Kind != "VirtualIPv6Address") {
-			continue
-		}
-		status := store.ObjectStatus(api.NetAPIVersion, res.Kind, res.Metadata.Name)
-		if statusBoolMap(status, "changed") {
-			changed = true
-			if statusStringMap(status, "backend") == "keepalived" {
-				if path := statusStringMap(status, "configPath"); path != "" {
-					changedFiles[path] = true
-				}
-			}
-		}
-		if role := statusStringMap(status, "role"); role != "" {
-			observed = append(observed, res.Metadata.Name+"="+role)
-		}
+func applyBGPArtifactsOnce(router *api.Router, store routerstate.Store) ([]string, bool, error) {
+	if router == nil || platformDefaults.OS == platform.OSFreeBSD || isNixOSHost() || !routerHasBGP(router) {
+		return nil, false, nil
 	}
-	files := make([]string, 0, len(changedFiles))
-	for path := range changedFiles {
-		files = append(files, path)
+	config, err := render.FRRConfig(router)
+	if err != nil || len(config) == 0 {
+		return nil, false, err
 	}
-	sort.Strings(files)
-	sort.Strings(observed)
-	return files, changed, observed
-}
+	var changedFiles []string
+	if err := os.MkdirAll(filepath.Dir(runtimeFRRConfigPath), 0755); err != nil {
+		return nil, false, err
+	}
+	changed, err := writeFileIfChanged(runtimeFRRConfigPath, config, 0644)
+	if err != nil {
+		return nil, false, err
+	}
+	if changed {
+		changedFiles = append(changedFiles, runtimeFRRConfigPath)
+	}
 
-func summarizeBGPControllerStatuses(router *api.Router, store routerstate.ObjectStatusStore) ([]string, bool, []string) {
-	var observed []string
-	changed := false
-	changedFiles := map[string]bool{}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.NetAPIVersion || res.Kind != "BGPRouter" {
-			continue
+	var existingDaemons []byte
+	if current, err := os.ReadFile(runtimeFRRDaemonsPath); err == nil {
+		existingDaemons = current
+	} else if !os.IsNotExist(err) {
+		return nil, false, err
+	}
+	daemons, err := render.FRRDaemons(existingDaemons, router)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(daemons) > 0 {
+		if err := os.MkdirAll(filepath.Dir(runtimeFRRDaemonsPath), 0755); err != nil {
+			return nil, false, err
 		}
-		status := store.ObjectStatus(api.NetAPIVersion, res.Kind, res.Metadata.Name)
-		if statusBoolMap(status, "changed") || statusBoolMap(status, "daemonsChanged") {
-			changed = true
-			if path := statusStringMap(status, "configPath"); path != "" {
-				changedFiles[path] = true
-			}
-			if path := statusStringMap(status, "daemonsPath"); path != "" {
-				changedFiles[path] = true
-			}
-		}
-		established := statusIntMap(status, "establishedPeers")
-		total := len(statusListMap(status, "peers"))
-		if total > 0 {
-			observed = append(observed, fmt.Sprintf("%s=%d/%d", res.Metadata.Name, established, total))
-		}
-	}
-	files := make([]string, 0, len(changedFiles))
-	for path := range changedFiles {
-		files = append(files, path)
-	}
-	sort.Strings(files)
-	sort.Strings(observed)
-	return files, changed, observed
-}
-
-func statusBoolMap(status map[string]any, key string) bool {
-	if status == nil {
-		return false
-	}
-	switch value := status[key].(type) {
-	case bool:
-		return value
-	case string:
-		return strings.EqualFold(strings.TrimSpace(value), "true")
-	default:
-		return false
-	}
-}
-
-func statusIntMap(status map[string]any, key string) int {
-	if status == nil {
-		return 0
-	}
-	switch value := status[key].(type) {
-	case int:
-		return value
-	case int64:
-		return int(value)
-	case float64:
-		return int(value)
-	case string:
-		parsed, _ := strconv.Atoi(strings.TrimSpace(value))
-		return parsed
-	default:
-		return 0
-	}
-}
-
-func statusListMap(status map[string]any, key string) []any {
-	if status == nil {
-		return nil
-	}
-	switch value := status[key].(type) {
-	case []any:
-		return value
-	default:
-		data, err := json.Marshal(value)
+		changed, err := writeFileIfChanged(runtimeFRRDaemonsPath, daemons, 0644)
 		if err != nil {
-			return nil
+			return nil, false, err
 		}
-		var out []any
-		if err := json.Unmarshal(data, &out); err != nil {
-			return nil
+		if changed {
+			changedFiles = append(changedFiles, runtimeFRRDaemonsPath)
 		}
-		return out
 	}
+	if statusStore, ok := store.(routerstate.ObjectStatusStore); ok {
+		if err := saveBGPRenderedStatuses(router, statusStore, len(changedFiles) > 0); err != nil {
+			return nil, false, err
+		}
+	}
+	sort.Strings(changedFiles)
+	return changedFiles, len(changedFiles) > 0, nil
+}
+
+func saveBGPRenderedStatuses(router *api.Router, store routerstate.ObjectStatusStore, changed bool) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || (resource.Kind != "BGPRouter" && resource.Kind != "BGPPeer") {
+			continue
+		}
+		status := map[string]any{
+			"phase":       "Rendered",
+			"backend":     "frr",
+			"configPath":  runtimeFRRConfigPath,
+			"daemonsPath": runtimeFRRDaemonsPath,
+			"applyWith":   "routerd serve --controller-chain",
+			"changed":     changed,
+			"dryRun":      false,
+			"observedAt":  now,
+			"conditions":  []map[string]any{{"type": "Configured", "status": "True", "reason": "FRRRendered"}},
+		}
+		if err := store.SaveObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyDirectDnsmasqConfig(configPath string, configData []byte, dnsmasqPath string) ([]string, error) {

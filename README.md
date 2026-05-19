@@ -17,9 +17,9 @@ general-purpose host to behave like an understandable router.
 Instead of spreading intent across netplan, systemd-networkd, dnsmasq,
 nftables, sysctl files, custom scripts, and one-off daemon units, routerd keeps
 the router shape in typed YAML resources. It then validates the configuration,
-shows a plan, applies the required host artifacts, starts managed daemons, and
-keeps status visible through `routerctl`, a local API, logs, and a read-only Web
-Console.
+shows a plan, writes the required host artifacts, and lets
+`routerd serve --controller-chain` own managed daemon lifecycle. Status stays
+visible through `routerctl`, a local API, logs, and a read-only Web Console.
 
 The project is built around a simple idea: a router should be configured like a
 system, but observed like a service.

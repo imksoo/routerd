@@ -168,7 +168,7 @@ func TestRunApplyOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
 	}
 }
 
-func TestRunApplyOnceVRRPUsesControllerStatus(t *testing.T) {
+func TestRunApplyOnceVRRPRendersKeepalivedWithoutDaemonLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -250,6 +250,13 @@ exit 0
 	if err != nil {
 		t.Fatalf("apply once: %v", err)
 	}
+	config, err := os.ReadFile(runtimeKeepalivedConfigPath)
+	if err != nil {
+		t.Fatalf("read keepalived config: %v", err)
+	}
+	if !strings.Contains(string(config), "vrrp_instance api_vip") || !strings.Contains(string(config), "virtual_router_id 66") {
+		t.Fatalf("keepalived config missing VRRP stanza:\n%s", config)
+	}
 
 	store, err := routerstate.OpenSQLite(statePath)
 	if err != nil {
@@ -257,74 +264,42 @@ exit 0
 	}
 	defer func() { _ = store.Close() }()
 	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "api-vip")
-	if statusStringMap(status, "lastReloadAt") == "" {
-		t.Fatalf("lastReloadAt missing from apply-once controller status: %#v", status)
+	if got := statusStringMap(status, "phase"); got != "Rendered" {
+		t.Fatalf("phase = %q, want Rendered; status=%#v", got, status)
 	}
-	if got := statusStringMap(status, "lastChangeReason"); got != "keepalived.config changed" {
-		t.Fatalf("lastChangeReason = %q, want keepalived.config changed; status=%#v", got, status)
+	if got := statusStringMap(status, "applyWith"); got != "routerd serve --controller-chain" {
+		t.Fatalf("applyWith = %q, want controller-chain handoff; status=%#v", got, status)
 	}
-	if got := statusStringMap(status, "role"); got != "master" {
-		t.Fatalf("role = %q, want master; status=%#v", got, status)
+	if got := statusStringMap(status, "role"); got != "unknown" {
+		t.Fatalf("role = %q, want unknown before controller-chain observation; status=%#v", got, status)
 	}
 	commands, err := os.ReadFile(commandLog)
 	if err != nil {
 		t.Fatalf("read command log: %v", err)
 	}
-	if !strings.Contains(string(commands), "rc-service keepalived reload") {
-		t.Fatalf("keepalived reload was not issued through controller path:\n%s", commands)
+	for _, unwanted := range []string{"rc-service keepalived reload", "rc-service keepalived restart", "keepalived --config-test", "ip -4 addr"} {
+		if strings.Contains(string(commands), unwanted) {
+			t.Fatalf("apply --once must not run VRRP daemon lifecycle command %q:\n%s", unwanted, commands)
+		}
 	}
-	if !strings.Contains(stdout.String(), "applied keepalived") {
-		t.Fatalf("stdout missing applied keepalived:\n%s", stdout.String())
+	if !strings.Contains(stdout.String(), "rendered VRRP artifacts") || strings.Contains(stdout.String(), "observed VRRP") || strings.Contains(stdout.String(), "applied keepalived") {
+		t.Fatalf("stdout did not describe VRRP as render-only:\n%s", stdout.String())
 	}
 }
 
-func TestRunApplyOnceBGPBootstrapsFRR(t *testing.T) {
+func TestRunApplyOnceBGPRendersFRRArtifactsWithoutDaemonLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		t.Fatalf("create fake bin dir: %v", err)
 	}
 	commandLog := filepath.Join(dir, "commands.log")
-	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
-echo "systemctl $@" >> %q
-exit 0
-`, commandLog))
-	writeExecutable(t, filepath.Join(binDir, "frr-reload.py"), fmt.Sprintf(`#!/bin/sh
-echo "frr-reload.py $@" >> %q
-exit 0
-`, commandLog))
-	writeExecutable(t, filepath.Join(binDir, "ss"), fmt.Sprintf(`#!/bin/sh
-echo "ss $@" >> %q
-cat <<'EOF'
-State  Recv-Q Send-Q Local Address:Port Peer Address:Port
-LISTEN 0      4096         0.0.0.0:179      0.0.0.0:*
-EOF
-exit 0
-`, commandLog))
-	writeExecutable(t, filepath.Join(binDir, "vtysh"), fmt.Sprintf(`#!/bin/sh
-echo "vtysh $@" >> %q
-case "$*" in
-  "-C -f "*)
-    test -s "$3"
-    exit $?
-    ;;
-  "-c show running-config")
-    echo ""
-    exit 0
-    ;;
-  "-c show bgp summary json")
-    cat <<'JSON'
-{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":"64513","state":"Established","pfxRcd":"2","msgRcvd":"12","msgSent":"11"}}}}
-JSON
-    exit 0
-    ;;
-  "-c show bgp ipv4 unicast json")
-    echo '{"routes":{"10.250.0.10/32":[{"valid":true,"bestpath":true}]}}'
-    exit 0
-    ;;
-esac
-exit 1
-`, commandLog))
+	for _, name := range []string{"systemctl", "rc-service", "ss", "vtysh", "frr-reload.py"} {
+		writeExecutable(t, filepath.Join(binDir, name), fmt.Sprintf(`#!/bin/sh
+echo "%s $@" >> %q
+exit 99
+`, name, commandLog))
+	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	oldDefaults := platformDefaults
@@ -403,19 +378,18 @@ exit 1
 	if !strings.Contains(string(config), "router bgp 64512") || !strings.Contains(string(config), "neighbor 10.0.0.21 remote-as 64513") {
 		t.Fatalf("frr config missing bgp stanza:\n%s", config)
 	}
-	commands, err := os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatalf("read command log: %v", err)
-	}
-	for _, want := range []string{
-		"systemctl enable frr.service",
-		"systemctl restart frr.service",
-		"ss -ltn",
-		"vtysh -C -f " + runtimeFRRConfigPath,
-		"frr-reload.py --reload " + runtimeFRRConfigPath,
-	} {
-		if !strings.Contains(string(commands), want) {
-			t.Fatalf("command log missing %q:\n%s", want, commands)
+	if commands, err := os.ReadFile(commandLog); err == nil {
+		for _, unwanted := range []string{
+			"systemctl enable frr.service",
+			"systemctl restart frr.service",
+			"rc-service frr restart",
+			"ss -ltn",
+			"vtysh ",
+			"frr-reload.py ",
+		} {
+			if strings.Contains(string(commands), unwanted) {
+				t.Fatalf("apply --once must not run BGP daemon lifecycle command %q:\n%s", unwanted, commands)
+			}
 		}
 	}
 	store, err := routerstate.OpenSQLite(statePath)
@@ -424,14 +398,14 @@ exit 1
 	}
 	defer func() { _ = store.Close() }()
 	status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if got := statusStringMap(status, "phase"); got != "Established" {
-		t.Fatalf("phase = %q, want Established; status=%#v", got, status)
+	if got := statusStringMap(status, "phase"); got != "Rendered" {
+		t.Fatalf("phase = %q, want Rendered; status=%#v", got, status)
 	}
-	if got := statusIntMap(status, "establishedPeers"); got != 1 {
-		t.Fatalf("establishedPeers = %d, want 1; status=%#v", got, status)
+	if got := statusStringMap(status, "applyWith"); got != "routerd serve --controller-chain" {
+		t.Fatalf("applyWith = %q, want controller-chain handoff; status=%#v", got, status)
 	}
-	if !strings.Contains(stdout.String(), "applied bgp") || !strings.Contains(stdout.String(), "observed BGP lan=1/1") {
-		t.Fatalf("stdout missing BGP apply/observe lines:\n%s", stdout.String())
+	if !strings.Contains(stdout.String(), "rendered BGP artifacts") || strings.Contains(stdout.String(), "observed BGP") || strings.Contains(stdout.String(), "applied bgp") {
+		t.Fatalf("stdout did not describe BGP as render-only:\n%s", stdout.String())
 	}
 }
 

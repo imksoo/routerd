@@ -46,17 +46,17 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added `ObservabilityPipeline` for OTLP environment rendering and built-in
   routerd event forwarding to stdout, syslog, or Loki, plus `RouterdCluster`
   file-lease high availability gating for apply/controller mutation.
-- Added Alpine/OpenRC VRRP apply support: `routerd apply --once` now renders
-  keepalived config, manages the OpenRC `keepalived` service, records observed
-  VRRP roles from live addresses, and includes an Alpine Kubernetes VIP example.
+- Added Alpine/OpenRC VRRP render support: `routerd apply --once` writes the
+  keepalived config artifact, while controller-chain serve manages the OpenRC
+  `keepalived` service and observes live VRRP roles.
 - Polished the Alpine live ISO path with live VRRP controller defaults, live
   `routerctl show vrrp` role observation, commit-aware version output, FRR
   reload tooling dependencies, and non-blocking setup wizard behavior.
 - Avoided no-op keepalived reloads during live VRRP reconcile and exposed the
   last keepalived reload/restart time and reason in controller status.
-- Routed `routerd apply --once` VRRP handling through the same controller
-  reconcile path as daemon mode, so keepalived reload/restart status fields are
-  written consistently.
+- Kept VRRP daemon lifecycle in controller-chain serve. `routerd apply --once`
+  renders keepalived artifacts and records controller handoff status without
+  reload/restart.
 - Decoupled IngressService live nftables apply from independent NAT44 dry-run
   mode and relaxed hostname DNSZone coverage to warnings with an `externalDNS`
   opt-out for externally managed DNS names.
@@ -102,14 +102,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Fixed
 
-- Fixed BGP bootstrap parity so `routerd apply --once` enables `bgpd`, restarts
-  FRR when needed, loads the generated FRR config, and records live peer state
-  through the same controller path as daemon mode.
+- Separated BGP apply-once rendering from daemon lifecycle. `routerd apply
+  --once` now writes the FRR config and daemon artifact only; `routerd serve
+  --controller-chain` owns bgpd enable/restart, `vtysh` validation, live reload,
+  and peer observation.
 - Fixed BGP observation for FRR JSON fields emitted as strings and made
   `routerctl show bgp` refresh stale stored status from live `vtysh` output.
-- Fixed FRR bootstrap reload ordering by waiting for `bgpd` readiness before
-  running `frr-reload.py`, with a bounded timeout so `apply --once` fails with
-  controller status instead of hanging.
+- Kept FRR readiness and reload status in the BGP controller path so
+  controller-chain serve can report pending/error state without making
+  `apply --once` wait on bgpd or `frr-reload.py`.
 - Added a Web Console Routes view and `/api/v1/routes` endpoint that combines
   kernel, BGP, static, DHCP, and policy route information with BGP peer state.
 
