@@ -733,6 +733,38 @@ func TestNftablesIngressServiceResolvesListenAddressFromStaticAddress(t *testing
 	}
 }
 
+func TestNftablesIngressServiceAutoHairpinForSameInterfaceSubnet(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-ip"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.1.1/24"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "kubernetes-api"}, Spec: api.IngressServiceSpec{
+				Listen: api.IngressListenSpec{Interface: "lan", Address: "192.168.1.248", Protocol: "tcp", Port: 6443},
+				Backends: []api.IngressBackendSpec{
+					{Name: "cp-01", Address: "192.168.1.54", Port: 6443},
+					{Name: "cp-02", Address: "192.168.1.55", Port: 6443},
+				},
+			}},
+		}},
+	}
+	data, err := NftablesIPv4SourceNAT(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`iifname "ens18" ip daddr 192.168.1.248 tcp dport 6443 counter dnat to 192.168.1.54:6443 comment "routerd IngressService kubernetes-api"`,
+		`iifname "ens18" ip daddr 192.168.1.54 tcp dport 6443 ct original ip daddr 192.168.1.248 ct original proto-dst 6443 counter masquerade comment "routerd IngressService kubernetes-api hairpin"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `dnat to 192.168.1.54:6443 comment "routerd IngressService kubernetes-api hairpin"`) {
+		t.Fatalf("unexpected duplicate same-interface hairpin DNAT:\n%s", got)
+	}
+}
+
 func TestNftablesIngressServiceSourceHashDistributesBackends(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{

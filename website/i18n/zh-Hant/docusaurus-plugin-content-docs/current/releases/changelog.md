@@ -44,6 +44,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - 將 IngressService 的 live nftables apply 與獨立 NAT44 dry-run mode 解耦；
   hostname 的 DNSZone coverage 現在降級為 warning，並可用 `externalDNS`
   標記外部 DNS 管理的名稱。
+- 自動處理 IngressService 的同一 interface hairpin SNAT 和轉發所需的 runtime
+  `ip_forward` sysctl，並在 `routerctl show ingress --verbose` 中顯示
+  forwarding、nftables、conntrack 的 dataplane 狀態。
 
 ## v20260519.0743
 

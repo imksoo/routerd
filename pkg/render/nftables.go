@@ -282,6 +282,9 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 			for _, rule := range ingressRules {
 				writeIngressDNATRule(&buf, rule, rule.ListenInterface, "")
 				for _, ifname := range rule.HairpinInterfaces {
+					if ifname == rule.ListenInterface {
+						continue
+					}
 					writeIngressDNATRule(&buf, rule, ifname, " hairpin")
 				}
 			}
@@ -984,6 +987,9 @@ func writeIngressForwardAcceptRules(buf *bytes.Buffer, rules []ingressNATRule) {
 	for _, rule := range rules {
 		writeIngressForwardAcceptRule(buf, rule, rule.ListenInterface, "")
 		for _, ifname := range rule.HairpinInterfaces {
+			if ifname == rule.ListenInterface {
+				continue
+			}
 			writeIngressForwardAcceptRule(buf, rule, ifname, " hairpin")
 		}
 	}
@@ -1456,6 +1462,9 @@ func writeIPv4SourceNATTable(buf *bytes.Buffer, router *api.Router, aliases map[
 		for _, rule := range ingressRules {
 			writeIngressDNATRule(buf, rule, rule.ListenInterface, "")
 			for _, ifname := range rule.HairpinInterfaces {
+				if ifname == rule.ListenInterface {
+					continue
+				}
 				writeIngressDNATRule(buf, rule, ifname, " hairpin")
 			}
 		}

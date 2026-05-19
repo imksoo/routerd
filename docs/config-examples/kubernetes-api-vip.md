@@ -33,7 +33,7 @@ The important production-oriented settings are:
 | Resource | Setting |
 | --- | --- |
 | `VirtualIPv4Address/k8s-api-vip` | VRRP `advertInterval: 1s`, `preemptDelay: 30s`, and track entries for API health and BGP health. |
-| `IngressService/kubernetes-api` | HTTPS health check on `/readyz`, `tlsSkipVerify: true` for kubeadm self-signed bootstrap certs, failover selection, and reject on no healthy backend. |
+| `IngressService/kubernetes-api` | HTTPS health check on `/readyz`, `tlsSkipVerify: true` for kubeadm self-signed bootstrap certs, failover selection, reject on no healthy backend, and automatic same-interface hairpin SNAT when selected control-plane backends are on the VIP LAN prefix. |
 | `BGPRouter/lan` | BGP timers `3s/9s/5s`, graceful restart, and an import allow-list for Kubernetes Service prefixes only. |
 | `DNSResolver/lan-resolver` | Automatically serves `k8s-api.cluster.example` from the VIP `hostname` field, plus static control-plane and worker records. |
 
@@ -42,4 +42,7 @@ addresses, and LoadBalancer/Service advertisement ranges.
 
 For operations, `routerctl show bgp`, `routerctl show vrrp`, and
 `routerctl show ingress` provide table views for peer state, VIP role, and
-backend health without dumping raw status JSON.
+backend health without dumping raw status JSON. Use
+`routerctl show ingress --verbose` when debugging dataplane state; it reports
+runtime forwarding sysctls, nftables DNAT/SNAT rule counts, and matching
+conntrack flow counts for the API ingress.

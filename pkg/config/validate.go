@@ -4245,7 +4245,16 @@ func validateIngressTarget(resourceID, path, address string, addressFrom api.Sta
 }
 
 func validateIngressHairpin(resourceID, path string, listen api.IngressListenSpec, hairpin api.IngressHairpinSpec) error {
-	if !hairpin.Enabled {
+	mode := strings.TrimSpace(hairpin.Mode)
+	switch mode {
+	case "", "auto", "manual", "off":
+	default:
+		return fmt.Errorf("%s %s.mode must be auto, manual, or off", resourceID, path)
+	}
+	if mode == "off" {
+		return nil
+	}
+	if !hairpin.Enabled && mode != "auto" {
 		if len(hairpin.Interfaces) > 0 {
 			return fmt.Errorf("%s %s.enabled must be true when interfaces are set", resourceID, path)
 		}
@@ -4254,15 +4263,12 @@ func validateIngressHairpin(resourceID, path string, listen api.IngressListenSpe
 	if strings.TrimSpace(listen.Address) == "" && strings.TrimSpace(listen.AddressFrom.Resource) == "" {
 		return fmt.Errorf("%s %s requires spec.listen.address or spec.listen.addressFrom", resourceID, path)
 	}
-	if len(hairpin.Interfaces) == 0 {
+	if hairpin.Enabled && mode != "auto" && len(hairpin.Interfaces) == 0 {
 		return fmt.Errorf("%s %s.interfaces is required when enabled is true", resourceID, path)
 	}
 	for i, name := range hairpin.Interfaces {
 		if strings.TrimSpace(name) == "" {
 			return fmt.Errorf("%s %s.interfaces[%d] must not be empty", resourceID, path, i)
-		}
-		if strings.TrimSpace(name) == listen.Interface {
-			return fmt.Errorf("%s %s.interfaces[%d] must not be the listen interface", resourceID, path, i)
 		}
 	}
 	return nil
@@ -4272,7 +4278,7 @@ func validateIngressInterfaceRefs(resourceID string, listen api.IngressListenSpe
 	if !interfaces[listen.Interface] {
 		return fmt.Errorf("%s spec.listen.interface references missing Interface %q", resourceID, listen.Interface)
 	}
-	if !hairpin.Enabled {
+	if !hairpin.Enabled && strings.TrimSpace(hairpin.Mode) != "auto" {
 		return nil
 	}
 	seen := map[string]bool{}

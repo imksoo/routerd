@@ -31,6 +31,13 @@ IngressService-derived nftables DNAT/hairpin rules are applied live as well.
 Independent `NAT44Rule`, `IPv4SourceNAT`, and `LocalServiceRedirect` resources
 remain controlled by `--controller-chain-dry-run-nat=false`.
 
+When the config contains resources that forward traffic, such as
+`IngressService`, `PortForward`, NAT, BGP, or static/policy routes, apply and
+controller reconcile also converge the runtime kernel forwarding switches:
+`net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1`. This is applied
+even when the YAML does not include an explicit `SysctlProfile`, so a live ISO
+or freshly booted router does not silently keep forwarding disabled.
+
 ## Drift checks
 
 routerd does not treat the status database as the only source of truth. The

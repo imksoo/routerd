@@ -33,6 +33,13 @@ selection と、IngressService 由来の nftables DNAT/hairpin rule の live app
 独立した `NAT44Rule`、`IPv4SourceNAT`、`LocalServiceRedirect` は引き続き
 `--controller-chain-dry-run-nat=false` で別に制御します。
 
+`IngressService`、`PortForward`、NAT、BGP、static/policy route など転送を伴う
+resource がある場合、apply と controller reconcile は runtime kernel forwarding
+も収束させます。具体的には `net.ipv4.ip_forward=1` と
+`net.ipv6.conf.all.forwarding=1` を適用します。明示的な `SysctlProfile` がない
+Live ISO や初回起動直後の router でも、forwarding disabled のまま silently 動く
+状態を避けるためです。
+
 ## drift の確認
 
 routerd は、状態データベースだけを唯一の正として扱いません。

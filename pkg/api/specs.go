@@ -1246,6 +1246,7 @@ type IngressBackendSpec struct {
 
 type IngressHairpinSpec struct {
 	Enabled    bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Mode       string   `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=auto,enum=manual,enum=off"`
 	Interfaces []string `yaml:"interfaces,omitempty" json:"interfaces,omitempty"`
 }
 

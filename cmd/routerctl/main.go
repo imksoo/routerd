@@ -901,6 +901,7 @@ type showOptions struct {
 	Events           bool
 	SpecOnly         bool
 	StatusOnly       bool
+	Verbose          bool
 	ConnectionsLimit int
 }
 
@@ -1407,6 +1408,8 @@ func parseShowOptions(args []string) (showOptions, error) {
 			opts.SpecOnly = true
 		case "--status":
 			opts.StatusOnly = true
+		case "-v", "--verbose":
+			opts.Verbose = true
 		default:
 			if strings.HasPrefix(arg, "-o=") {
 				opts.Output = strings.TrimPrefix(arg, "-o=")
@@ -1475,7 +1478,7 @@ func writeDedicatedShow(stdout io.Writer, router *api.Router, store routerstate.
 		case "vrrp":
 			return writeVRRPShowTable(stdout, router, resources)
 		case "ingress":
-			return writeIngressShowTable(stdout, router, resources)
+			return writeIngressShowTable(stdout, router, resources, opts.Verbose)
 		}
 	case "json":
 		return writeJSON(stdout, filterShowStatuses(resources, kind))
@@ -1610,9 +1613,10 @@ func writeVRRPShowTable(stdout io.Writer, router *api.Router, resources []router
 	return w.Flush()
 }
 
-func writeIngressShowTable(stdout io.Writer, router *api.Router, resources []routerstate.ObjectStatus) error {
+func writeIngressShowTable(stdout io.Writer, router *api.Router, resources []routerstate.ObjectStatus, verbose bool) error {
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	specs := ingressServiceSpecs(router)
+	var dataplane []ingressDataplaneRow
 	fmt.Fprintln(w, "SERVICE\tHOSTNAME\tLISTEN\tACTIVE_BACKEND\tSELECTION\tHEALTHY/TOTAL")
 	for _, resource := range resources {
 		if resource.Kind != "IngressService" {
@@ -1620,6 +1624,9 @@ func writeIngressShowTable(stdout io.Writer, router *api.Router, resources []rou
 		}
 		spec := specs[resource.Name]
 		active := statusMap(resource.Status["activeBackend"])
+		if verbose {
+			dataplane = append(dataplane, observeIngressDataplane(resource.Name, spec, resource.Status))
+		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d/%d\n",
 			resource.Name,
 			defaultShowString(statusString(resource.Status["hostname"]), "-"),
@@ -1654,7 +1661,156 @@ func writeIngressShowTable(stdout io.Writer, router *api.Router, resources []rou
 			}
 		}
 	}
+	if verbose && len(dataplane) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "DATAPLANE\tIPV4_FORWARD\tIPV6_FORWARD\tNFT_DNAT\tNFT_SNAT\tCONNTRACK\tDETAIL")
+		for _, row := range dataplane {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
+				row.Service,
+				row.IPv4Forward,
+				row.IPv6Forward,
+				row.NFTDNAT,
+				row.NFTSNAT,
+				row.Conntrack,
+				defaultShowString(row.Detail, "-"),
+			)
+		}
+	}
 	return w.Flush()
+}
+
+type ingressDataplaneRow struct {
+	Service     string
+	IPv4Forward string
+	IPv6Forward string
+	NFTDNAT     int
+	NFTSNAT     int
+	Conntrack   string
+	Detail      string
+}
+
+func observeIngressDataplane(name string, spec api.IngressServiceSpec, status map[string]any) ingressDataplaneRow {
+	row := ingressDataplaneRow{
+		Service:     name,
+		IPv4Forward: dataplaneSysctlValue("net.ipv4.ip_forward"),
+		IPv6Forward: dataplaneSysctlValue("net.ipv6.conf.all.forwarding"),
+	}
+	nftDNAT, nftSNAT, nftDetail := ingressNFTRuleCounts(name)
+	row.NFTDNAT = nftDNAT
+	row.NFTSNAT = nftSNAT
+	if nftDetail != "" {
+		row.Detail = nftDetail
+	}
+	count, detail := ingressConntrackCount(spec, status)
+	row.Conntrack = count
+	if detail != "" {
+		if row.Detail != "" {
+			row.Detail += "; "
+		}
+		row.Detail += detail
+	}
+	return row
+}
+
+func dataplaneSysctlValue(key string) string {
+	out, err := runDataplaneCommand("sysctl", "-n", key)
+	if err != nil {
+		return "unavailable"
+	}
+	value := strings.TrimSpace(string(out))
+	if value == "" {
+		return "unknown"
+	}
+	return value
+}
+
+func ingressNFTRuleCounts(name string) (int, int, string) {
+	out, err := runDataplaneCommand("nft", "-a", "list", "table", "ip", "routerd_nat")
+	if err != nil {
+		return 0, 0, "nft unavailable"
+	}
+	needle := "routerd IngressService " + name
+	var dnat, snat int
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, needle) {
+			continue
+		}
+		if strings.Contains(line, "dnat to") || strings.Contains(line, " vmap ") {
+			dnat++
+		}
+		if strings.Contains(line, " masquerade") || strings.Contains(line, " snat ") {
+			snat++
+		}
+	}
+	return dnat, snat, ""
+}
+
+func ingressConntrackCount(spec api.IngressServiceSpec, status map[string]any) (string, string) {
+	out, err := runDataplaneCommand("conntrack", "-L")
+	if err != nil {
+		return "unavailable", "conntrack unavailable"
+	}
+	needles := ingressConntrackNeedles(spec, status)
+	if len(needles) == 0 {
+		return "unknown", "conntrack no match keys"
+	}
+	var count int
+	for _, line := range strings.Split(string(out), "\n") {
+		if line == "" {
+			continue
+		}
+		for _, needle := range needles {
+			if strings.Contains(line, needle) {
+				count++
+				break
+			}
+		}
+	}
+	return strconv.Itoa(count), ""
+}
+
+func ingressConntrackNeedles(spec api.IngressServiceSpec, status map[string]any) []string {
+	seen := map[string]bool{}
+	var needles []string
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			return
+		}
+		seen[value] = true
+		needles = append(needles, value)
+	}
+	if listen := statusString(status["listenAddress"]); listen != "" {
+		add("dst=" + listen)
+		add("reply_src=" + listen)
+	} else if spec.Listen.Address != "" {
+		add("dst=" + spec.Listen.Address)
+		add("reply_src=" + spec.Listen.Address)
+	}
+	for _, backend := range statusMaps(status["backends"]) {
+		if resolved := statusString(backend["resolvedAddress"]); resolved != "" {
+			add("dst=" + resolved)
+			add("src=" + resolved)
+			continue
+		}
+		if address := statusString(backend["address"]); net.ParseIP(address) != nil {
+			add("dst=" + address)
+			add("src=" + address)
+		}
+	}
+	for _, backend := range spec.Backends {
+		if net.ParseIP(backend.Address) != nil {
+			add("dst=" + backend.Address)
+			add("src=" + backend.Address)
+		}
+	}
+	return needles
+}
+
+func runDataplaneCommand(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, hostcmd.Resolve(name), args...).CombinedOutput()
 }
 
 func parseShowTarget(target string) (string, string, error) {

@@ -83,14 +83,14 @@ func ingressRuleFromService(router *api.Router, aliases map[string]string, res a
 	if len(spec.Backends) == 0 {
 		return ingressNATRule{}, false, fmt.Errorf("%s needs at least one backend", res.ID())
 	}
-	return ingressRuleFromEndpoints(router, aliases, res, spec.Listen, spec.Backends, spec.Hairpin, defaultString(spec.Policy.Selection, "failover"))
+	return ingressRuleFromEndpoints(router, aliases, res, spec.Listen, spec.Backends, spec.Hairpin, defaultString(spec.Policy.Selection, "failover"), true)
 }
 
 func ingressRuleFromEndpoint(router *api.Router, aliases map[string]string, res api.Resource, listen api.IngressListenSpec, target api.IngressBackendSpec, hairpin api.IngressHairpinSpec) (ingressNATRule, bool, error) {
-	return ingressRuleFromEndpoints(router, aliases, res, listen, []api.IngressBackendSpec{target}, hairpin, "failover")
+	return ingressRuleFromEndpoints(router, aliases, res, listen, []api.IngressBackendSpec{target}, hairpin, "failover", false)
 }
 
-func ingressRuleFromEndpoints(router *api.Router, aliases map[string]string, res api.Resource, listen api.IngressListenSpec, backends []api.IngressBackendSpec, hairpin api.IngressHairpinSpec, selection string) (ingressNATRule, bool, error) {
+func ingressRuleFromEndpoints(router *api.Router, aliases map[string]string, res api.Resource, listen api.IngressListenSpec, backends []api.IngressBackendSpec, hairpin api.IngressHairpinSpec, selection string, autoHairpinDefault bool) (ingressNATRule, bool, error) {
 	ifname := aliases[listen.Interface]
 	if ifname == "" {
 		return ingressNATRule{}, false, fmt.Errorf("%s references listen interface with empty ifname %q", res.ID(), listen.Interface)
@@ -119,7 +119,7 @@ func ingressRuleFromEndpoints(router *api.Router, aliases map[string]string, res
 	if len(targets) == 0 {
 		return ingressNATRule{}, false, nil
 	}
-	hairpinIfnames, err := ingressHairpinInterfaces(aliases, res, listen, hairpin, listenAddress)
+	hairpinIfnames, err := ingressHairpinInterfaces(router, aliases, res, listen, hairpin, listenAddress, targets, autoHairpinDefault)
 	if err != nil {
 		return ingressNATRule{}, false, err
 	}
@@ -139,26 +139,84 @@ func ingressRuleFromEndpoints(router *api.Router, aliases map[string]string, res
 	}, true, nil
 }
 
-func ingressHairpinInterfaces(aliases map[string]string, res api.Resource, listen api.IngressListenSpec, hairpin api.IngressHairpinSpec, listenAddress string) ([]string, error) {
-	if !hairpin.Enabled {
+func ingressHairpinInterfaces(router *api.Router, aliases map[string]string, res api.Resource, listen api.IngressListenSpec, hairpin api.IngressHairpinSpec, listenAddress string, targets []ingressNATTarget, autoDefault bool) ([]string, error) {
+	mode := strings.TrimSpace(hairpin.Mode)
+	if mode == "" {
+		if autoDefault {
+			mode = "auto"
+		} else if hairpin.Enabled {
+			mode = "manual"
+		} else {
+			mode = "off"
+		}
+	}
+	if mode == "off" {
 		return nil, nil
 	}
 	if listenAddress == "" {
+		if mode == "auto" && !hairpin.Enabled && len(hairpin.Interfaces) == 0 {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("%s hairpin requires resolved listen address", res.ID())
 	}
-	ifnames := make([]string, 0, len(hairpin.Interfaces))
-	for _, name := range hairpin.Interfaces {
-		ifname := aliases[name]
-		if ifname == "" {
-			return nil, fmt.Errorf("%s references hairpin interface with empty ifname %q", res.ID(), name)
+	ifnames := make([]string, 0, len(hairpin.Interfaces)+1)
+	if mode == "auto" && ingressNeedsSameInterfaceHairpin(router, listen.Interface, listenAddress, targets) {
+		if ifname := aliases[listen.Interface]; ifname != "" {
+			ifnames = append(ifnames, ifname)
 		}
-		if name == listen.Interface || ifname == aliases[listen.Interface] {
-			return nil, fmt.Errorf("%s hairpin interface %q must not be the listen interface", res.ID(), name)
+	}
+	if hairpin.Enabled || len(hairpin.Interfaces) > 0 {
+		for _, name := range hairpin.Interfaces {
+			ifname := aliases[name]
+			if ifname == "" {
+				return nil, fmt.Errorf("%s references hairpin interface with empty ifname %q", res.ID(), name)
+			}
+			ifnames = append(ifnames, ifname)
 		}
-		ifnames = append(ifnames, ifname)
 	}
 	sort.Strings(ifnames)
 	return compactStrings(ifnames), nil
+}
+
+func ingressNeedsSameInterfaceHairpin(router *api.Router, listenInterface, listenAddress string, targets []ingressNATTarget) bool {
+	listenAddr, err := netip.ParseAddr(strings.TrimSpace(listenAddress))
+	if err != nil || !listenAddr.Is4() {
+		return false
+	}
+	for _, prefix := range ingressInterfaceIPv4Prefixes(router, listenInterface) {
+		if !prefix.Contains(listenAddr) {
+			continue
+		}
+		for _, target := range targets {
+			targetAddr, err := netip.ParseAddr(strings.TrimSpace(target.Address))
+			if err == nil && targetAddr.Is4() && prefix.Contains(targetAddr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func ingressInterfaceIPv4Prefixes(router *api.Router, interfaceName string) []netip.Prefix {
+	if router == nil {
+		return nil
+	}
+	var prefixes []netip.Prefix
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		spec, err := res.IPv4StaticAddressSpec()
+		if err != nil || spec.Interface != interfaceName {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Address))
+		if err != nil || !prefix.Addr().Is4() {
+			continue
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+	return prefixes
 }
 
 func ingressAddress(router *api.Router, address string, source api.StatusValueSourceSpec, allowEmpty bool) (string, bool, error) {

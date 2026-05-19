@@ -58,6 +58,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Decoupled IngressService live nftables apply from independent NAT44 dry-run
   mode and relaxed hostname DNSZone coverage to warnings with an `externalDNS`
   opt-out for externally managed DNS names.
+- Auto-enabled same-interface IngressService hairpin SNAT and runtime
+  `ip_forward` sysctls for forwarding configs, and added
+  `routerctl show ingress --verbose` dataplane checks for forwarding, nftables,
+  and conntrack state.
 
 ## v20260519.0743
 

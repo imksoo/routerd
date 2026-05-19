@@ -7304,6 +7304,15 @@
                               "type": "string"
                             },
                             "type": "array"
+                          },
+                          "mode": {
+                            "enum": [
+                              "",
+                              "auto",
+                              "manual",
+                              "off"
+                            ],
+                            "type": "string"
                           }
                         },
                         "type": "object"
@@ -7537,6 +7546,15 @@
                               "type": "string"
                             },
                             "type": "array"
+                          },
+                          "mode": {
+                            "enum": [
+                              "",
+                              "auto",
+                              "manual",
+                              "off"
+                            ],
+                            "type": "string"
                           }
                         },
                         "type": "object"

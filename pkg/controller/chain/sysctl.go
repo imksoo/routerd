@@ -94,6 +94,18 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	for _, entry := range sysctlprofile.ForwardingEntries(c.Router) {
+		name := "auto-forwarding-" + safeSysctlName(entry.Key)
+		result, err := c.applyOne(ctx, name, "Sysctl", sysctlSetting{Key: entry.Key, Value: entry.Value, Compare: entry.Compare, Optional: entry.Optional})
+		if err != nil {
+			return err
+		}
+		if result.changed && c.Bus != nil {
+			if err := c.publishApplied(ctx, "Sysctl", name, entry.Key, entry.Value); err != nil {
+				return err
+			}
+		}
+	}
 	if c.Router != nil && c.Router.Spec.Apply.AutoTuneConntrack {
 		if err := c.applyConntrackTuning(ctx); err != nil {
 			return err

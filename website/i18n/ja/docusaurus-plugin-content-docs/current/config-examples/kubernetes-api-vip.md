@@ -33,7 +33,7 @@ routerd-01/02  VRRP VIP 192.168.70.10
 | Resource | 設定 |
 | --- | --- |
 | `VirtualIPv4Address/k8s-api-vip` | VRRP の `advertInterval: 1s`、`preemptDelay: 30s`、API health と BGP health の track。 |
-| `IngressService/kubernetes-api` | `/readyz` の HTTPS health check、kubeadm bootstrap の self-signed 証明書向け `tlsSkipVerify: true`、failover selection、healthy backend 不在時の reject。 |
+| `IngressService/kubernetes-api` | `/readyz` の HTTPS health check、kubeadm bootstrap の self-signed 証明書向け `tlsSkipVerify: true`、failover selection、healthy backend 不在時の reject、VIP と選択済み control-plane backend が同じ LAN prefix 上にある場合の同一 interface hairpin SNAT 自動生成。 |
 | `BGPRouter/lan` | BGP timers `3s/9s/5s`、graceful restart、Kubernetes Service prefix だけを受ける import allow-list。 |
 | `DNSResolver/lan-resolver` | VIP の `hostname` field から `k8s-api.cluster.example` を自動で返し、control plane と worker の static record も提供。 |
 
@@ -42,4 +42,6 @@ Service advertisement range と重ならないようにしてください。
 
 運用時は `routerctl show bgp`、`routerctl show vrrp`、
 `routerctl show ingress` で、peer state、VIP role、backend health を
-raw status JSON ではなく表形式で確認できます。
+raw status JSON ではなく表形式で確認できます。dataplane を確認する場合は
+`routerctl show ingress --verbose` を使うと、runtime forwarding sysctl、nftables
+DNAT/SNAT rule 数、API ingress に該当する conntrack flow 数を表示できます。

@@ -195,6 +195,11 @@ hairpin は `listen.address` または `listen.addressFrom` が必須で、route
 DNAT と戻り経路用の masquerade/NAT reflection を生成します。
 `listen.addressFrom` と backend の `addressFrom` は `IPv4StaticAddress/<name>.address`
 や `VirtualIPv4Address/<name>.address` のような静的に描画できるアドレスリソースを参照できます。
+`IngressService` では `spec.hairpin.mode` 未指定を `auto` として扱います。
+listen address と選択済み backend が listen interface に宣言された同じ prefix 上に
+ある場合、routerd は LAN client が VIP を使うために必要な同一 interface の戻り
+SNAT を自動生成します。抑止する場合は `spec.hairpin.mode: off`、明示指定する場合は
+`manual` と `interfaces` を使います。
 `VirtualIPv4Address.spec.vrrp.authentication` は keepalived では `auth_pass`、
 FreeBSD CARP では `pass` として描画されます。本番構成では routerd YAML に
 共有 secret を残さないため、`VirtualIPv4Address.spec.vrrp.authenticationFrom`
@@ -297,7 +302,12 @@ active backend を転送先に使います。既存 conntrack は消さないた
 旧 backend に残り、新規 flow が選択済み backend に向かいます。`spec.hostname` は
 listen address の A record として DNSResolver に自動反映できます。外部 DNS が名前を
 管理する場合は `spec.externalDNS: true` を設定してください。
-`routerctl show ingress` は active backend と backend ごとの health を表示します。保守中は `routerctl drain
+`routerctl show ingress` は active backend と backend ごとの health を表示します。
+`routerctl show ingress --verbose` は live dataplane の `ip_forward`、nftables
+DNAT/SNAT rule 数、該当 conntrack flow 数も表示します。Ingress/NAT 系 resource が
+ある場合、明示的な `SysctlProfile` がなくても apply/controller reconcile 時に
+runtime の `net.ipv4.ip_forward=1` と `net.ipv6.conf.all.forwarding=1` を自動適用します。
+保守中は `routerctl drain
 ingress/<service> backend=<name> --duration 10m` で backend を runtime state 上の
 drain 状態にできます。controller は duration が切れるか `routerctl undrain
 ingress/<service> backend=<name>` で解除されるまで、該当 backend を reason `Drained`
@@ -327,6 +337,7 @@ spec:
     port: 443
   hairpin:
     enabled: true
+    mode: manual
     interfaces:
       - lan
 ```

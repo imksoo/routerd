@@ -55,6 +55,54 @@ func TestSysctlControllerAppliesRuntimeValue(t *testing.T) {
 	}
 }
 
+func TestSysctlControllerAutoEnablesForwardingForIngress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "kubernetes-api"}, Spec: api.IngressServiceSpec{
+			Listen:   api.IngressListenSpec{Interface: "lan", Address: "192.168.1.248", Protocol: "tcp", Port: 6443},
+			Backends: []api.IngressBackendSpec{{Address: "192.168.1.54", Port: 6443}},
+		}},
+	}}}
+	store := mapStore{}
+	values := map[string]string{
+		"net.ipv4.ip_forward":          "0",
+		"net.ipv6.conf.all.forwarding": "0",
+	}
+	var commands []string
+	controller := SysctlController{
+		Router: router,
+		Store:  store,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "sysctl" && len(args) == 2 && args[0] == "-n" {
+				return []byte(values[args[1]] + "\n"), nil
+			}
+			if name == "sysctl" && len(args) == 2 && args[0] == "-w" {
+				parts := strings.SplitN(args[1], "=", 2)
+				values[parts[0]] = parts[1]
+				return []byte(args[1] + "\n"), nil
+			}
+			t.Fatalf("unexpected command %s %v", name, args)
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"sysctl -w net.ipv4.ip_forward=1",
+		"sysctl -w net.ipv6.conf.all.forwarding=1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("commands missing %q:\n%s", want, got)
+		}
+	}
+	if status := store.ObjectStatus(api.SystemAPIVersion, "Sysctl", "auto-forwarding-net.ipv4.ip_forward"); status["phase"] != "Applied" {
+		t.Fatalf("auto IPv4 forwarding status = %#v", status)
+	}
+}
+
 func TestSysctlControllerSkipsRuntimeDisabled(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"}, Metadata: api.ObjectMeta{Name: "persistent-only"}, Spec: api.SysctlSpec{

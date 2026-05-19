@@ -489,6 +489,55 @@ spec:
 			}
 		}
 	}
+
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestCommand(t, filepath.Join(binDir, "sysctl"), `#!/bin/sh
+if [ "$1" = "-n" ] && [ "$2" = "net.ipv4.ip_forward" ]; then echo 1; exit 0; fi
+if [ "$1" = "-n" ] && [ "$2" = "net.ipv6.conf.all.forwarding" ]; then echo 1; exit 0; fi
+exit 1
+`)
+	writeTestCommand(t, filepath.Join(binDir, "nft"), `#!/bin/sh
+cat <<'EOF'
+table ip routerd_nat {
+  chain prerouting {
+    iifname "ens18" ip daddr 192.168.123.250 tcp dport 6443 counter dnat to 192.168.123.11:6443 comment "routerd IngressService kubernetes-api"
+  }
+  chain postrouting {
+    iifname "ens18" ip daddr 192.168.123.11 tcp dport 6443 ct original ip daddr 192.168.123.250 ct original proto-dst 6443 counter masquerade comment "routerd IngressService kubernetes-api hairpin"
+  }
+}
+EOF
+`)
+	writeTestCommand(t, filepath.Join(binDir, "conntrack"), `#!/bin/sh
+cat <<'EOF'
+tcp      6 431999 ESTABLISHED src=192.168.123.20 dst=192.168.123.250 sport=54000 dport=6443 src=192.168.123.11 dst=192.168.123.20 sport=6443 dport=54000
+EOF
+`)
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
+	var verbose bytes.Buffer
+	if err := run([]string{"show", "ingress", "--verbose", "--config", configPath, "--state-file", statePath, "--ledger-file", filepath.Join(dir, "missing-ledger.db")}, &verbose, &bytes.Buffer{}); err != nil {
+		t.Fatalf("show ingress --verbose: %v", err)
+	}
+	got := verbose.String()
+	for _, want := range []string{"DATAPLANE", "NFT_DNAT", "NFT_SNAT", "kubernetes-api"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("verbose ingress output missing %q:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(strings.Join(strings.Fields(got), " "), "kubernetes-api 1 1 1 1 1") {
+		t.Fatalf("verbose ingress dataplane counts were not rendered:\n%s", got)
+	}
+}
+
+func writeTestCommand(t *testing.T, path, script string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestIPOutputHasAddress(t *testing.T) {

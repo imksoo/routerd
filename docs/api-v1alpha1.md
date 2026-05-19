@@ -301,6 +301,11 @@ LAN clients to reach the service through the WAN address. Hairpin mode requires
 the return-path masquerade/NAT reflection rule. `listen.addressFrom` and backend
 `addressFrom` can reference statically rendered address resources such as
 `IPv4StaticAddress/<name>.address` or `VirtualIPv4Address/<name>.address`.
+`IngressService` treats omitted `spec.hairpin.mode` as `auto`: when the listen
+address and the selected backend are on a prefix declared for the same listen
+interface, routerd automatically emits the same-interface return-path SNAT
+needed for LAN clients to use the VIP. Set `spec.hairpin.mode: off` to suppress
+that behavior, or `manual` with `interfaces` for explicit NAT reflection.
 `IngressService` accepts multiple backends, TCP/HTTP health checks, and
 `failover`, `sourceHash`, or `random` backend selection. The runtime controller
 resolves backend FQDNs, falls back to the previous resolved IPv4 address when DNS
@@ -316,7 +321,12 @@ routerd-managed local daemons on the same protocol/interface. `spec.hostname`
 can also publish the listen address into matching DNSResolver-served `DNSZone`
 records. Set `spec.externalDNS: true` when AD DNS or another external DNS system
 owns the name. `routerctl show ingress` shows active backend and per-backend
-health. During maintenance, `routerctl drain ingress/<service> backend=<name>
+health; `routerctl show ingress --verbose` also samples the live dataplane
+(`ip_forward`, nftables DNAT/SNAT rule counts, and matching conntrack flows).
+Ingress and NAT-like resources automatically enable runtime
+`net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1` during apply or
+controller reconcile, even when no explicit `SysctlProfile` is present. During
+maintenance, `routerctl drain ingress/<service> backend=<name>
 --duration 10m` marks a backend as drained in the runtime state store. The
 controller treats it as unhealthy with reason `Drained` until the duration
 expires or `routerctl undrain ingress/<service> backend=<name>` clears the
@@ -360,6 +370,7 @@ spec:
     port: 443
   hairpin:
     enabled: true
+    mode: manual
     interfaces:
       - lan
 ```

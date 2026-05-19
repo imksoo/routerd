@@ -980,6 +980,32 @@ func TestValidatePortForwardAndIngressService(t *testing.T) {
 	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
 		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
 		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
+		Hairpin:  api.IngressHairpinSpec{Mode: "auto"},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate auto ingress hairpin: %v", err)
+	}
+
+	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
+		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
+		Hairpin:  api.IngressHairpinSpec{Enabled: true, Interfaces: []string{"wan"}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate same-interface ingress hairpin: %v", err)
+	}
+
+	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
+		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
+		Hairpin:  api.IngressHairpinSpec{Mode: "invalid"},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.hairpin.mode") {
+		t.Fatalf("expected invalid hairpin mode to be rejected, got %v", err)
+	}
+	router.Spec.Resources[3].Spec = api.IngressServiceSpec{
+		Listen:   api.IngressListenSpec{Interface: "wan", Address: "203.0.113.10", Protocol: "tcp", Port: 443},
+		Backends: []api.IngressBackendSpec{{Address: "172.18.1.89", Port: 8443}},
 	}
 
 	router.Spec.Resources[2].Spec = api.PortForwardSpec{
