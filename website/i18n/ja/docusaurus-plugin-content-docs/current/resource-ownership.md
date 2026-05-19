@@ -34,7 +34,7 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `ClusterNetworkRoute` | Pod / Service CIDR を指定 next hop 経由にする生成済み `IPv4StaticRoute` intent |
 | `NAT44Rule` | nftables `routerd_nat` テーブル |
 | `PortForward` / `IngressService` | Linux nftables の `routerd_nat` / `routerd_filter` DNAT、任意の hairpin SNAT、または FreeBSD `pf.conf` の `rdr pass` / 任意の NAT reflection ルール |
-| `BGPRouter` / `BGPPeer` | `/run/routerd/frr/routerd.conf` の FRR BGP 設定と `frr-reload.py` 適用。BFD daemon state 変更時の `/etc/frr/daemons` `bgpd` / `bfdd` toggle と `frr.service` restart |
+| `BGPRouter` / `BGPPeer` | `/run/routerd/frr/routerd.conf` の FRR BGP 設定と `frr-reload.py` 適用。FRR BGP 構成時の `/etc/frr/daemons` `bgpd` toggle、BFD 構成時の `bfdd` toggle、daemon state 変更時の FRR service enable/restart |
 | `VirtualIPv4Address` / `VirtualIPv6Address` | `ip addr` / `ifconfig` による static VIP、または Linux keepalived / FreeBSD CARP による VRRP/VRRPv3 VIP ownership |
 | `ObservabilityPipeline` | process 内 routerd event exporter と managed unit 向け OpenTelemetry environment |
 | `RouterdCluster` | `spec.leasePath` の file lease。leader のみ apply/controller mutation を実行 |

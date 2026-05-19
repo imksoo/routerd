@@ -21,6 +21,7 @@ type bgpRouterConfig struct {
 	ListenAddress   string
 	ListenPort      int
 	AllowedPrefixes []string
+	ExportPrefixes  []string
 	Redistribute    bgpRedistribute
 	Communities     bgpCommunities
 	Timers          bgpTimers
@@ -29,14 +30,15 @@ type bgpRouterConfig struct {
 }
 
 type bgpPeerConfig struct {
-	ResourceName string
-	Peer         string
-	ASN          uint32
-	Password     string
-	Timers       bgpTimers
-	Communities  bgpCommunities
-	BFD          bgpBFD
-	VRFName      string
+	ResourceName   string
+	Peer           string
+	ASN            uint32
+	Password       string
+	ExportPrefixes []string
+	Timers         bgpTimers
+	Communities    bgpCommunities
+	BFD            bgpBFD
+	VRFName        string
 }
 
 type bgpRedistribute struct {
@@ -125,6 +127,7 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 			ListenAddress:   strings.TrimSpace(spec.Listen.Address),
 			ListenPort:      listenPort,
 			AllowedPrefixes: compactStrings(spec.ImportPolicy.AllowedPrefixes),
+			ExportPrefixes:  compactStrings(spec.ExportPolicy.AllowedPrefixes),
 			Redistribute: bgpRedistribute{
 				Connected: compactStrings(spec.Redistribute.Connected.AllowedPrefixes),
 				Static:    compactStrings(spec.Redistribute.Static.AllowedPrefixes),
@@ -134,6 +137,7 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 			GracefulRestart: renderBGPGracefulRestart(spec.GracefulRestart),
 		}
 		sort.Strings(cfg.AllowedPrefixes)
+		sort.Strings(cfg.ExportPrefixes)
 		sort.Strings(cfg.Redistribute.Connected)
 		sort.Strings(cfg.Redistribute.Static)
 		byName[res.Metadata.Name] = &cfg
@@ -161,14 +165,15 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 				return nil, fmt.Errorf("%s spec.passwordFrom: %w", res.ID(), err)
 			}
 			cfg.Peers = append(cfg.Peers, bgpPeerConfig{
-				ResourceName: res.Metadata.Name,
-				Peer:         peer,
-				ASN:          spec.PeerASN,
-				Password:     password,
-				Timers:       renderBGPTimers(spec.Timers, cfg.Timers),
-				Communities:  renderBGPCommunities(spec.Communities, cfg.Communities),
-				BFD:          renderBGPBFD(spec.BFD),
-				VRFName:      cfg.VRFName,
+				ResourceName:   res.Metadata.Name,
+				Peer:           peer,
+				ASN:            spec.PeerASN,
+				Password:       password,
+				ExportPrefixes: sortedUniqueStrings(spec.ExportPolicy.AllowedPrefixes),
+				Timers:         renderBGPTimers(spec.Timers, cfg.Timers),
+				Communities:    renderBGPCommunities(spec.Communities, cfg.Communities),
+				BFD:            renderBGPBFD(spec.BFD),
+				VRFName:        cfg.VRFName,
 			})
 		}
 	}
@@ -194,9 +199,8 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 	routeMapInNameV6 := routeMapInName + "-V6"
 	routeMapOutName := "ROUTERD-" + frrName(cfg.Name) + "-OUT"
 	routeMapOutNameV6 := routeMapOutName + "-V6"
-	exportPrefixes := bgpExportPrefixes(cfg.Redistribute)
 	allowedV4, allowedV6 := splitBGPPrefixFamilies(cfg.AllowedPrefixes)
-	exportV4, exportV6 := splitBGPPrefixFamilies(exportPrefixes)
+	exportV4, exportV6 := splitBGPPrefixFamilies(cfg.ExportPrefixes)
 	connectedV4, connectedV6 := splitBGPPrefixFamilies(cfg.Redistribute.Connected)
 	staticV4, staticV6 := splitBGPPrefixFamilies(cfg.Redistribute.Static)
 	writeFRRPrefixList(buf, prefixListName, allowedV4, "ipv4")
@@ -204,10 +208,22 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 		writeFRRPrefixList(buf, prefixListNameV6, allowedV6, "ipv6")
 	}
 	if len(exportV4) > 0 {
-		writeFRRPrefixList(buf, "ROUTERD-"+frrName(cfg.Name)+"-EXPORT", exportV4, "ipv4")
+		writeFRRPrefixList(buf, routeMapOutPrefixList(cfg.Name, exportV4, "ipv4"), exportV4, "ipv4")
 	}
 	if len(exportV6) > 0 {
-		writeFRRPrefixList(buf, "ROUTERD-"+frrName(cfg.Name)+"-EXPORT-V6", exportV6, "ipv6")
+		writeFRRPrefixList(buf, routeMapOutPrefixList(cfg.Name, exportV6, "ipv6"), exportV6, "ipv6")
+	}
+	for _, peer := range cfg.Peers {
+		if len(peer.ExportPrefixes) == 0 {
+			continue
+		}
+		peerExportV4, peerExportV6 := splitBGPPrefixFamilies(peer.ExportPrefixes)
+		if len(peerExportV4) > 0 {
+			writeFRRPrefixList(buf, peerExportPrefixListName(cfg.Name, peer, "ipv4"), peerExportV4, "ipv4")
+		}
+		if len(peerExportV6) > 0 {
+			writeFRRPrefixList(buf, peerExportPrefixListName(cfg.Name, peer, "ipv6"), peerExportV6, "ipv6")
+		}
 	}
 	writeFRRRedistributePolicy(buf, cfg.Name, "CONNECTED", connectedV4, "ipv4")
 	writeFRRRedistributePolicy(buf, cfg.Name, "STATIC", staticV4, "ipv4")
@@ -249,8 +265,8 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 		})
 	}
 	for _, peer := range cfg.Peers {
-		if bgpPeerNeedsRouteMap(peer.Communities, cfg.Communities) {
-			writeFRRPeerCommunityRouteMaps(buf, cfg, peer, exportV4, exportV6)
+		if bgpPeerNeedsRouteMap(peer, cfg) {
+			writeFRRPeerRouteMaps(buf, cfg, peer, exportV4, exportV6)
 		}
 	}
 	buf.WriteString("!\n")
@@ -300,7 +316,7 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 		}
 		inName := routeMapInName
 		outName := routeMapOutName
-		if bgpPeerNeedsRouteMap(peer.Communities, cfg.Communities) {
+		if bgpPeerNeedsRouteMap(peer, cfg) {
 			inName = peerRouteMapName(cfg.Name, peer, "IN")
 			outName = peerRouteMapName(cfg.Name, peer, "OUT")
 		}
@@ -334,7 +350,7 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 			}
 			inName := routeMapInNameV6
 			outName := routeMapOutNameV6
-			if bgpPeerNeedsRouteMap(peer.Communities, cfg.Communities) {
+			if bgpPeerNeedsRouteMap(peer, cfg) {
 				inName = peerRouteMapName(cfg.Name, peer, "IN-V6")
 				outName = peerRouteMapName(cfg.Name, peer, "OUT-V6")
 			}
@@ -487,7 +503,8 @@ func writeFRRCommunityList(buf *bytes.Buffer, name string, communities []string)
 	}
 }
 
-func writeFRRPeerCommunityRouteMaps(buf *bytes.Buffer, cfg bgpRouterConfig, peer bgpPeerConfig, exportV4, exportV6 []string) {
+func writeFRRPeerRouteMaps(buf *bytes.Buffer, cfg bgpRouterConfig, peer bgpPeerConfig, exportV4, exportV6 []string) {
+	peerExportV4, peerExportV6 := peerEffectiveExportPrefixes(peer, exportV4, exportV6)
 	writeFRRRouteMap(buf, peerRouteMapName(cfg.Name, peer, "IN"), bgpRouteMapSpec{
 		PrefixList:      "ROUTERD-" + frrName(cfg.Name) + "-IMPORT",
 		AddressFamily:   "ipv4",
@@ -497,12 +514,12 @@ func writeFRRPeerCommunityRouteMaps(buf *bytes.Buffer, cfg bgpRouterConfig, peer
 		DefaultDeny:     true,
 	})
 	writeFRRRouteMap(buf, peerRouteMapName(cfg.Name, peer, "OUT"), bgpRouteMapSpec{
-		PrefixList:     routeMapOutPrefixList(cfg.Name, exportV4, "ipv4"),
+		PrefixList:     peerRouteMapOutPrefixList(cfg.Name, peer, peerExportV4, "ipv4"),
 		AddressFamily:  "ipv4",
-		SetCommunities: bgpOutboundSetCommunities(exportV4, peer.Communities.SetOut),
+		SetCommunities: bgpOutboundSetCommunities(peerExportV4, peer.Communities.SetOut),
 		DefaultDeny:    true,
 	})
-	if bgpPeerFamily(peer.Peer) == "ipv6" || len(exportV6) > 0 {
+	if bgpPeerFamily(peer.Peer) == "ipv6" || len(peerExportV6) > 0 {
 		writeFRRRouteMap(buf, peerRouteMapName(cfg.Name, peer, "IN-V6"), bgpRouteMapSpec{
 			PrefixList:      "ROUTERD-" + frrName(cfg.Name) + "-IMPORT-V6",
 			AddressFamily:   "ipv6",
@@ -511,9 +528,9 @@ func writeFRRPeerCommunityRouteMaps(buf *bytes.Buffer, cfg bgpRouterConfig, peer
 			DefaultDeny:     true,
 		})
 		writeFRRRouteMap(buf, peerRouteMapName(cfg.Name, peer, "OUT-V6"), bgpRouteMapSpec{
-			PrefixList:     routeMapOutPrefixList(cfg.Name, exportV6, "ipv6"),
+			PrefixList:     peerRouteMapOutPrefixList(cfg.Name, peer, peerExportV6, "ipv6"),
 			AddressFamily:  "ipv6",
-			SetCommunities: bgpOutboundSetCommunities(exportV6, peer.Communities.SetOut),
+			SetCommunities: bgpOutboundSetCommunities(peerExportV6, peer.Communities.SetOut),
 			DefaultDeny:    true,
 		})
 	}
@@ -585,10 +602,14 @@ func renderBGPBFD(spec api.BGPBFDSpec) bgpBFD {
 }
 
 func FRRDaemons(existing []byte, router *api.Router) ([]byte, error) {
-	if !routerUsesBFD(router) {
+	if !routerUsesBGP(router) {
 		return nil, nil
 	}
-	return renderFRRDaemons(existing, map[string]string{"bgpd": "yes", "bfdd": "yes"}), nil
+	values := map[string]string{"bgpd": "yes"}
+	if routerUsesBFD(router) {
+		values["bfdd"] = "yes"
+	}
+	return renderFRRDaemons(existing, values), nil
 }
 
 func renderFRRDaemons(existing []byte, values map[string]string) []byte {
@@ -621,6 +642,22 @@ func renderFRRDaemons(existing []byte, values map[string]string) []byte {
 	return []byte(strings.Join(lines, "\n") + "\n")
 }
 
+func routerUsesBGP(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := res.BGPRouterSpec()
+		if err == nil && (strings.TrimSpace(spec.Backend) == "" || spec.Backend == "frr") {
+			return true
+		}
+	}
+	return false
+}
+
 func routerUsesBFD(router *api.Router) bool {
 	if router == nil {
 		return false
@@ -635,10 +672,6 @@ func routerUsesBFD(router *api.Router) bool {
 		}
 	}
 	return false
-}
-
-func bgpExportPrefixes(redistribute bgpRedistribute) []string {
-	return sortedUniqueStrings(append(append([]string{}, redistribute.Connected...), redistribute.Static...))
 }
 
 func splitBGPPrefixFamilies(prefixes []string) ([]string, []string) {
@@ -692,6 +725,31 @@ func routeMapOutPrefixList(routerName string, exportPrefixes []string, family st
 	return "ROUTERD-" + frrName(routerName) + "-EXPORT"
 }
 
+func peerEffectiveExportPrefixes(peer bgpPeerConfig, routerV4, routerV6 []string) ([]string, []string) {
+	if len(peer.ExportPrefixes) == 0 {
+		return routerV4, routerV6
+	}
+	return splitBGPPrefixFamilies(peer.ExportPrefixes)
+}
+
+func peerRouteMapOutPrefixList(routerName string, peer bgpPeerConfig, exportPrefixes []string, family string) string {
+	if len(exportPrefixes) == 0 {
+		return ""
+	}
+	if len(peer.ExportPrefixes) > 0 {
+		return peerExportPrefixListName(routerName, peer, family)
+	}
+	return routeMapOutPrefixList(routerName, exportPrefixes, family)
+}
+
+func peerExportPrefixListName(routerName string, peer bgpPeerConfig, family string) string {
+	name := "ROUTERD-" + frrName(routerName) + "-" + frrName(peer.ResourceName+"-"+peer.Peer) + "-EXPORT"
+	if family == "ipv6" {
+		return name + "-V6"
+	}
+	return name
+}
+
 func redistributePrefixListName(routerName, protocol string) string {
 	return "ROUTERD-" + frrName(routerName) + "-REDIST-" + frrName(protocol)
 }
@@ -729,10 +787,11 @@ func peerRouteMapName(routerName string, peer bgpPeerConfig, direction string) s
 	return "ROUTERD-" + frrName(routerName) + "-" + frrName(peer.ResourceName+"-"+peer.Peer) + "-" + frrName(direction)
 }
 
-func bgpPeerNeedsRouteMap(peer, router bgpCommunities) bool {
-	return !equalStringSet(peer.Accept, router.Accept) ||
-		!equalStringSet(peer.SetIn, router.SetIn) ||
-		!equalStringSet(peer.SetOut, router.SetOut)
+func bgpPeerNeedsRouteMap(peer bgpPeerConfig, router bgpRouterConfig) bool {
+	return len(peer.ExportPrefixes) > 0 ||
+		!equalStringSet(peer.Communities.Accept, router.Communities.Accept) ||
+		!equalStringSet(peer.Communities.SetIn, router.Communities.SetIn) ||
+		!equalStringSet(peer.Communities.SetOut, router.Communities.SetOut)
 }
 
 func sortedUniqueStrings(values []string) []string {

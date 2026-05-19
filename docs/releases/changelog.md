@@ -27,6 +27,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added BFD support for FRR-managed BGP peers, FRR `bfdd` daemon rendering,
   BGP watcher tuning fields, BFD status observation, and
   `examples/bgp-bfd.yaml`.
+- Added BGP export policy allow-lists for transit routing and automatic FRR
+  `bgpd` daemon enablement when a `BGPRouter` is present.
 - Added `ClusterNetworkRoute` helpers for Kubernetes Pod / Service CIDR static
   routes, plus `passwordFrom` / `authenticationFrom` secret sources for BGP
   peer passwords and VRRP/CARP authentication.

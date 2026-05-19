@@ -27,6 +27,12 @@ spec:
           allowedPrefixes:
             - 10.244.0.0/16
             - fd00:244::/48
+        exportPolicy:
+          allowedPrefixes:
+            - 192.168.70.0/24
+            - fd00:70::/64
+            - 10.96.0.0/12
+            - fd00:96::/108
         redistribute:
           connected:
             allowedPrefixes:

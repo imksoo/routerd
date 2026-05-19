@@ -59,6 +59,9 @@ spec:
           static:
             allowedPrefixes:
               - 198.51.100.0/24
+        exportPolicy:
+          allowedPrefixes:
+            - 198.51.100.0/24
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPPeer

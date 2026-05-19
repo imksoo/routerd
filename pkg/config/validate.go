@@ -2051,6 +2051,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if err := validateBGPCommunities(res.ID(), "spec.communities", spec.Communities); err != nil {
 			return err
 		}
+		if _, err := validateBGPPrefixList(res.ID(), "spec.exportPolicy.allowedPrefixes", spec.ExportPolicy.AllowedPrefixes); err != nil {
+			return err
+		}
 		if err := validateBGPBFD(res.ID(), spec.BFD); err != nil {
 			return err
 		}

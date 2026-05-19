@@ -292,6 +292,48 @@ func TestValidateBGPRedistributeRejectsImportOverlap(t *testing.T) {
 	}
 }
 
+func TestValidateBGPExportPolicy(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:          64512,
+				RouterID:     "10.240.70.2",
+				ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}},
+				ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64513,
+				Peers:     []string{"10.240.70.21"},
+				ExportPolicy: api.BGPExportPolicySpec{
+					AllowedPrefixes: []string{"10.250.0.0/24"},
+				},
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("valid BGP export policy should validate: %v", err)
+	}
+
+	peer := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
+	peer.ExportPolicy.AllowedPrefixes = []string{"not-a-prefix"}
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.exportPolicy.allowedPrefixes[0]") {
+		t.Fatalf("expected peer export prefix validation error, got %v", err)
+	}
+
+	peer.ExportPolicy.AllowedPrefixes = []string{"10.250.0.0/24"}
+	router.Spec.Resources[1].Spec = peer
+	bgp := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
+	bgp.ExportPolicy.AllowedPrefixes = []string{"10.250.0.0/24", "10.250.0.0/24"}
+	router.Spec.Resources[0].Spec = bgp
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "duplicates") {
+		t.Fatalf("expected router export duplicate validation error, got %v", err)
+	}
+}
+
 func TestValidateBGPCommunitiesRejectsInvalidCommunity(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

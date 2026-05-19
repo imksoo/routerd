@@ -1,9 +1,10 @@
 # IPv6 dual-stack BGP and VIPs
 
 routerd can render FRR IPv4 and IPv6 unicast BGP in the same `BGPRouter`.
-Keep `spec.importPolicy.allowedPrefixes` and `redistribute.*.allowedPrefixes`
-as a single mixed list; routerd splits prefixes by address family when it
-renders FRR prefix-lists, route-maps, and `address-family` blocks.
+Keep `spec.importPolicy.allowedPrefixes`, `spec.exportPolicy.allowedPrefixes`,
+and `redistribute.*.allowedPrefixes` as mixed IPv4/IPv6 lists; routerd splits
+prefixes by address family when it renders FRR prefix-lists, route-maps, and
+`address-family` blocks.
 
 Use IPv6 peer addresses directly in `BGPPeer.spec.peers`:
 

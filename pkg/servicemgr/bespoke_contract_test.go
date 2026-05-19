@@ -51,7 +51,9 @@ func TestBespokeLifecycleContractsCoverRequiredIntegrations(t *testing.T) {
 		"keepalived-openrc-restart",
 		"dnsmasq-sighup-reload",
 		"dhcp-client-renew-release-ipc",
+		"bgpd-daemon-enable",
 		"bfd-daemon-enable",
+		"bgp-export-policy-transit-route-map",
 		"ingress-nft-map-apply",
 		"vrrp-track-script-artifacts",
 		"dslite-tunnel-event-hook",
@@ -145,12 +147,34 @@ func bespokeLifecycleContracts() []bespokeLifecycleContract {
 			},
 		},
 		{
+			name:   "bgpd-daemon-enable",
+			proves: "Any BGPRouter enables bgpd in /etc/frr/daemons and enables/restarts the FRR service even when BFD is not configured.",
+			plan: Plan{Operation: OperationRestart, Commands: []Command{
+				{Name: "artifact-write", Args: []string{"/etc/frr/daemons", "zebra=yes", "bgpd=yes", "bfdd=preserve"}},
+				Systemd{}.Command(OperationEnable, frr),
+				Systemd{}.Command(OperationRestart, frr),
+			}},
+		},
+		{
 			name:   "bfd-daemon-enable",
 			proves: "BGP BFD enables bgpd and bfdd in /etc/frr/daemons before the service restart needed for daemon-set changes.",
 			plan: Plan{Operation: OperationRestart, Commands: []Command{
 				{Name: "artifact-write", Args: []string{"/etc/frr/daemons", "zebra=yes", "bgpd=yes", "bfdd=yes"}},
+				Systemd{}.Command(OperationEnable, frr),
 				Systemd{}.Command(OperationRestart, frr),
 			}},
+		},
+		{
+			name:   "bgp-export-policy-transit-route-map",
+			proves: "Transit prefixes are advertised only when exportPolicy.allowedPrefixes renders an outbound permit route-map.",
+			plan: Plan{Operation: OperationReload, Commands: []Command{
+				{Name: "render-frr", Args: []string{"ip prefix-list ROUTERD-LAN-EXPORT seq 10 permit 10.250.0.0/24"}},
+				{Name: "render-frr", Args: []string{"route-map ROUTERD-LAN-OUT permit 10"}},
+				{Name: "render-frr", Args: []string{"match ip address prefix-list ROUTERD-LAN-EXPORT"}},
+			}},
+			forbidden: []Command{
+				{Name: "render-frr", Args: []string{"route-map ROUTERD-LAN-OUT deny-only"}},
+			},
 		},
 		{
 			name:   "ingress-nft-map-apply",
@@ -280,9 +304,16 @@ func bespokeMatrixPlan(contract bespokeLifecycleContract, manager Manager) Plan 
 		return manager.Plan(OperationRestart, keepalived)
 	case "dnsmasq-sighup-reload":
 		return manager.Plan(OperationReload, dnsmasq, PIDSignalHook(OperationReload, "HUP", "/run/routerd/dnsmasq.pid"))
+	case "bgpd-daemon-enable":
+		return Plan{Operation: OperationRestart, Commands: []Command{
+			{Name: "artifact-write", Args: []string{"/etc/frr/daemons", "zebra=yes", "bgpd=yes", "bfdd=preserve"}},
+			manager.Command(OperationEnable, frr),
+			manager.Command(OperationRestart, frr),
+		}}
 	case "bfd-daemon-enable":
 		return Plan{Operation: OperationRestart, Commands: []Command{
 			{Name: "artifact-write", Args: []string{"/etc/frr/daemons", "zebra=yes", "bgpd=yes", "bfdd=yes"}},
+			manager.Command(OperationEnable, frr),
 			manager.Command(OperationRestart, frr),
 		}}
 	case "vrrp-track-script-artifacts":

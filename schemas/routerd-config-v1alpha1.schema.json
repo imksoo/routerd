@@ -3180,6 +3180,18 @@
                         },
                         "type": "object"
                       },
+                      "exportPolicy": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowedPrefixes": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "gracefulRestart": {
                         "additionalProperties": false,
                         "properties": {
@@ -3432,6 +3444,18 @@
                               }
                             },
                             "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "exportPolicy": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowedPrefixes": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
                           }
                         },
                         "type": "object"

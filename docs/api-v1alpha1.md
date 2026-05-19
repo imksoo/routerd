@@ -226,8 +226,9 @@ imports set `ip next-hop peer-address` so Kubernetes-advertised
 redistribute connected and static IPv4 routes with independent
 `allowedPrefixes`; routerd renders FRR `redistribute connected/static route-map`
 statements and keeps the peer outbound route-map default-deny unless exported
-prefixes are explicitly listed. BGP community policy can be declared on the
-router or peer with `communities.send`, `communities.accept`, and
+prefixes are explicitly listed in `BGPRouter.spec.exportPolicy.allowedPrefixes`
+or a peer override at `BGPPeer.spec.exportPolicy.allowedPrefixes`. BGP
+community policy can be declared on the router or peer with `communities.send`, `communities.accept`, and
 `communities.set.in/out`. The watcher records observed route communities in
 status when FRR exposes them in JSON output. Multiple `BGPRouter` resources can
 run as separate FRR BGP instances by assigning additional routers to

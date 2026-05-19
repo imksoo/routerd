@@ -506,6 +506,7 @@ type BGPRouterSpec struct {
 	VRF             string                 `yaml:"vrf,omitempty" json:"vrf,omitempty"`
 	Listen          BGPListenSpec          `yaml:"listen,omitempty" json:"listen,omitempty"`
 	ImportPolicy    BGPImportPolicySpec    `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
+	ExportPolicy    BGPExportPolicySpec    `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
 	Redistribute    BGPRedistributeSpec    `yaml:"redistribute,omitempty" json:"redistribute,omitempty"`
 	Communities     BGPCommunitiesSpec     `yaml:"communities,omitempty" json:"communities,omitempty"`
 	Timers          BGPTimersSpec          `yaml:"timers,omitempty" json:"timers,omitempty"`
@@ -521,6 +522,10 @@ type BGPListenSpec struct {
 }
 
 type BGPImportPolicySpec struct {
+	AllowedPrefixes []string `yaml:"allowedPrefixes,omitempty" json:"allowedPrefixes,omitempty"`
+}
+
+type BGPExportPolicySpec struct {
 	AllowedPrefixes []string `yaml:"allowedPrefixes,omitempty" json:"allowedPrefixes,omitempty"`
 }
 
@@ -568,6 +573,7 @@ type BGPPeerSpec struct {
 	Peers        []string              `yaml:"peers" json:"peers"`
 	Password     string                `yaml:"password,omitempty" json:"password,omitempty"`
 	PasswordFrom SecretValueSourceSpec `yaml:"passwordFrom,omitempty" json:"passwordFrom,omitempty"`
+	ExportPolicy BGPExportPolicySpec   `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
 	Timers       BGPTimersSpec         `yaml:"timers,omitempty" json:"timers,omitempty"`
 	Communities  BGPCommunitiesSpec    `yaml:"communities,omitempty" json:"communities,omitempty"`
 	BFD          BGPBFDSpec            `yaml:"bfd,omitempty" json:"bfd,omitempty"`

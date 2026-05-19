@@ -27,6 +27,8 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - FRR 管理の BGP peer 向け BFD support、FRR `bfdd` daemon rendering、
   BGP watcher tuning field、BFD status observation、
   `examples/bgp-bfd.yaml` を追加しました。
+- transit routing 用の BGP export policy allow-list と、`BGPRouter` がある場合の
+  FRR `bgpd` daemon 自動 enable を追加しました。
 - Kubernetes の Pod / Service CIDR static route 向け `ClusterNetworkRoute`
   helper と、BGP peer password / VRRP-CARP authentication 用の
   `passwordFrom` / `authenticationFrom` secret source を追加しました。

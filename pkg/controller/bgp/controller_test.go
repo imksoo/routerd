@@ -33,12 +33,13 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 func TestReconcileValidatesAndReloadsFRR(t *testing.T) {
 	var calls []string
 	controller := Controller{
-		Router:     bgpRouter(),
-		Store:      mapStore{},
-		DryRun:     false,
-		ConfigPath: t.TempDir() + "/routerd.conf",
-		VTYSH:      "vtysh",
-		FRRReload:  "frr-reload.py",
+		Router:      bgpRouter(),
+		Store:       mapStore{},
+		DryRun:      false,
+		ConfigPath:  t.TempDir() + "/routerd.conf",
+		DaemonsPath: readyFRRDaemons(t),
+		VTYSH:       "vtysh",
+		FRRReload:   "frr-reload.py",
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			switch {
@@ -85,12 +86,13 @@ func TestReconcileValidatesAndReloadsFRR(t *testing.T) {
 func TestReconcileSkipsInitialBGPDiffEvents(t *testing.T) {
 	eventBus := bus.New()
 	controller := Controller{
-		Router:     bgpRouter(),
-		Bus:        eventBus,
-		Store:      mapStore{},
-		ConfigPath: t.TempDir() + "/routerd.conf",
-		VTYSH:      "vtysh",
-		FRRReload:  "frr-reload.py",
+		Router:      bgpRouter(),
+		Bus:         eventBus,
+		Store:       mapStore{},
+		ConfigPath:  t.TempDir() + "/routerd.conf",
+		DaemonsPath: readyFRRDaemons(t),
+		VTYSH:       "vtysh",
+		FRRReload:   "frr-reload.py",
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			switch {
 			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
@@ -156,11 +158,12 @@ func TestReconcileReloadsFRROnFirstLiveObserveWhenRunningConfigDiffers(t *testin
 	}
 	var calls []string
 	controller := Controller{
-		Router:     bgpRouter(),
-		Store:      mapStore{},
-		ConfigPath: path,
-		VTYSH:      "vtysh",
-		FRRReload:  "frr-reload.py",
+		Router:      bgpRouter(),
+		Store:       mapStore{},
+		ConfigPath:  path,
+		DaemonsPath: readyFRRDaemons(t),
+		VTYSH:       "vtysh",
+		FRRReload:   "frr-reload.py",
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			switch {
@@ -217,11 +220,12 @@ func TestReconcileSkipsInitialReloadWhenRunningConfigMatches(t *testing.T) {
 	}
 	var calls []string
 	controller := Controller{
-		Router:     bgpRouter(),
-		Store:      mapStore{},
-		ConfigPath: path,
-		VTYSH:      "vtysh",
-		FRRReload:  "frr-reload.py",
+		Router:      bgpRouter(),
+		Store:       mapStore{},
+		ConfigPath:  path,
+		DaemonsPath: readyFRRDaemons(t),
+		VTYSH:       "vtysh",
+		FRRReload:   "frr-reload.py",
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			switch {
@@ -267,10 +271,11 @@ func TestReconcileSeparatesMultiInstanceRouterStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := Controller{
-		Router:     router,
-		Store:      mapStore{},
-		ConfigPath: path,
-		VTYSH:      "vtysh",
+		Router:      router,
+		Store:       mapStore{},
+		ConfigPath:  path,
+		DaemonsPath: readyFRRDaemons(t),
+		VTYSH:       "vtysh",
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			if name != "vtysh" {
 				t.Fatalf("unexpected command: %s %v", name, args)
@@ -310,7 +315,7 @@ func TestReconcileSeparatesMultiInstanceRouterStatus(t *testing.T) {
 func TestReconcileObservesBFDAndWritesFRRDaemons(t *testing.T) {
 	router := bgpBFDRouter()
 	configPath := t.TempDir() + "/routerd.conf"
-	daemonsPath := t.TempDir() + "/daemons"
+	daemonsPath := pendingFRRDaemons(t)
 	var calls []string
 	controller := Controller{
 		Router:      router,
@@ -327,6 +332,8 @@ func TestReconcileObservesBFDAndWritesFRRDaemons(t *testing.T) {
 				return []byte("ok"), nil
 			case name == "frr-reload.py":
 				return []byte("reloaded"), nil
+			case name == "systemctl" && strings.Join(args, " ") == "enable frr.service":
+				return []byte("enabled"), nil
 			case name == "systemctl" && strings.Join(args, " ") == "restart frr.service":
 				return []byte("restarted"), nil
 			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
@@ -345,9 +352,10 @@ func TestReconcileObservesBFDAndWritesFRRDaemons(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 	want := []string{
+		"systemctl enable frr.service",
+		"systemctl restart frr.service",
 		"vtysh -C -f " + configPath,
 		"frr-reload.py --reload " + configPath,
-		"systemctl restart frr.service",
 		"vtysh -c show bgp summary json",
 		"vtysh -c show bgp ipv4 unicast json",
 		"vtysh -c show bfd peers brief json",
@@ -366,6 +374,61 @@ func TestReconcileObservesBFDAndWritesFRRDaemons(t *testing.T) {
 	peers, ok := status["peers"].([]bgpstate.Peer)
 	if !ok || len(peers) != 1 || peers[0].BFD == nil || peers[0].BFD.State != "up" {
 		t.Fatalf("BFD peer status = %#v", status["peers"])
+	}
+}
+
+func TestReconcileEnablesBGPDWithOpenRC(t *testing.T) {
+	configPath := t.TempDir() + "/routerd.conf"
+	var calls []string
+	controller := Controller{
+		Router:      bgpRouter(),
+		Store:       mapStore{},
+		ConfigPath:  configPath,
+		DaemonsPath: pendingFRRDaemons(t),
+		VTYSH:       "vtysh",
+		FRRReload:   "frr-reload.py",
+		Systemctl:   "rc-service",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			switch {
+			case name == "rc-update" && strings.Join(args, " ") == "add frr default":
+				return []byte("enabled"), nil
+			case name == "rc-service" && strings.Join(args, " ") == "frr restart":
+				return []byte("restarted"), nil
+			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
+				return []byte("ok"), nil
+			case name == "frr-reload.py":
+				return []byte("reloaded"), nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
+				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
+				return []byte(`{"routes":{}}`), nil
+			default:
+				t.Fatalf("unexpected command: %s %v", name, args)
+				return nil, nil
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []string{
+		"rc-update add frr default",
+		"rc-service frr restart",
+		"vtysh -C -f " + configPath,
+		"frr-reload.py --reload " + configPath,
+		"vtysh -c show bgp summary json",
+		"vtysh -c show bgp ipv4 unicast json",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	daemons, err := os.ReadFile(controller.DaemonsPath)
+	if err != nil {
+		t.Fatalf("read daemons: %v", err)
+	}
+	if !strings.Contains(string(daemons), "bgpd=yes") || strings.Contains(string(daemons), "bfdd=yes") {
+		t.Fatalf("daemons = %s", daemons)
 	}
 }
 
@@ -458,4 +521,22 @@ func bgpBFDRouter() *api.Router {
 			},
 		},
 	}}}
+}
+
+func readyFRRDaemons(t *testing.T) string {
+	t.Helper()
+	path := t.TempDir() + "/daemons"
+	if err := os.WriteFile(path, []byte("zebra=yes\nbgpd=yes\nbfdd=no\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func pendingFRRDaemons(t *testing.T) string {
+	t.Helper()
+	path := t.TempDir() + "/daemons"
+	if err := os.WriteFile(path, []byte("zebra=yes\nbgpd=no\nbfdd=no\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

@@ -60,7 +60,7 @@ func TestRenderGoldenExamples(t *testing.T) {
 func exampleConfigPath(t *testing.T, path string) string {
 	t.Helper()
 	rel := filepath.ToSlash(strings.TrimPrefix(path, filepath.Clean(filepath.Join("..", ".."))+string(os.PathSeparator)))
-	if isGitDirty(rel) {
+	if isGitDirty(rel) && !renderGoldenDirtyForExample(path) {
 		data, err := gitShow("HEAD:" + rel)
 		if err == nil {
 			tmp := filepath.Join(t.TempDir(), filepath.Base(path))
@@ -71,6 +71,17 @@ func exampleConfigPath(t *testing.T, path string) string {
 		}
 	}
 	return path
+}
+
+func renderGoldenDirtyForExample(path string) bool {
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	for _, target := range []string{"linux", "alpine", "freebsd", "nixos"} {
+		rel := filepath.ToSlash(filepath.Join("tests", "golden", "render", target, name+".golden"))
+		if isGitDirty(rel) {
+			return true
+		}
+	}
+	return false
 }
 
 func renderSnapshot(target string, router *api.Router) ([]byte, error) {

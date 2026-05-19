@@ -63,6 +63,9 @@ func validateBGPRouterPolicy(resourceID string, spec api.BGPRouterSpec) error {
 	if err != nil {
 		return err
 	}
+	if _, err := validateBGPPrefixList(resourceID, "spec.exportPolicy.allowedPrefixes", spec.ExportPolicy.AllowedPrefixes); err != nil {
+		return err
+	}
 	connected, err := validateBGPPrefixList(resourceID, "spec.redistribute.connected.allowedPrefixes", spec.Redistribute.Connected.AllowedPrefixes)
 	if err != nil {
 		return err

@@ -19,7 +19,9 @@ import (
 	bgpstate "routerd/pkg/bgp"
 	"routerd/pkg/bus"
 	"routerd/pkg/daemonapi"
+	"routerd/pkg/platform"
 	"routerd/pkg/render"
+	"routerd/pkg/servicemgr"
 )
 
 type Store interface {
@@ -92,6 +94,23 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			reloadNeeded = !matches
 		}
 	}
+	if daemonsChanged {
+		reloadNeeded = true
+	}
+	if !c.DryRun && daemonsChanged {
+		for _, command := range c.frrDaemonChangeCommands() {
+			if command.Name == "" {
+				continue
+			}
+			if out, err := c.run(ctx, command.Name, command.Args...); err != nil {
+				saveErr := c.saveConfiguredStatuses("Error", path, true, map[string]any{"reason": "FRRServiceEnableRestartFailed", "error": strings.TrimSpace(string(out)), "daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
+				if saveErr != nil {
+					return saveErr
+				}
+				return fmt.Errorf("%s %s: %w: %s", command.Name, strings.Join(command.Args, " "), err, strings.TrimSpace(string(out)))
+			}
+		}
+	}
 	if !c.DryRun && reloadNeeded {
 		vtysh := firstNonEmpty(c.VTYSH, "vtysh")
 		if out, err := c.run(ctx, vtysh, "-C", "-f", path); err != nil {
@@ -108,16 +127,6 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 				return saveErr
 			}
 			return fmt.Errorf("%s --reload %s: %w: %s", reload, path, err, strings.TrimSpace(string(out)))
-		}
-	}
-	if !c.DryRun && daemonsChanged {
-		systemctl := firstNonEmpty(c.Systemctl, "systemctl")
-		if out, err := c.run(ctx, systemctl, "restart", "frr.service"); err != nil {
-			saveErr := c.saveConfiguredStatuses("Error", path, true, map[string]any{"reason": "FRRServiceRestartFailed", "error": strings.TrimSpace(string(out)), "daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged})
-			if saveErr != nil {
-				return saveErr
-			}
-			return fmt.Errorf("%s restart frr.service: %w: %s", systemctl, err, strings.TrimSpace(string(out)))
 		}
 	}
 	if !c.DryRun {
@@ -137,9 +146,6 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 
 func (c *Controller) renderFRRDaemons() (bool, string, error) {
 	path := firstNonEmpty(c.DaemonsPath, "/etc/frr/daemons")
-	if !c.routerUsesBFD() {
-		return false, path, nil
-	}
 	var existing []byte
 	if current, err := os.ReadFile(path); err == nil {
 		existing = current
@@ -162,20 +168,28 @@ func (c *Controller) renderFRRDaemons() (bool, string, error) {
 	return changed, path, nil
 }
 
-func (c *Controller) routerUsesBFD() bool {
-	if c.Router == nil {
-		return false
+func (c *Controller) frrDaemonChangeCommands() []servicemgr.Command {
+	frr := servicemgr.Service{SystemdName: "frr.service", OpenRCName: "frr", RCDName: "frr", NixName: "frr"}
+	manager := c.serviceManager()
+	return []servicemgr.Command{
+		manager.Command(servicemgr.OperationEnable, frr),
+		manager.Command(servicemgr.OperationRestart, frr),
 	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
-			continue
-		}
-		spec, err := resource.BGPPeerSpec()
-		if err == nil && spec.BFD.Enabled != nil && *spec.BFD.Enabled {
-			return true
-		}
+}
+
+func (c *Controller) serviceManager() servicemgr.Manager {
+	switch strings.TrimSpace(c.Systemctl) {
+	case "rc-service", "rc-update":
+		return servicemgr.OpenRC{}
+	case "service", "sysrc":
+		return servicemgr.RCD{}
+	case "nixos-rebuild":
+		return servicemgr.NixOS{}
+	case "systemctl":
+		return servicemgr.Systemd{}
 	}
-	return false
+	_, features := platform.Current()
+	return servicemgr.ForPlatform(features)
 }
 
 func (c *Controller) runningConfigMatches(ctx context.Context, desired []byte) (bool, error) {
@@ -362,7 +376,11 @@ func (c *Controller) bgpInstances() []bgpInstance {
 }
 
 func (c *Controller) bgpRouterUsesIPv6(routerName string, spec api.BGPRouterSpec) bool {
-	for _, prefix := range append(append([]string{}, spec.ImportPolicy.AllowedPrefixes...), append(spec.Redistribute.Connected.AllowedPrefixes, spec.Redistribute.Static.AllowedPrefixes...)...) {
+	prefixes := append([]string{}, spec.ImportPolicy.AllowedPrefixes...)
+	prefixes = append(prefixes, spec.ExportPolicy.AllowedPrefixes...)
+	prefixes = append(prefixes, spec.Redistribute.Connected.AllowedPrefixes...)
+	prefixes = append(prefixes, spec.Redistribute.Static.AllowedPrefixes...)
+	for _, prefix := range prefixes {
 		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil && parsed.Addr().Is6() {
 			return true
 		}
@@ -381,6 +399,11 @@ func (c *Controller) bgpRouterUsesIPv6(routerName string, spec api.BGPRouterSpec
 		_, name, ok := strings.Cut(strings.TrimSpace(peerSpec.RouterRef), "/")
 		if !ok || name != routerName {
 			continue
+		}
+		for _, prefix := range peerSpec.ExportPolicy.AllowedPrefixes {
+			if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil && parsed.Addr().Is6() {
+				return true
+			}
 		}
 		for _, peer := range peerSpec.Peers {
 			if addr, err := netip.ParseAddr(strings.TrimSpace(peer)); err == nil && addr.Is6() {

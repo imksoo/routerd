@@ -138,24 +138,87 @@ os-matrix:
       systemctl restart routerd-dhcpv4-client@wan.service
       systemctl restart routerd-dhcpv6-client@wan-pd.service
 
+[bgpd-daemon-enable]
+proves: Any BGPRouter enables bgpd in /etc/frr/daemons and enables/restarts the FRR service even when BFD is not configured.
+commands:
+  artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=preserve
+  systemctl enable frr.service
+  systemctl restart frr.service
+os-matrix:
+  systemd:
+    artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=preserve
+    systemctl enable frr.service
+    systemctl restart frr.service
+  openrc:
+    artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=preserve
+    rc-update add frr default
+    rc-service frr restart
+  rc.d:
+    artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=preserve
+    sysrc frr_enable=YES
+    service frr restart
+  nixos:
+    artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=preserve
+    nixos-rebuild switch
+    nixos-rebuild switch
+
 [bfd-daemon-enable]
 proves: BGP BFD enables bgpd and bfdd in /etc/frr/daemons before the service restart needed for daemon-set changes.
 commands:
   artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=yes
+  systemctl enable frr.service
   systemctl restart frr.service
 os-matrix:
   systemd:
     artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=yes
+    systemctl enable frr.service
     systemctl restart frr.service
   openrc:
     artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=yes
+    rc-update add frr default
     rc-service frr restart
   rc.d:
     artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=yes
+    sysrc frr_enable=YES
     service frr restart
   nixos:
     artifact-write /etc/frr/daemons zebra=yes bgpd=yes bfdd=yes
     nixos-rebuild switch
+    nixos-rebuild switch
+
+[bgp-export-policy-transit-route-map]
+proves: Transit prefixes are advertised only when exportPolicy.allowedPrefixes renders an outbound permit route-map.
+commands:
+  render-frr ip prefix-list ROUTERD-LAN-EXPORT seq 10 permit 10.250.0.0/24
+  render-frr route-map ROUTERD-LAN-OUT permit 10
+  render-frr match ip address prefix-list ROUTERD-LAN-EXPORT
+forbidden:
+  render-frr route-map ROUTERD-LAN-OUT deny-only
+os-matrix:
+  systemd:
+    render-frr ip prefix-list ROUTERD-LAN-EXPORT seq 10 permit 10.250.0.0/24
+    render-frr route-map ROUTERD-LAN-OUT permit 10
+    render-frr match ip address prefix-list ROUTERD-LAN-EXPORT
+    forbidden:
+      render-frr route-map ROUTERD-LAN-OUT deny-only
+  openrc:
+    render-frr ip prefix-list ROUTERD-LAN-EXPORT seq 10 permit 10.250.0.0/24
+    render-frr route-map ROUTERD-LAN-OUT permit 10
+    render-frr match ip address prefix-list ROUTERD-LAN-EXPORT
+    forbidden:
+      render-frr route-map ROUTERD-LAN-OUT deny-only
+  rc.d:
+    render-frr ip prefix-list ROUTERD-LAN-EXPORT seq 10 permit 10.250.0.0/24
+    render-frr route-map ROUTERD-LAN-OUT permit 10
+    render-frr match ip address prefix-list ROUTERD-LAN-EXPORT
+    forbidden:
+      render-frr route-map ROUTERD-LAN-OUT deny-only
+  nixos:
+    render-frr ip prefix-list ROUTERD-LAN-EXPORT seq 10 permit 10.250.0.0/24
+    render-frr route-map ROUTERD-LAN-OUT permit 10
+    render-frr match ip address prefix-list ROUTERD-LAN-EXPORT
+    forbidden:
+      render-frr route-map ROUTERD-LAN-OUT deny-only
 
 [ingress-nft-map-apply]
 proves: IngressService backend rotation updates nftables dataplane state only and must not restart any daemon.

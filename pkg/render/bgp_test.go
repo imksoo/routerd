@@ -75,6 +75,9 @@ func TestFRRConfigRendersRedistributeAndCommunities(t *testing.T) {
 				ImportPolicy: api.BGPImportPolicySpec{
 					AllowedPrefixes: []string{"10.0.0.200/29"},
 				},
+				ExportPolicy: api.BGPExportPolicySpec{
+					AllowedPrefixes: []string{"192.168.50.0/24", "198.51.100.0/24"},
+				},
 				Redistribute: api.BGPRedistributeSpec{
 					Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{"192.168.50.0/24"}},
 					Static:    api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{"198.51.100.0/24"}},
@@ -124,6 +127,76 @@ func TestFRRConfigRendersRedistributeAndCommunities(t *testing.T) {
 	}
 }
 
+func TestFRRConfigRendersExportPolicyForTransitRouting(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+			ASN:          64512,
+			RouterID:     "10.0.0.1",
+			ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}},
+			ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "worker"}, Spec: api.BGPPeerSpec{
+			RouterRef: "BGPRouter/lan",
+			PeerASN:   64513,
+			Peers:     []string{"192.168.1.54"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "upstream"}, Spec: api.BGPPeerSpec{
+			RouterRef: "BGPRouter/lan",
+			PeerASN:   64514,
+			Peers:     []string{"192.168.1.1"},
+			ExportPolicy: api.BGPExportPolicySpec{
+				AllowedPrefixes: []string{"10.250.0.0/24"},
+			},
+		}},
+	}}}
+	data, err := FRRConfig(router)
+	if err != nil {
+		t.Fatalf("render FRR config: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"ip prefix-list ROUTERD-LAN-EXPORT seq 10 permit 10.250.0.0/24",
+		"route-map ROUTERD-LAN-OUT permit 10",
+		" match ip address prefix-list ROUTERD-LAN-EXPORT",
+		"ip prefix-list ROUTERD-LAN-UPSTREAM-192-168-1-1-EXPORT seq 10 permit 10.250.0.0/24",
+		"route-map ROUTERD-LAN-UPSTREAM-192-168-1-1-OUT permit 10",
+		" match ip address prefix-list ROUTERD-LAN-UPSTREAM-192-168-1-1-EXPORT",
+		"neighbor 192.168.1.1 route-map ROUTERD-LAN-UPSTREAM-192-168-1-1-OUT out",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("FRR config missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFRRConfigKeepsRedistributeExportDenyByDefault(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+			ASN:      64512,
+			RouterID: "10.0.0.1",
+			Redistribute: api.BGPRedistributeSpec{
+				Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{"192.168.50.0/24"}},
+			},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.BGPPeerSpec{
+			RouterRef: "BGPRouter/lan",
+			PeerASN:   64513,
+			Peers:     []string{"10.0.0.21"},
+		}},
+	}}}
+	data, err := FRRConfig(router)
+	if err != nil {
+		t.Fatalf("render FRR config: %v", err)
+	}
+	got := string(data)
+	if strings.Contains(got, "ROUTERD-LAN-EXPORT seq 10 permit") {
+		t.Fatalf("redistribute must not imply exportPolicy:\n%s", got)
+	}
+	if !strings.Contains(got, "route-map ROUTERD-LAN-OUT deny 999") {
+		t.Fatalf("FRR config missing default outbound deny:\n%s", got)
+	}
+}
+
 func TestFRRConfigRendersIPv6Unicast(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
@@ -135,6 +208,7 @@ func TestFRRConfigRendersIPv6Unicast(t *testing.T) {
 			Redistribute: api.BGPRedistributeSpec{
 				Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{"192.168.50.0/24", "fd00:50::/64"}},
 			},
+			ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"fd00:50::/64"}},
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.BGPPeerSpec{
 			RouterRef: "BGPRouter/lan",
@@ -151,8 +225,11 @@ func TestFRRConfigRendersIPv6Unicast(t *testing.T) {
 		"ip prefix-list ROUTERD-LAN-IMPORT seq 10 permit 10.0.0.200/29",
 		"ipv6 prefix-list ROUTERD-LAN-IMPORT-V6 seq 10 permit fd00:1234::/64",
 		"ipv6 prefix-list ROUTERD-LAN-REDIST-CONNECTED-V6 seq 10 permit fd00:50::/64",
+		"ipv6 prefix-list ROUTERD-LAN-EXPORT-V6 seq 10 permit fd00:50::/64",
 		"route-map ROUTERD-LAN-IN-V6 permit 10",
 		" match ipv6 address prefix-list ROUTERD-LAN-IMPORT-V6",
+		"route-map ROUTERD-LAN-OUT-V6 permit 10",
+		" match ipv6 address prefix-list ROUTERD-LAN-EXPORT-V6",
 		"address-family ipv6 unicast",
 		"  redistribute connected route-map ROUTERD-LAN-REDIST-CONNECTED-V6",
 		"  neighbor fd00:1234::21 activate",
@@ -248,6 +325,25 @@ func TestFRRConfigRendersBFDPeerAndDaemons(t *testing.T) {
 	for _, want := range []string{"zebra=yes", "bgpd=yes", "bfdd=yes"} {
 		if !strings.Contains(string(daemons), want) {
 			t.Fatalf("FRR daemons missing %q:\n%s", want, daemons)
+		}
+	}
+}
+
+func TestFRRDaemonsEnablesBGPDWithoutBFD(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+			ASN:      64512,
+			RouterID: "10.0.0.1",
+		}},
+	}}}
+	daemons, err := FRRDaemons([]byte("zebra=yes\nbgpd=no\nbfdd=no\n"), router)
+	if err != nil {
+		t.Fatalf("render FRR daemons: %v", err)
+	}
+	got := string(daemons)
+	for _, want := range []string{"zebra=yes", "bgpd=yes", "bfdd=no"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("FRR daemons missing %q:\n%s", want, got)
 		}
 	}
 }

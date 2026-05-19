@@ -247,7 +247,9 @@ import policy は default deny で、受け入れた経路には
 `set ip next-hop peer-address` を付けます。`BGPRouter` は connected/static IPv4
 route を個別の `allowedPrefixes` 付きで redistribute できます。routerd は FRR の
 `redistribute connected/static route-map` を生成し、明示的な export prefix がない限り
-peer outbound route-map は default deny のままにします。BGP community policy は
+peer outbound route-map は default deny のままにします。外向き広告は
+`BGPRouter.spec.exportPolicy.allowedPrefixes`、または peer ごとの
+`BGPPeer.spec.exportPolicy.allowedPrefixes` で明示します。BGP community policy は
 router または peer に `communities.send`、`communities.accept`、
 `communities.set.in/out` として宣言できます。FRR JSON に community が含まれる場合、
 watcher は観測した route community を status に保存します。複数の `BGPRouter`
