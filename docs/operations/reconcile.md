@@ -25,6 +25,12 @@ routerd serve --config router.yaml
 
 In serve mode, routerd reacts to events on the bus and re-evaluates only the resources affected. Inputs include DHCPv6-PD renewals, health-check results, derived events, and configuration changes detected by inotify.
 
+Controller dry-run flags are scoped by ownership. `--controller-chain-dry-run-ingress=false`
+means the IngressService controller performs live health selection and its
+IngressService-derived nftables DNAT/hairpin rules are applied live as well.
+Independent `NAT44Rule`, `IPv4SourceNAT`, and `LocalServiceRedirect` resources
+remain controlled by `--controller-chain-dry-run-nat=false`.
+
 ## Drift checks
 
 routerd does not treat the status database as the only source of truth. The

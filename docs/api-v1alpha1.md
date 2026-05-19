@@ -253,9 +253,12 @@ backend is used. `track` lowers priority when referenced resources such as
 hysteresis: by default three consecutive unhealthy observations are required to
 apply a penalty and two consecutive healthy observations are required to clear
 it. `spec.hostname` can publish VIPs into matching DNSResolver-served `DNSZone`
-records; IPv4 VIPs create A records and IPv6 VIPs create AAAA records. `routerctl
-show vrrp` shows role, priority, peers, and transition age. NixOS remains
-groundwork until a native service-manager module owns the same host artifacts.
+records; IPv4 VIPs create A records and IPv6 VIPs create AAAA records. Set
+`spec.externalDNS: true` when the name is owned by an outside DNS system; routerd
+will keep validating the hostname syntax but will not try to publish it or warn
+about missing DNSZone coverage. `routerctl show vrrp` shows role, priority,
+peers, and transition age. NixOS remains groundwork until a native
+service-manager module owns the same host artifacts.
 
 ### VRRP production tuning
 
@@ -311,7 +314,8 @@ backend while new flows use the selected backend. Validator checks reject
 listen-port collisions between `IngressService`, `LocalServiceRedirect`, and
 routerd-managed local daemons on the same protocol/interface. `spec.hostname`
 can also publish the listen address into matching DNSResolver-served `DNSZone`
-records, and `routerctl show ingress` shows active backend and per-backend
+records. Set `spec.externalDNS: true` when AD DNS or another external DNS system
+owns the name. `routerctl show ingress` shows active backend and per-backend
 health. During maintenance, `routerctl drain ingress/<service> backend=<name>
 --duration 10m` marks a backend as drained in the runtime state store. The
 controller treats it as unhealthy with reason `Drained` until the duration

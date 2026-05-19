@@ -32,6 +32,7 @@ type Controller struct {
 	Bus          *bus.Bus
 	Store        Store
 	DryRun       bool
+	IngressLive  bool
 	NftablesPath string
 	NftCommand   string
 	Interval     time.Duration
@@ -127,21 +128,30 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		})
 	}
 	renderRouter := c.effectiveIngressRouter()
+	applyLive := !c.DryRun || c.IngressLive
+	applyRouter := renderRouter
+	renderRules := rules
+	if applyLive {
+		applyRouter = c.applyRouter(renderRouter)
+		if c.DryRun {
+			renderRules = nil
+		}
+	}
 	if platform.CurrentOS() == platform.OSFreeBSD {
 		if len(rules) == 0 {
-			if c.DryRun {
+			if !applyLive {
 				return nil
 			}
 			return c.clearPF(ctx)
 		}
 		return c.reconcilePF(ctx, rules)
 	}
-	data, err := render.NftablesNAT44RulesForRouter(renderRouter, rules)
+	data, err := render.NftablesNAT44RulesForRouter(applyRouter, renderRules)
 	if err != nil {
 		return err
 	}
 	if len(data) == 0 {
-		if c.DryRun {
+		if !applyLive {
 			return nil
 		}
 		return c.clearNftables(ctx)
@@ -161,7 +171,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
-	if c.DryRun {
+	if !applyLive {
 		return c.saveRuleStatuses(ctx, rules, path, changed, false)
 	}
 	nft := firstNonEmpty(c.NftCommand, "nft")
@@ -365,6 +375,36 @@ func (c Controller) effectiveIngressRouter() *api.Router {
 		next.Spec.Resources[i].Spec = spec
 	}
 	return &next
+}
+
+func (c Controller) applyRouter(router *api.Router) *api.Router {
+	if router == nil {
+		return nil
+	}
+	includeNAT := !c.DryRun
+	includeIngress := c.IngressLive
+	if includeNAT && includeIngress {
+		return router
+	}
+	next := *router
+	next.Spec.Resources = make([]api.Resource, 0, len(router.Spec.Resources))
+	for _, resource := range router.Spec.Resources {
+		if nat44ControllerResource(resource) && !includeNAT {
+			continue
+		}
+		if resource.APIVersion == api.FirewallAPIVersion && resource.Kind == "IngressService" && !includeIngress {
+			continue
+		}
+		next.Spec.Resources = append(next.Spec.Resources, resource)
+	}
+	return &next
+}
+
+func nat44ControllerResource(resource api.Resource) bool {
+	if resource.Kind == "NAT44Rule" || resource.Kind == "IPv4SourceNAT" {
+		return true
+	}
+	return resource.APIVersion == api.FirewallAPIVersion && resource.Kind == "LocalServiceRedirect"
 }
 
 func activeBackends(status map[string]any) ([]api.IngressBackendSpec, string) {

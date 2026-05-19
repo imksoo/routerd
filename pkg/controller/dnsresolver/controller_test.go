@@ -208,6 +208,33 @@ func TestRuntimeConfigKeepsExplicitDNSZoneRecordOverHostnameRecord(t *testing.T)
 	}
 }
 
+func TestRuntimeConfigSkipsExternalDNSHostnameRecords(t *testing.T) {
+	store := mapStore{
+		api.FirewallAPIVersion + "/IngressService/kubernetes-api-alt": {"listenAddress": "192.168.123.251"},
+	}
+	router := dnsResolverRouterWithHostnameResources()
+	spec := router.Spec.Resources[4].Spec.(api.IngressServiceSpec)
+	spec.ExternalDNS = true
+	router.Spec.Resources[4].Spec = spec
+	controller := Controller{Router: router, Store: store, DryRun: true}
+	resolverSpec := api.DNSResolverSpec{
+		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
+		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lain.local"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
+	}
+	config, err := controller.runtimeConfig("lan-resolver", resolverSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range config.Zones[0].Spec.Records {
+		if record.Hostname == "k8s-api-alt" {
+			t.Fatalf("externalDNS hostname record was exported: %#v", config.Zones[0].Spec.Records)
+		}
+	}
+	if dnsResolverDependsOn(router, daemonapi.ResourceRef{APIVersion: api.FirewallAPIVersion, Kind: "IngressService", Name: "kubernetes-api-alt"}) {
+		t.Fatal("externalDNS resource should not trigger DNSResolver dependency")
+	}
+}
+
 func TestDNSResolverDependsOnDNSZoneRecordSource(t *testing.T) {
 	router := dnsResolverRouterWithZone(api.DNSZoneRecordSpec{
 		Hostname: "router",

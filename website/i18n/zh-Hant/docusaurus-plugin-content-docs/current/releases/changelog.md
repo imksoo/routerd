@@ -41,6 +41,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - `routerd apply --once` 的 VRRP 處理現在復用與 daemon mode 相同的
   controller reconcile 路徑，因此 keepalived reload/restart status fields
   會被一致寫入。
+- 將 IngressService 的 live nftables apply 與獨立 NAT44 dry-run mode 解耦；
+  hostname 的 DNSZone coverage 現在降級為 warning，並可用 `externalDNS`
+  標記外部 DNS 管理的名稱。
 
 ## v20260519.0743
 

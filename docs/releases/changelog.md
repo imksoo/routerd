@@ -55,6 +55,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Routed `routerd apply --once` VRRP handling through the same controller
   reconcile path as daemon mode, so keepalived reload/restart status fields are
   written consistently.
+- Decoupled IngressService live nftables apply from independent NAT44 dry-run
+  mode and relaxed hostname DNSZone coverage to warnings with an `externalDNS`
+  opt-out for externally managed DNS names.
 
 ## v20260519.0743
 

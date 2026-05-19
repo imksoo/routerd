@@ -27,6 +27,12 @@ routerd serve --config router.yaml
 serve モードでは、bus 上のイベントに反応して影響範囲のリソースだけを再評価します。
 入力は DHCPv6-PD renewal、health check 結果、derived event、inotify による設定変更検知などです。
 
+controller dry-run flag は所有範囲ごとに効きます。
+`--controller-chain-dry-run-ingress=false` は IngressService controller の live health
+selection と、IngressService 由来の nftables DNAT/hairpin rule の live apply を意味します。
+独立した `NAT44Rule`、`IPv4SourceNAT`、`LocalServiceRedirect` は引き続き
+`--controller-chain-dry-run-nat=false` で別に制御します。
+
 ## drift の確認
 
 routerd は、状態データベースだけを唯一の正として扱いません。

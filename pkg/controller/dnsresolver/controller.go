@@ -173,6 +173,9 @@ func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[
 			if err != nil {
 				continue
 			}
+			if spec.ExternalDNS {
+				continue
+			}
 			hostname := strings.TrimSpace(spec.Hostname)
 			if hostname == "" {
 				continue
@@ -190,6 +193,9 @@ func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[
 			if err != nil {
 				continue
 			}
+			if spec.ExternalDNS {
+				continue
+			}
 			hostname := strings.TrimSpace(spec.Hostname)
 			if hostname == "" {
 				continue
@@ -205,6 +211,9 @@ func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[
 			}
 			spec, err := resource.IngressServiceSpec()
 			if err != nil {
+				continue
+			}
+			if spec.ExternalDNS {
 				continue
 			}
 			hostname := strings.TrimSpace(spec.Hostname)
@@ -761,13 +770,13 @@ func hostnameResourceExists(router *api.Router, kind, name string) bool {
 		switch kind {
 		case "VirtualIPv4Address":
 			spec, err := resource.VirtualIPv4AddressSpec()
-			return err == nil && strings.TrimSpace(spec.Hostname) != ""
+			return err == nil && strings.TrimSpace(spec.Hostname) != "" && !spec.ExternalDNS
 		case "VirtualIPv6Address":
 			spec, err := resource.VirtualIPv6AddressSpec()
-			return err == nil && strings.TrimSpace(spec.Hostname) != ""
+			return err == nil && strings.TrimSpace(spec.Hostname) != "" && !spec.ExternalDNS
 		case "IngressService":
 			spec, err := resource.IngressServiceSpec()
-			return err == nil && strings.TrimSpace(spec.Hostname) != ""
+			return err == nil && strings.TrimSpace(spec.Hostname) != "" && !spec.ExternalDNS
 		}
 	}
 	return false

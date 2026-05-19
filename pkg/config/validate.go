@@ -61,8 +61,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	bgpRouters := map[string]bool{}
 	vrfs := map[string]bool{}
 	zones := map[string]bool{}
-	dnsZones := map[string]string{}
-	dnsResolverZones := map[string]bool{}
 	ipAddressSets := map[string]bool{}
 	udpListenPorts := map[int]string{}
 	staticByInterfaceAddress := map[string]string{}
@@ -277,30 +275,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "BGPRouter" {
 			bgpRouters[res.Metadata.Name] = true
 		}
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "DNSZone" {
-			spec, err := res.DNSZoneSpec()
-			if err != nil {
-				return err
-			}
-			dnsZones[res.Metadata.Name] = spec.Zone
-		}
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "DNSResolver" {
-			spec, err := res.DNSResolverSpec()
-			if err != nil {
-				return err
-			}
-			for _, source := range spec.Sources {
-				if source.Kind != "zone" {
-					continue
-				}
-				for _, ref := range source.ZoneRef {
-					kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
-					if ok && kind == "DNSZone" && name != "" {
-						dnsResolverZones[name] = true
-					}
-				}
-			}
-		}
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallZone" {
 			zones[res.Metadata.Name] = true
 		}
@@ -310,39 +284,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	}
 	if err := validateBGPRouterInstances(router, vrfs); err != nil {
 		return err
-	}
-	for _, res := range router.Spec.Resources {
-		hostname := ""
-		switch {
-		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv4Address":
-			spec, err := res.VirtualIPv4AddressSpec()
-			if err != nil {
-				return err
-			}
-			hostname = spec.Hostname
-		case res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualIPv6Address":
-			spec, err := res.VirtualIPv6AddressSpec()
-			if err != nil {
-				return err
-			}
-			hostname = spec.Hostname
-		case res.APIVersion == api.FirewallAPIVersion && res.Kind == "IngressService":
-			spec, err := res.IngressServiceSpec()
-			if err != nil {
-				return err
-			}
-			hostname = spec.Hostname
-		}
-		if strings.TrimSpace(hostname) == "" {
-			continue
-		}
-		zoneName, ok := dnsHostnameCovered(hostname, dnsZones)
-		if !ok {
-			return fmt.Errorf("%s spec.hostname %q is not covered by any DNSZone", res.ID(), hostname)
-		}
-		if !dnsResolverZones[zoneName] {
-			return fmt.Errorf("%s spec.hostname %q is covered by DNSZone/%s but no DNSResolver source references that zone", res.ID(), hostname, zoneName)
-		}
 	}
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.NetAPIVersion || res.Kind != "VirtualIPv4Address" {

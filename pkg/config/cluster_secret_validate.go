@@ -109,6 +109,7 @@ func Warnings(router *api.Router) []string {
 		return nil
 	}
 	var warnings []string
+	dnsZones, dnsResolverZones := dnsZoneCoverage(router)
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "BGPPeer":
@@ -120,15 +121,70 @@ func Warnings(router *api.Router) []string {
 			spec, err := res.VirtualIPv4AddressSpec()
 			if err == nil {
 				warnings = append(warnings, secretSourceWarnings(res.ID(), "spec.vrrp.authenticationFrom", spec.VRRP.AuthenticationFrom)...)
+				warnings = append(warnings, hostnameDNSCoverageWarnings(res.ID(), spec.Hostname, spec.ExternalDNS, dnsZones, dnsResolverZones)...)
 			}
 		case "VirtualIPv6Address":
 			spec, err := res.VirtualIPv6AddressSpec()
 			if err == nil {
 				warnings = append(warnings, secretSourceWarnings(res.ID(), "spec.vrrp.authenticationFrom", spec.VRRP.AuthenticationFrom)...)
+				warnings = append(warnings, hostnameDNSCoverageWarnings(res.ID(), spec.Hostname, spec.ExternalDNS, dnsZones, dnsResolverZones)...)
+			}
+		case "IngressService":
+			spec, err := res.IngressServiceSpec()
+			if err == nil {
+				warnings = append(warnings, hostnameDNSCoverageWarnings(res.ID(), spec.Hostname, spec.ExternalDNS, dnsZones, dnsResolverZones)...)
 			}
 		}
 	}
 	return warnings
+}
+
+func dnsZoneCoverage(router *api.Router) (map[string]string, map[string]bool) {
+	dnsZones := map[string]string{}
+	dnsResolverZones := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "DNSZone" {
+			spec, err := res.DNSZoneSpec()
+			if err == nil {
+				dnsZones[res.Metadata.Name] = spec.Zone
+			}
+			continue
+		}
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "DNSResolver" {
+			continue
+		}
+		spec, err := res.DNSResolverSpec()
+		if err != nil {
+			continue
+		}
+		for _, source := range spec.Sources {
+			if source.Kind != "zone" {
+				continue
+			}
+			for _, ref := range source.ZoneRef {
+				kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+				if ok && kind == "DNSZone" && name != "" {
+					dnsResolverZones[name] = true
+				}
+			}
+		}
+	}
+	return dnsZones, dnsResolverZones
+}
+
+func hostnameDNSCoverageWarnings(resourceID, hostname string, externalDNS bool, dnsZones map[string]string, dnsResolverZones map[string]bool) []string {
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" || externalDNS {
+		return nil
+	}
+	zoneName, ok := dnsHostnameCovered(hostname, dnsZones)
+	if !ok {
+		return []string{fmt.Sprintf("%s spec.hostname %q is not covered by any DNSZone; routerd will not publish it automatically unless externalDNS is true or a matching DNSZone/DNSResolver source is added", resourceID, hostname)}
+	}
+	if !dnsResolverZones[zoneName] {
+		return []string{fmt.Sprintf("%s spec.hostname %q is covered by DNSZone/%s but no DNSResolver source references that zone; routerd will not publish it automatically unless externalDNS is true or the zone is served", resourceID, hostname, zoneName)}
+	}
+	return nil
 }
 
 func secretSourceWarnings(resourceID, path string, source api.SecretValueSourceSpec) []string {

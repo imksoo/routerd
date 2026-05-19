@@ -451,6 +451,7 @@ type VirtualIPv4AddressSpec struct {
 	Interface   string                `yaml:"interface" json:"interface"`
 	Address     string                `yaml:"address" json:"address"`
 	Hostname    string                `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	ExternalDNS bool                  `yaml:"externalDNS,omitempty" json:"externalDNS,omitempty"`
 	Mode        string                `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=static,enum=vrrp"`
 	VRRP        VirtualIPv4VRRPSpec   `yaml:"vrrp,omitempty" json:"vrrp,omitempty"`
 	Track       []ResourceTrackSpec   `yaml:"track,omitempty" json:"track,omitempty"`
@@ -462,6 +463,7 @@ type VirtualIPv6AddressSpec struct {
 	Interface   string                `yaml:"interface" json:"interface"`
 	Address     string                `yaml:"address" json:"address"`
 	Hostname    string                `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	ExternalDNS bool                  `yaml:"externalDNS,omitempty" json:"externalDNS,omitempty"`
 	Mode        string                `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=static,enum=vrrp"`
 	VRRP        VirtualIPv6VRRPSpec   `yaml:"vrrp,omitempty" json:"vrrp,omitempty"`
 	Track       []ResourceTrackSpec   `yaml:"track,omitempty" json:"track,omitempty"`
@@ -1226,6 +1228,7 @@ type IngressTargetSpec struct {
 type IngressServiceSpec struct {
 	Listen      IngressListenSpec        `yaml:"listen" json:"listen"`
 	Hostname    string                   `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	ExternalDNS bool                     `yaml:"externalDNS,omitempty" json:"externalDNS,omitempty"`
 	Backends    []IngressBackendSpec     `yaml:"backends" json:"backends"`
 	Hairpin     IngressHairpinSpec       `yaml:"hairpin,omitempty" json:"hairpin,omitempty"`
 	HealthCheck IngressHealthCheckSpec   `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`

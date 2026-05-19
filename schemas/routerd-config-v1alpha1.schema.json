@@ -2735,6 +2735,9 @@
                         ],
                         "type": "object"
                       },
+                      "externalDNS": {
+                        "type": "boolean"
+                      },
                       "hostname": {
                         "type": "string"
                       },
@@ -2939,6 +2942,9 @@
                           "resource"
                         ],
                         "type": "object"
+                      },
+                      "externalDNS": {
+                        "type": "boolean"
                       },
                       "hostname": {
                         "type": "string"
@@ -7516,6 +7522,9 @@
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "externalDNS": {
+                        "type": "boolean"
                       },
                       "hairpin": {
                         "additionalProperties": false,

@@ -58,6 +58,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - `routerd apply --once` の VRRP 処理を daemon mode と同じ controller
   reconcile 経路へ寄せ、keepalived reload/restart status fields が一貫して
   保存されるようにしました。
+- IngressService の live nftables apply を独立 NAT44 dry-run mode から分離し、
+  hostname の DNSZone coverage は warning に緩和しました。外部 DNS 管理の名前は
+  `externalDNS` で自動公開と warning を抑止できます。
 
 ## v20260519.0743
 

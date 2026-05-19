@@ -1,0 +1,40 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: k8s-api-external-dns
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: eth0
+        managed: false
+
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: IngressService
+      metadata:
+        name: kubernetes-api
+      spec:
+        listen:
+          interface: lan
+          address: 192.0.2.10
+          protocol: tcp
+          port: 6443
+        hostname: k8s-api.cluster.example
+        externalDNS: true
+        healthCheck:
+          protocol: https
+          path: /readyz
+          timeout: 2s
+        backends:
+          - name: cp-01
+            address: 192.0.2.11
+            port: 6443
+          - name: cp-02
+            address: 192.0.2.12
+            port: 6443
+        policy:
+          selection: failover
+          onNoHealthyBackends: reject

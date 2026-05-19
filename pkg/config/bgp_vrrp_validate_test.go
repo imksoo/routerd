@@ -93,7 +93,7 @@ func TestValidateBGPDualStackAndVirtualIPv6Address(t *testing.T) {
 	}
 }
 
-func TestValidateHostnameRequiresDNSResolverZoneCoverage(t *testing.T) {
+func TestValidateHostnameWarnsWithoutDNSResolverZoneCoverage(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -119,6 +119,9 @@ func TestValidateHostnameRequiresDNSResolverZoneCoverage(t *testing.T) {
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate hostname coverage: %v", err)
 	}
+	if warnings := Warnings(router); len(warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none", warnings)
+	}
 	spec := router.Spec.Resources[3].Spec.(api.VirtualIPv4AddressSpec)
 	spec.Hostname = "k8s_api.lain.local"
 	router.Spec.Resources[3].Spec = spec
@@ -127,8 +130,19 @@ func TestValidateHostnameRequiresDNSResolverZoneCoverage(t *testing.T) {
 	}
 	spec.Hostname = "k8s-api.other.local"
 	router.Spec.Resources[3].Spec = spec
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not covered") {
-		t.Fatalf("expected uncovered hostname error, got %v", err)
+	if err := Validate(router); err != nil {
+		t.Fatalf("uncovered hostname should validate with warning: %v", err)
+	}
+	if warnings := Warnings(router); len(warnings) != 1 || !strings.Contains(warnings[0], "not covered") {
+		t.Fatalf("warnings = %#v, want uncovered hostname warning", warnings)
+	}
+	spec.ExternalDNS = true
+	router.Spec.Resources[3].Spec = spec
+	if err := Validate(router); err != nil {
+		t.Fatalf("external DNS hostname should validate: %v", err)
+	}
+	if warnings := Warnings(router); len(warnings) != 0 {
+		t.Fatalf("externalDNS warnings = %#v, want none", warnings)
 	}
 }
 
