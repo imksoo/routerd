@@ -74,6 +74,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   wrapper. Extended `pkg/servicemgr` with lifecycle hooks so FRR config-check
   + live reload, keepalived reload-vs-restart, and signal-based daemon reloads
   remain expressible instead of collapsing into generic restarts.
+- Added bespoke lifecycle command golden tests and a `make check-bespoke-lifecycle`
+  gate covering FRR live reload, keepalived no-op/reload behavior, dnsmasq
+  SIGHUP, DHCP daemon IPC, BFD daemon enablement, IngressService nftables-only
+  backend rotation, VRRP track artifacts, DS-Lite dataplane hooks, DHCP event
+  daemon ordering, and FRR graceful-restart observation.
 
 ## v20260519.0743
 

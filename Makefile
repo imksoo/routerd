@@ -44,7 +44,7 @@ PLAYWRIGHT_INSTALL_FLAGS ?= --with-deps
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test build build-daemons build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema check-render-golden update-render-golden website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test build build-daemons build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps alpine-vm-smoke webconsole-build webconsole-browser-install webconsole-screenshot generate-schema check-schema check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
 test:
 	go test ./...
@@ -146,6 +146,9 @@ check-render-golden:
 
 update-render-golden:
 	ROUTERD_UPDATE_GOLDEN=1 go test ./tests/golden
+
+check-bespoke-lifecycle:
+	go test ./pkg/servicemgr ./pkg/controller/bgp ./pkg/controller/vrrp ./pkg/controller/chain ./pkg/controller/nat44 ./cmd/routerctl
 
 website-deps: $(WEBSITE_NODE_MODULES_STAMP)
 

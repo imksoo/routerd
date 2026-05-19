@@ -59,6 +59,11 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
   `pkg/servicemgr` 也新增 lifecycle hook，使 FRR config-check + live reload、
   keepalived reload/restart 区分、signal-based daemon reload 不会退化成 generic
   restart。
+- 新增 bespoke lifecycle command golden test 与 `make check-bespoke-lifecycle`
+  gate，固定 FRR live reload、keepalived no-op/reload、dnsmasq SIGHUP、DHCP
+  daemon IPC、BFD daemon enablement、IngressService nftables-only backend
+  rotation、VRRP track artifact、DS-Lite dataplane hook、DHCP event daemon
+  ordering，以及 FRR graceful-restart observation。
 
 ## v20260519.0743
 

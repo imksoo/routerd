@@ -76,6 +76,11 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   netns 側の compatibility wrapper を追加しました。`pkg/servicemgr` には lifecycle
   hook を追加し、FRR の config-check + live reload、keepalived の reload/restart
   分離、signal-based daemon reload が generic restart に潰れないようにしました。
+- bespoke lifecycle command の golden test と `make check-bespoke-lifecycle`
+  gate を追加しました。FRR live reload、keepalived no-op/reload、dnsmasq
+  SIGHUP、DHCP daemon IPC、BFD daemon enablement、IngressService の nftables-only
+  backend rotation、VRRP track artifact、DS-Lite dataplane hook、DHCP event daemon
+  ordering、FRR graceful-restart observation を固定します。
 
 ## v20260519.0743
 
