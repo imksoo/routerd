@@ -38,6 +38,7 @@ import (
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
 	controllerchain "routerd/pkg/controller/chain"
+	vrrpcontroller "routerd/pkg/controller/vrrp"
 	"routerd/pkg/daemonapi"
 	"routerd/pkg/eventlog"
 	"routerd/pkg/ha"
@@ -68,23 +69,24 @@ const (
 var (
 	platformDefaults, platformFeatures = platform.Current()
 
-	defaultConfigPath          = platformDefaults.ConfigFile()
-	defaultPluginDir           = platformDefaults.PluginDir
-	defaultNetplanPath         = platformDefaults.NetplanFile
-	defaultDnsmasqConfigPath   = platformDefaults.DnsmasqConfigFile
-	defaultDnsmasqServicePath  = platformDefaults.DnsmasqServiceFile
-	defaultFreeBSDDHClientPath = platformDefaults.FreeBSDDHClientConfigFile
-	defaultFreeBSDMPD5Path     = platformDefaults.FreeBSDMPD5ConfigFile
-	defaultFreeBSDPFPath       = platformDefaults.FreeBSDPFConfigFile
-	defaultNftablesPath        = platformDefaults.NftablesFile
-	defaultRouteNftablesPath   = platformDefaults.DefaultRouteNftablesFile
-	defaultTimesyncdPath       = platformDefaults.TimesyncdDropinFile
-	defaultLedgerPath          = platformDefaults.DBFile()
-	defaultStatePath           = platformDefaults.DBFile()
-	pppoeCHAPSecretsPath       = platformDefaults.PPPoEChapSecretsFile
-	pppoePAPSecretsPath        = platformDefaults.PPPoEPapSecretsFile
-	pdClientLeaseDir           = filepath.Join(platformDefaults.StateDir, "dhcpv6-client")
-	legacyFreeBSDStateDir      = "/var/lib/routerd"
+	defaultConfigPath           = platformDefaults.ConfigFile()
+	defaultPluginDir            = platformDefaults.PluginDir
+	defaultNetplanPath          = platformDefaults.NetplanFile
+	defaultDnsmasqConfigPath    = platformDefaults.DnsmasqConfigFile
+	defaultDnsmasqServicePath   = platformDefaults.DnsmasqServiceFile
+	defaultFreeBSDDHClientPath  = platformDefaults.FreeBSDDHClientConfigFile
+	defaultFreeBSDMPD5Path      = platformDefaults.FreeBSDMPD5ConfigFile
+	defaultFreeBSDPFPath        = platformDefaults.FreeBSDPFConfigFile
+	defaultNftablesPath         = platformDefaults.NftablesFile
+	defaultRouteNftablesPath    = platformDefaults.DefaultRouteNftablesFile
+	defaultTimesyncdPath        = platformDefaults.TimesyncdDropinFile
+	defaultLedgerPath           = platformDefaults.DBFile()
+	defaultStatePath            = platformDefaults.DBFile()
+	runtimeKeepalivedConfigPath = defaultKeepalivedConfigPath
+	pppoeCHAPSecretsPath        = platformDefaults.PPPoEChapSecretsFile
+	pppoePAPSecretsPath         = platformDefaults.PPPoEPapSecretsFile
+	pdClientLeaseDir            = filepath.Join(platformDefaults.StateDir, "dhcpv6-client")
+	legacyFreeBSDStateDir       = "/var/lib/routerd"
 )
 
 var errNoIPv6PrefixAvailable = errors.New("no IPv6 prefix available")
@@ -1140,16 +1142,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			}
 		}
 
-		var keepalivedChangedFiles []string
-		var keepalivedConfigChanged bool
-		if err := recordStageError("keepalived-config", func() error {
-			var err error
-			keepalivedChangedFiles, keepalivedConfigChanged, err = applyKeepalivedConfig(effectiveRouter)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
 		var systemdUnitChangedFiles []string
 		if !opts.SkipServiceManager {
 			if err := recordStageError("service-manager", func() error {
@@ -1165,13 +1157,12 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			}
 		}
 
-		var keepalivedRestarted bool
-		if err := recordStageError("keepalived-service", func() error {
-			if !keepalivedConfigChanged {
-				return nil
-			}
+		var vrrpChangedFiles []string
+		var vrrpChanged bool
+		var observedVRRP []string
+		if err := recordStageError("vrrp", func() error {
 			var err error
-			keepalivedRestarted, err = restartKeepalivedService()
+			vrrpChangedFiles, vrrpChanged, observedVRRP, err = reconcileVRRPControllerOnce(context.Background(), effectiveRouter, stateStore, false)
 			return err
 		}()); err != nil {
 			return nil, err
@@ -1355,15 +1346,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			return nil, err
 		}
 
-		var observedVRRP []string
-		if err := recordStageError("vrrp-status", func() error {
-			var err error
-			observedVRRP, err = recordLinuxVRRPStatuses(effectiveRouter, stateStore, defaultKeepalivedConfigPath, keepalivedConfigChanged || keepalivedRestarted)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
 		var cleanedLedgerOrphans []string
 		var rememberedArtifacts int
 		if len(applyErrors) == 0 {
@@ -1384,13 +1366,13 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		}
 		changedFiles := append(nixOSChangedFiles, networkChangedFiles...)
 		changedFiles = append(changedFiles, systemdUnitChangedFiles...)
-		changedFiles = append(changedFiles, keepalivedChangedFiles...)
+		changedFiles = append(changedFiles, vrrpChangedFiles...)
 		changedFiles = append(changedFiles, dnsmasqChangedFiles...)
 		changedFiles = append(changedFiles, nftablesChangedFiles...)
 		changedFiles = append(changedFiles, pppoeChangedFiles...)
 		changedFiles = append(changedFiles, timesyncdChangedFiles...)
 		if len(changedFiles) == 0 {
-			if len(appliedRuntime) == 0 {
+			if len(appliedRuntime) == 0 && !vrrpChanged {
 				fmt.Fprintln(stdout, "network configuration already up to date")
 			}
 		} else {
@@ -1412,9 +1394,12 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			if len(timesyncdChangedFiles) > 0 {
 				fmt.Fprintln(stdout, "applied NTP client")
 			}
-			if len(keepalivedChangedFiles) > 0 {
+			if len(vrrpChangedFiles) > 0 {
 				fmt.Fprintln(stdout, "applied keepalived")
 			}
+		}
+		if len(changedFiles) == 0 && vrrpChanged {
+			fmt.Fprintln(stdout, "applied virtual address")
 		}
 		for _, key := range appliedRuntime {
 			fmt.Fprintf(stdout, "applied sysctl %s\n", key)
@@ -7146,205 +7131,85 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	return nil, nil
 }
 
-func applyKeepalivedConfig(router *api.Router) ([]string, bool, error) {
-	if router == nil || platformDefaults.OS == platform.OSFreeBSD || isNixOSHost() {
-		return nil, false, nil
-	}
-	configData, err := render.KeepalivedConfig(router, routerInterfaceAliases(router.Spec.Resources))
-	if err != nil {
-		return nil, false, err
-	}
-	if len(configData) == 0 {
-		return nil, false, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(defaultKeepalivedConfigPath), 0755); err != nil {
-		return nil, false, err
-	}
-	changed, err := writeFileIfChanged(defaultKeepalivedConfigPath, configData, 0644)
-	if err != nil {
-		return nil, false, err
-	}
-	if err := runLogged("keepalived", "--config-test", "--use-file", defaultKeepalivedConfigPath); err != nil {
-		return nil, changed, err
-	}
-	if changed {
-		return []string{defaultKeepalivedConfigPath}, true, nil
-	}
-	return nil, false, nil
-}
-
-func restartKeepalivedService() (bool, error) {
-	if platformFeatures.HasOpenRC {
-		return true, runLogged("rc-service", "keepalived", "restart")
-	}
-	if platformFeatures.HasSystemd {
-		return true, runLogged("systemctl", "reload-or-restart", "keepalived.service")
-	}
-	return false, nil
-}
-
-func recordLinuxVRRPStatuses(router *api.Router, store routerstate.Store, configPath string, changed bool) ([]string, error) {
+func reconcileVRRPControllerOnce(ctx context.Context, router *api.Router, store routerstate.Store, dryRun bool) ([]string, bool, []string, error) {
 	statusStore, ok := store.(routerstate.ObjectStatusStore)
-	if !ok || router == nil || platformDefaults.OS == platform.OSFreeBSD {
-		return nil, nil
+	if !ok || router == nil || platformDefaults.OS == platform.OSFreeBSD || isNixOSHost() || !routerHasVirtualAddress(router) {
+		return nil, false, nil, nil
 	}
-	aliases := routerInterfaceAliases(router.Spec.Resources)
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	var observed []string
-	for _, res := range router.Spec.Resources {
-		status, label, ok, err := linuxVirtualAddressStatus(router, res, aliases, configPath, changed, now, statusStore)
-		if err != nil {
-			return observed, err
-		}
-		if !ok {
-			continue
-		}
-		if err := statusStore.SaveObjectStatus(api.NetAPIVersion, res.Kind, res.Metadata.Name, status); err != nil {
-			return observed, err
-		}
-		observed = append(observed, label)
+	controller := vrrpcontroller.Controller{
+		Router:          router,
+		Store:           statusStore,
+		DryRun:          dryRun,
+		ConfigPath:      runtimeKeepalivedConfigPath,
+		Systemctl:       "systemctl",
+		RCService:       "rc-service",
+		KeepalivedCheck: "keepalived",
+		IP:              "ip",
+		OpenRC:          platformFeatures.HasOpenRC,
+		OperatingSystem: platformDefaults.OS,
+		Logger:          slog.Default(),
 	}
-	return observed, nil
+	if err := controller.Reconcile(ctx); err != nil {
+		return nil, false, nil, err
+	}
+	files, changed, observed := summarizeVRRPControllerStatuses(router, statusStore)
+	return files, changed, observed, nil
 }
 
-func linuxVirtualAddressStatus(router *api.Router, res api.Resource, aliases map[string]string, configPath string, changed bool, now string, store routerstate.ObjectStatusStore) (map[string]any, string, bool, error) {
-	if res.APIVersion != api.NetAPIVersion {
-		return nil, "", false, nil
-	}
-	switch res.Kind {
-	case "VirtualIPv4Address":
-		spec, err := res.VirtualIPv4AddressSpec()
-		if err != nil {
-			return nil, "", false, err
-		}
-		if spec.Mode != "vrrp" {
-			return nil, "", false, nil
-		}
-		address, err := render.VirtualIPv4Address(router, spec)
-		if err != nil {
-			return nil, "", false, err
-		}
-		ifname := aliases[spec.Interface]
-		role := linuxVirtualAddressRole(ifname, address, "ipv4", changed)
-		status := map[string]any{
-			"phase":           "Applied",
-			"backend":         "keepalived",
-			"address":         address,
-			"hostname":        strings.TrimSpace(spec.Hostname),
-			"interface":       spec.Interface,
-			"ifname":          ifname,
-			"configPath":      configPath,
-			"changed":         changed,
-			"dryRun":          false,
-			"observedAt":      now,
-			"virtualRouterID": spec.VRRP.VirtualRouterID,
-			"priority":        defaultInt(spec.VRRP.Priority, 100),
-			"basePriority":    defaultInt(spec.VRRP.Priority, 100),
-			"preempt":         spec.VRRP.Preempt != nil && *spec.VRRP.Preempt,
-			"track":           []map[string]any{},
-			"role":            role,
-		}
-		carryLastRoleTransition(status, store.ObjectStatus(api.NetAPIVersion, res.Kind, res.Metadata.Name), role, now)
-		return status, res.Metadata.Name + "=" + role, true, nil
-	case "VirtualIPv6Address":
-		spec, err := res.VirtualIPv6AddressSpec()
-		if err != nil {
-			return nil, "", false, err
-		}
-		if spec.Mode != "vrrp" {
-			return nil, "", false, nil
-		}
-		address, err := render.VirtualIPv6Address(router, spec)
-		if err != nil {
-			return nil, "", false, err
-		}
-		ifname := aliases[spec.Interface]
-		role := linuxVirtualAddressRole(ifname, address, "ipv6", changed)
-		status := map[string]any{
-			"phase":           "Applied",
-			"backend":         "keepalived",
-			"address":         address,
-			"hostname":        strings.TrimSpace(spec.Hostname),
-			"interface":       spec.Interface,
-			"ifname":          ifname,
-			"configPath":      configPath,
-			"changed":         changed,
-			"dryRun":          false,
-			"observedAt":      now,
-			"virtualRouterID": spec.VRRP.VirtualRouterID,
-			"priority":        defaultInt(spec.VRRP.Priority, 100),
-			"basePriority":    defaultInt(spec.VRRP.Priority, 100),
-			"preempt":         spec.VRRP.Preempt != nil && *spec.VRRP.Preempt,
-			"track":           []map[string]any{},
-			"role":            role,
-		}
-		carryLastRoleTransition(status, store.ObjectStatus(api.NetAPIVersion, res.Kind, res.Metadata.Name), role, now)
-		return status, res.Metadata.Name + "=" + role, true, nil
-	default:
-		return nil, "", false, nil
-	}
-}
-
-func carryLastRoleTransition(status, previous map[string]any, role, now string) {
-	if statusStringMain(previous, "role") == role && statusStringMain(previous, "lastRoleTransitionAt") != "" {
-		status["lastRoleTransitionAt"] = statusStringMain(previous, "lastRoleTransitionAt")
-		return
-	}
-	status["lastRoleTransitionAt"] = now
-}
-
-func statusStringMain(status map[string]any, key string) string {
-	if status == nil {
-		return ""
-	}
-	switch value := status[key].(type) {
-	case string:
-		return value
-	case fmt.Stringer:
-		return value.String()
-	default:
-		return ""
-	}
-}
-
-func linuxVirtualAddressRole(ifname, address, family string, wait bool) string {
-	if strings.TrimSpace(ifname) == "" || strings.TrimSpace(address) == "" {
-		return "unknown"
-	}
-	ipFamily := "-4"
-	if family == "ipv6" {
-		ipFamily = "-6"
-	}
-	attempts := 1
-	if wait {
-		attempts = 30
-	}
-	for i := 0; i < attempts; i++ {
-		out, err := exec.Command("ip", ipFamily, "addr", "show", "dev", ifname).CombinedOutput()
-		if err != nil {
-			return "unknown"
-		}
-		if linuxIPOutputHasAddress(string(out), address, family) {
-			return "master"
-		}
-		if i+1 < attempts {
-			time.Sleep(200 * time.Millisecond)
-		}
-	}
-	return "backup"
-}
-
-func linuxIPOutputHasAddress(output, address, family string) bool {
-	prefix, err := netip.ParsePrefix(strings.TrimSpace(address))
-	if err != nil {
+func routerHasVirtualAddress(router *api.Router) bool {
+	if router == nil {
 		return false
 	}
-	token := "inet "
-	if family == "ipv6" {
-		token = "inet6 "
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion == api.NetAPIVersion && (res.Kind == "VirtualIPv4Address" || res.Kind == "VirtualIPv6Address") {
+			return true
+		}
 	}
-	needle := token + prefix.Addr().String() + "/" + strconv.Itoa(prefix.Bits())
-	return strings.Contains(output, needle)
+	return false
+}
+
+func summarizeVRRPControllerStatuses(router *api.Router, store routerstate.ObjectStatusStore) ([]string, bool, []string) {
+	var observed []string
+	changed := false
+	changedFiles := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || (res.Kind != "VirtualIPv4Address" && res.Kind != "VirtualIPv6Address") {
+			continue
+		}
+		status := store.ObjectStatus(api.NetAPIVersion, res.Kind, res.Metadata.Name)
+		if statusBoolMap(status, "changed") {
+			changed = true
+			if statusStringMap(status, "backend") == "keepalived" {
+				if path := statusStringMap(status, "configPath"); path != "" {
+					changedFiles[path] = true
+				}
+			}
+		}
+		if role := statusStringMap(status, "role"); role != "" {
+			observed = append(observed, res.Metadata.Name+"="+role)
+		}
+	}
+	files := make([]string, 0, len(changedFiles))
+	for path := range changedFiles {
+		files = append(files, path)
+	}
+	sort.Strings(files)
+	sort.Strings(observed)
+	return files, changed, observed
+}
+
+func statusBoolMap(status map[string]any, key string) bool {
+	if status == nil {
+		return false
+	}
+	switch value := status[key].(type) {
+	case bool:
+		return value
+	case string:
+		return strings.EqualFold(strings.TrimSpace(value), "true")
+	default:
+		return false
+	}
 }
 
 func applyDirectDnsmasqConfig(configPath string, configData []byte, dnsmasqPath string) ([]string, error) {
@@ -7990,6 +7855,9 @@ func applyOpenRCServiceResources(router *api.Router) ([]string, error) {
 				return nil, err
 			}
 			delete(enabledServices, service.Name)
+		}
+		if service.Name == "keepalived" {
+			continue
 		}
 		active := openRCServiceActive(service.Name)
 		if service.Started {

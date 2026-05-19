@@ -52,6 +52,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   reload tooling dependencies, and non-blocking setup wizard behavior.
 - Avoided no-op keepalived reloads during live VRRP reconcile and exposed the
   last keepalived reload/restart time and reason in controller status.
+- Routed `routerd apply --once` VRRP handling through the same controller
+  reconcile path as daemon mode, so keepalived reload/restart status fields are
+  written consistently.
 
 ## v20260519.0743
 

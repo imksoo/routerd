@@ -38,6 +38,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
   commit，并补上 FRR reload tooling dependency 与非阻塞 setup wizard 行为。
 - live VRRP reconcile 会避免 keepalived 的 no-op reload/restart，并在
   controller status 中暴露最近一次 keepalived reload/restart 的时间与原因。
+- `routerd apply --once` 的 VRRP 处理现在复用与 daemon mode 相同的
+  controller reconcile 路径，因此 keepalived reload/restart status fields
+  会被一致写入。
 
 ## v20260519.0743
 

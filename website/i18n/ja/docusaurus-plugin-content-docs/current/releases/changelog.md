@@ -55,6 +55,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - live VRRP reconcile で keepalived の no-op reload/restart を避け、
   最後に keepalived を reload/restart した時刻と理由を controller status に
   出すようにしました。
+- `routerd apply --once` の VRRP 処理を daemon mode と同じ controller
+  reconcile 経路へ寄せ、keepalived reload/restart status fields が一貫して
+  保存されるようにしました。
 
 ## v20260519.0743
 

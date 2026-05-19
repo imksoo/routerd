@@ -70,7 +70,7 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 			if err != nil {
 				return backendResult{}, err
 			}
-			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRoles(ctx, c, aliases), LastChangeReason: reason}
+			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), LastChangeReason: reason}
 			if action == "reload" {
 				result.LastReloadAt = now
 			} else {
@@ -82,7 +82,7 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 			if err != nil {
 				return backendResult{}, err
 			}
-			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRoles(ctx, c, aliases), LastChangeReason: reason}
+			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), LastChangeReason: reason}
 			if action == "reload" {
 				result.LastReloadAt = now
 			} else {
@@ -129,6 +129,14 @@ func (c *Controller) useOpenRC() bool {
 }
 
 func observeKeepalivedRoles(ctx context.Context, c *Controller, aliases map[string]string) map[string]string {
+	return observeKeepalivedRolesWithWait(ctx, c, aliases, false)
+}
+
+func observeKeepalivedRolesAfterChange(ctx context.Context, c *Controller, aliases map[string]string) map[string]string {
+	return observeKeepalivedRolesWithWait(ctx, c, aliases, true)
+}
+
+func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases map[string]string, wait bool) map[string]string {
 	roles := dryRunRoles(c)
 	if roles != nil {
 		return roles
@@ -153,16 +161,31 @@ func observeKeepalivedRoles(ctx context.Context, c *Controller, aliases map[stri
 		if spec.Family == "ipv6" {
 			ipFamily = "-6"
 		}
-		out, err := c.run(ctx, ip, ipFamily, "addr", "show", "dev", ifname)
-		if err != nil {
-			roles[resource.Metadata.Name] = "unknown"
-			continue
+		attempts := 1
+		if wait {
+			attempts = 30
 		}
-		if ipAddressPresent(string(out), address, spec.Family) {
-			roles[resource.Metadata.Name] = "master"
-		} else {
-			roles[resource.Metadata.Name] = "backup"
+		role := "backup"
+		for i := 0; i < attempts; i++ {
+			out, err := c.run(ctx, ip, ipFamily, "addr", "show", "dev", ifname)
+			if err != nil {
+				role = "unknown"
+				break
+			}
+			if ipAddressPresent(string(out), address, spec.Family) {
+				role = "master"
+				break
+			}
+			if i+1 < attempts {
+				select {
+				case <-ctx.Done():
+					role = "unknown"
+					i = attempts
+				case <-time.After(200 * time.Millisecond):
+				}
+			}
 		}
+		roles[resource.Metadata.Name] = role
 	}
 	return roles
 }

@@ -168,6 +168,116 @@ func TestRunApplyOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
 	}
 }
 
+func TestRunApplyOnceVRRPUsesControllerStatus(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	commandLog := filepath.Join(dir, "commands.log")
+	writeExecutable(t, filepath.Join(binDir, "rc-update"), fmt.Sprintf(`#!/bin/sh
+echo "rc-update $@" >> %q
+if [ "$1" = "show" ]; then
+  exit 0
+fi
+exit 0
+`, commandLog))
+	writeExecutable(t, filepath.Join(binDir, "rc-service"), fmt.Sprintf(`#!/bin/sh
+echo "rc-service $@" >> %q
+exit 0
+`, commandLog))
+	writeExecutable(t, filepath.Join(binDir, "keepalived"), fmt.Sprintf(`#!/bin/sh
+echo "keepalived $@" >> %q
+exit 0
+`, commandLog))
+	writeExecutable(t, filepath.Join(binDir, "ip"), fmt.Sprintf(`#!/bin/sh
+echo "ip $@" >> %q
+if [ "$1" = "-4" ] && [ "$2" = "addr" ] && [ "$3" = "show" ]; then
+  echo "2: eth0 inet 10.240.70.10/32 scope global eth0"
+fi
+exit 0
+`, commandLog))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	oldDefaults := platformDefaults
+	oldFeatures := platformFeatures
+	oldKeepalivedPath := runtimeKeepalivedConfigPath
+	platformDefaults = oldDefaults
+	platformDefaults.OS = platform.OSLinux
+	platformDefaults.OpenRCScriptDir = filepath.Join(dir, "etc", "init.d")
+	platformDefaults.RuntimeDir = filepath.Join(dir, "run")
+	platformDefaults.StateDir = filepath.Join(dir, "var", "lib", "routerd")
+	platformFeatures = platform.Features{HasOpenRC: true}
+	runtimeKeepalivedConfigPath = filepath.Join(dir, "etc", "keepalived", "keepalived.conf")
+	t.Cleanup(func() {
+		platformDefaults = oldDefaults
+		platformFeatures = oldFeatures
+		runtimeKeepalivedConfigPath = oldKeepalivedPath
+	})
+
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "vrrp-apply-once"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "eth0", Managed: false},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
+				Metadata: api.ObjectMeta{Name: "api-vip"},
+				Spec: api.VirtualIPv4AddressSpec{
+					Interface: "lan",
+					Address:   "10.240.70.10/32",
+					Mode:      "vrrp",
+					VRRP: api.VirtualIPv4VRRPSpec{
+						VirtualRouterID: 66,
+						Priority:        150,
+						Peers:           []string{"10.240.70.11"},
+					},
+				},
+			},
+		}},
+	}
+	var stdout strings.Builder
+	statePath := filepath.Join(dir, "state.db")
+	_, err := runApplyOnce(router, applyOptions{
+		StatePath:  statePath,
+		LedgerPath: filepath.Join(dir, "ledger.db"),
+		ConfigPath: filepath.Join(dir, "router.yaml"),
+	}, &stdout, &eventlog.Logger{})
+	if err != nil {
+		t.Fatalf("apply once: %v", err)
+	}
+
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualIPv4Address", "api-vip")
+	if statusStringMap(status, "lastReloadAt") == "" {
+		t.Fatalf("lastReloadAt missing from apply-once controller status: %#v", status)
+	}
+	if got := statusStringMap(status, "lastChangeReason"); got != "keepalived.config changed" {
+		t.Fatalf("lastChangeReason = %q, want keepalived.config changed; status=%#v", got, status)
+	}
+	if got := statusStringMap(status, "role"); got != "master" {
+		t.Fatalf("role = %q, want master; status=%#v", got, status)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if !strings.Contains(string(commands), "rc-service keepalived reload") {
+		t.Fatalf("keepalived reload was not issued through controller path:\n%s", commands)
+	}
+	if !strings.Contains(stdout.String(), "applied keepalived") {
+		t.Fatalf("stdout missing applied keepalived:\n%s", stdout.String())
+	}
+}
+
 func TestActiveControllerDryRunModes(t *testing.T) {
 	got := activeControllerDryRunNames(controllerStatusesFromDryRunModes(map[string]bool{
 		"route": false,
