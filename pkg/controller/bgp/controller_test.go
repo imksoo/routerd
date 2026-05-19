@@ -4,6 +4,7 @@ package bgp
 
 import (
 	"context"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -374,6 +375,64 @@ func TestReconcileObservesBFDAndWritesFRRDaemons(t *testing.T) {
 	peers, ok := status["peers"].([]bgpstate.Peer)
 	if !ok || len(peers) != 1 || peers[0].BFD == nil || peers[0].BFD.State != "up" {
 		t.Fatalf("BFD peer status = %#v", status["peers"])
+	}
+}
+
+func TestReconcileRetriesFRRValidationAfterDaemonRestart(t *testing.T) {
+	configPath := t.TempDir() + "/routerd.conf"
+	daemonsPath := pendingFRRDaemons(t)
+	var calls []string
+	validateAttempts := 0
+	controller := Controller{
+		Router:      bgpRouter(),
+		Store:       mapStore{},
+		ConfigPath:  configPath,
+		DaemonsPath: daemonsPath,
+		VTYSH:       "vtysh",
+		FRRReload:   "frr-reload.py",
+		Systemctl:   "systemctl",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			switch {
+			case name == "systemctl" && strings.Join(args, " ") == "enable frr.service":
+				return []byte("enabled"), nil
+			case name == "systemctl" && strings.Join(args, " ") == "restart frr.service":
+				return []byte("restarted"), nil
+			case name == "vtysh" && reflect.DeepEqual(args[:2], []string{"-C", "-f"}):
+				validateAttempts++
+				if validateAttempts == 1 {
+					return []byte("bgpd not ready"), errors.New("not ready")
+				}
+				return []byte("ok"), nil
+			case name == "frr-reload.py":
+				return []byte("reloaded"), nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp summary json":
+				return []byte(`{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":64513,"state":"Established","pfxRcd":1}}}}`), nil
+			case name == "vtysh" && strings.Join(args, " ") == "-c show bgp ipv4 unicast json":
+				return []byte(`{"routes":{}}`), nil
+			default:
+				t.Fatalf("unexpected command: %s %v", name, args)
+				return nil, nil
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []string{
+		"systemctl enable frr.service",
+		"systemctl restart frr.service",
+		"vtysh -C -f " + configPath,
+		"vtysh -C -f " + configPath,
+		"frr-reload.py --reload " + configPath,
+		"vtysh -c show bgp summary json",
+		"vtysh -c show bgp ipv4 unicast json",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	if validateAttempts != 2 {
+		t.Fatalf("validate attempts = %d, want 2", validateAttempts)
 	}
 }
 

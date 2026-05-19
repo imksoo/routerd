@@ -8,7 +8,7 @@ func TestParseFRRStateAndDiff(t *testing.T) {
 	summary := []byte(`{
 	  "ipv4Unicast": {
 	    "peers": {
-	      "10.0.0.21": {"remoteAs": 64513, "state": "Established", "pfxRcd": 1, "msgRcvd": 12, "msgSent": 11, "lastConnectionEstablished": "2026-05-18T10:00:00Z"}
+	      "10.0.0.21": {"remoteAs": "64513", "state": "Established", "pfxRcd": "1", "msgRcvd": "12", "msgSent": "11", "lastConnectionEstablished": "2026-05-18T10:00:00Z"}
 	    }
 	  }
 	}`)

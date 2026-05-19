@@ -25,6 +25,7 @@ import (
 	"routerd/internal/hostcmd"
 	"routerd/pkg/api"
 	"routerd/pkg/apply"
+	bgpstate "routerd/pkg/bgp"
 	"routerd/pkg/config"
 	"routerd/pkg/controlapi"
 	"routerd/pkg/ingressdrain"
@@ -1469,6 +1470,8 @@ func writeDedicatedShow(stdout io.Writer, router *api.Router, store routerstate.
 	}
 	if kind == "vrrp" {
 		resources = withLiveVRRPRoles(router, resources)
+	} else if kind == "bgp" {
+		resources = withLiveBGPState(router, resources)
 	}
 	switch opts.Output {
 	case "", "table":
@@ -1569,6 +1572,152 @@ func writeBGPShowTable(stdout io.Writer, router *api.Router, resources []routers
 		}
 	}
 	return w.Flush()
+}
+
+func withLiveBGPState(router *api.Router, resources []routerstate.ObjectStatus) []routerstate.ObjectStatus {
+	if router == nil || !hasBGPResources(router) {
+		return resources
+	}
+	live := liveBGPStatuses(router)
+	if len(live) == 0 {
+		return resources
+	}
+	out := append([]routerstate.ObjectStatus(nil), resources...)
+	seen := map[string]bool{}
+	for i := range out {
+		if out[i].APIVersion != api.NetAPIVersion || out[i].Kind != "BGPRouter" {
+			continue
+		}
+		if status := live[out[i].Name]; status != nil {
+			out[i].Status = mergeBGPStatus(out[i].Status, status)
+			seen[out[i].Name] = true
+		}
+	}
+	for name, status := range live {
+		if seen[name] {
+			continue
+		}
+		out = append(out, routerstate.ObjectStatus{APIVersion: api.NetAPIVersion, Kind: "BGPRouter", Name: name, Status: status})
+	}
+	return out
+}
+
+func liveBGPStatuses(router *api.Router) map[string]map[string]any {
+	statuses := map[string]map[string]any{}
+	vrfs := routerctlBGPVRFNames(router)
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := resource.BGPRouterSpec()
+		if err != nil {
+			continue
+		}
+		vrfName := vrfs[routerctlBGPVRFRefName(spec.VRF)]
+		summaryCmd, routesCmd := routerctlBGPShowCommands(vrfName)
+		summary, err := runDataplaneCommand("vtysh", "-c", summaryCmd)
+		if err != nil {
+			continue
+		}
+		routes, err := runDataplaneCommand("vtysh", "-c", routesCmd)
+		if err != nil {
+			routes = nil
+		}
+		state, err := bgpstate.ParseFRRState(summary, routes)
+		if err != nil {
+			continue
+		}
+		if routerctlBGPRouterUsesIPv6(router, resource.Metadata.Name, spec) {
+			if routesV6, err := runDataplaneCommand("vtysh", "-c", routerctlBGPShowIPv6RoutesCommand(vrfName)); err == nil {
+				if prefixesV6, err := bgpstate.ParseFRRRoutesJSON(routesV6); err == nil {
+					state.Prefixes = append(state.Prefixes, prefixesV6...)
+					state = bgpstate.Normalize(state)
+				}
+			}
+		}
+		peers := routerctlPeersForRouter(router, resource.Metadata.Name, state)
+		established := 0
+		for _, peer := range peers {
+			if peer.Established {
+				established++
+			}
+		}
+		phase := "Pending"
+		if len(peers) > 0 && established == len(peers) {
+			phase = "Established"
+		} else if established > 0 {
+			phase = "Degraded"
+		} else if len(peers) > 0 {
+			phase = "Down"
+		}
+		statuses[resource.Metadata.Name] = map[string]any{
+			"phase":            phase,
+			"backend":          "frr",
+			"peers":            bgpPeersStatusMaps(peers),
+			"prefixes":         bgpPrefixesStatusMaps(state.Prefixes),
+			"establishedPeers": established,
+			"acceptedPrefixes": len(state.Prefixes),
+			"observedAt":       time.Now().UTC().Format(time.RFC3339Nano),
+			"source":           "live-vtysh",
+		}
+	}
+	return statuses
+}
+
+func mergeBGPStatus(current, live map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range current {
+		out[key] = value
+	}
+	livePeers := statusMaps(live["peers"])
+	currentPeers := statusMaps(current["peers"])
+	if len(livePeers) > 0 || len(currentPeers) == 0 || statusInt(current["establishedPeers"]) == 0 {
+		for key, value := range live {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func bgpPeersStatusMaps(peers []bgpstate.Peer) []map[string]any {
+	out := make([]map[string]any, 0, len(peers))
+	for _, peer := range peers {
+		out = append(out, map[string]any{
+			"address":           peer.Address,
+			"asn":               peer.ASN,
+			"state":             peer.State,
+			"established":       peer.Established,
+			"prefixesReceived":  peer.PrefixesReceived,
+			"messagesReceived":  peer.MessagesReceived,
+			"messagesSent":      peer.MessagesSent,
+			"lastEstablishedAt": peer.LastEstablishedAt,
+			"lastErrorAt":       peer.LastErrorAt,
+			"lastErrorReason":   peer.LastErrorReason,
+		})
+	}
+	return out
+}
+
+func bgpPrefixesStatusMaps(prefixes []bgpstate.Prefix) []map[string]any {
+	out := make([]map[string]any, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		out = append(out, map[string]any{
+			"prefix":      prefix.Prefix,
+			"best":        prefix.Best,
+			"valid":       prefix.Valid,
+			"communities": prefix.Communities,
+		})
+	}
+	return out
+}
+
+func hasBGPResources(router *api.Router) bool {
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == api.NetAPIVersion && (resource.Kind == "BGPRouter" || resource.Kind == "BGPPeer") {
+			return true
+		}
+	}
+	return false
 }
 
 func writeVRRPShowTable(stdout io.Writer, router *api.Router, resources []routerstate.ObjectStatus) error {
@@ -2088,6 +2237,111 @@ func virtualAddressShowSpecs(router *api.Router) map[string]virtualAddressShowSp
 		}
 	}
 	return out
+}
+
+func routerctlPeersForRouter(router *api.Router, routerName string, state bgpstate.State) []bgpstate.Peer {
+	byAddress := map[string]bgpstate.Peer{}
+	for _, peer := range state.Peers {
+		byAddress[peer.Address] = peer
+	}
+	var out []bgpstate.Peer
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
+			continue
+		}
+		spec, err := resource.BGPPeerSpec()
+		if err != nil {
+			continue
+		}
+		_, name, ok := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
+		if !ok || name != routerName {
+			continue
+		}
+		for _, address := range spec.Peers {
+			peer, ok := byAddress[strings.TrimSpace(address)]
+			if !ok {
+				peer = bgpstate.Peer{Address: strings.TrimSpace(address), ASN: spec.PeerASN, State: "Missing"}
+			}
+			out = append(out, peer)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Address < out[j].Address })
+	return out
+}
+
+func routerctlBGPVRFNames(router *api.Router) map[string]string {
+	out := map[string]string{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VRF" {
+			continue
+		}
+		spec, err := resource.VRFSpec()
+		if err != nil {
+			continue
+		}
+		out[resource.Metadata.Name] = defaultString(spec.IfName, resource.Metadata.Name)
+	}
+	return out
+}
+
+func routerctlBGPVRFRefName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if kind, name, ok := strings.Cut(value, "/"); ok && kind == "VRF" {
+		return strings.TrimSpace(name)
+	}
+	return value
+}
+
+func routerctlBGPRouterUsesIPv6(router *api.Router, routerName string, spec api.BGPRouterSpec) bool {
+	prefixes := append([]string{}, spec.ImportPolicy.AllowedPrefixes...)
+	prefixes = append(prefixes, spec.ExportPolicy.AllowedPrefixes...)
+	prefixes = append(prefixes, spec.Redistribute.Connected.AllowedPrefixes...)
+	prefixes = append(prefixes, spec.Redistribute.Static.AllowedPrefixes...)
+	for _, prefix := range prefixes {
+		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil && parsed.Addr().Is6() {
+			return true
+		}
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
+			continue
+		}
+		peerSpec, err := resource.BGPPeerSpec()
+		if err != nil {
+			continue
+		}
+		_, name, ok := strings.Cut(strings.TrimSpace(peerSpec.RouterRef), "/")
+		if !ok || name != routerName {
+			continue
+		}
+		for _, address := range peerSpec.Peers {
+			if parsed, err := netip.ParseAddr(strings.TrimSpace(address)); err == nil && parsed.Is6() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func routerctlBGPShowCommands(vrfName string) (string, string) {
+	if strings.TrimSpace(vrfName) == "" {
+		return "show bgp summary json", "show bgp ipv4 unicast json"
+	}
+	vrfName = strings.TrimSpace(vrfName)
+	return "show bgp vrf " + vrfName + " summary json", "show bgp vrf " + vrfName + " ipv4 unicast json"
+}
+
+func routerctlBGPShowIPv6RoutesCommand(vrfName string) string {
+	if strings.TrimSpace(vrfName) == "" {
+		return "show bgp ipv6 unicast json"
+	}
+	return "show bgp vrf " + strings.TrimSpace(vrfName) + " ipv6 unicast json"
 }
 
 func withLiveVRRPRoles(router *api.Router, resources []routerstate.ObjectStatus) []routerstate.ObjectStatus {

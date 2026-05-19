@@ -100,6 +100,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   edge-case declarations, race-tested reload calls, 80% coverage gates, and a
   four-OS bespoke lifecycle command matrix.
 
+### Fixed
+
+- Fixed BGP bootstrap parity so `routerd apply --once` enables `bgpd`, restarts
+  FRR when needed, loads the generated FRR config, and records live peer state
+  through the same controller path as daemon mode.
+- Fixed BGP observation for FRR JSON fields emitted as strings and made
+  `routerctl show bgp` refresh stale stored status from live `vtysh` output.
+
 ## v20260519.0743
 
 ### Changed

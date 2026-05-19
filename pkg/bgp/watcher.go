@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -467,6 +468,11 @@ func firstNumber(values map[string]any, keys ...string) float64 {
 			return value
 		case int:
 			return float64(value)
+		case string:
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err == nil {
+				return parsed
+			}
 		}
 	}
 	return 0

@@ -101,6 +101,16 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   edge-case declaration、race-tested reload、80% coverage gate、4 OS の
   bespoke lifecycle command matrix を追加しました。
 
+### 修正
+
+- BGP bootstrap の daemon mode / `routerd apply --once` 差分を修正しました。
+  `BGPRouter` がある場合は `bgpd` を enable し、必要に応じて FRR を restart して
+  生成済み FRR config を読み込み、live peer state を同じ controller 経路で
+  保存します。
+- FRR JSON が数値フィールドを文字列として返す場合の BGP observation を修正し、
+  `routerctl show bgp` は古い stored status を live `vtysh` output で更新して
+  表示するようにしました。
+
 ## v20260519.0743
 
 ### 変更

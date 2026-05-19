@@ -278,6 +278,154 @@ exit 0
 	}
 }
 
+func TestRunApplyOnceBGPBootstrapsFRR(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	commandLog := filepath.Join(dir, "commands.log")
+	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
+echo "systemctl $@" >> %q
+exit 0
+`, commandLog))
+	writeExecutable(t, filepath.Join(binDir, "frr-reload.py"), fmt.Sprintf(`#!/bin/sh
+echo "frr-reload.py $@" >> %q
+exit 0
+`, commandLog))
+	writeExecutable(t, filepath.Join(binDir, "vtysh"), fmt.Sprintf(`#!/bin/sh
+echo "vtysh $@" >> %q
+case "$*" in
+  "-C -f "*)
+    test -s "$3"
+    exit $?
+    ;;
+  "-c show running-config")
+    echo ""
+    exit 0
+    ;;
+  "-c show bgp summary json")
+    cat <<'JSON'
+{"ipv4Unicast":{"peers":{"10.0.0.21":{"remoteAs":"64513","state":"Established","pfxRcd":"2","msgRcvd":"12","msgSent":"11"}}}}
+JSON
+    exit 0
+    ;;
+  "-c show bgp ipv4 unicast json")
+    echo '{"routes":{"10.250.0.10/32":[{"valid":true,"bestpath":true}]}}'
+    exit 0
+    ;;
+esac
+exit 1
+`, commandLog))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	oldDefaults := platformDefaults
+	oldFeatures := platformFeatures
+	oldFRRConfigPath := runtimeFRRConfigPath
+	oldFRRDaemonsPath := runtimeFRRDaemonsPath
+	platformDefaults = oldDefaults
+	platformDefaults.OS = platform.OSLinux
+	platformDefaults.RuntimeDir = filepath.Join(dir, "run")
+	platformDefaults.StateDir = filepath.Join(dir, "var", "lib", "routerd")
+	platformFeatures = platform.Features{HasSystemd: true}
+	runtimeFRRConfigPath = filepath.Join(dir, "run", "routerd", "frr", "routerd.conf")
+	runtimeFRRDaemonsPath = filepath.Join(dir, "etc", "frr", "daemons")
+	t.Cleanup(func() {
+		platformDefaults = oldDefaults
+		platformFeatures = oldFeatures
+		runtimeFRRConfigPath = oldFRRConfigPath
+		runtimeFRRDaemonsPath = oldFRRDaemonsPath
+	})
+	if err := os.MkdirAll(filepath.Dir(runtimeFRRDaemonsPath), 0755); err != nil {
+		t.Fatalf("create daemons dir: %v", err)
+	}
+	if err := os.WriteFile(runtimeFRRDaemonsPath, []byte("zebra=yes\nbgpd=no\nbfdd=no\n"), 0644); err != nil {
+		t.Fatalf("seed frr daemons: %v", err)
+	}
+
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "bgp-apply-once"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec: api.BGPRouterSpec{
+					ASN:      64512,
+					RouterID: "10.0.0.1",
+					ImportPolicy: api.BGPImportPolicySpec{
+						AllowedPrefixes: []string{"10.250.0.0/24"},
+					},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+				Metadata: api.ObjectMeta{Name: "worker"},
+				Spec: api.BGPPeerSpec{
+					RouterRef: "BGPRouter/lan",
+					PeerASN:   64513,
+					Peers:     []string{"10.0.0.21"},
+				},
+			},
+		}},
+	}
+	var stdout strings.Builder
+	statePath := filepath.Join(dir, "state.db")
+	_, err := runApplyOnce(router, applyOptions{
+		StatePath:          statePath,
+		LedgerPath:         filepath.Join(dir, "ledger.db"),
+		ConfigPath:         filepath.Join(dir, "router.yaml"),
+		SkipServiceManager: true,
+	}, &stdout, &eventlog.Logger{})
+	if err != nil {
+		t.Fatalf("apply once: %v", err)
+	}
+
+	daemons, err := os.ReadFile(runtimeFRRDaemonsPath)
+	if err != nil {
+		t.Fatalf("read frr daemons: %v", err)
+	}
+	if !strings.Contains(string(daemons), "bgpd=yes") {
+		t.Fatalf("bgpd was not enabled:\n%s", daemons)
+	}
+	config, err := os.ReadFile(runtimeFRRConfigPath)
+	if err != nil {
+		t.Fatalf("read frr config: %v", err)
+	}
+	if !strings.Contains(string(config), "router bgp 64512") || !strings.Contains(string(config), "neighbor 10.0.0.21 remote-as 64513") {
+		t.Fatalf("frr config missing bgp stanza:\n%s", config)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	for _, want := range []string{
+		"systemctl enable frr.service",
+		"systemctl restart frr.service",
+		"vtysh -C -f " + runtimeFRRConfigPath,
+		"frr-reload.py --reload " + runtimeFRRConfigPath,
+	} {
+		if !strings.Contains(string(commands), want) {
+			t.Fatalf("command log missing %q:\n%s", want, commands)
+		}
+	}
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	if got := statusStringMap(status, "phase"); got != "Established" {
+		t.Fatalf("phase = %q, want Established; status=%#v", got, status)
+	}
+	if got := statusIntMap(status, "establishedPeers"); got != 1 {
+		t.Fatalf("establishedPeers = %d, want 1; status=%#v", got, status)
+	}
+	if !strings.Contains(stdout.String(), "applied bgp") || !strings.Contains(stdout.String(), "observed BGP lan=1/1") {
+		t.Fatalf("stdout missing BGP apply/observe lines:\n%s", stdout.String())
+	}
+}
+
 func TestActiveControllerDryRunModes(t *testing.T) {
 	got := activeControllerDryRunNames(controllerStatusesFromDryRunModes(map[string]bool{
 		"route": false,

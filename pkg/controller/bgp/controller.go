@@ -50,12 +50,14 @@ type Controller struct {
 	observed    bool
 	truncated   bool
 	peerEvents  map[string]time.Time
+	applyMeta   map[string]any
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil || !hasBGP(c.Router) {
 		return nil
 	}
+	c.applyMeta = nil
 	data, err := render.FRRConfig(c.Router)
 	if err != nil {
 		return err
@@ -112,8 +114,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		}
 	}
 	if !c.DryRun && reloadNeeded {
-		vtysh := firstNonEmpty(c.VTYSH, "vtysh")
-		if out, err := c.run(ctx, vtysh, "-C", "-f", path); err != nil {
+		out, err := c.validateFRRConfig(ctx, path, daemonsChanged)
+		if err != nil {
+			vtysh := firstNonEmpty(c.VTYSH, "vtysh")
 			saveErr := c.saveConfiguredStatuses("Error", path, reloadNeeded, map[string]any{"reason": "FRRSyntaxInvalid", "error": strings.TrimSpace(string(out))})
 			if saveErr != nil {
 				return saveErr
@@ -134,6 +137,15 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			extra := map[string]any{"daemonsPath": daemonsPath, "daemonsChanged": daemonsChanged}
 			if err := c.saveConfiguredStatuses("Applied", path, reloadNeeded || daemonsChanged, extra); err != nil {
 				return err
+			}
+			c.applyMeta = map[string]any{
+				"configPath":      path,
+				"applyWith":       "frr-reload.py --reload",
+				"changed":         reloadNeeded || daemonsChanged,
+				"dryRun":          c.DryRun,
+				"daemonsPath":     daemonsPath,
+				"daemonsChanged":  daemonsChanged,
+				"configuredPhase": "Applied",
 			}
 		}
 		return c.observe(ctx)
@@ -166,6 +178,32 @@ func (c *Controller) renderFRRDaemons() (bool, string, error) {
 		}
 	}
 	return changed, path, nil
+}
+
+func (c *Controller) validateFRRConfig(ctx context.Context, path string, retry bool) ([]byte, error) {
+	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
+	attempts := 1
+	if retry {
+		attempts = 25
+	}
+	var lastOut []byte
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		out, err := c.run(ctx, vtysh, "-C", "-f", path)
+		if err == nil {
+			return out, nil
+		}
+		lastOut, lastErr = out, err
+		if !retry {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return lastOut, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	return lastOut, lastErr
 }
 
 func (c *Controller) frrDaemonChangeCommands() []servicemgr.Command {
@@ -550,6 +588,9 @@ func (c *Controller) saveObservedStatuses(states map[string]bgpstate.State, aggr
 				"observedAt":          now,
 				"conditions":          []map[string]any{{"type": "Observed", "status": "True", "reason": "FRRStatus"}},
 			}
+			for key, value := range c.applyMeta {
+				status[key] = value
+			}
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name, status); err != nil {
 				return err
 			}
@@ -575,6 +616,9 @@ func (c *Controller) saveObservedStatuses(states map[string]bgpstate.State, aggr
 				"peers":            peers,
 				"establishedPeers": established,
 				"observedAt":       now,
+			}
+			for key, value := range c.applyMeta {
+				status[key] = value
 			}
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "BGPPeer", resource.Metadata.Name, status); err != nil {
 				return err

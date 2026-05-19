@@ -536,6 +536,83 @@ EOF
 	}
 }
 
+func TestShowBGPPullsLiveFRRStateWhenStoredStatusIsStale(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata:
+        name: lan
+      spec:
+        asn: 64512
+        routerID: 192.168.123.125
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPPeer
+      metadata:
+        name: worker
+      spec:
+        routerRef: BGPRouter/lan
+        peerASN: 64513
+        peers: [192.168.123.111]
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "lan", map[string]any{
+		"phase":            "Pending",
+		"establishedPeers": 0,
+		"acceptedPrefixes": 0,
+		"peers":            []map[string]any{},
+	}); err != nil {
+		t.Fatalf("save bgp: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestCommand(t, filepath.Join(binDir, "vtysh"), `#!/bin/sh
+case "$*" in
+  "-c show bgp summary json")
+    cat <<'JSON'
+{"ipv4Unicast":{"peers":{"192.168.123.111":{"remoteAs":"64513","state":"Established","pfxRcd":"2","msgRcvd":"12","msgSent":"11"}}}}
+JSON
+    exit 0
+    ;;
+  "-c show bgp ipv4 unicast json")
+    echo '{"routes":{"10.250.0.10/32":[{"valid":true,"bestpath":true}]}}'
+    exit 0
+    ;;
+esac
+exit 1
+`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	if err := run([]string{"show", "bgp", "--config", configPath, "--state-file", statePath, "--ledger-file", filepath.Join(dir, "missing-ledger.db")}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("show bgp: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"lan", "1/1", "192.168.123.111", "Established", "12", "11", "2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("show bgp output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func writeTestCommand(t *testing.T, path, script string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
