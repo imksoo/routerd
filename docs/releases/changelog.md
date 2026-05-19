@@ -79,6 +79,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   SIGHUP, DHCP daemon IPC, BFD daemon enablement, IngressService nftables-only
   backend rotation, VRRP track artifacts, DS-Lite dataplane hooks, DHCP event
   daemon ordering, and FRR graceful-restart observation.
+- Added a no-behavior-change firewall backend abstraction for nftables and pf
+  render/diff/reload paths, with regression contracts protecting nftables
+  `ct state`, `jhash`, `numgen`, hairpin conntrack expressions and pf
+  `rdr`, `nat-anchor`, and hairpin NAT syntax.
 
 ## v20260519.0743
 

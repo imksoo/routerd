@@ -81,6 +81,10 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
   SIGHUP、DHCP daemon IPC、BFD daemon enablement、IngressService の nftables-only
   backend rotation、VRRP track artifact、DS-Lite dataplane hook、DHCP event daemon
   ordering、FRR graceful-restart observation を固定します。
+- nftables / pf の render・diff・reload 経路向けに、挙動変更なしの
+  firewall backend abstraction を追加しました。nftables の `ct state`、`jhash`、
+  `numgen`、hairpin conntrack expression と、pf の `rdr`、`nat-anchor`、
+  hairpin NAT syntax を regression contract で固定します。
 
 ## v20260519.0743
 

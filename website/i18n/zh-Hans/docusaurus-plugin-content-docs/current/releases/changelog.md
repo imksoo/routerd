@@ -64,6 +64,10 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
   daemon IPC、BFD daemon enablement、IngressService nftables-only backend
   rotation、VRRP track artifact、DS-Lite dataplane hook、DHCP event daemon
   ordering，以及 FRR graceful-restart observation。
+- 为 nftables / pf 的 render、diff、reload 路径新增无行为变化的 firewall
+  backend abstraction，并用 regression contract 固定 nftables 的 `ct state`、
+  `jhash`、`numgen`、hairpin conntrack expression，以及 pf 的 `rdr`、
+  `nat-anchor`、hairpin NAT syntax。
 
 ## v20260519.0743
 
