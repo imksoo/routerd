@@ -86,7 +86,9 @@ func renderSnapshot(target string, router *api.Router) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		return sectionedFiles(fileMap(files)), nil
+		fileSet := fileMap(files)
+		addFirewallHoles(fileSet, router)
+		return sectionedFiles(fileSet), nil
 	default:
 		return nil, fmt.Errorf("unknown target %q", target)
 	}
@@ -102,6 +104,17 @@ func renderLinuxSnapshot(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	addWarnings(files, warnings)
+	netplanFiles, err := netconfigbackend.Netplan{Path: "netplan/99-routerd.yaml"}.Render(router)
+	if err != nil {
+		return nil, err
+	}
+	addRenderedFiles(files, "", netplanFiles)
+	networkdFiles, err := netconfigbackend.Networkd{}.Render(router)
+	if err != nil {
+		return nil, err
+	}
+	addRenderedFiles(files, "networkd/", networkdFiles)
+	addFirewallHoles(files, router)
 	addFile(files, "dnsmasq.conf", dnsmasqConfig)
 	aliases := interfaceAliases(router)
 	keepalived, err := render.KeepalivedConfig(router, aliases)
@@ -146,12 +159,17 @@ func renderAlpineSnapshot(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	addWarnings(files, warnings)
+	addFirewallHoles(files, router)
 	addFile(files, "dnsmasq.conf", dnsmasqConfig)
 	keepalived, err := render.KeepalivedConfig(router, interfaceAliases(router))
 	if err != nil {
 		return nil, err
 	}
 	addFile(files, "keepalived.conf", keepalived)
+	nat, err := render.NftablesIPv4SourceNAT(router)
+	addFileOrError(files, "nftables-nat.nft", nat, err)
+	firewall, err := render.NftablesFirewall(router, render.InternalFirewallHoles(router))
+	addFileOrError(files, "nftables-filter.nft", firewall, err)
 	for name, content := range data.InitScripts {
 		addFile(files, "openrc-"+name, content)
 	}
@@ -174,6 +192,7 @@ func renderFreeBSDSnapshot(router *api.Router) ([]byte, error) {
 	for name, content := range fileMap(rcConf) {
 		addFile(files, name, content)
 	}
+	addFirewallHoles(files, router)
 	dnsmasqConfig, warnings, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
 		RuntimeDir: "/var/run/routerd",
 		LeaseFile:  "/var/db/routerd/dnsmasq/dnsmasq.leases",
@@ -203,12 +222,52 @@ func addFile(files map[string][]byte, name string, data []byte) {
 	files[name] = data
 }
 
+func addFileOrError(files map[string][]byte, name string, data []byte, err error) {
+	if err != nil {
+		addFile(files, name+".error", []byte(err.Error()+"\n"))
+		return
+	}
+	addFile(files, name, data)
+}
+
 func addWarnings(files map[string][]byte, warnings []string) {
 	if len(warnings) == 0 {
 		return
 	}
 	sort.Strings(warnings)
 	files["warnings.txt"] = []byte(strings.Join(warnings, "\n") + "\n")
+}
+
+func addFirewallHoles(files map[string][]byte, router *api.Router) {
+	holes := render.InternalFirewallHoles(router)
+	if len(holes) == 0 {
+		return
+	}
+	var buf bytes.Buffer
+	for _, hole := range holes {
+		fmt.Fprintf(&buf, "%s from=%s to=%s ifnames=%s proto=%s port=%d action=%s direction=%s comment=%s\n",
+			hole.Name,
+			hole.FromZone,
+			hole.ToZone,
+			strings.Join(hole.IfNames, ","),
+			hole.Protocol,
+			hole.Port,
+			hole.Action,
+			hole.Direction,
+			hole.Comment,
+		)
+	}
+	addFile(files, "firewall-holes.txt", buf.Bytes())
+}
+
+func addRenderedFiles(files map[string][]byte, prefix string, rendered []render.File) {
+	for _, file := range rendered {
+		name := filepath.ToSlash(strings.TrimPrefix(file.Path, "/"))
+		if prefix != "" {
+			name = prefix + name
+		}
+		addFile(files, name, file.Data)
+	}
 }
 
 func fileMap(files []render.File) map[string][]byte {

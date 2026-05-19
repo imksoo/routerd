@@ -91,6 +91,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - PPPoE、VRRP/CARP、FRR、dnsmasq、DHCPv6 PD、DNS resolver、Tailscale の
   service-backed artifact intent を ServiceManager declaration table に整理し、
   systemd/OpenRC/rc.d/NixOS の ownership が出力変更なしで揃うようにしました。
+- firewall hole derivation と OS 別 interface/network artifact の render golden
+  coverage を拡張し、Linux の netplan/systemd-networkd output と Alpine の
+  nftables snapshot も固定しました。
 
 ## v20260519.0743
 

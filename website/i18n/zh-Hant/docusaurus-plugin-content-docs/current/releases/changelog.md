@@ -74,6 +74,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - 將 PPPoE、VRRP/CARP、FRR、dnsmasq、DHCPv6 PD、DNS resolver、Tailscale 的
   service-backed artifact intent 整理為 ServiceManager declaration table，使
   systemd/OpenRC/rc.d/NixOS ownership 在不改變輸出的前提下保持一致。
+- 擴展 render golden coverage，涵蓋 firewall hole derivation 與 OS-specific
+  interface/network artifacts，並固定 Linux netplan/systemd-networkd output 與
+  Alpine nftables snapshot。
 
 ## v20260519.0743
 

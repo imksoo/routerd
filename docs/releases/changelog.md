@@ -90,6 +90,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   table so systemd, OpenRC, rc.d, and NixOS service ownership stays consistent
   across PPPoE, VRRP/CARP, FRR, dnsmasq, DHCPv6 PD, DNS resolver, and Tailscale
   resources without changing rendered output.
+- Expanded render golden coverage for firewall hole derivation and OS-specific
+  interface/network artifacts, including Linux netplan/systemd-networkd output
+  and Alpine nftables snapshots.
 
 ## v20260519.0743
 

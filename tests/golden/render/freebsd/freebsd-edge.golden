@@ -13,6 +13,15 @@ dhcp-range=set:lan-dhcpv4,192.0.2.110,192.0.2.119,255.255.255.0,12h
 dhcp-option=tag:lan-dhcpv4,option:router,192.0.2.1
 dhcp-option=tag:lan-dhcpv4,option:dns-server,192.0.2.1
 dhcp-host=02:00:00:00:01:50,192.0.2.115,printer,infinite
+### firewall-holes.txt
+home-tailscale from=wan to=self ifnames=vtnet0 proto=udp port=41641 action=accept direction= comment=net.routerd.net/v1alpha1/TailscaleNode/home
+lan-dhcpv4-server-dhcpv4-server-lan from=lan to=self ifnames=vtnet1 proto=udp port=67 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Server/lan-dhcpv4-server
+lan-dhcpv6-server-dhcpv6-server-lan from=lan to=self ifnames=vtnet1 proto=udp port=547 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6Server/lan-dhcpv6-server
+mgmt-dhcpv4-dhcpv4-client from=mgmt to=self ifnames=vtnet2 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Lease/mgmt-dhcpv4
+static-dslite-example-dslite-ipip from=self to=wan ifnames=vtnet0 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/static-dslite-example
+wan-dhcpv4-dhcpv4-client from=wan to=self ifnames=vtnet0 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Lease/wan-dhcpv4
+wan-pd-dhcpv6-client from=wan to=self ifnames=vtnet0 proto=udp port=546 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd
+wg-lab-wireguard from=wan to=self ifnames=vtnet0 proto=udp port=51820 action=accept direction= comment=net.routerd.net/v1alpha1/WireGuardInterface/wg-lab
 ### install-packages.sh
 #!/bin/sh
 set -eu
