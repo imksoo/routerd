@@ -159,17 +159,12 @@ func criticalFRRLines(data []byte) []string {
 
 func (c *Controller) observe(ctx context.Context) error {
 	vtysh := firstNonEmpty(c.VTYSH, "vtysh")
-	summary, summaryErr := c.run(ctx, vtysh, "-c", "show bgp summary json")
-	routes, routesErr := c.run(ctx, vtysh, "-c", "show bgp ipv4 unicast json")
-	if summaryErr != nil || routesErr != nil {
-		errText := strings.TrimSpace(fmt.Sprintf("%v %v", summaryErr, routesErr))
-		return c.saveConfiguredStatuses("Pending", firstNonEmpty(c.ConfigPath, "/run/routerd/frr/routerd.conf"), false, map[string]any{"reason": "FRRStatusUnavailable", "error": errText})
-	}
-	state, err := bgpstate.ParseFRRState(summary, routes)
+	states, truncated, err := c.observeInstances(ctx, vtysh)
 	if err != nil {
-		return c.saveConfiguredStatuses("Pending", firstNonEmpty(c.ConfigPath, "/run/routerd/frr/routerd.conf"), false, map[string]any{"reason": "FRRStatusParseFailed", "error": err.Error()})
+		return c.saveConfiguredStatuses("Pending", firstNonEmpty(c.ConfigPath, "/run/routerd/frr/routerd.conf"), false, map[string]any{"reason": "FRRStatusUnavailable", "error": err.Error()})
 	}
-	state, c.truncated = bgpstate.LimitPrefixes(state, defaultInt(c.MaxPrefixes, bgpstate.DefaultMaxPrefixes))
+	c.truncated = truncated
+	state := aggregateBGPStates(states)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	state.Peers = c.applyPeerHistory(state.Peers, now)
 	var events []bgpstate.Event
@@ -178,7 +173,7 @@ func (c *Controller) observe(ctx context.Context) error {
 	}
 	c.lastState = state
 	c.observed = true
-	if err := c.saveObservedStatuses(state); err != nil {
+	if err := c.saveObservedStatuses(states, state); err != nil {
 		return err
 	}
 	for _, event := range events {
@@ -195,6 +190,102 @@ func (c *Controller) observe(ctx context.Context) error {
 		_ = c.Bus.Publish(ctx, daemonEvent)
 	}
 	return nil
+}
+
+func (c *Controller) observeInstances(ctx context.Context, vtysh string) (map[string]bgpstate.State, bool, error) {
+	states := map[string]bgpstate.State{}
+	truncatedAny := false
+	for _, instance := range c.bgpInstances() {
+		summaryCmd, routesCmd := bgpShowCommands(instance.VRFName)
+		summary, summaryErr := c.run(ctx, vtysh, "-c", summaryCmd)
+		routes, routesErr := c.run(ctx, vtysh, "-c", routesCmd)
+		if summaryErr != nil || routesErr != nil {
+			errText := strings.TrimSpace(fmt.Sprintf("%s: %v %v", instance.Name, summaryErr, routesErr))
+			return nil, false, fmt.Errorf("%s", errText)
+		}
+		state, err := bgpstate.ParseFRRState(summary, routes)
+		if err != nil {
+			return nil, false, fmt.Errorf("%s: %w", instance.Name, err)
+		}
+		limited, truncated := bgpstate.LimitPrefixes(state, defaultInt(c.MaxPrefixes, bgpstate.DefaultMaxPrefixes))
+		if truncated {
+			truncatedAny = true
+		}
+		states[instance.Name] = limited
+	}
+	return states, truncatedAny, nil
+}
+
+type bgpInstance struct {
+	Name    string
+	VRFName string
+}
+
+func (c *Controller) bgpInstances() []bgpInstance {
+	vrfs := controllerBGPVRFIfNames(c.Router)
+	var out []bgpInstance
+	if c.Router == nil {
+		return out
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := resource.BGPRouterSpec()
+		if err != nil {
+			continue
+		}
+		ref := strings.TrimSpace(spec.VRF)
+		out = append(out, bgpInstance{Name: resource.Metadata.Name, VRFName: vrfs[controllerBGPVRFRefName(ref)]})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func bgpShowCommands(vrfName string) (string, string) {
+	if strings.TrimSpace(vrfName) == "" {
+		return "show bgp summary json", "show bgp ipv4 unicast json"
+	}
+	vrf := strings.TrimSpace(vrfName)
+	return "show bgp vrf " + vrf + " summary json", "show bgp vrf " + vrf + " ipv4 unicast json"
+}
+
+func aggregateBGPStates(states map[string]bgpstate.State) bgpstate.State {
+	var aggregate bgpstate.State
+	for _, state := range states {
+		aggregate.Peers = append(aggregate.Peers, state.Peers...)
+		aggregate.Prefixes = append(aggregate.Prefixes, state.Prefixes...)
+	}
+	return bgpstate.Normalize(aggregate)
+}
+
+func controllerBGPVRFIfNames(router *api.Router) map[string]string {
+	out := map[string]string{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "VRF" {
+			continue
+		}
+		spec, err := resource.VRFSpec()
+		if err != nil {
+			continue
+		}
+		out[resource.Metadata.Name] = firstNonEmpty(spec.IfName, resource.Metadata.Name)
+	}
+	return out
+}
+
+func controllerBGPVRFRefName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if kind, name, ok := strings.Cut(value, "/"); ok && kind == "VRF" {
+		return strings.TrimSpace(name)
+	}
+	return value
 }
 
 func (c *Controller) saveConfiguredStatuses(phase, path string, changed bool, extra map[string]any) error {
@@ -223,15 +314,16 @@ func (c *Controller) saveConfiguredStatuses(phase, path string, changed bool, ex
 	return nil
 }
 
-func (c *Controller) saveObservedStatuses(state bgpstate.State) error {
+func (c *Controller) saveObservedStatuses(states map[string]bgpstate.State, aggregate bgpstate.State) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	peersByResource := c.peersByResource(state)
+	peersByResource := c.peersByResource(aggregate)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion {
 			continue
 		}
 		switch resource.Kind {
 		case "BGPRouter":
+			state := c.routerState(resource.Metadata.Name, states, peersByResource)
 			established := 0
 			for _, peer := range state.Peers {
 				if peer.Established {
@@ -250,6 +342,7 @@ func (c *Controller) saveObservedStatuses(state bgpstate.State) error {
 				"backend":             "frr",
 				"peers":               state.Peers,
 				"prefixes":            state.Prefixes,
+				"vrf":                 c.bgpInstanceVRFName(resource.Metadata.Name),
 				"observedCommunities": observedCommunities(state.Prefixes),
 				"establishedPeers":    established,
 				"acceptedPrefixes":    len(state.Prefixes),
@@ -290,6 +383,50 @@ func (c *Controller) saveObservedStatuses(state bgpstate.State) error {
 		}
 	}
 	return nil
+}
+
+func (c *Controller) routerState(routerName string, states map[string]bgpstate.State, peersByResource map[string][]bgpstate.Peer) bgpstate.State {
+	state := states[routerName]
+	wanted := c.peerResourceNamesForRouter(routerName)
+	var peers []bgpstate.Peer
+	for _, peerResource := range wanted {
+		peers = append(peers, peersByResource[peerResource]...)
+	}
+	if len(peers) > 0 {
+		state.Peers = peers
+	}
+	return bgpstate.Normalize(state)
+}
+
+func (c *Controller) peerResourceNamesForRouter(routerName string) []string {
+	var out []string
+	if c.Router == nil {
+		return out
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
+			continue
+		}
+		spec, err := resource.BGPPeerSpec()
+		if err != nil {
+			continue
+		}
+		_, name, ok := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
+		if ok && name == routerName {
+			out = append(out, resource.Metadata.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (c *Controller) bgpInstanceVRFName(routerName string) string {
+	for _, instance := range c.bgpInstances() {
+		if instance.Name == routerName {
+			return instance.VRFName
+		}
+	}
+	return ""
 }
 
 func observedCommunities(prefixes []bgpstate.Prefix) []string {

@@ -2602,6 +2602,9 @@
                       "listen": {
                         "additionalProperties": false,
                         "properties": {
+                          "address": {
+                            "type": "string"
+                          },
                           "port": {
                             "maximum": 65535,
                             "minimum": 1,
@@ -2657,6 +2660,9 @@
                           }
                         },
                         "type": "object"
+                      },
+                      "vrf": {
+                        "type": "string"
                       },
                       "when": {
                         "additionalProperties": false,

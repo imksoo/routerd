@@ -21,6 +21,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期與時間型版號。
 - 新增 FRR BGP connected/static redistribution、BGP community send/accept/set
   policy、observed community status parsing，以及
   `examples/lan-advertise-with-community.yaml`。
+- 新增基於 VRF-backed FRR BGP instance 的 multi-instance `BGPRouter` support、
+  listen-address collision validation、per-router observed status，以及
+  `examples/multi-instance-bgp.yaml`。
 
 ## v20260519.0743
 

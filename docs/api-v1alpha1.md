@@ -210,7 +210,14 @@ statements and keeps the peer outbound route-map default-deny unless exported
 prefixes are explicitly listed. BGP community policy can be declared on the
 router or peer with `communities.send`, `communities.accept`, and
 `communities.set.in/out`. The watcher records observed route communities in
-status when FRR exposes them in JSON output.
+status when FRR exposes them in JSON output. Multiple `BGPRouter` resources can
+run as separate FRR BGP instances by assigning additional routers to
+`spec.vrf`, which references a routerd `VRF` resource and renders
+`router bgp <asn> vrf <ifname>`. routerd stores observed BGP status per
+`BGPRouter` by following `BGPPeer.spec.routerRef`. `spec.listen.address` is
+validated and used for routerd-side listen collision checks; FRR address binding
+itself remains a bgpd daemon invocation option rather than an integrated config
+stanza.
 
 `VirtualIPv4Address` uses keepalived on Linux and CARP on FreeBSD for
 `mode: vrrp`. Linux VRRP uses explicit unicast peers and defaults to

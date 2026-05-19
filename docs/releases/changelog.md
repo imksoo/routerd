@@ -21,6 +21,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Added FRR BGP connected/static redistribution, BGP community send/accept/set
   policy, observed community status parsing, and
   `examples/lan-advertise-with-community.yaml`.
+- Added multi-instance `BGPRouter` support with VRF-backed FRR BGP instances,
+  listen-address collision validation, per-router observed status, and
+  `examples/multi-instance-bgp.yaml`.
 
 ## v20260519.0743
 

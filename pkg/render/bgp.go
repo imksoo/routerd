@@ -17,6 +17,8 @@ type bgpRouterConfig struct {
 	Name            string
 	ASN             uint32
 	RouterID        string
+	VRFName         string
+	ListenAddress   string
 	ListenPort      int
 	AllowedPrefixes []string
 	Redistribute    bgpRedistribute
@@ -84,6 +86,7 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 		return nil, nil
 	}
 	byName := map[string]*bgpRouterConfig{}
+	vrfs := bgpVRFIfNames(router)
 	var names []string
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.NetAPIVersion || res.Kind != "BGPRouter" {
@@ -100,10 +103,17 @@ func bgpRouterConfigs(router *api.Router) ([]bgpRouterConfig, error) {
 		if listenPort == 0 {
 			listenPort = 179
 		}
+		vrfRef := strings.TrimSpace(spec.VRF)
+		vrfName := vrfs[bgpVRFRefName(vrfRef)]
+		if vrfRef != "" && vrfName == "" {
+			return nil, fmt.Errorf("%s spec.vrf references missing VRF %q", res.ID(), spec.VRF)
+		}
 		cfg := bgpRouterConfig{
 			Name:            res.Metadata.Name,
 			ASN:             spec.ASN,
 			RouterID:        strings.TrimSpace(spec.RouterID),
+			VRFName:         vrfName,
+			ListenAddress:   strings.TrimSpace(spec.Listen.Address),
 			ListenPort:      listenPort,
 			AllowedPrefixes: compactStrings(spec.ImportPolicy.AllowedPrefixes),
 			Redistribute: bgpRedistribute{
@@ -194,7 +204,11 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 		}
 	}
 	buf.WriteString("!\n")
-	buf.WriteString(fmt.Sprintf("router bgp %d\n", cfg.ASN))
+	if cfg.VRFName != "" {
+		buf.WriteString(fmt.Sprintf("router bgp %d vrf %s\n", cfg.ASN, cfg.VRFName))
+	} else {
+		buf.WriteString(fmt.Sprintf("router bgp %d\n", cfg.ASN))
+	}
 	buf.WriteString(" bgp router-id " + cfg.RouterID + "\n")
 	if cfg.ListenPort != 179 {
 		buf.WriteString(fmt.Sprintf(" bgp listen port %d\n", cfg.ListenPort))
@@ -249,6 +263,35 @@ func writeFRRRouter(buf *bytes.Buffer, cfg bgpRouterConfig) {
 	}
 	buf.WriteString(" exit-address-family\n")
 	buf.WriteString("!\n")
+}
+
+func bgpVRFIfNames(router *api.Router) map[string]string {
+	out := map[string]string{}
+	if router == nil {
+		return out
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "VRF" {
+			continue
+		}
+		spec, err := res.VRFSpec()
+		if err != nil {
+			continue
+		}
+		out[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+	}
+	return out
+}
+
+func bgpVRFRefName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if kind, name, ok := strings.Cut(value, "/"); ok && kind == "VRF" {
+		return strings.TrimSpace(name)
+	}
+	return value
 }
 
 type bgpRouteMapSpec struct {

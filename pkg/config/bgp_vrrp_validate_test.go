@@ -151,6 +151,61 @@ func TestValidateBGPCommunitiesRejectsInvalidCommunity(t *testing.T) {
 	}
 }
 
+func TestValidateMultiInstanceBGPRouter(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VRF"}, Metadata: api.ObjectMeta{Name: "wan-peering"}, Spec: api.VRFSpec{IfName: "vrf-wan", RouteTable: 65001}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64512,
+				RouterID: "10.240.70.2",
+				Listen:   api.BGPListenSpec{Address: "10.240.70.2"},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.BGPRouterSpec{
+				ASN:      65001,
+				RouterID: "192.0.2.2",
+				VRF:      "wan-peering",
+				Listen:   api.BGPListenSpec{Address: "192.0.2.2"},
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("multi-instance BGP should validate: %v", err)
+	}
+}
+
+func TestValidateMultiInstanceBGPRouterRejectsASNAndListenConflicts(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VRF"}, Metadata: api.ObjectMeta{Name: "wan-peering"}, Spec: api.VRFSpec{IfName: "vrf-wan", RouteTable: 65001}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64512,
+				RouterID: "10.240.70.2",
+				Listen:   api.BGPListenSpec{Address: "10.240.70.2"},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.BGPRouterSpec{
+				ASN:      64512,
+				RouterID: "192.0.2.2",
+				VRF:      "wan-peering",
+				Listen:   api.BGPListenSpec{Address: "192.0.2.2"},
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.asn 64512 conflicts") {
+		t.Fatalf("expected ASN conflict, got %v", err)
+	}
+	spec := router.Spec.Resources[2].Spec.(api.BGPRouterSpec)
+	spec.ASN = 65001
+	spec.Listen.Address = "10.240.70.2"
+	router.Spec.Resources[2].Spec = spec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "bgp-listen conflicts") {
+		t.Fatalf("expected listen conflict, got %v", err)
+	}
+}
+
 func TestValidateVirtualIPv4AddressRejectsStaticAddressConflict(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

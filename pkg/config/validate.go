@@ -58,6 +58,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	routeSets := map[string]bool{}
 	healthChecks := map[string]bool{}
 	bgpRouters := map[string]bool{}
+	vrfs := map[string]bool{}
 	zones := map[string]bool{}
 	dnsZones := map[string]string{}
 	dnsResolverZones := map[string]bool{}
@@ -128,6 +129,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "VRF" {
 			interfaces[res.Metadata.Name] = true
+			vrfs[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "VXLANTunnel" {
 			interfaces[res.Metadata.Name] = true
@@ -290,6 +292,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		}
 	}
 	if err := validateListenPortCollisions(router); err != nil {
+		return err
+	}
+	if err := validateBGPRouterInstances(router, vrfs); err != nil {
 		return err
 	}
 	for _, res := range router.Spec.Resources {
@@ -1869,6 +1874,11 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		}
 		if spec.Listen.Port != 0 && (spec.Listen.Port < 1 || spec.Listen.Port > 65535) {
 			return fmt.Errorf("%s spec.listen.port must be within 1-65535", res.ID())
+		}
+		if strings.TrimSpace(spec.Listen.Address) != "" {
+			if _, err := netip.ParseAddr(strings.TrimSpace(spec.Listen.Address)); err != nil {
+				return fmt.Errorf("%s spec.listen.address must be an IP address", res.ID())
+			}
 		}
 		if err := validateBGPTimers(res.ID(), "spec.timers", spec.Timers); err != nil {
 			return err

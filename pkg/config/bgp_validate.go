@@ -11,6 +11,52 @@ import (
 	"routerd/pkg/api"
 )
 
+func validateBGPRouterInstances(router *api.Router, vrfs map[string]bool) error {
+	asnOwners := map[uint32]string{}
+	instanceOwners := map[string]string{}
+	var listens []bgpListenClaim
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "BGPRouter" {
+			continue
+		}
+		spec, err := res.BGPRouterSpec()
+		if err != nil {
+			return err
+		}
+		if existing := asnOwners[spec.ASN]; existing != "" {
+			return fmt.Errorf("%s spec.asn %d conflicts with %s; one routerd-managed FRR instance cannot reuse an ASN", res.ID(), spec.ASN, existing)
+		}
+		asnOwners[spec.ASN] = res.ID()
+		vrfName := bgpVRFRefName(spec.VRF)
+		if vrfName != "" && !vrfs[vrfName] {
+			return fmt.Errorf("%s spec.vrf references missing VRF %q", res.ID(), spec.VRF)
+		}
+		instanceKey := defaultString(vrfName, "default")
+		if existing := instanceOwners[instanceKey]; existing != "" {
+			return fmt.Errorf("%s spec.vrf conflicts with %s; BGP VRF instance %q is already managed", res.ID(), existing, instanceKey)
+		}
+		instanceOwners[instanceKey] = res.ID()
+		port := spec.Listen.Port
+		if port == 0 {
+			port = 179
+		}
+		claim := bgpListenClaim{Owner: res.ID(), Address: strings.TrimSpace(spec.Listen.Address), Port: port}
+		for _, existing := range listens {
+			if bgpListenClaimsConflict(existing, claim) {
+				return fmt.Errorf("%s spec.listen conflicts with %s on %s", res.ID(), existing.Owner, bgpListenLabel(claim.Address, claim.Port))
+			}
+		}
+		listens = append(listens, claim)
+	}
+	return nil
+}
+
+type bgpListenClaim struct {
+	Owner   string
+	Address string
+	Port    int
+}
+
 func validateBGPRouterPolicy(resourceID string, spec api.BGPRouterSpec) error {
 	imports, err := validateBGPPrefixList(resourceID, "spec.importPolicy.allowedPrefixes", spec.ImportPolicy.AllowedPrefixes)
 	if err != nil {
@@ -34,6 +80,32 @@ func validateBGPRouterPolicy(resourceID string, spec api.BGPRouterSpec) error {
 		return err
 	}
 	return validateBGPCommunities(resourceID, "spec.communities", spec.Communities)
+}
+
+func bgpVRFRefName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if kind, name, ok := strings.Cut(value, "/"); ok && kind == "VRF" {
+		return strings.TrimSpace(name)
+	}
+	return value
+}
+
+func bgpListenClaimsConflict(a, b bgpListenClaim) bool {
+	if a.Port != b.Port {
+		return false
+	}
+	return a.Address == "" || b.Address == "" || a.Address == b.Address
+}
+
+func bgpListenLabel(address string, port int) string {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return "all addresses tcp/" + strconv.Itoa(port)
+	}
+	return address + " tcp/" + strconv.Itoa(port)
 }
 
 func validateBGPPrefixList(resourceID, path string, values []string) ([]netip.Prefix, error) {

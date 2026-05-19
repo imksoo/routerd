@@ -12,6 +12,7 @@ import (
 
 type listenEndpoint struct {
 	Interface string
+	Address   string
 	Protocol  string
 	Port      int
 	Role      string
@@ -132,7 +133,7 @@ func (r *listenPortRegistry) addResource(router *api.Router, res api.Resource) e
 		if port == 0 {
 			port = 179
 		}
-		return r.add("", "tcp", port, "daemon", "", res.ID()+".bgp-listen")
+		return r.addAddress("", spec.Listen.Address, "tcp", port, "daemon", "", res.ID()+".bgp-listen")
 	case res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6RouterAdvertisement":
 		spec, err := res.IPv6RouterAdvertisementSpec()
 		if err != nil {
@@ -144,12 +145,17 @@ func (r *listenPortRegistry) addResource(router *api.Router, res api.Resource) e
 }
 
 func (r *listenPortRegistry) add(iface, protocol string, port int, role, group, owner string) error {
+	return r.addAddress(iface, "", protocol, port, role, group, owner)
+}
+
+func (r *listenPortRegistry) addAddress(iface, address, protocol string, port int, role, group, owner string) error {
 	protocol = strings.TrimSpace(protocol)
 	if protocol == "" || port < 0 {
 		return nil
 	}
 	endpoint := listenEndpoint{
 		Interface: strings.TrimSpace(iface),
+		Address:   strings.TrimSpace(address),
 		Protocol:  protocol,
 		Port:      port,
 		Role:      role,
@@ -176,7 +182,9 @@ func listenEndpointsConflict(a, b listenEndpoint) bool {
 	if listenRedirectsToDaemon(a, b) {
 		return false
 	}
-	return a.Interface == "" || b.Interface == "" || a.Interface == b.Interface
+	interfaceMatch := a.Interface == "" || b.Interface == "" || a.Interface == b.Interface
+	addressMatch := a.Address == "" || b.Address == "" || a.Address == b.Address
+	return interfaceMatch && addressMatch
 }
 
 func listenRedirectsToDaemon(a, b listenEndpoint) bool {
@@ -191,6 +199,9 @@ func listenEndpointLabel(endpoint listenEndpoint) string {
 		return "interface " + endpoint.Interface + " proto " + endpoint.Protocol
 	}
 	port := endpoint.Protocol + "/" + strconv.Itoa(endpoint.Port)
+	if endpoint.Address != "" {
+		return "address " + endpoint.Address + " " + port
+	}
 	if endpoint.Interface == "" {
 		return "all interfaces " + port
 	}

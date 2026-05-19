@@ -123,3 +123,43 @@ func TestFRRConfigRendersRedistributeAndCommunities(t *testing.T) {
 		}
 	}
 }
+
+func TestFRRConfigRendersMultipleBGPRouterInstances(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VRF"}, Metadata: api.ObjectMeta{Name: "wan-peering"}, Spec: api.VRFSpec{IfName: "vrf-wan", RouteTable: 65001}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+			ASN:      64512,
+			RouterID: "10.0.0.1",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.BGPRouterSpec{
+			ASN:      65001,
+			RouterID: "192.0.2.1",
+			VRF:      "wan-peering",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "lan-speaker"}, Spec: api.BGPPeerSpec{
+			RouterRef: "BGPRouter/lan",
+			PeerASN:   64513,
+			Peers:     []string{"10.0.0.21"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "wan-upstream"}, Spec: api.BGPPeerSpec{
+			RouterRef: "BGPRouter/wan",
+			PeerASN:   65002,
+			Peers:     []string{"192.0.2.254"},
+		}},
+	}}}
+	data, err := FRRConfig(router)
+	if err != nil {
+		t.Fatalf("render FRR config: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"router bgp 64512",
+		" neighbor 10.0.0.21 remote-as 64513",
+		"router bgp 65001 vrf vrf-wan",
+		" neighbor 192.0.2.254 remote-as 65002",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("FRR config missing %q:\n%s", want, got)
+		}
+	}
+}

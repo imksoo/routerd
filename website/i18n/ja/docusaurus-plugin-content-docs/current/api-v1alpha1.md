@@ -217,7 +217,13 @@ route を個別の `allowedPrefixes` 付きで redistribute できます。route
 peer outbound route-map は default deny のままにします。BGP community policy は
 router または peer に `communities.send`、`communities.accept`、
 `communities.set.in/out` として宣言できます。FRR JSON に community が含まれる場合、
-watcher は観測した route community を status に保存します。
+watcher は観測した route community を status に保存します。複数の `BGPRouter`
+resource は、追加 router に `spec.vrf` を指定することで別々の FRR BGP instance として
+動かせます。`spec.vrf` は routerd の `VRF` resource を参照し、
+`router bgp <asn> vrf <ifname>` を生成します。routerd は
+`BGPPeer.spec.routerRef` に従って、観測した BGP status を `BGPRouter` ごとに保存します。
+`spec.listen.address` は routerd 側の listen collision check に使います。FRR の
+address bind 自体は integrated config stanza ではなく bgpd daemon invocation option です。
 
 `VirtualIPv4Address` の `mode: vrrp` は Linux では keepalived、FreeBSD では CARP を
 使います。Linux VRRP は明示的な unicast peer を使い、既定は `nopreempt` です。

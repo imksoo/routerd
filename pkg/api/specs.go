@@ -412,6 +412,7 @@ type ResourceTrackSpec struct {
 type BGPRouterSpec struct {
 	ASN             uint32                 `yaml:"asn" json:"asn" jsonschema:"minimum=1"`
 	RouterID        string                 `yaml:"routerID" json:"routerID"`
+	VRF             string                 `yaml:"vrf,omitempty" json:"vrf,omitempty"`
 	Listen          BGPListenSpec          `yaml:"listen,omitempty" json:"listen,omitempty"`
 	ImportPolicy    BGPImportPolicySpec    `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
 	Redistribute    BGPRedistributeSpec    `yaml:"redistribute,omitempty" json:"redistribute,omitempty"`
@@ -423,7 +424,8 @@ type BGPRouterSpec struct {
 }
 
 type BGPListenSpec struct {
-	Port int `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	Address string `yaml:"address,omitempty" json:"address,omitempty"`
+	Port    int    `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
 }
 
 type BGPImportPolicySpec struct {
