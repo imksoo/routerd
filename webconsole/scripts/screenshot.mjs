@@ -25,6 +25,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     if (url.pathname === "/api/v1/summary") return json(res, summaryFixture());
+    if (url.pathname === "/api/v1/routes") return json(res, routesFixture());
     if (url.pathname === "/api/v1/config") return json(res, configFixture());
     if (url.pathname === "/api/v1/generations") return json(res, generationsFixture());
     if (url.pathname.startsWith("/api/v1/generations/")) return generationResponse(url.pathname, res);
@@ -33,7 +34,13 @@ const server = http.createServer(async (req, res) => {
     const filePath = path.resolve(staticDir, `.${requestedPath}`);
     if (!filePath.startsWith(staticDir)) return notFound(res);
     if (!existsSync(filePath)) return notFound(res);
-    const data = await readFile(filePath);
+    let data = await readFile(filePath);
+    if (filePath.endsWith("index.html")) {
+      data = Buffer.from(String(data)
+        .replaceAll("__ROUTERD_BASE_PATH__", "/")
+        .replaceAll("__ROUTERD_TITLE_TEXT__", "routerd")
+        .replaceAll("__ROUTERD_TITLE_JS__", "routerd"));
+    }
     res.writeHead(200, {
       "content-type": contentType(filePath),
       "cache-control": "no-store",
@@ -54,6 +61,7 @@ const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 }, deviceScaleFactor: 1 });
   await capture(page, "#overview", "overview-desktop.png");
+  await capture(page, "#routes", "routes-desktop.png");
   await capture(page, "#controllers", "controllers-desktop.png");
   await capture(page, "#connections", "connections-desktop.png");
   await capture(page, "#clients/inventory", "clients-desktop.png");
@@ -67,6 +75,7 @@ try {
     hasTouch: true,
   });
   await capture(mobile, "#overview", "overview-mobile.png");
+  await capture(mobile, "#routes", "routes-mobile.png");
   await capture(mobile, "#connections", "connections-mobile.png");
   await capture(mobile, "#clients/inventory", "clients-mobile.png");
 } finally {
@@ -187,6 +196,23 @@ function resourceFixture() {
     { apiVersion: "firewall.routerd.net/v1alpha1", kind: "FirewallPolicy", name: "three-role", status: { phase: "Observed", changedFields: "dry-run" } },
     { apiVersion: "system.routerd.net/v1alpha1", kind: "Package", name: "router-tools", status: { phase: "Healthy" } },
   ];
+}
+
+function routesFixture() {
+  const now = new Date().toISOString();
+  return {
+    generatedAt: now,
+    routes: [
+      { source: "kernel", family: "ipv4", destination: "default", gateway: "192.168.123.1", device: "wan0", protocol: "boot", table: "main", metric: "100", phase: "installed", observedAt: now },
+      { source: "kernel", family: "ipv4", destination: "172.18.0.0/16", device: "lan0", protocol: "kernel", scope: "link", table: "main", phase: "installed", observedAt: now },
+      { source: "static", resource: "IPv4StaticRoute/services", family: "ipv4", destination: "10.96.0.0/12", gateway: "172.18.0.10", device: "lan0", metric: "50", phase: "Applied", observedAt: now },
+      { source: "bgp", resource: "BGPRouter/lan", family: "ipv4", destination: "10.250.0.0/24", protocol: "bgp", peer: "192.168.123.111", phase: "Established", observedAt: now },
+      { source: "dhcpv4", resource: "DHCPv4Lease/wan", family: "ipv4", destination: "default", gateway: "192.168.123.1", device: "wan0", protocol: "dhcp", metric: "100", phase: "Bound", observedAt: now },
+    ],
+    bgpPeers: [
+      { router: "lan", peer: "192.168.123.111", asn: "64513", state: "Established", established: true, prefixesReceived: "12", messages: "82/79", lastEstablishedAt: now },
+    ],
+  };
 }
 
 function interfaceFixture() {

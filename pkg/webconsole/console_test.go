@@ -399,23 +399,15 @@ exit 1
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan", RouteMetric: 100}},
 	}}}
 	handler := New(Options{Store: store, Router: router, Title: "routerd"})
-	for _, tt := range []struct {
-		path string
-		want []string
-	}{
-		{"/api/v1/routes", []string{`"source": "bgp"`, `"source": "static"`, `"source": "dhcpv4"`, `"source": "kernel"`, `"bgpPeers"`, `"192.168.123.111"`}},
-		{"/routes", []string{"<h1>Routes</h1>", "BGP Peers", "10.250.0.0/24", "10.96.0.0/12", "192.168.123.111", "Established"}},
-	} {
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("%s status = %d body=%s", tt.path, rec.Code, rec.Body.String())
-		}
-		got := rec.Body.String()
-		for _, want := range tt.want {
-			if !strings.Contains(got, want) {
-				t.Fatalf("%s body missing %q:\n%s", tt.path, want, got)
-			}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/routes", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	for _, want := range []string{`"source": "bgp"`, `"source": "static"`, `"source": "dhcpv4"`, `"source": "kernel"`, `"bgpPeers"`, `"192.168.123.111"`, `"observedAt"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("body missing %q:\n%s", want, got)
 		}
 	}
 }
