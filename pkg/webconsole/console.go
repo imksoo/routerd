@@ -839,13 +839,13 @@ func (h Handler) configuredRouteEntries(resources []routerstate.ObjectStatus) []
 				Phase:       stringFromMap(status, "phase"),
 				ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
 			})
-		case "IPv4DefaultRoutePolicy":
-			spec, err := resource.IPv4DefaultRoutePolicySpec()
-			if err != nil {
+		case "EgressRoutePolicy":
+			spec, err := resource.EgressRoutePolicySpec()
+			if err != nil || firstNonEmpty(spec.Mode, "") != "priority" {
 				continue
 			}
 			for _, candidate := range spec.Candidates {
-				if candidate.RouteSet != "" {
+				if len(candidate.Targets) > 0 {
 					continue
 				}
 				out = append(out, RouteEntry{
@@ -854,9 +854,9 @@ func (h Handler) configuredRouteEntries(resources []routerstate.ObjectStatus) []
 					Family:      "ipv4",
 					Destination: "default",
 					Gateway:     candidate.Gateway,
-					Device:      candidate.Interface,
-					Table:       routeMetricText(strconv.Itoa(candidate.Table)),
-					Metric:      routeMetricText(strconv.Itoa(candidate.RouteMetric)),
+					Device:      candidate.EffectiveInterface(),
+					Table:       routeMetricText(strconv.Itoa(candidate.EffectiveTable())),
+					Metric:      routeMetricText(strconv.Itoa(candidate.EffectiveMetric())),
 					Phase:       stringFromMap(status, "phase"),
 					ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
 				})
@@ -2135,7 +2135,7 @@ func defaultResourceOwnerController(kind string) string {
 		return "package"
 	case "PPPoESession":
 		return "pppoesession"
-	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy":
+	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "EgressRoutePolicy":
 		return "route"
 	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
 		return "service-unit"

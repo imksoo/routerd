@@ -174,12 +174,11 @@ func TestNftablesSkipsRuntimeResolvedNAT44Policy(t *testing.T) {
 }
 
 func TestNftablesDefaultRoutePolicyFlushesTable(t *testing.T) {
-	data, err := NftablesIPv4DefaultRoutePolicy(
-		"net.routerd.net/v1alpha1/IPv4DefaultRoutePolicy/default",
-		api.IPv4DefaultRoutePolicySpec{SourceCIDRs: []string{"172.18.0.0/16"}},
-		api.IPv4DefaultRoutePolicyCandidate{Name: "wan", Mark: 100},
-		[]api.IPv4DefaultRoutePolicyCandidate{{Name: "wan", Mark: 100}},
-		nil,
+	data, err := NftablesEgressRoutePolicyDefaultMarks(
+		"net.routerd.net/v1alpha1/EgressRoutePolicy/default",
+		api.EgressRoutePolicySpec{SourceCIDRs: []string{"172.18.0.0/16"}},
+		api.EgressRoutePolicyCandidate{Name: "wan", Mark: 100},
+		[]api.EgressRoutePolicyCandidate{{Name: "wan", Mark: 100}},
 	)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
@@ -405,19 +404,22 @@ func TestNftablesNAT44RuleAddressPortRange(t *testing.T) {
 	}
 }
 
-func TestNftablesIPv4PolicyRoute(t *testing.T) {
+func TestNftablesEgressRoutePolicyMark(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRoute"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
 				Metadata: api.ObjectMeta{Name: "lan-via-transix"},
-				Spec: api.IPv4PolicyRouteSpec{
-					OutboundInterface: "transix",
-					Table:             100,
-					Priority:          10000,
-					Mark:              256,
-					SourceCIDRs:       []string{"192.168.10.0/24"},
-					DestinationCIDRs:  []string{"0.0.0.0/0"},
+				Spec: api.EgressRoutePolicySpec{
+					Mode:             "mark",
+					SourceCIDRs:      []string{"192.168.10.0/24"},
+					DestinationCIDRs: []string{"0.0.0.0/0"},
+					Candidates: []api.EgressRoutePolicyCandidate{{
+						Interface: "transix",
+						Table:     100,
+						Priority:  10000,
+						Mark:      256,
+					}},
 				},
 			},
 		}},
@@ -441,21 +443,24 @@ func TestNftablesIPv4PolicyRoute(t *testing.T) {
 	}
 }
 
-func TestNftablesIPv4PolicyRouteSet(t *testing.T) {
+func TestNftablesEgressRoutePolicyHash(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
 				Metadata: api.ObjectMeta{Name: "lan-balance"},
-				Spec: api.IPv4PolicyRouteSetSpec{
+				Spec: api.EgressRoutePolicySpec{
 					Mode:             "hash",
 					HashFields:       []string{"sourceAddress", "destinationAddress"},
 					SourceCIDRs:      []string{"192.168.10.0/24"},
 					DestinationCIDRs: []string{"0.0.0.0/0"},
-					Targets: []api.IPv4PolicyRouteTarget{
-						{OutboundInterface: "transix-a", Table: 100, Priority: 10000, Mark: 256},
-						{OutboundInterface: "transix-b", Table: 101, Priority: 10001, Mark: 257},
-					},
+					Candidates: []api.EgressRoutePolicyCandidate{{
+						Name: "lan-balance",
+						Targets: []api.EgressRoutePolicyTarget{
+							{Interface: "transix-a", Table: 100, Priority: 10000, Mark: 256},
+							{Interface: "transix-b", Table: 101, Priority: 10001, Mark: 257},
+						},
+					}},
 				},
 			},
 		}},
@@ -477,22 +482,25 @@ func TestNftablesIPv4PolicyRouteSet(t *testing.T) {
 	}
 }
 
-func TestNftablesIPv4PolicyRouteSetExcludesDestinations(t *testing.T) {
+func TestNftablesEgressRoutePolicyHashExcludesDestinations(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
 				Metadata: api.ObjectMeta{Name: "lan-balance"},
-				Spec: api.IPv4PolicyRouteSetSpec{
+				Spec: api.EgressRoutePolicySpec{
 					Mode:                    "hash",
 					HashFields:              []string{"sourceAddress"},
 					SourceCIDRs:             []string{"172.18.0.0/16"},
 					DestinationCIDRs:        []string{"0.0.0.0/0"},
 					ExcludeDestinationCIDRs: []string{"192.168.1.0/24", "192.168.123.0/24"},
-					Targets: []api.IPv4PolicyRouteTarget{
-						{OutboundInterface: "ds-lite-a", Table: 110, Priority: 10110, Mark: 0x110},
-						{OutboundInterface: "ds-lite-b", Table: 111, Priority: 10111, Mark: 0x111},
-					},
+					Candidates: []api.EgressRoutePolicyCandidate{{
+						Name: "dslite",
+						Targets: []api.EgressRoutePolicyTarget{
+							{Interface: "ds-lite-a", Table: 110, Priority: 10110, Mark: 0x110},
+							{Interface: "ds-lite-b", Table: 111, Priority: 10111, Mark: 0x111},
+						},
+					}},
 				},
 			},
 		}},
@@ -927,15 +935,18 @@ func TestNftablesIPv4PolicyRouteUsesDestinationAddressSet(t *testing.T) {
 			},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRoute"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
 			Metadata: api.ObjectMeta{Name: "cloud-via-alt"},
-			Spec: api.IPv4PolicyRouteSpec{
-				OutboundInterface:       "wan-alt",
-				Table:                   200,
-				Priority:                1200,
-				Mark:                    0x120,
+			Spec: api.EgressRoutePolicySpec{
+				Mode:                    "mark",
 				DestinationSetRefs:      []string{"IPAddressSet/cloud-service"},
 				ExcludeDestinationCIDRs: []string{"10.0.0.0/8"},
+				Candidates: []api.EgressRoutePolicyCandidate{{
+					Interface: "wan-alt",
+					Table:     200,
+					Priority:  1200,
+					Mark:      0x120,
+				}},
 			},
 		},
 	}}}

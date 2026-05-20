@@ -481,8 +481,12 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 			HealthyThreshold:   1,
 			UnhealthyThreshold: 3,
 		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.IPv4PolicyRouteSetSpec{
-			Targets: []api.IPv4PolicyRouteTarget{{Name: "ds-lite-a", Mark: 0x110, HealthCheck: "internet-via-dslite-a"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "hash",
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name:    "balanced",
+				Targets: []api.EgressRoutePolicyTarget{{Name: "ds-lite-a", Mark: 0x110, HealthCheck: "internet-via-dslite-a"}},
+			}},
 		}},
 	}}}
 	store := mapStore{api.NetAPIVersion + "/IPv4StaticAddress/lan-base": {"address": "172.18.0.1/16"}}

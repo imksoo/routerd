@@ -378,17 +378,13 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			action = resource.ActionDelete
 		}
 		return []resource.Intent{artifact("routerd.healthCheck", res.Metadata.Name, action, "routerd-scheduler", nil)}
-	case "IPv4DefaultRoutePolicy":
-		return ipv4DefaultRoutePolicyArtifacts(res, aliases)
+	case "EgressRoutePolicy":
+		return egressRoutePolicyArtifacts(res, aliases)
 	case "NAT44Rule":
 		if _, features := platform.Current(); features.HasPF {
 			return []resource.Intent{artifact("pf.anchor", "routerd_nat", resource.ActionEnsure, "pfctl", nil)}
 		}
 		return []resource.Intent{artifact("nft.table", "routerd_nat", resource.ActionEnsure, "nft", nil)}
-	case "IPv4PolicyRoute":
-		return ipv4PolicyRouteArtifacts(res, aliases)
-	case "IPv4PolicyRouteSet":
-		return ipv4PolicyRouteSetArtifacts(res, aliases)
 	case "FirewallZone":
 		return []resource.Intent{artifact("routerd.firewall.zone", res.Metadata.Name, resource.ActionEnsure, "nft", nil)}
 	case "FirewallPolicy", "FirewallRule":
@@ -488,79 +484,61 @@ func hasExplicitResource(router *api.Router, kind, name string) bool {
 	return false
 }
 
-func ipv4PolicyRouteArtifacts(res api.Resource, aliases map[string]string) []resource.Intent {
-	spec, err := res.IPv4PolicyRouteSpec()
-	if err != nil {
-		return nil
-	}
-	target := api.IPv4PolicyRouteTarget{
-		Name:              res.Metadata.Name,
-		OutboundInterface: spec.OutboundInterface,
-		Table:             spec.Table,
-		Priority:          spec.Priority,
-		Mark:              spec.Mark,
-		RouteMetric:       spec.RouteMetric,
-	}
-	return ipv4PolicyTargetArtifacts(res.ID(), target, aliases)
-}
-
-func ipv4PolicyRouteSetArtifacts(res api.Resource, aliases map[string]string) []resource.Intent {
-	spec, err := res.IPv4PolicyRouteSetSpec()
+func egressRoutePolicyArtifacts(res api.Resource, aliases map[string]string) []resource.Intent {
+	spec, err := res.EgressRoutePolicySpec()
 	if err != nil {
 		return nil
 	}
 	var intents []resource.Intent
-	intents = append(intents, resource.Intent{
-		Artifact:  resource.Artifact{Kind: "nft.table", Name: "routerd_policy", Owner: res.ID()},
-		Action:    resource.ActionEnsure,
-		ApplyWith: "nft",
-	})
-	for i, target := range spec.Targets {
-		if target.Name == "" {
-			target.Name = fmt.Sprintf("%s-%d", res.Metadata.Name, i)
-		}
-		intents = append(intents, ipv4PolicyTargetArtifacts(res.ID(), target, aliases)...)
+	mode := defaultString(spec.Mode, "")
+	if mode == "priority" {
+		intents = append(intents, resource.Intent{
+			Artifact:  resource.Artifact{Kind: "nft.table", Name: "routerd_default_route", Owner: res.ID()},
+			Action:    resource.ActionEnsure,
+			ApplyWith: "nft",
+		})
 	}
-	return intents
-}
-
-func ipv4DefaultRoutePolicyArtifacts(res api.Resource, aliases map[string]string) []resource.Intent {
-	spec, err := res.IPv4DefaultRoutePolicySpec()
-	if err != nil {
-		return nil
+	if mode == "mark" || mode == "hash" || egressRoutePolicyHasTargetCandidates(spec) {
+		intents = append(intents, resource.Intent{
+			Artifact:  resource.Artifact{Kind: "nft.table", Name: "routerd_policy", Owner: res.ID()},
+			Action:    resource.ActionEnsure,
+			ApplyWith: "nft",
+		})
 	}
-	var intents []resource.Intent
-	intents = append(intents, resource.Intent{
-		Artifact:  resource.Artifact{Kind: "nft.table", Name: "routerd_default_route", Owner: res.ID()},
-		Action:    resource.ActionEnsure,
-		ApplyWith: "nft",
-	})
 	for _, candidate := range spec.Candidates {
-		if candidate.RouteSet != "" {
+		if len(candidate.Targets) > 0 {
+			for i, target := range candidate.Targets {
+				if target.Name == "" {
+					target.Name = fmt.Sprintf("%s-%d", defaultString(candidate.Name, res.Metadata.Name), i)
+				}
+				intents = append(intents, egressPolicyTargetArtifacts(res.ID(), target, aliases)...)
+			}
 			continue
 		}
-		target := api.IPv4PolicyRouteTarget{
-			Name:              defaultString(candidate.Name, candidate.Interface),
-			OutboundInterface: candidate.Interface,
-			Table:             candidate.Table,
-			Priority:          candidate.Priority,
-			Mark:              candidate.Mark,
-			RouteMetric:       candidate.RouteMetric,
-		}
-		intents = append(intents, ipv4PolicyTargetArtifacts(res.ID(), target, aliases)...)
+		intents = append(intents, egressPolicyTargetArtifacts(res.ID(), egressTargetFromCandidate(candidate), aliases)...)
 	}
 	return intents
 }
 
-func ipv4PolicyTargetArtifacts(owner string, target api.IPv4PolicyRouteTarget, aliases map[string]string) []resource.Intent {
-	if target.Priority == 0 || target.Mark == 0 || target.Table == 0 {
+func egressRoutePolicyHasTargetCandidates(spec api.EgressRoutePolicySpec) bool {
+	for _, candidate := range spec.Candidates {
+		if len(candidate.Targets) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func egressPolicyTargetArtifacts(owner string, target api.EgressRoutePolicyTarget, aliases map[string]string) []resource.Intent {
+	table := target.EffectiveTable()
+	if target.Priority == 0 || target.Mark == 0 || table == 0 {
 		return nil
 	}
-	ifname := aliases[target.OutboundInterface]
+	ifname := aliases[target.EffectiveInterface()]
 	if ifname == "" {
-		ifname = target.OutboundInterface
+		ifname = target.EffectiveInterface()
 	}
-	routeName := fmt.Sprintf("table=%d", target.Table)
+	routeName := fmt.Sprintf("table=%d", table)
 	return []resource.Intent{
 		{
 			Artifact: resource.Artifact{
@@ -568,7 +546,7 @@ func ipv4PolicyTargetArtifacts(owner string, target api.IPv4PolicyRouteTarget, a
 				Name:  routeName,
 				Owner: owner,
 				Attributes: map[string]string{
-					"table":  fmt.Sprintf("%d", target.Table),
+					"table":  fmt.Sprintf("%d", table),
 					"ifname": ifname,
 				},
 			},
@@ -576,10 +554,24 @@ func ipv4PolicyTargetArtifacts(owner string, target api.IPv4PolicyRouteTarget, a
 			ApplyWith: "ip-route",
 		},
 		{
-			Artifact:  newIPv4FwmarkRuleArtifact(owner, target.Priority, target.Mark, target.Table),
+			Artifact:  newIPv4FwmarkRuleArtifact(owner, target.Priority, target.Mark, table),
 			Action:    resource.ActionEnsure,
 			ApplyWith: "ip-rule",
 		},
+	}
+}
+
+func egressTargetFromCandidate(candidate api.EgressRoutePolicyCandidate) api.EgressRoutePolicyTarget {
+	return api.EgressRoutePolicyTarget{
+		Name:        candidate.Name,
+		Interface:   candidate.EffectiveInterface(),
+		Table:       candidate.Table,
+		RouteTable:  candidate.RouteTable,
+		Priority:    candidate.Priority,
+		Mark:        candidate.Mark,
+		RouteMetric: candidate.RouteMetric,
+		Metric:      candidate.Metric,
+		HealthCheck: candidate.HealthCheck,
 	}
 }
 

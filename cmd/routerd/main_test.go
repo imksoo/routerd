@@ -1757,19 +1757,18 @@ func TestReplaceManagedPPPoEBlocks(t *testing.T) {
 	}
 }
 
-func TestRenderIPv4DefaultRoutePolicyMarks(t *testing.T) {
-	data, err := renderIPv4DefaultRoutePolicyMarks(
+func TestRenderEgressRoutePolicyDefaultMarks(t *testing.T) {
+	data, err := renderEgressRoutePolicyDefaultMarks(
 		"test/default",
-		api.IPv4DefaultRoutePolicySpec{
+		api.EgressRoutePolicySpec{
 			SourceCIDRs:      []string{"192.168.10.0/24"},
 			DestinationCIDRs: []string{"0.0.0.0/0"},
 		},
-		api.IPv4DefaultRoutePolicyCandidate{Name: "pppoe", Mark: 273},
-		[]api.IPv4DefaultRoutePolicyCandidate{
+		api.EgressRoutePolicyCandidate{Name: "pppoe", Mark: 273},
+		[]api.EgressRoutePolicyCandidate{
 			{Name: "dslite", Mark: 272},
 			{Name: "pppoe", Mark: 273},
 		},
-		nil,
 	)
 	if err != nil {
 		t.Fatalf("render default route policy marks: %v", err)
@@ -1789,25 +1788,24 @@ func TestRenderIPv4DefaultRoutePolicyMarks(t *testing.T) {
 	}
 }
 
-func TestRenderIPv4DefaultRoutePolicyMarksRouteSetActive(t *testing.T) {
-	data, err := renderIPv4DefaultRoutePolicyMarks(
+func TestRenderEgressRoutePolicyDefaultMarksTargetCandidateActive(t *testing.T) {
+	data, err := renderEgressRoutePolicyDefaultMarks(
 		"test/default",
-		api.IPv4DefaultRoutePolicySpec{
+		api.EgressRoutePolicySpec{
 			SourceCIDRs:      []string{"192.168.10.0/24"},
 			DestinationCIDRs: []string{"0.0.0.0/0"},
 		},
-		api.IPv4DefaultRoutePolicyCandidate{Name: "dslite", RouteSet: "lan-dslite-balance"},
-		[]api.IPv4DefaultRoutePolicyCandidate{
-			{Name: "dslite", RouteSet: "lan-dslite-balance"},
-		},
-		map[string]api.IPv4PolicyRouteSetSpec{
-			"lan-dslite-balance": {
-				Targets: []api.IPv4PolicyRouteTarget{
-					{Name: "transix-a", Mark: 256},
-					{Name: "transix-b", Mark: 257},
-					{Name: "transix-c", Mark: 258},
-				},
-			},
+		api.EgressRoutePolicyCandidate{Name: "dslite", Targets: []api.EgressRoutePolicyTarget{
+			{Name: "transix-a", Mark: 256},
+			{Name: "transix-b", Mark: 257},
+			{Name: "transix-c", Mark: 258},
+		}},
+		[]api.EgressRoutePolicyCandidate{
+			{Name: "dslite", Targets: []api.EgressRoutePolicyTarget{
+				{Name: "transix-a", Mark: 256},
+				{Name: "transix-b", Mark: 257},
+				{Name: "transix-c", Mark: 258},
+			}},
 		},
 	)
 	if err != nil {
@@ -1823,12 +1821,12 @@ func TestRenderIPv4DefaultRoutePolicyMarksRouteSetActive(t *testing.T) {
 		}
 	}
 	if strings.Contains(got, "ct mark 0x0 meta mark set 0x") {
-		t.Fatalf("routeSet active candidate should leave new flows unmarked for IPv4PolicyRouteSet hashing:\n%s", got)
+		t.Fatalf("target candidate should leave new flows unmarked for EgressRoutePolicy hashing:\n%s", got)
 	}
 }
 
 func TestSelectIPv4DefaultRouteCandidateTreatsMissingHealthCheckAsUp(t *testing.T) {
-	candidate, ok := selectIPv4DefaultRouteCandidate([]api.IPv4DefaultRoutePolicyCandidate{
+	candidate, ok := selectIPv4DefaultRouteCandidate([]api.EgressRoutePolicyCandidate{
 		{Name: "preferred", Priority: 10, HealthCheck: "preferred-check"},
 		{Name: "fallback", Priority: 20},
 	}, map[string]bool{"preferred-check": false})
@@ -1840,18 +1838,13 @@ func TestSelectIPv4DefaultRouteCandidateTreatsMissingHealthCheckAsUp(t *testing.
 	}
 }
 
-func TestAvailableIPv4DefaultRouteCandidatesSkipsMissingRouteSetDevices(t *testing.T) {
-	candidates := []api.IPv4DefaultRoutePolicyCandidate{
-		{Name: "dslite", Priority: 10, RouteSet: "dslite-set"},
+func TestAvailableIPv4DefaultRouteCandidatesSkipsMissingTargetDevices(t *testing.T) {
+	candidates := []api.EgressRoutePolicyCandidate{
+		{Name: "dslite", Priority: 10, Targets: []api.EgressRoutePolicyTarget{
+			{Interface: "ds-lite-a"},
+			{Interface: "ds-lite-b"},
+		}},
 		{Name: "wan", Priority: 20, Interface: "wan", HealthCheck: "wan-check"},
-	}
-	routeSets := map[string]api.IPv4PolicyRouteSetSpec{
-		"dslite-set": {
-			Targets: []api.IPv4PolicyRouteTarget{
-				{OutboundInterface: "ds-lite-a"},
-				{OutboundInterface: "ds-lite-b"},
-			},
-		},
 	}
 	aliases := map[string]string{
 		"wan":       "ens18",
@@ -1861,7 +1854,6 @@ func TestAvailableIPv4DefaultRouteCandidatesSkipsMissingRouteSetDevices(t *testi
 	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
 		Router:     &api.Router{},
 		Aliases:    aliases,
-		RouteSets:  routeSets,
 		Health:     map[string]bool{"wan-check": true},
 		LinkExists: func(ifname string) bool { return ifname == "ens18" },
 	}, candidates)
@@ -1870,18 +1862,13 @@ func TestAvailableIPv4DefaultRouteCandidatesSkipsMissingRouteSetDevices(t *testi
 	}
 }
 
-func TestAvailableIPv4DefaultRouteCandidatesKeepsRouteSetWithAnyDevice(t *testing.T) {
-	candidates := []api.IPv4DefaultRoutePolicyCandidate{
-		{Name: "dslite", Priority: 10, RouteSet: "dslite-set"},
+func TestAvailableIPv4DefaultRouteCandidatesKeepsTargetWithAnyDevice(t *testing.T) {
+	candidates := []api.EgressRoutePolicyCandidate{
+		{Name: "dslite", Priority: 10, Targets: []api.EgressRoutePolicyTarget{
+			{Interface: "ds-lite-a"},
+			{Interface: "ds-lite-b"},
+		}},
 		{Name: "wan", Priority: 20, Interface: "wan"},
-	}
-	routeSets := map[string]api.IPv4PolicyRouteSetSpec{
-		"dslite-set": {
-			Targets: []api.IPv4PolicyRouteTarget{
-				{OutboundInterface: "ds-lite-a"},
-				{OutboundInterface: "ds-lite-b"},
-			},
-		},
 	}
 	aliases := map[string]string{
 		"wan":       "ens18",
@@ -1891,7 +1878,6 @@ func TestAvailableIPv4DefaultRouteCandidatesKeepsRouteSetWithAnyDevice(t *testin
 	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
 		Router:     &api.Router{},
 		Aliases:    aliases,
-		RouteSets:  routeSets,
 		LinkExists: func(ifname string) bool { return ifname == "ens18" || ifname == "ds-lite-b" },
 	}, candidates)
 	if len(available) != 2 || available[0].Name != "dslite" {
@@ -1900,14 +1886,9 @@ func TestAvailableIPv4DefaultRouteCandidatesKeepsRouteSetWithAnyDevice(t *testin
 }
 
 func TestAvailableIPv4DefaultRouteCandidatesSkipsDSLiteWithoutLocalAddress(t *testing.T) {
-	candidates := []api.IPv4DefaultRoutePolicyCandidate{
-		{Name: "dslite", Priority: 10, RouteSet: "dslite-set"},
+	candidates := []api.EgressRoutePolicyCandidate{
+		{Name: "dslite", Priority: 10, Targets: []api.EgressRoutePolicyTarget{{Interface: "ds-lite-a"}}},
 		{Name: "wan", Priority: 20, Interface: "wan"},
-	}
-	routeSets := map[string]api.IPv4PolicyRouteSetSpec{
-		"dslite-set": {
-			Targets: []api.IPv4PolicyRouteTarget{{OutboundInterface: "ds-lite-a"}},
-		},
 	}
 	aliases := map[string]string{
 		"wan":       "ens18",
@@ -1938,7 +1919,6 @@ func TestAvailableIPv4DefaultRouteCandidatesSkipsDSLiteWithoutLocalAddress(t *te
 	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
 		Router:     router,
 		Aliases:    aliases,
-		RouteSets:  routeSets,
 		LinkExists: func(ifname string) bool { return ifname == "ens18" || ifname == "ds-lite-a" },
 	}, candidates)
 	if len(available) != 1 || available[0].Name != "wan" {
@@ -2706,7 +2686,7 @@ func TestResourceWhenCoversResourceLevelWhenSpecs(t *testing.T) {
 		testResourceWithSpecWhen("IngressService", api.IngressServiceSpec{When: want}),
 		testResourceWithSpecWhen("IPAddressSet", api.IPAddressSetSpec{When: want}),
 		testResourceWithSpecWhen("LocalServiceRedirect", api.LocalServiceRedirectSpec{When: want}),
-		testResourceWithSpecWhen("IPv4PolicyRouteSet", api.IPv4PolicyRouteSetSpec{When: want}),
+		testResourceWithSpecWhen("EgressRoutePolicy", api.EgressRoutePolicySpec{When: want}),
 	} {
 		t.Run(tc.Kind, func(t *testing.T) {
 			if got := resourceWhen(tc); !reflect.DeepEqual(got, want) {
@@ -2724,12 +2704,12 @@ func testResourceWithSpecWhen(kind string, spec any) api.Resource {
 	}
 }
 
-func TestFilterDefaultRouteCandidatesByWhen(t *testing.T) {
+func TestFilterEgressRoutePolicyCandidatesByWhen(t *testing.T) {
 	store := routerstate.New()
 	store.Set("wan.ipv6.mode", "address-only", "test")
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{Kind: "IPv4DefaultRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default-v4"}, Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
-			{Name: "dslite", RouteSet: "dslite", Priority: 10, When: api.ResourceWhenSpec{Any: []api.ResourceWhenSpec{
+		{TypeMeta: api.TypeMeta{Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default-v4"}, Spec: api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{
+			{Name: "dslite", Priority: 10, Targets: []api.EgressRoutePolicyTarget{{Interface: "dslite-a"}}, When: api.ResourceWhenSpec{Any: []api.ResourceWhenSpec{
 				{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {Equals: "pd-ready"}}},
 				{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {Equals: "address-only"}}},
 			}}},
@@ -2737,7 +2717,7 @@ func TestFilterDefaultRouteCandidatesByWhen(t *testing.T) {
 		}}},
 	}}}
 	filtered := filterRouterByWhen(router, store)
-	spec, err := filtered.Spec.Resources[0].IPv4DefaultRoutePolicySpec()
+	spec, err := filtered.Spec.Resources[0].EgressRoutePolicySpec()
 	if err != nil {
 		t.Fatal(err)
 	}

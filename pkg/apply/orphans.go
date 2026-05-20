@@ -518,30 +518,19 @@ func desiredIPv4FwmarkRuleArtifacts(router *api.Router) []resource.Artifact {
 	}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4PolicyRoute":
-			spec, err := res.IPv4PolicyRouteSpec()
-			if err != nil {
-				continue
-			}
-			add(res.ID(), spec.Priority, spec.Mark, spec.Table)
-		case "IPv4PolicyRouteSet":
-			spec, err := res.IPv4PolicyRouteSetSpec()
-			if err != nil {
-				continue
-			}
-			for _, target := range spec.Targets {
-				add(res.ID(), target.Priority, target.Mark, target.Table)
-			}
-		case "IPv4DefaultRoutePolicy":
-			spec, err := res.IPv4DefaultRoutePolicySpec()
+		case "EgressRoutePolicy":
+			spec, err := res.EgressRoutePolicySpec()
 			if err != nil {
 				continue
 			}
 			for _, candidate := range spec.Candidates {
-				if candidate.RouteSet != "" {
+				if len(candidate.Targets) > 0 {
+					for _, target := range candidate.Targets {
+						add(res.ID(), target.Priority, target.Mark, target.EffectiveTable())
+					}
 					continue
 				}
-				add(res.ID(), candidate.Priority, candidate.Mark, candidate.Table)
+				add(res.ID(), candidate.Priority, candidate.Mark, candidate.EffectiveTable())
 			}
 		}
 	}

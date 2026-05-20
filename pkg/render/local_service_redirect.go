@@ -217,18 +217,10 @@ func referencedNAT44ResourceIPAddressSets(resources []api.Resource, sets map[str
 	return referencedIPAddressSetsByRefs(refs, sets)
 }
 
-func referencedIPv4PolicyIPAddressSets(policies, policySets []api.Resource, sets map[string]nftIPAddressSet) []nftIPAddressSet {
+func referencedIPv4PolicyIPAddressSets(policies []api.Resource, sets map[string]nftIPAddressSet) []nftIPAddressSet {
 	var refs []string
 	for _, res := range policies {
-		spec, err := res.IPv4PolicyRouteSpec()
-		if err != nil {
-			continue
-		}
-		refs = append(refs, spec.DestinationSetRefs...)
-		refs = append(refs, spec.ExcludeDestinationSetRefs...)
-	}
-	for _, res := range policySets {
-		spec, err := res.IPv4PolicyRouteSetSpec()
+		spec, err := res.EgressRoutePolicySpec()
 		if err != nil {
 			continue
 		}

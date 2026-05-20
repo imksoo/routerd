@@ -555,22 +555,11 @@ func referencedIPAddressSetTargets(router *api.Router) map[string][]ipAddressSet
 			for _, ref := range append(append([]string{}, spec.DestinationSetRefs...), spec.ExcludeDestinationSetRefs...) {
 				add(ref, ipAddressSetTarget{TableFamily: "ip", AddressFamily: "ip", Table: "routerd_nat", Controller: "nat"})
 			}
-		case "IPv4PolicyRoute":
+		case "EgressRoutePolicy":
 			if resource.APIVersion != api.NetAPIVersion {
 				continue
 			}
-			spec, err := resource.IPv4PolicyRouteSpec()
-			if err != nil {
-				continue
-			}
-			for _, ref := range append(append([]string{}, spec.DestinationSetRefs...), spec.ExcludeDestinationSetRefs...) {
-				add(ref, ipAddressSetTarget{TableFamily: "ip", AddressFamily: "ip", Table: "routerd_policy", Controller: "route"})
-			}
-		case "IPv4PolicyRouteSet":
-			if resource.APIVersion != api.NetAPIVersion {
-				continue
-			}
-			spec, err := resource.IPv4PolicyRouteSetSpec()
+			spec, err := resource.EgressRoutePolicySpec()
 			if err != nil {
 				continue
 			}

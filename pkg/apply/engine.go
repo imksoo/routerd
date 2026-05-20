@@ -128,14 +128,10 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeDSLiteTunnel(res, aliases, includePlan, &rr)
 		case "HealthCheck":
 			e.observeHealthCheck(router, res, aliases, kinds, includePlan, &rr)
-		case "IPv4DefaultRoutePolicy":
-			e.observeIPv4DefaultRoutePolicy(res, aliases, includePlan, &rr)
+		case "EgressRoutePolicy":
+			e.observeEgressRoutePolicy(res, aliases, policies, includePlan, &rr)
 		case "NAT44Rule":
 			e.observeNAT44Rule(res, aliases, policies, includePlan, &rr)
-		case "IPv4PolicyRoute":
-			e.observeIPv4PolicyRoute(res, aliases, policies, includePlan, &rr)
-		case "IPv4PolicyRouteSet":
-			e.observeIPv4PolicyRouteSet(res, aliases, policies, includePlan, &rr)
 		case "ClusterNetworkRoute":
 			e.observeClusterNetworkRoute(res, includePlan, &rr)
 		case "FirewallZone":
@@ -836,84 +832,89 @@ func (e *Engine) observeNAT44Rule(res api.Resource, aliases map[string]string, p
 	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure NAT44 %s for %s via selected device from EgressRoutePolicy/%s", spec.Type, strings.Join(spec.SourceRanges, ","), spec.EgressPolicyRef))
 }
 
-func (e *Engine) observeIPv4PolicyRoute(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv4PolicyRouteSpec()
+func (e *Engine) observeEgressRoutePolicy(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+	spec, err := res.EgressRoutePolicySpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
 		return
 	}
-	outIfName := aliases[spec.OutboundInterface]
-	policy := policies[spec.OutboundInterface]
-
-	rr.Observed["outboundInterface"] = spec.OutboundInterface
-	rr.Observed["outboundIfname"] = outIfName
-	rr.Observed["table"] = fmt.Sprintf("%d", spec.Table)
-	rr.Observed["priority"] = fmt.Sprintf("%d", spec.Priority)
-	rr.Observed["mark"] = fmt.Sprintf("0x%x", spec.Mark)
-	if len(spec.SourceCIDRs) > 0 {
-		rr.Observed["sourceCIDRs"] = strings.Join(spec.SourceCIDRs, ",")
-	}
-	if len(spec.DestinationCIDRs) > 0 {
-		rr.Observed["destinationCIDRs"] = strings.Join(spec.DestinationCIDRs, ",")
-	}
-	if spec.RouteMetric != 0 {
-		rr.Observed["routeMetric"] = fmt.Sprintf("%d", spec.RouteMetric)
-	}
-
-	if !includePlan {
-		return
-	}
-	if !policy.Managed || policy.Owner == "external" || policy.Owner == "" {
-		rr.Plan = append(rr.Plan, "plan policy route for externally managed outbound interface")
-	} else if policy.RequiresAdoption {
-		rr.Phase = "RequiresAdoption"
-		rr.Plan = append(rr.Plan, "blocked: outbound interface requires adoption before routerd manages policy routing")
-		return
-	}
-	rr.Plan = append(rr.Plan, fmt.Sprintf("mark matching IPv4 packets with 0x%x", spec.Mark))
-	rr.Plan = append(rr.Plan, fmt.Sprintf("route fwmark 0x%x via table %d default dev %s", spec.Mark, spec.Table, outIfName))
-}
-
-func (e *Engine) observeIPv4PolicyRouteSet(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv4PolicyRouteSetSpec()
-	if err != nil {
-		rr.Phase = "Blocked"
-		rr.Warnings = append(rr.Warnings, err.Error())
-		return
-	}
-	mode := defaultString(spec.Mode, "hash")
+	mode := defaultString(spec.Mode, "selection")
 	rr.Observed["mode"] = mode
-	rr.Observed["hashFields"] = strings.Join(spec.HashFields, ",")
+	rr.Observed["family"] = defaultString(spec.Family, "ipv4")
+	rr.Observed["candidates"] = fmt.Sprintf("%d", len(spec.Candidates))
 	if len(spec.SourceCIDRs) > 0 {
 		rr.Observed["sourceCIDRs"] = strings.Join(spec.SourceCIDRs, ",")
 	}
 	if len(spec.DestinationCIDRs) > 0 {
 		rr.Observed["destinationCIDRs"] = strings.Join(spec.DestinationCIDRs, ",")
 	}
-	var targets []string
-	for _, target := range spec.Targets {
-		outIfName := aliases[target.OutboundInterface]
-		targetName := target.Name
-		if targetName == "" {
-			targetName = target.OutboundInterface
-		}
-		targets = append(targets, fmt.Sprintf("%s:%s:table=%d:mark=0x%x", targetName, outIfName, target.Table, target.Mark))
-		if includePlan {
-			policy := policies[target.OutboundInterface]
-			if policy.RequiresAdoption {
-				rr.Phase = "RequiresAdoption"
-				rr.Plan = append(rr.Plan, fmt.Sprintf("blocked: outbound interface %s requires adoption before routerd manages policy routing", target.OutboundInterface))
-				return
-			}
-		}
+	if len(spec.HashFields) > 0 {
+		rr.Observed["hashFields"] = strings.Join(spec.HashFields, ",")
 	}
-	rr.Observed["targets"] = strings.Join(targets, ",")
+	currentGateway, currentDev, currentProto := e.defaultIPv4Route()
+	if currentGateway != "" {
+		rr.Observed["currentGateway"] = currentGateway
+	}
+	if currentDev != "" {
+		rr.Observed["currentIfname"] = currentDev
+	}
+	if currentProto != "" {
+		rr.Observed["currentProto"] = currentProto
+	}
+
+	var candidates []string
+	for _, candidate := range sortedEgressRouteCandidates(spec.Candidates) {
+		name := defaultString(candidate.Name, candidate.EffectiveInterface())
+		if len(candidate.Targets) > 0 {
+			candidates = append(candidates, fmt.Sprintf("%s:targets=%d:priority=%d", name, len(candidate.Targets), candidate.Priority))
+			continue
+		}
+		ifname := aliases[candidate.EffectiveInterface()]
+		candidates = append(candidates, fmt.Sprintf("%s:%s:priority=%d:mark=0x%x", name, ifname, candidate.Priority, candidate.Mark))
+	}
+	rr.Observed["candidateOrder"] = strings.Join(candidates, ",")
 	if !includePlan {
 		return
 	}
-	rr.Plan = append(rr.Plan, fmt.Sprintf("hash IPv4 packets by %s and select one of %d policy route targets", strings.Join(spec.HashFields, ","), len(spec.Targets)))
-	rr.Plan = append(rr.Plan, "store selected mark in conntrack mark so each flow keeps the same route")
+	switch mode {
+	case "priority":
+		rr.Plan = append(rr.Plan, "select the first healthy IPv4 default route candidate by priority")
+	case "hash":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("hash IPv4 packets by %s and select one of the target route tables", strings.Join(spec.HashFields, ",")))
+		rr.Plan = append(rr.Plan, "store selected mark in conntrack mark so each flow keeps the same route")
+	case "mark":
+		rr.Plan = append(rr.Plan, "mark matching IPv4 packets and route them through configured route tables")
+	default:
+		rr.Plan = append(rr.Plan, "select egress route candidate and publish status for dependent resources")
+	}
+	for _, candidate := range sortedEgressRouteCandidates(spec.Candidates) {
+		if len(candidate.Targets) > 0 {
+			for _, target := range candidate.Targets {
+				policy := policies[target.EffectiveInterface()]
+				if policy.RequiresAdoption {
+					rr.Phase = "RequiresAdoption"
+					rr.Plan = append(rr.Plan, fmt.Sprintf("blocked: outbound interface %s requires adoption before routerd manages policy routing", target.EffectiveInterface()))
+					return
+				}
+			}
+			continue
+		}
+		if candidate.Mark == 0 {
+			continue
+		}
+		policy := policies[candidate.EffectiveInterface()]
+		if policy.RequiresAdoption {
+			rr.Phase = "RequiresAdoption"
+			rr.Plan = append(rr.Plan, fmt.Sprintf("blocked: outbound interface %s requires adoption before routerd manages policy routing", candidate.EffectiveInterface()))
+			return
+		}
+		if mode == "priority" {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("candidate %s priority %d via %s gatewaySource=%s", defaultString(candidate.Name, candidate.EffectiveInterface()), candidate.Priority, aliases[candidate.EffectiveInterface()], defaultString(candidate.GatewaySource, "none")))
+			continue
+		}
+		rr.Plan = append(rr.Plan, fmt.Sprintf("candidate %s marks packets with 0x%x and routes via table %d", defaultString(candidate.Name, candidate.EffectiveInterface()), candidate.Mark, candidate.EffectiveTable()))
+	}
 }
 
 func (e *Engine) observeClusterNetworkRoute(res api.Resource, includePlan bool, rr *ResourceResult) {
@@ -1182,57 +1183,6 @@ func (e *Engine) observeHealthCheck(router *api.Router, res api.Resource, aliase
 			target = targetSource
 		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("check %s %s reachability to %s every %s", role, addressFamily, target, interval))
-	}
-}
-
-func (e *Engine) observeIPv4DefaultRoutePolicy(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv4DefaultRoutePolicySpec()
-	if err != nil {
-		rr.Phase = "Blocked"
-		rr.Warnings = append(rr.Warnings, err.Error())
-		return
-	}
-	mode := defaultString(spec.Mode, "priority")
-	rr.Observed["mode"] = mode
-	rr.Observed["candidates"] = fmt.Sprintf("%d", len(spec.Candidates))
-	currentGateway, currentDev, currentProto := e.defaultIPv4Route()
-	if currentGateway != "" {
-		rr.Observed["currentGateway"] = currentGateway
-	}
-	if currentDev != "" {
-		rr.Observed["currentIfname"] = currentDev
-	}
-	if currentProto != "" {
-		rr.Observed["currentProto"] = currentProto
-	}
-	var candidates []string
-	for _, candidate := range sortedDefaultRouteCandidates(spec.Candidates) {
-		name := defaultString(candidate.Name, defaultString(candidate.RouteSet, candidate.Interface))
-		if candidate.RouteSet != "" {
-			candidates = append(candidates, fmt.Sprintf("%s:routeSet=%s:priority=%d", name, candidate.RouteSet, candidate.Priority))
-			continue
-		}
-		ifname := aliases[candidate.Interface]
-		candidates = append(candidates, fmt.Sprintf("%s:%s:priority=%d", name, ifname, candidate.Priority))
-	}
-	rr.Observed["candidateOrder"] = strings.Join(candidates, ",")
-	if !includePlan {
-		return
-	}
-	rr.Plan = append(rr.Plan, "select the first healthy IPv4 default route candidate by priority")
-	for _, candidate := range sortedDefaultRouteCandidates(spec.Candidates) {
-		health := "no health check"
-		if candidate.HealthCheck != "" {
-			health = "healthCheck=" + candidate.HealthCheck
-		}
-		name := defaultString(candidate.Name, defaultString(candidate.RouteSet, candidate.Interface))
-		if candidate.RouteSet != "" {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("candidate %s priority %d via routeSet=%s %s", name, candidate.Priority, candidate.RouteSet, health))
-			continue
-		}
-		ifname := aliases[candidate.Interface]
-		source := defaultString(candidate.GatewaySource, "none")
-		rr.Plan = append(rr.Plan, fmt.Sprintf("candidate %s priority %d via %s gatewaySource=%s %s", name, candidate.Priority, ifname, source, health))
 	}
 }
 
@@ -1905,8 +1855,8 @@ func ownerFromManaged(managed bool) string {
 	return "external"
 }
 
-func sortedDefaultRouteCandidates(candidates []api.IPv4DefaultRoutePolicyCandidate) []api.IPv4DefaultRoutePolicyCandidate {
-	result := append([]api.IPv4DefaultRoutePolicyCandidate{}, candidates...)
+func sortedEgressRouteCandidates(candidates []api.EgressRoutePolicyCandidate) []api.EgressRoutePolicyCandidate {
+	result := append([]api.EgressRoutePolicyCandidate{}, candidates...)
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].Priority < result[j].Priority
 	})

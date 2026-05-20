@@ -128,7 +128,7 @@ func packageFeatures(router *api.Router) map[string]bool {
 	features := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "Interface", "Bridge", "VXLANSegment", "VRF", "VXLANTunnel", "IPv4StaticAddress", "IPv6DelegatedAddress", "VirtualAddress", "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "ClusterNetworkRoute", "DHCPv4Client", "DHCPv6Address", "DHCPv6PrefixDelegation", "DHCPv6Information":
+		case "Interface", "Bridge", "VXLANSegment", "VRF", "VXLANTunnel", "IPv4StaticAddress", "IPv6DelegatedAddress", "VirtualAddress", "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Client", "DHCPv6Address", "DHCPv6PrefixDelegation", "DHCPv6Information":
 			features["base"] = true
 		case "DSLiteTunnel":
 			features["base"] = true

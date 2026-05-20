@@ -295,35 +295,29 @@ func DerivedFwMarkRefs(router *api.Router, healthCheckName string) []FwMarkRef {
 			continue
 		}
 		switch resource.Kind {
-		case "IPv4DefaultRoutePolicy":
-			spec, err := resource.IPv4DefaultRoutePolicySpec()
+		case "EgressRoutePolicy":
+			spec, err := resource.EgressRoutePolicySpec()
 			if err != nil {
 				continue
 			}
 			for _, candidate := range spec.Candidates {
-				if strings.TrimSpace(candidate.HealthCheck) != healthCheckName {
-					continue
+				if strings.TrimSpace(candidate.HealthCheck) == healthCheckName {
+					refs = append(refs, FwMarkRef{
+						Resource: resource.ID(),
+						Name:     strings.TrimSpace(candidate.Name),
+						Mark:     candidate.Mark,
+					})
 				}
-				refs = append(refs, FwMarkRef{
-					Resource: resource.ID(),
-					Name:     strings.TrimSpace(candidate.Name),
-					Mark:     candidate.Mark,
-				})
-			}
-		case "IPv4PolicyRouteSet":
-			spec, err := resource.IPv4PolicyRouteSetSpec()
-			if err != nil {
-				continue
-			}
-			for _, target := range spec.Targets {
-				if strings.TrimSpace(target.HealthCheck) != healthCheckName {
-					continue
+				for _, target := range candidate.Targets {
+					if strings.TrimSpace(target.HealthCheck) != healthCheckName {
+						continue
+					}
+					refs = append(refs, FwMarkRef{
+						Resource: resource.ID(),
+						Name:     strings.TrimSpace(target.Name),
+						Mark:     target.Mark,
+					})
 				}
-				refs = append(refs, FwMarkRef{
-					Resource: resource.ID(),
-					Name:     strings.TrimSpace(target.Name),
-					Mark:     target.Mark,
-				})
 			}
 		}
 	}

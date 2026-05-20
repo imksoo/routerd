@@ -164,14 +164,14 @@ endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
 | `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP/HTTP health checks, and `failover`, `sourceHash`, or `random` backend selection are accepted. |
 | `LocalServiceRedirect` | Redirects LAN-origin IPv4/IPv6 traffic for `IPAddressSet` destinations to a local router port. This is intended for plaintext DNS/NTP interception without touching DoH or DoT ports. |
-| `IPv4PolicyRoute` | Represents IPv4 policy routing. |
-| `IPv4PolicyRouteSet` | Groups multiple policy routes. |
-| `IPv4DefaultRoutePolicy` | Represents default-route policy. |
+| `EgressRoutePolicy` | Represents default-route selection, marked IPv4 policy routing, and hash-based multi-target egress routing. |
 
-`IPv4PolicyRoute` and `IPv4PolicyRouteSet` support `destinationSetRefs` and
-`excludeDestinationSetRefs` in addition to CIDR fields. Use them to steer or
-exclude FQDN-backed destination sets without expanding addresses directly into
-the policy resource.
+`EgressRoutePolicy` supports `destinationSetRefs` and `excludeDestinationSetRefs`
+in addition to CIDR fields. Use them to steer or exclude FQDN-backed destination
+sets without expanding addresses directly into the policy resource. Use
+`mode: priority` for default-route failover, `mode: mark` for one marked route
+table, and `mode: hash` or `candidates[].targets` for source/destination hash
+distribution across multiple route tables.
 
 routerd derives reverse path filter sysctls, tunnel MTU, RA MTU, and TCP MSS
 clamping from router role, tunnel, firewall zone, and RA/DHCPv6 resources.
@@ -185,9 +185,8 @@ Equal `weight` values produce equal route metrics for ECMP-capable platforms;
 different weights become different metrics so higher-weight next hops are
 preferred and lower-weight next hops act as fallback routes.
 
-`IPv4PolicyRoute`, `IPv4PolicyRouteSet`, and `IPv4DefaultRoutePolicy` support
-`excludeDestinationCIDRs`. Use it to keep LAN, management, HGW LAN, and RFC
-1918 destinations out of policy routing.
+`EgressRoutePolicy` supports `excludeDestinationCIDRs`. Use it to keep LAN,
+management, HGW LAN, and RFC 1918 destinations out of policy routing.
 
 `FirewallRule` supports `destinationSetRefs` and `excludeDestinationSetRefs`
 in addition to destination CIDR narrowing. Use these fields to accept, drop, or
@@ -438,11 +437,10 @@ it to the OS interface name at runtime. `via`, `fwmark`, and `sourceAddress`
 can also be specified. `sourceAddressFrom` derives the probe source address
 from another resource status. On Linux, `routerd-healthcheck` uses
 `SO_BINDTODEVICE` and can set `SO_MARK`. When a health check is referenced by an
-`IPv4DefaultRoutePolicy` candidate or an `IPv4PolicyRouteSet` target, routerd
-derives `SO_MARK` from that route target's mark automatically; direct `fwmark`
-is intended for standalone low-level probes. On FreeBSD, it selects a source
-address from the named interface because FreeBSD does not provide the Linux
-socket options.
+`EgressRoutePolicy` candidate or target, routerd derives `SO_MARK` from that
+route target's mark automatically; direct `fwmark` is intended for standalone
+low-level probes. On FreeBSD, it selects a source address from the named
+interface because FreeBSD does not provide the Linux socket options.
 
 `WebConsole.spec.listenAddressFrom` derives the HTTP listener address from
 another resource status, for example `Interface/mgmt.status.ipv4Addresses`.

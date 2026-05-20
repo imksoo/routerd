@@ -382,11 +382,7 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "IPv4DefaultRoutePolicy":
-		var spec IPv4DefaultRoutePolicySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
+		return fmt.Errorf("%s is not supported; use EgressRoutePolicy with candidates directly", r.ID())
 	case "NAT44Rule":
 		var spec NAT44RuleSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -418,17 +414,9 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "IPv4PolicyRoute":
-		var spec IPv4PolicyRouteSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
+		return fmt.Errorf("%s is not supported; use EgressRoutePolicy with one marked candidate", r.ID())
 	case "IPv4PolicyRouteSet":
-		var spec IPv4PolicyRouteSetSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
+		return fmt.Errorf("%s is not supported; put hashFields and targets under EgressRoutePolicy candidates", r.ID())
 	case "FirewallZone":
 		var spec FirewallZoneSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

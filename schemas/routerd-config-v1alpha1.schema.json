@@ -5482,12 +5482,29 @@
                             "healthCheck": {
                               "type": "string"
                             },
+                            "interface": {
+                              "type": "string"
+                            },
+                            "mark": {
+                              "maximum": 4294967295,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
                             "metric": {
                               "minimum": 0,
                               "type": "integer"
                             },
                             "name": {
                               "type": "string"
+                            },
+                            "priority": {
+                              "maximum": 32765,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "routeMetric": {
+                              "minimum": 0,
+                              "type": "integer"
                             },
                             "routeTable": {
                               "maximum": 4294967295,
@@ -5497,9 +5514,104 @@
                             "source": {
                               "type": "string"
                             },
+                            "table": {
+                              "maximum": 4294967295,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "targets": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "healthCheck": {
+                                    "type": "string"
+                                  },
+                                  "interface": {
+                                    "type": "string"
+                                  },
+                                  "mark": {
+                                    "maximum": 4294967295,
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "metric": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "outboundInterface": {
+                                    "type": "string"
+                                  },
+                                  "priority": {
+                                    "maximum": 32765,
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "routeMetric": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "routeTable": {
+                                    "maximum": 4294967295,
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "table": {
+                                    "maximum": 4294967295,
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
                             "weight": {
                               "minimum": 0,
                               "type": "integer"
+                            },
+                            "when": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "state": {
+                                  "additionalProperties": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "contains": {
+                                        "type": "string"
+                                      },
+                                      "equals": {
+                                        "type": "string"
+                                      },
+                                      "exists": {
+                                        "type": "boolean"
+                                      },
+                                      "for": {
+                                        "type": "string"
+                                      },
+                                      "in": {
+                                        "items": {
+                                          "type": "string"
+                                        },
+                                        "type": "array"
+                                      },
+                                      "status": {
+                                        "enum": [
+                                          "set",
+                                          "unset",
+                                          "unknown"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "type": "object"
                             }
                           },
                           "type": "object"
@@ -5512,6 +5624,24 @@
                         },
                         "type": "array"
                       },
+                      "destinationSetRefs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "excludeDestinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "excludeDestinationSetRefs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "family": {
                         "enum": [
                           "ipv4",
@@ -5519,7 +5649,21 @@
                         ],
                         "type": "string"
                       },
+                      "hashFields": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "hysteresis": {
+                        "type": "string"
+                      },
+                      "mode": {
+                        "enum": [
+                          "priority",
+                          "mark",
+                          "hash"
+                        ],
                         "type": "string"
                       },
                       "selection": {
@@ -5528,6 +5672,53 @@
                           "weighted-ecmp"
                         ],
                         "type": "string"
+                      },
+                      "sourceCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
                       }
                     },
                     "required": [
@@ -5772,170 +5963,6 @@
                     "required": [
                       "topic",
                       "inputs"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "IPv4DefaultRoutePolicy",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "candidates": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "gateway": {
-                              "type": "string"
-                            },
-                            "gatewaySource": {
-                              "enum": [
-                                "none",
-                                "dhcpv4",
-                                "static"
-                              ],
-                              "type": "string"
-                            },
-                            "healthCheck": {
-                              "type": "string"
-                            },
-                            "interface": {
-                              "type": "string"
-                            },
-                            "mark": {
-                              "maximum": 4294967295,
-                              "minimum": 1,
-                              "type": "integer"
-                            },
-                            "name": {
-                              "type": "string"
-                            },
-                            "priority": {
-                              "minimum": 1,
-                              "type": "integer"
-                            },
-                            "routeMetric": {
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            "routeSet": {
-                              "type": "string"
-                            },
-                            "table": {
-                              "maximum": 4294967295,
-                              "minimum": 1,
-                              "type": "integer"
-                            },
-                            "when": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "state": {
-                                  "additionalProperties": {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "contains": {
-                                        "type": "string"
-                                      },
-                                      "equals": {
-                                        "type": "string"
-                                      },
-                                      "exists": {
-                                        "type": "boolean"
-                                      },
-                                      "for": {
-                                        "type": "string"
-                                      },
-                                      "in": {
-                                        "items": {
-                                          "type": "string"
-                                        },
-                                        "type": "array"
-                                      },
-                                      "status": {
-                                        "enum": [
-                                          "set",
-                                          "unset",
-                                          "unknown"
-                                        ],
-                                        "type": "string"
-                                      }
-                                    },
-                                    "type": "object"
-                                  },
-                                  "type": "object"
-                                }
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "priority"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      },
-                      "destinationCIDRs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "excludeDestinationCIDRs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "mode": {
-                        "enum": [
-                          "priority"
-                        ],
-                        "type": "string"
-                      },
-                      "sourceCIDRs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      }
-                    },
-                    "required": [
-                      "candidates"
                     ],
                     "type": "object"
                   },
@@ -6844,282 +6871,6 @@
                     "required": [
                       "interface",
                       "rules"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "IPv4PolicyRoute",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "allowLocalSourceNAT": {
-                        "type": "boolean"
-                      },
-                      "destinationCIDRs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "destinationSetRefs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "excludeDestinationCIDRs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "excludeDestinationSetRefs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "mark": {
-                        "maximum": 4294967295,
-                        "minimum": 1,
-                        "type": "integer"
-                      },
-                      "outboundInterface": {
-                        "type": "string"
-                      },
-                      "priority": {
-                        "maximum": 32765,
-                        "minimum": 1,
-                        "type": "integer"
-                      },
-                      "routeMetric": {
-                        "minimum": 0,
-                        "type": "integer"
-                      },
-                      "sourceCIDRs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "table": {
-                        "maximum": 4294967295,
-                        "minimum": 1,
-                        "type": "integer"
-                      }
-                    },
-                    "required": [
-                      "outboundInterface",
-                      "table",
-                      "priority",
-                      "mark"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "IPv4PolicyRouteSet",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "destinationCIDRs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "destinationSetRefs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "excludeDestinationCIDRs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "excludeDestinationSetRefs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "hashFields": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "mode": {
-                        "enum": [
-                          "hash"
-                        ],
-                        "type": "string"
-                      },
-                      "sourceCIDRs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "targets": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "healthCheck": {
-                              "type": "string"
-                            },
-                            "mark": {
-                              "maximum": 4294967295,
-                              "minimum": 1,
-                              "type": "integer"
-                            },
-                            "name": {
-                              "type": "string"
-                            },
-                            "outboundInterface": {
-                              "type": "string"
-                            },
-                            "priority": {
-                              "maximum": 32765,
-                              "minimum": 1,
-                              "type": "integer"
-                            },
-                            "routeMetric": {
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            "table": {
-                              "maximum": 4294967295,
-                              "minimum": 1,
-                              "type": "integer"
-                            }
-                          },
-                          "required": [
-                            "outboundInterface",
-                            "table",
-                            "priority",
-                            "mark"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      },
-                      "when": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "state": {
-                            "additionalProperties": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "contains": {
-                                  "type": "string"
-                                },
-                                "equals": {
-                                  "type": "string"
-                                },
-                                "exists": {
-                                  "type": "boolean"
-                                },
-                                "for": {
-                                  "type": "string"
-                                },
-                                "in": {
-                                  "items": {
-                                    "type": "string"
-                                  },
-                                  "type": "array"
-                                },
-                                "status": {
-                                  "enum": [
-                                    "set",
-                                    "unset",
-                                    "unknown"
-                                  ],
-                                  "type": "string"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "type": "object"
-                          }
-                        },
-                        "type": "object"
-                      }
-                    },
-                    "required": [
-                      "targets"
                     ],
                     "type": "object"
                   },

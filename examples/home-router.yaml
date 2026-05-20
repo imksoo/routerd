@@ -564,11 +564,12 @@ spec:
             healthCheck: internet-via-hgw-direct
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4PolicyRouteSet
+      kind: EgressRoutePolicy
       metadata:
-        name: dslite-pd-balanced
+        name: lan-forward-egress
       spec:
-        mode: hash
+        family: ipv4
+        mode: priority
         hashFields:
           - sourceAddress
         sourceCIDRs:
@@ -579,44 +580,28 @@ spec:
           - 10.0.0.0/8
           - 172.16.0.0/12
           - 192.168.0.0/16
-        targets:
-          - name: ds-lite-a
-            outboundInterface: ds-lite-a
-            table: 110
-            priority: 10110
-            mark: 0x110
-            healthCheck: internet-via-dslite-a
-          - name: ds-lite-b
-            outboundInterface: ds-lite-b
-            table: 111
-            priority: 10111
-            mark: 0x111
-            healthCheck: internet-via-dslite-b
-          - name: ds-lite-c
-            outboundInterface: ds-lite-c
-            table: 112
-            priority: 10112
-            mark: 0x112
-            healthCheck: internet-via-dslite-c
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DefaultRoutePolicy
-      metadata:
-        name: lan-forward-egress
-      spec:
-        mode: priority
-        sourceCIDRs:
-          - 172.18.0.0/16
-        destinationCIDRs:
-          - 0.0.0.0/0
-        excludeDestinationCIDRs:
-          - 10.0.0.0/8
-          - 172.16.0.0/12
-          - 192.168.0.0/16
         candidates:
           - name: dslite-pd-balanced
-            routeSet: dslite-pd-balanced
             priority: 10
+            targets:
+              - name: ds-lite-a
+                interface: ds-lite-a
+                table: 110
+                priority: 10110
+                mark: 0x110
+                healthCheck: internet-via-dslite-a
+              - name: ds-lite-b
+                interface: ds-lite-b
+                table: 111
+                priority: 10111
+                mark: 0x111
+                healthCheck: internet-via-dslite-b
+              - name: ds-lite-c
+                interface: ds-lite-c
+                table: 112
+                priority: 10112
+                mark: 0x112
+                healthCheck: internet-via-dslite-c
           - name: ds-lite-ra
             interface: ds-lite-ra
             priority: 20

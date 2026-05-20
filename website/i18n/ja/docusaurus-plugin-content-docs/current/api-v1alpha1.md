@@ -148,20 +148,21 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 | `PortForward` | WAN 側の IPv4 TCP/UDP ポートを 1 つの内部 IPv4 宛先へ DNAT します。 |
 | `IngressService` | WAN 側の IPv4 TCP/UDP サービスを公開します。複数 backend、TCP/HTTP health check、`failover` / `sourceHash` / `random` selection を受け付けます。 |
 | `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
-| `IPv4PolicyRoute` | IPv4 ポリシールーティングを表します。 |
-| `IPv4PolicyRouteSet` | 複数のポリシールートをまとめます。 |
-| `IPv4DefaultRoutePolicy` | 既定経路の方針を表します。 |
+| `EgressRoutePolicy` | 既定経路の選択、mark ベースの IPv4 policy routing、複数 target への hash 分散を表します。 |
 
-`IPv4PolicyRoute` と `IPv4PolicyRouteSet` は、CIDR 指定に加えて
-`destinationSetRefs` と `excludeDestinationSetRefs` を持ちます。FQDN-backed な
-宛先 set を policy resource にアドレス展開せず、経路制御や除外条件として使えます。
+`EgressRoutePolicy` は、CIDR 指定に加えて `destinationSetRefs` と
+`excludeDestinationSetRefs` を持ちます。FQDN-backed な宛先 set を policy
+resource にアドレス展開せず、経路制御や除外条件として使えます。
+`mode: priority` は既定経路 failover、`mode: mark` は 1 つの mark 付き route
+table、`mode: hash` または `candidates[].targets` は複数 route table への
+source/destination hash 分散に使います。
 
 routerd は reverse path filter sysctl、tunnel MTU、RA MTU、TCP MSS clamp を
 router role、tunnel、firewall zone、RA/DHCPv6 resource から自動導出します。
 config では LAN/WAN と tunnel の intent を宣言し、`IPv4ReversePathFilter` や
 `PathMTUPolicy` は書きません。
 
-`IPv4PolicyRoute`、`IPv4PolicyRouteSet`、`IPv4DefaultRoutePolicy` は `excludeDestinationCIDRs` を持ちます。これにより、LAN 内部、管理網、HGW LAN、RFC 1918 の内部網などを policy routing の対象から外せます。
+`EgressRoutePolicy` は `excludeDestinationCIDRs` を持ちます。これにより、LAN 内部、管理網、HGW LAN、RFC 1918 の内部網などを policy routing の対象から外せます。
 
 `ClusterNetworkRoute` は Kubernetes node 向けの補助 resource です。
 `spec.pods.cidrs` と `spec.services.cidrs` に Pod / Service CIDR を並べ、
@@ -400,9 +401,9 @@ when:
 
 `HealthCheck.spec.sourceInterface` は実行時に OS のインターフェース名へ解決されます。
 Linux では `SO_BINDTODEVICE` を使います。`fwmark` を指定した場合は
-`SO_MARK` も設定します。`HealthCheck` が `IPv4DefaultRoutePolicy` の
-candidate や `IPv4PolicyRouteSet` の target から参照されている場合は、
-routerd がその route target の mark から `SO_MARK` を自動導出します。
+`SO_MARK` も設定します。`HealthCheck` が `EgressRoutePolicy` の candidate や
+target から参照されている場合は、routerd がその route target の mark から
+`SO_MARK` を自動導出します。
 直接の `fwmark` 指定は、route target に紐づかない低レベルな probe 向けです。
 FreeBSD では、指定したインターフェースから送信元アドレスを選びます。
 FreeBSD には Linux と同じ socket option がないためです。

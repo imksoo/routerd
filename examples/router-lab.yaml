@@ -91,7 +91,7 @@ spec:
         interface: wan
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DefaultRoutePolicy
+      kind: EgressRoutePolicy
       metadata:
         name: default-v4
       spec:
@@ -126,17 +126,21 @@ spec:
             end: 65535
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4PolicyRoute
+      kind: EgressRoutePolicy
       metadata:
         name: lan-via-transix
       spec:
-        outboundInterface: transix
-        table: 100
-        priority: 10000
-        mark: 256
+        family: ipv4
+        mode: mark
         sourceCIDRs:
           - 192.168.10.0/24
-        routeMetric: 50
+        candidates:
+          - name: transix
+            interface: transix
+            table: 100
+            priority: 10000
+            mark: 256
+            routeMetric: 50
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSResolver

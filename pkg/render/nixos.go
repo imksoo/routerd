@@ -1503,7 +1503,7 @@ func nixOSNeedsDnsmasq(router *api.Router) bool {
 func nixOSNeedsNftables(router *api.Router) bool {
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "DSLiteTunnel", "PPPoESession", "WireGuardInterface", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallLog", "ClientPolicy":
+		case "NAT44Rule", "EgressRoutePolicy", "DSLiteTunnel", "PPPoESession", "WireGuardInterface", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallLog", "ClientPolicy":
 			return true
 		}
 	}
@@ -1599,7 +1599,7 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 		case "DHCPv4Server", "DHCPv6Server":
 			service["dnsmasq"] = true
 			debug["dnsmasq"] = true
-		case "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "DSLiteTunnel", "WireGuardInterface", "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":
+		case "EgressRoutePolicy", "DSLiteTunnel", "WireGuardInterface", "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":
 			service["nftables"] = true
 			debug["nftables"] = true
 		case "PPPoESession":

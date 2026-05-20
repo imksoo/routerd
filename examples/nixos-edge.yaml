@@ -299,11 +299,12 @@ spec:
         mtu: 1454
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4PolicyRouteSet
+      kind: EgressRoutePolicy
       metadata:
-        name: lan-dslite-ecmp
+        name: default-v4
       spec:
-        mode: hash
+        family: ipv4
+        mode: priority
         hashFields:
           - sourceAddress
           - destinationAddress
@@ -311,40 +312,28 @@ spec:
           - 192.0.2.0/24
         destinationCIDRs:
           - 0.0.0.0/0
-        targets:
-          - name: ds-lite-a
-            outboundInterface: ds-lite-a
-            table: 100
-            priority: 10000
-            mark: 256
-            routeMetric: 50
-          - name: ds-lite-b
-            outboundInterface: ds-lite-b
-            table: 101
-            priority: 10001
-            mark: 257
-            routeMetric: 50
-          - name: ds-lite-c
-            outboundInterface: ds-lite-c
-            table: 102
-            priority: 10002
-            mark: 258
-            routeMetric: 50
-
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4DefaultRoutePolicy
-      metadata:
-        name: default-v4
-      spec:
-        mode: priority
-        sourceCIDRs:
-          - 192.0.2.0/24
-        destinationCIDRs:
-          - 0.0.0.0/0
         candidates:
           - name: dslite-ecmp
-            routeSet: lan-dslite-ecmp
             priority: 10
+            targets:
+              - name: ds-lite-a
+                interface: ds-lite-a
+                table: 100
+                priority: 10000
+                mark: 256
+                routeMetric: 50
+              - name: ds-lite-b
+                interface: ds-lite-b
+                table: 101
+                priority: 10001
+                mark: 257
+                routeMetric: 50
+              - name: ds-lite-c
+                interface: ds-lite-c
+                table: 102
+                priority: 10002
+                mark: 258
+                routeMetric: 50
           - name: wan-dhcpv4
             interface: wan
             gatewaySource: dhcpv4

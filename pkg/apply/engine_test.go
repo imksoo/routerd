@@ -121,7 +121,7 @@ func TestPlanKeepsExternalWANObserveOnly(t *testing.T) {
 	}
 }
 
-func TestPlanIPv4DefaultRoutePolicy(t *testing.T) {
+func TestPlanEgressRoutePolicyDefaultRoute(t *testing.T) {
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -145,7 +145,7 @@ func TestPlanIPv4DefaultRoutePolicy(t *testing.T) {
 		t.Fatalf("plan: %v", err)
 	}
 
-	route := findResult(result, "net.routerd.net/v1alpha1/IPv4DefaultRoutePolicy/default-v4")
+	route := findResult(result, "net.routerd.net/v1alpha1/EgressRoutePolicy/default-v4")
 	if route == nil {
 		t.Fatal("missing default route result")
 	}
@@ -216,7 +216,7 @@ func TestPlanStaticDefaultRoutePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	route := findResult(result, "net.routerd.net/v1alpha1/IPv4DefaultRoutePolicy/default-v4")
+	route := findResult(result, "net.routerd.net/v1alpha1/EgressRoutePolicy/default-v4")
 	if route == nil {
 		t.Fatal("missing default route result")
 	}
@@ -361,10 +361,11 @@ func staticDefaultRouteRouter() *api.Router {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true, Owner: "routerd"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
 				Metadata: api.ObjectMeta{Name: "default-v4"},
-				Spec: api.IPv4DefaultRoutePolicySpec{
-					Candidates: []api.IPv4DefaultRoutePolicyCandidate{
+				Spec: api.EgressRoutePolicySpec{
+					Mode: "priority",
+					Candidates: []api.EgressRoutePolicyCandidate{
 						{Interface: "wan", GatewaySource: "static", Gateway: "192.168.1.254", Priority: 10, Table: 100, Mark: 256},
 					},
 				},
@@ -437,7 +438,7 @@ func TestAdoptionCandidates(t *testing.T) {
 		{
 			Kind:  "linux.ipv4.fwmarkRule",
 			Name:  "priority=10,mark=0x100,table=100",
-			Owner: "net.routerd.net/v1alpha1/IPv4DefaultRoutePolicy/default-v4",
+			Owner: "net.routerd.net/v1alpha1/EgressRoutePolicy/default-v4",
 			Attributes: map[string]string{
 				"priority": "10",
 				"mark":     "0x100",

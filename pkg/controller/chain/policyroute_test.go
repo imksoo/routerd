@@ -14,18 +14,21 @@ import (
 	"routerd/pkg/render"
 )
 
-func TestIPv4PolicyRouteSetFiltersUnhealthyTargets(t *testing.T) {
+func TestEgressRoutePolicyFiltersUnhealthyTargets(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "dslite"}, Spec: api.IPv4PolicyRouteSetSpec{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "dslite"}, Spec: api.EgressRoutePolicySpec{
 			Mode:             "hash",
 			HashFields:       []string{"sourceAddress"},
 			SourceCIDRs:      []string{"172.18.0.0/16"},
 			DestinationCIDRs: []string{"0.0.0.0/0"},
-			Targets: []api.IPv4PolicyRouteTarget{
-				{Name: "a", OutboundInterface: "ds-lite-a", Table: 110, Priority: 10110, Mark: 0x110, HealthCheck: "hc-a"},
-				{Name: "b", OutboundInterface: "ds-lite-b", Table: 111, Priority: 10111, Mark: 0x111, HealthCheck: "hc-b"},
-				{Name: "c", OutboundInterface: "ds-lite-c", Table: 112, Priority: 10112, Mark: 0x112, HealthCheck: "hc-c"},
-			},
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name: "dslite",
+				Targets: []api.EgressRoutePolicyTarget{
+					{Name: "a", Interface: "ds-lite-a", Table: 110, Priority: 10110, Mark: 0x110, HealthCheck: "hc-a"},
+					{Name: "b", Interface: "ds-lite-b", Table: 111, Priority: 10111, Mark: 0x111, HealthCheck: "hc-b"},
+					{Name: "c", Interface: "ds-lite-c", Table: 112, Priority: 10112, Mark: 0x112, HealthCheck: "hc-c"},
+				},
+			}},
 		}},
 	}}}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -98,8 +101,9 @@ func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T)
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-hgw"}, Spec: api.HealthCheckSpec{
 			Target: "1.1.1.1",
 		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.IPv4DefaultRoutePolicySpec{
-			Candidates: []api.IPv4DefaultRoutePolicyCandidate{{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "priority",
+			Candidates: []api.EgressRoutePolicyCandidate{{
 				Name:          "hgw",
 				Interface:     "wan",
 				GatewaySource: "static",
@@ -115,7 +119,7 @@ func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T)
 	if err := controller.applyRouteTables(t.Context(), map[string]string{"wan": "lo"}); err != nil {
 		t.Fatal(err)
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "IPv4PolicyRoute", "hgw")
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "hgw")
 	if status["phase"] != "Installed" || status["mark"] != "0x116" {
 		t.Fatalf("bootstrap route status = %#v", status)
 	}
@@ -131,28 +135,22 @@ func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T)
 	if err := controller.applyRouteTables(t.Context(), map[string]string{"wan": "lo"}); err != nil {
 		t.Fatal(err)
 	}
-	if status := store.ObjectStatus(api.NetAPIVersion, "IPv4PolicyRoute", "hgw"); len(status) != 0 {
+	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "hgw"); len(status) != 0 {
 		t.Fatalf("disabled healthcheck should not bootstrap route: %#v", status)
 	}
 }
 
-func TestIPv4PolicyRouteSetReferencedByDefaultPolicyRendersOnlyWhenActive(t *testing.T) {
-	routeSet := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "dslite"}, Spec: api.IPv4PolicyRouteSetSpec{
-		Mode:             "hash",
-		HashFields:       []string{"sourceAddress"},
-		SourceCIDRs:      []string{"172.18.0.0/16"},
-		DestinationCIDRs: []string{"0.0.0.0/0"},
-		Targets: []api.IPv4PolicyRouteTarget{
-			{Name: "a", OutboundInterface: "ds-lite-a", Table: 110, Priority: 10110, Mark: 0x110},
-		},
-	}}
+func TestEgressRoutePolicyTargetCandidateRendersOnlyWhenActive(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		routeSet,
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"}, Metadata: api.ObjectMeta{Name: "lan-default"}, Spec: api.IPv4DefaultRoutePolicySpec{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "lan-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode:             "priority",
+			HashFields:       []string{"sourceAddress"},
 			SourceCIDRs:      []string{"172.18.0.0/16"},
 			DestinationCIDRs: []string{"0.0.0.0/0"},
-			Candidates: []api.IPv4DefaultRoutePolicyCandidate{
-				{Name: "dslite", RouteSet: "dslite", Priority: 10},
+			Candidates: []api.EgressRoutePolicyCandidate{
+				{Name: "dslite", Priority: 10, Targets: []api.EgressRoutePolicyTarget{
+					{Name: "a", Interface: "ds-lite-a", Table: 110, Priority: 10110, Mark: 0x110},
+				}},
 				{Name: "fallback", Interface: "lan", Priority: 20, Mark: 0x114},
 			},
 		}},
@@ -163,14 +161,14 @@ func TestIPv4PolicyRouteSetReferencedByDefaultPolicyRendersOnlyWhenActive(t *tes
 		t.Fatalf("render inactive policy routes: %v", err)
 	}
 	if strings.Contains(string(inactive), "0x110") {
-		t.Fatalf("inactive referenced routeSet should not render marks:\n%s", inactive)
+		t.Fatalf("inactive target candidate should not render marks:\n%s", inactive)
 	}
-	active, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(map[string]bool{"dslite": true}))
+	active, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(map[string]bool{"lan-default/dslite": true}))
 	if err != nil {
 		t.Fatalf("render active policy routes: %v", err)
 	}
 	if !strings.Contains(string(active), "0x110") {
-		t.Fatalf("active referenced routeSet should render marks:\n%s", active)
+		t.Fatalf("active target candidate should render marks:\n%s", active)
 	}
 }
 

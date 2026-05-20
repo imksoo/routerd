@@ -107,12 +107,15 @@ func TestIPAddressSetControllerRefreshesPolicyRouteNftSet(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "cloud-service"}, Spec: api.IPAddressSetSpec{
 			Names: []string{"service.example.test"},
 		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRoute"}, Metadata: api.ObjectMeta{Name: "cloud-via-alt"}, Spec: api.IPv4PolicyRouteSpec{
-			OutboundInterface:  "wan-alt",
-			Table:              200,
-			Priority:           1200,
-			Mark:               0x120,
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "cloud-via-alt"}, Spec: api.EgressRoutePolicySpec{
+			Mode:               "mark",
 			DestinationSetRefs: []string{"IPAddressSet/cloud-service"},
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Interface: "wan-alt",
+				Table:     200,
+				Priority:  1200,
+				Mark:      0x120,
+			}},
 		}},
 	}}}
 	store := mapStore{}

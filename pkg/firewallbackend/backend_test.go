@@ -271,6 +271,6 @@ func pfBespokeRouter() *api.Router {
 			Backends: []api.IngressBackendSpec{{Address: "172.18.1.10", Port: 6443}},
 			Hairpin:  api.IngressHairpinSpec{Enabled: true, Interfaces: []string{"lan"}},
 		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "dynamic"}, Spec: api.NAT44RuleSpec{EgressPolicyRef: "IPv4DefaultRoutePolicy/default", SourceRanges: []string{"172.18.0.0/16"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "dynamic"}, Spec: api.NAT44RuleSpec{EgressPolicyRef: "EgressRoutePolicy/default", SourceRanges: []string{"172.18.0.0/16"}}},
 	}}}
 }

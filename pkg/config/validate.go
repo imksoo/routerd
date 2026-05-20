@@ -52,7 +52,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	delegatedAddressInterfaces := map[string]string{}
 	selfAddressPolicies := map[string]bool{}
 	dsliteTunnels := map[string]bool{}
-	routeSets := map[string]bool{}
 	healthChecks := map[string]bool{}
 	bgpRouters := map[string]bool{}
 	vrfs := map[string]bool{}
@@ -193,9 +192,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DSLiteTunnel" {
 			dsliteTunnels[res.Metadata.Name] = true
-		}
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv4PolicyRouteSet" {
-			routeSets[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "HealthCheck" {
 			healthChecks[res.Metadata.Name] = true
@@ -481,29 +477,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				}
 			}
 		}
-		if res.Kind == "IPv4PolicyRoute" {
-			spec, err := res.IPv4PolicyRouteSpec()
-			if err != nil {
-				return err
-			}
-			if !interfaces[spec.OutboundInterface] && !dsliteTunnels[spec.OutboundInterface] {
-				return fmt.Errorf("%s references missing outbound Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), spec.OutboundInterface)
-			}
-		}
-		if res.Kind == "IPv4PolicyRouteSet" {
-			spec, err := res.IPv4PolicyRouteSetSpec()
-			if err != nil {
-				return err
-			}
-			for _, target := range spec.Targets {
-				if !interfaces[target.OutboundInterface] && !dsliteTunnels[target.OutboundInterface] {
-					return fmt.Errorf("%s target %q references missing outbound Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), target.Name, target.OutboundInterface)
-				}
-				if target.HealthCheck != "" && !healthChecks[target.HealthCheck] {
-					return fmt.Errorf("%s target %q references missing HealthCheck %q", res.ID(), target.Name, target.HealthCheck)
-				}
-			}
-		}
 		if res.Kind == "IPv6DelegatedAddress" {
 			spec, err := res.IPv6DelegatedAddressSpec()
 			if err != nil {
@@ -562,8 +535,8 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 		}
-		if res.Kind == "IPv4DefaultRoutePolicy" {
-			spec, err := res.IPv4DefaultRoutePolicySpec()
+		if res.Kind == "EgressRoutePolicy" {
+			spec, err := res.EgressRoutePolicySpec()
 			if err != nil {
 				return err
 			}
@@ -571,22 +544,16 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				if candidate.Interface != "" && !interfaces[candidate.Interface] && !dsliteTunnels[candidate.Interface] {
 					return fmt.Errorf("%s spec.candidates[%d] references missing Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), i, candidate.Interface)
 				}
-				if candidate.RouteSet != "" && !routeSets[candidate.RouteSet] {
-					return fmt.Errorf("%s spec.candidates[%d] references missing IPv4PolicyRouteSet %q", res.ID(), i, candidate.RouteSet)
-				}
 				if candidate.HealthCheck != "" && !healthChecks[candidate.HealthCheck] {
 					return fmt.Errorf("%s spec.candidates[%d] references missing HealthCheck %q", res.ID(), i, candidate.HealthCheck)
 				}
-			}
-		}
-		if res.Kind == "EgressRoutePolicy" {
-			spec, err := res.EgressRoutePolicySpec()
-			if err != nil {
-				return err
-			}
-			for i, candidate := range spec.Candidates {
-				if candidate.HealthCheck != "" && !healthChecks[candidate.HealthCheck] {
-					return fmt.Errorf("%s spec.candidates[%d] references missing HealthCheck %q", res.ID(), i, candidate.HealthCheck)
+				for j, target := range candidate.Targets {
+					if target.EffectiveInterface() != "" && !interfaces[target.EffectiveInterface()] && !dsliteTunnels[target.EffectiveInterface()] {
+						return fmt.Errorf("%s spec.candidates[%d].targets[%d] references missing Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), i, j, target.EffectiveInterface())
+					}
+					if target.HealthCheck != "" && !healthChecks[target.HealthCheck] {
+						return fmt.Errorf("%s spec.candidates[%d].targets[%d] references missing HealthCheck %q", res.ID(), i, j, target.HealthCheck)
+					}
 				}
 			}
 		}
@@ -685,20 +652,8 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 		}
-		if res.Kind == "IPv4PolicyRoute" {
-			spec, err := res.IPv4PolicyRouteSpec()
-			if err != nil {
-				return err
-			}
-			if err := validateIPAddressSetRefsExist(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs, ipAddressSets); err != nil {
-				return err
-			}
-			if err := validateIPAddressSetRefsExist(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs, ipAddressSets); err != nil {
-				return err
-			}
-		}
-		if res.Kind == "IPv4PolicyRouteSet" {
-			spec, err := res.IPv4PolicyRouteSetSpec()
+		if res.Kind == "EgressRoutePolicy" {
+			spec, err := res.EgressRoutePolicySpec()
 			if err != nil {
 				return err
 			}
@@ -2490,6 +2445,17 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		default:
 			return fmt.Errorf("%s spec.selection must be highest-weight-ready or weighted-ecmp", res.ID())
 		}
+		switch spec.Mode {
+		case "", "priority", "mark", "hash":
+		default:
+			return fmt.Errorf("%s spec.mode must be priority, mark, or hash", res.ID())
+		}
+		for _, cidr := range spec.SourceCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || (defaultString(spec.Family, "ipv4") == "ipv4" && !prefix.Addr().Is4()) || (defaultString(spec.Family, "ipv4") == "ipv6" && !prefix.Addr().Is6()) {
+				return fmt.Errorf("%s spec.sourceCIDRs entries must match family prefixes", res.ID())
+			}
+		}
 		for _, cidr := range spec.DestinationCIDRs {
 			prefix, err := netip.ParsePrefix(cidr)
 			if err != nil {
@@ -2506,6 +2472,28 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 				}
 			}
 		}
+		for _, cidr := range spec.ExcludeDestinationCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || (defaultString(spec.Family, "ipv4") == "ipv4" && !prefix.Addr().Is4()) || (defaultString(spec.Family, "ipv4") == "ipv6" && !prefix.Addr().Is6()) {
+				return fmt.Errorf("%s spec.excludeDestinationCIDRs entries must match family prefixes", res.ID())
+			}
+		}
+		if err := validateIPAddressSetRefs(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs); err != nil {
+			return err
+		}
+		if err := validateIPAddressSetRefs(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs); err != nil {
+			return err
+		}
+		if spec.Mode == "hash" && len(spec.HashFields) == 0 {
+			return fmt.Errorf("%s spec.hashFields is required when mode is hash", res.ID())
+		}
+		for _, field := range spec.HashFields {
+			switch field {
+			case "sourceAddress", "destinationAddress":
+			default:
+				return fmt.Errorf("%s spec.hashFields entries must be sourceAddress or destinationAddress", res.ID())
+			}
+		}
 		if spec.Hysteresis != "" {
 			if _, err := time.ParseDuration(spec.Hysteresis); err != nil {
 				return fmt.Errorf("%s spec.hysteresis is invalid: %w", res.ID(), err)
@@ -2515,8 +2503,53 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 			return fmt.Errorf("%s spec.candidates is required", res.ID())
 		}
 		for i, candidate := range spec.Candidates {
-			if candidate.Name == "" && candidate.Source == "" {
+			if candidate.Name == "" && candidate.Source == "" && candidate.EffectiveInterface() == "" && len(candidate.Targets) == 0 {
 				return fmt.Errorf("%s spec.candidates[%d] requires name or source", res.ID(), i)
+			}
+			if candidate.Table != 0 && candidate.RouteTable != 0 {
+				return fmt.Errorf("%s spec.candidates[%d] must not set both table and routeTable", res.ID(), i)
+			}
+			if candidate.RouteMetric != 0 && candidate.Metric != 0 {
+				return fmt.Errorf("%s spec.candidates[%d] must not set both routeMetric and metric", res.ID(), i)
+			}
+			if len(candidate.Targets) == 0 && (candidate.Mark != 0 || candidate.Priority != 0 || candidate.EffectiveTable() != 0) {
+				if candidate.Mark < 1 {
+					return fmt.Errorf("%s spec.candidates[%d].mark must be greater than 0", res.ID(), i)
+				}
+				if candidate.Priority < 1 || candidate.Priority > 32765 {
+					return fmt.Errorf("%s spec.candidates[%d].priority must be within 1-32765", res.ID(), i)
+				}
+				if candidate.EffectiveTable() < 1 {
+					return fmt.Errorf("%s spec.candidates[%d].table must be greater than 0", res.ID(), i)
+				}
+			}
+			if len(candidate.Targets) > 0 && spec.Mode != "hash" && spec.Mode != "priority" {
+				return fmt.Errorf("%s spec.candidates[%d].targets requires mode hash or priority", res.ID(), i)
+			}
+			if len(candidate.Targets) > 0 {
+				if candidate.Interface != "" || candidate.Device != "" || candidate.DeviceFrom.Resource != "" || candidate.Gateway != "" || candidate.GatewayFrom.Resource != "" || candidate.GatewaySource != "" || candidate.Table != 0 || candidate.RouteTable != 0 || candidate.Mark != 0 || candidate.RouteMetric != 0 || candidate.Metric != 0 {
+					return fmt.Errorf("%s spec.candidates[%d] target candidates cannot set interface, gatewaySource, gateway, table, mark, or routeMetric directly", res.ID(), i)
+				}
+			}
+			for j, target := range candidate.Targets {
+				if target.Table != 0 && target.RouteTable != 0 {
+					return fmt.Errorf("%s spec.candidates[%d].targets[%d] must not set both table and routeTable", res.ID(), i, j)
+				}
+				if target.RouteMetric != 0 && target.Metric != 0 {
+					return fmt.Errorf("%s spec.candidates[%d].targets[%d] must not set both routeMetric and metric", res.ID(), i, j)
+				}
+				if target.EffectiveInterface() == "" {
+					return fmt.Errorf("%s spec.candidates[%d].targets[%d].interface is required", res.ID(), i, j)
+				}
+				if target.EffectiveTable() < 1 {
+					return fmt.Errorf("%s spec.candidates[%d].targets[%d].table must be greater than 0", res.ID(), i, j)
+				}
+				if target.Priority < 1 || target.Priority > 32765 {
+					return fmt.Errorf("%s spec.candidates[%d].targets[%d].priority must be within 1-32765", res.ID(), i, j)
+				}
+				if target.Mark < 1 {
+					return fmt.Errorf("%s spec.candidates[%d].targets[%d].mark must be greater than 0", res.ID(), i, j)
+				}
 			}
 			if strings.Contains(candidate.Device, "${") {
 				return fmt.Errorf("%s spec.candidates[%d].device status expressions were removed; use deviceFrom", res.ID(), i)
@@ -2562,15 +2595,15 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 				if defaultString(spec.Family, "ipv4") != "ipv4" {
 					return fmt.Errorf("%s spec.candidates[%d].gatewaySource dhcpv4 requires family ipv4", res.ID(), i)
 				}
-				if candidate.Gateway != "" || candidate.GatewayFrom.Resource == "" {
-					return fmt.Errorf("%s spec.candidates[%d] must set gatewayFrom and must not set gateway when gatewaySource is dhcpv4", res.ID(), i)
+				if candidate.Gateway != "" {
+					return fmt.Errorf("%s spec.candidates[%d].gateway must not be set when gatewaySource is dhcpv4", res.ID(), i)
 				}
 			case "dhcpv6":
 				if defaultString(spec.Family, "ipv4") != "ipv6" {
 					return fmt.Errorf("%s spec.candidates[%d].gatewaySource dhcpv6 requires family ipv6", res.ID(), i)
 				}
-				if candidate.Gateway != "" || candidate.GatewayFrom.Resource == "" {
-					return fmt.Errorf("%s spec.candidates[%d] must set gatewayFrom and must not set gateway when gatewaySource is dhcpv6", res.ID(), i)
+				if candidate.Gateway != "" {
+					return fmt.Errorf("%s spec.candidates[%d].gateway must not be set when gatewaySource is dhcpv6", res.ID(), i)
 				}
 			default:
 				return fmt.Errorf("%s spec.candidates[%d].gatewaySource must be static, dhcpv4, dhcpv6, or none", res.ID(), i)
@@ -2648,96 +2681,7 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 			}
 		}
 	case "IPv4DefaultRoutePolicy":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.IPv4DefaultRoutePolicySpec()
-		if err != nil {
-			return err
-		}
-		switch defaultString(spec.Mode, "priority") {
-		case "priority":
-		default:
-			return fmt.Errorf("%s spec.mode must be priority", res.ID())
-		}
-		if len(spec.Candidates) == 0 {
-			return fmt.Errorf("%s spec.candidates is required", res.ID())
-		}
-		for _, cidr := range spec.SourceCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.sourceCIDRs entries must be IPv4 prefixes", res.ID())
-			}
-		}
-		for _, cidr := range spec.DestinationCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv4 prefixes", res.ID())
-			}
-		}
-		for _, cidr := range spec.ExcludeDestinationCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.excludeDestinationCIDRs entries must be IPv4 prefixes", res.ID())
-			}
-		}
-		seenPriorities := map[int]bool{}
-		seenMarks := map[int]bool{}
-		seenTables := map[int]bool{}
-		for i, candidate := range spec.Candidates {
-			if (candidate.Interface == "") == (candidate.RouteSet == "") {
-				return fmt.Errorf("%s spec.candidates[%d] must set exactly one of interface or routeSet", res.ID(), i)
-			}
-			isRouteSet := candidate.RouteSet != ""
-			source := defaultString(candidate.GatewaySource, "none")
-			if isRouteSet {
-				if candidate.GatewaySource != "" || candidate.Gateway != "" || candidate.Table != 0 || candidate.Mark != 0 || candidate.RouteMetric != 0 {
-					return fmt.Errorf("%s spec.candidates[%d] routeSet candidates cannot set gatewaySource, gateway, table, mark, or routeMetric", res.ID(), i)
-				}
-			} else {
-				switch source {
-				case "none":
-					if candidate.Gateway != "" {
-						return fmt.Errorf("%s spec.candidates[%d].gateway is only valid when gatewaySource is static", res.ID(), i)
-					}
-				case "dhcpv4":
-				case "static":
-					gateway := candidate.Gateway
-					if gateway == "" {
-						return fmt.Errorf("%s spec.candidates[%d].gateway is required when gatewaySource is static", res.ID(), i)
-					}
-					addr, err := netip.ParseAddr(gateway)
-					if err != nil || !addr.Is4() {
-						return fmt.Errorf("%s spec.candidates[%d].gateway must be an IPv4 address", res.ID(), i)
-					}
-				default:
-					return fmt.Errorf("%s spec.candidates[%d].gatewaySource must be none, dhcpv4, or static", res.ID(), i)
-				}
-			}
-			if candidate.Priority < 1 {
-				return fmt.Errorf("%s spec.candidates[%d].priority must be greater than 0", res.ID(), i)
-			}
-			if seenPriorities[candidate.Priority] {
-				return fmt.Errorf("%s spec.candidates[%d].priority duplicates another candidate", res.ID(), i)
-			}
-			seenPriorities[candidate.Priority] = true
-			if !isRouteSet {
-				if candidate.Table < 1 {
-					return fmt.Errorf("%s spec.candidates[%d].table must be greater than 0", res.ID(), i)
-				}
-				if candidate.Mark < 1 {
-					return fmt.Errorf("%s spec.candidates[%d].mark must be greater than 0", res.ID(), i)
-				}
-				if seenMarks[candidate.Mark] {
-					return fmt.Errorf("%s spec.candidates[%d].mark duplicates another candidate", res.ID(), i)
-				}
-				if seenTables[candidate.Table] {
-					return fmt.Errorf("%s spec.candidates[%d].table duplicates another candidate", res.ID(), i)
-				}
-				seenMarks[candidate.Mark] = true
-				seenTables[candidate.Table] = true
-			}
-		}
+		return fmt.Errorf("%s is not supported; use EgressRoutePolicy with candidates directly", res.ID())
 	case "NAT44Rule":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -2981,129 +2925,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 			}
 		}
 	case "IPv4PolicyRoute":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.IPv4PolicyRouteSpec()
-		if err != nil {
-			return err
-		}
-		if spec.OutboundInterface == "" {
-			return fmt.Errorf("%s spec.outboundInterface is required", res.ID())
-		}
-		if spec.Table < 1 {
-			return fmt.Errorf("%s spec.table must be greater than 0", res.ID())
-		}
-		if spec.Priority < 1 || spec.Priority > 32765 {
-			return fmt.Errorf("%s spec.priority must be within 1-32765", res.ID())
-		}
-		if spec.Mark < 1 {
-			return fmt.Errorf("%s spec.mark must be greater than 0", res.ID())
-		}
-		if len(spec.SourceCIDRs) == 0 && len(spec.DestinationCIDRs) == 0 && len(spec.DestinationSetRefs) == 0 {
-			return fmt.Errorf("%s spec.sourceCIDRs, spec.destinationCIDRs, or spec.destinationSetRefs is required", res.ID())
-		}
-		for _, cidr := range spec.SourceCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.sourceCIDRs entries must be IPv4 prefixes", res.ID())
-			}
-		}
-		for _, cidr := range spec.DestinationCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv4 prefixes", res.ID())
-			}
-		}
-		if err := validateIPAddressSetRefs(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs); err != nil {
-			return err
-		}
-		for _, cidr := range spec.ExcludeDestinationCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.excludeDestinationCIDRs entries must be IPv4 prefixes", res.ID())
-			}
-		}
-		if err := validateIPAddressSetRefs(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs); err != nil {
-			return err
-		}
+		return fmt.Errorf("%s is not supported; use EgressRoutePolicy with one marked candidate", res.ID())
 	case "IPv4PolicyRouteSet":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.IPv4PolicyRouteSetSpec()
-		if err != nil {
-			return err
-		}
-		switch defaultString(spec.Mode, "hash") {
-		case "hash":
-		default:
-			return fmt.Errorf("%s spec.mode must be hash", res.ID())
-		}
-		if len(spec.HashFields) == 0 {
-			return fmt.Errorf("%s spec.hashFields is required", res.ID())
-		}
-		for _, field := range spec.HashFields {
-			switch field {
-			case "sourceAddress", "destinationAddress":
-			default:
-				return fmt.Errorf("%s spec.hashFields entries must be sourceAddress or destinationAddress", res.ID())
-			}
-		}
-		if len(spec.SourceCIDRs) == 0 && len(spec.DestinationCIDRs) == 0 && len(spec.DestinationSetRefs) == 0 {
-			return fmt.Errorf("%s spec.sourceCIDRs, spec.destinationCIDRs, or spec.destinationSetRefs is required", res.ID())
-		}
-		for _, cidr := range spec.SourceCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.sourceCIDRs entries must be IPv4 prefixes", res.ID())
-			}
-		}
-		for _, cidr := range spec.DestinationCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.destinationCIDRs entries must be IPv4 prefixes", res.ID())
-			}
-		}
-		if err := validateIPAddressSetRefs(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs); err != nil {
-			return err
-		}
-		for _, cidr := range spec.ExcludeDestinationCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.excludeDestinationCIDRs entries must be IPv4 prefixes", res.ID())
-			}
-		}
-		if err := validateIPAddressSetRefs(res.ID(), "spec.excludeDestinationSetRefs", spec.ExcludeDestinationSetRefs); err != nil {
-			return err
-		}
-		if len(spec.Targets) < 2 {
-			return fmt.Errorf("%s spec.targets must contain at least two targets", res.ID())
-		}
-		seenMarks := map[int]bool{}
-		seenPriorities := map[int]bool{}
-		for i, target := range spec.Targets {
-			if target.OutboundInterface == "" {
-				return fmt.Errorf("%s spec.targets[%d].outboundInterface is required", res.ID(), i)
-			}
-			if target.Table < 1 {
-				return fmt.Errorf("%s spec.targets[%d].table must be greater than 0", res.ID(), i)
-			}
-			if target.Priority < 1 || target.Priority > 32765 {
-				return fmt.Errorf("%s spec.targets[%d].priority must be within 1-32765", res.ID(), i)
-			}
-			if target.Mark < 1 {
-				return fmt.Errorf("%s spec.targets[%d].mark must be greater than 0", res.ID(), i)
-			}
-			if seenMarks[target.Mark] {
-				return fmt.Errorf("%s spec.targets[%d].mark duplicates another target", res.ID(), i)
-			}
-			if seenPriorities[target.Priority] {
-				return fmt.Errorf("%s spec.targets[%d].priority duplicates another target", res.ID(), i)
-			}
-			seenMarks[target.Mark] = true
-			seenPriorities[target.Priority] = true
-		}
+		return fmt.Errorf("%s is not supported; put hashFields and targets under EgressRoutePolicy candidates", res.ID())
 	case "FirewallZone":
 		if res.APIVersion != api.FirewallAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
@@ -3415,12 +3239,10 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "LocalServiceRedirect":
 		spec, _ := res.LocalServiceRedirectSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "IPv4PolicyRouteSet":
-		spec, _ := res.IPv4PolicyRouteSetSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "IPv4DefaultRoutePolicy":
-		spec, _ := res.IPv4DefaultRoutePolicySpec()
-		out := make([]resourceWhenRef, 0, len(spec.Candidates))
+	case "EgressRoutePolicy":
+		spec, _ := res.EgressRoutePolicySpec()
+		out := make([]resourceWhenRef, 0, len(spec.Candidates)+1)
+		out = append(out, resourceWhenRef{path: res.ID() + " spec.when", when: spec.When})
 		for i, candidate := range spec.Candidates {
 			out = append(out, resourceWhenRef{path: fmt.Sprintf("%s spec.candidates[%d].when", res.ID(), i), when: candidate.When})
 		}

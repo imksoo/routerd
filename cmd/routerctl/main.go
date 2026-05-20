@@ -2316,10 +2316,10 @@ func canonicalShowKind(kind string) string {
 		"inv":                    "Inventory",
 		"orphan":                 "Orphan",
 		"orphans":                "Orphan",
-		"route":                  "IPv4PolicyRouteSet",
-		"routeset":               "IPv4PolicyRouteSet",
-		"ipv4route":              "IPv4PolicyRouteSet",
-		"ipv4policyrouteset":     "IPv4PolicyRouteSet",
+		"route":                  "EgressRoutePolicy",
+		"routeset":               "EgressRoutePolicy",
+		"ipv4route":              "EgressRoutePolicy",
+		"ipv4policyrouteset":     "EgressRoutePolicy",
 	}
 	if canonical, ok := aliases[key]; ok {
 		return canonical

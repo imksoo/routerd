@@ -111,16 +111,19 @@ func TestResolveSpecSourceInterfaceResourceNames(t *testing.T) {
 func TestResolveSpecDerivesFwMarkFromRoutingHealthCheckReferences(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
 			Metadata: api.ObjectMeta{Name: "balanced"},
-			Spec: api.IPv4PolicyRouteSetSpec{Targets: []api.IPv4PolicyRouteTarget{
-				{Name: "a", Mark: 0x110, HealthCheck: "internet-a"},
-			}},
+			Spec: api.EgressRoutePolicySpec{Mode: "hash", Candidates: []api.EgressRoutePolicyCandidate{{
+				Name: "balanced",
+				Targets: []api.EgressRoutePolicyTarget{
+					{Name: "a", Mark: 0x110, HealthCheck: "internet-a"},
+				},
+			}}},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
 			Metadata: api.ObjectMeta{Name: "default"},
-			Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
+			Spec: api.EgressRoutePolicySpec{Mode: "priority", Candidates: []api.EgressRoutePolicyCandidate{
 				{Name: "hgw", Mark: 0x116, HealthCheck: "internet-hgw"},
 			}},
 		},

@@ -21,8 +21,7 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 	}
 
 	var nat44Rules []api.Resource
-	var policies []api.Resource
-	var policySets []api.Resource
+	var egressPolicies []api.Resource
 	var zones []api.Resource
 	var firewallPolicies []api.Resource
 	var firewallLogs []api.Resource
@@ -38,11 +37,11 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 		if res.Kind == "NAT44Rule" {
 			nat44Rules = append(nat44Rules, res)
 		}
-		if res.Kind == "IPv4PolicyRoute" {
-			policies = append(policies, res)
-		}
-		if res.Kind == "IPv4PolicyRouteSet" {
-			policySets = append(policySets, res)
+		if res.Kind == "EgressRoutePolicy" {
+			spec, err := res.EgressRoutePolicySpec()
+			if err == nil && egressPolicyRendersPolicyMarks(spec) {
+				egressPolicies = append(egressPolicies, res)
+			}
 		}
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallZone" {
 			zones = append(zones, res)
@@ -89,12 +88,11 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 			l2FilterVXLANS = append(l2FilterVXLANS, vxlan)
 		}
 	}
-	if len(nat44Rules) == 0 && len(ingressRules) == 0 && len(redirectRules) == 0 && len(policies) == 0 && len(policySets) == 0 && len(zones) == 0 && len(firewallPolicies) == 0 && len(firewallLogs) == 0 && len(firewallRules) == 0 && len(clientPolicies) == 0 && len(mssPolicies) == 0 && len(l2FilterVXLANS) == 0 {
+	if len(nat44Rules) == 0 && len(ingressRules) == 0 && len(redirectRules) == 0 && len(egressPolicies) == 0 && len(zones) == 0 && len(firewallPolicies) == 0 && len(firewallLogs) == 0 && len(firewallRules) == 0 && len(clientPolicies) == 0 && len(mssPolicies) == 0 && len(l2FilterVXLANS) == 0 {
 		return nil, nil
 	}
 	sort.Slice(nat44Rules, func(i, j int) bool { return nat44Rules[i].Metadata.Name < nat44Rules[j].Metadata.Name })
-	sort.Slice(policies, func(i, j int) bool { return policies[i].Metadata.Name < policies[j].Metadata.Name })
-	sort.Slice(policySets, func(i, j int) bool { return policySets[i].Metadata.Name < policySets[j].Metadata.Name })
+	sort.Slice(egressPolicies, func(i, j int) bool { return egressPolicies[i].Metadata.Name < egressPolicies[j].Metadata.Name })
 	sort.Slice(zones, func(i, j int) bool { return zones[i].Metadata.Name < zones[j].Metadata.Name })
 	sort.Slice(firewallPolicies, func(i, j int) bool { return firewallPolicies[i].Metadata.Name < firewallPolicies[j].Metadata.Name })
 	sort.Slice(firewallLogs, func(i, j int) bool { return firewallLogs[i].Metadata.Name < firewallLogs[j].Metadata.Name })
@@ -116,8 +114,8 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 			return nil, err
 		}
 	}
-	if len(policies) > 0 || len(policySets) > 0 {
-		if err := writeIPv4PolicyRouteTable(&buf, policies, policySets, addressSets); err != nil {
+	if len(egressPolicies) > 0 {
+		if err := writeIPv4PolicyRouteTable(&buf, egressPolicies, addressSets); err != nil {
 			return nil, err
 		}
 	}
@@ -158,44 +156,39 @@ func NftablesTCPMSSClamp(router *api.Router) ([]byte, error) {
 
 func NftablesIPv4PolicyRoutes(router *api.Router) ([]byte, error) {
 	var policies []api.Resource
-	var policySets []api.Resource
 	addressSets, err := nftIPAddressSets(router)
 	if err != nil {
 		return nil, err
 	}
 	for _, res := range router.Spec.Resources {
-		if res.Kind == "IPv4PolicyRoute" {
+		if res.Kind != "EgressRoutePolicy" {
+			continue
+		}
+		spec, err := res.EgressRoutePolicySpec()
+		if err == nil && egressPolicyRendersPolicyMarks(spec) {
 			policies = append(policies, res)
 		}
-		if res.Kind == "IPv4PolicyRouteSet" {
-			policySets = append(policySets, res)
-		}
 	}
-	if len(policies) == 0 && len(policySets) == 0 {
+	if len(policies) == 0 {
 		return nil, nil
 	}
 	sort.Slice(policies, func(i, j int) bool { return policies[i].Metadata.Name < policies[j].Metadata.Name })
-	sort.Slice(policySets, func(i, j int) bool { return policySets[i].Metadata.Name < policySets[j].Metadata.Name })
 	var buf bytes.Buffer
-	if err := writeIPv4PolicyRouteTable(&buf, policies, policySets, addressSets); err != nil {
+	if err := writeIPv4PolicyRouteTable(&buf, policies, addressSets); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
-func NftablesIPv4DefaultRoutePolicy(resourceID string, spec api.IPv4DefaultRoutePolicySpec, active api.IPv4DefaultRoutePolicyCandidate, healthy []api.IPv4DefaultRoutePolicyCandidate, routeSets map[string]api.IPv4PolicyRouteSetSpec) ([]byte, error) {
+func NftablesEgressRoutePolicyDefaultMarks(resourceID string, spec api.EgressRoutePolicySpec, active api.EgressRoutePolicyCandidate, healthy []api.EgressRoutePolicyCandidate) ([]byte, error) {
 	matches, err := nftIPv4CIDRMatches(resourceID, spec.SourceCIDRs, spec.DestinationCIDRs, spec.ExcludeDestinationCIDRs)
 	if err != nil {
 		return nil, err
 	}
 	healthyMarks := make([]string, 0, len(healthy))
 	for _, candidate := range healthy {
-		if candidate.RouteSet != "" {
-			routeSet, ok := routeSets[candidate.RouteSet]
-			if !ok {
-				return nil, fmt.Errorf("%s references missing IPv4PolicyRouteSet %q", resourceID, candidate.RouteSet)
-			}
-			for _, target := range routeSet.Targets {
+		if len(candidate.Targets) > 0 {
+			for _, target := range candidate.Targets {
 				healthyMarks = append(healthyMarks, nftMark(target.Mark))
 			}
 			continue
@@ -208,7 +201,7 @@ func NftablesIPv4DefaultRoutePolicy(resourceID string, spec api.IPv4DefaultRoute
 	buf.WriteString("table ip routerd_default_route {\n")
 	buf.WriteString("  chain prerouting {\n")
 	buf.WriteString("    type filter hook prerouting priority -151; policy accept;\n")
-	activeRouteSet := active.RouteSet != ""
+	activeTargetCandidate := len(active.Targets) > 0
 	activeMark := nftMark(active.Mark)
 	for _, match := range matches {
 		prefix := strings.TrimSpace(match)
@@ -218,13 +211,13 @@ func NftablesIPv4DefaultRoutePolicy(resourceID string, spec api.IPv4DefaultRoute
 		if len(healthyMarks) > 0 {
 			set := "{ " + strings.Join(healthyMarks, ", ") + " }"
 			buf.WriteString("    " + prefix + "ct mark " + set + " meta mark set ct mark\n")
-			if activeRouteSet {
+			if activeTargetCandidate {
 				buf.WriteString("    " + prefix + "ct mark != 0x0 ct mark != " + set + " meta mark set 0x0 ct mark set meta mark\n")
 			} else {
 				buf.WriteString("    " + prefix + "ct mark != 0x0 ct mark != " + set + " meta mark set " + activeMark + " ct mark set meta mark\n")
 			}
 		}
-		if !activeRouteSet {
+		if !activeTargetCandidate {
 			buf.WriteString("    " + prefix + "ct mark 0x0 meta mark set " + activeMark + " ct mark set meta mark\n")
 		}
 	}
@@ -1731,44 +1724,45 @@ func writeTCPMSSClampTable(buf *bytes.Buffer, aliases map[string]string, policie
 	return nil
 }
 
-func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, policySets []api.Resource, addressSets map[string]nftIPAddressSet) error {
+func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, addressSets map[string]nftIPAddressSet) error {
 	writeNftTablePreamble(buf, "ip", "routerd_policy")
 	buf.WriteString("table ip routerd_policy {\n")
-	writeIPv4AddressSets(buf, referencedIPv4PolicyIPAddressSets(policies, policySets, addressSets))
+	writeIPv4AddressSets(buf, referencedIPv4PolicyIPAddressSets(policies, addressSets))
 	buf.WriteString("  chain prerouting {\n")
 	buf.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")
 	for _, res := range policies {
-		spec, err := res.IPv4PolicyRouteSpec()
+		spec, err := res.EgressRoutePolicySpec()
 		if err != nil {
 			return err
 		}
-		matches, err := nftIPv4PolicyRouteMatches(res.ID(), spec, addressSets)
+		matches, err := nftEgressRoutePolicyMatches(res.ID(), spec, addressSets)
 		if err != nil {
 			return err
 		}
-		for _, match := range matches {
-			buf.WriteString("    " + match + " meta mark set " + nftMark(spec.Mark) + "\n")
-		}
-	}
-	for _, res := range policySets {
-		spec, err := res.IPv4PolicyRouteSetSpec()
-		if err != nil {
-			return err
-		}
-		matches, err := nftIPv4PolicyRouteSetMatches(res.ID(), spec, addressSets)
-		if err != nil {
-			return err
-		}
-		hashExpr, err := nftIPv4PolicyRouteSetHash(res.ID(), spec)
-		if err != nil {
-			return err
-		}
-		markMap := nftPolicyRouteSetMarkMap(spec.Targets)
-		for _, match := range matches {
-			buf.WriteString("    " + match + " ct mark != 0x0 meta mark set ct mark\n")
-			prefix := strings.TrimSpace(match + " ct mark 0x0")
-			buf.WriteString("    " + prefix + " meta mark set " + hashExpr + " mod " + strconv.Itoa(len(spec.Targets)) + " map { " + markMap + " }\n")
-			buf.WriteString("    " + prefix + " ct mark set meta mark\n")
+		for _, candidate := range spec.Candidates {
+			if len(candidate.Targets) > 0 {
+				hashExpr, err := nftEgressRoutePolicyHash(res.ID(), spec)
+				if err != nil {
+					return err
+				}
+				markMap := nftEgressRoutePolicyTargetMarkMap(candidate.Targets)
+				for _, match := range matches {
+					buf.WriteString("    " + match + " ct mark != 0x0 meta mark set ct mark\n")
+					prefix := strings.TrimSpace(match + " ct mark 0x0")
+					buf.WriteString("    " + prefix + " meta mark set " + hashExpr + " mod " + strconv.Itoa(len(candidate.Targets)) + " map { " + markMap + " }\n")
+					buf.WriteString("    " + prefix + " ct mark set meta mark\n")
+				}
+				continue
+			}
+			if spec.Mode == "priority" {
+				continue
+			}
+			if candidate.Mark == 0 {
+				continue
+			}
+			for _, match := range matches {
+				buf.WriteString("    " + match + " meta mark set " + nftMark(candidate.Mark) + "\n")
+			}
 		}
 	}
 	buf.WriteString("  }\n")
@@ -1776,17 +1770,7 @@ func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, polic
 	return nil
 }
 
-func nftIPv4PolicyRouteMatches(resourceID string, spec api.IPv4PolicyRouteSpec, addressSets map[string]nftIPAddressSet) ([]string, error) {
-	return nftIPv4Matches(resourceID, nftIPv4MatchSpec{
-		SourceCIDRs:               spec.SourceCIDRs,
-		DestinationCIDRs:          spec.DestinationCIDRs,
-		DestinationSetRefs:        spec.DestinationSetRefs,
-		ExcludeDestinationCIDRs:   spec.ExcludeDestinationCIDRs,
-		ExcludeDestinationSetRefs: spec.ExcludeDestinationSetRefs,
-	}, addressSets)
-}
-
-func nftIPv4PolicyRouteSetMatches(resourceID string, spec api.IPv4PolicyRouteSetSpec, addressSets map[string]nftIPAddressSet) ([]string, error) {
+func nftEgressRoutePolicyMatches(resourceID string, spec api.EgressRoutePolicySpec, addressSets map[string]nftIPAddressSet) ([]string, error) {
 	return nftIPv4Matches(resourceID, nftIPv4MatchSpec{
 		SourceCIDRs:               spec.SourceCIDRs,
 		DestinationCIDRs:          spec.DestinationCIDRs,
@@ -1899,7 +1883,7 @@ func nftIPAddressSetRef(resourceID, ref string, sets map[string]nftIPAddressSet)
 	return set, nil
 }
 
-func nftIPv4PolicyRouteSetHash(resourceID string, spec api.IPv4PolicyRouteSetSpec) (string, error) {
+func nftEgressRoutePolicyHash(resourceID string, spec api.EgressRoutePolicySpec) (string, error) {
 	var fields []string
 	for _, field := range spec.HashFields {
 		switch field {
@@ -1917,12 +1901,28 @@ func nftIPv4PolicyRouteSetHash(resourceID string, spec api.IPv4PolicyRouteSetSpe
 	return "jhash " + strings.Join(fields, " . "), nil
 }
 
-func nftPolicyRouteSetMarkMap(targets []api.IPv4PolicyRouteTarget) string {
+func nftEgressRoutePolicyTargetMarkMap(targets []api.EgressRoutePolicyTarget) string {
 	parts := make([]string, 0, len(targets))
 	for i, target := range targets {
 		parts = append(parts, strconv.Itoa(i)+" : "+nftMark(target.Mark))
 	}
 	return strings.Join(parts, ", ")
+}
+
+func egressPolicyRendersPolicyMarks(spec api.EgressRoutePolicySpec) bool {
+	mode := defaultString(spec.Mode, "")
+	if mode == "mark" || mode == "hash" {
+		return true
+	}
+	for _, candidate := range spec.Candidates {
+		if len(candidate.Targets) > 0 {
+			return true
+		}
+		if candidate.Mark != 0 {
+			return mode != "priority"
+		}
+	}
+	return false
 }
 
 func nftSourceNATRules(ifname, cidr string, translation api.IPv4NATTranslationSpec) ([]string, error) {

@@ -137,13 +137,13 @@ func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTest
 		{specName: "DHCPv6ServerSpec", resource: testResource(api.NetAPIVersion, "DHCPv6Server", "lan-v6", api.DHCPv6ServerSpec{Server: "dnsmasq", DelegatedAddress: "lan-v6", When: when})},
 		{specName: "DSLiteTunnelSpec", resource: testResource(api.NetAPIVersion, "DSLiteTunnel", "dslite", api.DSLiteTunnelSpec{Interface: "wan", AFTRIPv6: "2001:db8::1", When: when})},
 		{specName: "HealthCheckSpec", resource: testResource(api.NetAPIVersion, "HealthCheck", "internet", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", When: when})},
-		{specName: "IPv4DefaultRoutePolicyCandidate", resource: testResource(api.NetAPIVersion, "IPv4DefaultRoutePolicy", "default-v4", api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{{Interface: "wan", Priority: 1, Table: 100, Mark: 100, When: when}}})},
+		{specName: "EgressRoutePolicySpec", resource: testResource(api.NetAPIVersion, "EgressRoutePolicy", "default-v4", api.EgressRoutePolicySpec{When: when, Candidates: []api.EgressRoutePolicyCandidate{{Interface: "wan", Priority: 1, Table: 100, Mark: 100}}})},
+		{specName: "EgressRoutePolicyCandidate", resource: testResource(api.NetAPIVersion, "EgressRoutePolicy", "default-v4", api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{{Interface: "wan", Priority: 1, Table: 100, Mark: 100, When: when}}})},
 		{specName: "NAT44RuleSpec", resource: testResource(api.NetAPIVersion, "NAT44Rule", "lan", api.NAT44RuleSpec{OutboundInterface: "wan", SourceCIDRs: []string{"192.0.2.0/24"}, Translation: api.IPv4NATTranslationSpec{Type: "interfaceAddress"}, When: when})},
 		{specName: "PortForwardSpec", resource: testResource(api.FirewallAPIVersion, "PortForward", "web", api.PortForwardSpec{Listen: api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 443}, Target: api.IngressTargetSpec{Address: "192.0.2.10", Port: 8443}, When: when})},
 		{specName: "IngressServiceSpec", resource: testResource(api.FirewallAPIVersion, "IngressService", "web", api.IngressServiceSpec{Listen: api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 443}, Backends: []api.IngressBackendSpec{{Address: "192.0.2.10", Port: 8443}}, When: when})},
 		{specName: "IPAddressSetSpec", resource: testResource(api.NetAPIVersion, "IPAddressSet", "blocked", api.IPAddressSetSpec{Addresses: []string{"192.0.2.10"}, When: when})},
 		{specName: "LocalServiceRedirectSpec", resource: testResource(api.FirewallAPIVersion, "LocalServiceRedirect", "dns", api.LocalServiceRedirectSpec{Interface: "lan", Rules: []api.LocalServiceRedirectRuleSpec{{Protocols: []string{"tcp"}, DestinationSetRef: "dns-servers", DestinationPort: 53, RedirectPort: 5353}}, When: when})},
-		{specName: "IPv4PolicyRouteSetSpec", resource: testResource(api.NetAPIVersion, "IPv4PolicyRouteSet", "split", api.IPv4PolicyRouteSetSpec{HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"192.0.2.0/24"}, Targets: []api.IPv4PolicyRouteTarget{{OutboundInterface: "wan-a", Table: 100, Priority: 100, Mark: 100}, {OutboundInterface: "wan-b", Table: 101, Priority: 101, Mark: 101}}, When: when})},
 	}
 }
 
@@ -559,7 +559,7 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 	}
 }
 
-func TestValidateIPv4DefaultRoutePolicyStaticRequiresGateway(t *testing.T) {
+func TestValidateEgressRoutePolicyStaticRequiresGateway(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -570,9 +570,9 @@ func TestValidateIPv4DefaultRoutePolicyStaticRequiresGateway(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
 				Metadata: api.ObjectMeta{Name: "default-v4"},
-				Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
+				Spec: api.EgressRoutePolicySpec{Mode: "priority", Candidates: []api.EgressRoutePolicyCandidate{
 					{Interface: "wan", GatewaySource: "static", Priority: 10, Table: 100, Mark: 256},
 				}},
 			},
@@ -600,9 +600,9 @@ func TestValidateRejectsHealthCheckFwMarkMismatchWithRouteTarget(t *testing.T) {
 				Spec:     api.HealthCheckSpec{Target: "1.1.1.1", Protocol: "tcp", Port: 443, FwMark: 0x999},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
 				Metadata: api.ObjectMeta{Name: "default-v4"},
-				Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
+				Spec: api.EgressRoutePolicySpec{Mode: "priority", Candidates: []api.EgressRoutePolicyCandidate{
 					{Name: "wan", Interface: "wan", GatewaySource: "none", Priority: 10, Table: 100, Mark: 0x100, HealthCheck: "internet-via-wan"},
 				}},
 			},
@@ -614,7 +614,7 @@ func TestValidateRejectsHealthCheckFwMarkMismatchWithRouteTarget(t *testing.T) {
 	}
 }
 
-func TestValidateIPv4DefaultRoutePolicyRouteSetCandidate(t *testing.T) {
+func TestValidateEgressRoutePolicyTargetCandidate(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -625,35 +625,32 @@ func TestValidateIPv4DefaultRoutePolicyRouteSetCandidate(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"},
-				Metadata: api.ObjectMeta{Name: "wan-balance"},
-				Spec: api.IPv4PolicyRouteSetSpec{
-					Mode:             "hash",
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
+				Metadata: api.ObjectMeta{Name: "default-v4"},
+				Spec: api.EgressRoutePolicySpec{
+					Mode:             "priority",
 					HashFields:       []string{"sourceAddress", "destinationAddress"},
 					SourceCIDRs:      []string{"192.168.10.0/24"},
 					DestinationCIDRs: []string{"0.0.0.0/0"},
-					Targets: []api.IPv4PolicyRouteTarget{
-						{OutboundInterface: "wan", Table: 100, Priority: 10000, Mark: 256},
-						{OutboundInterface: "wan", Table: 101, Priority: 10001, Mark: 257},
-					},
+					Candidates: []api.EgressRoutePolicyCandidate{{
+						Name:     "balanced",
+						Priority: 10,
+						Targets: []api.EgressRoutePolicyTarget{
+							{Interface: "wan", Table: 100, Priority: 10000, Mark: 256},
+							{Interface: "wan", Table: 101, Priority: 10001, Mark: 257},
+						},
+					}},
 				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
-				Metadata: api.ObjectMeta{Name: "default-v4"},
-				Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
-					{Name: "balanced", RouteSet: "wan-balance", Priority: 10},
-				}},
 			},
 		}},
 	}
 
 	if err := Validate(router); err != nil {
-		t.Fatalf("routeSet default route candidate should be valid: %v", err)
+		t.Fatalf("target default route candidate should be valid: %v", err)
 	}
 }
 
-func TestValidateIPv4DefaultRoutePolicyRouteSetCandidateRejectsDirectFields(t *testing.T) {
+func TestValidateEgressRoutePolicyTargetCandidateRejectsDirectFields(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -664,35 +661,21 @@ func TestValidateIPv4DefaultRoutePolicyRouteSetCandidateRejectsDirectFields(t *t
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"},
-				Metadata: api.ObjectMeta{Name: "wan-balance"},
-				Spec: api.IPv4PolicyRouteSetSpec{
-					Mode:             "hash",
-					HashFields:       []string{"sourceAddress", "destinationAddress"},
-					SourceCIDRs:      []string{"192.168.10.0/24"},
-					DestinationCIDRs: []string{"0.0.0.0/0"},
-					Targets: []api.IPv4PolicyRouteTarget{
-						{OutboundInterface: "wan", Table: 100, Priority: 10000, Mark: 256},
-						{OutboundInterface: "wan", Table: 101, Priority: 10001, Mark: 257},
-					},
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
 				Metadata: api.ObjectMeta{Name: "default-v4"},
-				Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{
-					{Name: "balanced", RouteSet: "wan-balance", Priority: 10, Mark: 256},
+				Spec: api.EgressRoutePolicySpec{Mode: "priority", HashFields: []string{"sourceAddress"}, Candidates: []api.EgressRoutePolicyCandidate{
+					{Name: "balanced", Priority: 10, Mark: 256, Targets: []api.EgressRoutePolicyTarget{{Interface: "wan", Table: 100, Priority: 10000, Mark: 256}}},
 				}},
 			},
 		}},
 	}
 
 	if err := Validate(router); err == nil {
-		t.Fatal("expected routeSet candidate with direct route mark to be rejected")
+		t.Fatal("expected target candidate with direct route mark to be rejected")
 	}
 }
 
-func TestValidateEgressRoutePolicyDynamicGatewayRequiresGatewayFrom(t *testing.T) {
+func TestValidateEgressRoutePolicyDynamicGatewayAllowsAutoDerivation(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -715,19 +698,8 @@ func TestValidateEgressRoutePolicyDynamicGatewayRequiresGatewayFrom(t *testing.T
 		}},
 	}
 
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "gatewayFrom") {
-		t.Fatalf("Validate error = %v, want gatewayFrom requirement", err)
-	}
-
-	policy := &router.Spec.Resources[1]
-	spec, err := policy.EgressRoutePolicySpec()
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec.Candidates[0].GatewayFrom = api.StatusValueSourceSpec{Resource: "DHCPv4Client/wan", Field: "gateway"}
-	policy.Spec = spec
 	if err := Validate(router); err != nil {
-		t.Fatalf("Validate with gatewayFrom: %v", err)
+		t.Fatalf("Validate with dynamic gateway auto-derivation: %v", err)
 	}
 }
 

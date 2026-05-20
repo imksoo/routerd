@@ -1026,28 +1026,97 @@ type HealthCheckSpec struct {
 }
 
 type EgressRoutePolicySpec struct {
-	Family           string                       `yaml:"family,omitempty" json:"family,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
-	DestinationCIDRs []string                     `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	Selection        string                       `yaml:"selection,omitempty" json:"selection,omitempty" jsonschema:"enum=highest-weight-ready,enum=weighted-ecmp"`
-	Hysteresis       string                       `yaml:"hysteresis,omitempty" json:"hysteresis,omitempty"`
-	Candidates       []EgressRoutePolicyCandidate `yaml:"candidates" json:"candidates"`
+	Family                    string                       `yaml:"family,omitempty" json:"family,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
+	Mode                      string                       `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=priority,enum=mark,enum=hash"`
+	SourceCIDRs               []string                     `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	DestinationCIDRs          []string                     `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	DestinationSetRefs        []string                     `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
+	ExcludeDestinationCIDRs   []string                     `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
+	ExcludeDestinationSetRefs []string                     `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
+	HashFields                []string                     `yaml:"hashFields,omitempty" json:"hashFields,omitempty"`
+	Selection                 string                       `yaml:"selection,omitempty" json:"selection,omitempty" jsonschema:"enum=highest-weight-ready,enum=weighted-ecmp"`
+	Hysteresis                string                       `yaml:"hysteresis,omitempty" json:"hysteresis,omitempty"`
+	Candidates                []EgressRoutePolicyCandidate `yaml:"candidates" json:"candidates"`
+	When                      ResourceWhenSpec             `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type EgressRoutePolicyCandidate struct {
-	Name          string                   `yaml:"name,omitempty" json:"name,omitempty"`
-	Disabled      bool                     `yaml:"disabled,omitempty" json:"disabled,omitempty"`
-	Source        string                   `yaml:"source,omitempty" json:"source,omitempty"`
-	Device        string                   `yaml:"device,omitempty" json:"device,omitempty"`
-	DeviceFrom    StatusValueSourceSpec    `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`
-	Gateway       string                   `yaml:"gateway,omitempty" json:"gateway,omitempty"`
-	GatewayFrom   StatusValueSourceSpec    `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
-	GatewaySource string                   `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=,enum=static,enum=dhcpv4,enum=dhcpv6,enum=none"`
-	RouteTable    int                      `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	Metric        int                      `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
-	Weight        int                      `yaml:"weight,omitempty" json:"weight,omitempty" jsonschema:"minimum=0"`
-	HealthCheck   string                   `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
-	DependsOn     []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
-	ReadyWhen     []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
+	Name          string                    `yaml:"name,omitempty" json:"name,omitempty"`
+	Disabled      bool                      `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+	Source        string                    `yaml:"source,omitempty" json:"source,omitempty"`
+	Interface     string                    `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Device        string                    `yaml:"device,omitempty" json:"device,omitempty"`
+	DeviceFrom    StatusValueSourceSpec     `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`
+	Gateway       string                    `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	GatewayFrom   StatusValueSourceSpec     `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
+	GatewaySource string                    `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=,enum=static,enum=dhcpv4,enum=dhcpv6,enum=none"`
+	Table         int                       `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	RouteTable    int                       `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	Priority      int                       `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=0,maximum=32765"`
+	Mark          int                       `yaml:"mark,omitempty" json:"mark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	RouteMetric   int                       `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	Metric        int                       `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+	Weight        int                       `yaml:"weight,omitempty" json:"weight,omitempty" jsonschema:"minimum=0"`
+	HealthCheck   string                    `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
+	Targets       []EgressRoutePolicyTarget `yaml:"targets,omitempty" json:"targets,omitempty"`
+	DependsOn     []ResourceDependencySpec  `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen     []ReadyWhenSpec           `yaml:"ready_when,omitempty" json:"-"`
+	When          ResourceWhenSpec          `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type EgressRoutePolicyTarget struct {
+	Name              string `yaml:"name,omitempty" json:"name,omitempty"`
+	Interface         string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	OutboundInterface string `yaml:"outboundInterface,omitempty" json:"outboundInterface,omitempty"`
+	Table             int    `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	RouteTable        int    `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	Priority          int    `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=0,maximum=32765"`
+	Mark              int    `yaml:"mark,omitempty" json:"mark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	RouteMetric       int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	Metric            int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+	HealthCheck       string `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
+}
+
+func (c EgressRoutePolicyCandidate) EffectiveInterface() string {
+	if c.Interface != "" {
+		return c.Interface
+	}
+	return c.Device
+}
+
+func (c EgressRoutePolicyCandidate) EffectiveTable() int {
+	if c.Table != 0 {
+		return c.Table
+	}
+	return c.RouteTable
+}
+
+func (c EgressRoutePolicyCandidate) EffectiveMetric() int {
+	if c.RouteMetric != 0 {
+		return c.RouteMetric
+	}
+	return c.Metric
+}
+
+func (t EgressRoutePolicyTarget) EffectiveInterface() string {
+	if t.OutboundInterface != "" {
+		return t.OutboundInterface
+	}
+	return t.Interface
+}
+
+func (t EgressRoutePolicyTarget) EffectiveTable() int {
+	if t.Table != 0 {
+		return t.Table
+	}
+	return t.RouteTable
+}
+
+func (t EgressRoutePolicyTarget) EffectiveMetric() int {
+	if t.RouteMetric != 0 {
+		return t.RouteMetric
+	}
+	return t.Metric
 }
 
 type EventRuleSpec struct {
@@ -1084,28 +1153,6 @@ type DerivedEventSpec struct {
 	RetractWhen string          `yaml:"retractWhen,omitempty" json:"retractWhen,omitempty" jsonschema:"enum=any_false,enum=all_false"`
 	Hysteresis  string          `yaml:"hysteresis,omitempty" json:"hysteresis,omitempty"`
 	EmitInitial bool            `yaml:"emitInitial,omitempty" json:"emitInitial,omitempty"`
-}
-
-type IPv4DefaultRoutePolicySpec struct {
-	Mode                    string                            `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=priority"`
-	SourceCIDRs             []string                          `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
-	DestinationCIDRs        []string                          `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	ExcludeDestinationCIDRs []string                          `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
-	Candidates              []IPv4DefaultRoutePolicyCandidate `yaml:"candidates" json:"candidates"`
-}
-
-type IPv4DefaultRoutePolicyCandidate struct {
-	Name          string           `yaml:"name,omitempty" json:"name,omitempty"`
-	Interface     string           `yaml:"interface,omitempty" json:"interface,omitempty"`
-	RouteSet      string           `yaml:"routeSet,omitempty" json:"routeSet,omitempty"`
-	GatewaySource string           `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=none,enum=dhcpv4,enum=static"`
-	Gateway       string           `yaml:"gateway,omitempty" json:"gateway,omitempty"`
-	Priority      int              `yaml:"priority" json:"priority" jsonschema:"minimum=1"`
-	Table         int              `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=1,maximum=4294967295"`
-	Mark          int              `yaml:"mark,omitempty" json:"mark,omitempty" jsonschema:"minimum=1,maximum=4294967295"`
-	RouteMetric   int              `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-	HealthCheck   string           `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
-	When          ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type NAT44RuleSpec struct {
@@ -1208,42 +1255,6 @@ type LocalServiceRedirectRuleSpec struct {
 	DestinationSetRef string   `yaml:"destinationSetRef" json:"destinationSetRef"`
 	DestinationPort   int      `yaml:"destinationPort" json:"destinationPort" jsonschema:"minimum=1,maximum=65535"`
 	RedirectPort      int      `yaml:"redirectPort" json:"redirectPort" jsonschema:"minimum=1,maximum=65535"`
-}
-
-type IPv4PolicyRouteSpec struct {
-	OutboundInterface         string   `yaml:"outboundInterface" json:"outboundInterface"`
-	Table                     int      `yaml:"table" json:"table" jsonschema:"minimum=1,maximum=4294967295"`
-	Priority                  int      `yaml:"priority" json:"priority" jsonschema:"minimum=1,maximum=32765"`
-	Mark                      int      `yaml:"mark" json:"mark" jsonschema:"minimum=1,maximum=4294967295"`
-	SourceCIDRs               []string `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
-	DestinationCIDRs          []string `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	DestinationSetRefs        []string `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
-	ExcludeDestinationCIDRs   []string `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
-	ExcludeDestinationSetRefs []string `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
-	RouteMetric               int      `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-	AllowLocalSourceNAT       bool     `yaml:"allowLocalSourceNAT,omitempty" json:"allowLocalSourceNAT,omitempty"`
-}
-
-type IPv4PolicyRouteSetSpec struct {
-	Mode                      string                  `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=hash"`
-	HashFields                []string                `yaml:"hashFields,omitempty" json:"hashFields,omitempty"`
-	SourceCIDRs               []string                `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
-	DestinationCIDRs          []string                `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	DestinationSetRefs        []string                `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
-	ExcludeDestinationCIDRs   []string                `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
-	ExcludeDestinationSetRefs []string                `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
-	Targets                   []IPv4PolicyRouteTarget `yaml:"targets" json:"targets"`
-	When                      ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
-}
-
-type IPv4PolicyRouteTarget struct {
-	Name              string `yaml:"name,omitempty" json:"name,omitempty"`
-	OutboundInterface string `yaml:"outboundInterface" json:"outboundInterface"`
-	Table             int    `yaml:"table" json:"table" jsonschema:"minimum=1,maximum=4294967295"`
-	Priority          int    `yaml:"priority" json:"priority" jsonschema:"minimum=1,maximum=32765"`
-	Mark              int    `yaml:"mark" json:"mark" jsonschema:"minimum=1,maximum=4294967295"`
-	RouteMetric       int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-	HealthCheck       string `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
 }
 
 type IPv4NATTranslationSpec struct {
@@ -1583,10 +1594,6 @@ func (r Resource) DerivedEventSpec() (DerivedEventSpec, error) {
 	return specAs[DerivedEventSpec](r)
 }
 
-func (r Resource) IPv4DefaultRoutePolicySpec() (IPv4DefaultRoutePolicySpec, error) {
-	return specAs[IPv4DefaultRoutePolicySpec](r)
-}
-
 func (r Resource) NAT44RuleSpec() (NAT44RuleSpec, error) {
 	return specAs[NAT44RuleSpec](r)
 }
@@ -1605,14 +1612,6 @@ func (r Resource) IPAddressSetSpec() (IPAddressSetSpec, error) {
 
 func (r Resource) LocalServiceRedirectSpec() (LocalServiceRedirectSpec, error) {
 	return specAs[LocalServiceRedirectSpec](r)
-}
-
-func (r Resource) IPv4PolicyRouteSpec() (IPv4PolicyRouteSpec, error) {
-	return specAs[IPv4PolicyRouteSpec](r)
-}
-
-func (r Resource) IPv4PolicyRouteSetSpec() (IPv4PolicyRouteSetSpec, error) {
-	return specAs[IPv4PolicyRouteSetSpec](r)
 }
 
 func (r Resource) FirewallZoneSpec() (FirewallZoneSpec, error) {
