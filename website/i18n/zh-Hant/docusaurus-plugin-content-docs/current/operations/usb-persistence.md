@@ -22,7 +22,7 @@ routerd/
   state/
 ```
 
-啟動時，`/usr/share/routerd/live-persistence.sh init` 會嘗試尋找 USB 裝置。它先檢查記錄過的裝置，再檢查 kernel command line 上的 `routerd.usb=`，最後尋找標籤為 `ROUTERD` 的分割區。
+啟動時，`/usr/share/routerd/live-persistence.sh init` 會嘗試尋找 config media。它先檢查記錄過的裝置，再檢查 kernel command line 上的 `routerd.usb=`，最後尋找標籤為 `ROUTERD_CONFIG` 或 `ROUTERD` 的裝置。可寫入的分割區會用於 persistence。Proxmox `media=cdrom` config ISO 這類 read-only ISO9660/UDF CD-ROM media 只用於 config import，flush 會停用。
 
 選中的分割區會掛載到 `/media/routerd-usb`。如果存在已保存的 `/media/routerd-usb/routerd/router.yaml`，它會被複製到 `/usr/local/etc/routerd/router.yaml`，然後由 live ISO 的啟動流程套用。如果沒有找到已保存設定，且 `/usr/local/etc/routerd/router.yaml` 也不存在，ISO 會啟動設定精靈。
 
@@ -35,6 +35,7 @@ live helper 使用 `blkid` 偵測檔案系統，並根據檔案系統選擇 moun
 | `ext4` | `rw,async,noatime` | 持久化路由器用途的首選。 |
 | `vfat` | `rw,async,noatime,utf8,shortname=mixed` | 適合簡單 USB 媒體。沒有 Unix 權限。 |
 | `exfat` | `rw,async,noatime` | 適合與桌面作業系統共用的大容量 USB 媒體。 |
+| `iso9660` / `udf` | `ro,noatime` | read-only config import media。persistence flush 會停用。 |
 
 FAT32 在 `blkid` 輸出中通常顯示為 `vfat`。live helper 不會先按 FAT32 硬編碼掛載，而是先偵測檔案系統類型，再選擇對應的掛載選項。
 

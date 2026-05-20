@@ -245,6 +245,9 @@ mount_options()
     fstype=$(fs_type "${dev}")
     policy=$(mount_policy)
     case "${fstype}" in
+        iso9660|udf)
+            printf '%s\n' "ro,noatime"
+            ;;
         ext2|ext3|ext4)
             printf '%s\n' "rw,${policy},noatime"
             ;;
@@ -318,7 +321,7 @@ discover_usb_candidates()
             dev=$(blkid -L ROUTERD 2>/dev/null || true)
             [ -n "${dev}" ] && [ -b "${dev}" ] && printf '%s\n' "${dev}"
         fi
-        for dev in /dev/disk/by-label/ROUTERD_CONFIG /dev/disk/by-label/ROUTERD /dev/sd*[0-9] /dev/vd*[0-9]; do
+        for dev in /dev/disk/by-label/ROUTERD_CONFIG /dev/disk/by-label/ROUTERD /dev/sd*[0-9] /dev/vd*[0-9] /dev/sr*; do
             [ -b "${dev}" ] || continue
             printf '%s\n' "${dev}"
         done
@@ -339,6 +342,15 @@ install_flush_job()
 /usr/share/routerd/live-persistence.sh flush >/run/routerd/logs/usb-flush.log 2>&1 || true
 EOS
     chmod 0755 /etc/periodic/daily/routerd-usb-flush
+}
+
+read_only_config_media()
+{
+    dev=$1
+    case "$(fs_type "${dev}")" in
+        iso9660|udf) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 setup_lbu()
@@ -509,7 +521,9 @@ case "${1:-init}" in
         if [ -n "${dev}" ]; then
             printf '%s\n' "${dev}" > "${usb_state_file}"
             [ "${restored}" = "yes" ] || restore_config "${dev}" || true
-            if mount_usb "${dev}" 2>/dev/null; then
+            if read_only_config_media "${dev}"; then
+                log "config media ${dev} is read-only; USB persistence flush disabled"
+            elif mount_usb "${dev}" 2>/dev/null; then
                 enabled=$(sed -n '1p' "${mount_dir}/${persist_dir_name}/usb-flush-enabled" 2>/dev/null || true)
                 [ -n "${enabled}" ] || enabled=yes
                 install_flush_job "${enabled}"
@@ -520,7 +534,7 @@ case "${1:-init}" in
         ;;
     list-devices)
         if command -v lsblk >/dev/null 2>&1; then
-            lsblk -rpno NAME,SIZE,FSTYPE,LABEL,TYPE 2>/dev/null | awk '$5 == "part" {print "  - " $1 " " $2 " " $3 " " $4}'
+            lsblk -rpno NAME,SIZE,FSTYPE,LABEL,TYPE 2>/dev/null | awk '$5 == "part" || $5 == "rom" {print "  - " $1 " " $2 " " $3 " " $4 " " $5}'
         elif command -v blkid >/dev/null 2>&1; then
             for dev in $(blkid -o device 2>/dev/null); do
                 [ -b "${dev}" ] && echo "  - ${dev} $(blkid "${dev}" 2>/dev/null)"
@@ -836,7 +850,7 @@ set timeout=5
 set default=0
 
 menuentry "routerd live ${version}" {
-    linux /boot/vmlinuz-lts modules=loop,squashfs,sd-mod,usb-storage,ext4,vfat,exfat,virtio,virtio_blk,virtio_net quiet alpine_dev=cdrom:iso9660 modloop=/boot/modloop-lts console=tty0 console=ttyS0,115200n8
+    linux /boot/vmlinuz-lts modules=loop,squashfs,sd-mod,sr-mod,cdrom,isofs,ata_piix,ata_generic,usb-storage,ext4,vfat,exfat,virtio,virtio_blk,virtio_net quiet alpine_dev=cdrom:iso9660 modloop=/boot/modloop-lts console=tty0 console=ttyS0,115200n8
     initrd /boot/initramfs-lts
 }
 EOF
@@ -853,7 +867,7 @@ MENU LABEL routerd live ${version}
 KERNEL /boot/vmlinuz-lts
 INITRD /boot/initramfs-lts
 FDTDIR /boot/dtbs-lts
-APPEND modules=loop,squashfs,sd-mod,usb-storage,ext4,vfat,exfat,virtio,virtio_blk,virtio_net quiet console=tty0 console=ttyS0,115200n8
+APPEND modules=loop,squashfs,sd-mod,sr-mod,cdrom,isofs,ata_piix,ata_generic,usb-storage,ext4,vfat,exfat,virtio,virtio_blk,virtio_net quiet console=tty0 console=ttyS0,115200n8
 EOF
 fi
 

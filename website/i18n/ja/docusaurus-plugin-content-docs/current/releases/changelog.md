@@ -15,6 +15,9 @@ routerd は `vYYYYMMDD.HHmm` 形式の日付と時刻に基づく版番号を使
 - 削除された `PPPoESession` について、ownership ledger に残る生成 artifact を
   garbage collect するようにしました。対象は PPP peer file、runtime socket、
   runtime directory、state directory、停止・無効化済み systemd unit です。
+- Live ISO が CD-ROM として接続された read-only ISO9660/UDF config media からも
+  router config を import できるようにしました。Proxmox の `media=cdrom` で
+  `ROUTERD_CONFIG` label を付けた config ISO を対象に含めます。
 
 ## v20260520.2307
 

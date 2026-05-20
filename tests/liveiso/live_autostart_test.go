@@ -48,6 +48,10 @@ func TestLivePersistenceSupportsLabeledConfigImport(t *testing.T) {
 		"config_source_file=/run/routerd/live-config-source",
 		"config_checksum_file=/run/routerd/live-config-sha256",
 		"blkid -L ROUTERD_CONFIG",
+		"/dev/sr*",
+		"iso9660|udf",
+		"read_only_config_media",
+		"$5 == \"part\" || $5 == \"rom\"",
 		"select_config_source()",
 		"${mount_dir}/${persist_dir_name}/hosts/${host}.yaml",
 		"${mount_dir}/${persist_dir_name}/hosts/${mac}.yaml",
@@ -58,6 +62,27 @@ func TestLivePersistenceSupportsLabeledConfigImport(t *testing.T) {
 	for _, needle := range required {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("live persistence script missing %q", needle)
+		}
+	}
+}
+
+func TestLiveISOIncludesCDROMModulesForConfigMedia(t *testing.T) {
+	data, err := os.ReadFile("../../scripts/build-live-iso.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	required := []string{
+		"sr-mod",
+		"cdrom",
+		"isofs",
+		"ata_piix",
+		"ata_generic",
+		"alpine_dev=cdrom:iso9660",
+	}
+	for _, needle := range required {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("live ISO boot config missing %q", needle)
 		}
 	}
 }

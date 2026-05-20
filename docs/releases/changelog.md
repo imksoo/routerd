@@ -15,6 +15,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Garbage-collect deleted `PPPoESession` artifacts recorded in the ownership
   ledger, including generated PPP peer files, runtime sockets, runtime
   directories, state directories, and the stopped/disabled systemd unit.
+- Let the Live ISO import router config from read-only ISO9660/UDF config media
+  attached as CD-ROM devices, including Proxmox `media=cdrom` config ISOs
+  labeled `ROUTERD_CONFIG`.
 
 ## v20260520.2307
 

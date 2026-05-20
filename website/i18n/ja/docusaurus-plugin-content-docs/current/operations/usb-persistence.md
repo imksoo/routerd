@@ -25,10 +25,13 @@ routerd/
   state/
 ```
 
-起動時は `/usr/share/routerd/live-persistence.sh init` が USB デバイスを探します。
+起動時は `/usr/share/routerd/live-persistence.sh init` が config media を探します。
 最初に記録済みデバイスを確認します。
 次に kernel command line の `routerd.usb=` を確認します。
-最後に `ROUTERD_CONFIG` または `ROUTERD` ラベルのパーティションを探します。
+最後に `ROUTERD_CONFIG` または `ROUTERD` ラベルの device を探します。
+書き込み可能な partition は persistence 用に使います。Proxmox の `media=cdrom`
+config ISO のような read-only ISO9660/UDF CD-ROM media は config import 専用として
+扱い、flush は無効化します。
 
 選択したパーティションは `/media/routerd-usb` に mount します。
 helper は host 固有の config を先に探し、その後 generic config を探します。
@@ -55,6 +58,7 @@ live helper は `blkid` でファイルシステムを判定します。
 | `ext4` | `rw,async,noatime` | 永続ルーター用途では第一候補です。 |
 | `vfat` | `rw,async,noatime,utf8,shortname=mixed` | 単純な USB メモリーで便利です。Unix permission はありません。 |
 | `exfat` | `rw,async,noatime` | 大容量 USB メモリーを desktop OS と共用しやすい形式です。 |
+| `iso9660` / `udf` | `ro,noatime` | read-only config import media です。persistence flush は無効です。 |
 
 FAT32 は通常 `blkid` では `vfat` として表示されます。
 live helper は FAT32 と決め打ちで mount しません。

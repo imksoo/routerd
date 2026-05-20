@@ -27,9 +27,11 @@ routerd/
   state/
 ```
 
-At boot, `/usr/share/routerd/live-persistence.sh init` tries to find the USB
-device. It first checks the remembered device, then `routerd.usb=` on the kernel
-command line, then partitions labeled `ROUTERD_CONFIG` or `ROUTERD`.
+At boot, `/usr/share/routerd/live-persistence.sh init` tries to find config
+media. It first checks the remembered device, then `routerd.usb=` on the kernel
+command line, then devices labeled `ROUTERD_CONFIG` or `ROUTERD`. Writable
+partitions are used for persistence. Read-only ISO9660/UDF CD-ROM media, such
+as a Proxmox `media=cdrom` config ISO, are accepted for config import only.
 
 The selected partition is mounted at `/media/routerd-usb`. The helper looks for
 host-specific configs first, then a generic config:
@@ -56,6 +58,7 @@ filesystem-specific options.
 | `ext4` | `rw,async,noatime` | Best choice for persistent router use. |
 | `vfat` | `rw,async,noatime,utf8,shortname=mixed` | Useful for simple removable media. No Unix permissions. |
 | `exfat` | `rw,async,noatime` | Useful for larger USB sticks shared with desktop OSes. |
+| `iso9660` / `udf` | `ro,noatime` | Read-only config import media. Persistence flush is disabled. |
 
 FAT32 normally appears as `vfat` in `blkid` output. The live helper does not
 force a FAT32 mount first; it detects the filesystem type and then chooses

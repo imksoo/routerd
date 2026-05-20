@@ -15,6 +15,9 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - 针对已删除的 `PPPoESession`，现在会 garbage collect ownership ledger 中
   留下的生成 artifact，包括 PPP peer file、runtime socket、runtime
   directory、state directory，以及已停止/停用的 systemd unit。
+- Live ISO 现在也可以从以 CD-ROM 连接的 read-only ISO9660/UDF config media
+  import router config，包含 Proxmox `media=cdrom` 且 label 为
+  `ROUTERD_CONFIG` 的 config ISO。
 
 ## v20260520.2307
 
