@@ -53,7 +53,6 @@ spec:
     spec:
       interface: ens18
       prefixLength: 60
-      iaid: "1"
   - apiVersion: net.routerd.net/v1alpha1
     kind: DHCPv6Information
     metadata:
@@ -373,11 +372,9 @@ spec:
     metadata:
       name: internet-tcp443
     spec:
-      daemon: routerd-healthcheck
       targetSource: static
       target: 1.1.1.1
       protocol: tcp
-      sourceInterface: ds-routerd-test
       port: 443
       interval: 30s
       timeout: 3s
@@ -388,7 +385,6 @@ spec:
     metadata:
       name: internet-unreachable
     spec:
-      daemon: routerd-healthcheck
       targetSource: static
       target: 192.0.2.1
       protocol: tcp
@@ -402,7 +398,6 @@ spec:
     metadata:
       name: internet-icmp
     spec:
-      daemon: routerd-healthcheck
       targetSource: static
       target: 1.1.1.1
       protocol: icmp

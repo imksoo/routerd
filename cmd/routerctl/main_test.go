@@ -908,7 +908,6 @@ spec:
       metadata:
         name: internet
       spec:
-        daemon: routerd-healthcheck
         target: 1.1.1.1
         protocol: tcp
         port: 443

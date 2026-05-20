@@ -589,6 +589,16 @@ func writeFRRPeerSendCommunity(buf *bytes.Buffer, peer bgpPeerConfig) {
 
 func renderBGPTimers(spec api.BGPTimersSpec, fallback bgpTimers) bgpTimers {
 	out := fallback
+	switch strings.TrimSpace(spec.Profile) {
+	case "fast":
+		out.KeepaliveSeconds = 3
+		out.HoldTimeSeconds = 9
+		out.ConnectRetrySeconds = 5
+	case "slow":
+		out.KeepaliveSeconds = 30
+		out.HoldTimeSeconds = 90
+		out.ConnectRetrySeconds = 120
+	}
 	if seconds := durationSeconds(spec.Keepalive); seconds > 0 {
 		out.KeepaliveSeconds = seconds
 	}

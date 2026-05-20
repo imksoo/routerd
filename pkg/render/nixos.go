@@ -1079,9 +1079,6 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 		if err != nil {
 			return nil, err
 		}
-		if spec.Daemon != "routerd-healthcheck" {
-			continue
-		}
 		name := "routerd-healthcheck@" + res.Metadata.Name + ".service"
 		if explicit[name] {
 			continue

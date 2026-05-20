@@ -1608,11 +1608,6 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
-                      "fwmark": {
-                        "maximum": 4294967295,
-                        "minimum": 0,
-                        "type": "integer"
-                      },
                       "listenPort": {
                         "maximum": 65535,
                         "minimum": 1,
@@ -1628,11 +1623,6 @@
                       },
                       "privateKeyFile": {
                         "type": "string"
-                      },
-                      "table": {
-                        "maximum": 4294967295,
-                        "minimum": 0,
-                        "type": "integer"
                       }
                     },
                     "type": "object"
@@ -1781,16 +1771,10 @@
                       "authKeyFile": {
                         "type": "string"
                       },
-                      "binaryPath": {
-                        "type": "string"
-                      },
                       "hostname": {
                         "type": "string"
                       },
                       "loginServer": {
-                        "type": "string"
-                      },
-                      "operator": {
                         "type": "string"
                       },
                       "shieldsUp": {
@@ -2218,9 +2202,6 @@
                       "vrrp": {
                         "additionalProperties": false,
                         "properties": {
-                          "advertInterval": {
-                            "type": "string"
-                          },
                           "authentication": {
                             "type": "string"
                           },
@@ -2247,9 +2228,6 @@
                           },
                           "preempt": {
                             "type": "boolean"
-                          },
-                          "preemptDelay": {
-                            "type": "string"
                           },
                           "priority": {
                             "maximum": 254,
@@ -2495,13 +2473,13 @@
                       "timers": {
                         "additionalProperties": false,
                         "properties": {
-                          "connectRetry": {
-                            "type": "string"
-                          },
-                          "holdTime": {
-                            "type": "string"
-                          },
-                          "keepalive": {
+                          "profile": {
+                            "enum": [
+                              "",
+                              "default",
+                              "fast",
+                              "slow"
+                            ],
                             "type": "string"
                           }
                         },
@@ -2703,13 +2681,13 @@
                       "timers": {
                         "additionalProperties": false,
                         "properties": {
-                          "connectRetry": {
-                            "type": "string"
-                          },
-                          "holdTime": {
-                            "type": "string"
-                          },
-                          "keepalive": {
+                          "profile": {
+                            "enum": [
+                              "",
+                              "default",
+                              "fast",
+                              "slow"
+                            ],
                             "type": "string"
                           }
                         },
@@ -3634,19 +3612,6 @@
                     "additionalProperties": false,
                     "properties": {
                       "client": {
-                        "type": "string"
-                      },
-                      "duidType": {
-                        "enum": [
-                          "",
-                          "vendor",
-                          "uuid",
-                          "link-layer-time",
-                          "link-layer"
-                        ],
-                        "type": "string"
-                      },
-                      "iaid": {
                         "type": "string"
                       },
                       "interface": {
@@ -5432,23 +5397,11 @@
                         ],
                         "type": "string"
                       },
-                      "daemon": {
-                        "enum": [
-                          "",
-                          "routerd-healthcheck"
-                        ],
-                        "type": "string"
-                      },
                       "disabled": {
                         "type": "boolean"
                       },
                       "enabled": {
                         "type": "boolean"
-                      },
-                      "fwmark": {
-                        "maximum": 4294967295,
-                        "minimum": 0,
-                        "type": "integer"
                       },
                       "healthyThreshold": {
                         "minimum": 1,
@@ -5485,30 +5438,6 @@
                         ],
                         "type": "string"
                       },
-                      "sourceAddress": {
-                        "type": "string"
-                      },
-                      "sourceAddressFrom": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "field": {
-                            "type": "string"
-                          },
-                          "optional": {
-                            "type": "boolean"
-                          },
-                          "resource": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "resource"
-                        ],
-                        "type": "object"
-                      },
-                      "sourceInterface": {
-                        "type": "string"
-                      },
                       "target": {
                         "type": "string"
                       },
@@ -5533,9 +5462,6 @@
                       "unhealthyThreshold": {
                         "minimum": 1,
                         "type": "integer"
-                      },
-                      "via": {
-                        "type": "string"
                       },
                       "when": {
                         "additionalProperties": false,

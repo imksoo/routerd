@@ -108,8 +108,7 @@ func (c *Controller) Start(ctx context.Context) {
 		if resource.Kind != "HealthCheck" {
 			continue
 		}
-		spec, err := resource.HealthCheckSpec()
-		if err == nil && spec.Daemon == DaemonKind {
+		if _, err := resource.HealthCheckSpec(); err == nil {
 			continue
 		}
 		resource := resource
@@ -242,12 +241,62 @@ func ResolveSpec(router *api.Router, spec api.HealthCheckSpec) api.HealthCheckSp
 }
 
 func ResolveSpecForResource(router *api.Router, resourceName string, spec api.HealthCheckSpec) api.HealthCheckSpec {
+	if strings.TrimSpace(spec.SourceInterface) == "" {
+		if ifname, ok := DerivedSourceInterface(router, resourceName); ok {
+			spec.SourceInterface = ifname
+		}
+	}
 	if spec.FwMark == 0 {
 		if mark, ok := DerivedFwMark(router, resourceName); ok {
 			spec.FwMark = mark
 		}
 	}
 	return ResolveSpec(router, spec)
+}
+
+func DerivedSourceInterface(router *api.Router, healthCheckName string) (string, bool) {
+	healthCheckName = strings.TrimSpace(healthCheckName)
+	if router == nil || healthCheckName == "" {
+		return "", false
+	}
+	var source string
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "EgressRoutePolicy" {
+			continue
+		}
+		spec, err := resource.EgressRoutePolicySpec()
+		if err != nil {
+			continue
+		}
+		for _, candidate := range spec.Candidates {
+			if strings.TrimSpace(candidate.HealthCheck) == healthCheckName {
+				if !sameDerivedSourceInterface(&source, candidate.EffectiveInterface()) {
+					return "", false
+				}
+			}
+			for _, target := range candidate.Targets {
+				if strings.TrimSpace(target.HealthCheck) != healthCheckName {
+					continue
+				}
+				if !sameDerivedSourceInterface(&source, target.EffectiveInterface()) {
+					return "", false
+				}
+			}
+		}
+	}
+	return source, source != ""
+}
+
+func sameDerivedSourceInterface(current *string, next string) bool {
+	next = strings.TrimSpace(next)
+	if next == "" {
+		return true
+	}
+	if *current == "" {
+		*current = next
+		return true
+	}
+	return *current == next
 }
 
 func ResolveSpecWithStore(router *api.Router, store Store, spec api.HealthCheckSpec) api.HealthCheckSpec {

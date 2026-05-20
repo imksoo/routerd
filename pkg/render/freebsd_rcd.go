@@ -108,9 +108,6 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if spec.Daemon != "routerd-healthcheck" {
-			continue
-		}
 		name := freeBSDServiceName("routerd-healthcheck@" + res.Metadata.Name + ".service")
 		if explicit[name] {
 			continue

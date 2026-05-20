@@ -14,7 +14,6 @@ spec:
         privateKeyFile: /usr/local/etc/routerd/secrets/wg-hub.key
         listenPort: 51820
         mtu: 1420
-        table: 200
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress

@@ -52,7 +52,6 @@ spec:
         vrrp:
           virtualRouterID: 70
           priority: 150
-          advertInterval: 1s
           authentication: change-me
           peers:
             - 192.168.70.3

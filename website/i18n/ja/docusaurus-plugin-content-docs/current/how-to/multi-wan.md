@@ -43,16 +43,14 @@ kind: HealthCheck
 metadata:
   name: internet-via-primary
 spec:
-  daemon: routerd-healthcheck
   target: 1.1.1.1
   protocol: tcp
   port: 443
-  sourceInterface: ds-lite-primary
   interval: 30s
   timeout: 3s
 ```
 
-各 check は候補インターフェースに bind します (`sourceInterface`)。これで本当にその経路で probe が出ます。
+各 check は対応する `EgressRoutePolicy` candidate から参照します。routerd はその参照から probe の source binding と socket mark を導出するため、config に host 固有の mechanics を書く必要はありません。
 ICMP は途中フィルタで落ちやすいので、TCP/443 を安定先 (1.1.1.1 等) に当てるのが安定します。
 
 ### Egress policy
@@ -142,7 +140,7 @@ spec:
 ## 運用上のヒント
 
 - 必ず帯域外の管理経路 (mgmt インターフェース、コンソール、専用 SSH NIC 等) を確保してください。WAN 経由の SSH で経路や firewall を変えるのは危険です。
-- Health check は候補インターフェースに bind してください (`sourceInterface: <ifname>`)。これで「probe 失敗 = その経路が壊れている」と一意に解釈できます。
+- Health check は 1 つの candidate から参照する形にしてください。routerd が単一の probe path を導出でき、「probe 失敗 = その経路が壊れている」と解釈しやすくなります。
 - 切り替え時に conntrack を flush しないでください。routerd は意図的に flush しません。すでに handshake 済みの TCP は自然に終わらせます。
 - 現在選択中の候補は `routerctl describe EgressRoutePolicy/<name>` の `status.selectedCandidate` で確認できます。
 

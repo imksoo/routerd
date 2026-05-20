@@ -64,8 +64,6 @@ spec:
           virtualRouterID: 70
           priority: 150
           preempt: true
-          preemptDelay: 30s
-          advertInterval: 1s
           peers:
             - 192.168.70.3
         track:
@@ -222,10 +220,6 @@ spec:
           allowedPrefixes:
             - 10.96.0.0/12
             - 192.168.80.0/24
-        timers:
-          keepalive: 3s
-          holdTime: 9s
-          connectRetry: 5s
         gracefulRestart:
           enabled: true
           restartTime: 120s
@@ -243,7 +237,3 @@ spec:
           - 192.168.70.32
           - 192.168.70.33
           - 192.168.70.34
-        timers:
-          keepalive: 3s
-          holdTime: 9s
-          connectRetry: 5s

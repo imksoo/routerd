@@ -32,14 +32,10 @@ router bgp 64512
  bgp router-id 192.168.50.1
  bgp graceful-restart
  neighbor 192.168.50.21 remote-as 64513
- neighbor 192.168.50.21 timers 3 9
- neighbor 192.168.50.21 timers connect 5
  neighbor 192.168.50.21 bfd
  neighbor 192.168.50.21 route-map ROUTERD-LAN-IN in
  neighbor 192.168.50.21 route-map ROUTERD-LAN-OUT out
  neighbor 192.168.50.22 remote-as 64513
- neighbor 192.168.50.22 timers 3 9
- neighbor 192.168.50.22 timers connect 5
  neighbor 192.168.50.22 bfd
  neighbor 192.168.50.22 route-map ROUTERD-LAN-IN in
  neighbor 192.168.50.22 route-map ROUTERD-LAN-OUT out

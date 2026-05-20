@@ -273,9 +273,8 @@ IPv6 VIP は keepalived VRRPv3 の
 `family inet6` として描画され、FreeBSD では `inet6` CARP alias になります。
 Linux VRRP は明示的な unicast peer を使い、既定は `nopreempt` です。
 FreeBSD CARP は親 interface 上の multicast advertisement を使うため、
-`spec.vrrp.peers` は FreeBSD では無視されます。`preempt: true` の場合、Linux では
-`preemptDelay` で取り戻しを遅らせられます。FreeBSD には直接対応する
-`preemptDelay` はありません。`track` で `BGPRouter`、`BGPPeer`、`IngressService`
+`spec.vrrp.peers` は FreeBSD では無視されます。`preempt: true` は自動 failback が必要な場合だけ使います。advertisement や
+failback の低レベル timing は resource ごとの field ではなく routerd の profile 既定値で扱います。`track` で `BGPRouter`、`BGPPeer`、`IngressService`
 などの状態に応じて priority を下げられます。既定では unhealthy 3 回連続で penalty
 を適用し、healthy 2 回連続で解除します。`spec.hostname` は DNSResolver が配信する
 対応 `DNSZone` へ VIP を自動公開できます。IPv4 VIP は A record、IPv6 VIP は AAAA
@@ -286,15 +285,10 @@ priority、peer、transition 経過時間を表示します。
 
 ### VRRP production tuning
 
-制御プレーン VIP のように高速 failover が重要な場所だけ、短い advertisement を
-使います。Kubernetes API VIP では `advertInterval: 1s`、`preempt: true`、
-`preemptDelay: 30s` が典型です。優先 router が VIP を取り戻しますが、復帰直後の
-揺れで即 failback しないように待ち時間を入れます。
-
-家庭 LAN や DS-Lite 周辺の VIP では、優先 owner に戻すことより安定性を優先する
-設定が扱いやすいです。保守的な preset は `advertInterval: 3s` と
-`preempt: false` です。backup が VIP を持った後は、その node が落ちるか明示的に
-移動するまで保持します。完全な resource fragment は
+制御プレーン VIP のように自動 failback が必要な場所だけ `preempt: true` を
+使います。家庭 LAN や DS-Lite 周辺の VIP では、優先 owner に戻すことより安定性を
+優先し、既定の non-preemptive 挙動を使うのが扱いやすいです。backup が VIP を
+持った後は、その node が落ちるか明示的に移動するまで保持します。完全な resource fragment は
 `examples/vrrp-tuning-presets.yaml` を参照してください。
 
 `BGPPeer.spec.password` は FRR 設定に `neighbor ... password ...` として描画されます。
@@ -364,7 +358,7 @@ DS-Lite、IPv4 既定経路、NAT44 は実 lab で動作確認済みです。
 
 | Kind | 役割 |
 | --- | --- |
-| `HealthCheck` | `routerd-healthcheck` または開発用の組み込み実行器で到達性を測ります。`sourceInterface` はネットワークリソース名を受け取り、実行時に OS のインターフェース名へ解決します。`via`、`fwmark`、`sourceAddress`、`sourceAddressFrom` も指定できます。 |
+| `HealthCheck` | target、protocol、cadence、threshold から到達性 probe の intent を宣言します。`EgressRoutePolicy` candidate/target から参照されると、routerd が health-check daemon、source binding、socket mark を自動導出します。 |
 | `EgressRoutePolicy` | 準備完了の候補から重みの高い外向き経路を選びます。`destinationCIDRs` と candidate の `gatewaySource`、`gateway` を持ちます。 |
 | `EventRule` | イベント列に対して all_of、any_of、sequence、window、absence、throttle、debounce、count を評価します。 |
 | `DerivedEvent` | 複数リソースの状態から仮想イベントを発行します。 |
@@ -438,8 +432,8 @@ OpenTelemetry endpoint へ出すための resource です。`LogSink` は operat
 
 ## Status Provides Contract
 
-`addressFrom`、`gatewayFrom`、`dnsServerFrom`、`sourceAddressFrom`、
-`dependsOn[].field` などの参照フィールドは、参照先 kind がこの contract で宣言した
+`addressFrom`、`gatewayFrom`、`dnsServerFrom`、`dependsOn[].field`
+などの参照フィールドは、参照先 kind がこの contract で宣言した
 field だけを参照できます。存在しない resource や `provides` 外の field は
 validator がエラーにします。
 

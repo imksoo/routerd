@@ -49,7 +49,6 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
   metadata: {name: wan-pd}
   spec:
     interface: wan
-    iaid: 1
 
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv6DelegatedAddress

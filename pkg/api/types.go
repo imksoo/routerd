@@ -171,6 +171,11 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "WireGuardInterface":
+		for _, field := range []string{"fwmark", "table"} {
+			if hasMappingKey(&raw.Spec, field) {
+				return fmt.Errorf("%s spec.%s is not supported; routerd derives WireGuard fwmark and routing table ownership automatically", r.ID(), field)
+			}
+		}
 		var spec WireGuardInterfaceSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
@@ -183,6 +188,11 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "TailscaleNode":
+		for _, field := range []string{"operator", "binaryPath"} {
+			if hasMappingKey(&raw.Spec, field) {
+				return fmt.Errorf("%s spec.%s is not supported; routerd derives the tailscale binary path and operator handling from the platform", r.ID(), field)
+			}
+		}
 		var spec TailscaleNodeSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
@@ -222,18 +232,39 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "VirtualAddress":
+		if vrrp := mappingValueNode(&raw.Spec, "vrrp"); vrrp != nil {
+			for _, field := range []string{"advertInterval", "preemptDelay"} {
+				if hasMappingKey(vrrp, field) {
+					return fmt.Errorf("%s spec.vrrp.%s is not supported; choose VRRP/CARP behavior with resource intent and routerd profile defaults", r.ID(), field)
+				}
+			}
+		}
 		var spec VirtualAddressSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
 	case "BGPRouter":
+		if timers := mappingValueNode(&raw.Spec, "timers"); timers != nil {
+			for _, field := range []string{"keepalive", "holdTime", "connectRetry"} {
+				if hasMappingKey(timers, field) {
+					return fmt.Errorf("%s spec.timers.%s is not supported; use spec.timers.profile or routerd BGP defaults", r.ID(), field)
+				}
+			}
+		}
 		var spec BGPRouterSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
 	case "BGPPeer":
+		if timers := mappingValueNode(&raw.Spec, "timers"); timers != nil {
+			for _, field := range []string{"keepalive", "holdTime", "connectRetry"} {
+				if hasMappingKey(timers, field) {
+					return fmt.Errorf("%s spec.timers.%s is not supported; use spec.timers.profile or routerd BGP defaults", r.ID(), field)
+				}
+			}
+		}
 		if bfd := mappingValueNode(&raw.Spec, "bfd"); bfd != nil {
 			if bfd.Kind != yaml.ScalarNode || bfd.Tag != "!!str" {
 				return fmt.Errorf("%s spec.bfd inline BFD settings are not supported; create a BFD/<name> resource and reference it with spec.bfd", r.ID())
@@ -301,6 +332,11 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "DHCPv6PrefixDelegation":
+		for _, field := range []string{"iaid", "duidType"} {
+			if hasMappingKey(&raw.Spec, field) {
+				return fmt.Errorf("%s spec.%s is not supported; use spec.profile and let routerd derive DHCPv6 client identity details", r.ID(), field)
+			}
+		}
 		var spec DHCPv6PrefixDelegationSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
@@ -396,8 +432,10 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "HealthCheck":
-		if hasMappingKey(&raw.Spec, "socketSource") {
-			return fmt.Errorf("%s spec.socketSource is not supported; routerd derives daemon sockets automatically", r.ID())
+		for _, field := range []string{"daemon", "socketSource", "fwmark", "sourceInterface", "sourceAddress", "sourceAddressFrom", "via"} {
+			if hasMappingKey(&raw.Spec, field) {
+				return fmt.Errorf("%s spec.%s is not supported; routerd derives health-check daemon, source binding, and fwmark from referenced route/interface resources", r.ID(), field)
+			}
 		}
 		var spec HealthCheckSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

@@ -754,8 +754,8 @@ func TestValidateRejectsHealthCheckFwMarkMismatchWithRouteTarget(t *testing.T) {
 		}},
 	}
 
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "conflicts with routing target mark") {
-		t.Fatalf("expected fwmark mismatch error, got %v", err)
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("expected fwmark validation error, got %v", err)
 	}
 }
 
@@ -1043,8 +1043,7 @@ func TestValidateDHCPv6PrefixDelegationIdentity(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "wan-pd"},
 				Spec: api.DHCPv6PrefixDelegationSpec{
 					Interface: "wan",
-					IAID:      "00000001",
-					DUIDType:  "link-layer",
+					Profile:   api.IPv6PDProfileNTTNGNDirectHikariDenwa,
 				},
 			},
 		}},
@@ -1054,13 +1053,13 @@ func TestValidateDHCPv6PrefixDelegationIdentity(t *testing.T) {
 	}
 
 	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "not-an-iaid"}
-	if err := Validate(router); err == nil {
-		t.Fatal("expected invalid IAID to be rejected")
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("expected IAID to be rejected, got %v", err)
 	}
 
 	router.Spec.Resources[1].Spec = api.DHCPv6PrefixDelegationSpec{Interface: "wan", DUIDType: "unknown"}
-	if err := Validate(router); err == nil {
-		t.Fatal("expected invalid duidType to be rejected")
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("expected duidType to be rejected, got %v", err)
 	}
 }
 

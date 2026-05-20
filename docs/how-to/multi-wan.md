@@ -44,16 +44,14 @@ kind: HealthCheck
 metadata:
   name: internet-via-primary
 spec:
-  daemon: routerd-healthcheck
   target: 1.1.1.1
   protocol: tcp
   port: 443
-  sourceInterface: ds-lite-primary
   interval: 30s
   timeout: 3s
 ```
 
-Bind each check to the candidate interface so the probe actually rides the candidate path. Use TCP/443 against a well-known stable target rather than ICMP, so transient ICMP filtering does not flap the selection.
+Reference each check from the matching `EgressRoutePolicy` candidate. routerd derives the probe source binding and socket mark from that reference, so the probe rides the candidate path without exposing host-specific mechanics in config. Use TCP/443 against a well-known stable target rather than ICMP, so transient ICMP filtering does not flap the selection.
 
 ### Egress policy
 
@@ -142,7 +140,7 @@ With this combination, RFC 1918 destinations are routed (not NATed), and the pub
 ## Operational notes
 
 - Always keep an out-of-band management path (mgmt interface, console, dedicated SSH NIC). Do not test router SSH over an untrusted WAN path while applying firewall or route changes.
-- Prefer health checks that are bound to the candidate interface (`sourceInterface: <ifname>`) so a probe failure really means that path is broken, not that the router default route was wrong.
+- Prefer health checks that are referenced by exactly one candidate, so routerd can derive a single probe path and a failure clearly means that path is broken.
 - Avoid clearing conntrack when the path switches. routerd does not flush conntrack on purpose; existing TCP flows that already finished their handshake should be allowed to die naturally.
 - The selected candidate is visible at any time via `routerctl describe EgressRoutePolicy/<name>` (`status.selectedCandidate`).
 

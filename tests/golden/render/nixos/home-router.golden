@@ -357,10 +357,10 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
         "1.1.1.1"
         "--protocol"
         "tcp"
+        "--fwmark"
+        "0x110"
         "--source-interface"
         "ds-lite-a"
-        "--source-address"
-        "192.0.0.2"
         "--port"
         "443"
         "--interval"
@@ -386,8 +386,8 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       StateDirectory = [ "routerd/healthcheck" ];
       LogsDirectory = [ "routerd" ];
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
-      AmbientCapabilities = [ "CAP_NET_RAW" ];
-      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
       RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
       ProtectSystem = "strict";
       ProtectHome = "yes";
@@ -410,10 +410,10 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
         "1.1.1.1"
         "--protocol"
         "tcp"
+        "--fwmark"
+        "0x111"
         "--source-interface"
         "ds-lite-b"
-        "--source-address"
-        "192.0.0.3"
         "--port"
         "443"
         "--interval"
@@ -439,8 +439,8 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       StateDirectory = [ "routerd/healthcheck" ];
       LogsDirectory = [ "routerd" ];
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
-      AmbientCapabilities = [ "CAP_NET_RAW" ];
-      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
       RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
       ProtectSystem = "strict";
       ProtectHome = "yes";
@@ -463,10 +463,10 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
         "1.1.1.1"
         "--protocol"
         "tcp"
+        "--fwmark"
+        "0x112"
         "--source-interface"
         "ds-lite-c"
-        "--source-address"
-        "192.0.0.4"
         "--port"
         "443"
         "--interval"
@@ -492,8 +492,8 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       StateDirectory = [ "routerd/healthcheck" ];
       LogsDirectory = [ "routerd" ];
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
-      AmbientCapabilities = [ "CAP_NET_RAW" ];
-      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
       RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
       ProtectSystem = "strict";
       ProtectHome = "yes";
@@ -516,10 +516,10 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
         "149.112.112.112"
         "--protocol"
         "tcp"
+        "--fwmark"
+        "0x113"
         "--source-interface"
         "ds-lite-ra"
-        "--source-address"
-        "192.0.0.5"
         "--port"
         "443"
         "--interval"
@@ -545,8 +545,8 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       StateDirectory = [ "routerd/healthcheck" ];
       LogsDirectory = [ "routerd" ];
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
-      AmbientCapabilities = [ "CAP_NET_RAW" ];
-      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
       RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
       ProtectSystem = "strict";
       ProtectHome = "yes";
@@ -569,10 +569,10 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
         "94.140.14.14"
         "--protocol"
         "tcp"
+        "--fwmark"
+        "0x116"
         "--source-interface"
         "ens18"
-        "--source-address"
-        "192.168.1.249"
         "--port"
         "443"
         "--interval"
@@ -598,8 +598,8 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       StateDirectory = [ "routerd/healthcheck" ];
       LogsDirectory = [ "routerd" ];
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
-      AmbientCapabilities = [ "CAP_NET_RAW" ];
-      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
       RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
       ProtectSystem = "strict";
       ProtectHome = "yes";
@@ -622,10 +622,10 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
         "1.0.0.1"
         "--protocol"
         "tcp"
+        "--fwmark"
+        "0x114"
         "--source-interface"
         "ens19"
-        "--source-address"
-        "172.17.0.2"
         "--port"
         "443"
         "--interval"
@@ -651,8 +651,8 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       StateDirectory = [ "routerd/healthcheck" ];
       LogsDirectory = [ "routerd" ];
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
-      AmbientCapabilities = [ "CAP_NET_RAW" ];
-      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
       RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
       ProtectSystem = "strict";
       ProtectHome = "yes";
@@ -675,8 +675,8 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
         "208.67.222.222"
         "--protocol"
         "tcp"
-        "--source-interface"
-        "pppoe-flets"
+        "--fwmark"
+        "0x115"
         "--port"
         "443"
         "--interval"
@@ -702,8 +702,8 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       StateDirectory = [ "routerd/healthcheck" ];
       LogsDirectory = [ "routerd" ];
       ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
-      AmbientCapabilities = [ "CAP_NET_RAW" ];
-      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
       RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
       ProtectSystem = "strict";
       ProtectHome = "yes";

@@ -405,9 +405,6 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if spec.Daemon != healthcheck.DaemonKind {
-				continue
-			}
 			unitName := healthCheckUnitName(resource.Metadata.Name)
 			if explicitUnits[unitName] {
 				continue
@@ -437,7 +434,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", resource.Metadata.Name, map[string]any{
 					"phase":     phase,
 					"reason":    "Disabled",
-					"daemon":    spec.Daemon,
+					"daemon":    healthcheck.DaemonKind,
 					"unitName":  unitName,
 					"dryRun":    c.DryRun,
 					"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
@@ -975,13 +972,10 @@ func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context,
 		if resource.Kind != "HealthCheck" {
 			continue
 		}
-		spec, err := resource.HealthCheckSpec()
-		if err != nil {
+		if _, err := resource.HealthCheckSpec(); err != nil {
 			return err
 		}
-		if spec.Daemon == healthcheck.DaemonKind {
-			desired[healthCheckUnitName(resource.Metadata.Name)] = true
-		}
+		desired[healthCheckUnitName(resource.Metadata.Name)] = true
 	}
 	matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, "routerd-healthcheck@*.service"))
 	if err != nil {

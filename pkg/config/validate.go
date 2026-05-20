@@ -630,12 +630,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			if spec.Interface != "" && !interfaces[spec.Interface] && !dsliteTunnels[spec.Interface] {
 				return fmt.Errorf("%s references missing Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), spec.Interface)
 			}
-			if spec.SourceInterface != "" && !interfaces[spec.SourceInterface] && !dsliteTunnels[spec.SourceInterface] {
-				return fmt.Errorf("%s references missing source Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), spec.SourceInterface)
-			}
-			if err := validateHealthCheckDerivedFwMark(router, res, spec); err != nil {
-				return err
-			}
 		}
 		if res.Kind == "EgressRoutePolicy" {
 			spec, err := res.EgressRoutePolicySpec()
@@ -1477,6 +1471,9 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
 			return fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
 		}
+		if spec.FwMark != 0 || spec.Table != 0 {
+			return fmt.Errorf("%s spec.fwmark and spec.table are not supported; routerd derives WireGuard fwmark and routing table ownership automatically", res.ID())
+		}
 		if strings.ContainsAny(spec.PrivateKeyFile, "\n\r") {
 			return fmt.Errorf("%s spec.privateKeyFile is invalid", res.ID())
 		}
@@ -1524,13 +1521,14 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if spec.AuthKey != "" && (spec.AuthKeyEnv != "" || spec.AuthKeyFile != "") {
 			return fmt.Errorf("%s spec.authKey is mutually exclusive with spec.authKeyEnv and spec.authKeyFile", res.ID())
 		}
+		if spec.Operator != "" || spec.BinaryPath != "" {
+			return fmt.Errorf("%s spec.operator and spec.binaryPath are not supported; routerd derives tailscale runtime mechanics from the platform", res.ID())
+		}
 		for field, value := range map[string]string{
 			"hostname":    spec.Hostname,
 			"loginServer": spec.LoginServer,
 			"authKeyEnv":  spec.AuthKeyEnv,
 			"authKeyFile": spec.AuthKeyFile,
-			"operator":    spec.Operator,
-			"binaryPath":  spec.BinaryPath,
 		} {
 			if strings.ContainsAny(value, "\x00\n\r") {
 				return fmt.Errorf("%s spec.%s contains invalid characters", res.ID(), field)
@@ -1740,7 +1738,7 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 				return fmt.Errorf("%s spec.listen.address must be an IP address", res.ID())
 			}
 		}
-		if err := validateBGPTimers(res.ID(), "spec.timers", spec.Timers); err != nil {
+		if err := validateBGPTimerProfile(res.ID(), "spec.timers", spec.Timers); err != nil {
 			return err
 		}
 		if err := validateBGPGracefulRestart(res.ID(), spec.GracefulRestart); err != nil {
@@ -1786,7 +1784,7 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 			}
 			seenPeers[peer] = true
 		}
-		if err := validateBGPTimers(res.ID(), "spec.timers", spec.Timers); err != nil {
+		if err := validateBGPTimerProfile(res.ID(), "spec.timers", spec.Timers); err != nil {
 			return err
 		}
 		if err := validateBGPCommunities(res.ID(), "spec.communities", spec.Communities); err != nil {
@@ -1904,13 +1902,8 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if spec.PrefixLength != 0 && (spec.PrefixLength < 1 || spec.PrefixLength > 128) {
 			return fmt.Errorf("%s spec.prefixLength must be within 1-128", res.ID())
 		}
-		if spec.IAID != "" && !validIAID(spec.IAID) {
-			return fmt.Errorf("%s spec.iaid must be a uint32 decimal value, 0x-prefixed hex value, or 8 hex digits", res.ID())
-		}
-		switch spec.DUIDType {
-		case "", "vendor", "uuid", "link-layer-time", "link-layer":
-		default:
-			return fmt.Errorf("%s spec.duidType must be vendor, uuid, link-layer-time, or link-layer", res.ID())
+		if spec.IAID != "" || spec.DUIDType != "" {
+			return fmt.Errorf("%s spec.iaid and spec.duidType are not supported; use spec.profile and let routerd derive DHCPv6 client identity details", res.ID())
 		}
 	case "IPv6DelegatedAddress":
 		if res.APIVersion != api.NetAPIVersion {
@@ -2535,10 +2528,8 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if err != nil {
 			return err
 		}
-		switch spec.Daemon {
-		case "", "routerd-healthcheck":
-		default:
-			return fmt.Errorf("%s spec.daemon must be routerd-healthcheck", res.ID())
+		if spec.Daemon != "" || spec.FwMark != 0 || spec.SourceInterface != "" || spec.SourceAddress != "" || spec.SourceAddressFrom.Resource != "" || spec.Via != "" {
+			return fmt.Errorf("%s health-check daemon, source binding, via, and fwmark fields are not supported; routerd derives them from referenced route/interface resources", res.ID())
 		}
 		switch defaultString(spec.Type, "ping") {
 		case "ping":
@@ -2552,9 +2543,6 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		}
 		if spec.Port < 0 || spec.Port > 65535 {
 			return fmt.Errorf("%s spec.port must be within 0-65535", res.ID())
-		}
-		if spec.FwMark < 0 {
-			return fmt.Errorf("%s spec.fwmark must be non-negative", res.ID())
 		}
 		switch defaultString(spec.Role, "next-hop") {
 		case "link", "next-hop", "internet", "service", "policy":
@@ -2597,24 +2585,6 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		}
 		if spec.HealthyThreshold < 0 || spec.UnhealthyThreshold < 0 {
 			return fmt.Errorf("%s spec.healthyThreshold and spec.unhealthyThreshold must be non-negative", res.ID())
-		}
-		if spec.SourceAddressFrom.Resource != "" && spec.SourceAddressFrom.Field == "" {
-			return fmt.Errorf("%s spec.sourceAddressFrom.field is required", res.ID())
-		}
-		for field, value := range map[string]string{"via": spec.Via, "sourceAddress": spec.SourceAddress} {
-			if value == "" || strings.Contains(value, "${") {
-				continue
-			}
-			addr, err := netip.ParseAddr(value)
-			if err != nil {
-				return fmt.Errorf("%s spec.%s must be an IP address or status path expression", res.ID(), field)
-			}
-			if spec.AddressFamily == "ipv4" && !addr.Is4() {
-				return fmt.Errorf("%s spec.%s must be IPv4 when addressFamily is ipv4", res.ID(), field)
-			}
-			if spec.AddressFamily == "ipv6" && !addr.Is6() {
-				return fmt.Errorf("%s spec.%s must be IPv6 when addressFamily is ipv6", res.ID(), field)
-			}
 		}
 	case "EgressRoutePolicy":
 		if res.APIVersion != api.NetAPIVersion {
@@ -3844,18 +3814,8 @@ func validateVirtualAddressResource(res api.Resource, targetOS platform.OS) erro
 		if spec.VRRP.Priority != 0 && (spec.VRRP.Priority < 1 || spec.VRRP.Priority > 254) {
 			return fmt.Errorf("%s spec.vrrp.priority must be within 1-254", res.ID())
 		}
-		if spec.VRRP.AdvertInterval != "" {
-			if _, err := time.ParseDuration(spec.VRRP.AdvertInterval); err != nil {
-				return fmt.Errorf("%s spec.vrrp.advertInterval is invalid: %w", res.ID(), err)
-			}
-		}
-		if spec.VRRP.PreemptDelay != "" {
-			if spec.VRRP.Preempt == nil || !*spec.VRRP.Preempt {
-				return fmt.Errorf("%s spec.vrrp.preemptDelay requires spec.vrrp.preempt=true", res.ID())
-			}
-			if _, err := time.ParseDuration(spec.VRRP.PreemptDelay); err != nil {
-				return fmt.Errorf("%s spec.vrrp.preemptDelay is invalid: %w", res.ID(), err)
-			}
+		if spec.VRRP.AdvertInterval != "" || spec.VRRP.PreemptDelay != "" {
+			return fmt.Errorf("%s spec.vrrp.advertInterval and spec.vrrp.preemptDelay are not supported; routerd derives VRRP/CARP timing from profile defaults", res.ID())
 		}
 		for i, peer := range spec.VRRP.Peers {
 			if err := validateAddressOrHostname(peer); err != nil {
@@ -4123,6 +4083,18 @@ func validateIngressAddressSource(resourceID, path string, source api.StatusValu
 	}
 	if strings.TrimSpace(source.Field) == "" {
 		return fmt.Errorf("%s %s.field is required", resourceID, path)
+	}
+	return nil
+}
+
+func validateBGPTimerProfile(resourceID, path string, spec api.BGPTimersSpec) error {
+	switch strings.TrimSpace(spec.Profile) {
+	case "", "default", "fast", "slow":
+	default:
+		return fmt.Errorf("%s %s.profile must be default, fast, or slow", resourceID, path)
+	}
+	if spec.Keepalive != "" || spec.HoldTime != "" || spec.ConnectRetry != "" {
+		return fmt.Errorf("%s %s keepalive, holdTime, and connectRetry are not supported; use %s.profile", resourceID, path, path)
 	}
 	return nil
 }

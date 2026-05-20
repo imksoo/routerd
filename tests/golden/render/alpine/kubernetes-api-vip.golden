@@ -25,7 +25,6 @@ vrrp_instance k8s_api_vip {
   virtual_router_id 70
   priority 150
   advert_int 1
-  preempt_delay 30
   unicast_peer {
     192.168.70.3
   }

@@ -71,6 +71,9 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(nat44Rules) == 0 {
+		nat44Rules = derivedDefaultNAT44Rules(router)
+	}
 	referencedAddressSets = mergeIPAddressSets(
 		referencedIPAddressSets(redirectRules, addressSets),
 		referencedNAT44ResourceIPAddressSets(nat44Rules, addressSets),
@@ -132,6 +135,95 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 
 func NftablesNAT44Rule(router *api.Router) ([]byte, error) {
 	return NftablesNAT44(router)
+}
+
+func derivedDefaultNAT44Rules(router *api.Router) []api.Resource {
+	if router == nil {
+		return nil
+	}
+	trustIfaces := map[string]bool{}
+	var untrustIfaces []string
+	seenUntrust := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.FirewallAPIVersion || res.Kind != "FirewallZone" {
+			continue
+		}
+		spec, err := res.FirewallZoneSpec()
+		if err != nil {
+			continue
+		}
+		for _, ref := range spec.Interfaces {
+			name := refName(ref)
+			if name == "" {
+				continue
+			}
+			switch spec.Role {
+			case "trust":
+				trustIfaces[name] = true
+			case "untrust":
+				if !seenUntrust[name] {
+					seenUntrust[name] = true
+					untrustIfaces = append(untrustIfaces, name)
+				}
+			}
+		}
+	}
+	if len(trustIfaces) == 0 || len(untrustIfaces) == 0 {
+		return nil
+	}
+	sourceSet := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		spec, err := res.IPv4StaticAddressSpec()
+		if err != nil || !trustIfaces[spec.Interface] {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(spec.Address)
+		if err != nil || !prefix.Addr().Is4() {
+			continue
+		}
+		sourceSet[prefix.Masked().String()] = true
+	}
+	if len(sourceSet) == 0 {
+		return nil
+	}
+	sources := make([]string, 0, len(sourceSet))
+	for source := range sourceSet {
+		sources = append(sources, source)
+	}
+	sort.Strings(sources)
+	sort.Strings(untrustIfaces)
+	rules := make([]api.Resource, 0, len(untrustIfaces))
+	for _, ifname := range untrustIfaces {
+		rules = append(rules, api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
+			Metadata: api.ObjectMeta{Name: "derived-lan-to-" + strings.NewReplacer("/", "-", ".", "-").Replace(ifname)},
+			Spec: api.NAT44RuleSpec{
+				Type:                    "masquerade",
+				EgressInterface:         ifname,
+				SourceRanges:            sources,
+				ExcludeDestinationCIDRs: privateIPv4CIDRs(),
+			},
+		})
+	}
+	return rules
+}
+
+func refName(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	if _, name, ok := strings.Cut(ref, "/"); ok {
+		return strings.TrimSpace(name)
+	}
+	return ref
+}
+
+func privateIPv4CIDRs() []string {
+	return []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
 }
 
 func NftablesTCPMSSClamp(router *api.Router) ([]byte, error) {

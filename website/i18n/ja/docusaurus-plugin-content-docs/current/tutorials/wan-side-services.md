@@ -50,7 +50,6 @@ ISP が同一 WAN インターフェースで IPv4 (DHCPv4) と IPv6 prefix (DHC
   metadata: {name: wan-pd}
   spec:
     interface: wan
-    iaid: 1
 
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv6DelegatedAddress

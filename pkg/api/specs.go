@@ -360,8 +360,8 @@ type WireGuardInterfaceSpec struct {
 	PrivateKeyFile string `yaml:"privateKeyFile,omitempty" json:"privateKeyFile,omitempty"`
 	ListenPort     int    `yaml:"listenPort,omitempty" json:"listenPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	MTU            int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
-	FwMark         int    `yaml:"fwmark,omitempty" json:"fwmark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	Table          int    `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	FwMark         int    `yaml:"-" json:"-"`
+	Table          int    `yaml:"-" json:"-"`
 }
 
 type WireGuardPeerSpec struct {
@@ -387,9 +387,9 @@ type TailscaleNodeSpec struct {
 	AcceptRoutes      *bool    `yaml:"acceptRoutes,omitempty" json:"acceptRoutes,omitempty"`
 	AcceptDNS         *bool    `yaml:"acceptDNS,omitempty" json:"acceptDNS,omitempty"`
 	SSH               bool     `yaml:"ssh,omitempty" json:"ssh,omitempty"`
-	Operator          string   `yaml:"operator,omitempty" json:"operator,omitempty"`
+	Operator          string   `yaml:"-" json:"-"`
 	ShieldsUp         *bool    `yaml:"shieldsUp,omitempty" json:"shieldsUp,omitempty"`
-	BinaryPath        string   `yaml:"binaryPath,omitempty" json:"binaryPath,omitempty"`
+	BinaryPath        string   `yaml:"-" json:"-"`
 }
 
 type IPsecConnectionSpec struct {
@@ -471,9 +471,9 @@ type VirtualAddressVRRPSpec struct {
 	VirtualRouterID    int                   `yaml:"virtualRouterID" json:"virtualRouterID" jsonschema:"minimum=1,maximum=255"`
 	Priority           int                   `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=1,maximum=254"`
 	Preempt            *bool                 `yaml:"preempt,omitempty" json:"preempt,omitempty"`
-	PreemptDelay       string                `yaml:"preemptDelay,omitempty" json:"preemptDelay,omitempty"`
+	PreemptDelay       string                `yaml:"-" json:"-"`
 	Peers              []string              `yaml:"peers,omitempty" json:"peers,omitempty"`
-	AdvertInterval     string                `yaml:"advertInterval,omitempty" json:"advertInterval,omitempty"`
+	AdvertInterval     string                `yaml:"-" json:"-"`
 	Authentication     string                `yaml:"authentication,omitempty" json:"authentication,omitempty"`
 	AuthenticationFrom SecretValueSourceSpec `yaml:"authenticationFrom,omitempty" json:"authenticationFrom,omitempty"`
 }
@@ -535,9 +535,10 @@ type BGPCommunitySetSpec struct {
 }
 
 type BGPTimersSpec struct {
-	Keepalive    string `yaml:"keepalive,omitempty" json:"keepalive,omitempty"`
-	HoldTime     string `yaml:"holdTime,omitempty" json:"holdTime,omitempty"`
-	ConnectRetry string `yaml:"connectRetry,omitempty" json:"connectRetry,omitempty"`
+	Profile      string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=,enum=default,enum=fast,enum=slow"`
+	Keepalive    string `yaml:"-" json:"-"`
+	HoldTime     string `yaml:"-" json:"-"`
+	ConnectRetry string `yaml:"-" json:"-"`
 }
 
 type BGPGracefulRestartSpec struct {
@@ -700,8 +701,8 @@ type DHCPv6PrefixDelegationSpec struct {
 	Client       string `yaml:"client,omitempty" json:"client,omitempty"`
 	Profile      string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
 	PrefixLength int    `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
-	IAID         string `yaml:"iaid,omitempty" json:"iaid,omitempty"`
-	DUIDType     string `yaml:"duidType,omitempty" json:"duidType,omitempty" jsonschema:"enum=,enum=vendor,enum=uuid,enum=link-layer-time,enum=link-layer"`
+	IAID         string `yaml:"-" json:"-"`
+	DUIDType     string `yaml:"-" json:"-"`
 	Required     bool   `yaml:"required,omitempty" json:"required,omitempty"`
 }
 
@@ -1046,17 +1047,17 @@ type HealthCheckSpec struct {
 	Enabled            *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Disabled           bool                  `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	Type               string                `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=ping"`
-	Daemon             string                `yaml:"daemon,omitempty" json:"daemon,omitempty" jsonschema:"enum=,enum=routerd-healthcheck"`
+	Daemon             string                `yaml:"-" json:"-"`
 	Role               string                `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=link,enum=next-hop,enum=internet,enum=service,enum=policy"`
 	AddressFamily      string                `yaml:"addressFamily,omitempty" json:"addressFamily,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
 	Target             string                `yaml:"target,omitempty" json:"target,omitempty"`
 	TargetSource       string                `yaml:"targetSource,omitempty" json:"targetSource,omitempty" jsonschema:"enum=auto,enum=static,enum=defaultGateway,enum=dsliteRemote"`
 	Interface          string                `yaml:"interface,omitempty" json:"interface,omitempty"`
-	Via                string                `yaml:"via,omitempty" json:"via,omitempty"`
-	FwMark             int                   `yaml:"fwmark,omitempty" json:"fwmark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	SourceInterface    string                `yaml:"sourceInterface,omitempty" json:"sourceInterface,omitempty"`
-	SourceAddress      string                `yaml:"sourceAddress,omitempty" json:"sourceAddress,omitempty"`
-	SourceAddressFrom  StatusValueSourceSpec `yaml:"sourceAddressFrom,omitempty" json:"sourceAddressFrom,omitempty"`
+	Via                string                `yaml:"-" json:"-"`
+	FwMark             int                   `yaml:"-" json:"-"`
+	SourceInterface    string                `yaml:"-" json:"-"`
+	SourceAddress      string                `yaml:"-" json:"-"`
+	SourceAddressFrom  StatusValueSourceSpec `yaml:"-" json:"-"`
 	Protocol           string                `yaml:"protocol,omitempty" json:"protocol,omitempty" jsonschema:"enum=,enum=icmp,enum=tcp,enum=dns,enum=http"`
 	Port               int                   `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=0,maximum=65535"`
 	Interval           string                `yaml:"interval,omitempty" json:"interval,omitempty"`

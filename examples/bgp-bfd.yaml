@@ -23,10 +23,6 @@ spec:
         routerID: 192.168.50.1
         listen:
           address: 192.168.50.1
-        timers:
-          keepalive: 3s
-          holdTime: 9s
-          connectRetry: 5s
         gracefulRestart:
           enabled: true
         watcher:

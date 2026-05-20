@@ -602,7 +602,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			continue
 		}
 		spec, err := resource.HealthCheckSpec()
-		if err != nil || healthCheckDisabled(spec) || spec.Daemon == "" {
+		if err != nil || healthCheckDisabled(spec) {
 			continue
 		}
 		name := resource.Metadata.Name
@@ -1326,7 +1326,7 @@ func (c DaemonStatusController) daemonSockets() []string {
 			add(socket)
 		case "HealthCheck":
 			spec, err := resource.HealthCheckSpec()
-			if err != nil || healthCheckDisabled(spec) || spec.Daemon == "" {
+			if err != nil || healthCheckDisabled(spec) {
 				continue
 			}
 			defaults, _ := platform.Current()

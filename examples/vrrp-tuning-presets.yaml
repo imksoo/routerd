@@ -28,9 +28,7 @@ spec:
           priority: 150
           peers:
             - 192.0.2.11
-          advertInterval: 1s
           preempt: true
-          preemptDelay: 30s
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: VirtualAddress
@@ -46,5 +44,4 @@ spec:
           priority: 120
           peers:
             - 192.0.2.12
-          advertInterval: 3s
           preempt: false

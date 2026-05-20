@@ -147,3 +147,11 @@ table inet routerd_filter {
     counter accept
   }
 }
+add table ip routerd_nat
+flush table ip routerd_nat
+table ip routerd_nat {
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    oifname "ens18" ip saddr 172.18.0.0/16 ip daddr !=10.0.0.0/8 ip daddr !=172.16.0.0/12 ip daddr !=192.168.0.0/16 masquerade
+  }
+}

@@ -116,7 +116,7 @@ func TestResolveSpecDerivesFwMarkFromRoutingHealthCheckReferences(t *testing.T) 
 			Spec: api.EgressRoutePolicySpec{Mode: "hash", Candidates: []api.EgressRoutePolicyCandidate{{
 				Name: "balanced",
 				Targets: []api.EgressRoutePolicyTarget{
-					{Name: "a", Mark: 0x110, HealthCheck: "internet-a"},
+					{Name: "a", Interface: "ds-lite-a", Mark: 0x110, HealthCheck: "internet-a"},
 				},
 			}}},
 		},
@@ -124,7 +124,7 @@ func TestResolveSpecDerivesFwMarkFromRoutingHealthCheckReferences(t *testing.T) 
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec: api.EgressRoutePolicySpec{Mode: "priority", Candidates: []api.EgressRoutePolicyCandidate{
-				{Name: "hgw", Mark: 0x116, HealthCheck: "internet-hgw"},
+				{Name: "hgw", Interface: "wan", Mark: 0x116, HealthCheck: "internet-hgw"},
 			}},
 		},
 	}}}
@@ -133,6 +133,12 @@ func TestResolveSpecDerivesFwMarkFromRoutingHealthCheckReferences(t *testing.T) 
 	}
 	if got := ResolveSpecForResource(router, "internet-hgw", api.HealthCheckSpec{}).FwMark; got != 0x116 {
 		t.Fatalf("default route candidate fwmark = 0x%x, want 0x116", got)
+	}
+	if got := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{}).SourceInterface; got != "ds-lite-a" {
+		t.Fatalf("route set target sourceInterface = %q, want ds-lite-a", got)
+	}
+	if got := ResolveSpecForResource(router, "internet-hgw", api.HealthCheckSpec{}).SourceInterface; got != "wan" {
+		t.Fatalf("default route candidate sourceInterface = %q, want wan", got)
 	}
 	if got := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{FwMark: 0x999}).FwMark; got != 0x999 {
 		t.Fatalf("explicit fwmark = 0x%x, want 0x999", got)

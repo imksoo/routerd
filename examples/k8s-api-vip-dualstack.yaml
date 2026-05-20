@@ -54,8 +54,6 @@ spec:
           virtualRouterID: 70
           priority: 150
           preempt: true
-          preemptDelay: 30s
-          advertInterval: 1s
           peers:
             - 192.168.70.3
         track:
@@ -78,8 +76,6 @@ spec:
           virtualRouterID: 71
           priority: 150
           preempt: true
-          preemptDelay: 30s
-          advertInterval: 1s
           peers:
             - fd00:70::3
         track:
@@ -175,9 +171,6 @@ spec:
             - fd00:244::/48
         gracefulRestart:
           enabled: true
-        timers:
-          keepalive: 3s
-          holdTime: 9s
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPPeer

@@ -269,8 +269,6 @@ wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=ac
         "1.1.1.1"
         "--protocol"
         "tcp"
-        "--source-interface"
-        "ds-routerd-test"
         "--port"
         "443"
         "--interval"

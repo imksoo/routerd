@@ -43,9 +43,7 @@ spec:
         vrrp:
           virtualRouterID: 50
           priority: 150
-          advertInterval: 1s
           preempt: true
-          preemptDelay: 30s
           peers:
             - 192.168.1.53
         track:

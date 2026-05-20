@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"routerd/pkg/api"
+	"routerd/pkg/healthcheck"
 )
 
 type HealthCheckSystemdOptions struct {
@@ -41,7 +42,7 @@ type HealthCheckDaemonUnitOptions struct {
 
 func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.SystemdUnitSpec {
 	resource := options.Resource
-	spec := options.Spec
+	spec := healthcheck.ResolveSpecForResource(options.Router, resource, options.Spec)
 	runtimeRoot := defaultString(options.RuntimeRoot, "/run")
 	stateRoot := defaultString(options.StateRoot, "/var/lib")
 	logRoot := defaultString(options.LogRoot, "/var/log")

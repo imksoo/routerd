@@ -179,7 +179,7 @@ routerd_carp_start() {
   kldload carp >/dev/null 2>&1 || true
   sysctl net.inet.carp.preempt='1' >/dev/null
   ifconfig 'ens19' 'inet' 'vhid' '60' 'advbase' '1' 'advskew' '104' 'alias' '192.0.2.10/32'
-  ifconfig 'ens19' 'inet' 'vhid' '61' 'advbase' '3' 'advskew' '134' 'alias' '192.0.2.1/32'
+  ifconfig 'ens19' 'inet' 'vhid' '61' 'advbase' '1' 'advskew' '134' 'alias' '192.0.2.1/32'
 }
 
 routerd_carp_stop() {

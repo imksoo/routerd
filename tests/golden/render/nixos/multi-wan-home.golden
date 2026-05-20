@@ -79,6 +79,308 @@
       PrivateTmp = true;
     };
   };
+  systemd.services."routerd-healthcheck@internet-via-dslite-a" = {
+    description = "routerd healthcheck internet-via-dslite-a";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-healthcheck"
+        "daemon"
+        "--resource"
+        "internet-via-dslite-a"
+        "--target"
+        "1.1.1.1"
+        "--protocol"
+        "tcp"
+        "--address-family"
+        "ipv4"
+        "--port"
+        "443"
+        "--interval"
+        "30s"
+        "--timeout"
+        "3s"
+        "--healthy-threshold"
+        "2"
+        "--unhealthy-threshold"
+        "2"
+        "--socket"
+        "/run/routerd/healthcheck/internet-via-dslite-a.sock"
+        "--state-file"
+        "/var/lib/routerd/healthcheck/internet-via-dslite-a/state.json"
+        "--event-file"
+        "/var/log/routerd/healthcheck/internet-via-dslite-a/events.jsonl"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/healthcheck" ];
+      RuntimeDirectoryPreserve = "yes";
+      StateDirectory = [ "routerd/healthcheck" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
+      AmbientCapabilities = [ "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "yes";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
+  systemd.services."routerd-healthcheck@internet-via-dslite-b" = {
+    description = "routerd healthcheck internet-via-dslite-b";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-healthcheck"
+        "daemon"
+        "--resource"
+        "internet-via-dslite-b"
+        "--target"
+        "1.1.1.1"
+        "--protocol"
+        "tcp"
+        "--address-family"
+        "ipv4"
+        "--port"
+        "443"
+        "--interval"
+        "30s"
+        "--timeout"
+        "3s"
+        "--healthy-threshold"
+        "2"
+        "--unhealthy-threshold"
+        "2"
+        "--socket"
+        "/run/routerd/healthcheck/internet-via-dslite-b.sock"
+        "--state-file"
+        "/var/lib/routerd/healthcheck/internet-via-dslite-b/state.json"
+        "--event-file"
+        "/var/log/routerd/healthcheck/internet-via-dslite-b/events.jsonl"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/healthcheck" ];
+      RuntimeDirectoryPreserve = "yes";
+      StateDirectory = [ "routerd/healthcheck" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
+      AmbientCapabilities = [ "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "yes";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
+  systemd.services."routerd-healthcheck@internet-via-dslite-c" = {
+    description = "routerd healthcheck internet-via-dslite-c";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-healthcheck"
+        "daemon"
+        "--resource"
+        "internet-via-dslite-c"
+        "--target"
+        "1.1.1.1"
+        "--protocol"
+        "tcp"
+        "--address-family"
+        "ipv4"
+        "--port"
+        "443"
+        "--interval"
+        "30s"
+        "--timeout"
+        "3s"
+        "--healthy-threshold"
+        "2"
+        "--unhealthy-threshold"
+        "2"
+        "--socket"
+        "/run/routerd/healthcheck/internet-via-dslite-c.sock"
+        "--state-file"
+        "/var/lib/routerd/healthcheck/internet-via-dslite-c/state.json"
+        "--event-file"
+        "/var/log/routerd/healthcheck/internet-via-dslite-c/events.jsonl"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/healthcheck" ];
+      RuntimeDirectoryPreserve = "yes";
+      StateDirectory = [ "routerd/healthcheck" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
+      AmbientCapabilities = [ "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "yes";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
+  systemd.services."routerd-healthcheck@internet-via-dslite-ra" = {
+    description = "routerd healthcheck internet-via-dslite-ra";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-healthcheck"
+        "daemon"
+        "--resource"
+        "internet-via-dslite-ra"
+        "--target"
+        "1.1.1.1"
+        "--protocol"
+        "tcp"
+        "--address-family"
+        "ipv4"
+        "--port"
+        "443"
+        "--interval"
+        "30s"
+        "--timeout"
+        "3s"
+        "--healthy-threshold"
+        "2"
+        "--unhealthy-threshold"
+        "2"
+        "--socket"
+        "/run/routerd/healthcheck/internet-via-dslite-ra.sock"
+        "--state-file"
+        "/var/lib/routerd/healthcheck/internet-via-dslite-ra/state.json"
+        "--event-file"
+        "/var/log/routerd/healthcheck/internet-via-dslite-ra/events.jsonl"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/healthcheck" ];
+      RuntimeDirectoryPreserve = "yes";
+      StateDirectory = [ "routerd/healthcheck" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
+      AmbientCapabilities = [ "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "yes";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
+  systemd.services."routerd-healthcheck@internet-via-hgw-direct" = {
+    description = "routerd healthcheck internet-via-hgw-direct";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-healthcheck"
+        "daemon"
+        "--resource"
+        "internet-via-hgw-direct"
+        "--target"
+        "1.1.1.1"
+        "--protocol"
+        "tcp"
+        "--address-family"
+        "ipv4"
+        "--port"
+        "443"
+        "--interval"
+        "30s"
+        "--timeout"
+        "3s"
+        "--healthy-threshold"
+        "2"
+        "--unhealthy-threshold"
+        "2"
+        "--socket"
+        "/run/routerd/healthcheck/internet-via-hgw-direct.sock"
+        "--state-file"
+        "/var/lib/routerd/healthcheck/internet-via-hgw-direct/state.json"
+        "--event-file"
+        "/var/log/routerd/healthcheck/internet-via-hgw-direct/events.jsonl"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/healthcheck" ];
+      RuntimeDirectoryPreserve = "yes";
+      StateDirectory = [ "routerd/healthcheck" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
+      AmbientCapabilities = [ "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "yes";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
+  systemd.services."routerd-healthcheck@internet-via-pppoe" = {
+    description = "routerd healthcheck internet-via-pppoe";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-healthcheck"
+        "daemon"
+        "--resource"
+        "internet-via-pppoe"
+        "--target"
+        "1.1.1.1"
+        "--protocol"
+        "tcp"
+        "--address-family"
+        "ipv4"
+        "--source-interface"
+        "ppp-flets"
+        "--port"
+        "443"
+        "--interval"
+        "30s"
+        "--timeout"
+        "3s"
+        "--healthy-threshold"
+        "2"
+        "--unhealthy-threshold"
+        "2"
+        "--socket"
+        "/run/routerd/healthcheck/internet-via-pppoe.sock"
+        "--state-file"
+        "/var/lib/routerd/healthcheck/internet-via-pppoe/state.json"
+        "--event-file"
+        "/var/log/routerd/healthcheck/internet-via-pppoe/events.jsonl"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/healthcheck" ];
+      RuntimeDirectoryPreserve = "yes";
+      StateDirectory = [ "routerd/healthcheck" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
+      AmbientCapabilities = [ "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_RAW" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "yes";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
   systemd.services."routerd-pppoe-client@pppoe-flets" = {
     description = "routerd PPPoE client pppoe-flets";
     wantedBy = [ "multi-user.target" ];

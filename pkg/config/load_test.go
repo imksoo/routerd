@@ -175,7 +175,6 @@ func TestLoadRejectsExplicitSocketSource(t *testing.T) {
       metadata:
         name: internet
       spec:
-        daemon: routerd-healthcheck
         socketSource: /run/routerd/healthcheck/internet.sock
 `,
 		},
@@ -207,8 +206,116 @@ spec:
 			if err == nil {
 				t.Fatal("expected socketSource to be rejected")
 			}
-			if !strings.Contains(err.Error(), "socketSource") || !strings.Contains(err.Error(), "derives daemon sockets automatically") {
+			if !strings.Contains(err.Error(), "socketSource") || !strings.Contains(err.Error(), "derives") {
 				t.Fatalf("error = %v, want unsupported socketSource", err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsLowLevelMechanicsFields(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "healthcheck-source",
+			body: `
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: HealthCheck
+      metadata:
+        name: internet
+      spec:
+        target: 1.1.1.1
+        sourceInterface: wan
+`,
+			want: "sourceInterface",
+		},
+		{
+			name: "bgp-timer-field",
+			body: `
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata:
+        name: lan
+      spec:
+        asn: 64512
+        routerID: 192.0.2.1
+        timers:
+          keepalive: 3s
+`,
+			want: "timers.keepalive",
+		},
+		{
+			name: "vrrp-timing",
+			body: `
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VirtualAddress
+      metadata:
+        name: vip
+      spec:
+        family: ipv4
+        interface: lan
+        address: 192.0.2.10/32
+        mode: vrrp
+        vrrp:
+          virtualRouterID: 10
+          peers: [192.0.2.11]
+          advertInterval: 1s
+`,
+			want: "vrrp.advertInterval",
+		},
+		{
+			name: "wireguard-table",
+			body: `
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata:
+        name: wg0
+      spec:
+        table: 200
+`,
+			want: "table",
+		},
+		{
+			name: "tailscale-binary-path",
+			body: `
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: TailscaleNode
+      metadata:
+        name: ts
+      spec:
+        binaryPath: /usr/local/bin/tailscale
+`,
+			want: "binaryPath",
+		},
+		{
+			name: "dhcpv6-pd-iaid",
+			body: `
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6PrefixDelegation
+      metadata:
+        name: wan-pd
+      spec:
+        interface: wan
+        iaid: "1"
+`,
+			want: "iaid",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeConfig(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+`+tc.body)
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "not supported") {
+				t.Fatalf("error = %v, want unsupported %q", err, tc.want)
 			}
 		})
 	}

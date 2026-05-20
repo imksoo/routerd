@@ -162,10 +162,6 @@ spec:
         target: 1.1.1.1
         protocol: tcp
         port: 443
-        sourceInterface: ds-lite-a
-        sourceAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-a-source
-          field: address
         interval: 30s
         timeout: 3s
         healthyThreshold: 2
@@ -181,10 +177,6 @@ spec:
         target: 1.1.1.1
         protocol: tcp
         port: 443
-        sourceInterface: ds-lite-b
-        sourceAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-b-source
-          field: address
         interval: 30s
         timeout: 3s
         healthyThreshold: 2
@@ -200,10 +192,6 @@ spec:
         target: 1.1.1.1
         protocol: tcp
         port: 443
-        sourceInterface: ds-lite-c
-        sourceAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-c-source
-          field: address
         interval: 30s
         timeout: 3s
         healthyThreshold: 2
@@ -219,7 +207,6 @@ spec:
         target: 1.1.1.1
         protocol: tcp
         port: 443
-        sourceInterface: ds-lite-ra
         interval: 30s
         timeout: 3s
         healthyThreshold: 2
@@ -235,7 +222,6 @@ spec:
         target: 1.1.1.1
         protocol: tcp
         port: 443
-        sourceInterface: pppoe-flets
         interval: 30s
         timeout: 3s
         healthyThreshold: 2
@@ -251,7 +237,6 @@ spec:
         target: 1.1.1.1
         protocol: tcp
         port: 443
-        sourceInterface: wan
         interval: 30s
         timeout: 3s
         healthyThreshold: 2

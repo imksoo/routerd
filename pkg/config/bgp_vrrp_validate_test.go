@@ -29,7 +29,7 @@ func TestValidateBGPRouterPeerAndVirtualAddressIPv4(t *testing.T) {
 				ASN:          64512,
 				RouterID:     "10.240.70.2",
 				ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.240.70.200/29"}},
-				Timers:       api.BGPTimersSpec{Keepalive: "3s", HoldTime: "9s", ConnectRetry: "5s"},
+				Timers:       api.BGPTimersSpec{Profile: "fast"},
 				GracefulRestart: api.BGPGracefulRestartSpec{
 					RestartTime:   "120s",
 					StalePathTime: "360s",
@@ -39,7 +39,7 @@ func TestValidateBGPRouterPeerAndVirtualAddressIPv4(t *testing.T) {
 				RouterRef: "BGPRouter/lan",
 				PeerASN:   64513,
 				Peers:     []string{"10.240.70.21", "10.240.70.22"},
-				Timers:    api.BGPTimersSpec{Keepalive: "2s", HoldTime: "6s"},
+				Timers:    api.BGPTimersSpec{Profile: "fast"},
 			}},
 		}},
 	}
@@ -146,7 +146,7 @@ func TestValidateHostnameWarnsWithoutDNSResolverZoneCoverage(t *testing.T) {
 	}
 }
 
-func TestValidateBGPTimersRejectsInvalidHoldTime(t *testing.T) {
+func TestValidateBGPTimersRejectsLowLevelFields(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -158,8 +158,8 @@ func TestValidateBGPTimersRejectsInvalidHoldTime(t *testing.T) {
 			}},
 		}},
 	}
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "holdTime must be greater") {
-		t.Fatalf("expected holdTime validation error, got %v", err)
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("expected low-level timer validation error, got %v", err)
 	}
 }
 
@@ -504,7 +504,7 @@ func TestValidateVirtualAddressIPv4PreemptDelayRequiresPreempt(t *testing.T) {
 			}},
 		}},
 	}
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.vrrp.preemptDelay requires") {
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("expected preemptDelay validation error, got %v", err)
 	}
 }

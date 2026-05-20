@@ -42,10 +42,6 @@ spec:
             allowedPrefixes:
               - 10.96.0.0/12
               - fd00:96::/108
-        timers:
-          keepalive: 3s
-          holdTime: 9s
-          connectRetry: 5s
         gracefulRestart:
           enabled: true
           restartTime: 120s

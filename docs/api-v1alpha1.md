@@ -259,8 +259,8 @@ stanza.
 unicast peers and defaults to
 `nopreempt`; FreeBSD CARP uses multicast advertisements on the parent interface,
 so `spec.vrrp.peers` is ignored there. Set `spec.vrrp.preempt: true` only when
-automatic failback is intended, and pair it with `spec.vrrp.preemptDelay` when
-Linux failback should wait. FreeBSD has no direct `preemptDelay` equivalent.
+automatic failback is intended. Advertisement and failback timing use routerd
+profile defaults rather than per-resource low-level timing fields.
 The resource status records the rendered backend, VIP address, VRID, base
 priority, track-adjusted priority, and generated config path when a file-backed
 backend is used. `track` lowers priority when referenced resources such as
@@ -277,16 +277,10 @@ service-manager module owns the same host artifacts.
 
 ### VRRP production tuning
 
-Use shorter advertisements only for control-plane VIPs where fast failover is
-worth the extra L2 chatter and operational sensitivity. A Kubernetes API VIP is
-a typical case: `advertInterval: 1s`, `preempt: true`, and
-`preemptDelay: 30s` lets the preferred router take the VIP back, but only after
-it has stayed healthy long enough to avoid a quick failback loop.
-
-Use slower, non-preemptive settings for home-router or DS-Lite/LAN service VIPs
-where stability matters more than returning to a preferred owner. A conservative
-preset is `advertInterval: 3s` with `preempt: false`; the backup keeps the VIP
-until it fails or is intentionally moved. See `examples/vrrp-tuning-presets.yaml`
+Use `preempt: true` only for control-plane VIPs where automatic failback is
+worth the operational sensitivity. For home-router or DS-Lite/LAN service VIPs,
+prefer the default non-preemptive behavior so the backup keeps the VIP until it
+fails or is intentionally moved. See `examples/vrrp-tuning-presets.yaml`
 for complete resource fragments.
 
 `BGPPeer.spec.password` is rendered into FRR as `neighbor ... password ...`.
@@ -449,15 +443,11 @@ state variable names to `exists`, `equals`, `in`, `contains`, `status`, and
 State-management resources are not exposed as config kinds; express conditional
 activation directly on the dependent resources with `spec.when`.
 
-`HealthCheck.spec.sourceInterface` accepts a network resource name and resolves
-it to the OS interface name at runtime. `via`, `fwmark`, and `sourceAddress`
-can also be specified. `sourceAddressFrom` derives the probe source address
-from another resource status. On Linux, `routerd-healthcheck` uses
-`SO_BINDTODEVICE` and can set `SO_MARK`. When a health check is referenced by an
-`EgressRoutePolicy` candidate or target, routerd derives `SO_MARK` from that
-route target's mark automatically; direct `fwmark` is intended for standalone
-low-level probes. On FreeBSD, it selects a source address from the named
-interface because FreeBSD does not provide the Linux socket options.
+`HealthCheck` declares probe intent: target, protocol, cadence, and thresholds.
+When a health check is referenced by an `EgressRoutePolicy` candidate or target,
+routerd derives the health-check daemon, source binding, and socket mark from
+that route target automatically. Platform-specific socket mechanics stay inside
+the controller and renderer.
 
 `WebConsole.spec.listenAddressFrom` derives the HTTP listener address from
 another resource status, for example `Interface/mgmt.status.ipv4Addresses`.
@@ -466,8 +456,8 @@ from DHCP, IPAM, or another declarative resource.
 
 ## Status Provides Contract
 
-Fields such as `addressFrom`, `gatewayFrom`, `dnsServerFrom`,
-`sourceAddressFrom`, and `dependsOn[].field` can reference only fields that the
+Fields such as `addressFrom`, `gatewayFrom`, `dnsServerFrom`, and
+`dependsOn[].field` can reference only fields that the
 target kind declares in this contract. The validator rejects missing resources
 and fields outside the target kind's `provides` set.
 

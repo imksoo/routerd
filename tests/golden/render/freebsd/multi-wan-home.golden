@@ -49,6 +49,12 @@ ipv6_gateway_enable="YES"
 pf_enable="YES"
 pflog_enable="YES"
 routerd_enable="YES"
+routerd_healthcheck_internet_via_dslite_a_enable="YES"
+routerd_healthcheck_internet_via_dslite_b_enable="YES"
+routerd_healthcheck_internet_via_dslite_c_enable="YES"
+routerd_healthcheck_internet_via_dslite_ra_enable="YES"
+routerd_healthcheck_internet_via_hgw_direct_enable="YES"
+routerd_healthcheck_internet_via_pppoe_enable="YES"
 ### rc.d-routerd
 #!/bin/sh
 #
@@ -202,4 +208,898 @@ routerd_status() {
 
 load_rc_config $name
 : ${routerd_enable:="YES"}
+run_rc_command "$1"
+### rc.d-routerd_healthcheck_internet_via_dslite_a
+#!/bin/sh
+#
+# Managed by routerd.
+#
+# PROVIDE: routerd_healthcheck_internet_via_dslite_a
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name='routerd_healthcheck_internet_via_dslite_a'
+rcvar="${name}_enable"
+daemon_pidfile="/var/run/${name}/${name}.daemon.pid"
+child_pidfile="/var/run/${name}/${name}.pid"
+daemon_command="/usr/sbin/daemon"
+daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-via-dslite-a' '--target' '1.1.1.1' '--protocol' 'tcp' '--address-family' 'ipv4' '--port' '443' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '2' '--unhealthy-threshold' '2' '--socket' '/var/run/routerd/healthcheck/internet-via-dslite-a.sock' '--state-file' '/var/db/routerd/healthcheck/internet-via-dslite-a/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-via-dslite-a/events.jsonl'"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+start_precmd="${name}_prestart"
+
+routerd_healthcheck_internet_via_dslite_a_prestart() {
+  mkdir -p "/var/run/${name}"
+  mkdir -p '/var/run/routerd/healthcheck'
+  mkdir -p '/var/db/routerd/healthcheck'
+  mkdir -p '/var/log/routerd'
+}
+
+routerd_healthcheck_internet_via_dslite_a_read_pidfile() {
+  _file="$1"
+  if [ -r "${_file}" ]; then
+    read _pid < "${_file}"
+    if [ -n "${_pid}" ] && kill -0 "${_pid}" 2>/dev/null; then
+      echo "${_pid}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_a_pgrep_child() {
+  ps -axo pid,command | awk -v exe='/usr/local/sbin/routerd-healthcheck' -v pat='/usr/local/sbin/routerd-healthcheck .*daemon .*--resource .*internet-via-dslite-a .*--target' '$0 ~ exe && $0 ~ pat { print $1; exit }'
+}
+
+routerd_healthcheck_internet_via_dslite_a_managed_child_pid() {
+  _candidate_pid=$(routerd_healthcheck_internet_via_dslite_a_child_pid)
+  if [ -z "${_candidate_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_candidate_pid}" 2>/dev/null | tr -d ' ')
+  _supervisor_pid=$(routerd_healthcheck_internet_via_dslite_a_supervisor_pid)
+  if [ -n "${_supervisor_pid}" ] && [ "${_parent_pid}" = "${_supervisor_pid}" ]; then
+    echo "${_candidate_pid}"
+    return 0
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_a_parent_daemon_pid() {
+  _child_pid=$(routerd_healthcheck_internet_via_dslite_a_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_child_pid}" 2>/dev/null | tr -d ' ')
+  if [ -z "${_parent_pid}" ] || [ "${_parent_pid}" = "1" ]; then
+    return 1
+  fi
+  _parent_command=$(ps -o command= -p "${_parent_pid}" 2>/dev/null)
+  case "${_parent_command}" in
+  daemon:*|*/daemon*)
+    echo "${_parent_pid}"
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_a_supervisor_pid() {
+  routerd_healthcheck_internet_via_dslite_a_read_pidfile "${daemon_pidfile}" || routerd_healthcheck_internet_via_dslite_a_parent_daemon_pid
+}
+
+routerd_healthcheck_internet_via_dslite_a_child_pid() {
+  routerd_healthcheck_internet_via_dslite_a_read_pidfile "${child_pidfile}" || routerd_healthcheck_internet_via_dslite_a_pgrep_child
+}
+
+routerd_healthcheck_internet_via_dslite_a_start() {
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_child_pid}" ]; then
+    echo "${name} is already running as pid ${_child_pid}."
+    return 0
+  fi
+  echo "Starting ${name}."
+  eval "${daemon_command} ${daemon_args}"
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+    if ${name}_child_pid >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to start ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_a_stop() {
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_supervisor_pid}" ] && [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 0
+  fi
+  echo "Stopping ${name}."
+  if [ -n "${_supervisor_pid}" ]; then kill "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "${name} did not stop after TERM; sending KILL"
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_supervisor_pid}" ]; then kill -KILL "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill -KILL "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to stop ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_a_status() {
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 1
+  fi
+  echo "${name} is running as pid ${_child_pid}."
+}
+
+load_rc_config $name
+: ${routerd_healthcheck_internet_via_dslite_a_enable:="YES"}
+run_rc_command "$1"
+### rc.d-routerd_healthcheck_internet_via_dslite_b
+#!/bin/sh
+#
+# Managed by routerd.
+#
+# PROVIDE: routerd_healthcheck_internet_via_dslite_b
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name='routerd_healthcheck_internet_via_dslite_b'
+rcvar="${name}_enable"
+daemon_pidfile="/var/run/${name}/${name}.daemon.pid"
+child_pidfile="/var/run/${name}/${name}.pid"
+daemon_command="/usr/sbin/daemon"
+daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-via-dslite-b' '--target' '1.1.1.1' '--protocol' 'tcp' '--address-family' 'ipv4' '--port' '443' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '2' '--unhealthy-threshold' '2' '--socket' '/var/run/routerd/healthcheck/internet-via-dslite-b.sock' '--state-file' '/var/db/routerd/healthcheck/internet-via-dslite-b/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-via-dslite-b/events.jsonl'"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+start_precmd="${name}_prestart"
+
+routerd_healthcheck_internet_via_dslite_b_prestart() {
+  mkdir -p "/var/run/${name}"
+  mkdir -p '/var/run/routerd/healthcheck'
+  mkdir -p '/var/db/routerd/healthcheck'
+  mkdir -p '/var/log/routerd'
+}
+
+routerd_healthcheck_internet_via_dslite_b_read_pidfile() {
+  _file="$1"
+  if [ -r "${_file}" ]; then
+    read _pid < "${_file}"
+    if [ -n "${_pid}" ] && kill -0 "${_pid}" 2>/dev/null; then
+      echo "${_pid}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_b_pgrep_child() {
+  ps -axo pid,command | awk -v exe='/usr/local/sbin/routerd-healthcheck' -v pat='/usr/local/sbin/routerd-healthcheck .*daemon .*--resource .*internet-via-dslite-b .*--target' '$0 ~ exe && $0 ~ pat { print $1; exit }'
+}
+
+routerd_healthcheck_internet_via_dslite_b_managed_child_pid() {
+  _candidate_pid=$(routerd_healthcheck_internet_via_dslite_b_child_pid)
+  if [ -z "${_candidate_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_candidate_pid}" 2>/dev/null | tr -d ' ')
+  _supervisor_pid=$(routerd_healthcheck_internet_via_dslite_b_supervisor_pid)
+  if [ -n "${_supervisor_pid}" ] && [ "${_parent_pid}" = "${_supervisor_pid}" ]; then
+    echo "${_candidate_pid}"
+    return 0
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_b_parent_daemon_pid() {
+  _child_pid=$(routerd_healthcheck_internet_via_dslite_b_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_child_pid}" 2>/dev/null | tr -d ' ')
+  if [ -z "${_parent_pid}" ] || [ "${_parent_pid}" = "1" ]; then
+    return 1
+  fi
+  _parent_command=$(ps -o command= -p "${_parent_pid}" 2>/dev/null)
+  case "${_parent_command}" in
+  daemon:*|*/daemon*)
+    echo "${_parent_pid}"
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_b_supervisor_pid() {
+  routerd_healthcheck_internet_via_dslite_b_read_pidfile "${daemon_pidfile}" || routerd_healthcheck_internet_via_dslite_b_parent_daemon_pid
+}
+
+routerd_healthcheck_internet_via_dslite_b_child_pid() {
+  routerd_healthcheck_internet_via_dslite_b_read_pidfile "${child_pidfile}" || routerd_healthcheck_internet_via_dslite_b_pgrep_child
+}
+
+routerd_healthcheck_internet_via_dslite_b_start() {
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_child_pid}" ]; then
+    echo "${name} is already running as pid ${_child_pid}."
+    return 0
+  fi
+  echo "Starting ${name}."
+  eval "${daemon_command} ${daemon_args}"
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+    if ${name}_child_pid >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to start ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_b_stop() {
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_supervisor_pid}" ] && [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 0
+  fi
+  echo "Stopping ${name}."
+  if [ -n "${_supervisor_pid}" ]; then kill "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "${name} did not stop after TERM; sending KILL"
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_supervisor_pid}" ]; then kill -KILL "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill -KILL "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to stop ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_b_status() {
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 1
+  fi
+  echo "${name} is running as pid ${_child_pid}."
+}
+
+load_rc_config $name
+: ${routerd_healthcheck_internet_via_dslite_b_enable:="YES"}
+run_rc_command "$1"
+### rc.d-routerd_healthcheck_internet_via_dslite_c
+#!/bin/sh
+#
+# Managed by routerd.
+#
+# PROVIDE: routerd_healthcheck_internet_via_dslite_c
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name='routerd_healthcheck_internet_via_dslite_c'
+rcvar="${name}_enable"
+daemon_pidfile="/var/run/${name}/${name}.daemon.pid"
+child_pidfile="/var/run/${name}/${name}.pid"
+daemon_command="/usr/sbin/daemon"
+daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-via-dslite-c' '--target' '1.1.1.1' '--protocol' 'tcp' '--address-family' 'ipv4' '--port' '443' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '2' '--unhealthy-threshold' '2' '--socket' '/var/run/routerd/healthcheck/internet-via-dslite-c.sock' '--state-file' '/var/db/routerd/healthcheck/internet-via-dslite-c/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-via-dslite-c/events.jsonl'"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+start_precmd="${name}_prestart"
+
+routerd_healthcheck_internet_via_dslite_c_prestart() {
+  mkdir -p "/var/run/${name}"
+  mkdir -p '/var/run/routerd/healthcheck'
+  mkdir -p '/var/db/routerd/healthcheck'
+  mkdir -p '/var/log/routerd'
+}
+
+routerd_healthcheck_internet_via_dslite_c_read_pidfile() {
+  _file="$1"
+  if [ -r "${_file}" ]; then
+    read _pid < "${_file}"
+    if [ -n "${_pid}" ] && kill -0 "${_pid}" 2>/dev/null; then
+      echo "${_pid}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_c_pgrep_child() {
+  ps -axo pid,command | awk -v exe='/usr/local/sbin/routerd-healthcheck' -v pat='/usr/local/sbin/routerd-healthcheck .*daemon .*--resource .*internet-via-dslite-c .*--target' '$0 ~ exe && $0 ~ pat { print $1; exit }'
+}
+
+routerd_healthcheck_internet_via_dslite_c_managed_child_pid() {
+  _candidate_pid=$(routerd_healthcheck_internet_via_dslite_c_child_pid)
+  if [ -z "${_candidate_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_candidate_pid}" 2>/dev/null | tr -d ' ')
+  _supervisor_pid=$(routerd_healthcheck_internet_via_dslite_c_supervisor_pid)
+  if [ -n "${_supervisor_pid}" ] && [ "${_parent_pid}" = "${_supervisor_pid}" ]; then
+    echo "${_candidate_pid}"
+    return 0
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_c_parent_daemon_pid() {
+  _child_pid=$(routerd_healthcheck_internet_via_dslite_c_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_child_pid}" 2>/dev/null | tr -d ' ')
+  if [ -z "${_parent_pid}" ] || [ "${_parent_pid}" = "1" ]; then
+    return 1
+  fi
+  _parent_command=$(ps -o command= -p "${_parent_pid}" 2>/dev/null)
+  case "${_parent_command}" in
+  daemon:*|*/daemon*)
+    echo "${_parent_pid}"
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_c_supervisor_pid() {
+  routerd_healthcheck_internet_via_dslite_c_read_pidfile "${daemon_pidfile}" || routerd_healthcheck_internet_via_dslite_c_parent_daemon_pid
+}
+
+routerd_healthcheck_internet_via_dslite_c_child_pid() {
+  routerd_healthcheck_internet_via_dslite_c_read_pidfile "${child_pidfile}" || routerd_healthcheck_internet_via_dslite_c_pgrep_child
+}
+
+routerd_healthcheck_internet_via_dslite_c_start() {
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_child_pid}" ]; then
+    echo "${name} is already running as pid ${_child_pid}."
+    return 0
+  fi
+  echo "Starting ${name}."
+  eval "${daemon_command} ${daemon_args}"
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+    if ${name}_child_pid >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to start ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_c_stop() {
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_supervisor_pid}" ] && [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 0
+  fi
+  echo "Stopping ${name}."
+  if [ -n "${_supervisor_pid}" ]; then kill "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "${name} did not stop after TERM; sending KILL"
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_supervisor_pid}" ]; then kill -KILL "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill -KILL "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to stop ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_c_status() {
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 1
+  fi
+  echo "${name} is running as pid ${_child_pid}."
+}
+
+load_rc_config $name
+: ${routerd_healthcheck_internet_via_dslite_c_enable:="YES"}
+run_rc_command "$1"
+### rc.d-routerd_healthcheck_internet_via_dslite_ra
+#!/bin/sh
+#
+# Managed by routerd.
+#
+# PROVIDE: routerd_healthcheck_internet_via_dslite_ra
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name='routerd_healthcheck_internet_via_dslite_ra'
+rcvar="${name}_enable"
+daemon_pidfile="/var/run/${name}/${name}.daemon.pid"
+child_pidfile="/var/run/${name}/${name}.pid"
+daemon_command="/usr/sbin/daemon"
+daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-via-dslite-ra' '--target' '1.1.1.1' '--protocol' 'tcp' '--address-family' 'ipv4' '--port' '443' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '2' '--unhealthy-threshold' '2' '--socket' '/var/run/routerd/healthcheck/internet-via-dslite-ra.sock' '--state-file' '/var/db/routerd/healthcheck/internet-via-dslite-ra/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-via-dslite-ra/events.jsonl'"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+start_precmd="${name}_prestart"
+
+routerd_healthcheck_internet_via_dslite_ra_prestart() {
+  mkdir -p "/var/run/${name}"
+  mkdir -p '/var/run/routerd/healthcheck'
+  mkdir -p '/var/db/routerd/healthcheck'
+  mkdir -p '/var/log/routerd'
+}
+
+routerd_healthcheck_internet_via_dslite_ra_read_pidfile() {
+  _file="$1"
+  if [ -r "${_file}" ]; then
+    read _pid < "${_file}"
+    if [ -n "${_pid}" ] && kill -0 "${_pid}" 2>/dev/null; then
+      echo "${_pid}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_ra_pgrep_child() {
+  ps -axo pid,command | awk -v exe='/usr/local/sbin/routerd-healthcheck' -v pat='/usr/local/sbin/routerd-healthcheck .*daemon .*--resource .*internet-via-dslite-ra .*--target' '$0 ~ exe && $0 ~ pat { print $1; exit }'
+}
+
+routerd_healthcheck_internet_via_dslite_ra_managed_child_pid() {
+  _candidate_pid=$(routerd_healthcheck_internet_via_dslite_ra_child_pid)
+  if [ -z "${_candidate_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_candidate_pid}" 2>/dev/null | tr -d ' ')
+  _supervisor_pid=$(routerd_healthcheck_internet_via_dslite_ra_supervisor_pid)
+  if [ -n "${_supervisor_pid}" ] && [ "${_parent_pid}" = "${_supervisor_pid}" ]; then
+    echo "${_candidate_pid}"
+    return 0
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_ra_parent_daemon_pid() {
+  _child_pid=$(routerd_healthcheck_internet_via_dslite_ra_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_child_pid}" 2>/dev/null | tr -d ' ')
+  if [ -z "${_parent_pid}" ] || [ "${_parent_pid}" = "1" ]; then
+    return 1
+  fi
+  _parent_command=$(ps -o command= -p "${_parent_pid}" 2>/dev/null)
+  case "${_parent_command}" in
+  daemon:*|*/daemon*)
+    echo "${_parent_pid}"
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_ra_supervisor_pid() {
+  routerd_healthcheck_internet_via_dslite_ra_read_pidfile "${daemon_pidfile}" || routerd_healthcheck_internet_via_dslite_ra_parent_daemon_pid
+}
+
+routerd_healthcheck_internet_via_dslite_ra_child_pid() {
+  routerd_healthcheck_internet_via_dslite_ra_read_pidfile "${child_pidfile}" || routerd_healthcheck_internet_via_dslite_ra_pgrep_child
+}
+
+routerd_healthcheck_internet_via_dslite_ra_start() {
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_child_pid}" ]; then
+    echo "${name} is already running as pid ${_child_pid}."
+    return 0
+  fi
+  echo "Starting ${name}."
+  eval "${daemon_command} ${daemon_args}"
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+    if ${name}_child_pid >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to start ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_ra_stop() {
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_supervisor_pid}" ] && [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 0
+  fi
+  echo "Stopping ${name}."
+  if [ -n "${_supervisor_pid}" ]; then kill "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "${name} did not stop after TERM; sending KILL"
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_supervisor_pid}" ]; then kill -KILL "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill -KILL "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to stop ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_dslite_ra_status() {
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 1
+  fi
+  echo "${name} is running as pid ${_child_pid}."
+}
+
+load_rc_config $name
+: ${routerd_healthcheck_internet_via_dslite_ra_enable:="YES"}
+run_rc_command "$1"
+### rc.d-routerd_healthcheck_internet_via_hgw_direct
+#!/bin/sh
+#
+# Managed by routerd.
+#
+# PROVIDE: routerd_healthcheck_internet_via_hgw_direct
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name='routerd_healthcheck_internet_via_hgw_direct'
+rcvar="${name}_enable"
+daemon_pidfile="/var/run/${name}/${name}.daemon.pid"
+child_pidfile="/var/run/${name}/${name}.pid"
+daemon_command="/usr/sbin/daemon"
+daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-via-hgw-direct' '--target' '1.1.1.1' '--protocol' 'tcp' '--address-family' 'ipv4' '--port' '443' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '2' '--unhealthy-threshold' '2' '--socket' '/var/run/routerd/healthcheck/internet-via-hgw-direct.sock' '--state-file' '/var/db/routerd/healthcheck/internet-via-hgw-direct/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-via-hgw-direct/events.jsonl'"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+start_precmd="${name}_prestart"
+
+routerd_healthcheck_internet_via_hgw_direct_prestart() {
+  mkdir -p "/var/run/${name}"
+  mkdir -p '/var/run/routerd/healthcheck'
+  mkdir -p '/var/db/routerd/healthcheck'
+  mkdir -p '/var/log/routerd'
+}
+
+routerd_healthcheck_internet_via_hgw_direct_read_pidfile() {
+  _file="$1"
+  if [ -r "${_file}" ]; then
+    read _pid < "${_file}"
+    if [ -n "${_pid}" ] && kill -0 "${_pid}" 2>/dev/null; then
+      echo "${_pid}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_hgw_direct_pgrep_child() {
+  ps -axo pid,command | awk -v exe='/usr/local/sbin/routerd-healthcheck' -v pat='/usr/local/sbin/routerd-healthcheck .*daemon .*--resource .*internet-via-hgw-direct .*--target' '$0 ~ exe && $0 ~ pat { print $1; exit }'
+}
+
+routerd_healthcheck_internet_via_hgw_direct_managed_child_pid() {
+  _candidate_pid=$(routerd_healthcheck_internet_via_hgw_direct_child_pid)
+  if [ -z "${_candidate_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_candidate_pid}" 2>/dev/null | tr -d ' ')
+  _supervisor_pid=$(routerd_healthcheck_internet_via_hgw_direct_supervisor_pid)
+  if [ -n "${_supervisor_pid}" ] && [ "${_parent_pid}" = "${_supervisor_pid}" ]; then
+    echo "${_candidate_pid}"
+    return 0
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_hgw_direct_parent_daemon_pid() {
+  _child_pid=$(routerd_healthcheck_internet_via_hgw_direct_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_child_pid}" 2>/dev/null | tr -d ' ')
+  if [ -z "${_parent_pid}" ] || [ "${_parent_pid}" = "1" ]; then
+    return 1
+  fi
+  _parent_command=$(ps -o command= -p "${_parent_pid}" 2>/dev/null)
+  case "${_parent_command}" in
+  daemon:*|*/daemon*)
+    echo "${_parent_pid}"
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+routerd_healthcheck_internet_via_hgw_direct_supervisor_pid() {
+  routerd_healthcheck_internet_via_hgw_direct_read_pidfile "${daemon_pidfile}" || routerd_healthcheck_internet_via_hgw_direct_parent_daemon_pid
+}
+
+routerd_healthcheck_internet_via_hgw_direct_child_pid() {
+  routerd_healthcheck_internet_via_hgw_direct_read_pidfile "${child_pidfile}" || routerd_healthcheck_internet_via_hgw_direct_pgrep_child
+}
+
+routerd_healthcheck_internet_via_hgw_direct_start() {
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_child_pid}" ]; then
+    echo "${name} is already running as pid ${_child_pid}."
+    return 0
+  fi
+  echo "Starting ${name}."
+  eval "${daemon_command} ${daemon_args}"
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+    if ${name}_child_pid >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to start ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_hgw_direct_stop() {
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_supervisor_pid}" ] && [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 0
+  fi
+  echo "Stopping ${name}."
+  if [ -n "${_supervisor_pid}" ]; then kill "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "${name} did not stop after TERM; sending KILL"
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_supervisor_pid}" ]; then kill -KILL "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill -KILL "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to stop ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_hgw_direct_status() {
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 1
+  fi
+  echo "${name} is running as pid ${_child_pid}."
+}
+
+load_rc_config $name
+: ${routerd_healthcheck_internet_via_hgw_direct_enable:="YES"}
+run_rc_command "$1"
+### rc.d-routerd_healthcheck_internet_via_pppoe
+#!/bin/sh
+#
+# Managed by routerd.
+#
+# PROVIDE: routerd_healthcheck_internet_via_pppoe
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name='routerd_healthcheck_internet_via_pppoe'
+rcvar="${name}_enable"
+daemon_pidfile="/var/run/${name}/${name}.daemon.pid"
+child_pidfile="/var/run/${name}/${name}.pid"
+daemon_command="/usr/sbin/daemon"
+daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-healthcheck' 'daemon' '--resource' 'internet-via-pppoe' '--target' '1.1.1.1' '--protocol' 'tcp' '--address-family' 'ipv4' '--source-interface' 'ppp-flets' '--port' '443' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '2' '--unhealthy-threshold' '2' '--socket' '/var/run/routerd/healthcheck/internet-via-pppoe.sock' '--state-file' '/var/db/routerd/healthcheck/internet-via-pppoe/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-via-pppoe/events.jsonl'"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+start_precmd="${name}_prestart"
+
+routerd_healthcheck_internet_via_pppoe_prestart() {
+  mkdir -p "/var/run/${name}"
+  mkdir -p '/var/run/routerd/healthcheck'
+  mkdir -p '/var/db/routerd/healthcheck'
+  mkdir -p '/var/log/routerd'
+}
+
+routerd_healthcheck_internet_via_pppoe_read_pidfile() {
+  _file="$1"
+  if [ -r "${_file}" ]; then
+    read _pid < "${_file}"
+    if [ -n "${_pid}" ] && kill -0 "${_pid}" 2>/dev/null; then
+      echo "${_pid}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_pppoe_pgrep_child() {
+  ps -axo pid,command | awk -v exe='/usr/local/sbin/routerd-healthcheck' -v pat='/usr/local/sbin/routerd-healthcheck .*daemon .*--resource .*internet-via-pppoe .*--target' '$0 ~ exe && $0 ~ pat { print $1; exit }'
+}
+
+routerd_healthcheck_internet_via_pppoe_managed_child_pid() {
+  _candidate_pid=$(routerd_healthcheck_internet_via_pppoe_child_pid)
+  if [ -z "${_candidate_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_candidate_pid}" 2>/dev/null | tr -d ' ')
+  _supervisor_pid=$(routerd_healthcheck_internet_via_pppoe_supervisor_pid)
+  if [ -n "${_supervisor_pid}" ] && [ "${_parent_pid}" = "${_supervisor_pid}" ]; then
+    echo "${_candidate_pid}"
+    return 0
+  fi
+  return 1
+}
+
+routerd_healthcheck_internet_via_pppoe_parent_daemon_pid() {
+  _child_pid=$(routerd_healthcheck_internet_via_pppoe_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    return 1
+  fi
+  _parent_pid=$(ps -o ppid= -p "${_child_pid}" 2>/dev/null | tr -d ' ')
+  if [ -z "${_parent_pid}" ] || [ "${_parent_pid}" = "1" ]; then
+    return 1
+  fi
+  _parent_command=$(ps -o command= -p "${_parent_pid}" 2>/dev/null)
+  case "${_parent_command}" in
+  daemon:*|*/daemon*)
+    echo "${_parent_pid}"
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+routerd_healthcheck_internet_via_pppoe_supervisor_pid() {
+  routerd_healthcheck_internet_via_pppoe_read_pidfile "${daemon_pidfile}" || routerd_healthcheck_internet_via_pppoe_parent_daemon_pid
+}
+
+routerd_healthcheck_internet_via_pppoe_child_pid() {
+  routerd_healthcheck_internet_via_pppoe_read_pidfile "${child_pidfile}" || routerd_healthcheck_internet_via_pppoe_pgrep_child
+}
+
+routerd_healthcheck_internet_via_pppoe_start() {
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_child_pid}" ]; then
+    echo "${name} is already running as pid ${_child_pid}."
+    return 0
+  fi
+  echo "Starting ${name}."
+  eval "${daemon_command} ${daemon_args}"
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+    if ${name}_child_pid >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to start ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_pppoe_stop() {
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_supervisor_pid}" ] && [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 0
+  fi
+  echo "Stopping ${name}."
+  if [ -n "${_supervisor_pid}" ]; then kill "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "${name} did not stop after TERM; sending KILL"
+  _supervisor_pid=$(${name}_supervisor_pid)
+  _child_pid=$(${name}_child_pid)
+  if [ -n "${_supervisor_pid}" ]; then kill -KILL "${_supervisor_pid}" 2>/dev/null || true; fi
+  if [ -n "${_child_pid}" ]; then kill -KILL "${_child_pid}" 2>/dev/null || true; fi
+  for _try in 1 2 3 4 5; do
+    if ! ${name}_supervisor_pid >/dev/null 2>&1 && ! ${name}_managed_child_pid >/dev/null 2>&1; then
+      rm -f "${daemon_pidfile}" "${child_pidfile}"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "failed to stop ${name}"
+  return 1
+}
+
+routerd_healthcheck_internet_via_pppoe_status() {
+  _child_pid=$(${name}_child_pid)
+  if [ -z "${_child_pid}" ]; then
+    echo "${name} is not running."
+    return 1
+  fi
+  echo "${name} is running as pid ${_child_pid}."
+}
+
+load_rc_config $name
+: ${routerd_healthcheck_internet_via_pppoe_enable:="YES"}
 run_rc_command "$1"

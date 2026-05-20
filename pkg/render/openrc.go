@@ -131,9 +131,6 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 		if err != nil {
 			return OpenRCConfig{}, err
 		}
-		if spec.Daemon != "routerd-healthcheck" {
-			continue
-		}
 		name := openRCServiceName("routerd-healthcheck@" + res.Metadata.Name + ".service")
 		if explicit[name] {
 			continue

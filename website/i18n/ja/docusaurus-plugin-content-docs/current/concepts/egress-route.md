@@ -95,7 +95,7 @@ spec:
 
 ## HealthCheck
 
-`HealthCheck` は、probe の送信経路を固定できます。
+`HealthCheck` は、probe の intent を宣言します。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -103,28 +103,12 @@ kind: HealthCheck
 metadata:
   name: internet-tcp443
 spec:
-  daemon: routerd-healthcheck
   target: 1.1.1.1
   protocol: tcp
   port: 443
-  sourceInterface: ds-routerd-test
 ```
 
-Linux では、`routerd-healthcheck` が `sourceInterface` に
-`SO_BINDTODEVICE` を使います。
-FreeBSD では、指定したインターフェースから送信元アドレスを選びます。
-FreeBSD には Linux と同じ socket option がないためです。
-routerd の設定では、`sourceInterface` に `Interface` や
-`DSLiteTunnel` などのネットワークリソース名を書きます。
-routerd は probe を実行する前に、リソース名を OS のインターフェース名へ解決します。
-単体の `routerd-healthcheck` の引数では、OS のインターフェース名を直接指定します。
-`sourceAddress` がある場合は、送信元アドレスを bind します。
-管理対象アドレスに追従させる場合は `sourceAddressFrom` を使います。
-たとえば `IPv4StaticAddress/lan-base.status.address` を参照できます。
-Linux では `fwmark` を指定すると、connect 前に socket mark を設定します。
-gateway を持つ経路では、既存の policy route table を使って probe できます。
 `HealthCheck` が `EgressRoutePolicy` の candidate や target から参照されている場合、
-routerd はその route target の mark から socket mark を自動導出します。
-`fwmark` を直接指定するのは、route target に紐づかない低レベルな probe に限ります。
-`via` は probe 経路の gateway を記録します。
-経路の作成は route policy リソースが担当します。
+routerd は health-check daemon、socket mark、source binding をその route target から
+自動導出します。config は probe intent だけを持ち、platform ごとの socket mechanics は
+controller と renderer の内部に閉じ込めます。

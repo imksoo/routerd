@@ -203,7 +203,6 @@ spec:
       spec:
         interface: wan
         prefixLength: 60
-        iaid: "1"
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv6Information
       metadata:
@@ -249,10 +248,6 @@ spec:
           connected:
             allowedPrefixes:
               - 172.18.0.0/16
-        timers:
-          keepalive: 3s
-          holdTime: 9s
-          connectRetry: 5s
         gracefulRestart:
           enabled: true
           restartTime: 120s
@@ -268,10 +263,6 @@ spec:
         peers:
           - 192.168.1.38
           - 192.168.1.53
-        timers:
-          keepalive: 3s
-          holdTime: 9s
-          connectRetry: 5s
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: PPPoESession
@@ -837,15 +828,10 @@ spec:
       metadata:
         name: internet-via-dslite-a
       spec:
-        daemon: routerd-healthcheck
         targetSource: static
         target: 1.1.1.1
         protocol: tcp
         port: 443
-        sourceInterface: ds-lite-a
-        sourceAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-a-source
-          field: address
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -855,15 +841,10 @@ spec:
       metadata:
         name: internet-via-dslite-b
       spec:
-        daemon: routerd-healthcheck
         targetSource: static
         target: 1.1.1.1
         protocol: tcp
         port: 443
-        sourceInterface: ds-lite-b
-        sourceAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-b-source
-          field: address
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -873,15 +854,10 @@ spec:
       metadata:
         name: internet-via-dslite-c
       spec:
-        daemon: routerd-healthcheck
         targetSource: static
         target: 1.1.1.1
         protocol: tcp
         port: 443
-        sourceInterface: ds-lite-c
-        sourceAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-c-source
-          field: address
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -895,15 +871,10 @@ spec:
           - kind: DSLiteTunnel
             name: ds-lite-ra
       spec:
-        daemon: routerd-healthcheck
         targetSource: static
         target: 149.112.112.112
         protocol: tcp
         port: 443
-        sourceInterface: ds-lite-ra
-        sourceAddressFrom:
-          resource: IPv4StaticAddress/ds-lite-ra-source
-          field: address
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -918,12 +889,10 @@ spec:
             name: pppoe-flets
       spec:
         disabled: true
-        daemon: routerd-healthcheck
         targetSource: static
         target: 208.67.222.222
         protocol: tcp
         port: 443
-        sourceInterface: pppoe-flets
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -937,13 +906,10 @@ spec:
           - kind: IPv4Route
             name: ix2215-healthcheck
       spec:
-        daemon: routerd-healthcheck
         targetSource: static
         target: 1.0.0.1
         protocol: tcp
         port: 443
-        sourceInterface: lan
-        sourceAddress: 172.17.0.2
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -957,13 +923,10 @@ spec:
           - kind: IPv4StaticAddress
             name: wan-hgw
       spec:
-        daemon: routerd-healthcheck
         targetSource: static
         target: 94.140.14.14
         protocol: tcp
         port: 443
-        sourceInterface: wan
-        sourceAddress: 192.168.1.249
         interval: 30s
         timeout: 3s
         healthyThreshold: 1
@@ -974,7 +937,6 @@ spec:
       metadata:
         name: internet-icmp
       spec:
-        daemon: routerd-healthcheck
         targetSource: static
         target: 1.1.1.1
         protocol: icmp

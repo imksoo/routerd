@@ -282,6 +282,44 @@ wg-lab-wireguard from=wan to=self ifnames=ens18 proto=udp port=51820 action=acce
       PrivateTmp = true;
     };
   };
+  systemd.services."routerd-healthcheck@wan-dhcpv4-v4" = {
+    description = "routerd healthcheck wan-dhcpv4-v4";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-healthcheck"
+        "daemon"
+        "--resource"
+        "wan-dhcpv4-v4"
+        "--fwmark"
+        "0x112"
+        "--source-interface"
+        "ens18"
+        "--socket"
+        "/run/routerd/healthcheck/wan-dhcpv4-v4.sock"
+        "--state-file"
+        "/var/lib/routerd/healthcheck/wan-dhcpv4-v4/state.json"
+        "--event-file"
+        "/var/log/routerd/healthcheck/wan-dhcpv4-v4/events.jsonl"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/healthcheck" ];
+      RuntimeDirectoryPreserve = "yes";
+      StateDirectory = [ "routerd/healthcheck" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "yes";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
   systemd.services."routerd-tailscale-home" = {
     description = "routerd Tailscale node home";
     wantedBy = [ "multi-user.target" ];

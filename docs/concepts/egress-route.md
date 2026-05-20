@@ -103,27 +103,12 @@ kind: HealthCheck
 metadata:
   name: internet-tcp443
 spec:
-  daemon: routerd-healthcheck
   target: 1.1.1.1
   protocol: tcp
   port: 443
-  sourceInterface: ds-routerd-test
 ```
 
-On Linux, `routerd-healthcheck` uses `SO_BINDTODEVICE` for
-`sourceInterface`. On FreeBSD, it selects a source address from the named
-interface because FreeBSD does not provide the Linux socket option. In routerd
-config, `sourceInterface` names an `Interface`, `DSLiteTunnel`, or similar
-network resource. routerd resolves that resource to the OS interface name before
-running the probe. Standalone
-`routerd-healthcheck` flags still take the OS interface name directly. It also
-binds to `sourceAddress` when that field is set. Use `sourceAddressFrom` when
-the probe source should follow a managed address resource such as
-`IPv4StaticAddress/lan-base.status.address`. On Linux, `fwmark` sets the socket
-mark before connecting, allowing the probe to use an existing policy-route table
-for gateway-based paths. When a `HealthCheck` is referenced by an
-`EgressRoutePolicy` candidate or target, routerd derives the socket mark from
-that route target automatically. Set `fwmark` directly only for low-level
-probes that are not attached to a route target.
-`via` records the intended gateway for the probe path. Route installation still
-belongs to route policy resources.
+When a `HealthCheck` is referenced by an `EgressRoutePolicy` candidate or
+target, routerd derives the health-check daemon, socket mark, and source binding
+from that route target automatically. The config describes the probe intent;
+platform-specific socket mechanics stay inside the controller and renderer.

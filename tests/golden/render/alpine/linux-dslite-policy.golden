@@ -306,7 +306,7 @@ start_pre() {
 name='routerd_healthcheck_internet_tcp443'
 description='routerd healthcheck internet-tcp443'
 command='/usr/local/sbin/routerd-healthcheck'
-command_args="'daemon' '--resource' 'internet-tcp443' '--target' '1.1.1.1' '--protocol' 'tcp' '--source-interface' 'ds-routerd-test' '--port' '443' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '1' '--unhealthy-threshold' '3' '--socket' '/run/routerd/healthcheck/internet-tcp443.sock' '--state-file' '/var/lib/routerd/healthcheck/internet-tcp443/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-tcp443/events.jsonl'"
+command_args="'daemon' '--resource' 'internet-tcp443' '--target' '1.1.1.1' '--protocol' 'tcp' '--port' '443' '--interval' '30s' '--timeout' '3s' '--healthy-threshold' '1' '--unhealthy-threshold' '3' '--socket' '/run/routerd/healthcheck/internet-tcp443.sock' '--state-file' '/var/lib/routerd/healthcheck/internet-tcp443/state.json' '--event-file' '/var/log/routerd/healthcheck/internet-tcp443/events.jsonl'"
 command_background="yes"
 pidfile="/run/routerd/openrc/${RC_SVCNAME}.pid"
 
