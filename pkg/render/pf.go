@@ -18,7 +18,6 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var nats []api.Resource
 	var nat44Rules []api.Resource
 	var zones []api.Resource
 	var policies []api.Resource
@@ -32,8 +31,6 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4SourceNAT":
-			nats = append(nats, res)
 		case "NAT44Rule":
 			nat44Rules = append(nat44Rules, res)
 		case "FirewallZone":
@@ -62,10 +59,9 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(nats) == 0 && len(nat44Rules) == 0 && len(ingressRules) == 0 && len(zones) == 0 && len(rules) == 0 && len(holes) == 0 && len(mssPolicies) == 0 {
+	if len(nat44Rules) == 0 && len(ingressRules) == 0 && len(zones) == 0 && len(rules) == 0 && len(holes) == 0 && len(mssPolicies) == 0 {
 		return nil, nil
 	}
-	sort.Slice(nats, func(i, j int) bool { return nats[i].Metadata.Name < nats[j].Metadata.Name })
 	sort.Slice(nat44Rules, func(i, j int) bool { return nat44Rules[i].Metadata.Name < nat44Rules[j].Metadata.Name })
 	sort.Slice(zones, func(i, j int) bool { return zones[i].Metadata.Name < zones[j].Metadata.Name })
 	sort.Slice(policies, func(i, j int) bool { return policies[i].Metadata.Name < policies[j].Metadata.Name })
@@ -102,7 +98,7 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	if err := writePFIngress(&buf, ingressRules); err != nil {
 		return nil, err
 	}
-	if err := writePFNAT(&buf, router, aliases, nats, nat44Rules); err != nil {
+	if err := writePFNAT(&buf, router, aliases, nat44Rules); err != nil {
 		return nil, err
 	}
 	filterRequested := len(zoneMap) > 0 || len(rules) > 0 || len(holes) > 0 || len(logs) > 0
@@ -174,32 +170,29 @@ func writePFMSSClamp(buf *bytes.Buffer, aliases map[string]string, policies []pa
 	return nil
 }
 
-func writePFNAT(buf *bytes.Buffer, router *api.Router, aliases map[string]string, nats []api.Resource, nat44Rules []api.Resource) error {
-	for _, res := range nats {
-		spec, err := res.IPv4SourceNATSpec()
-		if err != nil {
-			return err
-		}
-		ifname := aliases[spec.OutboundInterface]
-		if ifname == "" {
-			return fmt.Errorf("%s references outbound interface with empty ifname", res.ID())
-		}
-		for _, cidr := range spec.SourceCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s has invalid IPv4 source CIDR %q", res.ID(), cidr)
-			}
-			target, err := pfNATTarget(spec.Translation, ifname)
-			if err != nil {
-				return fmt.Errorf("%s: %w", res.ID(), err)
-			}
-			buf.WriteString("nat on " + ifname + " from " + prefix.Masked().String() + " to any -> " + target + "\n")
-		}
-	}
+func writePFNAT(buf *bytes.Buffer, router *api.Router, aliases map[string]string, nat44Rules []api.Resource) error {
 	for _, res := range nat44Rules {
 		spec, err := res.NAT44RuleSpec()
 		if err != nil {
 			return err
+		}
+		if spec.OutboundInterface != "" || len(spec.SourceCIDRs) > 0 || spec.Translation.Type != "" {
+			ifname := aliases[spec.OutboundInterface]
+			if ifname == "" {
+				return fmt.Errorf("%s references outbound interface with empty ifname", res.ID())
+			}
+			for _, cidr := range spec.SourceCIDRs {
+				prefix, err := netip.ParsePrefix(cidr)
+				if err != nil || !prefix.Addr().Is4() {
+					return fmt.Errorf("%s has invalid IPv4 source CIDR %q", res.ID(), cidr)
+				}
+				target, err := pfNATTarget(spec.Translation, ifname)
+				if err != nil {
+					return fmt.Errorf("%s: %w", res.ID(), err)
+				}
+				buf.WriteString("nat on " + ifname + " from " + prefix.Masked().String() + " to any -> " + target + "\n")
+			}
+			continue
 		}
 		if spec.EgressInterface == "" {
 			if spec.EgressPolicyRef != "" {

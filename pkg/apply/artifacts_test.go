@@ -25,7 +25,7 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"}, Metadata: api.ObjectMeta{Name: "forwarding"}, Spec: api.SysctlSpec{Key: "net.ipv4.ip_forward", Value: "1"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"}, Metadata: api.ObjectMeta{Name: "time"}, Spec: api.NTPClientSpec{Provider: "systemd-timesyncd"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "wan-pppoe"}, Spec: api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan-pppoe"}, Spec: api.PPPoESessionSpec{Interface: "wan", IfName: "ppp0"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan-session"}, Spec: api.PPPoESessionSpec{Interface: "wan", Username: "user", Password: "secret"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-lab"}, Spec: api.WireGuardInterfaceSpec{ListenPort: 51820}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"}, Metadata: api.ObjectMeta{Name: "peer-a"}, Spec: api.WireGuardPeerSpec{Interface: "wg-lab", PublicKey: "pub", AllowedIPs: []string{"10.44.0.2/32"}}},
@@ -36,7 +36,7 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"}, Metadata: api.ObjectMeta{Name: "k8s-api"}, Spec: api.VirtualIPv4AddressSpec{Interface: "lan", Address: "192.168.10.10/32", Mode: "vrrp", VRRP: api.VirtualIPv4VRRPSpec{VirtualRouterID: 50, Peers: []string{"192.168.10.4"}}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan-bgp"}, Spec: api.BGPRouterSpec{ASN: 64512, RouterID: "192.168.10.3"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "k8s-speakers"}, Spec: api.BGPPeerSpec{RouterRef: "BGPRouter/lan-bgp", PeerASN: 64513, Peers: []string{"192.168.10.21"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan-lease"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan-lease"}, Spec: api.DHCPv4ClientSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "dhcpv4"}, Spec: api.DHCPv4ServerSpec{Server: "dnsmasq"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Scope"}, Metadata: api.ObjectMeta{Name: "lan-scope"}, Spec: api.DHCPv4ScopeSpec{Server: "dhcpv4", Interface: "lan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address"}, Metadata: api.ObjectMeta{Name: "wan-v6"}, Spec: api.DHCPv6AddressSpec{Interface: "wan"}},
@@ -53,7 +53,7 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "transix-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-transix-a"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "wan-check"}, Spec: api.HealthCheckSpec{Type: "ping"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4DefaultRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default-v4"}, Spec: api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{{Name: "pppoe", Interface: "wan-pppoe", Priority: 10, Mark: 0x111, Table: 111}}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"}, Metadata: api.ObjectMeta{Name: "nat"}, Spec: api.IPv4SourceNATSpec{OutboundInterface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "nat"}, Spec: api.NAT44RuleSpec{OutboundInterface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "nat44"}, Spec: api.NAT44RuleSpec{Type: "masquerade", EgressInterface: "wan", SourceRanges: []string{"192.168.0.0/16"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRoute"}, Metadata: api.ObjectMeta{Name: "policy"}, Spec: api.IPv4PolicyRouteSpec{OutboundInterface: "wan", Priority: 100, Mark: 0x120, Table: 120}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "set"}, Spec: api.IPv4PolicyRouteSetSpec{Targets: []api.IPv4PolicyRouteTarget{{OutboundInterface: "transix-a", Priority: 10000, Mark: 0x100, Table: 100}}}},
@@ -144,9 +144,9 @@ func TestOpenRCServiceArtifactIntentsAvoidSystemd(t *testing.T) {
 	features := platform.Features{HasOpenRC: true}
 	resources := []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
 			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp0"},
+			Spec:     api.PPPoESessionSpec{Interface: "wan", IfName: "ppp0"},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},
@@ -203,9 +203,9 @@ func TestOpenRCServiceArtifactIntentsAvoidSystemd(t *testing.T) {
 func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 	resources := []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
 			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp0"},
+			Spec:     api.PPPoESessionSpec{Interface: "wan", IfName: "ppp0"},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualIPv4Address"},

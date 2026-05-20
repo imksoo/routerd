@@ -97,7 +97,7 @@ func TestNetplanEnablesIPv6LinkLocalForDelegatedAddress(t *testing.T) {
 	}
 }
 
-func TestNetplanDoesNotRenderDHCPv4LeaseAsHostDHCPClient(t *testing.T) {
+func TestNetplanDoesNotRenderDHCPv4ClientAsHostDHCPClient(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -108,9 +108,9 @@ func TestNetplanDoesNotRenderDHCPv4LeaseAsHostDHCPClient(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens20", Managed: true, Owner: "routerd", AdminUp: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
 				Metadata: api.ObjectMeta{Name: "mgmt-dhcpv4"},
-				Spec:     api.DHCPv4LeaseSpec{Interface: "mgmt", UseRoutes: boolPtr(false), UseDNS: boolPtr(false), RouteMetric: 900},
+				Spec:     api.DHCPv4ClientSpec{Interface: "mgmt", UseRoutes: boolPtr(false), UseDNS: boolPtr(false), RouteMetric: 900},
 			},
 		}},
 	}
@@ -129,7 +129,7 @@ func TestNetplanDoesNotRenderDHCPv4LeaseAsHostDHCPClient(t *testing.T) {
 	}
 	for _, unwanted := range []string{"dhcp4: true", "dhcp4-overrides:", "route-metric: 900"} {
 		if strings.Contains(got, unwanted) {
-			t.Fatalf("netplan output must not render daemon-owned DHCPv4Lease as host DHCP %q:\n%s", unwanted, got)
+			t.Fatalf("netplan output must not render daemon-owned DHCPv4Client as host DHCP %q:\n%s", unwanted, got)
 		}
 	}
 }

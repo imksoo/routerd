@@ -2,9 +2,9 @@
 home-tailscale from=wan to=self ifnames=vtnet0 proto=udp port=41641 action=accept direction= comment=net.routerd.net/v1alpha1/TailscaleNode/home
 lan-dhcpv4-server-dhcpv4-server-lan from=lan to=self ifnames=vtnet1 proto=udp port=67 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Server/lan-dhcpv4-server
 lan-dhcpv6-server-dhcpv6-server-lan from=lan to=self ifnames=vtnet1 proto=udp port=547 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6Server/lan-dhcpv6-server
-mgmt-dhcpv4-dhcpv4-client from=mgmt to=self ifnames=vtnet2 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Lease/mgmt-dhcpv4
+mgmt-dhcpv4-dhcpv4-client from=mgmt to=self ifnames=vtnet2 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Client/mgmt-dhcpv4
 static-dslite-example-dslite-ipip from=self to=wan ifnames=vtnet0 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/static-dslite-example
-wan-dhcpv4-dhcpv4-client from=wan to=self ifnames=vtnet0 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Lease/wan-dhcpv4
+wan-dhcpv4-dhcpv4-client from=wan to=self ifnames=vtnet0 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Client/wan-dhcpv4
 wan-pd-dhcpv6-client from=wan to=self ifnames=vtnet0 proto=udp port=546 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd
 wg-lab-wireguard from=wan to=self ifnames=vtnet0 proto=udp port=51820 action=accept direction= comment=net.routerd.net/v1alpha1/WireGuardInterface/wg-lab
 ### routerd-generated.nix
@@ -297,6 +297,44 @@ wg-lab-wireguard from=wan to=self ifnames=vtnet0 proto=udp port=51820 action=acc
       RuntimeDirectory = [ "routerd/ndpi-agent" ];
       RuntimeDirectoryPreserve = "yes";
       RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ProtectSystem = "strict";
+      ProtectHome = "true";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
+  systemd.services."routerd-pppoe-client@wan-pppoe" = {
+    description = "routerd PPPoE client wan-pppoe";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-pppoe-client"
+        "daemon"
+        "--resource"
+        "wan-pppoe"
+        "--interface"
+        "vtnet0"
+        "--username"
+        "user@example.jp"
+        "--password"
+        "change-me"
+        "--mtu"
+        "1454"
+        "--mru"
+        "1454"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/pppoe-client" ];
+      RuntimeDirectoryPreserve = "yes";
+      StateDirectory = [ "routerd/pppoe-client" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" "/etc/ppp" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
       ProtectSystem = "strict";
       ProtectHome = "true";
       NoNewPrivileges = true;

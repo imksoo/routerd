@@ -47,7 +47,7 @@ spec:
         owner: external
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Lease
+      kind: DHCPv4Client
       metadata:
         name: wan-dhcpv4
       spec:
@@ -64,7 +64,7 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Lease
+      kind: DHCPv4Client
       metadata:
         name: mgmt-dhcpv4
       spec:
@@ -355,7 +355,7 @@ spec:
             healthCheck: wan-dhcpv4-v4
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4SourceNAT
+      kind: NAT44Rule
       metadata:
         name: lan-to-dslite-a
       spec:
@@ -370,7 +370,7 @@ spec:
             end: 65535
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4SourceNAT
+      kind: NAT44Rule
       metadata:
         name: lan-to-dslite-b
       spec:
@@ -385,7 +385,7 @@ spec:
             end: 65535
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4SourceNAT
+      kind: NAT44Rule
       metadata:
         name: lan-to-dslite-c
       spec:

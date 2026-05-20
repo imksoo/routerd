@@ -139,7 +139,7 @@ func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTest
 		{specName: "DSLiteTunnelSpec", resource: testResource(api.NetAPIVersion, "DSLiteTunnel", "dslite", api.DSLiteTunnelSpec{Interface: "wan", AFTRIPv6: "2001:db8::1", When: when})},
 		{specName: "HealthCheckSpec", resource: testResource(api.NetAPIVersion, "HealthCheck", "internet", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", When: when})},
 		{specName: "IPv4DefaultRoutePolicyCandidate", resource: testResource(api.NetAPIVersion, "IPv4DefaultRoutePolicy", "default-v4", api.IPv4DefaultRoutePolicySpec{Candidates: []api.IPv4DefaultRoutePolicyCandidate{{Interface: "wan", Priority: 1, Table: 100, Mark: 100, When: when}}})},
-		{specName: "IPv4SourceNATSpec", resource: testResource(api.NetAPIVersion, "IPv4SourceNAT", "lan", api.IPv4SourceNATSpec{OutboundInterface: "wan", SourceCIDRs: []string{"192.0.2.0/24"}, Translation: api.IPv4NATTranslationSpec{Type: "interfaceAddress"}, When: when})},
+		{specName: "NAT44RuleSpec", resource: testResource(api.NetAPIVersion, "NAT44Rule", "lan", api.NAT44RuleSpec{OutboundInterface: "wan", SourceCIDRs: []string{"192.0.2.0/24"}, Translation: api.IPv4NATTranslationSpec{Type: "interfaceAddress"}, When: when})},
 		{specName: "PortForwardSpec", resource: testResource(api.FirewallAPIVersion, "PortForward", "web", api.PortForwardSpec{Listen: api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 443}, Target: api.IngressTargetSpec{Address: "192.0.2.10", Port: 8443}, When: when})},
 		{specName: "IngressServiceSpec", resource: testResource(api.FirewallAPIVersion, "IngressService", "web", api.IngressServiceSpec{Listen: api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 443}, Backends: []api.IngressBackendSpec{{Address: "192.0.2.10", Port: 8443}}, When: when})},
 		{specName: "IPAddressSetSpec", resource: testResource(api.NetAPIVersion, "IPAddressSet", "blocked", api.IPAddressSetSpec{Addresses: []string{"192.0.2.10"}, When: when})},
@@ -372,7 +372,7 @@ func TestValidateHealthCheckRejectsUnknownRole(t *testing.T) {
 	}
 }
 
-func TestValidatePPPoEInterface(t *testing.T) {
+func TestValidatePPPoESessionDaemonFields(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -383,9 +383,9 @@ func TestValidatePPPoEInterface(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
 				Metadata: api.ObjectMeta{Name: "wan-ppp"},
-				Spec: api.PPPoEInterfaceSpec{
+				Spec: api.PPPoESessionSpec{
 					Interface: "wan-ether",
 					IfName:    "ppp0",
 					Username:  "user@example.jp",
@@ -401,7 +401,7 @@ func TestValidatePPPoEInterface(t *testing.T) {
 	}
 }
 
-func TestValidatePPPoEInterfaceRequiresOnePasswordSource(t *testing.T) {
+func TestValidatePPPoESessionRequiresOnePasswordSource(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -412,9 +412,9 @@ func TestValidatePPPoEInterfaceRequiresOnePasswordSource(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
 				Metadata: api.ObjectMeta{Name: "wan-ppp"},
-				Spec: api.PPPoEInterfaceSpec{
+				Spec: api.PPPoESessionSpec{
 					Interface:    "wan-ether",
 					IfName:       "ppp0",
 					Username:     "user@example.jp",
@@ -725,7 +725,7 @@ func TestValidateEgressRoutePolicyDynamicGatewayRequiresGatewayFrom(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec.Candidates[0].GatewayFrom = api.StatusValueSourceSpec{Resource: "DHCPv4Lease/wan", Field: "gateway"}
+	spec.Candidates[0].GatewayFrom = api.StatusValueSourceSpec{Resource: "DHCPv4Client/wan", Field: "gateway"}
 	policy.Spec = spec
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate with gatewayFrom: %v", err)
@@ -984,7 +984,7 @@ func TestValidateRejectsExternalPDClientAndNetworkdDHCPv6OnSameInterface(t *test
 	}
 }
 
-func TestValidateIPv4SourceNATRequiresValidCIDR(t *testing.T) {
+func TestValidateNAT44RuleRequiresValidCIDR(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -995,9 +995,9 @@ func TestValidateIPv4SourceNATRequiresValidCIDR(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
 				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
-				Spec: api.IPv4SourceNATSpec{
+				Spec: api.NAT44RuleSpec{
 					OutboundInterface: "wan",
 					SourceCIDRs:       []string{"not-a-cidr"},
 					Translation:       api.IPv4NATTranslationSpec{Type: "interfaceAddress"},
@@ -1017,6 +1017,11 @@ func TestValidateNAT44Rule(t *testing.T) {
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
 				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
 				Spec: api.NAT44RuleSpec{
@@ -1030,11 +1035,11 @@ func TestValidateNAT44Rule(t *testing.T) {
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate NAT44Rule: %v", err)
 	}
-	router.Spec.Resources[0].Spec = api.NAT44RuleSpec{Type: "snat", EgressInterface: "wan", SourceRanges: []string{"192.168.0.0/16"}}
+	router.Spec.Resources[1].Spec = api.NAT44RuleSpec{Type: "snat", EgressInterface: "wan", SourceRanges: []string{"192.168.0.0/16"}}
 	if err := Validate(router); err == nil {
 		t.Fatal("expected snat without snatAddress or snatAddressFrom to be rejected")
 	}
-	router.Spec.Resources[0].Spec = api.NAT44RuleSpec{
+	router.Spec.Resources[1].Spec = api.NAT44RuleSpec{
 		Type:            "snat",
 		EgressInterface: "wan",
 		SourceRanges:    []string{"192.168.0.0/16"},
@@ -1245,7 +1250,7 @@ func TestValidateFirewallRuleAddressSetRef(t *testing.T) {
 	}
 }
 
-func TestValidateIPv4SourceNATRejectsInvalidPortRange(t *testing.T) {
+func TestValidateNAT44RuleRejectsInvalidPortRange(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -1256,9 +1261,9 @@ func TestValidateIPv4SourceNATRejectsInvalidPortRange(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
 				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
-				Spec: api.IPv4SourceNATSpec{
+				Spec: api.NAT44RuleSpec{
 					OutboundInterface: "wan",
 					SourceCIDRs:       []string{"192.168.10.0/24"},
 					Translation: api.IPv4NATTranslationSpec{
@@ -1276,6 +1281,36 @@ func TestValidateIPv4SourceNATRejectsInvalidPortRange(t *testing.T) {
 
 	if err := Validate(router); err == nil {
 		t.Fatal("expected invalid NAT port range to be rejected")
+	}
+}
+
+func TestValidateNAT44RuleRejectsMixedShapes(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
+				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
+				Spec: api.NAT44RuleSpec{
+					Type:              "masquerade",
+					EgressInterface:   "wan",
+					SourceRanges:      []string{"192.168.10.0/24"},
+					OutboundInterface: "wan",
+					SourceCIDRs:       []string{"192.168.10.0/24"},
+					Translation:       api.IPv4NATTranslationSpec{Type: "interfaceAddress"},
+				},
+			},
+		}},
+	}
+
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "must not mix") {
+		t.Fatalf("expected mixed NAT44Rule shape to be rejected, got %v", err)
 	}
 }
 

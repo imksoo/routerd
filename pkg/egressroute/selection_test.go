@@ -331,7 +331,7 @@ func TestControllerUsesHealthyOutputWhenSourceHasNoStatus(t *testing.T) {
 			Candidates: []api.EgressRoutePolicyCandidate{
 				{
 					Name:        "pppoe-flets",
-					Source:      "PPPoEInterface/pppoe-flets",
+					Source:      "PPPoESession/pppoe-flets",
 					Device:      "ppp-flets",
 					Weight:      60,
 					HealthCheck: "internet-via-pppoe",
@@ -365,7 +365,7 @@ func TestControllerSkipsDisabledCandidate(t *testing.T) {
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
 			Selection: SelectionHighestWeightReady,
 			Candidates: []api.EgressRoutePolicyCandidate{
-				{Name: "pppoe-flets", Disabled: true, Source: "PPPoEInterface/pppoe-flets", Device: "ppp-flets", Weight: 120, HealthCheck: "internet-via-pppoe"},
+				{Name: "pppoe-flets", Disabled: true, Source: "PPPoESession/pppoe-flets", Device: "ppp-flets", Weight: 120, HealthCheck: "internet-via-pppoe"},
 				{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", DeviceFrom: api.StatusValueSourceSpec{Resource: "DSLiteTunnel/ds-lite", Field: "device"}, Weight: 80},
 			},
 		}),
@@ -392,9 +392,9 @@ func TestControllerSkipsDisabledPPPoESource(t *testing.T) {
 	controller := Controller{
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
 				Metadata: api.ObjectMeta{Name: "pppoe-flets"},
-				Spec:     api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp-flets", Disabled: true, Username: "open@open.ad.jp", Password: "open"},
+				Spec:     api.PPPoESessionSpec{Interface: "wan", IfName: "ppp-flets", Disabled: true, Username: "open@open.ad.jp", Password: "open"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
@@ -402,7 +402,7 @@ func TestControllerSkipsDisabledPPPoESource(t *testing.T) {
 				Spec: api.EgressRoutePolicySpec{
 					Selection: SelectionHighestWeightReady,
 					Candidates: []api.EgressRoutePolicyCandidate{
-						{Name: "pppoe-flets", Source: "PPPoEInterface/pppoe-flets", Device: "ppp-flets", Weight: 120, HealthCheck: "internet-via-pppoe"},
+						{Name: "pppoe-flets", Source: "PPPoESession/pppoe-flets", Device: "ppp-flets", Weight: 120, HealthCheck: "internet-via-pppoe"},
 						{Name: "ds-lite", Source: "DSLiteTunnel/ds-lite", DeviceFrom: api.StatusValueSourceSpec{Resource: "DSLiteTunnel/ds-lite", Field: "device"}, Weight: 80},
 					},
 				},

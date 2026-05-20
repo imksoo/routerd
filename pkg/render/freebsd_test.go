@@ -16,11 +16,11 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "mgmt"}, Spec: api.InterfaceSpec{IfName: "vtnet2", Managed: true, Owner: "routerd", AdminUp: true}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "lan-bridge"}, Spec: api.BridgeSpec{IfName: "bridge0", Members: []string{"lan", "home-vxlan"}, RSTP: boolPtr(true)}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"}, Metadata: api.ObjectMeta{Name: "home-vxlan"}, Spec: api.VXLANSegmentSpec{IfName: "vxlan100", VNI: 100, LocalAddress: "192.0.2.10", Remotes: []string{"192.0.2.20"}, UnderlayInterface: "wan", UDPPort: 4789, MTU: 1450, Bridge: "lan-bridge"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan-dhcpv4"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "mgmt-dhcpv4"}, Spec: api.DHCPv4LeaseSpec{Interface: "mgmt", UseRoutes: boolPtr(false), UseDNS: boolPtr(false)}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan-dhcpv4"}, Spec: api.DHCPv4ClientSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "mgmt-dhcpv4"}, Spec: api.DHCPv4ClientSpec{Interface: "mgmt", UseRoutes: boolPtr(false), UseDNS: boolPtr(false)}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address"}, Metadata: api.ObjectMeta{Name: "wan-dhcpv6"}, Spec: api.DHCPv6AddressSpec{Interface: "wan", Client: "dhcp6c"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcp6c", Profile: "ntt-hgw-lan-pd", PrefixLength: 60, IAID: "00000001"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "wan-pppoe"}, Spec: api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp0", Username: "user@example.jp", Password: "secret", Managed: true, DefaultRoute: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan-pppoe"}, Spec: api.PPPoESessionSpec{Interface: "wan", IfName: "ppp0", Username: "user@example.jp", Password: "secret", Managed: true, DefaultRoute: true}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "bridge-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan-bridge", Address: "192.0.2.1/24"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"}, Metadata: api.ObjectMeta{Name: "lab-v4"}, Spec: api.IPv4StaticRouteSpec{Interface: "lan", Destination: "192.0.2.0/24", Via: "192.168.10.254"}},
@@ -28,7 +28,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", SubnetID: "0", AddressSuffix: "::1", Announce: true}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"}, Metadata: api.ObjectMeta{Name: "lan-nat"}, Spec: api.IPv4SourceNATSpec{OutboundInterface: "wan", SourceCIDRs: []string{"192.168.10.0/24"}, Translation: api.IPv4NATTranslationSpec{Type: "interfaceAddress"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-nat"}, Spec: api.NAT44RuleSpec{OutboundInterface: "wan", SourceCIDRs: []string{"192.168.10.0/24"}, Translation: api.IPv4NATTranslationSpec{Type: "interfaceAddress"}}},
 	}}}
 
 	got, err := FreeBSD(router)
@@ -69,7 +69,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		}
 	}
 	if dhclient := string(got.DHCPClient); strings.TrimSpace(dhclient) != "" {
-		t.Fatalf("FreeBSD renderer must not emit legacy dhclient config for DHCPv4Lease:\n%s", dhclient)
+		t.Fatalf("FreeBSD renderer must not emit legacy dhclient config for DHCPv4Client:\n%s", dhclient)
 	}
 	for _, unwanted := range []string{"dhcp6c_enable", "dhcp6c_interfaces", "dhcp6c_flags"} {
 		if strings.Contains(rc, unwanted) {

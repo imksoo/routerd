@@ -60,7 +60,7 @@ spec:
 | Kind | 役割 |
 | --- | --- |
 | `Interface` | routerd が扱う安定した名前と OS のインターフェース名を結び付け、下流 resource 向けの link/address status も提供します。 |
-| `PPPoEInterface` | PPPoE 用の下位インターフェース設定を表します。 |
+| `PPPoESession` | PPPoE 用の下位インターフェース設定を表します。 |
 | `PPPoESession` | `routerd-pppoe-client` が管理する PPPoE セッションです。 |
 | `WireGuardInterface` | WireGuard インターフェースを表します。 |
 | `WireGuardPeer` | WireGuard の相手を表します。 |
@@ -69,7 +69,7 @@ spec:
 | `VRF` | Linux VRF デバイスと経路表を表します。 |
 | `VXLANTunnel` | VXLAN トンネルを表します。 |
 
-`PPPoEInterface.spec.disabled` を `true` にすると、PPPoE の定義は残したまま、管理対象の pppd ユニットを停止・無効化します。
+`PPPoESession.spec.disabled` を `true` にすると、PPPoE の定義は残したまま、管理対象の pppd ユニットを停止・無効化します。
 通常運用では PPPoE セッション枠を使わず、必要なときだけ手動で試験する fallback 経路に使えます。
 
 `TailscaleNode` は初回登録用に `authKey` を使えます。
@@ -98,7 +98,7 @@ Kernel module と systemd-networkd/resolved の adoption drop-in は、router re
 | `IPv4StaticAddress` | 静的 IPv4 アドレスを付与します。 |
 | `VirtualIPv4Address` | IPv4 `/32` VIP を宣言します。`mode: vrrp` は Linux では keepalived、FreeBSD では CARP を使います。 |
 | `VirtualIPv6Address` | IPv6 `/128` VIP を宣言します。`mode: vrrp` は Linux keepalived の VRRPv3 と FreeBSD CARP inet6 alias を使います。 |
-| `DHCPv4Lease` | `routerd-dhcpv4-client` が DHCPv4 リース、IPv4 アドレス、任意のデフォルト経路を管理します。 |
+| `DHCPv4Client` | `routerd-dhcpv4-client` が DHCPv4 リース、IPv4 アドレス、任意のデフォルト経路を管理します。 |
 | `DHCPv6Address` | DHCPv6 IA_NA の意図を表します。 |
 | `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` が管理する DHCPv6-PD リースです。 |
 | `DHCPv6Information` | DHCPv6 情報要求の結果です。DNS、SNTP、ドメイン検索、AFTR 情報を観測します。 |
@@ -148,7 +148,6 @@ DNSSEC は `DNSZone.spec.dnssec` と `DNSResolver.spec.sources[].dnssecValidate`
 | `BGPRouter` | ローカル BGP router を宣言します。初期 backend は FRR で、import policy は default deny です。 |
 | `BGPPeer` | `BGPRouter` にぶら下がる FRR 管理の BGP peer を宣言します。Kubernetes BGP speaker などに使います。 |
 | `NAT44Rule` | nftables の `routerd_nat` テーブルで IPv4 NAPT を行います。 |
-| `IPv4SourceNAT` | 旧来の IPv4 送信元 NAT リソースです。新しい設定では `NAT44Rule` を優先します。 |
 | `PortForward` | WAN 側の IPv4 TCP/UDP ポートを 1 つの内部 IPv4 宛先へ DNAT します。 |
 | `IngressService` | WAN 側の IPv4 TCP/UDP サービスを公開します。複数 backend、TCP/HTTP health check、`failover` / `sourceHash` / `random` selection を受け付けます。 |
 | `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
@@ -182,10 +181,12 @@ type matching、`rateLimit`、`connLimit` も扱えます。`port` は単一の
 destination port shorthand として引き続き受け付けますが、新しい例では
 `destinationPorts` を使います。
 
-`NAT44Rule` は `destinationCIDRs`、`destinationSetRefs`、`excludeDestinationCIDRs`、
-`excludeDestinationSetRefs` を持ちます。これにより、インターネット向け通信だけを
-マスカレードし、静的経路を持つプライベート宛先や再利用可能な address set は NAT
-しない構成にできます。
+`NAT44Rule` は `outboundInterface`、`sourceCIDRs`、`translation` による単純な
+source NAT と、`type`、`egressInterface` または `egressPolicyRef`、`sourceRanges`
+による policy-aware NAT を扱います。さらに `destinationCIDRs`、`destinationSetRefs`、
+`excludeDestinationCIDRs`、`excludeDestinationSetRefs` を持ちます。これにより、
+インターネット向け通信だけをマスカレードし、静的経路を持つプライベート宛先や
+再利用可能な address set は NAT しない構成にできます。
 
 `PortForward` と `IngressService` は Linux nftables と FreeBSD pf に DNAT を生成します。
 `spec.hairpin.enabled: true` と `spec.hairpin.interfaces` を指定すると、LAN
@@ -414,7 +415,7 @@ FreeBSD には Linux と同じ socket option がないためです。
 | --- | --- |
 | `Hostname` | ホスト名を管理します。 |
 | `Sysctl` | sysctl 値を管理します。 |
-| `NTPClient` | NTP クライアント設定を管理します。`serverFrom` で `DHCPv4Lease.status.ntpServers` や `DHCPv6Information.status.sntpServers` を参照できます。 |
+| `NTPClient` | NTP クライアント設定を管理します。`serverFrom` で `DHCPv4Client.status.ntpServers` や `DHCPv6Information.status.sntpServers` を参照できます。 |
 | `LogSink` | ログ送信先を表します。 |
 | `WebConsole` | 状態、イベント、IPv4/IPv6 コネクション観測を表示する読み取り専用画面です。 |
 

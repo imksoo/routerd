@@ -385,7 +385,7 @@ exit 1
 		},
 		{
 			APIVersion: api.NetAPIVersion,
-			Kind:       "DHCPv4Lease",
+			Kind:       "DHCPv4Client",
 			Name:       "wan",
 			Status: map[string]any{
 				"phase":                 "Bound",
@@ -396,7 +396,7 @@ exit 1
 	}}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"}, Metadata: api.ObjectMeta{Name: "services"}, Spec: api.IPv4StaticRouteSpec{Interface: "lan", Destination: "10.96.0.0/12", Via: "192.168.123.50", Metric: 50}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan", RouteMetric: 100}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4ClientSpec{Interface: "wan", RouteMetric: 100}},
 	}}}
 	handler := New(Options{Store: store, Router: router, Title: "routerd"})
 	rec := httptest.NewRecorder()

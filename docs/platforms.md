@@ -190,7 +190,7 @@ Implemented:
 - FreeBSD-idiomatic `rc.conf.d` output for `gateway_enable`, `ipv6_gateway_enable`, `cloned_interfaces`, `ifconfig_*`, `static_routes`, `ipv6_static_routes`, `pf_enable`, `pflog_enable`, and `mpd_enable`
 - `dhclient.conf`, `mpd5.conf`, `pf.conf`, dnsmasq config, and generated `rc.d` scripts from `routerd render freebsd --out-dir`
 - pf rendering from `FirewallZone`, `FirewallPolicy`, `FirewallRule`
-- pf NAT rendering from `IPv4SourceNAT` and `NAT44Rule`
+- pf NAT rendering from `NAT44Rule`
 - automatic `pfctl -nf` validation and `pfctl -f` application for generated `pf.conf`
 - conntrack-equivalent traffic flows from `pfctl -ss -v`
 - `pflog0` ingestion through direct BPF reads for firewall logs; packet parsing avoids dependency on vendor-specific tcpdump text formats

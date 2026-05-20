@@ -68,7 +68,7 @@ spec:
 | Kind | Role |
 | --- | --- |
 | `Interface` | Binds a stable routerd name to an OS interface name and publishes link/address status for downstream resources. |
-| `PPPoEInterface` | Defines PPPoE lower-interface settings. |
+| `PPPoESession` | Defines PPPoE lower-interface settings. |
 | `PPPoESession` | Represents a `routerd-pppoe-client` session. |
 | `WireGuardInterface` | Represents a WireGuard interface. |
 | `WireGuardPeer` | Represents a WireGuard peer. |
@@ -77,7 +77,7 @@ spec:
 | `VRF` | Represents a Linux VRF device and route table. |
 | `VXLANTunnel` | Represents a VXLAN tunnel. |
 
-`PPPoEInterface.spec.disabled` keeps the PPPoE definition renderable but stops
+`PPPoESession.spec.disabled` keeps the PPPoE definition renderable but stops
 routerd from starting the managed pppd unit. This is useful for a fallback path
 that should remain available for manual testing without consuming a line's
 PPPoE session slot during normal operation.
@@ -109,7 +109,7 @@ instead of silently ignoring the input.
 | `IPv4StaticAddress` | Assigns a static IPv4 address. |
 | `VirtualIPv4Address` | Declares an IPv4 `/32` VIP. `mode: vrrp` uses keepalived on Linux and CARP on FreeBSD. |
 | `VirtualIPv6Address` | Declares an IPv6 `/128` VIP. `mode: vrrp` uses VRRPv3 on Linux keepalived and CARP inet6 aliases on FreeBSD. |
-| `DHCPv4Lease` | DHCPv4 lease, IPv4 address, and optional default route managed by `routerd-dhcpv4-client`. |
+| `DHCPv4Client` | DHCPv4 lease, IPv4 address, and optional default route managed by `routerd-dhcpv4-client`. |
 | `DHCPv6Address` | Represents DHCPv6 IA_NA intent for platform renderers. |
 | `DHCPv6PrefixDelegation` | DHCPv6-PD lease managed by `routerd-dhcpv6-client`. |
 | `DHCPv6Information` | DHCPv6 information request result, including DNS, SNTP, domain search, and AFTR observations. |
@@ -164,7 +164,6 @@ endpoint name resolution. DNSSEC is configured with `DNSZone.spec.dnssec` and
 | `BGPRouter` | Declares a local BGP router. The initial backend is FRR with default-deny import policy. |
 | `BGPPeer` | Declares FRR-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
-| `IPv4SourceNAT` | Older IPv4 source NAT resource. Prefer `NAT44Rule` for new configs. |
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
 | `IngressService` | Publishes one WAN-side IPv4 TCP/UDP service. Multiple backends, TCP/HTTP health checks, and `failover`, `sourceHash`, or `random` backend selection are accepted. |
 | `LocalServiceRedirect` | Redirects LAN-origin IPv4/IPv6 traffic for `IPAddressSet` destinations to a local router port. This is intended for plaintext DNS/NTP interception without touching DoH or DoT ports. |
@@ -201,10 +200,12 @@ each rule. Stateful rule expressions also support `sourcePorts`,
 `port` remains accepted as a single destination port shorthand; new examples
 prefer `destinationPorts`.
 
-`NAT44Rule` supports `destinationCIDRs`, `destinationSetRefs`,
-`excludeDestinationCIDRs`, and `excludeDestinationSetRefs`. This allows internet
-traffic to be masqueraded while private routed destinations or reusable address
-sets stay un-NATed.
+`NAT44Rule` supports simple source NAT with `outboundInterface`,
+`sourceCIDRs`, and `translation`, and policy-aware NAT with `type`,
+`egressInterface` or `egressPolicyRef`, and `sourceRanges`. It also supports
+`destinationCIDRs`, `destinationSetRefs`, `excludeDestinationCIDRs`, and
+`excludeDestinationSetRefs`. This allows internet traffic to be masqueraded
+while private routed destinations or reusable address sets stay un-NATed.
 
 `BGPRouter` and `BGPPeer` currently target FRR. routerd renders FRR config,
 validates it with `vtysh -C -f`, applies deltas with

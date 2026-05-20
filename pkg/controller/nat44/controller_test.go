@@ -424,7 +424,7 @@ func TestControllerSkipsUnchangedExistingNftablesTable(t *testing.T) {
 
 func TestControllerResolvesPPPoEEgressInterface(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoEInterfaceSpec{Interface: "wan", IfName: "ppp-flets", Username: "open@open.ad.jp"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoESessionSpec{Interface: "wan", IfName: "ppp-flets", Username: "open@open.ad.jp"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-pppoe"}, Spec: api.NAT44RuleSpec{
 			Type:            "masquerade",
 			EgressInterface: "pppoe-flets",

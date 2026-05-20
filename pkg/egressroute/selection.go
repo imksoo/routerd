@@ -360,14 +360,14 @@ func (c Controller) sourceDisabled(source string) bool {
 		return false
 	}
 	kind, name, ok := resourcequery.SplitResource(source)
-	if !ok || kind != "PPPoEInterface" {
+	if !ok || kind != "PPPoESession" {
 		return false
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != kind || resource.Metadata.Name != name {
 			continue
 		}
-		spec, err := resource.PPPoEInterfaceSpec()
+		spec, err := resource.PPPoESessionSpec()
 		return err == nil && spec.Disabled
 	}
 	return false

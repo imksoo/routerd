@@ -199,7 +199,7 @@ func TestNftablesBespokeExpressionsSurviveBackendRefactor(t *testing.T) {
 		}
 	}
 
-	nat, err := render.NftablesIPv4SourceNAT(nftBespokeRouter())
+	nat, err := render.NftablesNAT44Rule(nftBespokeRouter())
 	if err != nil {
 		t.Fatalf("render nftables NAT: %v", err)
 	}

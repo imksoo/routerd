@@ -723,7 +723,7 @@ func TestGetKindAndListKinds(t *testing.T) {
 	if err := run([]string{"get", "--list-kinds", "--config", configPath}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatalf("get --list-kinds: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "Interface") || !strings.Contains(got, "IPv4SourceNAT") {
+	if got := out.String(); !strings.Contains(got, "Interface") || !strings.Contains(got, "NAT44Rule") {
 		t.Fatalf("list kinds output = %s", got)
 	}
 }
@@ -1057,7 +1057,7 @@ spec:
         client: networkd
         prefixLength: 60
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4SourceNAT
+      kind: NAT44Rule
       metadata:
         name: lan-nat
       spec:

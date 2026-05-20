@@ -47,7 +47,7 @@ spec:
         serverFrom:
           - resource: DHCPv6Information/wan-info
             field: sntpServers
-          - resource: DHCPv4Lease/wan-v4
+          - resource: DHCPv4Client/wan-v4
             field: ntpServers
         fallbackServers:
           - ntp.jst.mfeed.ad.jp
@@ -64,7 +64,7 @@ spec:
         serverFrom:
           - resource: DHCPv6Information/wan-info
             field: sntpServers
-          - resource: DHCPv4Lease/wan-v4
+          - resource: DHCPv4Client/wan-v4
             field: ntpServers
         fallbackServers:
           - ntp.jst.mfeed.ad.jp
@@ -267,7 +267,7 @@ spec:
           connectRetry: 5s
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: PPPoEInterface
+      kind: PPPoESession
       metadata:
         name: pppoe-flets
       spec:
@@ -534,7 +534,7 @@ spec:
                 phase: Up
           - name: pppoe-flets
             disabled: true
-            source: PPPoEInterface/pppoe-flets
+            source: PPPoESession/pppoe-flets
             device: ppp-flets
             gatewaySource: none
             weight: 70
@@ -630,7 +630,7 @@ spec:
             mark: 0x115
             healthCheck: internet-via-pppoe
             dependsOn:
-              - resource: PPPoEInterface/pppoe-flets
+              - resource: PPPoESession/pppoe-flets
                 phase: Connected
           - name: ix2215-fallback
             interface: lan
@@ -705,7 +705,7 @@ spec:
         device: ppp-flets
         metric: 10
         dependsOn:
-          - resource: PPPoEInterface/pppoe-flets
+          - resource: PPPoESession/pppoe-flets
             phase: Connected
 
     - apiVersion: net.routerd.net/v1alpha1
@@ -922,7 +922,7 @@ spec:
       metadata:
         name: internet-via-pppoe
         ownerRefs:
-          - kind: PPPoEInterface
+          - kind: PPPoESession
             name: pppoe-flets
       spec:
         disabled: true
@@ -1225,7 +1225,7 @@ spec:
           - DSLiteTunnel/ds-lite-b
           - DSLiteTunnel/ds-lite-c
           - DSLiteTunnel/ds-lite-ra
-          - PPPoEInterface/pppoe-flets
+          - PPPoESession/pppoe-flets
 
     - apiVersion: firewall.routerd.net/v1alpha1
       kind: FirewallZone

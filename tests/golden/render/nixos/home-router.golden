@@ -734,6 +734,45 @@ wg-mesh-wireguard from=wan to=self ifnames=ens18 proto=udp port=51821 action=acc
       PrivateTmp = true;
     };
   };
+  systemd.services."routerd-pppoe-client@pppoe-flets" = {
+    description = "routerd PPPoE client pppoe-flets";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-pppoe-client"
+        "daemon"
+        "--resource"
+        "pppoe-flets"
+        "--interface"
+        "ens18"
+        "--username"
+        "open@open.ad.jp"
+        "--password"
+        "open"
+        "--mtu"
+        "1454"
+        "--mru"
+        "1454"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      Environment = [ "OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.119:4317" "OTEL_EXPORTER_OTLP_INSECURE=true" "OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,routerd.node=home-router" "OTEL_SERVICE_NAMESPACE=routerd" ];
+      RuntimeDirectory = [ "routerd/pppoe-client" ];
+      RuntimeDirectoryPreserve = "yes";
+      StateDirectory = [ "routerd/pppoe-client" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" "/etc/ppp" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
+      ProtectSystem = "strict";
+      ProtectHome = "true";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
   systemd.services."routerd-tailscale-home-router" = {
     description = "routerd Tailscale node home-router";
     wantedBy = [ "multi-user.target" ];

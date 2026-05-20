@@ -15,7 +15,7 @@ LAN 側 (ルーターから内側に提供するサービス) は [LAN 側サー
 | 役割 | リソース | 担当デーモン |
 | --- | --- | --- |
 | 物理 / 仮想インターフェース | `Interface`、`IPv4StaticAddress` | (kernel) |
-| ISP から DHCP で IPv4 を取得 | `DHCPv4Lease` | `routerd-dhcpv4-client` |
+| ISP から DHCP で IPv4 を取得 | `DHCPv4Client` | `routerd-dhcpv4-client` |
 | ISP から IPv6 prefix を取得 | `DHCPv6PrefixDelegation`、`IPv6DelegatedAddress` | `routerd-dhcpv6-client` |
 | その他の DHCPv6 オプション (DNS、AFTR 等) | `DHCPv6Information` | `routerd-dhcpv6-client` |
 | 上流の時刻サーバー | `NTPClient` | `systemd-timesyncd` または `ntpd` |
@@ -40,7 +40,7 @@ ISP が同一 WAN インターフェースで IPv4 (DHCPv4) と IPv6 prefix (DHC
     role: untrust
 
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DHCPv4Lease
+  kind: DHCPv4Client
   metadata: {name: wan-v4}
   spec:
     interface: wan
@@ -70,7 +70,7 @@ ISP が同一 WAN インターフェースで IPv4 (DHCPv4) と IPv6 prefix (DHC
       - 192.0.2.0/24
 ```
 
-`DHCPv4Lease` は `routerd-dhcpv4-client` を起動し、リース内容を `lease.json` に書き込みます。アドレス自体は kernel が保持し、routerd は下流リソース向けにイベントを発行します。
+`DHCPv4Client` は `routerd-dhcpv4-client` を起動し、リース内容を `lease.json` に書き込みます。アドレス自体は kernel が保持し、routerd は下流リソース向けにイベントを発行します。
 
 `DHCPv6PrefixDelegation` は `routerd-dhcpv6-client` で IA_PD を取得します。`IPv6DelegatedAddress` がそこから LAN 側に配る `/64` (またはその他の長さ) を切り出します。
 
@@ -89,7 +89,7 @@ Linux / NixOS では `systemd-timesyncd`、FreeBSD では `ntpd` を使います
     managed: true
     source: auto
     serverFrom:
-      - resource: DHCPv4Lease/wan-v4
+      - resource: DHCPv4Client/wan-v4
         field: ntpServers
       - resource: DHCPv6Information/wan-info
         field: sntpServers

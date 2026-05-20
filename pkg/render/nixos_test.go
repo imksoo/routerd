@@ -47,9 +47,9 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external", AdminUp: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
 				Metadata: api.ObjectMeta{Name: "wan-dhcpv4"},
-				Spec:     api.DHCPv4LeaseSpec{Interface: "wan"},
+				Spec:     api.DHCPv4ClientSpec{Interface: "wan"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"},
@@ -111,14 +111,14 @@ func TestNixOSModuleRendersHostUsersInterfacesAndDependencies(t *testing.T) {
 				Spec:     api.VRFSpec{IfName: "vrf-guest", RouteTable: 1001, Members: []string{"guest"}},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
 				Metadata: api.ObjectMeta{Name: "mgmt-dhcpv4"},
-				Spec:     api.DHCPv4LeaseSpec{Interface: "mgmt", UseRoutes: boolPtr(false), UseDNS: boolPtr(false), RouteMetric: 900},
+				Spec:     api.DHCPv4ClientSpec{Interface: "mgmt", UseRoutes: boolPtr(false), UseDNS: boolPtr(false), RouteMetric: 900},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
 				Metadata: api.ObjectMeta{Name: "lan-nat"},
-				Spec: api.IPv4SourceNATSpec{
+				Spec: api.NAT44RuleSpec{
 					OutboundInterface: "wan",
 					SourceCIDRs:       []string{"192.168.10.0/24"},
 					Translation:       api.IPv4NATTranslationSpec{Type: "interfaceAddress"},
@@ -299,9 +299,9 @@ func TestNixOSModuleRendersOptionalRouterdService(t *testing.T) {
 				Spec:     api.FirewallPolicySpec{},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
 				Metadata: api.ObjectMeta{Name: "pppoe"},
-				Spec: api.PPPoEInterfaceSpec{
+				Spec: api.PPPoESessionSpec{
 					Interface: "wan",
 					Username:  "open@open.ad.jp",
 					Password:  "open",
@@ -614,9 +614,9 @@ func TestNixOSModuleSynthesizesDHCPv4ClientDaemonUnit(t *testing.T) {
 			Spec:     api.InterfaceSpec{IfName: "ens18", AdminUp: true},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
 			Metadata: api.ObjectMeta{Name: "wan-dhcpv4"},
-			Spec: api.DHCPv4LeaseSpec{
+			Spec: api.DHCPv4ClientSpec{
 				Interface:        "wan",
 				Hostname:         "router02",
 				RequestedAddress: "192.0.2.10",
@@ -756,9 +756,9 @@ func TestNixOSModuleSkipsDHCPv6ClientServiceWhenRouterdSupervisesClients(t *test
 				Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan", Profile: "ntt-hgw-lan-pd"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
 				Metadata: api.ObjectMeta{Name: "wan-dhcpv4"},
-				Spec:     api.DHCPv4LeaseSpec{Interface: "wan"},
+				Spec:     api.DHCPv4ClientSpec{Interface: "wan"},
 			},
 		}},
 	}

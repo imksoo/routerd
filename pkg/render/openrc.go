@@ -100,10 +100,10 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 			services = append(services, OpenRCService{Name: name, Enabled: true, Started: true})
 		}
 		for _, res := range router.Spec.Resources {
-			if res.Kind != "DHCPv4Lease" {
+			if res.Kind != "DHCPv4Client" {
 				continue
 			}
-			spec, err := res.DHCPv4LeaseSpec()
+			spec, err := res.DHCPv4ClientSpec()
 			if err != nil {
 				return OpenRCConfig{}, err
 			}

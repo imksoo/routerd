@@ -858,7 +858,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - `EgressRoutePolicy` 现在可以表达 DS-Lite 主路径、RA 来源 DS-Lite、PPPoE 和 WAN 直连的多级回退。
 - 通过声明式 `Telemetry` 资源和 OTLP 环境变量传播，将 OpenTelemetry 配置扩展到路由器群。
 - DS-Lite 示例改用 RFC 6333 的 B4-AFTR link prefix `192.0.0.0/29` 作为隧道内侧 IPv4 源地址。
-- `PPPoEInterface.disabled` 和禁用的路径候选允许在 YAML 中保留 PPPoE 回退定义，同时避免生产 PPPoE 会话泄漏。
+- `PPPoESession.disabled` 和禁用的路径候选允许在 YAML 中保留 PPPoE 回退定义，同时避免生产 PPPoE 会话泄漏。
 
 ### 变更
 
@@ -924,7 +924,7 @@ routerd 使用 `vYYYYMMDD.HHmm` 格式的日期和时间型版本号。
 - 状态化 firewall：`FirewallZone`、`FirewallPolicy`、`FirewallRule` 生成 nftables 的 `inet routerd_filter` table。
 - `EgressRoutePolicy`（原名 `WANEgressPolicy`）新增 `destinationCIDRs`、`gateway`、`gatewaySource`。`HealthCheck` 可通过 `via`、`sourceInterface`、`sourceAddress` 指定 probe 路径。
 - DNS 子系统重构：`DNSZone`（权威区）与 `DNSResolver`（转发 / 缓存）分离。覆盖本地区、条件转发、DoH / DoT / DoQ、明文 UDP DNS。dnsmasq 仅限 DHCPv4 / DHCPv6 / RA / 中继。
-- DS-Lite（`DSLiteTunnel`）、PPPoE（`PPPoESession`、`routerd-pppoe-client`）、DHCPv4 client（`routerd-dhcpv4-client`、`DHCPv4Lease`）。
+- DS-Lite（`DSLiteTunnel`）、PPPoE（`PPPoESession`、`routerd-pppoe-client`）、DHCPv4 client（`routerd-dhcpv4-client`、`DHCPv4Client`）。
 - NAT44（`NAT44Rule`）与 conntrack 观测。在无 `/proc/net/nf_conntrack` 环境中回退到 sysctl 统计。
 
 ### 变更

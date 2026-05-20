@@ -590,7 +590,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan-v4"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan", Hostname: "routerd-test"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan-v4"}, Spec: api.DHCPv4ClientSpec{Interface: "wan", Hostname: "routerd-test"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "1"}},
 	}}}
 	store := mapStore{}
@@ -658,7 +658,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 	if status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", "routerd-dhcpv4-client@wan-v4.service"); status["phase"] != "Applied" {
 		t.Fatalf("dhcpv4 unit status = %#v", status)
 	}
-	if status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Lease", "wan-v4"); status["managedBy"] != "systemd" {
+	if status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "wan-v4"); status["managedBy"] != "systemd" {
 		t.Fatalf("dhcpv4 lease status = %#v", status)
 	}
 }
@@ -732,9 +732,9 @@ func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
 	}
 }
 
-func TestSystemdUnitControllerMarksDisabledPPPoEInterface(t *testing.T) {
+func TestSystemdUnitControllerMarksDisabledPPPoESession(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoEInterfaceSpec{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoESessionSpec{
 			Interface: "wan",
 			IfName:    "ppp-flets",
 			Disabled:  true,
@@ -746,7 +746,7 @@ func TestSystemdUnitControllerMarksDisabledPPPoEInterface(t *testing.T) {
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "PPPoEInterface", "pppoe-flets")
+	status := store.ObjectStatus(api.NetAPIVersion, "PPPoESession", "pppoe-flets")
 	if status["phase"] != PhaseDisabled {
 		t.Fatalf("pppoe status = %#v", status)
 	}

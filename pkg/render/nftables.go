@@ -14,13 +14,12 @@ import (
 	"routerd/pkg/api"
 )
 
-func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
+func NftablesNAT44(router *api.Router) ([]byte, error) {
 	aliases, err := nftOutboundAliases(router)
 	if err != nil {
 		return nil, err
 	}
 
-	var nats []api.Resource
 	var nat44Rules []api.Resource
 	var policies []api.Resource
 	var policySets []api.Resource
@@ -36,9 +35,6 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 	var mssPolicies []pathMTUPolicy
 	var l2FilterVXLANS []vxlanConfig
 	for _, res := range router.Spec.Resources {
-		if res.Kind == "IPv4SourceNAT" {
-			nats = append(nats, res)
-		}
 		if res.Kind == "NAT44Rule" {
 			nat44Rules = append(nat44Rules, res)
 		}
@@ -93,10 +89,9 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 			l2FilterVXLANS = append(l2FilterVXLANS, vxlan)
 		}
 	}
-	if len(nats) == 0 && len(nat44Rules) == 0 && len(ingressRules) == 0 && len(redirectRules) == 0 && len(policies) == 0 && len(policySets) == 0 && len(zones) == 0 && len(firewallPolicies) == 0 && len(firewallLogs) == 0 && len(firewallRules) == 0 && len(clientPolicies) == 0 && len(mssPolicies) == 0 && len(l2FilterVXLANS) == 0 {
+	if len(nat44Rules) == 0 && len(ingressRules) == 0 && len(redirectRules) == 0 && len(policies) == 0 && len(policySets) == 0 && len(zones) == 0 && len(firewallPolicies) == 0 && len(firewallLogs) == 0 && len(firewallRules) == 0 && len(clientPolicies) == 0 && len(mssPolicies) == 0 && len(l2FilterVXLANS) == 0 {
 		return nil, nil
 	}
-	sort.Slice(nats, func(i, j int) bool { return nats[i].Metadata.Name < nats[j].Metadata.Name })
 	sort.Slice(nat44Rules, func(i, j int) bool { return nat44Rules[i].Metadata.Name < nat44Rules[j].Metadata.Name })
 	sort.Slice(policies, func(i, j int) bool { return policies[i].Metadata.Name < policies[j].Metadata.Name })
 	sort.Slice(policySets, func(i, j int) bool { return policySets[i].Metadata.Name < policySets[j].Metadata.Name })
@@ -126,8 +121,8 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 			return nil, err
 		}
 	}
-	if len(nats) > 0 || len(nat44Rules) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
-		if err := writeIPv4SourceNATTable(&buf, router, aliases, nats, nat44Rules, ingressRules, redirectRules, referencedAddressSets, addressSets); err != nil {
+	if len(nat44Rules) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
+		if err := writeNAT44Table(&buf, router, aliases, nat44Rules, ingressRules, redirectRules, referencedAddressSets, addressSets); err != nil {
 			return nil, err
 		}
 	}
@@ -135,6 +130,10 @@ func NftablesIPv4SourceNAT(router *api.Router) ([]byte, error) {
 		writeIPv6LocalServiceRedirectTable(&buf, redirectRules, referencedAddressSets)
 	}
 	return buf.Bytes(), nil
+}
+
+func NftablesNAT44Rule(router *api.Router) ([]byte, error) {
+	return NftablesNAT44(router)
 }
 
 func NftablesTCPMSSClamp(router *api.Router) ([]byte, error) {
@@ -348,8 +347,8 @@ func nftOutboundAliases(router *api.Router) (map[string]string, error) {
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
-		case "PPPoEInterface":
-			spec, err := res.PPPoEInterfaceSpec()
+		case "PPPoESession":
+			spec, err := res.PPPoESessionSpec()
 			if err != nil {
 				return nil, err
 			}
@@ -1470,7 +1469,7 @@ func nftIPv4SourcesMatch(resourceID string, sources []string) (string, error) {
 	return " ip saddr { " + strings.Join(values, ", ") + " }", nil
 }
 
-func writeIPv4SourceNATTable(buf *bytes.Buffer, router *api.Router, aliases map[string]string, nats []api.Resource, nat44Rules []api.Resource, ingressRules []ingressNATRule, redirectRules []localServiceRedirectRule, addressSets []nftIPAddressSet, addressSetMap map[string]nftIPAddressSet) error {
+func writeNAT44Table(buf *bytes.Buffer, router *api.Router, aliases map[string]string, nat44Rules []api.Resource, ingressRules []ingressNATRule, redirectRules []localServiceRedirectRule, addressSets []nftIPAddressSet, addressSetMap map[string]nftIPAddressSet) error {
 	writeNftTablePreamble(buf, "ip", "routerd_nat")
 	buf.WriteString("table ip routerd_nat {\n")
 	writeIPv4AddressSets(buf, addressSets)
@@ -1493,33 +1492,30 @@ func writeIPv4SourceNATTable(buf *bytes.Buffer, router *api.Router, aliases map[
 	buf.WriteString("  chain postrouting {\n")
 	buf.WriteString("    type nat hook postrouting priority srcnat; policy accept;\n")
 	writeIngressHairpinSNATRules(buf, ingressRules)
-	for _, res := range nats {
-		spec, err := res.IPv4SourceNATSpec()
-		if err != nil {
-			return err
-		}
-		ifname := aliases[spec.OutboundInterface]
-		if ifname == "" {
-			return fmt.Errorf("%s references outbound interface with empty ifname", res.ID())
-		}
-		for _, cidr := range spec.SourceCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s has invalid IPv4 source CIDR %q", res.ID(), cidr)
-			}
-			rules, err := nftSourceNATRules(ifname, prefix.Masked().String(), spec.Translation)
-			if err != nil {
-				return fmt.Errorf("%s: %w", res.ID(), err)
-			}
-			for _, rule := range rules {
-				buf.WriteString("    " + rule + "\n")
-			}
-		}
-	}
 	for _, res := range nat44Rules {
 		spec, err := res.NAT44RuleSpec()
 		if err != nil {
 			return err
+		}
+		if spec.OutboundInterface != "" || len(spec.SourceCIDRs) > 0 || spec.Translation.Type != "" {
+			ifname := aliases[spec.OutboundInterface]
+			if ifname == "" {
+				return fmt.Errorf("%s references outbound interface with empty ifname", res.ID())
+			}
+			for _, cidr := range spec.SourceCIDRs {
+				prefix, err := netip.ParsePrefix(cidr)
+				if err != nil || !prefix.Addr().Is4() {
+					return fmt.Errorf("%s has invalid IPv4 source CIDR %q", res.ID(), cidr)
+				}
+				rules, err := nftSourceNATRules(ifname, prefix.Masked().String(), spec.Translation)
+				if err != nil {
+					return fmt.Errorf("%s: %w", res.ID(), err)
+				}
+				for _, rule := range rules {
+					buf.WriteString("    " + rule + "\n")
+				}
+			}
+			continue
 		}
 		if spec.EgressInterface == "" {
 			if spec.EgressPolicyRef != "" {

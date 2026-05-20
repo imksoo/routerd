@@ -542,8 +542,8 @@ func resolveInterfaceName(router *api.Router, name string) string {
 			if err == nil {
 				return firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
 			}
-		case "PPPoEInterface":
-			spec, err := resource.PPPoEInterfaceSpec()
+		case "PPPoESession":
+			spec, err := resource.PPPoESessionSpec()
 			if err == nil {
 				return firstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
 			}

@@ -887,7 +887,7 @@ EOF
             cat <<EOF
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Lease
+      kind: DHCPv4Client
       metadata:
         name: wan-dhcpv4
       spec:

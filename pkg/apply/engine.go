@@ -84,8 +84,6 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeWebConsole(res, includePlan, &rr)
 		case "Interface":
 			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], includePlan, &rr)
-		case "PPPoEInterface":
-			e.observePPPoEInterface(res, aliases, includePlan, &rr)
 		case "PPPoESession":
 			e.observePPPoESession(res, aliases, includePlan, &rr)
 		case "WireGuardInterface":
@@ -102,8 +100,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeVXLANTunnel(res, aliases, includePlan, &rr)
 		case "IPv4StaticAddress":
 			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
-		case "DHCPv4Lease":
-			e.observeDHCPv4Lease(res, aliases, policies, includePlan, &rr)
+		case "DHCPv4Client":
+			e.observeDHCPv4Client(res, aliases, policies, includePlan, &rr)
 		case "DHCPv4Server":
 			e.observeDHCPv4Server(res, includePlan, &rr)
 		case "DHCPv4Reservation":
@@ -136,10 +134,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeHealthCheck(router, res, aliases, kinds, includePlan, &rr)
 		case "IPv4DefaultRoutePolicy":
 			e.observeIPv4DefaultRoutePolicy(res, aliases, includePlan, &rr)
-		case "IPv4SourceNAT":
-			e.observeIPv4SourceNAT(res, aliases, policies, includePlan, &rr)
 		case "NAT44Rule":
-			e.observeNAT44Rule(res, aliases, includePlan, &rr)
+			e.observeNAT44Rule(res, aliases, policies, includePlan, &rr)
 		case "IPv4PolicyRoute":
 			e.observeIPv4PolicyRoute(res, aliases, policies, includePlan, &rr)
 		case "IPv4PolicyRouteSet":
@@ -587,50 +583,6 @@ func (e *Engine) observeDSLiteTunnel(res api.Resource, aliases map[string]string
 	}
 }
 
-func (e *Engine) observePPPoEInterface(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
-	spec, err := res.PPPoEInterfaceSpec()
-	if err != nil {
-		rr.Phase = "Blocked"
-		rr.Warnings = append(rr.Warnings, err.Error())
-		return
-	}
-	ifname := defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
-	lowerIfName := aliases[spec.Interface]
-	rr.Observed["interface"] = spec.Interface
-	rr.Observed["lowerIfname"] = lowerIfName
-	rr.Observed["ifname"] = ifname
-	rr.Observed["username"] = spec.Username
-	rr.Observed["managed"] = fmt.Sprintf("%t", spec.Managed)
-	rr.Observed["disabled"] = fmt.Sprintf("%t", spec.Disabled)
-	if spec.Disabled {
-		rr.Phase = "Disabled"
-	}
-	rr.Observed["defaultRoute"] = fmt.Sprintf("%t", spec.DefaultRoute)
-	rr.Observed["usePeerDNS"] = fmt.Sprintf("%t", spec.UsePeerDNS)
-	if spec.ServiceName != "" {
-		rr.Observed["serviceName"] = spec.ServiceName
-	}
-	if spec.ACName != "" {
-		rr.Observed["acName"] = spec.ACName
-	}
-	if includePlan {
-		if spec.Disabled {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("stop and disable PPPoE interface %s over %s", ifname, lowerIfName))
-			return
-		}
-		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure PPPoE interface %s over %s", ifname, lowerIfName))
-		if spec.DefaultRoute {
-			rr.Plan = append(rr.Plan, "install IPv4 default route from PPPoE peer")
-		}
-		if spec.UsePeerDNS {
-			rr.Plan = append(rr.Plan, "accept DNS servers from PPPoE peer")
-		}
-		if spec.Managed {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("manage systemd unit routerd-pppoe-%s.service", res.Metadata.Name))
-		}
-	}
-}
-
 func (e *Engine) observePPPoESession(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
 	spec, err := res.PPPoESessionSpec()
 	if err != nil {
@@ -639,12 +591,20 @@ func (e *Engine) observePPPoESession(res api.Resource, aliases map[string]string
 		return
 	}
 	lowerIfName := aliases[spec.Interface]
+	ifname := defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
 	auth := defaultString(spec.AuthMethod, "chap")
 	rr.Observed["interface"] = spec.Interface
 	rr.Observed["lowerIfname"] = lowerIfName
+	rr.Observed["ifname"] = ifname
 	rr.Observed["client"] = "routerd-pppoe-client"
 	rr.Observed["authMethod"] = auth
 	rr.Observed["username"] = spec.Username
+	rr.Observed["disabled"] = fmt.Sprintf("%t", spec.Disabled)
+	rr.Observed["defaultRoute"] = fmt.Sprintf("%t", spec.DefaultRoute)
+	rr.Observed["usePeerDNS"] = fmt.Sprintf("%t", spec.UsePeerDNS)
+	if spec.Disabled {
+		rr.Phase = "Disabled"
+	}
 	if spec.ServiceName != "" {
 		rr.Observed["serviceName"] = spec.ServiceName
 	}
@@ -652,6 +612,10 @@ func (e *Engine) observePPPoESession(res api.Resource, aliases map[string]string
 		rr.Observed["acName"] = spec.ACName
 	}
 	if includePlan {
+		if spec.Disabled {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("keep routerd-pppoe-client for %s disabled", lowerIfName))
+			return
+		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("run routerd-pppoe-client for %s and observe PPPoE IPCP status from daemon", lowerIfName))
 	}
 }
@@ -805,13 +769,7 @@ func (e *Engine) observeVXLANTunnel(res api.Resource, aliases map[string]string,
 	}
 }
 
-func (e *Engine) observeIPv4SourceNAT(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
-	spec, err := res.IPv4SourceNATSpec()
-	if err != nil {
-		rr.Phase = "Blocked"
-		rr.Warnings = append(rr.Warnings, err.Error())
-		return
-	}
+func (e *Engine) observeNAT44SourceNATFields(res api.Resource, spec api.NAT44RuleSpec, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
 	outIfName := aliases[spec.OutboundInterface]
 	policy := policies[spec.OutboundInterface]
 
@@ -859,11 +817,15 @@ func (e *Engine) observeIPv4SourceNAT(res api.Resource, aliases map[string]strin
 	}
 }
 
-func (e *Engine) observeNAT44Rule(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+func (e *Engine) observeNAT44Rule(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
 	spec, err := res.NAT44RuleSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	if spec.OutboundInterface != "" || len(spec.SourceCIDRs) > 0 || spec.Translation.Type != "" {
+		e.observeNAT44SourceNATFields(res, spec, aliases, policies, includePlan, rr)
 		return
 	}
 	if spec.EgressInterface != "" {
@@ -1567,8 +1529,8 @@ func (e *Engine) observeDHCP(res api.Resource, aliases map[string]string, polici
 	}
 }
 
-func (e *Engine) observeDHCPv4Lease(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
-	spec, err := res.DHCPv4LeaseSpec()
+func (e *Engine) observeDHCPv4Client(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPv4ClientSpec()
 	if err != nil {
 		rr.Phase = "Blocked"
 		rr.Warnings = append(rr.Warnings, err.Error())
@@ -1800,7 +1762,7 @@ func interfaceAliases(router *api.Router) map[string]string {
 			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
 		case "VXLANTunnel":
 			aliases[res.Metadata.Name] = stringSpecDefault(res, "ifname", res.Metadata.Name)
-		case "PPPoEInterface":
+		case "PPPoESession":
 			aliases[res.Metadata.Name] = defaultString(stringSpec(res, "ifname"), "ppp-"+res.Metadata.Name)
 		case "DSLiteTunnel":
 			aliases[res.Metadata.Name] = defaultString(stringSpec(res, "tunnelName"), res.Metadata.Name)
@@ -2029,15 +1991,10 @@ func stringSpec(res api.Resource, key string) string {
 		if key == "ifname" {
 			return spec.IfName
 		}
-	case api.PPPoEInterfaceSpec:
+	case api.PPPoESessionSpec:
 		switch key {
 		case "ifname":
 			return spec.IfName
-		case "interface":
-			return spec.Interface
-		}
-	case api.PPPoESessionSpec:
-		switch key {
 		case "interface":
 			return spec.Interface
 		case "authMethod":
@@ -2054,7 +2011,7 @@ func stringSpec(res api.Resource, key string) string {
 		case "allowOverlapReason":
 			return spec.AllowOverlapReason
 		}
-	case api.DHCPv4LeaseSpec:
+	case api.DHCPv4ClientSpec:
 		switch key {
 		case "interface":
 			return spec.Interface

@@ -21,7 +21,7 @@ routerd associates host-side artefacts with the resource that produced them. Rec
 | --- | --- |
 | `Interface` | OS interface name and admin state |
 | `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` socket, lease, events |
-| `DHCPv4Lease` | `routerd-dhcpv4-client` socket, lease, events |
+| `DHCPv4Client` | `routerd-dhcpv4-client` socket, lease, events |
 | `PPPoESession` | `routerd-pppoe-client` socket, state, pppd/ppp config |
 | `HealthCheck` | `routerd-healthcheck` socket, state, events |
 | `DHCPv4Server` / `DHCPv6Server` / `IPv6RouterAdvertisement` | Managed dnsmasq configuration |

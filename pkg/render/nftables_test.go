@@ -11,7 +11,7 @@ import (
 	"routerd/pkg/api"
 )
 
-func TestNftablesIPv4SourceNAT(t *testing.T) {
+func TestNftablesNAT44RuleSourceNATFields(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
@@ -20,9 +20,9 @@ func TestNftablesIPv4SourceNAT(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
 				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
-				Spec: api.IPv4SourceNATSpec{
+				Spec: api.NAT44RuleSpec{
 					OutboundInterface: "wan",
 					SourceCIDRs:       []string{"192.168.10.0/24"},
 					Translation: api.IPv4NATTranslationSpec{
@@ -38,7 +38,7 @@ func TestNftablesIPv4SourceNAT(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestNftablesIPv4SourceNAT(t *testing.T) {
 	}
 }
 
-func TestNftablesIPv4SourceNATCanUseDSLiteTunnel(t *testing.T) {
+func TestNftablesNAT44RuleCanUseDSLiteTunnel(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
@@ -70,9 +70,9 @@ func TestNftablesIPv4SourceNATCanUseDSLiteTunnel(t *testing.T) {
 				},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
 				Metadata: api.ObjectMeta{Name: "lan-to-transix"},
-				Spec: api.IPv4SourceNATSpec{
+				Spec: api.NAT44RuleSpec{
 					OutboundInterface: "transix",
 					SourceCIDRs:       []string{"192.168.10.0/24"},
 					Translation:       api.IPv4NATTranslationSpec{Type: "interfaceAddress"},
@@ -81,7 +81,7 @@ func TestNftablesIPv4SourceNATCanUseDSLiteTunnel(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestNftablesNAT44Rule(t *testing.T) {
 			},
 		}},
 	}
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestNftablesSkipsRuntimeResolvedNAT44Policy(t *testing.T) {
 			},
 		}},
 	}
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestNftablesVXLANL2Filter(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestNftablesVXLANL2FilterCanBeDisabled(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestNftablesVXLANUnderlayUDPAcceptInputChain(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestNftablesBridgeOverlayICMPAccept(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestNftablesBridgeOverlayICMPAccept(t *testing.T) {
 	}
 }
 
-func TestNftablesIPv4SourceNATAddressPortRange(t *testing.T) {
+func TestNftablesNAT44RuleAddressPortRange(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
@@ -377,9 +377,9 @@ func TestNftablesIPv4SourceNATAddressPortRange(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ds0", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
 				Metadata: api.ObjectMeta{Name: "lan-to-wan"},
-				Spec: api.IPv4SourceNATSpec{
+				Spec: api.NAT44RuleSpec{
 					OutboundInterface: "wan",
 					SourceCIDRs:       []string{"192.168.10.0/24"},
 					Translation: api.IPv4NATTranslationSpec{
@@ -396,7 +396,7 @@ func TestNftablesIPv4SourceNATAddressPortRange(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestNftablesIPv4PolicyRoute(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -461,7 +461,7 @@ func TestNftablesIPv4PolicyRouteSet(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -498,7 +498,7 @@ func TestNftablesIPv4PolicyRouteSetExcludesDestinations(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -518,9 +518,9 @@ func TestNftablesTCPMSSClamp(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
 				Metadata: api.ObjectMeta{Name: "wan-pppoe"},
-				Spec: api.PPPoEInterfaceSpec{
+				Spec: api.PPPoESessionSpec{
 					Interface: "wan",
 					IfName:    "ppp0",
 					Username:  "user@example.jp",
@@ -546,7 +546,7 @@ func TestNftablesTCPMSSClamp(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -574,9 +574,9 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
 				Metadata: api.ObjectMeta{Name: "wan-pppoe"},
-				Spec: api.PPPoEInterfaceSpec{
+				Spec: api.PPPoESessionSpec{
 					Interface: "wan-ether",
 					IfName:    "ppp0",
 					Username:  "user@example.jp",
@@ -611,7 +611,7 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -676,7 +676,7 @@ func TestNftablesPortForwardRendersDNATAndFirewallAccept(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -719,7 +719,7 @@ func TestNftablesIngressServiceResolvesListenAddressFromStaticAddress(t *testing
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -744,7 +744,7 @@ func TestNftablesIngressServiceAutoHairpinForSameInterfaceSubnet(t *testing.T) {
 			}},
 		}},
 	}
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -776,7 +776,7 @@ func TestNftablesIngressServiceAutoHairpinFallsBackToPrivateSlash24(t *testing.T
 			}},
 		}},
 	}
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -809,7 +809,7 @@ func TestNftablesIngressServiceSourceHashDistributesBackends(t *testing.T) {
 			},
 		}},
 	}
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -837,7 +837,7 @@ func TestNftablesIngressServiceRandomDistributesBackends(t *testing.T) {
 			}},
 		}},
 	}
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -890,7 +890,7 @@ func TestNftablesLocalServiceRedirectUsesDestinationAddressSets(t *testing.T) {
 		}},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -973,7 +973,7 @@ func TestNftablesFirewallRuleUsesDestinationAddressSet(t *testing.T) {
 			Action:             "accept",
 		}},
 	}}}
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -992,7 +992,7 @@ func TestNftablesFirewallRuleUsesDestinationAddressSet(t *testing.T) {
 
 func TestNftablesFirewallRuleStatefulExpressions(t *testing.T) {
 	router := nftablesStatefulFirewallTestRouter()
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -1020,7 +1020,7 @@ func TestNftablesFirewallRuleSyntaxSmoke(t *testing.T) {
 	if _, err := exec.LookPath("nft"); err != nil {
 		t.Skip("nft is not installed")
 	}
-	data, err := NftablesIPv4SourceNAT(nftablesStatefulFirewallTestRouter())
+	data, err := NftablesNAT44Rule(nftablesStatefulFirewallTestRouter())
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -1096,7 +1096,7 @@ func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 		},
 	}
 
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -1138,7 +1138,7 @@ func TestNftablesSamplesAcceptedForwardFlows(t *testing.T) {
 			},
 		},
 	}}}
-	data, err := NftablesIPv4SourceNAT(router)
+	data, err := NftablesNAT44Rule(router)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}

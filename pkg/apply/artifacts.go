@@ -41,9 +41,9 @@ type serviceDeclaration struct {
 
 var serviceDeclarations = []serviceDeclaration{
 	{
-		kind: "PPPoEInterface",
+		kind: "PPPoESession",
 		declare: func(ctx serviceDeclarationContext) []resource.Intent {
-			spec, err := ctx.res.PPPoEInterfaceSpec()
+			spec, err := ctx.res.PPPoESessionSpec()
 			if err != nil {
 				return nil
 			}
@@ -226,35 +226,22 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			action = resource.ActionEnsure
 		}
 		return []resource.Intent{artifact("net.link", spec.IfName, action, "platform-network", nil)}
-	case "PPPoEInterface":
-		spec, err := res.PPPoEInterfaceSpec()
-		if err != nil {
-			return nil
-		}
-		ifname := defaultString(spec.IfName, "ppp-"+res.Metadata.Name)
-		action := resource.ActionEnsure
-		if spec.Disabled {
-			action = resource.ActionDelete
-		}
-		intents := []resource.Intent{artifact("ppp.interface", ifname, action, "pppd", nil)}
-		intents = append(intents, declaredServiceIntents(serviceContext)...)
-		intents = append(intents,
-			artifact("file", "/etc/ppp/chap-secrets", resource.ActionEnsure, "file", nil),
-			artifact("file", "/etc/ppp/pap-secrets", resource.ActionEnsure, "file", nil),
-			artifact("file", "/usr/local/etc/mpd5/mpd.conf", resource.ActionEnsure, "mpd5", nil),
-			artifact("rc.d.service", "mpd5", action, "service", nil),
-		)
-		return intents
 	case "PPPoESession":
 		spec, err := res.PPPoESessionSpec()
 		if err != nil {
 			return nil
 		}
 		ifname := defaultString(spec.Interface, res.Metadata.Name)
-		return []resource.Intent{
-			artifact("routerd.pppoe.client", res.Metadata.Name, resource.ActionEnsure, "routerd-pppoe-client", map[string]string{"interface": ifname}),
-			artifact("unix.socket", "/run/routerd/pppoe-client/"+res.Metadata.Name+".sock", resource.ActionEnsure, "routerd-pppoe-client", nil),
+		action := resource.ActionEnsure
+		if spec.Disabled {
+			action = resource.ActionDelete
 		}
+		intents := declaredServiceIntents(serviceContext)
+		intents = append(intents,
+			artifact("routerd.pppoe.client", res.Metadata.Name, action, "routerd-pppoe-client", map[string]string{"interface": ifname}),
+			artifact("unix.socket", "/run/routerd/pppoe-client/"+res.Metadata.Name+".sock", action, "routerd-pppoe-client", nil),
+		)
+		return intents
 	case "IPv4StaticAddress":
 		spec, err := res.IPv4StaticAddressSpec()
 		if err != nil {
@@ -293,7 +280,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			artifact("frr.config", "/run/routerd/frr/routerd.conf", resource.ActionEnsure, "frr-reload", nil),
 			artifact("frr.bgp.peer", spec.RouterRef+"/"+res.Metadata.Name, resource.ActionEnsure, "frr", nil),
 		}
-	case "DHCPv4Lease":
+	case "DHCPv4Client":
 		return []resource.Intent{artifact("routerd.dhcpv4.client", res.Metadata.Name, resource.ActionEnsure, "routerd-dhcpv4-client", nil)}
 	case "WireGuardInterface":
 		return []resource.Intent{artifact("net.wireguard.interface", res.Metadata.Name, resource.ActionEnsure, "wg", nil)}
@@ -401,11 +388,6 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		return []resource.Intent{artifact("routerd.healthCheck", res.Metadata.Name, action, "routerd-scheduler", nil)}
 	case "IPv4DefaultRoutePolicy":
 		return ipv4DefaultRoutePolicyArtifacts(res, aliases)
-	case "IPv4SourceNAT":
-		if _, features := platform.Current(); features.HasPF {
-			return []resource.Intent{artifact("pf.anchor", "routerd_nat", resource.ActionEnsure, "pfctl", nil)}
-		}
-		return []resource.Intent{artifact("nft.table", "routerd_nat", resource.ActionEnsure, "nft", nil)}
 	case "NAT44Rule":
 		if _, features := platform.Current(); features.HasPF {
 			return []resource.Intent{artifact("pf.anchor", "routerd_nat", resource.ActionEnsure, "pfctl", nil)}

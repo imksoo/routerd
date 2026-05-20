@@ -29,7 +29,7 @@ flowchart LR
 | 番号 | 意味 | 主な resource |
 | --- | --- | --- |
 | [1] | WAN 側 IPv4 lease を配る上流 network。 | routerd 管理外 |
-| [2] | 物理 WAN interface。ここで DHCPv4 client を動かす。 | `Interface/wan`, `DHCPv4Lease/wan-dhcpv4` |
+| [2] | 物理 WAN interface。ここで DHCPv4 client を動かす。 | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
 | [3] | 派生 forwarding sysctl と nftables rule を適用する Linux host。 | Derived host runtime |
 | [4] | routerd が持つ LAN gateway address。 | `Interface/lan`, `IPv4StaticAddress/lan-base` |
 | [5] | router を gateway / DNS として使う LAN client。 | `DHCPv4Server/lan-dhcpv4` |
@@ -38,7 +38,7 @@ flowchart LR
 
 | 領域 | routerd resource |
 | --- | --- |
-| WAN address | `Interface/wan`, `DHCPv4Lease/wan-dhcpv4` |
+| WAN address | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
 | LAN address | `Interface/lan`, `IPv4StaticAddress/lan-base` |
 | LAN DHCPv4 | `DHCPv4Server/lan-dhcpv4` |
 | IPv4 internet access | `NAT44Rule/lan-to-wan` |
@@ -53,7 +53,7 @@ DNS server として配ります。基本的な routing が動いたあとで、
 ```yaml
 # [2] WAN address は上流 network から DHCPv4 で取得する。
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DHCPv4Lease
+  kind: DHCPv4Client
   metadata:
     name: wan-dhcpv4
   spec:
@@ -121,7 +121,7 @@ routerd apply --config router.yaml --once
 
 ```bash
 routerctl status
-routerctl describe DHCPv4Lease/wan-dhcpv4
+routerctl describe DHCPv4Client/wan-dhcpv4
 routerctl describe IPv4StaticAddress/lan-base
 routerctl describe NAT44Rule/lan-to-wan
 nft list table ip routerd_nat

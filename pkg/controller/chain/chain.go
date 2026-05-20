@@ -28,7 +28,7 @@ import (
 	"routerd/pkg/conntrack"
 	bgpcontroller "routerd/pkg/controller/bgp"
 	"routerd/pkg/controller/conntrackobserver"
-	"routerd/pkg/controller/dhcpv4lease"
+	dhcpv4client "routerd/pkg/controller/dhcpv4client"
 	dnsresolvercontroller "routerd/pkg/controller/dnsresolver"
 	firewallcontroller "routerd/pkg/controller/firewall"
 	"routerd/pkg/controller/framework"
@@ -146,8 +146,8 @@ func resourceOwnerController(kind string) string {
 		return "vrrp"
 	case "BGPRouter", "BGPPeer":
 		return "bgp"
-	case "DHCPv4Lease":
-		return "dhcpv4lease"
+	case "DHCPv4Client":
+		return "dhcpv4client"
 	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Scope", "DHCPv6Information", "IPv6RouterAdvertisement":
 		return "dhcpv6"
 	case "DNSResolver", "DNSZone":
@@ -158,7 +158,7 @@ func resourceOwnerController(kind string) string {
 		return "wireguard"
 	case "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":
 		return "firewall"
-	case "NAT44Rule", "IPv4SourceNAT":
+	case "NAT44Rule":
 		return "nat"
 	case "IPAddressSet", "LocalServiceRedirect":
 		return "ip-address-set"
@@ -166,7 +166,7 @@ func resourceOwnerController(kind string) string {
 		return "network-adoption"
 	case "Package", "KernelModule":
 		return "package"
-	case "PPPoEInterface", "PPPoESession":
+	case "PPPoESession":
 		return "pppoesession"
 	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy":
 		return "route"
@@ -511,7 +511,7 @@ type Options struct {
 	DryRunDSLite           bool
 	DryRunRoute            bool
 	DryRunDHCPv6           bool
-	DryRunDHCPv4Lease      bool
+	DryRunDHCPv4Client     bool
 	DryRunPPPoESession     bool
 	DryRunDNSResolver      bool
 	DryRunNAT              bool
@@ -577,7 +577,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		}()
 	}
 	for _, resource := range r.Router.Spec.Resources {
-		if resource.Kind != "DHCPv4Lease" {
+		if resource.Kind != "DHCPv4Client" {
 			continue
 		}
 		name := resource.Metadata.Name
@@ -662,7 +662,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		opts.DryRunDSLite = true
 		opts.DryRunRoute = true
 		opts.DryRunDHCPv6 = true
-		opts.DryRunDHCPv4Lease = true
+		opts.DryRunDHCPv4Client = true
 		opts.DryRunPPPoESession = true
 		opts.DryRunDNSResolver = true
 		opts.DryRunNAT = true
@@ -693,7 +693,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	policyRoute := IPv4PolicyRouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand, Logger: logger}
 	pathMTU := PathMTUController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand}
 	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
-	dhcp4Lease := dhcpv4lease.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Lease, Logger: logger}
+	dhcp4Client := dhcpv4client.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Client, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
 	defaults, _ := platform.Current()
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
@@ -725,8 +725,8 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, PeriodicFunc: adoption.Reconcile},
 		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, PeriodicFunc: serviceUnits.Reconcile},
 		framework.FuncController{ControllerName: "log-retention", Every: time.Hour, PeriodicFunc: logRetention.Reconcile},
-		framework.FuncController{ControllerName: "ntp-client", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Lease", "DHCPv6Information"), PeriodicFunc: ntpClient.Reconcile},
-		framework.FuncController{ControllerName: "ntp-server", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Lease", "DHCPv6Information", "IPv4StaticAddress", "IPv6DelegatedAddress"), PeriodicFunc: ntpServer.Reconcile},
+		framework.FuncController{ControllerName: "ntp-client", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Client", "DHCPv6Information"), PeriodicFunc: ntpClient.Reconcile},
+		framework.FuncController{ControllerName: "ntp-server", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Client", "DHCPv6Information", "IPv4StaticAddress", "IPv6DelegatedAddress"), PeriodicFunc: ntpServer.Reconcile},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: link.Reconcile},
 		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "WireGuardPeer"), PeriodicFunc: wireGuard.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-static-address", Subs: statusSubscriptions("WireGuardInterface"), PeriodicFunc: ipv4Static.Reconcile},
@@ -754,11 +754,11 @@ func (r *Runner) Start(ctx context.Context) error {
 		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: dslite.reconcile},
 		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface"), PeriodicFunc: policyRoute.Reconcile},
 		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: statusSubscriptions("DSLiteTunnel", "EgressRoutePolicy"), PeriodicFunc: route.reconcile},
-		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "PPPoEInterface", "PPPoESession", "WireGuardInterface", "Interface", "FirewallZone", "DHCPv6Scope", "IPv6RouterAdvertisement"), PeriodicFunc: pathMTU.Reconcile},
+		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "PPPoESession", "WireGuardInterface", "Interface", "FirewallZone", "DHCPv6Scope", "IPv6RouterAdvertisement"), PeriodicFunc: pathMTU.Reconcile},
 		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, PeriodicFunc: dhcpv6.reconcile},
 		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
-			return dhcp4Lease.ReconcileAll(ctx)
-		}, PeriodicFunc: dhcp4Lease.ReconcileAll},
+			return dhcp4Client.ReconcileAll(ctx)
+		}, PeriodicFunc: dhcp4Client.ReconcileAll},
 		framework.FuncController{ControllerName: "pppoe-session", Subs: []bus.Subscription{{Topics: []string{"routerd.pppoe.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			for _, resource := range r.Router.Spec.Resources {
 				if resource.Kind == "PPPoESession" {
@@ -770,7 +770,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			return nil
 		}},
 		framework.FuncController{ControllerName: "dns-resolver", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, ReconcileFunc: dnsResolver.HandleEvent, PeriodicFunc: dnsResolver.Reconcile},
-		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Lease", "PPPoESession"), PeriodicFunc: wan.Reconcile},
+		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptions("HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: wan.Reconcile},
 		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: bootstrapSubscriptions(), PeriodicFunc: ingressService.Reconcile},
 		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptions("EgressRoutePolicy", "IngressService"), PeriodicFunc: nat.Reconcile},
 		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.Router), Subs: bootstrapSubscriptions(), PeriodicFunc: bgp.Reconcile},
@@ -940,8 +940,8 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 				args = append(args, "--iaid", spec.IAID)
 			}
 			r.startSupervisedDaemon(ctx, logger, resource.Metadata.Name, "routerd-dhcpv6-client", args)
-		case "DHCPv4Lease":
-			spec, err := resource.DHCPv4LeaseSpec()
+		case "DHCPv4Client":
+			spec, err := resource.DHCPv4ClientSpec()
 			if err != nil {
 				continue
 			}
@@ -1317,7 +1317,7 @@ func (c DaemonStatusController) daemonSockets() []string {
 				socket = filepath.Join(defaults.RuntimeDir, "dhcpv6-client", resource.Metadata.Name+".sock")
 			}
 			add(socket)
-		case "DHCPv4Lease":
+		case "DHCPv4Client":
 			socket := c.DaemonSockets[resource.Metadata.Name]
 			if socket == "" {
 				defaults, _ := platform.Current()

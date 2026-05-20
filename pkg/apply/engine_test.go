@@ -112,7 +112,7 @@ func TestPlanKeepsExternalWANObserveOnly(t *testing.T) {
 		t.Fatalf("plan: %v", err)
 	}
 
-	wanDHCP := findResult(result, "net.routerd.net/v1alpha1/DHCPv4Lease/wan-dhcpv4")
+	wanDHCP := findResult(result, "net.routerd.net/v1alpha1/DHCPv4Client/wan-dhcpv4")
 	if wanDHCP == nil {
 		t.Fatal("missing wan dhcp result")
 	}
@@ -160,7 +160,7 @@ func TestPlanIPv4DefaultRoutePolicy(t *testing.T) {
 	}
 }
 
-func TestPlanIPv4SourceNAT(t *testing.T) {
+func TestPlanNAT44Rule(t *testing.T) {
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -183,7 +183,7 @@ func TestPlanIPv4SourceNAT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	nat := findResult(result, "net.routerd.net/v1alpha1/IPv4SourceNAT/lan-to-wan")
+	nat := findResult(result, "net.routerd.net/v1alpha1/NAT44Rule/lan-to-wan")
 	if nat == nil {
 		t.Fatal("missing source NAT result")
 	}
@@ -498,10 +498,10 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 	ledger := resource.NewLedger()
 	ledger.Remember([]resource.Artifact{
 		{Kind: "linux.ipip6.tunnel", Name: "ds-old", Owner: "net.routerd.net/v1alpha1/DSLiteTunnel/old"},
-		{Kind: "nft.table", Name: "routerd_old", Owner: "net.routerd.net/v1alpha1/IPv4SourceNAT/old", Attributes: map[string]string{"family": "ip", "name": "routerd_old"}},
-		{Kind: "systemd.service", Name: "routerd-old.service", Owner: "net.routerd.net/v1alpha1/PPPoEInterface/old"},
+		{Kind: "nft.table", Name: "routerd_old", Owner: "net.routerd.net/v1alpha1/NAT44Rule/old", Attributes: map[string]string{"family": "ip", "name": "routerd_old"}},
+		{Kind: "systemd.service", Name: "routerd-old.service", Owner: "net.routerd.net/v1alpha1/PPPoESession/old"},
 		{Kind: "net.link", Name: "ens19", Owner: "net.routerd.net/v1alpha1/Interface/lan"},
-		{Kind: "file", Name: "/etc/ppp/chap-secrets", Owner: "net.routerd.net/v1alpha1/PPPoEInterface/old"},
+		{Kind: "file", Name: "/etc/ppp/chap-secrets", Owner: "net.routerd.net/v1alpha1/PPPoESession/old"},
 	})
 	engine := &Engine{
 		Command: fakeCommand(map[string]string{

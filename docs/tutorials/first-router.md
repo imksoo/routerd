@@ -33,7 +33,7 @@ spec:
         managed: true
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Lease
+      kind: DHCPv4Client
       metadata:
         name: wan
       spec:
@@ -48,7 +48,7 @@ spec:
         address: 192.0.2.1/24
 ```
 
-`DHCPv4Lease` is owned by `routerd-dhcpv4-client`, the routerd-managed DHCPv4 daemon. routerd does not delegate to an OS-bundled client; the daemon publishes its state under the same contract as every other routerd daemon (`/v1/status`, `lease.json`, `events.jsonl`).
+`DHCPv4Client` is owned by `routerd-dhcpv4-client`, the routerd-managed DHCPv4 daemon. routerd does not delegate to an OS-bundled client; the daemon publishes its state under the same contract as every other routerd daemon (`/v1/status`, `lease.json`, `events.jsonl`).
 
 Before applying for real, validate the configuration and preview the plan:
 

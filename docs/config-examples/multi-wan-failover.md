@@ -34,19 +34,19 @@ flowchart LR
 
 | No. | Meaning | Main resources |
 | --- | --- | --- |
-| [1] | Physical access line used by all WAN candidates. | `Interface/wan`, `DHCPv4Lease/wan-dhcpv4` |
+| [1] | Physical access line used by all WAN candidates. | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
 | [2] | Router selecting one default route. | `EgressRoutePolicy/ipv4-default`, `IPv4Route/default` |
 | [3] | Primary DS-Lite candidate. | `DSLiteTunnel/ds-lite-a`, `HealthCheck/internet-via-dslite-a` |
 | [4] | Additional DS-Lite candidate. | `DSLiteTunnel/ds-lite-b`, `HealthCheck/internet-via-dslite-b` |
-| [5] | Lower-priority PPPoE backup. | `PPPoEInterface/pppoe-flets`, `HealthCheck/internet-via-pppoe` |
-| [6] | Direct upstream-router IPv4 fallback. | `DHCPv4Lease/wan-dhcpv4`, `HealthCheck/internet-via-hgw-direct` |
+| [5] | Lower-priority PPPoE backup. | `PPPoESession/pppoe-flets`, `HealthCheck/internet-via-pppoe` |
+| [6] | Direct upstream-router IPv4 fallback. | `DHCPv4Client/wan-dhcpv4`, `HealthCheck/internet-via-hgw-direct` |
 | [7] | LAN clients using the selected egress path through NAT. | `NAT44Rule/lan-to-selected-wan` |
 
 ## What this manages
 
 | Area | routerd resources |
 | --- | --- |
-| Egress paths | `DSLiteTunnel/*`, `PPPoEInterface/pppoe-flets`, `DHCPv4Lease/wan-dhcpv4` |
+| Egress paths | `DSLiteTunnel/*`, `PPPoESession/pppoe-flets`, `DHCPv4Client/wan-dhcpv4` |
 | Link readiness | `HealthCheck/internet-via-*` |
 | Selection | `EgressRoutePolicy/ipv4-default` |
 | Default route | `IPv4Route/default` |

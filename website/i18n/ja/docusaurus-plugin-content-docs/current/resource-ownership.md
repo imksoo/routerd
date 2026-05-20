@@ -22,7 +22,7 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | --- | --- |
 | `Interface` | OS インターフェース名、管理状態 |
 | `DHCPv6PrefixDelegation` | `routerd-dhcpv6-client` の socket、lease、events |
-| `DHCPv4Lease` | `routerd-dhcpv4-client` の socket、lease、events |
+| `DHCPv4Client` | `routerd-dhcpv4-client` の socket、lease、events |
 | `PPPoESession` | `routerd-pppoe-client` の socket、state、pppd/ppp 設定 |
 | `HealthCheck` | `routerd-healthcheck` の socket、state、events |
 | `DHCPv4Server` / `DHCPv6Server` / `IPv6RouterAdvertisement` | 管理対象 dnsmasq 設定 |

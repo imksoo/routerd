@@ -402,30 +402,11 @@ type VXLANTunnelSpec struct {
 	Bridge            string   `yaml:"bridge,omitempty" json:"bridge,omitempty"`
 }
 
-type PPPoEInterfaceSpec struct {
-	Interface      string `yaml:"interface" json:"interface"`
-	IfName         string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
-	Enabled        *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Disabled       bool   `yaml:"disabled,omitempty" json:"disabled,omitempty"`
-	Username       string `yaml:"username" json:"username"`
-	Password       string `yaml:"password,omitempty" json:"password,omitempty"`
-	PasswordFile   string `yaml:"passwordFile,omitempty" json:"passwordFile,omitempty"`
-	ServiceName    string `yaml:"serviceName,omitempty" json:"serviceName,omitempty"`
-	ACName         string `yaml:"acName,omitempty" json:"acName,omitempty"`
-	DefaultRoute   bool   `yaml:"defaultRoute,omitempty" json:"defaultRoute,omitempty"`
-	UsePeerDNS     bool   `yaml:"usePeerDNS,omitempty" json:"usePeerDNS,omitempty"`
-	Persist        *bool  `yaml:"persist,omitempty" json:"persist,omitempty"`
-	MTU            int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=1500"`
-	MRU            int    `yaml:"mru,omitempty" json:"mru,omitempty" jsonschema:"minimum=576,maximum=1500"`
-	LCPInterval    int    `yaml:"lcpInterval,omitempty" json:"lcpInterval,omitempty" jsonschema:"minimum=0"`
-	LCPFailure     int    `yaml:"lcpFailure,omitempty" json:"lcpFailure,omitempty" jsonschema:"minimum=0"`
-	IPv6           bool   `yaml:"ipv6,omitempty" json:"ipv6,omitempty"`
-	Managed        bool   `yaml:"managed,omitempty" json:"managed,omitempty"`
-	SecretEncoding string `yaml:"secretEncoding,omitempty" json:"secretEncoding,omitempty" jsonschema:"enum=plain"`
-}
-
 type PPPoESessionSpec struct {
 	Interface       string `yaml:"interface" json:"interface"`
+	IfName          string `yaml:"ifname,omitempty" json:"ifname,omitempty"`
+	Enabled         *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Disabled        bool   `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 	AuthMethod      string `yaml:"authMethod,omitempty" json:"authMethod,omitempty" jsonschema:"enum=chap,enum=pap,enum=both"`
 	Username        string `yaml:"username" json:"username"`
 	Password        string `yaml:"password,omitempty" json:"password,omitempty"`
@@ -434,8 +415,16 @@ type PPPoESessionSpec struct {
 	MRU             int    `yaml:"mru,omitempty" json:"mru,omitempty" jsonschema:"minimum=576,maximum=1500"`
 	ServiceName     string `yaml:"serviceName,omitempty" json:"serviceName,omitempty"`
 	ACName          string `yaml:"acName,omitempty" json:"acName,omitempty"`
+	DefaultRoute    bool   `yaml:"defaultRoute,omitempty" json:"defaultRoute,omitempty"`
+	UsePeerDNS      bool   `yaml:"usePeerDNS,omitempty" json:"usePeerDNS,omitempty"`
+	Persist         *bool  `yaml:"persist,omitempty" json:"persist,omitempty"`
+	LCPInterval     int    `yaml:"lcpInterval,omitempty" json:"lcpInterval,omitempty" jsonschema:"minimum=0"`
+	LCPFailure      int    `yaml:"lcpFailure,omitempty" json:"lcpFailure,omitempty" jsonschema:"minimum=0"`
 	LCPEchoInterval int    `yaml:"lcpEchoInterval,omitempty" json:"lcpEchoInterval,omitempty" jsonschema:"minimum=0"`
 	LCPEchoFailure  int    `yaml:"lcpEchoFailure,omitempty" json:"lcpEchoFailure,omitempty" jsonschema:"minimum=0"`
+	IPv6            bool   `yaml:"ipv6,omitempty" json:"ipv6,omitempty"`
+	Managed         bool   `yaml:"managed,omitempty" json:"managed,omitempty"`
+	SecretEncoding  string `yaml:"secretEncoding,omitempty" json:"secretEncoding,omitempty" jsonschema:"enum=plain"`
 }
 
 type IPv4StaticAddressSpec struct {
@@ -592,7 +581,7 @@ type SecretValueSourceSpec struct {
 	Base64 bool   `yaml:"base64,omitempty" json:"base64,omitempty"`
 }
 
-type DHCPv4LeaseSpec struct {
+type DHCPv4ClientSpec struct {
 	Interface        string `yaml:"interface" json:"interface"`
 	Hostname         string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
 	RequestedAddress string `yaml:"requestedAddress,omitempty" json:"requestedAddress,omitempty"`
@@ -1154,24 +1143,21 @@ type IPv4DefaultRoutePolicyCandidate struct {
 	When          ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
-type IPv4SourceNATSpec struct {
-	OutboundInterface string                 `yaml:"outboundInterface" json:"outboundInterface"`
-	SourceCIDRs       []string               `yaml:"sourceCIDRs" json:"sourceCIDRs"`
-	Translation       IPv4NATTranslationSpec `yaml:"translation" json:"translation"`
-	When              ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
-}
-
 type NAT44RuleSpec struct {
-	Type                      string                `yaml:"type" json:"type" jsonschema:"enum=masquerade,enum=snat"`
-	EgressInterface           string                `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
-	EgressPolicyRef           string                `yaml:"egressPolicyRef,omitempty" json:"egressPolicyRef,omitempty"`
-	SourceRanges              []string              `yaml:"sourceRanges" json:"sourceRanges"`
-	DestinationCIDRs          []string              `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
-	DestinationSetRefs        []string              `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
-	ExcludeDestinationCIDRs   []string              `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
-	ExcludeDestinationSetRefs []string              `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
-	SNATAddress               string                `yaml:"snatAddress,omitempty" json:"snatAddress,omitempty"`
-	SNATAddressFrom           StatusValueSourceSpec `yaml:"snatAddressFrom,omitempty" json:"snatAddressFrom,omitempty"`
+	Type                      string                 `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=masquerade,enum=snat"`
+	EgressInterface           string                 `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
+	EgressPolicyRef           string                 `yaml:"egressPolicyRef,omitempty" json:"egressPolicyRef,omitempty"`
+	SourceRanges              []string               `yaml:"sourceRanges,omitempty" json:"sourceRanges,omitempty"`
+	DestinationCIDRs          []string               `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	DestinationSetRefs        []string               `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
+	ExcludeDestinationCIDRs   []string               `yaml:"excludeDestinationCIDRs,omitempty" json:"excludeDestinationCIDRs,omitempty"`
+	ExcludeDestinationSetRefs []string               `yaml:"excludeDestinationSetRefs,omitempty" json:"excludeDestinationSetRefs,omitempty"`
+	SNATAddress               string                 `yaml:"snatAddress,omitempty" json:"snatAddress,omitempty"`
+	SNATAddressFrom           StatusValueSourceSpec  `yaml:"snatAddressFrom,omitempty" json:"snatAddressFrom,omitempty"`
+	OutboundInterface         string                 `yaml:"outboundInterface,omitempty" json:"outboundInterface,omitempty"`
+	SourceCIDRs               []string               `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	Translation               IPv4NATTranslationSpec `yaml:"translation,omitempty" json:"translation,omitempty"`
+	When                      ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type IngressListenSpec struct {
@@ -1512,10 +1498,6 @@ func (r Resource) VXLANTunnelSpec() (VXLANTunnelSpec, error) {
 	return specAs[VXLANTunnelSpec](r)
 }
 
-func (r Resource) PPPoEInterfaceSpec() (PPPoEInterfaceSpec, error) {
-	return specAs[PPPoEInterfaceSpec](r)
-}
-
 func (r Resource) PPPoESessionSpec() (PPPoESessionSpec, error) {
 	return specAs[PPPoESessionSpec](r)
 }
@@ -1540,8 +1522,8 @@ func (r Resource) BGPPeerSpec() (BGPPeerSpec, error) {
 	return specAs[BGPPeerSpec](r)
 }
 
-func (r Resource) DHCPv4LeaseSpec() (DHCPv4LeaseSpec, error) {
-	return specAs[DHCPv4LeaseSpec](r)
+func (r Resource) DHCPv4ClientSpec() (DHCPv4ClientSpec, error) {
+	return specAs[DHCPv4ClientSpec](r)
 }
 
 func (r Resource) IPv4StaticRouteSpec() (IPv4StaticRouteSpec, error) {
@@ -1650,10 +1632,6 @@ func (r Resource) DerivedEventSpec() (DerivedEventSpec, error) {
 
 func (r Resource) IPv4DefaultRoutePolicySpec() (IPv4DefaultRoutePolicySpec, error) {
 	return specAs[IPv4DefaultRoutePolicySpec](r)
-}
-
-func (r Resource) IPv4SourceNATSpec() (IPv4SourceNATSpec, error) {
-	return specAs[IPv4SourceNATSpec](r)
 }
 
 func (r Resource) NAT44RuleSpec() (NAT44RuleSpec, error) {

@@ -34,12 +34,12 @@ flowchart LR
 
 | 番号 | 意味 | 主な resource |
 | --- | --- | --- |
-| [1] | 複数 WAN candidate が共有する物理 access line。 | `Interface/wan`, `DHCPv4Lease/wan-dhcpv4` |
+| [1] | 複数 WAN candidate が共有する物理 access line。 | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
 | [2] | default route を 1 つ選ぶ router。 | `EgressRoutePolicy/ipv4-default`, `IPv4Route/default` |
 | [3] | primary DS-Lite candidate。 | `DSLiteTunnel/ds-lite-a`, `HealthCheck/internet-via-dslite-a` |
 | [4] | 追加 DS-Lite candidate。 | `DSLiteTunnel/ds-lite-b`, `HealthCheck/internet-via-dslite-b` |
-| [5] | 優先度を下げた PPPoE backup。 | `PPPoEInterface/pppoe-flets`, `HealthCheck/internet-via-pppoe` |
-| [6] | 上流 router 直結 IPv4 fallback。 | `DHCPv4Lease/wan-dhcpv4`, `HealthCheck/internet-via-hgw-direct` |
+| [5] | 優先度を下げた PPPoE backup。 | `PPPoESession/pppoe-flets`, `HealthCheck/internet-via-pppoe` |
+| [6] | 上流 router 直結 IPv4 fallback。 | `DHCPv4Client/wan-dhcpv4`, `HealthCheck/internet-via-hgw-direct` |
 | [7] | 選択された egress path を NAT 経由で使う LAN client。 | `NAT44Rule/lan-to-selected-wan` |
 
 ## 要点

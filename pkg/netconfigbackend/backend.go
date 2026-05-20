@@ -104,7 +104,7 @@ func (b NixOS) Render(router *api.Router) ([]render.File, error) {
 
 type RCConf struct {
 	Path        string
-	PasswordFor func(api.Resource, api.PPPoEInterfaceSpec) (string, error)
+	PasswordFor func(api.Resource, api.PPPoESessionSpec) (string, error)
 }
 
 func (RCConf) Name() string { return "rc.conf" }
@@ -116,7 +116,7 @@ func (RCConf) Declarations(router *api.Router) (Declarations, error) {
 func (b RCConf) Render(router *api.Router) ([]render.File, error) {
 	passwordFor := b.PasswordFor
 	if passwordFor == nil {
-		passwordFor = func(api.Resource, api.PPPoEInterfaceSpec) (string, error) { return "", nil }
+		passwordFor = func(api.Resource, api.PPPoESessionSpec) (string, error) { return "", nil }
 	}
 	data, err := render.FreeBSDWithPPPoEPasswords(router, passwordFor)
 	if err != nil || len(data.RCConf) == 0 {

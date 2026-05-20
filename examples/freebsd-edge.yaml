@@ -30,14 +30,14 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Lease
+      kind: DHCPv4Client
       metadata:
         name: wan-dhcpv4
       spec:
         interface: wan
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: PPPoEInterface
+      kind: PPPoESession
       metadata:
         name: wan-pppoe
       spec:
@@ -62,7 +62,7 @@ spec:
         owner: routerd
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Lease
+      kind: DHCPv4Client
       metadata:
         name: mgmt-dhcpv4
       spec:
@@ -176,7 +176,7 @@ spec:
         defaultRoute: false
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4SourceNAT
+      kind: NAT44Rule
       metadata:
         name: lan-nat
       spec:

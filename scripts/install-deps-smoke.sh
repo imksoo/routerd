@@ -109,7 +109,7 @@ spec:
         target: 1.1.1.1
         protocol: icmp
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Lease
+      kind: DHCPv4Client
       metadata:
         name: wan-v4
       spec:

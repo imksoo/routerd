@@ -446,7 +446,7 @@ func (d *dhcpv4Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	status.Health = daemonapi.HealthOK
 	status.Since = d.startedAt
 	status.Resources = []daemonapi.ResourceStatus{{
-		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv4Lease", Name: d.opts.resource},
+		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv4Client", Name: d.opts.resource},
 		Phase:    resourcePhase(snapshot.State),
 		Health:   daemonapi.HealthOK,
 		Since:    snapshot.UpdatedAt,
@@ -547,7 +547,7 @@ func (d *dhcpv4Daemon) publish(eventType, severity, reason, message string, attr
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	event := daemonapi.NewEvent(d.daemonRef(), eventType, severity)
-	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv4Lease", Name: d.opts.resource}
+	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv4Client", Name: d.opts.resource}
 	event.Reason = reason
 	event.Message = message
 	event.Attributes = attrs

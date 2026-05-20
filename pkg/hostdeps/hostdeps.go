@@ -128,7 +128,7 @@ func packageFeatures(router *api.Router) map[string]bool {
 	features := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "Interface", "Bridge", "VXLANSegment", "VRF", "VXLANTunnel", "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "ClusterNetworkRoute", "DHCPv4Lease", "DHCPv6Address", "DHCPv6PrefixDelegation", "DHCPv6Information":
+		case "Interface", "Bridge", "VXLANSegment", "VRF", "VXLANTunnel", "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "ClusterNetworkRoute", "DHCPv4Client", "DHCPv6Address", "DHCPv6PrefixDelegation", "DHCPv6Information":
 			features["base"] = true
 		case "DSLiteTunnel":
 			features["base"] = true
@@ -140,7 +140,7 @@ func packageFeatures(router *api.Router) map[string]bool {
 			features["bgp"] = true
 		case "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Server", "DHCPv6Scope", "IPv6RouterAdvertisement", "DNSResolver", "DNSZone", "DHCPv4Relay":
 			features["dhcp-dns"] = true
-		case "NAT44Rule", "IPv4SourceNAT":
+		case "NAT44Rule":
 			features["nat"] = true
 			features["conntrack"] = true
 		case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallLog", "ClientPolicy", "IPAddressSet", "PortForward", "IngressService", "LocalServiceRedirect":
@@ -150,7 +150,7 @@ func packageFeatures(router *api.Router) map[string]bool {
 			features["dpi"] = true
 		case "NTPClient", "NTPServer":
 			features["ntp"] = true
-		case "PPPoEInterface", "PPPoESession":
+		case "PPPoESession":
 			features["pppoe"] = true
 			features["nft"] = true
 		case "WireGuardInterface", "WireGuardPeer":
@@ -224,7 +224,7 @@ func KernelModules(router *api.Router) []string {
 	needed := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "NAT44Rule", "IPv4SourceNAT", "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "ConntrackObserver":
+		case "NAT44Rule", "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "ConntrackObserver":
 			needed["nf_conntrack"] = true
 		case "TrafficFlowLog", "FirewallLog":
 			needed["nf_conntrack"] = true
@@ -566,8 +566,8 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 	resolved := false
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "DHCPv4Lease":
-			if spec, err := res.DHCPv4LeaseSpec(); err == nil {
+		case "DHCPv4Client":
+			if spec, err := res.DHCPv4ClientSpec(); err == nil {
 				if item := ensure(spec.Interface); item != nil {
 					item.disableDHCPv4 = true
 				}

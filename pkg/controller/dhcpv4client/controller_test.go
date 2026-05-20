@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-package dhcpv4lease
+package dhcpv4client
 
 import (
 	"context"
@@ -35,7 +35,7 @@ func TestControllerAppliesLeaseDNS(t *testing.T) {
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		status := daemonapi.NewStatus(daemonapi.DaemonRef{Name: "routerd-dhcpv4-client-wan", Kind: "routerd-dhcpv4-client", Instance: "wan"})
 		status.Resources = []daemonapi.ResourceStatus{{
-			Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease", Name: "wan"},
+			Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client", Name: "wan"},
 			Phase:    daemonapi.ResourcePhaseBound,
 			Observed: map[string]string{
 				"interface":      "ens18",
@@ -52,7 +52,7 @@ func TestControllerAppliesLeaseDNS(t *testing.T) {
 	resolvPath := filepath.Join(t.TempDir(), "resolv.conf")
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan", UseRoutes: boolPtr(false)}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4ClientSpec{Interface: "wan", UseRoutes: boolPtr(false)}},
 	}}}
 	store := mapStore{}
 	controller := Controller{
@@ -72,12 +72,12 @@ func TestControllerAppliesLeaseDNS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read resolv.conf: %v", err)
 	}
-	for _, want := range []string{"# Source: DHCPv4Lease/wan", "nameserver 192.0.2.53", "nameserver 192.0.2.54"} {
+	for _, want := range []string{"# Source: DHCPv4Client/wan", "nameserver 192.0.2.53", "nameserver 192.0.2.54"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("resolv.conf missing %q:\n%s", want, data)
 		}
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Lease", "wan")
+	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "wan")
 	if status["appliedDNSServers"] != "192.0.2.53,192.0.2.54" {
 		t.Fatalf("status = %#v", status)
 	}
@@ -93,7 +93,7 @@ func TestControllerAppliesLeaseDNSWithSystemdResolved(t *testing.T) {
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		status := daemonapi.NewStatus(daemonapi.DaemonRef{Name: "routerd-dhcpv4-client-wan", Kind: "routerd-dhcpv4-client", Instance: "wan"})
 		status.Resources = []daemonapi.ResourceStatus{{
-			Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease", Name: "wan"},
+			Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client", Name: "wan"},
 			Phase:    daemonapi.ResourcePhaseBound,
 			Observed: map[string]string{
 				"interface":      "ens18",
@@ -114,7 +114,7 @@ func TestControllerAppliesLeaseDNSWithSystemdResolved(t *testing.T) {
 	var commands []string
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan", UseRoutes: boolPtr(false)}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4ClientSpec{Interface: "wan", UseRoutes: boolPtr(false)}},
 	}}}
 	store := mapStore{}
 	controller := Controller{
@@ -162,7 +162,7 @@ func TestControllerReconcilesDaemonStatus(t *testing.T) {
 		status.Phase = daemonapi.PhaseRunning
 		status.Health = daemonapi.HealthOK
 		status.Resources = []daemonapi.ResourceStatus{{
-			Resource:   daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease", Name: "wan"},
+			Resource:   daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client", Name: "wan"},
 			Phase:      daemonapi.ResourcePhaseBound,
 			Health:     daemonapi.HealthOK,
 			Conditions: []daemonapi.Condition{},
@@ -193,7 +193,7 @@ func TestControllerReconcilesDaemonStatus(t *testing.T) {
 	if err := controller.Reconcile(context.Background(), "wan"); err != nil {
 		t.Fatal(err)
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Lease", "wan")
+	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "wan")
 	if status["phase"] != daemonapi.ResourcePhaseBound {
 		t.Fatalf("phase = %v", status["phase"])
 	}
@@ -216,7 +216,7 @@ func TestControllerAppliesLeaseAddressAndRoute(t *testing.T) {
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		status := daemonapi.NewStatus(daemonapi.DaemonRef{Name: "routerd-dhcpv4-client-wan", Kind: "routerd-dhcpv4-client", Instance: "wan"})
 		status.Resources = []daemonapi.ResourceStatus{{
-			Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease", Name: "wan"},
+			Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client", Name: "wan"},
 			Phase:    daemonapi.ResourcePhaseBound,
 			Observed: map[string]string{
 				"interface":      "ens18",
@@ -233,7 +233,7 @@ func TestControllerAppliesLeaseAddressAndRoute(t *testing.T) {
 	var commands []string
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan", RouteMetric: 100}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4ClientSpec{Interface: "wan", RouteMetric: 100}},
 	}}}
 	store := mapStore{}
 	controller := Controller{
@@ -257,7 +257,7 @@ func TestControllerAppliesLeaseAddressAndRoute(t *testing.T) {
 	if strings.Join(commands, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("commands:\n%s", strings.Join(commands, "\n"))
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Lease", "wan")
+	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "wan")
 	if status["appliedAddress"] != "192.0.2.10/24" {
 		t.Fatalf("status = %#v", status)
 	}
@@ -273,7 +273,7 @@ func TestControllerRepairsMissingLeaseAddressWithStaleStatus(t *testing.T) {
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		status := daemonapi.NewStatus(daemonapi.DaemonRef{Name: "routerd-dhcpv4-client-wan", Kind: "routerd-dhcpv4-client", Instance: "wan"})
 		status.Resources = []daemonapi.ResourceStatus{{
-			Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease", Name: "wan"},
+			Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client", Name: "wan"},
 			Phase:    daemonapi.ResourcePhaseBound,
 			Observed: map[string]string{
 				"interface":      "ens18",
@@ -289,10 +289,10 @@ func TestControllerRepairsMissingLeaseAddressWithStaleStatus(t *testing.T) {
 	var commands []string
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4LeaseSpec{Interface: "wan", UseRoutes: boolPtr(false)}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.DHCPv4ClientSpec{Interface: "wan", UseRoutes: boolPtr(false)}},
 	}}}
 	store := mapStore{
-		api.NetAPIVersion + "/DHCPv4Lease/wan": {
+		api.NetAPIVersion + "/DHCPv4Client/wan": {
 			"phase":          daemonapi.ResourcePhaseBound,
 			"currentAddress": "192.0.2.10",
 			"prefixLength":   "24",
@@ -319,7 +319,7 @@ func TestControllerRepairsMissingLeaseAddressWithStaleStatus(t *testing.T) {
 	if strings.Join(commands, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("commands:\n%s", strings.Join(commands, "\n"))
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Lease", "wan")
+	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "wan")
 	if status["addressPresent"] != true {
 		t.Fatalf("status = %#v", status)
 	}

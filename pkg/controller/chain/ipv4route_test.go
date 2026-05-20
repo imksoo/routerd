@@ -49,7 +49,7 @@ func TestIPv4RouteControllerInstallsBlackholeRouteInDryRun(t *testing.T) {
 
 func TestIPv4RouteControllerMarksDisabledDependencyNotApplicable(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoEInterfaceSpec{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoESessionSpec{
 			Interface: "wan",
 			IfName:    "ppp-flets",
 			Disabled:  true,
@@ -59,7 +59,7 @@ func TestIPv4RouteControllerMarksDisabledDependencyNotApplicable(t *testing.T) {
 			Destination: "203.0.113.10/32",
 			Device:      "ppp-flets",
 			DependsOn: []api.ResourceDependencySpec{{
-				Resource: "PPPoEInterface/pppoe-flets",
+				Resource: "PPPoESession/pppoe-flets",
 				Phase:    "Connected",
 			}},
 		}},
@@ -79,7 +79,7 @@ func TestIPv4RouteControllerMarksDisabledDependencyNotApplicable(t *testing.T) {
 
 func TestIPv4RouteControllerMarksDisabledHealthcheckRouteStandby(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoEInterfaceSpec{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoESessionSpec{
 			Interface: "wan",
 			IfName:    "ppp-flets",
 			Disabled:  true,
@@ -89,7 +89,7 @@ func TestIPv4RouteControllerMarksDisabledHealthcheckRouteStandby(t *testing.T) {
 			Destination: "208.67.222.222/32",
 			Device:      "ppp-flets",
 			DependsOn: []api.ResourceDependencySpec{{
-				Resource: "PPPoEInterface/pppoe-flets",
+				Resource: "PPPoESession/pppoe-flets",
 				Phase:    "Connected",
 			}},
 		}},

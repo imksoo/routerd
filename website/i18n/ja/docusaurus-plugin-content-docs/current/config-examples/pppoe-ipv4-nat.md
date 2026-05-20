@@ -32,7 +32,7 @@ flowchart LR
 | --- | --- | --- |
 | [1] | routerd 管理外の access line / ONU。 | routerd 管理外 |
 | [2] | PPPoE を通す物理 Ethernet interface。 | `Interface/wan` |
-| [3] | PPPoE session と論理 egress interface。 | `PPPoEInterface/pppoe-home` |
+| [3] | PPPoE session と論理 egress interface。 | `PPPoESession/pppoe-home` |
 | [4] | IPv4 forwarding を導出し、nftables NAT を適用する host。 | Derived host runtime, `NAT44Rule/lan-to-pppoe` |
 | [5] | LAN gateway と DHCPv4 segment。 | `IPv4StaticAddress/lan-base`, `DHCPv4Server/lan-dhcpv4` |
 | [6] | NAT 経由で PPPoE を IPv4 internet path として使う client。 | `DHCPv4Server/lan-dhcpv4` |
@@ -41,7 +41,7 @@ flowchart LR
 
 | 領域 | routerd resource |
 | --- | --- |
-| PPPoE session | `PPPoEInterface/pppoe-home` |
+| PPPoE session | `PPPoESession/pppoe-home` |
 | LAN address / DHCPv4 | `IPv4StaticAddress/lan-base`, `DHCPv4Server/lan-dhcpv4` |
 | IPv4 internet access | `NAT44Rule/lan-to-pppoe` |
 | filtering | `FirewallZone/*`, `FirewallPolicy/home` |
@@ -50,7 +50,7 @@ flowchart LR
 
 ```yaml
 # [3] 物理 WAN 上に作る論理 PPPoE interface。
-- kind: PPPoEInterface
+- kind: PPPoESession
   metadata:
     name: pppoe-home
   spec:
@@ -78,7 +78,7 @@ flowchart LR
 ```bash
 routerd validate --config examples/example-pppoe-ipv4-nat.yaml
 routerd apply --config examples/example-pppoe-ipv4-nat.yaml --once --dry-run
-routerctl describe PPPoEInterface/pppoe-home
+routerctl describe PPPoESession/pppoe-home
 ip link show ppp-home
 ip route show default
 ```

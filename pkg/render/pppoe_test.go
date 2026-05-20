@@ -18,9 +18,9 @@ func TestPPPoERendersPeerUnitAndSecrets(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
 				Metadata: api.ObjectMeta{Name: "pppoe0"},
-				Spec: api.PPPoEInterfaceSpec{
+				Spec: api.PPPoESessionSpec{
 					Interface:    "wan-ether",
 					IfName:       "ppp0",
 					Username:     "user@example.jp",
@@ -33,7 +33,7 @@ func TestPPPoERendersPeerUnitAndSecrets(t *testing.T) {
 		}},
 	}
 
-	config, err := PPPoE(router, func(res api.Resource, spec api.PPPoEInterfaceSpec) (string, error) {
+	config, err := PPPoE(router, func(res api.Resource, spec api.PPPoESessionSpec) (string, error) {
 		return spec.Password, nil
 	})
 	if err != nil {
@@ -81,9 +81,9 @@ func TestPPPoERendersDisabledManagedUnitWithoutStartingIt(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: false, Owner: "external"},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
 				Metadata: api.ObjectMeta{Name: "pppoe0"},
-				Spec: api.PPPoEInterfaceSpec{
+				Spec: api.PPPoESessionSpec{
 					Interface: "wan-ether",
 					IfName:    "ppp0",
 					Disabled:  true,
@@ -95,7 +95,7 @@ func TestPPPoERendersDisabledManagedUnitWithoutStartingIt(t *testing.T) {
 		}},
 	}
 
-	config, err := PPPoE(router, func(res api.Resource, spec api.PPPoEInterfaceSpec) (string, error) {
+	config, err := PPPoE(router, func(res api.Resource, spec api.PPPoESessionSpec) (string, error) {
 		return spec.Password, nil
 	})
 	if err != nil {

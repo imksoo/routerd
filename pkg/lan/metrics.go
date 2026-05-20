@@ -10,7 +10,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-func RecordDHCPv4LeaseGranted(ctx context.Context, iface string) {
+func RecordDHCPv4ClientGranted(ctx context.Context, iface string) {
 	counter, _ := otel.Meter("routerd.lan").Int64Counter("routerd.dhcpv4.server.lease.granted")
 	counter.Add(ctx, 1, metric.WithAttributes(attribute.String("routerd.interface", iface)))
 }

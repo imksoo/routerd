@@ -29,7 +29,7 @@ flowchart LR
 | No. | Meaning | Main resources |
 | --- | --- | --- |
 | [1] | Upstream network that gives the router a WAN IPv4 lease. | External to routerd |
-| [2] | Physical WAN interface. routerd runs a DHCPv4 client here. | `Interface/wan`, `DHCPv4Lease/wan-dhcpv4` |
+| [2] | Physical WAN interface. routerd runs a DHCPv4 client here. | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
 | [3] | Linux host applying derived forwarding sysctls and nftables rules. | Derived host runtime |
 | [4] | LAN gateway address owned by routerd. | `Interface/lan`, `IPv4StaticAddress/lan-base` |
 | [5] | DHCPv4 clients using the router as gateway and DNS. | `DHCPv4Server/lan-dhcpv4` |
@@ -38,7 +38,7 @@ flowchart LR
 
 | Area | routerd resources |
 | --- | --- |
-| WAN address | `Interface/wan`, `DHCPv4Lease/wan-dhcpv4` |
+| WAN address | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
 | LAN address | `Interface/lan`, `IPv4StaticAddress/lan-base` |
 | LAN DHCPv4 | `DHCPv4Server/lan-dhcpv4` |
 | IPv4 internet access | `NAT44Rule/lan-to-wan` |
@@ -53,7 +53,7 @@ routing path is working.
 ```yaml
 # [2] WAN address is learned from the upstream network.
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DHCPv4Lease
+  kind: DHCPv4Client
   metadata:
     name: wan-dhcpv4
   spec:
@@ -122,7 +122,7 @@ routerd apply --config router.yaml --once
 
 ```bash
 routerctl status
-routerctl describe DHCPv4Lease/wan-dhcpv4
+routerctl describe DHCPv4Client/wan-dhcpv4
 routerctl describe IPv4StaticAddress/lan-base
 routerctl describe NAT44Rule/lan-to-wan
 nft list table ip routerd_nat

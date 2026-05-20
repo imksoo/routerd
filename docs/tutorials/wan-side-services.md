@@ -14,7 +14,7 @@ The companion page on the [LAN side](./lan-side-services.md) covers what the rou
 | Concern | Resource | Daemon backing it |
 | --- | --- | --- |
 | Physical / virtual interface | `Interface`, `IPv4StaticAddress` | (kernel) |
-| IPv4 from ISP via DHCP | `DHCPv4Lease` | `routerd-dhcpv4-client` |
+| IPv4 from ISP via DHCP | `DHCPv4Client` | `routerd-dhcpv4-client` |
 | IPv6 prefix from ISP | `DHCPv6PrefixDelegation`, `IPv6DelegatedAddress` | `routerd-dhcpv6-client` |
 | Other DHCPv6 options (DNS, AFTR, etc.) | `DHCPv6Information` | `routerd-dhcpv6-client` |
 | Upstream time sources | `NTPClient` | `systemd-timesyncd` or `ntpd` |
@@ -39,7 +39,7 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
     role: untrust
 
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DHCPv4Lease
+  kind: DHCPv4Client
   metadata: {name: wan-v4}
   spec:
     interface: wan
@@ -69,7 +69,7 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
       - 192.0.2.0/24
 ```
 
-`DHCPv4Lease` runs `routerd-dhcpv4-client` and writes the lease to `lease.json`. The kernel takes the address; routerd publishes events for downstream resources to react.
+`DHCPv4Client` runs `routerd-dhcpv4-client` and writes the lease to `lease.json`. The kernel takes the address; routerd publishes events for downstream resources to react.
 
 `DHCPv6PrefixDelegation` runs `routerd-dhcpv6-client` and obtains an IA_PD. `IPv6DelegatedAddress` carves a `/64` (or other length) for a LAN side.
 
@@ -86,7 +86,7 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
     managed: true
     source: auto
     serverFrom:
-      - resource: DHCPv4Lease/wan-v4
+      - resource: DHCPv4Client/wan-v4
         field: ntpServers
       - resource: DHCPv6Information/wan-info
         field: sntpServers

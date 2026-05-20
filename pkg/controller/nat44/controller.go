@@ -401,7 +401,7 @@ func (c Controller) applyRouter(router *api.Router) *api.Router {
 }
 
 func nat44ControllerResource(resource api.Resource) bool {
-	if resource.Kind == "NAT44Rule" || resource.Kind == "IPv4SourceNAT" {
+	if resource.Kind == "NAT44Rule" {
 		return true
 	}
 	return resource.APIVersion == api.FirewallAPIVersion && resource.Kind == "LocalServiceRedirect"
@@ -518,8 +518,8 @@ func interfaceAliases(router *api.Router) map[string]string {
 			if err == nil {
 				aliases[resource.Metadata.Name] = firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
 			}
-		case "PPPoEInterface":
-			spec, err := resource.PPPoEInterfaceSpec()
+		case "PPPoESession":
+			spec, err := resource.PPPoESessionSpec()
 			if err == nil {
 				aliases[resource.Metadata.Name] = firstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
 			}

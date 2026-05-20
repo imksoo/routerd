@@ -134,7 +134,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "VXLANTunnel" {
 			interfaces[res.Metadata.Name] = true
 		}
-		if res.APIVersion == api.NetAPIVersion && (res.Kind == "PPPoEInterface" || res.Kind == "PPPoESession") {
+		if res.APIVersion == api.NetAPIVersion && res.Kind == "PPPoESession" {
 			interfaces[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.SystemAPIVersion && res.Kind == "NetworkAdoption" {
@@ -325,7 +325,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4StaticAddress", "VirtualIPv4Address", "VirtualIPv6Address", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Scope", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoEInterface", "PPPoESession":
+		case "IPv4StaticAddress", "VirtualIPv4Address", "VirtualIPv6Address", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "DHCPv4Scope", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DSLiteTunnel", "PPPoESession":
 			name, err := interfaceRef(res)
 			if err != nil {
 				return err
@@ -336,7 +336,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			if !interfaces[name] {
 				return fmt.Errorf("%s references missing Interface %q", res.ID(), name)
 			}
-			if (res.Kind == "PPPoEInterface" || res.Kind == "PPPoESession") && !baseInterfaces[name] {
+			if res.Kind == "PPPoESession" && !baseInterfaces[name] {
 				return fmt.Errorf("%s spec.interface must reference a base Interface %q", res.ID(), name)
 			}
 		}
@@ -520,22 +520,13 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				}
 			}
 		}
-		if res.Kind == "IPv4SourceNAT" {
-			spec, err := res.IPv4SourceNATSpec()
-			if err != nil {
-				return err
-			}
-			if !interfaces[spec.OutboundInterface] && !dsliteTunnels[spec.OutboundInterface] {
-				return fmt.Errorf("%s references missing outbound Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.OutboundInterface)
-			}
-		}
 		if res.Kind == "IPv4PolicyRoute" {
 			spec, err := res.IPv4PolicyRouteSpec()
 			if err != nil {
 				return err
 			}
 			if !interfaces[spec.OutboundInterface] && !dsliteTunnels[spec.OutboundInterface] {
-				return fmt.Errorf("%s references missing outbound Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.OutboundInterface)
+				return fmt.Errorf("%s references missing outbound Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), spec.OutboundInterface)
 			}
 		}
 		if res.Kind == "IPv4PolicyRouteSet" {
@@ -545,7 +536,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			}
 			for _, target := range spec.Targets {
 				if !interfaces[target.OutboundInterface] && !dsliteTunnels[target.OutboundInterface] {
-					return fmt.Errorf("%s target %q references missing outbound Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), target.Name, target.OutboundInterface)
+					return fmt.Errorf("%s target %q references missing outbound Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), target.Name, target.OutboundInterface)
 				}
 				if target.HealthCheck != "" && !healthChecks[target.HealthCheck] {
 					return fmt.Errorf("%s target %q references missing HealthCheck %q", res.ID(), target.Name, target.HealthCheck)
@@ -619,10 +610,10 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 			if spec.Interface != "" && !interfaces[spec.Interface] && !dsliteTunnels[spec.Interface] {
-				return fmt.Errorf("%s references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.Interface)
+				return fmt.Errorf("%s references missing Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), spec.Interface)
 			}
 			if spec.SourceInterface != "" && !interfaces[spec.SourceInterface] && !dsliteTunnels[spec.SourceInterface] {
-				return fmt.Errorf("%s references missing source Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), spec.SourceInterface)
+				return fmt.Errorf("%s references missing source Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), spec.SourceInterface)
 			}
 			if err := validateHealthCheckDerivedFwMark(router, res, spec); err != nil {
 				return err
@@ -635,7 +626,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			}
 			for i, candidate := range spec.Candidates {
 				if candidate.Interface != "" && !interfaces[candidate.Interface] && !dsliteTunnels[candidate.Interface] {
-					return fmt.Errorf("%s spec.candidates[%d] references missing Interface, PPPoEInterface, or DSLiteTunnel %q", res.ID(), i, candidate.Interface)
+					return fmt.Errorf("%s spec.candidates[%d] references missing Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), i, candidate.Interface)
 				}
 				if candidate.RouteSet != "" && !routeSets[candidate.RouteSet] {
 					return fmt.Errorf("%s spec.candidates[%d] references missing IPv4PolicyRouteSet %q", res.ID(), i, candidate.RouteSet)
@@ -664,9 +655,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			for i, name := range spec.Interfaces {
 				refKind, refName := splitFirewallInterfaceRef(name)
 				switch refKind {
-				case "Interface", "PPPoEInterface", "WireGuardInterface":
+				case "Interface", "PPPoESession", "WireGuardInterface":
 					if !interfaces[refName] && !dsliteTunnels[refName] {
-						return fmt.Errorf("%s spec.interfaces[%d] references missing Interface, PPPoEInterface, WireGuardInterface, or DSLiteTunnel %q", res.ID(), i, refName)
+						return fmt.Errorf("%s spec.interfaces[%d] references missing Interface, PPPoESession, WireGuardInterface, or DSLiteTunnel %q", res.ID(), i, refName)
 					}
 				case "DSLiteTunnel":
 					if !dsliteTunnels[refName] {
@@ -737,6 +728,12 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			spec, err := res.NAT44RuleSpec()
 			if err != nil {
 				return err
+			}
+			if spec.OutboundInterface != "" && !interfaces[spec.OutboundInterface] && !dsliteTunnels[spec.OutboundInterface] {
+				return fmt.Errorf("%s references missing outbound Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), spec.OutboundInterface)
+			}
+			if spec.EgressInterface != "" && !interfaces[spec.EgressInterface] && !dsliteTunnels[spec.EgressInterface] {
+				return fmt.Errorf("%s references missing egress Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), spec.EgressInterface)
 			}
 			if err := validateIPAddressSetRefsExist(res.ID(), "spec.destinationSetRefs", spec.DestinationSetRefs, ipAddressSets); err != nil {
 				return err
@@ -1599,11 +1596,11 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
 			return fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
 		}
-	case "PPPoEInterface":
+	case "PPPoESession":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
 		}
-		spec, err := res.PPPoEInterfaceSpec()
+		spec, err := res.PPPoESessionSpec()
 		if err != nil {
 			return err
 		}
@@ -1643,47 +1640,18 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if spec.LCPInterval < 0 || spec.LCPFailure < 0 {
 			return fmt.Errorf("%s spec.lcpInterval and spec.lcpFailure must be non-negative", res.ID())
 		}
-		switch spec.SecretEncoding {
-		case "", "plain":
-		default:
-			return fmt.Errorf("%s spec.secretEncoding must be plain", res.ID())
-		}
-	case "PPPoESession":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.PPPoESessionSpec()
-		if err != nil {
-			return err
-		}
-		if spec.Interface == "" {
-			return fmt.Errorf("%s spec.interface is required", res.ID())
-		}
-		if spec.Username == "" {
-			return fmt.Errorf("%s spec.username is required", res.ID())
-		}
-		if spec.Password == "" && spec.PasswordFile == "" {
-			return fmt.Errorf("%s spec.password or spec.passwordFile is required", res.ID())
-		}
-		if spec.Password != "" && spec.PasswordFile != "" {
-			return fmt.Errorf("%s spec.password and spec.passwordFile are mutually exclusive", res.ID())
-		}
 		switch spec.AuthMethod {
 		case "", "chap", "pap", "both":
 		default:
 			return fmt.Errorf("%s spec.authMethod must be chap, pap, or both", res.ID())
 		}
-		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 1500) {
-			return fmt.Errorf("%s spec.mtu must be within 576-1500", res.ID())
-		}
-		if spec.MRU != 0 && (spec.MRU < 576 || spec.MRU > 1500) {
-			return fmt.Errorf("%s spec.mru must be within 576-1500", res.ID())
-		}
 		if spec.LCPEchoInterval < 0 || spec.LCPEchoFailure < 0 {
 			return fmt.Errorf("%s spec.lcpEchoInterval and spec.lcpEchoFailure must be non-negative", res.ID())
 		}
-		if strings.ContainsAny(spec.ServiceName, "\n\r") || strings.ContainsAny(spec.ACName, "\n\r") {
-			return fmt.Errorf("%s spec.serviceName and spec.acName must not contain newlines", res.ID())
+		switch spec.SecretEncoding {
+		case "", "plain":
+		default:
+			return fmt.Errorf("%s spec.secretEncoding must be plain", res.ID())
 		}
 	case "IPv4StaticAddress":
 		if res.APIVersion != api.NetAPIVersion {
@@ -1959,11 +1927,11 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
 		}
-	case "DHCPv4Lease":
+	case "DHCPv4Client":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
 		}
-		spec, err := res.DHCPv4LeaseSpec()
+		spec, err := res.DHCPv4ClientSpec()
 		if err != nil {
 			return err
 		}
@@ -3042,61 +3010,6 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 				seenTables[candidate.Table] = true
 			}
 		}
-	case "IPv4SourceNAT":
-		if res.APIVersion != api.NetAPIVersion {
-			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
-		}
-		spec, err := res.IPv4SourceNATSpec()
-		if err != nil {
-			return err
-		}
-		if spec.OutboundInterface == "" {
-			return fmt.Errorf("%s spec.outboundInterface is required", res.ID())
-		}
-		if len(spec.SourceCIDRs) == 0 {
-			return fmt.Errorf("%s spec.sourceCIDRs is required", res.ID())
-		}
-		for _, cidr := range spec.SourceCIDRs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil || !prefix.Addr().Is4() {
-				return fmt.Errorf("%s spec.sourceCIDRs entries must be IPv4 prefixes", res.ID())
-			}
-		}
-		switch spec.Translation.Type {
-		case "interfaceAddress":
-		case "address":
-			addr, err := netip.ParseAddr(spec.Translation.Address)
-			if err != nil || !addr.Is4() {
-				return fmt.Errorf("%s spec.translation.address must be an IPv4 address", res.ID())
-			}
-		case "pool":
-			if len(spec.Translation.Addresses) == 0 {
-				return fmt.Errorf("%s spec.translation.addresses is required when translation.type is pool", res.ID())
-			}
-			for _, value := range spec.Translation.Addresses {
-				addr, err := netip.ParseAddr(value)
-				if err != nil || !addr.Is4() {
-					return fmt.Errorf("%s spec.translation.addresses entries must be IPv4 addresses", res.ID())
-				}
-			}
-		default:
-			return fmt.Errorf("%s spec.translation.type must be interfaceAddress, address, or pool", res.ID())
-		}
-		portMappingType := defaultString(spec.Translation.PortMapping.Type, "auto")
-		switch portMappingType {
-		case "auto", "preserve":
-			if spec.Translation.PortMapping.Start != 0 || spec.Translation.PortMapping.End != 0 {
-				return fmt.Errorf("%s spec.translation.portMapping start/end are only valid when type is range", res.ID())
-			}
-		case "range":
-			start := spec.Translation.PortMapping.Start
-			end := spec.Translation.PortMapping.End
-			if start < 1 || start > 65535 || end < 1 || end > 65535 || start > end {
-				return fmt.Errorf("%s spec.translation.portMapping range must be within 1-65535 and start must be <= end", res.ID())
-			}
-		default:
-			return fmt.Errorf("%s spec.translation.portMapping.type must be auto, preserve, or range", res.ID())
-		}
 	case "NAT44Rule":
 		if res.APIVersion != api.NetAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -3104,6 +3017,12 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		spec, err := res.NAT44RuleSpec()
 		if err != nil {
 			return err
+		}
+		if spec.OutboundInterface != "" || len(spec.SourceCIDRs) > 0 || spec.Translation.Type != "" {
+			if err := validateNAT44SourceNATShape(res.ID(), spec); err != nil {
+				return err
+			}
+			break
 		}
 		switch spec.Type {
 		case "masquerade", "snat":
@@ -3756,8 +3675,8 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "HealthCheck":
 		spec, _ := res.HealthCheckSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
-	case "IPv4SourceNAT":
-		spec, _ := res.IPv4SourceNATSpec()
+	case "NAT44Rule":
+		spec, _ := res.NAT44RuleSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "PortForward":
 		spec, _ := res.PortForwardSpec()
@@ -4013,8 +3932,8 @@ func interfaceRef(res api.Resource) (string, error) {
 	case "VirtualIPv6Address":
 		spec, err := res.VirtualIPv6AddressSpec()
 		return spec.Interface, err
-	case "DHCPv4Lease":
-		spec, err := res.DHCPv4LeaseSpec()
+	case "DHCPv4Client":
+		spec, err := res.DHCPv4ClientSpec()
 		return spec.Interface, err
 	case "IPv4StaticRoute":
 		spec, err := res.IPv4StaticRouteSpec()
@@ -4043,9 +3962,6 @@ func interfaceRef(res api.Resource) (string, error) {
 		return "", nil
 	case "DSLiteTunnel":
 		spec, err := res.DSLiteTunnelSpec()
-		return spec.Interface, err
-	case "PPPoEInterface":
-		spec, err := res.PPPoEInterfaceSpec()
 		return spec.Interface, err
 	case "PPPoESession":
 		spec, err := res.PPPoESessionSpec()
@@ -4085,6 +4001,60 @@ func validateIngressListen(resourceID, path string, listen api.IngressListenSpec
 	}
 	if listen.Port < 1 || listen.Port > 65535 {
 		return fmt.Errorf("%s %s.port must be within 1-65535", resourceID, path)
+	}
+	return nil
+}
+
+func validateNAT44SourceNATShape(resourceID string, spec api.NAT44RuleSpec) error {
+	if spec.Type != "" || spec.EgressInterface != "" || spec.EgressPolicyRef != "" || len(spec.SourceRanges) > 0 || len(spec.DestinationCIDRs) > 0 || len(spec.DestinationSetRefs) > 0 || len(spec.ExcludeDestinationCIDRs) > 0 || len(spec.ExcludeDestinationSetRefs) > 0 || spec.SNATAddress != "" || spec.SNATAddressFrom.Resource != "" {
+		return fmt.Errorf("%s NAT44Rule must not mix outboundInterface/sourceCIDRs/translation with type/egressInterface/sourceRanges fields", resourceID)
+	}
+	if spec.OutboundInterface == "" {
+		return fmt.Errorf("%s spec.outboundInterface is required when using source NAT fields on NAT44Rule", resourceID)
+	}
+	if len(spec.SourceCIDRs) == 0 {
+		return fmt.Errorf("%s spec.sourceCIDRs is required when using source NAT fields on NAT44Rule", resourceID)
+	}
+	for _, cidr := range spec.SourceCIDRs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil || !prefix.Addr().Is4() {
+			return fmt.Errorf("%s spec.sourceCIDRs entries must be IPv4 prefixes", resourceID)
+		}
+	}
+	switch spec.Translation.Type {
+	case "interfaceAddress":
+	case "address":
+		addr, err := netip.ParseAddr(spec.Translation.Address)
+		if err != nil || !addr.Is4() {
+			return fmt.Errorf("%s spec.translation.address must be an IPv4 address", resourceID)
+		}
+	case "pool":
+		if len(spec.Translation.Addresses) == 0 {
+			return fmt.Errorf("%s spec.translation.addresses is required when translation.type is pool", resourceID)
+		}
+		for _, value := range spec.Translation.Addresses {
+			addr, err := netip.ParseAddr(value)
+			if err != nil || !addr.Is4() {
+				return fmt.Errorf("%s spec.translation.addresses entries must be IPv4 addresses", resourceID)
+			}
+		}
+	default:
+		return fmt.Errorf("%s spec.translation.type must be interfaceAddress, address, or pool", resourceID)
+	}
+	portMappingType := defaultString(spec.Translation.PortMapping.Type, "auto")
+	switch portMappingType {
+	case "auto", "preserve":
+		if spec.Translation.PortMapping.Start != 0 || spec.Translation.PortMapping.End != 0 {
+			return fmt.Errorf("%s spec.translation.portMapping start/end are only valid when type is range", resourceID)
+		}
+	case "range":
+		start := spec.Translation.PortMapping.Start
+		end := spec.Translation.PortMapping.End
+		if start < 1 || start > 65535 || end < 1 || end > 65535 || start > end {
+			return fmt.Errorf("%s spec.translation.portMapping range must be within 1-65535 and start must be <= end", resourceID)
+		}
+	default:
+		return fmt.Errorf("%s spec.translation.portMapping.type must be auto, preserve, or range", resourceID)
 	}
 	return nil
 }

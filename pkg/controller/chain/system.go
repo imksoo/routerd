@@ -503,25 +503,25 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
-	if err := c.reconcileDisabledPPPoEInterfaces(); err != nil {
+	if err := c.reconcileDisabledPPPoESessions(); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c SystemdUnitController) reconcileDisabledPPPoEInterfaces() error {
+func (c SystemdUnitController) reconcileDisabledPPPoESessions() error {
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "PPPoEInterface" {
+		if resource.Kind != "PPPoESession" {
 			continue
 		}
-		spec, err := resource.PPPoEInterfaceSpec()
+		spec, err := resource.PPPoESessionSpec()
 		if err != nil {
 			return err
 		}
-		if !pppoeInterfaceDisabled(spec) {
+		if !pppoeSessionDisabled(spec) {
 			continue
 		}
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "PPPoEInterface", resource.Metadata.Name, map[string]any{
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "PPPoESession", resource.Metadata.Name, map[string]any{
 			"phase":     PhaseDisabled,
 			"reason":    "Disabled",
 			"interface": spec.Interface,
@@ -609,8 +609,8 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, e
 	aliases := interfaceAliases(c.Router)
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
-		case "DHCPv4Lease":
-			spec, err := resource.DHCPv4LeaseSpec()
+		case "DHCPv4Client":
+			spec, err := resource.DHCPv4ClientSpec()
 			if err != nil {
 				return err
 			}
@@ -622,7 +622,7 @@ func (c SystemdUnitController) reconcileClientDaemonUnits(ctx context.Context, e
 			if explicitUnits[unitName] {
 				continue
 			}
-			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "DHCPv4Lease", resource.Metadata.Name, unitName, dhcpv4ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv), command); err != nil {
+			if err := c.reconcileSyntheticSystemdUnit(ctx, api.NetAPIVersion, "DHCPv4Client", resource.Metadata.Name, unitName, dhcpv4ClientUnitSpec(resource.Metadata.Name, ifname, spec, telemetryEnv), command); err != nil {
 				return err
 			}
 		case "DHCPv6PrefixDelegation":
@@ -759,7 +759,7 @@ func interfaceAliases(router *api.Router) map[string]string {
 	return out
 }
 
-func dhcpv4ClientUnitSpec(resource, ifname string, spec api.DHCPv4LeaseSpec, telemetryEnv []string) api.SystemdUnitSpec {
+func dhcpv4ClientUnitSpec(resource, ifname string, spec api.DHCPv4ClientSpec, telemetryEnv []string) api.SystemdUnitSpec {
 	noNewPrivileges := true
 	privateTmp := true
 	exec := []string{"/usr/local/sbin/routerd-dhcpv4-client", "daemon", "--resource", resource, "--interface", ifname}

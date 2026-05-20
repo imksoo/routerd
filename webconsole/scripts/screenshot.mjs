@@ -207,7 +207,7 @@ function routesFixture() {
       { source: "kernel", family: "ipv4", destination: "172.18.0.0/16", device: "lan0", protocol: "kernel", scope: "link", table: "main", phase: "installed", observedAt: now },
       { source: "static", resource: "IPv4StaticRoute/services", family: "ipv4", destination: "10.96.0.0/12", gateway: "172.18.0.10", device: "lan0", metric: "50", phase: "Applied", observedAt: now },
       { source: "bgp", resource: "BGPRouter/lan", family: "ipv4", destination: "10.250.0.0/24", protocol: "bgp", peer: "192.168.123.111", phase: "Established", observedAt: now },
-      { source: "dhcpv4", resource: "DHCPv4Lease/wan", family: "ipv4", destination: "default", gateway: "192.168.123.1", device: "wan0", protocol: "dhcp", metric: "100", phase: "Bound", observedAt: now },
+      { source: "dhcpv4", resource: "DHCPv4Client/wan", family: "ipv4", destination: "default", gateway: "192.168.123.1", device: "wan0", protocol: "dhcp", metric: "100", phase: "Bound", observedAt: now },
     ],
     bgpPeers: [
       { router: "lan", peer: "192.168.123.111", asn: "64513", state: "Established", established: true, prefixesReceived: "12", messages: "82/79", lastEstablishedAt: now },

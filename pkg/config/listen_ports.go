@@ -72,8 +72,8 @@ func (r *listenPortRegistry) addResource(router *api.Router, res api.Resource) e
 				}
 			}
 		}
-	case res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv4Lease":
-		spec, err := res.DHCPv4LeaseSpec()
+	case res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv4Client":
+		spec, err := res.DHCPv4ClientSpec()
 		if err != nil {
 			return err
 		}

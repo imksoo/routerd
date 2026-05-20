@@ -17,7 +17,7 @@ spec:
         owner: external
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: PPPoEInterface
+      kind: PPPoESession
       metadata:
         name: pppoe-home
       spec:

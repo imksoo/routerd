@@ -78,10 +78,10 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 			out[name] = data
 		}
 		for _, res := range router.Spec.Resources {
-			if res.Kind != "DHCPv4Lease" {
+			if res.Kind != "DHCPv4Client" {
 				continue
 			}
-			spec, err := res.DHCPv4LeaseSpec()
+			spec, err := res.DHCPv4ClientSpec()
 			if err != nil {
 				return nil, err
 			}
@@ -469,7 +469,7 @@ func freeBSDDHCPv6ClientSystemdSpec(resource, ifname string, spec api.DHCPv6Pref
 	}
 }
 
-func freeBSDDHCPv4ClientSystemdSpec(resource, ifname string, spec api.DHCPv4LeaseSpec, telemetryEnv []string) api.SystemdUnitSpec {
+func freeBSDDHCPv4ClientSystemdSpec(resource, ifname string, spec api.DHCPv4ClientSpec, telemetryEnv []string) api.SystemdUnitSpec {
 	args := []string{
 		"/usr/local/sbin/routerd-dhcpv4-client",
 		"daemon",

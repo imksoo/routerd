@@ -20,7 +20,7 @@ func healthCheckDisabled(spec api.HealthCheckSpec) bool {
 	return spec.Disabled || (spec.Enabled != nil && !*spec.Enabled)
 }
 
-func pppoeInterfaceDisabled(spec api.PPPoEInterfaceSpec) bool {
+func pppoeSessionDisabled(spec api.PPPoESessionSpec) bool {
 	return spec.Disabled || (spec.Enabled != nil && !*spec.Enabled)
 }
 
@@ -65,9 +65,9 @@ func specDisabled(router *api.Router, kind string, name string) bool {
 		case "HealthCheck":
 			spec, err := resource.HealthCheckSpec()
 			return err == nil && healthCheckDisabled(spec)
-		case "PPPoEInterface":
-			spec, err := resource.PPPoEInterfaceSpec()
-			return err == nil && pppoeInterfaceDisabled(spec)
+		case "PPPoESession":
+			spec, err := resource.PPPoESessionSpec()
+			return err == nil && pppoeSessionDisabled(spec)
 		default:
 			return false
 		}

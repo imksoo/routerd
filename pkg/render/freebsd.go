@@ -27,7 +27,7 @@ type FreeBSDConfig struct {
 }
 
 func FreeBSD(router *api.Router) (FreeBSDConfig, error) {
-	return FreeBSDWithPPPoEPasswords(router, func(_ api.Resource, spec api.PPPoEInterfaceSpec) (string, error) {
+	return FreeBSDWithPPPoEPasswords(router, func(_ api.Resource, spec api.PPPoESessionSpec) (string, error) {
 		if spec.Password != "" {
 			return spec.Password, nil
 		}
@@ -35,7 +35,7 @@ func FreeBSD(router *api.Router) (FreeBSDConfig, error) {
 	})
 }
 
-func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource, api.PPPoEInterfaceSpec) (string, error)) (FreeBSDConfig, error) {
+func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource, api.PPPoESessionSpec) (string, error)) (FreeBSDConfig, error) {
 	router = api.ExpandClusterNetworkRoutes(router)
 	aliases := map[string]string{}
 	managed := map[string]bool{}
@@ -185,8 +185,8 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 				return FreeBSDConfig{}, err
 			}
 			staticV6Routes = append(staticV6Routes, freeBSDStaticRoute{Name: res.Metadata.Name, IfName: aliases[spec.Interface], Destination: spec.Destination, Via: spec.Via})
-		case "PPPoEInterface":
-			spec, err := res.PPPoEInterfaceSpec()
+		case "PPPoESession":
+			spec, err := res.PPPoESessionSpec()
 			if err != nil {
 				return FreeBSDConfig{}, err
 			}
@@ -319,7 +319,7 @@ type freeBSDPPPoE struct {
 	IfName      string
 	LowerIfName string
 	Password    string
-	Spec        api.PPPoEInterfaceSpec
+	Spec        api.PPPoESessionSpec
 }
 
 type freeBSDStaticRoute struct {

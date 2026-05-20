@@ -33,7 +33,7 @@ spec:
         managed: true
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Lease
+      kind: DHCPv4Client
       metadata:
         name: wan
       spec:
@@ -48,7 +48,7 @@ spec:
         address: 192.0.2.1/24
 ```
 
-`DHCPv4Lease` は `routerd-dhcpv4-client` が所有します。
+`DHCPv4Client` は `routerd-dhcpv4-client` が所有します。
 routerd は OS 付属クライアントへ委譲しません。daemon は他の routerd daemon と同じ contract (`/v1/status`、`lease.json`、`events.jsonl`) で状態を公開します。
 
 本番 apply の前に、validate と plan で確認してください：

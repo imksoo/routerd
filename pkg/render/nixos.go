@@ -1118,13 +1118,13 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 		})
 	}
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "DHCPv4Lease" {
+		if res.Kind != "DHCPv4Client" {
 			continue
 		}
 		if routerdSupervisesClients {
 			continue
 		}
-		spec, err := res.DHCPv4LeaseSpec()
+		spec, err := res.DHCPv4ClientSpec()
 		if err != nil {
 			return nil, err
 		}
@@ -1228,7 +1228,7 @@ func dnsmasqNixOSSystemdSpec() api.SystemdUnitSpec {
 	}
 }
 
-func dhcpv4ClientSystemdSpec(name, ifname string, spec api.DHCPv4LeaseSpec, telemetryEnv []string) api.SystemdUnitSpec {
+func dhcpv4ClientSystemdSpec(name, ifname string, spec api.DHCPv4ClientSpec, telemetryEnv []string) api.SystemdUnitSpec {
 	noNewPrivileges := true
 	privateTmp := true
 	exec := []string{"/usr/local/sbin/routerd-dhcpv4-client", "daemon", "--resource", name, "--interface", ifname}
@@ -1503,7 +1503,7 @@ func nixOSNeedsDnsmasq(router *api.Router) bool {
 func nixOSNeedsNftables(router *api.Router) bool {
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "IPv4SourceNAT", "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "DSLiteTunnel", "PPPoEInterface", "PPPoESession", "WireGuardInterface", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallLog", "ClientPolicy":
+		case "NAT44Rule", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "DSLiteTunnel", "PPPoESession", "WireGuardInterface", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallLog", "ClientPolicy":
 			return true
 		}
 	}
@@ -1599,13 +1599,13 @@ func nixOSPackages(router *api.Router, host api.NixOSHostSpec) ([]string, []stri
 		case "DHCPv4Server", "DHCPv4Scope", "DHCPv6Server", "DHCPv6Scope":
 			service["dnsmasq"] = true
 			debug["dnsmasq"] = true
-		case "IPv4SourceNAT", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "DSLiteTunnel", "PPPoESession", "WireGuardInterface", "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":
+		case "IPv4PolicyRoute", "IPv4PolicyRouteSet", "IPv4DefaultRoutePolicy", "DSLiteTunnel", "WireGuardInterface", "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":
 			service["nftables"] = true
 			debug["nftables"] = true
-		case "PPPoEInterface":
+		case "PPPoESession":
 			service["nftables"] = true
 			debug["nftables"] = true
-			spec, err := res.PPPoEInterfaceSpec()
+			spec, err := res.PPPoESessionSpec()
 			if err != nil {
 				return nil, nil, err
 			}

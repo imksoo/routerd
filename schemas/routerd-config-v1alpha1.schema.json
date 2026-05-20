@@ -1419,7 +1419,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "PPPoEInterface",
+                    "const": "PPPoESession",
                     "type": "string"
                   },
                   "metadata": {
@@ -1441,6 +1441,14 @@
                       "acName": {
                         "type": "string"
                       },
+                      "authMethod": {
+                        "enum": [
+                          "chap",
+                          "pap",
+                          "both"
+                        ],
+                        "type": "string"
+                      },
                       "defaultRoute": {
                         "type": "boolean"
                       },
@@ -1458,6 +1466,14 @@
                       },
                       "ipv6": {
                         "type": "boolean"
+                      },
+                      "lcpEchoFailure": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "lcpEchoInterval": {
+                        "minimum": 0,
+                        "type": "integer"
                       },
                       "lcpFailure": {
                         "minimum": 0,
@@ -1500,97 +1516,6 @@
                       },
                       "usePeerDNS": {
                         "type": "boolean"
-                      },
-                      "username": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "interface",
-                      "username"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "PPPoESession",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "acName": {
-                        "type": "string"
-                      },
-                      "authMethod": {
-                        "enum": [
-                          "chap",
-                          "pap",
-                          "both"
-                        ],
-                        "type": "string"
-                      },
-                      "interface": {
-                        "type": "string"
-                      },
-                      "lcpEchoFailure": {
-                        "minimum": 0,
-                        "type": "integer"
-                      },
-                      "lcpEchoInterval": {
-                        "minimum": 0,
-                        "type": "integer"
-                      },
-                      "mru": {
-                        "maximum": 1500,
-                        "minimum": 576,
-                        "type": "integer"
-                      },
-                      "mtu": {
-                        "maximum": 1500,
-                        "minimum": 576,
-                        "type": "integer"
-                      },
-                      "password": {
-                        "type": "string"
-                      },
-                      "passwordFile": {
-                        "type": "string"
-                      },
-                      "serviceName": {
-                        "type": "string"
                       },
                       "username": {
                         "type": "string"
@@ -3036,7 +2961,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "DHCPv4Lease",
+                    "const": "DHCPv4Client",
                     "type": "string"
                   },
                   "metadata": {
@@ -6361,7 +6286,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "IPv4SourceNAT",
+                    "const": "NAT44Rule",
                     "type": "string"
                   },
                   "metadata": {
@@ -6380,10 +6305,67 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "destinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "destinationSetRefs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "egressInterface": {
+                        "type": "string"
+                      },
+                      "egressPolicyRef": {
+                        "type": "string"
+                      },
+                      "excludeDestinationCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "excludeDestinationSetRefs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "outboundInterface": {
                         "type": "string"
                       },
+                      "snatAddress": {
+                        "type": "string"
+                      },
+                      "snatAddressFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean"
+                          },
+                          "resource": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource"
+                        ],
+                        "type": "object"
+                      },
                       "sourceCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "sourceRanges": {
                         "items": {
                           "type": "string"
                         },
@@ -6439,6 +6421,13 @@
                         ],
                         "type": "object"
                       },
+                      "type": {
+                        "enum": [
+                          "masquerade",
+                          "snat"
+                        ],
+                        "type": "string"
+                      },
                       "when": {
                         "additionalProperties": false,
                         "properties": {
@@ -6481,122 +6470,6 @@
                         "type": "object"
                       }
                     },
-                    "required": [
-                      "outboundInterface",
-                      "sourceCIDRs",
-                      "translation"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "net.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "NAT44Rule",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "destinationCIDRs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "destinationSetRefs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "egressInterface": {
-                        "type": "string"
-                      },
-                      "egressPolicyRef": {
-                        "type": "string"
-                      },
-                      "excludeDestinationCIDRs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "excludeDestinationSetRefs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "snatAddress": {
-                        "type": "string"
-                      },
-                      "snatAddressFrom": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "field": {
-                            "type": "string"
-                          },
-                          "optional": {
-                            "type": "boolean"
-                          },
-                          "resource": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "resource"
-                        ],
-                        "type": "object"
-                      },
-                      "sourceRanges": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "type": {
-                        "enum": [
-                          "masquerade",
-                          "snat"
-                        ],
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "sourceRanges"
-                    ],
                     "type": "object"
                   },
                   "status": {

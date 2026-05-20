@@ -5,8 +5,8 @@ ds-lite-a-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=ac
 ds-lite-b-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/ds-lite-b
 ds-lite-c-dslite-ipip from=self to=wan ifnames=ens18 proto=ipip port=0 action=accept direction= comment=net.routerd.net/v1alpha1/DSLiteTunnel/ds-lite-c
 home-tailscale from=wan to=self ifnames=ens18 proto=udp port=41641 action=accept direction= comment=net.routerd.net/v1alpha1/TailscaleNode/home
-mgmt-dhcpv4-dhcpv4-client from=mgmt to=self ifnames=ens20 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Lease/mgmt-dhcpv4
-wan-dhcpv4-dhcpv4-client from=wan to=self ifnames=ens18 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Lease/wan-dhcpv4
+mgmt-dhcpv4-dhcpv4-client from=mgmt to=self ifnames=ens20 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Client/mgmt-dhcpv4
+wan-dhcpv4-dhcpv4-client from=wan to=self ifnames=ens18 proto=udp port=68 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv4Client/wan-dhcpv4
 wan-pd-dhcpv6-client from=wan to=self ifnames=ens18 proto=udp port=546 action=accept direction= comment=net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd
 wg-lab-wireguard from=wan to=self ifnames=ens18 proto=udp port=51820 action=accept direction= comment=net.routerd.net/v1alpha1/WireGuardInterface/wg-lab
 ### routerd-generated.nix

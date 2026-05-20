@@ -797,7 +797,7 @@ func canonicalResourceKind(kind string) string {
 		"dhcpv6prefixdelegation": "DHCPv6PrefixDelegation",
 		"ipv4static":             "IPv4StaticAddress",
 		"ipv4staticaddress":      "IPv4StaticAddress",
-		"dhcpv4lease":            "DHCPv4Lease",
+		"dhcpv4client":           "DHCPv4Client",
 		"dhcpv4server":           "DHCPv4Server",
 		"dhcpv4scope":            "DHCPv4Scope",
 		"dhcpv4reservation":      "DHCPv4Reservation",
@@ -810,9 +810,8 @@ func canonicalResourceKind(kind string) string {
 		"ipv4staticroute":        "IPv4StaticRoute",
 		"ipv6route":              "IPv6StaticRoute",
 		"ipv6staticroute":        "IPv6StaticRoute",
-		"nat":                    "IPv4SourceNAT",
-		"snat":                   "IPv4SourceNAT",
-		"ipv4sourcenat":          "IPv4SourceNAT",
+		"nat":                    "NAT44Rule",
+		"snat":                   "NAT44Rule",
 		"nat44":                  "NAT44Rule",
 		"nat44rule":              "NAT44Rule",
 		"portforward":            "PortForward",
@@ -828,8 +827,7 @@ func canonicalResourceKind(kind string) string {
 		"dslitetunnel":           "DSLiteTunnel",
 		"dns":                    "DNSResolver",
 		"resolver":               "DNSResolver",
-		"pppoe":                  "PPPoEInterface",
-		"pppoeinterface":         "PPPoEInterface",
+		"pppoe":                  "PPPoESession",
 		"pppoesession":           "PPPoESession",
 		"pppoeclient":            "PPPoESession",
 		"fw":                     "FirewallRule",
@@ -870,7 +868,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoEInterface", "PPPoESession", "IPv4StaticAddress", "DHCPv4Lease", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "IPv4SourceNAT", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet":
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4Scope", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6Scope", "DHCPv4Relay", "DNSZone", "DNSResolver", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "IPv4DefaultRoutePolicy", "NAT44Rule", "IPAddressSet", "IPv4PolicyRoute", "IPv4PolicyRouteSet":
 		return api.NetAPIVersion
 	default:
 		return ""
@@ -1244,7 +1242,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 
 		var nftablesChangedFiles []string
 		if err := recordStageError("nftables", func() error {
-			nftablesConfig, err := render.NftablesIPv4SourceNAT(effectiveRouter)
+			nftablesConfig, err := render.NftablesNAT44(effectiveRouter)
 			if err != nil {
 				return err
 			}
@@ -2446,8 +2444,8 @@ func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "HealthCheck":
 		spec, _ := res.HealthCheckSpec()
 		return spec.When
-	case "IPv4SourceNAT":
-		spec, _ := res.IPv4SourceNATSpec()
+	case "NAT44Rule":
+		spec, _ := res.NAT44RuleSpec()
 		return spec.When
 	case "PortForward":
 		spec, _ := res.PortForwardSpec()
@@ -3100,7 +3098,7 @@ func controllerDefaultStatuses() []controlapi.ControllerStatus {
 	names := []string{
 		"address",
 		"bgp",
-		"dhcpv4lease",
+		"dhcpv4client",
 		"dhcpv6",
 		"dns-resolver",
 		"dslite",
@@ -3132,8 +3130,8 @@ func controllerResourceKinds(name string) []string {
 	switch name {
 	case "address":
 		return []string{"IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress"}
-	case "dhcpv4lease":
-		return []string{"DHCPv4Lease"}
+	case "dhcpv4client":
+		return []string{"DHCPv4Client"}
 	case "dhcpv6":
 		return []string{"DHCPv6Server", "DHCPv6Scope", "IPv6RouterAdvertisement"}
 	case "dns-resolver":
@@ -3149,7 +3147,7 @@ func controllerResourceKinds(name string) []string {
 	case "vrrp":
 		return []string{"VirtualIPv4Address", "VirtualIPv6Address"}
 	case "nat":
-		return []string{"NAT44Rule", "IPv4SourceNAT", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
+		return []string{"NAT44Rule", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
 	case "network-adoption":
 		return []string{"NetworkAdoption"}
 	case "package":
@@ -3157,7 +3155,7 @@ func controllerResourceKinds(name string) []string {
 	case "kernel-module":
 		return []string{"KernelModule"}
 	case "pppoesession":
-		return []string{"PPPoEInterface", "PPPoESession"}
+		return []string{"PPPoESession"}
 	case "route":
 		return []string{"IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy"}
 	case "service-unit":
@@ -5366,8 +5364,8 @@ func applyIPv4PolicyRoutes(router *api.Router) ([]string, error) {
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
-		case "PPPoEInterface":
-			spec, err := res.PPPoEInterfaceSpec()
+		case "PPPoESession":
+			spec, err := res.PPPoESessionSpec()
 			if err != nil {
 				return nil, err
 			}
@@ -5590,8 +5588,8 @@ func outboundAliases(router *api.Router) (map[string]string, error) {
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = spec.IfName
-		case "PPPoEInterface":
-			spec, err := res.PPPoEInterfaceSpec()
+		case "PPPoESession":
+			spec, err := res.PPPoESessionSpec()
 			if err != nil {
 				return nil, err
 			}
@@ -7772,7 +7770,7 @@ func pppdAvailable() bool {
 	return false
 }
 
-func pppoePassword(res api.Resource, spec api.PPPoEInterfaceSpec) (string, error) {
+func pppoePassword(res api.Resource, spec api.PPPoESessionSpec) (string, error) {
 	if spec.Password != "" {
 		return spec.Password, nil
 	}

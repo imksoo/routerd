@@ -65,8 +65,8 @@ func (c IPv4PolicyRouteController) aliases() map[string]string {
 			if err == nil && spec.IfName != "" {
 				aliases[res.Metadata.Name] = spec.IfName
 			}
-		case "PPPoEInterface":
-			spec, err := res.PPPoEInterfaceSpec()
+		case "PPPoESession":
+			spec, err := res.PPPoESessionSpec()
 			if err == nil {
 				aliases[res.Metadata.Name] = firstNonEmpty(spec.IfName, "ppp-"+res.Metadata.Name)
 			}

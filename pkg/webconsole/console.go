@@ -818,8 +818,8 @@ func (h Handler) configuredRouteEntries(resources []routerstate.ObjectStatus) []
 				Phase:       stringFromMap(status, "phase"),
 				ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
 			})
-		case "DHCPv4Lease":
-			spec, err := resource.DHCPv4LeaseSpec()
+		case "DHCPv4Client":
+			spec, err := resource.DHCPv4ClientSpec()
 			if err != nil {
 				continue
 			}
@@ -2117,8 +2117,8 @@ func defaultResourceOwnerController(kind string) string {
 	switch kind {
 	case "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress", "Interface", "Link":
 		return "address"
-	case "DHCPv4Lease":
-		return "dhcpv4lease"
+	case "DHCPv4Client":
+		return "dhcpv4client"
 	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Scope", "DHCPv6Information", "IPv6RouterAdvertisement":
 		return "dhcpv6"
 	case "DNSResolver", "DNSZone":
@@ -2127,13 +2127,13 @@ func defaultResourceOwnerController(kind string) string {
 		return "dslite"
 	case "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":
 		return "firewall"
-	case "NAT44Rule", "IPv4SourceNAT":
+	case "NAT44Rule":
 		return "nat"
 	case "NetworkAdoption":
 		return "network-adoption"
 	case "Package", "KernelModule":
 		return "package"
-	case "PPPoEInterface", "PPPoESession":
+	case "PPPoESession":
 		return "pppoesession"
 	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "IPv4PolicyRoute", "IPv4PolicyRouteSet", "EgressRoutePolicy":
 		return "route"
@@ -5149,7 +5149,7 @@ func interfaceConfiguredAddresses(router *api.Router, statuses map[string]map[st
 			if addr != "" {
 				out[spec.Interface] = appendUnique(out[spec.Interface], addr)
 			}
-		case "DHCPv4Lease":
+		case "DHCPv4Client":
 			iface, addr := addressStatusForInterface(resource, statuses)
 			if iface != "" && addr != "" {
 				out[iface] = appendUnique(out[iface], addr)
@@ -5167,8 +5167,8 @@ func addressStatusForInterface(resource api.Resource, statuses map[string]map[st
 		return iface, addr
 	}
 	switch resource.Kind {
-	case "DHCPv4Lease":
-		spec, err := resource.DHCPv4LeaseSpec()
+	case "DHCPv4Client":
+		spec, err := resource.DHCPv4ClientSpec()
 		if err == nil {
 			return spec.Interface, addr
 		}

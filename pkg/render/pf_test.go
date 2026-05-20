@@ -57,9 +57,9 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 			Spec:     api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", SourceCIDRs: []string{"192.0.2.0/24"}, DestinationCIDRs: []string{"198.51.100.10/32"}, Protocol: "tcp", Port: 22, Action: "accept", Log: true},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4SourceNAT"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"},
 			Metadata: api.ObjectMeta{Name: "lan-nat"},
-			Spec: api.IPv4SourceNATSpec{
+			Spec: api.NAT44RuleSpec{
 				OutboundInterface: "wan",
 				SourceCIDRs:       []string{"172.18.0.0/16"},
 				Translation:       api.IPv4NATTranslationSpec{Type: "interfaceAddress"},

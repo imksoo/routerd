@@ -107,9 +107,9 @@ func TestOpenRCRenderSynthesizesHelperDaemons(t *testing.T) {
 			Spec:     api.InterfaceSpec{IfName: "eth0", Managed: true, AdminUp: true},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
 			Metadata: api.ObjectMeta{Name: "wan-v4"},
-			Spec:     api.DHCPv4LeaseSpec{Interface: "wan", Hostname: "router04"},
+			Spec:     api.DHCPv4ClientSpec{Interface: "wan", Hostname: "router04"},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},

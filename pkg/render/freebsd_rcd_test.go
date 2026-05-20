@@ -115,9 +115,9 @@ func TestFreeBSDRenderRoutesDHCPv4ClientThroughRouterd(t *testing.T) {
 			Spec:     api.InterfaceSpec{IfName: "vtnet0", AdminUp: true},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
 			Metadata: api.ObjectMeta{Name: "wan-v4"},
-			Spec:     api.DHCPv4LeaseSpec{Interface: "wan", Hostname: "router04"},
+			Spec:     api.DHCPv4ClientSpec{Interface: "wan", Hostname: "router04"},
 		},
 	}}}
 	cfg, err := FreeBSD(router)
@@ -151,9 +151,9 @@ func TestFreeBSDRenderSkipsDHCPClientRCDWhenRouterdSupervisesClients(t *testing.
 			Spec:     api.InterfaceSpec{IfName: "vtnet0", AdminUp: true},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease"},
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"},
 			Metadata: api.ObjectMeta{Name: "wan-v4"},
-			Spec:     api.DHCPv4LeaseSpec{Interface: "wan", Hostname: "router04"},
+			Spec:     api.DHCPv4ClientSpec{Interface: "wan", Hostname: "router04"},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},

@@ -932,7 +932,7 @@ func TestDnsmasqConfigIgnoresDNSResolverWhenObservedEmpty(t *testing.T) {
 						Name:      "wan-fwd",
 						Kind:      "forward",
 						Match:     []string{"example.com"},
-						Upstreams: []string{"${DHCPv4Lease/wan.status.dnsServers}"},
+						Upstreams: []string{"${DHCPv4Client/wan.status.dnsServers}"},
 					}},
 				},
 			},

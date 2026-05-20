@@ -197,12 +197,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "PPPoEInterface":
-		var spec PPPoEInterfaceSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "PPPoESession":
 		if hasMappingKey(&raw.Spec, "socketSource") {
 			return fmt.Errorf("%s spec.socketSource is not supported; routerd derives daemon sockets automatically", r.ID())
@@ -242,8 +236,8 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "DHCPv4Lease":
-		var spec DHCPv4LeaseSpec
+	case "DHCPv4Client":
+		var spec DHCPv4ClientSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -407,12 +401,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "IPv4SourceNAT":
-		var spec IPv4SourceNATSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "NAT44Rule":
 		var spec NAT44RuleSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -503,6 +491,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("%s is not supported; use Interface resources as link status providers", r.ID())
 	case "StatePolicy":
 		return fmt.Errorf("%s is not supported; use spec.when any/all predicates on the dependent resources", r.ID())
+	case "DHCPv4Lease":
+		return fmt.Errorf("%s is not supported; use DHCPv4Client for routerd-managed DHCPv4 client intent", r.ID())
+	case "PPPoEInterface":
+		return fmt.Errorf("%s is not supported; use PPPoESession for routerd-managed PPPoE session intent", r.ID())
+	case "IPv4SourceNAT":
+		return fmt.Errorf("%s is not supported; use NAT44Rule for IPv4 source NAT intent", r.ID())
 	case "IPv4ReversePathFilter":
 		return fmt.Errorf("%s is not supported; routerd derives reverse path filter sysctls automatically", r.ID())
 	case "PathMTUPolicy":

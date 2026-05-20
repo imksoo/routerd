@@ -27,7 +27,7 @@ spec:
         owner: external
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Lease
+      kind: DHCPv4Client
       metadata:
         name: wan-dhcpv4
       spec:
@@ -139,7 +139,7 @@ spec:
         mtu: 1454
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: PPPoEInterface
+      kind: PPPoESession
       metadata:
         name: pppoe-flets
       spec:
@@ -307,7 +307,7 @@ spec:
               field: ifname
             gatewaySource: dhcpv4
             gatewayFrom:
-              resource: DHCPv4Lease/wan-dhcpv4
+              resource: DHCPv4Client/wan-dhcpv4
               field: gateway
             weight: 40
             healthCheck: internet-via-hgw-direct

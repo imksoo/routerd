@@ -2260,7 +2260,7 @@ func canonicalShowKind(kind string) string {
 		"ingress":                "IngressService",
 		"ingressservice":         "IngressService",
 		"ingressservices":        "IngressService",
-		"dhcpv4lease":            "DHCPv4Lease",
+		"dhcpv4client":           "DHCPv4Client",
 		"dhcpv4server":           "DHCPv4Server",
 		"dhcpv4scope":            "DHCPv4Scope",
 		"dhcpv4reservation":      "DHCPv4Reservation",
@@ -2278,10 +2278,9 @@ func canonicalShowKind(kind string) string {
 		"ipv6staticroute":        "IPv6StaticRoute",
 		"ipv6raaddress":          "IPv6RAAddress",
 		"slaac":                  "IPv6RAAddress",
-		"nat":                    "IPv4SourceNAT",
-		"snat":                   "IPv4SourceNAT",
-		"ipv4nat":                "IPv4SourceNAT",
-		"ipv4sourcenat":          "IPv4SourceNAT",
+		"nat":                    "NAT44Rule",
+		"snat":                   "NAT44Rule",
+		"ipv4nat":                "NAT44Rule",
 		"nat44":                  "NAT44Rule",
 		"nat44rule":              "NAT44Rule",
 		"portforward":            "PortForward",
@@ -2296,8 +2295,7 @@ func canonicalShowKind(kind string) string {
 		"dnszone":                "DNSZone",
 		"dnsresolver":            "DNSResolver",
 		"dns":                    "DNSResolver",
-		"pppoe":                  "PPPoEInterface",
-		"pppoeinterface":         "PPPoEInterface",
+		"pppoe":                  "PPPoESession",
 		"pppoesession":           "PPPoESession",
 		"pppoeclient":            "PPPoESession",
 		"fw":                     "FirewallRule",
@@ -2971,27 +2969,18 @@ func observeResource(res api.Resource, aliases map[string]string, opts showOptio
 	case "IPv4StaticAddress":
 		spec, _ := res.IPv4StaticAddressSpec()
 		return map[string]any{"interface": aliases[spec.Interface], "addresses": interfaceIPv4Addresses(aliases[spec.Interface])}
-	case "DHCPv4Lease":
-		spec, _ := res.DHCPv4LeaseSpec()
+	case "DHCPv4Client":
+		spec, _ := res.DHCPv4ClientSpec()
 		return map[string]any{"interface": aliases[spec.Interface], "addresses": interfaceIPv4Addresses(aliases[spec.Interface])}
 	case "DHCPv6PrefixDelegation":
 		spec, _ := res.DHCPv6PrefixDelegationSpec()
 		return map[string]any{"interface": aliases[spec.Interface]}
-	case "IPv4SourceNAT":
-		table, err := observe.Connections(opts.ConnectionsLimit)
-		if err != nil {
-			return map[string]any{"connectionsError": err.Error()}
-		}
-		return map[string]any{"connections": table}
 	case "DSLiteTunnel":
 		spec, _ := res.DSLiteTunnelSpec()
 		return observeInterface(firstNonEmpty(spec.TunnelName, res.Metadata.Name))
-	case "PPPoEInterface":
-		spec, _ := res.PPPoEInterfaceSpec()
-		return observeInterface(firstNonEmpty(spec.IfName, "ppp-"+res.Metadata.Name))
 	case "PPPoESession":
 		spec, _ := res.PPPoESessionSpec()
-		return map[string]any{"interface": aliases[spec.Interface]}
+		return observeInterface(firstNonEmpty(spec.IfName, "ppp-"+res.Metadata.Name))
 	case "Hostname":
 		hostname, err := os.Hostname()
 		if err != nil {
@@ -3072,10 +3061,8 @@ func statePrefixForKind(kind, name string) string {
 	prefixes := map[string]string{
 		"Interface":            "interface.",
 		"IPv4StaticAddress":    "ipv4StaticAddress.",
-		"DHCPv4Lease":          "dhcpv4Lease.",
-		"IPv4SourceNAT":        "ipv4SourceNAT.",
+		"DHCPv4Client":         "dhcpv4Client.",
 		"DSLiteTunnel":         "dsLiteTunnel.",
-		"PPPoEInterface":       "pppoeInterface.",
 		"PPPoESession":         "pppoeSession.",
 		"FirewallPolicy":       "firewallPolicy.",
 		"FirewallZone":         "firewallZone.",

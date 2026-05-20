@@ -39,7 +39,7 @@ tail -n 20 /var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl
 curl --unix-socket /run/routerd/dhcpv4-client/wan.sock http://unix/v1/status
 ```
 
-`DHCPv4Lease` が `Bound` か確認します。
+`DHCPv4Client` が `Bound` か確認します。
 即時更新が必要なら `POST /v1/commands/renew` で要求します。
 
 ## dnsmasq

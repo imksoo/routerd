@@ -37,7 +37,7 @@ If the prefix is **not** `Bound`, IPv6 RA, AAAA, and DHCPv6 should be paused on 
 curl --unix-socket /run/routerd/dhcpv4-client/wan.sock http://unix/v1/status
 ```
 
-Confirm `DHCPv4Lease` is `Bound`. If you need an immediate renewal, `POST /v1/commands/renew` triggers it.
+Confirm `DHCPv4Client` is `Bound`. If you need an immediate renewal, `POST /v1/commands/renew` triggers it.
 
 ## dnsmasq
 

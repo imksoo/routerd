@@ -82,4 +82,42 @@ lan-dhcpv4-dhcpv4-server-lan from=lan to=self ifnames=ens19 proto=udp port=67 ac
       PrivateTmp = true;
     };
   };
+  systemd.services."routerd-pppoe-client@pppoe-home" = {
+    description = "routerd PPPoE client pppoe-home";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      ExecStart = lib.concatStringsSep " " [
+        "/usr/local/sbin/routerd-pppoe-client"
+        "daemon"
+        "--resource"
+        "pppoe-home"
+        "--interface"
+        "ens18"
+        "--username"
+        "user@example.jp"
+        "--password-file"
+        "/usr/local/etc/routerd/secrets/pppoe-home.password"
+        "--mtu"
+        "1454"
+        "--mru"
+        "1454"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      RuntimeDirectory = [ "routerd/pppoe-client" ];
+      RuntimeDirectoryPreserve = "yes";
+      StateDirectory = [ "routerd/pppoe-client" ];
+      LogsDirectory = [ "routerd" ];
+      ReadWritePaths = [ "/run/routerd" "/var/lib/routerd" "/var/log/routerd" "/etc/ppp" ];
+      AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" "CAP_NET_RAW" "CAP_SETUID" "CAP_SETGID" "CAP_CHOWN" ];
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
+      ProtectSystem = "strict";
+      ProtectHome = "true";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
 }

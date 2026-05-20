@@ -33,7 +33,7 @@ flowchart LR
 | --- | --- | --- |
 | [1] | Access line or ONU outside routerd management. | External to routerd |
 | [2] | Physical Ethernet interface that carries PPPoE. | `Interface/wan` |
-| [3] | PPPoE session and logical egress interface. | `PPPoEInterface/pppoe-home` |
+| [3] | PPPoE session and logical egress interface. | `PPPoESession/pppoe-home` |
 | [4] | Host deriving IPv4 forwarding and applying nftables NAT. | Derived host runtime, `NAT44Rule/lan-to-pppoe` |
 | [5] | LAN gateway and DHCPv4 segment. | `IPv4StaticAddress/lan-base`, `DHCPv4Server/lan-dhcpv4` |
 | [6] | Clients using PPPoE as their IPv4 internet path through NAT. | `DHCPv4Server/lan-dhcpv4` |
@@ -42,7 +42,7 @@ flowchart LR
 
 | Area | routerd resources |
 | --- | --- |
-| PPPoE session | `PPPoEInterface/pppoe-home` |
+| PPPoE session | `PPPoESession/pppoe-home` |
 | LAN address and DHCPv4 | `IPv4StaticAddress/lan-base`, `DHCPv4Server/lan-dhcpv4` |
 | IPv4 internet access | `NAT44Rule/lan-to-pppoe` |
 | Filtering | `FirewallZone/*`, `FirewallPolicy/home` |
@@ -51,7 +51,7 @@ flowchart LR
 
 ```yaml
 # [3] Logical PPPoE interface created over the physical WAN.
-- kind: PPPoEInterface
+- kind: PPPoESession
   metadata:
     name: pppoe-home
   spec:
@@ -79,7 +79,7 @@ flowchart LR
 ```bash
 routerd validate --config examples/example-pppoe-ipv4-nat.yaml
 routerd apply --config examples/example-pppoe-ipv4-nat.yaml --once --dry-run
-routerctl describe PPPoEInterface/pppoe-home
+routerctl describe PPPoESession/pppoe-home
 ip link show ppp-home
 ip route show default
 ```

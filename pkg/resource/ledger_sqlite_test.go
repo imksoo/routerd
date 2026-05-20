@@ -20,7 +20,7 @@ func TestSQLiteLedgerPersistsArtifacts(t *testing.T) {
 	artifact := Artifact{
 		Kind:       "nft.table",
 		Name:       "routerd_nat",
-		Owner:      "net.routerd.net/v1alpha1/IPv4SourceNAT/lan",
+		Owner:      "net.routerd.net/v1alpha1/NAT44Rule/lan",
 		Attributes: map[string]string{"family": "ip", "name": "routerd_nat"},
 	}
 	ledger.Remember([]Artifact{artifact})
@@ -44,7 +44,7 @@ func TestSQLiteLedgerMigratesTwoTableSQLiteArtifacts(t *testing.T) {
 		t.Fatalf("open fixture db: %v", err)
 	}
 	_, err = db.Exec(`CREATE TABLE artifacts(id TEXT PRIMARY KEY, kind TEXT, name TEXT, owner TEXT, attributes TEXT, source TEXT, generation INTEGER, observed_at TEXT);
-INSERT INTO artifacts(id,kind,name,owner,attributes,source,generation,observed_at) VALUES('nft.table/routerd_nat','nft.table','routerd_nat','net.routerd.net/v1alpha1/IPv4SourceNAT/lan','{"family":"ip","name":"routerd_nat"}','routerd',1,'2026-04-28T00:00:00Z');`)
+INSERT INTO artifacts(id,kind,name,owner,attributes,source,generation,observed_at) VALUES('nft.table/routerd_nat','nft.table','routerd_nat','net.routerd.net/v1alpha1/NAT44Rule/lan','{"family":"ip","name":"routerd_nat"}','routerd',1,'2026-04-28T00:00:00Z');`)
 	if err != nil {
 		t.Fatalf("seed fixture db: %v", err)
 	}
@@ -54,7 +54,7 @@ INSERT INTO artifacts(id,kind,name,owner,attributes,source,generation,observed_a
 	if err != nil {
 		t.Fatalf("open sqlite ledger: %v", err)
 	}
-	artifact := Artifact{Kind: "nft.table", Name: "routerd_nat", Owner: "net.routerd.net/v1alpha1/IPv4SourceNAT/lan"}
+	artifact := Artifact{Kind: "nft.table", Name: "routerd_nat", Owner: "net.routerd.net/v1alpha1/NAT44Rule/lan"}
 	if !ledger.Owns(artifact) {
 		t.Fatal("migrated ledger does not own artifact")
 	}
@@ -69,7 +69,7 @@ func TestSQLiteLedgerMigratesLegacyJSONAndRenames(t *testing.T) {
     {
       "kind": "nft.table",
       "name": "routerd_nat",
-      "owner": "net.routerd.net/v1alpha1/IPv4SourceNAT/lan",
+      "owner": "net.routerd.net/v1alpha1/NAT44Rule/lan",
       "attributes": {"family": "ip", "name": "routerd_nat"}
     }
   ]
@@ -82,7 +82,7 @@ func TestSQLiteLedgerMigratesLegacyJSONAndRenames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite ledger: %v", err)
 	}
-	artifact := Artifact{Kind: "nft.table", Name: "routerd_nat", Owner: "net.routerd.net/v1alpha1/IPv4SourceNAT/lan"}
+	artifact := Artifact{Kind: "nft.table", Name: "routerd_nat", Owner: "net.routerd.net/v1alpha1/NAT44Rule/lan"}
 	if !ledger.Owns(artifact) {
 		t.Fatal("migrated ledger does not own artifact")
 	}

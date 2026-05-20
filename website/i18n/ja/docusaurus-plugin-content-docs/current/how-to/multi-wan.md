@@ -28,7 +28,7 @@ routerd は常に「ready (上流リソースが落ち着いている) かつ he
 これにより、低 weight の fallback が起動直後から仕事をして、後から確認できた主回線にスムーズに移れます。
 
 試験用 PPPoE など、セッション枠を消費する fallback は YAML に残したまま無効化できます。
-`PPPoEInterface`、対応する `HealthCheck`、`EgressRoutePolicy` の候補に `disabled: true` を指定します。
+`PPPoESession`、対応する `HealthCheck`、`EgressRoutePolicy` の候補に `disabled: true` を指定します。
 通常の適用では生成済みサービスを停止・無効化し、必要なときだけ手動で試験できます。
 
 ## 最小構成

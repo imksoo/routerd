@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-package dhcpv4lease
+package dhcpv4client
 
 import (
 	"context"
@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	EventApplied = "routerd.dhcpv4.lease.applied"
+	EventApplied = "routerd.dhcpv4.client.applied"
 )
 
 type Store interface {
@@ -52,7 +52,7 @@ func (c Controller) Start(ctx context.Context) {
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv4.client.*"}}, 32)
 	go func() {
 		for event := range ch {
-			if event.Resource == nil || event.Resource.Kind != "DHCPv4Lease" {
+			if event.Resource == nil || event.Resource.Kind != "DHCPv4Client" {
 				continue
 			}
 			if err := c.reconcile(ctx, event.Resource.Name); err != nil && c.Logger != nil {
@@ -72,7 +72,7 @@ func (c Controller) ReconcileAll(ctx context.Context) error {
 	}
 	var errs []string
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "DHCPv4Lease" {
+		if resource.Kind != "DHCPv4Client" {
 			continue
 		}
 		name := resource.Metadata.Name
@@ -95,7 +95,7 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 		return err
 	}
 	for _, resource := range status.Resources {
-		if resource.Resource.Kind != "DHCPv4Lease" || resource.Resource.Name != name {
+		if resource.Resource.Kind != "DHCPv4Client" || resource.Resource.Name != name {
 			continue
 		}
 		observed := resource.Observed
@@ -143,7 +143,7 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 			return nil
 		}
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, EventApplied, daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Lease", Name: name}
+		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client", Name: name}
 		event.Attributes = map[string]string{
 			"currentAddress": observed["currentAddress"],
 			"defaultGateway": observed["defaultGateway"],
@@ -151,7 +151,7 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 		}
 		return c.Bus.Publish(ctx, event)
 	}
-	return fmt.Errorf("daemon status did not include DHCPv4Lease/%s", name)
+	return fmt.Errorf("daemon status did not include DHCPv4Client/%s", name)
 }
 
 func leaseEventChanged(current, next map[string]any) bool {
@@ -293,7 +293,7 @@ func systemdResolvedResolvConf(path string) bool {
 func writeResolvConf(path, resource string, servers []string, dryRun bool) error {
 	var b strings.Builder
 	b.WriteString("# Managed by routerd. Do not edit by hand.\n")
-	b.WriteString("# Source: DHCPv4Lease/")
+	b.WriteString("# Source: DHCPv4Client/")
 	b.WriteString(resource)
 	b.WriteByte('\n')
 	for _, server := range servers {
@@ -318,9 +318,9 @@ func writeResolvConf(path, resource string, servers []string, dryRun bool) error
 	return os.WriteFile(path, data, 0644)
 }
 
-func (c Controller) leaseSpecAndIfName(name string) (api.DHCPv4LeaseSpec, string, bool, error) {
+func (c Controller) leaseSpecAndIfName(name string) (api.DHCPv4ClientSpec, string, bool, error) {
 	if c.Router == nil {
-		return api.DHCPv4LeaseSpec{}, "", false, nil
+		return api.DHCPv4ClientSpec{}, "", false, nil
 	}
 	aliases := map[string]string{}
 	for _, resource := range c.Router.Spec.Resources {
@@ -329,28 +329,28 @@ func (c Controller) leaseSpecAndIfName(name string) (api.DHCPv4LeaseSpec, string
 		}
 		spec, err := resource.InterfaceSpec()
 		if err != nil {
-			return api.DHCPv4LeaseSpec{}, "", false, err
+			return api.DHCPv4ClientSpec{}, "", false, err
 		}
 		aliases[resource.Metadata.Name] = spec.IfName
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "DHCPv4Lease" || resource.Metadata.Name != name {
+		if resource.Kind != "DHCPv4Client" || resource.Metadata.Name != name {
 			continue
 		}
-		spec, err := resource.DHCPv4LeaseSpec()
+		spec, err := resource.DHCPv4ClientSpec()
 		if err != nil {
-			return api.DHCPv4LeaseSpec{}, "", false, err
+			return api.DHCPv4ClientSpec{}, "", false, err
 		}
 		ifname := aliases[spec.Interface]
 		if ifname == "" {
 			ifname = spec.Interface
 		}
 		if ifname == "" {
-			return api.DHCPv4LeaseSpec{}, "", false, fmt.Errorf("DHCPv4Lease/%s needs spec.interface", name)
+			return api.DHCPv4ClientSpec{}, "", false, fmt.Errorf("DHCPv4Client/%s needs spec.interface", name)
 		}
 		return spec, ifname, true, nil
 	}
-	return api.DHCPv4LeaseSpec{}, "", false, nil
+	return api.DHCPv4ClientSpec{}, "", false, nil
 }
 
 func replaceIPv4Address(ctx context.Context, osName platform.OS, command outputCommandFunc, ifname, address string) error {

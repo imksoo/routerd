@@ -75,12 +75,6 @@ func resourceMTUs(router *api.Router) (map[string]int, error) {
 		switch res.Kind {
 		case "Interface":
 			mtus[res.Metadata.Name] = 1500
-		case "PPPoEInterface":
-			spec, err := res.PPPoEInterfaceSpec()
-			if err != nil {
-				return nil, err
-			}
-			mtus[res.Metadata.Name] = defaultInt(spec.MTU, 1492)
 		case "PPPoESession":
 			spec, err := res.PPPoESessionSpec()
 			if err != nil {
@@ -157,12 +151,6 @@ func pathMTUTunnels(router *api.Router) []pathMTUTunnel {
 				continue
 			}
 			tunnels = append(tunnels, pathMTUTunnel{Name: res.Metadata.Name, Underlay: spec.Interface, MTU: defaultInt(spec.MTU, 1454)})
-		case "PPPoEInterface":
-			spec, err := res.PPPoEInterfaceSpec()
-			if err != nil {
-				continue
-			}
-			tunnels = append(tunnels, pathMTUTunnel{Name: res.Metadata.Name, Underlay: spec.Interface, MTU: defaultInt(spec.MTU, 1492)})
 		case "PPPoESession":
 			spec, err := res.PPPoESessionSpec()
 			if err != nil {

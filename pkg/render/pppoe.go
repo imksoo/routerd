@@ -33,7 +33,7 @@ type PPPoEConfig struct {
 	DisabledUnits []string
 }
 
-func PPPoE(router *api.Router, passwordFor func(api.Resource, api.PPPoEInterfaceSpec) (string, error)) (PPPoEConfig, error) {
+func PPPoE(router *api.Router, passwordFor func(api.Resource, api.PPPoESessionSpec) (string, error)) (PPPoEConfig, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Interface" {
@@ -48,7 +48,7 @@ func PPPoE(router *api.Router, passwordFor func(api.Resource, api.PPPoEInterface
 
 	var resources []api.Resource
 	for _, res := range router.Spec.Resources {
-		if res.Kind == "PPPoEInterface" {
+		if res.Kind == "PPPoESession" {
 			resources = append(resources, res)
 		}
 	}
@@ -56,7 +56,7 @@ func PPPoE(router *api.Router, passwordFor func(api.Resource, api.PPPoEInterface
 
 	var config PPPoEConfig
 	for _, res := range resources {
-		spec, err := res.PPPoEInterfaceSpec()
+		spec, err := res.PPPoESessionSpec()
 		if err != nil {
 			return PPPoEConfig{}, err
 		}
@@ -100,7 +100,7 @@ func PPPoE(router *api.Router, passwordFor func(api.Resource, api.PPPoEInterface
 	return config, nil
 }
 
-func pppoePeer(peerName, ifname, lowerIfName string, spec api.PPPoEInterfaceSpec) []byte {
+func pppoePeer(peerName, ifname, lowerIfName string, spec api.PPPoESessionSpec) []byte {
 	mtu := spec.MTU
 	if mtu == 0 {
 		mtu = 1492

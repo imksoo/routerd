@@ -45,6 +45,9 @@ func TestLoadRejectsRemovedImplementationResources(t *testing.T) {
 		{kind: "NixOSHost", apiVersion: "system.routerd.net/v1alpha1", spec: "hostname: router\n"},
 		{kind: "Link", apiVersion: "net.routerd.net/v1alpha1", spec: "ifname: eth0\n"},
 		{kind: "StatePolicy", apiVersion: "net.routerd.net/v1alpha1", spec: "variable: wan.mode\nvalues:\n  - value: ready\n    when: {}\n"},
+		{kind: "DHCPv4Lease", apiVersion: "net.routerd.net/v1alpha1", spec: "interface: wan\n"},
+		{kind: "PPPoEInterface", apiVersion: "net.routerd.net/v1alpha1", spec: "interface: wan\nusername: user\npassword: secret\n"},
+		{kind: "IPv4SourceNAT", apiVersion: "net.routerd.net/v1alpha1", spec: "outboundInterface: wan\nsourceCIDRs: [192.0.2.0/24]\ntranslation:\n  type: interfaceAddress\n"},
 		{kind: "IPv4ReversePathFilter", apiVersion: "net.routerd.net/v1alpha1", spec: "target: all\nmode: disabled\n"},
 		{kind: "PathMTUPolicy", apiVersion: "net.routerd.net/v1alpha1", spec: "fromInterface: lan\ntoInterfaces: [wan]\n"},
 	} {

@@ -149,7 +149,7 @@ func renderLinuxSnapshot(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	addFile(files, "frr-daemons", frrDaemons)
-	nat, err := render.NftablesIPv4SourceNAT(router)
+	nat, err := render.NftablesNAT44Rule(router)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func renderAlpineSnapshot(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	addFile(files, "keepalived.conf", keepalived)
-	nat, err := render.NftablesIPv4SourceNAT(router)
+	nat, err := render.NftablesNAT44Rule(router)
 	addFileOrError(files, "nftables-nat.nft", nat, err)
 	firewall, err := render.NftablesFirewall(router, render.InternalFirewallHoles(router))
 	addFileOrError(files, "nftables-filter.nft", firewall, err)
@@ -195,13 +195,13 @@ func renderAlpineSnapshot(router *api.Router) ([]byte, error) {
 
 func renderFreeBSDSnapshot(router *api.Router) ([]byte, error) {
 	files := map[string][]byte{}
-	data, err := render.FreeBSDWithPPPoEPasswords(router, func(api.Resource, api.PPPoEInterfaceSpec) (string, error) { return "", nil })
+	data, err := render.FreeBSDWithPPPoEPasswords(router, func(api.Resource, api.PPPoESessionSpec) (string, error) { return "", nil })
 	if err != nil {
 		return nil, err
 	}
 	rcConf, err := netconfigbackend.RCConf{
 		Path:        "rc.conf.d-routerd",
-		PasswordFor: func(api.Resource, api.PPPoEInterfaceSpec) (string, error) { return "", nil },
+		PasswordFor: func(api.Resource, api.PPPoESessionSpec) (string, error) { return "", nil },
 	}.Render(router)
 	if err != nil {
 		return nil, err

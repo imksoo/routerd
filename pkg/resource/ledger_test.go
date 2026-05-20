@@ -13,7 +13,7 @@ func TestLedgerRememberForgetAndSave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load missing ledger: %v", err)
 	}
-	artifact := Artifact{Kind: "nft.table", Name: "routerd_nat", Owner: "net.routerd.net/v1alpha1/IPv4SourceNAT/lan"}
+	artifact := Artifact{Kind: "nft.table", Name: "routerd_nat", Owner: "net.routerd.net/v1alpha1/NAT44Rule/lan"}
 	ledger.Remember([]Artifact{artifact})
 	if !ledger.Owns(artifact) {
 		t.Fatal("ledger does not own remembered artifact")
