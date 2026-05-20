@@ -227,10 +227,10 @@ func OpenRCWithOptions(router *api.Router, options OpenRCOptions) (OpenRCConfig,
 		services = append(services, OpenRCService{Name: name, Enabled: true, Started: true})
 	}
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "FirewallLog" {
+		if res.Kind != "FirewallEventLog" {
 			continue
 		}
-		spec, err := res.FirewallLogSpec()
+		spec, err := res.FirewallEventLogSpec()
 		if err != nil {
 			return OpenRCConfig{}, err
 		}

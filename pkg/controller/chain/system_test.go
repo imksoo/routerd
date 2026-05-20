@@ -265,7 +265,7 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.FirewallLogSpec{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.FirewallLogSpec{
 			Enabled: true,
 			Path:    "/var/lib/routerd/firewall-logs.db",
 		}},
@@ -301,7 +301,7 @@ func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 func TestSystemdUnitControllerSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.FirewallLogSpec{Enabled: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.FirewallLogSpec{Enabled: true}},
 	}}}
 	store := mapStore{}
 	var commands []string
@@ -339,7 +339,7 @@ func TestSystemdUnitControllerSynthesizesNDPIAgentForAutoClassifier(t *testing.T
 		}
 	}
 	status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", "routerd-ndpi-agent.service")
-	if status["phase"] != "Applied" || status["source"] != "TrafficFlowLog/FirewallLog" {
+	if status["phase"] != "Applied" || status["source"] != "TrafficFlowLog/FirewallEventLog" {
 		t.Fatalf("status = %#v", status)
 	}
 	gotCommands := strings.Join(commands, "\n")

@@ -172,6 +172,24 @@
                       "enabled": {
                         "type": "boolean"
                       },
+                      "file": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "journald": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "identifier": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "minLevel": {
                         "enum": [
                           "debug",
@@ -181,13 +199,13 @@
                         ],
                         "type": "string"
                       },
-                      "plugin": {
+                      "otlp": {
                         "additionalProperties": false,
                         "properties": {
-                          "path": {
+                          "endpoint": {
                             "type": "string"
                           },
-                          "timeout": {
+                          "telemetryRef": {
                             "type": "string"
                           }
                         },
@@ -243,9 +261,30 @@
                       "type": {
                         "enum": [
                           "syslog",
-                          "plugin"
+                          "otlp",
+                          "webhook",
+                          "file",
+                          "journald"
                         ],
                         "type": "string"
+                      },
+                      "webhook": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "headers": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          },
+                          "timeout": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
                       }
                     },
                     "required": [
@@ -654,8 +693,8 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
-                      "incrementalVacuum": {
-                        "type": "boolean"
+                      "retention": {
+                        "type": "string"
                       },
                       "schedule": {
                         "enum": [
@@ -664,28 +703,30 @@
                         ],
                         "type": "string"
                       },
-                      "targets": {
+                      "signals": {
                         "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "file": {
-                              "type": "string"
-                            },
-                            "retention": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "file",
-                            "retention"
+                          "enum": [
+                            "events",
+                            "dnsQueries",
+                            "trafficFlows",
+                            "firewallEvents"
                           ],
-                          "type": "object"
+                          "type": "string"
                         },
                         "type": "array"
+                      },
+                      "sinks": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "vacuum": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
-                      "targets"
+                      "retention"
                     ],
                     "type": "object"
                   },
@@ -7107,16 +7148,13 @@
                       "enabled": {
                         "type": "boolean"
                       },
-                      "includeNDPI": {
+                      "includeApplicationLayer": {
                         "type": "boolean"
                       },
                       "includeTLSSNI": {
                         "type": "boolean"
                       },
                       "path": {
-                        "type": "string"
-                      },
-                      "retention": {
                         "type": "string"
                       },
                       "source": {
@@ -7614,7 +7652,7 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "FirewallLog",
+                    "const": "FirewallEventLog",
                     "type": "string"
                   },
                   "metadata": {
@@ -7635,6 +7673,24 @@
                     "properties": {
                       "enabled": {
                         "type": "boolean"
+                      },
+                      "events": {
+                        "items": {
+                          "enum": [
+                            "deny",
+                            "allow",
+                            "rateLimit",
+                            "connLimit"
+                          ],
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "fromZones": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
                       },
                       "log": {
                         "additionalProperties": false,
@@ -7667,6 +7723,28 @@
                       },
                       "retention": {
                         "type": "string"
+                      },
+                      "rules": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "sampleRate": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "sinks": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "toZones": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
                       }
                     },
                     "type": "object"

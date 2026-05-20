@@ -37,7 +37,7 @@ spec:
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | interfaces, reusable `IPAddressSet` resources, DHCP, DNS, routes, tunnels, VIP, BGP, events, traffic flow logs |
-| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
+| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallEventLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
@@ -51,10 +51,10 @@ spec:
 | `SysctlProfile` | Narrow escape hatch for router-oriented sysctl defaults. Normal router sysctls are derived automatically. |
 | `Hostname` | Sets the host name. |
 | `NTPClient` | Enables the OS NTP client. It can use static servers or derive servers from DHCPv4 / DHCPv6 status with public fallback servers. |
-| `LogSink` | Sends routerd events to syslog or another local sink. |
+| `LogSink` | Routes log events to syslog, OTLP, webhook, file, or journald sinks. |
 | `ObservabilityPipeline` | Configures OTLP environment and built-in routerd event forwarding to stdout, syslog, or Loki. |
 | `RouterdCluster` | Uses a file lease so only the leader mutates host configuration while standby nodes observe status. |
-| `LogRetention` | Manages retention for events, DNS queries, traffic flows, and firewall logs. |
+| `LogRetention` | Manages retention for events, DNS queries, traffic flows, and firewall event logs. |
 | `WebConsole` | Enables the read-only management Web Console. |
 
 ## Observability
@@ -62,6 +62,12 @@ spec:
 | Kind | Role |
 | --- | --- |
 | `Telemetry` | Declares an external OTLP endpoint and injects OpenTelemetry environment variables into generated service units. |
+
+`Telemetry` describes routerd's own signal export endpoint for metrics, traces,
+and logs emitted by managed daemons. `LogSink` describes log forwarding routes
+for operational events and observed network logs. When a log sink uses OTLP,
+prefer `LogSink.spec.otlp.telemetryRef` so the sink reuses a `Telemetry`
+resource instead of duplicating collector endpoints.
 
 ## Interfaces
 

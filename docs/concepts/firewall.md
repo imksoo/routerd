@@ -67,7 +67,7 @@ as unsupported instead of silently applying a weaker policy.
 
 ## Logging
 
-When `FirewallPolicy.spec.logDeny` is true and a `FirewallLog` resource is
+When `FirewallPolicy.spec.logDeny` is true and a `FirewallEventLog` resource is
 enabled, generated nftables rules log denied packets to the configured NFLOG
 group. On Linux, `routerd-firewall-logger` reads that group directly through
 nfnetlink and stores rows in `firewall-logs.db`. This keeps NFLOG prefixes,
@@ -75,11 +75,11 @@ interfaces, packet family, protocol, addresses, and ports without running a
 separate packet capture process.
 
 The Web Console Firewall tab and `routerctl firewall-logs` read from that
-database. When `FirewallLog.spec.enabled` is true, routerd derives the
+database. When `FirewallEventLog.spec.enabled` is true, routerd derives the
 `routerd-firewall-logger` service artifact and passes the configured database
 path and NFLOG group to it.
 
-For accepted-flow DPI observation, set `FirewallLog.spec.log.copyRange` to cap
+For accepted-flow DPI observation, set `FirewallEventLog.spec.log.copyRange` to cap
 the NFLOG payload copied from each packet. Values such as `1536` or `2048`
 bytes keep the first payload visible for TLS/HTTP/DNS classification without
 copying full packets into user space.

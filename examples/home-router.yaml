@@ -83,17 +83,28 @@ spec:
       metadata:
         name: default
       spec:
+        retention: 30d
         schedule: daily
-        incrementalVacuum: true
-        targets:
-          - file: /var/lib/routerd/routerd.db
-            retention: 30d
-          - file: /var/lib/routerd/dns-queries.db
-            retention: 30d
-          - file: /var/lib/routerd/traffic-flows.db
-            retention: 30d
-          - file: /var/lib/routerd/firewall-logs.db
-            retention: 90d
+        vacuum: true
+        signals:
+          - events
+          - dnsQueries
+          - trafficFlows
+        sinks:
+          - LogSink/syslog-home
+
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: LogRetention
+      metadata:
+        name: firewall-events
+      spec:
+        retention: 90d
+        schedule: daily
+        vacuum: true
+        signals:
+          - firewallEvents
+        sinks:
+          - LogSink/syslog-home
 
     - apiVersion: system.routerd.net/v1alpha1
       kind: WebConsole
@@ -1014,7 +1025,6 @@ spec:
         queryLog:
           enabled: true
           path: /var/lib/routerd/dns-queries.db
-          retention: 30d
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: DNSForwarder
@@ -1437,19 +1447,23 @@ spec:
       spec:
         enabled: true
         path: /var/lib/routerd/traffic-flows.db
-        retention: 30d
         source: conntrack
-        includeNDPI: true
+        includeApplicationLayer: true
         includeTLSSNI: true
 
     - apiVersion: firewall.routerd.net/v1alpha1
-      kind: FirewallLog
+      kind: FirewallEventLog
       metadata:
         name: default
       spec:
         enabled: true
         path: /var/lib/routerd/firewall-logs.db
-        retention: 90d
+        events:
+          - deny
+          - allow
+        sinks:
+          - LogSink/syslog-home
+        retention: LogRetention/firewall-events
         nflogGroup: 1
         log:
           acceptSampleRate: 1

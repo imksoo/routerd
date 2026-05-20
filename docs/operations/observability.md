@@ -1,7 +1,11 @@
 # Observability pipeline
 
-`Telemetry` remains the small OTLP-only resource. Use `ObservabilityPipeline`
-when the router should also forward routerd event logs to a remote sink.
+`Telemetry` remains the small OTLP-only resource for routerd's own metrics,
+traces, and logs. `LogSink` describes log forwarding routes for operational
+events and observed network logs; an OTLP `LogSink` should reference a
+`Telemetry` resource rather than duplicating collector endpoints. Use
+`ObservabilityPipeline` when the router should also forward routerd event logs
+to pipeline-style remote sinks such as Loki.
 
 `ObservabilityPipeline` is a built-in pipeline, not a bundled `otelcol`
 process. routerd still uses the normal OpenTelemetry SDK for OTLP logs,

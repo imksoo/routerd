@@ -221,10 +221,10 @@ func firewallLogPath(router *api.Router) string {
 		return ""
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "FirewallLog" {
+		if resource.Kind != "FirewallEventLog" {
 			continue
 		}
-		spec, err := resource.FirewallLogSpec()
+		spec, err := resource.FirewallEventLogSpec()
 		if err != nil || !spec.Enabled {
 			continue
 		}

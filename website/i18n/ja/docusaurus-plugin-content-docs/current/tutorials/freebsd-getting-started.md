@@ -139,7 +139,7 @@ sudo pfctl -ss -v
 sudo tcpdump -n -e -ttt -i pflog0
 ```
 
-`FirewallLog` を有効にすると、routerd は `pflog0` の内容を取り込みます。
+`FirewallEventLog` を有効にすると、routerd は `pflog0` の内容を取り込みます。
 取り込んだログは `routerctl` と Web Console から確認できます。
 
 ## 関連項目

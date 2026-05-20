@@ -43,7 +43,7 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec:     api.TrafficFlowLogSpec{Enabled: true, Path: flowPath, Source: "conntrack"},
 		}, {
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec:     api.FirewallLogSpec{Enabled: true, Path: firewallPath},
 		}}}},

@@ -63,6 +63,10 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	dnsForwarders := map[string]api.DNSForwarderSpec{}
 	dnsUpstreams := map[string]api.DNSUpstreamSpec{}
 	ipAddressSets := map[string]bool{}
+	telemetries := map[string]bool{}
+	logSinks := map[string]bool{}
+	logRetentions := map[string]bool{}
+	firewallRules := map[string]bool{}
 	udpListenPorts := map[int]string{}
 	staticByInterfaceAddress := map[string]string{}
 	staticIPv4ByName := map[string]struct {
@@ -94,6 +98,15 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "Interface" {
 			baseInterfaces[res.Metadata.Name] = true
 			interfaces[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.ObservabilityAPIVersion && res.Kind == "Telemetry" {
+			telemetries[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.SystemAPIVersion && res.Kind == "LogSink" {
+			logSinks[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.SystemAPIVersion && res.Kind == "LogRetention" {
+			logRetentions[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "Bridge" {
 			interfaces[res.Metadata.Name] = true
@@ -274,6 +287,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		}
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallZone" {
 			zones[res.Metadata.Name] = true
+		}
+		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallRule" {
+			firewallRules[res.Metadata.Name] = true
 		}
 	}
 	if err := validateListenPortCollisions(router); err != nil {
@@ -478,6 +494,30 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			}
 			if spec.Interface != "" && !interfaces[spec.Interface] {
 				return fmt.Errorf("%s references missing Interface %q", res.ID(), spec.Interface)
+			}
+		}
+		if res.Kind == "LogSink" {
+			spec, err := res.LogSinkSpec()
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(spec.OTLP.TelemetryRef) != "" {
+				kind, name := splitKindNameRef(spec.OTLP.TelemetryRef, "Telemetry")
+				if kind != "Telemetry" || !telemetries[name] {
+					return fmt.Errorf("%s spec.otlp.telemetryRef references missing Telemetry %q", res.ID(), spec.OTLP.TelemetryRef)
+				}
+			}
+		}
+		if res.Kind == "LogRetention" {
+			spec, err := res.LogRetentionSpec()
+			if err != nil {
+				return err
+			}
+			for i, ref := range spec.Sinks {
+				kind, name := splitKindNameRef(ref, "LogSink")
+				if kind != "LogSink" || !logSinks[name] {
+					return fmt.Errorf("%s spec.sinks[%d] references missing LogSink %q", res.ID(), i, ref)
+				}
 			}
 		}
 		if res.Kind == "DHCPv4Server" {
@@ -745,6 +785,40 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 		}
+		if res.Kind == "FirewallEventLog" {
+			spec, err := res.FirewallEventLogSpec()
+			if err != nil {
+				return err
+			}
+			for i, name := range spec.FromZones {
+				if name != "self" && !zones[name] {
+					return fmt.Errorf("%s spec.fromZones[%d] references missing FirewallZone %q", res.ID(), i, name)
+				}
+			}
+			for i, name := range spec.ToZones {
+				if name != "self" && !zones[name] {
+					return fmt.Errorf("%s spec.toZones[%d] references missing FirewallZone %q", res.ID(), i, name)
+				}
+			}
+			for i, ref := range spec.Rules {
+				kind, name := splitKindNameRef(ref, "FirewallRule")
+				if kind != "FirewallRule" || !firewallRules[name] {
+					return fmt.Errorf("%s spec.rules[%d] references missing FirewallRule %q", res.ID(), i, ref)
+				}
+			}
+			for i, ref := range spec.Sinks {
+				kind, name := splitKindNameRef(ref, "LogSink")
+				if kind != "LogSink" || !logSinks[name] {
+					return fmt.Errorf("%s spec.sinks[%d] references missing LogSink %q", res.ID(), i, ref)
+				}
+			}
+			if strings.TrimSpace(spec.Retention) != "" {
+				kind, name := splitKindNameRef(spec.Retention, "LogRetention")
+				if kind != "LogRetention" || !logRetentions[name] {
+					return fmt.Errorf("%s spec.retention references missing LogRetention %q", res.ID(), spec.Retention)
+				}
+			}
+		}
 	}
 	for name := range bfdSpecs {
 		if bfdRefs[name] == 0 {
@@ -840,34 +914,8 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if err != nil {
 			return err
 		}
-		switch spec.Type {
-		case "syslog":
-			switch spec.Syslog.Network {
-			case "", "unix", "unixgram", "tcp", "udp":
-			default:
-				return fmt.Errorf("%s spec.syslog.network must be unix, unixgram, tcp, or udp", res.ID())
-			}
-			switch defaultString(spec.Syslog.Facility, "local6") {
-			case "kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news", "uucp", "cron", "authpriv", "ftp", "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7":
-			default:
-				return fmt.Errorf("%s spec.syslog.facility is invalid", res.ID())
-			}
-		case "plugin":
-			if spec.Plugin.Path == "" {
-				return fmt.Errorf("%s spec.plugin.path is required when type is plugin", res.ID())
-			}
-			if spec.Plugin.Timeout != "" {
-				if _, err := time.ParseDuration(spec.Plugin.Timeout); err != nil {
-					return fmt.Errorf("%s spec.plugin.timeout is invalid: %w", res.ID(), err)
-				}
-			}
-		default:
-			return fmt.Errorf("%s spec.type must be syslog or plugin", res.ID())
-		}
-		switch defaultString(spec.MinLevel, "info") {
-		case "debug", "info", "warning", "error":
-		default:
-			return fmt.Errorf("%s spec.minLevel must be debug, info, warning, or error", res.ID())
+		if err := validateLogSinkSpec(res.ID(), spec); err != nil {
+			return err
 		}
 	case "Telemetry":
 		if res.APIVersion != api.ObservabilityAPIVersion {
@@ -1097,18 +1145,17 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		default:
 			return fmt.Errorf("%s spec.schedule must be daily", res.ID())
 		}
-		if len(spec.Targets) == 0 {
-			return fmt.Errorf("%s spec.targets is required", res.ID())
+		if strings.TrimSpace(spec.Retention) == "" {
+			return fmt.Errorf("%s spec.retention is required", res.ID())
 		}
-		for i, target := range spec.Targets {
-			if !strings.HasPrefix(target.File, "/") {
-				return fmt.Errorf("%s spec.targets[%d].file must be an absolute path", res.ID(), i)
-			}
-			if strings.TrimSpace(target.Retention) == "" {
-				return fmt.Errorf("%s spec.targets[%d].retention is required", res.ID(), i)
-			}
-			if _, err := parseRetentionDuration(target.Retention); err != nil {
-				return fmt.Errorf("%s spec.targets[%d].retention must be a duration", res.ID(), i)
+		if _, err := parseRetentionDuration(spec.Retention); err != nil {
+			return fmt.Errorf("%s spec.retention must be a duration: %w", res.ID(), err)
+		}
+		for i, signal := range spec.Signals {
+			switch signal {
+			case "events", "dnsQueries", "trafficFlows", "firewallEvents":
+			default:
+				return fmt.Errorf("%s spec.signals[%d] must be events, dnsQueries, trafficFlows, or firewallEvents", res.ID(), i)
 			}
 		}
 	case "NTPClient":
@@ -3212,19 +3259,26 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 				return fmt.Errorf("%s guest egress CIDR[%d] is invalid: %w", res.ID(), i, err)
 			}
 		}
-	case "FirewallLog":
+	case "FirewallEventLog":
 		if res.APIVersion != api.FirewallAPIVersion {
 			return fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
 		}
-		spec, err := res.FirewallLogSpec()
+		spec, err := res.FirewallEventLogSpec()
 		if err != nil {
 			return err
 		}
-		if spec.Enabled && strings.TrimSpace(spec.Path) == "" {
-			return fmt.Errorf("%s spec.path is required when enabled is true", res.ID())
+		for i, event := range spec.Events {
+			switch event {
+			case "deny", "allow", "rateLimit", "connLimit":
+			default:
+				return fmt.Errorf("%s spec.events[%d] must be deny, allow, rateLimit, or connLimit", res.ID(), i)
+			}
 		}
 		if spec.NFLogGroup < 0 || spec.NFLogGroup > 65535 {
 			return fmt.Errorf("%s spec.nflogGroup must be between 0 and 65535", res.ID())
+		}
+		if spec.SampleRate < 0 {
+			return fmt.Errorf("%s spec.sampleRate must be greater than or equal to 0", res.ID())
 		}
 		if spec.Log.CopyRange < 0 {
 			return fmt.Errorf("%s spec.log.copyRange must be greater than or equal to 0", res.ID())
@@ -3964,6 +4018,67 @@ func splitResourceRef(ref string) (string, string) {
 		return kind, name
 	}
 	return "IPAddressSet", ref
+}
+
+func splitKindNameRef(ref, defaultKind string) (string, string) {
+	ref = strings.TrimSpace(ref)
+	if kind, name, ok := strings.Cut(ref, "/"); ok {
+		return kind, strings.TrimSpace(name)
+	}
+	return defaultKind, ref
+}
+
+func validateLogSinkSpec(resourceID string, spec api.LogSinkSpec) error {
+	switch spec.Type {
+	case "syslog":
+		switch spec.Syslog.Network {
+		case "", "unix", "unixgram", "tcp", "udp":
+		default:
+			return fmt.Errorf("%s spec.syslog.network must be unix, unixgram, tcp, or udp", resourceID)
+		}
+		switch defaultString(spec.Syslog.Facility, "local6") {
+		case "kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news", "uucp", "cron", "authpriv", "ftp", "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7":
+		default:
+			return fmt.Errorf("%s spec.syslog.facility is invalid", resourceID)
+		}
+	case "otlp":
+		hasTelemetry := strings.TrimSpace(spec.OTLP.TelemetryRef) != ""
+		hasEndpoint := strings.TrimSpace(spec.OTLP.Endpoint) != ""
+		if hasTelemetry == hasEndpoint {
+			return fmt.Errorf("%s spec.otlp must set exactly one of telemetryRef or endpoint", resourceID)
+		}
+		if hasEndpoint {
+			if _, err := url.ParseRequestURI(strings.TrimSpace(spec.OTLP.Endpoint)); err != nil {
+				return fmt.Errorf("%s spec.otlp.endpoint is invalid: %w", resourceID, err)
+			}
+		}
+	case "webhook":
+		if strings.TrimSpace(spec.Webhook.URL) == "" {
+			return fmt.Errorf("%s spec.webhook.url is required when type is webhook", resourceID)
+		}
+		if _, err := url.ParseRequestURI(strings.TrimSpace(spec.Webhook.URL)); err != nil {
+			return fmt.Errorf("%s spec.webhook.url is invalid: %w", resourceID, err)
+		}
+		if strings.TrimSpace(spec.Webhook.Timeout) != "" {
+			if _, err := time.ParseDuration(spec.Webhook.Timeout); err != nil {
+				return fmt.Errorf("%s spec.webhook.timeout is invalid: %w", resourceID, err)
+			}
+		}
+	case "file":
+		name := strings.TrimSpace(spec.File.Name)
+		if strings.ContainsAny(name, "/\\\x00\n\r") {
+			return fmt.Errorf("%s spec.file.name must be a logical name without path separators", resourceID)
+		}
+	case "journald":
+	default:
+		return fmt.Errorf("%s spec.type must be syslog, otlp, webhook, file, or journald", resourceID)
+	}
+	switch defaultString(spec.MinLevel, "info") {
+	case "debug", "info", "warning", "error":
+	default:
+		return fmt.Errorf("%s spec.minLevel must be debug, info, warning, or error", resourceID)
+	}
+	return nil
 }
 
 func validateIPAddressSetRefs(resourceID, path string, refs []string) error {

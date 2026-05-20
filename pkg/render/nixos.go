@@ -1170,10 +1170,10 @@ func nixOSSystemdUnits(router *api.Router) ([]nixOSSystemdUnit, error) {
 		out = append(out, nixOSSystemdUnit{Name: name, Spec: unit})
 	}
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "FirewallLog" {
+		if res.Kind != "FirewallEventLog" {
 			continue
 		}
-		spec, err := res.FirewallLogSpec()
+		spec, err := res.FirewallEventLogSpec()
 		if err != nil {
 			return nil, err
 		}
@@ -1503,7 +1503,7 @@ func nixOSNeedsDnsmasq(router *api.Router) bool {
 func nixOSNeedsNftables(router *api.Router) bool {
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "NAT44Rule", "EgressRoutePolicy", "DSLiteTunnel", "PPPoESession", "WireGuardInterface", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallLog", "ClientPolicy":
+		case "NAT44Rule", "EgressRoutePolicy", "DSLiteTunnel", "PPPoESession", "WireGuardInterface", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallEventLog", "ClientPolicy":
 			return true
 		}
 	}

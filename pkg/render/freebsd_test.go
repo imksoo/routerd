@@ -246,7 +246,7 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 			},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec:     api.FirewallLogSpec{Enabled: true, Path: "/var/db/routerd/firewall-logs.db"},
 		},
@@ -290,7 +290,7 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 func TestFreeBSDRenderSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec:     api.FirewallLogSpec{Enabled: true},
 		},

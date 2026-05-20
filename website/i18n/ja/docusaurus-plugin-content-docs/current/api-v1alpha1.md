@@ -36,7 +36,7 @@ spec:
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | インターフェース、再利用可能な `IPAddressSet`、DHCP、DNS、経路、トンネル、VIP、BGP、イベント、通信フローログ |
-| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
+| `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallEventLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
 
@@ -49,10 +49,10 @@ spec:
 | `SysctlProfile` | ルーター向け sysctl 推奨値を補う narrow escape hatch です。通常の router sysctl は自動導出されます。 |
 | `Hostname` | ホスト名を設定します。 |
 | `NTPClient` | OS の NTP クライアントを有効にします。DHCPv4 / DHCPv6 の状態から時刻サーバーを導出し、空なら public NTP サーバーへ戻せます。 |
-| `LogSink` | routerd のイベントを syslog や外部プログラムへ送ります。 |
+| `LogSink` | log event を syslog、OTLP、webhook、file、journald へ転送します。 |
 | `ObservabilityPipeline` | OTLP environment と、stdout / syslog / Loki への routerd event forwarding を設定します。 |
 | `RouterdCluster` | file lease により leader だけが host configuration を変更し、standby は status 観測に回ります。 |
-| `LogRetention` | イベント、DNS、通信フロー、ファイアウォールログの保管期間を管理します。 |
+| `LogRetention` | イベント、DNS、通信フロー、firewall event log の保管期間を管理します。 |
 | `WebConsole` | 読み取り専用の Web 画面を管理ネットワークで待ち受けます。 |
 
 ## インターフェース
@@ -426,6 +426,11 @@ FreeBSD には Linux と同じ socket option がないためです。
 | `NTPClient` | NTP クライアント設定を管理します。`serverFrom` で `DHCPv4Client.status.ntpServers` や `DHCPv6Information.status.sntpServers` を参照できます。 |
 | `LogSink` | ログ送信先を表します。 |
 | `WebConsole` | 状態、イベント、IPv4/IPv6 コネクション観測を表示する読み取り専用画面です。 |
+
+`Telemetry` は routerd 自身と管理対象 daemon の metrics / traces / logs を
+OpenTelemetry endpoint へ出すための resource です。`LogSink` は operational event
+や観測ログの転送経路を表します。OTLP へログ転送する場合は、collector endpoint を
+重複して書かずに `LogSink.spec.otlp.telemetryRef` で `Telemetry` を参照してください。
 
 `WebConsole.spec.listenAddressFrom` は、ほかのリソース状態から HTTP 待ち受けアドレスを導出します。
 たとえば、`Interface/mgmt.status.ipv4Addresses` を参照できます。

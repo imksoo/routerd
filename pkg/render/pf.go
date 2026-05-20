@@ -41,7 +41,7 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 			if res.APIVersion == api.FirewallAPIVersion {
 				policies = append(policies, res)
 			}
-		case "FirewallLog":
+		case "FirewallEventLog":
 			if res.APIVersion == api.FirewallAPIVersion {
 				logs = append(logs, res)
 			}

@@ -17,7 +17,10 @@ The log tables use column names that can be mapped to OpenTelemetry log
 attributes. nDPI and TLS SNI columns are reserved in `traffic-flows.db`, even
 when no writer fills them yet.
 
-`LogRetention` removes old rows and can run SQLite incremental vacuum:
+`LogRetention` removes old rows by signal and can run SQLite incremental
+vacuum. It no longer exposes database paths in user config; routerd derives the
+event, DNS query, traffic flow, and firewall event stores from the resources
+that produce those logs.
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -25,17 +28,26 @@ kind: LogRetention
 metadata:
   name: default
 spec:
+  retention: 30d
   schedule: daily
-  incrementalVacuum: true
-  targets:
-    - file: /var/lib/routerd/routerd.db
-      retention: 30d
-    - file: /var/lib/routerd/dns-queries.db
-      retention: 30d
-    - file: /var/lib/routerd/traffic-flows.db
-      retention: 30d
-    - file: /var/lib/routerd/firewall-logs.db
-      retention: 90d
+  vacuum: true
+  signals:
+    - events
+    - dnsQueries
+    - trafficFlows
+  sinks:
+    - LogSink/local-syslog
+---
+apiVersion: system.routerd.net/v1alpha1
+kind: LogRetention
+metadata:
+  name: firewall-events
+spec:
+  retention: 90d
+  schedule: daily
+  vacuum: true
+  signals:
+    - firewallEvents
 ```
 
 Inspection commands:

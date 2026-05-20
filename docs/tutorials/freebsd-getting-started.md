@@ -140,7 +140,7 @@ Check firewall logging through `pflog0`:
 sudo tcpdump -n -e -ttt -i pflog0
 ```
 
-If `FirewallLog` is enabled, routerd also imports `pflog0` entries into the
+If `FirewallEventLog` is enabled, routerd also imports `pflog0` entries into the
 firewall log store for `routerctl` and the Web Console.
 
 ## See also

@@ -11,11 +11,14 @@ import (
 )
 
 type LogSinkSpec struct {
-	Type     string            `yaml:"type" json:"type" jsonschema:"enum=syslog,enum=plugin"`
-	Enabled  *bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	MinLevel string            `yaml:"minLevel,omitempty" json:"minLevel,omitempty" jsonschema:"enum=debug,enum=info,enum=warning,enum=error"`
-	Syslog   LogSinkSyslogSpec `yaml:"syslog,omitempty" json:"syslog,omitempty"`
-	Plugin   LogSinkPluginSpec `yaml:"plugin,omitempty" json:"plugin,omitempty"`
+	Type     string              `yaml:"type" json:"type" jsonschema:"enum=syslog,enum=otlp,enum=webhook,enum=file,enum=journald"`
+	Enabled  *bool               `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	MinLevel string              `yaml:"minLevel,omitempty" json:"minLevel,omitempty" jsonschema:"enum=debug,enum=info,enum=warning,enum=error"`
+	Syslog   LogSinkSyslogSpec   `yaml:"syslog,omitempty" json:"syslog,omitempty"`
+	OTLP     LogSinkOTLPSpec     `yaml:"otlp,omitempty" json:"otlp,omitempty"`
+	Webhook  LogSinkWebhookSpec  `yaml:"webhook,omitempty" json:"webhook,omitempty"`
+	File     LogSinkFileSpec     `yaml:"file,omitempty" json:"file,omitempty"`
+	Journald LogSinkJournaldSpec `yaml:"journald,omitempty" json:"journald,omitempty"`
 }
 
 type TelemetrySpec struct {
@@ -94,9 +97,11 @@ type RouterdClusterSpec struct {
 }
 
 type LogRetentionSpec struct {
-	Schedule          string                   `yaml:"schedule,omitempty" json:"schedule,omitempty" jsonschema:"enum=,enum=daily"`
-	IncrementalVacuum bool                     `yaml:"incrementalVacuum,omitempty" json:"incrementalVacuum,omitempty"`
-	Targets           []LogRetentionTargetSpec `yaml:"targets" json:"targets"`
+	Retention string   `yaml:"retention" json:"retention"`
+	Signals   []string `yaml:"signals,omitempty" json:"signals,omitempty" jsonschema:"enum=events,enum=dnsQueries,enum=trafficFlows,enum=firewallEvents"`
+	Sinks     []string `yaml:"sinks,omitempty" json:"sinks,omitempty"`
+	Vacuum    bool     `yaml:"vacuum,omitempty" json:"vacuum,omitempty"`
+	Schedule  string   `yaml:"schedule,omitempty" json:"schedule,omitempty" jsonschema:"enum=,enum=daily"`
 }
 
 type LogRetentionTargetSpec struct {
@@ -118,9 +123,23 @@ type LogSinkSyslogSpec struct {
 	Tag      string `yaml:"tag,omitempty" json:"tag,omitempty"`
 }
 
-type LogSinkPluginSpec struct {
-	Path    string `yaml:"path,omitempty" json:"path,omitempty"`
-	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+type LogSinkOTLPSpec struct {
+	TelemetryRef string `yaml:"telemetryRef,omitempty" json:"telemetryRef,omitempty"`
+	Endpoint     string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+}
+
+type LogSinkWebhookSpec struct {
+	URL     string            `yaml:"url,omitempty" json:"url,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Timeout string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+}
+
+type LogSinkFileSpec struct {
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+}
+
+type LogSinkJournaldSpec struct {
+	Identifier string `yaml:"identifier,omitempty" json:"identifier,omitempty"`
 }
 
 type SysctlSpec struct {
@@ -873,12 +892,11 @@ type DNSResolverQueryLogSpec struct {
 }
 
 type TrafficFlowLogSpec struct {
-	Enabled       bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Path          string `yaml:"path,omitempty" json:"path,omitempty"`
-	Retention     string `yaml:"retention,omitempty" json:"retention,omitempty"`
-	Source        string `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"enum=,enum=conntrack"`
-	IncludeNDPI   bool   `yaml:"includeNDPI,omitempty" json:"includeNDPI,omitempty"`
-	IncludeTLSSNI bool   `yaml:"includeTLSSNI,omitempty" json:"includeTLSSNI,omitempty"`
+	Enabled                 bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Path                    string `yaml:"path,omitempty" json:"path,omitempty"`
+	Source                  string `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"enum=,enum=conntrack"`
+	IncludeApplicationLayer bool   `yaml:"includeApplicationLayer,omitempty" json:"includeApplicationLayer,omitempty"`
+	IncludeTLSSNI           bool   `yaml:"includeTLSSNI,omitempty" json:"includeTLSSNI,omitempty"`
 }
 
 type ReadyWhenSpec struct {
@@ -1303,13 +1321,21 @@ type FirewallPolicySpec struct {
 	SameRoleAccept bool `yaml:"sameRoleAccept,omitempty" json:"sameRoleAccept,omitempty"`
 }
 
-type FirewallLogSpec struct {
+type FirewallEventLogSpec struct {
 	Enabled    bool                  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Path       string                `yaml:"path,omitempty" json:"path,omitempty"`
+	Events     []string              `yaml:"events,omitempty" json:"events,omitempty" jsonschema:"enum=deny,enum=allow,enum=rateLimit,enum=connLimit"`
+	FromZones  []string              `yaml:"fromZones,omitempty" json:"fromZones,omitempty"`
+	ToZones    []string              `yaml:"toZones,omitempty" json:"toZones,omitempty"`
+	Rules      []string              `yaml:"rules,omitempty" json:"rules,omitempty"`
+	SampleRate int                   `yaml:"sampleRate,omitempty" json:"sampleRate,omitempty" jsonschema:"minimum=0"`
+	Sinks      []string              `yaml:"sinks,omitempty" json:"sinks,omitempty"`
 	Retention  string                `yaml:"retention,omitempty" json:"retention,omitempty"`
 	NFLogGroup int                   `yaml:"nflogGroup,omitempty" json:"nflogGroup,omitempty" jsonschema:"minimum=0,maximum=65535"`
 	Log        FirewallLogPolicySpec `yaml:"log,omitempty" json:"log,omitempty"`
 }
+
+type FirewallLogSpec = FirewallEventLogSpec
 
 type FirewallLogPolicySpec struct {
 	AcceptSampleRate int  `yaml:"acceptSampleRate,omitempty" json:"acceptSampleRate,omitempty" jsonschema:"minimum=0"`
@@ -1674,6 +1700,10 @@ func (r Resource) FirewallRuleSpec() (FirewallRuleSpec, error) {
 
 func (r Resource) FirewallLogSpec() (FirewallLogSpec, error) {
 	return specAs[FirewallLogSpec](r)
+}
+
+func (r Resource) FirewallEventLogSpec() (FirewallEventLogSpec, error) {
+	return specAs[FirewallEventLogSpec](r)
 }
 
 func (r Resource) LogSinkSpec() (LogSinkSpec, error) {

@@ -546,7 +546,7 @@ func TestNixOSModuleSynthesizesHealthCheckDaemonUnit(t *testing.T) {
 func TestNixOSModuleSynthesizesFirewallLoggerUnit(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec: api.FirewallLogSpec{
 				Enabled:    true,
@@ -583,7 +583,7 @@ func TestNixOSModuleSynthesizesFirewallLoggerUnit(t *testing.T) {
 func TestNixOSModuleSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec:     api.FirewallLogSpec{Enabled: true},
 		},

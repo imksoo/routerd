@@ -222,7 +222,7 @@ spec:
         logDeny: true
 
     - apiVersion: firewall.routerd.net/v1alpha1
-      kind: FirewallLog
+      kind: FirewallEventLog
       metadata:
         name: default
       spec:

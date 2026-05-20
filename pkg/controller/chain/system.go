@@ -470,22 +470,22 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		if render.RouterWantsDPIClassifier(c.Router) {
 			dpiSpec := render.DPIClassifierSystemdSpec("/run")
 			dpiSpec.Environment = mergeStringEnvs(dpiSpec.Environment, telemetryEnv)
-			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.DPIClassifierUnitName, "TrafficFlowLog/FirewallLog", dpiSpec, command); err != nil {
+			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.DPIClassifierUnitName, "TrafficFlowLog/FirewallEventLog", dpiSpec, command); err != nil {
 				return err
 			}
 		}
 		if render.RouterWantsNDPIAgent(c.Router) {
 			ndpiSpec := render.NDPIAgentSystemdSpec("/run")
 			ndpiSpec.Environment = mergeStringEnvs(ndpiSpec.Environment, telemetryEnv)
-			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "TrafficFlowLog/FirewallLog", ndpiSpec, command); err != nil {
+			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.NDPIAgentUnitName, "TrafficFlowLog/FirewallEventLog", ndpiSpec, command); err != nil {
 				return err
 			}
 		}
 		for _, resource := range c.Router.Spec.Resources {
-			if resource.Kind != "FirewallLog" {
+			if resource.Kind != "FirewallEventLog" {
 				continue
 			}
-			spec, err := resource.FirewallLogSpec()
+			spec, err := resource.FirewallEventLogSpec()
 			if err != nil {
 				return err
 			}
@@ -498,7 +498,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			}
 			unit := render.FirewallLoggerSystemdSpec(spec, dpiSocket)
 			unit.Environment = mergeStringEnvs(unit.Environment, telemetryEnv)
-			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, "routerd-firewall-logger.service", "FirewallLog/"+resource.Metadata.Name, unit, command); err != nil {
+			if err := c.reconcileSyntheticSystemdHelperUnit(ctx, "routerd-firewall-logger.service", "FirewallEventLog/"+resource.Metadata.Name, unit, command); err != nil {
 				return err
 			}
 		}

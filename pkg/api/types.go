@@ -72,6 +72,9 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 
 	switch raw.Kind {
 	case "LogSink":
+		if hasMappingKey(&raw.Spec, "plugin") {
+			return fmt.Errorf("%s spec.plugin is not supported; use type webhook, file, journald, or otlp for log forwarding sinks", r.ID())
+		}
 		var spec LogSinkSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
@@ -90,6 +93,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "LogRetention":
+		if hasMappingKey(&raw.Spec, "targets") {
+			return fmt.Errorf("%s spec.targets is not supported; use spec.retention with spec.signals and spec.sinks", r.ID())
+		}
+		if hasMappingKey(&raw.Spec, "incrementalVacuum") {
+			return fmt.Errorf("%s spec.incrementalVacuum is not supported; use spec.vacuum", r.ID())
+		}
 		var spec LogRetentionSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
@@ -363,6 +372,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "TrafficFlowLog":
+		if hasMappingKey(&raw.Spec, "includeNDPI") {
+			return fmt.Errorf("%s spec.includeNDPI is not supported; use spec.includeApplicationLayer", r.ID())
+		}
+		if hasMappingKey(&raw.Spec, "retention") {
+			return fmt.Errorf("%s spec.retention is not supported; declare a LogRetention resource for traffic flow retention", r.ID())
+		}
 		var spec TrafficFlowLogSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
@@ -455,8 +470,8 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "FirewallLog":
-		var spec FirewallLogSpec
+	case "FirewallEventLog":
+		var spec FirewallEventLogSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -501,6 +516,8 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("%s is not supported; use VirtualAddress with spec.family: ipv4", r.ID())
 	case "VirtualIPv6Address":
 		return fmt.Errorf("%s is not supported; use VirtualAddress with spec.family: ipv6", r.ID())
+	case "FirewallLog":
+		return fmt.Errorf("%s is not supported; use FirewallEventLog for firewall event logging intent", r.ID())
 	case "IPv4ReversePathFilter":
 		return fmt.Errorf("%s is not supported; routerd derives reverse path filter sysctls automatically", r.ID())
 	case "PathMTUPolicy":

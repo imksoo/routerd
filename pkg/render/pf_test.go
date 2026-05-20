@@ -47,7 +47,7 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 			Spec:     api.FirewallPolicySpec{LogDeny: true},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec:     api.FirewallLogSpec{Enabled: true},
 		},

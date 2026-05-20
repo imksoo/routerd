@@ -1,7 +1,10 @@
 # Observability pipeline
 
-`Telemetry` は OTLP だけを扱う小さな resource です。routerd の event log も
-遠隔 sink に送りたい場合は `ObservabilityPipeline` を使います。
+`Telemetry` は routerd 自身の metrics / traces / logs を OTLP へ出す小さな
+resource です。`LogSink` は operational event や観測ログの転送経路を表します。
+OTLP の `LogSink` は collector endpoint を重複して書かず、`Telemetry` resource を
+参照します。routerd の event log を Loki など pipeline 型の遠隔 sink に送りたい場合は
+`ObservabilityPipeline` を使います。
 
 `ObservabilityPipeline` は bundled `otelcol` process ではなく、routerd 内蔵の
 pipeline です。OTLP logs / metrics / traces は通常の OpenTelemetry SDK を使い、

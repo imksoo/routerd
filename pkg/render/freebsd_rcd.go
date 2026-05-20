@@ -187,10 +187,10 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		out[name] = data
 	}
 	for _, res := range router.Spec.Resources {
-		if res.Kind != "FirewallLog" {
+		if res.Kind != "FirewallEventLog" {
 			continue
 		}
-		spec, err := res.FirewallLogSpec()
+		spec, err := res.FirewallEventLogSpec()
 		if err != nil {
 			return nil, err
 		}

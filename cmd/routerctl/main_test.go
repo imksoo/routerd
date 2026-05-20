@@ -913,7 +913,7 @@ spec:
         protocol: tcp
         port: 443
     - apiVersion: firewall.routerd.net/v1alpha1
-      kind: FirewallLog
+      kind: FirewallEventLog
       metadata:
         name: nflog
       spec:
@@ -954,7 +954,7 @@ spec:
 		"HealthCheck/internet",
 		"Applied",
 		"routerd-firewall-logger.service",
-		"FirewallLog/nflog",
+		"FirewallEventLog/nflog",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("derived resources output missing %q:\n%s", want, got)

@@ -839,6 +839,8 @@ func canonicalResourceKind(kind string) string {
 		"firewall":               "FirewallPolicy",
 		"firewallzone":           "FirewallZone",
 		"firewallpolicy":         "FirewallPolicy",
+		"firewalleventlog":       "FirewallEventLog",
+		"firewalllog":            "FirewallEventLog",
 		"firewallrule":           "FirewallRule",
 		"zone":                   "FirewallZone",
 		"hostname":               "Hostname",
@@ -865,9 +867,9 @@ func canonicalResourceKind(kind string) string {
 
 func apiVersionForKind(kind string) string {
 	switch kind {
-	case "FirewallZone", "FirewallPolicy", "FirewallRule", "PortForward", "IngressService", "LocalServiceRedirect":
+	case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallEventLog", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
-	case "Hostname", "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "LogSink", "ObservabilityPipeline", "RouterdCluster", "ServiceUnit":
+	case "Hostname", "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "LogSink", "ObservabilityPipeline", "RouterdCluster", "LogRetention", "WebConsole", "ServiceUnit":
 		return api.SystemAPIVersion
 	case "Telemetry":
 		return api.ObservabilityAPIVersion
@@ -3164,7 +3166,7 @@ func controllerResourceKinds(name string) []string {
 	case "route":
 		return []string{"IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "EgressRoutePolicy"}
 	case "service-unit":
-		return []string{"ServiceUnit", "TailscaleNode", "HealthCheck", "FirewallLog", "TrafficFlowLog"}
+		return []string{"ServiceUnit", "TailscaleNode", "HealthCheck", "FirewallEventLog", "TrafficFlowLog"}
 	default:
 		return nil
 	}
@@ -3640,10 +3642,10 @@ func configuredFirewallLogPath(router *api.Router) string {
 		return fallback
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "FirewallLog" {
+		if resource.Kind != "FirewallEventLog" {
 			continue
 		}
-		spec, err := resource.FirewallLogSpec()
+		spec, err := resource.FirewallEventLogSpec()
 		if err != nil || !spec.Enabled {
 			continue
 		}

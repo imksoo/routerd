@@ -265,7 +265,7 @@ func TestValidateLogSinkSyslog(t *testing.T) {
 	}
 }
 
-func TestValidateLogSinkPluginRequiresPath(t *testing.T) {
+func TestValidateLogSinkWebhookRequiresURL(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -273,13 +273,39 @@ func TestValidateLogSinkPluginRequiresPath(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogSink"},
 				Metadata: api.ObjectMeta{Name: "remote-log"},
-				Spec:     api.LogSinkSpec{Type: "plugin"},
+				Spec:     api.LogSinkSpec{Type: "webhook"},
 			},
 		}},
 	}
 
 	if err := Validate(router); err == nil {
-		t.Fatal("expected plugin log sink without path to be rejected")
+		t.Fatal("expected webhook log sink without url to be rejected")
+	}
+}
+
+func TestValidateLogSinkOTLPReferencesTelemetry(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.ObservabilityAPIVersion, Kind: "Telemetry"},
+				Metadata: api.ObjectMeta{Name: "otlp"},
+				Spec: api.TelemetrySpec{
+					OTLP:    api.TelemetryOTLPSpec{Endpoint: "http://collector.example:4317"},
+					Signals: []string{"logs"},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogSink"},
+				Metadata: api.ObjectMeta{Name: "remote-log"},
+				Spec:     api.LogSinkSpec{Type: "otlp", OTLP: api.LogSinkOTLPSpec{TelemetryRef: "Telemetry/otlp"}},
+			},
+		}},
+	}
+
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate otlp log sink: %v", err)
 	}
 }
 

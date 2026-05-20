@@ -607,7 +607,7 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 				Spec:     api.FirewallPolicySpec{LogDeny: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
 				Metadata: api.ObjectMeta{Name: "default"},
 				Spec:     api.FirewallLogSpec{Enabled: true, NFLogGroup: 7, Path: "/var/lib/routerd/firewall-logs.db"},
 			},
@@ -1140,7 +1140,7 @@ func TestNftablesSamplesAcceptedForwardFlows(t *testing.T) {
 			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallLog"},
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
 			Metadata: api.ObjectMeta{Name: "default"},
 			Spec: api.FirewallLogSpec{
 				Enabled:    true,

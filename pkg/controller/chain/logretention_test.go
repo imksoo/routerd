@@ -26,11 +26,13 @@ func TestLogRetentionControllerDeletesExpiredRows(t *testing.T) {
 	store := mapStore{}
 	controller := LogRetentionController{
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.DNSResolverSpec{QueryLog: api.DNSResolverQueryLogSpec{Enabled: true, Path: path}},
+		}, {
 			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogRetention"},
 			Metadata: api.ObjectMeta{Name: "default"},
-			Spec: api.LogRetentionSpec{Schedule: "daily", IncrementalVacuum: true, Targets: []api.LogRetentionTargetSpec{{
-				File: path, Retention: "24h",
-			}}},
+			Spec:     api.LogRetentionSpec{Schedule: "daily", Vacuum: true, Signals: []string{"dnsQueries"}, Retention: "24h"},
 		}}}},
 		Bus:   bus.New(),
 		Store: store,

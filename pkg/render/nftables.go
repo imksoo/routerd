@@ -49,7 +49,7 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallPolicy" {
 			firewallPolicies = append(firewallPolicies, res)
 		}
-		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallLog" {
+		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallEventLog" {
 			firewallLogs = append(firewallLogs, res)
 		}
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallRule" {
@@ -450,7 +450,7 @@ func NftablesFirewall(router *api.Router, holes []FirewallHole) ([]byte, error) 
 			zones = append(zones, res)
 		case "FirewallPolicy":
 			policies = append(policies, res)
-		case "FirewallLog":
+		case "FirewallEventLog":
 			logs = append(logs, res)
 		case "FirewallRule":
 			rules = append(rules, res)
@@ -821,7 +821,7 @@ func firewallPolicyOptions(resources []api.Resource) firewallPolicy {
 
 func firewallLogOptions(resources []api.Resource) firewallLogging {
 	for _, res := range resources {
-		spec, err := res.FirewallLogSpec()
+		spec, err := res.FirewallEventLogSpec()
 		if err != nil || !spec.Enabled {
 			continue
 		}

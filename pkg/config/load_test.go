@@ -52,6 +52,7 @@ func TestLoadRejectsRemovedImplementationResources(t *testing.T) {
 		{kind: "VirtualIPv6Address", apiVersion: "net.routerd.net/v1alpha1", spec: "interface: lan\naddress: 2001:db8::10/128\n"},
 		{kind: "DHCPv4Scope", apiVersion: "net.routerd.net/v1alpha1", spec: "server: dhcpv4\ninterface: lan\nrangeStart: 192.0.2.10\nrangeEnd: 192.0.2.20\n"},
 		{kind: "DHCPv6Scope", apiVersion: "net.routerd.net/v1alpha1", spec: "server: dhcpv6\ndelegatedAddress: lan-v6\n"},
+		{kind: "FirewallLog", apiVersion: "firewall.routerd.net/v1alpha1", spec: "enabled: true\n"},
 		{kind: "IPv4ReversePathFilter", apiVersion: "net.routerd.net/v1alpha1", spec: "target: all\nmode: disabled\n"},
 		{kind: "PathMTUPolicy", apiVersion: "net.routerd.net/v1alpha1", spec: "fromInterface: lan\ntoInterfaces: [wan]\n"},
 	} {
@@ -76,6 +77,86 @@ spec:
 			}
 			if !strings.Contains(err.Error(), tc.kind) || !strings.Contains(err.Error(), "not supported") {
 				t.Fatalf("error = %v, want unsupported %s", err, tc.kind)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsOldLogForwardingFields(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "traffic-flow-include-ndpi",
+			body: `
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: TrafficFlowLog
+      metadata:
+        name: default
+      spec:
+        enabled: true
+        path: /var/lib/routerd/traffic-flows.db
+        includeNDPI: true
+`,
+			want: "includeApplicationLayer",
+		},
+		{
+			name: "traffic-flow-retention",
+			body: `
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: TrafficFlowLog
+      metadata:
+        name: default
+      spec:
+        enabled: true
+        path: /var/lib/routerd/traffic-flows.db
+        retention: 30d
+`,
+			want: "LogRetention",
+		},
+		{
+			name: "log-retention-targets",
+			body: `
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: LogRetention
+      metadata:
+        name: default
+      spec:
+        targets:
+          - file: /var/lib/routerd/routerd.db
+            retention: 30d
+`,
+			want: "spec.retention",
+		},
+		{
+			name: "log-sink-plugin",
+			body: `
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: LogSink
+      metadata:
+        name: plugin
+      spec:
+        type: plugin
+        plugin:
+          path: /usr/local/libexec/routerd/log-sink
+`,
+			want: "webhook",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeConfig(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+`+tc.body)
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
 			}
 		})
 	}

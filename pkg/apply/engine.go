@@ -275,9 +275,16 @@ func (e *Engine) observeLogSink(res api.Resource, includePlan bool, rr *Resource
 		if spec.Syslog.Address != "" {
 			rr.Observed["address"] = spec.Syslog.Address
 		}
-	case "plugin":
-		rr.Observed["pluginPath"] = spec.Plugin.Path
-		rr.Observed["timeout"] = defaultString(spec.Plugin.Timeout, "5s")
+	case "otlp":
+		rr.Observed["telemetryRef"] = spec.OTLP.TelemetryRef
+		rr.Observed["endpoint"] = spec.OTLP.Endpoint
+	case "webhook":
+		rr.Observed["url"] = spec.Webhook.URL
+		rr.Observed["timeout"] = defaultString(spec.Webhook.Timeout, "5s")
+	case "file":
+		rr.Observed["name"] = defaultString(spec.File.Name, res.Metadata.Name)
+	case "journald":
+		rr.Observed["identifier"] = defaultString(spec.Journald.Identifier, "routerd")
 	}
 	if !includePlan {
 		return
@@ -289,8 +296,18 @@ func (e *Engine) observeLogSink(res api.Resource, includePlan bool, rr *Resource
 	switch spec.Type {
 	case "syslog":
 		rr.Plan = append(rr.Plan, fmt.Sprintf("send routerd events to syslog facility %s", defaultString(spec.Syslog.Facility, "local6")))
-	case "plugin":
-		rr.Plan = append(rr.Plan, fmt.Sprintf("send routerd events to local log plugin %s", spec.Plugin.Path))
+	case "otlp":
+		target := spec.OTLP.TelemetryRef
+		if target == "" {
+			target = spec.OTLP.Endpoint
+		}
+		rr.Plan = append(rr.Plan, fmt.Sprintf("send routerd log events to OTLP sink %s", target))
+	case "webhook":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("send routerd log events to webhook %s", spec.Webhook.URL))
+	case "file":
+		rr.Plan = append(rr.Plan, fmt.Sprintf("write routerd log events to logical file sink %s", defaultString(spec.File.Name, res.Metadata.Name)))
+	case "journald":
+		rr.Plan = append(rr.Plan, "send routerd log events to journald")
 	}
 }
 

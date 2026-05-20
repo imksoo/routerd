@@ -4,12 +4,14 @@ package eventlog
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"log/syslog"
-	"os/exec"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -83,19 +85,29 @@ func NewSink(spec api.LogSinkSpec) (Sink, error) {
 			tag:      tag,
 			minLevel: minLevel,
 		}, nil
-	case "plugin":
-		if spec.Plugin.Path == "" {
-			return nil, fmt.Errorf("plugin.path is required")
+	case "otlp":
+		if strings.TrimSpace(spec.OTLP.TelemetryRef) == "" && strings.TrimSpace(spec.OTLP.Endpoint) == "" {
+			return nil, fmt.Errorf("otlp.telemetryRef or otlp.endpoint is required")
 		}
+		return &OTLPSink{minLevel: minLevel}, nil
+	case "webhook":
 		timeout := 5 * time.Second
-		if spec.Plugin.Timeout != "" {
-			parsed, err := time.ParseDuration(spec.Plugin.Timeout)
+		if spec.Webhook.Timeout != "" {
+			parsed, err := time.ParseDuration(spec.Webhook.Timeout)
 			if err != nil {
-				return nil, fmt.Errorf("plugin.timeout: %w", err)
+				return nil, fmt.Errorf("webhook.timeout: %w", err)
 			}
 			timeout = parsed
 		}
-		return &PluginSink{path: spec.Plugin.Path, timeout: timeout, minLevel: minLevel}, nil
+		return &WebhookSink{url: spec.Webhook.URL, headers: spec.Webhook.Headers, timeout: timeout, minLevel: minLevel}, nil
+	case "file":
+		name := strings.TrimSpace(spec.File.Name)
+		if name == "" {
+			name = "routerd-events"
+		}
+		return &FileSink{path: filepath.Join("/var/lib/routerd/logs", name+".jsonl"), minLevel: minLevel}, nil
+	case "journald":
+		return &JournaldSink{identifier: defaultString(spec.Journald.Identifier, "routerd"), minLevel: minLevel}, nil
 	default:
 		return nil, fmt.Errorf("unsupported log sink type %q", spec.Type)
 	}
@@ -174,13 +186,15 @@ func (s *SyslogSink) Close() error {
 	return s.writer.Close()
 }
 
-type PluginSink struct {
-	path     string
+type WebhookSink struct {
+	url      string
+	headers  map[string]string
 	timeout  time.Duration
 	minLevel int
+	client   *http.Client
 }
 
-func (s *PluginSink) Emit(event Event) error {
+func (s *WebhookSink) Emit(event Event) error {
 	if !enabled(event.Level, s.minLevel) {
 		return nil
 	}
@@ -188,26 +202,91 @@ func (s *PluginSink) Emit(event Event) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, s.path)
-	cmd.Stdin = bytes.NewReader(append(data, '\n'))
-	cmd.Env = append(cmd.Environ(),
-		"ROUTERD_LOG_LEVEL="+string(event.Level),
-		"ROUTERD_LOG_ROUTER="+event.Router,
-		"ROUTERD_LOG_COMMAND="+event.Command,
-	)
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("log plugin timed out after %s", s.timeout)
+	client := s.client
+	if client == nil {
+		client = &http.Client{Timeout: s.timeout}
 	}
+	req, err := http.NewRequest(http.MethodPost, s.url, bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("log plugin %s: %w: %s", s.path, err, strings.TrimSpace(string(out)))
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range s.headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("webhook log sink returned %s", resp.Status)
 	}
 	return nil
 }
 
-func (s *PluginSink) Close() error {
+func (s *WebhookSink) Close() error {
+	return nil
+}
+
+type FileSink struct {
+	path     string
+	minLevel int
+}
+
+func (s *FileSink) Emit(event Event) error {
+	if !enabled(event.Level, s.minLevel) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(append(data, '\n'))
+	return err
+}
+
+func (s *FileSink) Close() error {
+	return nil
+}
+
+type JournaldSink struct {
+	identifier string
+	minLevel   int
+}
+
+func (s *JournaldSink) Emit(event Event) error {
+	if !enabled(event.Level, s.minLevel) {
+		return nil
+	}
+	log.Printf("%s %s", s.identifier, formatEvent(event))
+	return nil
+}
+
+func (s *JournaldSink) Close() error {
+	return nil
+}
+
+type OTLPSink struct {
+	minLevel int
+}
+
+func (s *OTLPSink) Emit(event Event) error {
+	if !enabled(event.Level, s.minLevel) {
+		return nil
+	}
+	return nil
+}
+
+func (s *OTLPSink) Close() error {
 	return nil
 }
 

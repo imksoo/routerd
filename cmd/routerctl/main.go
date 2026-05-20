@@ -1586,10 +1586,10 @@ func plannedDerivedShowResources(router *api.Router) []showResource {
 	}
 	addServiceUnit(render.RouterdUnitName, "Router/"+router.Metadata.Name)
 	if render.RouterWantsDPIClassifier(router) {
-		addServiceUnit(render.DPIClassifierUnitName, "TrafficFlowLog/FirewallLog")
+		addServiceUnit(render.DPIClassifierUnitName, "TrafficFlowLog/FirewallEventLog")
 	}
 	if render.RouterWantsNDPIAgent(router) {
-		addServiceUnit(render.NDPIAgentUnitName, "TrafficFlowLog/FirewallLog")
+		addServiceUnit(render.NDPIAgentUnitName, "TrafficFlowLog/FirewallEventLog")
 	}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
@@ -1605,10 +1605,10 @@ func plannedDerivedShowResources(router *api.Router) []showResource {
 			if err == nil && spec.Daemon == "routerd-healthcheck" {
 				addServiceUnit("routerd-healthcheck@"+res.Metadata.Name+".service", "HealthCheck/"+res.Metadata.Name)
 			}
-		case "FirewallLog":
-			spec, err := res.FirewallLogSpec()
+		case "FirewallEventLog":
+			spec, err := res.FirewallEventLogSpec()
 			if err == nil && spec.Enabled {
-				addServiceUnit("routerd-firewall-logger.service", "FirewallLog/"+res.Metadata.Name)
+				addServiceUnit("routerd-firewall-logger.service", "FirewallEventLog/"+res.Metadata.Name)
 			}
 		}
 	}
@@ -2303,6 +2303,8 @@ func canonicalShowKind(kind string) string {
 		"firewall":               "FirewallPolicy",
 		"firewallzone":           "FirewallZone",
 		"firewallpolicy":         "FirewallPolicy",
+		"firewalleventlog":       "FirewallEventLog",
+		"firewalllog":            "FirewallEventLog",
 		"firewallrule":           "FirewallRule",
 		"zone":                   "FirewallZone",
 		"zones":                  "FirewallZone",

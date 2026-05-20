@@ -74,11 +74,11 @@ func RouterWantsDPIClassifier(router *api.Router) bool {
 		switch res.Kind {
 		case "TrafficFlowLog":
 			spec, err := res.TrafficFlowLogSpec()
-			if err == nil && spec.Enabled && (spec.IncludeNDPI || spec.IncludeTLSSNI) {
+			if err == nil && spec.Enabled && (spec.IncludeApplicationLayer || spec.IncludeTLSSNI) {
 				return true
 			}
-		case "FirewallLog":
-			spec, err := res.FirewallLogSpec()
+		case "FirewallEventLog":
+			spec, err := res.FirewallEventLogSpec()
 			if err == nil && spec.Enabled {
 				return true
 			}
